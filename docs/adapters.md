@@ -362,6 +362,25 @@ Adapters opt into these via the SDK; the shared conformance suite exercises
 pause/resume, snapshot/restore, and inspect against every adapter so behavior is
 uniform.
 
+### Log stream lifetime
+
+Protocol v2 also opens a per-session **Log stream** as soon as the session is
+opened. This stream is the host's only source of adapter-level liveness
+heartbeats, and it must remain open for the entire lifetime of the session:
+
+- **The SDK owns the heartbeat timer and stream lifetime.** Adapter authors
+  should not implement their own heartbeat logic; the SDK keeps the stream open
+  and emits `Heartbeat` events at the configured interval.
+- **Returning early from `Log` breaks the contract.** An adapter that returns
+  from its `Log` RPC before the session is closed stops sending heartbeats.
+  The host detects this as a broken contract and disarms stall detection for
+  that session so it is not falsely declared crashed, but the adapter will fail
+  the mandatory heartbeat conformance suite.
+- **Conformance enforces the contract.** Any adapter that declares a log stream
+  must pass the `heartbeats` conformance suite, which verifies the session
+  survives an idle period longer than the stall threshold and that actual
+  heartbeat events were observed.
+
 ## Security model
 
 - **Process scrub.** The sandbox setup scrubs the adapter's process environment;

@@ -58,8 +58,23 @@ type Loader interface {
 // LogStreamStarter is implemented by handles that support a dedicated
 // per-session Log server-stream RPC (v2 adapters). The host starts this
 // stream once at session open and cancels it at session close.
+//
+// Contract: the returned cancel function must end the stream, and the
+// returned channel must be closed once the stream has fully stopped. The
+// stream must remain open for the lifetime of the session. An adapter that
+// returns from its implementation of the underlying Log RPC before the
+// host cancels the stream disables its own heartbeat signal and breaks the
+// session-liveness contract; the host will surface that as a diagnostic.
+// LogStreamStarter is implemented by adapters that expose a long-lived Log
+// stream. The stream must remain open for the entire lifetime of the session:
+// cancelling it early stops the heartbeat liveness signal and the host will
+// treat the session as though it does not support heartbeat monitoring.
 type LogStreamStarter interface {
-	StartLogStream(ctx context.Context, sessionID string, sink LogEventSink) (cancel func(), err error)
+	// StartLogStream starts the per-session Log stream. cancel must stop the
+	// stream. done must be closed after the stream has fully shut down and must
+	// carry any terminal error. The host uses done to detect adapters that end
+	// the stream while the session is still open.
+	StartLogStream(ctx context.Context, sessionID string, sink LogEventSink) (cancel func(), done <-chan error, err error)
 }
 
 type Handle interface {
@@ -369,15 +384,18 @@ func (p *rpcHandle) OpenSession(ctx context.Context, id string, config, secrets 
 	return err
 }
 
-func (p *rpcHandle) StartLogStream(ctx context.Context, sessionID string, sink LogEventSink) (cancel func(), err error) {
+func (p *rpcHandle) StartLogStream(ctx context.Context, sessionID string, sink LogEventSink) (cancel func(), done <-chan error, err error) {
 	logCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	doneCh := make(chan error, 1)
 	go func() {
 		err := p.rpc.Log(logCtx, &v2.LogRequest{SessionId: sessionID}, sink)
 		if err != nil && !isExpectedStreamClose(err) {
 			slog.Warn("adapter log stream closed unexpectedly", "adapter", p.name, "session", sessionID, "error", err)
 		}
+		doneCh <- err
+		close(doneCh)
 	}()
-	return cancel, nil
+	return cancel, doneCh, nil
 }
 
 func (p *rpcHandle) StartPermissionStream(ctx context.Context, sessionID string, requests <-chan *v2.PermissionEvent) (cancel func(), err error) {

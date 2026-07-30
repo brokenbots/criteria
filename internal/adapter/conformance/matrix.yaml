@@ -22,3 +22,5 @@ suites:
   - error_injection
   - ordering
   - concurrent_stress
+required_suites:
+  - heartbeats

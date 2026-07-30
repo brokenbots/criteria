@@ -10,14 +10,21 @@ import (
 	"github.com/brokenbots/criteria/internal/adapterhost"
 )
 
+// defaultHeartbeatStallThreshold is the fast threshold used by the heartbeat
+// conformance suite. Tests can override it via Options.HeartbeatStallThreshold.
+const defaultHeartbeatStallThreshold = 250 * time.Millisecond
+
 func testHeartbeats(t *testing.T, name string, loader adapterhost.Loader, opts *Options, info *adapterhost.Info) {
 	t.Helper()
 
-	if !opts.Streaming || !opts.Heartbeats {
-		t.Skipf("%s: streaming or heartbeats not enabled in options", name)
-	}
+	// Heartbeat conformance is mandatory for any adapter that implements
+	// LogStreamStarter. It is no longer opt-in via opts.Heartbeats.
+	//
+	// In-tree fixtures read this variable and heartbeat faster than the
+	// production 30 s cadence so the idle-survival test can use a short
+	// threshold without waiting 90 s.
+	t.Setenv("CRITERIA_TEST_HEARTBEAT_INTERVAL_MS", "50")
 
-	// 30 s matches the StartTimeout in the loader.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -27,40 +34,74 @@ func testHeartbeats(t *testing.T, name string, loader adapterhost.Loader, opts *
 	}
 	defer plug.Kill()
 
-	sessionID := newSessionID("heartbeat")
-	if err := plug.OpenSession(ctx, sessionID, cloneConfig(opts.OpenConfig), cloneConfig(opts.Secrets)); err != nil {
-		t.Fatalf("open session: %v", err)
-	}
-	defer func() {
-		_ = plug.CloseSession(context.Background(), sessionID)
-	}()
-
-	// Start the Log stream; the adapter is expected to stall it.
-	if lss, ok := plug.(adapterhost.LogStreamStarter); ok {
-		logSink := &recordingSink{}
-		cancelLog, err := lss.StartLogStream(ctx, sessionID, logSink)
-		if err != nil {
-			t.Fatalf("start log stream: %v", err)
-		}
-		defer cancelLog()
-	} else {
+	if _, ok := plug.(adapterhost.LogStreamStarter); !ok {
 		t.Skipf("%s: adapter does not implement LogStreamStarter", name)
 	}
 
-	// The adapter must be configured to stall the Log stream.
-	cfg := cloneConfig(opts.StepConfig)
-	cfg["stall_log_stream"] = "true"
-	step := baseStep(name, info.Name, cfg)
-	sink := &recordingSink{}
-
-	// Use a short timeout because we expect the adapter to stall and the
-	// host to detect it.
-	execCtx, execCancel := context.WithTimeout(ctx, 2*time.Second)
-	_, execErr := executeNoPanic(t, adapterSessionTarget{handle: plug, sessionID: sessionID, name: info.Name}, execCtx, step, sink)
-	execCancel()
-
-	// We expect either a heartbeat-timeout error or a normal timeout.
-	if execErr == nil {
-		t.Fatalf("%s: adapter did not stall or host did not detect heartbeat loss — expected an error", name)
+	threshold := opts.HeartbeatStallThreshold
+	if threshold <= 0 {
+		threshold = defaultHeartbeatStallThreshold
 	}
+
+	// Positive path: open a session through the host SessionManager, leave it
+	// idle well past the stall threshold, and then execute a step.
+	sm := adapterhost.NewSessionManager(loader)
+	sm.HeartbeatStallThreshold = threshold
+	defer func() { _ = sm.Shutdown(ctx) }()
+
+	sessionID := openIdleSession(t, name, sm, ctx, info, opts)
+	// Idle past the threshold. A correct host+adapter pair keeps the session
+	// alive with log-stream heartbeats.
+	time.Sleep(threshold * 3)
+	res, execErr := sm.Execute(ctx, sessionID, baseStep(name, info.Name, cloneConfig(opts.StepConfig)), &recordingSink{})
+	if execErr != nil {
+		t.Fatalf("%s: idle session failed after %s: %v", name, threshold, execErr)
+	}
+	assertValidOutcome(t, res.Outcome, opts)
+
+	// Contract enforcement: probe a fresh Log stream and count heartbeat events.
+	hbEvents := countHeartbeatProbeEvents(t, name, loader, ctx, opts, threshold)
+	if hbEvents == 0 {
+		t.Fatalf("%s: log stream emitted no heartbeat events while idle; heartbeats are mandatory for log-streaming adapters", name)
+	}
+}
+
+func openIdleSession(t *testing.T, name string, sm *adapterhost.SessionManager, ctx context.Context, info *adapterhost.Info, opts *Options) string {
+	t.Helper()
+	sessionID := newSessionID(name + "-idle")
+	if err := sm.Open(ctx, sessionID, info.Name, "fail", cloneConfig(opts.OpenConfig), cloneConfig(opts.Secrets)); err != nil {
+		t.Fatalf("%s: open session via session manager: %v", name, err)
+	}
+	t.Cleanup(func() { _ = sm.Close(ctx, sessionID) })
+	return sessionID
+}
+
+func countHeartbeatProbeEvents(t *testing.T, name string, loader adapterhost.Loader, ctx context.Context, opts *Options, threshold time.Duration) int {
+	t.Helper()
+	hbCtx, hbCancel := context.WithTimeout(ctx, threshold*4)
+	defer hbCancel()
+
+	probePlug, err := loader.Resolve(hbCtx, name)
+	if err != nil {
+		t.Fatalf("%s: resolve probe adapter: %v", name, err)
+	}
+	defer probePlug.Kill()
+
+	probeSessionID := newSessionID(name + "-hb-probe")
+	if err := probePlug.OpenSession(hbCtx, probeSessionID, cloneConfig(opts.OpenConfig), cloneConfig(opts.Secrets)); err != nil {
+		t.Fatalf("%s: open probe session: %v", name, err)
+	}
+	defer func() { _ = probePlug.CloseSession(ctx, probeSessionID) }()
+
+	hbSink := &recordingSink{}
+	cancelLog, done, err := probePlug.(adapterhost.LogStreamStarter).StartLogStream(hbCtx, probeSessionID, hbSink)
+	if err != nil {
+		t.Fatalf("%s: start probe log stream: %v", name, err)
+	}
+
+	// Wait long enough for at least one heartbeat tick.
+	time.Sleep(threshold * 2)
+	cancelLog()
+	<-done
+	return hbSink.heartbeatEventCount()
 }

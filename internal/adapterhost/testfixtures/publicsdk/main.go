@@ -7,9 +7,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"sync"
 	"time"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	adapterhost "github.com/brokenbots/criteria-go-adapter-sdk/adapterhost"
@@ -83,8 +86,33 @@ func (p *publicSDKAdapter) Execute(ctx context.Context, req *v2.ExecuteRequest, 
 	})
 }
 
-func (p *publicSDKAdapter) Log(_ context.Context, _ *v2.LogRequest, _ adapterhost.LogEventSender) error {
-	return nil
+func (p *publicSDKAdapter) Log(ctx context.Context, _ *v2.LogRequest, sender adapterhost.LogEventSender) error {
+	// The log stream must remain open for the lifetime of the session. Returning
+	// immediately would stop the SDK heartbeat ticker and break the host's
+	// liveness contract, so block until the host cancels the stream.
+	//
+	// For fast conformance tests the host uses a short stall threshold, so we
+	// emit heartbeats at a configurable cadence (defaulting to the protocol
+	// 30 s). This lets the idle-survival test prove liveness without waiting
+	// the full production interval.
+	interval := 30 * time.Second
+	if raw := os.Getenv("CRITERIA_TEST_HEARTBEAT_INTERVAL_MS"); raw != "" {
+		if ms, err := strconv.Atoi(raw); err == nil && ms > 0 {
+			interval = time.Duration(ms) * time.Millisecond
+		}
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case t := <-ticker.C:
+			if err := sender.Send(&v2.LogEvent{Heartbeat: &v2.Heartbeat{StreamName: "log", SentAt: timestamppb.New(t)}}); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 func (p *publicSDKAdapter) CloseSession(_ context.Context, req *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {

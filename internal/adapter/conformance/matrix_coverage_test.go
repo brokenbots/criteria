@@ -12,7 +12,8 @@ import (
 )
 
 type matrix struct {
-	Suites []string `yaml:"suites"`
+	Suites         []string `yaml:"suites"`
+	RequiredSuites []string `yaml:"required_suites"`
 }
 
 func TestMatrixCoverage(t *testing.T) {
@@ -45,6 +46,13 @@ func TestMatrixCoverage(t *testing.T) {
 		wantFile := "conformance_" + suite + ".go"
 		if _, ok := files[wantFile]; !ok {
 			t.Errorf("matrix.yaml suite %q missing implementation file %q", suite, wantFile)
+		}
+	}
+
+	for _, suite := range m.RequiredSuites {
+		wantFile := "conformance_" + suite + ".go"
+		if _, ok := files[wantFile]; !ok {
+			t.Errorf("matrix.yaml required suite %q missing implementation file %q", suite, wantFile)
 		}
 	}
 }

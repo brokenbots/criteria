@@ -21,12 +21,13 @@ import (
 
 // loggingMockHandle is a mock Handle that also implements LogStreamStarter.
 type loggingMockHandle struct {
-	executeFunc func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error)
-	logEvents   []*v2.LogEvent
-	mu          sync.Mutex
-	started     bool
-	cancelled   bool
-	emitTrigger chan struct{} // when closed, the log goroutine starts emitting
+	executeFunc    func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error)
+	logEvents      []*v2.LogEvent
+	logReturnEarly bool // if true, the Log goroutine returns immediately instead of blocking
+	mu             sync.Mutex
+	started        bool
+	cancelled      bool
+	emitTrigger    chan struct{} // when closed, the log goroutine starts emitting
 }
 
 func (m *loggingMockHandle) Info(ctx context.Context) (Info, error) { return Info{}, nil }
@@ -51,12 +52,20 @@ func (m *loggingMockHandle) Snapshot(context.Context, string) (*v2.SnapshotRespo
 }
 func (m *loggingMockHandle) Restore(context.Context, string, []byte, uint32) error { return nil }
 
-func (m *loggingMockHandle) StartLogStream(ctx context.Context, sessionID string, sink LogEventSink) (func(), error) {
+func (m *loggingMockHandle) StartLogStream(ctx context.Context, sessionID string, sink LogEventSink) (cancel func(), done <-chan error, err error) {
 	m.mu.Lock()
 	m.started = true
 	m.mu.Unlock()
-	logCtx, cancel := context.WithCancel(ctx)
+	logCtx, cancelFn := context.WithCancel(ctx)
+	doneCh := make(chan error, 1)
 	go func() {
+		defer func() { doneCh <- nil; close(doneCh) }()
+		if m.logReturnEarly {
+			// Simulates an adapter that returns from Log immediately. The SDK
+			// heartbeat ticker dies with the call, so the host must not treat
+			// the absence of heartbeats as a stall.
+			return
+		}
 		if m.emitTrigger != nil {
 			select {
 			case <-m.emitTrigger:
@@ -70,15 +79,15 @@ func (m *loggingMockHandle) StartLogStream(ctx context.Context, sessionID string
 			}
 			_ = sink.Emit(ev)
 		}
-		// Block until cancelled.
+		// A correct adapter blocks until the host cancels the stream.
 		<-logCtx.Done()
 	}()
 	return func() {
-		cancel()
+		cancelFn()
 		m.mu.Lock()
 		m.cancelled = true
 		m.mu.Unlock()
-	}, nil
+	}, doneCh, nil
 }
 
 func TestSessionManager_LogStreamStartsAtOpen(t *testing.T) {
@@ -227,10 +236,12 @@ func TestSessionManager_LogLinesRoutedToStepSink(t *testing.T) {
 }
 
 // TestSessionManager_HeartbeatStall_DetectsCrash verifies that if no
-// heartbeat has been received for >90s, Execute treats the session as crashed.
+// heartbeat has been received for longer than the stall threshold while the
+// log stream is still alive, Execute treats the session as crashed.
 func TestSessionManager_HeartbeatStall_DetectsCrash(t *testing.T) {
 	h := &loggingMockHandle{}
 	sm := NewSessionManager(nil)
+	sm.HeartbeatStallThreshold = 100 * time.Millisecond
 	_ = sm.registerSession(context.Background(), "agent", "test", "fail", nil, nil, nil, nil, h, nil, "")
 	defer sm.Close(context.Background(), "agent")
 
@@ -250,6 +261,44 @@ func TestSessionManager_HeartbeatStall_DetectsCrash(t *testing.T) {
 	}
 	if !collector.saw("session.crash") {
 		t.Fatal("expected session.crash event on heartbeat stall")
+	}
+}
+
+// TestSessionManager_LogStreamEarlyEnd_DoesNotStall verifies that an adapter
+// which returns from its Log RPC immediately does not cause a later heartbeat
+// stall crash. The host must recognize the early stream end, log a clear
+// diagnostic, and disarm the stall detector.
+func TestSessionManager_LogStreamEarlyEnd_DoesNotStall(t *testing.T) {
+	rec := &recordingSlogHandler{}
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(rec))
+	defer slog.SetDefault(oldLogger)
+
+	h := &loggingMockHandle{logReturnEarly: true}
+	sm := NewSessionManager(nil)
+	sm.HeartbeatStallThreshold = 100 * time.Millisecond
+	_ = sm.registerSession(context.Background(), "agent", "test", "fail", nil, nil, nil, nil, h, nil, "")
+	defer sm.Close(context.Background(), "agent")
+
+	// Wait past the stall threshold. A buggy host would now see the monitor as
+	// stalled and declare the session crashed on the next Execute.
+	time.Sleep(200 * time.Millisecond)
+
+	collector := &adapterEventCollector{}
+	step := &workflow.StepNode{Name: "run"}
+	_, err := sm.Execute(context.Background(), "agent", step, collector)
+	if err != nil {
+		t.Fatalf("expected Execute to succeed after early log stream end, got %v", err)
+	}
+
+	var found bool
+	for _, r := range rec.all() {
+		if strings.Contains(r, "log stream ended while session was open") && strings.Contains(r, "broke the log-stream contract") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected diagnostic warning naming the broken log-stream contract")
 	}
 }
 
