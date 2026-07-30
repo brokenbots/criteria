@@ -1493,16 +1493,17 @@ func cloneOriginRefs(m map[string]secrets.OriginRef) map[string]secrets.OriginRe
 
 // validateConfigAgainstSchema performs a runtime check of the resolved config
 // against the adapter's declared manifest schema. It only enforces presence of
-// required fields and basic type shape; the compiler already rejects unknown
-// keys and incompatible types at workflow compile time, and the manifest schema
-// is intentionally a subset of the HCL type system.
+// required non-sensitive fields; sensitive required values are resolved
+// separately and validated by validateRequiredSecrets. The compiler already
+// rejects unknown keys and incompatible types at workflow compile time, and the
+// manifest schema is intentionally a subset of the HCL type system.
 func validateConfigAgainstSchema(config map[string]string, schema map[string]workflow.ConfigField) error {
 	if len(schema) == 0 {
 		return nil
 	}
 	var missing []string
 	for name, field := range schema {
-		if !field.Required {
+		if !field.Required || field.Sensitive {
 			continue
 		}
 		val, ok := config[name]

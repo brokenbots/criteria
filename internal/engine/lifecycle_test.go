@@ -855,3 +855,216 @@ state "done" {
 		t.Errorf("expected no steps to run, got %d", steps)
 	}
 }
+
+// schemaAdapter is a fake adapter whose Info response declares a manifest
+// config schema. It is used to exercise phase-1 config/secret validation.
+type schemaAdapter struct {
+	fakeAdapter
+	schema map[string]workflow.ConfigField
+}
+
+func (p *schemaAdapter) Info(context.Context) (adapterhost.Info, error) {
+	return adapterhost.Info{
+		Name:    p.name,
+		Version: "test",
+		AdapterInfo: workflow.AdapterInfo{
+			ConfigSchema: p.schema,
+		},
+	}, nil
+}
+
+// schemaTrackingAdapter combines lifecycle open/close tracking with a declared
+// manifest config schema.
+type schemaTrackingAdapter struct {
+	lifecycleTrackingAdapter
+	schema map[string]workflow.ConfigField
+}
+
+func (p *schemaTrackingAdapter) Info(context.Context) (adapterhost.Info, error) {
+	return adapterhost.Info{
+		Name:    p.name,
+		Version: "test",
+		AdapterInfo: workflow.AdapterInfo{
+			ConfigSchema: p.schema,
+		},
+	}, nil
+}
+
+// TestEngine_VerifyRejectsMissingRequiredConfigAtStartup verifies that an
+// adapter whose manifest declares a required config field fails during eager
+// phase-1 verification when the field is omitted, before any step runs. This
+// regression locks in the fail-fast guarantee for invalid config.
+func TestEngine_VerifyRejectsMissingRequiredConfigAtStartup(t *testing.T) {
+	g := compile(t, `
+workflow {
+  name          = "cfg-test"
+  version       = "0.1"
+  initial_state = "done"
+  target_state  = "done"
+}
+
+adapter "configful" "x" {
+  config {}
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}`)
+
+	adapter := &schemaAdapter{
+		fakeAdapter: fakeAdapter{name: "configful"},
+		schema: map[string]workflow.ConfigField{
+			"required_config": {Required: true, Type: workflow.ConfigFieldString},
+		},
+	}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"configful": adapter,
+	}}
+
+	sink := &lifecycleTrackingSink{}
+	eng := New(g, loader, sink)
+
+	err := eng.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected startup failure for missing required config, got nil")
+	}
+	if !strings.Contains(err.Error(), "configful.x") {
+		t.Errorf("error should name adapter instance, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "missing required config field(s): required_config") {
+		t.Errorf("error should report missing required config, got: %v", err)
+	}
+
+	sink.mu.Lock()
+	steps := len(sink.stepsRun)
+	sink.mu.Unlock()
+	if steps != 0 {
+		t.Errorf("expected no steps to run, got %d", steps)
+	}
+}
+
+// TestEngine_VerifyRejectsMissingRequiredSecretAtStartup verifies that an
+// adapter whose manifest declares a required sensitive field fails during eager
+// phase-1 verification when the secret is omitted, before any step runs. This
+// regression locks in the fail-fast guarantee for missing secrets.
+func TestEngine_VerifyRejectsMissingRequiredSecretAtStartup(t *testing.T) {
+	g := compile(t, `
+workflow {
+  name          = "sec-test"
+  version       = "0.1"
+  initial_state = "done"
+  target_state  = "done"
+}
+
+adapter "configful" "x" {
+  config {}
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}`)
+
+	adapter := &schemaAdapter{
+		fakeAdapter: fakeAdapter{name: "configful"},
+		schema: map[string]workflow.ConfigField{
+			"required_secret": {Required: true, Sensitive: true, Type: workflow.ConfigFieldString},
+		},
+	}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"configful": adapter,
+	}}
+
+	sink := &lifecycleTrackingSink{}
+	eng := New(g, loader, sink)
+
+	err := eng.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected startup failure for missing required secret, got nil")
+	}
+	if !strings.Contains(err.Error(), "configful.x") {
+		t.Errorf("error should name adapter instance, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "missing required secret(s): required_secret") {
+		t.Errorf("error should report missing required secret, got: %v", err)
+	}
+
+	sink.mu.Lock()
+	steps := len(sink.stepsRun)
+	sink.mu.Unlock()
+	if steps != 0 {
+		t.Errorf("expected no steps to run, got %d", steps)
+	}
+}
+
+// TestEngine_VerifyAcceptsCompleteConfigAndSecretThenBinds verifies that
+// providing all required config values and secrets allows the adapter to pass
+// phase-1 verification, bind at first use, and run to completion.
+func TestEngine_VerifyAcceptsCompleteConfigAndSecretThenBinds(t *testing.T) {
+	t.Setenv("TEST_CFG_SECRET", "shh")
+
+	g := compile(t, `
+workflow {
+  name          = "cfg-ok"
+  version       = "0.1"
+  initial_state = "use"
+  target_state  = "done"
+}
+
+adapter "configful" "x" {
+  config {
+    required_config = "ok"
+  }
+  secrets {
+    required_secret = "env:TEST_CFG_SECRET"
+  }
+}
+
+step "use" {
+  target = adapter.configful.x
+  outcome "success" { next = step.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}`)
+
+	adapter := &schemaTrackingAdapter{
+		lifecycleTrackingAdapter: lifecycleTrackingAdapter{fakeAdapter: fakeAdapter{name: "configful", outcome: "success"}},
+		schema: map[string]workflow.ConfigField{
+			"required_config": {Required: true, Type: workflow.ConfigFieldString},
+			"required_secret": {Required: true, Sensitive: true, Type: workflow.ConfigFieldString},
+		},
+	}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"configful": adapter,
+	}}
+
+	sink := &lifecycleTrackingSink{}
+	eng := New(g, loader, sink)
+
+	if err := eng.Run(context.Background()); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	adapter.mu.Lock()
+	opens := adapter.opensCount
+	closes := adapter.closesCount
+	adapter.mu.Unlock()
+
+	if opens != 1 {
+		t.Errorf("adapter opens: want 1, got %d", opens)
+	}
+	if closes != 1 {
+		t.Errorf("adapter closes: want 1, got %d", closes)
+	}
+
+	sink.mu.Lock()
+	steps := len(sink.stepsRun)
+	sink.mu.Unlock()
+	if steps != 1 {
+		t.Errorf("expected exactly one step to run, got %d", steps)
+	}
+}
