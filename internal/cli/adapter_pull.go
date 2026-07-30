@@ -15,7 +15,6 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter/manifest"
 	"github.com/brokenbots/criteria/internal/adapter/oci"
 	"github.com/brokenbots/criteria/internal/adapter/signing"
-	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
 func newAdapterPullCmd() *cobra.Command {
@@ -103,11 +102,6 @@ func runPullWithPuller(ctx context.Context, out io.Writer, ref oci.Reference, la
 	if err != nil {
 		return fmt.Errorf("extract adapter binary: %w", err)
 	}
-
-	// Update lockfile.  Since pull is not workflow-scoped, we cannot set
-	// Type/Name here.  The lockfile entry is written only when the caller
-	// (e.g. `adapter lock`) knows the workflow adapter mapping.
-	_ = lockfile.BuildEntry
 
 	printPullSummary(out, ref, dg, signer, m, extractPath)
 	return nil

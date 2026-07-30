@@ -485,6 +485,52 @@ func TestResolveOneAdapter_MutableConstraintLocksToDigestAndReResolves(t *testin
 	assert.Contains(t, out.String(), "locked noop.default")
 }
 
+func TestResolveOneAdapter_LatestTagLocksToConcreteDigestAndReResolves(t *testing.T) {
+	ctx := context.Background()
+	firstDigest := digest.FromString("first-digest")
+	secondDigest := digest.FromString("second-digest")
+
+	// Empty version ("latest") should resolve to the highest semver tag and
+	// record a concrete version+digest in the lockfile.
+	wa := &workflowAdapter{
+		Type:    "noop",
+		Name:    "default",
+		Source:  "ghcr.io/brokenbots/criteria-adapter-noop",
+		Version: "",
+	}
+	resolver := newFakeResolver().
+		withBlob(firstDigest).
+		withTag("1.0.0").
+		withEntry("ghcr.io/brokenbots/criteria-adapter-noop:1.0.0", &lockfile.LockedAdapter{
+			ResolvedDigest: firstDigest.String(),
+		})
+
+	var out bytes.Buffer
+	entry, err := resolveOneAdapter(ctx, wa, nil, resolver, nil, false, &signing.Policy{}, &out)
+	require.NoError(t, err)
+	assert.Equal(t, "1.0.0", entry.Version)
+	assert.Equal(t, firstDigest.String(), entry.ResolvedDigest)
+	assert.Contains(t, out.String(), "locked noop.default")
+
+	resolver2 := newFakeResolver().
+		withBlob(firstDigest).
+		withBlob(secondDigest).
+		withTag("1.0.0").
+		withTag("2.0.0").
+		withEntry("ghcr.io/brokenbots/criteria-adapter-noop:2.0.0", &lockfile.LockedAdapter{
+			ResolvedDigest: secondDigest.String(),
+		})
+	old := &lockfile.Lockfile{Adapters: []lockfile.LockedAdapter{*findLockedByEntry(&entry)}}
+
+	out.Reset()
+	entry2, err := resolveOneAdapter(ctx, wa, old, resolver2, nil, false, &signing.Policy{}, &out)
+	require.NoError(t, err)
+	assert.Len(t, resolver2.pulledRefs, 1)
+	assert.Equal(t, "2.0.0", resolver2.pulledRefs[0].Tag)
+	assert.Equal(t, secondDigest.String(), entry2.ResolvedDigest)
+	assert.Equal(t, "2.0.0", entry2.Version)
+}
+
 func TestResolveOneAdapter_ImmutablePinDigestDriftIsError(t *testing.T) {
 	ctx := context.Background()
 	oldDigest := digest.FromString("old-digest")
