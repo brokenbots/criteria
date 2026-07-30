@@ -291,14 +291,14 @@ func TestSessionManager_LogStreamEarlyEnd_DoesNotStall(t *testing.T) {
 		t.Fatalf("expected Execute to succeed after early log stream end, got %v", err)
 	}
 
-	var found bool
+	var found int
 	for _, r := range rec.all() {
 		if strings.Contains(r, "log stream ended while session was open") && strings.Contains(r, "broke the log-stream contract") {
-			found = true
+			found++
 		}
 	}
-	if !found {
-		t.Fatal("expected diagnostic warning naming the broken log-stream contract")
+	if found != 1 {
+		t.Fatalf("expected exactly one diagnostic warning naming the broken log-stream contract, got %d", found)
 	}
 }
 
@@ -458,8 +458,15 @@ func TestSessionManager_IdleLogRedaction(t *testing.T) {
 }
 
 // TestSessionManager_RespawnRestartsLogStream verifies that after a crash and
-// respawn, the log stream is restarted and heartbeat tracking is reset.
+// respawn, the log stream is restarted and heartbeat tracking is reset. A
+// correct adapter that blocks until cancellation must not be blamed for the
+// host-initiated log-stream teardown.
 func TestSessionManager_RespawnRestartsLogStream(t *testing.T) {
+	rec := &recordingSlogHandler{}
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(rec))
+	defer slog.SetDefault(oldLogger)
+
 	trigger1 := make(chan struct{})
 	trigger2 := make(chan struct{})
 
@@ -506,6 +513,12 @@ func TestSessionManager_RespawnRestartsLogStream(t *testing.T) {
 	lastHB := sess.hbMonitor.Last()
 	if time.Since(lastHB) > 90*time.Second {
 		t.Fatalf("expected heartbeat reset after respawn, got lastHB=%v", lastHB)
+	}
+
+	for _, r := range rec.all() {
+		if strings.Contains(r, "broke the log-stream contract") {
+			t.Fatalf("respawn of a correct adapter falsely emitted contract-breaker diagnostic: %q", r)
+		}
 	}
 }
 

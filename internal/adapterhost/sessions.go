@@ -145,7 +145,8 @@ type Session struct {
 	handle           Handle
 	respawned        bool
 	closing          atomic.Bool
-	SandboxCleanup   func() // removes transient cgroup dirs, etc.
+	restarting       atomic.Bool // true while host is tearing down the log stream for respawn/Close/Shutdown
+	SandboxCleanup   func()      // removes transient cgroup dirs, etc.
 	// WorkingDir is the resolved environment working_directory (the adapter
 	// process launch cwd), evaluated at adapter init. Persisted so respawn and
 	// snapshot/restore relaunch the adapter in the same directory.
@@ -592,7 +593,10 @@ func (m *SessionManager) beginLogStream(ctx context.Context, sess *Session, star
 // falsely declared crashed later.
 func (m *SessionManager) watchLogStream(sess *Session, done <-chan error) {
 	err := <-done
-	if sess.closing.Load() {
+	// Host-initiated teardown (Close, Shutdown, or respawn) cancels the log
+	// stream; that is not a contract violation by the adapter, so suppress the
+	// diagnostic and leave logStreamAlive untouched.
+	if sess.closing.Load() || sess.restarting.Load() {
 		return
 	}
 	sess.logStreamAlive.Store(false)
@@ -616,6 +620,7 @@ func (m *SessionManager) Close(ctx context.Context, name string) error {
 		return nil
 	}
 	sess.closing.Store(true)
+	sess.restarting.Store(true)
 	sess.logStreamAlive.Store(false)
 	if sess.PermissionState != nil {
 		sess.PermissionState.Stop()
@@ -892,6 +897,7 @@ func (m *SessionManager) Shutdown(ctx context.Context) error {
 	var errs []error
 	for _, sess := range sessions {
 		sess.closing.Store(true)
+		sess.restarting.Store(true)
 		sess.logStreamAlive.Store(false)
 		if sess.PermissionState != nil {
 			sess.PermissionState.Stop()
@@ -1011,6 +1017,9 @@ func (m *SessionManager) restartLogStream(ctx context.Context, sess *Session, pl
 	sess.logDone = nil
 	sess.logMu.Unlock()
 
+	// Mark host-initiated teardown so the old watchLogStream goroutine does not
+	// treat the cancelation as an adapter contract violation.
+	sess.restarting.Store(true)
 	if oldCancel != nil {
 		oldCancel()
 	}
@@ -1029,6 +1038,7 @@ func (m *SessionManager) restartLogStream(ctx context.Context, sess *Session, pl
 		sess.resetLogStreamState()
 		sess.mergeBuf = nil
 	}
+	sess.restarting.Store(false)
 }
 
 // resetLogStreamState clears the log-stream handles and marks the stream dead.
