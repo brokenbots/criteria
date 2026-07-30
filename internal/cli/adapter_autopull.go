@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -293,12 +294,31 @@ func extractOCIAdapterBinary(layout *oci.Layout, dg digest.Digest, adapterType s
 	}
 
 	// Idempotency: if the destination already exists and matches the expected
-	// layer digest, leave it in place.
+	// layer digest, leave it in place. Still ensure the executable bit is set,
+	// because a previous extraction may have lost it (e.g. chmod, umask, or a
+	// copy from a non-exec source) and adapterhost.DiscoverBinaryAt relies on it.
 	if existingErr := verifyFileDigest(dest, expectedBinDigest); existingErr == nil {
-		return dest, nil
+		if err := ensureExecutable(dest); err == nil {
+			return dest, nil
+		}
+		// The file can disappear between verify and chmod when another goroutine
+		// is replacing the same digest; fall through to rewrite rather than fail.
+		if !errors.Is(err, fs.ErrNotExist) {
+			return "", err
+		}
 	}
 
 	return writeVerifiedBinary(f, dest, expectedBinDigest, adapterType, dg)
+}
+
+// ensureExecutable sets 0755 permissions on path, returning a wrapped error
+// that explains the intent. It is safe to call on all platforms; on Windows it
+// is a no-op semantically but never fails.
+func ensureExecutable(path string) error {
+	if err := os.Chmod(path, 0o755); err != nil {
+		return fmt.Errorf("ensure extracted binary is executable: %w", err)
+	}
+	return nil
 }
 
 // writeVerifiedBinary copies src into dest (with a digest verifier) and makes
@@ -309,10 +329,22 @@ func writeVerifiedBinary(src io.Reader, dest string, expected digest.Digest, ada
 		return "", err
 	}
 
-	tmp := dest + ".tmp"
-	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+	// Use a per-call unique temp path so concurrent extractions of the same
+	// digest do not race on a shared sibling file.
+	f, err := os.CreateTemp(filepath.Dir(dest), filepath.Base(dest)+".tmp.*")
 	if err != nil {
 		return "", fmt.Errorf("create temporary extraction file: %w", err)
+	}
+	tmp := f.Name()
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return "", fmt.Errorf("close temporary extraction file handle: %w", err)
+	}
+
+	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+	if err != nil {
+		os.Remove(tmp)
+		return "", fmt.Errorf("open temporary extraction file: %w", err)
 	}
 	verifier := expected.Verifier()
 	w := io.MultiWriter(out, verifier)
@@ -329,9 +361,22 @@ func writeVerifiedBinary(src io.Reader, dest string, expected digest.Digest, ada
 		os.Remove(tmp)
 		return "", fmt.Errorf("extracted binary digest mismatch for %q under %s: expected %s", adapterType, dg, expected)
 	}
+	// Remove any existing destination so the rename is atomic and also succeeds
+	// on Windows, where os.Rename cannot overwrite an existing file.
+	if err := os.Remove(dest); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		os.Remove(tmp)
+		return "", fmt.Errorf("remove stale extracted binary: %w", err)
+	}
 	if err := os.Rename(tmp, dest); err != nil {
 		os.Remove(tmp)
 		return "", fmt.Errorf("rename extracted binary into place: %w", err)
+	}
+	if err := ensureExecutable(dest); err != nil {
+		// Another concurrent extraction may have replaced dest between our rename
+		// and chmod; the final file is still verified by the winning writer.
+		if !errors.Is(err, fs.ErrNotExist) {
+			return "", err
+		}
 	}
 	return dest, nil
 }

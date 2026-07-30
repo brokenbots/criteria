@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 
 	"github.com/opencontainers/go-digest"
@@ -160,6 +161,100 @@ func TestExtractOCIAdapterBinary_RejectsTamperedBlob(t *testing.T) {
 	_, err = extractOCIAdapterBinary(layout, manifestDigest, name)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "digest mismatch")
+}
+
+func TestExtractOCIAdapterBinary_RepairsMissingExecBit(t *testing.T) {
+	stateDir := t.TempDir()
+	adaptersDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+	t.Setenv("CRITERIA_ADAPTERS", adaptersDir)
+
+	layout, err := oci.Open(filepath.Join(stateDir, "cache", "oci"))
+	require.NoError(t, err)
+
+	const name = "testadapter"
+	binContent := []byte("#!/bin/sh\necho ok\n")
+	manifestDigest, _ := fakeArtifactFixture(t, layout, name, binContent)
+
+	first, err := extractOCIAdapterBinary(layout, manifestDigest, name)
+	require.NoError(t, err)
+
+	// Simulate a previous extraction losing its executable bit.
+	require.NoError(t, os.Chmod(first, 0o644))
+
+	second, err := extractOCIAdapterBinary(layout, manifestDigest, name)
+	require.NoError(t, err)
+	assert.Equal(t, first, second, "re-extraction must return the same path")
+
+	info, err := os.Stat(second)
+	require.NoError(t, err)
+	assert.NotZero(t, info.Mode().Perm()&0o111, "re-extraction must restore executable bits")
+}
+
+func TestExtractOCIAdapterBinary_ReExtractAfterDigestMismatch(t *testing.T) {
+	stateDir := t.TempDir()
+	adaptersDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+	t.Setenv("CRITERIA_ADAPTERS", adaptersDir)
+
+	layout, err := oci.Open(filepath.Join(stateDir, "cache", "oci"))
+	require.NoError(t, err)
+
+	const name = "testadapter"
+	binContent := []byte("#!/bin/sh\necho ok\n")
+	manifestDigest, binDigest := fakeArtifactFixture(t, layout, name, binContent)
+
+	first, err := extractOCIAdapterBinary(layout, manifestDigest, name)
+	require.NoError(t, err)
+
+	// Tamper with the installed file so it no longer matches the layer digest.
+	require.NoError(t, os.WriteFile(first, []byte("tampered"), 0o755))
+
+	second, err := extractOCIAdapterBinary(layout, manifestDigest, name)
+	require.NoError(t, err)
+	assert.Equal(t, first, second, "re-extraction must return the same path")
+
+	got, err := os.ReadFile(second)
+	require.NoError(t, err)
+	assert.Equal(t, binContent, got)
+	assert.Equal(t, binDigest.String(), digest.FromBytes(got).String())
+}
+
+func TestExtractOCIAdapterBinary_ConcurrentSameDigest(t *testing.T) {
+	stateDir := t.TempDir()
+	adaptersDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+	t.Setenv("CRITERIA_ADAPTERS", adaptersDir)
+
+	layout, err := oci.Open(filepath.Join(stateDir, "cache", "oci"))
+	require.NoError(t, err)
+
+	const name = "testadapter"
+	binContent := []byte("#!/bin/sh\necho ok\n")
+	manifestDigest, _ := fakeArtifactFixture(t, layout, name, binContent)
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := extractOCIAdapterBinary(layout, manifestDigest, name)
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		assert.NoError(t, err)
+	}
+
+	resolved, err := adapterhost.DiscoverBinaryAt(name, adapterhost.EncodeDigest(manifestDigest))
+	require.NoError(t, err)
+	got, err := os.ReadFile(resolved)
+	require.NoError(t, err)
+	assert.Equal(t, binContent, got)
 }
 
 func TestRunPullWithPuller_ExtractsToResolvablePath(t *testing.T) {
