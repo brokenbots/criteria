@@ -544,6 +544,8 @@ func resolveExprDataWriteValue(expr hcl.Expression, projectedCty, rawOutputs, sw
 // input { } block) are evaluated against the parent scope and passed into the
 // callee as variable bindings, overriding any declaration-level bindings.
 func (n *stepNode) evaluateSubworkflowStep(ctx context.Context, st *RunState, deps Deps) (string, error) {
+	deps.Sink.OnStepEntered(n.step.Name, "", 1)
+
 	swNode, ok := n.graph.Subworkflows[n.step.SubworkflowRef]
 	if !ok {
 		return "", fmt.Errorf("step %q: subworkflow %q not found", n.step.Name, n.step.SubworkflowRef)
@@ -560,7 +562,10 @@ func (n *stepNode) evaluateSubworkflowStep(ctx context.Context, st *RunState, de
 		stepInput = resolved
 	}
 
-	outputs, terminalState, runErr := runSubworkflow(ctx, swNode, st, stepInput, deps)
+	outputs, terminalState, runErr := runSubworkflow(ctx, n.step.Name, swNode, st, stepInput, deps)
+	if runErr != nil {
+		deps.Sink.OnStepOutcome(n.step.Name, "failure", 0, runErr)
+	}
 
 	outcome := "success"
 	if runErr != nil || (terminalState != workflow.ReturnSentinel && !swNode.Body.States[terminalState].Success) {

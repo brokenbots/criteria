@@ -22,16 +22,35 @@ import (
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
+// nullOutputsForSubworkflow returns a map with every declared subworkflow
+// output set to a known null value. This keeps the subworkflow.* namespace
+// defined when the callee fails before producing real outputs, so parent
+// outcome expressions can reference declared outputs without a try() guard.
+func nullOutputsForSubworkflow(body *workflow.FSMGraph) map[string]cty.Value {
+	if len(body.OutputOrder) == 0 {
+		return nil
+	}
+	out := make(map[string]cty.Value, len(body.OutputOrder))
+	for _, name := range body.OutputOrder {
+		out[name] = cty.NullVal(cty.DynamicPseudoType)
+	}
+	return out
+}
+
 // runSubworkflow executes the subworkflow identified by node against the parent
 // run state. It evaluates the node's input expressions in the parent scope,
 // merges any step-level input overrides (stepInput), seeds the child scope,
 // executes the callee FSMGraph to completion, evaluates the callee's declared
 // outputs, and returns the output map to the caller.
 //
+// stepName is the parent step that owns this invocation; it is forwarded to
+// adapter lifecycle events so the parent event stream can attribute child
+// adapter init failures to the calling step.
+//
 // stepInput contains per-call input bindings (from the step's input { } block)
 // that override the declaration-level bindings in node.Inputs. Pass nil when
 // there are no step-level overrides.
-func runSubworkflow(ctx context.Context, node *workflow.SubworkflowNode, parentSt *RunState, stepInput map[string]cty.Value, deps Deps) (outputs map[string]cty.Value, terminal string, err error) {
+func runSubworkflow(ctx context.Context, stepName string, node *workflow.SubworkflowNode, parentSt *RunState, stepInput map[string]cty.Value, deps Deps) (outputs map[string]cty.Value, terminal string, err error) {
 	// Evaluate each input expression against the parent scope.
 	evalOpts := workflow.DefaultFunctionOptions(parentSt.WorkflowDir)
 	inputVals, err := evaluateSubworkflowInputs(node, parentSt.Vars, evalOpts)
@@ -75,9 +94,18 @@ func runSubworkflow(ctx context.Context, node *workflow.SubworkflowNode, parentS
 		}
 	}
 
-	terminal, returnOutputs, finalVars, err := runWorkflowBody(ctx, node.Body, node.BodyEntry, childVars, calleeDir, deps)
+	terminal, returnOutputs, finalVars, err := runWorkflowBody(ctx, node.Body, node.BodyEntry, childVars, calleeDir, deps, stepName)
 	if err != nil {
-		return nil, "", fmt.Errorf("subworkflow %q: %w", node.Name, err)
+		// The caller (evaluateSubworkflowStep in node_step.go) surfaces this
+		// error on the parent's event stream as a step-level OnStepOutcome event,
+		// naming the parent step, so the failure is scoped to the step and can
+		// be routed through the parent's failure arm without publishing a
+		// whole-run RunFailed event from this helper.
+		//
+		// Return a defined output object with every declared output set to null so
+		// the parent can read subworkflow.* on the failure path without a try()
+		// guard and without getting a bare "unsupported attribute" error.
+		return nullOutputsForSubworkflow(node.Body), "", fmt.Errorf("subworkflow %q: %w", node.Name, err)
 	}
 	// When the callee exited via next = step.return, return the projected outputs
 	// directly. returnOutputs may be nil (legitimate empty projection) — in

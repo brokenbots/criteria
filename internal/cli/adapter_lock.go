@@ -40,7 +40,7 @@ func newAdapterLockCmd() *cobra.Command {
 			if len(args) > 0 {
 				workflowDir = args[0]
 			}
-			return runLock(cmd.Context(), workflowDir, upgrade, allowUnsigned, trustedKeyPaths, cmd.OutOrStdout())
+			return runLock(cmd.Context(), workflowDir, upgrade, allowUnsigned, trustedKeyPaths, cmd.OutOrStdout(), nil)
 		},
 	}
 
@@ -55,12 +55,78 @@ type lockState struct {
 	oldLF       *lockfile.Lockfile
 	wfAdapters  map[string]*workflowAdapter
 	aliases     map[string]string
-	layout      *oci.Layout
-	puller      *oci.Puller
+	resolver    lockResolver
 	policy      signing.Policy
 }
 
-func prepareLockState(workflowDir string, upgrade, allowUnsigned bool, trustedKeyPaths []string) (*lockState, error) {
+// lockResolver abstracts the OCI layout + puller so the lock path can be
+// tested without a real registry. The concrete implementation is ociLockResolver.
+type lockResolver interface {
+	HasBlob(digest.Digest) bool
+	ListTags(context.Context, oci.Reference) ([]string, error)
+	PullAndBuild(context.Context, oci.Reference, *signing.Policy) (digest.Digest, lockfile.LockedAdapter, error)
+}
+
+// ociLockResolver combines an OCI cache layout with a remote puller.
+type ociLockResolver struct {
+	layout *oci.Layout
+	puller *oci.Puller
+}
+
+func (r *ociLockResolver) HasBlob(d digest.Digest) bool {
+	if r == nil || r.layout == nil {
+		return false
+	}
+	return r.layout.HasBlob(d)
+}
+
+func (r *ociLockResolver) ListTags(ctx context.Context, ref oci.Reference) ([]string, error) {
+	if r == nil || r.puller == nil {
+		return nil, fmt.Errorf("no puller available")
+	}
+	return r.puller.ListTags(ctx, ref)
+}
+
+func (r *ociLockResolver) PullAndBuild(ctx context.Context, ref oci.Reference, policy *signing.Policy) (digest.Digest, lockfile.LockedAdapter, error) {
+	var zero lockfile.LockedAdapter
+	if r == nil || r.puller == nil {
+		return "", zero, fmt.Errorf("puller is nil")
+	}
+	if r.layout == nil {
+		return "", zero, fmt.Errorf("layout is nil")
+	}
+
+	dg, err := r.puller.Pull(ctx, ref)
+	if err != nil {
+		return "", zero, fmt.Errorf("pull %s: %w", ref, err)
+	}
+
+	artFS, err := r.layout.Open(dg)
+	if err != nil {
+		return "", zero, fmt.Errorf("open artifact: %w", err)
+	}
+
+	m, err := manifest.ParseFromFS(artFS, "adapter.yaml")
+	if err != nil {
+		return "", zero, fmt.Errorf("read adapter.yaml: %w", err)
+	}
+	if err := m.Validate(); err != nil {
+		return "", zero, fmt.Errorf("validate manifest: %w", err)
+	}
+
+	signer, err := signing.Verify(ctx, r.layout, dg, *policy)
+	if err != nil {
+		return "", zero, fmt.Errorf("signature verification: %w", err)
+	}
+
+	entry, err := lockfile.BuildEntry(ref, dg, m, signer, nil)
+	if err != nil {
+		return "", zero, fmt.Errorf("build lockfile entry: %w", err)
+	}
+	return dg, entry, nil
+}
+
+func prepareLockState(workflowDir string, upgrade, allowUnsigned bool, trustedKeyPaths []string, resolver lockResolver) (*lockState, error) {
 	workflowDir, err := filepath.Abs(workflowDir)
 	if err != nil {
 		return nil, fmt.Errorf("resolve workflow dir: %w", err)
@@ -96,9 +162,8 @@ func prepareLockState(workflowDir string, upgrade, allowUnsigned bool, trustedKe
 		return nil, err
 	}
 
-	var puller *oci.Puller
-	if upgrade || len(missingRefs(oldLF, wfAdapters)) > 0 {
-		puller = &oci.Puller{Layout: layout}
+	if resolver == nil {
+		resolver = newOCILockResolver(layout, upgrade, wfAdapters)
 	}
 
 	return &lockState{
@@ -106,10 +171,21 @@ func prepareLockState(workflowDir string, upgrade, allowUnsigned bool, trustedKe
 		oldLF:       oldLF,
 		wfAdapters:  wfAdapters,
 		aliases:     aliases,
-		layout:      layout,
-		puller:      puller,
+		resolver:    resolver,
 		policy:      policy,
 	}, nil
+}
+
+// newOCILockResolver builds the production OCI resolver. A puller is created
+// whenever any OCI-sourced adapter exists, because a declared version bump on
+// an already-locked adapter still needs re-resolution. Constructing the puller
+// performs no network I/O, so this is safe and cheap.
+func newOCILockResolver(layout *oci.Layout, upgrade bool, wfAdapters map[string]*workflowAdapter) lockResolver {
+	var puller *oci.Puller
+	if upgrade || hasOCIAdapters(wfAdapters) {
+		puller = &oci.Puller{Layout: layout}
+	}
+	return &ociLockResolver{layout: layout, puller: puller}
 }
 
 func openCacheAndPolicy(allowUnsigned bool, workflowVerification string, trustedKeys []signing.KeyIdentity) (*oci.Layout, signing.Policy, error) {
@@ -129,11 +205,11 @@ func openCacheAndPolicy(allowUnsigned bool, workflowVerification string, trusted
 	return layout, policy, nil
 }
 
-func runLock(ctx context.Context, workflowDir string, upgrade, allowUnsigned bool, trustedKeyPaths []string, out io.Writer) error {
+func runLock(ctx context.Context, workflowDir string, upgrade, allowUnsigned bool, trustedKeyPaths []string, out io.Writer, resolver lockResolver) error {
 	if out == nil {
 		out = os.Stderr
 	}
-	state, err := prepareLockState(workflowDir, upgrade, allowUnsigned, trustedKeyPaths)
+	state, err := prepareLockState(workflowDir, upgrade, allowUnsigned, trustedKeyPaths, resolver)
 	if err != nil {
 		return err
 	}
@@ -144,14 +220,14 @@ func runLock(ctx context.Context, workflowDir string, upgrade, allowUnsigned boo
 	}
 
 	for key, wa := range state.wfAdapters {
-		entry, err := resolveOneAdapter(ctx, wa, state.oldLF, state.layout, state.puller, state.aliases, upgrade, &state.policy, out)
+		entry, err := resolveOneAdapter(ctx, wa, state.oldLF, state.resolver, state.aliases, upgrade, &state.policy, out)
 		if err != nil {
 			return fmt.Errorf("adapter %q: %w", key, err)
 		}
 		newLF.Adapters = append(newLF.Adapters, entry)
 	}
 
-	printLockDiff(state.oldLF, newLF, out)
+	printLockDiff(state.oldLF, newLF, out, len(state.wfAdapters))
 
 	lockPath := filepath.Join(state.workflowDir, workflow.LockfileName)
 	if err := lockfile.Write(lockPath, newLF); err != nil {
@@ -161,7 +237,7 @@ func runLock(ctx context.Context, workflowDir string, upgrade, allowUnsigned boo
 }
 
 // resolveOneAdapter returns the lockfile entry for a single workflow adapter.
-func resolveOneAdapter(ctx context.Context, wa *workflowAdapter, oldLF *lockfile.Lockfile, layout *oci.Layout, puller *oci.Puller, aliases map[string]string, upgrade bool, policy *signing.Policy, out io.Writer) (lockfile.LockedAdapter, error) {
+func resolveOneAdapter(ctx context.Context, wa *workflowAdapter, oldLF *lockfile.Lockfile, resolver lockResolver, aliases map[string]string, upgrade bool, policy *signing.Policy, out io.Writer) (lockfile.LockedAdapter, error) {
 	var entry lockfile.LockedAdapter
 
 	if wa.Source == "" {
@@ -173,17 +249,18 @@ func resolveOneAdapter(ctx context.Context, wa *workflowAdapter, oldLF *lockfile
 		return entry, fmt.Errorf("adapter has no `source` and no existing lockfile entry; add `source = \"...\"` + `version = \"...\"` to the adapter block, or run `criteria adapter pull <ref>` manually")
 	}
 
-	// Reuse an existing pin unless --upgrade re-resolves the constraint.
-	if reused, ok, err := tryReusePin(ctx, wa, oldLF, layout, puller, upgrade, policy); ok || err != nil {
+	// Reuse an existing pin unless --upgrade re-resolves the constraint or the
+	// declared source/version no longer matches the pin.
+	if reused, ok, err := tryReusePin(ctx, wa, oldLF, resolver, aliases, upgrade, policy); ok || err != nil {
 		return reused, err
 	}
 
-	ref, err := resolveSourceVersion(ctx, ResolveContext{WorkflowAliases: aliases}, puller, wa.Source, wa.Version)
+	ref, err := resolveSourceVersion(ctx, ResolveContext{WorkflowAliases: aliases}, resolver, wa.Source, wa.Version)
 	if err != nil {
 		return entry, fmt.Errorf("resolve %s@%s: %w", wa.Source, versionOrLatest(wa.Version), err)
 	}
 
-	dg, pulledEntry, err := pullAndBuild(ctx, puller, layout, ref, policy)
+	dg, pulledEntry, err := resolver.PullAndBuild(ctx, ref, policy)
 	if err != nil {
 		return entry, err
 	}
@@ -198,11 +275,12 @@ func resolveOneAdapter(ctx context.Context, wa *workflowAdapter, oldLF *lockfile
 	return entry, nil
 }
 
-// tryReusePin reuses an existing lockfile entry without re-evaluating the
-// version constraint. Returns ok=true when the caller should return the entry.
+// tryReusePin reuses an existing lockfile entry when the declared adapter
+// source and version still match the pin and the blob is present in cache.
+// Returns ok=true when the caller should return the entry.
 // When the pinned blob is missing from the cache it is re-pulled from the
 // entry's pinned reference (still no constraint re-evaluation).
-func tryReusePin(ctx context.Context, wa *workflowAdapter, oldLF *lockfile.Lockfile, layout *oci.Layout, puller *oci.Puller, upgrade bool, policy *signing.Policy) (lockfile.LockedAdapter, bool, error) {
+func tryReusePin(ctx context.Context, wa *workflowAdapter, oldLF *lockfile.Lockfile, resolver lockResolver, aliases map[string]string, upgrade bool, policy *signing.Policy) (lockfile.LockedAdapter, bool, error) {
 	var entry lockfile.LockedAdapter
 	if oldLF == nil || upgrade {
 		return entry, false, nil
@@ -211,31 +289,75 @@ func tryReusePin(ctx context.Context, wa *workflowAdapter, oldLF *lockfile.Lockf
 	if oldA == nil {
 		return entry, false, nil
 	}
-	if layout.HasBlob(digest.Digest(oldA.ResolvedDigest)) {
-		return *oldA, true, nil
+
+	// If the workflow declaration no longer matches the lockfile pin, fall
+	// through to full resolution so the operator is not left with a stale lock.
+	if mismatch := declMatchesPin(wa, oldA, aliases); mismatch != "" {
+		return entry, false, nil
 	}
-	// Pinned blob evicted from cache: re-pull the exact pinned reference.
-	ref, err := oci.Parse(oldA.Reference)
+
+	if !resolver.HasBlob(digest.Digest(oldA.ResolvedDigest)) {
+		// Pinned blob evicted from cache: re-pull the exact pinned reference.
+		ref, err := oci.Parse(oldA.Reference)
+		if err != nil {
+			return entry, false, fmt.Errorf("parse pinned reference %q: %w", oldA.Reference, err)
+		}
+		dg, pulledEntry, err := resolver.PullAndBuild(ctx, ref, policy)
+		if err != nil {
+			return entry, false, err
+		}
+		entry = pulledEntry
+		entry.Reference = ref.String()
+		entry.ResolvedDigest = dg.String()
+		entry.Version = oldA.Version
+		entry.Type = wa.Type
+		entry.Name = wa.Name
+		return entry, true, nil
+	}
+	return *oldA, true, nil
+}
+
+// declMatchesPin returns an empty string when the workflow declaration matches
+// the lockfile entry's source and version. Otherwise it returns a short
+// human-readable reason describing the mismatch.
+func declMatchesPin(wa *workflowAdapter, oldA *lockfile.LockedAdapter, aliases map[string]string) string {
+	resolvedSource, err := ResolveSource(ResolveContext{WorkflowAliases: aliases}, wa.Source)
 	if err != nil {
-		return entry, false, fmt.Errorf("parse pinned reference %q: %w", oldA.Reference, err)
+		// Treat unresolvable sources as a mismatch so we re-resolve rather than
+		// silently reuse a potentially stale pin.
+		return "source could not be resolved"
 	}
-	dg, pulledEntry, err := pullAndBuild(ctx, puller, layout, ref, policy)
+
+	oldRef, err := oci.Parse(oldA.Reference)
 	if err != nil {
-		return entry, false, err
+		return "existing reference is unparsable"
 	}
-	entry = pulledEntry
-	entry.Reference = ref.String()
-	entry.ResolvedDigest = dg.String()
-	entry.Version = oldA.Version
-	entry.Type = wa.Type
-	entry.Name = wa.Name
-	return entry, true, nil
+	if oldRef.Registry != resolvedSource.Registry || oldRef.Repo != resolvedSource.Repo {
+		return fmt.Sprintf("source changed (%s/%s -> %s/%s)", oldRef.Registry, oldRef.Repo, resolvedSource.Registry, resolvedSource.Repo)
+	}
+
+	v := versionOrLatest(wa.Version)
+	if oldA.Version == "" {
+		return "existing pin has no resolved version"
+	}
+	if oci.IsExactVersion(v) {
+		if strings.TrimSpace(oldA.Version) != strings.TrimSpace(v) {
+			return fmt.Sprintf("version changed (%s -> %s)", oldA.Version, v)
+		}
+		return ""
+	}
+	// Constraint: the pinned concrete version must satisfy the declared
+	// constraint. A single-tag list is enough to test membership.
+	if _, err := oci.SelectVersion(v, []string{oldA.Version}); err != nil {
+		return fmt.Sprintf("pinned version %s no longer satisfies constraint %q", oldA.Version, v)
+	}
+	return ""
 }
 
 // resolveSourceVersion resolves an adapter's location + version constraint into
 // a fully-qualified, tagged oci.Reference. Exact versions skip registry tag
 // listing; constraints (^, ~, x, latest) list tags and pick the highest match.
-func resolveSourceVersion(ctx context.Context, rctx ResolveContext, puller *oci.Puller, source, version string) (oci.Reference, error) {
+func resolveSourceVersion(ctx context.Context, rctx ResolveContext, resolver lockResolver, source, version string) (oci.Reference, error) {
 	base, err := ResolveSource(rctx, source)
 	if err != nil {
 		return oci.Reference{}, err
@@ -245,10 +367,10 @@ func resolveSourceVersion(ctx context.Context, rctx ResolveContext, puller *oci.
 		base.Tag = strings.TrimSpace(v)
 		return base, nil
 	}
-	if puller == nil {
+	if resolver == nil {
 		return oci.Reference{}, fmt.Errorf("version constraint %q requires registry access", v)
 	}
-	tags, err := puller.ListTags(ctx, base)
+	tags, err := resolver.ListTags(ctx, base)
 	if err != nil {
 		return oci.Reference{}, err
 	}
@@ -267,13 +389,32 @@ func versionOrLatest(v string) string {
 	return v
 }
 
-func printLockDiff(oldLF, newLF *lockfile.Lockfile, out io.Writer) {
+func printLockDiff(oldLF, newLF *lockfile.Lockfile, out io.Writer, adapterCount int) {
 	if out == nil {
 		out = os.Stderr
 	}
 	changes := lockfile.Diff(oldLF, newLF)
+	if len(changes) == 0 {
+		fmt.Fprintf(out, "lockfile up to date, %d adapter(s)\n", adapterCount)
+		return
+	}
+
+	var signerChanges []lockfile.Change
+	var otherChanges []lockfile.Change
 	for i := range changes {
 		c := &changes[i]
+		if c.Kind == lockfile.SignerChanged {
+			signerChanges = append(signerChanges, *c)
+		} else {
+			otherChanges = append(otherChanges, *c)
+		}
+	}
+
+	for _, c := range signerChanges {
+		fmt.Fprintf(out, "! %s signer changed\n", c.Adapter)
+	}
+	for i := range otherChanges {
+		c := &otherChanges[i]
 		switch c.Kind {
 		case lockfile.Added:
 			fmt.Fprintf(out, "+ %s\n", c.Adapter)
@@ -281,8 +422,6 @@ func printLockDiff(oldLF, newLF *lockfile.Lockfile, out io.Writer) {
 			fmt.Fprintf(out, "- %s (stale)\n", c.Adapter)
 		case lockfile.DigestChanged:
 			fmt.Fprintf(out, "~ %s digest %s -> %s\n", c.Adapter, c.Before, c.After)
-		case lockfile.SignerChanged:
-			fmt.Fprintf(out, "~ %s signer changed\n", c.Adapter)
 		case lockfile.PlatformsChanged:
 			fmt.Fprintf(out, "~ %s platforms changed\n", c.Adapter)
 		case lockfile.ContainerImageChanged:
@@ -353,6 +492,17 @@ func parseAliasesFromFile(path string, aliases map[string]string) error {
 	return nil
 }
 
+// hasOCIAdapters reports whether any adapter in the map references an OCI
+// source. If so, the lock command needs a puller available for re-resolution.
+func hasOCIAdapters(adapters map[string]*workflowAdapter) bool {
+	for _, wa := range adapters {
+		if wa.Source != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func missingRefs(lf *lockfile.Lockfile, adapters map[string]*workflowAdapter) []string {
 	if lf == nil {
 		out := make([]string, 0, len(adapters))
@@ -383,39 +533,4 @@ func findLocked(lf *lockfile.Lockfile, typ, name string) *lockfile.LockedAdapter
 		}
 	}
 	return nil
-}
-
-func pullAndBuild(ctx context.Context, puller *oci.Puller, layout *oci.Layout, ref oci.Reference, policy *signing.Policy) (digest.Digest, lockfile.LockedAdapter, error) {
-	var zero lockfile.LockedAdapter
-	if puller == nil {
-		return "", zero, fmt.Errorf("puller is nil")
-	}
-	dg, err := puller.Pull(ctx, ref)
-	if err != nil {
-		return "", zero, fmt.Errorf("pull %s: %w", ref, err)
-	}
-
-	artFS, err := layout.Open(dg)
-	if err != nil {
-		return "", zero, fmt.Errorf("open artifact: %w", err)
-	}
-
-	m, err := manifest.ParseFromFS(artFS, "adapter.yaml")
-	if err != nil {
-		return "", zero, fmt.Errorf("read adapter.yaml: %w", err)
-	}
-	if err := m.Validate(); err != nil {
-		return "", zero, fmt.Errorf("validate manifest: %w", err)
-	}
-
-	signer, err := signing.Verify(ctx, layout, dg, *policy)
-	if err != nil {
-		return "", zero, fmt.Errorf("signature verification: %w", err)
-	}
-
-	entry, err := lockfile.BuildEntry(ref, dg, m, signer, nil)
-	if err != nil {
-		return "", zero, fmt.Errorf("build lockfile entry: %w", err)
-	}
-	return dg, entry, nil
 }

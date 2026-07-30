@@ -46,6 +46,18 @@ func autoPullCompileAdapters(ctx context.Context, workflowDir string, spec *work
 		return err
 	}
 
+	// Fail closed when the lockfile no longer matches the workflow's declared
+	// adapter constraints. A stale pin is not safe to run silently, even if the
+	// blob is still cached and the signer matches. The recommended recovery is
+	// `criteria adapter lock`, which re-resolves against the declared constraints.
+	aliases, err := collectWorkflowAliases(workflowDir, spec)
+	if err != nil {
+		return fmt.Errorf("collect aliases: %w", err)
+	}
+	if err := assertLockfileMatchesDeclarations(lf, ociAdapters, aliases); err != nil {
+		return err
+	}
+
 	cacheRoot, err := defaultCacheRoot()
 	if err != nil {
 		return err
@@ -92,6 +104,30 @@ func assertLockfileCoversAdapters(lf *lockfile.Lockfile, ociAdapters map[string]
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("lockfile missing entries for adapters: %v; run `criteria adapter lock`", missing)
+	}
+	return nil
+}
+
+// assertLockfileMatchesDeclarations errors when a lockfile entry's source or
+// version no longer matches the workflow's declared constraint. This guards the
+// run path so a stale pin cannot be used silently after the workflow author has
+// changed the declaration.
+func assertLockfileMatchesDeclarations(lf *lockfile.Lockfile, ociAdapters map[string]*workflowAdapter, aliases map[string]string) error {
+	var mismatches []string
+	for key, wa := range ociAdapters {
+		if wa.Source == "" {
+			continue // not OCI-based
+		}
+		entry := findLocked(lf, wa.Type, wa.Name)
+		if entry == nil {
+			continue // covered by assertLockfileCoversAdapters
+		}
+		if reason := declMatchesPin(wa, entry, aliases); reason != "" {
+			mismatches = append(mismatches, fmt.Sprintf("%s: %s", key, reason))
+		}
+	}
+	if len(mismatches) > 0 {
+		return fmt.Errorf("lockfile does not match workflow adapter declarations:\n  - %s\nrun `criteria adapter lock` to update it", strings.Join(mismatches, "\n  - "))
 	}
 	return nil
 }

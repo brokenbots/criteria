@@ -472,7 +472,7 @@ func (n *stepNode) runParallelSubworkflowIteration(ctx context.Context, st *RunS
 	iterDeps := deps
 	iterDeps.Sessions = adapterhost.NewSessionManager(deps.Loader)
 
-	swOutputs, terminalState, runErr := runSubworkflow(ctx, swNode, st, stepInput, iterDeps)
+	swOutputs, terminalState, runErr := runSubworkflow(ctx, n.step.Name, swNode, st, stepInput, iterDeps)
 	if runErr != nil {
 		return "failure", nil, runErr
 	}

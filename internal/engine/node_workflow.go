@@ -61,7 +61,7 @@ func checkRequiredVars(body *workflow.FSMGraph, parentInput cty.Value) error {
 //
 // The returned child vars represent the body's final execution scope and are
 // used by the caller to evaluate output{} block expressions.
-func runWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry string, childVars map[string]cty.Value, workflowDir string, deps Deps) (terminal string, returnOutputs, finalVars map[string]cty.Value, err error) {
+func runWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry string, childVars map[string]cty.Value, workflowDir string, deps Deps, scopeName string) (terminal string, returnOutputs, finalVars map[string]cty.Value, err error) {
 	if bodyEntry == "" {
 		bodyEntry = body.InitialState
 	}
@@ -70,7 +70,7 @@ func runWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry str
 	}
 
 	// Body-scope adapter provisioning (W12): each body declares its own adapters.
-	bodyOrder, err := initScopeAdapters(ctx, body, deps, childVars, workflowDir)
+	bodyOrder, err := initScopeAdapters(ctx, body, deps, childVars, workflowDir, scopeName)
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("workflow body init adapters: %w", err)
 	}
