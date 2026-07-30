@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -77,6 +79,11 @@ type SessionManager struct {
 	// It provides phone-home adapter handles instead of local binaries.
 	remoteShim RemoteShim
 
+	// LifecycleSink receives adapter provisioning events. When a verified-only
+	// adapter is promoted to a bound session, "opened" is emitted through this
+	// sink so lifecycle observers see the event at the correct phase-2 moment.
+	LifecycleSink LifecycleSink
+
 	// HeartbeatStallThreshold is the duration after which a log-stream heartbeat
 	// is considered stalled. If zero, the default 90s is used. This is primarily
 	// a test hook so conformance and regression tests can use a short threshold.
@@ -91,6 +98,33 @@ type SessionManager struct {
 
 	mu       sync.Mutex
 	sessions map[string]*Session
+	// verified holds adapters that have passed eager verification (phase 1)
+	// but have not yet been bound to their working directory (phase 2).
+	// Binding happens automatically on the first Execute call.
+	verified map[string]*verifiedRecord
+	// bindMu serializes the one-time promotion of a verified adapter to a
+	// bound session. This prevents concurrent Execute callers from racing to
+	// bind the same adapter and seeing ErrSessionAlreadyOpen from the winner.
+	bindMu sync.Mutex
+
+	// allowedRoots restricts environment working_directory values. Empty means
+	// no additional root checks; paths containing ".." are always rejected.
+	allowedRoots []string
+}
+
+// verifiedRecord stores the host-visible state of an adapter that has been
+// verified but not yet bound. It contains everything needed to start the
+// long-lived session later.
+type verifiedRecord struct {
+	name             string
+	adapter          string
+	onCrash          string
+	config           map[string]string
+	secrets          map[string]string
+	secretOriginRefs map[string]secrets.OriginRef
+	capabilities     []string
+	workingDir       string
+	adapterDigest    digest.Digest
 }
 
 func (m *SessionManager) heartbeatStallThreshold() time.Duration {
@@ -123,6 +157,11 @@ type RemoteShim interface {
 	WaitForFreshHandle(ctx context.Context, adapterType string, stale Handle) (Handle, error)
 }
 
+// LifecycleSink receives adapter lifecycle events from the session manager.
+type LifecycleSink interface {
+	OnAdapterLifecycle(runID, adapter, status, detail string)
+}
+
 // SetGraph provides the compiled workflow graph so the session manager
 // can look up per-adapter environment policies (e.g. sandbox) at open time.
 func (m *SessionManager) SetGraph(g *workflow.FSMGraph) {
@@ -152,6 +191,57 @@ func (m *SessionManager) GetLockfile() *lockfile.Lockfile {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.lockfile
+}
+
+// SetAllowedWorkingDirRoots restricts the directories an environment may bind
+// to. Empty (the default) disables the additional root check; paths containing
+// ".." are always rejected.
+func (m *SessionManager) SetAllowedWorkingDirRoots(roots []string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.allowedRoots = append([]string(nil), roots...)
+}
+
+// ValidateWorkingDirFaceValue rejects a resolved working directory that is
+// structurally invalid before the run starts. Paths containing ".." are always
+// rejected. When allowed roots are configured, the directory must lie under one
+// of them. A missing directory is *not* an error here: it will be deferred to
+// session binding, allowing a workflow step to create it first.
+func (m *SessionManager) ValidateWorkingDirFaceValue(dir string) error {
+	if dir == "" {
+		return nil
+	}
+
+	for _, part := range strings.Split(filepath.ToSlash(dir), "/") {
+		if part == ".." {
+			return fmt.Errorf("working directory %q contains \"..\"", dir)
+		}
+	}
+
+	m.mu.Lock()
+	roots := m.allowedRoots
+	m.mu.Unlock()
+	if len(roots) == 0 {
+		return nil
+	}
+
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return fmt.Errorf("resolve working directory %q: %w", dir, err)
+	}
+	absDir = filepath.Clean(absDir)
+
+	for _, root := range roots {
+		root = filepath.Clean(root)
+		if root == "" {
+			continue
+		}
+		if strings.HasPrefix(absDir, root+string(filepath.Separator)) {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("working directory %q is outside allowed roots", dir)
 }
 
 type Session struct {
@@ -239,6 +329,7 @@ func NewSessionManager(loader Loader) *SessionManager {
 	return &SessionManager{
 		loader:   loader,
 		sessions: map[string]*Session{},
+		verified: map[string]*verifiedRecord{},
 	}
 }
 
@@ -429,6 +520,108 @@ func (m *SessionManager) OpenWithOriginRefs(ctx context.Context, name, adapterNa
 	return m.registerSession(ctx, name, adapterName, onCrash, config, secrets, originRefs, caps, plug, cleanup, workingDir)
 }
 
+// Verify performs phase-1 adapter verification without binding the adapter to
+// its working directory. It resolves the adapter binary (or container/remote
+// equivalent), validates the protocol handshake via Info, checks the runtime
+// config against the adapter's manifest schema, and ensures required secrets
+// are present. The spawned handle is then killed; no long-lived session exists
+// after this call returns. Verification runs eagerly at scope start so broken
+// adapters fail before any step executes.
+//
+// If a verified or bound record already exists for name (e.g. a parent-scope
+// adapter re-declared in a subworkflow), Verify returns ErrSessionAlreadyOpen.
+// The caller should treat that as a no-op for re-declared adapters.
+func (m *SessionManager) Verify(ctx context.Context, name, adapterName, onCrash string, config, secrets map[string]string, originRefs map[string]secrets.OriginRef, workingDir string) error {
+	if strings.TrimSpace(name) == "" {
+		return errors.New("session name is required")
+	}
+	if strings.TrimSpace(adapterName) == "" {
+		return fmt.Errorf("session %q: adapter name is required", name)
+	}
+
+	if err := m.checkDuplicateLocked(name); err != nil {
+		return err
+	}
+
+	caps, err := m.verifyAdapterInfo(ctx, name, adapterName, config, secrets)
+	if err != nil {
+		return err
+	}
+
+	return m.storeVerifiedRecord(name, adapterName, onCrash, config, secrets, originRefs, workingDir, caps)
+}
+
+// checkDuplicateLocked returns ErrSessionAlreadyOpen if the named session is
+// already bound or verified. It is the caller's responsibility to hold no lock.
+func (m *SessionManager) checkDuplicateLocked(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.sessions[name]; exists {
+		return fmt.Errorf("%w: %s", ErrSessionAlreadyOpen, name)
+	}
+	if _, exists := m.verified[name]; exists {
+		return fmt.Errorf("%w: %s", ErrSessionAlreadyOpen, name)
+	}
+	return nil
+}
+
+// verifyAdapterInfo performs the phase-1 adapter handshake in a neutral launch
+// directory: it resolves the binary, calls Info, validates config and secrets,
+// and kills the temporary handle. It returns the adapter capabilities on success.
+func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterName string, config, secrets map[string]string) ([]string, error) {
+	// Phase 1 uses a neutral launch directory. Sandbox preparation is a
+	// bind-time concern: it may create side effects (cgroups) and its
+	// enforcement does not depend on the working directory existing.
+	plug, err := m.resolveAdapterHandle(ctx, name, adapterName, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer plug.Kill()
+
+	info, infoErr := plug.Info(ctx)
+	if infoErr != nil {
+		return nil, fmt.Errorf("adapter %q handshake: %w", adapterName, infoErr)
+	}
+
+	if schemaErr := validateConfigAgainstSchema(config, info.AdapterInfo.ConfigSchema); schemaErr != nil {
+		return nil, fmt.Errorf("adapter %q config: %w", adapterName, schemaErr)
+	}
+
+	if secretErr := validateRequiredSecrets(secrets, info.AdapterInfo.ConfigSchema); secretErr != nil {
+		return nil, fmt.Errorf("adapter %q secrets: %w", adapterName, secretErr)
+	}
+
+	return info.Capabilities, nil
+}
+
+// storeVerifiedRecord stores a verified adapter record, guarding against races.
+func (m *SessionManager) storeVerifiedRecord(name, adapterName, onCrash string, config, secrets map[string]string, originRefs map[string]secrets.OriginRef, workingDir string, capabilities []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.sessions[name]; exists {
+		return fmt.Errorf("%w: %s", ErrSessionAlreadyOpen, name)
+	}
+	if _, exists := m.verified[name]; exists {
+		return fmt.Errorf("%w: %s", ErrSessionAlreadyOpen, name)
+	}
+
+	rec := &verifiedRecord{
+		name:             name,
+		adapter:          adapterName,
+		onCrash:          normalizeOnCrash(onCrash),
+		config:           cloneConfig(config),
+		secrets:          cloneConfig(secrets),
+		secretOriginRefs: cloneOriginRefs(originRefs),
+		capabilities:     append([]string(nil), capabilities...),
+		workingDir:       workingDir,
+	}
+	if a := m.lockedAdapterFor(name); a != nil {
+		rec.adapterDigest = digest.Digest(a.ResolvedDigest)
+	}
+	m.verified[name] = rec
+	return nil
+}
+
 func (m *SessionManager) resolveAdapterHandle(ctx context.Context, name, adapterName string, customizer func(string, *exec.Cmd)) (Handle, error) {
 	// Remote-mode dispatch: if the adapter is bound to a remote environment,
 	// wait for the adapter to phone home via the shim.
@@ -552,6 +745,47 @@ func (m *SessionManager) registerSession(ctx context.Context, name, adapterName,
 
 	m.startPermissionStream(ctx, sess, plug)
 	m.startLogStream(ctx, sess, plug)
+	return nil
+}
+
+// bindVerifiedRecord performs phase-2 session binding for a previously verified
+// adapter. It launches the adapter in its resolved working directory, opens the
+// long-lived session, and starts the permission/log streams. On success the
+// verified record is promoted to a bound session.
+func (m *SessionManager) bindVerifiedRecord(ctx context.Context, rec *verifiedRecord) error {
+	customizer, cleanup, sandboxErr := m.buildCommandCustomizer(rec.name, rec.workingDir)
+	if sandboxErr != nil {
+		return fmt.Errorf("session %q: %w", rec.name, sandboxErr)
+	}
+
+	plug, err := m.resolveAdapterHandle(ctx, rec.name, rec.adapter, customizer)
+	if err != nil {
+		if cleanup != nil {
+			cleanup()
+		}
+		return err
+	}
+
+	var caps []string
+	if info, infoErr := plug.Info(ctx); infoErr == nil {
+		caps = append([]string(nil), info.Capabilities...)
+	}
+
+	if err := plug.OpenSession(ctx, rec.name, rec.config, rec.secrets); err != nil {
+		plug.Kill()
+		if cleanup != nil {
+			cleanup()
+		}
+		return err
+	}
+
+	if err := m.registerSession(ctx, rec.name, rec.adapter, rec.onCrash, rec.config, rec.secrets, rec.secretOriginRefs, caps, plug, cleanup, rec.workingDir); err != nil {
+		return err
+	}
+
+	if m.LifecycleSink != nil {
+		m.LifecycleSink.OnAdapterLifecycle("", rec.name, "opened", "")
+	}
 	return nil
 }
 
@@ -807,10 +1041,53 @@ func (m *SessionManager) handleCrash(ctx context.Context, name string, step *wor
 	}
 }
 
+// bindVerifiedAndLookup promotes a verified-only adapter to a bound session.
+// It serializes concurrent attempts so only one caller performs the bind and
+// the rest wait and then use the bound session. A binding error is wrapped
+// with the adapter name, step name, and working directory so failures at first
+// use are actionable.
+func (m *SessionManager) bindVerifiedAndLookup(ctx context.Context, name string, step *workflow.StepNode) (*Session, error) {
+	m.bindMu.Lock()
+	defer m.bindMu.Unlock()
+
+	// Another goroutine may have bound the session while we were waiting.
+	if sess, err := m.lookup(name); err == nil {
+		return sess, nil
+	}
+
+	m.mu.Lock()
+	rec := m.verified[name]
+	m.mu.Unlock()
+	if rec == nil {
+		return nil, ErrUnknownSession
+	}
+
+	stepName := ""
+	if step != nil {
+		stepName = step.Name
+	}
+	if bindErr := m.bindVerifiedRecord(ctx, rec); bindErr != nil {
+		return nil, fmt.Errorf("bind adapter %q for step %q in working directory %q: %w", rec.adapter, stepName, rec.workingDir, bindErr)
+	}
+
+	m.mu.Lock()
+	delete(m.verified, name)
+	m.mu.Unlock()
+
+	return m.lookup(name)
+}
+
 func (m *SessionManager) Execute(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
 	sess, err := m.lookup(name)
 	if err != nil {
-		return adapter.Result{Outcome: "failure"}, err
+		if !errors.Is(err, ErrUnknownSession) {
+			return adapter.Result{Outcome: "failure"}, err
+		}
+
+		sess, err = m.bindVerifiedAndLookup(ctx, name, step)
+		if err != nil {
+			return adapter.Result{Outcome: "failure"}, err
+		}
 	}
 
 	sink = m.wrapSink(sink)
@@ -925,10 +1202,19 @@ func (m *SessionManager) HasCapability(name, capName string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	sess, ok := m.sessions[name]
+	if ok {
+		for _, c := range sess.Capabilities {
+			if c == capName {
+				return true
+			}
+		}
+		return false
+	}
+	rec, ok := m.verified[name]
 	if !ok {
 		return false
 	}
-	for _, c := range sess.Capabilities {
+	for _, c := range rec.capabilities {
 		if c == capName {
 			return true
 		}
@@ -956,6 +1242,9 @@ func (m *SessionManager) Shutdown(ctx context.Context) error {
 	for name, sess := range m.sessions {
 		sessions = append(sessions, sess)
 		delete(m.sessions, name)
+	}
+	for name := range m.verified {
+		delete(m.verified, name)
 	}
 	m.mu.Unlock()
 
@@ -1200,6 +1489,57 @@ func cloneOriginRefs(m map[string]secrets.OriginRef) map[string]secrets.OriginRe
 		out[k] = v
 	}
 	return out
+}
+
+// validateConfigAgainstSchema performs a runtime check of the resolved config
+// against the adapter's declared manifest schema. It only enforces presence of
+// required fields and basic type shape; the compiler already rejects unknown
+// keys and incompatible types at workflow compile time, and the manifest schema
+// is intentionally a subset of the HCL type system.
+func validateConfigAgainstSchema(config map[string]string, schema map[string]workflow.ConfigField) error {
+	if len(schema) == 0 {
+		return nil
+	}
+	var missing []string
+	for name, field := range schema {
+		if !field.Required {
+			continue
+		}
+		val, ok := config[name]
+		if !ok || strings.TrimSpace(val) == "" {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		slices.Sort(missing)
+		return fmt.Errorf("missing required config field(s): %s", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+// validateRequiredSecrets checks that every config field marked Sensitive and
+// Required has a non-empty resolved secret value. Non-sensitive required values
+// are covered by validateConfigAgainstSchema; this path exists because secrets
+// are resolved separately from static config.
+func validateRequiredSecrets(secrets map[string]string, schema map[string]workflow.ConfigField) error {
+	if len(schema) == 0 {
+		return nil
+	}
+	var missing []string
+	for name, field := range schema {
+		if !(field.Required && field.Sensitive) {
+			continue
+		}
+		val, ok := secrets[name]
+		if !ok || strings.TrimSpace(val) == "" {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		slices.Sort(missing)
+		return fmt.Errorf("missing required secret(s): %s", strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 // SessionSnapshot records the complete host-visible state of a session at a

@@ -141,6 +141,16 @@ func WithRunID(id string) Option {
 	}
 }
 
+// WithWorkingDirAllowedRoots restricts the directories an environment may bind
+// to. A resolved working_directory that lies outside every configured root is
+// rejected at run start, before any step executes. Empty (the default) disables
+// the additional root check; paths containing ".." are always rejected.
+func WithWorkingDirAllowedRoots(roots []string) Option {
+	return func(e *Engine) {
+		e.workingDirAllowedRoots = append([]string(nil), roots...)
+	}
+}
+
 // isSuccessOutcome returns true when the outcome name indicates a successful
 // iteration. By convention, outcome names that equal "success" (case-
 // insensitive) are treated as successes; all other names set AnyFailed=true

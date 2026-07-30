@@ -578,21 +578,6 @@ func (p *ctxCheckAdapter) Execute(ctx context.Context, _ string, _ *workflow.Ste
 	return adapter.Result{Outcome: "success"}, nil
 }
 
-// calleeBodyWithAdapter builds a callee FSMGraph that declares a single adapter
-// and has an immediate terminal state. Adapter lifecycle (open/close) happens
-// regardless of whether any step uses the adapter.
-func calleeBodyWithAdapter(adapterType string) *workflow.FSMGraph {
-	instanceID := adapterType + ".default"
-	return &workflow.FSMGraph{
-		InitialState: "done",
-		States:       map[string]*workflow.StateNode{"done": {Name: "done", Terminal: true, Success: true}},
-		Variables:    map[string]*workflow.VariableNode{},
-		Adapters:     map[string]*workflow.AdapterNode{instanceID: {Type: adapterType, Name: "default"}},
-		AdapterOrder: []string{instanceID},
-		Policy:       workflow.DefaultPolicy,
-	}
-}
-
 // calleeBodyWithStep builds a callee FSMGraph with a single step that uses an
 // adapter. The step transitions to terminal state on "success" outcome.
 func calleeBodyWithStep(adapterType string) *workflow.FSMGraph {
@@ -638,17 +623,19 @@ func depsWithLoader(t *testing.T, loader adapterhost.Loader) Deps {
 }
 
 // TestRunSubworkflow_AdaptersIsolatedFromParent verifies that a callee-declared
-// adapter is opened at the start of the subworkflow scope and closed when it
+// adapter is opened before its first step runs and closed when the subworkflow
 // returns — proving that adapter lifecycle is fully contained within the
 // subworkflow and does not leak into the parent scope.
 //
 // A broken teardown (missing deferred tearDownScopeAdapters) would leave
-// closes==0 after runSubworkflow returns, failing the test.
+// closes==0 after runSubworkflow returns, failing the test. Under the
+// verify/bind split, the callee must contain a reachable step that targets
+// the adapter so that session binding actually occurs.
 func TestRunSubworkflow_AdaptersIsolatedFromParent(t *testing.T) {
-	tracker := &lifecycleTrackingAdapter{fakeAdapter: fakeAdapter{name: "noop"}}
+	tracker := &lifecycleTrackingAdapter{fakeAdapter: fakeAdapter{name: "noop", outcome: "success"}}
 	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"noop": tracker}}
 
-	node := subworkflowNodeFor("isolated", calleeBodyWithAdapter("noop"))
+	node := subworkflowNodeFor("isolated", calleeBodyWithStep("noop"))
 	parentSt := &RunState{
 		Vars:        map[string]cty.Value{"var": cty.EmptyObjectVal},
 		WorkflowDir: t.TempDir(),

@@ -77,8 +77,11 @@ state "failed" {
 
 - The first label is the adapter **type**, the second an instance **name**; steps
   bind via `target = adapter.<type>.<name>` (a traversal, not a string).
-- The engine opens the session before the step runs and closes it afterward — no
-  explicit open/close steps.
+- Adapters have a two-phase lifecycle (see [Adapter session lifecycle](#adapter-session-lifecycle)):
+  every adapter is **verified** eagerly at run start, but its working-directory
+  **session binding** is deferred until the first step that actually targets it.
+- The engine closes sessions automatically when the scope ends — no explicit
+  close step is required.
 
 ### 2. Pin adapters in the lockfile
 
@@ -105,6 +108,58 @@ cache (`~/.criteria/cache/oci`) automatically during compile.
 | `criteria adapter remove <name>` | Remove an adapter from the cache (`--prune` to GC blobs). |
 | `criteria adapter prune` | Reclaim cache space (`--older-than 30d`, `--max-size <bytes>`). |
 | `criteria adapter dev <binary>` | Register a local binary as an adapter, skipping lockfile + signature checks — the fast inner-loop path. |
+
+## Adapter session lifecycle
+
+Adapter provisioning is split into two phases so that fail-fast verification is
+preserved while still allowing a workflow step to create the directory an
+adapter runs in.
+
+### Phase 1: eager verification
+
+Before the first workflow step executes, the engine verifies **every** adapter
+declared in the current scope (and every parent-scope adapter re-declared in a
+subworkflow body):
+
+- resolves the adapter binary or OCI artifact;
+- verifies the signature/digest against the lockfile and trust policy;
+- performs the protocol `Info` handshake;
+- checks the resolved `config` block against the adapter's manifest schema;
+- checks that required secrets are present.
+
+This phase runs in a neutral working directory, so a missing or not-yet-created
+`working_directory` does **not** cause a failure. A broken adapter (missing
+binary, bad signature, invalid config, missing required secret) still fails the
+run before any step executes, even if no reachable step ever targets it.
+
+### Phase 2: lazy session binding
+
+When a step first targets an adapter, the engine promotes the verified record
+to a bound session:
+
+- the adapter process is launched in its resolved `working_directory`;
+- `OpenSession` is called with the resolved config and secrets;
+- the per-session permission and log streams are started.
+
+If the resolved working directory is missing at this point, the bind fails and
+produces an error that names the adapter, the step, and the directory. Because
+binding only happens for adapters that are actually reached, an adapter
+declared in a branch that is never taken is verified but never bound.
+
+### What is rejected eagerly vs. deferred
+
+Rejected at run start (before any step runs):
+
+- any verification failure in phase 1;
+- a `working_directory` path that contains `..`;
+- a `working_directory` that falls outside the configured allowed roots (when
+  any are configured).
+
+Deferred to first use:
+
+- a `working_directory` that simply does not exist yet. This is the case a
+  bootstrap step is allowed to fix by creating the directory before the first
+  adapter step that uses it.
 
 ## Authoring an adapter
 

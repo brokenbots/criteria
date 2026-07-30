@@ -2,14 +2,19 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/zclconf/go-cty/cty"
 
+	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	"github.com/brokenbots/criteria/workflow"
 )
 
 // lifecycleTrackingSink captures lifecycle events for verification
@@ -394,13 +399,28 @@ state "done" {
 	// Run with cancelled context - should fail due to cancellation
 	_ = eng.Run(ctx)
 
-	// Verify adapter was still closed despite context cancellation
+	// With verification/binding split, the adapter is only verified (no long-lived
+	// session) before the canceled context aborts the run. Teardown still emits the
+	// closed lifecycle event, but there is no active session to CloseSession.
 	trackingPlugin.mu.Lock()
 	closesCount := trackingPlugin.closesCount
 	trackingPlugin.mu.Unlock()
 
-	if closesCount != 1 {
-		t.Errorf("expected adapter to be closed once despite cancellation, was closed %d times", closesCount)
+	if closesCount != 0 {
+		t.Errorf("expected verified-only adapter to be closed 0 times (no session bound), was closed %d times", closesCount)
+	}
+
+	var closedEvents int
+	sink.mu.Lock()
+	for _, evt := range sink.adapterLifecycleEvents {
+		if evt == "noop.default:closed" {
+			closedEvents++
+		}
+	}
+	sink.mu.Unlock()
+
+	if closedEvents != 1 {
+		t.Errorf("expected one closed lifecycle event for noop.default, got %d", closedEvents)
 	}
 }
 
@@ -568,5 +588,270 @@ state "done" {
 	got := gotConfig["model"]
 	if got != "runtime-model" {
 		t.Errorf("adapter config[model] = %q, want %q (runtime var resolution failed)", got, "runtime-model")
+	}
+}
+
+// mkdirAdapter is a test helper that creates the directory named in the step's
+// "path" input. It simulates a bootstrap step that materializes an adapter's
+// working directory before that adapter is bound.
+type mkdirAdapter struct {
+	fakeAdapter
+}
+
+func (m *mkdirAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	if err := os.MkdirAll(step.Input["path"], 0o750); err != nil {
+		return adapter.Result{Outcome: "failure"}, fmt.Errorf("mkdir: %w", err)
+	}
+	return adapter.Result{Outcome: "success"}, nil
+}
+
+// TestEngine_AdapterWorkingDirectoryCreatedByStep verifies that an adapter bound
+// to a working directory created by an earlier workflow step runs successfully
+// from a clean state. The adapter is verified eagerly at run start (in a neutral
+// directory) but not bound until the first step that targets it, by which time
+// the directory exists.
+func TestEngine_AdapterWorkingDirectoryCreatedByStep(t *testing.T) {
+	tmp := t.TempDir()
+	worktree := filepath.Join(tmp, "worktree")
+
+	g := compile(t, `
+workflow {
+  name          = "mkdir-test"
+  version       = "0.1"
+  initial_state = "mkdir"
+  target_state  = "done"
+}
+
+variable "dir" {
+  type    = string
+  default = ""
+}
+
+environment "shell" "workdir" {
+  working_directory = var.dir
+}
+
+adapter "noop" "use" {
+  environment = shell.workdir
+}
+
+step "mkdir" {
+  target = adapter.mkdir
+  input {
+    path = var.dir
+  }
+  outcome "success" { next = step.use }
+}
+
+step "use" {
+  target = adapter.noop.use
+  outcome "success" { next = step.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}`)
+
+	mkdirHandle := &mkdirAdapter{fakeAdapter: fakeAdapter{name: "mkdir", outcome: "success"}}
+	useAdapter := &lifecycleTrackingAdapter{fakeAdapter: fakeAdapter{name: "noop", outcome: "success"}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"mkdir": mkdirHandle,
+		"noop":  useAdapter,
+	}}
+
+	sink := &lifecycleTrackingSink{}
+	eng := New(g, loader, sink, WithVarOverrides(map[string]cty.Value{
+		"dir": cty.StringVal(worktree),
+	}))
+
+	if err := eng.Run(context.Background()); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	if _, err := os.Stat(worktree); err != nil {
+		t.Fatalf("working directory was not created: %v", err)
+	}
+
+	useAdapter.mu.Lock()
+	opens := useAdapter.opensCount
+	closes := useAdapter.closesCount
+	useAdapter.mu.Unlock()
+
+	if opens != 1 {
+		t.Errorf("adapter opens: want 1, got %d", opens)
+	}
+	if closes != 1 {
+		t.Errorf("adapter closes: want 1, got %d", closes)
+	}
+}
+
+// TestEngine_UnreachableBrokenAdapterFailsAtStartup verifies that a broken
+// adapter declared in a workflow but never reached by any step still fails the
+// run during eager verification, before any step executes. This proves that
+// lazy session binding did not weaken the fail-fast startup guarantee.
+func TestEngine_UnreachableBrokenAdapterFailsAtStartup(t *testing.T) {
+	const initErrMsg = "broken adapter cannot initialize"
+
+	g := compile(t, `
+workflow {
+  name          = "unreachable-broken"
+  version       = "0.1"
+  initial_state = "done"
+  target_state  = "done"
+}
+
+adapter "broken" "x" {
+  config {}
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}`)
+
+	broken := &failingOpenAdapter{
+		fakeAdapter: fakeAdapter{name: "broken"},
+		openErr:     errors.New(initErrMsg),
+	}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"broken": broken,
+	}}
+
+	sink := &lifecycleTrackingSink{}
+	eng := New(g, loader, sink)
+
+	err := eng.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected startup failure for broken unreachable adapter, got nil")
+	}
+	if !strings.Contains(err.Error(), "broken.x") {
+		t.Errorf("error should name adapter instance, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), initErrMsg) {
+		t.Errorf("error should contain adapter failure message, got: %v", err)
+	}
+
+	// No step should have been entered.
+	sink.mu.Lock()
+	steps := len(sink.stepsRun)
+	sink.mu.Unlock()
+	if steps != 0 {
+		t.Errorf("expected no steps to run, got %d", steps)
+	}
+}
+
+// TestEngine_InvalidWorkingDirectoryRejectedAtStartup verifies that a resolved
+// working_directory that is structurally invalid (outside allowed roots) is
+// rejected eagerly during adapter verification, not deferred to first use.
+func TestEngine_InvalidWorkingDirectoryRejectedAtStartup(t *testing.T) {
+	allowed := t.TempDir()
+	outside := "/tmp/criteria-outside-root-" + fmt.Sprintf("%d", os.Getpid())
+
+	g := compile(t, `
+workflow {
+  name          = "invalid-wd"
+  version       = "0.1"
+  initial_state = "done"
+  target_state  = "done"
+}
+
+variable "dir" {
+  type    = string
+  default = ""
+}
+
+environment "shell" "env" {
+  working_directory = var.dir
+}
+
+adapter "noop" "use" {
+  environment = shell.env
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}`)
+
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"noop": &lifecycleTrackingAdapter{fakeAdapter: fakeAdapter{name: "noop", outcome: "success"}},
+	}}
+
+	sink := &lifecycleTrackingSink{}
+	eng := New(g, loader, sink,
+		WithVarOverrides(map[string]cty.Value{"dir": cty.StringVal(outside)}),
+		WithWorkingDirAllowedRoots([]string{allowed}),
+	)
+
+	err := eng.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected startup failure for invalid working directory, got nil")
+	}
+	if !strings.Contains(err.Error(), "outside allowed roots") {
+		t.Errorf("error should report working directory outside allowed roots, got: %v", err)
+	}
+
+	// No step should have been entered.
+	sink.mu.Lock()
+	steps := len(sink.stepsRun)
+	sink.mu.Unlock()
+	if steps != 0 {
+		t.Errorf("expected no steps to run, got %d", steps)
+	}
+}
+
+// TestEngine_WorkingDirectoryWithDotDotRejectedAtStartup verifies that a
+// resolved working_directory containing ".." is rejected eagerly at run start,
+// even when no allowed-root restriction is configured.
+func TestEngine_WorkingDirectoryWithDotDotRejectedAtStartup(t *testing.T) {
+	g := compile(t, `
+workflow {
+  name          = "dotdot-wd"
+  version       = "0.1"
+  initial_state = "done"
+  target_state  = "done"
+}
+
+variable "dir" {
+  type    = string
+  default = ""
+}
+
+environment "shell" "env" {
+  working_directory = var.dir
+}
+
+adapter "noop" "use" {
+  environment = shell.env
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}`)
+
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"noop": &lifecycleTrackingAdapter{fakeAdapter: fakeAdapter{name: "noop", outcome: "success"}},
+	}}
+
+	sink := &lifecycleTrackingSink{}
+	eng := New(g, loader, sink,
+		WithVarOverrides(map[string]cty.Value{"dir": cty.StringVal("/tmp/../etc")}),
+	)
+
+	err := eng.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected startup failure for working directory containing .., got nil")
+	}
+	if !strings.Contains(err.Error(), `".."`) {
+		t.Errorf("error should report working directory contains .., got: %v", err)
+	}
+
+	sink.mu.Lock()
+	steps := len(sink.stepsRun)
+	sink.mu.Unlock()
+	if steps != 0 {
+		t.Errorf("expected no steps to run, got %d", steps)
 	}
 }
