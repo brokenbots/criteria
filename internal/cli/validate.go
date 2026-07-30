@@ -58,7 +58,7 @@ func validatePath(ctx context.Context, path string, subworkflowRoots []string, d
 		workflowDir = filepath.Dir(path)
 	}
 	loader := adapterhost.NewLoader()
-	schemas, schemaDiags := diagutil.CollectSchemas(ctx, loader, spec, nil)
+	schemas, schemaDiags := diagutil.CollectSchemas(ctx, loader, workflowDir, spec, nil)
 	_ = loader.Shutdown(ctx)
 
 	_, diags = workflow.CompileWithContext(ctx, spec, schemas, workflow.CompileOpts{
@@ -77,17 +77,13 @@ func validatePath(ctx context.Context, path string, subworkflowRoots []string, d
 		}
 		return false
 	}
-	if !diagJSON {
-		fmt.Printf("%s: ok\n", path)
-	} else {
-		printDiagnosticsJSON(nil)
+	if diagJSON {
+		printDiagnosticsJSON(diags)
+		return true
 	}
+	fmt.Printf("%s: ok\n", path)
 	if len(diags) > 0 {
-		if diagJSON {
-			printDiagnosticsJSON(diags)
-		} else {
-			fmt.Fprintf(os.Stderr, "%s: warnings:\n%s\n", path, formatDiagnostics(diags))
-		}
+		fmt.Fprintf(os.Stderr, "%s: warnings:\n%s\n", path, formatDiagnostics(diags))
 	}
 	return true
 }

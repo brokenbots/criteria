@@ -626,22 +626,23 @@ func parseCompileForCli(ctx context.Context, workflowPath string, subworkflowRoo
 		return nil, nil, fmt.Errorf("parse errors in %s:\n%w", workflowPath, newDiagsError(diags))
 	}
 
-	loader := adapterhost.NewLoader()
-	schemas, schemaDiags := diagutil.CollectSchemas(ctx, loader, spec, nil)
-	defer func() { _ = loader.Shutdown(ctx) }()
-
 	workflowDir := workflowPath
 	if info, err := os.Stat(workflowPath); err == nil && !info.IsDir() {
 		workflowDir = filepath.Dir(workflowPath)
 	}
 
 	// Compile-time auto-pull: if the workflow declares OCI adapter sources,
-	// ensure the lockfile is present, complete, and binaries are cached.
+	// ensure the lockfile is present, complete, and binaries are cached. This
+	// must run before schema collection so the digest-addressed binaries exist.
 	if hasOCIReferences(spec) {
 		if err := autoPullCompileAdapters(ctx, workflowDir, spec, allowUnsigned); err != nil {
 			return nil, nil, err
 		}
 	}
+
+	loader := adapterhost.NewLoader()
+	schemas, schemaDiags := diagutil.CollectSchemas(ctx, loader, workflowDir, spec, nil)
+	defer func() { _ = loader.Shutdown(ctx) }()
 
 	graph, diags := workflow.CompileWithContext(ctx, spec, schemas, workflow.CompileOpts{
 		WorkflowDir:         workflowDir,

@@ -84,19 +84,19 @@ func compileForExecution(ctx context.Context, workflowPath string, log *slog.Log
 		return nil, nil, nil, fmt.Errorf("parse errors:\n%w", newDiagsError(diags))
 	}
 
-	loader := adapterhost.NewLoader()
-	schemas, schemaDiags := diagutil.CollectSchemas(ctx, loader, spec, log)
-
 	workflowDir := workflowDirFromPath(workflowPath)
 
 	// Execution-time auto-pull: ensure OCI adapters are present, verified against
-	// the resolved signing policy, and extracted before the run starts.
+	// the resolved signing policy, and extracted before the run starts. This must
+	// run before schema collection so the digest-addressed binaries exist.
 	if hasOCIReferences(spec) {
 		if err := autoPullCompileAdapters(ctx, workflowDir, spec, allowUnsigned); err != nil {
-			_ = loader.Shutdown(ctx)
 			return nil, nil, nil, err
 		}
 	}
+
+	loader := adapterhost.NewLoader()
+	schemas, schemaDiags := diagutil.CollectSchemas(ctx, loader, workflowDir, spec, log)
 
 	resolver := &workflow.LocalSubWorkflowResolver{AllowedRoots: subworkflowRoots}
 	graph, diags := workflow.CompileWithContext(ctx, spec, schemas, workflow.CompileOpts{

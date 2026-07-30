@@ -37,6 +37,13 @@ func (e *ErrAdapterNotFound) Error() string {
 // adaptersRoots returns the directories that hold installed adapter binaries,
 // in search order: $CRITERIA_ADAPTERS (if set) then ~/.criteria/adapters.
 func adaptersRoots() []string {
+	return AdaptersRoots()
+}
+
+// AdaptersRoots returns the directories that hold installed adapter binaries,
+// in search order: $CRITERIA_ADAPTERS (if set) then ~/.criteria/adapters.
+// It is exported so diagnostics can report the paths that were consulted.
+func AdaptersRoots() []string {
 	roots := make([]string, 0, 2)
 	if envDir := strings.TrimSpace(os.Getenv(adaptersEnvVar)); envDir != "" {
 		roots = append(roots, envDir)
