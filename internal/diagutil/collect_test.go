@@ -83,6 +83,11 @@ var _ discoveryLoader = (*mockDiscoveryLoader)(nil)
 
 func writeLockfile(t *testing.T, dir string) {
 	t.Helper()
+	writeLockfileWithDigest(t, dir, testDigest)
+}
+
+func writeLockfileWithDigest(t *testing.T, dir, digest string) {
+	t.Helper()
 	content := fmt.Sprintf(`schema_version = 1
 
 adapter "%s" "default" {
@@ -92,7 +97,7 @@ adapter "%s" "default" {
   source_url         = "https://github.com/example/%s"
   sdk_protocol_version = 2
 }
-`, testAdapterType, testAdapterType, testDigest, testAdapterType)
+`, testAdapterType, testAdapterType, digest, testAdapterType)
 	if err := os.WriteFile(filepath.Join(dir, ".criteria.lock.hcl"), []byte(content), 0o644); err != nil {
 		t.Fatalf("write lockfile: %v", err)
 	}
@@ -318,5 +323,102 @@ func TestCollectSchemas_UnverifiedWarningNamesSources(t *testing.T) {
 	}
 	if strings.Contains(d.Detail, "criteria adapter lock") {
 		t.Errorf("detail should not suggest re-running lock when lockfile exists; got %q", d.Detail)
+	}
+}
+
+// TestCollectSchemas_InvalidLockfileDigestFallsBackToByName asserts that a
+// malformed resolved_digest in the lockfile is rejected before it can be
+// encoded into a filesystem path. The adapter must fall back to by-name
+// resolution, the traversal string must never reach DiscoverBinaryAt, and any
+// diagnostic must not echo the raw malicious digest.
+func TestCollectSchemas_InvalidLockfileDigestFallsBackToByName(t *testing.T) {
+	setHermeticAdapterRoot(t)
+
+	dir := t.TempDir()
+	invalidDigest := "../../tmp/evil"
+	writeLockfileWithDigest(t, dir, invalidDigest)
+
+	resolveCalled := false
+	resolveWithDiscoveryCalled := false
+	loader := &mockDiscoveryLoader{
+		resolveFunc: func(_ context.Context, name string) (adapterhost.Handle, error) {
+			if name != testAdapterType {
+				t.Errorf("Resolve called with %q, want %q", name, testAdapterType)
+			}
+			resolveCalled = true
+			return schemafulHandle(), nil
+		},
+		resolveWithDiscoveryFunc: func(_ context.Context, name string, _ adapterhost.DiscoveryFunc, _ func(string, *exec.Cmd)) (adapterhost.Handle, error) {
+			resolveWithDiscoveryCalled = true
+			return nil, fmt.Errorf("ResolveWithDiscovery should not be called for invalid digest %q", name)
+		},
+	}
+
+	schemas, diags := CollectSchemas(context.Background(), loader, dir, makeSpec(), nil)
+
+	if !resolveCalled {
+		t.Errorf("Resolve was not called; expected by-name fallback")
+	}
+	if resolveWithDiscoveryCalled {
+		t.Errorf("ResolveWithDiscovery was called for an invalid digest")
+	}
+
+	info, ok := schemas[testAdapterType]
+	if !ok {
+		t.Fatalf("schemas missing %q; got %v", testAdapterType, schemas)
+	}
+	if _, ok := info.OutputSchema["baz"]; !ok {
+		t.Errorf("output schema 'baz' not available; got %v", info.OutputSchema)
+	}
+
+	for _, d := range diags {
+		if strings.Contains(d.Detail, invalidDigest) {
+			t.Errorf("diagnostic detail contains raw traversal digest: %q", d.Detail)
+		}
+	}
+
+	// The traversal path must never be touched. t.TempDir() paths are unique,
+	// so checking a relative traversal under it is deterministic enough.
+	evilPath := filepath.Join(dir, invalidDigest)
+	if _, err := os.Stat(evilPath); err == nil {
+		t.Errorf("evil path was created: %q", evilPath)
+	}
+}
+
+// TestCollectSchemas_UnverifiedWarningNamesMalformedDigest asserts that an
+// invalid digest in the lockfile surfaces in the consulted list as an invalid
+// digest, helping operators spot typos in .criteria.lock.hcl.
+func TestCollectSchemas_UnverifiedWarningNamesMalformedDigest(t *testing.T) {
+	setHermeticAdapterRoot(t)
+
+	dir := t.TempDir()
+	invalidDigest := "not-a-valid-digest"
+	writeLockfileWithDigest(t, dir, invalidDigest)
+
+	loader := &mockDiscoveryLoader{
+		resolveFunc: func(_ context.Context, name string) (adapterhost.Handle, error) {
+			return nil, fmt.Errorf("adapter %q not found", name)
+		},
+		resolveWithDiscoveryFunc: func(_ context.Context, name string, _ adapterhost.DiscoveryFunc, _ func(string, *exec.Cmd)) (adapterhost.Handle, error) {
+			return nil, fmt.Errorf("adapter %q not found at digest path", name)
+		},
+	}
+
+	_, diags := CollectSchemas(context.Background(), loader, dir, makeSpec(), nil)
+	if len(diags) != 1 {
+		t.Fatalf("expected 1 diagnostic, got %d: %v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Severity != hcl.DiagWarning {
+		t.Fatalf("expected warning, got %v", d.Severity)
+	}
+	if !strings.Contains(d.Detail, "invalid digest") {
+		t.Errorf("detail should note invalid digest, got %q", d.Detail)
+	}
+	if !strings.Contains(d.Detail, invalidDigest) {
+		t.Errorf("detail should name the malformed digest, got %q", d.Detail)
+	}
+	if strings.Contains(d.Detail, "OCI cache") {
+		t.Errorf("detail should not mention an OCI cache path for a malformed digest; got %q", d.Detail)
 	}
 }

@@ -64,7 +64,7 @@ func CollectSchemas(ctx context.Context, loader adapterhost.Loader, workflowDir 
 		return nil, nil
 	}
 
-	lockStatus := readLockfileStatus(workflowDir)
+	lockStatus := readLockfileStatus(workflowDir, log)
 
 	schemas := make(map[string]workflow.AdapterInfo)
 	var diags hcl.Diagnostics
@@ -86,7 +86,7 @@ func CollectSchemas(ctx context.Context, loader adapterhost.Loader, workflowDir 
 // add the returned info to the schemas map. On failure it returns a zero-value
 // info, ok=false, and a diagnostic explaining why schema verification was
 // skipped.
-func collectAdapterSchema(ctx context.Context, loader adapterhost.Loader, typeName string, lockStatus lockfileStatus, log *slog.Logger) (workflow.AdapterInfo, *hcl.Diagnostic, bool) {
+func collectAdapterSchema(ctx context.Context, loader adapterhost.Loader, typeName string, lockStatus *lockfileStatus, log *slog.Logger) (workflow.AdapterInfo, *hcl.Diagnostic, bool) {
 	p, resolvedDigest, resolveErr := resolveAdapter(ctx, loader, typeName, lockStatus, log)
 	if resolveErr != nil {
 		if log != nil {
@@ -113,7 +113,7 @@ func collectAdapterSchema(ctx context.Context, loader adapterhost.Loader, typeNa
 // the exact locked artifact is consulted. It returns the resolved digest (if
 // any) so diagnostics can report which artifact was used, and any resolution
 // error.
-func resolveAdapter(ctx context.Context, loader adapterhost.Loader, typeName string, lockStatus lockfileStatus, log *slog.Logger) (adapterhost.Handle, string, error) {
+func resolveAdapter(ctx context.Context, loader adapterhost.Loader, typeName string, lockStatus *lockfileStatus, log *slog.Logger) (adapterhost.Handle, string, error) {
 	if dl, ok := loader.(discoveryLoader); ok {
 		if digestStr := lockStatus.digestForType(typeName); digestStr != "" {
 			digestEncoded := adapterhost.EncodeDigest(digest.Digest(digestStr))
@@ -138,12 +138,18 @@ type lockfileStatus struct {
 	path       string
 	present    bool
 	readErr    error
-	byType     map[string]string // type -> resolved_digest
-	allDigests []string          // all digests seen (for diagnostics)
+	byType     map[string]string        // type -> resolved_digest
+	allDigests []string                 // all digests seen (for diagnostics)
+	malformed  []malformedLockfileEntry // invalid digest entries
 }
 
-func readLockfileStatus(workflowDir string) lockfileStatus {
-	status := lockfileStatus{
+type malformedLockfileEntry struct {
+	adapterType string
+	digest      string
+}
+
+func readLockfileStatus(workflowDir string, log *slog.Logger) *lockfileStatus {
+	status := &lockfileStatus{
 		path:   filepath.Join(workflowDir, workflow.LockfileName),
 		byType: make(map[string]string),
 	}
@@ -162,25 +168,74 @@ func readLockfileStatus(workflowDir string) lockfileStatus {
 		if ad.Type == "" {
 			continue
 		}
-		if _, ok := status.byType[ad.Type]; !ok && ad.ResolvedDigest != "" {
+		if ad.ResolvedDigest == "" {
+			continue
+		}
+		if err := digest.Digest(ad.ResolvedDigest).Validate(); err != nil {
+			if log != nil {
+				log.Debug("schema collection: skipping malformed lockfile digest", "adapter_type", ad.Type, "digest", ad.ResolvedDigest, "err", err)
+			}
+			status.malformed = append(status.malformed, malformedLockfileEntry{adapterType: ad.Type, digest: ad.ResolvedDigest})
+			continue
+		}
+		if _, ok := status.byType[ad.Type]; !ok {
 			status.byType[ad.Type] = ad.ResolvedDigest
 		}
-		if ad.ResolvedDigest != "" {
-			status.allDigests = append(status.allDigests, ad.ResolvedDigest)
-		}
+		status.allDigests = append(status.allDigests, ad.ResolvedDigest)
 	}
 	return status
 }
 
-func (s lockfileStatus) digestForType(adapterType string) string {
+func (s *lockfileStatus) digestForType(adapterType string) string {
 	return s.byType[adapterType]
+}
+
+// malformedDigest returns the raw, invalid digest string recorded for an
+// adapter type when the lockfile contains a malformed entry and no valid digest
+// for that type. It returns the empty string when a valid digest is available.
+func (s *lockfileStatus) malformedDigest(adapterType string) string {
+	if s.digestForType(adapterType) != "" {
+		return ""
+	}
+	for _, m := range s.malformed {
+		if m.adapterType == adapterType {
+			return m.digest
+		}
+	}
+	return ""
 }
 
 // unverifiedAdapterDiag builds the warning emitted when an adapter's schema
 // cannot be resolved at compile time, so the graph is only permissively
 // validated for that adapter. The detail names the consulted sources so the
 // operator gets actionable guidance.
-func unverifiedAdapterDiag(typeName, resolvedDigest string, lockStatus lockfileStatus, err error) *hcl.Diagnostic {
+func unverifiedAdapterDiag(typeName, resolvedDigest string, lockStatus *lockfileStatus, err error) *hcl.Diagnostic {
+	consulted := formatConsultedSources(typeName, resolvedDigest, lockStatus)
+
+	advice := "Ensure the adapter binary is available: cached and extracted to the digest-addressed path, " +
+		"or installed by name at the by-name path. Pass --warnings-as-errors to fail fast " +
+		"if schema verification is required."
+	if !lockStatus.present {
+		advice = "Run `criteria adapter lock` to generate a lockfile and cache the adapter binary, " +
+			"then validate again. " + advice
+	}
+
+	return &hcl.Diagnostic{
+		Severity: hcl.DiagWarning,
+		Summary:  fmt.Sprintf("adapter %q schema unverified", typeName),
+		Detail: fmt.Sprintf(
+			"Could not resolve adapter %q (%v). Its config/input/output schemas are unknown, "+
+				"so the workflow graph was validated permissively for this adapter and errors "+
+				"may only surface at runtime. Consulted: %s. %s",
+			typeName, err, strings.Join(consulted, "; "), advice),
+	}
+}
+
+// formatConsultedSources builds the ordered list of sources that were consulted
+// while trying to resolve an adapter. It keeps the diagnostic detail honest
+// about which lockfile entry, cache path, and by-name install paths were
+// examined.
+func formatConsultedSources(typeName, resolvedDigest string, lockStatus *lockfileStatus) []string {
 	var consulted []string
 	if !lockStatus.present {
 		consulted = append(consulted, fmt.Sprintf("lockfile %q (not present)", lockStatus.path))
@@ -188,6 +243,8 @@ func unverifiedAdapterDiag(typeName, resolvedDigest string, lockStatus lockfileS
 		consulted = append(consulted, fmt.Sprintf("lockfile %q (read error: %v)", lockStatus.path, lockStatus.readErr))
 	} else if digest := lockStatus.digestForType(typeName); digest != "" {
 		consulted = append(consulted, fmt.Sprintf("lockfile %q (pin: %s)", lockStatus.path, digest))
+	} else if malformed := lockStatus.malformedDigest(typeName); malformed != "" {
+		consulted = append(consulted, fmt.Sprintf("lockfile %q (entry for adapter %q: invalid digest %q)", lockStatus.path, typeName, malformed))
 	} else {
 		consulted = append(consulted, fmt.Sprintf("lockfile %q (no entry for adapter type %q)", lockStatus.path, typeName))
 	}
@@ -216,23 +273,7 @@ func unverifiedAdapterDiag(typeName, resolvedDigest string, lockStatus lockfileS
 		consulted = append(consulted, fmt.Sprintf("by-name install path(s): %s", strings.Join(paths, ", ")))
 	}
 
-	advice := "Ensure the adapter binary is available: cached and extracted to the digest-addressed path, " +
-		"or installed by name at the by-name path. Pass --warnings-as-errors to fail fast " +
-		"if schema verification is required."
-	if !lockStatus.present {
-		advice = "Run `criteria adapter lock` to generate a lockfile and cache the adapter binary, " +
-			"then validate again. " + advice
-	}
-
-	return &hcl.Diagnostic{
-		Severity: hcl.DiagWarning,
-		Summary:  fmt.Sprintf("adapter %q schema unverified", typeName),
-		Detail: fmt.Sprintf(
-			"Could not resolve adapter %q (%v). Its config/input/output schemas are unknown, "+
-				"so the workflow graph was validated permissively for this adapter and errors "+
-				"may only surface at runtime. Consulted: %s. %s",
-			typeName, err, strings.Join(consulted, "; "), advice),
-	}
+	return consulted
 }
 
 // noOutputSchemaDiag builds the distinct warning emitted when an adapter is
