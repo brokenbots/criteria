@@ -125,6 +125,10 @@ type verifiedRecord struct {
 	capabilities     []string
 	workingDir       string
 	adapterDigest    digest.Digest
+	// scopeName is the engine scope that verified this adapter. It is used to
+	// attribute the phase-2 "opened" lifecycle event to the same scope as the
+	// "verified" event.
+	scopeName string
 }
 
 func (m *SessionManager) heartbeatStallThreshold() time.Duration {
@@ -236,7 +240,10 @@ func (m *SessionManager) ValidateWorkingDirFaceValue(dir string) error {
 		if root == "" {
 			continue
 		}
-		if strings.HasPrefix(absDir, root+string(filepath.Separator)) {
+		if root == string(filepath.Separator) {
+			return nil
+		}
+		if absDir == root || strings.HasPrefix(absDir, root+string(filepath.Separator)) {
 			return nil
 		}
 	}
@@ -531,7 +538,7 @@ func (m *SessionManager) OpenWithOriginRefs(ctx context.Context, name, adapterNa
 // If a verified or bound record already exists for name (e.g. a parent-scope
 // adapter re-declared in a subworkflow), Verify returns ErrSessionAlreadyOpen.
 // The caller should treat that as a no-op for re-declared adapters.
-func (m *SessionManager) Verify(ctx context.Context, name, adapterName, onCrash string, config, secrets map[string]string, originRefs map[string]secrets.OriginRef, workingDir string) error {
+func (m *SessionManager) Verify(ctx context.Context, name, adapterName, onCrash string, config, secrets map[string]string, originRefs map[string]secrets.OriginRef, workingDir, scopeName string) error {
 	if strings.TrimSpace(name) == "" {
 		return errors.New("session name is required")
 	}
@@ -548,7 +555,7 @@ func (m *SessionManager) Verify(ctx context.Context, name, adapterName, onCrash 
 		return err
 	}
 
-	return m.storeVerifiedRecord(name, adapterName, onCrash, config, secrets, originRefs, workingDir, caps)
+	return m.storeVerifiedRecord(name, adapterName, onCrash, config, secrets, originRefs, workingDir, caps, scopeName)
 }
 
 // checkDuplicateLocked returns ErrSessionAlreadyOpen if the named session is
@@ -595,7 +602,7 @@ func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterNam
 }
 
 // storeVerifiedRecord stores a verified adapter record, guarding against races.
-func (m *SessionManager) storeVerifiedRecord(name, adapterName, onCrash string, config, secrets map[string]string, originRefs map[string]secrets.OriginRef, workingDir string, capabilities []string) error {
+func (m *SessionManager) storeVerifiedRecord(name, adapterName, onCrash string, config, secrets map[string]string, originRefs map[string]secrets.OriginRef, workingDir string, capabilities []string, scopeName string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.sessions[name]; exists {
@@ -614,6 +621,7 @@ func (m *SessionManager) storeVerifiedRecord(name, adapterName, onCrash string, 
 		secretOriginRefs: cloneOriginRefs(originRefs),
 		capabilities:     append([]string(nil), capabilities...),
 		workingDir:       workingDir,
+		scopeName:        scopeName,
 	}
 	if a := m.lockedAdapterFor(name); a != nil {
 		rec.adapterDigest = digest.Digest(a.ResolvedDigest)
@@ -752,7 +760,7 @@ func (m *SessionManager) registerSession(ctx context.Context, name, adapterName,
 // adapter. It launches the adapter in its resolved working directory, opens the
 // long-lived session, and starts the permission/log streams. On success the
 // verified record is promoted to a bound session.
-func (m *SessionManager) bindVerifiedRecord(ctx context.Context, rec *verifiedRecord) error {
+func (m *SessionManager) bindVerifiedRecord(ctx context.Context, rec *verifiedRecord, stepName string) error {
 	customizer, cleanup, sandboxErr := m.buildCommandCustomizer(rec.name, rec.workingDir)
 	if sandboxErr != nil {
 		return fmt.Errorf("session %q: %w", rec.name, sandboxErr)
@@ -784,7 +792,7 @@ func (m *SessionManager) bindVerifiedRecord(ctx context.Context, rec *verifiedRe
 	}
 
 	if m.LifecycleSink != nil {
-		m.LifecycleSink.OnAdapterLifecycle("", rec.name, "opened", "")
+		m.LifecycleSink.OnAdapterLifecycle(rec.scopeName, rec.name, "opened", stepName)
 	}
 	return nil
 }
@@ -899,6 +907,12 @@ func (m *SessionManager) Close(ctx context.Context, name string) error {
 	sess, exists := m.sessions[name]
 	if exists {
 		delete(m.sessions, name)
+	}
+	// Verified-but-never-bound adapters are tracked for per-scope teardown via
+	// initScopeAdapters/tearDownScopeAdapters. Remove the verified record so a
+	// later scope reusing the same instance ID can verify and bind afresh.
+	if _, verified := m.verified[name]; verified {
+		delete(m.verified, name)
 	}
 	m.mu.Unlock()
 
@@ -1066,8 +1080,8 @@ func (m *SessionManager) bindVerifiedAndLookup(ctx context.Context, name string,
 	if step != nil {
 		stepName = step.Name
 	}
-	if bindErr := m.bindVerifiedRecord(ctx, rec); bindErr != nil {
-		return nil, fmt.Errorf("bind adapter %q for step %q in working directory %q: %w", rec.adapter, stepName, rec.workingDir, bindErr)
+	if bindErr := m.bindVerifiedRecord(ctx, rec, stepName); bindErr != nil {
+		return nil, fmt.Errorf("bind adapter %q for step %q in working directory %q: %w", rec.name, stepName, rec.workingDir, bindErr)
 	}
 
 	m.mu.Lock()

@@ -47,7 +47,7 @@ func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, var
 			return nil, fmt.Errorf("initialize adapter %q: %w", instanceID, fvErr)
 		}
 
-		verifyErr := deps.Sessions.Verify(ctx, instanceID, adapter.Type, adapter.OnCrash, config, secretMap, originRefs, workingDir)
+		verifyErr := deps.Sessions.Verify(ctx, instanceID, adapter.Type, adapter.OnCrash, config, secretMap, originRefs, workingDir, scopeName)
 
 		// Silently swallow ErrSessionAlreadyOpen to support subworkflow bodies that
 		// re-declare parent adapters for safety through re-declaration. Same-scope

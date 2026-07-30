@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -578,6 +579,21 @@ func (p *ctxCheckAdapter) Execute(ctx context.Context, _ string, _ *workflow.Ste
 	return adapter.Result{Outcome: "success"}, nil
 }
 
+// calleeBodyWithAdapter builds a callee FSMGraph that declares a single adapter
+// and has an immediate terminal state. Adapter lifecycle (open/close) happens
+// regardless of whether any step uses the adapter.
+func calleeBodyWithAdapter(adapterType string) *workflow.FSMGraph {
+	instanceID := adapterType + ".default"
+	return &workflow.FSMGraph{
+		InitialState: "done",
+		States:       map[string]*workflow.StateNode{"done": {Name: "done", Terminal: true, Success: true}},
+		Variables:    map[string]*workflow.VariableNode{},
+		Adapters:     map[string]*workflow.AdapterNode{instanceID: {Type: adapterType, Name: "default"}},
+		AdapterOrder: []string{instanceID},
+		Policy:       workflow.DefaultPolicy,
+	}
+}
+
 // calleeBodyWithStep builds a callee FSMGraph with a single step that uses an
 // adapter. The step transitions to terminal state on "success" outcome.
 func calleeBodyWithStep(adapterType string) *workflow.FSMGraph {
@@ -623,39 +639,61 @@ func depsWithLoader(t *testing.T, loader adapterhost.Loader) Deps {
 }
 
 // TestRunSubworkflow_AdaptersIsolatedFromParent verifies that a callee-declared
-// adapter is opened before its first step runs and closed when the subworkflow
-// returns — proving that adapter lifecycle is fully contained within the
-// subworkflow and does not leak into the parent scope.
+// adapter that is verified but never bound is still torn down when the
+// subworkflow returns and does not leak verified state into the parent scope.
 //
-// A broken teardown (missing deferred tearDownScopeAdapters) would leave
-// closes==0 after runSubworkflow returns, failing the test. Under the
-// verify/bind split, the callee must contain a reachable step that targets
-// the adapter so that session binding actually occurs.
+// Under the verify/bind split, the callee adapter is verified at scope start
+// but has no reachable step, so it is never promoted to a bound session. A
+// broken teardown that leaves the verified record behind would cause a second
+// invocation of the same subworkflow to hit ErrSessionAlreadyOpen.
 func TestRunSubworkflow_AdaptersIsolatedFromParent(t *testing.T) {
-	tracker := &lifecycleTrackingAdapter{fakeAdapter: fakeAdapter{name: "noop", outcome: "success"}}
+	tracker := &lifecycleTrackingAdapter{fakeAdapter: fakeAdapter{name: "noop"}}
 	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"noop": tracker}}
 
-	node := subworkflowNodeFor("isolated", calleeBodyWithStep("noop"))
+	sink := &lifecycleTrackingSink{}
+	sessions := adapterhost.NewSessionManager(loader)
+	t.Cleanup(func() { sessions.Shutdown(context.Background()) })
+	deps := Deps{Sessions: sessions, Sink: sink}
+
+	node := subworkflowNodeFor("isolated", calleeBodyWithAdapter("noop"))
 	parentSt := &RunState{
 		Vars:        map[string]cty.Value{"var": cty.EmptyObjectVal},
 		WorkflowDir: t.TempDir(),
 	}
 
-	_, _, err := runSubworkflow(context.Background(), "test-step", node, parentSt, nil, depsWithLoader(t, loader))
-	if err != nil {
+	ctx := context.Background()
+	if _, _, err := runSubworkflow(ctx, "test-step", node, parentSt, nil, deps); err != nil {
 		t.Fatalf("runSubworkflow: %v", err)
 	}
 
+	// A verified-only adapter is never opened or closed at the adapter handle
+	// level because no step binds it to a working directory.
 	tracker.mu.Lock()
 	opens := tracker.opensCount
 	closes := tracker.closesCount
 	tracker.mu.Unlock()
-
-	if opens != 1 {
-		t.Errorf("callee adapter opens: want 1, got %d", opens)
+	if opens != 0 {
+		t.Errorf("callee adapter opens: want 0 (verified-only), got %d", opens)
 	}
-	if closes != 1 {
-		t.Errorf("callee adapter closes: want 1, got %d (adapter leaked past subworkflow boundary)", closes)
+	if closes != 0 {
+		t.Errorf("callee adapter closes: want 0 (verified-only), got %d", closes)
+	}
+
+	// Engine lifecycle events still mark the scope boundary.
+	sink.mu.Lock()
+	events := append([]string(nil), sink.adapterLifecycleEvents...)
+	sink.mu.Unlock()
+	if !slices.Contains(events, "noop.default:verified") {
+		t.Errorf("expected verified lifecycle event for noop.default, got %v", events)
+	}
+	if !slices.Contains(events, "noop.default:closed") {
+		t.Errorf("expected closed lifecycle event for noop.default, got %v", events)
+	}
+
+	// A second invocation must succeed: the verified record was cleaned up,
+	// so the new scope can verify the same instance ID afresh.
+	if _, _, err := runSubworkflow(ctx, "test-step", node, parentSt, nil, deps); err != nil {
+		t.Fatalf("second runSubworkflow: %v", err)
 	}
 }
 

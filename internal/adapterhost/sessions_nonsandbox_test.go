@@ -452,3 +452,28 @@ state "failed" {
 		t.Errorf("Case 2 error = %q; want mention of \"parallel_safe\"", diags.Error())
 	}
 }
+
+// TestValidateWorkingDirFaceValue_ExactRootAllowed verifies that a working
+// directory equal to an allowed root is accepted (regression for review fix 1).
+func TestValidateWorkingDirFaceValue_ExactRootAllowed(t *testing.T) {
+	sm := NewSessionManager(nil)
+	sm.SetAllowedWorkingDirRoots([]string{"/srv/criteria"})
+
+	if err := sm.ValidateWorkingDirFaceValue("/srv/criteria"); err != nil {
+		t.Fatalf("dir == root should be allowed, got: %v", err)
+	}
+}
+
+// TestValidateWorkingDirFaceValue_FilesystemRootAllowsAnyAbsolute verifies that
+// when "/" is the only allowed root, any absolute path is accepted (regression
+// for review fix 1).
+func TestValidateWorkingDirFaceValue_FilesystemRootAllowsAnyAbsolute(t *testing.T) {
+	sm := NewSessionManager(nil)
+	sm.SetAllowedWorkingDirRoots([]string{"/"})
+
+	for _, dir := range []string{"/srv/criteria", "/tmp", "/"} {
+		if err := sm.ValidateWorkingDirFaceValue(dir); err != nil {
+			t.Fatalf("root=/ should allow %q, got: %v", dir, err)
+		}
+	}
+}
