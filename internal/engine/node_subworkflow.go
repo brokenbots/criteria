@@ -96,11 +96,12 @@ func runSubworkflow(ctx context.Context, stepName string, node *workflow.Subwork
 
 	terminal, returnOutputs, finalVars, err := runWorkflowBody(ctx, node.Body, node.BodyEntry, childVars, calleeDir, deps, stepName)
 	if err != nil {
-		// Surface the child's error on the parent's event stream, naming both the
-		// parent step and the child workflow. The adapter init path also emits
-		// an OnAdapterLifecycle event with the same stepName, so operators can
-		// correlate the two diagnostics.
-		deps.Sink.OnRunFailed(fmt.Sprintf("subworkflow %q failed: %v", node.Name, err), stepName)
+		// The caller (evaluateSubworkflowStep in node_step.go) surfaces this
+		// error on the parent's event stream as a step-level OnStepOutcome event,
+		// naming the parent step, so the failure is scoped to the step and can
+		// be routed through the parent's failure arm without publishing a
+		// whole-run RunFailed event from this helper.
+		//
 		// Return a defined output object with every declared output set to null so
 		// the parent can read subworkflow.* on the failure path without a try()
 		// guard and without getting a bare "unsupported attribute" error.

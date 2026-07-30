@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -18,10 +19,11 @@ import (
 type captureSink struct {
 	fakeSink
 
-	mu          sync.Mutex
-	lifecycle   []lifecycleEvent
-	runFailed   []runFailedEvent
-	stepOutputs []stepOutputEvent
+	mu           sync.Mutex
+	lifecycle    []lifecycleEvent
+	stepEntered  []stepEnteredEvent
+	stepOutcomes []stepOutcomeEvent
+	stepOutputs  []stepOutputEvent
 }
 
 type lifecycleEvent struct {
@@ -31,9 +33,16 @@ type lifecycleEvent struct {
 	detail   string
 }
 
-type runFailedEvent struct {
-	reason string
-	step   string
+type stepEnteredEvent struct {
+	step    string
+	adapter string
+	attempt int
+}
+
+type stepOutcomeEvent struct {
+	step    string
+	outcome string
+	err     error
 }
 
 type stepOutputEvent struct {
@@ -47,10 +56,16 @@ func (s *captureSink) OnAdapterLifecycle(stepName, adapter, status, detail strin
 	s.lifecycle = append(s.lifecycle, lifecycleEvent{stepName: stepName, adapter: adapter, status: status, detail: detail})
 }
 
-func (s *captureSink) OnRunFailed(reason, step string) {
+func (s *captureSink) OnStepEntered(step, adapter string, attempt int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.runFailed = append(s.runFailed, runFailedEvent{reason: reason, step: step})
+	s.stepEntered = append(s.stepEntered, stepEnteredEvent{step: step, adapter: adapter, attempt: attempt})
+}
+
+func (s *captureSink) OnStepOutcome(step, outcome string, duration time.Duration, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stepOutcomes = append(s.stepOutcomes, stepOutcomeEvent{step: step, outcome: outcome, err: err})
 }
 
 func (s *captureSink) OnStepOutputCaptured(step string, outputs map[string]string) {
@@ -90,8 +105,9 @@ func calleeBodyWithAdapterAndOutputs(adapterType string) *workflow.FSMGraph {
 
 // TestRunSubworkflow_AdapterInitFailure_PropagatesErrorToParent asserts that
 // when a child workflow's adapter fails to initialize, the parent sink receives
-// an OnAdapterLifecycle event naming the parent step and failing adapter, and an
-// OnRunFailed event carrying the child's error text.
+// an OnAdapterLifecycle("init_failed", ...) event naming the parent step and
+// failing adapter, and an OnStepOutcome(stepName, "failure", ...) event carrying
+// the child's error.
 func TestRunSubworkflow_AdapterInitFailure_PropagatesErrorToParent(t *testing.T) {
 	const stepName = "call_child"
 	const childName = "broken_child"
@@ -112,34 +128,51 @@ func TestRunSubworkflow_AdapterInitFailure_PropagatesErrorToParent(t *testing.T)
 	deps := Deps{Sessions: sessions, Sink: sink}
 
 	node := subworkflowNodeFor(childName, calleeBodyWithAdapterAndOutputs(adapterType))
+	n := &stepNode{
+		graph: &workflow.FSMGraph{
+			Subworkflows: map[string]*workflow.SubworkflowNode{childName: node},
+		},
+		step: &workflow.StepNode{
+			Name:           stepName,
+			TargetKind:     workflow.StepTargetSubworkflow,
+			SubworkflowRef: childName,
+			Outcomes: map[string]*workflow.CompiledOutcome{
+				"failure": {Name: "failure"},
+			},
+		},
+	}
 	parentSt := &RunState{
 		Vars:        map[string]cty.Value{"var": cty.EmptyObjectVal},
 		WorkflowDir: t.TempDir(),
 	}
 
-	outputs, _, err := runSubworkflow(context.Background(), stepName, node, parentSt, nil, deps)
-	if err == nil {
-		t.Fatal("expected error from failing child adapter init, got nil")
+	next, err := n.evaluateSubworkflowStep(context.Background(), parentSt, deps)
+	if err != nil {
+		t.Fatalf("unexpected error from evaluateSubworkflowStep: %v", err)
 	}
-	if !strings.Contains(err.Error(), childName) {
-		t.Errorf("error should name the child workflow, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), initErrMsg) {
-		t.Errorf("error should contain the adapter init failure text, got: %v", err)
-	}
-
-	// Declared outputs must be defined (null) on the failure path.
-	if outputs == nil {
-		t.Fatal("expected defined outputs on failure path, got nil")
-	}
-	if status, ok := outputs["status"]; !ok || !status.IsNull() {
-		t.Errorf("expected declared output 'status' to be null on failure path, got %v", status)
+	if next != "" {
+		t.Errorf("expected empty next state for mapped failure outcome, got %q", next)
 	}
 
 	sink.mu.Lock()
 	lifecycle := append([]lifecycleEvent(nil), sink.lifecycle...)
-	runFailed := append([]runFailedEvent(nil), sink.runFailed...)
+	stepEntered := append([]stepEnteredEvent(nil), sink.stepEntered...)
+	stepOutcomes := append([]stepOutcomeEvent(nil), sink.stepOutcomes...)
 	sink.mu.Unlock()
+
+	if len(stepEntered) == 0 {
+		t.Fatal("expected OnStepEntered event for subworkflow step")
+	}
+	lastEntered := stepEntered[len(stepEntered)-1]
+	if lastEntered.step != stepName {
+		t.Errorf("OnStepEntered step = %q, want %q", lastEntered.step, stepName)
+	}
+	if lastEntered.adapter != "" {
+		t.Errorf("OnStepEntered adapter = %q, want empty", lastEntered.adapter)
+	}
+	if lastEntered.attempt != 1 {
+		t.Errorf("OnStepEntered attempt = %d, want 1", lastEntered.attempt)
+	}
 
 	var initFailedEvent *lifecycleEvent
 	for i := range lifecycle {
@@ -161,15 +194,21 @@ func TestRunSubworkflow_AdapterInitFailure_PropagatesErrorToParent(t *testing.T)
 		t.Errorf("init_failed event detail should contain adapter error, got: %v", initFailedEvent.detail)
 	}
 
-	if len(runFailed) == 0 {
-		t.Fatal("expected OnRunFailed event for child failure")
+	if len(stepOutcomes) == 0 {
+		t.Fatal("expected OnStepOutcome event for child failure")
 	}
-	lastFailed := runFailed[len(runFailed)-1]
-	if lastFailed.step != stepName {
-		t.Errorf("OnRunFailed step = %q, want %q", lastFailed.step, stepName)
+	lastOutcome := stepOutcomes[len(stepOutcomes)-1]
+	if lastOutcome.step != stepName {
+		t.Errorf("OnStepOutcome step = %q, want %q", lastOutcome.step, stepName)
 	}
-	if !strings.Contains(lastFailed.reason, childName) || !strings.Contains(lastFailed.reason, initErrMsg) {
-		t.Errorf("OnRunFailed reason should name child and adapter error, got: %v", lastFailed.reason)
+	if lastOutcome.outcome != "failure" {
+		t.Errorf("OnStepOutcome outcome = %q, want %q", lastOutcome.outcome, "failure")
+	}
+	if lastOutcome.err == nil {
+		t.Fatal("expected OnStepOutcome to carry the child error")
+	}
+	if !strings.Contains(lastOutcome.err.Error(), childName) || !strings.Contains(lastOutcome.err.Error(), initErrMsg) {
+		t.Errorf("OnStepOutcome error should name child and adapter error, got: %v", lastOutcome.err)
 	}
 }
 
