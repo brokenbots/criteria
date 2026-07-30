@@ -192,13 +192,19 @@ func unverifiedAdapterDiag(typeName, resolvedDigest string, lockStatus lockfileS
 		consulted = append(consulted, fmt.Sprintf("lockfile %q (no entry for adapter type %q)", lockStatus.path, typeName))
 	}
 
-	// Mention the OCI cache / digest-addressed install path when a digest was available.
-	if resolvedDigest != "" {
-		encoded := adapterhost.EncodeDigest(digest.Digest(resolvedDigest))
+	// Mention the OCI cache / digest-addressed install path when the lockfile
+	// pins a digest, even if digest-addressed resolution failed and we fell back
+	// to by-name. The operator needs to see the cache path was consulted.
+	if pinDigest := lockStatus.digestForType(typeName); pinDigest != "" {
+		encoded := adapterhost.EncodeDigest(digest.Digest(pinDigest))
+		attempted := ""
+		if resolvedDigest == "" {
+			attempted = " (attempted, not found)"
+		}
 		if root, rerr := adapterhost.InstallRoot(); rerr == nil {
-			consulted = append(consulted, fmt.Sprintf("OCI cache at %q (digest %s)", filepath.Join(root, encoded, adapterhost.AdapterBinaryName(typeName)), resolvedDigest))
+			consulted = append(consulted, fmt.Sprintf("OCI cache at %q (digest %s%s)", filepath.Join(root, encoded, adapterhost.AdapterBinaryName(typeName)), pinDigest, attempted))
 		} else {
-			consulted = append(consulted, fmt.Sprintf("OCI cache (digest %s)", resolvedDigest))
+			consulted = append(consulted, fmt.Sprintf("OCI cache (digest %s%s)", pinDigest, attempted))
 		}
 	}
 

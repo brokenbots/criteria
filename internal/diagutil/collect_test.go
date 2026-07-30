@@ -22,6 +22,14 @@ import (
 const testAdapterType = "test"
 const testDigest = "sha256:38f23c92a11548ce57c54e9312c567558d3ad017fd632adfba305b058988703d"
 
+// setHermeticAdapterRoot points CRITERIA_ADAPTERS at a temp directory for the
+// duration of the test so InstallRoot()/AdaptersRoots() are deterministic and
+// do not depend on $HOME.
+func setHermeticAdapterRoot(t *testing.T) {
+	t.Helper()
+	t.Setenv("CRITERIA_ADAPTERS", t.TempDir())
+}
+
 // mockHandle implements adapterhost.Handle for testing schema collection.
 type mockHandle struct {
 	info    adapterhost.Info
@@ -136,6 +144,8 @@ func expectedDigestPath(t *testing.T) string {
 // digest and its output schema becomes available to the compiler. It must fail
 // without the fix because the old code only called Resolve (by-name).
 func TestCollectSchemas_LockfileOnlyResolution(t *testing.T) {
+	setHermeticAdapterRoot(t)
+
 	dir := t.TempDir()
 	writeLockfile(t, dir)
 
@@ -175,6 +185,8 @@ func TestCollectSchemas_LockfileOnlyResolution(t *testing.T) {
 // TestCollectSchemas_ResolvedDigestMatchesLockfile asserts that the digest
 // actually consulted during schema resolution is the one pinned in the lockfile.
 func TestCollectSchemas_ResolvedDigestMatchesLockfile(t *testing.T) {
+	setHermeticAdapterRoot(t)
+
 	dir := t.TempDir()
 	writeLockfile(t, dir)
 
@@ -221,6 +233,8 @@ func TestCollectSchemas_ResolvedDigestMatchesLockfile(t *testing.T) {
 // TestCollectSchemas_NoOutputSchemaWarning asserts that an adapter that resolves
 // but declares no output_schema produces a distinct warning.
 func TestCollectSchemas_NoOutputSchemaWarning(t *testing.T) {
+	setHermeticAdapterRoot(t)
+
 	dir := t.TempDir()
 	writeLockfile(t, dir)
 
@@ -265,6 +279,8 @@ func TestCollectSchemas_NoOutputSchemaWarning(t *testing.T) {
 // unresolvable adapter warning names the consulted sources and does not repeat
 // the misleading "run criteria adapter lock" advice when a lockfile exists.
 func TestCollectSchemas_UnverifiedWarningNamesSources(t *testing.T) {
+	setHermeticAdapterRoot(t)
+
 	dir := t.TempDir()
 	writeLockfile(t, dir)
 
@@ -293,6 +309,12 @@ func TestCollectSchemas_UnverifiedWarningNamesSources(t *testing.T) {
 	}
 	if !strings.Contains(d.Detail, testDigest) {
 		t.Errorf("detail should name the locked digest, got %q", d.Detail)
+	}
+	if !strings.Contains(d.Detail, "OCI cache") {
+		t.Errorf("detail should mention the OCI cache path for the lockfile digest, got %q", d.Detail)
+	}
+	if !strings.Contains(d.Detail, "attempted, not found") {
+		t.Errorf("detail should note the digest-addressed cache path was attempted but not found, got %q", d.Detail)
 	}
 	if strings.Contains(d.Detail, "criteria adapter lock") {
 		t.Errorf("detail should not suggest re-running lock when lockfile exists; got %q", d.Detail)
