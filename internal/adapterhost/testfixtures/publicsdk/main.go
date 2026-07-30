@@ -14,7 +14,7 @@ import (
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	adapterhost "github.com/brokenbots/criteria-go-adapter-sdk/adapterhost"
 
-	"github.com/brokenbots/criteria/internal/adapterhost/testfixtures/heartbeatutil"
+	"github.com/brokenbots/criteria/internal/adapterhost/heartbeatutil"
 )
 
 // publicSDKAdapter is the reference implementation that exercises every method

@@ -11,7 +11,7 @@ import (
 	adapterhost "github.com/brokenbots/criteria-go-adapter-sdk/adapterhost"
 	"google.golang.org/protobuf/types/known/structpb"
 
-	"github.com/brokenbots/criteria/internal/adapterhost/testfixtures/heartbeatutil"
+	"github.com/brokenbots/criteria/internal/adapterhost/heartbeatutil"
 )
 
 type noopService struct {

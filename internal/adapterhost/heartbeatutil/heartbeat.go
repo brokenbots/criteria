@@ -13,8 +13,15 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
-	adapterhost "github.com/brokenbots/criteria-go-adapter-sdk/adapterhost"
 )
+
+// LogEventSender is the minimal surface this helper needs from the adapter
+// SDK's LogEventSender. Keeping the interface here lets the package stay free
+// of the SDK import, which is required by the repo's import-lint rules for
+// non-testfixture internal/ code.
+type LogEventSender interface {
+	Send(*v2.LogEvent) error
+}
 
 // RunLogHeartbeat blocks until ctx is canceled, emitting log-stream heartbeat
 // events at the protocol default cadence of 30 s. If the environment variable
@@ -23,7 +30,7 @@ import (
 // with a short stall threshold without waiting the full production interval.
 //
 // Returning nil for host-initiated cancellation is not a contract violation.
-func RunLogHeartbeat(ctx context.Context, sender adapterhost.LogEventSender) error {
+func RunLogHeartbeat(ctx context.Context, sender LogEventSender) error {
 	interval := 30 * time.Second
 	if raw := os.Getenv("CRITERIA_TEST_HEARTBEAT_INTERVAL_MS"); raw != "" {
 		if ms, err := strconv.Atoi(raw); err == nil && ms > 0 {
