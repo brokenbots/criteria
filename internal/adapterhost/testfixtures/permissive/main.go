@@ -25,6 +25,8 @@ import (
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	adapterhost "github.com/brokenbots/criteria-go-adapter-sdk/adapterhost"
+
+	"github.com/brokenbots/criteria/internal/adapterhost/heartbeatutil"
 )
 
 type permissiveService struct {
@@ -112,8 +114,15 @@ func (s *permissiveService) Execute(_ context.Context, req *v2.ExecuteRequest, s
 	})
 }
 
-func (s *permissiveService) Log(_ context.Context, _ *v2.LogRequest, _ adapterhost.LogEventSender) error {
-	return nil
+func (s *permissiveService) Log(ctx context.Context, _ *v2.LogRequest, sender adapterhost.LogEventSender) error {
+	// The log stream must remain open for the lifetime of the session. Returning
+	// immediately would stop the SDK heartbeat ticker and break the host's
+	// liveness contract, so block until the host cancels the stream.
+	//
+	// heartbeatutil.RunLogHeartbeat is a transitional shim: the Go SDK should
+	// own session-lifetime heartbeats (see PR #283 Follow-ups). Remove this once
+	// the SDK fix lands.
+	return heartbeatutil.RunLogHeartbeat(ctx, sender)
 }
 
 func (s *permissiveService) Pause(_ context.Context, _ *v2.PauseRequest) (*v2.PauseResponse, error) {

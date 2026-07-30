@@ -13,6 +13,8 @@ import (
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	adapterhost "github.com/brokenbots/criteria-go-adapter-sdk/adapterhost"
+
+	"github.com/brokenbots/criteria/internal/adapterhost/heartbeatutil"
 )
 
 // publicSDKAdapter is the reference implementation that exercises every method
@@ -83,8 +85,15 @@ func (p *publicSDKAdapter) Execute(ctx context.Context, req *v2.ExecuteRequest, 
 	})
 }
 
-func (p *publicSDKAdapter) Log(_ context.Context, _ *v2.LogRequest, _ adapterhost.LogEventSender) error {
-	return nil
+func (p *publicSDKAdapter) Log(ctx context.Context, _ *v2.LogRequest, sender adapterhost.LogEventSender) error {
+	// The log stream must remain open for the lifetime of the session. Returning
+	// immediately would stop the SDK heartbeat ticker and break the host's
+	// liveness contract, so block until the host cancels the stream.
+	//
+	// heartbeatutil.RunLogHeartbeat is a transitional shim: the Go SDK should
+	// own session-lifetime heartbeats (see PR #283 Follow-ups). Remove this once
+	// the SDK fix lands.
+	return heartbeatutil.RunLogHeartbeat(ctx, sender)
 }
 
 func (p *publicSDKAdapter) CloseSession(_ context.Context, req *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {

@@ -21,12 +21,14 @@ import (
 
 // loggingMockHandle is a mock Handle that also implements LogStreamStarter.
 type loggingMockHandle struct {
-	executeFunc func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error)
-	logEvents   []*v2.LogEvent
-	mu          sync.Mutex
-	started     bool
-	cancelled   bool
-	emitTrigger chan struct{} // when closed, the log goroutine starts emitting
+	executeFunc            func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error)
+	logEvents              []*v2.LogEvent
+	logReturnEarly         bool // if true, the Log goroutine returns immediately instead of blocking
+	mu                     sync.Mutex
+	started                bool
+	cancelled              bool
+	emitTrigger            chan struct{} // when closed, the log goroutine starts emitting
+	startLogStreamOverride func(ctx context.Context, sessionID string, sink LogEventSink) (cancel func(), done <-chan error, err error)
 }
 
 func (m *loggingMockHandle) Info(ctx context.Context) (Info, error) { return Info{}, nil }
@@ -51,12 +53,23 @@ func (m *loggingMockHandle) Snapshot(context.Context, string) (*v2.SnapshotRespo
 }
 func (m *loggingMockHandle) Restore(context.Context, string, []byte, uint32) error { return nil }
 
-func (m *loggingMockHandle) StartLogStream(ctx context.Context, sessionID string, sink LogEventSink) (func(), error) {
+func (m *loggingMockHandle) StartLogStream(ctx context.Context, sessionID string, sink LogEventSink) (cancel func(), done <-chan error, err error) {
+	if m.startLogStreamOverride != nil {
+		return m.startLogStreamOverride(ctx, sessionID, sink)
+	}
 	m.mu.Lock()
 	m.started = true
 	m.mu.Unlock()
-	logCtx, cancel := context.WithCancel(ctx)
+	logCtx, cancelFn := context.WithCancel(ctx)
+	doneCh := make(chan error, 1)
 	go func() {
+		defer func() { doneCh <- nil; close(doneCh) }()
+		if m.logReturnEarly {
+			// Simulates an adapter that returns from Log immediately. The SDK
+			// heartbeat ticker dies with the call, so the host must not treat
+			// the absence of heartbeats as a stall.
+			return
+		}
 		if m.emitTrigger != nil {
 			select {
 			case <-m.emitTrigger:
@@ -70,15 +83,23 @@ func (m *loggingMockHandle) StartLogStream(ctx context.Context, sessionID string
 			}
 			_ = sink.Emit(ev)
 		}
-		// Block until cancelled.
+		// A correct adapter blocks until the host cancels the stream.
 		<-logCtx.Done()
 	}()
 	return func() {
-		cancel()
+		cancelFn()
 		m.mu.Lock()
 		m.cancelled = true
 		m.mu.Unlock()
-	}, nil
+	}, doneCh, nil
+}
+
+// logStarted reports whether StartLogStream has been called. It is safe for
+// concurrent use by test assertions.
+func (m *loggingMockHandle) logStarted() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.started
 }
 
 func TestSessionManager_LogStreamStartsAtOpen(t *testing.T) {
@@ -86,14 +107,14 @@ func TestSessionManager_LogStreamStartsAtOpen(t *testing.T) {
 	sm := NewSessionManager(nil)
 
 	// StartLogStream should not have been called yet.
-	if h.started {
+	if h.logStarted() {
 		t.Fatal("expected log stream not started before Open")
 	}
 
 	_ = sm.registerSession(context.Background(), "agent", "test", "fail", nil, nil, nil, nil, h, nil, "")
 	defer sm.Close(context.Background(), "agent")
 
-	if !h.started {
+	if !h.logStarted() {
 		t.Fatal("expected log stream started after registerSession")
 	}
 }
@@ -227,10 +248,12 @@ func TestSessionManager_LogLinesRoutedToStepSink(t *testing.T) {
 }
 
 // TestSessionManager_HeartbeatStall_DetectsCrash verifies that if no
-// heartbeat has been received for >90s, Execute treats the session as crashed.
+// heartbeat has been received for longer than the stall threshold while the
+// log stream is still alive, Execute treats the session as crashed.
 func TestSessionManager_HeartbeatStall_DetectsCrash(t *testing.T) {
 	h := &loggingMockHandle{}
 	sm := NewSessionManager(nil)
+	sm.HeartbeatStallThreshold = 100 * time.Millisecond
 	_ = sm.registerSession(context.Background(), "agent", "test", "fail", nil, nil, nil, nil, h, nil, "")
 	defer sm.Close(context.Background(), "agent")
 
@@ -250,6 +273,44 @@ func TestSessionManager_HeartbeatStall_DetectsCrash(t *testing.T) {
 	}
 	if !collector.saw("session.crash") {
 		t.Fatal("expected session.crash event on heartbeat stall")
+	}
+}
+
+// TestSessionManager_LogStreamEarlyEnd_DoesNotStall verifies that an adapter
+// which returns from its Log RPC immediately does not cause a later heartbeat
+// stall crash. The host must recognize the early stream end, log a clear
+// diagnostic, and disarm the stall detector.
+func TestSessionManager_LogStreamEarlyEnd_DoesNotStall(t *testing.T) {
+	rec := &recordingSlogHandler{}
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(rec))
+	defer slog.SetDefault(oldLogger)
+
+	h := &loggingMockHandle{logReturnEarly: true}
+	sm := NewSessionManager(nil)
+	sm.HeartbeatStallThreshold = 100 * time.Millisecond
+	_ = sm.registerSession(context.Background(), "agent", "test", "fail", nil, nil, nil, nil, h, nil, "")
+	defer sm.Close(context.Background(), "agent")
+
+	// Wait past the stall threshold. A buggy host would now see the monitor as
+	// stalled and declare the session crashed on the next Execute.
+	time.Sleep(200 * time.Millisecond)
+
+	collector := &adapterEventCollector{}
+	step := &workflow.StepNode{Name: "run"}
+	_, err := sm.Execute(context.Background(), "agent", step, collector)
+	if err != nil {
+		t.Fatalf("expected Execute to succeed after early log stream end, got %v", err)
+	}
+
+	var found int
+	for _, r := range rec.all() {
+		if strings.Contains(r, "log stream ended while session was open") && strings.Contains(r, "broke the log-stream contract") {
+			found++
+		}
+	}
+	if found != 1 {
+		t.Fatalf("expected exactly one diagnostic warning naming the broken log-stream contract, got %d", found)
 	}
 }
 
@@ -409,8 +470,15 @@ func TestSessionManager_IdleLogRedaction(t *testing.T) {
 }
 
 // TestSessionManager_RespawnRestartsLogStream verifies that after a crash and
-// respawn, the log stream is restarted and heartbeat tracking is reset.
+// respawn, the log stream is restarted and heartbeat tracking is reset. A
+// correct adapter that blocks until cancellation must not be blamed for the
+// host-initiated log-stream teardown.
 func TestSessionManager_RespawnRestartsLogStream(t *testing.T) {
+	rec := &recordingSlogHandler{}
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(rec))
+	defer slog.SetDefault(oldLogger)
+
 	trigger1 := make(chan struct{})
 	trigger2 := make(chan struct{})
 
@@ -449,7 +517,7 @@ func TestSessionManager_RespawnRestartsLogStream(t *testing.T) {
 	}
 
 	// After respawn, the new handle's log stream should have been started.
-	if !h2.started {
+	if !h2.logStarted() {
 		t.Fatal("expected log stream started on respawned handle")
 	}
 	// hbMonitor should have been reset to a recent time.
@@ -457,6 +525,247 @@ func TestSessionManager_RespawnRestartsLogStream(t *testing.T) {
 	lastHB := sess.hbMonitor.Last()
 	if time.Since(lastHB) > 90*time.Second {
 		t.Fatalf("expected heartbeat reset after respawn, got lastHB=%v", lastHB)
+	}
+
+	for _, r := range rec.all() {
+		if strings.Contains(r, "broke the log-stream contract") {
+			t.Fatalf("respawn of a correct adapter falsely emitted contract-breaker diagnostic: %q", r)
+		}
+	}
+}
+
+// TestSessionManager_OldWatcherAfterReset_NoFalseDiagnostic forces the old
+// stream's watcher to linger until after the respawned stream is established.
+// With per-stream host-cancel channels the old watcher must suppress its
+// diagnostic regardless of when it runs.
+func TestSessionManager_OldWatcherAfterReset_NoFalseDiagnostic(t *testing.T) {
+	rec := &recordingSlogHandler{}
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(rec))
+	defer slog.SetDefault(oldLogger)
+
+	oldBlocked := make(chan struct{})
+	h1 := &loggingMockHandle{}
+	// Override StartLogStream for h1 so we can control when done fires.
+	h1CustomStart := func(ctx context.Context, sessionID string, sink LogEventSink) (cancel func(), done <-chan error, err error) {
+		logCtx, cancelFn := context.WithCancel(ctx)
+		d := make(chan error, 1)
+		go func() {
+			<-oldBlocked    // wait until the test releases the old stream
+			<-logCtx.Done() // do not exit until the host cancels the stream
+			d <- logCtx.Err()
+			close(d)
+		}()
+		return cancelFn, d, nil
+	}
+	h1.startLogStreamOverride = h1CustomStart
+	h1.executeFunc = func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+		// Unblock the old Log goroutine before returning the crash error.
+		// This makes oldDone close, allowing respawn to start the new stream
+		// while the old watcher goroutine may still be scheduled later.
+		close(oldBlocked)
+		return adapter.Result{}, errors.New("connection reset")
+	}
+
+	h2 := &loggingMockHandle{
+		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+			return adapter.Result{Outcome: "success"}, nil
+		},
+	}
+
+	loader := &mockLoaderForRespawn{handles: []*loggingMockHandle{h2}}
+	sm := NewSessionManager(loader)
+	sm.SetGraph(&workflow.FSMGraph{})
+
+	_ = sm.registerSession(context.Background(), "agent", "test", OnCrashRespawn, nil, nil, nil, nil, h1, nil, "")
+	defer sm.Close(context.Background(), "agent")
+
+	step := &workflow.StepNode{Name: "run"}
+	_, err := sm.Execute(context.Background(), "agent", step, &logEventCollector{})
+	if err != nil {
+		t.Fatalf("expected respawn+retry to succeed, got %v", err)
+	}
+
+	// Give the old watcher a chance to observe its per-stream host-cancel
+	// channel after the new stream is established.
+	time.Sleep(100 * time.Millisecond)
+
+	for _, r := range rec.all() {
+		if strings.Contains(r, "broke the log-stream contract") {
+			t.Fatalf("lingering old watcher falsely emitted contract-breaker diagnostic: %q", r)
+		}
+	}
+}
+
+// TestSessionManager_RespawnedEarlyLogEnd_DetectsBrokenContract verifies that a
+// respawned adapter whose Log stream ends early is still diagnosed, because the
+// new stream generation has its own host-cancel channel.
+func TestSessionManager_RespawnedEarlyLogEnd_DetectsBrokenContract(t *testing.T) {
+	rec := &recordingSlogHandler{}
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(rec))
+	defer slog.SetDefault(oldLogger)
+
+	h1 := &loggingMockHandle{
+		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+			return adapter.Result{}, errors.New("connection reset")
+		},
+	}
+	// The respawned handle is broken: its Log returns immediately.
+	h2 := &loggingMockHandle{
+		logReturnEarly: true,
+		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+			return adapter.Result{Outcome: "success"}, nil
+		},
+	}
+
+	loader := &mockLoaderForRespawn{handles: []*loggingMockHandle{h2}}
+	sm := NewSessionManager(loader)
+	sm.SetGraph(&workflow.FSMGraph{})
+	_ = sm.registerSession(context.Background(), "agent", "test", OnCrashRespawn, nil, nil, nil, nil, h1, nil, "")
+	defer sm.Close(context.Background(), "agent")
+
+	// Wait long enough for the new (broken) stream to end and the watcher to
+	// record the contract violation before Close suppresses it.
+	time.Sleep(50 * time.Millisecond)
+
+	step := &workflow.StepNode{Name: "run"}
+	_, err := sm.Execute(context.Background(), "agent", step, &logEventCollector{})
+	if err != nil {
+		t.Fatalf("expected Execute to succeed despite broken respawned stream, got %v", err)
+	}
+	if !h2.logStarted() {
+		t.Fatal("expected respawned handle log stream to start")
+	}
+	// Allow the watcher goroutine for the new broken stream to record the
+	// contract-violation diagnostic before we inspect the captured records.
+	time.Sleep(50 * time.Millisecond)
+
+	var found int
+	for _, r := range rec.all() {
+		if strings.Contains(r, "broke the log-stream contract") {
+			found++
+		}
+	}
+	if found != 1 {
+		t.Fatalf("expected exactly one contract-breaker diagnostic for the broken respawned stream, got %d", found)
+	}
+}
+
+// TestSessionManager_RestartLogStream_BoundedWait verifies that if the old
+// log stream's done channel is never closed after cancel, restartLogStream does
+// not block forever: it proceeds after the configured drain timeout, starts
+// the new stream, and logs a single warning.
+func TestSessionManager_RestartLogStream_BoundedWait(t *testing.T) {
+	rec := &recordingSlogHandler{}
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(rec))
+	defer slog.SetDefault(oldLogger)
+
+	h1 := &loggingMockHandle{}
+	// The old stream's done channel is intentionally never closed, even after
+	// cancel. This simulates a broken adapter whose Log goroutine ignores
+	// cancellation and never reports stream termination.
+	h1.startLogStreamOverride = func(ctx context.Context, sessionID string, sink LogEventSink) (cancel func(), done <-chan error, err error) {
+		logCtx, cancelFn := context.WithCancel(ctx)
+		d := make(chan error)
+		go func() {
+			// Wait for cancel, but never close d.
+			<-logCtx.Done()
+		}()
+		return cancelFn, d, nil
+	}
+	h1.executeFunc = func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+		return adapter.Result{}, errors.New("connection reset")
+	}
+
+	h2 := &loggingMockHandle{
+		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+			return adapter.Result{Outcome: "success"}, nil
+		},
+	}
+
+	loader := &mockLoaderForRespawn{handles: []*loggingMockHandle{h2}}
+	sm := NewSessionManager(loader)
+	sm.SetGraph(&workflow.FSMGraph{})
+	sm.HeartbeatStallThreshold = 100 * time.Millisecond
+	sm.RespawnLogStreamDrainTimeout = 50 * time.Millisecond
+
+	_ = sm.registerSession(context.Background(), "agent", "test", OnCrashRespawn, nil, nil, nil, nil, h1, nil, "")
+	defer sm.Close(context.Background(), "agent")
+
+	step := &workflow.StepNode{Name: "run"}
+	start := time.Now()
+	_, err := sm.Execute(context.Background(), "agent", step, &logEventCollector{})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("expected respawn+retry to succeed despite wedged old watcher, got %v", err)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("respawn took too long (%v); bounded wait did not unblock", elapsed)
+	}
+	if !h2.logStarted() {
+		t.Fatal("expected log stream started on respawned handle")
+	}
+
+	// A subsequent Execute on the respawned handle should succeed.
+	_, err = sm.Execute(context.Background(), "agent", step, &logEventCollector{})
+	if err != nil {
+		t.Fatalf("expected second Execute on respawned handle to succeed, got %v", err)
+	}
+
+	// The new stream is already alive; a late diagnostic from the old watcher
+	// would be distinguishable from a respawn false-positive.
+	sess := sm.sessions["agent"]
+	if !sess.logStreamAlive.Load() {
+		t.Fatal("expected logStreamAlive true for new stream after bounded respawn")
+	}
+
+	var found int
+	for _, r := range rec.all() {
+		if strings.Contains(r, "adapter log stream did not drain after cancel; continuing respawn to avoid wedge") {
+			found++
+		}
+	}
+	if found != 1 {
+		t.Fatalf("expected exactly one bounded-drain warning, got %d", found)
+	}
+}
+
+// TestSessionManager_RespawnThenClose_NoFalseDiagnostic verifies the
+// respawn-then-immediately-close race is handled by the same per-stream
+// host-cancel signal used during respawn.
+func TestSessionManager_RespawnThenClose_NoFalseDiagnostic(t *testing.T) {
+	rec := &recordingSlogHandler{}
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(rec))
+	defer slog.SetDefault(oldLogger)
+
+	h1 := &loggingMockHandle{
+		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+			return adapter.Result{}, errors.New("connection reset")
+		},
+	}
+	h2 := &loggingMockHandle{
+		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+			return adapter.Result{Outcome: "success"}, nil
+		},
+	}
+
+	loader := &mockLoaderForRespawn{handles: []*loggingMockHandle{h2}}
+	sm := NewSessionManager(loader)
+	sm.SetGraph(&workflow.FSMGraph{})
+	_ = sm.registerSession(context.Background(), "agent", "test", OnCrashRespawn, nil, nil, nil, nil, h1, nil, "")
+
+	// Allow respawn to begin.
+	time.Sleep(10 * time.Millisecond)
+	// Close while the respawn is in progress or immediately after it finishes.
+	_ = sm.Close(context.Background(), "agent")
+
+	for _, r := range rec.all() {
+		if strings.Contains(r, "broke the log-stream contract") {
+			t.Fatalf("respawn-then-close falsely emitted contract-breaker diagnostic: %q", r)
+		}
 	}
 }
 

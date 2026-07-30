@@ -103,12 +103,13 @@ func (noopSink) Adapter(string, any) {}
 
 // recordingSink records all events for assertion by tests.
 type recordingSink struct {
-	mu            sync.Mutex
-	logEvents     int
-	adapterEvts   int
-	chunks        [][]byte
-	adapterData   []string
-	adapterEvents []recordedAdapterEvent
+	mu              sync.Mutex
+	logEvents       int
+	heartbeatEvents int
+	adapterEvts     int
+	chunks          [][]byte
+	adapterData     []string
+	adapterEvents   []recordedAdapterEvent
 }
 
 func (s *recordingSink) Log(_ string, chunk []byte) {
@@ -138,10 +139,21 @@ func (s *recordingSink) Emit(event *v2.LogEvent) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.logEvents++
+	if event.GetHeartbeat() != nil {
+		s.heartbeatEvents++
+		return nil
+	}
 	if len(event.GetLine()) > 0 {
 		s.chunks = append(s.chunks, append([]byte(nil), event.GetLine()...))
 	}
 	return nil
+}
+
+// heartbeatEventCount returns the number of LogEvent heartbeat events observed.
+func (s *recordingSink) heartbeatEventCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.heartbeatEvents
 }
 
 func (s *recordingSink) totalEvents() int {

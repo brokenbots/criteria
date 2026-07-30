@@ -26,11 +26,18 @@ func testLogging(t *testing.T, name string, loader adapterhost.Loader, opts *Opt
 
 	if lss, ok := plug.(adapterhost.LogStreamStarter); ok {
 		logSink := &recordingSink{}
-		cancelLog, err := lss.StartLogStream(ctx, sessionID, logSink)
+		cancelLog, done, err := lss.StartLogStream(ctx, sessionID, logSink)
 		if err != nil {
 			t.Fatalf("start log stream: %v", err)
 		}
-		defer cancelLog()
+		defer func() {
+			cancelLog()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatalf("%s: log stream did not finish after cancel", name)
+			}
+		}()
 	}
 
 	cfg := cloneConfig(opts.StepConfig)

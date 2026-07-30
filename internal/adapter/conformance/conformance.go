@@ -4,10 +4,14 @@ package conformance
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
@@ -39,9 +43,11 @@ type Options struct {
 	// post-W15) should set this to "failure".
 	PermissionDenialOutcome string
 
-	// Heartbeats, when true, enables the heartbeats suite (requires the
-	// adapter to support log-stream stall detection).
-	Heartbeats bool
+	// HeartbeatStallThreshold is the duration the host uses as its stall
+	// threshold in the heartbeat conformance tests. It lets the suite run with
+	// a short threshold instead of waiting the production 90s. If zero a
+	// default short threshold is used.
+	HeartbeatStallThreshold time.Duration
 
 	// ErrorInjection, when true, enables the error_injection suite.
 	ErrorInjection bool
@@ -64,6 +70,41 @@ type executeTarget interface {
 }
 
 type targetFactory func(*testing.T) executeTarget
+
+//go:embed matrix.yaml
+var matrixYAML []byte
+
+var (
+	matrixSuites         []string
+	matrixRequiredSuites []string
+	matrixLoadOnce       sync.Once
+)
+
+func loadMatrix() (suites, required []string) {
+	matrixLoadOnce.Do(func() {
+		var m struct {
+			Suites         []string `yaml:"suites"`
+			RequiredSuites []string `yaml:"required_suites"`
+		}
+		if err := yaml.Unmarshal(matrixYAML, &m); err != nil {
+			// matrix.yaml is bundled at build time; a parse error is a programming
+			// error and should surface loudly rather than be swallowed.
+			panic(fmt.Sprintf("parse embedded matrix.yaml: %v", err))
+		}
+		matrixSuites = m.Suites
+		matrixRequiredSuites = m.RequiredSuites
+	})
+	return matrixSuites, matrixRequiredSuites
+}
+
+func requiredSuiteSet() map[string]struct{} {
+	_, required := loadMatrix()
+	set := make(map[string]struct{}, len(required))
+	for _, r := range required {
+		set[r] = struct{}{}
+	}
+	return set
+}
 
 // Run executes the shared adapter conformance contract.
 func Run(t *testing.T, name string, factory func() adapter.Adapter, opts Options) {
@@ -126,23 +167,38 @@ func RunAdapter(t *testing.T, name, binaryPath string, opts Options) {
 }
 
 func runV2Suites(t *testing.T, name string, loader adapterhost.Loader, opts *Options, info *adapterhost.Info) {
-	t.Run("session_lifecycle", func(t *testing.T) { testSessionLifecycle(t, name, loader, opts, info) })
-	t.Run("concurrent_sessions", func(t *testing.T) { testConcurrentSessions(t, name, loader, opts, info) })
-	t.Run("session_crash_detection", func(t *testing.T) { testSessionCrashDetection(t, name, loader, opts, info) })
-	t.Run("permission_request_shape", func(t *testing.T) { testPermissionRequestShape(t, name, loader, opts, info) })
+	required := requiredSuiteSet()
+	runSuite := func(t *testing.T, suite string, fn func(*testing.T)) {
+		t.Helper()
+		skipped := false
+		t.Run(suite, func(t *testing.T) {
+			defer func() { skipped = t.Skipped() }()
+			fn(t)
+		})
+		if skipped {
+			if _, ok := required[suite]; ok {
+				t.Fatalf("required conformance suite %q was skipped", suite)
+			}
+		}
+	}
 
-	t.Run("permissions", func(t *testing.T) { testPermissions(t, name, loader, opts, info) })
-	t.Run("logging", func(t *testing.T) { testLogging(t, name, loader, opts, info) })
-	t.Run("pause_resume", func(t *testing.T) { testPauseResume(t, name, loader, opts, info) })
-	t.Run("snapshot_restore", func(t *testing.T) { testSnapshotRestore(t, name, loader, opts, info) })
-	t.Run("inspect", func(t *testing.T) { testInspect(t, name, loader, opts, info) })
-	t.Run("secrets", func(t *testing.T) { testSecrets(t, name, loader, opts, info) })
-	t.Run("sensitive_output", func(t *testing.T) { testSensitiveOutput(t, name, loader, opts, info) })
-	t.Run("heartbeats", func(t *testing.T) { testHeartbeats(t, name, loader, opts, info) })
-	t.Run("chunking", func(t *testing.T) { testChunking(t, name, loader, opts, info) })
-	t.Run("error_injection", func(t *testing.T) { testErrorInjection(t, name, loader, opts, info) })
-	t.Run("ordering", func(t *testing.T) { testOrdering(t, name, loader, opts, info) })
-	t.Run("concurrent_stress", func(t *testing.T) { testConcurrentStress(t, name, loader, opts, info) })
+	runSuite(t, "session_lifecycle", func(t *testing.T) { testSessionLifecycle(t, name, loader, opts, info) })
+	runSuite(t, "concurrent_sessions", func(t *testing.T) { testConcurrentSessions(t, name, loader, opts, info) })
+	runSuite(t, "session_crash_detection", func(t *testing.T) { testSessionCrashDetection(t, name, loader, opts, info) })
+	runSuite(t, "permission_request_shape", func(t *testing.T) { testPermissionRequestShape(t, name, loader, opts, info) })
+
+	runSuite(t, "permissions", func(t *testing.T) { testPermissions(t, name, loader, opts, info) })
+	runSuite(t, "logging", func(t *testing.T) { testLogging(t, name, loader, opts, info) })
+	runSuite(t, "pause_resume", func(t *testing.T) { testPauseResume(t, name, loader, opts, info) })
+	runSuite(t, "snapshot_restore", func(t *testing.T) { testSnapshotRestore(t, name, loader, opts, info) })
+	runSuite(t, "inspect", func(t *testing.T) { testInspect(t, name, loader, opts, info) })
+	runSuite(t, "secrets", func(t *testing.T) { testSecrets(t, name, loader, opts, info) })
+	runSuite(t, "sensitive_output", func(t *testing.T) { testSensitiveOutput(t, name, loader, opts, info) })
+	runSuite(t, "heartbeats", func(t *testing.T) { testHeartbeats(t, name, loader, opts, info) })
+	runSuite(t, "chunking", func(t *testing.T) { testChunking(t, name, loader, opts, info) })
+	runSuite(t, "error_injection", func(t *testing.T) { testErrorInjection(t, name, loader, opts, info) })
+	runSuite(t, "ordering", func(t *testing.T) { testOrdering(t, name, loader, opts, info) })
+	runSuite(t, "concurrent_stress", func(t *testing.T) { testConcurrentStress(t, name, loader, opts, info) })
 }
 
 func runContractTests(t *testing.T, name string, opts *Options, factory targetFactory) {

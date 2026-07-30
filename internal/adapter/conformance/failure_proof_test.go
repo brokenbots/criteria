@@ -6,7 +6,8 @@ import (
 	"testing"
 )
 
-func runBrokenAdapterFixtureAssertion(t *testing.T) {
+func runConformanceFailFixture(t *testing.T, fixtureTestName, requiredSubtest string) {
+	t.Helper()
 	cmd := exec.Command(
 		"go",
 		"test",
@@ -14,19 +15,31 @@ func runBrokenAdapterFixtureAssertion(t *testing.T) {
 		"conformancefail",
 		"./internal/adapter/conformance",
 		"-run",
-		"TestBrokenAdapterConformanceFixture",
+		fixtureTestName,
 	)
 	cmd.Dir = "../../.."
 	out, err := cmd.CombinedOutput()
 	if err == nil {
-		t.Fatalf("expected broken fixture conformance test to fail, but it passed\noutput:\n%s", out)
+		t.Fatalf("expected %q conformance test to fail, but it passed\noutput:\n%s", fixtureTestName, out)
 	}
 	outText := string(out)
-	if !strings.Contains(outText, "outcome_domain") {
-		t.Fatalf("expected failing sub-test outcome_domain in output\noutput:\n%s", outText)
+	if !strings.Contains(outText, requiredSubtest) {
+		t.Fatalf("expected failing sub-test %q in %q output\noutput:\n%s", requiredSubtest, fixtureTestName, outText)
 	}
 }
 
-func TestConformanceHarnessDetectsBrokenAdapterFixture(t *testing.T) {
-	runBrokenAdapterFixtureAssertion(t)
+func TestConformanceHarnessDetectsBrokenOutcomeDomainFixture(t *testing.T) {
+	// The broken fixture returns an empty outcome; only outcome_domain should fail.
+	runConformanceFailFixture(t, "TestBrokenAdapterConformanceFixture", "outcome_domain")
+}
+
+func TestConformanceHarnessDetectsNonHeartbeatingFixture(t *testing.T) {
+	// The nonheartbeating fixture returns from Log immediately; heartbeats must fail.
+	runConformanceFailFixture(t, "TestNonHeartbeatingAdapterConformanceFixture", "heartbeats")
+}
+
+func TestConformanceHarnessFailsWhenRequiredSuiteSkipped(t *testing.T) {
+	// A handle that does not implement LogStreamStarter skips the heartbeats
+	// suite; because heartbeats is required, runV2Suites must fail loudly.
+	runConformanceFailFixture(t, "TestRequiredSuiteSkipFailsRun", "required conformance suite \"heartbeats\" was skipped")
 }

@@ -77,8 +77,41 @@ type SessionManager struct {
 	// It provides phone-home adapter handles instead of local binaries.
 	remoteShim RemoteShim
 
+	// HeartbeatStallThreshold is the duration after which a log-stream heartbeat
+	// is considered stalled. If zero, the default 90s is used. This is primarily
+	// a test hook so conformance and regression tests can use a short threshold.
+	HeartbeatStallThreshold time.Duration
+
+	// RespawnLogStreamDrainTimeout is the maximum time restartLogStream waits for
+	// the previous log-stream watcher to finish after cancellation. If zero, a
+	// bound derived from HeartbeatStallThreshold is used (1/3 of the threshold,
+	// clamped between 5s and 30s). This is a test hook so the bounded-wait
+	// regression test can use a short value.
+	RespawnLogStreamDrainTimeout time.Duration
+
 	mu       sync.Mutex
 	sessions map[string]*Session
+}
+
+func (m *SessionManager) heartbeatStallThreshold() time.Duration {
+	if m.HeartbeatStallThreshold > 0 {
+		return m.HeartbeatStallThreshold
+	}
+	return 90 * time.Second
+}
+
+func (m *SessionManager) respawnLogStreamDrainTimeout() time.Duration {
+	if m.RespawnLogStreamDrainTimeout > 0 {
+		return m.RespawnLogStreamDrainTimeout
+	}
+	third := m.heartbeatStallThreshold() / 3
+	if third < 5*time.Second {
+		return 5 * time.Second
+	}
+	if third > 30*time.Second {
+		return 30 * time.Second
+	}
+	return third
 }
 
 // RemoteShim is the interface the session manager uses to wait for remote
@@ -142,10 +175,14 @@ type Session struct {
 	AdapterDigest digest.Digest
 
 	// WS15: session-level log stream lifecycle and heartbeat tracking.
-	cancelLog     func()
-	hbMonitor     adapter.HeartbeatMonitor
-	currentSink   adapter.EventSink
-	currentSinkMu sync.Mutex
+	logMu          sync.Mutex
+	cancelLog      func()
+	logDone        <-chan error
+	logHostCancel  chan struct{} // closed by the host before cancelLog(); per-stream
+	logStreamAlive atomic.Bool
+	hbMonitor      adapter.HeartbeatMonitor
+	currentSink    adapter.EventSink
+	currentSinkMu  sync.Mutex
 
 	// WS15: MergeBuffer interleaves log and adapter events by timestamp.
 	mergeBuf *log.MergeBuffer
@@ -536,21 +573,88 @@ func (m *SessionManager) startPermissionStream(ctx context.Context, sess *Sessio
 // supports it.
 func (m *SessionManager) startLogStream(ctx context.Context, sess *Session, plug Handle) {
 	if starter, ok := plug.(LogStreamStarter); ok {
-		logAdapterSink := &sessionLogAdapterSink{sess: sess}
-		redactedLogSink := m.wrapSink(logAdapterSink)
-		sess.mergeBuf = log.NewMergeBuffer(redactedLogSink, 500*time.Millisecond)
-		logSink := &logForwardSink{
-			sink: sess.mergeBuf,
-			onHeartbeat: func() {
-				sess.hbMonitor.Record()
-			},
-		}
-		cancel, err := starter.StartLogStream(ctx, sess.Name, logSink)
-		if err != nil {
-			slog.Warn("adapter log stream start failed", "session", sess.Name, "err", err)
-		} else {
-			sess.cancelLog = cancel
+		m.beginLogStream(ctx, sess, starter)
+	}
+}
+
+// beginLogStream starts the adapter Log stream for an open session, wires the
+// heartbeat monitor, and launches the watcher. On error all stream state is
+// cleared.
+func (m *SessionManager) beginLogStream(ctx context.Context, sess *Session, starter LogStreamStarter) {
+	logAdapterSink := &sessionLogAdapterSink{sess: sess}
+	redactedLogSink := m.wrapSink(logAdapterSink)
+	sess.mergeBuf = log.NewMergeBuffer(redactedLogSink, 500*time.Millisecond)
+	logSink := &logForwardSink{
+		sink: sess.mergeBuf,
+		onHeartbeat: func() {
 			sess.hbMonitor.Record()
+		},
+	}
+	cancel, done, err := starter.StartLogStream(ctx, sess.Name, logSink)
+	if err != nil {
+		slog.Warn("adapter log stream start failed", "session", sess.Name, "err", err)
+		sess.mergeBuf.Close()
+		sess.mergeBuf = nil
+		sess.resetLogStreamState()
+		return
+	}
+
+	// Each stream generation gets its own host-cancel channel. The host closes
+	// it *before* calling cancel() so the watcher can distinguish host-initiated
+	// teardown from an adapter that returned early from Log.
+	hostCancel := make(chan struct{})
+	var closed atomic.Bool
+	wrappedCancel := func() {
+		if closed.CompareAndSwap(false, true) {
+			close(hostCancel)
+		}
+		if cancel != nil {
+			cancel()
+		}
+	}
+
+	sess.logMu.Lock()
+	sess.cancelLog = wrappedCancel
+	sess.logDone = done
+	sess.logHostCancel = hostCancel
+	sess.logMu.Unlock()
+	sess.logStreamAlive.Store(true)
+	sess.hbMonitor.Record()
+	go m.watchLogStream(sess, done, hostCancel)
+}
+
+// watchLogStream waits for the adapter's Log stream to end. If it ends while
+// the session is still open and the host did not cancel it, the adapter broke
+// the contract that the log stream must remain open for the lifetime of the
+// session; we log a clear diagnostic and disarm the heartbeat stall detector
+// so the session is not falsely declared crashed later.
+func (m *SessionManager) watchLogStream(sess *Session, done <-chan error, hostCancel <-chan struct{}) {
+	select {
+	case <-hostCancel:
+		// Host-initiated teardown for this specific stream generation. Drain
+		// any terminal error and return without touching logStreamAlive.
+		select {
+		case <-done:
+		default:
+		}
+		return
+	case err := <-done:
+		// The stream ended without a host cancellation signal. Re-check
+		// hostCancel in case both channels became ready at the same time and
+		// the select chose done.
+		select {
+		case <-hostCancel:
+			return
+		default:
+		}
+		if sess.closing.Load() {
+			return
+		}
+		sess.logStreamAlive.Store(false)
+		if err != nil {
+			slog.Warn("adapter log stream ended unexpectedly; heartbeat stall detector disarmed", "session", sess.Name, "adapter", sess.Adapter, "error", err)
+		} else {
+			slog.Warn("adapter log stream ended while session was open; heartbeat stall detector disarmed (adapter broke the log-stream contract)", "session", sess.Name, "adapter", sess.Adapter)
 		}
 	}
 }
@@ -568,11 +672,15 @@ func (m *SessionManager) Close(ctx context.Context, name string) error {
 		return nil
 	}
 	sess.closing.Store(true)
+	sess.logStreamAlive.Store(false)
 	if sess.PermissionState != nil {
 		sess.PermissionState.Stop()
 	}
-	if sess.cancelLog != nil {
-		sess.cancelLog()
+	sess.logMu.Lock()
+	cancelLog := sess.cancelLog
+	sess.logMu.Unlock()
+	if cancelLog != nil {
+		cancelLog()
 	}
 	if sess.mergeBuf != nil {
 		sess.mergeBuf.Close()
@@ -708,9 +816,13 @@ func (m *SessionManager) Execute(ctx context.Context, name string, step *workflo
 	sink = m.wrapSink(sink)
 
 	// WS15: heartbeat-stall detection. If no heartbeat has been received for
-	// >90s, treat the session as crashed before attempting the step.
-	if sess.cancelLog != nil && sess.hbMonitor.Stalled(90*time.Second) {
-		return m.handleCrash(ctx, name, step, sink, sess, errors.New("heartbeat stall (>90s)"))
+	// longer than the stall threshold while the log stream is still alive,
+	// treat the session as crashed before attempting the step. If the log stream
+	// ended early (contract violation) watchLogStream has already disarmed the
+	// detector, so we never declare a crash on a heartbeat the adapter was not
+	// sending.
+	if sess.logStreamAlive.Load() && sess.hbMonitor.Stalled(m.heartbeatStallThreshold()) {
+		return m.handleCrash(ctx, name, step, sink, sess, fmt.Errorf("heartbeat stall (>%s)", m.heartbeatStallThreshold()))
 	}
 
 	m.setStepPolicy(sess, step)
@@ -824,6 +936,20 @@ func (m *SessionManager) HasCapability(name, capName string) bool {
 	return false
 }
 
+// AdapterHandle returns the underlying adapter handle for the named session.
+// It is used by conformance tests to inspect handle capabilities without
+// spawning a throwaway probe process. Returns (nil, false) if the session is
+// not found. Thread-safe.
+func (m *SessionManager) AdapterHandle(name string) (Handle, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sess, ok := m.sessions[name]
+	if !ok {
+		return nil, false
+	}
+	return sess.handle, true
+}
+
 func (m *SessionManager) Shutdown(ctx context.Context) error {
 	m.mu.Lock()
 	sessions := make([]*Session, 0, len(m.sessions))
@@ -836,11 +962,15 @@ func (m *SessionManager) Shutdown(ctx context.Context) error {
 	var errs []error
 	for _, sess := range sessions {
 		sess.closing.Store(true)
+		sess.logStreamAlive.Store(false)
 		if sess.PermissionState != nil {
 			sess.PermissionState.Stop()
 		}
-		if sess.cancelLog != nil {
-			sess.cancelLog()
+		sess.logMu.Lock()
+		cancelLog := sess.cancelLog
+		sess.logMu.Unlock()
+		if cancelLog != nil {
+			cancelLog()
 		}
 		if sess.mergeBuf != nil {
 			sess.mergeBuf.Close()
@@ -944,34 +1074,54 @@ func (m *SessionManager) restartPermissionStream(ctx context.Context, sess *Sess
 // restartLogStream cancels the old log stream, closes the old merge buffer, and
 // starts a new one for the given handle.
 func (m *SessionManager) restartLogStream(ctx context.Context, sess *Session, plug Handle) {
-	if sess.cancelLog != nil {
-		sess.cancelLog()
+	sess.logMu.Lock()
+	oldCancel := sess.cancelLog
+	oldDone := sess.logDone
+	sess.cancelLog = nil
+	sess.logDone = nil
+	sess.logHostCancel = nil
+	sess.logMu.Unlock()
+
+	if oldCancel != nil {
+		// The wrapped cancel closes the stream's host-cancel channel *before*
+		// invoking the adapter cancel, so the old watcher can deterministically
+		// identify this as host-initiated teardown.
+		oldCancel()
+	}
+	if oldDone != nil {
+		// Wait for the previous watcher to finish before reusing the merge buffer
+		// and heartbeat state, avoiding races and goroutine leaks. Bound the wait
+		// so a broken adapter that never closes its done channel cannot wedge the
+		// respawn path and prevent the step retry from starting.
+		drainTimeout := m.respawnLogStreamDrainTimeout()
+		select {
+		case <-oldDone:
+		case <-ctx.Done():
+		case <-time.After(drainTimeout):
+			slog.Warn("adapter log stream did not drain after cancel; continuing respawn to avoid wedge",
+				"session", sess.Name, "adapter", sess.Adapter, "drain_timeout", drainTimeout)
+		}
 	}
 	if sess.mergeBuf != nil {
 		sess.mergeBuf.Close()
 	}
+
 	if starter, ok := plug.(LogStreamStarter); ok {
-		logAdapterSink := &sessionLogAdapterSink{sess: sess}
-		redactedLogSink := m.wrapSink(logAdapterSink)
-		sess.mergeBuf = log.NewMergeBuffer(redactedLogSink, 500*time.Millisecond)
-		logSink := &logForwardSink{
-			sink: sess.mergeBuf,
-			onHeartbeat: func() {
-				sess.hbMonitor.Record()
-			},
-		}
-		cancel, err := starter.StartLogStream(ctx, sess.Name, logSink)
-		if err != nil {
-			slog.Warn("adapter log stream restart failed after respawn", "session", sess.Name, "err", err)
-			sess.cancelLog = nil
-		} else {
-			sess.cancelLog = cancel
-			sess.hbMonitor.Record()
-		}
+		m.beginLogStream(ctx, sess, starter)
 	} else {
-		sess.cancelLog = nil
+		sess.resetLogStreamState()
 		sess.mergeBuf = nil
 	}
+}
+
+// resetLogStreamState clears the log-stream handles and marks the stream dead.
+func (s *Session) resetLogStreamState() {
+	s.logMu.Lock()
+	s.cancelLog = nil
+	s.logDone = nil
+	s.logHostCancel = nil
+	s.logMu.Unlock()
+	s.logStreamAlive.Store(false)
 }
 
 func (m *SessionManager) failResult(sink adapter.EventSink, sess *Session, err error) (adapter.Result, error) {
