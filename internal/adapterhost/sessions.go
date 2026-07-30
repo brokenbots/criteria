@@ -911,9 +911,7 @@ func (m *SessionManager) Close(ctx context.Context, name string) error {
 	// Verified-but-never-bound adapters are tracked for per-scope teardown via
 	// initScopeAdapters/tearDownScopeAdapters. Remove the verified record so a
 	// later scope reusing the same instance ID can verify and bind afresh.
-	if _, verified := m.verified[name]; verified {
-		delete(m.verified, name)
-	}
+	delete(m.verified, name)
 	m.mu.Unlock()
 
 	if !exists {
