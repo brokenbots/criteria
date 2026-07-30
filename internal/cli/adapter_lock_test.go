@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapter/oci"
 	"github.com/brokenbots/criteria/internal/adapter/signing"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
@@ -25,6 +27,7 @@ type fakeLockResolver struct {
 	tags       []string
 	entries    map[string]lockfile.LockedAdapter
 	pulledRefs []oci.Reference
+	layout     *oci.Layout
 }
 
 func newFakeResolver() *fakeLockResolver {
@@ -44,22 +47,33 @@ func (f *fakeLockResolver) ListTags(ctx context.Context, ref oci.Reference) ([]s
 
 func (f *fakeLockResolver) PullAndBuild(ctx context.Context, ref oci.Reference, policy *signing.Policy) (digest.Digest, lockfile.LockedAdapter, error) {
 	f.pulledRefs = append(f.pulledRefs, ref)
-	dg := digest.FromString(ref.String())
 	entry, ok := f.entries[ref.String()]
 	if !ok {
 		entry = lockfile.LockedAdapter{
 			Reference:          ref.String(),
 			Version:            ref.Tag,
-			ResolvedDigest:     dg.String(),
 			SDKProtocolVersion: 2,
 		}
+	}
+	// Use a caller-supplied digest when present so tests can simulate digest
+	// drift under a tag. Otherwise derive a deterministic digest from the ref.
+	dg := entry.ResolvedDigest
+	if dg == "" {
+		dg = digest.FromString(ref.String()).String()
 	}
 	// Ensure the returned entry carries the reference/version of the requested
 	// ref even when the caller pre-registered a custom entry.
 	entry.Reference = ref.String()
 	entry.Version = ref.Tag
-	entry.ResolvedDigest = dg.String()
-	return dg, entry, nil
+	entry.ResolvedDigest = dg
+	return digest.Digest(dg), entry, nil
+}
+
+func (f *fakeLockResolver) Extract(d digest.Digest, adapterType string) (string, error) {
+	if f.layout == nil {
+		return "", nil
+	}
+	return extractOCIAdapterBinary(f.layout, d, adapterType)
 }
 
 func (f *fakeLockResolver) withBlob(dg digest.Digest) *fakeLockResolver {
@@ -69,6 +83,20 @@ func (f *fakeLockResolver) withBlob(dg digest.Digest) *fakeLockResolver {
 
 func (f *fakeLockResolver) withTag(tag string) *fakeLockResolver {
 	f.tags = append(f.tags, tag)
+	return f
+}
+
+func (f *fakeLockResolver) withEntry(ref string, entry *lockfile.LockedAdapter) *fakeLockResolver {
+	if entry == nil {
+		delete(f.entries, ref)
+		return f
+	}
+	f.entries[ref] = *entry
+	return f
+}
+
+func (f *fakeLockResolver) withLayout(layout *oci.Layout) *fakeLockResolver {
+	f.layout = layout
 	return f
 }
 
@@ -127,7 +155,8 @@ func TestResolveOneAdapter_ReusesPinWhenUpToDate(t *testing.T) {
 	entry, err := resolveOneAdapter(ctx, wa, old, resolver, nil, false, &signing.Policy{}, &out)
 	require.NoError(t, err)
 
-	assert.Empty(t, resolver.pulledRefs, "up-to-date pin should not be re-resolved")
+	assert.Len(t, resolver.pulledRefs, 1, "plain lock should re-resolve even when the constraint has not changed")
+	assert.Equal(t, "0.5.1", resolver.pulledRefs[0].Tag)
 	assert.Equal(t, "0.5.1", entry.Version)
 	assert.Equal(t, oldDigest.String(), entry.ResolvedDigest)
 }
@@ -330,7 +359,8 @@ func TestRunLock_UpToDateMessage(t *testing.T) {
 	err := runLock(context.Background(), dir, false, true, nil, &out, fake)
 	require.NoError(t, err)
 
-	assert.Empty(t, fake.pulledRefs, "no pull should happen when lockfile already matches declarations")
+	assert.Len(t, fake.pulledRefs, 1, "plain lock must re-resolve every OCI adapter even when declarations are unchanged")
+	assert.Contains(t, out.String(), "locked noop.default")
 	assert.Contains(t, out.String(), "lockfile up to date")
 	assert.Contains(t, out.String(), "1 adapter(s)")
 }
@@ -368,4 +398,335 @@ adapter "noop" "default" {
 	}
 	require.NoError(t, lockfile.Write(filepath.Join(dir, workflow.LockfileName), lf))
 	return dir
+}
+
+func TestResolveOneAdapter_ReResolvesUnchangedConstraintAndDetectsMovedDigest(t *testing.T) {
+	ctx := context.Background()
+	oldDigest := digest.FromString("old-digest")
+	newDigest := digest.FromString("new-digest")
+	old := &lockfile.Lockfile{Adapters: []lockfile.LockedAdapter{{
+		Type:           "noop",
+		Name:           "default",
+		Reference:      "ghcr.io/brokenbots/criteria-adapter-noop:0.5.1",
+		Version:        "0.5.1",
+		ResolvedDigest: oldDigest.String(),
+	}}}
+	wa := &workflowAdapter{
+		Type:    "noop",
+		Name:    "default",
+		Source:  "ghcr.io/brokenbots/criteria-adapter-noop",
+		Version: "^0.5.0",
+	}
+
+	resolver := newFakeResolver().
+		withBlob(oldDigest).
+		withBlob(newDigest).
+		withTag("0.5.1").
+		withTag("0.5.2").
+		withEntry("ghcr.io/brokenbots/criteria-adapter-noop:0.5.2", &lockfile.LockedAdapter{
+			ResolvedDigest: newDigest.String(),
+		})
+
+	var out bytes.Buffer
+	entry, err := resolveOneAdapter(ctx, wa, old, resolver, nil, false, &signing.Policy{}, &out)
+	require.NoError(t, err)
+
+	assert.Len(t, resolver.pulledRefs, 1, "plain lock must re-resolve even when the constraint is unchanged")
+	assert.Equal(t, "0.5.2", resolver.pulledRefs[0].Tag)
+	assert.Equal(t, newDigest.String(), entry.ResolvedDigest)
+	assert.Contains(t, out.String(), "locked noop.default")
+}
+
+func TestResolveOneAdapter_MutableConstraintLocksToDigestAndReResolves(t *testing.T) {
+	ctx := context.Background()
+	firstDigest := digest.FromString("first-digest")
+	secondDigest := digest.FromString("second-digest")
+
+	// First lock: nothing pinned yet. The ^0.5.0 constraint is mutable and must
+	// lock to a concrete digest.
+	wa := &workflowAdapter{
+		Type:    "noop",
+		Name:    "default",
+		Source:  "ghcr.io/brokenbots/criteria-adapter-noop",
+		Version: "^0.5.0",
+	}
+	resolver := newFakeResolver().
+		withBlob(firstDigest).
+		withTag("0.5.1").
+		withTag("0.5.2").
+		withEntry("ghcr.io/brokenbots/criteria-adapter-noop:0.5.2", &lockfile.LockedAdapter{
+			ResolvedDigest: firstDigest.String(),
+		})
+
+	var out bytes.Buffer
+	entry, err := resolveOneAdapter(ctx, wa, nil, resolver, nil, false, &signing.Policy{}, &out)
+	require.NoError(t, err)
+	assert.Equal(t, "0.5.2", resolver.pulledRefs[0].Tag)
+	assert.Equal(t, firstDigest.String(), entry.ResolvedDigest)
+	assert.Contains(t, out.String(), "locked noop.default")
+
+	// Second lock with the same mutable constraint: resolver now points to a new
+	// digest. The lockfile must update to the new concrete digest.
+	resolver2 := newFakeResolver().
+		withBlob(firstDigest).
+		withBlob(secondDigest).
+		withTag("0.5.1").
+		withTag("0.5.3").
+		withEntry("ghcr.io/brokenbots/criteria-adapter-noop:0.5.3", &lockfile.LockedAdapter{
+			ResolvedDigest: secondDigest.String(),
+		})
+	old := &lockfile.Lockfile{Adapters: []lockfile.LockedAdapter{*findLockedByEntry(&entry)}}
+
+	out.Reset()
+	entry2, err := resolveOneAdapter(ctx, wa, old, resolver2, nil, false, &signing.Policy{}, &out)
+	require.NoError(t, err)
+	assert.Len(t, resolver2.pulledRefs, 1)
+	assert.Equal(t, "0.5.3", resolver2.pulledRefs[0].Tag)
+	assert.Equal(t, secondDigest.String(), entry2.ResolvedDigest)
+	assert.Contains(t, out.String(), "locked noop.default")
+}
+
+func TestResolveOneAdapter_LatestTagLocksToConcreteDigestAndReResolves(t *testing.T) {
+	ctx := context.Background()
+	firstDigest := digest.FromString("first-digest")
+	secondDigest := digest.FromString("second-digest")
+
+	// Empty version ("latest") should resolve to the highest semver tag and
+	// record a concrete version+digest in the lockfile.
+	wa := &workflowAdapter{
+		Type:    "noop",
+		Name:    "default",
+		Source:  "ghcr.io/brokenbots/criteria-adapter-noop",
+		Version: "",
+	}
+	resolver := newFakeResolver().
+		withBlob(firstDigest).
+		withTag("1.0.0").
+		withEntry("ghcr.io/brokenbots/criteria-adapter-noop:1.0.0", &lockfile.LockedAdapter{
+			ResolvedDigest: firstDigest.String(),
+		})
+
+	var out bytes.Buffer
+	entry, err := resolveOneAdapter(ctx, wa, nil, resolver, nil, false, &signing.Policy{}, &out)
+	require.NoError(t, err)
+	assert.Equal(t, "1.0.0", entry.Version)
+	assert.Equal(t, firstDigest.String(), entry.ResolvedDigest)
+	assert.Contains(t, out.String(), "locked noop.default")
+
+	resolver2 := newFakeResolver().
+		withBlob(firstDigest).
+		withBlob(secondDigest).
+		withTag("1.0.0").
+		withTag("2.0.0").
+		withEntry("ghcr.io/brokenbots/criteria-adapter-noop:2.0.0", &lockfile.LockedAdapter{
+			ResolvedDigest: secondDigest.String(),
+		})
+	old := &lockfile.Lockfile{Adapters: []lockfile.LockedAdapter{*findLockedByEntry(&entry)}}
+
+	out.Reset()
+	entry2, err := resolveOneAdapter(ctx, wa, old, resolver2, nil, false, &signing.Policy{}, &out)
+	require.NoError(t, err)
+	assert.Len(t, resolver2.pulledRefs, 1)
+	assert.Equal(t, "2.0.0", resolver2.pulledRefs[0].Tag)
+	assert.Equal(t, secondDigest.String(), entry2.ResolvedDigest)
+	assert.Equal(t, "2.0.0", entry2.Version)
+}
+
+func TestResolveOneAdapter_ImmutablePinDigestDriftIsError(t *testing.T) {
+	ctx := context.Background()
+	oldDigest := digest.FromString("old-digest")
+	newDigest := digest.FromString("new-digest")
+	old := &lockfile.Lockfile{Adapters: []lockfile.LockedAdapter{{
+		Type:           "noop",
+		Name:           "default",
+		Reference:      "ghcr.io/brokenbots/criteria-adapter-noop:0.5.1",
+		Version:        "0.5.1",
+		ResolvedDigest: oldDigest.String(),
+	}}}
+	wa := &workflowAdapter{
+		Type:    "noop",
+		Name:    "default",
+		Source:  "ghcr.io/brokenbots/criteria-adapter-noop",
+		Version: "0.5.1",
+	}
+
+	resolver := newFakeResolver().
+		withBlob(oldDigest).
+		withBlob(newDigest).
+		withEntry("ghcr.io/brokenbots/criteria-adapter-noop:0.5.1", &lockfile.LockedAdapter{
+			ResolvedDigest: newDigest.String(),
+		})
+
+	var out bytes.Buffer
+	_, err := resolveOneAdapter(ctx, wa, old, resolver, nil, false, &signing.Policy{}, &out)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "immutable pin digest drift")
+	assert.Contains(t, err.Error(), oldDigest.String())
+	assert.Contains(t, err.Error(), newDigest.String())
+	assert.Contains(t, err.Error(), "--upgrade")
+}
+
+func TestResolveOneAdapter_ImmutablePinDigestDriftAcceptedWithUpgrade(t *testing.T) {
+	ctx := context.Background()
+	oldDigest := digest.FromString("old-digest")
+	newDigest := digest.FromString("new-digest")
+	old := &lockfile.Lockfile{Adapters: []lockfile.LockedAdapter{{
+		Type:           "noop",
+		Name:           "default",
+		Reference:      "ghcr.io/brokenbots/criteria-adapter-noop:0.5.1",
+		Version:        "0.5.1",
+		ResolvedDigest: oldDigest.String(),
+	}}}
+	wa := &workflowAdapter{
+		Type:    "noop",
+		Name:    "default",
+		Source:  "ghcr.io/brokenbots/criteria-adapter-noop",
+		Version: "0.5.1",
+	}
+
+	resolver := newFakeResolver().
+		withBlob(oldDigest).
+		withBlob(newDigest).
+		withEntry("ghcr.io/brokenbots/criteria-adapter-noop:0.5.1", &lockfile.LockedAdapter{
+			ResolvedDigest: newDigest.String(),
+		})
+
+	var out bytes.Buffer
+	entry, err := resolveOneAdapter(ctx, wa, old, resolver, nil, true, &signing.Policy{}, &out)
+	require.NoError(t, err)
+	assert.Equal(t, newDigest.String(), entry.ResolvedDigest)
+	assert.Contains(t, out.String(), "immutable pin digest drift")
+	assert.Contains(t, out.String(), "accepted by --upgrade")
+}
+
+func TestRunLock_ExtractsBinaryForSchemaVerification(t *testing.T) {
+	stateDir := t.TempDir()
+	adaptersDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+	t.Setenv("CRITERIA_ADAPTERS", adaptersDir)
+
+	cacheRoot := filepath.Join(stateDir, "cache", "oci")
+	layout, err := oci.Open(cacheRoot)
+	require.NoError(t, err)
+
+	const adapterType = "noop"
+	binContent := []byte("#!/bin/sh\necho locked\n")
+	manifestDigest, _ := fakeArtifactFixture(t, layout, adapterType, binContent)
+
+	dir := writeLockFixture(t, "0.5.1", func(lf *lockfile.Lockfile) {
+		lf.Adapters[0].ResolvedDigest = manifestDigest.String()
+	})
+
+	resolver := newFakeResolver().
+		withBlob(manifestDigest).
+		withEntry("ghcr.io/brokenbots/criteria-adapter-noop:0.5.1", &lockfile.LockedAdapter{
+			ResolvedDigest: manifestDigest.String(),
+		}).
+		withLayout(layout)
+
+	var out bytes.Buffer
+	err = runLock(context.Background(), dir, false, true, nil, &out, resolver)
+	require.NoError(t, err)
+
+	resolved, err := adapterhost.DiscoverBinaryAt(adapterType, adapterhost.EncodeDigest(manifestDigest))
+	require.NoError(t, err)
+	assert.FileExists(t, resolved)
+
+	got, err := os.ReadFile(resolved)
+	require.NoError(t, err)
+	assert.Equal(t, binContent, got)
+}
+
+func TestLockThenValidate_FullSchemaVerification(t *testing.T) {
+	ctx := context.Background()
+
+	// Save the real noop binary built by TestMain before overriding
+	// CRITERIA_ADAPTERS with a fresh directory. Use a unique adapter type label
+	// in the workflow so there is no by-name install to mask a missing extraction.
+	builtNoopPath := filepath.Join(os.Getenv("CRITERIA_ADAPTERS"), "criteria-adapter-noop")
+	noopBinary, err := os.ReadFile(builtNoopPath)
+	require.NoError(t, err, "read built noop adapter binary from %s", builtNoopPath)
+
+	adaptersDir := t.TempDir()
+	t.Setenv("CRITERIA_ADAPTERS", adaptersDir)
+
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	workflowDir := t.TempDir()
+
+	cacheRoot := filepath.Join(stateDir, "cache", "oci")
+	layout, err := oci.Open(cacheRoot)
+	require.NoError(t, err)
+
+	// Use a unique adapter type label that does not exist as a by-name install in
+	// any adapters root, so pre-fix behavior (no extraction) falls back to
+	// permissive "schema unverified" validation.
+	const adapterType = "lockvalidate"
+	manifestDigest, _ := fakeArtifactFixture(t, layout, adapterType, noopBinary)
+
+	ref, err := oci.Parse("ghcr.io/brokenbots/criteria-adapter-lockvalidate:0.5.1")
+	require.NoError(t, err)
+
+	resolver := newFakeResolver().
+		withLayout(layout).
+		withBlob(manifestDigest).
+		withTag("0.5.1").
+		withEntry(ref.String(), &lockfile.LockedAdapter{
+			ResolvedDigest: manifestDigest.String(),
+		})
+
+	workflowSrc := `workflow {
+  name = "lock-validate-test"
+  version = "1.0"
+  initial_state = "hello"
+  target_state = "hello"
+}
+
+adapter "lockvalidate" "default" {
+  source = "ghcr.io/brokenbots/criteria-adapter-lockvalidate"
+  version = "0.5.1"
+  config {}
+}
+
+step "hello" {
+  target = adapter.lockvalidate.default
+  input { delay_ms = "0" }
+  outcome "success" { next = state.hello }
+}
+`
+	workflowPath := filepath.Join(workflowDir, "workflow.hcl")
+	require.NoError(t, os.WriteFile(workflowPath, []byte(workflowSrc), 0o644))
+
+	var lockOut bytes.Buffer
+	err = runLock(ctx, workflowDir, false, true, nil, &lockOut, resolver)
+	require.NoError(t, err)
+	assert.Contains(t, lockOut.String(), "locked lockvalidate.default")
+
+	// Validate must resolve the extracted binary via the lockfile digest and
+	// perform full schema verification. The only acceptable warning is the
+	// "declares no output schema" notice from the real noop adapter; there must
+	// be no "schema unverified" permissive-validation warning.
+	out := captureOutput(t, func() {
+		ok := validatePath(ctx, workflowPath, nil, true, false)
+		assert.True(t, ok)
+	})
+
+	var diags []validateDiagnostic
+	require.NoError(t, json.Unmarshal([]byte(out), &diags), "validate output must be JSON: %s", out)
+
+	for _, d := range diags {
+		assert.NotContains(t, d.Summary, "schema unverified",
+			"lock followed by validate should resolve the adapter via the lockfile digest; got diagnostic: %s", d.Summary)
+	}
+}
+
+// findLockedByEntry returns a copy of the locked adapter so it can be used to
+// build a synthetic old lockfile in tests.
+func findLockedByEntry(a *lockfile.LockedAdapter) *lockfile.LockedAdapter {
+	if a == nil {
+		return nil
+	}
+	b := *a
+	return &b
 }

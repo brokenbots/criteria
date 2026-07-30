@@ -15,7 +15,6 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter/manifest"
 	"github.com/brokenbots/criteria/internal/adapter/oci"
 	"github.com/brokenbots/criteria/internal/adapter/signing"
-	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
 func newAdapterPullCmd() *cobra.Command {
@@ -65,12 +64,22 @@ func runPull(ctx context.Context, out io.Writer, rawRef string, allowUnsigned bo
 	}
 
 	puller := &oci.Puller{Layout: layout}
-	dg, err := puller.Pull(ctx, ref)
+	return runPullWithPuller(ctx, out, ref, layout, &policy, puller)
+}
+
+// puller is the minimal surface runPull needs from an OCI puller. It exists
+// so tests can inject a fake registry/artifact without a live Docker daemon.
+type puller interface {
+	Pull(context.Context, oci.Reference) (digest.Digest, error)
+}
+
+func runPullWithPuller(ctx context.Context, out io.Writer, ref oci.Reference, layout *oci.Layout, policy *signing.Policy, p puller) error {
+	dg, err := p.Pull(ctx, ref)
 	if err != nil {
 		return fmt.Errorf("pull %s: %w", ref, err)
 	}
 
-	m, signer, err := validatePulledArtifact(ctx, layout, dg, &policy)
+	m, signer, err := validatePulledArtifact(ctx, layout, dg, policy)
 	if err != nil {
 		return err
 	}
@@ -86,12 +95,15 @@ func runPull(ctx context.Context, out io.Writer, rawRef string, allowUnsigned bo
 		}
 	}
 
-	// Update lockfile.  Since pull is not workflow-scoped, we cannot set
-	// Type/Name here.  The lockfile entry is written only when the caller
-	// (e.g. `adapter lock`) knows the workflow adapter mapping.
-	_ = lockfile.BuildEntry
+	// Extract the platform binary to the digest-addressed install path so the
+	// adapter is resolvable for compile-time schema verification without
+	// requiring a prior run.
+	extractPath, err := extractOCIAdapterBinary(layout, dg, m.Name)
+	if err != nil {
+		return fmt.Errorf("extract adapter binary: %w", err)
+	}
 
-	printPullSummary(out, ref, dg, signer, m)
+	printPullSummary(out, ref, dg, signer, m, extractPath)
 	return nil
 }
 
@@ -143,7 +155,7 @@ func assertHostPlatformSupported(ref oci.Reference, m *manifest.Manifest) error 
 	return fmt.Errorf("adapter %s does not support host platform %s; contact the publisher to add support", ref, hostPlatform)
 }
 
-func printPullSummary(out io.Writer, ref oci.Reference, dg digest.Digest, signer *signing.SignerIdentity, m *manifest.Manifest) {
+func printPullSummary(out io.Writer, ref oci.Reference, dg digest.Digest, signer *signing.SignerIdentity, m *manifest.Manifest, extractPath string) {
 	fmt.Fprintf(out, "Pulled %s\n", ref)
 	fmt.Fprintf(out, "Digest:    %s\n", dg)
 	if signer != nil {
@@ -156,6 +168,7 @@ func printPullSummary(out io.Writer, ref oci.Reference, dg digest.Digest, signer
 		fmt.Fprintf(out, "Signer:    (unsigned)\n")
 	}
 	fmt.Fprintf(out, "Platforms: %v\n", m.Platforms)
+	fmt.Fprintf(out, "Extracted: %s\n", extractPath)
 }
 
 // pullContainerImage tries docker pull, then podman pull, returning the first
