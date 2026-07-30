@@ -125,12 +125,16 @@ subworkflow body):
 - verifies the signature/digest against the lockfile and trust policy;
 - performs the protocol `Info` handshake;
 - checks the resolved `config` block against the adapter's manifest schema;
-- checks that required secrets are present.
+- checks that required secrets are present;
+- validates sandbox primitive availability and strict-mode policy failures for
+  adapters bound to a `sandbox` environment (missing landlock/seccomp/cgroup
+  primitives, or a strict-mode policy that cannot be satisfied on the host).
 
 This phase runs in a neutral working directory, so a missing or not-yet-created
 `working_directory` does **not** cause a failure. A broken adapter (missing
-binary, bad signature, invalid config, missing required secret) still fails the
-run before any step executes, even if no reachable step ever targets it.
+binary, bad signature, invalid config, missing required secret, strict sandbox
+with missing primitives) still fails the run before any step executes, even if no
+reachable step ever targets it.
 
 ### Phase 2: lazy session binding
 
@@ -139,7 +143,10 @@ to a bound session:
 
 - the adapter process is launched in its resolved `working_directory`;
 - `OpenSession` is called with the resolved config and secrets;
-- the per-session permission and log streams are started.
+- the per-session permission and log streams are started;
+- side-effecting sandbox setup runs: transient cgroup directories are created,
+  and the sandboxed process is launched with the resolved `working_directory`
+  as its cwd (for example via the bubblewrap `--chdir` option).
 
 If the resolved working directory is missing at this point, the bind fails and
 produces an error that names the adapter, the step, and the directory. Because
@@ -153,13 +160,17 @@ Rejected at run start (before any step runs):
 - any verification failure in phase 1;
 - a `working_directory` path that contains `..`;
 - a `working_directory` that falls outside the configured allowed roots (when
-  any are configured).
+  any are configured);
+- a `sandbox` adapter whose `policy_mode = "strict"` references a host primitive
+  (landlock, seccomp, cgroupv2) that is unavailable on the current host.
 
 Deferred to first use:
 
 - a `working_directory` that simply does not exist yet. This is the case a
   bootstrap step is allowed to fix by creating the directory before the first
-  adapter step that uses it.
+  adapter step that uses it;
+- the actual sandbox environment setup, including transient cgroup directory
+  creation and the sandboxed process chdir to the resolved `working_directory`.
 
 ## Authoring an adapter
 

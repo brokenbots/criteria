@@ -763,6 +763,60 @@ state "done" {
 	}
 }
 
+// TestEngine_StrictSandboxMissingPrimitivesFailsAtStartup verifies that a
+// strict-mode sandbox adapter whose host primitives are unavailable fails the
+// run during eager phase-1 verification, before any step executes. This is a
+// regression test for the deferral of sandbox enforcement to bind time.
+func TestEngine_StrictSandboxMissingPrimitivesFailsAtStartup(t *testing.T) {
+	g := compile(t, `
+workflow {
+  name          = "strict-sandbox-unreachable"
+  version       = "0.1"
+  initial_state = "done"
+  target_state  = "done"
+}
+
+environment "sandbox" "strict" {
+  policy_mode = "strict"
+}
+
+adapter "noop" "x" {
+  environment = sandbox.strict
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}`)
+
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"noop": &fakeAdapter{name: "noop", outcome: "success"},
+	}}
+
+	sink := &lifecycleTrackingSink{}
+	eng := New(g, loader, sink, WithSandboxProbeOverride(strictMissingSandboxCaps))
+
+	err := eng.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected startup failure for strict sandbox with missing primitives, got nil")
+	}
+	if !strings.Contains(err.Error(), "noop.x") {
+		t.Errorf("error should name adapter instance, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "strict") {
+		t.Errorf("error should mention strict sandbox failure, got: %v", err)
+	}
+
+	// No step should have been entered: the failure must surface from Verify,
+	// not from Execute at first use.
+	sink.mu.Lock()
+	steps := len(sink.stepsRun)
+	sink.mu.Unlock()
+	if steps != 0 {
+		t.Errorf("expected no steps to run, got %d", steps)
+	}
+}
+
 // TestEngine_UnreachableBrokenAdapterFailsAtStartup verifies that a broken
 // adapter declared in a workflow but never reached by any step still fails the
 // run during eager verification, before any step executes. This proves that

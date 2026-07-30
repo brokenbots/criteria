@@ -15,6 +15,7 @@ import (
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapter/environment/remote"
+	"github.com/brokenbots/criteria/internal/adapter/environment/sandbox"
 	"github.com/brokenbots/criteria/internal/adapter/secrets"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	engineruntime "github.com/brokenbots/criteria/internal/engine/runtime"
@@ -167,6 +168,10 @@ type Engine struct {
 	// are configured) or that contains ".." is rejected eagerly during adapter
 	// verification, before any step runs. Empty means no additional root checks.
 	workingDirAllowedRoots []string
+
+	// sandboxProbeOverride, when non-nil, is propagated to the SessionManager so
+	// tests can simulate a host with missing sandbox primitives.
+	sandboxProbeOverride func() sandbox.Capabilities
 }
 
 func New(graph *workflow.FSMGraph, loader adapterhost.Loader, sink Sink, opts ...Option) *Engine {
@@ -256,6 +261,9 @@ func (e *Engine) restoreSessionsFromSnapshots(ctx context.Context) (*adapterhost
 	sessions.RedactionRegistry = secrets.NewRegistry()
 	sessions.LifecycleSink = e.sink
 	sessions.SetAllowedWorkingDirRoots(e.workingDirAllowedRoots)
+	if e.sandboxProbeOverride != nil {
+		sessions.SetSandboxProbeOverride(e.sandboxProbeOverride)
+	}
 	if e.auditWriter != nil {
 		sessions.Audit = e.auditWriter
 	}
@@ -322,6 +330,9 @@ func (e *Engine) Run(ctx context.Context) error {
 	sessions := adapterhost.NewSessionManager(e.loader)
 	sessions.SetGraph(e.graph)
 	sessions.Audit = e.auditWriter
+	if e.sandboxProbeOverride != nil {
+		sessions.SetSandboxProbeOverride(e.sandboxProbeOverride)
+	}
 	if err := e.setLockfileOnSessions(sessions); err != nil {
 		return err
 	}
@@ -380,6 +391,9 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	sessions := adapterhost.NewSessionManager(e.loader)
 	sessions.SetGraph(e.graph)
 	sessions.Audit = e.auditWriter
+	if e.sandboxProbeOverride != nil {
+		sessions.SetSandboxProbeOverride(e.sandboxProbeOverride)
+	}
 	if err := e.setLockfileOnSessions(sessions); err != nil {
 		return err
 	}

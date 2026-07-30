@@ -7,6 +7,7 @@ import (
 
 	"github.com/zclconf/go-cty/cty"
 
+	"github.com/brokenbots/criteria/internal/adapter/environment/sandbox"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
@@ -148,6 +149,16 @@ func WithRunID(id string) Option {
 func WithWorkingDirAllowedRoots(roots []string) Option {
 	return func(e *Engine) {
 		e.workingDirAllowedRoots = append([]string(nil), roots...)
+	}
+}
+
+// WithSandboxProbeOverride is a test-only option that replaces the host sandbox
+// capability probe used by the session manager. It allows tests to simulate a
+// host with missing sandbox primitives (for example, a strict-mode sandbox
+// adapter running on a kernel without landlock).
+func WithSandboxProbeOverride(fn func() sandbox.Capabilities) Option {
+	return func(e *Engine) {
+		e.sandboxProbeOverride = fn
 	}
 }
 

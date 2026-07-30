@@ -340,6 +340,70 @@ func NewSessionManager(loader Loader) *SessionManager {
 	}
 }
 
+// SetSandboxProbeOverride sets the test hook that replaces sandbox.Probe()
+// when evaluating sandbox requirements. It is intended for tests that need to
+// simulate a host with missing sandbox primitives.
+func (m *SessionManager) SetSandboxProbeOverride(fn func() sandbox.Capabilities) {
+	m.sandboxProbeOverride = fn
+}
+
+// validateSandboxPrimitivesEagerly runs the host-side sandbox validation for
+// instanceID without creating side effects. It resolves the sandbox policy,
+// probes the host's sandbox primitives, and calls sandbox.Prepare with
+// ValidateOnly set so no transient cgroup directories or other bind-time state
+// is allocated. If the adapter is not bound to a sandbox environment or no
+// policy exists, it returns nil. In strict mode a missing primitive (or any
+// other Prepare validation failure) returns an error so the run fails at
+// startup; in permissive mode the failure is logged and the function returns
+// nil, matching the bind-time behavior.
+func (m *SessionManager) validateSandboxPrimitivesEagerly(instanceID string) error {
+	envNode, rp, ok := m.sandboxEnvAndPolicy(instanceID)
+	if !ok {
+		return nil
+	}
+
+	var adapterBinary string
+	if m.graph != nil {
+		if adapterNode, ok := m.graph.Adapters[instanceID]; ok {
+			path, discoverErr := DiscoverBinary(adapterNode.Type)
+			if discoverErr == nil {
+				adapterBinary = path
+			} else {
+				var notFound *ErrAdapterNotFound
+				if !errors.As(discoverErr, &notFound) {
+					return fmt.Errorf("discover adapter binary: %w", discoverErr)
+				}
+				// Built-in adapter or missing plugin: leave adapterBinary empty.
+				// The primitive-availability check does not depend on it.
+			}
+		}
+	}
+
+	caps := sandbox.Probe()
+	if m.sandboxProbeOverride != nil {
+		caps = m.sandboxProbeOverride()
+	}
+	if missing := caps.Missing(); len(missing) > 0 {
+		slog.Info("sandbox primitives missing", "missing", missing, "instance", instanceID)
+	}
+
+	ctx := sandbox.PrepareContext{
+		Policy:        rp,
+		Env:           envNode,
+		Caps:          caps,
+		AdapterBinary: adapterBinary,
+		ValidateOnly:  true,
+	}
+	_, err := sandbox.Handler{}.Prepare(ctx)
+	if err != nil {
+		if rp.PolicyMode == "strict" {
+			return fmt.Errorf("sandbox strict mode: %w", err)
+		}
+		slog.Info("sandbox permissive degradation", "instance", instanceID, "error", err)
+	}
+	return nil
+}
+
 // buildSandboxCustomizer returns a function that applies the sandbox
 // configuration to an exec.Cmd, or nil if the adapter is not bound to a
 // sandbox environment. The second return value is a cleanup function
@@ -574,11 +638,15 @@ func (m *SessionManager) checkDuplicateLocked(name string) error {
 
 // verifyAdapterInfo performs the phase-1 adapter handshake in a neutral launch
 // directory: it resolves the binary, calls Info, validates config and secrets,
-// and kills the temporary handle. It returns the adapter capabilities on success.
+// validates sandbox primitive availability for strict sandbox adapters, and
+// kills the temporary handle. It returns the adapter capabilities on success.
 func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterName string, config, secrets map[string]string) ([]string, error) {
-	// Phase 1 uses a neutral launch directory. Sandbox preparation is a
-	// bind-time concern: it may create side effects (cgroups) and its
-	// enforcement does not depend on the working directory existing.
+	// Phase 1 uses a neutral launch directory. The working-directory-dependent,
+	// side-effecting parts of sandbox setup (cgroup directory creation, the bwrap
+	// --chdir to the resolved working directory) remain a bind-time concern. The
+	// host-side primitive-availability and strict-mode validation can and do run
+	// eagerly here so that a strict-sandbox adapter with missing primitives fails
+	// before any step executes.
 	plug, err := m.resolveAdapterHandle(ctx, name, adapterName, nil)
 	if err != nil {
 		return nil, err
@@ -596,6 +664,10 @@ func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterNam
 
 	if secretErr := validateRequiredSecrets(secrets, info.AdapterInfo.ConfigSchema); secretErr != nil {
 		return nil, fmt.Errorf("adapter %q secrets: %w", adapterName, secretErr)
+	}
+
+	if sandboxErr := m.validateSandboxPrimitivesEagerly(name); sandboxErr != nil {
+		return nil, fmt.Errorf("adapter %q sandbox validation: %w", adapterName, sandboxErr)
 	}
 
 	return info.Capabilities, nil

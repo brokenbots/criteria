@@ -70,6 +70,11 @@ type PrepareContext struct {
 	Env           *workflow.EnvironmentNode
 	Caps          Capabilities
 	AdapterBinary string // populated at prepare time for darwin sandbox allow-listing; unused on linux
+	// ValidateOnly, when true, skips side-effecting preparation steps (e.g.
+	// creating transient cgroup directories) so the call can be used for eager
+	// host-side validation. The strict-mode primitive-availability checks still
+	// run and still fail closed.
+	ValidateOnly bool
 }
 
 // LinuxPrepared is the result of translating a sandbox policy into
@@ -147,7 +152,7 @@ func (h Handler) Prepare(ctx PrepareContext) (LinuxPrepared, error) {
 	if err := applySeccompToPrep(&prep, ctx.Caps, mode, allowNet); err != nil {
 		return LinuxPrepared{}, err
 	}
-	if err := applyResourcesToPrep(&prep, ctx.Caps, mode, ctx.Policy); err != nil {
+	if err := applyResourcesToPrep(&prep, ctx.Caps, mode, ctx.Policy, ctx.ValidateOnly); err != nil {
 		return LinuxPrepared{}, err
 	}
 
@@ -226,7 +231,7 @@ func applySeccompToPrep(prep *LinuxPrepared, caps Capabilities, mode string, all
 	return nil
 }
 
-func applyResourcesToPrep(prep *LinuxPrepared, caps Capabilities, mode string, policy *workflow.ResolvedPolicy) error {
+func applyResourcesToPrep(prep *LinuxPrepared, caps Capabilities, mode string, policy *workflow.ResolvedPolicy, validateOnly bool) error {
 	resObj := cty.NilVal
 	if policy.TypeSpecific != nil {
 		if v, ok := policy.TypeSpecific["resources"]; ok {
@@ -248,6 +253,11 @@ func applyResourcesToPrep(prep *LinuxPrepared, caps Capabilities, mode string, p
 	prep.Rlimits = buildRlimits(memBytes, timeoutDur)
 
 	if !useCgroup || !caps.Cgroupv2 {
+		return nil
+	}
+	if validateOnly {
+		// Eager validation: confirm the policy would attempt to use a cgroup
+		// primitive without actually creating the transient cgroup directory.
 		return nil
 	}
 	cg, err := prepareCgroupV2(cpuVal, memBytes)
