@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -634,6 +635,90 @@ func TestRunLock_ExtractsBinaryForSchemaVerification(t *testing.T) {
 	got, err := os.ReadFile(resolved)
 	require.NoError(t, err)
 	assert.Equal(t, binContent, got)
+}
+
+func TestLockThenValidate_FullSchemaVerification(t *testing.T) {
+	ctx := context.Background()
+
+	// Save the real noop binary built by TestMain before overriding
+	// CRITERIA_ADAPTERS with a fresh directory. Use a unique adapter type label
+	// in the workflow so there is no by-name install to mask a missing extraction.
+	builtNoopPath := filepath.Join(os.Getenv("CRITERIA_ADAPTERS"), "criteria-adapter-noop")
+	noopBinary, err := os.ReadFile(builtNoopPath)
+	require.NoError(t, err, "read built noop adapter binary from %s", builtNoopPath)
+
+	adaptersDir := t.TempDir()
+	t.Setenv("CRITERIA_ADAPTERS", adaptersDir)
+
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	workflowDir := t.TempDir()
+
+	cacheRoot := filepath.Join(stateDir, "cache", "oci")
+	layout, err := oci.Open(cacheRoot)
+	require.NoError(t, err)
+
+	// Use a unique adapter type label that does not exist as a by-name install in
+	// any adapters root, so pre-fix behavior (no extraction) falls back to
+	// permissive "schema unverified" validation.
+	const adapterType = "lockvalidate"
+	manifestDigest, _ := fakeArtifactFixture(t, layout, adapterType, noopBinary)
+
+	ref, err := oci.Parse("ghcr.io/brokenbots/criteria-adapter-lockvalidate:0.5.1")
+	require.NoError(t, err)
+
+	resolver := newFakeResolver().
+		withLayout(layout).
+		withBlob(manifestDigest).
+		withTag("0.5.1").
+		withEntry(ref.String(), &lockfile.LockedAdapter{
+			ResolvedDigest: manifestDigest.String(),
+		})
+
+	workflowSrc := `workflow {
+  name = "lock-validate-test"
+  version = "1.0"
+  initial_state = "hello"
+  target_state = "hello"
+}
+
+adapter "lockvalidate" "default" {
+  source = "ghcr.io/brokenbots/criteria-adapter-lockvalidate"
+  version = "0.5.1"
+  config {}
+}
+
+step "hello" {
+  target = adapter.lockvalidate.default
+  input { delay_ms = "0" }
+  outcome "success" { next = state.hello }
+}
+`
+	workflowPath := filepath.Join(workflowDir, "workflow.hcl")
+	require.NoError(t, os.WriteFile(workflowPath, []byte(workflowSrc), 0o644))
+
+	var lockOut bytes.Buffer
+	err = runLock(ctx, workflowDir, false, true, nil, &lockOut, resolver)
+	require.NoError(t, err)
+	assert.Contains(t, lockOut.String(), "locked lockvalidate.default")
+
+	// Validate must resolve the extracted binary via the lockfile digest and
+	// perform full schema verification. The only acceptable warning is the
+	// "declares no output schema" notice from the real noop adapter; there must
+	// be no "schema unverified" permissive-validation warning.
+	out := captureOutput(t, func() {
+		ok := validatePath(ctx, workflowPath, nil, true, false)
+		assert.True(t, ok)
+	})
+
+	var diags []validateDiagnostic
+	require.NoError(t, json.Unmarshal([]byte(out), &diags), "validate output must be JSON: %s", out)
+
+	for _, d := range diags {
+		assert.NotContains(t, d.Summary, "schema unverified",
+			"lock followed by validate should resolve the adapter via the lockfile digest; got diagnostic: %s", d.Summary)
+	}
 }
 
 // findLockedByEntry returns a copy of the locked adapter so it can be used to
