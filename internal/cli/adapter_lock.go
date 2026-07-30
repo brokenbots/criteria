@@ -44,7 +44,7 @@ func newAdapterLockCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().BoolVar(&upgrade, "upgrade", false, "Re-resolve all adapters and update to latest digest")
+	cmd.Flags().BoolVar(&upgrade, "upgrade", false, "Re-evaluate version constraints and accept digest drift under immutable version pins. Plain lock already re-fetches and re-verifies every adapter's pinned digest; use --upgrade only when an exact-version pin resolved to a new digest and you accept the supply-chain change")
 	cmd.Flags().BoolVar(&allowUnsigned, "allow-unsigned", false, "Skip adapter signature verification (also via CRITERIA_ALLOW_UNSIGNED)")
 	cmd.Flags().StringArrayVar(&trustedKeyPaths, "trusted-key", nil, "Path to a trusted PEM public key for key-mode verification (repeatable)")
 	return cmd
@@ -65,6 +65,7 @@ type lockResolver interface {
 	HasBlob(digest.Digest) bool
 	ListTags(context.Context, oci.Reference) ([]string, error)
 	PullAndBuild(context.Context, oci.Reference, *signing.Policy) (digest.Digest, lockfile.LockedAdapter, error)
+	Extract(digest.Digest, string) (string, error)
 }
 
 // ociLockResolver combines an OCI cache layout with a remote puller.
@@ -124,6 +125,13 @@ func (r *ociLockResolver) PullAndBuild(ctx context.Context, ref oci.Reference, p
 		return "", zero, fmt.Errorf("build lockfile entry: %w", err)
 	}
 	return dg, entry, nil
+}
+
+func (r *ociLockResolver) Extract(d digest.Digest, adapterType string) (string, error) {
+	if r == nil || r.layout == nil {
+		return "", fmt.Errorf("layout is nil")
+	}
+	return extractOCIAdapterBinary(r.layout, d, adapterType)
 }
 
 func prepareLockState(workflowDir string, upgrade, allowUnsigned bool, trustedKeyPaths []string, resolver lockResolver) (*lockState, error) {
@@ -237,6 +245,10 @@ func runLock(ctx context.Context, workflowDir string, upgrade, allowUnsigned boo
 }
 
 // resolveOneAdapter returns the lockfile entry for a single workflow adapter.
+// It always re-resolves OCI-sourced adapters so that every run of `lock`
+// re-verifies the pinned digest. Mutable tags and semver constraints are
+// expected to drift; an exact-version pin whose digest moves is treated as a
+// supply-chain red flag unless --upgrade is supplied.
 func resolveOneAdapter(ctx context.Context, wa *workflowAdapter, oldLF *lockfile.Lockfile, resolver lockResolver, aliases map[string]string, upgrade bool, policy *signing.Policy, out io.Writer) (lockfile.LockedAdapter, error) {
 	var entry lockfile.LockedAdapter
 
@@ -249,12 +261,6 @@ func resolveOneAdapter(ctx context.Context, wa *workflowAdapter, oldLF *lockfile
 		return entry, fmt.Errorf("adapter has no `source` and no existing lockfile entry; add `source = \"...\"` + `version = \"...\"` to the adapter block, or run `criteria adapter pull <ref>` manually")
 	}
 
-	// Reuse an existing pin unless --upgrade re-resolves the constraint or the
-	// declared source/version no longer matches the pin.
-	if reused, ok, err := tryReusePin(ctx, wa, oldLF, resolver, aliases, upgrade, policy); ok || err != nil {
-		return reused, err
-	}
-
 	ref, err := resolveSourceVersion(ctx, ResolveContext{WorkflowAliases: aliases}, resolver, wa.Source, wa.Version)
 	if err != nil {
 		return entry, fmt.Errorf("resolve %s@%s: %w", wa.Source, versionOrLatest(wa.Version), err)
@@ -264,6 +270,7 @@ func resolveOneAdapter(ctx context.Context, wa *workflowAdapter, oldLF *lockfile
 	if err != nil {
 		return entry, err
 	}
+
 	entry = pulledEntry
 	entry.Reference = ref.String()
 	entry.ResolvedDigest = dg.String()
@@ -271,50 +278,33 @@ func resolveOneAdapter(ctx context.Context, wa *workflowAdapter, oldLF *lockfile
 	entry.Type = wa.Type
 	entry.Name = wa.Name
 
+	// Re-verify the exact pin: a digest change under an immutable version is a
+	// supply-chain event and must not be applied silently.
+	oldA := findLocked(oldLF, wa.Type, wa.Name)
+	if oldA != nil && oldA.ResolvedDigest != dg.String() {
+		if isImmutableExactPin(wa.Version) && oldA.Version == ref.Tag {
+			if !upgrade {
+				return entry, fmt.Errorf("immutable pin digest drift detected for %s.%s: %s -> %s (version %q was re-pushed); run with --upgrade only if you accept this drift", wa.Type, wa.Name, oldA.ResolvedDigest, dg, ref.Tag)
+			}
+			fmt.Fprintf(out, "! %s.%s immutable pin digest drift: %s -> %s (accepted by --upgrade)\n", wa.Type, wa.Name, oldA.ResolvedDigest, dg)
+		}
+	}
+
+	// Extract the platform binary to the digest-addressed install path so that
+	// compile-time schema verification can resolve it without a prior run.
+	if _, err := resolver.Extract(dg, wa.Type); err != nil {
+		return entry, fmt.Errorf("extract binary for %s.%s: %w", wa.Type, wa.Name, err)
+	}
+
 	fmt.Fprintf(out, "locked %s.%s -> %s (%s)\n", wa.Type, wa.Name, entry.ResolvedDigest, ref.Tag)
 	return entry, nil
 }
 
-// tryReusePin reuses an existing lockfile entry when the declared adapter
-// source and version still match the pin and the blob is present in cache.
-// Returns ok=true when the caller should return the entry.
-// When the pinned blob is missing from the cache it is re-pulled from the
-// entry's pinned reference (still no constraint re-evaluation).
-func tryReusePin(ctx context.Context, wa *workflowAdapter, oldLF *lockfile.Lockfile, resolver lockResolver, aliases map[string]string, upgrade bool, policy *signing.Policy) (lockfile.LockedAdapter, bool, error) {
-	var entry lockfile.LockedAdapter
-	if oldLF == nil || upgrade {
-		return entry, false, nil
-	}
-	oldA := findLocked(oldLF, wa.Type, wa.Name)
-	if oldA == nil {
-		return entry, false, nil
-	}
-
-	// If the workflow declaration no longer matches the lockfile pin, fall
-	// through to full resolution so the operator is not left with a stale lock.
-	if mismatch := declMatchesPin(wa, oldA, aliases); mismatch != "" {
-		return entry, false, nil
-	}
-
-	if !resolver.HasBlob(digest.Digest(oldA.ResolvedDigest)) {
-		// Pinned blob evicted from cache: re-pull the exact pinned reference.
-		ref, err := oci.Parse(oldA.Reference)
-		if err != nil {
-			return entry, false, fmt.Errorf("parse pinned reference %q: %w", oldA.Reference, err)
-		}
-		dg, pulledEntry, err := resolver.PullAndBuild(ctx, ref, policy)
-		if err != nil {
-			return entry, false, err
-		}
-		entry = pulledEntry
-		entry.Reference = ref.String()
-		entry.ResolvedDigest = dg.String()
-		entry.Version = oldA.Version
-		entry.Type = wa.Type
-		entry.Name = wa.Name
-		return entry, true, nil
-	}
-	return *oldA, true, nil
+// isImmutableExactPin reports whether the declared version is a single,
+// fully-specified version (e.g. "0.5.3"). Mutable tags and semver constraints
+// return false.
+func isImmutableExactPin(version string) bool {
+	return oci.IsExactVersion(versionOrLatest(version))
 }
 
 // declMatchesPin returns an empty string when the workflow declaration matches
@@ -527,6 +517,9 @@ func missingRefs(lf *lockfile.Lockfile, adapters map[string]*workflowAdapter) []
 }
 
 func findLocked(lf *lockfile.Lockfile, typ, name string) *lockfile.LockedAdapter {
+	if lf == nil {
+		return nil
+	}
 	for i := range lf.Adapters {
 		if lf.Adapters[i].Type == typ && lf.Adapters[i].Name == name {
 			return &lf.Adapters[i]

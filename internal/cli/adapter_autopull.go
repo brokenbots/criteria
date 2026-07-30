@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -12,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/opencontainers/go-digest"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/brokenbots/criteria/internal/adapter/environment/container"
 	"github.com/brokenbots/criteria/internal/adapter/manifest"
@@ -168,7 +170,7 @@ func ensureAdapterCached(ctx context.Context, key string, wa *workflowAdapter, l
 		if err := verifyAgainstPin(ctx, key, layout, dg, entry, policy); err != nil {
 			return err
 		}
-		if err := extractOCIAdapterBinary(layout, dg, wa.Type); err != nil {
+		if _, err := extractOCIAdapterBinary(layout, dg, wa.Type); err != nil {
 			return fmt.Errorf("adapter %q extract binary: %w", key, err)
 		}
 		return nil
@@ -200,7 +202,7 @@ func ensureAdapterCached(ctx context.Context, key string, wa *workflowAdapter, l
 		return err
 	}
 
-	if err := extractOCIAdapterBinary(layout, pulledDg, wa.Type); err != nil {
+	if _, err := extractOCIAdapterBinary(layout, pulledDg, wa.Type); err != nil {
 		return fmt.Errorf("adapter %q extract binary: %w", key, err)
 	}
 
@@ -260,45 +262,125 @@ func hasOCIReferences(spec *workflow.Spec) bool {
 // it never selects the source path inside the artifact: the artifact says where
 // its own binary lives. A workflow is free to label an adapter whatever it
 // likes, so the two names need not agree.
-func extractOCIAdapterBinary(layout *oci.Layout, dg digest.Digest, adapterType string) error {
+//
+// The copied binary is verified against the digest of its OCI layer, and the
+// write is idempotent: if the destination already exists with the expected
+// digest it is left untouched.
+func extractOCIAdapterBinary(layout *oci.Layout, dg digest.Digest, adapterType string) (string, error) {
+	expectedBinDigest, err := artifactBinaryLayerDigest(layout, dg)
+	if err != nil {
+		return "", err
+	}
+
 	artFS, err := layout.Open(dg)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	platformPath, err := artifactBinaryPath(artFS)
 	if err != nil {
-		return err
+		return "", err
 	}
 	f, err := artFS.Open(platformPath)
 	if err != nil {
-		return fmt.Errorf("open %s in artifact: %w", platformPath, err)
+		return "", fmt.Errorf("open %s in artifact: %w", platformPath, err)
 	}
 	defer f.Close()
 
 	dest, err := adapterhost.AdapterInstallPath(adapterType, adapterhost.EncodeDigest(dg))
 	if err != nil {
-		return err
+		return "", err
 	}
+
+	// Idempotency: if the destination already exists and matches the expected
+	// layer digest, leave it in place.
+	if existingErr := verifyFileDigest(dest, expectedBinDigest); existingErr == nil {
+		return dest, nil
+	}
+
+	return writeVerifiedBinary(f, dest, expectedBinDigest, adapterType, dg)
+}
+
+// writeVerifiedBinary copies src into dest (with a digest verifier) and makes
+// it executable. The write is atomic: a sibling temp file is renamed into
+// place after verification. If verification fails the temp file is removed.
+func writeVerifiedBinary(src io.Reader, dest string, expected digest.Digest, adapterType string, dg digest.Digest) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		return err
+		return "", err
 	}
 
 	tmp := dest + ".tmp"
 	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
 	if err != nil {
-		return err
+		return "", fmt.Errorf("create temporary extraction file: %w", err)
 	}
-	if _, err := io.Copy(out, f); err != nil {
+	verifier := expected.Verifier()
+	w := io.MultiWriter(out, verifier)
+	if _, err := io.Copy(w, src); err != nil {
 		out.Close()
 		os.Remove(tmp)
-		return err
+		return "", fmt.Errorf("copy binary: %w", err)
 	}
 	if err := out.Close(); err != nil {
 		os.Remove(tmp)
+		return "", fmt.Errorf("close temporary extraction file: %w", err)
+	}
+	if !verifier.Verified() {
+		os.Remove(tmp)
+		return "", fmt.Errorf("extracted binary digest mismatch for %q under %s: expected %s", adapterType, dg, expected)
+	}
+	if err := os.Rename(tmp, dest); err != nil {
+		os.Remove(tmp)
+		return "", fmt.Errorf("rename extracted binary into place: %w", err)
+	}
+	return dest, nil
+}
+
+// artifactBinaryLayerDigest returns the digest of the host platform binary
+// layer inside the artifact identified by manifest digest d.
+func artifactBinaryLayerDigest(layout *oci.Layout, d digest.Digest) (digest.Digest, error) {
+	var zero digest.Digest
+	data, err := os.ReadFile(layout.BlobPath(d))
+	if err != nil {
+		return zero, fmt.Errorf("read manifest blob %s: %w", d, err)
+	}
+	var m ocispec.Manifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		return zero, fmt.Errorf("parse manifest %s: %w", d, err)
+	}
+
+	platformDir := path.Join("bin", runtime.GOOS, runtime.GOARCH)
+	expectedPrefix := platformDir + "/"
+	for _, layer := range m.Layers {
+		title, ok := layer.Annotations[oci.AnnotationTitle]
+		if !ok || title == "" {
+			continue
+		}
+		title = strings.TrimPrefix(title, "/")
+		if strings.HasPrefix(title, expectedPrefix) {
+			return layer.Digest, nil
+		}
+	}
+	return zero, fmt.Errorf("artifact %s has no binary for %s/%s", d, runtime.GOOS, runtime.GOARCH)
+}
+
+// verifyFileDigest reports whether the file at path matches the expected
+// digest. Any error (missing file, read failure, digest mismatch) is returned
+// so the caller can fall through to a fresh extraction.
+func verifyFileDigest(path string, expected digest.Digest) error {
+	f, err := os.Open(path)
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, dest)
+	defer f.Close()
+	verifier := expected.Verifier()
+	if _, err := io.Copy(verifier, f); err != nil {
+		return err
+	}
+	if !verifier.Verified() {
+		return fmt.Errorf("digest mismatch: expected %s", expected)
+	}
+	return nil
 }
 
 // artifactBinaryPath locates this host's platform binary inside an adapter
