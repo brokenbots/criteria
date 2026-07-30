@@ -936,6 +936,20 @@ func (m *SessionManager) HasCapability(name, capName string) bool {
 	return false
 }
 
+// AdapterHandle returns the underlying adapter handle for the named session.
+// It is used by conformance tests to inspect handle capabilities without
+// spawning a throwaway probe process. Returns (nil, false) if the session is
+// not found. Thread-safe.
+func (m *SessionManager) AdapterHandle(name string) (Handle, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sess, ok := m.sessions[name]
+	if !ok {
+		return nil, false
+	}
+	return sess.handle, true
+}
+
 func (m *SessionManager) Shutdown(ctx context.Context) error {
 	m.mu.Lock()
 	sessions := make([]*Session, 0, len(m.sessions))

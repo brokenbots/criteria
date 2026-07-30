@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,11 +17,11 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	adapterhost "github.com/brokenbots/criteria-go-adapter-sdk/adapterhost"
 	"github.com/brokenbots/criteria/cmd/criteria-adapter-mcp/mcpclient"
+	"github.com/brokenbots/criteria/internal/adapterhost/testfixtures/heartbeatutil"
 )
 
 const (
@@ -280,27 +279,10 @@ func (b *MCPBridge) Log(ctx context.Context, _ *v2.LogRequest, sender adapterhos
 	// immediately would stop the SDK heartbeat ticker and break the host's
 	// liveness contract, so block until the host cancels the stream.
 	//
-	// For fast conformance tests the host uses a short stall threshold, so we
-	// emit heartbeats at a configurable cadence (defaulting to the protocol
-	// 30 s).
-	interval := 30 * time.Second
-	if raw := os.Getenv("CRITERIA_TEST_HEARTBEAT_INTERVAL_MS"); raw != "" {
-		if ms, err := strconv.Atoi(raw); err == nil && ms > 0 {
-			interval = time.Duration(ms) * time.Millisecond
-		}
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case t := <-ticker.C:
-			if err := sender.Send(&v2.LogEvent{Heartbeat: &v2.Heartbeat{StreamName: "log", SentAt: timestamppb.New(t)}}); err != nil {
-				return err
-			}
-		}
-	}
+	// heartbeatutil.RunLogHeartbeat is a transitional shim: the Go SDK should
+	// own session-lifetime heartbeats (see PR #283 Follow-ups). Remove this once
+	// the SDK fix lands.
+	return heartbeatutil.RunLogHeartbeat(ctx, sender)
 }
 
 // Permissions implements blocking permission enforcement for the MCP adapter.

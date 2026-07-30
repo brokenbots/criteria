@@ -2,14 +2,11 @@ package main
 
 import (
 	"context"
-	"os"
-	"strconv"
-	"time"
-
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	adapterhost "github.com/brokenbots/criteria-go-adapter-sdk/adapterhost"
+
+	"github.com/brokenbots/criteria/internal/adapterhost/testfixtures/heartbeatutil"
 )
 
 type brokenService struct {
@@ -35,24 +32,11 @@ func (brokenService) Log(ctx context.Context, _ *v2.LogRequest, sender adapterho
 	// immediately would stop the SDK heartbeat ticker and break the host's
 	// liveness contract. This fixture is intentionally broken only on the
 	// outcome-domain contract, so it keeps the stream alive with heartbeats.
-	interval := 30 * time.Second
-	if raw := os.Getenv("CRITERIA_TEST_HEARTBEAT_INTERVAL_MS"); raw != "" {
-		if ms, err := strconv.Atoi(raw); err == nil && ms > 0 {
-			interval = time.Duration(ms) * time.Millisecond
-		}
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case t := <-ticker.C:
-			if err := sender.Send(&v2.LogEvent{Heartbeat: &v2.Heartbeat{StreamName: "log", SentAt: timestamppb.New(t)}}); err != nil {
-				return err
-			}
-		}
-	}
+	//
+	// heartbeatutil.RunLogHeartbeat is a transitional shim: the Go SDK should
+	// own session-lifetime heartbeats (see PR #283 Follow-ups). Remove this once
+	// the SDK fix lands.
+	return heartbeatutil.RunLogHeartbeat(ctx, sender)
 }
 
 func (brokenService) CloseSession(context.Context, *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {

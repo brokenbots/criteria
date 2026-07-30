@@ -28,16 +28,6 @@ func testHeartbeats(t *testing.T, name string, loader adapterhost.Loader, opts *
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	plug, err := loader.Resolve(ctx, name)
-	if err != nil {
-		t.Fatalf("resolve adapter: %v", err)
-	}
-	defer plug.Kill()
-
-	if _, ok := plug.(adapterhost.LogStreamStarter); !ok {
-		t.Skipf("%s: adapter does not implement LogStreamStarter", name)
-	}
-
 	threshold := opts.HeartbeatStallThreshold
 	if threshold <= 0 {
 		threshold = defaultHeartbeatStallThreshold
@@ -50,6 +40,18 @@ func testHeartbeats(t *testing.T, name string, loader adapterhost.Loader, opts *
 	defer func() { _ = sm.Shutdown(ctx) }()
 
 	sessionID := openIdleSession(t, name, sm, ctx, info, opts)
+
+	// Heartbeat conformance is mandatory for any adapter that implements
+	// LogStreamStarter. Reuse the session manager's handle to avoid spawning a
+	// throwaway probe process.
+	handle, ok := sm.AdapterHandle(sessionID)
+	if !ok {
+		t.Fatalf("%s: session handle not found after open", name)
+	}
+	if _, ok := handle.(adapterhost.LogStreamStarter); !ok {
+		t.Skipf("%s: adapter does not implement LogStreamStarter", name)
+	}
+
 	// Idle past the threshold. A correct host+adapter pair keeps the session
 	// alive with log-stream heartbeats.
 	time.Sleep(threshold * 3)
@@ -59,8 +61,9 @@ func testHeartbeats(t *testing.T, name string, loader adapterhost.Loader, opts *
 	}
 	assertValidOutcome(t, res.Outcome, opts)
 
-	// Contract enforcement: probe a fresh Log stream and count heartbeat events.
-	hbEvents := countHeartbeatProbeEvents(t, name, loader, ctx, opts, threshold)
+	// Contract enforcement: probe the same adapter handle and count heartbeat
+	// events on a secondary session.
+	hbEvents := countHeartbeatProbeEvents(t, name, sm, sessionID, ctx, opts, threshold)
 	if hbEvents == 0 {
 		t.Fatalf("%s: log stream emitted no heartbeat events while idle; heartbeats are mandatory for log-streaming adapters", name)
 	}
@@ -76,25 +79,30 @@ func openIdleSession(t *testing.T, name string, sm *adapterhost.SessionManager, 
 	return sessionID
 }
 
-func countHeartbeatProbeEvents(t *testing.T, name string, loader adapterhost.Loader, ctx context.Context, opts *Options, threshold time.Duration) int {
+func countHeartbeatProbeEvents(t *testing.T, name string, sm *adapterhost.SessionManager, sessionID string, ctx context.Context, opts *Options, threshold time.Duration) int {
 	t.Helper()
 	hbCtx, hbCancel := context.WithTimeout(ctx, threshold*4)
 	defer hbCancel()
 
-	probePlug, err := loader.Resolve(hbCtx, name)
-	if err != nil {
-		t.Fatalf("%s: resolve probe adapter: %v", name, err)
+	// Reuse the handle already opened by the session manager instead of
+	// spawning a throwaway probe process.
+	handle, ok := sm.AdapterHandle(sessionID)
+	if !ok {
+		t.Fatalf("%s: session handle not found", name)
 	}
-	defer probePlug.Kill()
+	lss, ok := handle.(adapterhost.LogStreamStarter)
+	if !ok {
+		t.Fatalf("%s: adapter handle unexpectedly lacks LogStreamStarter", name)
+	}
 
 	probeSessionID := newSessionID(name + "-hb-probe")
-	if err := probePlug.OpenSession(hbCtx, probeSessionID, cloneConfig(opts.OpenConfig), cloneConfig(opts.Secrets)); err != nil {
+	if err := handle.OpenSession(hbCtx, probeSessionID, cloneConfig(opts.OpenConfig), cloneConfig(opts.Secrets)); err != nil {
 		t.Fatalf("%s: open probe session: %v", name, err)
 	}
-	defer func() { _ = probePlug.CloseSession(ctx, probeSessionID) }()
+	defer func() { _ = handle.CloseSession(ctx, probeSessionID) }()
 
 	hbSink := &recordingSink{}
-	cancelLog, done, err := probePlug.(adapterhost.LogStreamStarter).StartLogStream(hbCtx, probeSessionID, hbSink)
+	cancelLog, done, err := lss.StartLogStream(hbCtx, probeSessionID, hbSink)
 	if err != nil {
 		t.Fatalf("%s: start probe log stream: %v", name, err)
 	}
