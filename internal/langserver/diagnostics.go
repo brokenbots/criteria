@@ -66,7 +66,7 @@ func (s *server) compileDiagnostics(dir string) []compileDiagnostic {
 
 	ctx := context.Background()
 	loader := adapterhost.NewLoader()
-	schemas, schemaDiags := diagutil.CollectSchemas(ctx, loader, spec, nil)
+	schemas, schemaDiags := diagutil.CollectSchemas(ctx, loader, dir, spec, nil)
 	_ = loader.Shutdown(ctx)
 
 	_, compileDiags := workflow.CompileWithContext(ctx, spec, schemas, workflow.CompileOpts{

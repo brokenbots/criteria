@@ -44,7 +44,13 @@ step "hello" {
 	var diags []validateDiagnostic
 	err = json.Unmarshal([]byte(out), &diags)
 	require.NoError(t, err, "output must be valid JSON: %s", out)
-	assert.Empty(t, diags)
+	// The real noop adapter built by TestMain declares no output_schema, so
+	// schema resolution now emits a distinct warning while still validating
+	// successfully.
+	require.Len(t, diags, 1)
+	assert.Equal(t, "warning", diags[0].Severity)
+	assert.Contains(t, diags[0].Summary, "noop")
+	assert.Contains(t, diags[0].Summary, "declares no output schema")
 }
 
 func TestValidateDiagJSON_InvalidWorkflow(t *testing.T) {
