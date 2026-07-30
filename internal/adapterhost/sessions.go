@@ -82,6 +82,13 @@ type SessionManager struct {
 	// a test hook so conformance and regression tests can use a short threshold.
 	HeartbeatStallThreshold time.Duration
 
+	// RespawnLogStreamDrainTimeout is the maximum time restartLogStream waits for
+	// the previous log-stream watcher to finish after cancellation. If zero, a
+	// bound derived from HeartbeatStallThreshold is used (1/3 of the threshold,
+	// clamped between 5s and 30s). This is a test hook so the bounded-wait
+	// regression test can use a short value.
+	RespawnLogStreamDrainTimeout time.Duration
+
 	mu       sync.Mutex
 	sessions map[string]*Session
 }
@@ -91,6 +98,20 @@ func (m *SessionManager) heartbeatStallThreshold() time.Duration {
 		return m.HeartbeatStallThreshold
 	}
 	return 90 * time.Second
+}
+
+func (m *SessionManager) respawnLogStreamDrainTimeout() time.Duration {
+	if m.RespawnLogStreamDrainTimeout > 0 {
+		return m.RespawnLogStreamDrainTimeout
+	}
+	third := m.heartbeatStallThreshold() / 3
+	if third < 5*time.Second {
+		return 5 * time.Second
+	}
+	if third > 30*time.Second {
+		return 30 * time.Second
+	}
+	return third
 }
 
 // RemoteShim is the interface the session manager uses to wait for remote
@@ -1055,8 +1076,17 @@ func (m *SessionManager) restartLogStream(ctx context.Context, sess *Session, pl
 	}
 	if oldDone != nil {
 		// Wait for the previous watcher to finish before reusing the merge buffer
-		// and heartbeat state, avoiding races and goroutine leaks.
-		<-oldDone
+		// and heartbeat state, avoiding races and goroutine leaks. Bound the wait
+		// so a broken adapter that never closes its done channel cannot wedge the
+		// respawn path and prevent the step retry from starting.
+		drainTimeout := m.respawnLogStreamDrainTimeout()
+		select {
+		case <-oldDone:
+		case <-ctx.Done():
+		case <-time.After(drainTimeout):
+			slog.Warn("adapter log stream did not drain after cancel; continuing respawn to avoid wedge",
+				"session", sess.Name, "adapter", sess.Adapter, "drain_timeout", drainTimeout)
+		}
 	}
 	if sess.mergeBuf != nil {
 		sess.mergeBuf.Close()

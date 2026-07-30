@@ -644,6 +644,86 @@ func TestSessionManager_RespawnedEarlyLogEnd_DetectsBrokenContract(t *testing.T)
 	}
 }
 
+// TestSessionManager_RestartLogStream_BoundedWait verifies that if the old
+// log stream's done channel is never closed after cancel, restartLogStream does
+// not block forever: it proceeds after the configured drain timeout, starts
+// the new stream, and logs a single warning.
+func TestSessionManager_RestartLogStream_BoundedWait(t *testing.T) {
+	rec := &recordingSlogHandler{}
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(rec))
+	defer slog.SetDefault(oldLogger)
+
+	h1 := &loggingMockHandle{}
+	// The old stream's done channel is intentionally never closed, even after
+	// cancel. This simulates a broken adapter whose Log goroutine ignores
+	// cancellation and never reports stream termination.
+	h1.startLogStreamOverride = func(ctx context.Context, sessionID string, sink LogEventSink) (cancel func(), done <-chan error, err error) {
+		logCtx, cancelFn := context.WithCancel(ctx)
+		d := make(chan error)
+		go func() {
+			// Wait for cancel, but never close d.
+			<-logCtx.Done()
+		}()
+		return cancelFn, d, nil
+	}
+	h1.executeFunc = func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+		return adapter.Result{}, errors.New("connection reset")
+	}
+
+	h2 := &loggingMockHandle{
+		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+			return adapter.Result{Outcome: "success"}, nil
+		},
+	}
+
+	loader := &mockLoaderForRespawn{handles: []*loggingMockHandle{h2}}
+	sm := NewSessionManager(loader)
+	sm.SetGraph(&workflow.FSMGraph{})
+	sm.HeartbeatStallThreshold = 100 * time.Millisecond
+	sm.RespawnLogStreamDrainTimeout = 50 * time.Millisecond
+
+	_ = sm.registerSession(context.Background(), "agent", "test", OnCrashRespawn, nil, nil, nil, nil, h1, nil, "")
+	defer sm.Close(context.Background(), "agent")
+
+	step := &workflow.StepNode{Name: "run"}
+	start := time.Now()
+	_, err := sm.Execute(context.Background(), "agent", step, &logEventCollector{})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("expected respawn+retry to succeed despite wedged old watcher, got %v", err)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("respawn took too long (%v); bounded wait did not unblock", elapsed)
+	}
+	if !h2.started {
+		t.Fatal("expected log stream started on respawned handle")
+	}
+
+	// A subsequent Execute on the respawned handle should succeed.
+	_, err = sm.Execute(context.Background(), "agent", step, &logEventCollector{})
+	if err != nil {
+		t.Fatalf("expected second Execute on respawned handle to succeed, got %v", err)
+	}
+
+	// The new stream is already alive; a late diagnostic from the old watcher
+	// would be distinguishable from a respawn false-positive.
+	sess := sm.sessions["agent"]
+	if !sess.logStreamAlive.Load() {
+		t.Fatal("expected logStreamAlive true for new stream after bounded respawn")
+	}
+
+	var found int
+	for _, r := range rec.all() {
+		if strings.Contains(r, "adapter log stream did not drain after cancel; continuing respawn to avoid wedge") {
+			found++
+		}
+	}
+	if found != 1 {
+		t.Fatalf("expected exactly one bounded-drain warning, got %d", found)
+	}
+}
+
 // TestSessionManager_RespawnThenClose_NoFalseDiagnostic verifies the
 // respawn-then-immediately-close race is handled by the same per-stream
 // host-cancel signal used during respawn.
