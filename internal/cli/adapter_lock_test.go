@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/opencontainers/go-digest"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapter/oci"
 	"github.com/brokenbots/criteria/internal/adapter/signing"
+	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
@@ -269,4 +272,100 @@ func TestDeclMatchesPin_ConstraintNoLongerSatisfied(t *testing.T) {
 	}
 	wa := &workflowAdapter{Source: "ghcr.io/brokenbots/criteria-adapter-noop", Version: "^0.5.2"}
 	assert.Contains(t, declMatchesPin(wa, oldA, nil), "pinned version 0.5.1 no longer satisfies constraint")
+}
+
+func TestPrepareLockState_BuildsPullerForVersionBump(t *testing.T) {
+	dir := writeLockFixture(t, "0.5.2", func(lf *lockfile.Lockfile) {
+		lf.Adapters[0].Version = "0.5.1"
+		lf.Adapters[0].Reference = "ghcr.io/brokenbots/criteria-adapter-noop:0.5.1"
+		lf.Adapters[0].ResolvedDigest = digest.FromString("ghcr.io/brokenbots/criteria-adapter-noop:0.5.1").String()
+	})
+
+	state, err := prepareLockState(dir, false, true, nil, nil)
+	require.NoError(t, err)
+
+	ociResolver, ok := state.resolver.(*ociLockResolver)
+	require.True(t, ok, "prepareLockState should build the production OCI resolver")
+	require.NotNil(t, ociResolver.puller, "prepareLockState must build a puller when any OCI-sourced adapter exists so a declared version bump can re-resolve")
+}
+
+func TestRunLock_VersionBumpReResolvesEndToEnd(t *testing.T) {
+	dir := writeLockFixture(t, "0.5.2", func(lf *lockfile.Lockfile) {
+		lf.Adapters[0].Version = "0.5.1"
+		lf.Adapters[0].Reference = "ghcr.io/brokenbots/criteria-adapter-noop:0.5.1"
+		lf.Adapters[0].ResolvedDigest = digest.FromString("ghcr.io/brokenbots/criteria-adapter-noop:0.5.1").String()
+	})
+
+	oldDigest := digest.FromString("ghcr.io/brokenbots/criteria-adapter-noop:0.5.1")
+	fake := newFakeResolver().
+		withBlob(oldDigest).
+		withTag("0.5.2")
+
+	var out bytes.Buffer
+	err := runLock(context.Background(), dir, false, true, nil, &out, fake)
+	require.NoError(t, err)
+
+	require.Len(t, fake.pulledRefs, 1, "plain lock must re-resolve an already-locked adapter when the declared version changes")
+	assert.Equal(t, "0.5.2", fake.pulledRefs[0].Tag)
+	assert.Contains(t, out.String(), "locked noop.default")
+	assert.Contains(t, out.String(), "(0.5.2)")
+	assert.Contains(t, out.String(), "~ noop.default digest")
+
+	newLF, err := lockfile.ReadFromDir(dir)
+	require.NoError(t, err)
+	require.Len(t, newLF.Adapters, 1)
+	assert.Equal(t, "0.5.2", newLF.Adapters[0].Version)
+	assert.Equal(t, digest.FromString("ghcr.io/brokenbots/criteria-adapter-noop:0.5.2").String(), newLF.Adapters[0].ResolvedDigest)
+}
+
+func TestRunLock_UpToDateMessage(t *testing.T) {
+	oldDigest := digest.FromString("ghcr.io/brokenbots/criteria-adapter-noop:0.5.1")
+	dir := writeLockFixture(t, "0.5.1", func(lf *lockfile.Lockfile) {
+		lf.Adapters[0].ResolvedDigest = oldDigest.String()
+	})
+
+	fake := newFakeResolver().withBlob(oldDigest)
+
+	var out bytes.Buffer
+	err := runLock(context.Background(), dir, false, true, nil, &out, fake)
+	require.NoError(t, err)
+
+	assert.Empty(t, fake.pulledRefs, "no pull should happen when lockfile already matches declarations")
+	assert.Contains(t, out.String(), "lockfile up to date")
+	assert.Contains(t, out.String(), "1 adapter(s)")
+}
+
+// writeLockFixture creates a temp workflow directory containing a single OCI
+// adapter declared at the given version and a lockfile that the caller can
+// customize via editFn.
+func writeLockFixture(t *testing.T, declaredVersion string, editFn func(*lockfile.Lockfile)) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+
+	workflowHCL := `workflow {
+  name    = "w"
+  version = "0.1"
+}
+
+adapter "noop" "default" {
+  source  = "ghcr.io/brokenbots/criteria-adapter-noop"
+  version = "` + declaredVersion + `"
+}
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "workflow.hcl"), []byte(workflowHCL), 0o600))
+
+	lf := &lockfile.Lockfile{Adapters: []lockfile.LockedAdapter{{
+		Type:               "noop",
+		Name:               "default",
+		Reference:          "ghcr.io/brokenbots/criteria-adapter-noop:" + declaredVersion,
+		Version:            declaredVersion,
+		ResolvedDigest:     digest.FromString("ghcr.io/brokenbots/criteria-adapter-noop:" + declaredVersion).String(),
+		SDKProtocolVersion: 2,
+	}}}
+	if editFn != nil {
+		editFn(lf)
+	}
+	require.NoError(t, lockfile.Write(filepath.Join(dir, workflow.LockfileName), lf))
+	return dir
 }

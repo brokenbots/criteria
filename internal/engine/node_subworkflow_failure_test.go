@@ -201,7 +201,6 @@ func TestRunSubworkflow_AdapterInitFailure_DefinesOutputsForParentOutcome(t *tes
 	// With declared outputs defined as null, this must evaluate to a known null
 	// value instead of a bare "unsupported attribute" diagnostic.
 	projection := parseExpr(t, `{ status = subworkflow.status }`)
-	parentSt.Vars = workflow.WithStepOutputs(parentSt.Vars, "call_child", outputs)
 	projected, perr := evalOutcomeOutputProjection(projection, outputs, nil, parentSt)
 	if perr != nil {
 		t.Fatalf("expected output projection to succeed on failure path, got: %v", perr)

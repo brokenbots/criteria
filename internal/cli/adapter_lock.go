@@ -40,7 +40,7 @@ func newAdapterLockCmd() *cobra.Command {
 			if len(args) > 0 {
 				workflowDir = args[0]
 			}
-			return runLock(cmd.Context(), workflowDir, upgrade, allowUnsigned, trustedKeyPaths, cmd.OutOrStdout())
+			return runLock(cmd.Context(), workflowDir, upgrade, allowUnsigned, trustedKeyPaths, cmd.OutOrStdout(), nil)
 		},
 	}
 
@@ -126,7 +126,7 @@ func (r *ociLockResolver) PullAndBuild(ctx context.Context, ref oci.Reference, p
 	return dg, entry, nil
 }
 
-func prepareLockState(workflowDir string, upgrade, allowUnsigned bool, trustedKeyPaths []string) (*lockState, error) {
+func prepareLockState(workflowDir string, upgrade, allowUnsigned bool, trustedKeyPaths []string, resolver lockResolver) (*lockState, error) {
 	workflowDir, err := filepath.Abs(workflowDir)
 	if err != nil {
 		return nil, fmt.Errorf("resolve workflow dir: %w", err)
@@ -162,9 +162,8 @@ func prepareLockState(workflowDir string, upgrade, allowUnsigned bool, trustedKe
 		return nil, err
 	}
 
-	var puller *oci.Puller
-	if upgrade || len(missingRefs(oldLF, wfAdapters)) > 0 {
-		puller = &oci.Puller{Layout: layout}
+	if resolver == nil {
+		resolver = newOCILockResolver(layout, upgrade, wfAdapters)
 	}
 
 	return &lockState{
@@ -172,9 +171,21 @@ func prepareLockState(workflowDir string, upgrade, allowUnsigned bool, trustedKe
 		oldLF:       oldLF,
 		wfAdapters:  wfAdapters,
 		aliases:     aliases,
-		resolver:    &ociLockResolver{layout: layout, puller: puller},
+		resolver:    resolver,
 		policy:      policy,
 	}, nil
+}
+
+// newOCILockResolver builds the production OCI resolver. A puller is created
+// whenever any OCI-sourced adapter exists, because a declared version bump on
+// an already-locked adapter still needs re-resolution. Constructing the puller
+// performs no network I/O, so this is safe and cheap.
+func newOCILockResolver(layout *oci.Layout, upgrade bool, wfAdapters map[string]*workflowAdapter) lockResolver {
+	var puller *oci.Puller
+	if upgrade || hasOCIAdapters(wfAdapters) {
+		puller = &oci.Puller{Layout: layout}
+	}
+	return &ociLockResolver{layout: layout, puller: puller}
 }
 
 func openCacheAndPolicy(allowUnsigned bool, workflowVerification string, trustedKeys []signing.KeyIdentity) (*oci.Layout, signing.Policy, error) {
@@ -194,11 +205,11 @@ func openCacheAndPolicy(allowUnsigned bool, workflowVerification string, trusted
 	return layout, policy, nil
 }
 
-func runLock(ctx context.Context, workflowDir string, upgrade, allowUnsigned bool, trustedKeyPaths []string, out io.Writer) error {
+func runLock(ctx context.Context, workflowDir string, upgrade, allowUnsigned bool, trustedKeyPaths []string, out io.Writer, resolver lockResolver) error {
 	if out == nil {
 		out = os.Stderr
 	}
-	state, err := prepareLockState(workflowDir, upgrade, allowUnsigned, trustedKeyPaths)
+	state, err := prepareLockState(workflowDir, upgrade, allowUnsigned, trustedKeyPaths, resolver)
 	if err != nil {
 		return err
 	}
@@ -479,6 +490,17 @@ func parseAliasesFromFile(path string, aliases map[string]string) error {
 		}
 	}
 	return nil
+}
+
+// hasOCIAdapters reports whether any adapter in the map references an OCI
+// source. If so, the lock command needs a puller available for re-resolution.
+func hasOCIAdapters(adapters map[string]*workflowAdapter) bool {
+	for _, wa := range adapters {
+		if wa.Source != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func missingRefs(lf *lockfile.Lockfile, adapters map[string]*workflowAdapter) []string {
