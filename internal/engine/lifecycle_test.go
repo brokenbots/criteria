@@ -686,6 +686,83 @@ state "done" {
 	}
 }
 
+// failingBindAdapter fails OpenSession, simulating a deferred bind-time failure
+// such as a working directory that has not been created before the adapter is
+// first used.
+type failingBindAdapter struct {
+	fakeAdapter
+	workingDir string
+}
+
+func (f *failingBindAdapter) OpenSession(_ context.Context, _ string, _, _ map[string]string) error {
+	if _, err := os.Stat(f.workingDir); err != nil {
+		return fmt.Errorf("working directory does not exist: %w", err)
+	}
+	return nil
+}
+
+// TestEngine_DeferredBindFailureIdentifiesAdapterStepAndWorkingDir verifies that
+// when a deferred session bind fails at first use, the error identifies the
+// adapter instance, the step, and the resolved working directory. This is a
+// regression test for the error wrapping in SessionManager.bindVerifiedAndLookup.
+func TestEngine_DeferredBindFailureIdentifiesAdapterStepAndWorkingDir(t *testing.T) {
+	tmp := t.TempDir()
+	worktree := filepath.Join(tmp, "worktree") // intentionally never created
+
+	g := compile(t, `
+workflow {
+  name          = "bind-failure-test"
+  version       = "0.1"
+  initial_state = "use"
+  target_state  = "done"
+}
+
+variable "dir" {
+  type    = string
+  default = ""
+}
+
+environment "shell" "workdir" {
+  working_directory = var.dir
+}
+
+adapter "noop" "use" {
+  environment = shell.workdir
+}
+
+step "use" {
+  target = adapter.noop.use
+  outcome "success" { next = step.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}`)
+
+	failing := &failingBindAdapter{fakeAdapter: fakeAdapter{name: "noop"}, workingDir: worktree}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"noop": failing,
+	}}
+
+	sink := &lifecycleTrackingSink{}
+	eng := New(g, loader, sink, WithVarOverrides(map[string]cty.Value{
+		"dir": cty.StringVal(worktree),
+	}))
+
+	err := eng.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected deferred bind failure, got nil")
+	}
+
+	errStr := err.Error()
+	for _, want := range []string{"noop.use", "use", worktree} {
+		if !strings.Contains(errStr, want) {
+			t.Errorf("error should identify %q; got:\n%s", want, errStr)
+		}
+	}
+}
+
 // TestEngine_UnreachableBrokenAdapterFailsAtStartup verifies that a broken
 // adapter declared in a workflow but never reached by any step still fails the
 // run during eager verification, before any step executes. This proves that
