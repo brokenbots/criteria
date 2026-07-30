@@ -49,7 +49,14 @@ func TestMatrixCoverage(t *testing.T) {
 		}
 	}
 
+	suites := make(map[string]struct{}, len(m.Suites))
+	for _, suite := range m.Suites {
+		suites[suite] = struct{}{}
+	}
 	for _, suite := range m.RequiredSuites {
+		if _, ok := suites[suite]; !ok {
+			t.Errorf("matrix.yaml required suite %q must also be listed in suites", suite)
+		}
 		wantFile := "conformance_" + suite + ".go"
 		if _, ok := files[wantFile]; !ok {
 			t.Errorf("matrix.yaml required suite %q missing implementation file %q", suite, wantFile)

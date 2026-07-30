@@ -60,15 +60,12 @@ type Loader interface {
 // stream once at session open and cancels it at session close.
 //
 // Contract: the returned cancel function must end the stream, and the
-// returned channel must be closed once the stream has fully stopped. The
-// stream must remain open for the lifetime of the session. An adapter that
-// returns from its implementation of the underlying Log RPC before the
-// host cancels the stream disables its own heartbeat signal and breaks the
-// session-liveness contract; the host will surface that as a diagnostic.
-// LogStreamStarter is implemented by adapters that expose a long-lived Log
-// stream. The stream must remain open for the entire lifetime of the session:
-// cancelling it early stops the heartbeat liveness signal and the host will
-// treat the session as though it does not support heartbeat monitoring.
+// returned done channel must be closed once the stream has fully stopped.
+// The stream must remain open for the entire lifetime of the session. An
+// adapter that returns from its implementation of the underlying Log RPC
+// before the host cancels the stream disables its own heartbeat signal and
+// breaks the session-liveness contract; the host will surface that as a
+// diagnostic and disarm the heartbeat stall detector for that session.
 type LogStreamStarter interface {
 	// StartLogStream starts the per-session Log stream. cancel must stop the
 	// stream. done must be closed after the stream has fully shut down and must

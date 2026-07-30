@@ -37,3 +37,9 @@ func TestConformanceHarnessDetectsNonHeartbeatingFixture(t *testing.T) {
 	// The nonheartbeating fixture returns from Log immediately; heartbeats must fail.
 	runConformanceFailFixture(t, "TestNonHeartbeatingAdapterConformanceFixture", "heartbeats")
 }
+
+func TestConformanceHarnessFailsWhenRequiredSuiteSkipped(t *testing.T) {
+	// A handle that does not implement LogStreamStarter skips the heartbeats
+	// suite; because heartbeats is required, runV2Suites must fail loudly.
+	runConformanceFailFixture(t, "TestRequiredSuiteSkipFailsRun", "required conformance suite \"heartbeats\" was skipped")
+}

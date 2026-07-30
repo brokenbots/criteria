@@ -104,7 +104,9 @@ func (s *noopService) Log(ctx context.Context, _ *v2.LogRequest, sender adapterh
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			// Return nil for host-initiated cancellation; the error is not a
+			// contract violation.
+			return nil
 		case t := <-ticker.C:
 			if err := sender.Send(&v2.LogEvent{Heartbeat: &v2.Heartbeat{StreamName: "log", SentAt: timestamppb.New(t)}}); err != nil {
 				return err

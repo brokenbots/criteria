@@ -368,14 +368,17 @@ Protocol v2 also opens a per-session **Log stream** as soon as the session is
 opened. This stream is the host's only source of adapter-level liveness
 heartbeats, and it must remain open for the entire lifetime of the session:
 
-- **The SDK owns the heartbeat timer and stream lifetime.** Adapter authors
-  should not implement their own heartbeat logic; the SDK keeps the stream open
-  and emits `Heartbeat` events at the configured interval.
-- **Returning early from `Log` breaks the contract.** An adapter that returns
-  from its `Log` RPC before the session is closed stops sending heartbeats.
-  The host detects this as a broken contract and disarms stall detection for
-  that session so it is not falsely declared crashed, but the adapter will fail
-  the mandatory heartbeat conformance suite.
+- **The log stream must remain open for the lifetime of the session.** An
+  adapter that returns from its `Log` RPC before the session is closed stops
+  sending heartbeats. The host detects this as a broken contract and disarms
+  stall detection for that session so it is not falsely declared crashed, but
+  the adapter will fail the mandatory heartbeat conformance suite.
+- **Current Go SDK transitional requirement.** In the Go SDK today the
+  heartbeat ticker is scoped to the adapter's `Log` call, so a Go adapter's
+  `Log` implementation must block until its context is cancelled. The intent is
+  for the SDK to own stream lifetime independently in a future go-sdk update;
+  until then, adapter authors must keep `Log` alive and let the SDK emit
+  `Heartbeat` events at the configured interval.
 - **Conformance enforces the contract.** Any adapter that declares a log stream
   must pass the `heartbeats` conformance suite, which verifies the session
   survives an idle period longer than the stall threshold and that actual

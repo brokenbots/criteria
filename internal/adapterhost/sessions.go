@@ -145,8 +145,7 @@ type Session struct {
 	handle           Handle
 	respawned        bool
 	closing          atomic.Bool
-	restarting       atomic.Bool // true while host is tearing down the log stream for respawn/Close/Shutdown
-	SandboxCleanup   func()      // removes transient cgroup dirs, etc.
+	SandboxCleanup   func() // removes transient cgroup dirs, etc.
 	// WorkingDir is the resolved environment working_directory (the adapter
 	// process launch cwd), evaluated at adapter init. Persisted so respawn and
 	// snapshot/restore relaunch the adapter in the same directory.
@@ -158,6 +157,7 @@ type Session struct {
 	logMu          sync.Mutex
 	cancelLog      func()
 	logDone        <-chan error
+	logHostCancel  chan struct{} // closed by the host before cancelLog(); per-stream
 	logStreamAlive atomic.Bool
 	hbMonitor      adapter.HeartbeatMonitor
 	currentSink    adapter.EventSink
@@ -577,33 +577,64 @@ func (m *SessionManager) beginLogStream(ctx context.Context, sess *Session, star
 		sess.resetLogStreamState()
 		return
 	}
+
+	// Each stream generation gets its own host-cancel channel. The host closes
+	// it *before* calling cancel() so the watcher can distinguish host-initiated
+	// teardown from an adapter that returned early from Log.
+	hostCancel := make(chan struct{})
+	var closed atomic.Bool
+	wrappedCancel := func() {
+		if closed.CompareAndSwap(false, true) {
+			close(hostCancel)
+		}
+		if cancel != nil {
+			cancel()
+		}
+	}
+
 	sess.logMu.Lock()
-	sess.cancelLog = cancel
+	sess.cancelLog = wrappedCancel
 	sess.logDone = done
+	sess.logHostCancel = hostCancel
 	sess.logMu.Unlock()
 	sess.logStreamAlive.Store(true)
 	sess.hbMonitor.Record()
-	go m.watchLogStream(sess, done)
+	go m.watchLogStream(sess, done, hostCancel)
 }
 
 // watchLogStream waits for the adapter's Log stream to end. If it ends while
-// the session is still open, the adapter broke the contract that the log
-// stream must remain open for the lifetime of the session; we log a clear
-// diagnostic and disarm the heartbeat stall detector so the session is not
-// falsely declared crashed later.
-func (m *SessionManager) watchLogStream(sess *Session, done <-chan error) {
-	err := <-done
-	// Host-initiated teardown (Close, Shutdown, or respawn) cancels the log
-	// stream; that is not a contract violation by the adapter, so suppress the
-	// diagnostic and leave logStreamAlive untouched.
-	if sess.closing.Load() || sess.restarting.Load() {
+// the session is still open and the host did not cancel it, the adapter broke
+// the contract that the log stream must remain open for the lifetime of the
+// session; we log a clear diagnostic and disarm the heartbeat stall detector
+// so the session is not falsely declared crashed later.
+func (m *SessionManager) watchLogStream(sess *Session, done <-chan error, hostCancel <-chan struct{}) {
+	select {
+	case <-hostCancel:
+		// Host-initiated teardown for this specific stream generation. Drain
+		// any terminal error and return without touching logStreamAlive.
+		select {
+		case <-done:
+		default:
+		}
 		return
-	}
-	sess.logStreamAlive.Store(false)
-	if err != nil {
-		slog.Warn("adapter log stream ended unexpectedly; heartbeat stall detector disarmed", "session", sess.Name, "adapter", sess.Adapter, "error", err)
-	} else {
-		slog.Warn("adapter log stream ended while session was open; heartbeat stall detector disarmed (adapter broke the log-stream contract)", "session", sess.Name, "adapter", sess.Adapter)
+	case err := <-done:
+		// The stream ended without a host cancellation signal. Re-check
+		// hostCancel in case both channels became ready at the same time and
+		// the select chose done.
+		select {
+		case <-hostCancel:
+			return
+		default:
+		}
+		if sess.closing.Load() {
+			return
+		}
+		sess.logStreamAlive.Store(false)
+		if err != nil {
+			slog.Warn("adapter log stream ended unexpectedly; heartbeat stall detector disarmed", "session", sess.Name, "adapter", sess.Adapter, "error", err)
+		} else {
+			slog.Warn("adapter log stream ended while session was open; heartbeat stall detector disarmed (adapter broke the log-stream contract)", "session", sess.Name, "adapter", sess.Adapter)
+		}
 	}
 }
 
@@ -620,7 +651,6 @@ func (m *SessionManager) Close(ctx context.Context, name string) error {
 		return nil
 	}
 	sess.closing.Store(true)
-	sess.restarting.Store(true)
 	sess.logStreamAlive.Store(false)
 	if sess.PermissionState != nil {
 		sess.PermissionState.Stop()
@@ -897,7 +927,6 @@ func (m *SessionManager) Shutdown(ctx context.Context) error {
 	var errs []error
 	for _, sess := range sessions {
 		sess.closing.Store(true)
-		sess.restarting.Store(true)
 		sess.logStreamAlive.Store(false)
 		if sess.PermissionState != nil {
 			sess.PermissionState.Stop()
@@ -1015,12 +1044,13 @@ func (m *SessionManager) restartLogStream(ctx context.Context, sess *Session, pl
 	oldDone := sess.logDone
 	sess.cancelLog = nil
 	sess.logDone = nil
+	sess.logHostCancel = nil
 	sess.logMu.Unlock()
 
-	// Mark host-initiated teardown so the old watchLogStream goroutine does not
-	// treat the cancelation as an adapter contract violation.
-	sess.restarting.Store(true)
 	if oldCancel != nil {
+		// The wrapped cancel closes the stream's host-cancel channel *before*
+		// invoking the adapter cancel, so the old watcher can deterministically
+		// identify this as host-initiated teardown.
 		oldCancel()
 	}
 	if oldDone != nil {
@@ -1038,7 +1068,6 @@ func (m *SessionManager) restartLogStream(ctx context.Context, sess *Session, pl
 		sess.resetLogStreamState()
 		sess.mergeBuf = nil
 	}
-	sess.restarting.Store(false)
 }
 
 // resetLogStreamState clears the log-stream handles and marks the stream dead.
@@ -1046,6 +1075,7 @@ func (s *Session) resetLogStreamState() {
 	s.logMu.Lock()
 	s.cancelLog = nil
 	s.logDone = nil
+	s.logHostCancel = nil
 	s.logMu.Unlock()
 	s.logStreamAlive.Store(false)
 }

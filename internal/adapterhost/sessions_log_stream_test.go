@@ -21,13 +21,14 @@ import (
 
 // loggingMockHandle is a mock Handle that also implements LogStreamStarter.
 type loggingMockHandle struct {
-	executeFunc    func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error)
-	logEvents      []*v2.LogEvent
-	logReturnEarly bool // if true, the Log goroutine returns immediately instead of blocking
-	mu             sync.Mutex
-	started        bool
-	cancelled      bool
-	emitTrigger    chan struct{} // when closed, the log goroutine starts emitting
+	executeFunc            func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error)
+	logEvents              []*v2.LogEvent
+	logReturnEarly         bool // if true, the Log goroutine returns immediately instead of blocking
+	mu                     sync.Mutex
+	started                bool
+	cancelled              bool
+	emitTrigger            chan struct{} // when closed, the log goroutine starts emitting
+	startLogStreamOverride func(ctx context.Context, sessionID string, sink LogEventSink) (cancel func(), done <-chan error, err error)
 }
 
 func (m *loggingMockHandle) Info(ctx context.Context) (Info, error) { return Info{}, nil }
@@ -53,6 +54,9 @@ func (m *loggingMockHandle) Snapshot(context.Context, string) (*v2.SnapshotRespo
 func (m *loggingMockHandle) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 func (m *loggingMockHandle) StartLogStream(ctx context.Context, sessionID string, sink LogEventSink) (cancel func(), done <-chan error, err error) {
+	if m.startLogStreamOverride != nil {
+		return m.startLogStreamOverride(ctx, sessionID, sink)
+	}
 	m.mu.Lock()
 	m.started = true
 	m.mu.Unlock()
@@ -518,6 +522,161 @@ func TestSessionManager_RespawnRestartsLogStream(t *testing.T) {
 	for _, r := range rec.all() {
 		if strings.Contains(r, "broke the log-stream contract") {
 			t.Fatalf("respawn of a correct adapter falsely emitted contract-breaker diagnostic: %q", r)
+		}
+	}
+}
+
+// TestSessionManager_OldWatcherAfterReset_NoFalseDiagnostic forces the old
+// stream's watcher to linger until after the respawned stream is established.
+// With per-stream host-cancel channels the old watcher must suppress its
+// diagnostic regardless of when it runs.
+func TestSessionManager_OldWatcherAfterReset_NoFalseDiagnostic(t *testing.T) {
+	rec := &recordingSlogHandler{}
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(rec))
+	defer slog.SetDefault(oldLogger)
+
+	oldBlocked := make(chan struct{})
+	h1 := &loggingMockHandle{}
+	// Override StartLogStream for h1 so we can control when done fires.
+	h1CustomStart := func(ctx context.Context, sessionID string, sink LogEventSink) (cancel func(), done <-chan error, err error) {
+		logCtx, cancelFn := context.WithCancel(ctx)
+		d := make(chan error, 1)
+		go func() {
+			<-oldBlocked    // wait until the test releases the old stream
+			<-logCtx.Done() // do not exit until the host cancels the stream
+			d <- logCtx.Err()
+			close(d)
+		}()
+		return cancelFn, d, nil
+	}
+	h1.startLogStreamOverride = h1CustomStart
+	h1.executeFunc = func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+		// Unblock the old Log goroutine before returning the crash error.
+		// This makes oldDone close, allowing respawn to start the new stream
+		// while the old watcher goroutine may still be scheduled later.
+		close(oldBlocked)
+		return adapter.Result{}, errors.New("connection reset")
+	}
+
+	h2 := &loggingMockHandle{
+		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+			return adapter.Result{Outcome: "success"}, nil
+		},
+	}
+
+	loader := &mockLoaderForRespawn{handles: []*loggingMockHandle{h2}}
+	sm := NewSessionManager(loader)
+	sm.SetGraph(&workflow.FSMGraph{})
+
+	_ = sm.registerSession(context.Background(), "agent", "test", OnCrashRespawn, nil, nil, nil, nil, h1, nil, "")
+	defer sm.Close(context.Background(), "agent")
+
+	step := &workflow.StepNode{Name: "run"}
+	_, err := sm.Execute(context.Background(), "agent", step, &logEventCollector{})
+	if err != nil {
+		t.Fatalf("expected respawn+retry to succeed, got %v", err)
+	}
+
+	// Give the old watcher a chance to observe its per-stream host-cancel
+	// channel after the new stream is established.
+	time.Sleep(100 * time.Millisecond)
+
+	for _, r := range rec.all() {
+		if strings.Contains(r, "broke the log-stream contract") {
+			t.Fatalf("lingering old watcher falsely emitted contract-breaker diagnostic: %q", r)
+		}
+	}
+}
+
+// TestSessionManager_RespawnedEarlyLogEnd_DetectsBrokenContract verifies that a
+// respawned adapter whose Log stream ends early is still diagnosed, because the
+// new stream generation has its own host-cancel channel.
+func TestSessionManager_RespawnedEarlyLogEnd_DetectsBrokenContract(t *testing.T) {
+	rec := &recordingSlogHandler{}
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(rec))
+	defer slog.SetDefault(oldLogger)
+
+	h1 := &loggingMockHandle{
+		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+			return adapter.Result{}, errors.New("connection reset")
+		},
+	}
+	// The respawned handle is broken: its Log returns immediately.
+	h2 := &loggingMockHandle{
+		logReturnEarly: true,
+		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+			return adapter.Result{Outcome: "success"}, nil
+		},
+	}
+
+	loader := &mockLoaderForRespawn{handles: []*loggingMockHandle{h2}}
+	sm := NewSessionManager(loader)
+	sm.SetGraph(&workflow.FSMGraph{})
+	_ = sm.registerSession(context.Background(), "agent", "test", OnCrashRespawn, nil, nil, nil, nil, h1, nil, "")
+	defer sm.Close(context.Background(), "agent")
+
+	// Wait long enough for the new (broken) stream to end and the watcher to
+	// record the contract violation before Close suppresses it.
+	time.Sleep(50 * time.Millisecond)
+
+	step := &workflow.StepNode{Name: "run"}
+	_, err := sm.Execute(context.Background(), "agent", step, &logEventCollector{})
+	if err != nil {
+		t.Fatalf("expected Execute to succeed despite broken respawned stream, got %v", err)
+	}
+	if !h2.started {
+		t.Fatal("expected respawned handle log stream to start")
+	}
+	// Allow the watcher goroutine for the new broken stream to record the
+	// contract-violation diagnostic before we inspect the captured records.
+	time.Sleep(50 * time.Millisecond)
+
+	var found int
+	for _, r := range rec.all() {
+		if strings.Contains(r, "broke the log-stream contract") {
+			found++
+		}
+	}
+	if found != 1 {
+		t.Fatalf("expected exactly one contract-breaker diagnostic for the broken respawned stream, got %d", found)
+	}
+}
+
+// TestSessionManager_RespawnThenClose_NoFalseDiagnostic verifies the
+// respawn-then-immediately-close race is handled by the same per-stream
+// host-cancel signal used during respawn.
+func TestSessionManager_RespawnThenClose_NoFalseDiagnostic(t *testing.T) {
+	rec := &recordingSlogHandler{}
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(rec))
+	defer slog.SetDefault(oldLogger)
+
+	h1 := &loggingMockHandle{
+		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+			return adapter.Result{}, errors.New("connection reset")
+		},
+	}
+	h2 := &loggingMockHandle{
+		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+			return adapter.Result{Outcome: "success"}, nil
+		},
+	}
+
+	loader := &mockLoaderForRespawn{handles: []*loggingMockHandle{h2}}
+	sm := NewSessionManager(loader)
+	sm.SetGraph(&workflow.FSMGraph{})
+	_ = sm.registerSession(context.Background(), "agent", "test", OnCrashRespawn, nil, nil, nil, nil, h1, nil, "")
+
+	// Allow respawn to begin.
+	time.Sleep(10 * time.Millisecond)
+	// Close while the respawn is in progress or immediately after it finishes.
+	_ = sm.Close(context.Background(), "agent")
+
+	for _, r := range rec.all() {
+		if strings.Contains(r, "broke the log-stream contract") {
+			t.Fatalf("respawn-then-close falsely emitted contract-breaker diagnostic: %q", r)
 		}
 	}
 }
