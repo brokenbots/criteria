@@ -110,6 +110,13 @@ func countHeartbeatProbeEvents(t *testing.T, name string, sm *adapterhost.Sessio
 	// Wait long enough for at least one heartbeat tick.
 	time.Sleep(threshold * 2)
 	cancelLog()
-	<-done
+
+	// A correct adapter closes `done` promptly after cancellation. Bound the
+	// drain so a broken adapter cannot hang the conformance run.
+	select {
+	case <-done:
+	case <-hbCtx.Done():
+		t.Fatalf("%s: probe log stream did not finish after cancel: %v", name, hbCtx.Err())
+	}
 	return hbSink.heartbeatEventCount()
 }

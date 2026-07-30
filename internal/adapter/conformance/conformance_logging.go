@@ -32,7 +32,11 @@ func testLogging(t *testing.T, name string, loader adapterhost.Loader, opts *Opt
 		}
 		defer func() {
 			cancelLog()
-			<-done
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatalf("%s: log stream did not finish after cancel", name)
+			}
 		}()
 	}
 

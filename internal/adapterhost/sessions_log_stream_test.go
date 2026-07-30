@@ -94,19 +94,27 @@ func (m *loggingMockHandle) StartLogStream(ctx context.Context, sessionID string
 	}, doneCh, nil
 }
 
+// logStarted reports whether StartLogStream has been called. It is safe for
+// concurrent use by test assertions.
+func (m *loggingMockHandle) logStarted() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.started
+}
+
 func TestSessionManager_LogStreamStartsAtOpen(t *testing.T) {
 	h := &loggingMockHandle{}
 	sm := NewSessionManager(nil)
 
 	// StartLogStream should not have been called yet.
-	if h.started {
+	if h.logStarted() {
 		t.Fatal("expected log stream not started before Open")
 	}
 
 	_ = sm.registerSession(context.Background(), "agent", "test", "fail", nil, nil, nil, nil, h, nil, "")
 	defer sm.Close(context.Background(), "agent")
 
-	if !h.started {
+	if !h.logStarted() {
 		t.Fatal("expected log stream started after registerSession")
 	}
 }
@@ -509,7 +517,7 @@ func TestSessionManager_RespawnRestartsLogStream(t *testing.T) {
 	}
 
 	// After respawn, the new handle's log stream should have been started.
-	if !h2.started {
+	if !h2.logStarted() {
 		t.Fatal("expected log stream started on respawned handle")
 	}
 	// hbMonitor should have been reset to a recent time.
@@ -626,7 +634,7 @@ func TestSessionManager_RespawnedEarlyLogEnd_DetectsBrokenContract(t *testing.T)
 	if err != nil {
 		t.Fatalf("expected Execute to succeed despite broken respawned stream, got %v", err)
 	}
-	if !h2.started {
+	if !h2.logStarted() {
 		t.Fatal("expected respawned handle log stream to start")
 	}
 	// Allow the watcher goroutine for the new broken stream to record the
@@ -696,7 +704,7 @@ func TestSessionManager_RestartLogStream_BoundedWait(t *testing.T) {
 	if elapsed > time.Second {
 		t.Fatalf("respawn took too long (%v); bounded wait did not unblock", elapsed)
 	}
-	if !h2.started {
+	if !h2.logStarted() {
 		t.Fatal("expected log stream started on respawned handle")
 	}
 
