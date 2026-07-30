@@ -219,7 +219,7 @@ func TestPrintLockDiff(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	printLockDiff(oldLF, newLF, &out)
+	printLockDiff(oldLF, newLF, &out, 2)
 	diff := out.String()
 	assert.Contains(t, diff, "~ noop.default digest sha256:aaa -> sha256:bbb")
 	assert.Contains(t, diff, "+ shell.local")

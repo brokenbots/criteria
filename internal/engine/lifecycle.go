@@ -19,7 +19,7 @@ import (
 // an event is emitted, and the error is returned.
 // Returns the ordered slice of provisioned adapter IDs (for correct LIFO teardown)
 // and an error if any adapter failed to initialize.
-func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, vars map[string]cty.Value, workflowDir string) (order []string, err error) {
+func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, vars map[string]cty.Value, workflowDir, scopeName string) (order []string, err error) {
 	if len(g.Adapters) == 0 {
 		return nil, nil
 	}
@@ -33,7 +33,7 @@ func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, var
 		// Prepare the adapter inputs (secrets, origin refs, working dir, runtime
 		// config). A prepare error means the adapter was never opened, so we emit
 		// init_failed and return without rolling back already-provisioned peers.
-		config, secretMap, originRefs, workingDir, perr := prepareScopeAdapter(ctx, g, instanceID, adapter, vars, workflowDir, deps)
+		config, secretMap, originRefs, workingDir, perr := prepareScopeAdapter(ctx, g, instanceID, adapter, vars, workflowDir, deps, scopeName)
 		if perr != nil {
 			return nil, perr
 		}
@@ -51,14 +51,14 @@ func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, var
 			for i := len(provisioned) - 1; i >= 0; i-- {
 				_ = deps.Sessions.Close(ctx, provisioned[i]) // ignore teardown errors during rollback
 			}
-			deps.Sink.OnAdapterLifecycle("", instanceID, "init_failed", openErr.Error())
+			deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", openErr.Error())
 			return nil, fmt.Errorf("initialize adapter %q: %w", instanceID, openErr)
 		}
 		// Only track adapters that we newly opened (not already-open ones)
 		// This prevents tearing down adapters that belong to a parent scope
 		if openErr == nil {
 			provisioned = append(provisioned, instanceID)
-			deps.Sink.OnAdapterLifecycle("", instanceID, "opened", "")
+			deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "opened", "")
 		}
 	}
 
@@ -78,19 +78,20 @@ func prepareScopeAdapter(
 	vars map[string]cty.Value,
 	workflowDir string,
 	deps Deps,
+	scopeName string,
 ) (config, secretMap map[string]string, originRefs map[string]secrets.OriginRef, workingDir string, err error) {
 	// Resolve adapter secrets (WS13).
 	if len(adapter.Secrets) > 0 {
 		secretMap, err = resolveAdapterSecrets(ctx, g, adapter, vars, deps.Sessions.RedactionRegistry)
 		if err != nil {
-			deps.Sink.OnAdapterLifecycle("", instanceID, "init_failed", err.Error())
+			deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
 			return nil, nil, nil, "", fmt.Errorf("initialize adapter %q: %w", instanceID, err)
 		}
 	}
 
 	originRefs, err = buildOriginRefs(adapter, vars)
 	if err != nil {
-		deps.Sink.OnAdapterLifecycle("", instanceID, "init_failed", err.Error())
+		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
 		return nil, nil, nil, "", fmt.Errorf("initialize adapter %q: %w", instanceID, err)
 	}
 
@@ -100,7 +101,7 @@ func prepareScopeAdapter(
 	// adapter process launch cwd.
 	workingDir, err = resolveAdapterWorkingDir(g, adapter, vars)
 	if err != nil {
-		deps.Sink.OnAdapterLifecycle("", instanceID, "init_failed", err.Error())
+		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
 		return nil, nil, nil, "", fmt.Errorf("initialize adapter %q: resolve working_directory: %w", instanceID, err)
 	}
 
@@ -112,7 +113,7 @@ func prepareScopeAdapter(
 			adapter.ConfigExprs, vars, workflow.DefaultFunctionOptions(workflowDir),
 		)
 		if evalErr != nil {
-			deps.Sink.OnAdapterLifecycle("", instanceID, "init_failed", evalErr.Error())
+			deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", evalErr.Error())
 			return nil, nil, nil, "", fmt.Errorf("initialize adapter %q: evaluate config: %w", instanceID, evalErr)
 		}
 		config = runtimeConfig

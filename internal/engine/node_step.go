@@ -560,7 +560,7 @@ func (n *stepNode) evaluateSubworkflowStep(ctx context.Context, st *RunState, de
 		stepInput = resolved
 	}
 
-	outputs, terminalState, runErr := runSubworkflow(ctx, swNode, st, stepInput, deps)
+	outputs, terminalState, runErr := runSubworkflow(ctx, n.step.Name, swNode, st, stepInput, deps)
 
 	outcome := "success"
 	if runErr != nil || (terminalState != workflow.ReturnSentinel && !swNode.Body.States[terminalState].Success) {

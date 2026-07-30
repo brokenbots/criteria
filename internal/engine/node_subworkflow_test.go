@@ -75,7 +75,7 @@ func TestRunSubworkflow_ReachesTerminalState(t *testing.T) {
 		WorkflowDir: t.TempDir(),
 	}
 
-	outputs, _, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
+	outputs, _, err := runSubworkflow(context.Background(), "test-step", node, parentSt, nil, testDeps(t))
 	if err != nil {
 		t.Fatalf("runSubworkflow: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestRunSubworkflow_OutputsEvaluated(t *testing.T) {
 		WorkflowDir: t.TempDir(),
 	}
 
-	outputs, _, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
+	outputs, _, err := runSubworkflow(context.Background(), "test-step", node, parentSt, nil, testDeps(t))
 	if err != nil {
 		t.Fatalf("runSubworkflow: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestRunSubworkflow_InputBoundToOutput(t *testing.T) {
 		WorkflowDir: t.TempDir(),
 	}
 
-	outputs, _, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
+	outputs, _, err := runSubworkflow(context.Background(), "test-step", node, parentSt, nil, testDeps(t))
 	if err != nil {
 		t.Fatalf("runSubworkflow: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestRunSubworkflow_ComplexInputConverted(t *testing.T) {
 		WorkflowDir: t.TempDir(),
 	}
 
-	outputs, _, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
+	outputs, _, err := runSubworkflow(context.Background(), "test-step", node, parentSt, nil, testDeps(t))
 	if err != nil {
 		t.Fatalf("runSubworkflow: %v", err)
 	}
@@ -301,7 +301,7 @@ func TestRunSubworkflow_ObjectOptionalDefaultsApplied(t *testing.T) {
 		WorkflowDir: t.TempDir(),
 	}
 
-	outputs, _, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
+	outputs, _, err := runSubworkflow(context.Background(), "test-step", node, parentSt, nil, testDeps(t))
 	if err != nil {
 		t.Fatalf("runSubworkflow: %v", err)
 	}
@@ -350,7 +350,7 @@ func TestRunSubworkflow_NullInputFallsBackToDefault(t *testing.T) {
 		WorkflowDir: t.TempDir(),
 	}
 
-	outputs, _, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
+	outputs, _, err := runSubworkflow(context.Background(), "test-step", node, parentSt, nil, testDeps(t))
 	if err != nil {
 		t.Fatalf("runSubworkflow: %v", err)
 	}
@@ -387,7 +387,7 @@ func TestRunSubworkflow_NullRequiredInputReportsMissing(t *testing.T) {
 		WorkflowDir: t.TempDir(),
 	}
 
-	_, _, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
+	_, _, err := runSubworkflow(context.Background(), "test-step", node, parentSt, nil, testDeps(t))
 	if err == nil {
 		t.Fatal("expected error for null required input")
 	}
@@ -424,7 +424,7 @@ func TestRunSubworkflow_StringBindingToNumberRejectsGarbage(t *testing.T) {
 		WorkflowDir: t.TempDir(),
 	}
 
-	_, _, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
+	_, _, err := runSubworkflow(context.Background(), "test-step", node, parentSt, nil, testDeps(t))
 	if err == nil {
 		t.Fatal("expected error for invalid number string")
 	}
@@ -464,7 +464,7 @@ func TestRunSubworkflow_EachThreadedToOutput(t *testing.T) {
 		WorkflowDir: t.TempDir(),
 	}
 
-	outputs, _, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
+	outputs, _, err := runSubworkflow(context.Background(), "test-step", node, parentSt, nil, testDeps(t))
 	if err != nil {
 		t.Fatalf("runSubworkflow: %v", err)
 	}
@@ -497,7 +497,7 @@ func TestRunSubworkflow_MissingRequiredInput(t *testing.T) {
 		WorkflowDir: t.TempDir(),
 	}
 
-	_, _, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
+	_, _, err := runSubworkflow(context.Background(), "test-step", node, parentSt, nil, testDeps(t))
 	if err == nil {
 		t.Fatal("expected error for missing required input, got none")
 	}
@@ -552,7 +552,7 @@ func TestRunSubworkflow_FileFromCalleeDir(t *testing.T) {
 		WorkflowDir: parentDir,
 	}
 
-	outputs, _, err := runSubworkflow(context.Background(), node, parentSt, nil, testDeps(t))
+	outputs, _, err := runSubworkflow(context.Background(), "test-step", node, parentSt, nil, testDeps(t))
 	if err != nil {
 		t.Fatalf("runSubworkflow: %v", err)
 	}
@@ -654,7 +654,7 @@ func TestRunSubworkflow_AdaptersIsolatedFromParent(t *testing.T) {
 		WorkflowDir: t.TempDir(),
 	}
 
-	_, _, err := runSubworkflow(context.Background(), node, parentSt, nil, depsWithLoader(t, loader))
+	_, _, err := runSubworkflow(context.Background(), "test-step", node, parentSt, nil, depsWithLoader(t, loader))
 	if err != nil {
 		t.Fatalf("runSubworkflow: %v", err)
 	}
@@ -688,7 +688,7 @@ func TestRunSubworkflow_ErrorPropagatesToParent(t *testing.T) {
 		WorkflowDir: t.TempDir(),
 	}
 
-	_, _, err := runSubworkflow(context.Background(), node, parentSt, nil, depsWithLoader(t, loader))
+	_, _, err := runSubworkflow(context.Background(), "test-step", node, parentSt, nil, depsWithLoader(t, loader))
 	if err == nil {
 		t.Fatal("expected error from failing callee step, got nil")
 	}
@@ -718,7 +718,7 @@ func TestRunSubworkflow_CalleeCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, _, err := runSubworkflow(ctx, node, parentSt, nil, depsWithLoader(t, loader))
+	_, _, err := runSubworkflow(ctx, "test-step", node, parentSt, nil, depsWithLoader(t, loader))
 	if err == nil {
 		t.Fatal("expected error after context cancellation, got nil")
 	}
@@ -770,7 +770,7 @@ func TestRunSubworkflow_ReturnSentinelWithNilOutputs(t *testing.T) {
 	}
 	deps := depsWithLoader(t, loader)
 
-	outputs, _, err := runSubworkflow(context.Background(), swNode, parentSt, nil, deps)
+	outputs, _, err := runSubworkflow(context.Background(), "test-step", swNode, parentSt, nil, deps)
 	if err != nil {
 		t.Fatalf("runSubworkflow: %v", err)
 	}
