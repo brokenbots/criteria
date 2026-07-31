@@ -172,6 +172,101 @@ func TestArtifactProtocolVersion_Missing(t *testing.T) {
 	assert.Equal(t, uint32(0), l.ArtifactProtocolVersion(unknown))
 }
 
+func TestAnnotate_MergesAndPersists(t *testing.T) {
+	root := t.TempDir()
+	l, err := oci.Open(root)
+	require.NoError(t, err)
+
+	manifestDigest := buildFixtureArtifact(t, l)
+
+	// buildFixtureArtifact wrote the manifest blob but did not register it
+	// in index.json. Register it now so Annotate can find it.
+	ix := &ocispec.Index{
+		MediaType: ocispec.MediaTypeImageIndex,
+		Manifests: []ocispec.Descriptor{
+			{MediaType: ocispec.MediaTypeImageManifest, Digest: manifestDigest, Size: 100},
+		},
+	}
+	require.NoError(t, l.WriteIndex(ix))
+
+	// Annotate merges the extra map into the descriptor's Annotations.
+	require.NoError(t, l.Annotate(manifestDigest, map[string]string{
+		oci.AnnotationReference: "ghcr.io/brokenbots/ccriteria-adapter-test:1.2.3",
+		oci.AnnotationSourceURL: "https://example.com/test",
+	}))
+
+	ix, err = l.Index()
+	require.NoError(t, err)
+	var found bool
+	for _, m := range ix.Manifests {
+		if m.Digest == manifestDigest {
+			found = true
+			assert.Equal(t, "ghcr.io/brokenbots/ccriteria-adapter-test:1.2.3", m.Annotations[oci.AnnotationReference])
+			assert.Equal(t, "https://example.com/test", m.Annotations[oci.AnnotationSourceURL])
+		}
+	}
+	require.True(t, found, "manifest must be in index after annotate")
+
+	// A second Annotate call must merge, not overwrite unrelated keys.
+	require.NoError(t, l.Annotate(manifestDigest, map[string]string{
+		"extra.key": "extra-value",
+	}))
+	ix, err = l.Index()
+	require.NoError(t, err)
+	for _, m := range ix.Manifests {
+		if m.Digest == manifestDigest {
+			assert.Equal(t, "ghcr.io/brokenbots/ccriteria-adapter-test:1.2.3", m.Annotations[oci.AnnotationReference])
+			assert.Equal(t, "extra-value", m.Annotations["extra.key"])
+		}
+	}
+}
+
+func TestAnnotate_UnknownDigestErrors(t *testing.T) {
+	root := t.TempDir()
+	l, err := oci.Open(root)
+	require.NoError(t, err)
+
+	// Write a manifest blob so the layout has at least one index entry to
+	// have something to be not-found against.
+	manifestDigest := writeManifestWithLayer(t, l, []byte("payload"))
+	ix := &ocispec.Index{
+		MediaType: ocispec.MediaTypeImageIndex,
+		Manifests: []ocispec.Descriptor{
+			{MediaType: ocispec.MediaTypeImageManifest, Digest: manifestDigest, Size: 100},
+		},
+	}
+	require.NoError(t, l.WriteIndex(ix))
+
+	unknown := digest.FromBytes([]byte("not in index"))
+	err = l.Annotate(unknown, map[string]string{"k": "v"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestAnnotate_NilExtraIsNoOp(t *testing.T) {
+	root := t.TempDir()
+	l, err := oci.Open(root)
+	require.NoError(t, err)
+
+	manifestDigest := writeManifestWithLayer(t, l, []byte("payload"))
+	ix := &ocispec.Index{
+		MediaType: ocispec.MediaTypeImageIndex,
+		Manifests: []ocispec.Descriptor{
+			{MediaType: ocispec.MediaTypeImageManifest, Digest: manifestDigest, Size: 100},
+		},
+	}
+	require.NoError(t, l.WriteIndex(ix))
+
+	// Nil/empty maps must not write any annotations or persist a new index.
+	beforeBytes, err := os.ReadFile(filepath.Join(root, "index.json"))
+	require.NoError(t, err)
+	require.NoError(t, l.Annotate(manifestDigest, nil))
+	require.NoError(t, l.Annotate(manifestDigest, map[string]string{}))
+	afterBytes, err := os.ReadFile(filepath.Join(root, "index.json"))
+	require.NoError(t, err)
+	assert.Equal(t, string(beforeBytes), string(afterBytes))
+}
+
 func TestLock_PreventsDataRace(t *testing.T) {
 	root := t.TempDir()
 	l, err := oci.Open(root)

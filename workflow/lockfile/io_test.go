@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -267,4 +268,122 @@ func TestRead_InvalidHCL(t *testing.T) {
 
 	_, err := lockfile.Read(path)
 	require.Error(t, err)
+}
+
+func TestWrite_WorkflowRefBlock_TrailingCompatibility(t *testing.T) {
+	// Locks regressed when adapters were sorted after workflow refs; this asserts
+	// that two workflow_ref blocks round-trip cleanly and the resulting HCL file
+	// retains the canonical shape (source, resolved_ref, kind attributes).
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".criteria.lock.hcl")
+
+	original := &lockfile.Lockfile{
+		SchemaVersion: 1,
+		WorkflowRefs: []lockfile.LockedWorkflowRef{
+			{Name: "pair_programming_loop", Source: "./loop", ResolvedRef: "abc123", Kind: "git"},
+			{Name: "release", Source: "https://github.com/example/release", ResolvedRef: "v1.2.3", Kind: "git"},
+		},
+	}
+	require.NoError(t, lockfile.Write(path, original))
+
+	reloaded, err := lockfile.Read(path)
+	require.NoError(t, err)
+	require.Len(t, reloaded.WorkflowRefs, 2)
+
+	// Sorted alphabetically by Name.
+	assert.Equal(t, "pair_programming_loop", reloaded.WorkflowRefs[0].Name)
+	assert.Equal(t, "abc123", reloaded.WorkflowRefs[0].ResolvedRef)
+	assert.Equal(t, "git", reloaded.WorkflowRefs[0].Kind)
+	assert.Equal(t, "release", reloaded.WorkflowRefs[1].Name)
+	assert.Equal(t, "./loop", reloaded.WorkflowRefs[0].Source)
+}
+
+func TestWrite_WorkflowRefBlock_EmitsBlockShape(t *testing.T) {
+	// Verifies that workflow_ref blocks are emitted with the canonical HCL block
+	// shape (lane header followed by the three attributes), as the read side
+	// depends on it. hclwrite pads attribute names so we only assert on the
+	// values, not the exact spacing.
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".criteria.lock.hcl")
+
+	lf := &lockfile.Lockfile{
+		SchemaVersion: 1,
+		WorkflowRefs: []lockfile.LockedWorkflowRef{
+			{Name: "loop", Source: "./loop", ResolvedRef: "abc", Kind: "git"},
+		},
+	}
+	require.NoError(t, lockfile.Write(path, lf))
+
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	body := string(raw)
+	assert.Contains(t, body, `workflow_ref "loop"`)
+	assert.Contains(t, body, `"./loop"`)
+	assert.Contains(t, body, `"abc"`)
+	assert.Contains(t, body, `"git"`)
+
+	// Each attribute should appear in the body on its own line. Use a more
+	// lenient match to allow hclwrite to vary spacing.
+	assert.Regexp(t, `(?m)^\s*source\s*=\s*"\./loop"\s*$`, body)
+	assert.Regexp(t, `(?m)^\s*resolved_ref\s*=\s*"abc"\s*$`, body)
+	assert.Regexp(t, `(?m)^\s*kind\s*=\s*"git"\s*$`, body)
+}
+
+func TestWrite_MixedAdaptersAndWorkflowRefs_SortsBoth(t *testing.T) {
+	// Locks must remain sorted across both kinds: adapters by "<type>.<name>"
+	// and workflow_refs by Name. Both are emitted in a single file.
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".criteria.lock.hcl")
+
+	lf := &lockfile.Lockfile{
+		SchemaVersion: 1,
+		Adapters: []lockfile.LockedAdapter{
+			{Type: "noop", Name: "default", Reference: "r", ResolvedDigest: "sha256:d", SourceURL: "https://example.com", SDKProtocolVersion: 2},
+		},
+		WorkflowRefs: []lockfile.LockedWorkflowRef{
+			{Name: "zeta", Source: "./z", ResolvedRef: "z1", Kind: "git"},
+			{Name: "alpha", Source: "./a", ResolvedRef: "a1", Kind: "git"},
+		},
+	}
+	require.NoError(t, lockfile.Write(path, lf))
+
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	body := string(raw)
+
+	// Adapter block must come before workflow_ref blocks.
+	adapterAt := strings.Index(body, "adapter")
+	refAt := strings.Index(body, "workflow_ref")
+	require.GreaterOrEqual(t, refAt, 0)
+	require.GreaterOrEqual(t, adapterAt, 0)
+	assert.Less(t, adapterAt, refAt, "adapter blocks must be emitted before workflow_ref blocks")
+
+	// workflow_ref blocks must be sorted alphabetically by Name.
+	alphaAt := strings.Index(body, `workflow_ref "alpha"`)
+	zetaAt := strings.Index(body, `workflow_ref "zeta"`)
+	require.GreaterOrEqual(t, alphaAt, 0)
+	require.GreaterOrEqual(t, zetaAt, 0)
+	assert.Less(t, alphaAt, zetaAt)
+}
+
+func TestReadFromDir_ReadsWorkflowRefs(t *testing.T) {
+	// ReadFromDir must surface WorkflowRefs alongside Adapters so the recursive
+	// lock/run paths can see them without re-parsing.
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".criteria.lock.hcl")
+	require.NoError(t, os.WriteFile(path, []byte(`schema_version = 1
+
+workflow_ref "loop" {
+  source        = "./loop"
+  resolved_ref  = "abc123"
+  kind          = "git"
+}
+`), 0o644))
+
+	lf, err := lockfile.ReadFromDir(dir)
+	require.NoError(t, err)
+	require.NotNil(t, lf)
+	require.Len(t, lf.WorkflowRefs, 1)
+	assert.Equal(t, "loop", lf.WorkflowRefs[0].Name)
+	assert.Equal(t, "abc123", lf.WorkflowRefs[0].ResolvedRef)
 }
