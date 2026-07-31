@@ -61,9 +61,8 @@ func compileAdapterStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[strin
 	timeout, d := decodeStepTimeout(sp)
 	diags = append(diags, d...)
 
-	if sp.MaxVisits < 0 {
-		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: max_visits must be >= 0", sp.Name)})
-	}
+	maxVisits, d := decodeMaxVisits(sp.Name, sp.Remain, g)
+	diags = append(diags, d...)
 
 	envKey, d := resolveStepEnvironmentOverride(sp.Name, sp.Remain, g)
 	diags = append(diags, d...)
@@ -84,7 +83,7 @@ func compileAdapterStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[strin
 
 	outputSchema := resolveOutputSchema(adapterType, schemas)
 
-	node := newAdapterStepNode(sp, spec, adapterRef, effectiveOnCrash, envKey, timeout, inputMap, inputExprs, secretInputMap, secretInputExprs, outputSchema)
+	node := newAdapterStepNode(sp, spec, adapterRef, effectiveOnCrash, envKey, timeout, inputMap, inputExprs, secretInputMap, secretInputExprs, outputSchema, maxVisits)
 	diags = append(diags, maybeCopilotAliasWarnings(sp.Name, adapterType, node.AllowTools)...)
 	diags = append(diags, compileOutcomeBlock(sp, node, g, opts, schemas[adapterRef].OutputSchema)...)
 
@@ -150,14 +149,14 @@ func maybeCopilotAliasWarnings(stepName, adapterName string, tools []string) hcl
 func newAdapterStepNode(sp *StepSpec, spec *Spec, adapterRef string, effectiveOnCrash string, envKey string, timeout time.Duration,
 	inputMap map[string]string, inputExprs map[string]hcl.Expression,
 	secretInputMap map[string]string, secretInputExprs map[string]hcl.Expression,
-	outputSchema map[string]ConfigField) *StepNode {
+	outputSchema map[string]ConfigField, maxVisits int) *StepNode {
 	return &StepNode{
 		Name:             sp.Name,
 		TargetKind:       StepTargetAdapter,
 		AdapterRef:       adapterRef,
 		OnCrash:          effectiveOnCrash,
 		OnFailure:        sp.OnFailure,
-		MaxVisits:        sp.MaxVisits,
+		MaxVisits:        maxVisits,
 		Input:            inputMap,
 		InputExprs:       inputExprs,
 		SecretInputs:     secretInputMap,

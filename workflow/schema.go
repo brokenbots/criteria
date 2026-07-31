@@ -248,9 +248,6 @@ type StepSpec struct {
 	// sequential for_each/count steps), "abort" (stop on first failure; default
 	// for parallel steps), or "ignore" (treat all as success).
 	OnFailure string `hcl:"on_failure,optional"`
-	// MaxVisits limits how many times this step may be evaluated in a single run.
-	// 0 (default) means unlimited. Negative values are rejected at compile time.
-	MaxVisits int `hcl:"max_visits,optional"`
 	// Config is the legacy map attribute; retained for parse-time detection so the
 	// compiler can emit a helpful "use input { } block" diagnostic.
 	Config      map[string]string `hcl:"config,optional"`
@@ -264,7 +261,8 @@ type StepSpec struct {
 	// quoted-string form causes a compile error with a migration hint.
 	Outcomes []OutcomeSpec `hcl:"outcome,block"`
 	// Captures: target (required — adapter traversal e.g. adapter.copilot.main, or subworkflow.<name>);
-	// for_each, count, parallel, while (optional iteration controls); environment (optional, bare traversal e.g. shell.ci).
+	// for_each, count, parallel, while (optional iteration controls); environment (optional, bare traversal e.g. shell.ci);
+	// max_visits (optional integer, accepts a literal or a compile-time-resolvable variable/local reference).
 	Remain hcl.Body `hcl:",remain"`
 	// LegacyConfigRange, when set by Parse, points at the source range for a
 	// legacy config = { ... } attribute so compile diagnostics can include
