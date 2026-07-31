@@ -47,9 +47,8 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 	timeout, d := decodeStepTimeout(sp)
 	diags = append(diags, d...)
 
-	if sp.MaxVisits < 0 {
-		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: max_visits must be >= 0", sp.Name)})
-	}
+	maxVisits, d := decodeMaxVisits(sp.Name, sp.Remain, g)
+	diags = append(diags, d...)
 
 	ie, d := decodeRemainIter(sp, g)
 	diags = append(diags, d...)
@@ -71,7 +70,7 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 		if ie.While == nil {
 			diags = append(diags, validateWhileRefs(sp.Name, swInputExprs)...)
 		}
-		node = newSubworkflowIterStepNode(sp, spec, subworkflowRef, effectiveOnCrash, envKey, timeout, swInputExprs)
+		node = newSubworkflowIterStepNode(sp, spec, subworkflowRef, effectiveOnCrash, envKey, timeout, swInputExprs, maxVisits)
 	} else {
 		inputMap, inputExprs, d := decodeStepInput(g, sp, schemas, opts, adapterType)
 		diags = append(diags, d...)
@@ -88,7 +87,7 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 			}
 		}
 		// each.* references are valid inside iterating steps; no error emitted.
-		node = newAdapterStepNode(sp, spec, adapterRef, effectiveOnCrash, envKey, timeout, inputMap, inputExprs, secretInputMap, secretInputExprs, outputSchema)
+		node = newAdapterStepNode(sp, spec, adapterRef, effectiveOnCrash, envKey, timeout, inputMap, inputExprs, secretInputMap, secretInputExprs, outputSchema, maxVisits)
 		diags = append(diags, maybeCopilotAliasWarnings(sp.Name, adapterType, node.AllowTools)...)
 		// parallel_safe capability gate: when the step uses parallel = [...] the
 		// adapter must declare "parallel_safe". When the adapter is absent from the
@@ -126,14 +125,14 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 }
 
 // newSubworkflowIterStepNode constructs a StepNode for an iterating subworkflow step.
-func newSubworkflowIterStepNode(sp *StepSpec, _ *Spec, subworkflowRef, effectiveOnCrash, envKey string, timeout time.Duration, inputExprs map[string]hcl.Expression) *StepNode {
+func newSubworkflowIterStepNode(sp *StepSpec, _ *Spec, subworkflowRef, effectiveOnCrash, envKey string, timeout time.Duration, inputExprs map[string]hcl.Expression, maxVisits int) *StepNode {
 	return &StepNode{
 		Name:           sp.Name,
 		TargetKind:     StepTargetSubworkflow,
 		SubworkflowRef: subworkflowRef,
 		OnCrash:        effectiveOnCrash,
 		OnFailure:      sp.OnFailure,
-		MaxVisits:      sp.MaxVisits,
+		MaxVisits:      maxVisits,
 		Timeout:        timeout,
 		InputExprs:     inputExprs,
 		Outcomes:       map[string]*CompiledOutcome{},
@@ -238,6 +237,33 @@ func decodeParallelMax(stepName string, attr *hcl.Attribute, g *FSMGraph) (int, 
 		}}
 	}
 	return val, nil
+}
+
+// decodeMaxVisits decodes and validates the max_visits attribute from a step body.
+// It accepts literal integers and compile-time-resolvable references (var.* with a
+// known default, local.*). Missing attribute returns 0 (unlimited). Runtime-only
+// references and unknown values are rejected with clear diagnostics.
+func decodeMaxVisits(stepName string, body hcl.Body, g *FSMGraph) (int, hcl.Diagnostics) {
+	if body == nil {
+		return 0, nil
+	}
+	attr, diags := readStepBodyAttr("max_visits", body)
+	if attr == nil {
+		return 0, diags
+	}
+	var val int
+	d := decodeIntAttr(attr, g, &val)
+	if d.HasErrors() {
+		return 0, append(diags, d...)
+	}
+	if val < 0 {
+		return 0, append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Subject:  attr.Expr.StartRange().Ptr(),
+			Summary:  fmt.Sprintf("step %q: max_visits must be >= 0", stepName),
+		})
+	}
+	return val, diags
 }
 
 // validateWhileExprType performs a compile-time static type check on the while

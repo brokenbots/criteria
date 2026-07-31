@@ -49,9 +49,8 @@ func compileSubworkflowStep(g *FSMGraph, sp *StepSpec, _ *Spec, subworkflowRef s
 	timeout, d := decodeStepTimeout(sp)
 	diags = append(diags, d...)
 
-	if sp.MaxVisits < 0 {
-		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: max_visits must be >= 0", sp.Name)})
-	}
+	maxVisits, d := decodeMaxVisits(sp.Name, sp.Remain, g)
+	diags = append(diags, d...)
 
 	effectiveOnCrash := sp.OnCrash
 	if effectiveOnCrash != "" && !isValidOnCrash(effectiveOnCrash) {
@@ -69,7 +68,7 @@ func compileSubworkflowStep(g *FSMGraph, sp *StepSpec, _ *Spec, subworkflowRef s
 		TargetKind:     StepTargetSubworkflow,
 		SubworkflowRef: subworkflowRef,
 		OnCrash:        effectiveOnCrash,
-		MaxVisits:      sp.MaxVisits,
+		MaxVisits:      maxVisits,
 		Timeout:        timeout,
 		InputExprs:     inputExprs,
 		Outcomes:       map[string]*CompiledOutcome{},
