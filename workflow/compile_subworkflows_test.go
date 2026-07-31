@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hashicorp/hcl/v2"
 )
 
 // minimalCalleeHCL returns a minimal valid callee workflow HCL with the given name.
@@ -805,5 +807,63 @@ func TestCompileWithContext_CancellationPropagates(t *testing.T) {
 	})
 	if !diags.HasErrors() {
 		t.Fatal("expected compile error due to cancelled context, got none")
+	}
+}
+
+// TestCompileSubworkflows_AdapterConfigUnresolvedString_NoPanic verifies that a
+// subworkflow whose adapter config references a variable with no default does not
+// panic in the parent compile. The child compile error is surfaced as a located
+// diagnostic naming the unresolved attribute.
+func TestCompileSubworkflows_AdapterConfigUnresolvedString_NoPanic(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	childHCL := `workflow {
+  name = "child"
+  version       = "1"
+  initial_state = "done"
+  target_state  = "done"
+}
+
+variable "missing_default" {
+  type = string
+}
+
+adapter "copilot" "bot" {
+  config {
+    system_prompt = var.missing_default
+  }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	writeSubworkflowDir(t, tmpDir, "child", childHCL)
+
+	parentHCL := parentHCLWithSubworkflow("child_task", "./child", "")
+	spec, parseDiags := Parse("parent.hcl", []byte(parentHCL))
+	if parseDiags.HasErrors() {
+		t.Fatalf("parse failed: %s", parseDiags.Error())
+	}
+
+	_, compileDiags := CompileWithOpts(spec, testSchemas, CompileOpts{
+		WorkflowDir:         tmpDir,
+		SubWorkflowResolver: &LocalSubWorkflowResolver{},
+		Schemas:             testSchemas,
+	})
+	if !compileDiags.HasErrors() {
+		t.Fatal("expected compile error for unresolved child adapter config value, got none")
+	}
+
+	found := false
+	for _, d := range compileDiags {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, `field "system_prompt" cannot be determined`) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected diagnostic about unresolved system_prompt from child workflow, got: %s", compileDiags.Error())
 	}
 }
