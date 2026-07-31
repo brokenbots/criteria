@@ -290,6 +290,24 @@ func slugify(s string) string {
 	return s
 }
 
+// safeExtractPath joins dst with the archive entry name and confirms the result
+// stays within dst. It rejects absolute paths and paths that escape the
+// destination directory via ".." components.
+func safeExtractPath(dst, name string) (string, error) {
+	if filepath.IsAbs(name) {
+		return "", fmt.Errorf("archive entry %q is an absolute path", name)
+	}
+	target := filepath.Clean(filepath.Join(dst, name))
+	rel, err := filepath.Rel(dst, target)
+	if err != nil {
+		return "", fmt.Errorf("archive entry %q cannot be constrained to destination: %w", name, err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("archive entry %q escapes destination directory", name)
+	}
+	return target, nil
+}
+
 func extractTarGz(dst string, data []byte) error {
 	gz, err := gzip.NewReader(strings.NewReader(string(data)))
 	if err != nil {
@@ -308,7 +326,10 @@ func extractTarGz(dst string, data []byte) error {
 		if !validTarHeader(h) {
 			continue
 		}
-		target := filepath.Join(dst, filepath.Clean(h.Name))
+		target, err := safeExtractPath(dst, h.Name)
+		if err != nil {
+			return err
+		}
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
 		}
@@ -334,7 +355,10 @@ func extractZip(dst string, data []byte) error {
 		if zf.FileInfo().IsDir() {
 			continue
 		}
-		target := filepath.Join(dst, filepath.Clean(zf.Name))
+		target, err := safeExtractPath(dst, zf.Name)
+		if err != nil {
+			return err
+		}
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
 		}
