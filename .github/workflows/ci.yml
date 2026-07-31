@@ -15,7 +15,7 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.0
 
       - uses: actions/setup-go@v6
         with:
@@ -23,7 +23,7 @@ jobs:
           cache: true
 
       - name: Cache Go build cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/go-build
           key: go-build-lint-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
@@ -52,7 +52,7 @@ jobs:
     name: Unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.0
 
       - uses: actions/setup-go@v6
         with:
@@ -60,7 +60,7 @@ jobs:
           cache: true
 
       - name: Cache Go build cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/go-build
           key: go-build-unit-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
@@ -87,7 +87,7 @@ jobs:
       # in-process builtin), so e2e steps must find the built adapter plugins.
       CRITERIA_ADAPTERS: ${{ github.workspace }}/bin
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.0
 
       - uses: actions/setup-go@v6
         with:
@@ -95,7 +95,7 @@ jobs:
           cache: true
 
       - name: Cache Go build cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/go-build
           key: go-build-e2e-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
@@ -121,7 +121,7 @@ jobs:
     name: Proto drift check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.0
 
       - uses: bufbuild/buf-setup-action@v1
         with:
@@ -151,7 +151,7 @@ jobs:
     # now a required check in all-checks. A PR introducing a dependency with a
     # known OSV advisory fails CI until upgraded or time-boxed in osv-scanner.toml.
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.0
 
       - uses: actions/setup-go@v6
         with:
@@ -159,7 +159,7 @@ jobs:
           cache: true
 
       - name: Cache Go build cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/go-build
           key: go-build-osv-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
@@ -181,7 +181,7 @@ jobs:
     # upstream release cadence. This job only surfaces drift on every PR.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.0
 
       - uses: actions/setup-go@v6
         with:
@@ -189,7 +189,7 @@ jobs:
           cache: true
 
       - name: Cache Go build cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/go-build
           key: go-build-deps-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
@@ -224,7 +224,7 @@ jobs:
       )
     needs: [unit-tests, e2e]
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.0
 
       - uses: actions/setup-go@v6
         with:
@@ -297,7 +297,7 @@ jobs:
     # lower the floor with a documented reason.
     needs: unit-tests
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.0
 
       - uses: actions/setup-go@v6
         with:
@@ -305,7 +305,7 @@ jobs:
           cache: true
 
       - name: Cache Go build cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/go-build
           key: go-build-cover-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
