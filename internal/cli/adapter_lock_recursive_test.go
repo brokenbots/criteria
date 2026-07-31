@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -180,6 +181,27 @@ func TestRunLock_NoRecursive_KeepsSingleDirectoryBehaviour(t *testing.T) {
 	require.True(t, os.IsNotExist(statErr), "--no-recursive must not create the subworkflow lockfile")
 }
 
+// captureStderr temporarily replaces os.Stderr with a pipe, runs fn, then
+// restores os.Stderr and returns everything written to it. It must not be used
+// concurrently with other goroutines that write to os.Stderr.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+	defer func() { os.Stderr = oldStderr }()
+
+	fn()
+
+	require.NoError(t, w.Close())
+	var buf bytes.Buffer
+	_, err = io.Copy(&buf, r)
+	require.NoError(t, err)
+	require.NoError(t, r.Close())
+	return buf.String()
+}
+
 func TestValidate_FailsOnUnpinnedAdapterInTree(t *testing.T) {
 	ctx := context.Background()
 	root, sub := writeRecursiveLockFixture(t)
@@ -196,8 +218,12 @@ func TestValidate_FailsOnUnpinnedAdapterInTree(t *testing.T) {
 	require.NoError(t, os.Remove(filepath.Join(sub, workflow.LockfileName)))
 
 	workflowPath := filepath.Join(root, "workflow.hcl")
-	ok := validatePath(ctx, workflowPath, nil, false, false)
-	require.False(t, ok, "validate must fail when a subworkflow adapter is unpinned")
+	out := captureStderr(t, func() {
+		_ = validatePath(ctx, workflowPath, nil, false, false)
+	})
+	require.Contains(t, out, sub, "validate stderr must name the workflow directory")
+	require.Contains(t, out, "copilot", "validate stderr must name the adapter")
+	require.Contains(t, out, "criteria adapter lock", "validate stderr must state the fix command")
 }
 
 func TestApply_FailsOnUnpinnedAdapterInTree(t *testing.T) {
@@ -214,9 +240,16 @@ func TestApply_FailsOnUnpinnedAdapterInTree(t *testing.T) {
 	require.NoError(t, os.Remove(filepath.Join(sub, workflow.LockfileName)))
 
 	workflowPath := filepath.Join(root, "workflow.hcl")
-	_, _, _, err := compileForExecution(ctx, workflowPath, nil, false, false)
+	var err error
+	out := captureStderr(t, func() {
+		_, _, _, err = compileForExecution(ctx, workflowPath, nil, false, false)
+	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unpinned")
+	assert.Contains(t, err.Error(), root, "apply top-level error must name the workflow directory")
+	require.Contains(t, out, sub, "apply stderr must name the workflow directory")
+	require.Contains(t, out, "copilot", "apply stderr must name the adapter")
+	require.Contains(t, out, "criteria adapter lock", "apply stderr must state the fix command")
 }
 
 // fakeWorkflowFetcher is a test double that materialises a pre-built remote

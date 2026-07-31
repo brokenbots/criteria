@@ -18,7 +18,7 @@ type lockfileCoverageError struct {
 	Reason      string
 }
 
-func (e *lockfileCoverageError) Error() string {
+func (e lockfileCoverageError) Error() string {
 	return fmt.Sprintf("%s: adapter %s is %s; run `criteria adapter lock %s` to pin it", e.WorkflowDir, e.AdapterKey, e.Reason, e.WorkflowDir)
 }
 
