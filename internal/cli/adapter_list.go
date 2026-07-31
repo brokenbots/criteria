@@ -78,7 +78,15 @@ func listInstalled(out io.Writer) error {
 				name = mf.Name
 			}
 		}
-		fmt.Fprintf(out, "%s  %s\n", dg, name)
+		ref := m.Annotations[oci.AnnotationReference]
+		source := m.Annotations[oci.AnnotationSourceURL]
+		if ref == "" {
+			ref = "(unattributed)"
+		}
+		if source == "" {
+			source = "(unattributed)"
+		}
+		fmt.Fprintf(out, "%s  %s  %s  %s\n", dg, name, ref, source)
 	}
 	return nil
 }

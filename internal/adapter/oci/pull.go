@@ -68,6 +68,14 @@ type Puller struct {
 // If the artifact is already present in the layout (by digest), Pull is a
 // no-op that returns the cached digest.
 func (p *Puller) Pull(ctx context.Context, ref Reference) (digest.Digest, error) {
+	return p.PullWithAnnotations(ctx, ref, nil)
+}
+
+// PullWithAnnotations is like Pull but additionally records the supplied
+// key/value annotations on the index.json descriptor for the pulled manifest.
+// This is used to keep provenance (original reference, source URL) alongside
+// the cached artifact so `criteria adapter list` can attribute every entry.
+func (p *Puller) PullWithAnnotations(ctx context.Context, ref Reference, annotations map[string]string) (digest.Digest, error) {
 	if !ref.FullyQualified() {
 		return "", fmt.Errorf("oci: pull requires a fully-qualified reference (got %q)", ref)
 	}
@@ -102,10 +110,10 @@ func (p *Puller) Pull(ctx context.Context, ref Reference) (digest.Digest, error)
 	// so this is best-effort.
 	_ = copyReferrers(ctx, repo, store, &desc)
 
-	// Annotate the index descriptor with the protocol/schema version so
-	// the host loader can discriminate cached artifacts without re-parsing
-	// adapter.yaml.
-	if err := p.annotateIndex(&desc); err != nil {
+	// Annotate the index descriptor with the protocol/schema version and any
+	// caller-supplied provenance so the host loader can discriminate cached
+	// artifacts without re-parsing adapter.yaml.
+	if err := p.annotateIndex(&desc, annotations); err != nil {
 		return "", err
 	}
 
@@ -214,9 +222,9 @@ func (p *Puller) newRepository(ref Reference) (*remote.Repository, error) {
 }
 
 // annotateIndex updates the index.json entry for the given descriptor,
-// adding protocol/schema version annotations. The index is locked during
-// the update.
-func (p *Puller) annotateIndex(desc *ocispec.Descriptor) error {
+// adding protocol/schema version and caller-supplied annotations. The index is
+// locked during the update.
+func (p *Puller) annotateIndex(desc *ocispec.Descriptor, extra map[string]string) error {
 	release, err := p.Layout.Lock()
 	if err != nil {
 		return err
@@ -228,15 +236,19 @@ func (p *Puller) annotateIndex(desc *ocispec.Descriptor) error {
 		return err
 	}
 
-	for i, m := range ix.Manifests {
-		if m.Digest == desc.Digest {
-			if ix.Manifests[i].Annotations == nil {
-				ix.Manifests[i].Annotations = make(map[string]string)
-			}
-			ix.Manifests[i].Annotations[AnnotationProtocolVersion] = "2"
-			ix.Manifests[i].Annotations[AnnotationSchemaVersion] = "1"
-			return p.Layout.WriteIndex(ix)
+	for i := range ix.Manifests {
+		if ix.Manifests[i].Digest != desc.Digest {
+			continue
 		}
+		if ix.Manifests[i].Annotations == nil {
+			ix.Manifests[i].Annotations = make(map[string]string)
+		}
+		ix.Manifests[i].Annotations[AnnotationProtocolVersion] = "2"
+		ix.Manifests[i].Annotations[AnnotationSchemaVersion] = "1"
+		for k, v := range extra {
+			ix.Manifests[i].Annotations[k] = v
+		}
+		return p.Layout.WriteIndex(ix)
 	}
 	// Descriptor not yet in index — unexpected after a successful oras.Copy.
 	return fmt.Errorf("oci: annotateIndex: descriptor %s not found in index.json after pull", desc.Digest)

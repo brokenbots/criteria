@@ -26,6 +26,7 @@ import (
 func newAdapterLockCmd() *cobra.Command {
 	var (
 		upgrade         bool
+		noRecursive     bool
 		allowUnsigned   bool
 		trustedKeyPaths []string
 	)
@@ -40,11 +41,12 @@ func newAdapterLockCmd() *cobra.Command {
 			if len(args) > 0 {
 				workflowDir = args[0]
 			}
-			return runLock(cmd.Context(), workflowDir, upgrade, allowUnsigned, trustedKeyPaths, cmd.OutOrStdout(), nil)
+			return runLock(cmd.Context(), workflowDir, upgrade, !noRecursive, allowUnsigned, trustedKeyPaths, cmd.OutOrStdout(), nil, nil)
 		},
 	}
 
 	cmd.Flags().BoolVar(&upgrade, "upgrade", false, "Re-evaluate version constraints and accept digest drift under immutable version pins. Plain lock already re-fetches and re-verifies every adapter's pinned digest; use --upgrade only when an exact-version pin resolved to a new digest and you accept the supply-chain change")
+	cmd.Flags().BoolVar(&noRecursive, "no-recursive", false, "Lock only the named workflow directory, ignoring subworkflows")
 	cmd.Flags().BoolVar(&allowUnsigned, "allow-unsigned", false, "Skip adapter signature verification (also via CRITERIA_ALLOW_UNSIGNED)")
 	cmd.Flags().StringArrayVar(&trustedKeyPaths, "trusted-key", nil, "Path to a trusted PEM public key for key-mode verification (repeatable)")
 	return cmd
@@ -52,6 +54,7 @@ func newAdapterLockCmd() *cobra.Command {
 
 type lockState struct {
 	workflowDir string
+	spec        *workflow.Spec
 	oldLF       *lockfile.Lockfile
 	wfAdapters  map[string]*workflowAdapter
 	aliases     map[string]string
@@ -115,6 +118,15 @@ func (r *ociLockResolver) PullAndBuild(ctx context.Context, ref oci.Reference, p
 		return "", zero, fmt.Errorf("validate manifest: %w", err)
 	}
 
+	// Record provenance on the cached manifest so `criteria adapter list` can
+	// attribute every adapter pulled through criteria.
+	if err := r.layout.Annotate(dg, map[string]string{
+		oci.AnnotationReference: ref.String(),
+		oci.AnnotationSourceURL: m.SourceURL,
+	}); err != nil {
+		return "", zero, fmt.Errorf("annotate cache entry: %w", err)
+	}
+
 	signer, err := signing.Verify(ctx, r.layout, dg, *policy)
 	if err != nil {
 		return "", zero, fmt.Errorf("signature verification: %w", err)
@@ -134,94 +146,76 @@ func (r *ociLockResolver) Extract(d digest.Digest, adapterType string) (string, 
 	return extractOCIAdapterBinary(r.layout, d, adapterType)
 }
 
-func prepareLockState(workflowDir string, upgrade, allowUnsigned bool, trustedKeyPaths []string, resolver lockResolver) (*lockState, error) {
-	workflowDir, err := filepath.Abs(workflowDir)
-	if err != nil {
-		return nil, fmt.Errorf("resolve workflow dir: %w", err)
-	}
-
-	spec, diags := workflow.ParseFileOrDir(workflowDir)
-	if diags.HasErrors() {
-		return nil, fmt.Errorf("parse workflow: %w", newDiagsError(diags))
-	}
-
-	oldLF, err := lockfile.ReadFromDir(workflowDir)
-	if err != nil {
-		return nil, fmt.Errorf("read lockfile: %w", err)
-	}
-
-	wfAdapters := collectWorkflowAdapters(spec)
-
-	aliases, err := collectWorkflowAliases(workflowDir, spec)
-	if err != nil {
-		return nil, err
-	}
-
-	workflowVerification := ""
-	if spec.Header != nil {
-		workflowVerification = spec.Header.Verification
-	}
-	trustedKeys, err := loadTrustedKeys(workflowDir, trustedKeyPaths)
-	if err != nil {
-		return nil, fmt.Errorf("load trusted keys: %w", err)
-	}
-	layout, policy, err := openCacheAndPolicy(allowUnsigned, workflowVerification, trustedKeys)
-	if err != nil {
-		return nil, err
-	}
-
-	if resolver == nil {
-		resolver = newOCILockResolver(layout, upgrade, wfAdapters)
-	}
-
-	return &lockState{
-		workflowDir: workflowDir,
-		oldLF:       oldLF,
-		wfAdapters:  wfAdapters,
-		aliases:     aliases,
-		resolver:    resolver,
-		policy:      policy,
-	}, nil
+// newOCILockResolver builds the production OCI resolver. The puller is always
+// created because recursive locking may discover OCI-sourced adapters in
+// subworkflows, and constructing the puller performs no network I/O.
+func newOCILockResolver(layout *oci.Layout) lockResolver {
+	return &ociLockResolver{layout: layout, puller: &oci.Puller{Layout: layout}}
 }
 
-// newOCILockResolver builds the production OCI resolver. A puller is created
-// whenever any OCI-sourced adapter exists, because a declared version bump on
-// an already-locked adapter still needs re-resolution. Constructing the puller
-// performs no network I/O, so this is safe and cheap.
-func newOCILockResolver(layout *oci.Layout, upgrade bool, wfAdapters map[string]*workflowAdapter) lockResolver {
-	var puller *oci.Puller
-	if upgrade || hasOCIAdapters(wfAdapters) {
-		puller = &oci.Puller{Layout: layout}
-	}
-	return &ociLockResolver{layout: layout, puller: puller}
-}
-
-func openCacheAndPolicy(allowUnsigned bool, workflowVerification string, trustedKeys []signing.KeyIdentity) (*oci.Layout, signing.Policy, error) {
-	var policy signing.Policy
+// openCache opens the shared OCI adapter cache layout.
+func openCache() (*oci.Layout, error) {
 	cacheRoot, err := defaultCacheRoot()
 	if err != nil {
-		return nil, policy, err
+		return nil, err
 	}
 	layout, err := oci.Open(cacheRoot)
 	if err != nil {
-		return nil, policy, fmt.Errorf("open OCI cache: %w", err)
+		return nil, fmt.Errorf("open OCI cache: %w", err)
 	}
-	policy, err = resolveSigningPolicy(allowUnsigned, workflowVerification, trustedKeys)
-	if err != nil {
-		return nil, policy, fmt.Errorf("signing policy: %w", err)
-	}
-	return layout, policy, nil
+	return layout, nil
 }
 
-func runLock(ctx context.Context, workflowDir string, upgrade, allowUnsigned bool, trustedKeyPaths []string, out io.Writer, resolver lockResolver) error {
+// resolveWorkflowPolicy returns the signing policy for a single workflow
+// directory, honouring the CLI flags and any workflow-local trusted keys.
+func resolveWorkflowPolicy(allowUnsigned bool, workflowVerification, workflowDir string, trustedKeyPaths []string) (signing.Policy, error) {
+	trustedKeys, err := loadTrustedKeys(workflowDir, trustedKeyPaths)
+	if err != nil {
+		return signing.Policy{}, fmt.Errorf("load trusted keys: %w", err)
+	}
+	policy, err := resolveSigningPolicy(allowUnsigned, workflowVerification, trustedKeys)
+	if err != nil {
+		return signing.Policy{}, fmt.Errorf("signing policy: %w", err)
+	}
+	return policy, nil
+}
+
+func runLock(ctx context.Context, workflowDir string, upgrade, recursive, allowUnsigned bool, trustedKeyPaths []string, out io.Writer, resolver lockResolver, fetcher workflowFetcher) error {
 	if out == nil {
 		out = os.Stderr
 	}
-	state, err := prepareLockState(workflowDir, upgrade, allowUnsigned, trustedKeyPaths, resolver)
+
+	workflowDir, err := filepath.Abs(workflowDir)
+	if err != nil {
+		return fmt.Errorf("resolve workflow dir: %w", err)
+	}
+
+	layout, err := openCache()
 	if err != nil {
 		return err
 	}
+	if resolver == nil {
+		resolver = newOCILockResolver(layout)
+	}
+	if fetcher == nil {
+		fetcher = newWorkflowFetcher()
+	}
 
+	if !recursive {
+		state, err := prepareLockState(workflowDir, allowUnsigned, trustedKeyPaths, layout, resolver)
+		if err != nil {
+			return err
+		}
+		return lockSingleDirectory(ctx, state, upgrade, out)
+	}
+
+	return lockTree(ctx, workflowDir, upgrade, allowUnsigned, trustedKeyPaths, layout, resolver, fetcher, out)
+}
+
+// lockSingleDirectory resolves every adapter declared directly in state.workflowDir
+// and writes that directory's .criteria.lock.hcl. This is the behaviour of
+// `criteria adapter lock --no-recursive`.
+func lockSingleDirectory(ctx context.Context, state *lockState, upgrade bool, out io.Writer) error {
 	newLF := &lockfile.Lockfile{SchemaVersion: 1}
 	if state.oldLF != nil {
 		newLF.SchemaVersion = state.oldLF.SchemaVersion
@@ -235,13 +229,63 @@ func runLock(ctx context.Context, workflowDir string, upgrade, allowUnsigned boo
 		newLF.Adapters = append(newLF.Adapters, entry)
 	}
 
-	printLockDiff(state.oldLF, newLF, out, len(state.wfAdapters))
+	printLockDiff(state.oldLF, newLF, out, len(state.wfAdapters), state.workflowDir)
 
 	lockPath := filepath.Join(state.workflowDir, workflow.LockfileName)
 	if err := lockfile.Write(lockPath, newLF); err != nil {
 		return fmt.Errorf("write lockfile: %w", err)
 	}
 	return nil
+}
+
+// prepareLockState loads the workflow, existing lockfile, adapter aliases, and
+// signing policy for a single directory, using the shared OCI cache layout and
+// resolver.
+func prepareLockState(workflowDir string, allowUnsigned bool, trustedKeyPaths []string, layout *oci.Layout, resolver lockResolver) (*lockState, error) {
+	workflowDir, err := filepath.Abs(workflowDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve workflow dir: %w", err)
+	}
+
+	spec, diags := workflow.ParseFileOrDir(workflowDir)
+	if diags.HasErrors() {
+		return nil, fmt.Errorf("parse workflow %q: %w", workflowDir, newDiagsError(diags))
+	}
+
+	oldLF, err := lockfile.ReadFromDir(workflowDir)
+	if err != nil {
+		return nil, fmt.Errorf("read lockfile %q: %w", workflowDir, err)
+	}
+
+	wfAdapters := collectWorkflowAdapters(spec)
+
+	aliases, err := collectWorkflowAliases(workflowDir, spec)
+	if err != nil {
+		return nil, err
+	}
+
+	workflowVerification := ""
+	if spec.Header != nil {
+		workflowVerification = spec.Header.Verification
+	}
+	policy, err := resolveWorkflowPolicy(allowUnsigned, workflowVerification, workflowDir, trustedKeyPaths)
+	if err != nil {
+		return nil, err
+	}
+
+	if resolver == nil {
+		resolver = newOCILockResolver(layout)
+	}
+
+	return &lockState{
+		workflowDir: workflowDir,
+		spec:        spec,
+		oldLF:       oldLF,
+		wfAdapters:  wfAdapters,
+		aliases:     aliases,
+		resolver:    resolver,
+		policy:      policy,
+	}, nil
 }
 
 // resolveOneAdapter returns the lockfile entry for a single workflow adapter.
@@ -379,7 +423,7 @@ func versionOrLatest(v string) string {
 	return v
 }
 
-func printLockDiff(oldLF, newLF *lockfile.Lockfile, out io.Writer, adapterCount int) {
+func printLockDiff(oldLF, newLF *lockfile.Lockfile, out io.Writer, adapterCount int, workflowDir string) {
 	if out == nil {
 		out = os.Stderr
 	}
@@ -387,6 +431,9 @@ func printLockDiff(oldLF, newLF *lockfile.Lockfile, out io.Writer, adapterCount 
 	if len(changes) == 0 {
 		fmt.Fprintf(out, "lockfile up to date, %d adapter(s)\n", adapterCount)
 		return
+	}
+	if workflowDir != "" {
+		fmt.Fprintf(out, "# %s\n", workflowDir)
 	}
 
 	var signerChanges []lockfile.Change
@@ -480,17 +527,6 @@ func parseAliasesFromFile(path string, aliases map[string]string) error {
 		}
 	}
 	return nil
-}
-
-// hasOCIAdapters reports whether any adapter in the map references an OCI
-// source. If so, the lock command needs a puller available for re-resolution.
-func hasOCIAdapters(adapters map[string]*workflowAdapter) bool {
-	for _, wa := range adapters {
-		if wa.Source != "" {
-			return true
-		}
-	}
-	return false
 }
 
 func missingRefs(lf *lockfile.Lockfile, adapters map[string]*workflowAdapter) []string {

@@ -223,3 +223,139 @@ func TestDiff_MultipleChangesSorted(t *testing.T) {
 	assert.Equal(t, "c.z", changes[2].Adapter)
 	assert.Equal(t, lockfile.Added, changes[2].Kind)
 }
+
+func TestDiff_WorkflowRefAddedRemoved(t *testing.T) {
+	old := &lockfile.Lockfile{
+		WorkflowRefs: []lockfile.LockedWorkflowRef{
+			{Name: "loop", Source: "./loop", ResolvedRef: "abc", Kind: "git"},
+		},
+	}
+	nextLF := &lockfile.Lockfile{
+		WorkflowRefs: []lockfile.LockedWorkflowRef{
+			{Name: "release", Source: "https://example.com/release", ResolvedRef: "v1.0.0", Kind: "git"},
+			{Name: "loop", Source: "./loop", ResolvedRef: "abc", Kind: "git"},
+		},
+	}
+	changes := lockfile.Diff(old, nextLF)
+	require.Len(t, changes, 1)
+	assert.Equal(t, "workflow_ref.release", changes[0].Adapter)
+	assert.Equal(t, lockfile.WorkflowRefChanged, changes[0].Kind)
+	// Added: Before is nil.
+	assert.Nil(t, changes[0].Before)
+	after := changes[0].After
+	require.NotNil(t, after)
+	afterVal, ok := after.(lockfile.LockedWorkflowRef)
+	require.True(t, ok)
+	assert.Equal(t, "release", afterVal.Name)
+	assert.Equal(t, "v1.0.0", afterVal.ResolvedRef)
+}
+
+func TestDiff_WorkflowRefRemoved(t *testing.T) {
+	old := &lockfile.Lockfile{
+		WorkflowRefs: []lockfile.LockedWorkflowRef{
+			{Name: "loop", Source: "./loop", ResolvedRef: "abc", Kind: "git"},
+			{Name: "release", Source: "https://example.com/release", ResolvedRef: "v1.0.0", Kind: "git"},
+		},
+	}
+	nextLF := &lockfile.Lockfile{
+		WorkflowRefs: []lockfile.LockedWorkflowRef{
+			{Name: "loop", Source: "./loop", ResolvedRef: "abc", Kind: "git"},
+		},
+	}
+	changes := lockfile.Diff(old, nextLF)
+	require.Len(t, changes, 1)
+	assert.Equal(t, "workflow_ref.release", changes[0].Adapter)
+	assert.Equal(t, lockfile.WorkflowRefChanged, changes[0].Kind)
+	before := changes[0].Before
+	require.NotNil(t, before)
+	beforeVal, ok := before.(lockfile.LockedWorkflowRef)
+	require.True(t, ok)
+	assert.Equal(t, "release", beforeVal.Name)
+	// Removed: After is nil.
+	assert.Nil(t, changes[0].After)
+}
+
+func TestDiff_WorkflowRefResolvedRefChanged(t *testing.T) {
+	old := &lockfile.Lockfile{
+		WorkflowRefs: []lockfile.LockedWorkflowRef{
+			{Name: "loop", Source: "./loop", ResolvedRef: "abc", Kind: "git"},
+		},
+	}
+	nextLF := &lockfile.Lockfile{
+		WorkflowRefs: []lockfile.LockedWorkflowRef{
+			{Name: "loop", Source: "./loop", ResolvedRef: "def", Kind: "git"},
+		},
+	}
+	changes := lockfile.Diff(old, nextLF)
+	require.Len(t, changes, 1)
+	assert.Equal(t, "workflow_ref.loop", changes[0].Adapter)
+	assert.Equal(t, lockfile.WorkflowRefChanged, changes[0].Kind)
+	before := changes[0].Before.(lockfile.LockedWorkflowRef)
+	after := changes[0].After.(lockfile.LockedWorkflowRef)
+	assert.Equal(t, "abc", before.ResolvedRef)
+	assert.Equal(t, "def", after.ResolvedRef)
+}
+
+func TestDiff_WorkflowRefSourceChanged(t *testing.T) {
+	old := &lockfile.Lockfile{
+		WorkflowRefs: []lockfile.LockedWorkflowRef{
+			{Name: "loop", Source: "./loop", ResolvedRef: "abc", Kind: "git"},
+		},
+	}
+	nextLF := &lockfile.Lockfile{
+		WorkflowRefs: []lockfile.LockedWorkflowRef{
+			{Name: "loop", Source: "./loop2", ResolvedRef: "abc", Kind: "git"},
+		},
+	}
+	changes := lockfile.Diff(old, nextLF)
+	require.Len(t, changes, 1)
+	assert.Equal(t, lockfile.WorkflowRefChanged, changes[0].Kind)
+}
+
+func TestDiff_WorkflowRefKindChanged(t *testing.T) {
+	old := &lockfile.Lockfile{
+		WorkflowRefs: []lockfile.LockedWorkflowRef{
+			{Name: "loop", Source: "./loop", ResolvedRef: "abc", Kind: "git"},
+		},
+	}
+	nextLF := &lockfile.Lockfile{
+		WorkflowRefs: []lockfile.LockedWorkflowRef{
+			{Name: "loop", Source: "./loop", ResolvedRef: "abc", Kind: "archive"},
+		},
+	}
+	changes := lockfile.Diff(old, nextLF)
+	require.Len(t, changes, 1)
+	assert.Equal(t, lockfile.WorkflowRefChanged, changes[0].Kind)
+}
+
+func TestDiff_WorkflowRefUnchanged(t *testing.T) {
+	old := &lockfile.Lockfile{
+		WorkflowRefs: []lockfile.LockedWorkflowRef{
+			{Name: "loop", Source: "./loop", ResolvedRef: "abc", Kind: "git"},
+		},
+	}
+	nextLF := &lockfile.Lockfile{
+		WorkflowRefs: []lockfile.LockedWorkflowRef{
+			{Name: "loop", Source: "./loop", ResolvedRef: "abc", Kind: "git"},
+		},
+	}
+	changes := lockfile.Diff(old, nextLF)
+	assert.Empty(t, changes)
+}
+
+func TestDiff_PlatformsLengthMismatch(t *testing.T) {
+	// stringSliceEqual length-mismatch branch.
+	old := &lockfile.Lockfile{
+		Adapters: []lockfile.LockedAdapter{
+			{Type: "a", Name: "x", Reference: "r", ResolvedDigest: "sha256:d", SourceURL: "https://example.com", SDKProtocolVersion: 2, Platforms: []string{"linux/amd64"}},
+		},
+	}
+	nextLF := &lockfile.Lockfile{
+		Adapters: []lockfile.LockedAdapter{
+			{Type: "a", Name: "x", Reference: "r", ResolvedDigest: "sha256:d", SourceURL: "https://example.com", SDKProtocolVersion: 2, Platforms: []string{"linux/amd64", "linux/arm64"}},
+		},
+	}
+	changes := lockfile.Diff(old, nextLF)
+	require.Len(t, changes, 1)
+	assert.Equal(t, lockfile.PlatformsChanged, changes[0].Kind)
+}

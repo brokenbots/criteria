@@ -58,6 +58,15 @@ type RemoteFields struct {
 	ServerCertFingerprint string
 }
 
+// LockedWorkflowRef records the resolved identifier of a subworkflow whose
+// source is a remote git ref or archive. It is stored in the parent's lockfile.
+type LockedWorkflowRef struct {
+	Name        string `hcl:"name,label"`
+	Source      string `hcl:"source"`
+	ResolvedRef string `hcl:"resolved_ref"`
+	Kind        string `hcl:"kind"`
+}
+
 // ChangeKind categorises the kinds of differences between two lockfiles.
 type ChangeKind int
 
@@ -70,6 +79,7 @@ const (
 	ContainerImageChanged
 	RemoteChanged
 	OverrideChanged
+	WorkflowRefChanged
 )
 
 // Change records a single difference for a specific adapter.

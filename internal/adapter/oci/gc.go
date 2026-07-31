@@ -25,6 +25,10 @@ type GCOptions struct {
 	// are never evicted even if they violate MaxSize or OlderThan constraints.
 	// Unreachable orphan blobs are always removed regardless of this flag.
 	KeepReachable bool
+	// UnattributedOnly limits evictions to manifests that lack provenance
+	// annotations (reference and source_url). When true, only unattributed
+	// entries are candidates for removal; other entries are preserved.
+	UnattributedOnly bool
 }
 
 // GCResult reports what the garbage collector did.
@@ -59,8 +63,8 @@ func (l *Layout) GC(opts GCOptions) (GCResult, error) {
 		return result, err
 	}
 
-	// Phase 2: evict whole refs by OlderThan/MaxSize, then clean up.
-	if !opts.KeepReachable && (opts.OlderThan > 0 || opts.MaxSize > 0) {
+	// Phase 2: evict whole refs by OlderThan/MaxSize/UnattributedOnly, then clean up.
+	if !opts.KeepReachable && (opts.OlderThan > 0 || opts.MaxSize > 0 || opts.UnattributedOnly) {
 		if err := l.gcEvictRefs(opts, &result); err != nil {
 			return result, err
 		}
@@ -110,10 +114,16 @@ type refMeta struct {
 }
 
 // selectEvictions returns a set of descriptor indices to evict from manifests
-// according to opts (OlderThan and/or MaxSize, LRU by manifest blob mtime).
+// according to opts. When UnattributedOnly is set, only manifests lacking
+// provenance annotations are candidates; otherwise the normal OlderThan/MaxSize
+// rules apply.
 func (l *Layout) selectEvictions(manifests []ocispec.Descriptor, opts GCOptions) map[int]bool {
 	metas := make([]refMeta, 0, len(manifests))
-	for i, m := range manifests {
+	for i := range manifests {
+		m := &manifests[i]
+		if opts.UnattributedOnly && !isUnattributed(m) {
+			continue
+		}
 		metas = append(metas, refMeta{
 			idx:       i,
 			mtime:     l.manifestMtime(m.Digest.String()),
@@ -122,6 +132,14 @@ func (l *Layout) selectEvictions(manifests []ocispec.Descriptor, opts GCOptions)
 	}
 
 	evict := make(map[int]bool)
+
+	if opts.UnattributedOnly && opts.OlderThan == 0 && opts.MaxSize == 0 {
+		// Evict all unattributed entries when no other constraints are given.
+		for _, m := range metas {
+			evict[m.idx] = true
+		}
+		return evict
+	}
 
 	if opts.OlderThan > 0 {
 		cutoff := time.Now().Add(-opts.OlderThan)
@@ -137,6 +155,14 @@ func (l *Layout) selectEvictions(manifests []ocispec.Descriptor, opts GCOptions)
 	}
 
 	return evict
+}
+
+// isUnattributed reports whether m lacks provenance annotations.
+func isUnattributed(m *ocispec.Descriptor) bool {
+	if m.Annotations == nil {
+		return true
+	}
+	return m.Annotations[AnnotationReference] == "" || m.Annotations[AnnotationSourceURL] == ""
 }
 
 // applyMaxSizeEvictions trims refs LRU until total reachable blob size ≤ maxSize.

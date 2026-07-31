@@ -45,47 +45,78 @@ func NewValidateCmd() *cobra.Command {
 func validatePath(ctx context.Context, path string, subworkflowRoots []string, diagJSON, warnsAsErrors bool) (ok bool) {
 	spec, diags := workflow.ParseFileOrDir(path)
 	if diags.HasErrors() {
-		if diagJSON {
-			printDiagnosticsJSON(diags)
-		} else {
-			fmt.Fprintf(os.Stderr, "%s: parse failed:\n%s\n", path, formatDiagnostics(diags))
+		printValidationParseError(path, diags, diagJSON)
+		return false
+	}
+	workflowDir := workflowDirForPath(path)
+
+	if unpinned, err := collectUnpinnedAdapters(ctx, workflowDir); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: lockfile coverage check failed: %v\n", path, err)
+		return false
+	} else if len(unpinned) > 0 {
+		for _, e := range unpinned {
+			fmt.Fprintf(os.Stderr, "%s: error: %v\n", path, e)
 		}
 		return false
 	}
-	info, _ := os.Stat(path)
-	workflowDir := path
-	if info != nil && !info.IsDir() {
-		workflowDir = filepath.Dir(path)
+
+	diags = compileAndSchemas(ctx, workflowDir, spec, subworkflowRoots, warnsAsErrors)
+	if diags.HasErrors() {
+		printValidationCompileError(path, diags, diagJSON)
+		return false
 	}
+	printValidationOK(path, diags, diagJSON)
+	return true
+}
+
+func workflowDirForPath(path string) string {
+	info, _ := os.Stat(path)
+	if info != nil && !info.IsDir() {
+		return filepath.Dir(path)
+	}
+	return path
+}
+
+func printValidationParseError(path string, diags hcl.Diagnostics, diagJSON bool) {
+	if diagJSON {
+		printDiagnosticsJSON(diags)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "%s: parse failed:\n%s\n", path, formatDiagnostics(diags))
+}
+
+func compileAndSchemas(ctx context.Context, workflowDir string, spec *workflow.Spec, subworkflowRoots []string, warnsAsErrors bool) hcl.Diagnostics {
 	loader := adapterhost.NewLoader()
 	schemas, schemaDiags := diagutil.CollectSchemas(ctx, loader, workflowDir, spec, nil)
 	_ = loader.Shutdown(ctx)
 
-	_, diags = workflow.CompileWithContext(ctx, spec, schemas, workflow.CompileOpts{
+	_, diags := workflow.CompileWithContext(ctx, spec, schemas, workflow.CompileOpts{
 		WorkflowDir:         workflowDir,
 		SubWorkflowResolver: &workflow.LocalSubWorkflowResolver{AllowedRoots: subworkflowRoots},
 		Schemas:             schemas,
 	})
 	// Fold unverified-adapter warnings into the diagnostics; --warnings-as-errors
 	// promotes them so they fail validation rather than only printing.
-	diags = append(diags, promoteWarnings(schemaDiags, warnsAsErrors)...)
-	if diags.HasErrors() {
-		if diagJSON {
-			printDiagnosticsJSON(diags)
-		} else {
-			fmt.Fprintf(os.Stderr, "%s: compile failed:\n%s\n", path, formatDiagnostics(diags))
-		}
-		return false
-	}
+	return append(diags, promoteWarnings(schemaDiags, warnsAsErrors)...)
+}
+
+func printValidationCompileError(path string, diags hcl.Diagnostics, diagJSON bool) {
 	if diagJSON {
 		printDiagnosticsJSON(diags)
-		return true
+		return
+	}
+	fmt.Fprintf(os.Stderr, "%s: compile failed:\n%s\n", path, formatDiagnostics(diags))
+}
+
+func printValidationOK(path string, diags hcl.Diagnostics, diagJSON bool) {
+	if diagJSON {
+		printDiagnosticsJSON(diags)
+		return
 	}
 	fmt.Printf("%s: ok\n", path)
 	if len(diags) > 0 {
 		fmt.Fprintf(os.Stderr, "%s: warnings:\n%s\n", path, formatDiagnostics(diags))
 	}
-	return true
 }
 
 func runValidate(paths, subworkflowRoots []string, diagJSON, warnsAsErrors bool) bool {

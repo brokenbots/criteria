@@ -28,7 +28,9 @@ outputs, branching, iteration, wait nodes, approval gates) see
   host reads it at pull time without launching the adapter.
 - **Lockfile (`.criteria.lock.hcl`)** — a Terraform-style file committed next to
   your workflow that pins every referenced adapter by digest, records the signer
-  identity, and makes the workflow reproduce identically anywhere.
+  identity, and (for fetched subworkflows) pins the resolved commit/archive
+  identifier. Each workflow directory owns its own lockfile; there is no
+  aggregate root lockfile.
 - **Signing** — published artifacts are signed with cosign. The default CI path
   is **keyless** (Sigstore/Fulcio, no long-lived keys); explicit Ed25519 keys are
   also supported. The host verifies signatures at pull time against a
@@ -89,13 +91,61 @@ state "failed" {
 criteria adapter lock        # resolve every referenced adapter, pin digests
 ```
 
-This writes `.criteria.lock.hcl` next to the workflow. Commit it. From then on
-the workflow resolves to the exact pinned digests; `criteria adapter lock
---upgrade` re-resolves to the latest matching versions.
+`criteria adapter lock` is recursive by default. It walks every workflow
+directory reachable from the root — local subworkflows and fetched workflow
+references alike — and writes a `.criteria.lock.hcl` in **each** directory. Each
+lockfile covers only the adapters declared in that directory, so any workflow
+directory remains independently shippable and carries the pins its author tested
+against. There is no aggregate root lockfile that overrides subworkflow pins.
 
-If a workflow references OCI adapters but no lockfile exists, compilation tells
-you to run `criteria adapter lock`. Missing adapters are pulled into the local
-cache (`~/.criteria/cache/oci`) automatically during compile.
+Use `--no-recursive` to lock only the named directory, preserving the previous
+single-directory behaviour. A second recursive run touches no file when the tree
+is already up to date.
+
+`criteria adapter lock --upgrade` re-resolves version constraints and accepts
+digest drift under immutable version pins. It also recurses; plain `lock` does
+not accept drift but still re-fetches and re-verifies every pinned digest.
+
+If a workflow references OCI adapters but no lockfile entry exists, `validate`
+and `apply` fail with an error naming the workflow directory and adapter and
+directing you to run `criteria adapter lock`.
+
+#### Fetched workflow references
+
+A `subworkflow` whose `source` is a git ref or archive is fetched into the local
+cache and pinned in the **parent** lockfile as a `workflow_ref` block:
+
+```hcl
+workflow_ref {
+  source       = "git::https://github.com/example/criteria-workflows?ref=main"
+  resolved_ref = "sha256:abc123..."  # resolved commit SHA or archive digest
+}
+```
+
+The source reference is recorded as written; the `resolved_ref` is the immutable
+identifier (commit SHA for git, content digest for archives). Subsequent runs
+fetch by that resolved identifier, so a mutable branch is pinned at lock time and
+the fetched tree is reproducible.
+
+A fetched workflow must ship a complete lockfile covering its own adapters. The
+three states are defined:
+
+- **Complete lockfile** — the recorded pins are used as-is. Adapters are pulled
+  by digest; signature verification follows the local trust policy. Declared
+  version constraints are not re-resolved.
+- **No lockfile** — the run fails, naming the fetched workflow and stating that
+  `criteria adapter lock` against it will generate the pins.
+- **Partial or stale lockfile** — treated as missing for the uncovered adapters;
+  the run fails naming each unpinned adapter. A lockfile entry whose version no
+  longer satisfies the declared constraint is also rejected.
+
+#### Local inventory provenance
+
+Every adapter pulled through Criteria records its original `reference` and
+`source_url` as OCI index annotations. `criteria adapter list` shows these
+alongside the digest, so cached entries can be traced back to where they came
+from. Entries that predate this feature are labelled `(unattributed)` and can be
+cleared with `criteria adapter prune --unattributed-only`.
 
 ### 3. Manage the local cache directly (optional)
 
@@ -106,7 +156,7 @@ cache (`~/.criteria/cache/oci`) automatically during compile.
 | `criteria adapter info <name>` | Print the cached manifest and verified signer identity. |
 | `criteria adapter where <name>` | Print the on-disk binary path for this platform. |
 | `criteria adapter remove <name>` | Remove an adapter from the cache (`--prune` to GC blobs). |
-| `criteria adapter prune` | Reclaim cache space (`--older-than 30d`, `--max-size <bytes>`). |
+| `criteria adapter prune` | Reclaim cache space (`--older-than 30d`, `--max-size <bytes>`). `--unattributed-only` clears entries that lack provenance annotations. |
 | `criteria adapter dev <binary>` | Register a local binary as an adapter, skipping lockfile + signature checks — the fast inner-loop path. |
 
 ## Adapter session lifecycle
@@ -475,6 +525,8 @@ heartbeats, and it must remain open for the entire lifetime of the session:
 | Symptom | Likely cause / fix |
 |---|---|
 | `workflow uses OCI adapter references but .criteria.lock.hcl is missing` | Run `criteria adapter lock`, then commit the lockfile. |
+| `validate`/`apply` reports an unpinned adapter in a subworkflow | A subworkflow lockfile is missing or incomplete. Run `criteria adapter lock <subworkflow-dir>` to regenerate that directory's pins. |
+| Fetched workflow has no/incomplete lockfile | Materialise the fetched workflow (`criteria adapter lock` against it) so its adapters are pinned, or request an updated lockfile from the publisher. |
 | Pull fails: *adapter does not support `<goos>/<goarch>`* | The publisher didn't build your platform. Ask them to add it, or use a different adapter (no cross-arch emulation). |
 | Pull fails: *does not publish a container image; cannot run under runtime = "…"* | The adapter is artifact-only. Set `environment.runtime = "none"`, or ask the publisher to publish an image. |
 | Signature verification failed at pull | The artifact is unsigned or the signer is outside the trust policy. Fix the publisher's signing, adjust the trust policy, or (dev only) `--allow-unsigned` / `verification = "warn"`. |
