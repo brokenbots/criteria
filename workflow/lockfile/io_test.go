@@ -270,6 +270,27 @@ func TestRead_InvalidHCL(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestRead_InvalidSchema(t *testing.T) {
+	// Syntactically valid HCL that fails semantic decode into Lockfile.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bad-schema.lock.hcl")
+	require.NoError(t, os.WriteFile(path, []byte(`schema_version = "not-a-number"
+`), 0o644))
+
+	_, err := lockfile.Read(path)
+	require.Error(t, err)
+}
+
+func TestRead_FullWorkflowRefFixture(t *testing.T) {
+	lf, err := lockfile.Read("testdata/complete.lock.hcl")
+	require.NoError(t, err)
+	require.NotNil(t, lf)
+	require.Len(t, lf.Adapters, 1)
+	require.Len(t, lf.WorkflowRefs, 1)
+	assert.Equal(t, "loop", lf.WorkflowRefs[0].Name)
+	assert.Equal(t, "abc", lf.WorkflowRefs[0].ResolvedRef)
+}
+
 func TestWrite_WorkflowRefBlock_TrailingCompatibility(t *testing.T) {
 	// Locks regressed when adapters were sorted after workflow refs; this asserts
 	// that two workflow_ref blocks round-trip cleanly and the resulting HCL file
@@ -364,6 +385,89 @@ func TestWrite_MixedAdaptersAndWorkflowRefs_SortsBoth(t *testing.T) {
 	require.GreaterOrEqual(t, alphaAt, 0)
 	require.GreaterOrEqual(t, zetaAt, 0)
 	assert.Less(t, alphaAt, zetaAt)
+}
+
+func TestWrite_AdapterWithKeySignature(t *testing.T) {
+	// Exercises writeAdapterBlock's signature.key branch, which is distinct
+	// from the keyless path already covered by TestWrite_RoundTrip.
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".criteria.lock.hcl")
+
+	lf := &lockfile.Lockfile{
+		SchemaVersion: 1,
+		Adapters: []lockfile.LockedAdapter{
+			{
+				Type:               "copilot",
+				Name:               "default",
+				Reference:          "ghcr.io/criteria-adapters/copilot:0.5.0",
+				ResolvedDigest:     "sha256:789012",
+				SourceURL:          "https://github.com/criteria-adapters/copilot",
+				SDKProtocolVersion: 2,
+				Signature: &lockfile.LockedSignature{
+					Key: &lockfile.LockedKey{Algorithm: "ed25519", Fingerprint: "sha256:pubkeyfp"},
+				},
+			},
+		},
+	}
+	require.NoError(t, lockfile.Write(path, lf))
+
+	reloaded, err := lockfile.Read(path)
+	require.NoError(t, err)
+	require.Len(t, reloaded.Adapters, 1)
+	require.NotNil(t, reloaded.Adapters[0].Signature)
+	require.NotNil(t, reloaded.Adapters[0].Signature.Key)
+	assert.Equal(t, "ed25519", reloaded.Adapters[0].Signature.Key.Algorithm)
+	assert.Equal(t, "sha256:pubkeyfp", reloaded.Adapters[0].Signature.Key.Fingerprint)
+}
+
+func TestWrite_EmptyAdaptersWithWorkflowRefs(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".criteria.lock.hcl")
+
+	lf := &lockfile.Lockfile{
+		SchemaVersion: 1,
+		WorkflowRefs: []lockfile.LockedWorkflowRef{
+			{Name: "loop", Source: "./loop", ResolvedRef: "abc", Kind: "git"},
+		},
+	}
+	require.NoError(t, lockfile.Write(path, lf))
+
+	reloaded, err := lockfile.Read(path)
+	require.NoError(t, err)
+	assert.Empty(t, reloaded.Adapters)
+	require.Len(t, reloaded.WorkflowRefs, 1)
+	assert.Equal(t, "loop", reloaded.WorkflowRefs[0].Name)
+}
+
+func TestWrite_ReadOnlyDirectory(t *testing.T) {
+	// os.WriteFile error path: write into a directory that lacks write permission.
+	dir := t.TempDir()
+	require.NoError(t, os.Chmod(dir, 0o555))
+	defer os.Chmod(dir, 0o755) // ensure cleanup can remove the directory
+
+	path := filepath.Join(dir, ".criteria.lock.hcl")
+	err := lockfile.Write(path, &lockfile.Lockfile{SchemaVersion: 1})
+	require.Error(t, err)
+}
+
+func TestReadFromDir_MalformedLockfile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".criteria.lock.hcl")
+	require.NoError(t, os.WriteFile(path, []byte(`schema_version = "not-a-number"`), 0o644))
+
+	_, err := lockfile.ReadFromDir(dir)
+	require.Error(t, err)
+}
+
+func TestReadFromDir_StatError(t *testing.T) {
+	// Passing a regular file as the workflow directory makes os.Stat fail with
+	// ENOTDIR, which is not os.IsNotExist and must be returned as an error.
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "a-file")
+	require.NoError(t, os.WriteFile(filePath, []byte("not a dir"), 0o644))
+
+	_, err := lockfile.ReadFromDir(filePath)
+	require.Error(t, err)
 }
 
 func TestReadFromDir_ReadsWorkflowRefs(t *testing.T) {

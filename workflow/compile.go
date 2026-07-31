@@ -9,6 +9,8 @@ import (
 	"fmt"
 
 	"github.com/hashicorp/hcl/v2"
+
+	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
 const (
@@ -33,12 +35,9 @@ type CompileOpts struct {
 	// When set, compile-time validation of constant file() arguments is
 	// enabled: missing files produce HCL diagnostics with source ranges.
 	WorkflowDir string
-	// LoadDepth tracks the current inline sub-workflow nesting depth. The
-	// compiler increments this for each recursive CompileWithOpts call when
-	// compiling a workflow-type step body. Maximum depth is 4.
-	LoadDepth int
 	// SubworkflowChain tracks resolved source paths in the current call stack
-	// for cycle detection when compiling subworkflows.
+	// for cycle detection when compiling subworkflows. Its length is the current
+	// inline sub-workflow nesting depth.
 	SubworkflowChain []string
 	// SubWorkflowResolver is an optional callback used to load an external
 	// subworkflow directory referenced by subworkflow.source = "...".
@@ -48,6 +47,11 @@ type CompileOpts struct {
 	// compiles so callee adapter config and step input are fully validated.
 	// Set by the CLI compile path; nil when compiling standalone without adapters.
 	Schemas map[string]AdapterInfo
+	// PinSet is the pre-computed merged lockfile for the workflow tree. When
+	// non-nil, the compiler uses it instead of reading lockfiles from disk. This
+	// lets the CLI startup gate and the engine share exactly the same in-memory
+	// pin set.
+	PinSet *lockfile.Lockfile
 }
 
 // Compile validates a Spec and returns an executable FSMGraph. It is a
@@ -113,6 +117,10 @@ func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]Adap
 	diags = append(diags, validateHeader(spec.Header)...)
 
 	g := newFSMGraph(spec)
+	g.WorkflowDir = opts.WorkflowDir
+	g.FileCache = make(map[string]string)
+	initGraphPinSet(g, opts)
+
 	diags = append(diags, compileVariables(g, spec)...)
 	diags = append(diags, compileLocals(g, spec, opts)...)
 	diags = append(diags, compileData(g, spec, opts)...)
@@ -140,9 +148,9 @@ func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]Adap
 	// predecessor taint propagation.
 	diags = append(diags, TaintPass(g, schemas)...)
 	// Reserved-name checks only apply to user-authored top-level workflows.
-	// Sub-workflow bodies (LoadDepth > 0) are synthetic and intentionally use
-	// the "_continue" name as a terminal state.
-	if opts.LoadDepth == 0 {
+	// Sub-workflow bodies (SubworkflowChain non-empty) are synthetic and
+	// intentionally use the "_continue" name as a terminal state.
+	if len(opts.SubworkflowChain) == 0 {
 		diags = append(diags, checkReservedNames(spec)...)
 	}
 	diags = append(diags, resolveTransitions(g)...)
@@ -154,6 +162,20 @@ func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]Adap
 		return nil, diags
 	}
 	return g, diags
+}
+
+// initGraphPinSet loads the merged pin set from opts, or falls back to reading
+// the workflow directory's own lockfile when no pre-computed set is supplied.
+func initGraphPinSet(g *FSMGraph, opts CompileOpts) {
+	if opts.PinSet != nil {
+		g.PinSet = opts.PinSet
+		return
+	}
+	if opts.WorkflowDir != "" {
+		if lf, err := lockfile.ReadFromDir(opts.WorkflowDir); err == nil && lf != nil {
+			g.PinSet = lf
+		}
+	}
 }
 
 // newFSMGraph allocates a fresh FSMGraph seeded from spec's top-level fields.

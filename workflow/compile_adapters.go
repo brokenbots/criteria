@@ -23,13 +23,15 @@ import (
 // adapter.config expressions are never silently emptied. file()/fileexists()
 // then produce a "workflow directory not configured" compile diagnostic for
 // callers that compile without a WorkflowDir.
-func adapterConfigEvalContext(vars, locals map[string]cty.Value, workflowDir string) *hcl.EvalContext {
+func adapterConfigEvalContext(vars, locals map[string]cty.Value, workflowDir string, fileCache map[string]string) *hcl.EvalContext {
+	opts := DefaultFunctionOptions(workflowDir)
+	opts.FileCache = fileCache
 	return &hcl.EvalContext{
 		Variables: map[string]cty.Value{
 			"var":   ctyObjectOrEmpty(vars),
 			"local": ctyObjectOrEmpty(locals),
 		},
-		Functions: workflowFunctions(DefaultFunctionOptions(workflowDir)),
+		Functions: workflowFunctions(opts),
 	}
 }
 
@@ -46,7 +48,7 @@ func adapterConfigEvalContext(vars, locals map[string]cty.Value, workflowDir str
 // Adapter declaration order is recorded in g.AdapterOrder for stable iteration.
 func compileAdapters(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) hcl.Diagnostics {
 	var diags hcl.Diagnostics
-	configEvalCtx := adapterConfigEvalContext(graphVars(g), graphLocals(g), opts.WorkflowDir)
+	configEvalCtx := adapterConfigEvalContext(graphVars(g), graphLocals(g), opts.WorkflowDir, g.FileCache)
 	for _, ad := range spec.Adapters {
 		diags = append(diags, compileOneAdapter(g, &ad, schemas, configEvalCtx)...)
 	}
@@ -61,20 +63,8 @@ func compileOneAdapter(g *FSMGraph, ad *AdapterDeclSpec, schemas map[string]Adap
 	instanceName := ad.Name
 	key := typeName + "." + instanceName
 
-	// Duplicate detection: key format is "<type>.<name>".
-	if _, dup := g.Adapters[key]; dup {
-		return append(diags, &hcl.Diagnostic{
-			Severity: hcl.DiagError,
-			Summary:  fmt.Sprintf("duplicate adapter %q", key),
-		})
-	}
-
-	// Validate the adapter type is registered.
-	if !isValidAdapterName(typeName) {
-		return append(diags, &hcl.Diagnostic{
-			Severity: hcl.DiagError,
-			Summary:  fmt.Sprintf("adapter %q: invalid type %q", key, typeName),
-		})
+	if d := validateAdapterDecl(g, key, typeName); d.HasErrors() {
+		return append(diags, d...)
 	}
 
 	effectiveOnCrash, d := resolveAdapterOnCrash(key, ad.OnCrash)
@@ -100,6 +90,7 @@ func compileOneAdapter(g *FSMGraph, ad *AdapterDeclSpec, schemas map[string]Adap
 	g.Adapters[key] = &AdapterNode{
 		Type:        typeName,
 		Name:        instanceName,
+		Source:      ad.Source,
 		Environment: effectiveEnv,
 		OnCrash:     effectiveOnCrash,
 		Config:      adapterConfig,
@@ -114,6 +105,20 @@ func compileOneAdapter(g *FSMGraph, ad *AdapterDeclSpec, schemas map[string]Adap
 // resolveAdapterOnCrash validates and returns the effective on_crash value.
 // An empty value is replaced by the default (fail). An invalid non-empty value
 // appends an error diagnostic.
+// validateAdapterDecl checks that the adapter key is not already declared and
+// that the adapter type name is valid. Returns diagnostics on failure.
+func validateAdapterDecl(g *FSMGraph, key, typeName string) hcl.Diagnostics {
+	// Duplicate detection: key format is "<type>.<name>".
+	if _, dup := g.Adapters[key]; dup {
+		return hcl.Diagnostics{{Severity: hcl.DiagError, Summary: fmt.Sprintf("duplicate adapter %q", key)}}
+	}
+	// Validate the adapter type is registered.
+	if !isValidAdapterName(typeName) {
+		return hcl.Diagnostics{{Severity: hcl.DiagError, Summary: fmt.Sprintf("adapter %q: invalid type %q", key, typeName)}}
+	}
+	return nil
+}
+
 func resolveAdapterOnCrash(key, onCrash string) (string, hcl.Diagnostics) {
 	if onCrash == "" {
 		return onCrashFail, nil

@@ -304,24 +304,17 @@ func (e *Engine) InspectSession(ctx context.Context, name string) (*v2.InspectRe
 	return sessions.InspectSession(ctx, name)
 }
 
-// setLockfileOnSessions ensures the session manager has the lockfile needed
-// for container-mode adapter resolution. If the engine already has a lockfile
-// it is used directly; otherwise if workflowDir is set the lockfile is read
-// from the workflow directory.
-func (e *Engine) setLockfileOnSessions(sessions *adapterhost.SessionManager) error {
+// setLockfileOnSessions ensures the session manager has the compiled graph's
+// merged pin set. The merged lockfile is resolved once at compile time and is
+// the single source of truth for the run; no workflow files are read here.
+func (e *Engine) setLockfileOnSessions(sessions *adapterhost.SessionManager) {
+	if e.graph != nil && e.graph.PinSet != nil {
+		sessions.SetLockfile(e.graph.PinSet)
+		return
+	}
 	if e.lockfile != nil {
 		sessions.SetLockfile(e.lockfile)
-		return nil
 	}
-	if e.workflowDir == "" {
-		return nil
-	}
-	lf, err := lockfile.ReadFromDir(e.workflowDir)
-	if err != nil {
-		return fmt.Errorf("read lockfile: %w", err)
-	}
-	sessions.SetLockfile(lf)
-	return nil
 }
 
 // Run executes the workflow until a terminal state is reached, the global
@@ -333,9 +326,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	if e.sandboxProbeOverride != nil {
 		sessions.SetSandboxProbeOverride(e.sandboxProbeOverride)
 	}
-	if err := e.setLockfileOnSessions(sessions); err != nil {
-		return err
-	}
+	e.setLockfileOnSessions(sessions)
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
 	// Create a per-run redaction registry and wire it into the session manager
@@ -359,6 +350,15 @@ func (e *Engine) Run(ctx context.Context) error {
 	// WS20: if any environment is remote, start the phone-home shim before
 	// provisioning adapters.
 	if err := e.maybeStartRemoteShim(ctx, sessions); err != nil {
+		return err
+	}
+
+	// Verify every adapter declared anywhere in the compiled graph before the
+	// first step executes. This fails fast on a missing or unverifiable adapter
+	// in a subworkflow the run has not yet reached. Per-scope binding still
+	// opens sessions lazily at scope entry.
+	if err := sessions.VerifyGraph(ctx, e.graph, vars); err != nil {
+		sink.OnRunFailed(err.Error(), e.graph.InitialState)
 		return err
 	}
 
@@ -394,9 +394,7 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	if e.sandboxProbeOverride != nil {
 		sessions.SetSandboxProbeOverride(e.sandboxProbeOverride)
 	}
-	if err := e.setLockfileOnSessions(sessions); err != nil {
-		return err
-	}
+	e.setLockfileOnSessions(sessions)
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
 	redactionReg := secrets.NewRegistry()
@@ -414,6 +412,13 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	// WS20: if any environment is remote, start the phone-home shim before
 	// provisioning adapters.
 	if err := e.maybeStartRemoteShim(ctx, sessions); err != nil {
+		return err
+	}
+
+	// Verify every adapter declared anywhere in the compiled graph before the
+	// resumed step executes, using the same merged pin set the engine uses.
+	if err := sessions.VerifyGraph(ctx, e.graph, vars); err != nil {
+		sink.OnRunFailed(err.Error(), startStep)
 		return err
 	}
 

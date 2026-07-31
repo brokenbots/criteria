@@ -9,6 +9,8 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
 	"github.com/zclconf/go-cty/cty/convert"
+
+	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
 // compileSubworkflows resolves each subworkflow.source via opts.SubWorkflowResolver,
@@ -78,10 +80,32 @@ func compileSingleSubworkflow(ctx context.Context, g *FSMGraph, swSpec Subworkfl
 		return diags
 	}
 
+	// Merge the callee's compile-time pin set and file cache into the parent.
+	// The merge happens once at compile time; the engine never reads these
+	// files again at subworkflow entry.
+	mergeCalleeGraph(g, calleeGraph)
+
 	inputs, inputDiags := extractSubworkflowInputs(swSpec, calleeGraph.Variables)
 	diags = append(diags, inputDiags...)
 	envKey, envDiags := resolveEnvironmentExpr(swSpec.Environment, fmt.Sprintf("subworkflow %q", swSpec.Name))
 	diags = append(diags, envDiags...)
+	recordSubworkflowNode(g, swSpec, resolvedDir, calleeGraph, inputs, envKey)
+	return diags
+}
+
+// mergeCalleeGraph merges a child workflow's pin set and file cache into the
+// parent graph. The child remains authoritative for its own adapters.
+func mergeCalleeGraph(g, callee *FSMGraph) {
+	g.PinSet = lockfile.Merge(g.PinSet, callee.PinSet)
+	for k, v := range callee.FileCache {
+		if _, ok := g.FileCache[k]; !ok {
+			g.FileCache[k] = v
+		}
+	}
+}
+
+// recordSubworkflowNode stores the compiled subworkflow in the parent graph.
+func recordSubworkflowNode(g *FSMGraph, swSpec SubworkflowSpec, resolvedDir string, calleeGraph *FSMGraph, inputs map[string]hcl.Expression, envKey string) {
 	g.Subworkflows[swSpec.Name] = &SubworkflowNode{
 		Name:         swSpec.Name,
 		SourcePath:   resolvedDir,
@@ -92,7 +116,6 @@ func compileSingleSubworkflow(ctx context.Context, g *FSMGraph, swSpec Subworkfl
 		DeclaredVars: calleeGraph.Variables,
 	}
 	g.SubworkflowOrder = append(g.SubworkflowOrder, swSpec.Name)
-	return diags
 }
 
 // buildChildOpts builds the CompileOpts for a recursive subworkflow compilation,
@@ -103,7 +126,6 @@ func buildChildOpts(opts CompileOpts, resolvedDir string) CompileOpts {
 	copy(newChain, opts.SubworkflowChain)
 	newChain = append(newChain, resolvedDir)
 	child.SubworkflowChain = newChain
-	child.LoadDepth = opts.LoadDepth + 1
 	child.WorkflowDir = resolvedDir
 	return child
 }

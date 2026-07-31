@@ -631,16 +631,24 @@ func parseCompileForCli(ctx context.Context, workflowPath string, subworkflowRoo
 		workflowDir = filepath.Dir(workflowPath)
 	}
 
+	// Resolve the merged tree-wide pin set once. It drives auto-pull, the
+	// startup coverage gate, and the compiled graph the engine consults.
+	pinSet, err := loadTreePinSet(ctx, workflowDir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load workflow tree pin set: %w", err)
+	}
+
 	// Compile-time auto-pull: if the workflow declares OCI adapter sources,
 	// ensure the lockfile is present, complete, and binaries are cached. This
 	// must run before schema collection so the digest-addressed binaries exist.
 	if hasOCIReferences(spec) {
-		if err := autoPullCompileAdapters(ctx, workflowDir, spec, allowUnsigned); err != nil {
+		if err := autoPullCompileAdapters(ctx, workflowDir, spec, pinSet, allowUnsigned); err != nil {
 			return nil, nil, err
 		}
 	}
 
 	loader := adapterhost.NewLoader()
+	loader.SetDevBindings(devBindingPaths())
 	schemas, schemaDiags := diagutil.CollectSchemas(ctx, loader, workflowDir, spec, nil)
 	defer func() { _ = loader.Shutdown(ctx) }()
 
@@ -648,6 +656,7 @@ func parseCompileForCli(ctx context.Context, workflowPath string, subworkflowRoo
 		WorkflowDir:         workflowDir,
 		SubWorkflowResolver: &workflow.LocalSubWorkflowResolver{AllowedRoots: subworkflowRoots},
 		Schemas:             schemas,
+		PinSet:              pinSet,
 	})
 	if diags.HasErrors() {
 		return nil, nil, fmt.Errorf("compile errors in %s:\n%w", workflowPath, newDiagsError(diags))

@@ -117,10 +117,14 @@ func prepareScopeAdapter(
 
 	// Re-evaluate adapter config against runtime vars so that var.* references
 	// in config blocks resolve to actual runtime values, not compile-time defaults.
+	// file() content is served from the graph's compile-time cache so prompt
+	// files cannot be altered mid-run.
 	config = adapter.Config
 	if len(adapter.ConfigExprs) > 0 {
+		opts := workflow.DefaultFunctionOptions(workflowDir)
+		opts.FileCache = g.FileCache
 		runtimeConfig, evalErr := workflow.ResolveInputExprsWithOpts(
-			adapter.ConfigExprs, vars, workflow.DefaultFunctionOptions(workflowDir),
+			adapter.ConfigExprs, vars, opts,
 		)
 		if evalErr != nil {
 			deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", evalErr.Error())

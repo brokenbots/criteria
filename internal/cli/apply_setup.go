@@ -11,6 +11,7 @@ import (
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/diagutil"
 	"github.com/brokenbots/criteria/workflow"
+	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
 func newApplyLogger() *slog.Logger {
@@ -86,26 +87,13 @@ func compileForExecution(ctx context.Context, workflowPath string, log *slog.Log
 
 	workflowDir := workflowDirFromPath(workflowPath)
 
-	// Refuse to start if any adapter in the tree is unpinned. This must run
-	// before auto-pull so a mutable tag can never be resolved for an unpinned
-	// adapter.
-	if unpinned, err := collectUnpinnedAdapters(ctx, workflowDir); err != nil {
-		return nil, nil, nil, fmt.Errorf("lockfile coverage check failed: %w", err)
-	} else if len(unpinned) > 0 {
-		for _, e := range unpinned {
-			fmt.Fprintf(os.Stderr, "error: %v\n", e)
-		}
-		return nil, nil, nil, fmt.Errorf("cannot start: %d unpinned adapter(s) in workflow tree; run `criteria adapter lock %s`", len(unpinned), workflowDir)
-	}
-
-	// Execution-time auto-pull: ensure OCI adapters are present, verified against
-	// the resolved signing policy, and extracted before the run starts. This must
-	// run before schema collection so the digest-addressed binaries exist.
-	if err := autoPullCompileAdapters(ctx, workflowDir, spec, allowUnsigned); err != nil {
+	pinSet, err := verifyAndPullTreeAdapters(ctx, workflowDir, spec, allowUnsigned)
+	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	loader := adapterhost.NewLoader()
+	loader.SetDevBindings(devBindingPaths())
 	schemas, schemaDiags := diagutil.CollectSchemas(ctx, loader, workflowDir, spec, log)
 
 	resolver := &workflow.LocalSubWorkflowResolver{AllowedRoots: subworkflowRoots}
@@ -113,6 +101,7 @@ func compileForExecution(ctx context.Context, workflowPath string, log *slog.Log
 		WorkflowDir:         workflowDir,
 		SubWorkflowResolver: resolver,
 		Schemas:             schemas,
+		PinSet:              pinSet,
 	})
 	if diags.HasErrors() {
 		_ = loader.Shutdown(ctx)
@@ -133,4 +122,35 @@ func compileForExecution(ctx context.Context, workflowPath string, log *slog.Log
 	}
 
 	return spec.SourceBytes, graph, loader, nil
+}
+
+// verifyAndPullTreeAdapters resolves the merged, tree-wide pin set once, refuses
+// to start if any adapter is unpinned, and auto-pulls the OCI artifacts so the
+// digest-addressed binaries are present before compilation. The same
+// in-memory pin set is returned for use by the compiler and engine.
+func verifyAndPullTreeAdapters(ctx context.Context, workflowDir string, spec *workflow.Spec, allowUnsigned bool) (*lockfile.Lockfile, error) {
+	pinSet, err := loadTreePinSet(ctx, workflowDir)
+	if err != nil {
+		return nil, fmt.Errorf("load workflow tree pin set: %w", err)
+	}
+
+	// Refuse to start if any adapter in the tree is unpinned. This must run
+	// before auto-pull so a mutable tag can never be resolved for an unpinned
+	// adapter.
+	if unpinned, err := collectUnpinnedAdaptersWithPinSet(ctx, workflowDir, pinSet); err != nil {
+		return nil, fmt.Errorf("lockfile coverage check failed: %w", err)
+	} else if len(unpinned) > 0 {
+		for _, e := range unpinned {
+			fmt.Fprintf(os.Stderr, "error: %v\n", e)
+		}
+		return nil, fmt.Errorf("cannot start: %d unpinned adapter(s) in workflow tree; run `criteria adapter lock %s`", len(unpinned), workflowDir)
+	}
+
+	// Execution-time auto-pull: ensure OCI adapters are present, verified against
+	// the resolved signing policy, and extracted before the run starts.
+	if err := autoPullCompileAdapters(ctx, workflowDir, spec, pinSet, allowUnsigned); err != nil {
+		return nil, err
+	}
+
+	return pinSet, nil
 }

@@ -75,9 +75,10 @@ func compileAdapterStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[strin
 	secretInputMap, secretInputExprs, d := decodeStepSecretInput(g, sp, schemas, opts, adapterType)
 	diags = append(diags, d...)
 
-	// each.* references are only valid inside iterating steps or workflow bodies
-	// (LoadDepth > 0). Non-iterating top-level steps must not reference them.
-	if opts.LoadDepth == 0 {
+	// each.* references are only valid inside iterating steps or workflow
+	// bodies (SubworkflowChain non-empty). Non-iterating top-level steps must not
+	// reference them.
+	if len(opts.SubworkflowChain) == 0 {
 		diags = append(diags, validateTopLevelStepRefs(sp.Name, inputExprs, secretInputExprs)...)
 	}
 

@@ -359,3 +359,82 @@ func TestDiff_PlatformsLengthMismatch(t *testing.T) {
 	require.Len(t, changes, 1)
 	assert.Equal(t, lockfile.PlatformsChanged, changes[0].Kind)
 }
+
+func TestDiff_PlatformsSameLengthContentMismatch(t *testing.T) {
+	// stringSliceEqual element-mismatch branch.
+	old := &lockfile.Lockfile{
+		Adapters: []lockfile.LockedAdapter{
+			{Type: "a", Name: "x", Reference: "r", ResolvedDigest: "sha256:d", SourceURL: "https://example.com", SDKProtocolVersion: 2, Platforms: []string{"linux/amd64"}},
+		},
+	}
+	nextLF := &lockfile.Lockfile{
+		Adapters: []lockfile.LockedAdapter{
+			{Type: "a", Name: "x", Reference: "r", ResolvedDigest: "sha256:d", SourceURL: "https://example.com", SDKProtocolVersion: 2, Platforms: []string{"linux/arm64"}},
+		},
+	}
+	changes := lockfile.Diff(old, nextLF)
+	require.Len(t, changes, 1)
+	assert.Equal(t, lockfile.PlatformsChanged, changes[0].Kind)
+	assert.Equal(t, []string{"linux/amd64"}, changes[0].Before)
+	assert.Equal(t, []string{"linux/arm64"}, changes[0].After)
+}
+
+func TestDiff_NilOldInput(t *testing.T) {
+	nextLF := &lockfile.Lockfile{
+		Adapters: []lockfile.LockedAdapter{
+			{Type: "a", Name: "x", Reference: "r", ResolvedDigest: "sha256:d", SourceURL: "https://example.com", SDKProtocolVersion: 2},
+		},
+	}
+	changes := lockfile.Diff(nil, nextLF)
+	require.Len(t, changes, 1)
+	assert.Equal(t, "a.x", changes[0].Adapter)
+	assert.Equal(t, lockfile.Added, changes[0].Kind)
+}
+
+func TestDiff_NilNextInput(t *testing.T) {
+	old := &lockfile.Lockfile{
+		Adapters: []lockfile.LockedAdapter{
+			{Type: "a", Name: "x", Reference: "r", ResolvedDigest: "sha256:d", SourceURL: "https://example.com", SDKProtocolVersion: 2},
+		},
+	}
+	changes := lockfile.Diff(old, nil)
+	require.Len(t, changes, 1)
+	assert.Equal(t, "a.x", changes[0].Adapter)
+	assert.Equal(t, lockfile.Removed, changes[0].Kind)
+}
+
+func TestDiff_SameAdapterMultipleChanges(t *testing.T) {
+	// Two changes for the same adapter key exercise Diff's secondary sort
+	// criterion (by Kind) and stringSliceEqual/override logic.
+	old := &lockfile.Lockfile{
+		Adapters: []lockfile.LockedAdapter{
+			{
+				Type: "a", Name: "x", Reference: "r", ResolvedDigest: "sha256:old",
+				SourceURL: "https://example.com", SDKProtocolVersion: 2,
+				Platforms:                      []string{"linux/amd64"},
+				CompatibleEnvironmentsOverride: []string{"shell"},
+				OverriddenBy:                   "workflow.hcl:1",
+			},
+		},
+	}
+	nextLF := &lockfile.Lockfile{
+		Adapters: []lockfile.LockedAdapter{
+			{
+				Type: "a", Name: "x", Reference: "r", ResolvedDigest: "sha256:new",
+				SourceURL: "https://example.com", SDKProtocolVersion: 2,
+				Platforms:                      []string{"linux/arm64"},
+				CompatibleEnvironmentsOverride: []string{"docker"},
+				OverriddenBy:                   "workflow.hcl:2",
+			},
+		},
+	}
+	changes := lockfile.Diff(old, nextLF)
+	require.Len(t, changes, 3)
+	// Sorted by adapter key (all "a.x") then Kind.
+	assert.Equal(t, "a.x", changes[0].Adapter)
+	assert.Equal(t, lockfile.DigestChanged, changes[0].Kind)
+	assert.Equal(t, "a.x", changes[1].Adapter)
+	assert.Equal(t, lockfile.PlatformsChanged, changes[1].Kind)
+	assert.Equal(t, "a.x", changes[2].Adapter)
+	assert.Equal(t, lockfile.OverrideChanged, changes[2].Kind)
+}

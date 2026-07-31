@@ -8,6 +8,8 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/ext/typeexpr"
 	"github.com/zclconf/go-cty/cty"
+
+	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
 // LocalSpec is the parsed (but unvalidated) local value declaration.
@@ -506,6 +508,18 @@ type FSMGraph struct {
 	Switches           map[string]*SwitchNode          // by switch node name (W16)
 	ResolvedPolicies   map[string]*ResolvedPolicy      // cached per (adapter, environment); key = "adapterRef:envKey"
 	Policy             Policy
+	// WorkflowDir is the absolute directory of the workflow that produced this
+	// graph. It is used at runtime to attribute adapter resolution errors to a
+	// workflow directory.
+	WorkflowDir string
+	// PinSet is the merged lockfile for this workflow and every transitive
+	// subworkflow, resolved once at compile time. The engine uses it as the
+	// single source of truth for adapter pins.
+	PinSet *lockfile.Lockfile
+	// FileCache holds the content of every file() reference resolved while
+	// compiling adapter config. Runtime config re-evaluation reads from this
+	// cache so runs are immune to changes in prompt files after compile time.
+	FileCache map[string]string
 	// Order of step declarations (stable for diagnostics).
 	stepOrder []string
 }
@@ -530,6 +544,7 @@ func (v *VariableNode) IsRequired() bool { return v.Default == cty.NilVal }
 type AdapterNode struct {
 	Type        string            // adapter type (first label)
 	Name        string            // instance name (second label)
+	Source      string            // OCI source location (empty for non-OCI adapters)
 	Environment string            // optional "<env_type>.<env_name>" reference; resolved to default at scope start if not set
 	OnCrash     string            // "fail" (default) or "continue"
 	Config      map[string]string // compile-folded config from adapter.config { }

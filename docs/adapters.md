@@ -161,35 +161,54 @@ cleared with `criteria adapter prune --unattributed-only`.
 
 ## Adapter session lifecycle
 
-Adapter provisioning is split into two phases so that fail-fast verification is
-preserved while still allowing a workflow step to create the directory an
-adapter runs in.
+Adapter provisioning is split into three phases so that the whole workflow
+tree is reproducible at compile time, fail-fast verification runs before any
+step executes, and session binding stays lazy per scope.
 
-### Phase 1: eager verification
+### Phase 1: compile-time resolution
+
+`criteria compile` and `criteria apply` build the entire FSM graph before the
+run starts, recursively compiling every transitive subworkflow. For every
+workflow directory reachable from the root, the compiler reads that directory's
+`.criteria.lock.hcl` and merges all adapter pins into a single in-memory pin set
+carried on the compiled graph. A subworkflow's own lockfile remains the authority
+for its adapters on disk; the merge is performed once in memory so the whole
+tree has one resolved view.
+
+The content of every `file()` reference in adapter `config { }` blocks is also
+read at compile time and cached in the graph. Runtime `var.*` references in
+config are preserved and re-evaluated at scope entry, but the static content of
+`file()`-referenced assets is immutable for the duration of the run.
+
+After `apply` begins, deleting, modifying, or replacing any lockfile,
+`.chcl`/`.hcl` file, or `file()`-referenced asset in the workflow tree has no
+effect on the in-flight run.
+
+### Phase 2: eager verification at apply start
 
 Before the first workflow step executes, the engine verifies **every** adapter
-declared in the current scope (and every parent-scope adapter re-declared in a
-subworkflow body):
+declared anywhere in the compiled graph — including adapters in subworkflows the
+run has not yet reached — using the same merged pin set that `validate` and
+`apply` setup checked. It is not possible for the startup coverage gate and the
+engine to disagree on which adapters are pinned.
 
-- resolves the adapter binary or OCI artifact;
-- verifies the signature/digest against the lockfile and trust policy;
-- performs the protocol `Info` handshake;
-- checks the resolved `config` block against the adapter's manifest schema;
-- checks that required secrets are present;
-- validates sandbox primitive availability and strict-mode policy failures for
-  adapters bound to a `sandbox` environment (missing landlock/seccomp/cgroup
-  primitives, or a strict-mode policy that cannot be satisfied on the host).
+Verification resolves the adapter binary or OCI artifact, checks the
+signature/digest against the lockfile and trust policy, performs the protocol
+`Info` handshake, validates the resolved `config` block against the adapter's
+manifest schema, checks that required secrets are present, and validates sandbox
+primitive availability and strict-mode policy failures for adapters bound to a
+`sandbox` environment (missing landlock/seccomp/cgroup primitives, or a
+strict-mode policy that cannot be satisfied on the host). A missing or
+unverifiable adapter in a subworkflow fails the run at startup, before any step
+executes.
 
 This phase runs in a neutral working directory, so a missing or not-yet-created
-`working_directory` does **not** cause a failure. A broken adapter (missing
-binary, bad signature, invalid config, missing required secret, strict sandbox
-with missing primitives) still fails the run before any step executes, even if no
-reachable step ever targets it.
+`working_directory` does **not** cause a failure.
 
-### Phase 2: lazy session binding
+### Phase 3: lazy session binding at scope entry
 
-When a step first targets an adapter, the engine promotes the verified record
-to a bound session:
+When a step first targets an adapter in a scope, the engine opens a session for
+that scope:
 
 - the adapter process is launched in its resolved `working_directory`;
 - `OpenSession` is called with the resolved config and secrets;
@@ -201,26 +220,31 @@ to a bound session:
 If the resolved working directory is missing at this point, the bind fails and
 produces an error that names the adapter, the step, and the directory. Because
 binding only happens for adapters that are actually reached, an adapter
-declared in a branch that is never taken is verified but never bound.
+declared in a branch that is never taken is verified but never bound. Similarly,
+subworkflow adapter sessions are opened when the subworkflow is entered and
+torn down when it exits; they are not held open for the whole run.
 
 ### What is rejected eagerly vs. deferred
 
-Rejected at run start (before any step runs):
+Rejected before the run starts:
 
-- any verification failure in phase 1;
+- any missing or incomplete lockfile entry for an OCI-backed adapter;
+- any verification failure in phase 2;
 - a `working_directory` path that contains `..`;
 - a `working_directory` that falls outside the configured allowed roots (when
   any are configured);
 - a `sandbox` adapter whose `policy_mode = "strict"` references a host primitive
   (landlock, seccomp, cgroupv2) that is unavailable on the current host.
 
-Deferred to first use:
+Deferred to first use in a scope:
 
 - a `working_directory` that simply does not exist yet. This is the case a
   bootstrap step is allowed to fix by creating the directory before the first
   adapter step that uses it;
 - the actual sandbox environment setup, including transient cgroup directory
-  creation and the sandboxed process chdir to the resolved `working_directory`.
+  creation and the sandboxed process chdir to the resolved `working_directory`;
+- runtime `var.*` resolution in adapter `config { }` blocks, so `--var` overrides
+  and directories created by earlier steps still bind at scope entry.
 
 ## Authoring an adapter
 
