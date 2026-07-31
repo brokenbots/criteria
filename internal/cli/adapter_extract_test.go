@@ -79,6 +79,18 @@ platforms:
 	manifestDigest = digest.FromBytes(manifestJSON)
 	require.NoError(t, layout.WriteBlob(bytes.NewReader(manifestJSON), manifestDigest))
 
+	// Register the manifest in index.json so list/annotate/provenance helpers can
+	// find it. Tests that only need blob-level access still work because
+	// layout.Open reads by digest.
+	ix, err := layout.Index()
+	require.NoError(t, err)
+	ix.Manifests = append(ix.Manifests, ocispec.Descriptor{
+		MediaType: ocispec.MediaTypeImageManifest,
+		Digest:    manifestDigest,
+		Size:      int64(len(manifestJSON)),
+	})
+	require.NoError(t, layout.WriteIndex(ix))
+
 	return manifestDigest, binDesc.Digest
 }
 

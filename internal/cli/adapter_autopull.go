@@ -34,19 +34,21 @@ import (
 // `verification` attribute (off|warn|strict) is read from the spec header. The
 // resolved policy governs signature verification of every pulled artifact.
 func autoPullCompileAdapters(ctx context.Context, workflowDir string, spec *workflow.Spec, allowUnsigned bool) error {
-	// Read lockfile.
+	// Read lockfile. A missing lockfile is only an error when this directory
+	// declares OCI adapters; otherwise the directory simply has nothing to pull.
 	lf, err := lockfile.ReadFromDir(workflowDir)
 	if err != nil {
 		return fmt.Errorf("read lockfile: %w", err)
 	}
-	if lf == nil {
-		return fmt.Errorf("workflow uses OCI adapter references but %q is missing; run `criteria adapter lock`", filepath.Join(workflowDir, workflow.LockfileName))
-	}
 
 	// Build set of OCI-referenced adapters and validate the lockfile covers them.
 	ociAdapters := collectWorkflowAdapters(spec)
-	if err := assertLockfileCoversAdapters(lf, ociAdapters); err != nil {
+	if err := assertLockfileCoversAdapters(lf, workflowDir, ociAdapters); err != nil {
 		return err
+	}
+
+	if lf == nil {
+		lf = &lockfile.Lockfile{}
 	}
 
 	// Fail closed when the lockfile no longer matches the workflow's declared
@@ -61,6 +63,12 @@ func autoPullCompileAdapters(ctx context.Context, workflowDir string, spec *work
 		return err
 	}
 
+	return pullAdaptersForDirectory(ctx, workflowDir, spec, ociAdapters, lf, allowUnsigned)
+}
+
+// pullAdaptersForDirectory opens the OCI cache, resolves the signing policy,
+// and pulls/extracts every OCI-referenced adapter declared in this directory.
+func pullAdaptersForDirectory(ctx context.Context, workflowDir string, spec *workflow.Spec, ociAdapters map[string]*workflowAdapter, lf *lockfile.Lockfile, allowUnsigned bool) error {
 	cacheRoot, err := defaultCacheRoot()
 	if err != nil {
 		return err
@@ -94,19 +102,42 @@ func autoPullCompileAdapters(ctx context.Context, workflowDir string, spec *work
 }
 
 // assertLockfileCoversAdapters errors when any OCI-referenced workflow adapter
-// has no entry in the lockfile.
-func assertLockfileCoversAdapters(lf *lockfile.Lockfile, ociAdapters map[string]*workflowAdapter) error {
+// has no entry in the lockfile, or when an entry lacks a required provenance
+// field (reference, resolved_digest, source_url).
+func assertLockfileCoversAdapters(lf *lockfile.Lockfile, workflowDir string, ociAdapters map[string]*workflowAdapter) error {
+	var ociKeys []string
+	for key, wa := range ociAdapters {
+		if wa.Source != "" {
+			ociKeys = append(ociKeys, key)
+		}
+	}
+	if len(ociKeys) == 0 {
+		return nil
+	}
+	if lf == nil {
+		return fmt.Errorf("workflow uses OCI adapter references but %q is missing; run `criteria adapter lock`", filepath.Join(workflowDir, workflow.LockfileName))
+	}
+
 	var missing []string
+	var incomplete []string
 	for key, wa := range ociAdapters {
 		if wa.Source == "" {
 			continue // not OCI-based
 		}
-		if findLocked(lf, wa.Type, wa.Name) == nil {
+		entry := findLocked(lf, wa.Type, wa.Name)
+		if entry == nil {
 			missing = append(missing, key)
+			continue
+		}
+		if entry.Reference == "" || entry.ResolvedDigest == "" || entry.SourceURL == "" {
+			incomplete = append(incomplete, key)
 		}
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("lockfile missing entries for adapters: %v; run `criteria adapter lock`", missing)
+	}
+	if len(incomplete) > 0 {
+		return fmt.Errorf("lockfile entries for adapters %v are incomplete (each entry must have reference, resolved_digest, and source_url); run `criteria adapter lock`", incomplete)
 	}
 	return nil
 }
@@ -168,52 +199,103 @@ func ensureAdapterCached(ctx context.Context, key string, wa *workflowAdapter, l
 	// the trust anchor is enforced on every run (not just the first pull), then
 	// ensure it's in the plugin directory.
 	if layout.HasBlob(dg) {
-		if err := verifyAgainstPin(ctx, key, layout, dg, entry, policy); err != nil {
-			return err
-		}
-		if _, err := extractOCIAdapterBinary(layout, dg, wa.Type); err != nil {
-			return fmt.Errorf("adapter %q extract binary: %w", key, err)
-		}
-		return nil
+		return useCachedAdapter(ctx, key, wa, layout, dg, entry, policy)
 	}
 
-	// Binary missing from cache — pull silently.
+	return pullAndInstallAdapter(ctx, key, wa, dg, entry, layout, puller, policy)
+}
+
+// useCachedAdapter verifies, annotates and extracts a cached adapter blob.
+func useCachedAdapter(ctx context.Context, key string, wa *workflowAdapter, layout *oci.Layout, dg digest.Digest, entry *lockfile.LockedAdapter, policy *signing.Policy) error {
+	if err := verifyAgainstPin(ctx, key, layout, dg, entry, policy); err != nil {
+		return err
+	}
+	if err := annotateProvenance(layout, dg, entry); err != nil {
+		return fmt.Errorf("adapter %q %w", key, err)
+	}
+	if _, err := extractOCIAdapterBinary(layout, dg, wa.Type); err != nil {
+		return fmt.Errorf("adapter %q extract binary: %w", key, err)
+	}
+	return nil
+}
+
+// pullAndInstallAdapter pulls an adapter by its pinned digest, verifies it,
+// records provenance, extracts the platform binary, and pulls any container
+// image declared by the artifact manifest.
+func pullAndInstallAdapter(ctx context.Context, key string, wa *workflowAdapter, dg digest.Digest, entry *lockfile.LockedAdapter, layout *oci.Layout, puller *oci.Puller, policy *signing.Policy) error {
+	// Binary missing from cache — pull by the pinned digest, never by tag.
 	ref, err := oci.Parse(entry.Reference)
 	if err != nil {
 		return fmt.Errorf("adapter %q parse reference %q: %w", key, entry.Reference, err)
 	}
+	ref.Tag = ""
+	ref.Digest = dg
 
 	pulledDg, err := puller.Pull(ctx, ref)
 	if err != nil {
 		return fmt.Errorf("adapter %q pull %s: %w", key, ref, err)
 	}
+	if pulledDg != dg {
+		return fmt.Errorf("adapter %q digest mismatch: lockfile pins %s but registry returned %s", key, dg, pulledDg)
+	}
 
-	artFS, err := layout.Open(pulledDg)
-	if err != nil {
-		return fmt.Errorf("adapter %q open artifact: %w", key, err)
+	if err := annotateProvenance(layout, pulledDg, entry); err != nil {
+		return fmt.Errorf("adapter %q %w", key, err)
 	}
-	m, err := manifest.ParseFromFS(artFS, "adapter.yaml")
+
+	m, err := readAdapterManifest(layout, pulledDg, key)
 	if err != nil {
-		return fmt.Errorf("adapter %q read manifest: %w", key, err)
-	}
-	if err := m.Validate(); err != nil {
-		return fmt.Errorf("adapter %q validate manifest: %w", key, err)
+		return err
 	}
 	if err := verifyAgainstPin(ctx, key, layout, pulledDg, entry, policy); err != nil {
 		return err
 	}
-
 	if _, err := extractOCIAdapterBinary(layout, pulledDg, wa.Type); err != nil {
 		return fmt.Errorf("adapter %q extract binary: %w", key, err)
 	}
-
 	return maybePullContainerImage(ctx, key, m)
+}
+
+// readAdapterManifest opens the artifact and parses its adapter.yaml manifest.
+func readAdapterManifest(layout *oci.Layout, dg digest.Digest, key string) (*manifest.Manifest, error) {
+	artFS, err := layout.Open(dg)
+	if err != nil {
+		return nil, fmt.Errorf("adapter %q open artifact: %w", key, err)
+	}
+	m, err := manifest.ParseFromFS(artFS, "adapter.yaml")
+	if err != nil {
+		return nil, fmt.Errorf("adapter %q read manifest: %w", key, err)
+	}
+	if err := m.Validate(); err != nil {
+		return nil, fmt.Errorf("adapter %q validate manifest: %w", key, err)
+	}
+	return m, nil
 }
 
 // verifyAgainstPin verifies the cached artifact under a policy tightened to the
 // lockfile-pinned signer (the trust anchor), then confirms the verified signer
 // matches the pin. A nil signer (ModeOff, or a ModeWarn failure) skips the pin
 // check; see policyForPin and assertSignerMatchesPin.
+// annotateProvenance records the original reference and source URL on a cached
+// manifest so `criteria adapter list` can attribute the entry. It is a no-op
+// when the entry carries no provenance.
+func annotateProvenance(layout *oci.Layout, dg digest.Digest, entry *lockfile.LockedAdapter) error {
+	if entry.Reference == "" && entry.SourceURL == "" {
+		return nil
+	}
+	extra := make(map[string]string)
+	if entry.Reference != "" {
+		extra[oci.AnnotationReference] = entry.Reference
+	}
+	if entry.SourceURL != "" {
+		extra[oci.AnnotationSourceURL] = entry.SourceURL
+	}
+	if err := layout.Annotate(dg, extra); err != nil {
+		return fmt.Errorf("annotate cache entry: %w", err)
+	}
+	return nil
+}
+
 func verifyAgainstPin(ctx context.Context, key string, layout *oci.Layout, dg digest.Digest, entry *lockfile.LockedAdapter, policy *signing.Policy) error {
 	effective := policyForPin(policy, entry.Signature)
 	signer, err := signing.Verify(ctx, layout, dg, effective)

@@ -23,7 +23,7 @@ import (
 func TestAssertLockfileCoversAdapters(t *testing.T) {
 	lf := &lockfile.Lockfile{
 		Adapters: []lockfile.LockedAdapter{
-			{Type: "foo", Name: "inst", Reference: "reg/foo", ResolvedDigest: "sha256:" + "ab"},
+			{Type: "foo", Name: "inst", Reference: "reg/foo", ResolvedDigest: "sha256:" + "ab", SourceURL: "https://example.com/foo"},
 		},
 	}
 
@@ -32,7 +32,8 @@ func TestAssertLockfileCoversAdapters(t *testing.T) {
 			"foo.inst":  {Type: "foo", Name: "inst", Source: "reg/foo"},
 			"bar.other": {Type: "bar", Name: "other", Source: "reg/bar"},
 		}
-		err := assertLockfileCoversAdapters(lf, ociAdapters)
+		workflowDir := t.TempDir()
+		err := assertLockfileCoversAdapters(lf, workflowDir, ociAdapters)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "lockfile missing entries")
 		assert.Contains(t, err.Error(), "bar.other")
@@ -40,19 +41,21 @@ func TestAssertLockfileCoversAdapters(t *testing.T) {
 
 	t.Run("non_oci_skipped", func(t *testing.T) {
 		// A non-OCI adapter (empty Source) must not be required in the lockfile.
+		workflowDir := t.TempDir()
 		ociAdapters := map[string]*workflowAdapter{
 			"foo.inst":  {Type: "foo", Name: "inst", Source: "reg/foo"},
 			"local.dev": {Type: "local", Name: "dev", Source: ""},
 		}
-		err := assertLockfileCoversAdapters(lf, ociAdapters)
+		err := assertLockfileCoversAdapters(lf, workflowDir, ociAdapters)
 		require.NoError(t, err)
 	})
 
 	t.Run("covered_ok", func(t *testing.T) {
+		workflowDir := t.TempDir()
 		ociAdapters := map[string]*workflowAdapter{
 			"foo.inst": {Type: "foo", Name: "inst", Source: "reg/foo"},
 		}
-		err := assertLockfileCoversAdapters(lf, ociAdapters)
+		err := assertLockfileCoversAdapters(lf, workflowDir, ociAdapters)
 		require.NoError(t, err)
 	})
 }

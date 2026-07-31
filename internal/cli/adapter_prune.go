@@ -15,8 +15,9 @@ import (
 
 func newAdapterPruneCmd() *cobra.Command {
 	var (
-		olderThan string
-		maxSize   int64
+		olderThan        string
+		maxSize          int64
+		unattributedOnly bool
 	)
 
 	cmd := &cobra.Command{
@@ -24,16 +25,17 @@ func newAdapterPruneCmd() *cobra.Command {
 		Short: "Remove unused or old adapter blobs from the local cache",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
-			return runPrune(olderThan, maxSize, cmd.OutOrStdout())
+			return runPrune(olderThan, maxSize, unattributedOnly, cmd.OutOrStdout())
 		},
 	}
 
 	cmd.Flags().StringVar(&olderThan, "older-than", "", "Remove blobs older than this duration (e.g. 30d)")
 	cmd.Flags().Int64Var(&maxSize, "max-size", 0, "Target maximum total cache size in bytes")
+	cmd.Flags().BoolVar(&unattributedOnly, "unattributed-only", false, "Remove only cached adapters lacking recorded provenance")
 	return cmd
 }
 
-func runPrune(olderThan string, maxSize int64, out io.Writer) error {
+func runPrune(olderThan string, maxSize int64, unattributedOnly bool, out io.Writer) error {
 	if out == nil {
 		out = os.Stderr
 	}
@@ -48,6 +50,7 @@ func runPrune(olderThan string, maxSize int64, out io.Writer) error {
 	if maxSize > 0 {
 		opts.MaxSize = maxSize
 	}
+	opts.UnattributedOnly = unattributedOnly
 
 	cacheRoot, err := defaultCacheRoot()
 	if err != nil {
