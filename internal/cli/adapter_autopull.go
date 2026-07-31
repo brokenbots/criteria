@@ -184,7 +184,7 @@ func autoPullPolicy(workflowDir string, spec *workflow.Spec, allowUnsigned bool)
 	return policy, nil
 }
 
-func ensureAdapterCached(ctx context.Context, key string, wa *workflowAdapter, lf *lockfile.Lockfile, layout *oci.Layout, puller *oci.Puller, policy *signing.Policy) error {
+func ensureAdapterCached(ctx context.Context, key string, wa *workflowAdapter, lf *lockfile.Lockfile, layout *oci.Layout, puller puller, policy *signing.Policy) error {
 	entry := findLocked(lf, wa.Type, wa.Name)
 	if entry == nil {
 		return nil // validated above
@@ -222,7 +222,7 @@ func useCachedAdapter(ctx context.Context, key string, wa *workflowAdapter, layo
 // pullAndInstallAdapter pulls an adapter by its pinned digest, verifies it,
 // records provenance, extracts the platform binary, and pulls any container
 // image declared by the artifact manifest.
-func pullAndInstallAdapter(ctx context.Context, key string, wa *workflowAdapter, dg digest.Digest, entry *lockfile.LockedAdapter, layout *oci.Layout, puller *oci.Puller, policy *signing.Policy) error {
+func pullAndInstallAdapter(ctx context.Context, key string, wa *workflowAdapter, dg digest.Digest, entry *lockfile.LockedAdapter, layout *oci.Layout, puller puller, policy *signing.Policy) error {
 	// Binary missing from cache — pull by the pinned digest, never by tag.
 	ref, err := oci.Parse(entry.Reference)
 	if err != nil {
@@ -577,10 +577,15 @@ func artifactPlatforms(artFS fs.FS) []string {
 // pullSubworkflowAdapters recursively processes subworkflows declared in spec
 // and ensures their OCI adapter binaries are extracted. Each subworkflow has
 // its own lockfile; this is necessary because autoPullCompileAdapters only
-// sees the top-level spec's adapters.
-func pullSubworkflowAdapters(ctx context.Context, workflowDir string, spec *workflow.Spec, layout *oci.Layout, puller *oci.Puller, policy *signing.Policy) error {
+// sees the top-level spec's adapters. Remote workflow sources are fetched by the
+// parent's pinned resolved_ref so the pulled binaries match the locked tree.
+func pullSubworkflowAdapters(ctx context.Context, workflowDir string, spec *workflow.Spec, layout *oci.Layout, puller puller, policy *signing.Policy) error {
+	fetcher := newWorkflowFetcherFunc()
 	for _, swSpec := range spec.Subworkflows {
-		subDir := resolveSubworkflowSourceDir(workflowDir, swSpec.Source)
+		subDir, _, err := resolveSubworkflowForLock(ctx, workflowDir, swSpec.Source, fetcher)
+		if err != nil {
+			return fmt.Errorf("subworkflow %q in %q: %w", swSpec.Name, workflowDir, err)
+		}
 		subLF, err := lockfile.ReadFromDir(subDir)
 		if err != nil || subLF == nil {
 			continue // no lockfile means no OCI adapters in this subworkflow

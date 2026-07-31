@@ -29,6 +29,10 @@ type defaultWorkflowFetcher struct {
 	http      *http.Client
 }
 
+// newWorkflowFetcherFunc is the factory used by run-time paths that need to
+// resolve remote workflow sources. It is overridable in tests.
+var newWorkflowFetcherFunc = newWorkflowFetcher
+
 // newWorkflowFetcher creates a fetcher backed by the shared criteria cache.
 func newWorkflowFetcher() workflowFetcher {
 	base := os.Getenv("CRITERIA_STATE_DIR")

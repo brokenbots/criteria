@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
@@ -9,9 +12,12 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/opencontainers/go-digest"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/brokenbots/criteria/internal/adapter/oci"
 	"github.com/brokenbots/criteria/internal/adapter/signing"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
@@ -184,4 +190,185 @@ func TestArtifactPlatforms(t *testing.T) {
 		assert.Contains(t, got, "linux/amd64")
 		assert.Contains(t, got, "darwin/arm64")
 	})
+}
+
+// TestEnsureAdapterCachedPullsMissingBlobByDigest verifies that the run-time
+// auto-pull path pulls a missing adapter by its pinned digest, never by tag.
+// A fake puller copies the artifact into the cache on pull and records the
+// reference it was asked to resolve, so the test fails if the tag is left set.
+func TestEnsureAdapterCachedPullsMissingBlobByDigest(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+	t.Setenv("CRITERIA_ADAPTERS", t.TempDir())
+
+	// Source layout holds the artifact; target layout is empty.
+	sourceRoot := filepath.Join(t.TempDir(), "source")
+	targetRoot := filepath.Join(t.TempDir(), "target")
+	require.NoError(t, os.MkdirAll(sourceRoot, 0o755))
+	require.NoError(t, os.MkdirAll(targetRoot, 0o755))
+
+	sourceLayout, err := oci.Open(sourceRoot)
+	require.NoError(t, err)
+	targetLayout, err := oci.Open(targetRoot)
+	require.NoError(t, err)
+
+	binContent := []byte("#!/bin/sh\necho pulled\n")
+	manifestDigest, _ := fakeArtifactFixture(t, sourceLayout, "noop", binContent)
+
+	lf := &lockfile.Lockfile{
+		Adapters: []lockfile.LockedAdapter{{
+			Type:               "noop",
+			Name:               "default",
+			Reference:          "ghcr.io/brokenbots/criteria-adapter-noop:0.5.4",
+			Version:            "0.5.4",
+			ResolvedDigest:     manifestDigest.String(),
+			SourceURL:          "https://github.com/brokenbots/criteria-adapter-noop",
+			SDKProtocolVersion: 2,
+		}},
+	}
+
+	wa := &workflowAdapter{Type: "noop", Name: "default", Source: "ghcr.io/brokenbots/criteria-adapter-noop", Version: "0.5.4"}
+	policy := signing.Policy{Mode: signing.ModeOff}
+	puller := &copyingFakePuller{
+		layout: targetLayout,
+		source: sourceLayout,
+		manifests: map[string]digest.Digest{
+			"ghcr.io/brokenbots/criteria-adapter-noop@" + manifestDigest.String(): manifestDigest,
+		},
+	}
+
+	require.NoError(t, ensureAdapterCached(ctx, "noop.default", wa, lf, targetLayout, puller, &policy))
+
+	require.Len(t, puller.calls, 1, "puller should have been called for the missing blob")
+	called := puller.calls[0]
+	assert.Empty(t, called.Tag, "pull must not use a mutable tag")
+	assert.Equal(t, manifestDigest, called.Digest, "pull must use the pinned digest")
+	assert.True(t, targetLayout.HasBlob(manifestDigest), "pulled manifest blob must now be present in target layout")
+}
+
+// TestEnsureAdapterCachedRejectsDigestMismatch verifies that if the registry
+// returns a different digest than the one pinned in the lockfile, the pull is
+// rejected rather than silently installing the wrong artifact.
+func TestEnsureAdapterCachedRejectsDigestMismatch(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+	t.Setenv("CRITERIA_ADAPTERS", t.TempDir())
+
+	// The source layout only exists to provide a known manifest digest. The
+	// target layout is empty so ensureAdapterCached takes the pull path.
+	sourceRoot := filepath.Join(t.TempDir(), "source")
+	targetRoot := filepath.Join(t.TempDir(), "target")
+	require.NoError(t, os.MkdirAll(sourceRoot, 0o755))
+	require.NoError(t, os.MkdirAll(targetRoot, 0o755))
+
+	sourceLayout, err := oci.Open(sourceRoot)
+	require.NoError(t, err)
+	targetLayout, err := oci.Open(targetRoot)
+	require.NoError(t, err)
+
+	binContent := []byte("#!/bin/sh\necho locked\n")
+	manifestDigest, _ := fakeArtifactFixture(t, sourceLayout, "noop", binContent)
+
+	lf := &lockfile.Lockfile{
+		Adapters: []lockfile.LockedAdapter{{
+			Type:               "noop",
+			Name:               "default",
+			Reference:          "ghcr.io/brokenbots/criteria-adapter-noop:0.5.4",
+			Version:            "0.5.4",
+			ResolvedDigest:     manifestDigest.String(),
+			SourceURL:          "https://github.com/brokenbots/criteria-adapter-noop",
+			SDKProtocolVersion: 2,
+		}},
+	}
+
+	wa := &workflowAdapter{Type: "noop", Name: "default", Source: "ghcr.io/brokenbots/criteria-adapter-noop", Version: "0.5.4"}
+	policy := signing.Policy{Mode: signing.ModeOff}
+	wrongDg := digest.FromString("wrong").String()
+	puller := &badFakePuller{returned: digest.Digest(wrongDg)}
+
+	err = ensureAdapterCached(ctx, "noop.default", wa, lf, targetLayout, puller, &policy)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "digest mismatch")
+
+	require.Len(t, puller.calls, 1)
+	called := puller.calls[0]
+	assert.Empty(t, called.Tag, "pull must not use a mutable tag")
+	assert.Equal(t, manifestDigest, called.Digest, "pull must use the pinned digest")
+}
+
+// copyingFakePuller is a test double that copies a pre-staged artifact from a
+// source layout into a target layout when Pull is invoked. It records every
+// reference it is asked to pull so tests can assert the digest/tag handling.
+type copyingFakePuller struct {
+	layout    *oci.Layout
+	source    *oci.Layout
+	manifests map[string]digest.Digest // ref.String() -> manifest digest
+	calls     []oci.Reference
+}
+
+func (f *copyingFakePuller) Pull(ctx context.Context, ref oci.Reference) (digest.Digest, error) {
+	f.calls = append(f.calls, ref)
+	dg, ok := f.manifests[ref.String()]
+	if !ok {
+		return "", fmt.Errorf("copyingFakePuller: reference %s not staged", ref)
+	}
+	if err := copyArtifactBlobs(f.source, f.layout, dg); err != nil {
+		return "", err
+	}
+	return dg, nil
+}
+
+// copyArtifactBlobs copies a manifest and all of its config/layer blobs from src
+// to dst, and registers the manifest in dst's index.json. This is enough for the
+// post-pull verification and extraction steps to succeed in tests.
+func copyArtifactBlobs(src, dst *oci.Layout, dg digest.Digest) error {
+	data, err := os.ReadFile(src.BlobPath(dg))
+	if err != nil {
+		return fmt.Errorf("read manifest %s: %w", dg, err)
+	}
+	var manifest ocispec.Manifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return fmt.Errorf("parse manifest %s: %w", dg, err)
+	}
+
+	for _, d := range append([]ocispec.Descriptor{manifest.Config}, manifest.Layers...) {
+		if err := copyBlob(src, dst, d.Digest); err != nil {
+			return err
+		}
+	}
+	if err := copyBlob(src, dst, dg); err != nil {
+		return err
+	}
+
+	ix, err := dst.Index()
+	if err != nil {
+		return err
+	}
+	ix.Manifests = append(ix.Manifests, ocispec.Descriptor{
+		MediaType: ocispec.MediaTypeImageManifest,
+		Digest:    dg,
+		Size:      int64(len(data)),
+	})
+	return dst.WriteIndex(ix)
+}
+
+func copyBlob(src, dst *oci.Layout, dg digest.Digest) error {
+	r, err := os.Open(src.BlobPath(dg))
+	if err != nil {
+		return fmt.Errorf("open blob %s: %w", dg, err)
+	}
+	defer r.Close()
+	return dst.WriteBlob(r, dg)
+}
+
+// badFakePuller returns a fixed digest regardless of the reference. It records
+// the reference so tests can verify the digest/tag handling.
+type badFakePuller struct {
+	returned digest.Digest
+	calls    []oci.Reference
+}
+
+func (f *badFakePuller) Pull(_ context.Context, ref oci.Reference) (digest.Digest, error) {
+	f.calls = append(f.calls, ref)
+	return f.returned, nil
 }

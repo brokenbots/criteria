@@ -80,8 +80,9 @@ func walkWorkflowDirs(ctx context.Context, rootDir string, seen map[string]bool,
 		return err
 	}
 
+	fetcher := newWorkflowFetcherFunc()
 	for _, sw := range spec.Subworkflows {
-		resolved, _, err := resolveSubworkflowForLock(ctx, abs, sw.Source, nil)
+		resolved, _, err := resolveSubworkflowForLock(ctx, abs, sw.Source, fetcher)
 		if err != nil {
 			return fmt.Errorf("subworkflow %q in %q: %w", sw.Name, abs, err)
 		}

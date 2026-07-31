@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/brokenbots/criteria/internal/adapter/oci"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
@@ -374,6 +375,81 @@ func TestRunLock_FetchedWorkflowPartialLockfileFails(t *testing.T) {
 	assert.Contains(t, err.Error(), "copilot.driver")
 }
 
+func TestRunLock_FetchedWorkflowCompleteLockfilePinsPreserved(t *testing.T) {
+	ctx := context.Background()
+	source := "https://github.com/example/remote-workflow.git"
+	root, remoteDir := writeFetchedWorkflowFixture(t, source)
+
+	// Pre-seed the fetched tree with a complete lockfile whose digest differs
+	// from anything the resolver would return. The author's pins must win.
+	authorDg := digest.FromString("author:pin").String()
+	require.NoError(t, lockfile.Write(filepath.Join(remoteDir, workflow.LockfileName), &lockfile.Lockfile{
+		SchemaVersion: 1,
+		Adapters: []lockfile.LockedAdapter{{
+			Type: "copilot", Name: "driver",
+			Reference: "ghcr.io/brokenbots/criteria-adapter-copilot:0.5.4",
+			Version:   "0.5.4", ResolvedDigest: authorDg,
+			SourceURL:          "https://github.com/brokenbots/criteria-adapter-copilot",
+			SDKProtocolVersion: 2,
+		}},
+	}))
+	before, err := os.ReadFile(filepath.Join(remoteDir, workflow.LockfileName))
+	require.NoError(t, err)
+
+	// The resolver would produce a different digest if it were called.
+	resolverDg := digest.FromString("resolver:tag").String()
+	fake := newFakeResolver().
+		withTag("0.5.4").
+		withEntry("ghcr.io/brokenbots/criteria-adapter-copilot:0.5.4", &lockfile.LockedAdapter{
+			ResolvedDigest:     resolverDg,
+			SDKProtocolVersion: 2,
+		})
+
+	fetcher := &fakeWorkflowFetcher{callers: map[string]string{source: remoteDir}, resolved: "abc123"}
+
+	var out bytes.Buffer
+	require.NoError(t, runLock(ctx, root, false, true, true, nil, &out, fake, fetcher))
+
+	rootLF, err := lockfile.ReadFromDir(root)
+	require.NoError(t, err)
+	require.Len(t, rootLF.WorkflowRefs, 1)
+	assert.Equal(t, source, rootLF.WorkflowRefs[0].Source)
+	assert.Equal(t, "abc123", rootLF.WorkflowRefs[0].ResolvedRef)
+
+	after, err := os.ReadFile(filepath.Join(remoteDir, workflow.LockfileName))
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "fetched workflow lockfile must be preserved byte-for-byte")
+}
+
+func TestRunLock_FetchedWorkflowStaleVersionConstraintFails(t *testing.T) {
+	ctx := context.Background()
+	source := "https://github.com/example/remote-workflow.git"
+	root, remoteDir := writeFetchedWorkflowFixture(t, source)
+
+	// The workflow declares version = "0.5.4" (exact) but the shipped lockfile
+	// pins 0.6.0. Re-locking must reject the stale pin.
+	require.NoError(t, lockfile.Write(filepath.Join(remoteDir, workflow.LockfileName), &lockfile.Lockfile{
+		SchemaVersion: 1,
+		Adapters: []lockfile.LockedAdapter{{
+			Type: "copilot", Name: "driver",
+			Reference: "ghcr.io/brokenbots/criteria-adapter-copilot:0.6.0",
+			Version:   "0.6.0", ResolvedDigest: digest.FromString("copilot:0.6.0").String(),
+			SourceURL:          "https://github.com/brokenbots/criteria-adapter-copilot",
+			SDKProtocolVersion: 2,
+		}},
+	}))
+
+	fake := newFakeResolver().withTag("0.5.4").withTag("0.6.0")
+	fetcher := &fakeWorkflowFetcher{callers: map[string]string{source: remoteDir}, resolved: "abc123"}
+
+	err := runLock(ctx, root, false, true, true, nil, &bytes.Buffer{}, fake, fetcher)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), source)
+	assert.Contains(t, err.Error(), "copilot.driver")
+	assert.Contains(t, err.Error(), "version changed")
+	assert.Contains(t, err.Error(), "criteria adapter lock")
+}
+
 func TestRunLock_FetchedWorkflowBranchRefPinned(t *testing.T) {
 	ctx := context.Background()
 	source := "https://github.com/example/remote-workflow.git?ref=main"
@@ -454,4 +530,156 @@ func TestRunLock_UpgradeRecursesAndAcceptsDriftUnderImmutablePins(t *testing.T) 
 	subLF, err := lockfile.ReadFromDir(sub)
 	require.NoError(t, err)
 	assert.Equal(t, secondDg, subLF.Adapters[0].ResolvedDigest)
+}
+
+// runPathFetcher builds a fetcher that materialises the remote workflow
+// directory used by the run-path tests. It accepts both the original source and
+// the source qualified by the resolved ref so re-fetch by SHA works.
+func runPathFetcher(remoteDir, source string) workflowFetcher {
+	const resolved = "abc123"
+	keys := map[string]string{
+		source:                      remoteDir,
+		source + "?ref=" + resolved: remoteDir,
+	}
+	return &fakeWorkflowFetcher{callers: keys, resolved: resolved}
+}
+
+func TestCollectUnpinnedAdapters_FetchedWorkflowComplete(t *testing.T) {
+	ctx := context.Background()
+	source := "https://github.com/example/remote-workflow.git"
+	root, remoteDir := writeFetchedWorkflowFixture(t, source)
+
+	dg := digest.FromString("copilot:0.5.4").String()
+	require.NoError(t, lockfile.Write(filepath.Join(remoteDir, workflow.LockfileName), &lockfile.Lockfile{
+		SchemaVersion: 1,
+		Adapters: []lockfile.LockedAdapter{{
+			Type: "copilot", Name: "driver",
+			Reference: "ghcr.io/brokenbots/criteria-adapter-copilot:0.5.4",
+			Version:   "0.5.4", ResolvedDigest: dg,
+			SourceURL:          "https://github.com/brokenbots/criteria-adapter-copilot",
+			SDKProtocolVersion: 2,
+		}},
+	}))
+	require.NoError(t, lockfile.Write(filepath.Join(root, workflow.LockfileName), &lockfile.Lockfile{
+		SchemaVersion: 1,
+		WorkflowRefs: []lockfile.LockedWorkflowRef{{
+			Source: source, ResolvedRef: "abc123", Kind: "git",
+		}},
+		Adapters: []lockfile.LockedAdapter{{
+			Type: "copilot", Name: "coordinator",
+			Reference: "ghcr.io/brokenbots/criteria-adapter-copilot:0.5.4",
+			Version:   "0.5.4", ResolvedDigest: dg,
+			SourceURL:          "https://github.com/brokenbots/criteria-adapter-copilot",
+			SDKProtocolVersion: 2,
+		}},
+	}))
+
+	old := newWorkflowFetcherFunc
+	newWorkflowFetcherFunc = func() workflowFetcher { return runPathFetcher(remoteDir, source) }
+	defer func() { newWorkflowFetcherFunc = old }()
+
+	errs, err := collectUnpinnedAdapters(ctx, root)
+	require.NoError(t, err)
+	assert.Empty(t, errs)
+}
+
+func TestCollectUnpinnedAdapters_FetchedWorkflowMissingLockfile(t *testing.T) {
+	ctx := context.Background()
+	source := "https://github.com/example/remote-workflow.git"
+	root, remoteDir := writeFetchedWorkflowFixture(t, source)
+
+	require.NoError(t, lockfile.Write(filepath.Join(root, workflow.LockfileName), &lockfile.Lockfile{
+		SchemaVersion: 1,
+		WorkflowRefs: []lockfile.LockedWorkflowRef{{
+			Source: source, ResolvedRef: "abc123", Kind: "git",
+		}},
+	}))
+
+	old := newWorkflowFetcherFunc
+	newWorkflowFetcherFunc = func() workflowFetcher { return runPathFetcher(remoteDir, source) }
+	defer func() { newWorkflowFetcherFunc = old }()
+
+	_, err := collectUnpinnedAdapters(ctx, root)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), source)
+	assert.Contains(t, err.Error(), "no lockfile")
+	assert.Contains(t, err.Error(), "criteria adapter lock")
+}
+
+func TestCollectUnpinnedAdapters_FetchedWorkflowPartialLockfile(t *testing.T) {
+	ctx := context.Background()
+	source := "https://github.com/example/remote-workflow.git"
+	root, remoteDir := writeFetchedWorkflowFixture(t, source)
+
+	require.NoError(t, lockfile.Write(filepath.Join(remoteDir, workflow.LockfileName), &lockfile.Lockfile{
+		SchemaVersion: 1,
+		Adapters:      []lockfile.LockedAdapter{},
+	}))
+	require.NoError(t, lockfile.Write(filepath.Join(root, workflow.LockfileName), &lockfile.Lockfile{
+		SchemaVersion: 1,
+		WorkflowRefs: []lockfile.LockedWorkflowRef{{
+			Source: source, ResolvedRef: "abc123", Kind: "git",
+		}},
+	}))
+
+	old := newWorkflowFetcherFunc
+	newWorkflowFetcherFunc = func() workflowFetcher { return runPathFetcher(remoteDir, source) }
+	defer func() { newWorkflowFetcherFunc = old }()
+
+	_, err := collectUnpinnedAdapters(ctx, root)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), source)
+	assert.Contains(t, err.Error(), "copilot.driver")
+	assert.Contains(t, err.Error(), "criteria adapter lock")
+}
+
+func TestAutoPullCompileAdapters_FetchedWorkflowComplete(t *testing.T) {
+	ctx := context.Background()
+	source := "https://github.com/example/remote-workflow.git"
+	root, remoteDir := writeFetchedWorkflowFixture(t, source)
+	t.Setenv("CRITERIA_ADAPTERS", t.TempDir())
+
+	cacheRoot, err := defaultCacheRoot()
+	require.NoError(t, err)
+	layout, err := oci.Open(cacheRoot)
+	require.NoError(t, err)
+
+	binContent := []byte("#!/bin/sh\necho remote\n")
+	manifestDigest, _ := fakeArtifactFixture(t, layout, "copilot", binContent)
+
+	resolvedDg := manifestDigest.String()
+	fake := newFakeResolver().
+		withTag("0.5.4").
+		withEntry("ghcr.io/brokenbots/criteria-adapter-copilot:0.5.4", &lockfile.LockedAdapter{
+			ResolvedDigest:     resolvedDg,
+			SDKProtocolVersion: 2,
+		})
+
+	// The fetched workflow ships a complete lockfile with the author's tested pins.
+	require.NoError(t, lockfile.Write(filepath.Join(remoteDir, workflow.LockfileName), &lockfile.Lockfile{
+		SchemaVersion: 1,
+		Adapters: []lockfile.LockedAdapter{{
+			Type: "copilot", Name: "driver",
+			Reference: "ghcr.io/brokenbots/criteria-adapter-copilot:0.5.4",
+			Version:   "0.5.4", ResolvedDigest: resolvedDg,
+			SourceURL:          "https://github.com/brokenbots/criteria-adapter-copilot",
+			SDKProtocolVersion: 2,
+		}},
+	}))
+
+	fetcher := runPathFetcher(remoteDir, source)
+	require.NoError(t, runLock(ctx, root, false, true, true, nil, &bytes.Buffer{}, fake, fetcher))
+
+	old := newWorkflowFetcherFunc
+	newWorkflowFetcherFunc = func() workflowFetcher { return runPathFetcher(remoteDir, source) }
+	defer func() { newWorkflowFetcherFunc = old }()
+
+	// Sanity-check that the fetched lockfile is still present after runLock.
+	remoteLF, err := lockfile.ReadFromDir(remoteDir)
+	require.NoError(t, err)
+	require.NotNil(t, remoteLF, "remote lockfile should exist before auto-pull")
+
+	spec, diags := workflow.ParseDir(root)
+	require.False(t, diags.HasErrors())
+	require.NoError(t, autoPullCompileAdapters(ctx, root, spec, true))
 }

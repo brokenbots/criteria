@@ -47,6 +47,10 @@ type lockNode struct {
 	state    *lockState
 	children []lockChild
 	newLF    *lockfile.Lockfile
+	// frozen is true for fetched workflow directories whose lockfile is complete
+	// and valid. Their pins are used as-is and their lockfile must not be
+	// rewritten.
+	frozen bool
 }
 
 // lockChild records a subworkflow declared in the parent and its resolved
@@ -74,9 +78,20 @@ func buildLockNode(ctx context.Context, workflowDir string, allowUnsigned bool, 
 		if err != nil {
 			return nil, fmt.Errorf("subworkflow %q in %q: %w", sw.Name, state.workflowDir, err)
 		}
-		child, err := buildLockNode(ctx, resolved, allowUnsigned, trustedKeyPaths, layout, resolver, fetcher, nil)
-		if err != nil {
-			return nil, fmt.Errorf("subworkflow %q in %q: %w", sw.Name, state.workflowDir, err)
+
+		var child *lockNode
+		if pin != nil {
+			// Fetched remote workflows with a complete lockfile are frozen: the
+			// author's tested pins are used as-is and the lockfile is not rewritten.
+			child, err = buildFetchedLockNode(resolved)
+			if err != nil {
+				return nil, fmt.Errorf("subworkflow %q in %q: %w", sw.Name, state.workflowDir, err)
+			}
+		} else {
+			child, err = buildLockNode(ctx, resolved, allowUnsigned, trustedKeyPaths, layout, resolver, fetcher, nil)
+			if err != nil {
+				return nil, fmt.Errorf("subworkflow %q in %q: %w", sw.Name, state.workflowDir, err)
+			}
 		}
 		node.children = append(node.children, lockChild{
 			name:      sw.Name,
@@ -88,6 +103,34 @@ func buildLockNode(ctx context.Context, workflowDir string, allowUnsigned bool, 
 	}
 
 	return node, nil
+}
+
+// buildFetchedLockNode builds a frozen lockNode for a fetched workflow whose
+// lockfile has already been verified complete. Its existing lockfile is used as
+// the resolved lockfile and no re-resolution or rewriting occurs.
+func buildFetchedLockNode(resolvedDir string) (*lockNode, error) {
+	lf, err := lockfile.ReadFromDir(resolvedDir)
+	if err != nil {
+		return nil, fmt.Errorf("read fetched lockfile: %w", err)
+	}
+
+	spec, diags := workflow.ParseDir(resolvedDir)
+	if diags.HasErrors() || spec == nil {
+		// Parsing errors surface during normal compile; here we only need the
+		// adapter count for the summary.
+		spec = &workflow.Spec{}
+	}
+
+	return &lockNode{
+		frozen: true,
+		state: &lockState{
+			workflowDir: resolvedDir,
+			spec:        spec,
+			oldLF:       lf,
+			wfAdapters:  collectWorkflowAdapters(spec),
+		},
+		newLF: lf,
+	}, nil
 }
 
 func resolveSubworkflowForLock(ctx context.Context, callerDir, source string, fetcher workflowFetcher) (string, *lockfile.LockedWorkflowRef, error) {
@@ -156,9 +199,10 @@ func isRemoteWorkflowSource(source string) bool {
 }
 
 // assertFetchedWorkflowLockfileComplete validates that a fetched workflow tree
-// has a complete lockfile covering all its declared adapters. Absent or partial
-// lockfiles fail with an error naming the fetched workflow and the command
-// that generates the missing pins.
+// has a complete lockfile covering all its declared adapters and that each
+// pinned version still satisfies the workflow's declared constraint. Absent,
+// partial, or stale lockfiles fail with an error naming the fetched workflow and
+// the command that updates the pins.
 func assertFetchedWorkflowLockfileComplete(dir, source string) error {
 	lf, err := lockfile.ReadFromDir(dir)
 	if err != nil {
@@ -173,6 +217,7 @@ func assertFetchedWorkflowLockfileComplete(dir, source string) error {
 		return nil // parsing errors surface during normal compile; here we only care about lockfile completeness
 	}
 
+	aliases, _ := collectWorkflowAliases(dir, spec)
 	adapters := collectWorkflowAdapters(spec)
 	var unpinned []string
 	for key, wa := range adapters {
@@ -186,6 +231,10 @@ func assertFetchedWorkflowLockfileComplete(dir, source string) error {
 		}
 		if entry.Reference == "" || entry.ResolvedDigest == "" || entry.SourceURL == "" {
 			unpinned = append(unpinned, key)
+			continue
+		}
+		if reason := declMatchesPin(wa, entry, aliases); reason != "" {
+			unpinned = append(unpinned, fmt.Sprintf("%s (%s)", key, reason))
 		}
 	}
 	if len(unpinned) > 0 {
@@ -195,6 +244,11 @@ func assertFetchedWorkflowLockfileComplete(dir, source string) error {
 }
 
 func resolveLockNode(ctx context.Context, node *lockNode, upgrade bool, out io.Writer) error {
+	if node.frozen {
+		// Fetched workflows with a complete lockfile keep their author's pins.
+		return nil
+	}
+
 	state := node.state
 	newLF := &lockfile.Lockfile{SchemaVersion: 1}
 	if state.oldLF != nil {
@@ -223,6 +277,11 @@ func resolveLockNode(ctx context.Context, node *lockNode, upgrade bool, out io.W
 }
 
 func writeLockNode(node *lockNode) (int, error) {
+	if node.frozen {
+		// Fetched workflow lockfiles are intentionally left untouched.
+		return 0, nil
+	}
+
 	written := 0
 	for _, child := range node.children {
 		n, err := writeLockNode(child.childNode)
