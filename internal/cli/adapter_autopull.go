@@ -33,22 +33,19 @@ import (
 // allowUnsigned forces the unsigned-override (WS46); the workflow-level
 // `verification` attribute (off|warn|strict) is read from the spec header. The
 // resolved policy governs signature verification of every pulled artifact.
-func autoPullCompileAdapters(ctx context.Context, workflowDir string, spec *workflow.Spec, allowUnsigned bool) error {
-	// Read lockfile. A missing lockfile is only an error when this directory
-	// declares OCI adapters; otherwise the directory simply has nothing to pull.
-	lf, err := lockfile.ReadFromDir(workflowDir)
-	if err != nil {
-		return fmt.Errorf("read lockfile: %w", err)
+func autoPullCompileAdapters(ctx context.Context, workflowDir string, spec *workflow.Spec, pinSet *lockfile.Lockfile, allowUnsigned bool) error {
+	// pinSet is the merged, tree-wide lockfile resolved once at startup. A nil
+	// set means the whole workflow tree has no OCI adapter references.
+	lf := pinSet
+	if lf == nil {
+		lf = &lockfile.Lockfile{}
 	}
 
-	// Build set of OCI-referenced adapters and validate the lockfile covers them.
+	// Build set of OCI-referenced adapters and validate the merged pin set
+	// covers them.
 	ociAdapters := collectWorkflowAdapters(spec)
 	if err := assertLockfileCoversAdapters(lf, workflowDir, ociAdapters); err != nil {
 		return err
-	}
-
-	if lf == nil {
-		lf = &lockfile.Lockfile{}
 	}
 
 	// Fail closed when the lockfile no longer matches the workflow's declared
@@ -63,12 +60,12 @@ func autoPullCompileAdapters(ctx context.Context, workflowDir string, spec *work
 		return err
 	}
 
-	return pullAdaptersForDirectory(ctx, workflowDir, spec, ociAdapters, lf, allowUnsigned)
+	return pullAdaptersForDirectory(ctx, workflowDir, spec, ociAdapters, lf, pinSet, allowUnsigned)
 }
 
 // pullAdaptersForDirectory opens the OCI cache, resolves the signing policy,
 // and pulls/extracts every OCI-referenced adapter declared in this directory.
-func pullAdaptersForDirectory(ctx context.Context, workflowDir string, spec *workflow.Spec, ociAdapters map[string]*workflowAdapter, lf *lockfile.Lockfile, allowUnsigned bool) error {
+func pullAdaptersForDirectory(ctx context.Context, workflowDir string, spec *workflow.Spec, ociAdapters map[string]*workflowAdapter, lf, pinSet *lockfile.Lockfile, allowUnsigned bool) error {
 	cacheRoot, err := defaultCacheRoot()
 	if err != nil {
 		return err
@@ -93,8 +90,9 @@ func pullAdaptersForDirectory(ctx context.Context, workflowDir string, spec *wor
 		}
 	}
 
-	// Also pull adapters declared in subworkflows, which have their own lockfiles.
-	if err := pullSubworkflowAdapters(ctx, workflowDir, spec, layout, puller, &policy); err != nil {
+	// Also pull adapters declared in subworkflows. They are covered by the same
+	// merged pin set, so verification and extraction use one consistent source.
+	if err := pullSubworkflowAdapters(ctx, workflowDir, spec, layout, puller, &policy, pinSet); err != nil {
 		return err
 	}
 
@@ -575,26 +573,30 @@ func artifactPlatforms(artFS fs.FS) []string {
 }
 
 // pullSubworkflowAdapters recursively processes subworkflows declared in spec
-// and ensures their OCI adapter binaries are extracted. Each subworkflow has
-// its own lockfile; this is necessary because autoPullCompileAdapters only
-// sees the top-level spec's adapters. Remote workflow sources are fetched by the
-// parent's pinned resolved_ref so the pulled binaries match the locked tree.
-func pullSubworkflowAdapters(ctx context.Context, workflowDir string, spec *workflow.Spec, layout *oci.Layout, puller puller, policy *signing.Policy) error {
+// and ensures their OCI adapter binaries are extracted. The same merged pinSet
+// covers the whole tree, so every adapter is verified and extracted against the
+// same lockfile the engine will use at run time. Remote workflow sources are
+// fetched by the parent's pinned resolved_ref so the pulled binaries match the
+// locked tree.
+func pullSubworkflowAdapters(ctx context.Context, workflowDir string, spec *workflow.Spec, layout *oci.Layout, puller puller, policy *signing.Policy, pinSet *lockfile.Lockfile) error {
 	fetcher := newWorkflowFetcherFunc()
 	for _, swSpec := range spec.Subworkflows {
 		subDir, _, err := resolveSubworkflowForLock(ctx, workflowDir, swSpec.Source, fetcher)
 		if err != nil {
 			return fmt.Errorf("subworkflow %q in %q: %w", swSpec.Name, workflowDir, err)
 		}
-		subLF, err := lockfile.ReadFromDir(subDir)
-		if err != nil || subLF == nil {
-			continue // no lockfile means no OCI adapters in this subworkflow
+		// Use the merged tree-wide pin set instead of re-reading this directory's
+		// lockfile, guaranteeing auto-pull and the engine agree.
+		lf := pinSet
+		if lf == nil {
+			lf = &lockfile.Lockfile{}
 		}
-		for i := range subLF.Adapters {
-			entry := &subLF.Adapters[i]
-			wa := &workflowAdapter{Type: entry.Type, Name: entry.Name, Source: entry.Reference}
-			key := entry.Type + "." + entry.Name
-			if err := ensureAdapterCached(ctx, key, wa, subLF, layout, puller, policy); err != nil {
+		adapters := collectWorkflowAdaptersFromDir(subDir)
+		for key, wa := range adapters {
+			if wa.Source == "" {
+				continue
+			}
+			if err := ensureAdapterCached(ctx, key, wa, lf, layout, puller, policy); err != nil {
 				return fmt.Errorf("subworkflow %q adapter %s: %w", swSpec.Name, key, err)
 			}
 		}
@@ -603,11 +605,21 @@ func pullSubworkflowAdapters(ctx context.Context, workflowDir string, spec *work
 		if diags.HasErrors() || subSpec == nil {
 			continue
 		}
-		if err := pullSubworkflowAdapters(ctx, subDir, subSpec, layout, puller, policy); err != nil {
+		if err := pullSubworkflowAdapters(ctx, subDir, subSpec, layout, puller, policy, pinSet); err != nil {
 			return fmt.Errorf("subworkflow %q: %w", swSpec.Name, err)
 		}
 	}
 	return nil
+}
+
+// collectWorkflowAdaptersFromDir parses a workflow directory and returns its
+// declared adapter map keyed by "type.name".
+func collectWorkflowAdaptersFromDir(dir string) map[string]*workflowAdapter {
+	spec, diags := workflow.ParseDir(dir)
+	if diags.HasErrors() || spec == nil {
+		return nil
+	}
+	return collectWorkflowAdapters(spec)
 }
 
 // resolveSubworkflowSourceDir resolves a subworkflow source path (relative or

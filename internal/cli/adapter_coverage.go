@@ -22,20 +22,46 @@ func (e lockfileCoverageError) Error() string {
 	return fmt.Sprintf("%s: adapter %s is %s; run `criteria adapter lock %s` to pin it", e.WorkflowDir, e.AdapterKey, e.Reason, e.WorkflowDir)
 }
 
+// loadTreePinSet resolves every workflow directory reachable from rootDir,
+// reads each directory's lockfile, and merges them into a single in-memory
+// pin set. The merged set is the single source of truth used by the startup
+// coverage gate and by the engine at run time.
+func loadTreePinSet(ctx context.Context, rootDir string) (*lockfile.Lockfile, error) {
+	var merged *lockfile.Lockfile
+	seen := make(map[string]bool)
+	if err := walkWorkflowDirs(ctx, rootDir, seen, func(_ string, _ *workflow.Spec, lf *lockfile.Lockfile) error {
+		merged = lockfile.Merge(merged, lf)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return merged, nil
+}
+
 // collectUnpinnedAdapters walks every workflow directory reachable from rootDir
-// and returns the first adapter that is declared but not fully pinned. A
-// lockfile entry is only acceptable when it has reference, resolved_digest, and
-// source_url populated.
+// and returns adapters that are declared but not fully pinned in the merged
+// tree-wide pin set. A lockfile entry is only acceptable when it has reference,
+// resolved_digest, and source_url populated.
 func collectUnpinnedAdapters(ctx context.Context, rootDir string) ([]lockfileCoverageError, error) {
+	pinSet, err := loadTreePinSet(ctx, rootDir)
+	if err != nil {
+		return nil, err
+	}
+	return collectUnpinnedAdaptersWithPinSet(ctx, rootDir, pinSet)
+}
+
+// collectUnpinnedAdaptersWithPinSet checks every reachable workflow directory's
+// OCI adapter declarations against the supplied merged pin set.
+func collectUnpinnedAdaptersWithPinSet(ctx context.Context, rootDir string, pinSet *lockfile.Lockfile) ([]lockfileCoverageError, error) {
 	var errs []lockfileCoverageError
 	seen := make(map[string]bool)
-	if err := walkWorkflowDirs(ctx, rootDir, seen, func(dir string, spec *workflow.Spec, lf *lockfile.Lockfile) error {
+	if err := walkWorkflowDirs(ctx, rootDir, seen, func(dir string, spec *workflow.Spec, _ *lockfile.Lockfile) error {
 		adapters := collectWorkflowAdapters(spec)
 		for key, wa := range adapters {
 			if wa.Source == "" {
 				continue // non-OCI adapter, not subject to lockfile pinning
 			}
-			entry := findLocked(lf, wa.Type, wa.Name)
+			entry := findLocked(pinSet, wa.Type, wa.Name)
 			if entry == nil {
 				errs = append(errs, lockfileCoverageError{WorkflowDir: dir, AdapterKey: key, Reason: "unpinned (no lockfile entry)"})
 				continue

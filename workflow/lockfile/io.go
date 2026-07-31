@@ -10,9 +10,11 @@ import (
 	"github.com/hashicorp/hcl/v2/hclparse"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
-
-	"github.com/brokenbots/criteria/workflow"
 )
+
+// LockfileName is the on-disk name of the adapter lockfile that lives alongside
+// a workflow's source files.
+const LockfileName = ".criteria.lock.hcl"
 
 // Read parses a .criteria.lock.hcl file from disk.
 func Read(path string) (*Lockfile, error) {
@@ -151,7 +153,7 @@ func writeAdapterBlock(body *hclwrite.Body, a *LockedAdapter) { //nolint:funlen 
 // and returns the parsed Lockfile. If the file does not exist, it returns
 // (nil, nil).
 func ReadFromDir(workflowDir string) (*Lockfile, error) {
-	path := filepath.Join(workflowDir, workflow.LockfileName)
+	path := filepath.Join(workflowDir, LockfileName)
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil

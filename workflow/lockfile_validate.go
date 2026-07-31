@@ -1,21 +1,21 @@
-package lockfile
+package workflow
 
 import (
 	"sort"
 
-	"github.com/brokenbots/criteria/workflow"
+	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
-// ValidateAgainstWorkflow ensures every adapter referenced by the parsed
-// workflow has a matching lockfile entry, and every lockfile entry refers to
-// an adapter still referenced by the workflow.
+// ValidateLockfileAgainstGraph ensures every adapter referenced by the compiled
+// graph has a matching lockfile entry, and every lockfile entry refers to an
+// adapter still referenced by the graph.
 //
 // Returns:
-//   - missing: adapters referenced by workflow but not in lockfile (compile
-//     hint: "run `criteria adapter lock`")
-//   - stale:   adapters in lockfile but not referenced (lock command will
-//     prune these next run)
-func ValidateAgainstWorkflow(lf *Lockfile, graph *workflow.FSMGraph) (missing, stale []string) {
+//   - missing: adapters referenced by graph but not in lockfile (compile hint:
+//     "run `criteria adapter lock`")
+//   - stale:   adapters in lockfile but not referenced (lock command will prune
+//     these next run)
+func ValidateLockfileAgainstGraph(lf *lockfile.Lockfile, graph *FSMGraph) (missing, stale []string) {
 	if lf == nil || graph == nil {
 		return nil, nil
 	}

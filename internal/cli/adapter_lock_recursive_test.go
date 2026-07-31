@@ -714,5 +714,7 @@ func TestAutoPullCompileAdapters_FetchedWorkflowComplete(t *testing.T) {
 
 	spec, diags := workflow.ParseDir(root)
 	require.False(t, diags.HasErrors())
-	require.NoError(t, autoPullCompileAdapters(ctx, root, spec, true))
+	pinSet, err := loadTreePinSet(ctx, root)
+	require.NoError(t, err)
+	require.NoError(t, autoPullCompileAdapters(ctx, root, spec, pinSet, true))
 }

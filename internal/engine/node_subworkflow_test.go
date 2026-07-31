@@ -968,7 +968,7 @@ func TestRunSubworkflow_TerminalStateSuccess(t *testing.T) {
 	}
 }
 
-// TestMergeLockfiles verifies the mergeLockfiles helper that unions two lockfiles,
+// TestMergeLockfiles verifies the lockfile.Merge helper that unions two lockfiles,
 // with overlay entries taking precedence on (type, name) collisions.
 func TestMergeLockfiles(t *testing.T) {
 	baseAdapter := lockfile.LockedAdapter{
@@ -997,9 +997,12 @@ func TestMergeLockfiles(t *testing.T) {
 		overlay := &lockfile.Lockfile{
 			Adapters: []lockfile.LockedAdapter{overlayAdapter},
 		}
-		got := mergeLockfiles(nil, overlay)
-		if got != overlay {
-			t.Errorf("nil base: expected overlay returned unchanged")
+		got := lockfile.Merge(nil, overlay)
+		if got == nil {
+			t.Fatal("expected non-nil merged lockfile")
+		}
+		if len(got.Adapters) != 1 || got.Adapters[0].Name != overlayAdapter.Name {
+			t.Errorf("nil base: expected overlay adapter, got %v", got.Adapters)
 		}
 	})
 
@@ -1007,25 +1010,12 @@ func TestMergeLockfiles(t *testing.T) {
 		base := &lockfile.Lockfile{
 			Adapters: []lockfile.LockedAdapter{baseAdapter},
 		}
-		// The function only nil-checks base, not overlay. Passing nil overlay currently
-		// panics on overlay.Adapters field access. Use defer/recover so this subtest
-		// fails gracefully rather than crashing the test binary.
-		var got *lockfile.Lockfile
-		panicked := func() (panicked bool) {
-			defer func() {
-				if r := recover(); r != nil {
-					panicked = true
-				}
-			}()
-			got = mergeLockfiles(base, nil)
-			return false
-		}()
-		if panicked {
-			t.Error("nil overlay: mergeLockfiles(base, nil) panicked — the function should handle nil overlay without panicking")
-			return
-		}
+		got := lockfile.Merge(base, nil)
 		if got == nil {
-			t.Error("nil overlay: expected non-nil result")
+			t.Fatal("expected non-nil merged lockfile")
+		}
+		if len(got.Adapters) != 1 || got.Adapters[0].Name != baseAdapter.Name {
+			t.Errorf("nil overlay: expected base adapter, got %v", got.Adapters)
 		}
 	})
 
@@ -1036,7 +1026,7 @@ func TestMergeLockfiles(t *testing.T) {
 		overlay := &lockfile.Lockfile{
 			Adapters: []lockfile.LockedAdapter{overlayAdapter},
 		}
-		got := mergeLockfiles(base, overlay)
+		got := lockfile.Merge(base, overlay)
 		if got == nil {
 			t.Fatal("expected non-nil merged lockfile")
 		}
@@ -1063,7 +1053,7 @@ func TestMergeLockfiles(t *testing.T) {
 		overlay := &lockfile.Lockfile{
 			Adapters: []lockfile.LockedAdapter{conflictingAdapter},
 		}
-		got := mergeLockfiles(base, overlay)
+		got := lockfile.Merge(base, overlay)
 		if got == nil {
 			t.Fatal("expected non-nil merged lockfile")
 		}

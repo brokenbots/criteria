@@ -296,8 +296,16 @@ Adapters are out-of-process binaries distributed as cosign-signed OCI artifacts.
 A workflow references one by `source`; `criteria adapter lock` resolves, pulls,
 verifies, and pins it by digest in `.criteria.lock.hcl`. For local iteration,
 `criteria adapter dev <binary>` registers a binary directly (skipping the
-lockfile and signature checks). See [adapters.md](adapters.md) for the full
-distribution, signing, and wire-protocol model.
+lockfile and signature checks).
+
+At compile time the whole workflow tree is resolved: every reachable
+`.criteria.lock.hcl` is read once, all pins are merged into the compiled FSM
+graph, and the content of every `file()` reference in adapter `config { }` is
+cached. At `apply` start the engine verifies every adapter in that graph before
+any step runs, but it only opens an adapter session when a scope actually uses
+it. After the run starts, changes to workflow source files or `file()`-referenced
+assets do not affect the in-flight run. See [adapters.md](adapters.md) for the
+full distribution, signing, lifecycle, and wire-protocol model.
 
 ---
 

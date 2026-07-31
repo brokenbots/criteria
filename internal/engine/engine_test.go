@@ -1136,9 +1136,7 @@ func TestEngineSetLockfileOnSessions(t *testing.T) {
 	eng := NewTestEngine(g, loader, &fakeSink{}, WithLockfile(lf))
 
 	sessions := adapterhost.NewSessionManager(loader)
-	if err := eng.setLockfileOnSessions(sessions); err != nil {
-		t.Fatalf("setLockfileOnSessions: %v", err)
-	}
+	eng.setLockfileOnSessions(sessions)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -1169,9 +1167,7 @@ func TestEngineSetLockfileOnSessions_ReadFromDir(t *testing.T) {
 	eng.workflowDir = dir
 
 	sessions := adapterhost.NewSessionManager(loader)
-	if err := eng.setLockfileOnSessions(sessions); err != nil {
-		t.Fatalf("setLockfileOnSessions: %v", err)
-	}
+	eng.setLockfileOnSessions(sessions)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

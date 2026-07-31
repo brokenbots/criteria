@@ -109,13 +109,15 @@ type DefaultLoader struct {
 	builtins      map[string]BuiltinFactory
 	active        map[*rpcHandle]struct{}
 	cmdCustomizer func(name string, cmd *exec.Cmd)
+	devBindings   map[string]string
 }
 
 func NewLoader() *DefaultLoader {
 	return &DefaultLoader{
-		discover: DiscoverBinary,
-		builtins: map[string]BuiltinFactory{},
-		active:   map[*rpcHandle]struct{}{},
+		discover:    DiscoverBinary,
+		builtins:    map[string]BuiltinFactory{},
+		active:      map[*rpcHandle]struct{}{},
+		devBindings: map[string]string{},
 	}
 }
 
@@ -125,6 +127,26 @@ func NewLoaderWithDiscovery(discover DiscoveryFunc) *DefaultLoader {
 		ldr.discover = discover
 	}
 	return ldr
+}
+
+// SetDevBindings registers explicit adapter binaries keyed by "<type>.<name>".
+// These bindings take precedence over lockfile pins and are used for local
+// development adapters registered with `criteria adapter dev`.
+func (l *DefaultLoader) SetDevBindings(bindings map[string]string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.devBindings = make(map[string]string, len(bindings))
+	for k, v := range bindings {
+		l.devBindings[k] = v
+	}
+}
+
+// DevBinding returns the explicit binary path registered for name, if any.
+func (l *DefaultLoader) DevBinding(name string) (string, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	p, ok := l.devBindings[name]
+	return p, ok
 }
 
 // SetCommandCustomizer sets a function that is called for every

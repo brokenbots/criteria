@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/opencontainers/go-digest"
+	"github.com/zclconf/go-cty/cty"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
@@ -110,6 +111,14 @@ type SessionManager struct {
 	// allowedRoots restricts environment working_directory values. Empty means
 	// no additional root checks; paths containing ".." are always rejected.
 	allowedRoots []string
+
+	// graphAdapters caches every adapter node in the compiled graph tree, keyed
+	// by instance ID. It is populated by VerifyGraph and used at resolution time
+	// to know whether an adapter is OCI-backed without re-reading workflow files.
+	graphAdapters map[string]*workflow.AdapterNode
+	// adapterDirs records the workflow directory each adapter was declared in,
+	// keyed by instance ID. Populated by VerifyGraph.
+	adapterDirs map[string]string
 }
 
 // verifiedRecord stores the host-visible state of an adapter that has been
@@ -195,6 +204,122 @@ func (m *SessionManager) GetLockfile() *lockfile.Lockfile {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.lockfile
+}
+
+// graphAdapterRef identifies a single adapter node in the compiled graph tree
+// so VerifyGraph can walk the whole tree and attribute errors to a workflow
+// directory.
+type graphAdapterRef struct {
+	instanceID string
+	node       *workflow.AdapterNode
+	graph      *workflow.FSMGraph
+}
+
+// collectGraphAdapters appends every adapter declared in g (and recursively in
+// its subworkflows) to refs. Parent adapters appear before child adapters so the
+// cached metadata reflects the first declaration when an instance is
+// re-declared in a subworkflow.
+func collectGraphAdapters(g *workflow.FSMGraph, refs *[]graphAdapterRef) {
+	if g == nil {
+		return
+	}
+	for _, id := range g.AdapterOrder {
+		*refs = append(*refs, graphAdapterRef{
+			instanceID: id,
+			node:       g.Adapters[id],
+			graph:      g,
+		})
+	}
+	for _, name := range g.SubworkflowOrder {
+		collectGraphAdapters(g.Subworkflows[name].Body, refs)
+	}
+}
+
+// VerifyGraph eagerly verifies every adapter declared anywhere in the compiled
+// graph tree before any step runs. It performs the same handshake and policy
+// checks as per-scope Verify but does not store verified records, so session
+// binding remains lazy at scope entry. Missing lockfile entries for OCI-backed
+// adapters are reported as fatal errors naming the workflow directory, the
+// adapter instance, and the remediation command.
+func (m *SessionManager) VerifyGraph(ctx context.Context, graph *workflow.FSMGraph, vars map[string]cty.Value) error {
+	if graph == nil {
+		return nil
+	}
+	var refs []graphAdapterRef
+	collectGraphAdapters(graph, &refs)
+
+	for _, ref := range refs {
+		if err := m.verifyGraphAdapter(ctx, graph, ref, vars); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *SessionManager) verifyGraphAdapter(ctx context.Context, root *workflow.FSMGraph, ref graphAdapterRef, vars map[string]cty.Value) error {
+	evalVars := vars
+	if ref.graph != root {
+		// For subworkflows, use the callee's declared variable defaults at
+		// startup. Runtime input bindings are evaluated later at scope entry.
+		evalVars = workflow.SeedVarsFromGraph(ref.graph)
+	}
+
+	// Re-evaluate adapter config so var.* values are available, but file()
+	// content is served from the compile-time cache. This matches what
+	// prepareScopeAdapter does at scope entry.
+	config := ref.node.Config
+	if len(ref.node.ConfigExprs) > 0 {
+		opts := workflow.DefaultFunctionOptions(ref.graph.WorkflowDir)
+		opts.FileCache = ref.graph.FileCache
+		runtimeConfig, err := workflow.ResolveInputExprsWithOpts(ref.node.ConfigExprs, evalVars, opts)
+		if err != nil {
+			return fmt.Errorf("verify adapter %q in %q: evaluate config: %w", ref.instanceID, ref.graph.WorkflowDir, err)
+		}
+		config = runtimeConfig
+	}
+
+	secretMap, err := m.verifyGraphSecrets(ref, evalVars)
+	if err != nil {
+		return err
+	}
+
+	if _, err := m.verifyAdapterInfo(ctx, ref.instanceID, ref.node.Type, config, secretMap); err != nil {
+		return fmt.Errorf("verify adapter %q in %q: %w; run 'criteria adapter lock %s'", ref.instanceID, ref.graph.WorkflowDir, err, ref.graph.WorkflowDir)
+	}
+
+	m.cacheGraphAdapterRef(ref)
+	return nil
+}
+
+func (m *SessionManager) cacheGraphAdapterRef(ref graphAdapterRef) {
+	if m.graphAdapters == nil {
+		m.graphAdapters = make(map[string]*workflow.AdapterNode)
+	}
+	if _, ok := m.graphAdapters[ref.instanceID]; !ok {
+		m.graphAdapters[ref.instanceID] = ref.node
+	}
+	if m.adapterDirs == nil {
+		m.adapterDirs = make(map[string]string)
+	}
+	if _, ok := m.adapterDirs[ref.instanceID]; !ok {
+		m.adapterDirs[ref.instanceID] = ref.graph.WorkflowDir
+	}
+}
+
+// verifyGraphSecrets evaluates an adapter's secret expressions for VerifyGraph,
+// using the compile-time file cache. Returns nil when the adapter declares no
+// secrets.
+func (m *SessionManager) verifyGraphSecrets(ref graphAdapterRef, vars map[string]cty.Value) (map[string]string, error) {
+	if len(ref.node.Secrets) == 0 {
+		return nil, nil
+	}
+	opts := workflow.DefaultFunctionOptions(ref.graph.WorkflowDir)
+	opts.FileCache = ref.graph.FileCache
+	out, err := workflow.ResolveInputExprsWithOpts(ref.node.Secrets, vars, opts)
+	if err != nil {
+		return nil, fmt.Errorf("verify adapter %q in %q: evaluate secrets: %w", ref.instanceID, ref.graph.WorkflowDir, err)
+	}
+	return out, nil
 }
 
 // SetAllowedWorkingDirRoots restricts the directories an environment may bind
@@ -710,6 +835,14 @@ func (m *SessionManager) resolveAdapterHandle(ctx context.Context, name, adapter
 	}
 
 	if dl, ok := m.loader.(*DefaultLoader); ok {
+		// Dev-mode dispatch: adapters registered with `criteria adapter dev`
+		// are keyed by "<type>.<name>" and take precedence over lockfile pins
+		// so local development builds are always used when explicitly bound.
+		if devPath, ok := dl.DevBinding(name); ok {
+			discover := func(_ string) (string, error) { return devPath, nil }
+			return dl.ResolveWithDiscovery(ctx, adapterName, discover, customizer)
+		}
+
 		// Container-mode dispatch: if the adapter is bound to a container
 		// environment, use a docker/podman runner instead of a local binary.
 		runnerFunc, containerErr := adapter.BuildContainerRunner(m.graph, m.lockfile, name)
@@ -725,7 +858,19 @@ func (m *SessionManager) resolveAdapterHandle(ctx context.Context, name, adapter
 		if a := m.lockedAdapterFor(name); a != nil && a.ResolvedDigest != "" {
 			enc := EncodeDigest(digest.Digest(a.ResolvedDigest))
 			discover := func(t string) (string, error) { return DiscoverBinaryAt(t, enc) }
-			return dl.ResolveWithDiscovery(ctx, adapterName, discover, customizer)
+			h, err := dl.ResolveWithDiscovery(ctx, adapterName, discover, customizer)
+			if err != nil {
+				dir := m.adapterDir(name)
+				return nil, fmt.Errorf("adapter %q in %q (digest %s) could not be resolved: %w; run 'criteria adapter lock %s'", name, dir, a.ResolvedDigest, err, dir)
+			}
+			return h, nil
+		}
+		// An OCI-backed adapter without a matching lockfile entry must never
+		// fall back to by-name discovery. Surface a clear error that names the
+		// workflow directory, the adapter instance, and the remediation command.
+		if m.isOCIAdapter(name) {
+			dir := m.adapterDir(name)
+			return nil, fmt.Errorf("adapter %q in %q is not pinned in the lockfile; run 'criteria adapter lock %s'", name, dir, dir)
 		}
 		return dl.ResolveWithCustomizer(ctx, adapterName, customizer)
 	}
@@ -774,6 +919,39 @@ func (m *SessionManager) isRemoteAdapter(instanceID string) bool {
 		return false
 	}
 	return envNode.Type == "remote"
+}
+
+// isOCIAdapter reports whether the named adapter instance declares an OCI
+// source. OCI adapters require a matching lockfile entry and may not fall back
+// to by-name discovery. The lookup uses the graph tree cached by VerifyGraph so
+// subworkflow adapters are covered even though the root graph does not contain
+// them.
+func (m *SessionManager) isOCIAdapter(instanceID string) bool {
+	if m.graphAdapters != nil {
+		if node, ok := m.graphAdapters[instanceID]; ok {
+			return node.Source != ""
+		}
+	}
+	if m.graph != nil {
+		if node, ok := m.graph.Adapters[instanceID]; ok {
+			return node.Source != ""
+		}
+	}
+	return false
+}
+
+// adapterDir returns the workflow directory associated with instanceID,
+// defaulting to the graph's root directory when no cached directory exists.
+func (m *SessionManager) adapterDir(instanceID string) string {
+	if m.adapterDirs != nil {
+		if dir, ok := m.adapterDirs[instanceID]; ok {
+			return dir
+		}
+	}
+	if m.graph != nil {
+		return m.graph.WorkflowDir
+	}
+	return ""
 }
 
 // makeSandboxCustomizer builds the exec.Cmd customizer and cleanup from

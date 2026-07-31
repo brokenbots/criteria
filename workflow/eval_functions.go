@@ -51,6 +51,13 @@ type FunctionOptions struct {
 	Cwd          string
 	MaxBytes     int64
 	AllowedPaths []string
+	// FileCache, when non-nil, is a map from resolved absolute path to file
+	// content. file() and templatefile() return cached content without reading
+	// disk when a path is present, and record newly-read content into the map.
+	// This lets the compiler capture static prompt files and the runtime
+	// re-evaluate adapter config against live var.* values without re-reading
+	// files from disk.
+	FileCache map[string]string
 }
 
 // DefaultFunctionOptions builds FunctionOptions from environment variables
@@ -337,41 +344,59 @@ func stdlibDateFunctions() map[string]function.Function {
 // fileFunction implements the file(path) → string expression function.
 // Reads the UTF-8 file at path (resolved relative to WorkflowDir),
 // enforcing path confinement and the MaxBytes size cap.
+// readFileWithCache resolves raw relative to opts.WorkflowDir, returns cached
+// content if present, otherwise reads, validates, and caches the result when
+// opts.FileCache is non-nil.
+func readFileWithCache(raw string, opts *FunctionOptions, funcName string) (string, error) {
+	if opts.WorkflowDir == "" {
+		return "", fmt.Errorf("%s(): workflow directory not configured", funcName)
+	}
+	resolved, err := resolveConfinedPath(raw, opts.WorkflowDir, opts.AllowedPaths)
+	if err != nil {
+		return "", err
+	}
+	if opts.FileCache != nil {
+		if cached, ok := opts.FileCache[resolved]; ok {
+			return cached, nil
+		}
+	}
+
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", mapOSError(raw, err)
+	}
+	if info.Size() > opts.MaxBytes {
+		return "", fmt.Errorf(
+			"%s(): %q is %d bytes; max is %d (set CRITERIA_FILE_FUNC_MAX_BYTES to raise)",
+			funcName, raw, info.Size(), opts.MaxBytes)
+	}
+
+	data, err := os.ReadFile(resolved)
+	if err != nil {
+		return "", mapOSError(raw, err)
+	}
+
+	if !utf8.Valid(data) {
+		offset := invalidUTF8Offset(data)
+		return "", fmt.Errorf(
+			"%s(): %q contains invalid UTF-8 at byte %d", funcName, raw, offset)
+	}
+	if opts.FileCache != nil {
+		opts.FileCache[resolved] = string(data)
+	}
+	return string(data), nil
+}
+
 func fileFunction(opts *FunctionOptions) function.Function {
 	return function.New(&function.Spec{
 		Params: []function.Parameter{{Name: "path", Type: cty.String}},
 		Type:   function.StaticReturnType(cty.String),
 		Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
-			if opts.WorkflowDir == "" {
-				return cty.StringVal(""), fmt.Errorf("file(): workflow directory not configured")
-			}
-			raw := args[0].AsString()
-			resolved, err := resolveConfinedPath(raw, opts.WorkflowDir, opts.AllowedPaths)
+			content, err := readFileWithCache(args[0].AsString(), opts, "file")
 			if err != nil {
 				return cty.StringVal(""), err
 			}
-
-			info, err := os.Stat(resolved)
-			if err != nil {
-				return cty.StringVal(""), mapOSError(raw, err)
-			}
-			if info.Size() > opts.MaxBytes {
-				return cty.StringVal(""), fmt.Errorf(
-					"file(): %q is %d bytes; max is %d (set CRITERIA_FILE_FUNC_MAX_BYTES to raise)",
-					raw, info.Size(), opts.MaxBytes)
-			}
-
-			data, err := os.ReadFile(resolved)
-			if err != nil {
-				return cty.StringVal(""), mapOSError(raw, err)
-			}
-
-			if !utf8.Valid(data) {
-				offset := invalidUTF8Offset(data)
-				return cty.StringVal(""), fmt.Errorf(
-					"file(): %q contains invalid UTF-8 at byte %d", raw, offset)
-			}
-			return cty.StringVal(string(data)), nil
+			return cty.StringVal(content), nil
 		},
 	})
 }
@@ -411,10 +436,6 @@ func templatefileFunction(opts *FunctionOptions) function.Function {
 // renderTemplateFile is the core implementation of templatefile(). It is
 // extracted from the Impl closure to keep cognitive complexity manageable.
 func renderTemplateFile(opts *FunctionOptions, raw string, varsVal cty.Value) (cty.Value, error) {
-	if opts.WorkflowDir == "" {
-		return cty.StringVal(""), fmt.Errorf("templatefile(): workflow directory not configured")
-	}
-
 	// Validate vars is an object (or map). Reject primitives and lists.
 	ty := varsVal.Type()
 	if !ty.IsObjectType() && !ty.IsMapType() {
@@ -422,28 +443,9 @@ func renderTemplateFile(opts *FunctionOptions, raw string, varsVal cty.Value) (c
 			"templatefile(): vars must be an object or map; got %s", ty.FriendlyName())
 	}
 
-	// Read file content via the same confinement + size cap as file().
-	resolved, err := resolveConfinedPath(raw, opts.WorkflowDir, opts.AllowedPaths)
+	content, err := readFileWithCache(raw, opts, "templatefile")
 	if err != nil {
 		return cty.StringVal(""), rewriteFuncName(err, "file()", "templatefile()")
-	}
-	info, err := os.Stat(resolved)
-	if err != nil {
-		return cty.StringVal(""), rewriteFuncName(mapOSError(raw, err), "file()", "templatefile()")
-	}
-	if info.Size() > opts.MaxBytes {
-		return cty.StringVal(""), fmt.Errorf(
-			"templatefile(): %q is %d bytes; max is %d (set CRITERIA_FILE_FUNC_MAX_BYTES to raise)",
-			raw, info.Size(), opts.MaxBytes)
-	}
-	data, err := os.ReadFile(resolved)
-	if err != nil {
-		return cty.StringVal(""), rewriteFuncName(mapOSError(raw, err), "file()", "templatefile()")
-	}
-	if !utf8.Valid(data) {
-		offset := invalidUTF8Offset(data)
-		return cty.StringVal(""), fmt.Errorf(
-			"templatefile(): %q contains invalid UTF-8 at byte %d", raw, offset)
 	}
 
 	// Convert cty vars to Go map for text/template.
@@ -456,7 +458,7 @@ func renderTemplateFile(opts *FunctionOptions, raw string, varsVal cty.Value) (c
 	// the source file.
 	tmpl, err := template.New(filepath.Base(raw)).
 		Option("missingkey=error").
-		Parse(string(data))
+		Parse(content)
 	if err != nil {
 		return cty.StringVal(""), fmt.Errorf("templatefile(): %q parse: %w", raw, err)
 	}
