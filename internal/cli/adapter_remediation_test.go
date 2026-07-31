@@ -170,7 +170,7 @@ func TestRunPrune_Basic(t *testing.T) {
 	t.Setenv("CRITERIA_STATE_DIR", root)
 
 	var out bytes.Buffer
-	require.NoError(t, runPrune("", 0, &out))
+	require.NoError(t, runPrune("", 0, false, &out))
 	assert.Contains(t, out.String(), "pruned")
 }
 
@@ -182,7 +182,7 @@ func TestRunPrune_WithOlderThan(t *testing.T) {
 	t.Setenv("CRITERIA_STATE_DIR", root)
 
 	var out bytes.Buffer
-	require.NoError(t, runPrune("30d", 0, &out))
+	require.NoError(t, runPrune("30d", 0, false, &out))
 	assert.Contains(t, out.String(), "pruned")
 }
 
@@ -194,7 +194,7 @@ func TestRunPrune_InvalidDuration(t *testing.T) {
 	t.Setenv("CRITERIA_STATE_DIR", root)
 
 	var out bytes.Buffer
-	err = runPrune("not-a-duration", 0, &out)
+	err = runPrune("not-a-duration", 0, false, &out)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "parse --older-than")
 }
@@ -219,7 +219,7 @@ func TestPrintLockDiff(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	printLockDiff(oldLF, newLF, &out, 2)
+	printLockDiff(oldLF, newLF, &out, 2, "")
 	diff := out.String()
 	assert.Contains(t, diff, "~ noop.default digest sha256:aaa -> sha256:bbb")
 	assert.Contains(t, diff, "+ shell.local")

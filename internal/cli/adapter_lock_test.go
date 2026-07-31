@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/opencontainers/go-digest"
@@ -66,6 +67,14 @@ func (f *fakeLockResolver) PullAndBuild(ctx context.Context, ref oci.Reference, 
 	entry.Reference = ref.String()
 	entry.Version = ref.Tag
 	entry.ResolvedDigest = dg
+	if entry.SourceURL == "" {
+		lastSlash := strings.LastIndex(ref.Repo, "/")
+		name := ref.Repo
+		if lastSlash >= 0 {
+			name = ref.Repo[lastSlash+1:]
+		}
+		entry.SourceURL = "https://github.com/brokenbots/criteria-adapter-" + name
+	}
 	return digest.Digest(dg), entry, nil
 }
 
@@ -203,7 +212,7 @@ func TestPrintLockDiff_UpToDateMessage(t *testing.T) {
 	newLF := &lockfile.Lockfile{Adapters: []lockfile.LockedAdapter{*findLocked(old, "noop", "default")}}
 
 	var out bytes.Buffer
-	printLockDiff(old, newLF, &out, 1)
+	printLockDiff(old, newLF, &out, 1, "")
 
 	assert.Contains(t, out.String(), "lockfile up to date")
 	assert.Contains(t, out.String(), "1 adapter(s)")
@@ -232,7 +241,7 @@ func TestPrintLockDiff_SignerChangeIsProminent(t *testing.T) {
 	}}}
 
 	var out bytes.Buffer
-	printLockDiff(old, newLF, &out, 1)
+	printLockDiff(old, newLF, &out, 1, "")
 	lines := out.String()
 
 	require.Contains(t, lines, "! noop.default signer changed", "signer changes must be surfaced prominently")
@@ -310,12 +319,12 @@ func TestPrepareLockState_BuildsPullerForVersionBump(t *testing.T) {
 		lf.Adapters[0].ResolvedDigest = digest.FromString("ghcr.io/brokenbots/criteria-adapter-noop:0.5.1").String()
 	})
 
-	state, err := prepareLockState(dir, false, true, nil, nil)
+	state, err := prepareLockState(dir, false, nil, nil, nil)
 	require.NoError(t, err)
 
 	ociResolver, ok := state.resolver.(*ociLockResolver)
 	require.True(t, ok, "prepareLockState should build the production OCI resolver")
-	require.NotNil(t, ociResolver.puller, "prepareLockState must build a puller when any OCI-sourced adapter exists so a declared version bump can re-resolve")
+	require.NotNil(t, ociResolver.puller, "prepareLockState must build a puller so a declared version bump can re-resolve")
 }
 
 func TestRunLock_VersionBumpReResolvesEndToEnd(t *testing.T) {
@@ -331,7 +340,7 @@ func TestRunLock_VersionBumpReResolvesEndToEnd(t *testing.T) {
 		withTag("0.5.2")
 
 	var out bytes.Buffer
-	err := runLock(context.Background(), dir, false, true, nil, &out, fake)
+	err := runLock(context.Background(), dir, false, false, true, nil, &out, fake, nil)
 	require.NoError(t, err)
 
 	require.Len(t, fake.pulledRefs, 1, "plain lock must re-resolve an already-locked adapter when the declared version changes")
@@ -356,7 +365,7 @@ func TestRunLock_UpToDateMessage(t *testing.T) {
 	fake := newFakeResolver().withBlob(oldDigest)
 
 	var out bytes.Buffer
-	err := runLock(context.Background(), dir, false, true, nil, &out, fake)
+	err := runLock(context.Background(), dir, false, false, true, nil, &out, fake, nil)
 	require.NoError(t, err)
 
 	assert.Len(t, fake.pulledRefs, 1, "plain lock must re-resolve every OCI adapter even when declarations are unchanged")
@@ -625,7 +634,7 @@ func TestRunLock_ExtractsBinaryForSchemaVerification(t *testing.T) {
 		withLayout(layout)
 
 	var out bytes.Buffer
-	err = runLock(context.Background(), dir, false, true, nil, &out, resolver)
+	err = runLock(context.Background(), dir, false, false, true, nil, &out, resolver, nil)
 	require.NoError(t, err)
 
 	resolved, err := adapterhost.DiscoverBinaryAt(adapterType, adapterhost.EncodeDigest(manifestDigest))
@@ -699,7 +708,7 @@ step "hello" {
 	require.NoError(t, os.WriteFile(workflowPath, []byte(workflowSrc), 0o644))
 
 	var lockOut bytes.Buffer
-	err = runLock(ctx, workflowDir, false, true, nil, &lockOut, resolver)
+	err = runLock(ctx, workflowDir, false, false, true, nil, &lockOut, resolver, nil)
 	require.NoError(t, err)
 	assert.Contains(t, lockOut.String(), "locked lockvalidate.default")
 
