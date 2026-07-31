@@ -216,6 +216,23 @@ func validateSchemaAttrs(context string, attrs hcl.Attributes, schema map[string
 				}
 			}
 		}
+		// Guard against reading concrete values from unknown or null expressions.
+		// Step input uses evalCtx == nil and defers these to runtime; adapter
+		// config has a non-nil evalCtx and must report a compile-time error.
+		if !val.IsKnown() || val.IsNull() {
+			if evalCtx == nil {
+				result[k] = ""
+				continue
+			}
+			r := attr.Expr.StartRange()
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("%s: field %q cannot be determined", context, k),
+				Detail:   fmt.Sprintf("The value for %q is unknown or null at compile time.", k),
+				Subject:  &r,
+			})
+			continue
+		}
 		// Coerce to string for the output map.
 		switch val.Type() {
 		case cty.String:

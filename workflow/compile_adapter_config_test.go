@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hashicorp/hcl/v2"
 )
 
 // TestAdapterConfigFoldsVarRef verifies that a var.* reference in adapter.config
@@ -323,5 +325,57 @@ state "done" { terminal = true }
 	_, diags = Compile(spec, schemas)
 	if diags.HasErrors() {
 		t.Fatalf("expected wildcard compatibility to compile without error, got: %s", diags.Error())
+	}
+}
+
+// TestAdapterConfig_UnresolvedStringVariable_NoPanic verifies that an adapter
+// config attribute of type string which references a variable with no default
+// does not panic. Instead the compiler returns a located diagnostic naming the
+// attribute and explaining that the value cannot be determined.
+func TestAdapterConfig_UnresolvedStringVariable_NoPanic(t *testing.T) {
+	src := `
+workflow {
+  name = "x"
+  version       = "0.1"
+  initial_state = "work"
+  target_state  = "done"
+}
+
+variable "missing_default" {
+  type = string
+}
+
+adapter "copilot" "bot" {
+  config {
+    system_prompt = var.missing_default
+  }
+}
+
+step "work" {
+  target = adapter.copilot.bot
+  outcome "success" { next = step.done }
+}
+
+state "done" { terminal = true }
+`
+
+	spec, parseDiags := Parse("t.hcl", []byte(src))
+	if parseDiags.HasErrors() {
+		t.Fatalf("parse: %s", parseDiags.Error())
+	}
+	_, compileDiags := Compile(spec, testSchemas)
+	if !compileDiags.HasErrors() {
+		t.Fatal("expected compile error for unresolved adapter config value, got none")
+	}
+
+	found := false
+	for _, d := range compileDiags {
+		if d.Severity == hcl.DiagError && strings.Contains(d.Summary, `field "system_prompt" cannot be determined`) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected diagnostic about unresolved system_prompt, got: %s", compileDiags.Error())
 	}
 }
