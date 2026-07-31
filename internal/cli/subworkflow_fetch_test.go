@@ -108,6 +108,48 @@ func TestExtractZip_RejectAbsolutePath(t *testing.T) {
 	assert.Contains(t, err.Error(), "absolute path")
 }
 
+// TestExtractTarGz_DeeplyNestedEntry verifies that a tar.gz archive with a
+// deeply nested file extracts correctly and that close-error handling does not
+// mask a successful extraction.
+func TestExtractTarGz_DeeplyNestedEntry(t *testing.T) {
+	tmp := t.TempDir()
+	dst := filepath.Join(tmp, "extract")
+	require.NoError(t, os.MkdirAll(dst, 0o755))
+
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tr := tar.NewWriter(gz)
+	writeTarEntry(t, tr, "a/b/c/deep.txt", []byte("deep value"))
+	require.NoError(t, tr.Close())
+	require.NoError(t, gz.Close())
+
+	require.NoError(t, extractTarGz(dst, buf.Bytes()))
+
+	got, err := os.ReadFile(filepath.Join(dst, "a", "b", "c", "deep.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "deep value", string(got))
+}
+
+// TestExtractZip_DeeplyNestedEntry verifies that a zip archive with a deeply
+// nested file extracts correctly and that close-error handling does not mask a
+// successful extraction.
+func TestExtractZip_DeeplyNestedEntry(t *testing.T) {
+	tmp := t.TempDir()
+	dst := filepath.Join(tmp, "extract")
+	require.NoError(t, os.MkdirAll(dst, 0o755))
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	writeZipEntry(t, zw, "a/b/c/deep.txt", []byte("deep value"))
+	require.NoError(t, zw.Close())
+
+	require.NoError(t, extractZip(dst, buf.Bytes()))
+
+	got, err := os.ReadFile(filepath.Join(dst, "a", "b", "c", "deep.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "deep value", string(got))
+}
+
 func writeTarEntry(t *testing.T, tw *tar.Writer, name string, body []byte) {
 	t.Helper()
 	h := &tar.Header{

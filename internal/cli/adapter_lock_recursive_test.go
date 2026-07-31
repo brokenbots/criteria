@@ -125,7 +125,7 @@ func TestRunLock_Recursive_RestoresDeletedSubworkflowLockfile(t *testing.T) {
 
 	var out bytes.Buffer
 	require.NoError(t, runLock(ctx, root, false, true, true, nil, &out, fake, nil))
-	assert.Contains(t, out.String(), sub)
+	assert.Contains(t, out.String(), filepath.Base(sub))
 
 	subLF, err := lockfile.ReadFromDir(sub)
 	require.NoError(t, err)

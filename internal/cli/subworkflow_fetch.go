@@ -337,11 +337,10 @@ func extractTarGz(dst string, data []byte) error {
 		if err != nil {
 			return err
 		}
-		if _, err := io.Copy(f, tr); err != nil {
-			f.Close()
+		_, copyErr := io.Copy(f, tr)
+		if err := errors.Join(copyErr, f.Close()); err != nil {
 			return err
 		}
-		f.Close()
 	}
 	return nil
 }
@@ -368,16 +367,12 @@ func extractZip(dst string, data []byte) error {
 		}
 		rc, err := zf.Open()
 		if err != nil {
-			f.Close()
+			return errors.Join(err, f.Close())
+		}
+		_, copyErr := io.Copy(f, rc)
+		if err := errors.Join(copyErr, rc.Close(), f.Close()); err != nil {
 			return err
 		}
-		if _, err := io.Copy(f, rc); err != nil {
-			rc.Close()
-			f.Close()
-			return err
-		}
-		rc.Close()
-		f.Close()
 	}
 	return nil
 }
