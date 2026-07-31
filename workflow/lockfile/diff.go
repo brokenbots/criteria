@@ -27,6 +27,7 @@ func Diff(old, next *Lockfile) []Change {
 	}
 
 	var changes []Change
+	changes = appendWorkflowRefChanges(changes, old.WorkflowRefs, next.WorkflowRefs)
 
 	// Added.
 	for k, a := range nextMap {
@@ -127,8 +128,53 @@ func appendAdapterChanges(changes []Change, k string, oldA, nextA *LockedAdapter
 	return changes
 }
 
+func appendWorkflowRefChanges(changes []Change, oldRefs, nextRefs []LockedWorkflowRef) []Change {
+	oldMap := workflowRefMap(oldRefs)
+	nextMap := workflowRefMap(nextRefs)
+
+	// Added.
+	for k, w := range nextMap {
+		if _, ok := oldMap[k]; !ok {
+			changes = append(changes, Change{Adapter: "workflow_ref." + k, Kind: WorkflowRefChanged, After: *w})
+		}
+	}
+
+	// Removed.
+	for k, w := range oldMap {
+		if _, ok := nextMap[k]; !ok {
+			changes = append(changes, Change{Adapter: "workflow_ref." + k, Kind: WorkflowRefChanged, Before: *w})
+		}
+	}
+
+	// Changed.
+	for k, oldW := range oldMap {
+		nextW, ok := nextMap[k]
+		if !ok {
+			continue
+		}
+		if oldW.ResolvedRef != nextW.ResolvedRef || oldW.Source != nextW.Source || oldW.Kind != nextW.Kind {
+			changes = append(changes, Change{
+				Adapter: "workflow_ref." + k,
+				Kind:    WorkflowRefChanged,
+				Before:  *oldW,
+				After:   *nextW,
+			})
+		}
+	}
+	return changes
+}
+
 func adapterKey(a *LockedAdapter) string {
 	return a.Type + "." + a.Name
+}
+
+func workflowRefMap(refs []LockedWorkflowRef) map[string]*LockedWorkflowRef {
+	m := make(map[string]*LockedWorkflowRef, len(refs))
+	for i := range refs {
+		w := &refs[i]
+		m[w.Name] = w
+	}
+	return m
 }
 
 func stringSliceEqual(a, b []string) bool {

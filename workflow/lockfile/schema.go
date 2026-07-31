@@ -20,6 +20,7 @@ package lockfile
 
 // Lockfile is the top-level structure of a .criteria.lock.hcl file.
 type Lockfile struct {
-	SchemaVersion int             `hcl:"schema_version"`
-	Adapters      []LockedAdapter `hcl:"adapter,block"`
+	SchemaVersion int                 `hcl:"schema_version"`
+	Adapters      []LockedAdapter     `hcl:"adapter,block"`
+	WorkflowRefs  []LockedWorkflowRef `hcl:"workflow_ref,block"`
 }

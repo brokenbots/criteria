@@ -24,6 +24,8 @@ const ociLayoutVersion = "1.0.0"
 const (
 	AnnotationProtocolVersion = "dev.criteria.adapter.protocol_version"
 	AnnotationSchemaVersion   = "dev.criteria.adapter.schema_version"
+	AnnotationReference       = "dev.criteria.adapter.reference"
+	AnnotationSourceURL       = "dev.criteria.adapter.source_url"
 )
 
 // Layout is a handle to an OCI Image Layout on disk.
@@ -197,6 +199,37 @@ func (l *Layout) ArtifactProtocolVersion(d digest.Digest) uint32 {
 		}
 	}
 	return 0
+}
+
+// Annotate merges extra annotations into the index.json descriptor for the
+// manifest identified by d. It returns ErrNotFound if d is absent from the
+// index. The update is atomic and holds the layout lock.
+func (l *Layout) Annotate(d digest.Digest, extra map[string]string) error {
+	if len(extra) == 0 {
+		return nil
+	}
+	release, err := l.Lock()
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	ix, err := l.Index()
+	if err != nil {
+		return err
+	}
+	for i, m := range ix.Manifests {
+		if m.Digest == d {
+			if ix.Manifests[i].Annotations == nil {
+				ix.Manifests[i].Annotations = make(map[string]string)
+			}
+			for k, v := range extra {
+				ix.Manifests[i].Annotations[k] = v
+			}
+			return l.WriteIndex(ix)
+		}
+	}
+	return fmt.Errorf("oci: annotate: descriptor %s not found in index.json", d)
 }
 
 // — helpers —

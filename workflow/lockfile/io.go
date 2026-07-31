@@ -60,10 +60,27 @@ func Write(path string, lf *Lockfile) error {
 		writeAdapterBlock(body, &sorted[i])
 	}
 
+	wfSorted := make([]LockedWorkflowRef, len(lf.WorkflowRefs))
+	copy(wfSorted, lf.WorkflowRefs)
+	sort.Slice(wfSorted, func(i, j int) bool {
+		return wfSorted[i].Name < wfSorted[j].Name
+	})
+	for i := range wfSorted {
+		writeWorkflowRefBlock(body, &wfSorted[i])
+	}
+
 	if err := os.WriteFile(path, f.Bytes(), 0o644); err != nil {
 		return fmt.Errorf("write lockfile %q: %w", path, err)
 	}
 	return nil
+}
+
+func writeWorkflowRefBlock(body *hclwrite.Body, w *LockedWorkflowRef) {
+	blk := body.AppendNewBlock("workflow_ref", []string{w.Name})
+	wb := blk.Body()
+	wb.SetAttributeValue("source", cty.StringVal(w.Source))
+	wb.SetAttributeValue("resolved_ref", cty.StringVal(w.ResolvedRef))
+	wb.SetAttributeValue("kind", cty.StringVal(w.Kind))
 }
 
 func writeAdapterBlock(body *hclwrite.Body, a *LockedAdapter) { //nolint:funlen // WS07: canonical emitter for all adapter block attributes and nested blocks
