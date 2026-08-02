@@ -1,6 +1,6 @@
 #!/bin/sh
 # POSIX one-line installer for the Criteria CLI.
-# Usage: curl -fsSL https://raw.githubusercontent.com/brokenbots/criteria/main/install.sh | /bin/sh
+# Usage: curl -fsSL https://raw.githubusercontent.com/brokenbots/criteria/main/install.sh | sh
 # Version can be pinned via CRITERIA_VERSION=v0.5.6.
 
 set -e
@@ -111,39 +111,93 @@ else
 fi
 
 # Install the binary and bundled adapters.
-install -d "${HOME}/.criteria/bin" "${HOME}/.criteria/adapters"
-
 stage=$(mktemp -d "${TMPDIR:-/tmp}/criteria-extract.XXXXXX")
 trap 'rm -rf "${tmp}" "${stage}"' EXIT
 
 tar -xzf "${tmp}/${tarball}" -C "$stage"
 
-install -m 755 "${stage}/criteria" "${HOME}/.criteria/bin/criteria"
+# Resolve the binary install directory.
+install_dir=""
+install_with_sudo=0
 
+# Option 1: $HOME/.local/bin if it exists and is already on PATH.
+if [ -d "${HOME}/.local/bin" ]; then
+    case ":${PATH}:" in
+        *:"${HOME}/.local/bin":*)
+            install_dir="${HOME}/.local/bin"
+            ;;
+    esac
+fi
+
+# Option 2: /usr/local/bin if it exists and is writable directly or via passwordless sudo.
+if [ -z "$install_dir" ] && [ -d /usr/local/bin ]; then
+    if [ -w /usr/local/bin ]; then
+        install_dir=/usr/local/bin
+    elif command -v sudo >/dev/null 2>&1 && sudo -n test -w /usr/local/bin >/dev/null 2>&1; then
+        install_dir=/usr/local/bin
+        install_with_sudo=1
+    fi
+fi
+
+# Option 3: fallback to $HOME/.criteria/bin. Only this case may edit a startup file.
+if [ -z "$install_dir" ]; then
+    install_dir="${HOME}/.criteria/bin"
+fi
+
+case "$install_dir" in
+    "${HOME}/.local/bin"|"${HOME}/.criteria/bin")
+        install -d "$install_dir"
+        ;;
+esac
+
+if [ "$install_with_sudo" -eq 1 ]; then
+    sudo install -m 755 "${stage}/criteria" "${install_dir}/criteria"
+else
+    install -m 755 "${stage}/criteria" "${install_dir}/criteria"
+fi
+
+# Adapters always install to ${HOME}/.criteria/adapters.
+install -d "${HOME}/.criteria/adapters"
 for f in "${stage}"/criteria-adapter-*; do
     if [ -f "$f" ]; then
         install -m 755 "$f" "${HOME}/.criteria/adapters/"
     fi
 done
 
-# Update shell startup files so criteria is on PATH.
-path_line='export PATH="$HOME/.criteria/bin:$PATH"'
-startup_files='.bashrc .bash_profile .zshrc .profile'
-found=0
-for name in $startup_files; do
-    file="${HOME}/${name}"
-    if [ -f "$file" ]; then
-        if ! grep -qxF "$path_line" "$file"; then
-            printf '\n%s\n' "$path_line" >> "$file"
-        fi
-        found=1
-    fi
-done
+# Update exactly one shell startup file, only for the fallback directory.
+if [ "$install_dir" = "${HOME}/.criteria/bin" ]; then
+    shell_name=$(basename "${SHELL:-}")
+    case "$shell_name" in
+        bash)
+            if [ -f "${HOME}/.bashrc" ]; then
+                profile_file="${HOME}/.bashrc"
+            elif [ -f "${HOME}/.bash_profile" ]; then
+                profile_file="${HOME}/.bash_profile"
+            else
+                profile_file="${HOME}/.bashrc"
+            fi
+            ;;
+        zsh)
+            profile_file="${HOME}/.zshrc"
+            ;;
+        *)
+            profile_file="${HOME}/.profile"
+            ;;
+    esac
 
-if [ "$found" -eq 0 ]; then
-    printf '%s\n' "$path_line" > "${HOME}/.profile"
+    path_line='export PATH="$HOME/.criteria/bin:$PATH"'
+    if ! grep -qxF "$path_line" "$profile_file" 2>/dev/null; then
+        printf '\n%s\n' "$path_line" >> "$profile_file"
+    fi
 fi
 
-printf '\ncriteria %s installed to %s/.criteria/bin\n' "$tag" "$HOME"
+printf '\ncriteria %s installed to %s\n' "$tag" "$install_dir"
 printf 'Adapters installed to %s/.criteria/adapters\n' "$HOME"
-printf 'Open a new shell or source your profile to use the criteria command.\n'
+
+if [ "$install_dir" = "${HOME}/.criteria/bin" ]; then
+    printf 'Updated %s for future shells.\n' "$profile_file"
+    printf 'Run this command to use criteria in the current shell:\n'
+    printf '  %s\n' "$path_line"
+else
+    printf 'criteria is installed and ready to use.\n'
+fi

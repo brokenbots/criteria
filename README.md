@@ -75,13 +75,13 @@ The authoritative reference is `criteria spec` (and [docs/workflow.md](docs/work
 One-line installer (macOS / Linux):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/brokenbots/criteria/main/install.sh | /bin/sh
+curl -fsSL https://raw.githubusercontent.com/brokenbots/criteria/main/install.sh | sh
 ```
 
 Pin to a specific release:
 
 ```sh
-CRITERIA_VERSION=v0.5.6 curl -fsSL https://raw.githubusercontent.com/brokenbots/criteria/main/install.sh | /bin/sh
+CRITERIA_VERSION=v0.5.6 curl -fsSL https://raw.githubusercontent.com/brokenbots/criteria/main/install.sh | sh
 ```
 
 Install from source with Go 1.26 or later:
