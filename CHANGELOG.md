@@ -11,6 +11,12 @@ term — "adapter" — is used throughout. Existing adapters were migrated in
 parallel; artifacts track the **0.5.0** line (v2 is the *protocol* version, not a
 product version). The release tag and date are finalized by the release gate.
 
+### Install / distribution
+
+- Add one-line POSIX shell installer (`install.sh`) served from the default
+  branch; downloads signed release tarballs and installs `criteria` plus
+  bundled adapters to `~/.criteria`.
+
 ### Adapter system rewrite
 
 - **OCI-based distribution.** Adapters publish as multi-platform OCI artifacts
