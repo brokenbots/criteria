@@ -344,6 +344,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           TAG="${{ github.ref_name }}"
           # Tags with a hyphen (v1.2.3-rc.1) are pre-releases; mark them so they
           # don't show as "Latest" and downstream tooling can distinguish them.
@@ -351,8 +352,18 @@ jobs:
           case "$TAG" in
             *-*) PRERELEASE=(--prerelease) ;;
           esac
-          gh release create "$TAG" \
-            --title "$TAG" \
-            --notes-file release-notes.md \
-            "${PRERELEASE[@]}" \
-            release-assets/*
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; updating title, notes, and assets."
+            gh release edit "$TAG" \
+              --title "$TAG" \
+              --notes-file release-notes.md \
+              "${PRERELEASE[@]}"
+            gh release upload "$TAG" release-assets/* --clobber
+          else
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes-file release-notes.md \
+              "${PRERELEASE[@]}" \
+              release-assets/*
+          fi
