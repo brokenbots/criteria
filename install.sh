@@ -97,7 +97,6 @@ if command -v cosign >/dev/null 2>&1; then
         printf 'Verifying SHA256SUMS signature with cosign...\n'
         cosign verify-blob \
             --bundle "${tmp}/SHA256SUMS.bundle" \
-            --trusted-root \
             --certificate-identity "https://github.com/brokenbots/criteria/.github/workflows/release.yml@refs/tags/${tag}" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             "${tmp}/SHA256SUMS" || {
