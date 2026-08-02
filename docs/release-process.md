@@ -81,6 +81,21 @@ tap). The release-source guard additionally requires a full-release tag to point
 at a commit on `main`. Generate the GitHub Release notes from the `CHANGELOG.md`
 v0.5.0 section.
 
+## One-line installer
+
+The file [`install.sh`](../install.sh) is served from the default branch at
+`https://raw.githubusercontent.com/brokenbots/criteria/main/install.sh`. It goes
+live as soon as a change lands on `main`, so the release artifact contract it
+relies on must be preserved:
+
+- Per-platform tarballs named `criteria-<tag>-<os>-<arch>.tar.gz`.
+- A top-level `SHA256SUMS` file.
+- Cosign signature and certificate files `SHA256SUMS.sig` and `SHA256SUMS.cert`.
+
+Changing the tarball layout, the filenames, or the checksum file format is a
+breaking change for the installer and must be coordinated with an update to
+`install.sh`.
+
 ## Verifying independence
 
 The proto and the standalone adapters live in their own repos. These audits

@@ -1,5 +1,5 @@
 .PHONY: help bootstrap tidy build plugins install proto proto-lint proto-check-drift \
-	test test-cover coverage-check test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint vuln-scan deps-outdated deps-majors validate validate-docs example-plugin bench docker-runtime docker-runtime-smoke ci clean
+	test test-cover coverage-check test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint lint-sh vuln-scan deps-outdated deps-majors validate validate-docs example-plugin bench docker-runtime docker-runtime-smoke ci clean
 
 # Default target: list available targets.
 help:
@@ -157,7 +157,11 @@ lint-no-todos: ## Fail if any TODO/FIXME/XXX marker appears in non-test producti
 	fi
 	@echo "OK: no TODO/FIXME/XXX markers in production code"
 
-lint: lint-imports lint-go lint-baseline-check spec-check lint-no-todos ## Run all linters
+lint-sh: ## Check POSIX shell syntax of install.sh
+	@sh -n install.sh
+	@echo "install.sh: POSIX syntax OK"
+
+lint: lint-imports lint-go lint-baseline-check spec-check lint-no-todos lint-sh ## Run all linters
 
 # Pinned osv-scanner version — keep in sync with the osv-scan CI job. Run via
 # `go run pkg@version` so it does not touch any module's go.mod/go.sum (the build

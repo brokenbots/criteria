@@ -72,7 +72,19 @@ The authoritative reference is `criteria spec` (and [docs/workflow.md](docs/work
 
 ## Install
 
-Requires Go 1.26 or later.
+One-line installer (macOS / Linux):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/brokenbots/criteria/main/install.sh | /bin/sh
+```
+
+Pin to a specific release:
+
+```sh
+CRITERIA_VERSION=v0.5.6 curl -fsSL https://raw.githubusercontent.com/brokenbots/criteria/main/install.sh | /bin/sh
+```
+
+Install from source with Go 1.26 or later:
 
 ```bash
 go install github.com/brokenbots/criteria/cmd/criteria@latest
