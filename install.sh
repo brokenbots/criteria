@@ -92,14 +92,19 @@ if [ "$expected" != "$actual" ]; then
     exit 1
 fi
 
-# Optionally verify the checksum file with cosign.
+# When cosign is not installed, this installer proceeds with transport-integrity only. This is a deliberate product choice: the one-line installer must work on stock machines; install cosign to also verify signature authenticity.
 if command -v cosign >/dev/null 2>&1; then
     if [ -f "${tmp}/SHA256SUMS.sig" ] && [ -f "${tmp}/SHA256SUMS.cert" ]; then
         printf 'Verifying SHA256SUMS signature with cosign...\n'
         cosign verify-blob \
             --signature "${tmp}/SHA256SUMS.sig" \
             --certificate "${tmp}/SHA256SUMS.cert" \
-            "${tmp}/SHA256SUMS"
+            --certificate-identity "https://github.com/brokenbots/criteria/.github/workflows/release.yml@refs/tags/${tag}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${tmp}/SHA256SUMS" || {
+                printf 'ERROR: SHA256SUMS signature verification failed for %s\n' "$tag" >&2
+                exit 1
+            }
     else
         printf 'WARNING: cosign is available but signature/certificate files were not downloaded; skipping signature verification\n' >&2
     fi
