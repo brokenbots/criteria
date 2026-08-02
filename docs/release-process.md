@@ -99,13 +99,38 @@ The job:
 5. Writes `Formula/criteria.rb` using only hashes from the signed manifest.
 6. Commits and pushes the formula to the tap repository.
 
-### Required secret
+### Required GitHub App
 
-The job needs a fine-grained personal access token with **only** `contents: write`
-permission on `brokenbots/homebrew-criteria`. Store this token as the repository
-secret `HOMEBREW_TAP_TOKEN` in `brokenbots/criteria`. Do not use a classic
-`repo`-scoped PAT, and do not widen any existing credential to reach the tap
-repo.
+The job authenticates to the tap with a short-lived installation token minted at
+run time by
+[`actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1`](https://github.com/actions/create-github-app-token).
+No personal access token is used.
+
+Store the App credentials in `brokenbots/criteria`:
+
+- Repository variable `HOMEBREW_TAP_APP_CLIENT_ID` — the App's Client ID.
+- Repository secret `HOMEBREW_TAP_APP_PRIVATE_KEY` — the App's private key PEM.
+
+The App needs **only** `contents: write` on `brokenbots/homebrew-criteria`.
+
+#### Manual setup steps
+
+1. In the `brokenbots` organization, create a GitHub App named
+   `brokenbots-criteria-tap-writer`.
+2. Under **Permissions > Repository permissions**, set **Contents** to
+   **Read and write**. Leave all other permissions at **No access**.
+3. Install the App on **only** `brokenbots/homebrew-criteria`.
+4. Copy the App's **Client ID** and save it as the repository variable
+   `HOMEBREW_TAP_APP_CLIENT_ID` in `brokenbots/criteria`.
+5. Generate a private key for the App, download the `.pem` file, and save its
+   contents as the repository secret `HOMEBREW_TAP_APP_PRIVATE_KEY` in
+   `brokenbots/criteria`.
+
+Until the App is created and both credentials are stored, the
+`update-homebrew-tap` job will fail on the next full release. This visible
+failure is intentional — it signals that the App setup is incomplete, and it
+prevents the release from silently falling back to a less secure authentication
+path.
 
 ### Full-release-only behavior
 
