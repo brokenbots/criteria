@@ -193,6 +193,12 @@ type Spec struct {
 	// Populated by Parse/ParseFile; used by the compiler to extract expression
 	// source text (e.g. for SwitchEvaluated.Condition).
 	SourceBytes []byte
+	// SourceFileOffsets maps each contributing filename to the byte offset of that
+	// file's content within SourceBytes. Populated by ParseDir for multi-file
+	// directory modules; nil for single-file parses. Expression byte ranges are
+	// relative to their originating file, so extraction from the merged
+	// SourceBytes buffer must add the corresponding offset.
+	SourceFileOffsets map[string]int
 }
 
 // VariableSpec is the parsed (but unvalidated) variable declaration.
