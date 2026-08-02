@@ -139,13 +139,13 @@ if [ -z "$install_dir" ] && [ -d /usr/local/bin ]; then
     fi
 fi
 
-# Option 3: fallback to $HOME/.criteria/bin. Only this case may edit a startup file.
+# Option 3: fallback to $HOME/.local/criteria/bin. Only this case may edit a startup file.
 if [ -z "$install_dir" ]; then
-    install_dir="${HOME}/.criteria/bin"
+    install_dir="${HOME}/.local/criteria/bin"
 fi
 
 case "$install_dir" in
-    "${HOME}/.local/bin"|"${HOME}/.criteria/bin")
+    "${HOME}/.local/bin"|"${HOME}/.local/criteria/bin")
         install -d "$install_dir"
         ;;
 esac
@@ -156,16 +156,16 @@ else
     install -m 755 "${stage}/criteria" "${install_dir}/criteria"
 fi
 
-# Adapters always install to ${HOME}/.criteria/adapters.
-install -d "${HOME}/.criteria/adapters"
+# Adapters always install to ${HOME}/.local/criteria/adapters.
+install -d "${HOME}/.local/criteria/adapters"
 for f in "${stage}"/criteria-adapter-*; do
     if [ -f "$f" ]; then
-        install -m 755 "$f" "${HOME}/.criteria/adapters/"
+        install -m 755 "$f" "${HOME}/.local/criteria/adapters/"
     fi
 done
 
 # Update exactly one shell startup file, only for the fallback directory.
-if [ "$install_dir" = "${HOME}/.criteria/bin" ]; then
+if [ "$install_dir" = "${HOME}/.local/criteria/bin" ]; then
     shell_name=$(basename "${SHELL:-}")
     case "$shell_name" in
         bash)
@@ -185,16 +185,16 @@ if [ "$install_dir" = "${HOME}/.criteria/bin" ]; then
             ;;
     esac
 
-    path_line='export PATH="$HOME/.criteria/bin:$PATH"'
+    path_line='export PATH="$HOME/.local/criteria/bin:$PATH"'
     if ! grep -qxF "$path_line" "$profile_file" 2>/dev/null; then
         printf '\n%s\n' "$path_line" >> "$profile_file"
     fi
 fi
 
 printf '\ncriteria %s installed to %s\n' "$tag" "$install_dir"
-printf 'Adapters installed to %s/.criteria/adapters\n' "$HOME"
+printf 'Adapters installed to %s/.local/criteria/adapters\n' "$HOME"
 
-if [ "$install_dir" = "${HOME}/.criteria/bin" ]; then
+if [ "$install_dir" = "${HOME}/.local/criteria/bin" ]; then
     printf 'Updated %s for future shells.\n' "$profile_file"
     printf 'Run this command to use criteria in the current shell:\n'
     printf '  %s\n' "$path_line"

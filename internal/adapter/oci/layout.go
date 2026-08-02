@@ -1,7 +1,6 @@
 // Package oci implements an OCI Image Layout-compliant local cache for
-// adapter artifacts. The cache lives at ~/.criteria/cache/oci/ (or
-// $CRITERIA_STATE_DIR/cache/oci/) and can be inspected by any OCI-aware
-// tool such as oras.
+// adapter artifacts. The cache lives under the criteria root at
+// cache/oci/ and can be inspected by any OCI-aware tool such as oras.
 package oci
 
 import (
@@ -15,6 +14,8 @@ import (
 
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+
+	"github.com/brokenbots/criteria/internal/dirs"
 )
 
 // ociLayoutVersion is the value written into the oci-layout marker file.
@@ -37,18 +38,10 @@ type Layout struct {
 	mu sync.Mutex
 }
 
-// DefaultCacheRoot returns the default OCI cache root, honouring
-// CRITERIA_STATE_DIR (falls back to ~/.criteria/cache/oci).
+// DefaultCacheRoot returns the default OCI cache root, deriving it from
+// the criteria home directory.
 func DefaultCacheRoot() (string, error) {
-	base := os.Getenv("CRITERIA_STATE_DIR")
-	if base == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("oci: resolve home dir: %w", err)
-		}
-		base = filepath.Join(home, ".criteria")
-	}
-	return filepath.Join(base, "cache", "oci"), nil
+	return dirs.CacheOCI()
 }
 
 // Open opens the OCI Image Layout at root, creating it if it does not exist.

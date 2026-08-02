@@ -136,6 +136,46 @@ func TestLocalState_NoStateDir_IsNoOp(t *testing.T) {
 	}
 }
 
+// TestLocalState_LegacyCriteriaHomeSurvives verifies that an existing
+// ~/.criteria directory from a prior install is used in place, so run history
+// remains visible after the upgrade to CRITERIA_HOME.
+func TestLocalState_LegacyCriteriaHomeSurvives(t *testing.T) {
+	homeDir := t.TempDir()
+	legacyRoot := filepath.Join(homeDir, ".criteria")
+	runsDir := filepath.Join(legacyRoot, "runs")
+	if err := os.MkdirAll(runsDir, 0o755); err != nil {
+		t.Fatalf("mkdir legacy runs: %v", err)
+	}
+
+	t.Setenv("HOME", homeDir)
+	t.Setenv("CRITERIA_HOME", "")
+	t.Setenv("CRITERIA_STATE_DIR", "")
+
+	cp := &StepCheckpoint{
+		RunID:       "legacy-run",
+		CurrentStep: "legacy-step",
+	}
+	if err := WriteStepCheckpoint(cp); err != nil {
+		t.Fatalf("WriteStepCheckpoint: %v", err)
+	}
+
+	// Verify the checkpoint was written under the legacy root, not a new one.
+	if _, err := os.Stat(filepath.Join(legacyRoot, "runs", "legacy-run.json")); err != nil {
+		t.Fatalf("legacy checkpoint file not found: %v", err)
+	}
+
+	checkpoints, err := ListStepCheckpoints()
+	if err != nil {
+		t.Fatalf("ListStepCheckpoints: %v", err)
+	}
+	if len(checkpoints) != 1 {
+		t.Fatalf("expected 1 checkpoint, got %d", len(checkpoints))
+	}
+	if checkpoints[0].RunID != "legacy-run" {
+		t.Fatalf("run_id=%q want legacy-run", checkpoints[0].RunID)
+	}
+}
+
 func TestLocalState_WriteAndReadRunState(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", dir)

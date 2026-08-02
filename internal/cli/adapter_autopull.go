@@ -334,9 +334,10 @@ func hasOCIReferences(spec *workflow.Spec) bool {
 
 // extractOCIAdapterBinary reads the platform-specific binary from the OCI
 // artifact and copies it into a digest-addressed directory under the adapter
-// install root (~/.criteria/adapters/<digest>/) so that multiple versions of
-// the same adapter type can coexist and adapterhost.DiscoverBinaryAt can
-// resolve the exact pinned binary.
+// install root ($CRITERIA_HOME/adapters/<digest>/, default
+// ~/.local/criteria/adapters/<digest>/) so that multiple versions of the same
+// adapter type can coexist and adapterhost.DiscoverBinaryAt can resolve the
+// exact pinned binary.
 //
 // adapterType is the workflow's `adapter "<type>" "<name>"` label. It names the
 // binary at the *destination* (that is the identity adapterhost routes on), but

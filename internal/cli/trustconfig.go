@@ -13,9 +13,9 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter/signing"
 )
 
-// trustConfig is the schema of a trust HCL file (~/.criteria/trust.hcl or a
-// trust.hcl alongside a workflow). It declares the public keys accepted for
-// key-mode adapter verification (WS47).
+// trustConfig is the schema of a trust HCL file ($CRITERIA_HOME/trust.hcl or
+// a trust.hcl alongside a workflow; default ~/.local/criteria/trust.hcl). It
+// declares the public keys accepted for key-mode adapter verification (WS47).
 type trustConfig struct {
 	Keys []trustedKeyBlock `hcl:"trusted_key,block"`
 }
@@ -30,7 +30,8 @@ type trustedKeyBlock struct {
 }
 
 // loadTrustedKeys resolves the union of trusted public keys from, in order:
-//   - the global trust config (~/.criteria/trust.hcl, honoring CRITERIA_STATE_DIR)
+//   - the global trust config (under CRITERIA_HOME, or the deprecated
+//     CRITERIA_STATE_DIR alias)
 //   - a trust.hcl in workflowDir (when non-empty)
 //   - extraKeyPaths (ad-hoc --trusted-key PEM files)
 //

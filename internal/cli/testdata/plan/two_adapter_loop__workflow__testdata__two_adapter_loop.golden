@@ -25,4 +25,4 @@ states:
   done    terminal=true   success=true
 
 adapters required:
-  copilot   (search: $CRITERIA_ADAPTERS, ~/.criteria/adapters)
+  copilot   (search: $CRITERIA_ADAPTERS, then $CRITERIA_HOME/adapters, default ~/.local/criteria/adapters)

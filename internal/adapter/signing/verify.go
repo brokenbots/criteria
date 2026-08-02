@@ -15,10 +15,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/brokenbots/criteria/internal/adapter/oci"
+	"github.com/brokenbots/criteria/internal/dirs"
 
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -493,7 +493,7 @@ var trustedMaterialOverride root.TrustedMaterial
 // bundles.
 //
 // TUF root policy (decision D-WS48-TUF): the root is fetched via TUF and cached
-// on disk at ~/.criteria/cache/sigstore/ (honoring CRITERIA_STATE_DIR); once
+// under the criteria home at cache/sigstore/; once
 // cached, verification reuses it for reproducibility. Refresh happens by
 // clearing that cache directory (an explicit `criteria adapter trust refresh`
 // command is future work). Air-gapped consumers cannot keyless-verify (the TUF
@@ -523,15 +523,7 @@ func trustedMaterial(_ context.Context) (root.TrustedMaterial, error) {
 }
 
 func sigstoreCacheDir() (string, error) {
-	base := os.Getenv("CRITERIA_STATE_DIR")
-	if base == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("home dir: %w", err)
-		}
-		base = filepath.Join(home, ".criteria")
-	}
-	return filepath.Join(base, "cache", "sigstore"), nil
+	return dirs.CacheSigstore()
 }
 
 // DefaultTrustedIssuers are the OIDC issuers trusted by default for keyless
