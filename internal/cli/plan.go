@@ -158,7 +158,7 @@ func renderPlanOutput(ctx context.Context, workflowPath string, overrides map[st
 		b.WriteString("  (none)\n")
 	} else {
 		for _, p := range adapts {
-			b.WriteString(fmt.Sprintf("  %s   (search: $CRITERIA_ADAPTERS, ~/.criteria/adapters)\n", p))
+			b.WriteString(fmt.Sprintf("  %s   (search: $CRITERIA_ADAPTERS, then $CRITERIA_HOME/adapters, default ~/.local/criteria/adapters)\n", p))
 		}
 	}
 

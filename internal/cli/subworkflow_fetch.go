@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/brokenbots/criteria/internal/dirs"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
@@ -35,17 +36,12 @@ var newWorkflowFetcherFunc = newWorkflowFetcher
 
 // newWorkflowFetcher creates a fetcher backed by the shared criteria cache.
 func newWorkflowFetcher() workflowFetcher {
-	base := os.Getenv("CRITERIA_STATE_DIR")
-	if base == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			base = os.TempDir()
-		} else {
-			base = filepath.Join(home, ".criteria")
-		}
+	cacheRoot, err := dirs.CacheWorkflows()
+	if err != nil {
+		cacheRoot = filepath.Join(os.TempDir(), "cache", "workflows")
 	}
 	return &defaultWorkflowFetcher{
-		cacheRoot: filepath.Join(base, "cache", "workflows"),
+		cacheRoot: cacheRoot,
 		http:      http.DefaultClient,
 	}
 }

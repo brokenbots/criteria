@@ -527,8 +527,11 @@ By default, `approval` and `wait { signal }` nodes require an orchestrator (`--s
 
 ### File paths
 
-- **Request file** (operator writes): `$CRITERIA_STATE_DIR/runs/<run_id>/approval-<node>.json`
-- **Decision record** (written after consumption): `$CRITERIA_STATE_DIR/runs/<run_id>/approvals/<node>.json`
+- **Request file** (operator writes): `$CRITERIA_HOME/runs/<run_id>/approval-<node>.json`
+- **Decision record** (written after consumption): `$CRITERIA_HOME/runs/<run_id>/approvals/<node>.json`
+
+`$CRITERIA_HOME` defaults to `~/.local/criteria`. `$CRITERIA_STATE_DIR` is a
+deprecated alias that is still honored when set and `CRITERIA_HOME` is not.
 
 ### Reattach safety
 
@@ -560,7 +563,7 @@ CRITERIA_LOCAL_APPROVAL=env CRITERIA_APPROVAL_SHIP_TO_PROD=approved criteria app
 
 # Operator writes decision out-of-band (file mode)
 CRITERIA_LOCAL_APPROVAL=file criteria apply workflow.hcl &
-echo '{"decision":"approved"}' > ~/.criteria/runs/<run_id>/approval-ship_to_prod.json
+echo '{"decision":"approved"}' > ~/.local/criteria/runs/<run_id>/approval-ship_to_prod.json
 ```
 
 ---
@@ -1415,7 +1418,7 @@ See [`proto/criteria/v1/`](../proto/criteria/v1/) for proto definitions and even
 
 - Duration-based waits work.
 - Signal-based waits and approval nodes require `CRITERIA_LOCAL_APPROVAL` (see **Local-mode approval and signal wait**) or `--server`.
-- Local runs write step checkpoints and persisted approval/signal decisions under `$CRITERIA_STATE_DIR` (default `~/.criteria`) so a restarted run can reuse captured decisions without re-prompting. For full crash recovery and distributed persistence, use `--server`.
+- Local runs write step checkpoints and persisted approval/signal decisions under `$CRITERIA_HOME` (default `~/.local/criteria`; `$CRITERIA_STATE_DIR` is a deprecated alias when `CRITERIA_HOME` is not set) so a restarted run can reuse captured decisions without re-prompting. For full crash recovery and distributed persistence, use `--server`.
 
 For examples demonstrating each command, see:
 - Linear shell pipeline: [examples/build_and_test/build_and_test.hcl](../examples/build_and_test/build_and_test.hcl)

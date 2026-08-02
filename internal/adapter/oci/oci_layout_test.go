@@ -308,13 +308,15 @@ func TestDefaultCacheRoot_HonoursEnv(t *testing.T) {
 }
 
 func TestDefaultCacheRoot_FallsBackToHome(t *testing.T) {
+	t.Setenv("CRITERIA_HOME", "")
 	t.Setenv("CRITERIA_STATE_DIR", "")
+	t.Setenv("HOME", t.TempDir())
 
 	root, err := oci.DefaultCacheRoot()
 	require.NoError(t, err)
-	// Should end with /.criteria/cache/oci
-	assert.True(t, strings.HasSuffix(root, filepath.Join(".criteria", "cache", "oci")),
-		"expected root ending in .criteria/cache/oci, got %q", root)
+	// Should end with /.local/criteria/cache/oci
+	assert.True(t, strings.HasSuffix(root, filepath.Join(".local", "criteria", "cache", "oci")),
+		"expected root ending in .local/criteria/cache/oci, got %q", root)
 }
 
 // fuzzBlob is a helper that writes n random bytes and returns digest.

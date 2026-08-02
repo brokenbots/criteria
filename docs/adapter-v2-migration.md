@@ -10,7 +10,7 @@ For the full reference, see [adapters.md](adapters.md).
 
 | Area | v0.3 | v2 |
 |---|---|---|
-| Distribution | Build from source, copy the binary into `~/.criteria/adapters/` | Signed **OCI artifacts** pulled from any registry |
+| Distribution | Build from source, copy the binary into `~/.local/criteria/adapters/` | Signed **OCI artifacts** pulled from any registry |
 | Reference | Discovery by binary name (`criteria-adapter-<name>`) | `source` + `version` on the `adapter` block, resolved at lock time |
 | Reproducibility | None | Per-workflow `.criteria.lock.hcl` pinning digests + signer |
 | Protocol | v1 (5 RPCs) | v2 (output schema, log stream, permission stream, pause/resume/snapshot/restore/inspect) |
