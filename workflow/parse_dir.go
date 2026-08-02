@@ -13,6 +13,7 @@ import (
 // fileEntry pairs a parsed Spec with the source block ranges from that file,
 // used to produce file:line diagnostic locations for merge conflicts.
 type fileEntry struct {
+	path   string
 	spec   *Spec
 	ranges map[string]hcl.Range
 }
@@ -120,6 +121,7 @@ func ParseDir(dir string) (*Spec, hcl.Diagnostics) { //nolint:funlen // file dis
 		allDiags = append(allDiags, parseDiags...)
 		if spec != nil {
 			entries = append(entries, fileEntry{
+				path:   path,
 				spec:   spec,
 				ranges: collectFileBlockRanges(src, path),
 			})
@@ -198,6 +200,12 @@ func mergeSpecs(dir string, entries []fileEntry) (*Spec, hcl.Diagnostics) { //no
 	// Track source bytes for concatenation.
 	var srcParts [][]byte
 
+	// Track the byte offset of each file's content within the merged SourceBytes.
+	// Expression ranges decoded from a given file are relative to that file's bytes,
+	// so source extraction from the merged buffer must add the corresponding offset.
+	merged.SourceFileOffsets = make(map[string]int)
+	nextOffset := 0
+
 	// Track first-seen ranges for singleton blocks.
 	var headerRange, permissionsRange *hcl.Range
 
@@ -268,7 +276,9 @@ func mergeSpecs(dir string, entries []fileEntry) (*Spec, hcl.Diagnostics) { //no
 		}
 
 		if len(s.SourceBytes) > 0 {
+			merged.SourceFileOffsets[entry.path] = nextOffset
 			srcParts = append(srcParts, s.SourceBytes)
+			nextOffset += len(s.SourceBytes) + 1 // +1 for the newline separator appended by joinBytes
 		}
 	}
 

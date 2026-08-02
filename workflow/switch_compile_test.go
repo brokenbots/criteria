@@ -2,6 +2,8 @@ package workflow_test
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -681,5 +683,123 @@ state "done" { terminal = true }
 	}
 	if sw.DefaultNext != "done" {
 		t.Errorf("DefaultNext = %q, want \"done\"", sw.DefaultNext)
+	}
+}
+
+// writeHCLFileForTest writes content to dir/name.hcl and fails the test on error.
+func writeHCLFileForTest(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name+".hcl"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s.hcl: %v", name, err)
+	}
+}
+
+// TestSwitchCompile_MatchSrc_MultiFile verifies that SwitchCondition.MatchSrc is
+// extracted from the correct file in a multi-file workflow directory. This is a
+// regression test for a bug where per-file byte ranges were used against the
+// merged SourceBytes buffer, producing unrelated source fragments.
+func TestSwitchCompile_MatchSrc_MultiFile(t *testing.T) {
+	dir := t.TempDir()
+	// Place the switch in a file that sorts after the header file so that it is
+	// not the first file parsed; the bug only reproduced for non-first files.
+	writeHCLFileForTest(t, dir, "01_workflow", `
+workflow {
+  name = "multi"
+  version       = "0.1"
+  initial_state = "route"
+  target_state  = "done"
+}
+
+variable "pick" {
+  type    = string
+  default = "a"
+}
+
+adapter "noop" "default" {}
+
+state "done" { terminal = true }
+`)
+	writeHCLFileForTest(t, dir, "99_routing", `
+switch "route" {
+  match {
+    condition = var.pick == "a"
+    next      = state.done
+  }
+  match {
+    condition = var.pick == "b"
+    next      = state.done
+  }
+  default {
+    next = state.done
+  }
+}
+`)
+
+	spec, diags := workflow.ParseDir(dir)
+	if diags.HasErrors() {
+		t.Fatalf("ParseDir: %s", diags.Error())
+	}
+	g, diags := workflow.Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("Compile: %s", diags.Error())
+	}
+
+	sw, ok := g.Switches["route"]
+	if !ok {
+		t.Fatal("switch 'route' missing from compiled graph")
+	}
+	if len(sw.Conditions) != 2 {
+		t.Fatalf("expected 2 conditions, got %d", len(sw.Conditions))
+	}
+	want := []string{`var.pick == "a"`, `var.pick == "b"`}
+	for i, cond := range sw.Conditions {
+		if cond.MatchSrc != want[i] {
+			t.Errorf("Conditions[%d].MatchSrc = %q, want %q", i, cond.MatchSrc, want[i])
+		}
+	}
+}
+
+// TestSwitchCompile_MatchSrc_SingleFile verifies that SwitchCondition.MatchSrc
+// continues to extract the correct source text from a single-file workflow.
+func TestSwitchCompile_MatchSrc_SingleFile(t *testing.T) {
+	src := `
+workflow {
+  name = "w"
+  version       = "0.1"
+  initial_state = "route"
+  target_state  = "done"
+}
+
+variable "pick" {
+  type    = string
+  default = "a"
+}
+
+switch "route" {
+  match {
+    condition = var.pick == "a"
+    next      = state.done
+  }
+  match {
+    condition = var.pick == "b"
+    next      = state.done
+  }
+  default {
+    next = state.done
+  }
+}
+
+state "done" { terminal = true }
+`
+	g := mustParseAndCompile(t, src)
+	sw, ok := g.Switches["route"]
+	if !ok {
+		t.Fatal("switch 'route' missing from compiled graph")
+	}
+	want := []string{`var.pick == "a"`, `var.pick == "b"`}
+	for i, cond := range sw.Conditions {
+		if cond.MatchSrc != want[i] {
+			t.Errorf("Conditions[%d].MatchSrc = %q, want %q", i, cond.MatchSrc, want[i])
+		}
 	}
 }

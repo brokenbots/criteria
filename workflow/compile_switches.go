@@ -36,7 +36,7 @@ func compileSwitches(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, op
 		}
 
 		for i, cs := range ss.Matches {
-			cond, condDiags := compileSwitchMatchBlock(cs, i, name, spec.SourceBytes, g, schemas, opts)
+			cond, condDiags := compileSwitchMatchBlock(cs, i, name, spec.SourceBytes, spec.SourceFileOffsets, g, schemas, opts)
 			diags = append(diags, condDiags...)
 			if cond != nil {
 				node.Conditions = append(node.Conditions, *cond)
@@ -107,7 +107,7 @@ func compileSwitchDefaultBlock(def *SwitchDefaultSpec, switchName string, g *FSM
 
 // compileSwitchMatchBlock compiles a single match block within a switch.
 // Returns a SwitchCondition (or nil on critical error) and diagnostics.
-func compileSwitchMatchBlock(cs MatchSpec, idx int, switchName string, sourceBytes []byte, g *FSMGraph, schemas map[string]AdapterInfo, opts CompileOpts) (*SwitchCondition, hcl.Diagnostics) {
+func compileSwitchMatchBlock(cs MatchSpec, idx int, switchName string, sourceBytes []byte, sourceFileOffsets map[string]int, g *FSMGraph, schemas map[string]AdapterInfo, opts CompileOpts) (*SwitchCondition, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
 	location := fmt.Sprintf("match[%d]", idx)
 
@@ -144,7 +144,7 @@ func compileSwitchMatchBlock(cs MatchSpec, idx int, switchName string, sourceByt
 
 	cond := &SwitchCondition{
 		Match:    conditionExpr,
-		MatchSrc: extractExprSource(conditionExpr, sourceBytes),
+		MatchSrc: extractExprSource(conditionExpr, sourceBytes, sourceFileOffsets),
 		Next:     condNext,
 	}
 
@@ -388,15 +388,30 @@ func validateSwitchStepFieldRef(seg hcl.Traverser, stepName string, g *FSMGraph,
 }
 
 // extractExprSource extracts the source text of an expression from raw source bytes.
-func extractExprSource(expr hcl.Expression, sourceBytes []byte) string {
+// sourceFileOffsets maps each contributing filename to the offset of that file's
+// content within sourceBytes; it is used to translate per-file byte ranges into
+// merged-buffer positions for multi-file workflow directories.
+func extractExprSource(expr hcl.Expression, sourceBytes []byte, sourceFileOffsets map[string]int) string {
 	if sourceBytes == nil {
 		return ""
 	}
 	type noder interface{ Range() hcl.Range }
 	if nr, ok := expr.(noder); ok {
 		r := nr.Range()
-		if r.Start.Byte < r.End.Byte && r.End.Byte <= len(sourceBytes) {
-			return string(sourceBytes[r.Start.Byte:r.End.Byte])
+		offset := 0
+		if sourceFileOffsets != nil {
+			off, ok := sourceFileOffsets[r.Filename]
+			if !ok {
+				// Multi-file offsets are known but this expression's file is not;
+				// the source text cannot be recovered accurately, so omit it.
+				return ""
+			}
+			offset = off
+		}
+		start := r.Start.Byte + offset
+		end := r.End.Byte + offset
+		if start < end && end <= len(sourceBytes) {
+			return string(sourceBytes[start:end])
 		}
 	}
 	return ""

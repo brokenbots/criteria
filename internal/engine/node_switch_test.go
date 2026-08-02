@@ -2,7 +2,8 @@ package engine_test
 
 import (
 	"context"
-	"strings"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -142,11 +143,9 @@ state "done"           { terminal = true }
 	if ev.target != "staging_deploy" {
 		t.Errorf("event.target = %q, want \"staging_deploy\"", ev.target)
 	}
-	if ev.condition == "" {
-		t.Error("event.condition should be non-empty for a matched condition")
-	}
-	if !strings.Contains(ev.condition, "staging") {
-		t.Errorf("event.condition = %q, expected it to contain \"staging\"", ev.condition)
+	want := `var.env == "staging"`
+	if ev.condition != want {
+		t.Errorf("event.condition = %q, want %q", ev.condition, want)
 	}
 	if sink.terminal != "staging_deploy" {
 		t.Errorf("terminal = %q, want \"staging_deploy\"", sink.terminal)
@@ -534,5 +533,146 @@ state "done" { terminal = true }
 	}
 	if ev.matchedArm != "match[0]" {
 		t.Errorf("branch event matchedArm = %q, want \"match[0]\"", ev.matchedArm)
+	}
+}
+
+// writeHCLFile writes content to dir/name.hcl and fails the test on error.
+func writeHCLFile(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name+".hcl"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s.hcl: %v", name, err)
+	}
+}
+
+// TestSwitch_MultiFile_BranchEvaluatedCondition is an end-to-end regression test
+// verifying that BranchEvaluated events for a switch declared in a non-first file
+// report the actual condition source text, not an unrelated fragment of the merged
+// SourceBytes buffer.
+func TestSwitch_MultiFile_BranchEvaluatedCondition(t *testing.T) {
+	dir := t.TempDir()
+	// Keep the switch in a file that sorts after the header so it is parsed from a
+	// non-first file; the bug only reproduced in that arrangement.
+	writeHCLFile(t, dir, "01_workflow", `
+workflow {
+  name = "multi"
+  version       = "0.1"
+  initial_state = "route"
+  target_state  = "done"
+}
+
+variable "pick" {
+  type    = string
+  default = "b"
+}
+
+state "done" { terminal = true }
+`)
+	writeHCLFile(t, dir, "99_routing", `
+switch "route" {
+  match {
+    condition = var.pick == "a"
+    next      = state.done
+  }
+  match {
+    condition = var.pick == "b"
+    next      = state.done
+  }
+  default {
+    next = state.done
+  }
+}
+`)
+
+	spec, diags := workflow.ParseDir(dir)
+	if diags.HasErrors() {
+		t.Fatalf("ParseDir: %s", diags.Error())
+	}
+	g, diags := workflow.Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("Compile: %s", diags.Error())
+	}
+	vars := workflow.SeedVarsFromGraph(g)
+
+	sink := &switchSink{}
+	eng := engine.New(g, adapterhost.NewLoader(), sink, engine.WithResumedVars(vars))
+	if err := eng.Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if len(sink.branchEvents) != 1 {
+		t.Fatalf("expected 1 branch event, got %d", len(sink.branchEvents))
+	}
+	ev := sink.branchEvents[0]
+	if ev.node != "route" {
+		t.Errorf("event.node = %q, want \"route\"", ev.node)
+	}
+	if ev.matchedArm != "match[1]" {
+		t.Errorf("event.matchedArm = %q, want \"match[1]\"", ev.matchedArm)
+	}
+	if ev.target != "done" {
+		t.Errorf("event.target = %q, want \"done\"", ev.target)
+	}
+	want := `var.pick == "b"`
+	if ev.condition != want {
+		t.Errorf("event.condition = %q, want %q", ev.condition, want)
+	}
+}
+
+// TestSwitch_MultiFile_DefaultOmitsCondition verifies that default arms in a
+// multi-file workflow continue to omit the condition field.
+func TestSwitch_MultiFile_DefaultOmitsCondition(t *testing.T) {
+	dir := t.TempDir()
+	writeHCLFile(t, dir, "01_workflow", `
+workflow {
+  name = "multi"
+  version       = "0.1"
+  initial_state = "route"
+  target_state  = "done"
+}
+
+variable "pick" {
+  type    = string
+  default = "c"
+}
+
+state "done" { terminal = true }
+`)
+	writeHCLFile(t, dir, "99_routing", `
+switch "route" {
+  match {
+    condition = var.pick == "a"
+    next      = state.done
+  }
+  default {
+    next = state.done
+  }
+}
+`)
+
+	spec, diags := workflow.ParseDir(dir)
+	if diags.HasErrors() {
+		t.Fatalf("ParseDir: %s", diags.Error())
+	}
+	g, diags := workflow.Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("Compile: %s", diags.Error())
+	}
+	vars := workflow.SeedVarsFromGraph(g)
+
+	sink := &switchSink{}
+	eng := engine.New(g, adapterhost.NewLoader(), sink, engine.WithResumedVars(vars))
+	if err := eng.Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if len(sink.branchEvents) != 1 {
+		t.Fatalf("expected 1 branch event, got %d", len(sink.branchEvents))
+	}
+	ev := sink.branchEvents[0]
+	if ev.matchedArm != "default" {
+		t.Errorf("event.matchedArm = %q, want \"default\"", ev.matchedArm)
+	}
+	if ev.condition != "" {
+		t.Errorf("event.condition = %q, want empty string for default arm", ev.condition)
 	}
 }
