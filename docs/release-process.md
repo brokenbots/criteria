@@ -76,10 +76,48 @@ git push origin v0.5.0
 ```
 
 The signed tag triggers `release.yml`, which runs the four gates and — only if
-they all pass — builds, signs, and publishes the release (binaries, Homebrew
-tap). The release-source guard additionally requires a full-release tag to point
-at a commit on `main`. Generate the GitHub Release notes from the `CHANGELOG.md`
+they all pass — builds, signs, and publishes the release binaries. Full releases
+additionally update the `brokenbots/homebrew-criteria` tap (see below). The
+release-source guard additionally requires a full-release tag to point at a
+commit on `main`. Generate the GitHub Release notes from the `CHANGELOG.md`
 v0.5.0 section.
+
+## Homebrew tap update
+
+Full releases (`vX.Y.Z`, tags without `-rcN` or `-betaN`) automatically update
+the `brokenbots/homebrew-criteria` tap. This is performed by the
+`update-homebrew-tap` job in `.github/workflows/release.yml`, which runs after
+the GitHub Release is published.
+
+The job:
+
+1. Installs cosign.
+2. Checks out `brokenbots/homebrew-criteria` using a repository-scoped token.
+3. Runs `.github/scripts/update-homebrew-tap.py` with the release tag.
+4. Verifies the release's `SHA256SUMS` with the `SHA256SUMS.bundle` signature
+   against the GitHub Actions identity before reading any checksums.
+5. Writes `Formula/criteria.rb` using only hashes from the signed manifest.
+6. Commits and pushes the formula to the tap repository.
+
+### Required secret
+
+The job needs a fine-grained personal access token with **only** `contents: write`
+permission on `brokenbots/homebrew-criteria`. Store this token as the repository
+secret `HOMEBREW_TAP_TOKEN` in `brokenbots/criteria`. Do not use a classic
+`repo`-scoped PAT, and do not widen any existing credential to reach the tap
+repo.
+
+### Full-release-only behavior
+
+`update-homebrew-tap` is skipped for pre-release tags (`-rcN`, `-betaN`). The tap
+should only advertise stable releases, so the job's `if:` condition excludes any
+tag containing a hyphen.
+
+### Failure handling
+
+The job is **not** marked `continue-on-error`. If the cosign verification fails,
+a required platform tarball hash is missing, or the push to the tap repository
+fails, the entire release workflow is red.
 
 ## One-line installer
 
