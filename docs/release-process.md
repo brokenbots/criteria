@@ -90,11 +90,21 @@ relies on must be preserved:
 
 - Per-platform tarballs named `criteria-<tag>-<os>-<arch>.tar.gz`.
 - A top-level `SHA256SUMS` file.
-- Cosign signature and certificate files `SHA256SUMS.sig` and `SHA256SUMS.cert`.
+- A Sigstore bundle file `SHA256SUMS.bundle`, produced by keyless signing via
+  GitHub OIDC in `release.yml`.
 
 Changing the tarball layout, the filenames, or the checksum file format is a
 breaking change for the installer and must be coordinated with an update to
 `install.sh`.
+
+### Signing behavior
+
+From the first release that includes this change, `release.yml` signs
+`SHA256SUMS` with `cosign sign-blob --bundle SHA256SUMS.bundle`. The key-based
+fallback and detached `SHA256SUMS.sig` / `SHA256SUMS.cert` files are removed. If
+keyless signing fails, the `checksum-and-sign` job fails immediately and no
+release assets are published. Releases before this change provided `.sig` / `.cert`
+and no bundle; those releases are not installable with the current `install.sh`.
 
 ## Verifying independence
 

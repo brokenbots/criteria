@@ -68,8 +68,7 @@ trap 'rm -rf "${tmp}"' EXIT
 printf 'Downloading %s...\n' "$tarball"
 curl -fsSL -o "${tmp}/${tarball}" "${base_url}/${tarball}"
 curl -fsSL -o "${tmp}/SHA256SUMS" "${base_url}/SHA256SUMS"
-curl -fsSL -o "${tmp}/SHA256SUMS.sig" "${base_url}/SHA256SUMS.sig" || true
-curl -fsSL -o "${tmp}/SHA256SUMS.cert" "${base_url}/SHA256SUMS.cert" || true
+curl -fsSL -o "${tmp}/SHA256SUMS.bundle" "${base_url}/SHA256SUMS.bundle" || true
 
 # Verify the tarball hash.
 expected=$(awk -v file="$tarball" '$2 == file { print $1; exit }' "${tmp}/SHA256SUMS")
@@ -94,11 +93,11 @@ fi
 
 # When cosign is not installed, this installer proceeds with transport-integrity only. This is a deliberate product choice: the one-line installer must work on stock machines; install cosign to also verify signature authenticity.
 if command -v cosign >/dev/null 2>&1; then
-    if [ -f "${tmp}/SHA256SUMS.sig" ] && [ -f "${tmp}/SHA256SUMS.cert" ]; then
+    if [ -f "${tmp}/SHA256SUMS.bundle" ]; then
         printf 'Verifying SHA256SUMS signature with cosign...\n'
         cosign verify-blob \
-            --signature "${tmp}/SHA256SUMS.sig" \
-            --certificate "${tmp}/SHA256SUMS.cert" \
+            --bundle "${tmp}/SHA256SUMS.bundle" \
+            --trusted-root \
             --certificate-identity "https://github.com/brokenbots/criteria/.github/workflows/release.yml@refs/tags/${tag}" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             "${tmp}/SHA256SUMS" || {
@@ -106,7 +105,7 @@ if command -v cosign >/dev/null 2>&1; then
                 exit 1
             }
     else
-        printf 'WARNING: cosign is available but signature/certificate files were not downloaded; skipping signature verification\n' >&2
+        printf 'WARNING: cosign is available but SHA256SUMS.bundle was not downloaded; skipping signature verification\n' >&2
     fi
 else
     printf 'WARNING: cosign not found in PATH. Transport integrity was verified, but signature authenticity was not checked.\n' >&2
