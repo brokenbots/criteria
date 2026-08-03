@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -169,5 +170,81 @@ func TestBuildSignatureManifest_HasEmptyConfigAndSchemaVersion(t *testing.T) {
 	}
 	if m.Subject == nil || m.Subject.Digest != artifactDesc.Digest {
 		t.Errorf("subject must reference the artifact digest")
+	}
+	if m.ArtifactType != cosignSignatureArtifactType {
+		t.Errorf("artifactType = %q, want %q", m.ArtifactType, cosignSignatureArtifactType)
+	}
+}
+
+// TestLegacyCosignSignatureTag matches the cosign "sha256-<algorithm>-<hex>.sig"
+// convention. This is the tag default cosign verification resolves when the
+// registry does not support the OCI 1.1 referrers API.
+func TestLegacyCosignSignatureTag(t *testing.T) {
+	dg := digest.FromString("some-artifact")
+	got := legacyCosignSignatureTag(dg)
+	want := strings.Replace(dg.String(), ":", "-", 1) + ".sig"
+	if got != want {
+		t.Errorf("legacyCosignSignatureTag = %q, want %q", got, want)
+	}
+	if !strings.HasPrefix(got, "sha256-") || !strings.HasSuffix(got, ".sig") {
+		t.Errorf("legacy tag %q does not look like a cosign signature tag", got)
+	}
+}
+
+// recordingTagPusher is a content.Pusher that also records tags pushed to it.
+type recordingTagPusher struct {
+	pushed map[digest.Digest][]byte
+	tagged map[string]digest.Digest
+}
+
+func newRecordingTagPusher() *recordingTagPusher {
+	return &recordingTagPusher{pushed: map[digest.Digest][]byte{}, tagged: map[string]digest.Digest{}}
+}
+
+//nolint:gocritic // desc is passed by value to satisfy the content.Pusher interface signature.
+func (p *recordingTagPusher) Push(ctx context.Context, desc ocispec.Descriptor, r io.Reader) error {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	p.pushed[desc.Digest] = data
+	return nil
+}
+
+//nolint:gocritic // desc is passed by value to satisfy the tagPusher interface signature.
+func (p *recordingTagPusher) Tag(_ context.Context, desc ocispec.Descriptor, reference string) error {
+	p.tagged[reference] = desc.Digest
+	return nil
+}
+
+// TestSignArtifact_PublishesLegacySigTag verifies signArtifact tags the
+// signature manifest with the cosign legacy .sig tag when the store supports
+// tagging.
+func TestSignArtifact_PublishesLegacySigTag(t *testing.T) {
+	artifact := ocispec.Manifest{
+		MediaType: ocispec.MediaTypeImageManifest,
+		Config:    ocispec.Descriptor{MediaType: mediaTypeAdapterConfig, Digest: digest.FromString("{}"), Size: 2},
+	}
+	artifactData, _ := json.Marshal(artifact)
+	artifactDesc := ocispec.Descriptor{MediaType: ocispec.MediaTypeImageManifest, Digest: digest.FromBytes(artifactData), Size: int64(len(artifactData))}
+
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ref := oci.Reference{Registry: "localhost:5001", Repo: "test/artifact", Tag: "v1"}
+	p := newRecordingTagPusher()
+
+	sigDesc, err := signArtifact(context.Background(), p, ref, &artifactDesc, KeySigner{Priv: priv})
+	if err != nil {
+		t.Fatalf("signArtifact: %v", err)
+	}
+
+	wantTag := legacyCosignSignatureTag(artifactDesc.Digest)
+	if taggedDigest, ok := p.tagged[wantTag]; !ok {
+		t.Errorf("signature manifest was not tagged with %q", wantTag)
+	} else if taggedDigest != sigDesc.Digest {
+		t.Errorf("tagged digest for %q = %q, want %q", wantTag, taggedDigest, sigDesc.Digest)
 	}
 }
