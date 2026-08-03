@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -32,6 +33,13 @@ const DefaultFulcioURL = "https://fulcio.sigstore.dev"
 // carry the base64-encoded signature. It is the key the verifier reads
 // (see internal/adapter/signing.recordFromManifest).
 const cosignSignatureAnnotation = "dev.cosignproject.cosign/signature"
+
+// cosignSignatureArtifactType is the OCI manifest ArtifactType cosign filters on
+// when discovering signatures via OCI 1.1 referrers. It matches the value
+// github.com/sigstore/cosign/v3/pkg/oci/remote tests expect for a signature
+// referrer (wantArtifactType in write_test.go). Cosign does not export the
+// constant, so we keep a local mirror with its source noted.
+const cosignSignatureArtifactType = "application/vnd.dev.cosign.artifact.sig.v1+json"
 
 // SignResult is the output of a Signer: the raw signature over the
 // simple-signing payload plus, for keyless mode, the Fulcio leaf certificate and
@@ -254,7 +262,8 @@ func buildSignatureManifest(artifactDesc *ocispec.Descriptor, payload []byte, re
 	}
 
 	sigManifest := ocispec.Manifest{
-		MediaType: ocispec.MediaTypeImageManifest,
+		MediaType:    ocispec.MediaTypeImageManifest,
+		ArtifactType: cosignSignatureArtifactType,
 		// An OCI image manifest requires a valid config descriptor. Without one
 		// the zero value marshals as {"mediaType":"","digest":"","size":0},
 		// which strict registries (notably GHCR) reject with a 500 on push. Use
@@ -276,11 +285,22 @@ func buildSignatureManifest(artifactDesc *ocispec.Descriptor, payload []byte, re
 	return manifestJSON, payload
 }
 
+// tagPusher is a store that can both push manifests and tag them by reference.
+// remote.Repository and oras memory/oci stores implement this.
+type tagPusher interface {
+	content.Pusher
+	Tag(ctx context.Context, desc ocispec.Descriptor, reference string) error
+}
+
 // signArtifact signs artifactDesc with signer and pushes the cosign signature
 // manifest (a referrer) plus its payload blob into pusher. For a remote
 // repository the registry records the referrer against the artifact; for an
 // in-memory/on-disk store the manifest is staged for later copy. Returns the
 // signature manifest descriptor.
+//
+// To stay discoverable by default (non-experimental) cosign, the signature
+// manifest is also tagged as sha256-<algorithm>-<hex>.sig, the legacy tag
+// cosign's non-OCI-1.1 path resolves.
 func signArtifact(ctx context.Context, pusher content.Pusher, ref oci.Reference, artifactDesc *ocispec.Descriptor, signer Signer) (ocispec.Descriptor, error) {
 	payload := simpleSigningPayload(ref, artifactDesc.Digest)
 	res, err := signer.Sign(payload)
@@ -315,5 +335,24 @@ func signArtifact(ctx context.Context, pusher content.Pusher, ref oci.Reference,
 	if err := pusher.Push(ctx, sigDesc, bytes.NewReader(manifestJSON)); err != nil {
 		return ocispec.Descriptor{}, fmt.Errorf("publish: push signature manifest: %w", err)
 	}
+
+	// Also publish the legacy cosign signature tag so default (non-OCI-1.1)
+	// cosign verification can find the signature. The tag is content-addressed
+	// from the artifact digest and does not conflict with the OCI 1.1 referrers
+	// fallback index tag (sha256-<algorithm>-<hex>).
+	if tp, ok := pusher.(tagPusher); ok {
+		sigTag := legacyCosignSignatureTag(artifactDesc.Digest)
+		if err := tp.Tag(ctx, sigDesc, sigTag); err != nil {
+			return ocispec.Descriptor{}, fmt.Errorf("publish: tag signature manifest %q: %w", sigTag, err)
+		}
+	}
+
 	return sigDesc, nil
+}
+
+// legacyCosignSignatureTag returns the cosign legacy signature tag for a digest:
+// "sha256-<algorithm>-<hex>.sig". This matches cosign's SignatureTag naming
+// (github.com/sigstore/cosign/v3/pkg/oci/remote.normalize).
+func legacyCosignSignatureTag(d digest.Digest) string {
+	return strings.Replace(d.String(), ":", "-", 1) + ".sig"
 }
