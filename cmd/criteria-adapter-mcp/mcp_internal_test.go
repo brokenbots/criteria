@@ -122,6 +122,12 @@ func TestMCPBridge_Info(t *testing.T) {
 	if resp.GetVersion() != adapterVersion {
 		t.Fatalf("version=%q want %q", resp.GetVersion(), adapterVersion)
 	}
+	if resp.GetSourceUrl() == "" {
+		t.Fatal("source_url is empty")
+	}
+	if len(resp.GetPlatforms()) == 0 {
+		t.Fatal("platforms is empty")
+	}
 
 	// ConfigSchema must have "command" as required field.
 	cfg := resp.GetConfigSchema()

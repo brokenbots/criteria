@@ -87,6 +87,8 @@ func (b *MCPBridge) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse
 	return &v2.InfoResponse{
 		Name:         adapterName,
 		Version:      adapterVersion,
+		SourceUrl:    "https://github.com/brokenbots/criteria/tree/main/cmd/criteria-adapter-mcp",
+		Platforms:    []string{"linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64"},
 		Capabilities: []string{"single_shot", "permission_gating"},
 		ConfigSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
 			"command": {Required: true, Type: "string", Description: "MCP server binary to launch."},
