@@ -99,6 +99,15 @@ The job:
 5. Writes `Formula/criteria.rb` using only hashes from the signed manifest.
 6. Commits and pushes the formula to the tap repository.
 
+The criteria repository's own CI (the `homebrew-tap-script` job in
+`.github/workflows/ci.yml`) verifies the update script and generated formula: it
+runs cosign verification against the signed release manifest, renders the
+formula for a tagged release, asserts the expected tarball hashes are present,
+and checks Ruby syntax with `ruby -c`. The authoritative audit, install, and
+test signal lives in the tap repository (`brokenbots/homebrew-criteria`), where
+a `macos-latest` job runs `brew audit --online`, `brew install`, and
+`brew test` against the real tap layout.
+
 ### Required GitHub App
 
 The job authenticates to the tap with a short-lived installation token minted at

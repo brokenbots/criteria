@@ -139,8 +139,6 @@ jobs:
         run: python3 -m py_compile .github/scripts/update-homebrew-tap.py
 
       - name: Test update script against v0.5.7
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: "1"
         run: |
           set -euo pipefail
           tmp_tap="$(mktemp -d)"
@@ -155,16 +153,6 @@ jobs:
           grep -q "sha256 \"$expected_linux_arm64\"" "$tmp_tap/Formula/criteria.rb"
 
           ruby -c "$tmp_tap/Formula/criteria.rb"
-
-          # Homebrew audit requires a real git tap clone, not a bare path.
-          git -C "$tmp_tap" init -q
-          git -C "$tmp_tap" add Formula/criteria.rb
-          git -C "$tmp_tap" -c user.name=ci -c user.email=ci@localhost commit -q -m "criteria v0.5.7"
-          brew tap brokenbots/criteria "file://$tmp_tap"
-          brew audit --new --online brokenbots/criteria/criteria
-          brew untap brokenbots/criteria
-
-          rm -rf "$tmp_tap"
 
   proto-drift:
     name: Proto drift check
