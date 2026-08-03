@@ -26,7 +26,7 @@ import (
 
 const (
 	adapterName    = "mcp"
-	adapterVersion = "0.1.0"
+	adapterVersion = "0.1.1"
 
 	closeGrace  = 5 * time.Second
 	initTimeout = 5 * time.Second
