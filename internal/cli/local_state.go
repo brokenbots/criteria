@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/brokenbots/criteria/internal/dirs"
 )
 
 type localRunState struct {
@@ -41,18 +43,11 @@ type StepCheckpoint struct {
 }
 
 // stateDir returns the base directory for Criteria state files.
-// It respects the CRITERIA_STATE_DIR environment variable; defaults to
-// ~/.criteria. If the directory cannot be resolved or created, writes are
-// soft-degraded (callers log the error and continue).
+// It resolves the criteria root once via internal/dirs so that all
+// state-file paths derive from CRITERIA_HOME (or the deprecated
+// CRITERIA_STATE_DIR alias).
 func stateDir() (string, error) {
-	if d := os.Getenv("CRITERIA_STATE_DIR"); d != "" {
-		return d, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".criteria"), nil
+	return dirs.Home()
 }
 
 func stateFilePath() (string, error) {

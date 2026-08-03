@@ -2,14 +2,13 @@ package cli
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/opencontainers/go-digest"
 	"github.com/spf13/cobra"
 
 	"github.com/brokenbots/criteria/internal/adapter/manifest"
 	"github.com/brokenbots/criteria/internal/adapter/oci"
+	"github.com/brokenbots/criteria/internal/dirs"
 )
 
 // NewAdapterCmd returns the `criteria adapter` parent command.
@@ -32,45 +31,19 @@ func NewAdapterCmd() *cobra.Command {
 	return cmd
 }
 
-// defaultCacheRoot returns the default OCI cache root, honouring
-// CRITERIA_STATE_DIR.
+// defaultCacheRoot returns the default OCI cache root.
 func defaultCacheRoot() (string, error) {
-	base := os.Getenv("CRITERIA_STATE_DIR")
-	if base == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("resolve home dir: %w", err)
-		}
-		base = filepath.Join(home, ".criteria")
-	}
-	return filepath.Join(base, "cache", "oci"), nil
+	return dirs.CacheOCI()
 }
 
 // defaultGlobalConfigPath returns the default global config file path.
 func defaultGlobalConfigPath() (string, error) {
-	base := os.Getenv("CRITERIA_STATE_DIR")
-	if base == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("resolve home dir: %w", err)
-		}
-		base = filepath.Join(home, ".criteria")
-	}
-	return filepath.Join(base, "config.hcl"), nil
+	return dirs.ConfigPath()
 }
 
-// defaultTrustConfigPath returns the default global trust-config file path
-// (~/.criteria/trust.hcl), honoring CRITERIA_STATE_DIR.
+// defaultTrustConfigPath returns the default global trust-config file path.
 func defaultTrustConfigPath() (string, error) {
-	base := os.Getenv("CRITERIA_STATE_DIR")
-	if base == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("resolve home dir: %w", err)
-		}
-		base = filepath.Join(home, ".criteria")
-	}
-	return filepath.Join(base, "trust.hcl"), nil
+	return dirs.TrustConfigPath()
 }
 
 // resolveRefOrName attempts to turn a user-supplied string into a digest.

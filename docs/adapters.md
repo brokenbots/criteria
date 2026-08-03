@@ -311,12 +311,13 @@ pin on every run. A changed signer surfaces as a `SignerChanged` lockfile diff.
   its own repo's CI verifies with no per-consumer configuration**.
 - **Explicit key (enterprise, offline).** `--sign-key <pem>` signs with an
   Ed25519 key; the lockfile records the key fingerprint. Consumers declare which
-  public keys they trust in a **trust config** — a global `~/.criteria/trust.hcl`
-  and/or a `trust.hcl` beside the workflow (their union is used), or ad-hoc
-  `--trusted-key <pem>` on `pull`/`lock`:
+  public keys they trust in a **trust config** — a global file under
+  `$CRITERIA_HOME/trust.hcl` (default `~/.local/criteria/trust.hcl`;
+  `CRITERIA_STATE_DIR` is a deprecated alias) and/or a `trust.hcl` beside the
+  workflow (their union is used), or ad-hoc `--trusted-key <pem>` on `pull`/`lock`:
 
   ```hcl
-  # ~/.criteria/trust.hcl
+  # ~/.local/criteria/trust.hcl
   trusted_key {
     key = <<-EOT
     -----BEGIN PUBLIC KEY-----
@@ -339,9 +340,10 @@ pin on every run. A changed signer surfaces as a `SignerChanged` lockfile diff.
   artifacts don't break `lock`/`apply`; it returns to `strict` once keyless
   verification is confirmed in CI.
 - **TUF / air-gapped.** Keyless verification needs the Sigstore TUF root (fetched
-  via TUF and cached at `~/.criteria/cache/sigstore/`; clear that directory to
-  refresh) and a Rekor entry created while online at signing time. Fully
-  air-gapped consumers use explicit-key mode or `--allow-unsigned`.
+  via TUF and cached at `$CRITERIA_HOME/cache/sigstore/`, default
+  `~/.local/criteria/cache/sigstore/`; clear that directory to refresh) and a
+  Rekor entry created while online at signing time. Fully air-gapped consumers
+  use explicit-key mode or `--allow-unsigned`.
 
 ## Secrets
 
@@ -542,7 +544,8 @@ heartbeats, and it must remain open for the entire lifetime of the session:
 - **Permission stream.** Tool-permission requests flow over a bidirectional
   stream handled inside the session, evaluated against the `allow_tools` policy
   (extended by environment policy fields), with one audit entry per decision at
-  `~/.criteria/runs/<run-id>/audit.log`.
+`$CRITERIA_HOME/runs/<run-id>/audit.log` (default
+`~/.local/criteria/runs/<run-id>/audit.log`).
 
 ## Troubleshooting
 

@@ -7,8 +7,8 @@
 //   - env         — reads CRITERIA_APPROVAL_<NODE> / CRITERIA_SIGNAL_<NODE>.
 //   - auto-approve — auto-approves with a warning log; for unattended pipelines.
 //
-// Decisions are persisted under the resolved state dir ($CRITERIA_STATE_DIR,
-// or ~/.criteria by default) at runs/<runID>/approvals/<node>.json
+// Decisions are persisted under the resolved criteria home ($CRITERIA_HOME,
+// or the deprecated $CRITERIA_STATE_DIR alias) at runs/<runID>/approvals/<node>.json
 // for reattach safety. On reattach, the persisted decision is reused without
 // re-prompting the operator.
 package localresume
@@ -25,6 +25,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/brokenbots/criteria/internal/dirs"
 )
 
 // Mode is the local approval resolution mode selected by CRITERIA_LOCAL_APPROVAL.
@@ -91,7 +93,8 @@ type Options struct {
 	// derivation. buildLocalResumer injects ApprovalRequestPath from local_state.go.
 	RequestPathFn func(runID, nodeName string) (string, error)
 	// StateDir overrides the state directory used when DecisionPathFn/RequestPathFn
-	// are not provided (unit tests only). Defaults to CRITERIA_STATE_DIR or ~/.criteria.
+	// are not provided (unit tests only). Defaults to CRITERIA_HOME (or the
+	// deprecated CRITERIA_STATE_DIR alias).
 	StateDir string
 }
 
@@ -541,12 +544,5 @@ func (r *resumer) stateDir() (string, error) {
 	if r.opts.StateDir != "" {
 		return r.opts.StateDir, nil
 	}
-	if d := os.Getenv("CRITERIA_STATE_DIR"); d != "" {
-		return d, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".criteria"), nil
+	return dirs.Home()
 }

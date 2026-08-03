@@ -31,28 +31,28 @@ plugins: ## Build adapter plugin binaries (output: bin/criteria-adapter-*)
 	@# examples and the CLI smoke test stay self-contained (no external OCI pull).
 	go build -o bin/criteria-adapter-noop ./internal/adapter/conformance/testdata/noop
 
-install: build plugins ## Install criteria to ~/.criteria (binary → ~/.criteria/bin, plugins → ~/.criteria/adapters)
-	@install -d "$$HOME/.criteria/bin" "$$HOME/.criteria/adapters"
-	@install -m 755 bin/criteria "$$HOME/.criteria/bin/criteria"
+install: build plugins ## Install criteria to ~/.local/criteria (binary → ~/.local/criteria/bin, plugins → ~/.local/criteria/adapters)
+	@install -d "$$HOME/.local/criteria/bin" "$$HOME/.local/criteria/adapters"
+	@install -m 755 bin/criteria "$$HOME/.local/criteria/bin/criteria"
 	@for f in bin/criteria-adapter-*; do \
-		[ -f "$$f" ] && install -m 755 "$$f" "$$HOME/.criteria/adapters/"; \
+		[ -f "$$f" ] && install -m 755 "$$f" "$$HOME/.local/criteria/adapters/"; \
 	done
 	@echo ""
-	@echo "criteria installed to $$HOME/.criteria"
+	@echo "criteria installed to $$HOME/.local/criteria"
 	@echo ""
 	@echo "Add the following to your shell config to use it:"
 	@echo ""
 	@echo "  bash  (~/.bashrc or ~/.bash_profile):"
-	@echo '    export PATH="$$HOME/.criteria/bin:$$PATH"'
-	@echo '    export CRITERIA_ADAPTERS="$$HOME/.criteria/adapters"'
+	@echo '    export PATH="$$HOME/.local/criteria/bin:$$PATH"'
+	@echo '    export CRITERIA_ADAPTERS="$$HOME/.local/criteria/adapters"'
 	@echo ""
 	@echo "  zsh   (~/.zshrc):"
-	@echo '    export PATH="$$HOME/.criteria/bin:$$PATH"'
-	@echo '    export CRITERIA_ADAPTERS="$$HOME/.criteria/adapters"'
+	@echo '    export PATH="$$HOME/.local/criteria/bin:$$PATH"'
+	@echo '    export CRITERIA_ADAPTERS="$$HOME/.local/criteria/adapters"'
 	@echo ""
 	@echo "  fish  (~/.config/fish/config.fish):"
-	@echo '    fish_add_path $$HOME/.criteria/bin'
-	@echo '    set -gx CRITERIA_ADAPTERS $$HOME/.criteria/adapters'
+	@echo '    fish_add_path $$HOME/.local/criteria/bin'
+	@echo '    set -gx CRITERIA_ADAPTERS $$HOME/.local/criteria/adapters'
 	@echo ""
 
 docker-runtime: ## Build the runtime Docker image (criteria/runtime:dev)

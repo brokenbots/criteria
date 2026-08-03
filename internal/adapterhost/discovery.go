@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/opencontainers/go-digest"
+
+	"github.com/brokenbots/criteria/internal/dirs"
 )
 
 const (
@@ -35,33 +37,34 @@ func (e *ErrAdapterNotFound) Error() string {
 }
 
 // adaptersRoots returns the directories that hold installed adapter binaries,
-// in search order: $CRITERIA_ADAPTERS (if set) then ~/.criteria/adapters.
+// in search order: $CRITERIA_ADAPTERS (if set) then $CRITERIA_HOME/adapters.
 func adaptersRoots() []string {
 	return AdaptersRoots()
 }
 
 // AdaptersRoots returns the directories that hold installed adapter binaries,
-// in search order: $CRITERIA_ADAPTERS (if set) then ~/.criteria/adapters.
+// in search order: $CRITERIA_ADAPTERS (if set) then $CRITERIA_HOME/adapters.
 // It is exported so diagnostics can report the paths that were consulted.
 func AdaptersRoots() []string {
 	roots := make([]string, 0, 2)
 	if envDir := strings.TrimSpace(os.Getenv(adaptersEnvVar)); envDir != "" {
 		roots = append(roots, envDir)
 	}
-	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
-		roots = append(roots, filepath.Join(home, ".criteria", "adapters"))
+	defaultDir, err := dirs.DefaultAdaptersDir()
+	if err == nil && defaultDir != "" {
+		// Avoid listing the same directory twice if CRITERIA_ADAPTERS happens
+		// to match the default.
+		if len(roots) == 0 || roots[0] != defaultDir {
+			roots = append(roots, defaultDir)
+		}
 	}
 	return roots
 }
 
 // InstallRoot returns the primary directory adapter binaries are written to:
-// $CRITERIA_ADAPTERS if set, otherwise ~/.criteria/adapters.
+// $CRITERIA_ADAPTERS if set, otherwise $CRITERIA_HOME/adapters.
 func InstallRoot() (string, error) {
-	roots := adaptersRoots()
-	if len(roots) == 0 {
-		return "", errors.New("no adapter install root: HOME unset and CRITERIA_ADAPTERS unset")
-	}
-	return roots[0], nil
+	return dirs.AdaptersDir()
 }
 
 // EncodeDigest renders a digest as a filesystem-safe directory segment, e.g.
@@ -97,7 +100,7 @@ func DiscoverBinary(name string) (string, error) {
 	if name == "" {
 		return "", errors.New("adapter name is required")
 	}
-	if !isValidAdapterName(name) {
+	if !IsValidAdapterName(name) {
 		return "", fmt.Errorf("%w %q", ErrInvalidAdapterName, name)
 	}
 	binary := adapterBinaryPrefix + name
@@ -106,7 +109,7 @@ func DiscoverBinary(name string) (string, error) {
 	for _, root := range roots {
 		candidate := filepath.Join(root, binary)
 		searched = append(searched, candidate)
-		if isRunnableFile(candidate) {
+		if IsRunnableFile(candidate) {
 			return candidate, nil
 		}
 	}
@@ -122,7 +125,7 @@ func DiscoverBinaryAt(adapterType, digestEncoded string) (string, error) {
 	if adapterType == "" {
 		return "", errors.New("adapter type is required")
 	}
-	if !isValidAdapterName(adapterType) {
+	if !IsValidAdapterName(adapterType) {
 		return "", fmt.Errorf("%w %q", ErrInvalidAdapterName, adapterType)
 	}
 	binary := adapterBinaryPrefix + adapterType
@@ -131,14 +134,15 @@ func DiscoverBinaryAt(adapterType, digestEncoded string) (string, error) {
 	for _, root := range roots {
 		candidate := filepath.Join(root, digestEncoded, binary)
 		searched = append(searched, candidate)
-		if isRunnableFile(candidate) {
+		if IsRunnableFile(candidate) {
 			return candidate, nil
 		}
 	}
 	return "", &ErrAdapterNotFound{Name: adapterType, Searched: searched}
 }
 
-func isRunnableFile(path string) bool {
+// IsRunnableFile reports whether path is an executable regular file.
+func IsRunnableFile(path string) bool {
 	info, err := os.Stat(path)
 	if err != nil {
 		return false
@@ -152,7 +156,8 @@ func isRunnableFile(path string) bool {
 	return true
 }
 
-func isValidAdapterName(name string) bool {
+// IsValidAdapterName reports whether name is a valid flat adapter name.
+func IsValidAdapterName(name string) bool {
 	if name == "" {
 		return false
 	}

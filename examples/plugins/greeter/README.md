@@ -19,9 +19,9 @@ The greeter accepts one input key (`name`) and returns:
 go build -o bin/criteria-adapter-greeter .
 
 # Install into your personal plugin directory:
-mkdir -p ~/.criteria/adapters
-cp bin/criteria-adapter-greeter ~/.criteria/adapters/
-chmod +x ~/.criteria/adapters/criteria-adapter-greeter
+mkdir -p ~/.local/criteria/adapters
+cp bin/criteria-adapter-greeter ~/.local/criteria/adapters/
+chmod +x ~/.local/criteria/adapters/criteria-adapter-greeter
 ```
 
 Or use a temporary directory to avoid touching your home directory:
