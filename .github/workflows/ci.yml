@@ -126,6 +126,34 @@ jobs:
       - name: install-script-syntax
         run: make lint-sh
 
+  homebrew-tap-script:
+    name: Homebrew tap update script
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Syntax check update script
+        run: python3 -m py_compile .github/scripts/update-homebrew-tap.py
+
+      - name: Test update script against v0.5.7
+        run: |
+          set -euo pipefail
+          tmp_tap="$(mktemp -d)"
+          python3 .github/scripts/update-homebrew-tap.py v0.5.7 "$tmp_tap"
+
+          expected_darwin_arm64="bf091e09473dbc8d087406744e92284c7a2a31f8a9a2f54b4810942cd3dca208"
+          expected_linux_amd64="cee7e824612f098b59d342cf0549656810282d6f80bb583b5d1ac743d5d718fb"
+          expected_linux_arm64="3471e14311a7396217f40b572533d64d2d5f1ad2fc1dd939ff6a07c2e93e7601"
+
+          grep -q "sha256 \"$expected_darwin_arm64\"" "$tmp_tap/Formula/criteria.rb"
+          grep -q "sha256 \"$expected_linux_amd64\"" "$tmp_tap/Formula/criteria.rb"
+          grep -q "sha256 \"$expected_linux_arm64\"" "$tmp_tap/Formula/criteria.rb"
+
+          ruby -c "$tmp_tap/Formula/criteria.rb"
+
   proto-drift:
     name: Proto drift check
     runs-on: ubuntu-latest

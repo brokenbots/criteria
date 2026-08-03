@@ -76,10 +76,82 @@ git push origin v0.5.0
 ```
 
 The signed tag triggers `release.yml`, which runs the four gates and — only if
-they all pass — builds, signs, and publishes the release (binaries, Homebrew
-tap). The release-source guard additionally requires a full-release tag to point
-at a commit on `main`. Generate the GitHub Release notes from the `CHANGELOG.md`
+they all pass — builds, signs, and publishes the release binaries. Full releases
+additionally update the `brokenbots/homebrew-criteria` tap (see below). The
+release-source guard additionally requires a full-release tag to point at a
+commit on `main`. Generate the GitHub Release notes from the `CHANGELOG.md`
 v0.5.0 section.
+
+## Homebrew tap update
+
+Full releases (`vX.Y.Z`, tags without `-rcN` or `-betaN`) automatically update
+the `brokenbots/homebrew-criteria` tap. This is performed by the
+`update-homebrew-tap` job in `.github/workflows/release.yml`, which runs after
+the GitHub Release is published.
+
+The job:
+
+1. Installs cosign.
+2. Checks out `brokenbots/homebrew-criteria` using a repository-scoped token.
+3. Runs `.github/scripts/update-homebrew-tap.py` with the release tag.
+4. Verifies the release's `SHA256SUMS` with the `SHA256SUMS.bundle` signature
+   against the GitHub Actions identity before reading any checksums.
+5. Writes `Formula/criteria.rb` using only hashes from the signed manifest.
+6. Commits and pushes the formula to the tap repository.
+
+The criteria repository's own CI (the `homebrew-tap-script` job in
+`.github/workflows/ci.yml`) verifies the update script and generated formula: it
+runs cosign verification against the signed release manifest, renders the
+formula for a tagged release, asserts the expected tarball hashes are present,
+and checks Ruby syntax with `ruby -c`. The authoritative audit, install, and
+test signal lives in the tap repository (`brokenbots/homebrew-criteria`), where
+a `macos-latest` job runs `brew audit --online`, `brew install`, and
+`brew test` against the real tap layout.
+
+### Required GitHub App
+
+The job authenticates to the tap with a short-lived installation token minted at
+run time by
+[`actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1`](https://github.com/actions/create-github-app-token).
+No personal access token is used.
+
+Store the App credentials in `brokenbots/criteria`:
+
+- Repository variable `HOMEBREW_TAP_APP_CLIENT_ID` — the App's Client ID.
+- Repository secret `HOMEBREW_TAP_APP_PRIVATE_KEY` — the App's private key PEM.
+
+The App needs **only** `contents: write` on `brokenbots/homebrew-criteria`.
+
+#### Manual setup steps
+
+1. In the `brokenbots` organization, create a GitHub App named
+   `brokenbots-criteria-tap-writer`.
+2. Under **Permissions > Repository permissions**, set **Contents** to
+   **Read and write**. Leave all other permissions at **No access**.
+3. Install the App on **only** `brokenbots/homebrew-criteria`.
+4. Copy the App's **Client ID** and save it as the repository variable
+   `HOMEBREW_TAP_APP_CLIENT_ID` in `brokenbots/criteria`.
+5. Generate a private key for the App, download the `.pem` file, and save its
+   contents as the repository secret `HOMEBREW_TAP_APP_PRIVATE_KEY` in
+   `brokenbots/criteria`.
+
+Until the App is created and both credentials are stored, the
+`update-homebrew-tap` job will fail on the next full release. This visible
+failure is intentional — it signals that the App setup is incomplete, and it
+prevents the release from silently falling back to a less secure authentication
+path.
+
+### Full-release-only behavior
+
+`update-homebrew-tap` is skipped for pre-release tags (`-rcN`, `-betaN`). The tap
+should only advertise stable releases, so the job's `if:` condition excludes any
+tag containing a hyphen.
+
+### Failure handling
+
+The job is **not** marked `continue-on-error`. If the cosign verification fails,
+a required platform tarball hash is missing, or the push to the tap repository
+fails, the entire release workflow is red.
 
 ## One-line installer
 
