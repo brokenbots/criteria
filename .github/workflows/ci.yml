@@ -15,7 +15,7 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v7
         with:
@@ -52,7 +52,7 @@ jobs:
     name: Unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v7
         with:
@@ -87,7 +87,7 @@ jobs:
       # in-process builtin), so e2e steps must find the built adapter plugins.
       CRITERIA_ADAPTERS: ${{ github.workspace }}/bin
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v7
         with:
@@ -121,7 +121,7 @@ jobs:
     name: Install script syntax
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7
 
       - name: install-script-syntax
         run: make lint-sh
@@ -130,7 +130,7 @@ jobs:
     name: Homebrew tap update script
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
@@ -158,7 +158,7 @@ jobs:
     name: Proto drift check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7
 
       - uses: bufbuild/buf-setup-action@v1
         with:
@@ -188,7 +188,7 @@ jobs:
     # now a required check in all-checks. A PR introducing a dependency with a
     # known OSV advisory fails CI until upgraded or time-boxed in osv-scanner.toml.
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v7
         with:
@@ -218,7 +218,7 @@ jobs:
     # upstream release cadence. This job only surfaces drift on every PR.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v7
         with:
@@ -261,7 +261,7 @@ jobs:
       )
     needs: [unit-tests, e2e]
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v7
         with:
@@ -334,7 +334,7 @@ jobs:
     # lower the floor with a documented reason.
     needs: unit-tests
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v7
         with:
