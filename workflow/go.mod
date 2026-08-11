@@ -3,7 +3,7 @@ module github.com/brokenbots/criteria/workflow
 go 1.26.5
 
 require (
-	github.com/brokenbots/criteria v0.5.5
+	github.com/brokenbots/criteria v0.5.7
 	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/hcl/v2 v2.24.0
@@ -70,7 +70,6 @@ require (
 	github.com/sigstore/sigstore v1.10.8 // indirect
 	github.com/sigstore/sigstore-go v1.2.2 // indirect
 	github.com/sigstore/timestamp-authority/v2 v2.1.2 // indirect
-	github.com/testcontainers/testcontainers-go v0.43.0 // indirect
 	github.com/theupdateframework/go-tuf/v2 v2.4.2 // indirect
 	github.com/transparency-dev/formats v0.1.1 // indirect
 	github.com/transparency-dev/merkle v0.0.2 // indirect
