@@ -682,32 +682,21 @@ func TestClientReconnectMultipleFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Publish numEvents events; each triggers a disconnect after its ack.
-	for i := 0; i < numEvents; i++ {
-		env := events.NewEnvelope(runID, &pb.StepEntered{Step: "s" + strconv.Itoa(i+1), Adapter: "shell", Attempt: 1})
+	// Wait for each event to persist before publishing the next. The next send
+	// surfaces the prior stream's post-ack disconnect and is replayed after the
+	// reconnect, without depending on how many writes HTTP/2 buffers at once.
+	steps := []string{"s1", "s2", "s3", "final"}
+	for i, step := range steps {
+		env := events.NewEnvelope(runID, &pb.StepEntered{Step: step, Adapter: "shell", Attempt: 1})
 		c.Publish(ctx, env)
-	}
-
-	// After numEvents reconnects the fake allows acks through indefinitely.
-	// Publish one final event on the stable connection.
-	final := events.NewEnvelope(runID, &pb.StepEntered{Step: "final", Adapter: "shell", Attempt: 1})
-	c.Publish(ctx, final)
-
-	const want = numEvents + 1
-	// Use a longer timeout because -race + multiple reconnects can be slow on CI runners.
-	if !waitForCond(t, 20*time.Second, func() bool {
-		f.mu.Lock()
-		got := len(f.events[runID])
-		f.mu.Unlock()
-		if got > 0 && got < want {
-			t.Logf("waiting for events: got %d, want %d", got, want)
+		wantPersisted := i + 1
+		if !waitForCond(t, 10*time.Second, func() bool {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			return len(f.events[runID]) == wantPersisted
+		}) {
+			t.Fatalf("event %d was not persisted", wantPersisted)
 		}
-		return got == want
-	}) {
-		f.mu.Lock()
-		got := len(f.events[runID])
-		f.mu.Unlock()
-		t.Fatalf("expected %d persisted events after multi-failure reconnect, got %d", want, got)
 	}
 
 	// Verify the exact event sequence (s1, s2, s3, final): a count-only check
