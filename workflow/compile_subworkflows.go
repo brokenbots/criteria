@@ -306,19 +306,19 @@ func checkMissingInputKeys(swName string, inputs map[string]hcl.Expression, decl
 }
 
 // checkInputTypeCompat returns an error when a compile-time-known input value
-// is incompatible with the declared callee variable type. It accepts reasonable
-// conversions (number string "3" → number) and rejects clearly incompatible ones
-// (string "abc" → number). Expressions that cannot be evaluated at compile time
-// are not checked here.
+// is incompatible with the declared callee variable type. It accepts exact
+// type matches and any conversion that cty considers safe (e.g. tuple → list,
+// object → map, string "3" → number). It rejects incompatible conversions
+// with a normal type-mismatch error. Expressions that cannot be evaluated at
+// compile time are not checked here.
 func checkInputTypeCompat(val cty.Value, wantType cty.Type) error {
-	if wantType == cty.NilType || val == cty.NilVal || !val.IsKnown() || val.IsNull() {
+	if wantType.Equals(cty.NilType) || val == cty.NilVal || !val.IsKnown() || val.IsNull() {
 		return nil
 	}
 	gotType := val.Type()
-	if gotType == wantType {
+	if gotType.Equals(wantType) {
 		return nil // exact match
 	}
-	// Allow safe conversions between string/number/bool via cty convert.
 	if _, err := convert.Convert(val, wantType); err != nil {
 		return fmt.Errorf("expected %s, got %s", wantType.FriendlyName(), gotType.FriendlyName())
 	}
