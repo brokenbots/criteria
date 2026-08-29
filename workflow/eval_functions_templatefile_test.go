@@ -180,18 +180,75 @@ func TestTemplatefile_MissingKey_ReturnsError(t *testing.T) {
 	}
 }
 
-// Test 9: unknown attribute value inside vars returns an error.
-func TestTemplatefile_UnknownVar_ReturnsError(t *testing.T) {
+// Test 9: unknown attribute value inside vars returns an unknown string so
+// validation of workflows with runtime-only variables succeeds.
+func TestTemplatefile_UnknownVar_ReturnsUnknown(t *testing.T) {
 	dir := t.TempDir()
 	writeTmpl(t, dir, "unk.tmpl", "{{ .x }}")
 	// An object whose attribute value is unknown (not the object itself).
 	vars := cty.ObjectVal(map[string]cty.Value{"x": cty.UnknownVal(cty.String)})
-	_, err := callTemplateFile(tmplOpts(dir), "unk.tmpl", vars)
-	if err == nil {
-		t.Fatal("expected error for unknown var; got none")
+	val, err := templatefileFunction(tmplOpts(dir)).Call([]cty.Value{
+		cty.StringVal("unk.tmpl"),
+		vars,
+	})
+	if err != nil {
+		t.Fatalf("expected success for unknown var; got error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "unknown") {
-		t.Errorf("error %q should mention 'unknown'", err.Error())
+	if val.IsKnown() {
+		t.Errorf("expected unknown result; got %q", val.AsString())
+	}
+	if val.Type() != cty.String {
+		t.Errorf("expected string type; got %s", val.Type().FriendlyName())
+	}
+}
+
+// Test 9b: a deeply nested unknown value also produces an unknown result.
+func TestTemplatefile_UnknownVar_Nested_ReturnsUnknown(t *testing.T) {
+	dir := t.TempDir()
+	writeTmpl(t, dir, "nested.tmpl", "{{ .person.name }}")
+	vars := cty.ObjectVal(map[string]cty.Value{
+		"person": cty.ObjectVal(map[string]cty.Value{
+			"name": cty.UnknownVal(cty.String),
+		}),
+	})
+	val, err := templatefileFunction(tmplOpts(dir)).Call([]cty.Value{
+		cty.StringVal("nested.tmpl"),
+		vars,
+	})
+	if err != nil {
+		t.Fatalf("expected success for nested unknown var; got error: %v", err)
+	}
+	if val.IsKnown() {
+		t.Errorf("expected unknown result; got %q", val.AsString())
+	}
+}
+
+// Test 9c: unknown vars still surface file-not-found errors before returning
+// unknown, so missing templates are caught during validation.
+func TestTemplatefile_UnknownVar_MissingFile_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	vars := cty.ObjectVal(map[string]cty.Value{"x": cty.UnknownVal(cty.String)})
+	_, err := callTemplateFile(tmplOpts(dir), "missing.tmpl", vars)
+	if err == nil {
+		t.Fatal("expected error for missing template file; got none")
+	}
+	if !strings.Contains(err.Error(), "no such file") {
+		t.Errorf("error %q should mention 'no such file'", err.Error())
+	}
+}
+
+// Test 9d: unknown vars still surface template parse errors before returning
+// unknown, so malformed templates are caught during validation.
+func TestTemplatefile_UnknownVar_ParseError_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	writeTmpl(t, dir, "bad.tmpl", "{{ .unclosed")
+	vars := cty.ObjectVal(map[string]cty.Value{"x": cty.UnknownVal(cty.String)})
+	_, err := callTemplateFile(tmplOpts(dir), "bad.tmpl", vars)
+	if err == nil {
+		t.Fatal("expected parse error; got none")
+	}
+	if !strings.Contains(err.Error(), "parse") {
+		t.Errorf("error %q should mention 'parse'", err.Error())
 	}
 }
 
