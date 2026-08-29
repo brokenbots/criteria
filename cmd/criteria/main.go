@@ -46,6 +46,7 @@ func main() {
 	root.AddCommand(cli.NewInspectCmd())
 	root.AddCommand(cli.NewAdapterCmd())
 	root.AddCommand(cli.NewLangserverCmd())
+	root.AddCommand(cli.NewVersionCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
