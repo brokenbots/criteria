@@ -32,6 +32,16 @@ func (n *switchNode) Name() string { return n.node.Name }
 // bubbles the return to the caller (mirrors outcome block behaviour from W15).
 func (n *switchNode) Evaluate(ctx context.Context, st *RunState, deps Deps) (string, error) {
 	_ = ctx
+
+	// Refresh the "data" namespace so that match conditions and output
+	// projection expressions see values written by previous steps. Step nodes
+	// already perform this re-seed at entry; switches must do the same before
+	// any HCL evaluation. SeedDataSnapshot is infallible today, but if it ever
+	// returns an error it should surface as a run failure.
+	if st.DataStore != nil {
+		st.Vars = workflow.SeedDataSnapshot(st.Vars, st.DataStore.Snapshot())
+	}
+
 	ec := workflow.BuildEvalContextWithOpts(st.Vars, workflow.DefaultFunctionOptions(st.WorkflowDir))
 
 	for i, cond := range n.node.Conditions {
