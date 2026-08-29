@@ -1326,11 +1326,22 @@ The effective allowlist is the union of workflow-level and step-level patterns.
 
 ### Pattern matching
 
-Tool names are matched against glob patterns using `filepath.Match` semantics:
+Tool names are matched against glob patterns using Go `path/filepath.Match` semantics. The pattern is matched against the full tool target string.
 
-- `shell:git*` permits `shell:git status`, `shell:git commit`, etc.
-- `shell:*` permits all shell commands.
+- `*` matches any sequence of **non-slash** characters; it does **not** cross `/`.
+- `?` matches a single non-slash character.
+- `[a-z]` matches a character class.
+- There is no `**` recursive syntax.
+
+Examples:
+
 - `*` permits all tools (use with caution).
+- `shell:git*` permits `shell:git status` and `shell:git commit`.
+- `shell:*` permits shell commands whose target contains no `/` (e.g., `shell:git status`), but does not permit `shell:cat /etc/hosts`.
+- To match shell commands whose arguments contain `/`, the pattern must include a literal `/` for each slash-separated segment, e.g., `shell:*/*/*` permits `shell:cat /etc/hosts`.
+- An exact literal such as `shell:cat /etc/hosts` permits only `shell:cat /etc/hosts`.
+
+An empty or absent `allow_tools` list denies all tool requests. The first matching pattern wins.
 
 See [adapters.md](adapters.md) for the tool invocation wire protocol.
 

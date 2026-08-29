@@ -260,7 +260,16 @@ type StepSpec struct {
 	Input       *InputSpec        `hcl:"input,block"`
 	SecretInput *InputSpec        `hcl:"secret_input,block"`
 	Timeout     string            `hcl:"timeout,optional"`
-	AllowTools  []string          `hcl:"allow_tools,optional"`
+	// AllowTools is the step-level list of glob patterns for permitted tool
+	// invocations, unioned with permissions.allow_tools. Patterns are matched
+	// against the full tool target string using path/filepath.Match semantics:
+	// * matches any sequence of non-slash characters and does not cross /,
+	// ? matches a single non-slash character, [a-z] matches a character class,
+	// and there is no ** recursive syntax. The colon form tool:<glob> (and
+	// adapter-specific forms such as shell:<glob>) scopes by adapter/tool kind
+	// and arguments; bare * permits all tools. An empty or absent list denies
+	// all tool requests. The first matching pattern wins.
+	AllowTools []string `hcl:"allow_tools,optional"`
 	// Outcomes lists the declared outcome blocks for this step.
 	// Environment (e.g. shell.ci) is not decoded as a struct field; it is a bare
 	// traversal captured from Remain by resolveStepEnvironmentOverride. A
@@ -479,8 +488,14 @@ type PolicySpec struct {
 // PermissionsSpec defines workflow-level permission allowlists applied to all steps.
 type PermissionsSpec struct {
 	// AllowTools is the workflow-wide list of glob patterns for permitted tool
-	// invocations. Step-level allow_tools is unioned with this list.
-	// See StepSpec.AllowTools for matching semantics.
+	// invocations. Step-level allow_tools is unioned with this list. Patterns are
+	// matched against the full tool target string using path/filepath.Match
+	// semantics: * matches any sequence of non-slash characters and does not
+	// cross /, ? matches a single non-slash character, [a-z] matches a character
+	// class, and there is no ** recursive syntax. The colon form tool:<glob>
+	// (e.g., shell:<glob>) scopes by adapter/tool kind and arguments; bare *
+	// permits all tools. An empty or absent list denies all tool requests. The
+	// first matching pattern wins.
 	AllowTools []string `hcl:"allow_tools,optional"`
 }
 

@@ -131,7 +131,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `output "name" { ... }`
 
-- **Source:** [`workflow/schema.go:326`](../workflow/schema.go#L326)
+- **Source:** [`workflow/schema.go:335`](../workflow/schema.go#L335)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -159,7 +159,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `subworkflow "name" { ... }`
 
-- **Source:** [`workflow/schema.go:336`](../workflow/schema.go#L336)
+- **Source:** [`workflow/schema.go:345`](../workflow/schema.go#L345)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -182,14 +182,14 @@ The following block types are defined. Tables are auto-generated from [`workflow
 | `on_failure` | string | no | OnFailure controls iteration failure behaviour: "continue" (default for sequential for_each/count steps), "abort" (stop on first failure; default for parallel steps), or "ignore" (treat all as success). |
 | `config` | map(string) | no | Config is the legacy map attribute; retained for parse-time detection so the compiler can emit a helpful "use input { } block" diagnostic. |
 | `timeout` | string | no | _(no description)_ |
-| `allow_tools` | list(string) | no | _(no description)_ |
+| `allow_tools` | list(string) | no | AllowTools is the step-level list of glob patterns for permitted tool invocations, unioned with permissions.allow_tools. Patterns are matched against the full tool target string using path/filepath.Match semantics: * matches any sequence of non-slash characters and does not cross /, ? matches a single non-slash character, [a-z] matches a character class, and there is no ** recursive syntax. The colon form tool:<glob> (and adapter-specific forms such as shell:<glob>) scopes by adapter/tool kind and arguments; bare * permits all tools. An empty or absent list denies all tool requests. The first matching pattern wins. |
 
 - **Additional attributes:** Captures: target (required — adapter traversal e.g. adapter.copilot.main, or subworkflow.<name>); for_each, count, parallel, while (optional iteration controls); environment (optional, bare traversal e.g. shell.ci); max_visits (optional integer, accepts a literal or a compile-time-resolvable variable/local reference).
 - **Nested blocks:** [`input`](#input---), [`secret_input`](#secret_input---), [`outcome`](#outcome-name---)
 
 ### `state "name" { ... }`
 
-- **Source:** [`workflow/schema.go:430`](../workflow/schema.go#L430)
+- **Source:** [`workflow/schema.go:439`](../workflow/schema.go#L439)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -202,7 +202,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `wait "name" { ... }`
 
-- **Source:** [`workflow/schema.go:413`](../workflow/schema.go#L413)
+- **Source:** [`workflow/schema.go:422`](../workflow/schema.go#L422)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -215,7 +215,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `approval "name" { ... }`
 
-- **Source:** [`workflow/schema.go:422`](../workflow/schema.go#L422)
+- **Source:** [`workflow/schema.go:431`](../workflow/schema.go#L431)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -228,23 +228,23 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `switch "name" { ... }`
 
-- **Source:** [`workflow/schema.go:441`](../workflow/schema.go#L441)
+- **Source:** [`workflow/schema.go:450`](../workflow/schema.go#L450)
 - **Labels:** `name`
 - **Nested blocks:** [`match`](#match---), [`default`](#default---)
 
 ### `permissions { ... }`
 
-- **Source:** [`workflow/schema.go:480`](../workflow/schema.go#L480)
+- **Source:** [`workflow/schema.go:489`](../workflow/schema.go#L489)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
 |---|---|---|---|
-| `allow_tools` | list(string) | no | AllowTools is the workflow-wide list of glob patterns for permitted tool invocations. Step-level allow_tools is unioned with this list. See StepSpec.AllowTools for matching semantics. |
+| `allow_tools` | list(string) | no | AllowTools is the workflow-wide list of glob patterns for permitted tool invocations. Step-level allow_tools is unioned with this list. Patterns are matched against the full tool target string using path/filepath.Match semantics: * matches any sequence of non-slash characters and does not cross /, ? matches a single non-slash character, [a-z] matches a character class, and there is no ** recursive syntax. The colon form tool:<glob> (e.g., shell:<glob>) scopes by adapter/tool kind and arguments; bare * permits all tools. An empty or absent list denies all tool requests. The first matching pattern wins. |
 
 
 ### `policy { ... }`
 
-- **Source:** [`workflow/schema.go:461`](../workflow/schema.go#L461)
+- **Source:** [`workflow/schema.go:470`](../workflow/schema.go#L470)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -272,7 +272,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `outcome "name" { ... }`
 
-- **Source:** [`workflow/schema.go:391`](../workflow/schema.go#L391)
+- **Source:** [`workflow/schema.go:400`](../workflow/schema.go#L400)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -285,17 +285,17 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `match { ... }`
 
-- **Source:** [`workflow/schema.go:450`](../workflow/schema.go#L450)
+- **Source:** [`workflow/schema.go:459`](../workflow/schema.go#L459)
 - **Additional attributes:** captures: condition (required), next (required), output (optional)
 
 ### `default { ... }`
 
-- **Source:** [`workflow/schema.go:456`](../workflow/schema.go#L456)
+- **Source:** [`workflow/schema.go:465`](../workflow/schema.go#L465)
 - **Additional attributes:** captures: next (required), output (optional)
 
 ### `write { ... }`
 
-- **Source:** [`workflow/schema.go:399`](../workflow/schema.go#L399)
+- **Source:** [`workflow/schema.go:408`](../workflow/schema.go#L408)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
