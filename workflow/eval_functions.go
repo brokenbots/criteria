@@ -448,12 +448,6 @@ func renderTemplateFile(opts *FunctionOptions, raw string, varsVal cty.Value) (c
 		return cty.StringVal(""), rewriteFuncName(err, "file()", "templatefile()")
 	}
 
-	// Convert cty vars to Go map for text/template.
-	ctxMap, err := ctyToGoMap(varsVal)
-	if err != nil {
-		return cty.StringVal(""), fmt.Errorf("templatefile(): converting vars: %w", err)
-	}
-
 	// Template name is the basename of path so error messages reference
 	// the source file.
 	tmpl, err := template.New(filepath.Base(raw)).
@@ -462,11 +456,49 @@ func renderTemplateFile(opts *FunctionOptions, raw string, varsVal cty.Value) (c
 	if err != nil {
 		return cty.StringVal(""), fmt.Errorf("templatefile(): %q parse: %w", raw, err)
 	}
+
+	// If any template variable is unknown (e.g. a var.* with no default during
+	// validation), we cannot render the template yet, but we have already
+	// verified the file exists and the template parses. Return an unknown
+	// string so the expression folds correctly at validation time and is
+	// re-rendered once runtime values are available.
+	if hasUnknownValue(varsVal) {
+		return cty.UnknownVal(cty.String), nil
+	}
+
+	// Convert cty vars to Go map for text/template.
+	ctxMap, err := ctyToGoMap(varsVal)
+	if err != nil {
+		return cty.StringVal(""), fmt.Errorf("templatefile(): converting vars: %w", err)
+	}
+
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, ctxMap); err != nil {
 		return cty.StringVal(""), fmt.Errorf("templatefile(): %q execute: %w", raw, err)
 	}
 	return cty.StringVal(buf.String()), nil
+}
+
+// hasUnknownValue reports whether v or any nested value inside it is unknown.
+// It recurses through objects, maps, lists, tuples, and sets.
+func hasUnknownValue(v cty.Value) bool {
+	if !v.IsKnown() {
+		return true
+	}
+	if v.IsNull() {
+		return false
+	}
+	ty := v.Type()
+	if ty.IsObjectType() || ty.IsMapType() || ty.IsListType() || ty.IsTupleType() || ty.IsSetType() {
+		it := v.ElementIterator()
+		for it.Next() {
+			_, elem := it.Element()
+			if hasUnknownValue(elem) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // fileExistsFunction implements the fileexists(path) → bool expression function.
