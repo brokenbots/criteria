@@ -3,14 +3,20 @@
 set -euo pipefail
 
 BINDIR="${BINDIR:-./bin}"
+BIN="${CRITERIA_BIN:-${BINDIR}/criteria}"
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
-python3 - "$TMPDIR" "$BINDIR" <<'PY'
+# The validation binary must be built with version.Version=dev (or no version
+# ldflag) so that CRITERIA_OVERRIDE_VERSION is consulted. A release-style
+# embedded version ignores the override.
+export CRITERIA_OVERRIDE_VERSION="${CRITERIA_OVERRIDE_VERSION:-0.5.9}"
+
+python3 - "$TMPDIR" "$BIN" <<'PY'
 import re, os, subprocess, sys
 
 tmp = sys.argv[1]
-bin_dir = sys.argv[2]
+bin_path = sys.argv[2]
 errors = []
 
 for doc in ['docs/LANGUAGE-SPEC.md']:
@@ -46,7 +52,7 @@ for doc in ['docs/LANGUAGE-SPEC.md']:
                             '}\n'
                         )
         result = subprocess.run(
-            [os.path.join(bin_dir, 'criteria'), 'validate', fname],
+            [bin_path, 'validate', fname],
             capture_output=True, text=True
         )
         if result.returncode != 0:

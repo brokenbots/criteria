@@ -29,16 +29,25 @@ type SubWorkflowResolver interface {
 	ResolveSource(ctx context.Context, callerDir, source string) (dir string, err error)
 }
 
+// subworkflowFrame records one level of subworkflow recursion during
+// compilation. path is the resolved source directory (used for cycle
+// detection); name is the workflow name (used for compatibility diagnostics).
+type subworkflowFrame struct {
+	path string
+	name string
+}
+
 // CompileOpts carries optional configuration for the Compile pass.
 type CompileOpts struct {
 	// WorkflowDir is the directory containing the HCL file being compiled.
 	// When set, compile-time validation of constant file() arguments is
 	// enabled: missing files produce HCL diagnostics with source ranges.
 	WorkflowDir string
-	// SubworkflowChain tracks resolved source paths in the current call stack
-	// for cycle detection when compiling subworkflows. Its length is the current
-	// inline sub-workflow nesting depth.
-	SubworkflowChain []string
+	// SubworkflowChain tracks resolved source paths and workflow names in the
+	// current call stack for cycle detection and compatibility diagnostics when
+	// compiling subworkflows. Its length is the current inline sub-workflow
+	// nesting depth.
+	SubworkflowChain []subworkflowFrame
 	// SubWorkflowResolver is an optional callback used to load an external
 	// subworkflow directory referenced by subworkflow.source = "...".
 	// When nil, any subworkflow is rejected with a compile error.
@@ -52,6 +61,16 @@ type CompileOpts struct {
 	// lets the CLI startup gate and the engine share exactly the same in-memory
 	// pin set.
 	PinSet *lockfile.Lockfile
+}
+
+// workflowNames returns the workflow names from a subworkflow chain, in root-to-leaf
+// order, for use in nested compatibility diagnostics.
+func workflowNames(chain []subworkflowFrame) []string {
+	names := make([]string, len(chain))
+	for i, f := range chain {
+		names[i] = f.name
+	}
+	return names
 }
 
 // Compile validates a Spec and returns an executable FSMGraph. It is a
@@ -153,6 +172,7 @@ func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]Adap
 	if len(opts.SubworkflowChain) == 0 {
 		diags = append(diags, checkReservedNames(spec)...)
 	}
+	diags = append(diags, CheckGraphCriteriaVersion(g, workflowNames(opts.SubworkflowChain))...)
 	diags = append(diags, resolveTransitions(g)...)
 	if g.InitialState != "" && !diags.HasErrors() {
 		diags = append(diags, checkReachability(g)...)
@@ -181,26 +201,28 @@ func initGraphPinSet(g *FSMGraph, opts CompileOpts) {
 // newFSMGraph allocates a fresh FSMGraph seeded from spec's top-level fields.
 func newFSMGraph(spec *Spec) *FSMGraph {
 	g := &FSMGraph{
-		Name:             spec.Header.Name,
-		InitialState:     spec.Header.InitialState,
-		TargetState:      spec.Header.TargetState,
-		Verification:     spec.Header.Verification,
-		Variables:        map[string]*VariableNode{},
-		Locals:           map[string]*LocalNode{},
-		Data:             map[string]map[string]*DataNode{},
-		Environments:     map[string]*EnvironmentNode{},
-		Outputs:          map[string]*OutputNode{},
-		OutputOrder:      []string{},
-		Adapters:         map[string]*AdapterNode{},
-		AdapterOrder:     []string{},
-		Subworkflows:     map[string]*SubworkflowNode{},
-		Steps:            map[string]*StepNode{},
-		States:           map[string]*StateNode{},
-		Waits:            map[string]*WaitNode{},
-		Approvals:        map[string]*ApprovalNode{},
-		Switches:         map[string]*SwitchNode{},
-		ResolvedPolicies: map[string]*ResolvedPolicy{},
-		Policy:           DefaultPolicy,
+		Name:                 spec.Header.Name,
+		InitialState:         spec.Header.InitialState,
+		TargetState:          spec.Header.TargetState,
+		CriteriaVersion:      spec.Header.CriteriaVersion,
+		CriteriaVersionRange: spec.Header.CriteriaVersionRange,
+		Verification:         spec.Header.Verification,
+		Variables:            map[string]*VariableNode{},
+		Locals:               map[string]*LocalNode{},
+		Data:                 map[string]map[string]*DataNode{},
+		Environments:         map[string]*EnvironmentNode{},
+		Outputs:              map[string]*OutputNode{},
+		OutputOrder:          []string{},
+		Adapters:             map[string]*AdapterNode{},
+		AdapterOrder:         []string{},
+		Subworkflows:         map[string]*SubworkflowNode{},
+		Steps:                map[string]*StepNode{},
+		States:               map[string]*StateNode{},
+		Waits:                map[string]*WaitNode{},
+		Approvals:            map[string]*ApprovalNode{},
+		Switches:             map[string]*SwitchNode{},
+		ResolvedPolicies:     map[string]*ResolvedPolicy{},
+		Policy:               DefaultPolicy,
 	}
 	if spec.Header.Policy != nil {
 		if spec.Header.Policy.MaxTotalSteps > 0 {

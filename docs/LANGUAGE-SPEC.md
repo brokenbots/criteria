@@ -27,6 +27,7 @@ content_decl     := workflow_block | variable_block | local_block | data_block
 workflow_block   := "workflow" "{" workflow_attr* "}"
 workflow_attr    := "name" "=" STRING
                   | "version" "=" STRING
+                  | "criteria_version" "=" STRING
                   | "initial_state" "=" STRING
                   | "target_state" "=" STRING
                   | "environment" "=" traversal
@@ -78,6 +79,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 |---|---|---|---|
 | `name` | string | yes | _(no description)_ |
 | `version` | string | yes | Version is the HCL schema version string. Use "1". |
+| `criteria_version` | string | no | CriteriaVersion is an optional semantic-version constraint declaring the Criteria engine releases with which this workflow is compatible. Empty means the workflow does not declare an engine compatibility bound. |
 | `initial_state` | string | yes | InitialState names the step or state where workflow execution begins. |
 | `target_state` | string | no | _(no description)_ |
 | `environment` | hcl.Expression | no | _(no description)_ |
@@ -87,7 +89,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `variable "name" { ... }`
 
-- **Source:** [`workflow/schema.go:206`](../workflow/schema.go#L206)
+- **Source:** [`workflow/schema.go:213`](../workflow/schema.go#L213)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -131,7 +133,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `output "name" { ... }`
 
-- **Source:** [`workflow/schema.go:335`](../workflow/schema.go#L335)
+- **Source:** [`workflow/schema.go:342`](../workflow/schema.go#L342)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -144,7 +146,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `adapter "type" "name" { ... }`
 
-- **Source:** [`workflow/schema.go:233`](../workflow/schema.go#L233)
+- **Source:** [`workflow/schema.go:240`](../workflow/schema.go#L240)
 - **Labels:** `type` `name`
 - **Attributes:**
 
@@ -159,7 +161,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `subworkflow "name" { ... }`
 
-- **Source:** [`workflow/schema.go:345`](../workflow/schema.go#L345)
+- **Source:** [`workflow/schema.go:352`](../workflow/schema.go#L352)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -172,7 +174,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `step "name" { ... }`
 
-- **Source:** [`workflow/schema.go:250`](../workflow/schema.go#L250)
+- **Source:** [`workflow/schema.go:257`](../workflow/schema.go#L257)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -189,7 +191,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `state "name" { ... }`
 
-- **Source:** [`workflow/schema.go:439`](../workflow/schema.go#L439)
+- **Source:** [`workflow/schema.go:446`](../workflow/schema.go#L446)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -202,7 +204,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `wait "name" { ... }`
 
-- **Source:** [`workflow/schema.go:422`](../workflow/schema.go#L422)
+- **Source:** [`workflow/schema.go:429`](../workflow/schema.go#L429)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -215,7 +217,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `approval "name" { ... }`
 
-- **Source:** [`workflow/schema.go:431`](../workflow/schema.go#L431)
+- **Source:** [`workflow/schema.go:438`](../workflow/schema.go#L438)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -228,13 +230,13 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `switch "name" { ... }`
 
-- **Source:** [`workflow/schema.go:450`](../workflow/schema.go#L450)
+- **Source:** [`workflow/schema.go:457`](../workflow/schema.go#L457)
 - **Labels:** `name`
 - **Nested blocks:** [`match`](#match---), [`default`](#default---)
 
 ### `permissions { ... }`
 
-- **Source:** [`workflow/schema.go:489`](../workflow/schema.go#L489)
+- **Source:** [`workflow/schema.go:496`](../workflow/schema.go#L496)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -244,7 +246,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `policy { ... }`
 
-- **Source:** [`workflow/schema.go:470`](../workflow/schema.go#L470)
+- **Source:** [`workflow/schema.go:477`](../workflow/schema.go#L477)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -256,23 +258,23 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `config { ... }`
 
-- **Source:** [`workflow/schema.go:216`](../workflow/schema.go#L216)
+- **Source:** [`workflow/schema.go:223`](../workflow/schema.go#L223)
 
 ### `secrets { ... }`
 
-- **Source:** [`workflow/schema.go:216`](../workflow/schema.go#L216)
+- **Source:** [`workflow/schema.go:223`](../workflow/schema.go#L223)
 
 ### `input { ... }`
 
-- **Source:** [`workflow/schema.go:226`](../workflow/schema.go#L226)
+- **Source:** [`workflow/schema.go:233`](../workflow/schema.go#L233)
 
 ### `secret_input { ... }`
 
-- **Source:** [`workflow/schema.go:226`](../workflow/schema.go#L226)
+- **Source:** [`workflow/schema.go:233`](../workflow/schema.go#L233)
 
 ### `outcome "name" { ... }`
 
-- **Source:** [`workflow/schema.go:400`](../workflow/schema.go#L400)
+- **Source:** [`workflow/schema.go:407`](../workflow/schema.go#L407)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -285,17 +287,17 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `match { ... }`
 
-- **Source:** [`workflow/schema.go:459`](../workflow/schema.go#L459)
+- **Source:** [`workflow/schema.go:466`](../workflow/schema.go#L466)
 - **Additional attributes:** captures: condition (required), next (required), output (optional)
 
 ### `default { ... }`
 
-- **Source:** [`workflow/schema.go:465`](../workflow/schema.go#L465)
+- **Source:** [`workflow/schema.go:472`](../workflow/schema.go#L472)
 - **Additional attributes:** captures: next (required), output (optional)
 
 ### `write { ... }`
 
-- **Source:** [`workflow/schema.go:408`](../workflow/schema.go#L408)
+- **Source:** [`workflow/schema.go:415`](../workflow/schema.go#L415)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -306,7 +308,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### Notes on specific blocks
 
-**`workflow`** — Exactly one per module. `version` must be `"1"`. `initial_state` names the starting state; defaults to the first declared state if absent. `target_state` names the expected terminal success state used by `make validate`.
+**`workflow`** — Exactly one per module. `version` must be `"1"`; this is the CHCL schema version, not the Criteria engine version. `criteria_version` is an optional semver constraint declaring compatible Criteria engine releases (e.g. `">=0.5.8, <0.6.0"`). When present, every Criteria command and the engine check it before adapter initialization, secret resolution, or step execution. The constraint follows SemVer precedence: an optional leading `v` is accepted, build metadata does not affect precedence, and a prerelease engine does not satisfy a stable lower bound unless the constraint explicitly includes a prerelease bound. Development builds with an unknown version fail closed unless `CRITERIA_OVERRIDE_VERSION` is set to an explicit semver. The constraint is rechecked on resume and for every recursively resolved subworkflow.
 
 **`variable`** — Compile-time typed inputs. Type may be any HCL type expression that the compiler resolves, including `string`, `bool`, `number`, `list(...)`, `map(...)`, and `object({...})` with `optional(<type>, <default>)` attributes. A `default` expression may follow the declared attributes; absence makes the variable required (supply via `--var`/`--var-file`).
 
@@ -658,6 +660,32 @@ state "failed" {
   success  = false
 }
 ```
+
+### 6. Engine version compatibility
+
+```hcl
+workflow {
+  name             = "version_bound"
+  version          = "1"
+  criteria_version = ">=0.5.8, <0.6.0"
+  initial_state    = "hello"
+  target_state     = "done"
+}
+
+adapter "noop" "default" {}
+
+step "hello" {
+  target = adapter.noop.default
+  outcome "success" { next = state.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+```
+
+When `criteria_version` is present, the engine rejects any engine that does not satisfy the constraint before adapter initialization, secret resolution, or step execution. The constraint is rechecked on resume and for every subworkflow.
 
 > For pattern-by-pattern guidance, see [docs/llm/](./llm/). Concatenate this spec with the prompt pack to assemble a complete LLM authoring system prompt.
 

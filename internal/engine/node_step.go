@@ -562,7 +562,7 @@ func (n *stepNode) evaluateSubworkflowStep(ctx context.Context, st *RunState, de
 		stepInput = resolved
 	}
 
-	outputs, terminalState, runErr := runSubworkflow(ctx, n.step.Name, swNode, st, stepInput, deps)
+	outputs, terminalState, runErr := runSubworkflow(ctx, n.step.Name, swNode, st, stepInput, deps, st.Ancestors...)
 	if runErr != nil {
 		deps.Sink.OnStepOutcome(n.step.Name, "failure", 0, runErr)
 	}

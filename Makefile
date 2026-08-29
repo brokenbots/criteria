@@ -16,7 +16,7 @@ tidy: ## Run go mod tidy across all modules
 
 build: ## Build the criteria binary (output: bin/criteria)
 	mkdir -p bin
-	go build -ldflags "-X github.com/brokenbots/criteria/internal/cli.version=$(shell git describe --tags --match 'v*' --always --dirty)" -o bin/criteria ./cmd/criteria
+	go build -ldflags "-X github.com/brokenbots/criteria/workflow/version.Version=$(shell git describe --tags --match 'v*' --always --dirty)" -o bin/criteria ./cmd/criteria
 
 plugins: ## Build adapter plugin binaries (output: bin/criteria-adapter-*)
 	mkdir -p bin
@@ -207,8 +207,10 @@ validate: build ## Validate all example workflow directories
 	done
 	@echo "All examples validated."
 
-validate-docs: build ## Validate HCL fenced blocks in docs/LANGUAGE-SPEC.md
-	@BINDIR=./bin ./tools/validate-docs.sh
+validate-docs: ## Validate HCL fenced blocks in docs/LANGUAGE-SPEC.md
+	@mkdir -p bin
+	@go build -ldflags "-X github.com/brokenbots/criteria/workflow/version.Version=dev" -o bin/criteria-validate-docs ./cmd/criteria
+	@CRITERIA_BIN=./bin/criteria-validate-docs ./tools/validate-docs.sh
 
 example-plugin: build ## Build and run the greeter example plugin end-to-end
 	@echo "Building greeter example plugin..."

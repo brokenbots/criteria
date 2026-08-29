@@ -49,7 +49,7 @@ func nullOutputsForSubworkflow(body *workflow.FSMGraph) map[string]cty.Value {
 // stepInput contains per-call input bindings (from the step's input { } block)
 // that override the declaration-level bindings in node.Inputs. Pass nil when
 // there are no step-level overrides.
-func runSubworkflow(ctx context.Context, stepName string, node *workflow.SubworkflowNode, parentSt *RunState, stepInput map[string]cty.Value, deps Deps) (outputs map[string]cty.Value, terminal string, err error) {
+func runSubworkflow(ctx context.Context, stepName string, node *workflow.SubworkflowNode, parentSt *RunState, stepInput map[string]cty.Value, deps Deps, ancestors ...string) (outputs map[string]cty.Value, terminal string, err error) {
 	// Evaluate each input expression against the parent scope.
 	evalOpts := workflow.DefaultFunctionOptions(parentSt.WorkflowDir)
 	inputVals, err := evaluateSubworkflowInputs(node, parentSt.Vars, evalOpts)
@@ -84,7 +84,13 @@ func runSubworkflow(ctx context.Context, stepName string, node *workflow.Subwork
 	// compile time. The session manager already has the merged lockfile, so no
 	// workflow files are read here.
 
-	terminal, returnOutputs, finalVars, err := runWorkflowBody(ctx, node.Body, node.BodyEntry, childVars, calleeDir, deps, stepName)
+	childAncestors := make([]string, len(ancestors), len(ancestors)+1)
+	copy(childAncestors, ancestors)
+	if parentSt.WorkflowName != "" {
+		childAncestors = append(childAncestors, parentSt.WorkflowName)
+	}
+
+	terminal, returnOutputs, finalVars, err := runWorkflowBody(ctx, node.Body, node.BodyEntry, childVars, calleeDir, deps, stepName, childAncestors...)
 	if err != nil {
 		// The caller (evaluateSubworkflowStep in node_step.go) surfaces this
 		// error on the parent's event stream as a step-level OnStepOutcome event,

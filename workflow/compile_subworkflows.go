@@ -74,7 +74,7 @@ func compileSingleSubworkflow(ctx context.Context, g *FSMGraph, swSpec Subworkfl
 		return diags
 	}
 
-	calleeGraph, compileDiags := CompileWithContext(ctx, calleeSpec, opts.Schemas, buildChildOpts(opts, resolvedDir))
+	calleeGraph, compileDiags := CompileWithContext(ctx, calleeSpec, opts.Schemas, buildChildOpts(opts, resolvedDir, g))
 	diags = append(diags, compileDiags...)
 	if compileDiags.HasErrors() {
 		return diags
@@ -119,12 +119,12 @@ func recordSubworkflowNode(g *FSMGraph, swSpec SubworkflowSpec, resolvedDir stri
 }
 
 // buildChildOpts builds the CompileOpts for a recursive subworkflow compilation,
-// appending resolvedDir to the load chain and incrementing the depth.
-func buildChildOpts(opts CompileOpts, resolvedDir string) CompileOpts {
+// appending resolvedDir and the parent workflow name to the load chain.
+func buildChildOpts(opts CompileOpts, resolvedDir string, parentGraph *FSMGraph) CompileOpts {
 	child := opts
-	newChain := make([]string, len(opts.SubworkflowChain), len(opts.SubworkflowChain)+1)
+	newChain := make([]subworkflowFrame, len(opts.SubworkflowChain), len(opts.SubworkflowChain)+1)
 	copy(newChain, opts.SubworkflowChain)
-	newChain = append(newChain, resolvedDir)
+	newChain = append(newChain, subworkflowFrame{path: resolvedDir, name: parentGraph.Name})
 	child.SubworkflowChain = newChain
 	child.WorkflowDir = resolvedDir
 	return child
@@ -132,13 +132,15 @@ func buildChildOpts(opts CompileOpts, resolvedDir string) CompileOpts {
 
 // detectSubworkflowCycle returns a DiagError if resolvedDir already appears in
 // the current subworkflow load chain, indicating a recursive import cycle.
-func detectSubworkflowCycle(resolvedDir string, chain []string) *hcl.Diagnostic {
-	for _, chainPath := range chain {
-		if chainPath != resolvedDir {
+func detectSubworkflowCycle(resolvedDir string, chain []subworkflowFrame) *hcl.Diagnostic {
+	for _, f := range chain {
+		if f.path != resolvedDir {
 			continue
 		}
 		cycle := make([]string, len(chain)+1)
-		copy(cycle, chain)
+		for i, f := range chain {
+			cycle[i] = f.path
+		}
 		cycle[len(chain)] = resolvedDir
 		return &hcl.Diagnostic{
 			Severity: hcl.DiagError,

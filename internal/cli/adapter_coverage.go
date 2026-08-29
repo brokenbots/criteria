@@ -29,7 +29,7 @@ func (e lockfileCoverageError) Error() string {
 func loadTreePinSet(ctx context.Context, rootDir string) (*lockfile.Lockfile, error) {
 	var merged *lockfile.Lockfile
 	seen := make(map[string]bool)
-	if err := walkWorkflowDirs(ctx, rootDir, seen, func(_ string, _ *workflow.Spec, lf *lockfile.Lockfile) error {
+	if err := walkWorkflowDirs(ctx, rootDir, nil, seen, func(_ string, _ *workflow.Spec, lf *lockfile.Lockfile) error {
 		merged = lockfile.Merge(merged, lf)
 		return nil
 	}); err != nil {
@@ -55,7 +55,7 @@ func collectUnpinnedAdapters(ctx context.Context, rootDir string) ([]lockfileCov
 func collectUnpinnedAdaptersWithPinSet(ctx context.Context, rootDir string, pinSet *lockfile.Lockfile) ([]lockfileCoverageError, error) {
 	var errs []lockfileCoverageError
 	seen := make(map[string]bool)
-	if err := walkWorkflowDirs(ctx, rootDir, seen, func(dir string, spec *workflow.Spec, _ *lockfile.Lockfile) error {
+	if err := walkWorkflowDirs(ctx, rootDir, nil, seen, func(dir string, spec *workflow.Spec, _ *lockfile.Lockfile) error {
 		adapters := collectWorkflowAdapters(spec)
 		for key, wa := range adapters {
 			if wa.Source == "" {
@@ -82,7 +82,7 @@ func collectUnpinnedAdaptersWithPinSet(ctx context.Context, rootDir string, pinS
 // including local-path subworkflows and materialised remote subworkflows. The
 // callback receives the parsed spec and the directory's lockfile (nil if
 // absent).
-func walkWorkflowDirs(ctx context.Context, rootDir string, seen map[string]bool, fn func(dir string, spec *workflow.Spec, lf *lockfile.Lockfile) error) error {
+func walkWorkflowDirs(ctx context.Context, rootDir string, nameChain []string, seen map[string]bool, fn func(dir string, spec *workflow.Spec, lf *lockfile.Lockfile) error) error {
 	abs, err := filepath.Abs(rootDir)
 	if err != nil {
 		return fmt.Errorf("resolve workflow dir: %w", err)
@@ -97,6 +97,12 @@ func walkWorkflowDirs(ctx context.Context, rootDir string, seen map[string]bool,
 		return fmt.Errorf("parse workflow %q: %w", abs, newDiagsError(diags))
 	}
 
+	// Reject engine-version incompatibilities before any adapter, secret, or lock
+	// work that could produce side effects or network traffic.
+	if diags := workflow.CheckSpecCriteriaVersion(spec, nameChain); diags.HasErrors() {
+		return fmt.Errorf("engine compatibility check for %q: %w", abs, newDiagsError(diags))
+	}
+
 	lf, err := lockfile.ReadFromDir(abs)
 	if err != nil {
 		return fmt.Errorf("read lockfile %q: %w", abs, err)
@@ -107,12 +113,15 @@ func walkWorkflowDirs(ctx context.Context, rootDir string, seen map[string]bool,
 	}
 
 	fetcher := newWorkflowFetcherFunc()
+	childChain := make([]string, len(nameChain)+1)
+	copy(childChain, nameChain)
+	childChain[len(nameChain)] = spec.Header.Name
 	for _, sw := range spec.Subworkflows {
 		resolved, _, err := resolveSubworkflowForLock(ctx, abs, sw.Source, fetcher)
 		if err != nil {
 			return fmt.Errorf("subworkflow %q in %q: %w", sw.Name, abs, err)
 		}
-		if err := walkWorkflowDirs(ctx, resolved, seen, fn); err != nil {
+		if err := walkWorkflowDirs(ctx, resolved, childChain, seen, fn); err != nil {
 			return err
 		}
 	}

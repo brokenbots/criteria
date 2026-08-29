@@ -53,11 +53,42 @@ func Parse(filename string, src []byte) (*Spec, hcl.Diagnostics) {
 		return nil, decodeDiags
 	}
 	spec.SourceBytes = src
+	captureCriteriaVersionRange(&spec, f.Body)
 	if annotateDiags := annotateLegacyConfigRanges(&spec, f.Body); annotateDiags.HasErrors() {
 		diags = append(diags, annotateDiags...)
 		return nil, diags
 	}
 	return &spec, diags
+}
+
+// captureCriteriaVersionRange records the source range of the
+// criteria_version attribute inside the workflow block. gohcl decodes the value
+// but does not expose positional metadata for optional attributes.
+func captureCriteriaVersionRange(spec *Spec, body hcl.Body) {
+	if spec == nil || spec.Header == nil || body == nil {
+		return
+	}
+	blockSchema := &hcl.BodySchema{
+		Blocks: []hcl.BlockHeaderSchema{{Type: "workflow"}},
+	}
+	content, _, _ := body.PartialContent(blockSchema)
+	if content == nil {
+		return
+	}
+	attrSchema := &hcl.BodySchema{
+		Attributes: []hcl.AttributeSchema{{Name: "criteria_version"}},
+	}
+	for _, block := range content.Blocks {
+		attrs, _, _ := block.Body.PartialContent(attrSchema)
+		if attrs == nil {
+			continue
+		}
+		if attr, ok := attrs.Attributes["criteria_version"]; ok {
+			rng := attr.Expr.Range()
+			spec.Header.CriteriaVersionRange = &rng
+			break
+		}
+	}
 }
 
 // checkLegacyAttributes runs all legacy attribute and block rejection checks.
