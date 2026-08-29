@@ -222,4 +222,20 @@ func TestCheckCriteriaVersionDiagnostics(t *testing.T) {
 		require.True(t, diags.HasErrors())
 		assert.Contains(t, diags.Error(), `workflow "wf" declares invalid criteria_version "latest"`)
 	})
+
+	t.Run("explicitly declared empty constraint fails", func(t *testing.T) {
+		version.Version = "v0.5.8"
+		diags := checkCriteriaVersion("wf", "", makeRange(), nil)
+		require.True(t, diags.HasErrors())
+		assert.Contains(t, diags.Error(), `workflow "wf" declares empty criteria_version`)
+		assert.NotNil(t, diags[0].Subject, "diagnostic must be source-located")
+	})
+
+	t.Run("explicitly declared whitespace-only constraint fails", func(t *testing.T) {
+		version.Version = "v0.5.8"
+		diags := checkCriteriaVersion("wf", "   ", makeRange(), nil)
+		require.True(t, diags.HasErrors())
+		assert.Contains(t, diags.Error(), `declares empty criteria_version`)
+		assert.NotNil(t, diags[0].Subject)
+	})
 }

@@ -197,6 +197,9 @@ func CheckSpecCriteriaVersion(spec *Spec, nameChain []string) hcl.Diagnostics {
 func checkCriteriaVersion(name, constraint string, r *hcl.Range, nameChain []string) hcl.Diagnostics {
 	constraint = strings.TrimSpace(constraint)
 	if constraint == "" {
+		if r != nil {
+			return hcl.Diagnostics{emptyConstraintDiag(name, r)}
+		}
 		return nil
 	}
 
@@ -275,4 +278,13 @@ func invalidConstraintDiag(name, constraint string, err error, r *hcl.Range) *hc
 		d.Subject = r
 	}
 	return d
+}
+
+func emptyConstraintDiag(name string, r *hcl.Range) *hcl.Diagnostic {
+	return &hcl.Diagnostic{
+		Severity: hcl.DiagError,
+		Summary:  fmt.Sprintf("workflow %q declares empty criteria_version", name),
+		Detail:   "criteria_version was set to an empty string. Either remove the attribute to accept any engine version, or provide a non-empty constraint such as \">=0.5.8, <0.6.0\".",
+		Subject:  r,
+	}
 }
