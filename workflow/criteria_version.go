@@ -110,6 +110,32 @@ func (c CriteriaVersionConstraint) Allow(v semver.Version) bool {
 	return true
 }
 
+// ExampleVersion returns a concrete stable semantic version that satisfies the
+// constraint, used to recommend an explicit value for development builds. It
+// prefers lower bounds, then exact bounds, then upper bounds. If no stable
+// version can be derived it returns 0.0.0.
+func (c CriteriaVersionConstraint) ExampleVersion() semver.Version {
+	for _, r := range c.ranges {
+		if (r.op == ">" || r.op == ">=") && len(r.ver.Pre) == 0 {
+			return r.ver
+		}
+	}
+	for _, r := range c.ranges {
+		if (r.op == "=" || r.op == "==") && len(r.ver.Pre) == 0 {
+			return r.ver
+		}
+	}
+	for _, r := range c.ranges {
+		if r.op == "<=" && len(r.ver.Pre) == 0 {
+			return r.ver
+		}
+		if r.op == "<" && len(r.ver.Pre) == 0 {
+			return semver.Version{}
+		}
+	}
+	return semver.Version{}
+}
+
 // stableLowerRejectsPrerelease reports whether a satisfied stable lower bound
 // exists but no satisfied prerelease lower bound does. When true, a prerelease
 // running engine must be rejected.
@@ -213,13 +239,21 @@ func unknownVersionDiag(name, constraint string, chain []string, r *hcl.Range) *
 	if len(chain) > 0 {
 		label = "subworkflow"
 	}
+
+	example := semver.Version{Major: 0, Minor: 0, Patch: 0}
+	if parsed, err := ParseCriteriaVersionConstraint(constraint); err == nil {
+		example = parsed.ExampleVersion()
+	}
+	exampleStr := "v" + example.String()
+
 	d := &hcl.Diagnostic{
 		Severity: hcl.DiagError,
 		Summary:  fmt.Sprintf("%s %q requires Criteria %s; running engine version is unknown", label, name, constraint),
 		Detail: fmt.Sprintf(
 			"The Criteria binary did not embed a parseable semantic version. "+
-				"For development and testing, set %s to an explicit semver such as %q.",
-			version.OverrideEnv(), constraint,
+				"For development and testing, set %s to an explicit semver such as %q, "+
+				"or build a release binary with %q.",
+			version.OverrideEnv(), exampleStr, version.LdflagsExample(exampleStr),
 		),
 	}
 	if len(chain) > 0 {

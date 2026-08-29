@@ -122,7 +122,7 @@ func TestCriteriaVersionConstraintAllow(t *testing.T) {
 		{"leading v in constraint", "v0.5.8", "0.5.8", true},
 		{"leading v in version", "=0.5.8", "v0.5.8", true},
 		{"build metadata ignored", ">=0.5.8", "v0.5.8+dirty", true},
-		{"exact build metadata fail", "=0.5.8", "0.5.8+dirty", true},
+		{"exact build metadata allowed", "=0.5.8", "0.5.8+dirty", true},
 
 		// prerelease precedence
 		{"prerelease below stable lower bound", ">=0.5.8", "0.5.9-rc1", false},
@@ -140,6 +140,27 @@ func TestCriteriaVersionConstraintAllow(t *testing.T) {
 			require.NoError(t, err)
 			v := mustParse(t, tc.version)
 			assert.Equal(t, tc.want, c.Allow(v))
+		})
+	}
+}
+
+func TestCriteriaVersionConstraintExampleVersion(t *testing.T) {
+	cases := []struct {
+		constraint string
+		want       semver.Version
+	}{
+		{">=0.5.8, <0.6.0", semver.Version{Major: 0, Minor: 5, Patch: 8}},
+		{"=0.5.8", semver.Version{Major: 0, Minor: 5, Patch: 8}},
+		{"<0.6.0", semver.Version{}},
+		{"<=0.6.0", semver.Version{Major: 0, Minor: 6, Patch: 0}},
+		{"!=0.5.7", semver.Version{}},
+		{">=0.5.9-rc1", semver.Version{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.constraint, func(t *testing.T) {
+			c, err := ParseCriteriaVersionConstraint(tc.constraint)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, c.ExampleVersion())
 		})
 	}
 }
@@ -191,6 +212,8 @@ func TestCheckCriteriaVersionDiagnostics(t *testing.T) {
 		require.True(t, diags.HasErrors())
 		assert.Contains(t, diags.Error(), "running engine version is unknown")
 		assert.Contains(t, diags.Error(), version.OverrideEnv())
+		assert.Contains(t, diags.Error(), "set CRITERIA_OVERRIDE_VERSION to an explicit semver such as \"v0.5.8\"")
+		assert.Contains(t, diags.Error(), version.LdflagsExample("v0.5.8"))
 	})
 
 	t.Run("invalid constraint", func(t *testing.T) {

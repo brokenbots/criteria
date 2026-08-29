@@ -27,6 +27,12 @@ const overrideEnv = "CRITERIA_OVERRIDE_VERSION"
 // not parseable.
 func OverrideEnv() string { return overrideEnv }
 
+// LdflagsExample returns a go build -ldflags string that injects the given
+// version into the running binary. It is used in diagnostics and tests.
+func LdflagsExample(v string) string {
+	return fmt.Sprintf("-X github.com/brokenbots/criteria/workflow/version.Version=%s", v)
+}
+
 // Info holds the resolved engine version and metadata used for diagnostics.
 type Info struct {
 	// Version is the parsed semantic version, if known.
