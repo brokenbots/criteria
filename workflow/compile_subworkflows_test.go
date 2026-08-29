@@ -867,3 +867,462 @@ state "done" {
 		t.Errorf("expected diagnostic about unresolved system_prompt from child workflow, got: %s", compileDiags.Error())
 	}
 }
+
+// TestCompileSubworkflows_InputObjectLiteral_NoPanic is a regression test for
+// CRI-29: a structurally-identical object literal passed to an object-typed
+// subworkflow variable must not panic and must compile without errors.
+func TestCompileSubworkflows_InputObjectLiteral_NoPanic(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	childHCL := `workflow {
+  name          = "child"
+  version       = "1"
+  initial_state = "noop"
+  target_state  = "done"
+}
+
+variable "item" {
+  type = object({ id = string, severity = string })
+}
+
+adapter "noop" "default" {}
+
+step "noop" {
+  target = adapter.noop.default
+  input { value = var.item.id }
+  outcome "success" { next = state.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	writeSubworkflowDir(t, tmpDir, "child", childHCL)
+
+	parentHCL := `workflow {
+  name          = "parent"
+  version       = "1"
+  initial_state = "call_child"
+  target_state  = "done"
+}
+
+subworkflow "one" {
+  source = "./child"
+  input = {
+    item = { id = "x", severity = "low" }
+  }
+}
+
+step "call_child" {
+  target = subworkflow.one
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+state "failed" {
+  terminal = true
+  success  = false
+}
+`
+	spec, parseDiags := Parse("parent.hcl", []byte(parentHCL))
+	if parseDiags.HasErrors() {
+		t.Fatalf("parse failed: %s", parseDiags.Error())
+	}
+	_, compileDiags := CompileWithOpts(spec, testSchemas, CompileOpts{
+		WorkflowDir:         tmpDir,
+		SubWorkflowResolver: &LocalSubWorkflowResolver{},
+		Schemas:             testSchemas,
+	})
+	if compileDiags.HasErrors() {
+		t.Fatalf("expected compile success for object literal binding, got: %s", compileDiags.Error())
+	}
+}
+
+// TestCompileSubworkflows_InputTuple_NoPanic is a regression test for CRI-29:
+// a tuple literal passed to a tuple-typed subworkflow variable must not panic
+// and must compile without errors.
+func TestCompileSubworkflows_InputTuple_NoPanic(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	childHCL := `workflow {
+  name          = "child"
+  version       = "1"
+  initial_state = "noop"
+  target_state  = "done"
+}
+
+variable "item" {
+  type = tuple([string, string])
+}
+
+adapter "noop" "default" {}
+
+step "noop" {
+  target = adapter.noop.default
+  input { value = var.item[0] }
+  outcome "success" { next = state.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	writeSubworkflowDir(t, tmpDir, "child", childHCL)
+
+	parentHCL := `workflow {
+  name          = "parent"
+  version       = "1"
+  initial_state = "call_child"
+  target_state  = "done"
+}
+
+subworkflow "one" {
+  source = "./child"
+  input = {
+    item = ["x", "y"]
+  }
+}
+
+step "call_child" {
+  target = subworkflow.one
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+state "failed" {
+  terminal = true
+  success  = false
+}
+`
+	spec, parseDiags := Parse("parent.hcl", []byte(parentHCL))
+	if parseDiags.HasErrors() {
+		t.Fatalf("parse failed: %s", parseDiags.Error())
+	}
+	_, compileDiags := CompileWithOpts(spec, testSchemas, CompileOpts{
+		WorkflowDir:         tmpDir,
+		SubWorkflowResolver: &LocalSubWorkflowResolver{},
+		Schemas:             testSchemas,
+	})
+	if compileDiags.HasErrors() {
+		t.Fatalf("expected compile success for tuple literal binding, got: %s", compileDiags.Error())
+	}
+}
+
+// TestCompileSubworkflows_InputObjectMismatchedFieldType_NoPanic is a regression
+// test for CRI-29: an object literal whose field type does not match the
+// declared callee variable type must produce a normal HCL type-mismatch
+// diagnostic, not a Go panic.
+func TestCompileSubworkflows_InputObjectMismatchedFieldType_NoPanic(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	childHCL := `workflow {
+  name          = "child"
+  version       = "1"
+  initial_state = "noop"
+  target_state  = "done"
+}
+
+variable "item" {
+  type = object({ id = string, severity = string })
+}
+
+adapter "noop" "default" {}
+
+step "noop" {
+  target = adapter.noop.default
+  input { value = var.item.id }
+  outcome "success" { next = state.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	writeSubworkflowDir(t, tmpDir, "child", childHCL)
+
+	parentHCL := `workflow {
+  name          = "parent"
+  version       = "1"
+  initial_state = "call_child"
+  target_state  = "done"
+}
+
+subworkflow "one" {
+  source = "./child"
+  input = {
+    item = { id = "x", severity = 5 }
+  }
+}
+
+step "call_child" {
+  target = subworkflow.one
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+state "failed" {
+  terminal = true
+  success  = false
+}
+`
+	spec, parseDiags := Parse("parent.hcl", []byte(parentHCL))
+	if parseDiags.HasErrors() {
+		t.Fatalf("parse failed: %s", parseDiags.Error())
+	}
+	_, compileDiags := CompileWithOpts(spec, testSchemas, CompileOpts{
+		WorkflowDir:         tmpDir,
+		SubWorkflowResolver: &LocalSubWorkflowResolver{},
+		Schemas:             testSchemas,
+	})
+	if !compileDiags.HasErrors() {
+		t.Fatal("expected type mismatch error for mismatched object field type, got none")
+	}
+	if !strings.Contains(compileDiags.Error(), "type mismatch") {
+		t.Errorf("expected 'type mismatch' in error, got: %s", compileDiags.Error())
+	}
+}
+
+// TestCompileSubworkflows_InputListOfObjects_NoPanic verifies that a tuple
+// literal binding for a list(object(...)) subworkflow variable is accepted
+// without panic (CRI-29 regression guard).
+func TestCompileSubworkflows_InputListOfObjects_NoPanic(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	childHCL := `workflow {
+  name          = "child"
+  version       = "1"
+  initial_state = "noop"
+  target_state  = "done"
+}
+
+variable "items" {
+  type = list(object({ id = string }))
+}
+
+adapter "noop" "default" {}
+
+step "noop" {
+  target = adapter.noop.default
+  input { value = var.items[0].id }
+  outcome "success" { next = state.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	writeSubworkflowDir(t, tmpDir, "child", childHCL)
+
+	parentHCL := `workflow {
+  name          = "parent"
+  version       = "1"
+  initial_state = "call_child"
+  target_state  = "done"
+}
+
+subworkflow "one" {
+  source = "./child"
+  input = {
+    items = [{ id = "x" }]
+  }
+}
+
+step "call_child" {
+  target = subworkflow.one
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+state "failed" {
+  terminal = true
+  success  = false
+}
+`
+	spec, parseDiags := Parse("parent.hcl", []byte(parentHCL))
+	if parseDiags.HasErrors() {
+		t.Fatalf("parse failed: %s", parseDiags.Error())
+	}
+	_, compileDiags := CompileWithOpts(spec, testSchemas, CompileOpts{
+		WorkflowDir:         tmpDir,
+		SubWorkflowResolver: &LocalSubWorkflowResolver{},
+		Schemas:             testSchemas,
+	})
+	if compileDiags.HasErrors() {
+		t.Fatalf("expected compile success for list of objects binding, got: %s", compileDiags.Error())
+	}
+}
+
+// TestCompileSubworkflows_InputMapOfObjects_NoPanic verifies that an object
+// literal binding for a map(object(...)) subworkflow variable is accepted without
+// panic (CRI-29 regression guard).
+func TestCompileSubworkflows_InputMapOfObjects_NoPanic(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	childHCL := `workflow {
+  name          = "child"
+  version       = "1"
+  initial_state = "noop"
+  target_state  = "done"
+}
+
+variable "items" {
+  type = map(object({ id = string }))
+}
+
+adapter "noop" "default" {}
+
+step "noop" {
+  target = adapter.noop.default
+  input { value = var.items["a"].id }
+  outcome "success" { next = state.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	writeSubworkflowDir(t, tmpDir, "child", childHCL)
+
+	parentHCL := `workflow {
+  name          = "parent"
+  version       = "1"
+  initial_state = "call_child"
+  target_state  = "done"
+}
+
+subworkflow "one" {
+  source = "./child"
+  input = {
+    items = { a = { id = "x" } }
+  }
+}
+
+step "call_child" {
+  target = subworkflow.one
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+state "failed" {
+  terminal = true
+  success  = false
+}
+`
+	spec, parseDiags := Parse("parent.hcl", []byte(parentHCL))
+	if parseDiags.HasErrors() {
+		t.Fatalf("parse failed: %s", parseDiags.Error())
+	}
+	_, compileDiags := CompileWithOpts(spec, testSchemas, CompileOpts{
+		WorkflowDir:         tmpDir,
+		SubWorkflowResolver: &LocalSubWorkflowResolver{},
+		Schemas:             testSchemas,
+	})
+	if compileDiags.HasErrors() {
+		t.Fatalf("expected compile success for map of objects binding, got: %s", compileDiags.Error())
+	}
+}
+
+// TestCompileSubworkflows_InputObjectCoercibleField_NoPanic verifies that an
+// object literal containing a coercible scalar value ("5" for a number field)
+// does not panic. After CRI-29, structural types require an exact type match at
+// the subworkflow input boundary, so this case produces a normal type-mismatch
+// diagnostic rather than silent coercion.
+func TestCompileSubworkflows_InputObjectCoercibleField_NoPanic(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	childHCL := `workflow {
+  name          = "child"
+  version       = "1"
+  initial_state = "noop"
+  target_state  = "done"
+}
+
+variable "item" {
+  type = object({ id = string, count = number })
+}
+
+adapter "noop" "default" {}
+
+step "noop" {
+  target = adapter.noop.default
+  input { value = var.item.id }
+  outcome "success" { next = state.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	writeSubworkflowDir(t, tmpDir, "child", childHCL)
+
+	parentHCL := `workflow {
+  name          = "parent"
+  version       = "1"
+  initial_state = "call_child"
+  target_state  = "done"
+}
+
+subworkflow "one" {
+  source = "./child"
+  input = {
+    item = { id = "x", count = "5" }
+  }
+}
+
+step "call_child" {
+  target = subworkflow.one
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+state "failed" {
+  terminal = true
+  success  = false
+}
+`
+	spec, parseDiags := Parse("parent.hcl", []byte(parentHCL))
+	if parseDiags.HasErrors() {
+		t.Fatalf("parse failed: %s", parseDiags.Error())
+	}
+	_, compileDiags := CompileWithOpts(spec, testSchemas, CompileOpts{
+		WorkflowDir:         tmpDir,
+		SubWorkflowResolver: &LocalSubWorkflowResolver{},
+		Schemas:             testSchemas,
+	})
+	if !compileDiags.HasErrors() {
+		t.Fatal("expected type mismatch error for coercible but non-exact object field, got none")
+	}
+	if !strings.Contains(compileDiags.Error(), "type mismatch") {
+		t.Errorf("expected 'type mismatch' in error, got: %s", compileDiags.Error())
+	}
+}

@@ -1,6 +1,6 @@
 module github.com/brokenbots/criteria/workflow
 
-go 1.26.5
+go 1.26.6
 
 require (
 	github.com/brokenbots/criteria v0.5.7

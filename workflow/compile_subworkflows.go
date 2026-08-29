@@ -306,21 +306,139 @@ func checkMissingInputKeys(swName string, inputs map[string]hcl.Expression, decl
 }
 
 // checkInputTypeCompat returns an error when a compile-time-known input value
-// is incompatible with the declared callee variable type. It accepts reasonable
-// conversions (number string "3" → number) and rejects clearly incompatible ones
-// (string "abc" → number). Expressions that cannot be evaluated at compile time
-// are not checked here.
+// is incompatible with the declared callee variable type. It accepts exact
+// structural matches, container-kind conversions where element types match
+// exactly (tuple → list/set, object → map), and safe scalar conversions
+// (number string "3" → number). It rejects incompatible conversions such as
+// number 5 → string inside an object field. Expressions that cannot be
+// evaluated at compile time are not checked here.
 func checkInputTypeCompat(val cty.Value, wantType cty.Type) error {
 	if wantType == cty.NilType || val == cty.NilVal || !val.IsKnown() || val.IsNull() {
 		return nil
 	}
 	gotType := val.Type()
-	if gotType == wantType {
+	if gotType.Equals(wantType) {
 		return nil // exact match
+	}
+	// For structural types, permit conversions that do not require scalar
+	// coercion of nested values. This avoids both the Go panic from comparing
+	// uncomparable cty types with == and surprising cross-kind coercion.
+	if wantType.IsObjectType() || wantType.IsTupleType() || wantType.IsListType() || wantType.IsMapType() || wantType.IsSetType() {
+		if canConvertWithoutCoercion(gotType, wantType) {
+			return nil
+		}
+		return fmt.Errorf("expected %s, got %s", wantType.FriendlyName(), gotType.FriendlyName())
 	}
 	// Allow safe conversions between string/number/bool via cty convert.
 	if _, err := convert.Convert(val, wantType); err != nil {
 		return fmt.Errorf("expected %s, got %s", wantType.FriendlyName(), gotType.FriendlyName())
 	}
 	return nil
+}
+
+// canConvertWithoutCoercion reports whether values of type got can be assigned
+// to a variable of type want without scalar coercion. It permits container-kind
+// conversions where the element types are themselves compatible without
+// coercion (tuple → list/set, object → map) and exact structural matches.
+func canConvertWithoutCoercion(got, want cty.Type) bool {
+	if got.Equals(want) {
+		return true
+	}
+	switch {
+	case want.IsListType() || want.IsSetType():
+		return collectionFromTupleOrSameKind(got, want)
+	case want.IsMapType():
+		return mapCompatible(got, want)
+	case want.IsTupleType():
+		return tupleCompatible(got, want)
+	case want.IsObjectType():
+		return objectCompatible(got, want)
+	}
+	return false
+}
+
+// collectionFromTupleOrSameKind handles tuple → list/set and list/set → list/set.
+func collectionFromTupleOrSameKind(got, want cty.Type) bool {
+	wantElem := want.ElementType()
+	if got.IsTupleType() {
+		return allTypesCompatible(got.TupleElementTypes(), wantElem)
+	}
+	if got.IsListType() || got.IsSetType() {
+		return canConvertWithoutCoercion(got.ElementType(), wantElem)
+	}
+	return false
+}
+
+// mapCompatible handles object → map and map → map.
+func mapCompatible(got, want cty.Type) bool {
+	wantElem := want.ElementType()
+	if got.IsObjectType() {
+		return allObjectAttrsCompatible(got.AttributeTypes(), wantElem)
+	}
+	if got.IsMapType() {
+		return canConvertWithoutCoercion(got.ElementType(), wantElem)
+	}
+	return false
+}
+
+// tupleCompatible handles tuple → tuple.
+func tupleCompatible(got, want cty.Type) bool {
+	if !got.IsTupleType() {
+		return false
+	}
+	wantElems := want.TupleElementTypes()
+	gotElems := got.TupleElementTypes()
+	if len(wantElems) != len(gotElems) {
+		return false
+	}
+	for i := range wantElems {
+		if !canConvertWithoutCoercion(gotElems[i], wantElems[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// objectCompatible handles object → object.
+func objectCompatible(got, want cty.Type) bool {
+	if !got.IsObjectType() {
+		return false
+	}
+	wantAttrs := want.AttributeTypes()
+	gotAttrs := got.AttributeTypes()
+	if len(wantAttrs) != len(gotAttrs) {
+		return false
+	}
+	for name, wantAttr := range wantAttrs {
+		gotAttr, ok := gotAttrs[name]
+		if !ok {
+			return false
+		}
+		if !canConvertWithoutCoercion(gotAttr, wantAttr) {
+			return false
+		}
+	}
+	return true
+}
+
+// allTypesCompatible reports whether every type in elems can be assigned to
+// wantElem without scalar coercion.
+func allTypesCompatible(elems []cty.Type, wantElem cty.Type) bool {
+	for _, gotElem := range elems {
+		if !canConvertWithoutCoercion(gotElem, wantElem) {
+			return false
+		}
+	}
+	return true
+}
+
+// allObjectAttrsCompatible reports whether every attribute type in attrs can
+// be assigned to wantElem without scalar coercion.
+func allObjectAttrsCompatible(attrs map[string]cty.Type, wantElem cty.Type) bool {
+	for _, gotElem := range attrs {
+		if !canConvertWithoutCoercion(gotElem, wantElem) {
+			return false
+		}
+	}
+	return true
 }

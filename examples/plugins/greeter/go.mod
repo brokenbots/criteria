@@ -1,6 +1,6 @@
 module example.com/criteria-adapter-greeter
 
-go 1.26.5
+go 1.26.6
 
 // This example builds against the published external SDK + proto modules, the
 // same way an external adapter author would — no local replace directives.
