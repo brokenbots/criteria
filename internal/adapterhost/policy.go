@@ -99,18 +99,21 @@ var adapterPermissionAliases = map[string]map[string]string{
 
 // NewPolicy returns a PermissionPolicy that evaluates requests against the
 // given glob patterns. Patterns are matched against req.Tool using
-// path/filepath.Match semantics ('*' matches any sequence within a segment,
-// '?' matches any single character; colons in patterns such as "shell:git *"
-// are treated as literals). First-match wins; an empty pattern list produces
-// a deny-all policy.
+// path/filepath.Match semantics: '*' matches any sequence of non-slash
+// characters and does not cross '/', '?' matches any single non-slash character,
+// and '[a-z]' matches a character class. There is no '**' recursive syntax.
+// Colons in patterns such as "shell:git *" are treated as literals.
+// First-match wins; an empty pattern list produces a deny-all policy.
 //
 // Examples:
 //
-//	NewPolicy([]string{"read_file"})          // allows any read_file call
-//	NewPolicy([]string{"shell:git status"})   // allows exactly "shell:git status"
-//	NewPolicy([]string{"shell:git *"})        // allows any git sub-command
-//	NewPolicy([]string{"shell:*"})            // allows any shell command
-//	NewPolicy(nil)                            // denies everything (default)
+//	NewPolicy([]string{"read_file"})            // allows the read_file tool
+//	NewPolicy([]string{"shell:git status"})     // allows exactly "shell:git status"
+//	NewPolicy([]string{"shell:git *"})          // allows "shell:git status" but not "shell:git add src/main.go"
+//	NewPolicy([]string{"shell:*/*/*"})         // allows "shell:cat /etc/hosts"
+//	NewPolicy([]string{"shell:cat /etc/hosts"}) // allows exactly "shell:cat /etc/hosts"
+//	NewPolicy([]string{"*"})                    // allows any tool
+//	NewPolicy(nil)                              // denies everything (default)
 func NewPolicy(patterns []string) PermissionPolicy {
 	return NewPolicyWithAliases(patterns, nil)
 }
