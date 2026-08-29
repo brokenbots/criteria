@@ -157,6 +157,13 @@ type WorkflowHeaderSpec struct {
 	//
 	// spec:required
 	Version string `hcl:"version,optional"`
+	// CriteriaVersion is an optional semantic-version constraint declaring the
+	// Criteria engine releases with which this workflow is compatible. Empty
+	// means the workflow does not declare an engine compatibility bound.
+	//
+	// spec:optional
+	CriteriaVersion      string     `hcl:"criteria_version,optional"`
+	CriteriaVersionRange *hcl.Range // source range for diagnostics
 	// InitialState names the step or state where workflow execution begins.
 	//
 	// spec:required
@@ -504,6 +511,10 @@ type FSMGraph struct {
 	Name         string
 	InitialState string
 	TargetState  string
+	// CriteriaVersion is the raw engine compatibility constraint copied from the
+	// header. Empty means no constraint was declared.
+	CriteriaVersion      string
+	CriteriaVersionRange *hcl.Range
 	// Verification is the workflow-level signature-verification posture
 	// (off|warn|strict) copied from the header; empty means the CLI transition
 	// default applies. Consumed by the runtime adapter-pin enforcement path.

@@ -329,6 +329,10 @@ func (e *Engine) Run(ctx context.Context) error {
 	e.setLockfileOnSessions(sessions)
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
+	if diags := workflow.CheckGraphCriteriaVersion(e.graph, nil); diags.HasErrors() {
+		return fmt.Errorf("%s", diags.Error())
+	}
+
 	// Create a per-run redaction registry and wire it into the session manager
 	// and the engine sink so all secret values are masked before display or
 	// persistence.
@@ -397,6 +401,10 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	e.setLockfileOnSessions(sessions)
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
+	if diags := workflow.CheckGraphCriteriaVersion(e.graph, nil); diags.HasErrors() {
+		return fmt.Errorf("%s", diags.Error())
+	}
+
 	redactionReg := secrets.NewRegistry()
 	sessions.RedactionRegistry = redactionReg
 
@@ -454,6 +462,7 @@ func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManag
 		Visits:           cloneVisits(e.resumedVisits),
 		WorkflowDir:      e.workflowDir,
 		DataStore:        NewDataStore(e.graph),
+		WorkflowName:     e.graph.Name,
 		firstStep:        true,
 		firstStepAttempt: firstStepAttempt,
 	}

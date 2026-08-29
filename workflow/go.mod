@@ -3,6 +3,7 @@ module github.com/brokenbots/criteria/workflow
 go 1.26.6
 
 require (
+	github.com/blang/semver v3.5.1+incompatible
 	github.com/brokenbots/criteria v0.5.7
 	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
@@ -18,7 +19,6 @@ require (
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
 	github.com/apparentlymart/go-textseg/v17 v17.0.1 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
-	github.com/blang/semver v3.5.1+incompatible // indirect
 	github.com/brokenbots/criteria-adapter-proto v0.5.1 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

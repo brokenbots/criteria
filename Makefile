@@ -16,7 +16,7 @@ tidy: ## Run go mod tidy across all modules
 
 build: ## Build the criteria binary (output: bin/criteria)
 	mkdir -p bin
-	go build -ldflags "-X github.com/brokenbots/criteria/internal/cli.version=$(shell git describe --tags --match 'v*' --always --dirty)" -o bin/criteria ./cmd/criteria
+	go build -ldflags "-X github.com/brokenbots/criteria/workflow/version.Version=$(shell git describe --tags --match 'v*' --always --dirty)" -o bin/criteria ./cmd/criteria
 
 plugins: ## Build adapter plugin binaries (output: bin/criteria-adapter-*)
 	mkdir -p bin

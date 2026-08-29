@@ -53,6 +53,13 @@ type RunState struct {
 	// declares no data blocks.
 	DataStore *DataStore
 
+	// WorkflowName is the name of the workflow body currently executing. Used
+	// for engine-version compatibility diagnostics in nested subworkflows.
+	WorkflowName string
+	// Ancestors is the chain of parent workflow names leading to the current
+	// workflow body. Empty for a root workflow.
+	Ancestors []string
+
 	firstStep        bool
 	firstStepAttempt int
 }

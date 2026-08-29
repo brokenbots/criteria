@@ -5,11 +5,9 @@ import (
 	"io"
 
 	"github.com/spf13/cobra"
-)
 
-// version is set at link time by the Makefile using -ldflags. It defaults to
-// "dev" for builds that do not inject a version identifier.
-var version = "dev"
+	"github.com/brokenbots/criteria/workflow/version"
+)
 
 // NewVersionCmd returns the `criteria version` command.
 func NewVersionCmd() *cobra.Command {
@@ -26,6 +24,7 @@ func NewVersionCmd() *cobra.Command {
 }
 
 func printVersion(w io.Writer) error {
-	_, err := fmt.Fprintln(w, version)
+	info := version.Current()
+	_, err := fmt.Fprintln(w, info.Display)
 	return err
 }

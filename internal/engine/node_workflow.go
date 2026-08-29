@@ -61,20 +61,40 @@ func checkRequiredVars(body *workflow.FSMGraph, parentInput cty.Value) error {
 //
 // The returned child vars represent the body's final execution scope and are
 // used by the caller to evaluate output{} block expressions.
-func runWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry string, childVars map[string]cty.Value, workflowDir string, deps Deps, scopeName string) (terminal string, returnOutputs, finalVars map[string]cty.Value, err error) {
+func runWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry string, childVars map[string]cty.Value, workflowDir string, deps Deps, scopeName string, ancestors ...string) (terminal string, returnOutputs, finalVars map[string]cty.Value, err error) {
+	bodyEntry, err = resolveBodyEntry(body, bodyEntry)
+	if err != nil {
+		return "", nil, nil, err
+	}
+
+	if diags := workflow.CheckGraphCriteriaVersion(body, ancestors); diags.HasErrors() {
+		return "", nil, nil, fmt.Errorf("%s", diags.Error())
+	}
+
+	bodyOrder, childSt, err := startWorkflowBody(ctx, body, bodyEntry, childVars, workflowDir, deps, scopeName, ancestors)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	defer func() { tearDownScopeAdapters(ctx, bodyOrder, deps) }()
+
+	return runWorkflowBodyLoop(ctx, body, childSt, deps)
+}
+
+func resolveBodyEntry(body *workflow.FSMGraph, bodyEntry string) (string, error) {
 	if bodyEntry == "" {
 		bodyEntry = body.InitialState
 	}
 	if bodyEntry == "" {
-		return "", nil, nil, fmt.Errorf("workflow body has no initial state")
+		return "", fmt.Errorf("workflow body has no initial state")
 	}
+	return bodyEntry, nil
+}
 
-	// Body-scope adapter provisioning (W12): each body declares its own adapters.
+func startWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry string, childVars map[string]cty.Value, workflowDir string, deps Deps, scopeName string, ancestors []string) ([]string, *RunState, error) {
 	bodyOrder, err := initScopeAdapters(ctx, body, deps, childVars, workflowDir, scopeName)
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("workflow body init adapters: %w", err)
+		return nil, nil, fmt.Errorf("workflow body init adapters: %w", err)
 	}
-	defer func() { tearDownScopeAdapters(ctx, bodyOrder, deps) }()
 
 	childSt := &RunState{
 		Current:       bodyEntry,
@@ -84,8 +104,13 @@ func runWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry str
 		ResumePayload: nil,
 		DataStore:     NewDataStore(body),
 		firstStep:     false,
+		WorkflowName:  body.Name,
+		Ancestors:     ancestors,
 	}
+	return bodyOrder, childSt, nil
+}
 
+func runWorkflowBodyLoop(ctx context.Context, body *workflow.FSMGraph, childSt *RunState, deps Deps) (terminal string, returnOutputs, finalVars map[string]cty.Value, err error) {
 	for {
 		node, err := nodeFor(body, childSt.Current)
 		if err != nil {

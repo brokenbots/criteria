@@ -194,3 +194,62 @@ func TestValidateDiagnosticJSONFieldNames(t *testing.T) {
 	_, ok := m["extra"]
 	assert.False(t, ok)
 }
+
+func TestValidateCriteriaVersion_Incompatible(t *testing.T) {
+	t.Setenv("CRITERIA_OVERRIDE_VERSION", "0.5.7")
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "workflow.hcl")
+	src := `workflow {
+  name             = "wf"
+  version          = "1"
+  criteria_version = ">=0.5.8, <0.6.0"
+  initial_state    = "done"
+  target_state     = "done"
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	err := os.WriteFile(path, []byte(src), 0o644)
+	require.NoError(t, err)
+
+	out := captureOutput(t, func() {
+		ok := validatePath(context.Background(), path, nil, false, false)
+		assert.False(t, ok)
+	})
+
+	assert.Contains(t, out, `workflow "wf" requires Criteria >=0.5.8, <0.6.0`)
+	assert.Contains(t, out, "running engine is v0.5.7")
+}
+
+func TestValidateCriteriaVersion_Compatible(t *testing.T) {
+	t.Setenv("CRITERIA_OVERRIDE_VERSION", "0.5.8")
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "workflow.hcl")
+	src := `workflow {
+  name             = "wf"
+  version          = "1"
+  criteria_version = ">=0.5.8, <0.6.0"
+  initial_state    = "done"
+  target_state     = "done"
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	err := os.WriteFile(path, []byte(src), 0o644)
+	require.NoError(t, err)
+
+	out := captureOutput(t, func() {
+		ok := validatePath(context.Background(), path, nil, false, false)
+		assert.True(t, ok)
+	})
+
+	assert.Contains(t, out, "ok")
+}

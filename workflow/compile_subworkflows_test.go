@@ -1323,3 +1323,42 @@ state "failed" {
 		t.Fatalf("expected compile success for coercible object field, got: %s", compileDiags.Error())
 	}
 }
+
+// TestCompileSubworkflows_CriteriaVersionRejected verifies that a child workflow
+// declaring an incompatible criteria_version is rejected at compile time, with
+// the parent->child source chain included in the diagnostic.
+func TestCompileSubworkflows_CriteriaVersionRejected(t *testing.T) {
+	t.Setenv("CRITERIA_OVERRIDE_VERSION", "0.5.8")
+
+	tmpDir := t.TempDir()
+	childHCL := `workflow {
+  name             = "child"
+  version          = "1"
+  criteria_version = ">=0.5.9"
+  initial_state    = "done"
+  target_state     = "done"
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	writeSubworkflowDir(t, tmpDir, "inner", childHCL)
+
+	parentHCL := parentHCLWithSubworkflow("inner_task", "./inner", "")
+	_, diags := compileParentSpec(t, parentHCL, tmpDir)
+	if !diags.HasErrors() {
+		t.Fatal("expected criteria-version error for incompatible child, got none")
+	}
+	msg := diags.Error()
+	if !strings.Contains(msg, `subworkflow "child" requires Criteria >=0.5.9`) {
+		t.Errorf("missing child requirement: %s", msg)
+	}
+	if !strings.Contains(msg, "running engine is v0.5.8") {
+		t.Errorf("missing running engine version: %s", msg)
+	}
+	if !strings.Contains(msg, "required by parent -> child") {
+		t.Errorf("missing source chain: %s", msg)
+	}
+}

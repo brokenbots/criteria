@@ -6,6 +6,11 @@ BINDIR="${BINDIR:-./bin}"
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
+# Development builds have no embedded release version, so any workflow that
+# declares criteria_version would fail validation. Override with a stable
+# semver so doc examples can exercise the new attribute.
+export CRITERIA_OVERRIDE_VERSION="${CRITERIA_OVERRIDE_VERSION:-0.5.9}"
+
 python3 - "$TMPDIR" "$BINDIR" <<'PY'
 import re, os, subprocess, sys
 
