@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -338,6 +339,66 @@ func TestShim_AcceptAndCallInfo(t *testing.T) {
 	if info.Version != "1.0.0" {
 		t.Errorf("info.Version = %q, want 1.0.0", info.Version)
 	}
+}
+
+func TestShim_StopCancelsSessions(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	verifier := &fixedDigestVerifier{allowed: map[string]string{"noop": "sha256:abcd1234"}}
+	shim, err := NewShim(&Config{ListenAddress: "127.0.0.1:0"}, verifier)
+	if err != nil {
+		t.Fatalf("NewShim: %v", err)
+	}
+	if err := shim.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	addr := shim.listener.Addr().String()
+	go func() {
+		_ = dialFakeAdapter(addr, handshakeMessage{
+			Name:    "noop",
+			Version: "1.0.0",
+			Digest:  "sha256:abcd1234",
+		}, nil)
+	}()
+
+	handle, err := shim.WaitForHandle(ctx, "noop")
+	if err != nil {
+		t.Fatalf("WaitForHandle: %v", err)
+	}
+
+	var canceled atomic.Bool
+	shim.mu.Lock()
+	sess, ok := shim.sessions["noop"]
+	if !ok || sess == nil {
+		t.Fatalf("expected session for noop to be registered")
+	}
+	origCancel := sess.cancel
+	sess.cancel = func() {
+		canceled.Store(true)
+		if origCancel != nil {
+			origCancel()
+		}
+	}
+	shim.mu.Unlock()
+
+	if err := shim.Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	if !canceled.Load() {
+		t.Fatal("expected session cancel to run during Stop")
+	}
+
+	shim.mu.Lock()
+	if len(shim.sessions) != 0 {
+		t.Fatalf("expected sessions map to be cleared, got %d entries", len(shim.sessions))
+	}
+	shim.mu.Unlock()
+
+	// Silence unused-variable lint; Stop already closed the handle.
+	_ = handle
 }
 
 func TestShim_RejectUnknownDigest(t *testing.T) {
