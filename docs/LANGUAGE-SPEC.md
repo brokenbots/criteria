@@ -390,9 +390,9 @@ Expression functions available in all HCL attribute values within a workflow. Fu
 | `yamldecode` | `yamldecode(value: string)` | `unknown` | [workflow/eval_functions_encoding.go:88](../workflow/eval_functions_encoding.go#L88) |
 | `uuid` | `uuid()` | `string` | [workflow/eval_functions_dynamic.go:28](../workflow/eval_functions_dynamic.go#L28) |
 | `timestamp` | `timestamp()` | `string` | [workflow/eval_functions_dynamic.go:41](../workflow/eval_functions_dynamic.go#L41) |
-| `startswith` | `startswith(string: string, prefix: string)` | `bool` | [workflow/eval_functions.go:165](../workflow/eval_functions.go#L165) |
-| `endswith` | `endswith(string: string, suffix: string)` | `bool` | [workflow/eval_functions.go:178](../workflow/eval_functions.go#L178) |
-| `strrev` | `strrev(string: string)` | `string` | [workflow/eval_functions.go:191](../workflow/eval_functions.go#L191) |
+| `startswith` | `startswith(string: string, prefix: string)` | `bool` | [workflow/eval_functions.go:184](../workflow/eval_functions.go#L184) |
+| `endswith` | `endswith(string: string, suffix: string)` | `bool` | [workflow/eval_functions.go:197](../workflow/eval_functions.go#L197) |
+| `strrev` | `strrev(string: string)` | `string` | [workflow/eval_functions.go:210](../workflow/eval_functions.go#L210) |
 <!-- END GENERATED:functions -->
 
 ### Standard library functions

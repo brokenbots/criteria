@@ -1068,6 +1068,41 @@ step "draft" {
 
 > **Differences from Terraform's `templatefile`:** Terraform's `templatefile` uses HCL native template syntax (`${field}`). Criteria's uses Go `text/template` syntax (`{{ .field }}`). This is intentional — `text/template` is in the Go stdlib and does not auto-escape output, which is desirable for LLM prompt content.
 
+##### Shell-safe substitution with `shellquote`
+
+Inside a `templatefile` template, use the `shellquote` function to embed an arbitrary string value in a POSIX shell command without that value being interpreted as shell syntax or executable code. `shellquote` wraps the value in single quotes and escapes any embedded single quotes, so characters such as `"`, `$`, `;`, `|`, `&&`, and even newlines are treated as literal data.
+
+`command.tmpl`:
+
+```gotemplate
+printf '%s\n' {{ .value | shellquote }}
+```
+
+Workflow:
+
+```hcl
+variable "value" {
+  type    = string
+  default = "can't"
+}
+
+step "run" {
+  target = adapter.shell.local
+  input {
+    command = templatefile("./command.tmpl", { value = var.value })
+  }
+  outcome "success" { next = state.done }
+}
+```
+
+Rendered command:
+
+```sh
+printf '%s\n' 'can'\''t'
+```
+
+The shell parses `'can'\''t'` as a single literal argument equal to `can't`. Templates that do not use `shellquote` continue to render values unchanged.
+
 #### `fileset(path, pattern)`
 
 Lists regular files inside `path` (resolved relative to the workflow directory) whose basenames match the glob `pattern`. Returns a sorted `list(string)` of paths **relative to the workflow directory**, suitable for passing directly to `file()` or `templatefile()` via `each.value`.

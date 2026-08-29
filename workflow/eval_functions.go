@@ -31,6 +31,25 @@ const (
 	trimFrontmatterSearchLimit = 64 * 1024
 )
 
+// templateFileFuncs are the custom functions available inside templatefile()
+// templates. They are registered in addition to the default functions provided
+// by Go's text/template package.
+var templateFileFuncs = template.FuncMap{
+	"shellquote": shellQuote,
+}
+
+// shellQuote returns a POSIX-shell-safe single-quoted representation of s.
+// The result can be embedded directly into a shell command string and will be
+// parsed as one literal word regardless of metacharacters it contains.
+// Empty strings render as "”" and embedded single quotes are escaped by
+// closing the quoted region, inserting an escaped quote, and reopening it.
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 // FunctionOptions carries the configuration needed to construct the
 // workflow expression functions.
 //
@@ -451,6 +470,7 @@ func renderTemplateFile(opts *FunctionOptions, raw string, varsVal cty.Value) (c
 	// Template name is the basename of path so error messages reference
 	// the source file.
 	tmpl, err := template.New(filepath.Base(raw)).
+		Funcs(templateFileFuncs).
 		Option("missingkey=error").
 		Parse(content)
 	if err != nil {
