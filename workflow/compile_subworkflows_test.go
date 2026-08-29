@@ -1019,8 +1019,8 @@ state "failed" {
 }
 
 // TestCompileSubworkflows_InputObjectMismatchedFieldType_NoPanic is a regression
-// test for CRI-29: an object literal whose field type does not match the
-// declared callee variable type must produce a normal HCL type-mismatch
+// test for CRI-29: an object literal whose field type is not safely convertible
+// to the declared callee variable type must produce a normal HCL type-mismatch
 // diagnostic, not a Go panic.
 func TestCompileSubworkflows_InputObjectMismatchedFieldType_NoPanic(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -1033,7 +1033,7 @@ func TestCompileSubworkflows_InputObjectMismatchedFieldType_NoPanic(t *testing.T
 }
 
 variable "item" {
-  type = object({ id = string, severity = string })
+  type = object({ id = number })
 }
 
 adapter "noop" "default" {}
@@ -1061,7 +1061,7 @@ state "done" {
 subworkflow "one" {
   source = "./child"
   input = {
-    item = { id = "x", severity = 5 }
+    item = { id = "x" }
   }
 }
 
@@ -1249,9 +1249,9 @@ state "failed" {
 
 // TestCompileSubworkflows_InputObjectCoercibleField_NoPanic verifies that an
 // object literal containing a coercible scalar value ("5" for a number field)
-// does not panic. After CRI-29, structural types require an exact type match at
-// the subworkflow input boundary, so this case produces a normal type-mismatch
-// diagnostic rather than silent coercion.
+// does not panic. CRI-29 requires that safe cty conversions (including
+// string "5" → number inside an object) continue to work at the subworkflow
+// input boundary, so this binding compiles without errors.
 func TestCompileSubworkflows_InputObjectCoercibleField_NoPanic(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -1319,10 +1319,7 @@ state "failed" {
 		SubWorkflowResolver: &LocalSubWorkflowResolver{},
 		Schemas:             testSchemas,
 	})
-	if !compileDiags.HasErrors() {
-		t.Fatal("expected type mismatch error for coercible but non-exact object field, got none")
-	}
-	if !strings.Contains(compileDiags.Error(), "type mismatch") {
-		t.Errorf("expected 'type mismatch' in error, got: %s", compileDiags.Error())
+	if compileDiags.HasErrors() {
+		t.Fatalf("expected compile success for coercible object field, got: %s", compileDiags.Error())
 	}
 }
