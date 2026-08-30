@@ -9,6 +9,10 @@ import "runtime"
 // architectures supported by the sandbox.
 var networkSyscalls = []string{
 	"sendfile",
+	// Batched socket IO used by modern glibc resolvers (e.g. Debian curl
+	// sends paired A/AAAA DNS queries via sendmmsg) and by some HTTP stacks.
+	"sendmmsg",
+	"recvmmsg",
 }
 
 // baseSyscalls is the default-deny seccomp allow-list for the current
@@ -40,7 +44,7 @@ func init() {
 var baseSyscallsAMD64 = []string{
 	// File operations
 	"read", "write", "open", "openat", "openat2", "close",
-	"stat", "fstat", "lstat", "statx", "fstatfs", "statfs",
+	"stat", "fstat", "lstat", "statx", "newfstatat", "fstatfs", "statfs",
 	"access", "faccessat", "faccessat2",
 	"lseek", "pread64", "pwrite64", "readv", "writev",
 	"getdents64", "ioctl", "fcntl", "flock", "fsync", "fdatasync",

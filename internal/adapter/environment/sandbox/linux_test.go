@@ -636,6 +636,208 @@ func TestShimIntegration_DenyNetwork(t *testing.T) {
 	}
 }
 
+// TestShimIntegration_CurlAllowNetwork verifies that a real libc resolver
+// path (getent) and curl can both resolve a hostname and fetch HTTP inside
+// a network-allowed Linux sandbox with seccomp enabled. This exercises the
+// sendmmsg/recvmmsg batched socket syscalls used by glibc's threaded
+// resolver, which were previously blocked by the default-deny filter.
+func TestShimIntegration_CurlAllowNetwork(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux only")
+	}
+	caps := Probe()
+	if !caps.UserNamespaces {
+		t.Skip("user namespaces not available")
+	}
+	if !caps.Seccomp {
+		t.Skip("seccomp not available")
+	}
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl not on PATH")
+	}
+	if _, err := exec.LookPath("getent"); err != nil {
+		t.Skip("getent not on PATH")
+	}
+
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("failed to get test file path")
+	}
+	fixtureDir := filepath.Join(filepath.Dir(testFile), "testfixture", "curl")
+
+	dir := t.TempDir()
+	helper := filepath.Join(dir, "curl_helper")
+	buildCmd := exec.Command("go", "build", "-o", helper, fixtureDir)
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("compile helper: %v\n%s", err, out)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("OK"))
+	}))
+	defer server.Close()
+
+	prep, err := Handler{}.Prepare(PrepareContext{
+		Policy: &workflow.ResolvedPolicy{
+			OS:         "linux",
+			PolicyMode: "permissive",
+			Network:    &workflow.NetworkPolicy{AllowEgress: true},
+		},
+		Caps: caps,
+	})
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	defer prep.Cleanup()
+
+	cfg := ShimConfig{
+		TargetPath: helper,
+		Mode:       prep.Mode,
+		// Broad system paths are required so the dynamically linked curl
+		// binary, glibc resolver, dynamic loader and /dev devices can load.
+		// No NetPorts are configured; egress is controlled by seccomp and by
+		// sharing the host network namespace when AllowEgress is true.
+		ReadPaths: []string{
+			"/usr",
+			"/lib",
+			"/lib64",
+			"/etc",
+			"/proc",
+			"/dev",
+		},
+		WritePaths:   []string{"/tmp", "/dev"},
+		NetPorts:     []uint16{},
+		AllowNetwork: prep.AllowNetwork,
+		Seccomp:      true,
+		Rlimits:      prep.Rlimits,
+	}
+	tmpFile, err := os.CreateTemp(dir, "criteria-sandbox-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpFile.Name())
+	if err := json.NewEncoder(tmpFile).Encode(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	runCmd := exec.Command(helper, server.URL+"/")
+	runCmd.SysProcAttr = prep.SysProcAttr
+	runCmd.Env = append(os.Environ(), "CRITERIA_SANDBOX_CONFIG_PATH="+tmpFile.Name())
+	out, err := runCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("helper failed: %v\n%s", err, out)
+	}
+	outStr := string(out)
+	t.Logf("helper output:\n%s", outStr)
+	if !strings.Contains(outStr, "GETENT_OK") {
+		t.Fatalf("expected GETENT_OK with AllowNetwork=true, got: %s", outStr)
+	}
+	if !strings.Contains(outStr, "CURL_OK") {
+		t.Fatalf("expected CURL_OK with AllowNetwork=true, got: %s", outStr)
+	}
+}
+
+// TestShimIntegration_CurlDenyNetwork verifies that a network-denied sandbox
+// still blocks external egress. curl/getent are allowed to load but the
+// new network namespace prevents any connect/DNS path from succeeding.
+func TestShimIntegration_CurlDenyNetwork(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux only")
+	}
+	caps := Probe()
+	if !caps.UserNamespaces {
+		t.Skip("user namespaces not available")
+	}
+	if !caps.Seccomp {
+		t.Skip("seccomp not available")
+	}
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl not on PATH")
+	}
+	if _, err := exec.LookPath("getent"); err != nil {
+		t.Skip("getent not on PATH")
+	}
+
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("failed to get test file path")
+	}
+	fixtureDir := filepath.Join(filepath.Dir(testFile), "testfixture", "curl")
+
+	dir := t.TempDir()
+	helper := filepath.Join(dir, "curl_helper")
+	buildCmd := exec.Command("go", "build", "-o", helper, fixtureDir)
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("compile helper: %v\n%s", err, out)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("OK"))
+	}))
+	defer server.Close()
+
+	prep, err := Handler{}.Prepare(PrepareContext{
+		Policy: &workflow.ResolvedPolicy{
+			OS:         "linux",
+			PolicyMode: "permissive",
+			Network:    &workflow.NetworkPolicy{AllowEgress: false},
+		},
+		Caps: caps,
+	})
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	defer prep.Cleanup()
+
+	cfg := ShimConfig{
+		TargetPath: helper,
+		Mode:       prep.Mode,
+		ReadPaths: []string{
+			"/usr",
+			"/lib",
+			"/lib64",
+			"/etc",
+			"/proc",
+			"/dev",
+		},
+		WritePaths:   []string{"/tmp", "/dev"},
+		NetPorts:     []uint16{},
+		AllowNetwork: prep.AllowNetwork,
+		Seccomp:      true,
+		Rlimits:      prep.Rlimits,
+	}
+	tmpFile, err := os.CreateTemp(dir, "criteria-sandbox-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpFile.Name())
+	if err := json.NewEncoder(tmpFile).Encode(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	runCmd := exec.Command(helper, server.URL+"/")
+	runCmd.SysProcAttr = prep.SysProcAttr
+	runCmd.Env = append(os.Environ(), "CRITERIA_SANDBOX_CONFIG_PATH="+tmpFile.Name())
+	out, err := runCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("helper failed: %v\n%s", err, out)
+	}
+	outStr := string(out)
+	t.Logf("helper output:\n%s", outStr)
+	if strings.Contains(outStr, "GETENT_OK") {
+		t.Fatalf("expected GETENT to fail with AllowNetwork=false, got: %s", outStr)
+	}
+	if strings.Contains(outStr, "CURL_OK") {
+		t.Fatalf("expected CURL to fail with AllowNetwork=false, got: %s", outStr)
+	}
+}
+
 // TestMaxThreads_PthreadSurrogate verifies that RLIMIT_NPROC plumbing
 // controls how many pthreads can be created inside the sandbox. The
 // default policy and an explicit max_threads="2048" must both allow at
@@ -1167,6 +1369,37 @@ func TestBuildSeccompFilter(t *testing.T) {
 	if f2 == nil {
 		t.Fatal("expected non-nil filter")
 	}
+}
+
+func TestBuildSeccompFilter_NetworkSyscalls(t *testing.T) {
+	allowed, err := buildSeccompFilter(true)
+	if err != nil {
+		t.Fatalf("buildSeccompFilter(true): %v", err)
+	}
+	for _, name := range []string{"sendmmsg", "recvmmsg"} {
+		if !syscallsContains(allowed.Policy.Syscalls[0].Names, name) {
+			t.Fatalf("expected %s in network-allowed seccomp allow-list", name)
+		}
+	}
+
+	denied, err := buildSeccompFilter(false)
+	if err != nil {
+		t.Fatalf("buildSeccompFilter(false): %v", err)
+	}
+	for _, name := range []string{"sendmmsg", "recvmmsg"} {
+		if syscallsContains(denied.Policy.Syscalls[0].Names, name) {
+			t.Fatalf("expected %s to be absent from network-denied seccomp allow-list", name)
+		}
+	}
+}
+
+func syscallsContains(list []string, name string) bool {
+	for _, n := range list {
+		if n == name {
+			return true
+		}
+	}
+	return false
 }
 
 func TestMaybeUseBubblewrap(t *testing.T) {
