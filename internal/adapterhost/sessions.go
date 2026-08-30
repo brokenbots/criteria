@@ -66,6 +66,12 @@ type SessionManager struct {
 	// When nil the real Probe() is used.
 	sandboxProbeOverride func() sandbox.Capabilities
 
+	// sandboxShimBin is the path to the binary used as the sandbox pre-exec
+	// shim. When empty the current process image (os.Args[0]) is used, matching
+	// production criteria CLI behavior. Tests set this to a dedicated helper
+	// binary so the shim runs in a minimal process instead of the test binary.
+	sandboxShimBin string
+
 	// lockfile holds the parsed lockfile for container-mode lookups.
 	lockfile *lockfile.Lockfile
 
@@ -601,7 +607,7 @@ func (m *SessionManager) buildSandboxCustomizer(instanceID, workingDir string) (
 		return nil, nil, nil
 	}
 
-	customizer, cleanup = makeSandboxCustomizer(&prep, envNode, workingDir)
+	customizer, cleanup = makeSandboxCustomizer(&prep, envNode, workingDir, m.sandboxShimBin)
 	return customizer, cleanup, nil
 }
 
@@ -971,8 +977,10 @@ func (m *SessionManager) adapterDir(instanceID string) string {
 
 // makeSandboxCustomizer builds the exec.Cmd customizer and cleanup from
 // a prepared LinuxPrepared config. It handles both the bubblewrap and
-// in-process shim paths.
-func makeSandboxCustomizer(prep *sandbox.LinuxPrepared, envNode *workflow.EnvironmentNode, workingDir string) (customizer func(name string, cmd *exec.Cmd), cleanup func()) {
+// in-process shim paths. The shimBin argument overrides the binary used as
+// the pre-exec shim; when empty the current process image (os.Args[0]) is
+// used, which is how the production criteria CLI acts as its own shim.
+func makeSandboxCustomizer(prep *sandbox.LinuxPrepared, envNode *workflow.EnvironmentNode, workingDir, shimBin string) (customizer func(name string, cmd *exec.Cmd), cleanup func()) {
 	cleanup = func() { _ = prep.Cleanup() }
 	if bwrapCmd := sandbox.MaybeUseBubblewrap(prep, envNode, workingDir); bwrapCmd != nil {
 		return func(_ string, cmd *exec.Cmd) {
@@ -992,7 +1000,7 @@ func makeSandboxCustomizer(prep *sandbox.LinuxPrepared, envNode *workflow.Enviro
 		if prep.TargetPath == "" {
 			prep.TargetPath = cmd.Path
 		}
-		_ = prep.ApplyToCmd(cmd, os.Args[0])
+		_ = prep.ApplyToCmd(cmd, shimBin)
 	}, cleanup
 }
 

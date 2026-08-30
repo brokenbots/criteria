@@ -141,7 +141,7 @@ func TestMakeSandboxCustomizer_BwrapNotOptedIn(t *testing.T) {
 		TargetPath:  "/usr/bin/true",
 	}
 	env := &workflow.EnvironmentNode{Type: "sandbox", Name: "default"}
-	customizer, cleanup := makeSandboxCustomizer(prep, env, "")
+	customizer, cleanup := makeSandboxCustomizer(prep, env, "", "")
 	if customizer == nil {
 		t.Fatal("expected non-nil customizer")
 	}
@@ -169,7 +169,7 @@ func TestMakeSandboxCustomizer_ShimCallsApplyToCmd(t *testing.T) {
 		AllowNetwork: true,
 	}
 	env := &workflow.EnvironmentNode{Type: "sandbox", Name: "default"}
-	customizer, cleanup := makeSandboxCustomizer(prep, env, "")
+	customizer, cleanup := makeSandboxCustomizer(prep, env, "", "")
 	if customizer == nil {
 		t.Fatal("expected non-nil customizer")
 	}
@@ -181,7 +181,7 @@ func TestMakeSandboxCustomizer_ShimCallsApplyToCmd(t *testing.T) {
 	cmd := exec.Command("/usr/bin/my-adapter", "--flag", "value")
 	customizer("noop", cmd)
 
-	// ApplyToCmd replaces cmd.Path with the criteria binary.
+	// ApplyToCmd replaces cmd.Path with the shim binary.
 	if cmd.Path == "" {
 		t.Fatal("expected cmd.Path to be replaced with shim")
 	}
@@ -236,7 +236,12 @@ func TestSessionManager_Open_LockedOCIAdapter_Sandbox(t *testing.T) {
 
 	t.Setenv(adaptersEnvVar, root)
 
+	if testSandboxShimBin == "" {
+		t.Fatal("sandbox shim binary not built")
+	}
+
 	sm := NewSessionManager(NewLoader())
+	sm.sandboxShimBin = testSandboxShimBin
 	sm.SetLockfile(&lockfile.Lockfile{
 		Adapters: []lockfile.LockedAdapter{
 			{Type: "noop", Name: "default", ResolvedDigest: dg.String()},

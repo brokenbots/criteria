@@ -1,7 +1,6 @@
 package adapterhost
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,28 +17,22 @@ import (
 // -race -count=3 on loaded hosts.
 var testNoopAdapterBin string
 
-// sandboxShimEntry is replaced on Linux by a function that applies the
-// sandbox restrictions and re-execs the real adapter when the test binary is
-// invoked as a pre-exec shim (CRITERIA_SANDBOX_CONFIG_PATH is set). This lets
-// integration tests that launch real adapters inside the Linux sandbox use the
-// test binary as the shim, matching how the criteria CLI binary behaves.
-var sandboxShimEntry = func() (ran bool, err error) { return false, nil }
+// testSandboxShimBin is the path to a dedicated Linux sandbox shim helper
+// binary. It is only built on Linux; on other platforms it remains empty and
+// the Linux-only sandbox tests that need it are skipped.
+var testSandboxShimBin string
 
 func TestMain(m *testing.M) {
-	if ran, err := sandboxShimEntry(); ran {
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "sandbox shim failed:", err)
-			os.Exit(125)
-		}
-		// RunIfEnv should have replaced this process via syscall.Exec; reaching
-		// here is unexpected but safe to treat as success.
-		os.Exit(0)
-	} else if err != nil {
-		fmt.Fprintln(os.Stderr, "sandbox shim check failed:", err)
-		os.Exit(125)
+	dir, err := os.MkdirTemp("", "criteria-adapter-tests-")
+	if err != nil {
+		panic("adapterhost/main_test.go: create temp dir: " + err.Error())
 	}
 
-	testNoopAdapterBin = buildTestNoopAdapter()
+	testNoopAdapterBin = buildTestNoopAdapter(dir)
+	if runtime.GOOS == "linux" {
+		testSandboxShimBin = buildTestSandboxShim(dir)
+	}
+
 	// IgnoreCurrent captures any goroutines started by the Go runtime or
 	// test infrastructure before our tests run (e.g. the race detector's own
 	// goroutines). This avoids false-positive leak reports for goroutines that
@@ -47,24 +40,34 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m, goleak.IgnoreCurrent())
 }
 
-// buildTestNoopAdapter compiles the noop adapter into an OS temp dir that
-// persists for the duration of the test binary. The binary is built once;
-// every test reads testNoopAdapterBin rather than triggering a fresh build.
-func buildTestNoopAdapter() string {
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		panic("adapterhost/main_test.go: resolve caller path")
-	}
-	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
-	dir, err := os.MkdirTemp("", "criteria-adapter-tests-")
-	if err != nil {
-		panic("adapterhost/main_test.go: create temp dir: " + err.Error())
-	}
+// buildTestNoopAdapter compiles the noop adapter into dir. The binary is built
+// once; every test reads testNoopAdapterBin rather than triggering a fresh
+// build.
+func buildTestNoopAdapter(dir string) string {
 	bin := filepath.Join(dir, "criteria-adapter-noop")
 	cmd := exec.Command("go", "build", "-o", bin, "./internal/adapter/conformance/testdata/noop")
-	cmd.Dir = moduleRoot
+	cmd.Dir = moduleRootFromCaller()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		panic("adapterhost/main_test.go: build noop adapter: " + err.Error() + "\n" + string(out))
 	}
 	return bin
+}
+
+// buildTestSandboxShim compiles the Linux-only sandbox shim helper into dir.
+func buildTestSandboxShim(dir string) string {
+	bin := filepath.Join(dir, "criteria-sandbox-shim")
+	cmd := exec.Command("go", "build", "-o", bin, "./internal/adapterhost/testdata/sandboxshim")
+	cmd.Dir = moduleRootFromCaller()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		panic("adapterhost/main_test.go: build sandbox shim: " + err.Error() + "\n" + string(out))
+	}
+	return bin
+}
+
+func moduleRootFromCaller() string {
+	_, file, _, ok := runtime.Caller(1)
+	if !ok {
+		panic("adapterhost/main_test.go: resolve caller path")
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 }
