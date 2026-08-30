@@ -461,13 +461,34 @@ func runOneParallelItem(
 		outcome, outputs, err = n.runParallelIterationOnce(iterCtx, iterSt, deps)
 		release()
 	} else {
-		outcome, outputs, err = n.runParallelIterationOnce(iterCtx, iterSt, deps)
+		outcome, outputs, err = n.runParallelSubworkflowOnce(iterCtx, iterSt, st, deps, effectiveMax)
 	}
 	results[i] = parallelIterResult{index: i, outcome: outcome, outputs: outputs, err: err}
 
 	if cancelIter != nil && (err != nil || !isSuccessOutcome(outcome)) {
 		cancelOnce.Do(cancelIter)
 	}
+}
+
+// runParallelSubworkflowOnce runs a single parallel subworkflow iteration,
+// acquiring the ancestor subtree semaphore when this step lowered the inherited
+// ceiling so the subworkflow's inner leaves also contend on it.
+func (n *stepNode) runParallelSubworkflowOnce(
+	ctx context.Context,
+	iterSt *RunState,
+	st *RunState,
+	deps Deps,
+	effectiveMax int,
+) (outcome string, outputs map[string]cty.Value, err error) {
+	if st.ParallelSem != nil && effectiveMax < st.ParallelCeiling {
+		select {
+		case st.ParallelSem <- struct{}{}:
+		case <-ctx.Done():
+			return "", nil, ctx.Err()
+		}
+		defer func() { <-st.ParallelSem }()
+	}
+	return n.runParallelIterationOnce(ctx, iterSt, deps)
 }
 
 // buildParallelIterState constructs the per-iteration RunState. The Visits map

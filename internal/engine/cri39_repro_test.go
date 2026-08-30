@@ -394,6 +394,72 @@ func TestCRI39_SiblingStepsRespectSubtreeCeiling(t *testing.T) {
 	}
 }
 
+// cri39SubworkflowSiblingChildHCL returns a child workflow with two sequential
+// sibling steps: step_a is a parallel adapter step with parallel_max=aMax that
+// transitions to step_b; step_b is a parallel subworkflow step with
+// parallel_max=1 that invokes a grandchild workflow.
+func cri39SubworkflowSiblingChildHCL(list string, aMax int) string {
+	return `workflow {
+  name          = "child"
+  version       = "0.1"
+  initial_state = "a"
+  target_state  = "done"
+}
+
+adapter "fake" "default" {}
+
+subworkflow "grandchild" {
+  source = "./grandchild"
+}
+
+step "a" {
+  target       = adapter.fake.default
+  parallel     = ` + list + `
+  parallel_max = ` + strconv.Itoa(aMax) + `
+  outcome "all_succeeded" { next = state.b }
+  outcome "any_failed" { next = state.failed }
+}
+
+step "b" {
+  target       = subworkflow.grandchild
+  parallel     = ` + list + `
+  parallel_max = 1
+  outcome "all_succeeded" { next = state.done }
+  outcome "any_failed" { next = state.failed }
+}
+
+state "done" {
+  terminal = true
+}
+
+state "failed" {
+  terminal = true
+  success  = false
+}
+`
+}
+
+// TestCRI39_SubworkflowSiblingRespectsSubtreeCeiling verifies the subworkflow
+// variant of the sibling case. The outer parallel step caps the subtree at 2.
+// step_a (adapter, cap 2) reuses the ancestor subtree semaphore. step_b
+// (subworkflow, cap 1) uses a per-step leaf semaphore for its grandchild; if the
+// subworkflow iteration does not also hold the ancestor subtree semaphore,
+// step_b leaves from one outer iteration can run concurrently with step_a leaves
+// from another, pushing aggregate concurrency above the outer ceiling.
+func TestCRI39_SubworkflowSiblingRespectsSubtreeCeiling(t *testing.T) {
+	p := cri39NewAdapter(50 * time.Millisecond)
+	g := cri39Compile(t, map[string]string{
+		"main.chcl":                  cri39ParentHCL(cri39HCLList(4), 2),
+		"child/main.chcl":            cri39SubworkflowSiblingChildHCL(cri39HCLList(3), 2),
+		"child/grandchild/main.chcl": cri39ChildHCL(cri39HCLList(8), 8),
+	})
+	cri39Run(t, g, p)
+
+	if peak := cri39Peak(p); peak > 2 {
+		t.Errorf("peak concurrent executions = %d; want <= 2", peak)
+	}
+}
+
 // TestCRI39_SequentialOuterParallelInner (Neg shape) verifies that a sequential
 // outer step does not impose a ceiling on the inner parallel step.
 func TestCRI39_SequentialOuterParallelInner(t *testing.T) {
