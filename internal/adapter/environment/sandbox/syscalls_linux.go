@@ -9,6 +9,10 @@ import "runtime"
 // architectures supported by the sandbox.
 var networkSyscalls = []string{
 	"sendfile",
+	// Batched socket IO used by modern glibc resolvers (e.g. Debian curl
+	// sends paired A/AAAA DNS queries via sendmmsg) and by some HTTP stacks.
+	"sendmmsg",
+	"recvmmsg",
 }
 
 // baseSyscalls is the default-deny seccomp allow-list for the current
