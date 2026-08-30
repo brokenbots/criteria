@@ -300,6 +300,7 @@ func TestLock_PreventsDataRace(t *testing.T) {
 
 func TestDefaultCacheRoot_HonoursEnv(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("CRITERIA_HOME", "")
 	t.Setenv("CRITERIA_STATE_DIR", dir)
 
 	root, err := oci.DefaultCacheRoot()

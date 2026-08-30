@@ -41,8 +41,15 @@ func NewStatusCmd() *cobra.Command {
 		Short: "Show registered agents and local in-flight run details",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
-			if st, err := readLocalRunState(); err == nil {
-				fmt.Printf("local run: %-36s  %-20s  pid=%d\n", st.RunID, st.Workflow, st.PID)
+			states, err := ListLocalRunStates()
+			if err != nil {
+				return fmt.Errorf("list local runs: %w", err)
+			}
+			if len(states) > 0 {
+				fmt.Println("local runs:")
+				for _, st := range states {
+					fmt.Printf("  %-36s  %-20s  pid=%d\n", st.RunID, st.Workflow, st.PID)
+				}
 			}
 			client, err := flags.client()
 			if err != nil {

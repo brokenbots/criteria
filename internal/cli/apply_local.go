@@ -85,7 +85,7 @@ func runApplyLocal(
 		StartedAt: time.Now().UTC(),
 	}
 	_ = writeLocalRunState(state)
-	defer removeLocalRunState()
+	defer removeLocalRunState(runID)
 	defer RemoveStepCheckpoint(runID)
 
 	// src (raw HCL bytes) is consumed only by server mode for signed payload delivery;
