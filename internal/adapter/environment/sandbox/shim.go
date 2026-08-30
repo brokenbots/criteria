@@ -193,6 +193,7 @@ func seccompFilterForShim(cfg *ShimConfig) *seccomp.Filter {
 	policy := seccomp.Policy{
 		DefaultAction: seccomp.ActionErrno,
 		Syscalls: []seccomp.SyscallGroup{
+			denySetuidRootGroup,
 			{
 				Names:  syscalls,
 				Action: seccomp.ActionAllow,

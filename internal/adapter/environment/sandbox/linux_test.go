@@ -1147,8 +1147,11 @@ func TestBuildSeccompFilter(t *testing.T) {
 	if f.Policy.DefaultAction != seccomp.ActionErrno {
 		t.Fatalf("expected default-deny (ActionErrno), got %v", f.Policy.DefaultAction)
 	}
-	if len(f.Policy.Syscalls) != 1 {
-		t.Fatalf("expected 1 syscall group, got %d", len(f.Policy.Syscalls))
+	if len(f.Policy.Syscalls) != 2 {
+		t.Fatalf("expected 2 syscall groups (deny-setuid-root + allow-list), got %d", len(f.Policy.Syscalls))
+	}
+	if f.Policy.Syscalls[0].Action != seccomp.ActionErrno {
+		t.Fatalf("expected first group to deny setuid(0), got action %v", f.Policy.Syscalls[0].Action)
 	}
 	// Verify that the base syscalls are present.
 	asm, err := f.Policy.Assemble()

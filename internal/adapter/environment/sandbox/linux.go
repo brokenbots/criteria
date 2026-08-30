@@ -360,6 +360,7 @@ func buildSeccompFilter(allowNetwork bool) (*seccomp.Filter, error) {
 	policy := seccomp.Policy{
 		DefaultAction: seccomp.ActionErrno,
 		Syscalls: []seccomp.SyscallGroup{
+			denySetuidRootGroup,
 			{
 				Names:  syscalls,
 				Action: seccomp.ActionAllow,
