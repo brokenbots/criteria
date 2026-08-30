@@ -3,6 +3,8 @@ package engine
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"time"
 
 	engineruntime "github.com/brokenbots/criteria/internal/engine/runtime"
@@ -14,6 +16,12 @@ type waitNode struct {
 }
 
 func (n *waitNode) Name() string { return n.node.Name }
+
+// sortedOutcomeKeys returns the outcome names of a wait node in a stable,
+// deterministic order for error messages and diagnostics.
+func sortedOutcomeKeys(outcomes map[string]string) []string {
+	return slices.Sorted(maps.Keys(outcomes))
+}
 
 func (n *waitNode) Evaluate(ctx context.Context, st *RunState, deps Deps) (string, error) {
 	if n.node.Duration > 0 {
@@ -67,18 +75,25 @@ func (n *waitNode) evaluateSignal(st *RunState, deps Deps) (string, error) {
 		deps.Sink.OnWaitResumed(n.node.Name, "signal", n.node.Signal, payload)
 
 		// payload["outcome"] selects the branch; this is the documented contract
-		// between the Resume RPC caller and the engine. If absent or unrecognised,
-		// fall back to the first (and typically only) outcome so single-outcome
-		// waits work without requiring the caller to supply a payload key.
-		if outcomeName := payload["outcome"]; outcomeName != "" {
-			if target, ok := n.node.Outcomes[outcomeName]; ok {
+		// between the Resume RPC caller and the engine. Multi-outcome signal waits
+		// require a valid selector to avoid Go map-iteration non-determinism.
+		// Single-outcome waits retain the payload-free resume path.
+		if len(n.node.Outcomes) == 1 {
+			if outcomeName := payload["outcome"]; outcomeName != "" {
+				if target, ok := n.node.Outcomes[outcomeName]; ok {
+					return target, nil
+				}
+			}
+			for _, target := range n.node.Outcomes {
 				return target, nil
 			}
 		}
-		for _, target := range n.node.Outcomes {
+
+		outcomeName := payload["outcome"]
+		if target, ok := n.node.Outcomes[outcomeName]; ok && outcomeName != "" {
 			return target, nil
 		}
-		return "", fmt.Errorf("wait %q: no outcomes defined", n.node.Name)
+		return "", fmt.Errorf("wait %q: missing or invalid outcome %q; valid outcomes: %v", n.node.Name, outcomeName, sortedOutcomeKeys(n.node.Outcomes))
 	}
 
 	// First entry or crash-reattach: pause and wait for the signal.
