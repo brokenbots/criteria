@@ -341,6 +341,20 @@ func (ps *permissionState) RestoreState(data []byte, policy PermissionPolicy, au
 	return nil
 }
 
+// resolvePermissionRequestID extracts the permission request ID from an
+// adapter payload, preferring the snake_case "request_id" key and falling back
+// to camelCase "requestId" for SDKs that emit that shape. It returns the
+// resolved ID and true when one of the keys is present and non-empty.
+func resolvePermissionRequestID(payload map[string]any) (string, bool) {
+	if id, ok := payload["request_id"].(string); ok && id != "" {
+		return id, true
+	}
+	if id, ok := payload["requestId"].(string); ok && id != "" {
+		return id, true
+	}
+	return "", false
+}
+
 // permissionInterceptSink wraps an adapter.EventSink and intercepts
 // permission.request events. It delegates evaluation to the session's
 // PermissionState, emits permission.granted / permission.denied events, and
@@ -374,7 +388,14 @@ func (s *permissionInterceptSink) handlePermissionRequest(data any) {
 		})
 		return
 	}
-	requestID, _ := payload["request_id"].(string)
+	requestID, ok := resolvePermissionRequestID(payload)
+	if !ok {
+		s.anyDenied = true
+		s.inner.Adapter("permission.denied", map[string]any{
+			"reason": "malformed permission.request payload: missing request_id",
+		})
+		return
+	}
 	tool, _ := payload["tool"].(string)
 	fullCmd, _ := payload["full_command_text"].(string)
 
