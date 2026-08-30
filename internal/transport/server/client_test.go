@@ -360,11 +360,11 @@ func TestClientHappyPath(t *testing.T) {
 		t.Fatalf("event never persisted")
 	}
 	if !waitForCond(t, 2*time.Second, func() bool {
-		return c.lastAckedSeq.Load() == 1
+		return c.defaultPublisher.lastAckedSeq.Load() == 1
 	}) {
-		t.Fatalf("ack never observed: lastAcked=%d", c.lastAckedSeq.Load())
+		t.Fatalf("ack never observed: lastAcked=%d", c.defaultPublisher.lastAckedSeq.Load())
 	}
-	if got := len(c.snapshotPending()); got != 0 {
+	if got := len(c.defaultPublisher.snapshotPending()); got != 0 {
 		t.Fatalf("pending should be empty after ack, got %d", got)
 	}
 }
@@ -397,7 +397,7 @@ func TestClientReconnectSendsSinceSeq(t *testing.T) {
 
 	env1 := events.NewEnvelope(runID, &pb.StepEntered{Step: "s1", Adapter: "shell", Attempt: 1})
 	c.Publish(ctx, env1)
-	if !waitForCond(t, 2*time.Second, func() bool { return c.lastAckedSeq.Load() == 1 }) {
+	if !waitForCond(t, 2*time.Second, func() bool { return c.defaultPublisher.lastAckedSeq.Load() == 1 }) {
 		t.Fatalf("first ack not observed")
 	}
 
@@ -538,11 +538,11 @@ func TestClientPersistBeforeAckReconnect(t *testing.T) {
 	env := events.NewEnvelope(runID, &pb.StepEntered{Step: "s1", Adapter: "shell", Attempt: 1})
 	c.Publish(ctx, env)
 
-	if !waitForCond(t, 5*time.Second, func() bool { return c.lastAckedSeq.Load() == 1 }) {
-		t.Fatalf("ack never observed after persist-before-ack reconnect: lastAcked=%d", c.lastAckedSeq.Load())
+	if !waitForCond(t, 5*time.Second, func() bool { return c.defaultPublisher.lastAckedSeq.Load() == 1 }) {
+		t.Fatalf("ack never observed after persist-before-ack reconnect: lastAcked=%d", c.defaultPublisher.lastAckedSeq.Load())
 	}
-	if !waitForCond(t, 1*time.Second, func() bool { return len(c.snapshotPending()) == 0 }) {
-		t.Fatalf("pending should drain, got %d", len(c.snapshotPending()))
+	if !waitForCond(t, 1*time.Second, func() bool { return len(c.defaultPublisher.snapshotPending()) == 0 }) {
+		t.Fatalf("pending should drain, got %d", len(c.defaultPublisher.snapshotPending()))
 	}
 
 	f.mu.Lock()
@@ -603,8 +603,8 @@ func TestClientPublishBlocksWhenBufferFull(t *testing.T) {
 		t.Fatal("publish never unblocked after buffer drained")
 	}
 
-	if !waitForCond(t, 2*time.Second, func() bool { return c.lastAckedSeq.Load() == 3 }) {
-		t.Fatalf("expected 3 acks, got lastAcked=%d", c.lastAckedSeq.Load())
+	if !waitForCond(t, 2*time.Second, func() bool { return c.defaultPublisher.lastAckedSeq.Load() == 3 }) {
+		t.Fatalf("expected 3 acks, got lastAcked=%d", c.defaultPublisher.lastAckedSeq.Load())
 	}
 	c.Close()
 }
@@ -777,7 +777,7 @@ func TestClientSinceSeqZeroEventReplay(t *testing.T) {
 	// Publish and wait for first ack; triggers disconnect.
 	env1 := events.NewEnvelope(runID, &pb.StepEntered{Step: "s1", Adapter: "shell", Attempt: 1})
 	c.Publish(ctx, env1)
-	if !waitForCond(t, 2*time.Second, func() bool { return c.lastAckedSeq.Load() == 1 }) {
+	if !waitForCond(t, 2*time.Second, func() bool { return c.defaultPublisher.lastAckedSeq.Load() == 1 }) {
 		t.Fatalf("first ack not observed before disconnect")
 	}
 
@@ -1137,13 +1137,14 @@ func TestClientDrain(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// Publish without starting streams so the event stays in sendCh,
-		// causing Drain to block on the select rather than returning early.
+		// Create a run publisher without starting its stream so the event stays
+		// in sendCh, causing Drain to block on the select rather than returning early.
+		p := newRunPublisher(c, runID, c.opts.SendBuffer)
 		env := events.NewEnvelope(runID, &pb.StepEntered{Step: "s1", Adapter: "shell", Attempt: 1})
-		c.Publish(ctx, env)
+		p.Publish(ctx, env)
 
 		done := make(chan struct{})
-		go func() { c.Drain(ctx); close(done) }()
+		go func() { p.Drain(ctx); close(done) }()
 
 		// cancel() is safe to call immediately: Drain's select handles
 		// ctx.Done() whether or not the goroutine has started yet, so no

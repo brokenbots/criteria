@@ -20,7 +20,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -78,6 +80,14 @@ type Fake struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+
+	// closeAllConns is called by DropControl to force a transport-level
+	// disconnect of all active connections, exercising the client's
+	// automatic reconnect path.
+	closeAllConns func()
+
+	connMu      sync.Mutex
+	activeConns []net.Conn
 }
 
 // CACertPEM returns the PEM-encoded CA certificate for TLS fake servers,
@@ -100,12 +110,13 @@ func (f *Fake) ClientKeyPEM() []byte { return f.clientKeyPEM }
 // newFakeHandler allocates and initialises the internal handler for f.
 func newFakeHandler(f *Fake) *fakeHandler {
 	return &fakeHandler{
-		parent:      f,
-		criteriaID:  "test-criteria-id",
-		token:       "test-token",
-		events:      make(map[string][]*pb.Envelope),
-		controls:    make(chan *pb.ControlMessage, 32),
-		ctlAttached: make(chan struct{}, 1),
+		parent:          f,
+		criteriaID:      "test-criteria-id",
+		token:           "test-token",
+		events:          make(map[string][]*pb.Envelope),
+		controls:        make(chan *pb.ControlMessage, 32),
+		ctlAttached:     make(chan struct{}, 1),
+		assignmentAdded: make(chan struct{}, 1),
 	}
 }
 
@@ -135,16 +146,9 @@ func New(t testing.TB) *Fake {
 
 	// Intercept the ConnState hook before srv.Start() so httptest.Server.wrap()
 	// captures this as oldHook and calls it after its own tracking logic. We
-	// record hijacked connections so the cleanup can close them explicitly.
-	var hijackedMu sync.Mutex
-	var hijackedConns []net.Conn
-	srv.Config.ConnState = func(c net.Conn, cs http.ConnState) {
-		if cs == http.StateHijacked {
-			hijackedMu.Lock()
-			hijackedConns = append(hijackedConns, c)
-			hijackedMu.Unlock()
-		}
-	}
+	// record active connections (including hijacked h2c streams) so that tests
+	// can forcibly drop them without closing the server's listener.
+	srv.Config.ConnState = f.trackConn
 
 	srv.Start()
 	f.srv = srv
@@ -152,14 +156,9 @@ func New(t testing.TB) *Fake {
 	t.Cleanup(func() {
 		cancel()
 		f.wg.Wait()
-		// Close hijacked h2c connections: not tracked by httptest after hijack,
-		// so srv.Config.Close() and srv.Close() cannot reach them.
-		hijackedMu.Lock()
-		for _, c := range hijackedConns {
-			_ = c.Close()
-		}
-		hijackedMu.Unlock()
-		// Close any non-hijacked connections in StateActive (belt-and-suspenders).
+		// Close all live connections (including hijacked h2c streams, which
+		// httptest cannot reach) before shutting down the server.
+		f.closeActiveConns()
 		_ = srv.Config.Close()
 		srv.Close()
 	})
@@ -255,14 +254,17 @@ func NewTLS(t testing.TB) *Fake {
 	srv := httptest.NewUnstartedServer(mux)
 	srv.TLS = &tls.Config{Certificates: []tls.Certificate{cert}}
 	srv.EnableHTTP2 = true
+	// Set ConnState before StartTLS() so httptest wraps it safely and avoids
+	// the data race between Server.setState() and this assignment.
+	srv.Config.ConnState = f.trackConn
 	srv.StartTLS()
 	f.srv = srv
 
 	t.Cleanup(func() {
 		cancel()
 		f.wg.Wait()
-		// srv.Config.Close() closes TLS h2 connections in StateActive, which
-		// httptest.Server.CloseClientConnections() would skip (it only closes idle).
+		// Close all live TLS connections before shutting down the server.
+		f.closeActiveConns()
 		_ = srv.Config.Close()
 		srv.Close()
 	})
@@ -348,14 +350,17 @@ func NewMTLS(t testing.TB) *Fake {
 		VerifyPeerCertificate: rejectCACertClient,
 	}
 	srv.EnableHTTP2 = true
+	// Set ConnState before StartTLS() so httptest wraps it safely and avoids
+	// the data race between Server.setState() and this assignment.
+	srv.Config.ConnState = f.trackConn
 	srv.StartTLS()
 	f.srv = srv
 
 	t.Cleanup(func() {
 		cancel()
 		f.wg.Wait()
-		// srv.Config.Close() closes TLS h2 connections in StateActive, which
-		// httptest.Server.CloseClientConnections() would skip (it only closes idle).
+		// Close all live mTLS connections before shutting down the server.
+		f.closeActiveConns()
 		_ = srv.Config.Close()
 		srv.Close()
 	})
@@ -412,6 +417,37 @@ func (f *Fake) SinceSeqHeaders() []string {
 	return out
 }
 
+// trackConn is an http.ConnState hook that records live connections so tests
+// can drop them without closing the server listener.
+func (f *Fake) trackConn(c net.Conn, cs http.ConnState) {
+	f.connMu.Lock()
+	defer f.connMu.Unlock()
+	switch cs {
+	case http.StateNew, http.StateActive, http.StateHijacked:
+		f.activeConns = append(f.activeConns, c)
+	case http.StateClosed, http.StateIdle:
+		for i, x := range f.activeConns {
+			if x == c {
+				f.activeConns = append(f.activeConns[:i], f.activeConns[i+1:]...)
+				return
+			}
+		}
+	}
+}
+
+// closeActiveConns closes every connection currently tracked by the fake
+// server and clears the tracked set. The listener is left open so clients can
+// reconnect.
+func (f *Fake) closeActiveConns() {
+	f.connMu.Lock()
+	conns := append([]net.Conn(nil), f.activeConns...)
+	f.activeConns = nil
+	f.connMu.Unlock()
+	for _, c := range conns {
+		_ = c.Close()
+	}
+}
+
 // WaitForCond polls pred at 5ms intervals until it returns true or d elapses,
 // then fails the test.
 func (f *Fake) WaitForCond(t testing.TB, d time.Duration, pred func() bool) {
@@ -426,6 +462,71 @@ func (f *Fake) WaitForCond(t testing.TB, d time.Duration, pred func() bool) {
 	if !pred() {
 		t.Fatalf("WaitForCond: condition not met within %s", d)
 	}
+}
+
+// QueueAssignment pushes a workflow assignment to the agent's control
+// stream. If the agent has not yet connected, the assignment is buffered and
+// delivered once the control stream attaches.
+func (f *Fake) QueueAssignment(a *pb.WorkflowAssignment) {
+	if a == nil {
+		return
+	}
+	f.handler.mu.Lock()
+	f.handler.assignments = append(f.handler.assignments, a)
+	f.handler.mu.Unlock()
+	select {
+	case f.handler.assignmentAdded <- struct{}{}:
+	default:
+	}
+}
+
+// CancelRun sends a RunCancel control message to the agent.
+func (f *Fake) CancelRun(runID, reason string) {
+	f.handler.sendControl(&pb.ControlMessage{
+		Command: &pb.ControlMessage_RunCancel{
+			RunCancel: &pb.RunCancel{RunId: runID, Reason: reason},
+		},
+	})
+}
+
+// ResumeRun sends a ResumeRun control message to the agent.
+func (f *Fake) ResumeRun(runID, signal string) {
+	f.handler.sendControl(&pb.ControlMessage{
+		Command: &pb.ControlMessage_ResumeRun{
+			ResumeRun: &pb.ResumeRun{RunId: runID, Signal: signal, Payload: map[string]string{"outcome": "received"}},
+		},
+	})
+}
+
+// DropControl forcibly closes every active HTTP/2 connection to the fake
+// server, causing the agent to exercise its transport-loss reconnect path.
+func (f *Fake) DropControl() {
+	if f.closeAllConns != nil {
+		f.closeAllConns()
+	} else {
+		f.closeActiveConns()
+	}
+}
+
+// RequireAuthToken requires every request except Register to present an
+// Authorization header with the given bearer token. Use this to verify that
+// the agent enforces authentication for assignment and control operations.
+func (f *Fake) RequireAuthToken(token string) {
+	f.handler.mu.Lock()
+	f.handler.requireToken = token
+	f.handler.mu.Unlock()
+}
+
+// ControlAttachCount returns how many times an agent has opened the control
+// server-stream and received the ControlReady handshake.
+func (f *Fake) ControlAttachCount() int {
+	return int(f.handler.controlAttachCount.Load())
+}
+
+// RegistrationCount returns how many successful Register calls the server has
+// received.
+func (f *Fake) RegistrationCount() int {
+	return int(f.handler.registrationCount.Load())
 }
 
 // envelopeTypeName returns a human-readable payload type name for an envelope.
@@ -466,22 +567,35 @@ type fakeHandler struct {
 	sinceSeqHdr []string                  // since_seq header values per connection
 	dropDone    bool                      // true after DropStreamAt has fired once
 
-	controls    chan *pb.ControlMessage
-	ctlAttached chan struct{}
+	controls        chan *pb.ControlMessage
+	ctlAttached     chan struct{}
+	assignmentAdded chan struct{}
+
+	requireToken       string
+	assignments        []*pb.WorkflowAssignment
+	controlAttachCount atomic.Int32
+	registrationCount  atomic.Int32
 }
 
 func (h *fakeHandler) Register(_ context.Context, _ *connect.Request[pb.RegisterRequest]) (*connect.Response[pb.RegisterResponse], error) {
+	h.registrationCount.Add(1)
 	return connect.NewResponse(&pb.RegisterResponse{
 		CriteriaId: h.criteriaID,
 		Token:      h.token,
 	}), nil
 }
 
-func (h *fakeHandler) Heartbeat(_ context.Context, _ *connect.Request[pb.HeartbeatRequest]) (*connect.Response[pb.HeartbeatResponse], error) {
+func (h *fakeHandler) Heartbeat(_ context.Context, req *connect.Request[pb.HeartbeatRequest]) (*connect.Response[pb.HeartbeatResponse], error) {
+	if err := h.checkAuth(req); err != nil {
+		return nil, err
+	}
 	return connect.NewResponse(&pb.HeartbeatResponse{}), nil
 }
 
 func (h *fakeHandler) CreateRun(_ context.Context, req *connect.Request[pb.CreateRunRequest]) (*connect.Response[pb.Run], error) {
+	if err := h.checkAuth(req); err != nil {
+		return nil, err
+	}
 	id := uuid.NewString()
 	h.mu.Lock()
 	h.events[id] = nil
@@ -495,6 +609,9 @@ func (h *fakeHandler) CreateRun(_ context.Context, req *connect.Request[pb.Creat
 }
 
 func (h *fakeHandler) SubmitEvents(_ context.Context, stream *connect.BidiStream[pb.Envelope, pb.Ack]) error {
+	if err := h.checkAuthHeader(stream.RequestHeader()); err != nil {
+		return err
+	}
 	sinceRaw := stream.RequestHeader().Get("since_seq")
 	h.mu.Lock()
 	h.sinceSeqHdr = append(h.sinceSeqHdr, sinceRaw)
@@ -527,20 +644,30 @@ func (h *fakeHandler) SubmitEvents(_ context.Context, stream *connect.BidiStream
 			replayed[msg.RunId] = true
 		}
 
-		seq, cid, shouldDrop, isDuplicate := h.persistMsg(msg)
-
-		if shouldDrop {
-			return connect.NewError(connect.CodeUnavailable, errors.New("applytest: stream drop injected"))
-		}
-
-		if err := stream.Send(&pb.Ack{RunId: msg.RunId, Seq: seq, CorrelationId: cid}); err != nil {
+		if done, err := h.handleSubmitMessage(stream, msg); done {
 			return err
 		}
-
-		if !isDuplicate {
-			h.triggerActions(msg)
-		}
 	}
+}
+
+// handleSubmitMessage persists one envelope, sends its ack, and triggers any
+// scripted actions. It returns (done=true, err) when the stream should be closed
+// (for injected drops), otherwise (done=false, nil).
+func (h *fakeHandler) handleSubmitMessage(stream *connect.BidiStream[pb.Envelope, pb.Ack], msg *pb.Envelope) (bool, error) {
+	seq, cid, shouldDrop, isDuplicate := h.persistMsg(msg)
+
+	if shouldDrop {
+		return true, connect.NewError(connect.CodeUnavailable, errors.New("applytest: stream drop injected"))
+	}
+
+	if err := stream.Send(&pb.Ack{RunId: msg.RunId, Seq: seq, CorrelationId: cid}); err != nil {
+		return true, err
+	}
+
+	if !isDuplicate {
+		h.triggerActions(msg)
+	}
+	return false, nil
 }
 
 // replayAcks sends ack messages for all persisted events above sinceSeq.
@@ -664,20 +791,31 @@ func (h *fakeHandler) schedulePauseResume(runID string) {
 	}()
 }
 
-func (h *fakeHandler) Control(ctx context.Context, _ *connect.Request[pb.ControlSubscribeRequest], stream *connect.ServerStream[pb.ControlMessage]) error {
+func (h *fakeHandler) Control(ctx context.Context, req *connect.Request[pb.ControlSubscribeRequest], stream *connect.ServerStream[pb.ControlMessage]) error {
+	if err := h.checkAuth(req); err != nil {
+		return err
+	}
 	if err := stream.Send(&pb.ControlMessage{
 		Command: &pb.ControlMessage_ControlReady{ControlReady: &pb.ControlReady{}},
 	}); err != nil {
 		return err
 	}
+	h.controlAttachCount.Add(1)
 	select {
 	case h.ctlAttached <- struct{}{}:
 	default:
 	}
 	for {
+		// Drain any assignments that were queued before or while the control
+		// stream is attached. Each reconnect re-enters this loop and drains
+		// whatever is still pending.
+		h.sendPendingAssignments(stream)
+
 		select {
 		case <-ctx.Done():
 			return nil
+		case <-h.assignmentAdded:
+			// New assignments queued; loop around to send them.
 		case msg, ok := <-h.controls:
 			if !ok {
 				return nil
@@ -687,4 +825,42 @@ func (h *fakeHandler) Control(ctx context.Context, _ *connect.Request[pb.Control
 			}
 		}
 	}
+}
+
+// sendPendingAssignments sends all queued WorkflowAssignment messages over
+// the control stream. It is called each time the control stream attaches and
+// whenever the assignmentAdded signal fires.
+func (h *fakeHandler) sendPendingAssignments(stream *connect.ServerStream[pb.ControlMessage]) {
+	h.mu.Lock()
+	pending := h.assignments
+	h.assignments = nil
+	h.mu.Unlock()
+	for _, a := range pending {
+		if err := stream.Send(&pb.ControlMessage{
+			Command: &pb.ControlMessage_WorkflowAssignment{WorkflowAssignment: a},
+		}); err != nil {
+			return
+		}
+	}
+}
+
+// checkAuth verifies the request carries the bearer token required by
+// RequireAuthToken. Register is intentionally exempt because the client
+// obtains its token from the Register response.
+func (h *fakeHandler) checkAuth(req connect.AnyRequest) error {
+	return h.checkAuthHeader(req.Header())
+}
+
+func (h *fakeHandler) checkAuthHeader(hd http.Header) error {
+	h.mu.Lock()
+	required := h.requireToken
+	h.mu.Unlock()
+	if required == "" {
+		return nil
+	}
+	auth := hd.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != required {
+		return connect.NewError(connect.CodeUnauthenticated, errors.New("applytest: invalid or missing bearer token"))
+	}
+	return nil
 }

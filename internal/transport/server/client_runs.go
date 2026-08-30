@@ -5,7 +5,6 @@ package servertrans
 import (
 	"context"
 	"errors"
-	"time"
 
 	"connectrpc.com/connect"
 
@@ -74,24 +73,4 @@ func (c *Client) Resume(ctx context.Context, runID, signal string, payload map[s
 		return nil, err
 	}
 	return resp.Msg, nil
-}
-
-// Drain blocks until every published envelope has been acknowledged, ctx is
-// done, or the client is closed. It is intended for deterministic shutdown
-// at the end of a run so trailing events aren't dropped.
-func (c *Client) Drain(ctx context.Context) {
-	t := time.NewTicker(10 * time.Millisecond)
-	defer t.Stop()
-	for {
-		if len(c.snapshotPending()) == 0 && len(c.sendCh) == 0 {
-			return
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-c.closed:
-			return
-		case <-t.C:
-		}
-	}
 }

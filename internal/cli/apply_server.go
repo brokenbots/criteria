@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -26,13 +27,19 @@ func applyClientOptions(opts applyOptions) servertrans.Options {
 	}
 }
 
-// buildServerSink constructs a run.Sink wired to the given server client.
+// buildServerSink constructs a run.Sink wired to the given publisher.
+// authClient provides the criteria id and token persisted in crash-recovery
+// checkpoints; it may be nil in tests that do not exercise checkpoints.
 // getVisits, if non-nil, is called on each checkpoint to capture the current
 // per-step visit counts for crash-recovery persistence (W07).
-func buildServerSink(ctx context.Context, client *servertrans.Client, runID string, graph *workflow.FSMGraph, workflowPath, serverURL string, log *slog.Logger, getVisits func() map[string]int) *run.Sink {
+func buildServerSink(ctx context.Context, publisher run.Publisher, authClient *servertrans.Client, runID string, graph *workflow.FSMGraph, workflowPath, serverURL string, log *slog.Logger, getVisits func() map[string]int) *run.Sink {
+	criteriaID, token := "", ""
+	if authClient != nil {
+		criteriaID, token = authClient.CriteriaID(), authClient.Token()
+	}
 	return &run.Sink{
 		RunID:  runID,
-		Client: client,
+		Client: publisher,
 		Log:    log.With("run_id", runID),
 		Ctx:    ctx,
 		CheckpointFn: func(step string, attempt int) {
@@ -40,7 +47,7 @@ func buildServerSink(ctx context.Context, client *servertrans.Client, runID stri
 			if getVisits != nil {
 				visits = getVisits()
 			}
-			writeRunCheckpoint(log, runID, graph.Name, workflowPath, serverURL, step, attempt, client.CriteriaID(), client.Token(), visits)
+			writeRunCheckpoint(log, runID, graph.Name, workflowPath, serverURL, step, attempt, criteriaID, token, visits)
 		},
 	}
 }
@@ -57,7 +64,7 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 
 	// Declare eng first so the checkpoint closure can capture live visit counts.
 	var eng *engine.Engine
-	sink := buildServerSink(ctx, client, state.RunID, graph, opts.workflowPath, opts.serverURL, log,
+	sink := buildServerSink(ctx, client, client, state.RunID, graph, opts.workflowPath, opts.serverURL, log,
 		func() map[string]int {
 			if eng != nil {
 				return eng.VisitCounts()
@@ -83,7 +90,7 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 	}
 	log.Info("run completed", "run_id", state.RunID)
 
-	if err := drainResumeCycles(ctx, log, loader, sink, runSink, client, state, graph, opts, eng); err != nil {
+	if err := drainResumeCycles(ctx, log, loader, sink, runSink, client.ResumeCh(), state, graph, workflowDirFromPath(opts.workflowPath), eng); err != nil {
 		return err
 	}
 
@@ -100,18 +107,22 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 }
 
 // drainResumeCycles handles the pause/resume loop: each time the sink is
-// paused it waits for a matching ResumeRun message and restarts the engine
-// from the paused node, updating eng to the most recently completed engine.
-// runSink is the sink passed to every engine instance so that terminal-state
-// capture is consistent across the original run and all resume cycles.
-func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost.Loader, sink *run.Sink, runSink engine.Sink, client *servertrans.Client, state *localRunState, graph *workflow.FSMGraph, opts applyOptions, eng *engine.Engine) error {
+// paused it waits for a matching ResumeRun message on resumeCh and restarts
+// the engine from the paused node, updating eng to the most recently
+// completed engine. runSink is the sink passed to every engine instance so
+// that terminal-state capture is consistent across the original run and all
+// resume cycles.
+func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost.Loader, sink *run.Sink, runSink engine.Sink, resumeCh <-chan *pb.ResumeRun, state *localRunState, graph *workflow.FSMGraph, workflowDir string, eng *engine.Engine) error {
 	for sink.IsPaused() {
 		log.Info("run paused; waiting for resume signal", "run_id", state.RunID, "node", sink.PausedAt())
 		var resumeMsg *pb.ResumeRun
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case resumeMsg = <-client.ResumeCh():
+		case resumeMsg = <-resumeCh:
+		}
+		if resumeMsg == nil {
+			return errors.New("resume channel closed")
 		}
 		if resumeMsg.RunId != state.RunID {
 			log.Warn("received resume for unexpected run", "expected", state.RunID, "got", resumeMsg.RunId)
@@ -124,7 +135,7 @@ func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost
 			engine.WithResumedVars(eng.VarScope()),
 			engine.WithResumedVisits(eng.VisitCounts()),
 			engine.WithResumePayload(resumeMsg.Payload),
-			engine.WithWorkflowDir(workflowDirFromPath(opts.workflowPath)),
+			engine.WithWorkflowDir(workflowDir),
 		)
 		if err := resumedEng.RunFrom(ctx, pausedNode, 1); err != nil {
 			log.Error("run failed after resume", "error", err)

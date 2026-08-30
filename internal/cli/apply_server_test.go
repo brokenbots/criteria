@@ -611,12 +611,11 @@ func TestDrainResumeCycles_PauseThenResume(t *testing.T) {
 	defer client.Close()
 
 	state := newLocalRunState(runID, graph.Name, fake.URL())
-	opts := applyOptions{workflowPath: wfPath, serverURL: fake.URL()}
 
 	// Build the sink and engine exactly as executeServerRun would, but without
 	// the deferred checkpoint cleanup so we can assert its state between cycles.
 	var eng *engine.Engine
-	sink := buildServerSink(ctx, client, runID, graph, wfPath, fake.URL(), log,
+	sink := buildServerSink(ctx, client, client, runID, graph, wfPath, fake.URL(), log,
 		func() map[string]int {
 			if eng != nil {
 				return eng.VisitCounts()
@@ -649,7 +648,7 @@ func TestDrainResumeCycles_PauseThenResume(t *testing.T) {
 	// Call drainResumeCycles directly — it blocks until the fake sends ResumeRun.
 	// Pass sink as the runSink because this test builds the server sink directly
 	// rather than through executeServerRun.
-	if err := drainResumeCycles(ctx, log, loader, sink, sink, client, state, graph, opts, eng); err != nil {
+	if err := drainResumeCycles(ctx, log, loader, sink, sink, client.ResumeCh(), state, graph, filepath.Dir(wfPath), eng); err != nil {
 		t.Fatalf("drainResumeCycles: %v", err)
 	}
 	// Flush queued events to the fake server before asserting receipt.
@@ -715,11 +714,10 @@ func TestDrainResumeCycles_StreamDropAndReconnect(t *testing.T) {
 	defer client.Close()
 
 	state := newLocalRunState(runID, graph.Name, fake.URL())
-	opts := applyOptions{workflowPath: wfPath, serverURL: fake.URL()}
 
 	// Run the engine to the pause point, then call drainResumeCycles directly.
 	var eng *engine.Engine
-	sink := buildServerSink(ctx, client, runID, graph, wfPath, fake.URL(), log,
+	sink := buildServerSink(ctx, client, client, runID, graph, wfPath, fake.URL(), log,
 		func() map[string]int {
 			if eng != nil {
 				return eng.VisitCounts()
@@ -737,7 +735,7 @@ func TestDrainResumeCycles_StreamDropAndReconnect(t *testing.T) {
 
 	// Pass sink as the runSink because this test builds the server sink directly
 	// rather than through executeServerRun.
-	if err := drainResumeCycles(ctx, log, loader, sink, sink, client, state, graph, opts, eng); err != nil {
+	if err := drainResumeCycles(ctx, log, loader, sink, sink, client.ResumeCh(), state, graph, filepath.Dir(wfPath), eng); err != nil {
 		t.Fatalf("drainResumeCycles: %v", err)
 	}
 	// Flush queued events to the fake server before asserting receipt.

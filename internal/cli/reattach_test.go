@@ -462,7 +462,7 @@ func TestBuildServerSink(t *testing.T) {
 
 	c := newOfflineClient(t)
 	log := discardLogger()
-	sink := buildServerSink(context.Background(), c, "run-srv-1", graph, wfFile, "http://srv", log, nil)
+	sink := buildServerSink(context.Background(), c, c, "run-srv-1", graph, wfFile, "http://srv", log, nil)
 	if sink == nil {
 		t.Fatal("expected non-nil Sink")
 	}
@@ -509,7 +509,7 @@ func TestBuildServerSink_VisitsPersisted(t *testing.T) {
 
 	wantVisits := map[string]int{"build": 2, "test": 1}
 	c := newOfflineClient(t)
-	sink := buildServerSink(context.Background(), c, "run-srv-visits", graph, wfFile, "http://srv", discardLogger(),
+	sink := buildServerSink(context.Background(), c, c, "run-srv-visits", graph, wfFile, "http://srv", discardLogger(),
 		func() map[string]int { return wantVisits })
 
 	sink.CheckpointFn("build", 3)
