@@ -327,6 +327,42 @@ func effectiveParallelMax(stepMax, ceiling int) int {
 	return stepMax
 }
 
+// parallelSemaphores computes the launch and leaf semaphores for a parallel
+// step, applying the inherited subtree ceiling. The launch semaphore bounds
+// how many of this step's iteration goroutines can be in flight. The leaf
+// semaphore is the shared token pool for actual adapter executions in the
+// subtree: it reuses the parent's leaf semaphore when this step does not lower
+// the cap, otherwise it looks up or creates a per-step leaf semaphore cached by
+// compiled step and ancestor context so all instances of the same inner step
+// share one lower ceiling.
+func (n *stepNode) parallelSemaphores(st *RunState) (launchSem, leafSem chan struct{}, effectiveMax int) {
+	effectiveMax = effectiveParallelMax(n.step.ParallelMax, st.ParallelCeiling)
+
+	launchSem = make(chan struct{}, effectiveMax)
+
+	if st.ParallelSem != nil && effectiveMax == st.ParallelCeiling {
+		return launchSem, st.ParallelSem, effectiveMax
+	}
+
+	if st.ParallelSemCache == nil {
+		st.ParallelSemCache = make(map[parallelSemKey]chan struct{})
+	}
+	if st.ParallelSemMu == nil {
+		st.ParallelSemMu = &sync.Mutex{}
+	}
+
+	st.ParallelSemMu.Lock()
+	defer st.ParallelSemMu.Unlock()
+
+	key := parallelSemKey{step: n.step, ceiling: st.ParallelCeiling, parentSem: st.ParallelSem}
+	if sem, ok := st.ParallelSemCache[key]; ok {
+		return launchSem, sem, effectiveMax
+	}
+	leafSem = make(chan struct{}, effectiveMax)
+	st.ParallelSemCache[key] = leafSem
+	return launchSem, leafSem, effectiveMax
+}
+
 // runParallelIterations executes the step body concurrently for each item in
 // items, bounded by the supplied semaphore. Results are in index order.
 //
@@ -662,43 +698,9 @@ func (n *stepNode) evaluateParallel(ctx context.Context, st *RunState, deps Deps
 		return co.Next, nil
 	}
 
-	// Apply the inherited subtree ceiling: a parallel step may not run more
-	// concurrent iterations than the smallest parallel_max along the path from
-	// the root workflow to this step. The effective cap becomes the ceiling for
-	// any parallel steps inside the subtree.
-	effectiveMax := effectiveParallelMax(n.step.ParallelMax, st.ParallelCeiling)
-
-	// launchSem bounds how many of this step's iteration goroutines can be in
-	// flight at once. This limits concurrent child subworkflow bodies even when
-	// the child has no parallel step of its own.
-	launchSem := make(chan struct{}, effectiveMax)
-
-	// leafSem is the shared token pool for actual leaf (adapter) executions in
-	// this subtree. Reuse the parent leaf semaphore when this step's effective
-	// cap equals the inherited ceiling so that nested parallel steps enforce a
-	// single global leaf limit; otherwise look up or create a per-step leaf
-	// semaphore in the shared cache so that all instances of this compiled step
-	// (one per parent iteration) share the same lower ceiling.
-	var leafSem chan struct{}
-	if st.ParallelSem != nil && effectiveMax == st.ParallelCeiling {
-		leafSem = st.ParallelSem
-	} else {
-		if st.ParallelSemCache == nil {
-			st.ParallelSemCache = make(map[parallelSemKey]chan struct{})
-		}
-		if st.ParallelSemMu == nil {
-			st.ParallelSemMu = &sync.Mutex{}
-		}
-		st.ParallelSemMu.Lock()
-		key := parallelSemKey{step: n.step, ceiling: st.ParallelCeiling, parentSem: st.ParallelSem}
-		if sem, ok := st.ParallelSemCache[key]; ok {
-			leafSem = sem
-		} else {
-			leafSem = make(chan struct{}, effectiveMax)
-			st.ParallelSemCache[key] = leafSem
-		}
-		st.ParallelSemMu.Unlock()
-	}
+	// Compute the effective cap and obtain the launch/leaf semaphores for this
+	// parallel step, honoring the inherited subtree ceiling.
+	launchSem, leafSem, effectiveMax := n.parallelSemaphores(st)
 
 	// Serialize sink calls from goroutines to prevent data races on the sink.
 	lk := &lockedSink{Sink: deps.Sink}
