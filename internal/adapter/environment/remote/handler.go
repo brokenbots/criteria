@@ -24,6 +24,7 @@ type Config struct {
 	ServerKeyPath         string
 	ClientCAPath          string
 	ClientIdentityPattern string
+	Insecure              bool
 }
 
 // RemoteHandler implements the environment handler interface for the
@@ -45,7 +46,7 @@ func (h *RemoteHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
 	for name := range attrs {
 		switch name {
 		case "variables", "policy_mode", "os", "working_directory",
-			"listen_address", "mtls", "accept_token", "accept_digest_from":
+			"listen_address", "mtls", "accept_token", "accept_digest_from", "insecure":
 			// accepted
 		default:
 			rng := attrs[name].Range
@@ -141,6 +142,15 @@ func parseTopLevelAttrs(cfg *Config, getAttr func(string) (*hcl.Attribute, bool)
 			*mapping.target = val
 		}
 	}
+
+	if v, ok := getAttr("insecure"); ok {
+		val, err := attrAsBool(v)
+		if err != nil {
+			return fmt.Errorf("remote environment: insecure: %w", err)
+		}
+		cfg.Insecure = val
+	}
+
 	return nil
 }
 
@@ -203,4 +213,16 @@ func attrAsString(attr *hcl.Attribute) (string, error) {
 		return "", fmt.Errorf("expected string, got %s", val.Type().FriendlyName())
 	}
 	return val.AsString(), nil
+}
+
+// attrAsBool evaluates a cty attribute as a plain bool.
+func attrAsBool(attr *hcl.Attribute) (bool, error) {
+	val, diags := attr.Expr.Value(nil)
+	if diags.HasErrors() {
+		return false, diags
+	}
+	if val.Type() != cty.Bool {
+		return false, fmt.Errorf("expected bool, got %s", val.Type().FriendlyName())
+	}
+	return val.True(), nil
 }

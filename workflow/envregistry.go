@@ -198,14 +198,14 @@ func (h *builtinRemoteHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
 	for name := range attrs {
 		switch name {
 		case "variables", "policy_mode", "os", "working_directory",
-			"listen_address", "mtls", "accept_token", "accept_digest_from", "config":
+			"listen_address", "mtls", "accept_token", "accept_digest_from", "insecure", "config":
 			// accepted
 		default:
 			rng := attrs[name].Range
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  fmt.Sprintf("remote environment: unknown attribute %q", name),
-				Detail:   "remote environments accept variables, policy_mode, os, working_directory, listen_address, mtls, accept_token, accept_digest_from, and config.",
+				Detail:   "remote environments accept variables, policy_mode, os, working_directory, listen_address, mtls, accept_token, accept_digest_from, insecure, and config.",
 				Subject:  &rng,
 			})
 		}

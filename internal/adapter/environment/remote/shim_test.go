@@ -1,6 +1,7 @@
 package remote
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -11,6 +12,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/big"
 	"net"
 	"os"
@@ -1135,5 +1137,233 @@ func TestShim_ConcurrentAccept(t *testing.T) {
 	}
 	if info.Version != "2.0.0" {
 		t.Errorf("version after concurrent accept = %q, want 2.0.0", info.Version)
+	}
+}
+
+func TestValidateListenerSecurity(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     *Config
+		wantErr bool
+	}{
+		{"loopback ip no auth", &Config{ListenAddress: "127.0.0.1:0"}, false},
+		{"ipv6 loopback no auth", &Config{ListenAddress: "[::1]:0"}, false},
+		{"localhost no auth", &Config{ListenAddress: "localhost:0"}, false},
+		{"all interfaces no auth", &Config{ListenAddress: "0.0.0.0:0"}, true},
+		{"ipv6 all interfaces no auth", &Config{ListenAddress: "[::]:0"}, true},
+		{"unspecified host no auth", &Config{ListenAddress: ":0"}, true},
+		{"non-loopback ip no auth", &Config{ListenAddress: "192.168.1.1:0"}, true},
+		{"unix socket no auth", &Config{ListenAddress: "/tmp/criteria.sock"}, false},
+		{"non-loopback with mtls", &Config{ListenAddress: "0.0.0.0:0", ServerCertPath: "x", ServerKeyPath: "x", ClientCAPath: "x"}, false},
+		{"non-loopback with token", &Config{ListenAddress: "0.0.0.0:0", AcceptToken: "tok"}, false},
+		{"non-loopback with insecure", &Config{ListenAddress: "0.0.0.0:0", Insecure: true}, false},
+		{"loopback with insecure no auth", &Config{ListenAddress: "127.0.0.1:0", Insecure: true}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateListenerSecurity(tt.cfg)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if !strings.Contains(err.Error(), "non-loopback") {
+					t.Errorf("expected non-loopback error, got: %v", err)
+				}
+			} else if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestParseConfig_Insecure(t *testing.T) {
+	src := `
+listen_address = "0.0.0.0:7778"
+insecure = true
+`
+	parser := hclparse.NewParser()
+	file, diags := parser.ParseHCL([]byte(src), "test.hcl")
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	cfg, err := ParseConfig(file.Body)
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if !cfg.Insecure {
+		t.Error("expected insecure = true")
+	}
+	if cfg.ListenAddress != "0.0.0.0:7778" {
+		t.Errorf("listen_address = %q", cfg.ListenAddress)
+	}
+}
+
+func TestShim_NonLoopbackRequiresAuth(t *testing.T) {
+	verifier := &fixedDigestVerifier{allowed: map[string]string{"noop": "sha256:abcd1234"}}
+	_, err := NewShim(&Config{ListenAddress: "0.0.0.0:0"}, verifier)
+	if err == nil {
+		t.Fatal("expected NewShim to fail for non-loopback address without authentication")
+	}
+	if !strings.Contains(err.Error(), "non-loopback") {
+		t.Errorf("expected non-loopback auth error, got: %v", err)
+	}
+}
+
+func TestShim_NonLoopbackAcceptToken(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	verifier := &fixedDigestVerifier{allowed: map[string]string{"noop": "sha256:abcd1234"}}
+	shim, err := NewShim(&Config{
+		ListenAddress: "0.0.0.0:0",
+		AcceptToken:   "secret-token",
+	}, verifier)
+	if err != nil {
+		t.Fatalf("NewShim: %v", err)
+	}
+	if err := shim.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = shim.Stop(ctx) }()
+
+	addr := shim.listener.Addr().String()
+
+	go func() {
+		_ = dialFakeAdapter(addr, handshakeMessage{
+			Name:    "noop",
+			Version: "1.0.0",
+			Digest:  "sha256:abcd1234",
+			Token:   "secret-token",
+		}, nil)
+	}()
+
+	handle, err := shim.WaitForHandle(ctx, "noop")
+	if err != nil {
+		t.Fatalf("WaitForHandle: %v", err)
+	}
+	defer handle.Kill()
+
+	info, err := handle.Info(ctx)
+	if err != nil {
+		t.Fatalf("Info: %v", err)
+	}
+	if info.Name != "noop" {
+		t.Errorf("info.Name = %q, want noop", info.Name)
+	}
+}
+
+func TestShim_NonLoopbackMTLS(t *testing.T) {
+	serverCert, serverKey, clientCert, clientKey, caCert := generateTestCerts(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	verifier := &fixedDigestVerifier{allowed: map[string]string{"noop": "sha256:abcd1234"}}
+	shim, err := NewShim(&Config{
+		ListenAddress:  "0.0.0.0:0",
+		ServerCertPath: serverCert,
+		ServerKeyPath:  serverKey,
+		ClientCAPath:   caCert,
+	}, verifier)
+	if err != nil {
+		t.Fatalf("NewShim: %v", err)
+	}
+	if err := shim.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = shim.Stop(ctx) }()
+
+	addr := shim.listener.Addr().String()
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatalf("split listener addr: %v", err)
+	}
+	dialAddr := net.JoinHostPort("127.0.0.1", port)
+
+	cert, err := tls.LoadX509KeyPair(clientCert, clientKey)
+	if err != nil {
+		t.Fatalf("load client cert: %v", err)
+	}
+	caPool := x509.NewCertPool()
+	caPEM, _ := os.ReadFile(caCert)
+	caPool.AppendCertsFromPEM(caPEM)
+	clientTLS := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      caPool,
+		ServerName:   "localhost",
+	}
+
+	go func() {
+		_ = dialFakeAdapter(dialAddr, handshakeMessage{
+			Name:    "noop",
+			Version: "1.0.0",
+			Digest:  "sha256:abcd1234",
+		}, clientTLS)
+	}()
+
+	handle, err := shim.WaitForHandle(ctx, "noop")
+	if err != nil {
+		t.Fatalf("WaitForHandle: %v", err)
+	}
+	defer handle.Kill()
+
+	info, err := handle.Info(ctx)
+	if err != nil {
+		t.Fatalf("Info: %v", err)
+	}
+	if info.Name != "noop" {
+		t.Errorf("info.Name = %q, want noop", info.Name)
+	}
+}
+
+func TestShim_NonLoopbackInsecureOverride(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var buf bytes.Buffer
+	oldLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(oldLogger) })
+
+	verifier := &fixedDigestVerifier{allowed: map[string]string{"noop": "sha256:abcd1234"}}
+	shim, err := NewShim(&Config{
+		ListenAddress: "0.0.0.0:0",
+		Insecure:      true,
+	}, verifier)
+	if err != nil {
+		t.Fatalf("NewShim: %v", err)
+	}
+	if err := shim.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = shim.Stop(ctx) }()
+
+	if !strings.Contains(buf.String(), "without authentication") {
+		t.Errorf("expected insecure warning log, got: %s", buf.String())
+	}
+
+	addr := shim.listener.Addr().String()
+
+	go func() {
+		_ = dialFakeAdapter(addr, handshakeMessage{
+			Name:    "noop",
+			Version: "1.0.0",
+			Digest:  "sha256:abcd1234",
+		}, nil)
+	}()
+
+	handle, err := shim.WaitForHandle(ctx, "noop")
+	if err != nil {
+		t.Fatalf("WaitForHandle: %v", err)
+	}
+	defer handle.Kill()
+
+	info, err := handle.Info(ctx)
+	if err != nil {
+		t.Fatalf("Info: %v", err)
+	}
+	if info.Name != "noop" {
+		t.Errorf("info.Name = %q, want noop", info.Name)
 	}
 }

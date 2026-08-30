@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -49,6 +50,7 @@ type Shim struct {
 	clientIdentityPattern string
 	clientIdentityRe      *regexp.Regexp
 	digestVerifier        DigestVerifier
+	insecure              bool
 
 	mu       sync.Mutex
 	sessions map[string]*session // adapter type → active session
@@ -71,6 +73,10 @@ type waitResult struct {
 
 // NewShim builds a Shim from a parsed Config and a digest verifier.
 func NewShim(cfg *Config, verifier DigestVerifier) (*Shim, error) {
+	if err := validateListenerSecurity(cfg); err != nil {
+		return nil, fmt.Errorf("remote shim: %w", err)
+	}
+
 	tlsConf, err := buildTLSConfig(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("remote shim: build tls config: %w", err)
@@ -89,6 +95,7 @@ func NewShim(cfg *Config, verifier DigestVerifier) (*Shim, error) {
 		clientIdentityPattern: cfg.ClientIdentityPattern,
 		clientIdentityRe:      re,
 		digestVerifier:        verifier,
+		insecure:              cfg.Insecure,
 		sessions:              make(map[string]*session),
 		waiters:               make(map[string][]chan waitResult),
 	}, nil
@@ -123,7 +130,11 @@ func (s *Shim) Start(ctx context.Context) error {
 	s.started = true
 	s.mu.Unlock()
 
-	slog.Info("remote shim listening", "addr", lis.Addr().String())
+	if s.insecure && s.tlsConfig == nil && s.acceptToken == "" {
+		slog.Warn("remote shim listening without authentication", "addr", lis.Addr().String())
+	} else {
+		slog.Info("remote shim listening", "addr", lis.Addr().String())
+	}
 
 	go s.serve(ctx, lis)
 	return nil
@@ -572,4 +583,61 @@ func buildTLSConfig(cfg *Config) (*tls.Config, error) {
 		ClientCAs:    caPool,
 		ClientAuth:   tls.RequireAndVerifyClientCert,
 	}, nil
+}
+
+// validateListenerSecurity rejects non-loopback TCP listeners that are not
+// protected by mTLS, accept_token, or the explicit insecure opt-in.
+func validateListenerSecurity(cfg *Config) error {
+	if isUnixSocketAddr(cfg.ListenAddress) {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(cfg.ListenAddress)
+	if err != nil {
+		return fmt.Errorf("listen_address %q: %w", cfg.ListenAddress, err)
+	}
+	if isLoopbackHost(host) {
+		return nil
+	}
+
+	hasMTLS := cfg.ServerCertPath != "" && cfg.ServerKeyPath != "" && cfg.ClientCAPath != ""
+	hasToken := cfg.AcceptToken != ""
+	if hasMTLS || hasToken || cfg.Insecure {
+		return nil
+	}
+
+	return fmt.Errorf("listen_address %q binds to a non-loopback address and has no authentication; configure mtls, accept_token, or set insecure = true to opt out", cfg.ListenAddress)
+}
+
+// isUnixSocketAddr reports whether addr is intended as a Unix socket path.
+func isUnixSocketAddr(addr string) bool {
+	return filepath.IsAbs(addr) || (addr != "" && addr[0] == '/')
+}
+
+// isLoopbackHost reports whether host is a loopback-only host name or address.
+// An empty host (e.g. ":7778") binds all interfaces and is therefore not
+// loopback. Hostnames are resolved and considered loopback only if every
+// resolved IP is loopback. IPv6 literals from net.SplitHostPort include
+// brackets, which are stripped before parsing.
+func isLoopbackHost(host string) bool {
+	host = strings.Trim(host, "[]")
+	if host == "" {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+
+	ips, err := net.LookupIP(host)
+	if err != nil || len(ips) == 0 {
+		return false
+	}
+	for _, ip := range ips {
+		if !ip.IsLoopback() {
+			return false
+		}
+	}
+	return true
 }
