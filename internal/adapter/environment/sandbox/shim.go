@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"runtime"
 	"syscall"
 
 	"github.com/elastic/go-seccomp-bpf"
@@ -110,6 +111,10 @@ func applyShimRestrictions(cfg *ShimConfig) error {
 		return fmt.Errorf("prctl(PR_SET_NO_NEW_PRIVS): %w", err)
 	}
 
+	// Pin the caller to a stable OS thread before installing any sandbox
+	// primitives so each enforcement step targets the same M.
+	runtime.LockOSThread()
+
 	// Apply rlimits before anything else so later syscalls are bounded.
 	for _, rl := range cfg.Rlimits {
 		if err := syscall.Setrlimit(rl.Resource, &rl.Rlimit); err != nil {
@@ -128,6 +133,7 @@ func applyShimRestrictions(cfg *ShimConfig) error {
 			return err
 		}
 	}
+
 	return nil
 }
 

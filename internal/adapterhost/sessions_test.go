@@ -6,9 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -142,7 +145,7 @@ func TestMakeSandboxCustomizer_BwrapNotOptedIn(t *testing.T) {
 		TargetPath:  "/usr/bin/true",
 	}
 	env := &workflow.EnvironmentNode{Type: "sandbox", Name: "default"}
-	customizer, cleanup := makeSandboxCustomizer(prep, env, "", "")
+	customizer, cleanup := makeSandboxCustomizer(prep, env, "", "", false)
 	if customizer == nil {
 		t.Fatal("expected non-nil customizer")
 	}
@@ -170,7 +173,7 @@ func TestMakeSandboxCustomizer_ShimCallsApplyToCmd(t *testing.T) {
 		AllowNetwork: true,
 	}
 	env := &workflow.EnvironmentNode{Type: "sandbox", Name: "default"}
-	customizer, cleanup := makeSandboxCustomizer(prep, env, "", "")
+	customizer, cleanup := makeSandboxCustomizer(prep, env, "", "", false)
 	if customizer == nil {
 		t.Fatal("expected non-nil customizer")
 	}
@@ -309,6 +312,167 @@ func TestSessionManager_Open_LockedOCIAdapter_Sandbox(t *testing.T) {
 	t.Cleanup(func() { _ = sm.Close(context.Background(), "noop.default") })
 	if err := sm.Open(ctx, "noop.default", "noop", "", nil, nil); err != nil {
 		t.Fatalf("open locked OCI sandbox adapter: %v", err)
+	}
+}
+
+// TestSessionManager_Open_LockedOCIAdapter_Sandbox_ProductionShim is a CRI-44
+// regression test. It runs the production criteria-as-shim path
+// (SkipShimRestrictions=false, Seccomp=true) with a real v2 adapter binary on
+// Linux, asserts that the plugin handshake completes in both AllowEgress=true
+// and AllowEgress=false modes, and verifies that external TCP egress remains
+// blocked when AllowEgress=false.
+func TestSessionManager_Open_LockedOCIAdapter_Sandbox_ProductionShim(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux only")
+	}
+	caps := sandbox.Probe()
+	if !caps.UserNamespaces || !caps.Seccomp {
+		t.Skip("sandbox user namespaces or seccomp not available on this host")
+	}
+	if testCriteriaBin == "" {
+		t.Fatal("criteria binary not built")
+	}
+	if testNoopAdapterBin == "" {
+		t.Fatal("noop adapter binary not built")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// Install the noop adapter binary under a digest-addressed directory so it
+	// looks like a locked OCI adapter pulled by `criteria adapter lock`.
+	root := t.TempDir()
+	dg := digest.FromString("locked-oci-adapter-production-shim")
+	enc := EncodeDigest(dg)
+	instDir := filepath.Join(root, enc)
+	if err := os.MkdirAll(instDir, 0o755); err != nil {
+		t.Fatalf("mkdir digest install dir: %v", err)
+	}
+	adapterBin := filepath.Join(instDir, AdapterBinaryName("noop"))
+	if err := copyFile(testNoopAdapterBin, adapterBin); err != nil {
+		t.Fatalf("copy adapter binary: %v", err)
+	}
+	if err := os.Chmod(adapterBin, 0o755); err != nil {
+		t.Fatalf("chmod adapter binary: %v", err)
+	}
+
+	t.Setenv(adaptersEnvVar, root)
+
+	// Use the real criteria binary as the shim, exercising the production path.
+	sm := NewSessionManager(NewLoader())
+	sm.sandboxProductionShimBin = testCriteriaBin
+	sm.SetLockfile(&lockfile.Lockfile{
+		Adapters: []lockfile.LockedAdapter{
+			{Type: "noop", Name: "allow", ResolvedDigest: dg.String()},
+			{Type: "noop", Name: "deny", ResolvedDigest: dg.String()},
+		},
+	})
+	sm.graph = &workflow.FSMGraph{
+		Adapters: map[string]*workflow.AdapterNode{
+			"noop.allow": {Type: "noop", Name: "allow", Environment: "sandbox.allow"},
+			"noop.deny":  {Type: "noop", Name: "deny", Environment: "sandbox.deny"},
+		},
+		Environments: map[string]*workflow.EnvironmentNode{
+			"sandbox.allow": {Type: "sandbox", Name: "allow"},
+			"sandbox.deny":  {Type: "sandbox", Name: "deny"},
+		},
+		ResolvedPolicies: map[string]*workflow.ResolvedPolicy{
+			"noop.allow:sandbox.allow": {
+				PolicyMode: "permissive",
+				OS:         "linux",
+				Network:    &workflow.NetworkPolicy{AllowEgress: true},
+			},
+			"noop.deny:sandbox.deny": {
+				PolicyMode: "permissive",
+				OS:         "linux",
+				Network:    &workflow.NetworkPolicy{AllowEgress: false},
+			},
+		},
+	}
+
+	// Verify the production shim path is actually in use: the customizer must
+	// set cmd.Path to the real criteria binary and the shim config must not
+	// request restriction skipping.
+	customizer, cleanup, err := sm.buildCommandCustomizer("noop.deny", "")
+	if err != nil {
+		t.Fatalf("build command customizer: %v", err)
+	}
+	cmd := exec.Command(adapterBin)
+	customizer("noop", cmd)
+	if cmd.Path != testCriteriaBin {
+		t.Fatalf("expected cmd.Path to be the criteria binary %q, got %q", testCriteriaBin, cmd.Path)
+	}
+	var cfgPath string
+	for _, e := range cmd.Env {
+		if after, ok := strings.CutPrefix(e, "CRITERIA_SANDBOX_CONFIG_PATH="); ok {
+			cfgPath = after
+			break
+		}
+	}
+	if cfgPath == "" {
+		t.Fatal("expected CRITERIA_SANDBOX_CONFIG_PATH env var in shim command")
+	}
+	cfgData, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read shim config: %v", err)
+	}
+	var cfg sandbox.ShimConfig
+	if err := json.Unmarshal(cfgData, &cfg); err != nil {
+		t.Fatalf("parse shim config: %v", err)
+	}
+	if cfg.TargetPath != adapterBin {
+		t.Fatalf("expected shim cfg.TargetPath %q, got %q", adapterBin, cfg.TargetPath)
+	}
+	if cfg.SkipRestrictions {
+		t.Fatal("expected production shim to apply in-process restrictions")
+	}
+	if !cfg.Seccomp {
+		t.Fatal("expected production shim to enable seccomp")
+	}
+	cleanup()
+
+	t.Cleanup(func() {
+		_ = sm.Close(context.Background(), "noop.allow")
+		_ = sm.Close(context.Background(), "noop.deny")
+	})
+
+	// Both AllowEgress=true and AllowEgress=false must complete the handshake.
+	if err := sm.Open(ctx, "noop.allow", "noop", "", nil, nil); err != nil {
+		t.Fatalf("open AllowEgress=true sandbox adapter: %v", err)
+	}
+	if err := sm.Open(ctx, "noop.deny", "noop", "", nil, nil); err != nil {
+		t.Fatalf("open AllowEgress=false sandbox adapter: %v", err)
+	}
+
+	// With AllowEgress=false, external TCP egress must be blocked.
+	denyStep := &workflow.StepNode{
+		Name:  "probe",
+		Input: map[string]string{"connect": "8.8.8.8:53"},
+	}
+	denyRes, err := sm.Execute(ctx, "noop.deny", denyStep, &adapterEventCollector{})
+	if err != nil {
+		t.Fatalf("execute deny probe: %v", err)
+	}
+	if denyRes.Outcome != "network_unreachable" && denyRes.Outcome != "connect_fail" {
+		t.Fatalf("deny probe outcome = %q, want network_unreachable or connect_fail", denyRes.Outcome)
+	}
+
+	// With AllowEgress=true, the adapter can reach a local host endpoint.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("OK"))
+	}))
+	defer server.Close()
+
+	allowStep := &workflow.StepNode{
+		Name:  "probe",
+		Input: map[string]string{"connect": strings.TrimPrefix(server.URL, "http://")},
+	}
+	allowRes, err := sm.Execute(ctx, "noop.allow", allowStep, &adapterEventCollector{})
+	if err != nil {
+		t.Fatalf("execute allow probe: %v", err)
+	}
+	if allowRes.Outcome != "connect_ok" {
+		t.Fatalf("allow probe outcome = %q, want connect_ok", allowRes.Outcome)
 	}
 }
 

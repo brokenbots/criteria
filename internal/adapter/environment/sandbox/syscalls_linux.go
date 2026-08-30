@@ -5,12 +5,10 @@ package sandbox
 import "runtime"
 
 // networkSyscalls are appended to the base allow-list when the policy
-// permits network egress. These names are common across the Linux
+// permits external network egress. These names are common across the Linux
 // architectures supported by the sandbox.
 var networkSyscalls = []string{
-	"socket", "socketpair", "bind", "connect", "listen", "accept", "accept4",
-	"getsockname", "getpeername", "setsockopt", "getsockopt", "shutdown",
-	"recvfrom", "recvmsg", "sendto", "sendmsg", "sendfile",
+	"sendfile",
 }
 
 // baseSyscalls is the default-deny seccomp allow-list for the current
@@ -68,7 +66,7 @@ var baseSyscallsAMD64 = []string{
 	"getuid", "getgid", "geteuid", "getegid", "getgroups",
 	"getresuid", "getresgid", "getcwd",
 	"set_tid_address", "set_robust_list",
-	"rt_sigaction", "rt_sigreturn", "sigaltstack", "signalfd4",
+	"rt_sigaction", "rt_sigprocmask", "rt_sigreturn", "sigaltstack", "signalfd4",
 	"kill", "tkill", "tgkill",
 	"prctl", "arch_prctl", "capget", "capset", "personality",
 	"sched_yield", "sched_getaffinity", "sched_setaffinity",
@@ -88,6 +86,12 @@ var baseSyscallsAMD64 = []string{
 	// Polling / events
 	"poll", "ppoll", "epoll_create1", "epoll_ctl", "epoll_pwait", "epoll_pwait2",
 	"select", "pselect6",
+
+	// Local socket (AF_UNIX) — required by go-plugin control socket even when
+	// external network egress is denied.
+	"socket", "socketpair", "bind", "connect", "listen", "accept", "accept4",
+	"getsockname", "getpeername", "setsockopt", "getsockopt", "shutdown",
+	"recvfrom", "recvmsg", "sendto", "sendmsg",
 
 	// Seccomp / landlock (self-referential)
 	"seccomp", "landlock_create_ruleset", "landlock_add_rule", "landlock_restrict_self",
@@ -133,7 +137,7 @@ var baseSyscallsARM64 = []string{
 	"getuid", "getgid", "geteuid", "getegid", "getgroups",
 	"getresuid", "getresgid", "getcwd",
 	"set_tid_address", "set_robust_list",
-	"rt_sigaction", "rt_sigreturn", "sigaltstack", "signalfd4",
+	"rt_sigaction", "rt_sigprocmask", "rt_sigreturn", "sigaltstack", "signalfd4",
 	"kill", "tkill", "tgkill",
 	"prctl", "capget", "capset", "personality",
 	"sched_yield", "sched_getaffinity", "sched_setaffinity",
@@ -153,6 +157,12 @@ var baseSyscallsARM64 = []string{
 	// Polling / events
 	"ppoll", "epoll_create1", "epoll_ctl", "epoll_pwait", "epoll_pwait2",
 	"pselect6",
+
+	// Local socket (AF_UNIX) — required by go-plugin control socket even when
+	// external network egress is denied.
+	"socket", "socketpair", "bind", "connect", "listen", "accept", "accept4",
+	"getsockname", "getpeername", "setsockopt", "getsockopt", "shutdown",
+	"recvfrom", "recvmsg", "sendto", "sendmsg",
 
 	// Seccomp / landlock (self-referential)
 	"seccomp", "landlock_create_ruleset", "landlock_add_rule", "landlock_restrict_self",
