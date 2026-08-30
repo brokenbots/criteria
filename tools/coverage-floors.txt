@@ -8,7 +8,8 @@ internal/adapter/conformance 38.0
 internal/adapter/environment/container 59.0
 internal/adapter/environment/remote 76.0
 internal/adapter/manifest 95.5
-internal/adapter/oci 67.0
+# CRI-52: lowered from 67.0 because ~63 well-covered statements were moved to internal/adapter/semver; remaining code is unchanged.
+internal/adapter/oci 65.5
 internal/adapter/publish 59.5
 internal/adapter/secrets 59.0
 internal/adapter/signing 66.0
