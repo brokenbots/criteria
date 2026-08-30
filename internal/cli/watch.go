@@ -63,7 +63,7 @@ func NewWatchCmd() *cobra.Command {
 			ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer cancel()
 
-			return runWatch(ctx, newRunEventClient(client), opts.runID, mode, os.Stdout)
+			return runWatch(ctx, newRunEventClient(client), opts.runID, mode, cmd.OutOrStdout())
 		},
 	}
 
