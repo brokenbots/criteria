@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -58,12 +59,13 @@ func TestBuildSysProcAttr_AllowNetwork(t *testing.T) {
 }
 
 func TestBuildRlimits(t *testing.T) {
-	rs := buildRlimits(1024*1024, 5*time.Second)
+	rs := buildRlimits(1024*1024, 5*time.Second, 0)
 	if len(rs) == 0 {
 		t.Fatal("expected rlimits")
 	}
 	foundAS := false
 	foundCPU := false
+	foundNPROC := false
 	for _, r := range rs {
 		if r.Resource == unix.RLIMIT_AS {
 			foundAS = true
@@ -77,12 +79,77 @@ func TestBuildRlimits(t *testing.T) {
 				t.Fatalf("RLIMIT_CPU cur = %d, want 5", r.Rlimit.Cur)
 			}
 		}
+		if r.Resource == unix.RLIMIT_NPROC {
+			foundNPROC = true
+			if r.Rlimit.Cur != defaultMaxThreads {
+				t.Fatalf("RLIMIT_NPROC cur = %d, want default %d", r.Rlimit.Cur, defaultMaxThreads)
+			}
+		}
 	}
 	if !foundAS {
 		t.Fatal("expected RLIMIT_AS")
 	}
 	if !foundCPU {
 		t.Fatal("expected RLIMIT_CPU")
+	}
+	if !foundNPROC {
+		t.Fatal("expected RLIMIT_NPROC")
+	}
+}
+
+func TestBuildRlimits_ExplicitMaxThreads(t *testing.T) {
+	rs := buildRlimits(0, 0, 64)
+	foundNOFILE := false
+	foundNPROC := false
+	for _, r := range rs {
+		if r.Resource == unix.RLIMIT_NOFILE {
+			foundNOFILE = true
+			if r.Rlimit.Cur != 1024 {
+				t.Fatalf("RLIMIT_NOFILE cur = %d, want 1024", r.Rlimit.Cur)
+			}
+		}
+		if r.Resource == unix.RLIMIT_NPROC {
+			foundNPROC = true
+			if r.Rlimit.Cur != 64 || r.Rlimit.Max != 64 {
+				t.Fatalf("RLIMIT_NPROC = %d/%d, want 64/64", r.Rlimit.Cur, r.Rlimit.Max)
+			}
+		}
+	}
+	if !foundNOFILE {
+		t.Fatal("expected RLIMIT_NOFILE")
+	}
+	if !foundNPROC {
+		t.Fatal("expected RLIMIT_NPROC")
+	}
+}
+
+func TestParseMaxThreads(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    uint64
+		wantErr bool
+	}{
+		{"empty", "", 0, false},
+		{"whitespace", "   ", 0, false},
+		{"zero", "0", 0, false},
+		{"positive", "64", 64, false},
+		{"large", "2048", 2048, false},
+		{"negative", "-1", 0, true},
+		{"non-numeric", "abc", 0, true},
+		{"unit-suffix", "64K", 0, true},
+		{"hex", "0x40", 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseMaxThreads(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("parseMaxThreads(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Fatalf("parseMaxThreads(%q) = %d, want %d", tt.input, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -207,6 +274,96 @@ func TestHandlerPrepare(t *testing.T) {
 	if prep.SysProcAttr == nil {
 		t.Fatal("expected SysProcAttr in prepared config")
 	}
+}
+
+func TestHandlerPrepare_MaxThreads_Default(t *testing.T) {
+	caps := Probe()
+	prep, err := Handler{}.Prepare(PrepareContext{
+		Policy: &workflow.ResolvedPolicy{
+			OS:         "linux",
+			PolicyMode: "permissive",
+		},
+		Caps: caps,
+	})
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	defer prep.Cleanup()
+	assertRlimitNproc(t, prep.Rlimits, defaultMaxThreads)
+}
+
+func TestHandlerPrepare_MaxThreads_Explicit(t *testing.T) {
+	caps := Probe()
+	prep, err := Handler{}.Prepare(PrepareContext{
+		Policy: &workflow.ResolvedPolicy{
+			OS:         "linux",
+			PolicyMode: "permissive",
+			TypeSpecific: map[string]cty.Value{
+				"resources": cty.ObjectVal(map[string]cty.Value{
+					"max_threads": cty.StringVal("1024"),
+				}),
+			},
+		},
+		Caps: caps,
+	})
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	defer prep.Cleanup()
+	assertRlimitNproc(t, prep.Rlimits, 1024)
+}
+
+func TestHandlerPrepare_MaxThreads_Invalid_Strict(t *testing.T) {
+	caps := Probe()
+	_, err := Handler{}.Prepare(PrepareContext{
+		Policy: &workflow.ResolvedPolicy{
+			OS:         "linux",
+			PolicyMode: "strict",
+			TypeSpecific: map[string]cty.Value{
+				"resources": cty.ObjectVal(map[string]cty.Value{
+					"max_threads": cty.StringVal("not-a-number"),
+				}),
+			},
+		},
+		Caps: caps,
+	})
+	if err == nil {
+		t.Fatal("expected Prepare error for invalid max_threads in strict mode")
+	}
+}
+
+func TestHandlerPrepare_MaxThreads_Invalid_Permissive(t *testing.T) {
+	caps := Probe()
+	prep, err := Handler{}.Prepare(PrepareContext{
+		Policy: &workflow.ResolvedPolicy{
+			OS:         "linux",
+			PolicyMode: "permissive",
+			TypeSpecific: map[string]cty.Value{
+				"resources": cty.ObjectVal(map[string]cty.Value{
+					"max_threads": cty.StringVal("not-a-number"),
+				}),
+			},
+		},
+		Caps: caps,
+	})
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	defer prep.Cleanup()
+	assertRlimitNproc(t, prep.Rlimits, defaultMaxThreads)
+}
+
+func assertRlimitNproc(t *testing.T, rlimits []RlimitConfig, want uint64) {
+	t.Helper()
+	for _, r := range rlimits {
+		if r.Resource == unix.RLIMIT_NPROC {
+			if r.Rlimit.Cur != want || r.Rlimit.Max != want {
+				t.Fatalf("RLIMIT_NPROC = %d/%d, want %d/%d", r.Rlimit.Cur, r.Rlimit.Max, want, want)
+			}
+			return
+		}
+	}
+	t.Fatalf("RLIMIT_NPROC not found in rlimits")
 }
 
 func TestHandlerPrepare_NetworkAllowEgress_NoNewNet(t *testing.T) {
@@ -473,6 +630,238 @@ func TestShimIntegration_DenyNetwork(t *testing.T) {
 	if !strings.Contains(outStr, "network is unreachable") && !strings.Contains(outStr, "connection refused") {
 		t.Fatalf("expected network-unreachable/connection-failed error, got: %s", outStr)
 	}
+}
+
+// TestMaxThreads_PthreadSurrogate verifies that RLIMIT_NPROC plumbing
+// controls how many pthreads can be created inside the sandbox. The
+// default policy and an explicit max_threads="2048" must both allow at
+// least 100 threads, while max_threads="64" must cap the surrogate.
+func TestMaxThreads_PthreadSurrogate(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux only")
+	}
+	caps := Probe()
+	if !caps.UserNamespaces {
+		t.Skip("user namespaces not available")
+	}
+
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("failed to get test file path")
+	}
+	fixtureDir := filepath.Join(filepath.Dir(testFile), "testfixture", "pthread")
+
+	dir := t.TempDir()
+	helper := filepath.Join(dir, "pthread_helper")
+	buildCmd := exec.Command("go", "build", "-o", helper, fixtureDir)
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("compile helper: %v\n%s", err, out)
+	}
+
+	cases := []struct {
+		name       string
+		maxThreads string
+		minWant    int
+		maxWant    int // inclusive upper bound; -1 means no upper bound
+	}{
+		{"default", "", 100, -1},
+		{"explicit-2048", "2048", 100, -1},
+		{"explicit-64", "64", 0, 99},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			policy := &workflow.ResolvedPolicy{
+				OS:         "linux",
+				PolicyMode: "permissive",
+			}
+			if tc.maxThreads != "" {
+				policy.TypeSpecific = map[string]cty.Value{
+					"resources": cty.ObjectVal(map[string]cty.Value{
+						"max_threads": cty.StringVal(tc.maxThreads),
+					}),
+				}
+			}
+
+			prep, err := Handler{}.Prepare(PrepareContext{
+				Policy: policy,
+				Caps:   caps,
+			})
+			if err != nil {
+				t.Fatalf("Prepare failed: %v", err)
+			}
+			defer prep.Cleanup()
+
+			cfg := ShimConfig{
+				TargetPath:   helper,
+				Mode:         prep.Mode,
+				ReadPaths:    prep.ReadPaths,
+				WritePaths:   prep.WritePaths,
+				NetPorts:     prep.NetPorts,
+				AllowNetwork: prep.AllowNetwork,
+				Seccomp:      false, // isolate rlimit behavior from seccomp
+				Rlimits:      prep.Rlimits,
+			}
+			tmpFile, err := os.CreateTemp(dir, "criteria-sandbox-*.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer os.Remove(tmpFile.Name())
+			if err := json.NewEncoder(tmpFile).Encode(cfg); err != nil {
+				t.Fatal(err)
+			}
+			if err := tmpFile.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			runCmd := exec.Command(helper, "100")
+			runCmd.SysProcAttr = prep.SysProcAttr
+			runCmd.Env = append(os.Environ(), "CRITERIA_SANDBOX_CONFIG_PATH="+tmpFile.Name())
+			out, err := runCmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("helper failed: %v\n%s", err, out)
+			}
+			outStr := string(out)
+			t.Logf("helper output:\n%s", outStr)
+
+			count, ok := parseThreadCount(outStr)
+			if !ok {
+				t.Fatalf("expected THREADS_OK count=N in output, got: %s", outStr)
+			}
+			if count < tc.minWant {
+				t.Fatalf("thread count %d < min want %d", count, tc.minWant)
+			}
+			if tc.maxWant >= 0 && count > tc.maxWant {
+				t.Fatalf("thread count %d > max want %d", count, tc.maxWant)
+			}
+		})
+	}
+}
+
+func parseThreadCount(out string) (int, bool) {
+	const prefix = "THREADS_OK count="
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			n, err := strconv.Atoi(strings.TrimPrefix(line, prefix))
+			if err != nil {
+				return 0, false
+			}
+			return n, true
+		}
+	}
+	return 0, false
+}
+
+// TestMaxThreads_CopilotRegression runs the real GitHub Copilot CLI inside
+// the default sandbox and verifies that it does not abort with a thread-spawn
+// panic / SIGABRT. The default max_threads policy (2048) must provide
+// enough headroom for the Copilot native runtime. The test supplies only a
+// dummy token, so an auth-related error is expected.
+func TestMaxThreads_CopilotRegression(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux only")
+	}
+	caps := Probe()
+	if !caps.UserNamespaces {
+		t.Skip("user namespaces not available")
+	}
+	if _, err := exec.LookPath("copilot"); err != nil {
+		t.Skip("copilot not on PATH")
+	}
+
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("failed to get test file path")
+	}
+	fixtureDir := filepath.Join(filepath.Dir(testFile), "testfixture", "copilot")
+
+	dir := t.TempDir()
+	helper := filepath.Join(dir, "copilot_helper")
+	buildCmd := exec.Command("go", "build", "-o", helper, fixtureDir)
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("compile helper: %v\n%s", err, out)
+	}
+
+	prep, err := Handler{}.Prepare(PrepareContext{
+		Policy: &workflow.ResolvedPolicy{
+			OS:         "linux",
+			PolicyMode: "permissive",
+		},
+		Caps: caps,
+	})
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	defer prep.Cleanup()
+
+	assertRlimitNproc(t, prep.Rlimits, defaultMaxThreads)
+
+	cfg := ShimConfig{
+		TargetPath:   helper,
+		Mode:         prep.Mode,
+		ReadPaths:    prep.ReadPaths,
+		WritePaths:   prep.WritePaths,
+		NetPorts:     prep.NetPorts,
+		AllowNetwork: prep.AllowNetwork,
+		Seccomp:      false, // isolate the max_threads behavior from seccomp
+		Rlimits:      prep.Rlimits,
+	}
+	tmpFile, err := os.CreateTemp(dir, "criteria-sandbox-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpFile.Name())
+	if err := json.NewEncoder(tmpFile).Encode(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Use a prompt that exercises the native runtime and reaches the auth
+	// layer with the dummy token.
+	runCmd := exec.Command(helper, "-p", "run echo hello")
+	runCmd.SysProcAttr = prep.SysProcAttr
+	runCmd.Env = append(os.Environ(),
+		"CRITERIA_SANDBOX_CONFIG_PATH="+tmpFile.Name(),
+		"GITHUB_TOKEN=dummy",
+	)
+	out, err := runCmd.CombinedOutput()
+	outStr := string(out)
+	t.Logf("copilot output:\n%s", outStr)
+
+	// The process must not die from thread-exhaustion / SIGABRT.
+	if isSignalExit(err, syscall.SIGABRT) {
+		t.Fatalf("copilot exited via SIGABRT (thread exhaustion) under default sandbox: %v\n%s", err, outStr)
+	}
+	if strings.Contains(outStr, "failed to spawn thread") {
+		t.Fatalf("copilot panicked with thread-spawn failure under default sandbox:\n%s", outStr)
+	}
+	if strings.Contains(outStr, "SIGABRT") {
+		t.Fatalf("copilot was terminated by SIGABRT under default sandbox:\n%s", outStr)
+	}
+
+	// With only a dummy token we expect an auth-related exit, not success.
+	if !strings.Contains(outStr, "Authentication") &&
+		!strings.Contains(outStr, "No authentication information found") &&
+		!strings.Contains(outStr, "token") &&
+		!strings.Contains(outStr, "authenticate") {
+		t.Fatalf("expected auth-related output from copilot, got:\n%s", outStr)
+	}
+}
+
+// isSignalExit reports whether err is an *exec.ExitError caused by the
+// given signal.
+func isSignalExit(err error, sig syscall.Signal) bool {
+	if err == nil {
+		return false
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok {
+			return ws.Signaled() && ws.Signal() == sig
+		}
+	}
+	return false
 }
 
 func TestApplyToCmd_EnvScrubBlockedVarsAbsent(t *testing.T) {
