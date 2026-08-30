@@ -824,7 +824,11 @@ func (s *executeCaptureSink) handlePermissionRequest(adapterEvt *v2.AdapterEvent
 		payload = adapterEvt.GetPayload().AsMap()
 	}
 
-	requestID, _ := payload["request_id"].(string)
+	requestID, ok := resolvePermissionRequestID(payload)
+	if !ok {
+		s.emitMalformedPermissionDenied()
+		return
+	}
 	tool, _ := payload["tool"].(string)
 	fullCmd, _ := payload["full_command_text"].(string)
 
@@ -839,6 +843,16 @@ func (s *executeCaptureSink) handlePermissionRequest(adapterEvt *v2.AdapterEvent
 		return
 	}
 	s.emitDenied(requestID, tool, reason)
+}
+
+// emitMalformedPermissionDenied emits a permission.denied event for a payload
+// that is missing a correlation ID. No stream message is sent because there is
+// no request ID to correlate.
+func (s *executeCaptureSink) emitMalformedPermissionDenied() {
+	s.anyDenied = true
+	s.sink.Adapter("permission.denied", map[string]any{
+		"reason": "malformed permission.request payload: missing request_id",
+	})
 }
 
 func (s *executeCaptureSink) emitGranted(requestID, tool, reason string) {

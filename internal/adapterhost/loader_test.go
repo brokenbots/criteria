@@ -868,3 +868,152 @@ func TestLoaderResolveWithRunnerFunc(t *testing.T) {
 	}
 	handle.Kill()
 }
+
+// TestExecuteCaptureSink_PermissionRequestIDCorrelation verifies that the
+// fallback per-Execute permission path resolves request IDs from both
+// snake_case and camelCase keys, prefers snake_case when both are present, and
+// rejects payloads that have no correlation ID.
+func TestExecuteCaptureSink_PermissionRequestIDCorrelation(t *testing.T) {
+	cases := []struct {
+		name        string
+		payload     map[string]any
+		wantReqID   string
+		wantReason  string
+		wantAllowed bool
+	}{
+		{
+			name: "camelCase only denied",
+			payload: map[string]any{
+				"requestId": "req-camel",
+				"tool":      "write_file",
+			},
+			wantReqID:   "req-camel",
+			wantReason:  "no matching allow_tools entry",
+			wantAllowed: false,
+		},
+		{
+			name: "snake_case only denied",
+			payload: map[string]any{
+				"request_id": "req-snake",
+				"tool":       "write_file",
+			},
+			wantReqID:   "req-snake",
+			wantReason:  "no matching allow_tools entry",
+			wantAllowed: false,
+		},
+		{
+			name: "both equal granted",
+			payload: map[string]any{
+				"request_id": "req-both",
+				"requestId":  "req-both",
+				"tool":       "read_file",
+			},
+			wantReqID:   "req-both",
+			wantReason:  "matched: read_file",
+			wantAllowed: true,
+		},
+		{
+			name: "both different prefers snake_case",
+			payload: map[string]any{
+				"request_id": "req-snake",
+				"requestId":  "req-camel",
+				"tool":       "read_file",
+			},
+			wantReqID:   "req-snake",
+			wantReason:  "matched: read_file",
+			wantAllowed: true,
+		},
+		{
+			name:    "neither present",
+			payload: map[string]any{"tool": "write_file"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			inner := &adapterEventCollector{}
+			requests := make(chan *v2.PermissionEvent, 4)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			cs := &executeCaptureSink{
+				sink:        inner,
+				policy:      NewPolicy([]string{"read_file"}),
+				adapterName: "noop",
+				requests:    requests,
+				ctx:         ctx,
+			}
+
+			payload, err := structpb.NewStruct(tc.payload)
+			if err != nil {
+				t.Fatalf("NewStruct: %v", err)
+			}
+			evt := &v2.AdapterEvent{
+				EventKind: "permission.request",
+				Payload:   payload,
+			}
+			if err := cs.emitAdapterEvent(evt); err != nil {
+				t.Fatalf("emitAdapterEvent: %v", err)
+			}
+
+			if tc.wantReqID == "" {
+				if !inner.saw("permission.denied") {
+					t.Fatal("expected permission.denied for malformed payload")
+				}
+				data, _ := inner.first("permission.denied")
+				if data["reason"] != "malformed permission.request payload: missing request_id" {
+					t.Errorf("reason = %q; want malformed reason", data["reason"])
+				}
+				if data["request_id"] != "" && data["request_id"] != nil {
+					t.Errorf("expected empty request_id, got %q", data["request_id"])
+				}
+				if !cs.anyDenied {
+					t.Error("expected anyDenied=true after malformed denial")
+				}
+				select {
+				case <-requests:
+					t.Fatal("unexpected stream message for malformed payload")
+				default:
+				}
+				return
+			}
+
+			kind := "permission.denied"
+			if tc.wantAllowed {
+				kind = "permission.granted"
+			}
+			if !inner.saw(kind) {
+				t.Fatalf("expected %s event", kind)
+			}
+			data, _ := inner.first(kind)
+			if data["request_id"] != tc.wantReqID {
+				t.Errorf("request_id = %q; want %q", data["request_id"], tc.wantReqID)
+			}
+			if tc.wantAllowed {
+				if data["pattern"] == "" || data["pattern"] == nil {
+					t.Errorf("expected non-empty pattern for granted event, got %v", data["pattern"])
+				}
+			} else {
+				if data["reason"] != tc.wantReason {
+					t.Errorf("reason = %q; want %q", data["reason"], tc.wantReason)
+				}
+			}
+
+			select {
+			case streamEvt := <-requests:
+				var gotReqID string
+				switch e := streamEvt.GetEvent().(type) {
+				case *v2.PermissionEvent_Request:
+					gotReqID = e.Request.GetRequestId()
+				case *v2.PermissionEvent_Cancel:
+					gotReqID = e.Cancel.GetRequestId()
+				}
+				if gotReqID != tc.wantReqID {
+					t.Errorf("stream request_id = %q; want %q", gotReqID, tc.wantReqID)
+				}
+			default:
+				t.Fatal("expected stream event")
+			}
+		})
+	}
+}

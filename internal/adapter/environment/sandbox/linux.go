@@ -54,6 +54,7 @@ import (
 	"time"
 
 	"github.com/elastic/go-seccomp-bpf"
+	seccomparch "github.com/elastic/go-seccomp-bpf/arch"
 	"github.com/zclconf/go-cty/cty"
 	"golang.org/x/sys/unix"
 
@@ -347,14 +348,34 @@ func buildSysProcAttr(allowNetwork bool) *syscall.SysProcAttr {
 // baseSyscalls and networkSyscalls are defined in syscalls_linux.go with
 // architecture-specific allow-lists selected at init time.
 
+// filterSyscallsForCurrentArch returns only the syscalls from the provided
+// list that are valid on the current runtime architecture. Syscalls that do
+// not exist on the host arch (e.g. x86_64-specific names on aarch64) are
+// dropped so that seccomp policy assembly does not fail with "unknown syscall"
+// errors.
+func filterSyscallsForCurrentArch(syscalls []string) []string {
+	info, err := seccomparch.GetInfo("")
+	if err != nil {
+		// Unsupported architecture — return the original list and let the
+		// assembler report the real error.
+		return syscalls
+	}
+	out := make([]string, 0, len(syscalls))
+	for _, name := range syscalls {
+		if _, ok := info.SyscallNames[name]; ok {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
 // buildSeccompFilter returns a default-deny seccomp filter with a base
 // allow-list covering the syscalls needed by the Go runtime, the gRPC
 // plugin transport, and basic file/network operations.
 func buildSeccompFilter(allowNetwork bool) (*seccomp.Filter, error) {
-	syscalls := make([]string, len(baseSyscalls))
-	copy(syscalls, baseSyscalls)
+	syscalls := filterSyscallsForCurrentArch(baseSyscalls)
 	if allowNetwork {
-		syscalls = append(syscalls, networkSyscalls...)
+		syscalls = append(syscalls, filterSyscallsForCurrentArch(networkSyscalls)...)
 	}
 
 	policy := seccomp.Policy{

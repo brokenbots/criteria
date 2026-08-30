@@ -208,10 +208,9 @@ func applySeccompFilter(cfg *ShimConfig) error {
 // avoids surprises where the parent validates one set and the child
 // loads another.
 func seccompFilterForShim(cfg *ShimConfig) *seccomp.Filter {
-	syscalls := make([]string, len(baseSyscalls))
-	copy(syscalls, baseSyscalls)
+	syscalls := filterSyscallsForCurrentArch(baseSyscalls)
 	if cfg.AllowNetwork {
-		syscalls = append(syscalls, networkSyscalls...)
+		syscalls = append(syscalls, filterSyscallsForCurrentArch(networkSyscalls)...)
 	}
 
 	policy := seccomp.Policy{

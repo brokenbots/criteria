@@ -305,6 +305,143 @@ func TestPermissionInterceptSink_MalformedPayload(t *testing.T) {
 	}
 }
 
+// TestPermissionInterceptSink_RequestIDCorrelation verifies that the intercept
+// sink resolves permission request IDs from both snake_case and camelCase keys,
+// applies the snake_case precedence rule, and rejects payloads with no ID.
+func TestPermissionInterceptSink_RequestIDCorrelation(t *testing.T) {
+	cases := []struct {
+		name        string
+		payload     map[string]any
+		wantReqID   string
+		wantReason  string
+		wantAllowed bool
+	}{
+		{
+			name: "camelCase only",
+			payload: map[string]any{
+				"requestId": "req-camel",
+				"tool":      "write_file",
+			},
+			wantReqID:   "req-camel",
+			wantReason:  "no matching allow_tools entry",
+			wantAllowed: false,
+		},
+		{
+			name: "snake_case only",
+			payload: map[string]any{
+				"request_id": "req-snake",
+				"tool":       "write_file",
+			},
+			wantReqID:   "req-snake",
+			wantReason:  "no matching allow_tools entry",
+			wantAllowed: false,
+		},
+		{
+			name: "both equal",
+			payload: map[string]any{
+				"request_id": "req-both",
+				"requestId":  "req-both",
+				"tool":       "read_file",
+			},
+			wantReqID:   "req-both",
+			wantReason:  "matched: read_file",
+			wantAllowed: true,
+		},
+		{
+			name: "both different prefers snake_case",
+			payload: map[string]any{
+				"request_id": "req-snake",
+				"requestId":  "req-camel",
+				"tool":       "read_file",
+			},
+			wantReqID:   "req-snake",
+			wantReason:  "matched: read_file",
+			wantAllowed: true,
+		},
+		{
+			name: "camelCase granted",
+			payload: map[string]any{
+				"requestId": "req-camel-allow",
+				"tool":      "read_file",
+			},
+			wantReqID:   "req-camel-allow",
+			wantReason:  "matched: read_file",
+			wantAllowed: true,
+		},
+		{
+			name:        "neither present",
+			payload:     map[string]any{"tool": "write_file"},
+			wantReqID:   "",
+			wantReason:  "malformed permission.request payload: missing request_id",
+			wantAllowed: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			inner := &adapterEventCollector{}
+			sess := &Session{Adapter: "noop"}
+			ps := NewPermissionState("sess-1", nil)
+			ps.SetPolicy(NewPolicy([]string{"read_file"}))
+
+			sink := &permissionInterceptSink{
+				inner:     inner,
+				permState: ps,
+				session:   sess,
+			}
+
+			sink.Adapter("permission.request", tc.payload)
+
+			var gotKind string
+			var gotData map[string]any
+			for _, evt := range inner.events {
+				if evt.kind == "permission.granted" || evt.kind == "permission.denied" {
+					gotKind = evt.kind
+					gotData = evt.data
+					break
+				}
+			}
+
+			if tc.wantAllowed {
+				if gotKind != "permission.granted" {
+					t.Fatalf("expected permission.granted, got %q", gotKind)
+				}
+			} else {
+				if gotKind != "permission.denied" {
+					t.Fatalf("expected permission.denied, got %q", gotKind)
+				}
+				if !sink.anyDenied {
+					t.Error("expected anyDenied=true after denial")
+				}
+			}
+
+			if tc.wantReqID == "" {
+				if gotData["request_id"] != "" && gotData["request_id"] != nil {
+					t.Errorf("request_id = %q; want empty", gotData["request_id"])
+				}
+			} else {
+				if gotData["request_id"] != tc.wantReqID {
+					t.Errorf("request_id = %q; want %q", gotData["request_id"], tc.wantReqID)
+				}
+			}
+			if tc.wantAllowed {
+				if gotData["pattern"] == "" || gotData["pattern"] == nil {
+					t.Errorf("expected non-empty pattern for granted event, got %v", gotData["pattern"])
+				}
+			} else {
+				if gotData["reason"] != tc.wantReason {
+					t.Errorf("reason = %q; want %q", gotData["reason"], tc.wantReason)
+				}
+			}
+			if tc.wantReqID != "" {
+				if gotData["tool"] != tc.payload["tool"] {
+					t.Errorf("tool = %q; want %q", gotData["tool"], tc.payload["tool"])
+				}
+			}
+		})
+	}
+}
+
 // TestSessionManager_ExecutePermissionOutcomeOverride verifies that when a
 // permission is denied during Execute, a success outcome is overridden to
 // needs_review.
@@ -450,10 +587,69 @@ func TestFileAuditWriter(t *testing.T) {
 	}
 }
 
+// TestSessionManager_ExecutePermissionOutcomeOverride_CamelCase verifies that
+// an adapter emitting a camelCase requestId payload is correlated correctly
+// end-to-end: the step resolves promptly to needs_review with the policy
+// reason and the host echoes the resolved request_id back.
+func TestSessionManager_ExecutePermissionOutcomeOverride_CamelCase(t *testing.T) {
+	loader := NewLoaderWithDiscovery(func(string) (string, error) {
+		return "", nil
+	})
+	loader.RegisterBuiltin("noop", func() Handle {
+		return &permissionEmittingAdapter{
+			tool:      "write_file",
+			requestID: "req-camel",
+			camelCase: true,
+		}
+	})
+	sm := NewSessionManager(loader)
+
+	ctx := context.Background()
+	if err := sm.Open(ctx, "agent", "noop", "", nil, nil); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = sm.Close(ctx, "agent") }()
+
+	step := &workflow.StepNode{
+		Name:       "run",
+		AllowTools: []string{"read_file"}, // deny-all for write_file
+		Outcomes: map[string]*workflow.CompiledOutcome{
+			"success":      {Name: "success"},
+			"needs_review": {Name: "needs_review"},
+		},
+	}
+	inner := &adapterEventCollector{}
+	start := time.Now()
+	res, err := sm.Execute(ctx, "agent", step, inner)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.Outcome != "needs_review" {
+		t.Errorf("outcome = %q; want needs_review", res.Outcome)
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("Execute took %v; want under 5s", elapsed)
+	}
+
+	data, ok := inner.first("permission.denied")
+	if !ok {
+		t.Fatal("expected permission.denied event")
+	}
+	if data["request_id"] != "req-camel" {
+		t.Errorf("permission.denied request_id = %q; want req-camel", data["request_id"])
+	}
+	if data["reason"] != "no matching allow_tools entry" {
+		t.Errorf("permission.denied reason = %q; want policy reason", data["reason"])
+	}
+}
+
 // permissionEmittingAdapter is a builtin adapter that emits a permission.request
 // event and then returns success.
 type permissionEmittingAdapter struct {
-	tool string
+	tool      string
+	requestID string
+	camelCase bool
 }
 
 func (a *permissionEmittingAdapter) Info(_ context.Context) (Info, error) {
@@ -476,9 +672,18 @@ func (a *permissionEmittingAdapter) Restore(context.Context, string, []byte, uin
 	return nil
 }
 func (a *permissionEmittingAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
-	sink.Adapter("permission.request", map[string]any{
-		"request_id": "req-1",
-		"tool":       a.tool,
-	})
+	reqID := a.requestID
+	if reqID == "" {
+		reqID = "req-1"
+	}
+	payload := map[string]any{
+		"tool": a.tool,
+	}
+	if a.camelCase {
+		payload["requestId"] = reqID
+	} else {
+		payload["request_id"] = reqID
+	}
+	sink.Adapter("permission.request", payload)
 	return adapter.Result{Outcome: "success"}, nil
 }
