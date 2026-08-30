@@ -111,6 +111,10 @@ func applyShimRestrictions(cfg *ShimConfig) error {
 		return fmt.Errorf("prctl(PR_SET_NO_NEW_PRIVS): %w", err)
 	}
 
+	// Pin the caller to a stable OS thread before installing any sandbox
+	// primitives so each enforcement step targets the same M.
+	runtime.LockOSThread()
+
 	// Apply rlimits before anything else so later syscalls are bounded.
 	for _, rl := range cfg.Rlimits {
 		if err := syscall.Setrlimit(rl.Resource, &rl.Rlimit); err != nil {
@@ -129,14 +133,6 @@ func applyShimRestrictions(cfg *ShimConfig) error {
 			return err
 		}
 	}
-
-	// Landlock restrictions are per-thread. On kernels without TSYNC
-	// support the library applies the ruleset to every existing thread, but
-	// Go may still migrate this goroutine to a new OS thread created after
-	// the restriction was installed. Keep the caller on the restricted
-	// thread so in-process sandbox helpers (ApplyEnv) continue to enforce the
-	// filesystem policy.
-	runtime.LockOSThread()
 
 	return nil
 }
