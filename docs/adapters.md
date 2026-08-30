@@ -543,8 +543,9 @@ heartbeats, and it must remain open for the entire lifetime of the session:
   references are persisted.
 - **Permission stream.** Tool-permission requests flow over a bidirectional
   stream handled inside the session, evaluated against the `allow_tools` policy
-  (extended by environment policy fields), with one audit entry per decision at
-`$CRITERIA_HOME/runs/<run-id>/audit.log` (default
+  and then against the resolved environment filesystem and network policy.
+  Each layer produces a distinguishable denial reason and one audit entry per
+  decision at `$CRITERIA_HOME/runs/<run-id>/audit.log` (default
 `~/.local/criteria/runs/<run-id>/audit.log`).
 
 ## Troubleshooting

@@ -104,6 +104,53 @@ func TestPermissionState_CombinedPolicyEnvPolicy(t *testing.T) {
 	}
 }
 
+// TestPermissionState_ReadOnlyFilesystemEventAndAudit verifies that an
+// environment-policy denial emits a PermissionEvent_Cancel on the stream and
+// records a deny audit entry with the environment-policy reason.
+func TestPermissionState_ReadOnlyFilesystemEventAndAudit(t *testing.T) {
+	audit := &sliceAuditWriter{}
+	ps := NewPermissionState("sess-1", audit)
+	ps.SetPolicy(NewCombinedPolicy("noop", []string{"*"}, &workflow.ResolvedPolicy{
+		Filesystem: &workflow.FilesystemPolicy{ReadOnly: true},
+	}))
+	ps.SetStreamCancel(func() {})
+
+	allow, reason := ps.Evaluate("req-1", "write_file", "", "")
+	if allow {
+		t.Fatalf("expected deny for write_file under read-only env, got allow")
+	}
+	if !strings.HasPrefix(reason, "denied by environment policy: filesystem read-only") {
+		t.Fatalf("expected read-only env denial reason, got %q", reason)
+	}
+
+	select {
+	case ev := <-ps.Requests():
+		cancel := ev.GetCancel()
+		if cancel == nil {
+			t.Fatalf("expected cancel event, got %T", ev.Event)
+		}
+		if cancel.RequestId != "req-1" {
+			t.Errorf("cancel request_id=%q, want req-1", cancel.RequestId)
+		}
+		if cancel.Reason != reason {
+			t.Errorf("cancel reason=%q, want %q", cancel.Reason, reason)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for cancel event")
+	}
+
+	entries := audit.all()
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 audit entry, got %d", len(entries))
+	}
+	if entries[0].Decision != "deny" {
+		t.Errorf("audit decision=%q, want deny", entries[0].Decision)
+	}
+	if !strings.HasPrefix(entries[0].Reason, "denied by environment policy: filesystem read-only") {
+		t.Errorf("audit reason=%q, want read-only env denial prefix", entries[0].Reason)
+	}
+}
+
 // TestPermissionState_Concurrency verifies that 100 concurrent Evaluate calls
 // on a single session all return decisions and produce 100 audit entries.
 func TestPermissionState_Concurrency(t *testing.T) {

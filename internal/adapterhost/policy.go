@@ -66,16 +66,123 @@ func (p *CombinedPolicy) Decide(req PermissionRequest) (allow bool, reason strin
 	if !allow {
 		return false, reason
 	}
-	// 2. env-policy checks (placeholder for WS09 full wiring)
+	// 2. env-policy checks. Environment policy is a second layer applied only
+	// after allow_tools grants the request. Filesystem write operations are
+	// denied under a read-only filesystem policy, while read operations remain
+	// allowed. Network egress operations are denied when AllowEgress is false,
+	// while purely local operations remain allowed.
 	if p.Env != nil {
-		if p.Env.Filesystem != nil && p.Env.Filesystem.ReadOnly {
-			_ = req // placeholder for WS09: inspect req.Details for write operations
+		if p.Env.Filesystem != nil && p.Env.Filesystem.ReadOnly && isFilesystemWrite(req) {
+			return false, "denied by environment policy: filesystem read-only"
 		}
-		if p.Env.Network != nil && !p.Env.Network.AllowEgress {
-			_ = req // placeholder for WS09: deny network-dependent tools
+		if p.Env.Network != nil && !p.Env.Network.AllowEgress && isNetworkEgress(req) {
+			return false, "denied by environment policy: network egress disabled"
 		}
 	}
 	return true, reason
+}
+
+// isFilesystemWrite reports whether req is a filesystem write operation.
+//
+// Classification scheme:
+//   - Known write tool kinds (e.g. "write_file") are always treated as writes.
+//   - For "shell" requests, the command text is inspected for common write
+//     verbs (touch, rm, cp, mv, mkdir, ...) or shell output redirection
+//     operators (>, >>). Read-only commands such as "cat" and "pwd" are not matched.
+func isFilesystemWrite(req PermissionRequest) bool {
+	if filesystemWriteToolKinds[req.Tool] {
+		return true
+	}
+	if req.Tool != "shell" {
+		return false
+	}
+	cmd := commandText(req)
+	if cmd == "" {
+		return false
+	}
+	lower := strings.ToLower(cmd)
+	for _, verb := range filesystemWriteVerbs {
+		if wordBoundaryContains(lower, verb) {
+			return true
+		}
+	}
+	// Shell output redirection creates or overwrites a file.
+	return strings.Contains(lower, ">")
+}
+
+// isNetworkEgress reports whether req performs network egress.
+//
+// Classification scheme:
+//   - Known network tool kinds (currently "fetch") are always treated as egress.
+//   - For "shell" requests, the command text is inspected for network client
+//     verbs (curl, wget, ssh, scp, ...) or URL-like markers (://). Local
+//     commands such as "cat" and "pwd" are not matched.
+func isNetworkEgress(req PermissionRequest) bool {
+	if networkToolKinds[req.Tool] {
+		return true
+	}
+	if req.Tool != "shell" {
+		return false
+	}
+	cmd := commandText(req)
+	if cmd == "" {
+		return false
+	}
+	lower := strings.ToLower(cmd)
+	for _, verb := range networkEgressVerbs {
+		if wordBoundaryContains(lower, verb) {
+			return true
+		}
+	}
+	return strings.Contains(lower, "://")
+}
+
+// commandText returns the concatenated command hints from the request details.
+func commandText(req PermissionRequest) string {
+	if len(req.Details) == 0 {
+		return ""
+	}
+	keys := []string{"full_command_text", "command", "commands"}
+	var parts []string
+	for _, k := range keys {
+		if v := strings.TrimSpace(req.Details[k]); v != "" {
+			parts = append(parts, v)
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+// wordBoundaryContains reports whether s contains word as a whole word.
+func wordBoundaryContains(s, word string) bool {
+	// Fast path for common delimiters.
+	for _, sep := range []string{" ", "\t", ";", "&", "|", "(", ")"} {
+		if strings.Contains(s, sep+word+sep) || strings.HasPrefix(s, word+sep) || strings.HasSuffix(s, sep+word) {
+			return true
+		}
+	}
+	return s == word
+}
+
+var filesystemWriteToolKinds = map[string]bool{
+	"write_file":  true,
+	"edit_file":   true,
+	"delete_file": true,
+	"move_file":   true,
+	"create_file": true,
+}
+
+var filesystemWriteVerbs = []string{
+	"touch", "rm", "cp", "mv", "mkdir", "rmdir", "chmod", "chown", "tee",
+	"shred", "mkfs", "dd",
+}
+
+var networkToolKinds = map[string]bool{
+	"fetch": true,
+}
+
+var networkEgressVerbs = []string{
+	"curl", "wget", "ssh", "scp", "sftp", "ping", "dig", "nslookup", "nc",
+	"telnet", "ftp",
 }
 
 // adapterPermissionAliases maps adapter name → (user-facing allow_tools name → canonical SDK kind).
