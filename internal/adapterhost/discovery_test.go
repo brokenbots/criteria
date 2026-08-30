@@ -35,6 +35,7 @@ func TestDiscoverBinaryPrefersEnvOverHome(t *testing.T) {
 	writeExecutable(t, envPath)
 	writeExecutable(t, homePath)
 
+	t.Setenv("CRITERIA_HOME", "")
 	t.Setenv("CRITERIA_ADAPTERS", envDir)
 	t.Setenv("HOME", homeDir)
 
@@ -55,6 +56,7 @@ func TestDiscoverBinaryFallsBackToHome(t *testing.T) {
 	homePath := filepath.Join(homeDir, ".local", "criteria", "adapters", "criteria-adapter-noop")
 	writeExecutable(t, homePath)
 
+	t.Setenv("CRITERIA_HOME", "")
 	t.Setenv("CRITERIA_ADAPTERS", filepath.Join(t.TempDir(), "missing"))
 	t.Setenv("HOME", homeDir)
 
@@ -93,6 +95,7 @@ func TestDiscoverBinaryLegacyCriteriaHomeSurvives(t *testing.T) {
 func TestDiscoverBinaryNotFoundIncludesSearchedPaths(t *testing.T) {
 	envDir := filepath.Join(t.TempDir(), "env")
 	homeDir := filepath.Join(t.TempDir(), "home")
+	t.Setenv("CRITERIA_HOME", "")
 	t.Setenv("CRITERIA_ADAPTERS", envDir)
 	t.Setenv("HOME", homeDir)
 

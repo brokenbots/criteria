@@ -12,6 +12,11 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	// Do not inherit a CRITERIA_HOME or CRITERIA_STATE_DIR from the outer test
+	// runner; tests that need an explicit state directory set it via t.Setenv.
+	_ = os.Unsetenv("CRITERIA_HOME")
+	_ = os.Unsetenv("CRITERIA_STATE_DIR")
+
 	// Build the noop adapter once and expose it via CRITERIA_ADAPTERS so tests
 	// that execute real workflows can discover an adapter out-of-process (shell
 	// and other adapters are external binaries, not in-process builtins). Tests
