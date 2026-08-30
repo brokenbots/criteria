@@ -1001,6 +1001,13 @@ func makeSandboxCustomizer(prep *sandbox.LinuxPrepared, envNode *workflow.Enviro
 			prep.TargetPath = cmd.Path
 		}
 		_ = prep.ApplyToCmd(cmd, shimBin)
+		if shimBin != "" {
+			// test-only: keep the dedicated shim helper in host namespaces
+			// so applyShimRestrictions can install seccomp without EPERM.
+			// seccomp/landlock/NO_NEW_PRIVS survive syscall.Exec; namespaces
+			// do not. The production path (shimBin == "") is unaffected.
+			cmd.SysProcAttr = nil
+		}
 	}, cleanup
 }
 
