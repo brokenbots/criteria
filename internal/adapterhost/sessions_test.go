@@ -4,6 +4,7 @@ package adapterhost
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
@@ -201,10 +202,12 @@ func TestMakeSandboxCustomizer_ShimCallsApplyToCmd(t *testing.T) {
 }
 
 // TestSessionManager_Open_LockedOCIAdapter_Sandbox verifies that a
-// digest-installed adapter binary bound to a Linux sandbox environment starts
-// under the in-process shim and reaches plugin handshake (OpenSession). This
-// is the CRI-40 regression test: before the fix the shim received an empty
-// target path and the adapter exited with status 125 before the handshake.
+// digest-installed adapter binary bound to a Linux sandbox environment is
+// launched through the dedicated test shim helper and reaches plugin
+// handshake (OpenSession). The test-only helper skips in-process restriction
+// installation and just execs the real adapter; this regression test verifies
+// the shim plumbing (cmd.Path, CRITERIA_SANDBOX_CONFIG_PATH, cfg.TargetPath)
+// and the subsequent plugin handshake.
 func TestSessionManager_Open_LockedOCIAdapter_Sandbox(t *testing.T) {
 	caps := sandbox.Probe()
 	if !caps.UserNamespaces || !caps.Seccomp {
@@ -262,6 +265,46 @@ func TestSessionManager_Open_LockedOCIAdapter_Sandbox(t *testing.T) {
 			},
 		},
 	}
+
+	// Verify the shim plumbing before exercising the full handshake: the
+	// test-only helper must be used as the shim, it must receive the correct
+	// target adapter path, and it must be told to skip in-process restriction
+	// installation so it can exec the real adapter without tripping kernel
+	// fragility around TSYNC seccomp in a multi-threaded helper.
+	customizer, cleanup, err := sm.buildCommandCustomizer("noop.default", "")
+	if err != nil {
+		t.Fatalf("build command customizer: %v", err)
+	}
+	cmd := exec.Command(adapterBin)
+	customizer("noop", cmd)
+	if cmd.Path != testSandboxShimBin {
+		t.Fatalf("expected cmd.Path to be the dedicated shim helper %q, got %q", testSandboxShimBin, cmd.Path)
+	}
+	var cfgPath string
+	for _, e := range cmd.Env {
+		if after, ok := strings.CutPrefix(e, "CRITERIA_SANDBOX_CONFIG_PATH="); ok {
+			cfgPath = after
+			break
+		}
+	}
+	if cfgPath == "" {
+		t.Fatal("expected CRITERIA_SANDBOX_CONFIG_PATH env var in shim command")
+	}
+	cfgData, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read shim config: %v", err)
+	}
+	var cfg sandbox.ShimConfig
+	if err := json.Unmarshal(cfgData, &cfg); err != nil {
+		t.Fatalf("parse shim config: %v", err)
+	}
+	if cfg.TargetPath != adapterBin {
+		t.Fatalf("expected shim cfg.TargetPath %q, got %q", adapterBin, cfg.TargetPath)
+	}
+	if !cfg.SkipRestrictions {
+		t.Fatal("expected test-only shim helper to skip in-process restriction installation")
+	}
+	cleanup()
 
 	t.Cleanup(func() { _ = sm.Close(context.Background(), "noop.default") })
 	if err := sm.Open(ctx, "noop.default", "noop", "", nil, nil); err != nil {

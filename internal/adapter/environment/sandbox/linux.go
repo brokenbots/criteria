@@ -103,6 +103,12 @@ type LinuxPrepared struct {
 	// socket/connect syscalls.
 	AllowNetwork bool
 
+	// SkipShimRestrictions, when true, tells the shim helper to skip
+	// in-process landlock/seccomp/rlimits/PR_SET_NO_NEW_PRIVS installation
+	// and only syscall.Exec the target. It is used only by the test-only
+	// dedicated shim helper path; production leaves it false.
+	SkipShimRestrictions bool
+
 	// ShimConfigPath is the temp JSON config file created by ApplyToCmd.
 	// Cleanup removes it.
 	ShimConfigPath string
@@ -566,14 +572,15 @@ func (prep *LinuxPrepared) ApplyToCmd(cmd *exec.Cmd, criteriaBin string) error {
 	// Serialize shim configuration to a private temp file so the
 	// child can apply the same restrictions without re-deriving them.
 	shimCfg := ShimConfig{
-		TargetPath:   prep.TargetPath,
-		Mode:         prep.Mode,
-		ReadPaths:    prep.ReadPaths,
-		WritePaths:   prep.WritePaths,
-		NetPorts:     prep.NetPorts,
-		AllowNetwork: prep.AllowNetwork,
-		Seccomp:      prep.SeccompBPF != nil,
-		Rlimits:      prep.Rlimits,
+		TargetPath:       prep.TargetPath,
+		Mode:             prep.Mode,
+		ReadPaths:        prep.ReadPaths,
+		WritePaths:       prep.WritePaths,
+		NetPorts:         prep.NetPorts,
+		AllowNetwork:     prep.AllowNetwork,
+		Seccomp:          prep.SeccompBPF != nil,
+		Rlimits:          prep.Rlimits,
+		SkipRestrictions: prep.SkipShimRestrictions,
 	}
 	tmpFile, err := os.CreateTemp("", "criteria-sandbox-*.json")
 	if err != nil {

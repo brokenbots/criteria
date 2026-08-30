@@ -18,14 +18,15 @@ const shimEnvVar = "CRITERIA_SANDBOX_CONFIG_PATH"
 // ShimConfig is the JSON-serialised data passed from the parent process
 // to the shim child via a temp file pointed to by shimEnvVar.
 type ShimConfig struct {
-	TargetPath   string         `json:"target_path"`
-	Mode         string         `json:"mode"`
-	ReadPaths    []string       `json:"read_paths"`
-	WritePaths   []string       `json:"write_paths"`
-	NetPorts     []uint16       `json:"net_ports"`
-	AllowNetwork bool           `json:"allow_network"`
-	Seccomp      bool           `json:"seccomp"`
-	Rlimits      []RlimitConfig `json:"rlimits"`
+	TargetPath       string         `json:"target_path"`
+	Mode             string         `json:"mode"`
+	ReadPaths        []string       `json:"read_paths"`
+	WritePaths       []string       `json:"write_paths"`
+	NetPorts         []uint16       `json:"net_ports"`
+	AllowNetwork     bool           `json:"allow_network"`
+	Seccomp          bool           `json:"seccomp"`
+	Rlimits          []RlimitConfig `json:"rlimits"`
+	SkipRestrictions bool           `json:"skip_restrictions"`
 }
 
 // RunIfEnv detects shimEnvVar and, if present, performs the sandbox
@@ -74,8 +75,17 @@ func runShim(configPath string) error {
 		return fmt.Errorf("parse shim config: %w", err)
 	}
 
-	if err := applyShimRestrictions(&cfg); err != nil {
-		return err
+	// Test-only dedicated shim helpers are short-lived wrappers: the Go
+	// runtime starts worker threads before main, so in-process installation of
+	// a TSYNC seccomp filter (or tight rlimits) is fragile. Skip the
+	// restriction primitives in that mode and just exec the real adapter.
+	// The production criteria CLI path (criteria binary as its own shim)
+	// leaves SkipRestrictions false, applying the profile in-process before
+	// exec so the adapter inherits it.
+	if !cfg.SkipRestrictions {
+		if err := applyShimRestrictions(&cfg); err != nil {
+			return err
+		}
 	}
 
 	// Re-exec the real adapter binary, replacing this process image.

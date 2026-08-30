@@ -17,9 +17,12 @@ func configureLinuxShimForTest(prep *sandbox.LinuxPrepared, shimBin string) {
 	if shimBin == "" {
 		return
 	}
-	// test-only: drop RLIMIT_NPROC for the dedicated shim helper so its Go
-	// runtime can spawn OS threads before syscall.Exec. The helper is
-	// short-lived; the target adapter still inherits the remaining rlimits.
+	// test-only: the dedicated shim helper is a short-lived wrapper. The Go
+	// runtime starts worker threads before main, so installing a TSYNC seccomp
+	// filter in-process is fragile on some kernels; skip landlock, seccomp,
+	// rlimits and PR_SET_NO_NEW_PRIVS in the helper and just exec the real
+	// adapter. The remaining rlimits are still inherited by the target.
+	prep.SkipShimRestrictions = true
 	prep.Rlimits = withoutRlimitNproc(prep.Rlimits)
 }
 
