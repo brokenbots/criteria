@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"time"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
@@ -14,17 +15,28 @@ import (
 	"github.com/brokenbots/criteria/workflow"
 )
 
+// Handshake deadline bounds. Defaults match the previously hardcoded values
+// so existing configurations keep the same behavior.
+const (
+	DefaultTLSHandshakeDeadline      = 10 * time.Second
+	DefaultIdentityHandshakeDeadline = 5 * time.Second
+	MinHandshakeDeadline             = 100 * time.Millisecond
+	MaxHandshakeDeadline             = 5 * time.Minute
+)
+
 // Config is the runtime configuration for a remote environment block.
 type Config struct {
-	ListenAddress         string
-	AcceptToken           string
-	PolicyMode            string
-	AcceptDigestFrom      string
-	ServerCertPath        string
-	ServerKeyPath         string
-	ClientCAPath          string
-	ClientIdentityPattern string
-	Insecure              bool
+	ListenAddress             string
+	AcceptToken               string
+	PolicyMode                string
+	AcceptDigestFrom          string
+	ServerCertPath            string
+	ServerKeyPath             string
+	ClientCAPath              string
+	ClientIdentityPattern     string
+	Insecure                  bool
+	TLSHandshakeDeadline      time.Duration
+	IdentityHandshakeDeadline time.Duration
 }
 
 // RemoteHandler implements the environment handler interface for the
@@ -46,14 +58,15 @@ func (h *RemoteHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
 	for name := range attrs {
 		switch name {
 		case "variables", "policy_mode", "os", "working_directory",
-			"listen_address", "mtls", "accept_token", "accept_digest_from", "insecure":
+			"listen_address", "mtls", "accept_token", "accept_digest_from", "insecure",
+			"tls_handshake_deadline", "identity_handshake_deadline":
 			// accepted
 		default:
 			rng := attrs[name].Range
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  fmt.Sprintf("remote environment: unknown attribute %q", name),
-				Detail:   "remote environments accept variables, policy_mode, os, working_directory, listen_address, mtls, accept_token, and accept_digest_from.",
+				Detail:   "remote environments accept variables, policy_mode, os, working_directory, listen_address, mtls, accept_token, accept_digest_from, insecure, tls_handshake_deadline, and identity_handshake_deadline.",
 				Subject:  &rng,
 			})
 		}
@@ -151,6 +164,40 @@ func parseTopLevelAttrs(cfg *Config, getAttr func(string) (*hcl.Attribute, bool)
 		cfg.Insecure = val
 	}
 
+	for _, mapping := range []struct {
+		name   string
+		target *time.Duration
+		def    time.Duration
+	}{
+		{"tls_handshake_deadline", &cfg.TLSHandshakeDeadline, DefaultTLSHandshakeDeadline},
+		{"identity_handshake_deadline", &cfg.IdentityHandshakeDeadline, DefaultIdentityHandshakeDeadline},
+	} {
+		if v, ok := getAttr(mapping.name); ok {
+			d, err := attrAsDuration(v)
+			if err != nil {
+				return fmt.Errorf("remote environment: %s: %w", mapping.name, err)
+			}
+			if err := validateHandshakeDeadline(mapping.name, d); err != nil {
+				return err
+			}
+			*mapping.target = d
+		} else {
+			*mapping.target = mapping.def
+		}
+	}
+
+	return nil
+}
+
+// validateHandshakeDeadline enforces the documented bounds so that handshake
+// timeouts cannot be disabled (zero) or weakened by an excessive wait.
+func validateHandshakeDeadline(name string, d time.Duration) error {
+	if d < MinHandshakeDeadline {
+		return fmt.Errorf("remote environment: %s must be at least %s (got %s)", name, MinHandshakeDeadline, d)
+	}
+	if d > MaxHandshakeDeadline {
+		return fmt.Errorf("remote environment: %s must be at most %s (got %s)", name, MaxHandshakeDeadline, d)
+	}
 	return nil
 }
 
@@ -225,4 +272,20 @@ func attrAsBool(attr *hcl.Attribute) (bool, error) {
 		return false, fmt.Errorf("expected bool, got %s", val.Type().FriendlyName())
 	}
 	return val.True(), nil
+}
+
+// attrAsDuration evaluates a cty attribute as a Go time.Duration string.
+func attrAsDuration(attr *hcl.Attribute) (time.Duration, error) {
+	val, diags := attr.Expr.Value(nil)
+	if diags.HasErrors() {
+		return 0, diags
+	}
+	if val.Type() != cty.String {
+		return 0, fmt.Errorf("expected duration string, got %s", val.Type().FriendlyName())
+	}
+	d, err := time.ParseDuration(val.AsString())
+	if err != nil {
+		return 0, fmt.Errorf("invalid duration: %w", err)
+	}
+	return d, nil
 }

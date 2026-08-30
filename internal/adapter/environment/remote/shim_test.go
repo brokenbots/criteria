@@ -259,6 +259,210 @@ mtls {
 	}
 }
 
+func TestParseConfig_HandshakeDeadlines(t *testing.T) {
+	src := `
+listen_address = "127.0.0.1:0"
+tls_handshake_deadline = "20s"
+identity_handshake_deadline = "2s"
+`
+	parser := hclparse.NewParser()
+	file, diags := parser.ParseHCL([]byte(src), "test.hcl")
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	cfg, err := ParseConfig(file.Body)
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.TLSHandshakeDeadline != 20*time.Second {
+		t.Errorf("tls_handshake_deadline = %v, want 20s", cfg.TLSHandshakeDeadline)
+	}
+	if cfg.IdentityHandshakeDeadline != 2*time.Second {
+		t.Errorf("identity_handshake_deadline = %v, want 2s", cfg.IdentityHandshakeDeadline)
+	}
+}
+
+func TestParseConfig_DefaultDeadlines(t *testing.T) {
+	src := `listen_address = "127.0.0.1:0"`
+	parser := hclparse.NewParser()
+	file, diags := parser.ParseHCL([]byte(src), "test.hcl")
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	cfg, err := ParseConfig(file.Body)
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.TLSHandshakeDeadline != DefaultTLSHandshakeDeadline {
+		t.Errorf("tls_handshake_deadline = %v, want %v", cfg.TLSHandshakeDeadline, DefaultTLSHandshakeDeadline)
+	}
+	if cfg.IdentityHandshakeDeadline != DefaultIdentityHandshakeDeadline {
+		t.Errorf("identity_handshake_deadline = %v, want %v", cfg.IdentityHandshakeDeadline, DefaultIdentityHandshakeDeadline)
+	}
+}
+
+func TestParseConfig_HandshakeDeadlineBounds(t *testing.T) {
+	cases := []struct {
+		name  string
+		field string
+		value string
+	}{
+		{"zero tls", "tls_handshake_deadline", "0s"},
+		{"zero identity", "identity_handshake_deadline", "0s"},
+		{"too small tls", "tls_handshake_deadline", "50ms"},
+		{"too small identity", "identity_handshake_deadline", "50ms"},
+		{"too large tls", "tls_handshake_deadline", "6m"},
+		{"too large identity", "identity_handshake_deadline", "6m"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := fmt.Sprintf("listen_address = \"127.0.0.1:0\"\n%s = %q\n", tc.field, tc.value)
+			parser := hclparse.NewParser()
+			file, diags := parser.ParseHCL([]byte(src), "test.hcl")
+			if diags.HasErrors() {
+				t.Fatalf("parse: %s", diags.Error())
+			}
+			_, err := ParseConfig(file.Body)
+			if err == nil {
+				t.Fatalf("expected error for %s=%s", tc.field, tc.value)
+			}
+			if !strings.Contains(err.Error(), tc.field) {
+				t.Errorf("error %q does not mention field %q", err.Error(), tc.field)
+			}
+			if !strings.Contains(err.Error(), "must be") {
+				t.Errorf("error %q does not mention bounds", err.Error())
+			}
+		})
+	}
+}
+
+func TestShim_PerformHandshake_TLSTimeout(t *testing.T) {
+	serverCert, serverKey, _, _, caCert := generateTestCerts(t)
+	verifier := &fixedDigestVerifier{allowed: map[string]string{"noop": "sha256:abcd1234"}}
+	shim, err := NewShim(&Config{
+		ListenAddress:        "127.0.0.1:0",
+		ServerCertPath:       serverCert,
+		ServerKeyPath:        serverKey,
+		ClientCAPath:         caCert,
+		TLSHandshakeDeadline: 100 * time.Millisecond,
+	}, verifier)
+	if err != nil {
+		t.Fatalf("NewShim: %v", err)
+	}
+
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	tlsConn := tls.Server(server, shim.tlsConfig)
+	done := make(chan error, 1)
+	go func() {
+		done <- shim.performHandshake(context.Background(), tlsConn)
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected TLS handshake timeout error")
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, "TLS handshake deadline") {
+			t.Errorf("error %q does not name TLS handshake deadline", msg)
+		}
+		if !strings.Contains(msg, "100ms") {
+			t.Errorf("error %q does not include configured deadline", msg)
+		}
+		if !strings.Contains(msg, "timeout caused rejection") {
+			t.Errorf("error %q does not state timeout caused rejection", msg)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("performHandshake did not return within deadline")
+	}
+}
+
+func TestShim_ReadHandshakeMessage_IdentityTimeout(t *testing.T) {
+	verifier := &fixedDigestVerifier{allowed: map[string]string{"noop": "sha256:abcd1234"}}
+	shim, err := NewShim(&Config{
+		ListenAddress:             "127.0.0.1:0",
+		IdentityHandshakeDeadline: 100 * time.Millisecond,
+	}, verifier)
+	if err != nil {
+		t.Fatalf("NewShim: %v", err)
+	}
+
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := shim.readHandshakeMessage(server)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected identity message timeout error")
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, "identity message deadline") {
+			t.Errorf("error %q does not name identity message deadline", msg)
+		}
+		if !strings.Contains(msg, "100ms") {
+			t.Errorf("error %q does not include configured deadline", msg)
+		}
+		if !strings.Contains(msg, "timeout caused rejection") {
+			t.Errorf("error %q does not state timeout caused rejection", msg)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("readHandshakeMessage did not return within deadline")
+	}
+}
+
+func TestShim_CustomDeadlinesSuccess(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	verifier := &fixedDigestVerifier{allowed: map[string]string{"noop": "sha256:abcd1234"}}
+	shim, err := NewShim(&Config{
+		ListenAddress:             "127.0.0.1:0",
+		TLSHandshakeDeadline:      2 * time.Second,
+		IdentityHandshakeDeadline: 1 * time.Second,
+	}, verifier)
+	if err != nil {
+		t.Fatalf("NewShim: %v", err)
+	}
+	if err := shim.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer shim.Stop(ctx)
+
+	addr := shim.listener.Addr().String()
+	go func() {
+		_ = dialFakeAdapter(addr, handshakeMessage{
+			Name:    "noop",
+			Version: "1.0.0",
+			Digest:  "sha256:abcd1234",
+		}, nil)
+	}()
+
+	handle, err := shim.WaitForHandle(ctx, "noop")
+	if err != nil {
+		t.Fatalf("WaitForHandle: %v", err)
+	}
+	if handle == nil {
+		t.Fatal("expected a handle")
+	}
+	info, err := handle.Info(ctx)
+	if err != nil {
+		t.Fatalf("Info: %v", err)
+	}
+	if info.Name != "noop" {
+		t.Errorf("info.Name = %q, want noop", info.Name)
+	}
+}
+
 func TestValidateClientIdentity(t *testing.T) {
 	re := regexp.MustCompile("CN=criteria-adapter-.*")
 	if err := ValidateClientIdentity("CN=criteria-adapter-noop", re); err != nil {
