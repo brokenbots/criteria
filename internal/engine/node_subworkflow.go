@@ -90,7 +90,7 @@ func runSubworkflow(ctx context.Context, stepName string, node *workflow.Subwork
 		childAncestors = append(childAncestors, parentSt.WorkflowName)
 	}
 
-	terminal, returnOutputs, finalVars, err := runWorkflowBody(ctx, node.Body, node.BodyEntry, childVars, calleeDir, deps, stepName, childAncestors...)
+	terminal, returnOutputs, finalVars, err := runWorkflowBody(ctx, node.Body, node.BodyEntry, childVars, calleeDir, deps, stepName, parentSt.ParallelCeiling, parentSt.ParallelSem, parentSt.ParallelSemCache, parentSt.ParallelSemMu, childAncestors...)
 	if err != nil {
 		// The caller (evaluateSubworkflowStep in node_step.go) surfaces this
 		// error on the parent's event stream as a step-level OnStepOutcome event,
