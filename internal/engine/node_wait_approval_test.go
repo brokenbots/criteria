@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -65,6 +66,32 @@ func minimalWaitSignalGraph(signal string) *workflow.FSMGraph {
 		Name:     "done",
 		Terminal: true,
 		Success:  true,
+	}
+	return g
+}
+
+func minimalWaitSignalGraphWithOutcomes(outcomes map[string]string, targets map[string]bool) *workflow.FSMGraph {
+	const name = "gate"
+	g := &workflow.FSMGraph{
+		Name:      "wait_signal_multi",
+		Steps:     map[string]*workflow.StepNode{},
+		States:    map[string]*workflow.StateNode{},
+		Waits:     map[string]*workflow.WaitNode{},
+		Approvals: map[string]*workflow.ApprovalNode{},
+		Variables: map[string]*workflow.VariableNode{},
+	}
+	g.InitialState = name
+	g.Waits[name] = &workflow.WaitNode{
+		Name:     name,
+		Signal:   "resume",
+		Outcomes: outcomes,
+	}
+	for target, terminal := range targets {
+		g.States[target] = &workflow.StateNode{
+			Name:     target,
+			Terminal: terminal,
+			Success:  terminal,
+		}
 	}
 	return g
 }
@@ -270,5 +297,117 @@ func TestNodeApproval_ResumeRejected(t *testing.T) {
 	}
 	if !sink2.completed {
 		t.Error("expected completed after rejection")
+	}
+}
+
+// CRI-46 regression: signal waits with multiple outcomes must require a valid
+// "outcome" selector in the resume payload and must not route nondeterministically.
+
+func TestNodeWait_Signal_MultiOutcome_MissingSelector(t *testing.T) {
+	g := minimalWaitSignalGraphWithOutcomes(map[string]string{"ok": "done_ok", "err": "done_err"}, map[string]bool{"done_ok": true, "done_err": true})
+	eng := engine.New(g, emptyLoader(), &pauseSink{})
+	if err := eng.Run(context.Background()); err != nil {
+		t.Fatalf("first run error: %v", err)
+	}
+
+	resumed := engine.New(g, emptyLoader(), &pauseSink{},
+		engine.WithResumedVars(eng.VarScope()),
+		engine.WithResumePayload(map[string]string{}),
+	)
+	err := resumed.RunFrom(context.Background(), "gate", 1)
+	if err == nil {
+		t.Fatalf("expected error for missing outcome selector, got nil")
+	}
+	if !strings.Contains(err.Error(), "gate") {
+		t.Errorf("error should include wait node name 'gate', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "ok") || !strings.Contains(err.Error(), "err") {
+		t.Errorf("error should include valid outcomes, got: %v", err)
+	}
+}
+
+func TestNodeWait_Signal_MultiOutcome_EmptySelector(t *testing.T) {
+	g := minimalWaitSignalGraphWithOutcomes(map[string]string{"ok": "done_ok", "err": "done_err"}, map[string]bool{"done_ok": true, "done_err": true})
+	eng := engine.New(g, emptyLoader(), &pauseSink{})
+	if err := eng.Run(context.Background()); err != nil {
+		t.Fatalf("first run error: %v", err)
+	}
+
+	resumed := engine.New(g, emptyLoader(), &pauseSink{},
+		engine.WithResumedVars(eng.VarScope()),
+		engine.WithResumePayload(map[string]string{"outcome": ""}),
+	)
+	err := resumed.RunFrom(context.Background(), "gate", 1)
+	if err == nil {
+		t.Fatalf("expected error for empty outcome selector, got nil")
+	}
+	if !strings.Contains(err.Error(), "gate") {
+		t.Errorf("error should include wait node name 'gate', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "ok") || !strings.Contains(err.Error(), "err") {
+		t.Errorf("error should include valid outcomes, got: %v", err)
+	}
+}
+
+func TestNodeWait_Signal_MultiOutcome_UnknownSelector(t *testing.T) {
+	g := minimalWaitSignalGraphWithOutcomes(map[string]string{"ok": "done_ok", "err": "done_err"}, map[string]bool{"done_ok": true, "done_err": true})
+	eng := engine.New(g, emptyLoader(), &pauseSink{})
+	if err := eng.Run(context.Background()); err != nil {
+		t.Fatalf("first run error: %v", err)
+	}
+
+	resumed := engine.New(g, emptyLoader(), &pauseSink{},
+		engine.WithResumedVars(eng.VarScope()),
+		engine.WithResumePayload(map[string]string{"outcome": "unknown"}),
+	)
+	err := resumed.RunFrom(context.Background(), "gate", 1)
+	if err == nil {
+		t.Fatalf("expected error for unknown outcome selector, got nil")
+	}
+	if !strings.Contains(err.Error(), "gate") {
+		t.Errorf("error should include wait node name 'gate', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "ok") || !strings.Contains(err.Error(), "err") {
+		t.Errorf("error should include valid outcomes, got: %v", err)
+	}
+}
+
+func TestNodeWait_Signal_MultiOutcome_ValidSelector(t *testing.T) {
+	g := minimalWaitSignalGraphWithOutcomes(map[string]string{"ok": "done_ok", "err": "done_err"}, map[string]bool{"done_ok": true, "done_err": true})
+	eng := engine.New(g, emptyLoader(), &pauseSink{})
+	if err := eng.Run(context.Background()); err != nil {
+		t.Fatalf("first run error: %v", err)
+	}
+
+	sink := &pauseSink{}
+	resumed := engine.New(g, emptyLoader(), sink,
+		engine.WithResumedVars(eng.VarScope()),
+		engine.WithResumePayload(map[string]string{"outcome": "ok"}),
+	)
+	if err := resumed.RunFrom(context.Background(), "gate", 1); err != nil {
+		t.Fatalf("resume error: %v", err)
+	}
+	if !sink.completed {
+		t.Fatal("expected run completed")
+	}
+}
+
+func TestNodeWait_Signal_SingleOutcome_PayloadFreeResume(t *testing.T) {
+	g := minimalWaitSignalGraphWithOutcomes(map[string]string{"ok": "done"}, map[string]bool{"done": true})
+	eng := engine.New(g, emptyLoader(), &pauseSink{})
+	if err := eng.Run(context.Background()); err != nil {
+		t.Fatalf("first run error: %v", err)
+	}
+
+	sink := &pauseSink{}
+	resumed := engine.New(g, emptyLoader(), sink,
+		engine.WithResumedVars(eng.VarScope()),
+		engine.WithResumePayload(map[string]string{}),
+	)
+	if err := resumed.RunFrom(context.Background(), "gate", 1); err != nil {
+		t.Fatalf("resume error: %v", err)
+	}
+	if !sink.completed {
+		t.Fatal("expected run completed")
 	}
 }
