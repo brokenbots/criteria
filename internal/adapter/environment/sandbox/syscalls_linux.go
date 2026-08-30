@@ -2,45 +2,13 @@
 
 package sandbox
 
-import (
-	"runtime"
-
-	"github.com/elastic/go-seccomp-bpf"
-)
+import "runtime"
 
 // networkSyscalls are appended to the base allow-list when the policy
 // permits external network egress. These names are common across the Linux
 // architectures supported by the sandbox.
 var networkSyscalls = []string{
 	"sendfile",
-}
-
-// setuidFamily lists the uid/gid-setting syscalls that the Go runtime or
-// test fixtures may legitimately reference.  They are allowed by the base
-// seccomp policy, but transitions to UID/GID 0 are denied below so the
-// sandbox cannot escalate privileges inside the user namespace.
-var setuidFamily = []string{
-	"setuid", "setgid",
-	"setreuid", "setregid",
-	"setresuid", "setresgid",
-}
-
-// denySetuidRootGroup returns a seccomp rule that returns EPERM for any
-// setuid-family syscall whose first argument is 0.  This prevents setuid(0)
-// from succeeding under the sandbox while still permitting benign
-// no-op/non-root identity changes.
-var denySetuidRootGroup = seccomp.SyscallGroup{
-	NamesWithCondtions: func() []seccomp.NameWithConditions {
-		c := []seccomp.Condition{
-			{Argument: 0, Operation: seccomp.Equal, Value: 0},
-		}
-		out := make([]seccomp.NameWithConditions, 0, len(setuidFamily))
-		for _, name := range setuidFamily {
-			out = append(out, seccomp.NameWithConditions{Name: name, Conditions: c})
-		}
-		return out
-	}(),
-	Action: seccomp.ActionErrno,
 }
 
 // baseSyscalls is the default-deny seccomp allow-list for the current
@@ -101,7 +69,6 @@ var baseSyscallsAMD64 = []string{
 	"rt_sigaction", "rt_sigprocmask", "rt_sigreturn", "sigaltstack", "signalfd4",
 	"kill", "tkill", "tgkill",
 	"prctl", "arch_prctl", "capget", "capset", "personality",
-	"setuid", "setgid", "setreuid", "setregid", "setresuid", "setresgid",
 	"sched_yield", "sched_getaffinity", "sched_setaffinity",
 	"sched_getscheduler", "sched_setscheduler",
 	"sched_getparam", "sched_setparam",
@@ -173,7 +140,6 @@ var baseSyscallsARM64 = []string{
 	"rt_sigaction", "rt_sigprocmask", "rt_sigreturn", "sigaltstack", "signalfd4",
 	"kill", "tkill", "tgkill",
 	"prctl", "capget", "capset", "personality",
-	"setuid", "setgid", "setreuid", "setregid", "setresuid", "setresgid",
 	"sched_yield", "sched_getaffinity", "sched_setaffinity",
 	"sched_getscheduler", "sched_setscheduler",
 	"sched_getparam", "sched_setparam",
