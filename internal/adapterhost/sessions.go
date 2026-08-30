@@ -66,6 +66,12 @@ type SessionManager struct {
 	// When nil the real Probe() is used.
 	sandboxProbeOverride func() sandbox.Capabilities
 
+	// sandboxShimBin is the path to the binary used as the sandbox pre-exec
+	// shim. When empty the current process image (os.Args[0]) is used, matching
+	// production criteria CLI behavior. Tests set this to a dedicated helper
+	// binary so the shim runs in a minimal process instead of the test binary.
+	sandboxShimBin string
+
 	// lockfile holds the parsed lockfile for container-mode lookups.
 	lockfile *lockfile.Lockfile
 
@@ -490,7 +496,7 @@ func (m *SessionManager) validateSandboxPrimitivesEagerly(instanceID string) err
 	var adapterBinary string
 	if m.graph != nil {
 		if adapterNode, ok := m.graph.Adapters[instanceID]; ok {
-			path, discoverErr := DiscoverBinary(adapterNode.Type)
+			path, discoverErr := m.resolveAdapterBinaryForInstance(instanceID, adapterNode.Type)
 			if discoverErr == nil {
 				adapterBinary = path
 			} else {
@@ -529,6 +535,19 @@ func (m *SessionManager) validateSandboxPrimitivesEagerly(instanceID string) err
 	return nil
 }
 
+// resolveAdapterBinaryForInstance returns the local adapter binary path for
+// the given adapter instance. When the instance is pinned in the lockfile the
+// digest-addressed binary is returned; otherwise the caller gets the flat
+// install-root binary. A missing binary is reported as *ErrAdapterNotFound so
+// callers can decide whether that is fatal.
+func (m *SessionManager) resolveAdapterBinaryForInstance(instanceID, adapterType string) (string, error) {
+	if a := m.lockedAdapterFor(instanceID); a != nil && a.ResolvedDigest != "" {
+		enc := EncodeDigest(digest.Digest(a.ResolvedDigest))
+		return DiscoverBinaryAt(adapterType, enc)
+	}
+	return DiscoverBinary(adapterType)
+}
+
 // buildSandboxCustomizer returns a function that applies the sandbox
 // configuration to an exec.Cmd, or nil if the adapter is not bound to a
 // sandbox environment. The second return value is a cleanup function
@@ -544,11 +563,13 @@ func (m *SessionManager) buildSandboxCustomizer(instanceID, workingDir string) (
 
 	// Resolve the adapter binary path so the sandbox profile can
 	// pre-allowlist it at prepare time (avoids mutating the profile
-	// inside ApplyToCmd).
+	// inside ApplyToCmd). For lockfile-pinned (OCI) adapters this must use the
+	// digest-addressed install path; flat discovery only sees dev/test binaries
+	// placed directly in the adapter root.
 	var adapterBinary string
 	if m.graph != nil {
 		if adapterNode, ok := m.graph.Adapters[instanceID]; ok {
-			path, discoverErr := DiscoverBinary(adapterNode.Type)
+			path, discoverErr := m.resolveAdapterBinaryForInstance(instanceID, adapterNode.Type)
 			if discoverErr == nil {
 				adapterBinary = path
 			} else {
@@ -586,7 +607,7 @@ func (m *SessionManager) buildSandboxCustomizer(instanceID, workingDir string) (
 		return nil, nil, nil
 	}
 
-	customizer, cleanup = makeSandboxCustomizer(&prep, envNode, workingDir)
+	customizer, cleanup = makeSandboxCustomizer(&prep, envNode, workingDir, m.sandboxShimBin)
 	return customizer, cleanup, nil
 }
 
@@ -956,8 +977,10 @@ func (m *SessionManager) adapterDir(instanceID string) string {
 
 // makeSandboxCustomizer builds the exec.Cmd customizer and cleanup from
 // a prepared LinuxPrepared config. It handles both the bubblewrap and
-// in-process shim paths.
-func makeSandboxCustomizer(prep *sandbox.LinuxPrepared, envNode *workflow.EnvironmentNode, workingDir string) (customizer func(name string, cmd *exec.Cmd), cleanup func()) {
+// in-process shim paths. The shimBin argument overrides the binary used as
+// the pre-exec shim; when empty the current process image (os.Args[0]) is
+// used, which is how the production criteria CLI acts as its own shim.
+func makeSandboxCustomizer(prep *sandbox.LinuxPrepared, envNode *workflow.EnvironmentNode, workingDir, shimBin string) (customizer func(name string, cmd *exec.Cmd), cleanup func()) {
 	cleanup = func() { _ = prep.Cleanup() }
 	if bwrapCmd := sandbox.MaybeUseBubblewrap(prep, envNode, workingDir); bwrapCmd != nil {
 		return func(_ string, cmd *exec.Cmd) {
@@ -969,7 +992,18 @@ func makeSandboxCustomizer(prep *sandbox.LinuxPrepared, envNode *workflow.Enviro
 		}, cleanup
 	}
 	return func(_ string, cmd *exec.Cmd) {
-		_ = prep.ApplyToCmd(cmd, os.Args[0])
+		// The real adapter path is already on cmd.Path at this point (set by
+		// the loader from the resolved binary). Linux-only: if the sandbox
+		// preparer could not resolve the path earlier, copy it into
+		// TargetPath so the shim config is not serialized with an empty
+		// executable path. On Darwin this field does not exist; Darwin's
+		// ApplyToCmd uses cmd.Path directly.
+		seedLinuxTargetPath(prep, cmd.Path)
+		// Linux-only test shim relaxations (rlimit NPROC, namespace clearing).
+		// No-op on Darwin and non-Linux.
+		configureLinuxShimForTest(prep, shimBin)
+		_ = prep.ApplyToCmd(cmd, shimBin)
+		finalizeLinuxShimCmd(cmd, shimBin)
 	}, cleanup
 }
 

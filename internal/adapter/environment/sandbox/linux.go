@@ -69,7 +69,7 @@ type PrepareContext struct {
 	Policy        *workflow.ResolvedPolicy
 	Env           *workflow.EnvironmentNode
 	Caps          Capabilities
-	AdapterBinary string // populated at prepare time for darwin sandbox allow-listing; unused on linux
+	AdapterBinary string // adapter binary path used by the shim/bwrap as TargetPath (linux) and for darwin allow-listing
 	// ValidateOnly, when true, skips side-effecting preparation steps (e.g.
 	// creating transient cgroup directories) so the call can be used for eager
 	// host-side validation. The strict-mode primitive-availability checks still
@@ -102,6 +102,12 @@ type LinuxPrepared struct {
 	// AllowNetwork controls whether the seccomp filter includes
 	// socket/connect syscalls.
 	AllowNetwork bool
+
+	// SkipShimRestrictions, when true, tells the shim helper to skip
+	// in-process landlock/seccomp/rlimits/PR_SET_NO_NEW_PRIVS installation
+	// and only syscall.Exec the target. It is used only by the test-only
+	// dedicated shim helper path; production leaves it false.
+	SkipShimRestrictions bool
 
 	// ShimConfigPath is the temp JSON config file created by ApplyToCmd.
 	// Cleanup removes it.
@@ -138,6 +144,9 @@ func (h Handler) Prepare(ctx PrepareContext) (LinuxPrepared, error) {
 	}
 
 	prep := LinuxPrepared{Mode: mode}
+	if ctx.AdapterBinary != "" {
+		prep.TargetPath = ctx.AdapterBinary
+	}
 	prep.SysProcAttr = buildSysProcAttr()
 
 	readPaths, writePaths, netAllow, allowNet, err := extractPolicyPaths(ctx.Policy)
@@ -563,14 +572,15 @@ func (prep *LinuxPrepared) ApplyToCmd(cmd *exec.Cmd, criteriaBin string) error {
 	// Serialize shim configuration to a private temp file so the
 	// child can apply the same restrictions without re-deriving them.
 	shimCfg := ShimConfig{
-		TargetPath:   prep.TargetPath,
-		Mode:         prep.Mode,
-		ReadPaths:    prep.ReadPaths,
-		WritePaths:   prep.WritePaths,
-		NetPorts:     prep.NetPorts,
-		AllowNetwork: prep.AllowNetwork,
-		Seccomp:      prep.SeccompBPF != nil,
-		Rlimits:      prep.Rlimits,
+		TargetPath:       prep.TargetPath,
+		Mode:             prep.Mode,
+		ReadPaths:        prep.ReadPaths,
+		WritePaths:       prep.WritePaths,
+		NetPorts:         prep.NetPorts,
+		AllowNetwork:     prep.AllowNetwork,
+		Seccomp:          prep.SeccompBPF != nil,
+		Rlimits:          prep.Rlimits,
+		SkipRestrictions: prep.SkipShimRestrictions,
 	}
 	tmpFile, err := os.CreateTemp("", "criteria-sandbox-*.json")
 	if err != nil {
