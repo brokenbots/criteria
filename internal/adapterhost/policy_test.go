@@ -3,6 +3,8 @@ package adapterhost
 import (
 	"strings"
 	"testing"
+
+	"github.com/brokenbots/criteria/workflow"
 )
 
 // TestPermissionDenialSuggestionDeterministicOrder verifies that
@@ -281,5 +283,87 @@ func TestPolicyShellCommandFingerprintGlob(t *testing.T) {
 	})
 	if allow {
 		t.Fatal("expected deny for non-git command with shell:git * pattern")
+	}
+}
+
+func TestCombinedPolicy_ReadOnlyFilesystem(t *testing.T) {
+	env := &workflow.ResolvedPolicy{
+		Filesystem: &workflow.FilesystemPolicy{ReadOnly: true},
+	}
+	p := NewCombinedPolicy("noop", []string{"*"}, env)
+
+	cases := []struct {
+		name      string
+		tool      string
+		details   map[string]string
+		wantAllow bool
+	}{
+		{"read_file allowed", "read_file", nil, true},
+		{"shell cat allowed", "shell", map[string]string{"command": "cat /etc/passwd"}, true},
+		{"write_file denied", "write_file", nil, false},
+		{"shell touch denied", "shell", map[string]string{"command": "touch /tmp/x"}, false},
+	}
+
+	for _, tc := range cases {
+		allow, reason := p.Decide(PermissionRequest{
+			ID:      "req-" + tc.name,
+			Tool:    tc.tool,
+			Details: tc.details,
+		})
+		if allow != tc.wantAllow {
+			t.Fatalf("%s: allow=%v, want %v (reason=%q)", tc.name, allow, tc.wantAllow, reason)
+		}
+		if !allow && !strings.HasPrefix(reason, "denied by environment policy: filesystem read-only") {
+			t.Fatalf("%s: expected read-only denial reason, got %q", tc.name, reason)
+		}
+	}
+}
+
+func TestCombinedPolicy_NoEgressNetwork(t *testing.T) {
+	env := &workflow.ResolvedPolicy{
+		Network: &workflow.NetworkPolicy{AllowEgress: false},
+	}
+	p := NewCombinedPolicy("noop", []string{"*"}, env)
+
+	cases := []struct {
+		name      string
+		tool      string
+		details   map[string]string
+		wantAllow bool
+	}{
+		{"read_file allowed", "read_file", nil, true},
+		{"shell pwd allowed", "shell", map[string]string{"command": "pwd"}, true},
+		{"fetch curl denied", "fetch", map[string]string{"command": "curl https://example.com"}, false},
+		{"shell curl denied", "shell", map[string]string{"command": "curl https://example.com"}, false},
+	}
+
+	for _, tc := range cases {
+		allow, reason := p.Decide(PermissionRequest{
+			ID:      "req-" + tc.name,
+			Tool:    tc.tool,
+			Details: tc.details,
+		})
+		if allow != tc.wantAllow {
+			t.Fatalf("%s: allow=%v, want %v (reason=%q)", tc.name, allow, tc.wantAllow, reason)
+		}
+		if !allow && !strings.HasPrefix(reason, "denied by environment policy: network egress disabled") {
+			t.Fatalf("%s: expected network denial reason, got %q", tc.name, reason)
+		}
+	}
+}
+
+func TestCombinedPolicy_AllowToolsFirstLayer(t *testing.T) {
+	env := &workflow.ResolvedPolicy{
+		Filesystem: &workflow.FilesystemPolicy{ReadOnly: true},
+		Network:    &workflow.NetworkPolicy{AllowEgress: false},
+	}
+	p := NewCombinedPolicy("noop", []string{"read_file"}, env)
+
+	allow, reason := p.Decide(PermissionRequest{ID: "1", Tool: "write_file"})
+	if allow {
+		t.Fatalf("expected deny for write_file, got allow")
+	}
+	if reason != "no matching allow_tools entry" {
+		t.Fatalf("expected allow_tools denial reason, got %q", reason)
 	}
 }
