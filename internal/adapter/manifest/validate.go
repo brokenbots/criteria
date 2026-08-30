@@ -7,7 +7,8 @@ import (
 	"sort"
 
 	"github.com/opencontainers/go-digest"
-	"golang.org/x/mod/semver"
+
+	"github.com/brokenbots/criteria/internal/adapter/semver"
 )
 
 // AllowUnknownSchemaTypes controls whether unknown SchemaField.Type values
