@@ -191,7 +191,11 @@ func TestLocalState_WriteAndReadRunState(t *testing.T) {
 		t.Fatalf("writeLocalRunState: %v", err)
 	}
 
-	got, err := readLocalRunState()
+	if _, err := os.Stat(filepath.Join(dir, "runs", "run-xyz", "run-state.json")); err != nil {
+		t.Fatalf("per-run state file not created: %v", err)
+	}
+
+	got, err := readLocalRunState(st.RunID)
 	if err != nil {
 		t.Fatalf("readLocalRunState: %v", err)
 	}
@@ -210,7 +214,7 @@ func TestLocalState_ReadRunState_Missing(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", dir)
 
-	_, err := readLocalRunState()
+	_, err := readLocalRunState("run-missing")
 	if err == nil {
 		t.Fatal("expected error reading missing state file")
 	}
@@ -225,9 +229,122 @@ func TestLocalState_RemoveRunState(t *testing.T) {
 		t.Fatalf("writeLocalRunState: %v", err)
 	}
 	// Must not panic or error.
-	removeLocalRunState()
+	removeLocalRunState(st.RunID)
 	// Double-remove must be a no-op.
-	removeLocalRunState()
+	removeLocalRunState(st.RunID)
+
+	if _, err := readLocalRunState(st.RunID); !os.IsNotExist(err) {
+		t.Fatalf("expected state file to be removed, got err=%v", err)
+	}
+}
+
+func TestLocalState_ConcurrentRunStates(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", dir)
+
+	a := &localRunState{PID: 100, RunID: "run-a", Workflow: "wf-a", StartedAt: time.Now().UTC()}
+	b := &localRunState{PID: 200, RunID: "run-b", Workflow: "wf-b", StartedAt: time.Now().UTC()}
+
+	if err := writeLocalRunState(a); err != nil {
+		t.Fatalf("writeLocalRunState a: %v", err)
+	}
+	if err := writeLocalRunState(b); err != nil {
+		t.Fatalf("writeLocalRunState b: %v", err)
+	}
+
+	// Both files exist independently.
+	if _, err := os.Stat(filepath.Join(dir, "runs", "run-a", "run-state.json")); err != nil {
+		t.Fatalf("run-a state file missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "runs", "run-b", "run-state.json")); err != nil {
+		t.Fatalf("run-b state file missing: %v", err)
+	}
+
+	gotA, err := readLocalRunState(a.RunID)
+	if err != nil {
+		t.Fatalf("readLocalRunState a: %v", err)
+	}
+	if gotA.PID != a.PID {
+		t.Fatalf("run-a pid=%d want %d", gotA.PID, a.PID)
+	}
+	gotB, err := readLocalRunState(b.RunID)
+	if err != nil {
+		t.Fatalf("readLocalRunState b: %v", err)
+	}
+	if gotB.PID != b.PID {
+		t.Fatalf("run-b pid=%d want %d", gotB.PID, b.PID)
+	}
+
+	states, err := ListLocalRunStates()
+	if err != nil {
+		t.Fatalf("ListLocalRunStates: %v", err)
+	}
+	if len(states) != 2 {
+		t.Fatalf("expected 2 local run states, got %d", len(states))
+	}
+
+	// Removing one must not affect the other.
+	removeLocalRunState(a.RunID)
+	if _, err := readLocalRunState(a.RunID); !os.IsNotExist(err) {
+		t.Fatalf("run-a state should be removed: %v", err)
+	}
+	if _, err := readLocalRunState(b.RunID); err != nil {
+		t.Fatalf("run-b state should remain readable: %v", err)
+	}
+}
+
+func TestLocalState_ListRunStates_SkipsInvalid(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", dir)
+
+	runsDir := filepath.Join(dir, "runs")
+	if err := os.MkdirAll(filepath.Join(runsDir, "run-valid"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(runsDir, "run-corrupt"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	valid := &localRunState{PID: 1, RunID: "run-valid", Workflow: "w"}
+	b, _ := json.MarshalIndent(valid, "", "  ")
+	if err := os.WriteFile(filepath.Join(runsDir, "run-valid", "run-state.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runsDir, "run-corrupt", "run-state.json"), []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runsDir, "not-a-dir.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	states, err := ListLocalRunStates()
+	if err != nil {
+		t.Fatalf("ListLocalRunStates: %v", err)
+	}
+	if len(states) != 1 {
+		t.Fatalf("expected 1 valid state, got %d", len(states))
+	}
+	if states[0].RunID != "run-valid" {
+		t.Fatalf("run_id=%q want run-valid", states[0].RunID)
+	}
+}
+
+func TestLocalState_WriteLocalRunState_CleansLegacyGlobal(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", dir)
+
+	legacy := filepath.Join(dir, "criteria-state.json")
+	if err := os.WriteFile(legacy, []byte(`{"run_id":"old"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	st := &localRunState{PID: 1, RunID: "run-new", Workflow: "w"}
+	if err := writeLocalRunState(st); err != nil {
+		t.Fatalf("writeLocalRunState: %v", err)
+	}
+
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("legacy criteria-state.json should be removed after per-run write, got err=%v", err)
+	}
 }
 
 func TestLocalState_StateDir_EnvOverride(t *testing.T) {
@@ -324,7 +441,7 @@ func TestStateDirPerms(t *testing.T) {
 		t.Fatalf("writeLocalRunState: %v", err)
 	}
 
-	stateFileInfo, err := os.Stat(filepath.Join(dir, "criteria-state.json"))
+	stateFileInfo, err := os.Stat(filepath.Join(dir, "runs", "run-perms", "run-state.json"))
 	if err != nil {
 		t.Fatalf("stat state file: %v", err)
 	}
@@ -338,6 +455,14 @@ func TestStateDirPerms(t *testing.T) {
 	}
 	if got := stateDirInfo.Mode().Perm(); got != 0o700 {
 		t.Errorf("state dir mode = %04o, want 0700", got)
+	}
+
+	runDirInfo, err := os.Stat(filepath.Join(dir, "runs", "run-perms"))
+	if err != nil {
+		t.Fatalf("stat per-run dir: %v", err)
+	}
+	if got := runDirInfo.Mode().Perm(); got != 0o700 {
+		t.Errorf("per-run dir mode = %04o, want 0700", got)
 	}
 
 	// --- WriteStepCheckpoint ---

@@ -47,7 +47,7 @@ func buildServerSink(ctx context.Context, client *servertrans.Client, runID stri
 
 func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.Loader, client *servertrans.Client, state *localRunState, graph *workflow.FSMGraph, opts applyOptions) error {
 	_ = writeLocalRunState(state)
-	defer removeLocalRunState()
+	defer removeLocalRunState(state.RunID)
 	defer RemoveStepCheckpoint(state.RunID)
 
 	log.Info("starting run",

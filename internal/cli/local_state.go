@@ -50,7 +50,18 @@ func stateDir() (string, error) {
 	return dirs.Home()
 }
 
-func stateFilePath() (string, error) {
+func runStateFilePath(runID string) (string, error) {
+	if runID == "" {
+		return "", errors.New("run_id required")
+	}
+	d, err := stateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "runs", runID, "run-state.json"), nil
+}
+
+func legacyStateFilePath() (string, error) {
 	d, err := stateDir()
 	if err != nil {
 		return "", err
@@ -75,7 +86,13 @@ func auditLogPath(runID string) (string, error) {
 }
 
 func writeLocalRunState(st *localRunState) error {
-	p, err := stateFilePath()
+	if st == nil {
+		return errors.New("local run state is nil")
+	}
+	if st.RunID == "" {
+		return errors.New("run_id required")
+	}
+	p, err := runStateFilePath(st.RunID)
 	if err != nil {
 		return err
 	}
@@ -86,11 +103,20 @@ func writeLocalRunState(st *localRunState) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(p, b, 0o600)
+	if err := os.WriteFile(p, b, 0o600); err != nil {
+		return err
+	}
+	// Remove the legacy global state file so an old single-run record does
+	// not remain visible after concurrent per-run records are introduced.
+	legacy, err := legacyStateFilePath()
+	if err == nil {
+		_ = os.Remove(legacy)
+	}
+	return nil
 }
 
-func readLocalRunState() (*localRunState, error) {
-	p, err := stateFilePath()
+func readLocalRunState(runID string) (*localRunState, error) {
+	p, err := runStateFilePath(runID)
 	if err != nil {
 		return nil, err
 	}
@@ -105,12 +131,50 @@ func readLocalRunState() (*localRunState, error) {
 	return &st, nil
 }
 
-func removeLocalRunState() {
-	p, err := stateFilePath()
+func removeLocalRunState(runID string) {
+	p, err := runStateFilePath(runID)
 	if err != nil {
 		return
 	}
 	_ = os.Remove(p)
+}
+
+// ListLocalRunStates returns all valid per-run state records found under the
+// runs subdirectory of the state dir. Corrupt or unreadable records are
+// silently skipped.
+func ListLocalRunStates() ([]*localRunState, error) {
+	d, err := stateDir()
+	if err != nil {
+		return nil, err
+	}
+	runsDir := filepath.Join(d, "runs")
+	entries, err := os.ReadDir(runsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	out := make([]*localRunState, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		p := filepath.Join(runsDir, e.Name(), "run-state.json")
+		b, readErr := os.ReadFile(p)
+		if readErr != nil {
+			continue // skip missing/unreadable
+		}
+		var st localRunState
+		if jsonErr := json.Unmarshal(b, &st); jsonErr != nil {
+			continue // skip corrupt
+		}
+		if st.RunID == "" {
+			continue
+		}
+		out = append(out, &st)
+	}
+	return out, nil
 }
 
 // WriteStepCheckpoint persists the current step checkpoint for a run.
