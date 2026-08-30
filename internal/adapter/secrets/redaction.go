@@ -2,6 +2,7 @@ package secrets
 
 import (
 	"io"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -34,12 +35,7 @@ func (r *Registry) Redact(in string) string {
 	if len(r.values) == 0 {
 		return in
 	}
-	// Use strings.Replacer for efficient multi-string replacement.
-	oldnew := make([]string, 0, len(r.values)*2)
-	for v := range r.values {
-		oldnew = append(oldnew, v, "[REDACTED]")
-	}
-	return strings.NewReplacer(oldnew...).Replace(in)
+	return strings.NewReplacer(r.replacerArgs()...).Replace(in)
 }
 
 // RedactBytes is the []byte variant of Redact.
@@ -49,11 +45,31 @@ func (r *Registry) RedactBytes(in []byte) []byte {
 	if len(r.values) == 0 {
 		return in
 	}
-	oldnew := make([]string, 0, len(r.values)*2)
+	return []byte(strings.NewReplacer(r.replacerArgs()...).Replace(string(in)))
+}
+
+// replacerArgs builds deterministic arguments for strings.NewReplacer.
+// Longer secrets are ordered first so that overlapping secrets are redacted
+// completely; shorter secrets that are substrings of longer ones cannot
+// leave fragments behind. Equal-length secrets are sorted lexicographically
+// so the order is stable across calls and goroutines.
+func (r *Registry) replacerArgs() []string {
+	values := make([]string, 0, len(r.values))
 	for v := range r.values {
+		values = append(values, v)
+	}
+	sort.Slice(values, func(i, j int) bool {
+		if len(values[i]) != len(values[j]) {
+			return len(values[i]) > len(values[j])
+		}
+		return values[i] < values[j]
+	})
+
+	oldnew := make([]string, 0, len(values)*2)
+	for _, v := range values {
 		oldnew = append(oldnew, v, "[REDACTED]")
 	}
-	return []byte(strings.NewReplacer(oldnew...).Replace(string(in)))
+	return oldnew
 }
 
 // Wrap returns an io.Writer that redacts all written bytes before forwarding
