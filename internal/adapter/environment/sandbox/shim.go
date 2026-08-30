@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"runtime"
 	"syscall"
 
 	"github.com/elastic/go-seccomp-bpf"
@@ -128,6 +129,15 @@ func applyShimRestrictions(cfg *ShimConfig) error {
 			return err
 		}
 	}
+
+	// Landlock restrictions are per-thread. On kernels without TSYNC
+	// support the library applies the ruleset to every existing thread, but
+	// Go may still migrate this goroutine to a new OS thread created after
+	// the restriction was installed. Keep the caller on the restricted
+	// thread so in-process sandbox helpers (ApplyEnv) continue to enforce the
+	// filesystem policy.
+	runtime.LockOSThread()
+
 	return nil
 }
 
