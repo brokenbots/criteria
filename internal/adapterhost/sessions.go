@@ -17,6 +17,7 @@ import (
 
 	"github.com/opencontainers/go-digest"
 	"github.com/zclconf/go-cty/cty"
+	"golang.org/x/sys/unix"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
@@ -975,6 +976,22 @@ func (m *SessionManager) adapterDir(instanceID string) string {
 	return ""
 }
 
+// withoutRlimitNproc returns a copy of rls with any RLIMIT_NPROC entries
+// removed. It is used for the test-only dedicated shim helper: the helper
+// is a short-lived Go binary that just applies restrictions and re-execs the
+// real adapter, so it must be allowed to create OS threads. The production
+// path (shimBin == "") is unaffected.
+func withoutRlimitNproc(rls []sandbox.RlimitConfig) []sandbox.RlimitConfig {
+	out := make([]sandbox.RlimitConfig, 0, len(rls))
+	for _, rl := range rls {
+		if rl.Resource == unix.RLIMIT_NPROC {
+			continue
+		}
+		out = append(out, rl)
+	}
+	return out
+}
+
 // makeSandboxCustomizer builds the exec.Cmd customizer and cleanup from
 // a prepared LinuxPrepared config. It handles both the bubblewrap and
 // in-process shim paths. The shimBin argument overrides the binary used as
@@ -999,6 +1016,13 @@ func makeSandboxCustomizer(prep *sandbox.LinuxPrepared, envNode *workflow.Enviro
 		// serialized with an empty executable path.
 		if prep.TargetPath == "" {
 			prep.TargetPath = cmd.Path
+		}
+		if shimBin != "" {
+			// test-only: drop RLIMIT_NPROC for the dedicated shim helper so
+			// its Go runtime can start threads before syscall.Exec. The helper
+			// is short-lived; the target adapter still inherits the remaining
+			// rlimits. The production path (shimBin == "") is unaffected.
+			prep.Rlimits = withoutRlimitNproc(prep.Rlimits)
 		}
 		_ = prep.ApplyToCmd(cmd, shimBin)
 		if shimBin != "" {
