@@ -131,6 +131,20 @@ func NewClient(serverURL string, log *slog.Logger, opts ...Options) (*Client, er
 	}, nil
 }
 
+// isLoopbackHost reports whether host is exactly "localhost" or a loopback
+// IP address. It follows the same convention used by the Darwin sandbox host
+// allow-list (internal/adapter/environment/sandbox/darwin.go): hostnames that
+// happen to resolve to loopback are not treated as loopback.
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return true
+	}
+	return false
+}
+
 // resolveOptions applies defaults and validates the given options against the
 // parsed server URL. It returns an error if the TLS mode is incompatible with
 // the URL scheme.
@@ -148,6 +162,8 @@ func resolveOptions(u *url.URL, serverURL string, opts []Options) (Options, erro
 	if o.TLSMode == "" {
 		if u.Scheme == "https" {
 			o.TLSMode = TLSEnable
+		} else if !isLoopbackHost(u.Hostname()) {
+			return Options{}, fmt.Errorf("server: plaintext connections to non-loopback hosts are not allowed by default: %q", serverURL)
 		} else {
 			o.TLSMode = TLSDisable
 		}

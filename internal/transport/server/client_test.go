@@ -884,6 +884,79 @@ func TestClientTLSErrors(t *testing.T) {
 	})
 }
 
+// TestNewClientPlaintextLoopback verifies that plaintext http:// server URLs
+// are rejected by default when the host is not loopback, and accepted when
+// the host is loopback or when TLS disablement is explicitly requested.
+func TestNewClientPlaintextLoopback(t *testing.T) {
+	log := newTestLogger()
+
+	rejectCases := []string{
+		"http://example.com",
+		"http://192.168.1.10:8080",
+		"http://10.0.0.1:8080",
+		"http://[2001:db8::1]:8080",
+		"http://0.0.0.0:8080",
+	}
+	for _, url := range rejectCases {
+		t.Run("reject_"+url, func(t *testing.T) {
+			c, err := NewClient(url, log)
+			if err == nil {
+				c.Close()
+				t.Fatalf("expected error for %q; got nil", url)
+			}
+			if !strings.Contains(err.Error(), url) {
+				t.Errorf("error should mention URL %q; got: %v", url, err)
+			}
+			want := "plaintext connections to non-loopback hosts are not allowed by default"
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error should mention %q; got: %v", want, err)
+			}
+		})
+	}
+
+	loopbackCases := []string{
+		"http://localhost:8080",
+		"http://127.0.0.1:8080",
+		"http://[::1]:8080",
+		"http://127.0.0.0:8080",
+		"http://127.255.255.255:8080",
+	}
+	for _, url := range loopbackCases {
+		t.Run("accept_"+url, func(t *testing.T) {
+			c, err := NewClient(url, log)
+			if err != nil {
+				t.Fatalf("unexpected error for %q: %v", url, err)
+			}
+			defer c.Close()
+			if c.TLSMode() != TLSDisable {
+				t.Errorf("expected TLSDisable for %q, got %q", url, c.TLSMode())
+			}
+		})
+	}
+
+	t.Run("https_non_loopback_tls", func(t *testing.T) {
+		c, err := NewClient("https://example.com", log)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer c.Close()
+		if c.TLSMode() != TLSEnable {
+			t.Errorf("expected TLSEnable, got %q", c.TLSMode())
+		}
+	})
+
+	t.Run("explicit_disable_non_loopback", func(t *testing.T) {
+		c, err := NewClient("http://example.com", log, Options{TLSMode: TLSDisable})
+		if err != nil {
+			t.Fatalf("explicit TLSDisable should be permitted for non-loopback: %v", err)
+		}
+		defer c.Close()
+		if c.TLSMode() != TLSDisable {
+			t.Errorf("expected TLSDisable, got %q", c.TLSMode())
+		}
+	})
+}
+
 // TestClientAccessors verifies Token, ResumeCh, TLSMode, and SetCredentials.
 func TestClientAccessors(t *testing.T) {
 	c, err := NewClient("http://localhost:9999", newTestLogger())
