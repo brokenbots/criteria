@@ -44,7 +44,7 @@ func (p *FileProvider) Resolve(_ context.Context, ref OriginRef) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("file provider: invalid root %q: %w", p.Root, err)
 	}
-	if !strings.HasPrefix(requested, root) {
+	if !isWithinRoot(requested, root) {
 		return "", fmt.Errorf("file provider: path %q escapes root %q", ref.Ref, root)
 	}
 
@@ -53,4 +53,36 @@ func (p *FileProvider) Resolve(_ context.Context, ref OriginRef) (string, error)
 		return "", fmt.Errorf("file provider: read %q: %w", ref.Ref, err)
 	}
 	return strings.TrimRight(string(data), "\r\n"), nil
+}
+
+// isWithinRoot reports whether path is root itself or a descendant contained
+// inside root at a path-component boundary. Both arguments must already be
+// cleaned and evaluated (e.g. via filepath.Clean and filepath.EvalSymlinks).
+func isWithinRoot(path, root string) bool {
+	if path == root {
+		return true
+	}
+
+	rootParts := splitPath(root)
+	pathParts := splitPath(path)
+	if len(pathParts) < len(rootParts) {
+		return false
+	}
+	for i, part := range rootParts {
+		if pathParts[i] != part {
+			return false
+		}
+	}
+	return true
+}
+
+// splitPath splits a cleaned path into its component names. It discards the
+// trailing empty element produced by a root path ending in a separator so that
+// the root directory is represented by a single component list.
+func splitPath(p string) []string {
+	parts := strings.Split(p, string(filepath.Separator))
+	if len(parts) > 0 && parts[len(parts)-1] == "" {
+		parts = parts[:len(parts)-1]
+	}
+	return parts
 }
