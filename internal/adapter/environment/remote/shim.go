@@ -51,6 +51,8 @@ type Shim struct {
 	clientIdentityRe      *regexp.Regexp
 	digestVerifier        DigestVerifier
 	insecure              bool
+	tlsHandshakeDeadline  time.Duration
+	identityDeadline      time.Duration
 
 	mu       sync.Mutex
 	sessions map[string]*session // adapter type → active session
@@ -88,6 +90,22 @@ func NewShim(cfg *Config, verifier DigestVerifier) (*Shim, error) {
 			return nil, fmt.Errorf("remote shim: invalid client_identity_pattern: %w", err)
 		}
 	}
+
+	tlsDeadline := cfg.TLSHandshakeDeadline
+	if tlsDeadline == 0 {
+		tlsDeadline = DefaultTLSHandshakeDeadline
+	}
+	identityDeadline := cfg.IdentityHandshakeDeadline
+	if identityDeadline == 0 {
+		identityDeadline = DefaultIdentityHandshakeDeadline
+	}
+	if err := validateHandshakeDeadline("tls_handshake_deadline", tlsDeadline); err != nil {
+		return nil, fmt.Errorf("remote shim: %w", err)
+	}
+	if err := validateHandshakeDeadline("identity_handshake_deadline", identityDeadline); err != nil {
+		return nil, fmt.Errorf("remote shim: %w", err)
+	}
+
 	return &Shim{
 		listenAddr:            cfg.ListenAddress,
 		tlsConfig:             tlsConf,
@@ -96,6 +114,8 @@ func NewShim(cfg *Config, verifier DigestVerifier) (*Shim, error) {
 		clientIdentityRe:      re,
 		digestVerifier:        verifier,
 		insecure:              cfg.Insecure,
+		tlsHandshakeDeadline:  tlsDeadline,
+		identityDeadline:      identityDeadline,
 		sessions:              make(map[string]*session),
 		waiters:               make(map[string][]chan waitResult),
 	}, nil
@@ -207,8 +227,7 @@ func (s *Shim) serve(ctx context.Context, lis net.Listener) {
 // digest, creates a local UDS, spawns the bridge goroutine, and produces
 // a Reattach-mode Client for the session layer.
 func (s *Shim) Accept(ctx context.Context, conn net.Conn) error {
-	_, err := s.performHandshake(ctx, conn)
-	if err != nil {
+	if err := s.performHandshake(ctx, conn); err != nil {
 		return err
 	}
 
@@ -236,16 +255,19 @@ func (s *Shim) Accept(ctx context.Context, conn net.Conn) error {
 	return s.buildAndStoreHandle(ctx, hs.Name, conn, res.udsConn, lis, socketPath, res.client, res.pluginClient, res.bridgeCancel, res.bridgeCtx, res.bridgeWG)
 }
 
-func (s *Shim) performHandshake(ctx context.Context, conn net.Conn) (string, error) {
+func (s *Shim) performHandshake(ctx context.Context, conn net.Conn) error {
 	var certSubject string
 	if tlsConn, ok := conn.(*tls.Conn); ok {
-		if err := tlsConn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		if err := tlsConn.SetDeadline(time.Now().Add(s.tlsHandshakeDeadline)); err != nil {
 			_ = conn.Close()
-			return "", fmt.Errorf("set handshake deadline: %w", err)
+			return fmt.Errorf("set tls handshake deadline: %w", err)
 		}
 		if err := tlsConn.HandshakeContext(ctx); err != nil {
 			_ = conn.Close()
-			return "", fmt.Errorf("mtls handshake: %w", err)
+			if isDeadlineTimeout(err) {
+				return fmt.Errorf("TLS handshake deadline (%s) exceeded; timeout caused rejection", s.tlsHandshakeDeadline)
+			}
+			return fmt.Errorf("mtls handshake: %w", err)
 		}
 		_ = tlsConn.SetDeadline(time.Time{})
 		state := tlsConn.ConnectionState()
@@ -255,19 +277,22 @@ func (s *Shim) performHandshake(ctx context.Context, conn net.Conn) (string, err
 	}
 	if err := ValidateClientIdentity(certSubject, s.clientIdentityRe); err != nil {
 		_ = conn.Close()
-		return "", err
+		return err
 	}
-	return certSubject, nil
+	return nil
 }
 
 func (s *Shim) readHandshakeMessage(conn net.Conn) (handshakeMessage, error) {
-	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(s.identityDeadline))
 	reader := bufio.NewReader(conn)
 	var header []byte
 	for {
 		b, err := reader.ReadByte()
 		if err != nil {
 			_ = conn.Close()
+			if isDeadlineTimeout(err) {
+				return handshakeMessage{}, fmt.Errorf("identity message deadline (%s) exceeded; timeout caused rejection", s.identityDeadline)
+			}
 			return handshakeMessage{}, fmt.Errorf("read handshake: %w", err)
 		}
 		if b == '\n' {
@@ -548,6 +573,23 @@ func (s *Shim) WaitForFreshHandle(ctx context.Context, adapterType string, stale
 		s.mu.Unlock()
 		return nil, ctx.Err()
 	}
+}
+
+// isDeadlineTimeout reports whether err was caused by a net.Conn deadline.
+// It is used to turn low-level i/o timeout errors into clear handshake
+// diagnostics that name the configured deadline.
+func isDeadlineTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return netErr.Timeout()
+	}
+	return false
 }
 
 // buildTLSConfig assembles a server-side TLS config from the Config.
