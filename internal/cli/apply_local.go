@@ -70,6 +70,7 @@ func runApplyLocal(
 			checkpointFn(node, 0)
 		},
 	}
+	runSink := &terminalSuccessSink{Sink: tracker}
 
 	log.Info("starting local run",
 		"run_id", runID,
@@ -96,7 +97,7 @@ func runApplyLocal(
 	if err != nil {
 		return err
 	}
-	eng = engine.New(graph, loader, tracker,
+	eng = engine.New(graph, loader, runSink,
 		engine.WithVarOverrides(mergedVars),
 		engine.WithWorkflowDir(workflowDirFromPath(opts.workflowPath)),
 		engine.WithAuditWriter(auditWriter),
@@ -107,9 +108,13 @@ func runApplyLocal(
 	}
 
 	if resumer != nil {
-		if err := drainLocalResumeCycles(ctx, log, graph, loader, tracker, resumer, runID, opts, eng); err != nil {
+		if err := drainLocalResumeCycles(ctx, log, graph, loader, tracker, runSink, resumer, runID, opts, eng); err != nil {
 			return err
 		}
+	}
+
+	if finalState, success, ok := runSink.TerminalSuccess(); ok && !success {
+		return fmt.Errorf("run completed with terminal state %q (success=false)", finalState)
 	}
 
 	log.Info("local run completed", "run_id", runID)
@@ -175,14 +180,14 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 		return
 	}
 
-	opts, tracker, eng := buildReattachTrackerAndEngine(cp, log, graph, loader, out, mode, nextAttempt)
+	opts, tracker, runSink, eng := buildReattachTrackerAndEngine(cp, log, graph, loader, out, mode, nextAttempt)
 	if runErr := eng.RunFrom(ctx, cp.CurrentStep, nextAttempt); runErr != nil {
 		log.Error("resumed local run failed", "run_id", cp.RunID, "error", runErr)
 		RemoveStepCheckpoint(cp.RunID)
 		return
 	}
 	if resumer != nil {
-		if cycleErr := drainLocalResumeCycles(ctx, log, graph, loader, tracker, resumer, cp.RunID, opts, eng); cycleErr != nil {
+		if cycleErr := drainLocalResumeCycles(ctx, log, graph, loader, tracker, runSink, resumer, cp.RunID, opts, eng); cycleErr != nil {
 			log.Error("resumed local run failed during approval", "run_id", cp.RunID, "error", cycleErr)
 			RemoveStepCheckpoint(cp.RunID)
 			return
@@ -195,7 +200,7 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 // buildReattachTrackerAndEngine wires the checkpoint sink, pause tracker, and
 // engine for a crash-reattach run. The checkpointFn closure captures eng so
 // that each checkpoint write includes the current visit counts (W07).
-func buildReattachTrackerAndEngine(cp *StepCheckpoint, log *slog.Logger, graph *workflow.FSMGraph, loader adapterhost.Loader, out io.Writer, mode outputMode, nextAttempt int) (applyOptions, *pauseTracker, *engine.Engine) {
+func buildReattachTrackerAndEngine(cp *StepCheckpoint, log *slog.Logger, graph *workflow.FSMGraph, loader adapterhost.Loader, out io.Writer, mode outputMode, nextAttempt int) (applyOptions, *pauseTracker, *terminalSuccessSink, *engine.Engine) {
 	opts := applyOptions{workflowPath: cp.WorkflowPath}
 	var eng *engine.Engine // captured by checkpointFn; assigned below before any callbacks fire
 	checkpointFn := func(step string, attempt int) {
@@ -215,10 +220,11 @@ func buildReattachTrackerAndEngine(cp *StepCheckpoint, log *slog.Logger, graph *
 		Sink:              baseSink,
 		PauseCheckpointFn: func(node string) { checkpointFn(node, 0) },
 	}
+	runSink := &terminalSuccessSink{Sink: tracker}
 	tracker.OnStepResumed(cp.CurrentStep, nextAttempt, "criteria_restart")
-	eng = engine.New(graph, loader, tracker,
+	eng = engine.New(graph, loader, runSink,
 		engine.WithWorkflowDir(workflowDirFromPath(cp.WorkflowPath)),
 		engine.WithResumedVisits(cp.Visits),
 	)
-	return opts, tracker, eng
+	return opts, tracker, runSink, eng
 }

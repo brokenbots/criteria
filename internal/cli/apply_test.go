@@ -335,7 +335,7 @@ func TestApplyLocal_VarFileOverridesVariable(t *testing.T) {
 workflow {
   name          = "var_file_override"
   version       = "1"
-  initial_state = "start"
+  initial_state = "done"
   target_state  = "done"
 }
 
@@ -348,7 +348,6 @@ output "greeting" {
   value = var.greeting
 }
 
-state "start" {}
 state "done" {
   terminal = true
   success  = true

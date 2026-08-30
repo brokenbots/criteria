@@ -188,6 +188,59 @@ func TestRunApplyServer_HappyPath(t *testing.T) {
 	}
 }
 
+// TestRunApplyServer_TerminalFailure_ExitsNonZero verifies that a server-mode
+// run ending in a terminal state with success=false causes runApplyServer to
+// return a non-nil error, which propagates to a non-zero CLI exit code.
+func TestRunApplyServer_TerminalFailure_ExitsNonZero(t *testing.T) {
+	requireNoGoroutineLeak(t)
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+	fake := applytest.New(t)
+
+	wfPath := writeWorkflowFile(t, `
+workflow {
+  name = "server_terminal_failure"
+  version       = "0.1"
+  initial_state = "failed"
+  target_state  = "failed"
+}
+
+state "failed" {
+  terminal = true
+  success  = false
+}
+`)
+	opts := applyOptions{
+		workflowPath: wfPath,
+		serverURL:    fake.URL(),
+		name:         "test-agent",
+	}
+	err := runApplyServer(context.Background(), opts)
+	if err == nil {
+		t.Fatal("expected non-nil error for terminal failed server run")
+	}
+	if !strings.Contains(err.Error(), "success=false") {
+		t.Fatalf("error should report success=false, got: %v", err)
+	}
+
+	evts := fake.Events()
+	var completed *pb.RunCompleted
+	for _, e := range evts {
+		if rc := e.GetRunCompleted(); rc != nil {
+			completed = rc
+			break
+		}
+	}
+	if completed == nil {
+		t.Fatal("expected RunCompleted event")
+	}
+	if completed.GetFinalState() != "failed" {
+		t.Fatalf("RunCompleted.finalState = %q, want failed", completed.GetFinalState())
+	}
+	if completed.GetSuccess() {
+		t.Fatal("RunCompleted.success = true, want false")
+	}
+}
+
 // TestExecuteServerRun_Cancellation verifies that a RunCancel message from the
 // server terminates executeServerRun with context.Canceled, that the step
 // checkpoint was written before the cancel propagated, and that the checkpoint
@@ -594,7 +647,9 @@ func TestDrainResumeCycles_PauseThenResume(t *testing.T) {
 	}
 
 	// Call drainResumeCycles directly — it blocks until the fake sends ResumeRun.
-	if err := drainResumeCycles(ctx, log, loader, sink, client, state, graph, opts, eng); err != nil {
+	// Pass sink as the runSink because this test builds the server sink directly
+	// rather than through executeServerRun.
+	if err := drainResumeCycles(ctx, log, loader, sink, sink, client, state, graph, opts, eng); err != nil {
 		t.Fatalf("drainResumeCycles: %v", err)
 	}
 	// Flush queued events to the fake server before asserting receipt.
@@ -680,7 +735,9 @@ func TestDrainResumeCycles_StreamDropAndReconnect(t *testing.T) {
 		t.Fatal("expected engine to be paused at gate wait node")
 	}
 
-	if err := drainResumeCycles(ctx, log, loader, sink, client, state, graph, opts, eng); err != nil {
+	// Pass sink as the runSink because this test builds the server sink directly
+	// rather than through executeServerRun.
+	if err := drainResumeCycles(ctx, log, loader, sink, sink, client, state, graph, opts, eng); err != nil {
 		t.Fatalf("drainResumeCycles: %v", err)
 	}
 	// Flush queued events to the fake server before asserting receipt.

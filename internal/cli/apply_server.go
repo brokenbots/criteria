@@ -64,6 +64,7 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 			}
 			return nil
 		})
+	runSink := &terminalSuccessSink{Sink: sink}
 
 	auditPath, _ := auditLogPath(state.RunID)
 	auditWriter := adapterhost.NewFileAuditWriter(auditPath)
@@ -71,7 +72,7 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 	if err != nil {
 		return err
 	}
-	eng = engine.New(graph, loader, sink,
+	eng = engine.New(graph, loader, runSink,
 		engine.WithVarOverrides(mergedVars),
 		engine.WithWorkflowDir(workflowDirFromPath(opts.workflowPath)),
 		engine.WithAuditWriter(auditWriter),
@@ -82,20 +83,28 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 	}
 	log.Info("run completed", "run_id", state.RunID)
 
-	if err := drainResumeCycles(ctx, log, loader, sink, client, state, graph, opts, eng); err != nil {
+	if err := drainResumeCycles(ctx, log, loader, sink, runSink, client, state, graph, opts, eng); err != nil {
 		return err
 	}
 
+	// Flush queued events before inspecting the terminal result so the server
+	// receives the RunCompleted envelope regardless of success.
 	drainCtx, drainCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	client.Drain(drainCtx)
 	drainCancel()
+
+	if finalState, success, ok := runSink.TerminalSuccess(); ok && !success {
+		return fmt.Errorf("run completed with terminal state %q (success=false)", finalState)
+	}
 	return nil
 }
 
 // drainResumeCycles handles the pause/resume loop: each time the sink is
 // paused it waits for a matching ResumeRun message and restarts the engine
 // from the paused node, updating eng to the most recently completed engine.
-func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost.Loader, sink *run.Sink, client *servertrans.Client, state *localRunState, graph *workflow.FSMGraph, opts applyOptions, eng *engine.Engine) error {
+// runSink is the sink passed to every engine instance so that terminal-state
+// capture is consistent across the original run and all resume cycles.
+func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost.Loader, sink *run.Sink, runSink engine.Sink, client *servertrans.Client, state *localRunState, graph *workflow.FSMGraph, opts applyOptions, eng *engine.Engine) error {
 	for sink.IsPaused() {
 		log.Info("run paused; waiting for resume signal", "run_id", state.RunID, "node", sink.PausedAt())
 		var resumeMsg *pb.ResumeRun
@@ -111,7 +120,7 @@ func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost
 		log.Info("received resume signal", "run_id", state.RunID, "signal", resumeMsg.Signal)
 		pausedNode := sink.PausedAt()
 		sink.ClearPaused()
-		resumedEng := engine.New(graph, loader, sink,
+		resumedEng := engine.New(graph, loader, runSink,
 			engine.WithResumedVars(eng.VarScope()),
 			engine.WithResumedVisits(eng.VisitCounts()),
 			engine.WithResumePayload(resumeMsg.Payload),
