@@ -3,6 +3,8 @@
 package sandbox
 
 import (
+	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -72,6 +74,37 @@ func parseTimeout(s string) time.Duration {
 		return 0
 	}
 	return d
+}
+
+// parseMaxThreads parses a plain base-10 integer thread limit string.
+// An empty string returns 0 and no error (caller should apply the
+// default). Any non-numeric or negative value returns an error so the
+// caller can surface misconfiguration at prepare time.
+func parseMaxThreads(s string) (uint64, error) {
+	if s == "" {
+		return 0, nil
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, nil
+	}
+	return strconv.ParseUint(s, 10, 64)
+}
+
+// resolveMaxThreads parses maxThreads and applies strict/permissive policy.
+// It returns 0 when the caller should apply the default. In strict mode an
+// invalid value returns an error; in permissive mode it logs a warning and
+// falls back to 0.
+func resolveMaxThreads(maxThreadsStr, mode string) (uint64, error) {
+	maxThreads, err := parseMaxThreads(maxThreadsStr)
+	if err != nil {
+		if mode == "strict" {
+			return 0, fmt.Errorf("max_threads: %w", err)
+		}
+		slog.Warn("sandbox max_threads invalid, using default", "value", maxThreadsStr, "error", err)
+		return 0, nil
+	}
+	return maxThreads, nil
 }
 
 // stringFromObject extracts a string from a nested object field.

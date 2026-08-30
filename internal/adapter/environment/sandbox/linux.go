@@ -240,7 +240,18 @@ func applySeccompToPrep(prep *LinuxPrepared, caps Capabilities, mode string, all
 	return nil
 }
 
-func applyResourcesToPrep(prep *LinuxPrepared, caps Capabilities, mode string, policy *workflow.ResolvedPolicy, validateOnly bool) error {
+// resourceStrings extracts raw resource configuration from the policy. It
+// centralizes the lookup of TypeSpecific["resources"] and the legacy
+// policy.Resources fallback so applyResourcesToPrep stays readable.
+type resourceStrings struct {
+	memory     string
+	cpu        string
+	timeout    string
+	maxThreads string
+	useCgroup  bool
+}
+
+func resourceStringsFromPolicy(policy *workflow.ResolvedPolicy) resourceStrings {
 	resObj := cty.NilVal
 	if policy.TypeSpecific != nil {
 		if v, ok := policy.TypeSpecific["resources"]; ok {
@@ -251,17 +262,29 @@ func applyResourcesToPrep(prep *LinuxPrepared, caps Capabilities, mode string, p
 	if memStr == "" && policy.Resources != nil {
 		memStr = policy.Resources.MaxMemory
 	}
-	cpuStr := stringFromObject(resObj, "cpu")
-	timeoutStr := stringFromObject(resObj, "timeout")
-	useCgroup := boolFromObject(resObj, "cgroup", false)
+	return resourceStrings{
+		memory:     memStr,
+		cpu:        stringFromObject(resObj, "cpu"),
+		timeout:    stringFromObject(resObj, "timeout"),
+		maxThreads: stringFromObject(resObj, "max_threads"),
+		useCgroup:  boolFromObject(resObj, "cgroup", false),
+	}
+}
 
-	memBytes := parseMemoryLimit(memStr)
-	cpuVal := parseCPULimit(cpuStr)
-	timeoutDur := parseTimeout(timeoutStr)
+func applyResourcesToPrep(prep *LinuxPrepared, caps Capabilities, mode string, policy *workflow.ResolvedPolicy, validateOnly bool) error {
+	res := resourceStringsFromPolicy(policy)
 
-	prep.Rlimits = buildRlimits(memBytes, timeoutDur)
+	memBytes := parseMemoryLimit(res.memory)
+	cpuVal := parseCPULimit(res.cpu)
+	timeoutDur := parseTimeout(res.timeout)
+	maxThreads, err := resolveMaxThreads(res.maxThreads, mode)
+	if err != nil {
+		return err
+	}
 
-	if !useCgroup || !caps.Cgroupv2 {
+	prep.Rlimits = buildRlimits(memBytes, timeoutDur, maxThreads)
+
+	if !res.useCgroup || !caps.Cgroupv2 {
 		return nil
 	}
 	if validateOnly {
@@ -358,8 +381,14 @@ func buildSeccompFilter(allowNetwork bool) (*seccomp.Filter, error) {
 	return &filter, nil
 }
 
-// buildRlimits returns rlimit configs derived from memory and timeout values.
-func buildRlimits(memBytes uint64, timeout time.Duration) []RlimitConfig {
+// defaultMaxThreads is the RLIMIT_NPROC value used when no max_threads
+// policy is configured. It must remain finite and large enough for
+// thread-heavy adapters such as the GitHub Copilot CLI native runtime.
+const defaultMaxThreads = 2048
+
+// buildRlimits returns rlimit configs derived from memory, timeout, and
+// max_threads values. A maxThreads value of 0 means "use default".
+func buildRlimits(memBytes uint64, timeout time.Duration, maxThreads uint64) []RlimitConfig {
 	var out []RlimitConfig
 
 	if memBytes > 0 {
@@ -383,6 +412,9 @@ func buildRlimits(memBytes uint64, timeout time.Duration) []RlimitConfig {
 	}
 
 	// Sensible defaults regardless of explicit policy.
+	if maxThreads == 0 {
+		maxThreads = defaultMaxThreads
+	}
 	out = append(out,
 		RlimitConfig{
 			Resource: unix.RLIMIT_NOFILE,
@@ -390,7 +422,7 @@ func buildRlimits(memBytes uint64, timeout time.Duration) []RlimitConfig {
 		},
 		RlimitConfig{
 			Resource: unix.RLIMIT_NPROC,
-			Rlimit:   syscall.Rlimit{Cur: 64, Max: 64},
+			Rlimit:   syscall.Rlimit{Cur: maxThreads, Max: maxThreads},
 		},
 	)
 
