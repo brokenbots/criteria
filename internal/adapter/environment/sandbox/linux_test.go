@@ -5,6 +5,8 @@ package sandbox
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,8 +24,8 @@ import (
 	"github.com/brokenbots/criteria/workflow"
 )
 
-func TestBuildSysProcAttr(t *testing.T) {
-	attr := buildSysProcAttr()
+func TestBuildSysProcAttr_DenyNetwork(t *testing.T) {
+	attr := buildSysProcAttr(false)
 	if attr == nil {
 		t.Fatal("expected non-nil SysProcAttr")
 	}
@@ -37,6 +39,21 @@ func TestBuildSysProcAttr(t *testing.T) {
 	}
 	if attr.UidMappings[0].ContainerID != 0 {
 		t.Fatalf("expected ContainerID 0, got %d", attr.UidMappings[0].ContainerID)
+	}
+}
+
+func TestBuildSysProcAttr_AllowNetwork(t *testing.T) {
+	attr := buildSysProcAttr(true)
+	if attr == nil {
+		t.Fatal("expected non-nil SysProcAttr")
+	}
+	if attr.Cloneflags&syscall.CLONE_NEWNET != 0 {
+		t.Fatalf("CLONE_NEWNET set when AllowNetwork=true: Cloneflags = %#x", attr.Cloneflags)
+	}
+	want := uintptr(syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS | syscall.CLONE_NEWPID |
+		syscall.CLONE_NEWIPC | syscall.CLONE_NEWUTS)
+	if attr.Cloneflags != want {
+		t.Fatalf("Cloneflags = %#x, want %#x", attr.Cloneflags, want)
 	}
 }
 
@@ -192,6 +209,56 @@ func TestHandlerPrepare(t *testing.T) {
 	}
 }
 
+func TestHandlerPrepare_NetworkAllowEgress_NoNewNet(t *testing.T) {
+	caps := Probe()
+	ctx := PrepareContext{
+		Policy: &workflow.ResolvedPolicy{
+			OS:         "linux",
+			PolicyMode: "permissive",
+			Network:    &workflow.NetworkPolicy{AllowEgress: true},
+		},
+		Caps: caps,
+	}
+	prep, err := Handler{}.Prepare(ctx)
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	if prep.SysProcAttr == nil {
+		t.Fatal("expected SysProcAttr in prepared config")
+	}
+	if prep.SysProcAttr.Cloneflags&syscall.CLONE_NEWNET != 0 {
+		t.Fatalf("CLONE_NEWNET set when AllowEgress=true: Cloneflags = %#x", prep.SysProcAttr.Cloneflags)
+	}
+	if !prep.AllowNetwork {
+		t.Fatal("expected AllowNetwork=true")
+	}
+}
+
+func TestHandlerPrepare_NetworkDenyEgress_HasNewNet(t *testing.T) {
+	caps := Probe()
+	ctx := PrepareContext{
+		Policy: &workflow.ResolvedPolicy{
+			OS:         "linux",
+			PolicyMode: "permissive",
+			Network:    &workflow.NetworkPolicy{AllowEgress: false},
+		},
+		Caps: caps,
+	}
+	prep, err := Handler{}.Prepare(ctx)
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	if prep.SysProcAttr == nil {
+		t.Fatal("expected SysProcAttr in prepared config")
+	}
+	if prep.SysProcAttr.Cloneflags&syscall.CLONE_NEWNET == 0 {
+		t.Fatalf("CLONE_NEWNET not set when AllowEgress=false: Cloneflags = %#x", prep.SysProcAttr.Cloneflags)
+	}
+	if prep.AllowNetwork {
+		t.Fatal("expected AllowNetwork=false")
+	}
+}
+
 // TestShimIntegration compiles a tiny helper binary that imports this
 // package, calls RunIfEnv, and then tries prohibited operations. The
 // helper runs inside the shim so we can verify restrictions from the
@@ -250,6 +317,161 @@ func TestShimIntegration(t *testing.T) {
 	}
 	if strings.Contains(outStr, "CONNECT_OK") {
 		t.Fatal("expected connect to 8.8.8.8:53 to fail under sandbox")
+	}
+}
+
+func TestShimIntegration_AllowNetwork(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux only")
+	}
+	caps := Probe()
+	if !caps.UserNamespaces {
+		t.Skip("user namespaces not available")
+	}
+
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("failed to get test file path")
+	}
+	fixtureDir := filepath.Join(filepath.Dir(testFile), "testfixture", "http")
+
+	dir := t.TempDir()
+	helper := filepath.Join(dir, "http_helper")
+	buildCmd := exec.Command("go", "build", "-o", helper, fixtureDir)
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("compile helper: %v\n%s", err, out)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("OK"))
+	}))
+	defer server.Close()
+
+	prep, err := Handler{}.Prepare(PrepareContext{
+		Policy: &workflow.ResolvedPolicy{
+			OS:         "linux",
+			PolicyMode: "permissive",
+			Network:    &workflow.NetworkPolicy{AllowEgress: true},
+		},
+		Caps: caps,
+	})
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	defer prep.Cleanup()
+
+	cfg := ShimConfig{
+		TargetPath:   helper,
+		Mode:         prep.Mode,
+		ReadPaths:    prep.ReadPaths,
+		WritePaths:   prep.WritePaths,
+		NetPorts:     prep.NetPorts,
+		AllowNetwork: prep.AllowNetwork,
+		Seccomp:      false, // isolate namespace behavior; seccomp tested separately
+		Rlimits:      prep.Rlimits,
+	}
+	tmpFile, err := os.CreateTemp(dir, "criteria-sandbox-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpFile.Name())
+	if err := json.NewEncoder(tmpFile).Encode(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	runCmd := exec.Command(helper, server.URL+"/")
+	runCmd.SysProcAttr = prep.SysProcAttr
+	runCmd.Env = append(os.Environ(), "CRITERIA_SANDBOX_CONFIG_PATH="+tmpFile.Name())
+	out, err := runCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("helper failed: %v\n%s", err, out)
+	}
+	outStr := string(out)
+	t.Logf("helper output:\n%s", outStr)
+	if !strings.Contains(outStr, "HTTP_OK") {
+		t.Fatalf("expected HTTP_OK with AllowNetwork=true, got: %s", outStr)
+	}
+}
+
+func TestShimIntegration_DenyNetwork(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux only")
+	}
+	caps := Probe()
+	if !caps.UserNamespaces {
+		t.Skip("user namespaces not available")
+	}
+
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("failed to get test file path")
+	}
+	fixtureDir := filepath.Join(filepath.Dir(testFile), "testfixture", "http")
+
+	dir := t.TempDir()
+	helper := filepath.Join(dir, "http_helper")
+	buildCmd := exec.Command("go", "build", "-o", helper, fixtureDir)
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("compile helper: %v\n%s", err, out)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("OK"))
+	}))
+	defer server.Close()
+
+	prep, err := Handler{}.Prepare(PrepareContext{
+		Policy: &workflow.ResolvedPolicy{
+			OS:         "linux",
+			PolicyMode: "permissive",
+			Network:    &workflow.NetworkPolicy{AllowEgress: false},
+		},
+		Caps: caps,
+	})
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	defer prep.Cleanup()
+
+	cfg := ShimConfig{
+		TargetPath:   helper,
+		Mode:         prep.Mode,
+		ReadPaths:    prep.ReadPaths,
+		WritePaths:   prep.WritePaths,
+		NetPorts:     prep.NetPorts,
+		AllowNetwork: prep.AllowNetwork,
+		Seccomp:      false,
+		Rlimits:      prep.Rlimits,
+	}
+	tmpFile, err := os.CreateTemp(dir, "criteria-sandbox-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpFile.Name())
+	if err := json.NewEncoder(tmpFile).Encode(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	runCmd := exec.Command(helper, server.URL+"/")
+	runCmd.SysProcAttr = prep.SysProcAttr
+	runCmd.Env = append(os.Environ(), "CRITERIA_SANDBOX_CONFIG_PATH="+tmpFile.Name())
+	out, err := runCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("helper failed: %v\n%s", err, out)
+	}
+	outStr := string(out)
+	t.Logf("helper output:\n%s", outStr)
+	if !strings.Contains(outStr, "HTTP_FAIL") {
+		t.Fatalf("expected HTTP_FAIL with AllowNetwork=false, got: %s", outStr)
+	}
+	if !strings.Contains(outStr, "network is unreachable") && !strings.Contains(outStr, "connection refused") {
+		t.Fatalf("expected network-unreachable/connection-failed error, got: %s", outStr)
 	}
 }
 

@@ -147,13 +147,13 @@ func (h Handler) Prepare(ctx PrepareContext) (LinuxPrepared, error) {
 	if ctx.AdapterBinary != "" {
 		prep.TargetPath = ctx.AdapterBinary
 	}
-	prep.SysProcAttr = buildSysProcAttr()
 
 	readPaths, writePaths, netAllow, allowNet, err := extractPolicyPaths(ctx.Policy)
 	if err != nil {
 		return LinuxPrepared{}, err
 	}
 	prep.AllowNetwork = allowNet
+	prep.SysProcAttr = buildSysProcAttr(allowNet)
 
 	if err := applyLandlockToPrep(&prep, ctx.Caps, mode, readPaths, writePaths, netAllow); err != nil {
 		return LinuxPrepared{}, err
@@ -292,19 +292,25 @@ func applyResourcesToPrep(prep *LinuxPrepared, caps Capabilities, mode string, p
 }
 
 // buildSysProcAttr creates a SysProcAttr that places the child in a new
-// user, mount, PID, network, IPC and UTS namespace.
-func buildSysProcAttr() *syscall.SysProcAttr {
+// user, mount, PID, IPC and UTS namespace. When allowNetwork is false the
+// child is also placed in a new network namespace so it has no usable
+// interfaces or DNS path; when allowNetwork is true the network namespace
+// is left shared with the parent so allowed destinations can be reached.
+func buildSysProcAttr(allowNetwork bool) *syscall.SysProcAttr {
 	uid := os.Getuid()
 	gid := os.Getgid()
 	// Map the current user to root (0) inside the user namespace.
 	// This is the standard unprivileged user-namespace pattern.
+	flags := uintptr(syscall.CLONE_NEWUSER |
+		syscall.CLONE_NEWNS |
+		syscall.CLONE_NEWPID |
+		syscall.CLONE_NEWIPC |
+		syscall.CLONE_NEWUTS)
+	if !allowNetwork {
+		flags |= uintptr(syscall.CLONE_NEWNET)
+	}
 	return &syscall.SysProcAttr{
-		Cloneflags: syscall.CLONE_NEWUSER |
-			syscall.CLONE_NEWNS |
-			syscall.CLONE_NEWPID |
-			syscall.CLONE_NEWNET |
-			syscall.CLONE_NEWIPC |
-			syscall.CLONE_NEWUTS,
+		Cloneflags: flags,
 		UidMappings: []syscall.SysProcIDMap{
 			{ContainerID: 0, HostID: uid, Size: 1},
 		},
