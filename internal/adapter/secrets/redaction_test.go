@@ -27,18 +27,49 @@ func TestRegistry_Redact_NoMatch(t *testing.T) {
 }
 
 func TestRegistry_Redact_Overlapping(t *testing.T) {
-	// If one secret is a substring of another, the longer one should be
-	// redacted first (Replacer handles this deterministically).
+	// If one secret is a substring of another, the longer one must be
+	// redacted first so no fragment of the longer secret survives.
 	r := NewRegistry()
 	r.Register("secret")
 	r.Register("secret123")
 
 	in := "secret123 and secret"
 	out := r.Redact(in)
-	// Replacer processes in registration order, but both get replaced.
+	require.Equal(t, "[REDACTED] and [REDACTED]", out)
 	require.NotContains(t, out, "secret123")
 	require.NotContains(t, out, "secret")
-	require.Contains(t, out, "[REDACTED]")
+	require.NotContains(t, out, "123")
+}
+
+func TestRegistry_RedactBytes_Overlapping(t *testing.T) {
+	r := NewRegistry()
+	r.Register("secret")
+	r.Register("secret123")
+
+	in := []byte("secret123 and secret")
+	out := r.RedactBytes(in)
+	require.Equal(t, "[REDACTED] and [REDACTED]", string(out))
+	require.NotContains(t, string(out), "secret123")
+	require.NotContains(t, string(out), "secret")
+	require.NotContains(t, string(out), "123")
+}
+
+func TestRegistry_Redact_PrefixChain(t *testing.T) {
+	// A chain of secrets where each is a prefix of the next. Redaction
+	// must be complete regardless of registration order.
+	r := NewRegistry()
+	r.Register("p")
+	r.Register("password")
+	r.Register("password123")
+	r.Register("password123!")
+
+	in := "p password password123 password123!"
+	out := r.Redact(in)
+	require.Equal(t, "[REDACTED] [REDACTED] [REDACTED] [REDACTED]", out)
+	require.NotContains(t, out, "p")
+	require.NotContains(t, out, "password")
+	require.NotContains(t, out, "password123")
+	require.NotContains(t, out, "password123!")
 }
 
 func TestRegistry_RedactBytes(t *testing.T) {
