@@ -11,6 +11,7 @@ import (
 
 	"github.com/elastic/go-seccomp-bpf"
 	"github.com/landlock-lsm/go-landlock/landlock"
+	ll "github.com/landlock-lsm/go-landlock/landlock/syscall"
 	"golang.org/x/sys/unix"
 )
 
@@ -137,6 +138,12 @@ func applyShimRestrictions(cfg *ShimConfig) error {
 	return nil
 }
 
+// readAccessFS grants read access to both files and directories plus
+// execute/traverse access.  Execute on directory hierarchies is required
+// for helpers such as exec.LookPath to stat binaries under read paths
+// (e.g. /usr/bin/getent) on newer kernels.
+var readAccessFS = landlock.AccessFSSet(ll.AccessFSExecute | ll.AccessFSReadFile | ll.AccessFSReadDir)
+
 func applyLandlock(cfg *ShimConfig) error {
 	if len(cfg.ReadPaths)+len(cfg.WritePaths)+len(cfg.NetPorts) == 0 {
 		return nil
@@ -160,7 +167,7 @@ func applyLandlock(cfg *ShimConfig) error {
 	ruleCap += len(cfg.NetPorts)
 	rules := make([]landlock.Rule, 0, ruleCap)
 	if len(cfg.ReadPaths) > 0 {
-		rules = append(rules, landlock.RODirs(cfg.ReadPaths...).IgnoreIfMissing())
+		rules = append(rules, landlock.PathAccess(readAccessFS, cfg.ReadPaths...).IgnoreIfMissing())
 	}
 	if len(cfg.WritePaths) > 0 {
 		rules = append(rules, landlock.RWDirs(cfg.WritePaths...).IgnoreIfMissing())
