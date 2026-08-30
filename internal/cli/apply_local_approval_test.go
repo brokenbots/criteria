@@ -86,12 +86,14 @@ func TestApplyLocal_EnvMode_ApprovalRejected(t *testing.T) {
 	t.Setenv("CRITERIA_APPROVAL_REVIEW", "rejected")
 
 	wf := filepath.Join("testdata", "local_approval_simple")
-	// "rejected_state" is a valid terminal state (success=false); runApply
-	// returns nil — workflow-level outcome is communicated via RunCompleted events,
-	// not as a Go error.
+	// "rejected_state" is a valid terminal state (success=false); runApply must
+	// now return a non-nil error so the CLI exits non-zero.
 	err := runApply(context.Background(), applyOptions{workflowPath: wf})
-	if err != nil {
-		t.Fatalf("rejected approval: run should complete cleanly, got: %v", err)
+	if err == nil {
+		t.Fatal("rejected approval: expected non-nil error for terminal failed run")
+	}
+	if !strings.Contains(err.Error(), "success=false") {
+		t.Fatalf("error should report success=false, got: %v", err)
 	}
 }
 
@@ -223,9 +225,10 @@ func TestApplyLocal_StdinMode_Rejected(t *testing.T) {
 	w.Close()
 
 	wf := filepath.Join("testdata", "local_approval_simple")
-	// "rejected_state" is a valid terminal state (success=false); engine returns nil.
-	if err := runApply(context.Background(), applyOptions{workflowPath: wf, stdin: r}); err != nil {
-		t.Fatalf("stdin rejected run should complete cleanly, got: %v", err)
+	// "rejected_state" is a valid terminal state (success=false); runApply must
+	// now return a non-nil error so the CLI exits non-zero.
+	if err := runApply(context.Background(), applyOptions{workflowPath: wf, stdin: r}); err == nil {
+		t.Fatal("stdin rejected run: expected non-nil error for terminal failed run")
 	}
 }
 

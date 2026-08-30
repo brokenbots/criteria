@@ -124,8 +124,10 @@ func buildLocalResumer(log *slog.Logger, stdin io.Reader) (localresume.LocalResu
 // drainLocalResumeCycles drives the pause/resume loop for local-mode runs with
 // CRITERIA_LOCAL_APPROVAL set. Each time the engine pauses, it calls the
 // resumer, populates a new engine with the resulting payload, and re-invokes
-// RunFrom until the run is no longer paused.
-func drainLocalResumeCycles(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, loader adapterhost.Loader, tracker *pauseTracker, resumer localresume.LocalResumer, runID string, opts applyOptions, eng *engine.Engine) error {
+// RunFrom until the run is no longer paused. runSink is the sink passed to
+// every engine instance so that terminal-state capture is consistent across
+// the original run and all resume cycles.
+func drainLocalResumeCycles(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, loader adapterhost.Loader, tracker *pauseTracker, runSink engine.Sink, resumer localresume.LocalResumer, runID string, opts applyOptions, eng *engine.Engine) error {
 	for tracker.IsPaused() {
 		pausedNode := tracker.PausedAt()
 		log.Info("local run paused; resolving via local resumer", "run_id", runID, "node", pausedNode)
@@ -136,7 +138,7 @@ func drainLocalResumeCycles(ctx context.Context, log *slog.Logger, graph *workfl
 		}
 
 		tracker.ClearPaused()
-		resumedEng := engine.New(graph, loader, tracker,
+		resumedEng := engine.New(graph, loader, runSink,
 			engine.WithResumedVars(eng.VarScope()),
 			engine.WithResumedVisits(eng.VisitCounts()),
 			engine.WithResumePayload(payload),

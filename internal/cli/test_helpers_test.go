@@ -27,6 +27,27 @@ func buildNoopAdapterBinary(t *testing.T) string {
 	return binary
 }
 
+// buildFailAdapterBinary builds a test adapter that always returns outcome
+// "failure". The binary name is "criteria-adapter-fail" so workflows can
+// target adapter.fail.default.
+func buildFailAdapterBinary(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve caller path")
+	}
+	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
+	binary := filepath.Join(t.TempDir(), "criteria-adapter-fail")
+
+	cmd := exec.Command("go", "build", "-o", binary, "./internal/adapter/conformance/testdata/fail")
+	cmd.Dir = moduleRoot
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("build fail adapter: %v\n%s", err, string(out))
+	}
+	return binary
+}
+
 func writeWorkflowFile(t *testing.T, contents string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "workflow.hcl")

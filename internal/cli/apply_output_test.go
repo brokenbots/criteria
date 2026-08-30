@@ -168,7 +168,7 @@ func TestApplyLocal_OutputsEmittedInEventStream(t *testing.T) {
 workflow {
   name = "test_outputs"
   version       = "1"
-  initial_state = "start"
+  initial_state = "done"
   target_state  = "done"
 }
 
@@ -183,8 +183,10 @@ output "name" {
   value       = "test"
 }
 
-state "start" {}
-state "done" { terminal = true }
+state "done" {
+  terminal = true
+  success  = true
+}
 `)
 
 	eventsFile := filepath.Join(t.TempDir(), "events.ndjson")
