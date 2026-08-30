@@ -43,6 +43,7 @@ func main() {
 	root.AddCommand(cli.NewStopCmd())
 	root.AddCommand(cli.NewPauseCmd())
 	root.AddCommand(cli.NewResumeCmd())
+	root.AddCommand(cli.NewWatchCmd())
 	root.AddCommand(cli.NewInspectCmd())
 	root.AddCommand(cli.NewAdapterCmd())
 	root.AddCommand(cli.NewLangserverCmd())
