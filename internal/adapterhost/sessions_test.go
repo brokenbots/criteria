@@ -3,14 +3,21 @@
 package adapterhost
 
 import (
+	"context"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
+
+	"github.com/opencontainers/go-digest"
 
 	"github.com/brokenbots/criteria/internal/adapter/environment/sandbox"
 	"github.com/brokenbots/criteria/workflow"
+	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
 func TestBuildSandboxCustomizer_EnvScrubIntegration(t *testing.T) {
@@ -191,4 +198,87 @@ func TestMakeSandboxCustomizer_ShimCallsApplyToCmd(t *testing.T) {
 	if !found {
 		t.Fatal("expected CRITERIA_SANDBOX_CONFIG_PATH env var after customizer")
 	}
+}
+
+// TestSessionManager_Open_LockedOCIAdapter_Sandbox verifies that a
+// digest-installed adapter binary bound to a Linux sandbox environment starts
+// under the in-process shim and reaches plugin handshake (OpenSession). This
+// is the CRI-40 regression test: before the fix the shim received an empty
+// target path and the adapter exited with status 125 before the handshake.
+func TestSessionManager_Open_LockedOCIAdapter_Sandbox(t *testing.T) {
+	caps := sandbox.Probe()
+	if !caps.UserNamespaces || !caps.Seccomp {
+		t.Skip("sandbox user namespaces or seccomp not available on this host")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Install the noop adapter binary under a digest-addressed directory so it
+	// looks like a locked OCI adapter pulled by `criteria adapter lock`.
+	if testNoopAdapterBin == "" {
+		t.Fatal("noop adapter binary not built")
+	}
+	root := t.TempDir()
+	dg := digest.FromString("locked-oci-adapter-test")
+	enc := EncodeDigest(dg)
+	instDir := filepath.Join(root, enc)
+	if err := os.MkdirAll(instDir, 0o755); err != nil {
+		t.Fatalf("mkdir digest install dir: %v", err)
+	}
+	adapterBin := filepath.Join(instDir, AdapterBinaryName("noop"))
+	if err := copyFile(testNoopAdapterBin, adapterBin); err != nil {
+		t.Fatalf("copy adapter binary: %v", err)
+	}
+	if err := os.Chmod(adapterBin, 0o755); err != nil {
+		t.Fatalf("chmod adapter binary: %v", err)
+	}
+
+	t.Setenv(adaptersEnvVar, root)
+
+	sm := NewSessionManager(NewLoader())
+	sm.SetLockfile(&lockfile.Lockfile{
+		Adapters: []lockfile.LockedAdapter{
+			{Type: "noop", Name: "default", ResolvedDigest: dg.String()},
+		},
+	})
+	sm.graph = &workflow.FSMGraph{
+		Adapters: map[string]*workflow.AdapterNode{
+			"noop.default": {Type: "noop", Name: "default", Environment: "sandbox.default"},
+		},
+		Environments: map[string]*workflow.EnvironmentNode{
+			"sandbox.default": {Type: "sandbox", Name: "default"},
+		},
+		ResolvedPolicies: map[string]*workflow.ResolvedPolicy{
+			"noop.default:sandbox.default": {
+				PolicyMode: "permissive",
+				OS:         "linux",
+				Network:    &workflow.NetworkPolicy{AllowEgress: true},
+			},
+		},
+	}
+
+	t.Cleanup(func() { _ = sm.Close(context.Background(), "noop.default") })
+	if err := sm.Open(ctx, "noop.default", "noop", "", nil, nil); err != nil {
+		t.Fatalf("open locked OCI sandbox adapter: %v", err)
+	}
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Close()
 }

@@ -490,7 +490,7 @@ func (m *SessionManager) validateSandboxPrimitivesEagerly(instanceID string) err
 	var adapterBinary string
 	if m.graph != nil {
 		if adapterNode, ok := m.graph.Adapters[instanceID]; ok {
-			path, discoverErr := DiscoverBinary(adapterNode.Type)
+			path, discoverErr := m.resolveAdapterBinaryForInstance(instanceID, adapterNode.Type)
 			if discoverErr == nil {
 				adapterBinary = path
 			} else {
@@ -529,6 +529,19 @@ func (m *SessionManager) validateSandboxPrimitivesEagerly(instanceID string) err
 	return nil
 }
 
+// resolveAdapterBinaryForInstance returns the local adapter binary path for
+// the given adapter instance. When the instance is pinned in the lockfile the
+// digest-addressed binary is returned; otherwise the caller gets the flat
+// install-root binary. A missing binary is reported as *ErrAdapterNotFound so
+// callers can decide whether that is fatal.
+func (m *SessionManager) resolveAdapterBinaryForInstance(instanceID, adapterType string) (string, error) {
+	if a := m.lockedAdapterFor(instanceID); a != nil && a.ResolvedDigest != "" {
+		enc := EncodeDigest(digest.Digest(a.ResolvedDigest))
+		return DiscoverBinaryAt(adapterType, enc)
+	}
+	return DiscoverBinary(adapterType)
+}
+
 // buildSandboxCustomizer returns a function that applies the sandbox
 // configuration to an exec.Cmd, or nil if the adapter is not bound to a
 // sandbox environment. The second return value is a cleanup function
@@ -544,11 +557,13 @@ func (m *SessionManager) buildSandboxCustomizer(instanceID, workingDir string) (
 
 	// Resolve the adapter binary path so the sandbox profile can
 	// pre-allowlist it at prepare time (avoids mutating the profile
-	// inside ApplyToCmd).
+	// inside ApplyToCmd). For lockfile-pinned (OCI) adapters this must use the
+	// digest-addressed install path; flat discovery only sees dev/test binaries
+	// placed directly in the adapter root.
 	var adapterBinary string
 	if m.graph != nil {
 		if adapterNode, ok := m.graph.Adapters[instanceID]; ok {
-			path, discoverErr := DiscoverBinary(adapterNode.Type)
+			path, discoverErr := m.resolveAdapterBinaryForInstance(instanceID, adapterNode.Type)
 			if discoverErr == nil {
 				adapterBinary = path
 			} else {
@@ -969,6 +984,14 @@ func makeSandboxCustomizer(prep *sandbox.LinuxPrepared, envNode *workflow.Enviro
 		}, cleanup
 	}
 	return func(_ string, cmd *exec.Cmd) {
+		// The real adapter path is already on cmd.Path at this point (set by
+		// the loader from the resolved binary). If the sandbox preparer could
+		// not resolve the path earlier (e.g. a dev binding or an unusual
+		// discovery path), copy it into TargetPath so the shim config is not
+		// serialized with an empty executable path.
+		if prep.TargetPath == "" {
+			prep.TargetPath = cmd.Path
+		}
 		_ = prep.ApplyToCmd(cmd, os.Args[0])
 	}, cleanup
 }

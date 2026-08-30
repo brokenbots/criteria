@@ -69,7 +69,7 @@ type PrepareContext struct {
 	Policy        *workflow.ResolvedPolicy
 	Env           *workflow.EnvironmentNode
 	Caps          Capabilities
-	AdapterBinary string // populated at prepare time for darwin sandbox allow-listing; unused on linux
+	AdapterBinary string // adapter binary path used by the shim/bwrap as TargetPath (linux) and for darwin allow-listing
 	// ValidateOnly, when true, skips side-effecting preparation steps (e.g.
 	// creating transient cgroup directories) so the call can be used for eager
 	// host-side validation. The strict-mode primitive-availability checks still
@@ -138,6 +138,9 @@ func (h Handler) Prepare(ctx PrepareContext) (LinuxPrepared, error) {
 	}
 
 	prep := LinuxPrepared{Mode: mode}
+	if ctx.AdapterBinary != "" {
+		prep.TargetPath = ctx.AdapterBinary
+	}
 	prep.SysProcAttr = buildSysProcAttr()
 
 	readPaths, writePaths, netAllow, allowNet, err := extractPolicyPaths(ctx.Policy)
