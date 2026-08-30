@@ -72,6 +72,11 @@ type SessionManager struct {
 	// binary so the shim runs in a minimal process instead of the test binary.
 	sandboxShimBin string
 
+	// sandboxProductionShimBin overrides the binary used for the production
+	// criteria-as-shim path. Unlike sandboxShimBin, setting this does not
+	// enable test-helper relaxations (SkipShimRestrictions remains false).
+	sandboxProductionShimBin string
+
 	// lockfile holds the parsed lockfile for container-mode lookups.
 	lockfile *lockfile.Lockfile
 
@@ -607,8 +612,22 @@ func (m *SessionManager) buildSandboxCustomizer(instanceID, workingDir string) (
 		return nil, nil, nil
 	}
 
-	customizer, cleanup = makeSandboxCustomizer(&prep, envNode, workingDir, m.sandboxShimBin)
+	shimBin, skipRestrictions := m.selectShimBin()
+	customizer, cleanup = makeSandboxCustomizer(&prep, envNode, workingDir, shimBin, skipRestrictions)
 	return customizer, cleanup, nil
+}
+
+// selectShimBin returns the shim binary path and whether the test-only helper
+// relaxations should be applied. The production-shim override takes precedence
+// over the test helper override and keeps restrictions enabled.
+func (m *SessionManager) selectShimBin() (shimBin string, skipRestrictions bool) {
+	if m.sandboxProductionShimBin != "" {
+		return m.sandboxProductionShimBin, false
+	}
+	if m.sandboxShimBin != "" {
+		return m.sandboxShimBin, true
+	}
+	return "", false
 }
 
 // sandboxEnvAndPolicy resolves the sandbox environment node and resolved
@@ -980,7 +999,9 @@ func (m *SessionManager) adapterDir(instanceID string) string {
 // in-process shim paths. The shimBin argument overrides the binary used as
 // the pre-exec shim; when empty the current process image (os.Args[0]) is
 // used, which is how the production criteria CLI acts as its own shim.
-func makeSandboxCustomizer(prep *sandbox.LinuxPrepared, envNode *workflow.EnvironmentNode, workingDir, shimBin string) (customizer func(name string, cmd *exec.Cmd), cleanup func()) {
+// When skipRestrictions is true the test-only helper relaxations are
+// applied (SkipShimRestrictions=true and namespaces cleared).
+func makeSandboxCustomizer(prep *sandbox.LinuxPrepared, envNode *workflow.EnvironmentNode, workingDir, shimBin string, skipRestrictions bool) (customizer func(name string, cmd *exec.Cmd), cleanup func()) {
 	cleanup = func() { _ = prep.Cleanup() }
 	if bwrapCmd := sandbox.MaybeUseBubblewrap(prep, envNode, workingDir); bwrapCmd != nil {
 		return func(_ string, cmd *exec.Cmd) {
@@ -1001,9 +1022,13 @@ func makeSandboxCustomizer(prep *sandbox.LinuxPrepared, envNode *workflow.Enviro
 		seedLinuxTargetPath(prep, cmd.Path)
 		// Linux-only test shim relaxations (rlimit NPROC, namespace clearing).
 		// No-op on Darwin and non-Linux.
-		configureLinuxShimForTest(prep, shimBin)
+		if skipRestrictions {
+			configureLinuxShimForTest(prep, shimBin)
+		}
 		_ = prep.ApplyToCmd(cmd, shimBin)
-		finalizeLinuxShimCmd(cmd, shimBin)
+		if skipRestrictions {
+			finalizeLinuxShimCmd(cmd, shimBin)
+		}
 	}, cleanup
 }
 

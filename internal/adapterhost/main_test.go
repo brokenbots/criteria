@@ -22,6 +22,10 @@ var testNoopAdapterBin string
 // the Linux-only sandbox tests that need it are skipped.
 var testSandboxShimBin string
 
+// testCriteriaBin is the path to the real criteria CLI binary. It is built on
+// Linux so the production criteria-as-shim path can be exercised in tests.
+var testCriteriaBin string
+
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "criteria-adapter-tests-")
 	if err != nil {
@@ -31,6 +35,7 @@ func TestMain(m *testing.M) {
 	testNoopAdapterBin = buildTestNoopAdapter(dir)
 	if runtime.GOOS == "linux" {
 		testSandboxShimBin = buildTestSandboxShim(dir)
+		testCriteriaBin = buildTestCriteriaBin(dir)
 	}
 
 	// IgnoreCurrent captures any goroutines started by the Go runtime or
@@ -60,6 +65,20 @@ func buildTestSandboxShim(dir string) string {
 	cmd.Dir = moduleRootFromCaller()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		panic("adapterhost/main_test.go: build sandbox shim: " + err.Error() + "\n" + string(out))
+	}
+	return bin
+}
+
+// buildTestCriteriaBin compiles the real criteria CLI binary into dir. The
+// production shim path uses this binary instead of the test binary so the
+// sandbox restrictions are applied by the criteria CLI's RunIfEnv entry point
+// before exec'ing the adapter.
+func buildTestCriteriaBin(dir string) string {
+	bin := filepath.Join(dir, "criteria")
+	cmd := exec.Command("go", "build", "-o", bin, "./cmd/criteria")
+	cmd.Dir = moduleRootFromCaller()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		panic("adapterhost/main_test.go: build criteria binary: " + err.Error() + "\n" + string(out))
 	}
 	return bin
 }

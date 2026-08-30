@@ -453,6 +453,10 @@ func TestShimIntegration(t *testing.T) {
 
 	runCmd := exec.Command(helper)
 	runCmd.Env = append(os.Environ(), "CRITERIA_SANDBOX_CONFIG_PATH="+tmpFile.Name())
+	// Network egress denial is enforced by CLONE_NEWNET inside a user namespace;
+	// the base seccomp allow-list now permits the local socket syscalls required
+	// by go-plugin, so the connect must fail in the new network namespace instead.
+	runCmd.SysProcAttr = buildSysProcAttr(false)
 	out, err := runCmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("helper failed: %v\n%s", err, out)

@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -80,9 +82,34 @@ func (s *noopService) Execute(ctx context.Context, req *v2.ExecuteRequest, sink 
 			return err
 		}
 	}
+	if connectAddr := req.GetInput()["connect"]; connectAddr != "" {
+		outcome := probeConnect(connectAddr)
+		return sink.Send(&v2.ExecuteEvent{
+			Event: &v2.ExecuteEvent_Result{Result: &v2.ExecuteResult{Outcome: outcome}},
+		})
+	}
 	return sink.Send(&v2.ExecuteEvent{
 		Event: &v2.ExecuteEvent_Result{Result: &v2.ExecuteResult{Outcome: "success"}},
 	})
+}
+
+// probeConnect attempts a TCP connection to addr and returns an outcome string
+// suitable for asserting network namespace behavior in tests.
+func probeConnect(addr string) string {
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err == nil {
+		_ = conn.Close()
+		return "connect_ok"
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "network is unreachable") ||
+		strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "no route to host") ||
+		strings.Contains(msg, "timeout") ||
+		strings.Contains(msg, "context deadline exceeded") {
+		return "network_unreachable"
+	}
+	return "connect_fail"
 }
 
 func (s *noopService) Log(ctx context.Context, _ *v2.LogRequest, sender adapterhost.LogEventSender) error {
