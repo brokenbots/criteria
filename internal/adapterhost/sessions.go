@@ -17,7 +17,6 @@ import (
 
 	"github.com/opencontainers/go-digest"
 	"github.com/zclconf/go-cty/cty"
-	"golang.org/x/sys/unix"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
@@ -976,22 +975,6 @@ func (m *SessionManager) adapterDir(instanceID string) string {
 	return ""
 }
 
-// withoutRlimitNproc returns a copy of rls with any RLIMIT_NPROC entries
-// removed. It is used for the test-only dedicated shim helper: the helper
-// is a short-lived Go binary that just applies restrictions and re-execs the
-// real adapter, so it must be allowed to create OS threads. The production
-// path (shimBin == "") is unaffected.
-func withoutRlimitNproc(rls []sandbox.RlimitConfig) []sandbox.RlimitConfig {
-	out := make([]sandbox.RlimitConfig, 0, len(rls))
-	for _, rl := range rls {
-		if rl.Resource == unix.RLIMIT_NPROC {
-			continue
-		}
-		out = append(out, rl)
-	}
-	return out
-}
-
 // makeSandboxCustomizer builds the exec.Cmd customizer and cleanup from
 // a prepared LinuxPrepared config. It handles both the bubblewrap and
 // in-process shim paths. The shimBin argument overrides the binary used as
@@ -1010,28 +993,17 @@ func makeSandboxCustomizer(prep *sandbox.LinuxPrepared, envNode *workflow.Enviro
 	}
 	return func(_ string, cmd *exec.Cmd) {
 		// The real adapter path is already on cmd.Path at this point (set by
-		// the loader from the resolved binary). If the sandbox preparer could
-		// not resolve the path earlier (e.g. a dev binding or an unusual
-		// discovery path), copy it into TargetPath so the shim config is not
-		// serialized with an empty executable path.
-		if prep.TargetPath == "" {
-			prep.TargetPath = cmd.Path
-		}
-		if shimBin != "" {
-			// test-only: drop RLIMIT_NPROC for the dedicated shim helper so
-			// its Go runtime can start threads before syscall.Exec. The helper
-			// is short-lived; the target adapter still inherits the remaining
-			// rlimits. The production path (shimBin == "") is unaffected.
-			prep.Rlimits = withoutRlimitNproc(prep.Rlimits)
-		}
+		// the loader from the resolved binary). Linux-only: if the sandbox
+		// preparer could not resolve the path earlier, copy it into
+		// TargetPath so the shim config is not serialized with an empty
+		// executable path. On Darwin this field does not exist; Darwin's
+		// ApplyToCmd uses cmd.Path directly.
+		seedLinuxTargetPath(prep, cmd.Path)
+		// Linux-only test shim relaxations (rlimit NPROC, namespace clearing).
+		// No-op on Darwin and non-Linux.
+		configureLinuxShimForTest(prep, shimBin)
 		_ = prep.ApplyToCmd(cmd, shimBin)
-		if shimBin != "" {
-			// test-only: keep the dedicated shim helper in host namespaces
-			// so applyShimRestrictions can install seccomp without EPERM.
-			// seccomp/landlock/NO_NEW_PRIVS survive syscall.Exec; namespaces
-			// do not. The production path (shimBin == "") is unaffected.
-			cmd.SysProcAttr = nil
-		}
+		finalizeLinuxShimCmd(cmd, shimBin)
 	}, cleanup
 }
 
