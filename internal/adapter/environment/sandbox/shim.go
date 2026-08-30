@@ -169,16 +169,15 @@ func applyLandlock(cfg *ShimConfig) error {
 	if len(cfg.ReadPaths) > 0 {
 		rules = append(rules, landlock.PathAccess(readAccessFS, cfg.ReadPaths...).IgnoreIfMissing())
 	}
-	// Network-enabled sandboxes may need to reach the host's DNS resolver
-	// and D-Bus paths (e.g. Ubuntu's /etc/resolv.conf -> /run/systemd/resolve
-	// and nss-resolve talking to systemd-resolved over /run/dbus). Grant
-	// read-only access when the policy allows external egress; the paths
-	// are ignored on systems where they do not exist.
+	// Network-enabled sandboxes may need to follow the host's resolv.conf
+	// symlink into /run/systemd/resolve (common on Ubuntu/systemd-resolved
+	// hosts). Grant read-only access to that directory when external egress
+	// is allowed; the rule is ignored on systems where it does not exist.
+	// Note: /run/dbus is intentionally NOT granted here. If nss-resolve cannot
+	// contact systemd-resolved via D-Bus, glibc falls back to the "dns" module,
+	// which exercises the sendmmsg/recvmmsg path this workstream enables.
 	if cfg.AllowNetwork {
-		rules = append(rules,
-			landlock.PathAccess(readAccessFS, "/run/systemd/resolve").IgnoreIfMissing(),
-			landlock.PathAccess(readAccessFS, "/run/dbus").IgnoreIfMissing(),
-		)
+		rules = append(rules, landlock.PathAccess(readAccessFS, "/run/systemd/resolve").IgnoreIfMissing())
 	}
 	if len(cfg.WritePaths) > 0 {
 		rules = append(rules, landlock.RWDirs(cfg.WritePaths...).IgnoreIfMissing())

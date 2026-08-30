@@ -33,6 +33,12 @@ func main() {
 		host = os.Args[2]
 	}
 
+	// Print the nsswitch hosts configuration so CI logs show which resolver
+	// modules are available on the runner (e.g. "files dns" vs "files resolve
+	// [!UNAVAIL=return] dns"). This helps verify that GETENT_OK actually
+	// exercises the glibc "dns" module and therefore sendmmsg/recvmmsg.
+	printNSSwitchHosts()
+
 	// Exercise the glibc threaded resolver via getent. This path is known
 	// to issue paired A/AAAA queries using sendmmsg on Debian arm64.
 	if err := runCommand("getent", "hosts", host); err != nil {
@@ -72,4 +78,23 @@ func runCommand(name string, args ...string) error {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
 	return cmd.Run()
+}
+
+// printNSSwitchHosts emits the nsswitch.conf "hosts:" line, if present, to
+// stdout. This makes the CI logs self-documenting about which resolver path
+// getent actually exercised (files/dns vs files/resolve/dbus).
+func printNSSwitchHosts() {
+	data, err := os.ReadFile("/etc/nsswitch.conf")
+	if err != nil {
+		fmt.Println("NSSWITCH_READ_ERR", err)
+		return
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "hosts:") {
+			fmt.Println("NSSWITCH_HOSTS", line)
+			return
+		}
+	}
+	fmt.Println("NSSWITCH_HOSTS not_found")
 }
