@@ -306,8 +306,29 @@ type parallelIterResult struct {
 	err     error
 }
 
+// parallelSemKey identifies a leaf semaphore in ParallelSemCache. A lower
+// parallel_max than the inherited ceiling needs a per-step semaphore that is
+// shared across all instances of the same compiled step in the same ancestor
+// context (same inherited ceiling and parent leaf semaphore), but isolated
+// from instances reached through a different ancestor context.
+type parallelSemKey struct {
+	step      *workflow.StepNode
+	ceiling   int
+	parentSem chan struct{}
+}
+
+// effectiveParallelMax returns the concurrency cap for a parallel step, taking
+// the inherited subtree ceiling into account. A zero ceiling means no ancestor
+// parallel step imposed a bound.
+func effectiveParallelMax(stepMax, ceiling int) int {
+	if ceiling > 0 && ceiling < stepMax {
+		return ceiling
+	}
+	return stepMax
+}
+
 // runParallelIterations executes the step body concurrently for each item in
-// items, bounded by n.step.ParallelMax goroutines. Results are in index order.
+// items, bounded by the supplied semaphore. Results are in index order.
 //
 // For abort mode (on_failure == "" || "abort"), the per-iteration context is
 // cancelled on the first failure so outstanding goroutines exit early. In
@@ -322,29 +343,47 @@ func runOneParallelItem(
 	items, keys []cty.Value,
 	st *RunState,
 	deps Deps,
-	sem chan struct{},
+	launchSem, leafSem chan struct{},
 	results []parallelIterResult,
 	cancelIter context.CancelFunc,
 	cancelOnce *sync.Once,
 	visitsMu *sync.Mutex,
+	effectiveMax int,
 ) {
 	select {
-	case sem <- struct{}{}:
+	case launchSem <- struct{}{}:
 	case <-iterCtx.Done():
 		results[i] = parallelIterResult{index: i, err: iterCtx.Err()}
 		return
 	}
-	defer func() { <-sem }()
+	defer func() { <-launchSem }()
 
 	key := cty.StringVal(strconv.Itoa(i))
 	if i < len(keys) {
 		key = keys[i]
 	}
-	iterSt := buildParallelIterState(i, total, items[i], key, st, visitsMu)
+	iterSt := buildParallelIterState(i, total, items[i], key, st, visitsMu, leafSem, effectiveMax)
 
 	deps.Sink.OnStepIterationStarted(n.step.Name, i, workflow.CtyValueToString(items[i]), false)
 
-	outcome, outputs, err := n.runParallelIterationOnce(iterCtx, iterSt, deps)
+	var outcome string
+	var outputs map[string]cty.Value
+	var err error
+	if n.step.TargetKind == workflow.StepTargetAdapter {
+		// Adapter executions are leaf executions: they must contend on the
+		// shared subtree leaf semaphore so the total number of concurrent
+		// leaves never exceeds the inherited ceiling.
+		select {
+		case leafSem <- struct{}{}:
+		case <-iterCtx.Done():
+			results[i] = parallelIterResult{index: i, err: iterCtx.Err()}
+			return
+		}
+		outcome, outputs, err = n.runParallelIterationOnce(iterCtx, iterSt, deps)
+		<-leafSem
+	} else {
+		outcome, outputs, err = n.runParallelIterationOnce(iterCtx, iterSt, deps)
+	}
 	results[i] = parallelIterResult{index: i, outcome: outcome, outputs: outputs, err: err}
 
 	if cancelIter != nil && (err != nil || !isSuccessOutcome(outcome)) {
@@ -355,13 +394,17 @@ func runOneParallelItem(
 // buildParallelIterState constructs the per-iteration RunState. The Visits map
 // is shared by reference so that max_visits is enforced across all goroutines;
 // visitsMu serializes concurrent check-and-increment in incrementVisit.
-func buildParallelIterState(i, total int, item, key cty.Value, st *RunState, visitsMu *sync.Mutex) *RunState {
+func buildParallelIterState(i, total int, item, key cty.Value, st *RunState, visitsMu *sync.Mutex, sem chan struct{}, ceiling int) *RunState {
 	return &RunState{
-		Current:     st.Current,
-		WorkflowDir: st.WorkflowDir,
-		DataStore:   st.DataStore,
-		Visits:      st.Visits,
-		VisitsMu:    visitsMu,
+		Current:          st.Current,
+		WorkflowDir:      st.WorkflowDir,
+		DataStore:        st.DataStore,
+		Visits:           st.Visits,
+		VisitsMu:         visitsMu,
+		ParallelCeiling:  ceiling,
+		ParallelSem:      sem,
+		ParallelSemCache: st.ParallelSemCache,
+		ParallelSemMu:    st.ParallelSemMu,
 		Vars: workflow.WithEachBinding(st.Vars, &workflow.EachBinding{
 			Value: item,
 			Key:   key,
@@ -374,7 +417,7 @@ func buildParallelIterState(i, total int, item, key cty.Value, st *RunState, vis
 	}
 }
 
-func runParallelIterations(ctx context.Context, n *stepNode, items, keys []cty.Value, st *RunState, deps Deps, lk *lockedSink) []parallelIterResult {
+func runParallelIterations(ctx context.Context, n *stepNode, items, keys []cty.Value, st *RunState, deps Deps, lk *lockedSink, launchSem, leafSem chan struct{}, effectiveMax int) []parallelIterResult {
 	total := len(items)
 	results := make([]parallelIterResult, total)
 
@@ -384,8 +427,6 @@ func runParallelIterations(ctx context.Context, n *stepNode, items, keys []cty.V
 		iterCtx, cancelIter = context.WithCancel(ctx)
 		defer cancelIter()
 	}
-
-	sem := make(chan struct{}, n.step.ParallelMax)
 
 	// Ensure the shared Visits map exists so all iterSt copies see the same
 	// underlying map for max_visits tracking. visitsMu serializes concurrent
@@ -403,7 +444,7 @@ func runParallelIterations(ctx context.Context, n *stepNode, items, keys []cty.V
 		i := i
 		go func() {
 			defer wg.Done()
-			runOneParallelItem(iterCtx, n, i, total, items, keys, st, deps, sem, results, cancelIter, &cancelOnce, &visitsMu)
+			runOneParallelItem(iterCtx, n, i, total, items, keys, st, deps, launchSem, leafSem, results, cancelIter, &cancelOnce, &visitsMu, effectiveMax)
 		}()
 	}
 
@@ -621,12 +662,50 @@ func (n *stepNode) evaluateParallel(ctx context.Context, st *RunState, deps Deps
 		return co.Next, nil
 	}
 
+	// Apply the inherited subtree ceiling: a parallel step may not run more
+	// concurrent iterations than the smallest parallel_max along the path from
+	// the root workflow to this step. The effective cap becomes the ceiling for
+	// any parallel steps inside the subtree.
+	effectiveMax := effectiveParallelMax(n.step.ParallelMax, st.ParallelCeiling)
+
+	// launchSem bounds how many of this step's iteration goroutines can be in
+	// flight at once. This limits concurrent child subworkflow bodies even when
+	// the child has no parallel step of its own.
+	launchSem := make(chan struct{}, effectiveMax)
+
+	// leafSem is the shared token pool for actual leaf (adapter) executions in
+	// this subtree. Reuse the parent leaf semaphore when this step's effective
+	// cap equals the inherited ceiling so that nested parallel steps enforce a
+	// single global leaf limit; otherwise look up or create a per-step leaf
+	// semaphore in the shared cache so that all instances of this compiled step
+	// (one per parent iteration) share the same lower ceiling.
+	var leafSem chan struct{}
+	if st.ParallelSem != nil && effectiveMax == st.ParallelCeiling {
+		leafSem = st.ParallelSem
+	} else {
+		if st.ParallelSemCache == nil {
+			st.ParallelSemCache = make(map[parallelSemKey]chan struct{})
+		}
+		if st.ParallelSemMu == nil {
+			st.ParallelSemMu = &sync.Mutex{}
+		}
+		st.ParallelSemMu.Lock()
+		key := parallelSemKey{step: n.step, ceiling: st.ParallelCeiling, parentSem: st.ParallelSem}
+		if sem, ok := st.ParallelSemCache[key]; ok {
+			leafSem = sem
+		} else {
+			leafSem = make(chan struct{}, effectiveMax)
+			st.ParallelSemCache[key] = leafSem
+		}
+		st.ParallelSemMu.Unlock()
+	}
+
 	// Serialize sink calls from goroutines to prevent data races on the sink.
 	lk := &lockedSink{Sink: deps.Sink}
 	parallelDeps := deps
 	parallelDeps.Sink = lk
 
-	results := runParallelIterations(ctx, n, items, keys, st, parallelDeps, lk)
+	results := runParallelIterations(ctx, n, items, keys, st, parallelDeps, lk, launchSem, leafSem, effectiveMax)
 
 	// If the parent context was cancelled (not just an internal abort), propagate
 	// the error rather than treating it as a normal failure outcome.

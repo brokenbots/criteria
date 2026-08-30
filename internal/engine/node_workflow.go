@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -52,6 +53,8 @@ func checkRequiredVars(body *workflow.FSMGraph, parentInput cty.Value) error {
 //   - childVars is the pre-seeded child scope built by seedChildVarsFromBindings.
 //   - workflowDir is forwarded for file() resolution in eval contexts.
 //   - deps carries the same session manager and event sink as the outer loop.
+//   - parallelCeiling and parallelSem carry the inherited parallel_max ceiling
+//     from any enclosing parallel step (zero/nil if none).
 //
 // When the body reaches "_continue" the caller should treat the iteration as
 // successfully completed and advance the cursor. Any other terminal state is
@@ -61,7 +64,7 @@ func checkRequiredVars(body *workflow.FSMGraph, parentInput cty.Value) error {
 //
 // The returned child vars represent the body's final execution scope and are
 // used by the caller to evaluate output{} block expressions.
-func runWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry string, childVars map[string]cty.Value, workflowDir string, deps Deps, scopeName string, ancestors ...string) (terminal string, returnOutputs, finalVars map[string]cty.Value, err error) {
+func runWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry string, childVars map[string]cty.Value, workflowDir string, deps Deps, scopeName string, parallelCeiling int, parallelSem chan struct{}, parallelSemCache map[parallelSemKey]chan struct{}, parallelSemMu *sync.Mutex, ancestors ...string) (terminal string, returnOutputs, finalVars map[string]cty.Value, err error) {
 	bodyEntry, err = resolveBodyEntry(body, bodyEntry)
 	if err != nil {
 		return "", nil, nil, err
@@ -71,7 +74,7 @@ func runWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry str
 		return "", nil, nil, fmt.Errorf("%s", diags.Error())
 	}
 
-	bodyOrder, childSt, err := startWorkflowBody(ctx, body, bodyEntry, childVars, workflowDir, deps, scopeName, ancestors)
+	bodyOrder, childSt, err := startWorkflowBody(ctx, body, bodyEntry, childVars, workflowDir, deps, scopeName, parallelCeiling, parallelSem, parallelSemCache, parallelSemMu, ancestors)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -90,22 +93,33 @@ func resolveBodyEntry(body *workflow.FSMGraph, bodyEntry string) (string, error)
 	return bodyEntry, nil
 }
 
-func startWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry string, childVars map[string]cty.Value, workflowDir string, deps Deps, scopeName string, ancestors []string) ([]string, *RunState, error) {
+func startWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry string, childVars map[string]cty.Value, workflowDir string, deps Deps, scopeName string, parallelCeiling int, parallelSem chan struct{}, parallelSemCache map[parallelSemKey]chan struct{}, parallelSemMu *sync.Mutex, ancestors []string) ([]string, *RunState, error) {
 	bodyOrder, err := initScopeAdapters(ctx, body, deps, childVars, workflowDir, scopeName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("workflow body init adapters: %w", err)
 	}
 
+	if parallelSemCache == nil {
+		parallelSemCache = make(map[parallelSemKey]chan struct{})
+	}
+	if parallelSemMu == nil {
+		parallelSemMu = &sync.Mutex{}
+	}
+
 	childSt := &RunState{
-		Current:       bodyEntry,
-		Vars:          childVars,
-		WorkflowDir:   workflowDir,
-		PendingSignal: "",
-		ResumePayload: nil,
-		DataStore:     NewDataStore(body),
-		firstStep:     false,
-		WorkflowName:  body.Name,
-		Ancestors:     ancestors,
+		Current:          bodyEntry,
+		Vars:             childVars,
+		WorkflowDir:      workflowDir,
+		PendingSignal:    "",
+		ResumePayload:    nil,
+		DataStore:        NewDataStore(body),
+		firstStep:        false,
+		WorkflowName:     body.Name,
+		Ancestors:        ancestors,
+		ParallelCeiling:  parallelCeiling,
+		ParallelSem:      parallelSem,
+		ParallelSemCache: parallelSemCache,
+		ParallelSemMu:    parallelSemMu,
 	}
 	return bodyOrder, childSt, nil
 }

@@ -59,6 +59,30 @@ type RunState struct {
 	// Ancestors is the chain of parent workflow names leading to the current
 	// workflow body. Empty for a root workflow.
 	Ancestors []string
+	// ParallelCeiling is the maximum concurrency inherited from any enclosing
+	// parallel step. Zero means no ancestor imposed a ceiling. A parallel step
+	// uses min(step.ParallelMax, st.ParallelCeiling) as its effective cap and
+	// propagates that effective cap to its descendants so that the subtree-wide
+	// concurrency never exceeds the smallest parallel_max along the path from
+	// the root workflow.
+	ParallelCeiling int
+	// ParallelSem is the shared token pool for the current subtree ceiling.
+	// When a nested parallel step's effective cap equals the inherited ceiling,
+	// it reuses this semaphore so that leaf executions across all parent
+	// iterations contend for the same global limit. Nil means there is no
+	// inherited parallel step and the next parallel step should create its own.
+	ParallelSem chan struct{}
+	// ParallelSemCache holds per-step leaf semaphores that are lower than the
+	// inherited ceiling. The same compiled parallel step can run in many parent
+	// iterations (e.g. a subworkflow invoked by a parallel parent), so the
+	// semaphore must be shared across all of those instances. The key identifies
+	// the compiled step and the ancestor context (inherited ceiling and parent
+	// leaf semaphore) so that semaphores are not accidentally shared across
+	// unrelated call paths.
+	ParallelSemCache map[parallelSemKey]chan struct{}
+	// ParallelSemMu serializes access to ParallelSemCache across concurrent
+	// parent iterations.
+	ParallelSemMu *sync.Mutex
 
 	firstStep        bool
 	firstStepAttempt int
