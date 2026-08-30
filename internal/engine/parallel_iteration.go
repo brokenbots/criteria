@@ -369,6 +369,47 @@ func (n *stepNode) parallelSemaphores(st *RunState) (launchSem, leafSem chan str
 // For abort mode (on_failure == "" || "abort"), the per-iteration context is
 // cancelled on the first failure so outstanding goroutines exit early. In
 // continue/ignore mode, all goroutines run to completion.
+// acquireParallelLeafSemaphores acquires the leaf semaphore(s) needed for an
+// adapter execution in a parallel step. When the step's own cap is lower than
+// the inherited subtree ceiling, it first acquires the shared subtree semaphore
+// and then the per-step leaf semaphore, returning a release function that
+// releases them in reverse order. If the context is cancelled during
+// acquisition, any semaphore already acquired is released before returning.
+func acquireParallelLeafSemaphores(
+	ctx context.Context,
+	st *RunState,
+	leafSem chan struct{},
+	effectiveMax int,
+) (release func(), err error) {
+	var acquiredSubtree bool
+	if st.ParallelSem != nil && effectiveMax < st.ParallelCeiling {
+		select {
+		case st.ParallelSem <- struct{}{}:
+			acquiredSubtree = true
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		defer func() {
+			if err != nil && acquiredSubtree {
+				<-st.ParallelSem
+			}
+		}()
+	}
+
+	select {
+	case leafSem <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
+	return func() {
+		<-leafSem
+		if acquiredSubtree {
+			<-st.ParallelSem
+		}
+	}, nil
+}
+
 // runOneParallelItem runs a single item in the parallel fan-out. It acquires
 // the semaphore, binds each.*, runs the step body, and stores the result.
 // visitsMu serializes Visits map access across goroutines (see runParallelIterations).
@@ -408,15 +449,17 @@ func runOneParallelItem(
 	if n.step.TargetKind == workflow.StepTargetAdapter {
 		// Adapter executions are leaf executions: they must contend on the
 		// shared subtree leaf semaphore so the total number of concurrent
-		// leaves never exceeds the inherited ceiling.
-		select {
-		case leafSem <- struct{}{}:
-		case <-iterCtx.Done():
-			results[i] = parallelIterResult{index: i, err: iterCtx.Err()}
+		// leaves never exceeds the inherited ceiling. When this step's own
+		// parallel_max is lower than the inherited ceiling, leafSem is a
+		// per-step semaphore; both semaphores are acquired (subtree first) and
+		// released in reverse order so both limits are enforced together.
+		release, acquireErr := acquireParallelLeafSemaphores(iterCtx, st, leafSem, effectiveMax)
+		if acquireErr != nil {
+			results[i] = parallelIterResult{index: i, err: acquireErr}
 			return
 		}
 		outcome, outputs, err = n.runParallelIterationOnce(iterCtx, iterSt, deps)
-		<-leafSem
+		release()
 	} else {
 		outcome, outputs, err = n.runParallelIterationOnce(iterCtx, iterSt, deps)
 	}

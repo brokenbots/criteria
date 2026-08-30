@@ -334,6 +334,66 @@ func TestCRI39_SequentialSubworkflowInsideParallelParent(t *testing.T) {
 	}
 }
 
+// cri39SiblingChildHCL returns a child workflow with two sequential parallel
+// adapter steps. step_a uses parallel_max=aMax and transitions to step_b, which
+// uses parallel_max=bMax.
+func cri39SiblingChildHCL(list string, aMax, bMax int) string {
+	return `workflow {
+  name          = "child"
+  version       = "0.1"
+  initial_state = "a"
+  target_state  = "done"
+}
+
+adapter "fake" "default" {}
+
+step "a" {
+  target       = adapter.fake.default
+  parallel     = ` + list + `
+  parallel_max = ` + strconv.Itoa(aMax) + `
+  outcome "all_succeeded" { next = state.b }
+  outcome "any_failed" { next = state.failed }
+}
+
+step "b" {
+  target       = adapter.fake.default
+  parallel     = ` + list + `
+  parallel_max = ` + strconv.Itoa(bMax) + `
+  outcome "all_succeeded" { next = state.done }
+  outcome "any_failed" { next = state.failed }
+}
+
+state "done" {
+  terminal = true
+}
+
+state "failed" {
+  terminal = true
+  success  = false
+}
+`
+}
+
+// TestCRI39_SiblingStepsRespectSubtreeCeiling verifies that sibling parallel
+// adapter steps inside a parallel subworkflow share the inherited subtree
+// ceiling. The outer step caps the subtree at 2; step_a matches the ceiling and
+// reuses the subtree semaphore, while step_b lowers its own cap to 1 and uses
+// a per-step semaphore. Without also contending on the subtree semaphore,
+// step_b leaves running in different parent iterations could push aggregate
+// concurrency above 2.
+func TestCRI39_SiblingStepsRespectSubtreeCeiling(t *testing.T) {
+	p := cri39NewAdapter(50 * time.Millisecond)
+	g := cri39Compile(t, map[string]string{
+		"main.chcl":       cri39ParentHCL(cri39HCLList(4), 2),
+		"child/main.chcl": cri39SiblingChildHCL(cri39HCLList(3), 2, 1),
+	})
+	cri39Run(t, g, p)
+
+	if peak := cri39Peak(p); peak > 2 {
+		t.Errorf("peak concurrent executions = %d; want <= 2", peak)
+	}
+}
+
 // TestCRI39_SequentialOuterParallelInner (Neg shape) verifies that a sequential
 // outer step does not impose a ceiling on the inner parallel step.
 func TestCRI39_SequentialOuterParallelInner(t *testing.T) {
