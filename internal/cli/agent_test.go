@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -20,17 +21,30 @@ import (
 // ends to satisfy goleak.
 func startTestAgent(t *testing.T, fake *applytest.Fake) (cancel context.CancelFunc, errCh <-chan error) {
 	t.Helper()
+	return startTestAgentOpts(t, fake, &agentOptions{})
+}
+
+// startTestAgentOpts starts runAgent with the supplied options merged over the
+// test defaults.
+func startTestAgentOpts(t *testing.T, fake *applytest.Fake, opts *agentOptions) (cancel context.CancelFunc, errCh <-chan error) {
+	t.Helper()
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	errChOut := make(chan error, 1)
-	opts := agentOptions{
-		serverURL: fake.URL(),
-		name:      "test-agent",
-		tlsMode:   serverTransTLSModeName(servertrans.TLSDisable),
-		log:       newApplyLogger(),
+	if opts.serverURL == "" {
+		opts.serverURL = fake.URL()
 	}
-	go func() { errChOut <- runAgent(ctx, &opts) }()
+	if opts.name == "" {
+		opts.name = "test-agent"
+	}
+	if opts.tlsMode == "" {
+		opts.tlsMode = serverTransTLSModeName(servertrans.TLSDisable)
+	}
+	if opts.log == nil {
+		opts.log = newApplyLogger()
+	}
+	go func() { errChOut <- runAgent(ctx, opts) }()
 	return cancel, errChOut
 }
 
@@ -133,6 +147,32 @@ func runEventIndex(fake *applytest.Fake, runID, typeName string) int {
 		}
 	}
 	return -1
+}
+
+// runEventCountOfType returns how many events of typeName the fake received for
+// the given run_id.
+func runEventCountOfType(fake *applytest.Fake, runID, typeName string) int {
+	count := 0
+	for _, env := range fake.Events() {
+		if env.RunId != runID {
+			continue
+		}
+		switch typeName {
+		case "RunFailed":
+			if env.GetRunFailed() != nil {
+				count++
+			}
+		case "RunCompleted":
+			if env.GetRunCompleted() != nil {
+				count++
+			}
+		case "RunStarted":
+			if env.GetRunStarted() != nil {
+				count++
+			}
+		}
+	}
+	return count
 }
 
 func TestAgent_HappyPath(t *testing.T) {
@@ -239,6 +279,86 @@ func TestAgent_Reconnect(t *testing.T) {
 	runID := uuid.NewString()
 	fake.QueueAssignment(makeAssignment(runID, "two_step", twoStepWorkflow))
 	fake.WaitForCond(t, 10*time.Second, func() bool { return runHasEventOfType(fake, runID, "RunCompleted") })
+
+	cancel()
+	waitAgent(t, errCh)
+}
+
+// invalidWorkflowSource is workflow HCL that cannot be parsed, exercising the
+// compile-time failure path in agent assignments.
+const invalidWorkflowSource = `
+this is not valid criteria workflow source
+`
+
+func TestAgent_CompileFailureReportsRunFailed(t *testing.T) {
+	requireNoGoroutineLeak(t)
+	fake := applytest.New(t)
+	cancel, errCh := startTestAgent(t, fake)
+	defer cancel()
+
+	fake.WaitForCond(t, 5*time.Second, func() bool { return fake.ControlAttachCount() > 0 })
+
+	runID := uuid.NewString()
+	fake.QueueAssignment(makeAssignment(runID, "invalid", invalidWorkflowSource))
+	fake.WaitForCond(t, 10*time.Second, func() bool { return runHasEventOfType(fake, runID, "RunFailed") })
+
+	// The agent must remain available for a subsequent assignment after reporting
+	// the terminal compile failure.
+	nextID := uuid.NewString()
+	fake.QueueAssignment(makeAssignment(nextID, "two_step", twoStepWorkflow))
+	fake.WaitForCond(t, 10*time.Second, func() bool { return runHasEventOfType(fake, nextID, "RunCompleted") })
+
+	cancel()
+	waitAgent(t, errCh)
+}
+
+func TestAgent_InitFailureReportsRunFailed(t *testing.T) {
+	requireNoGoroutineLeak(t)
+	fake := applytest.New(t)
+
+	// Point the agent at a non-existent var-file so that run initialization
+	// (mergeVarSources inside buildAgentRun) fails before execution starts.
+	badVarFile := filepath.Join(t.TempDir(), "missing.json")
+	cancel, errCh := startTestAgentOpts(t, fake, &agentOptions{
+		varFiles: []string{badVarFile},
+	})
+	defer cancel()
+
+	fake.WaitForCond(t, 5*time.Second, func() bool { return fake.ControlAttachCount() > 0 })
+
+	runID := uuid.NewString()
+	fake.QueueAssignment(makeAssignment(runID, "two_step", twoStepWorkflow))
+	fake.WaitForCond(t, 10*time.Second, func() bool { return runHasEventOfType(fake, runID, "RunFailed") })
+
+	// A second assignment must still be processed, proving the agent is still
+	// accepting work after the terminal initialization failure.
+	nextID := uuid.NewString()
+	fake.QueueAssignment(makeAssignment(nextID, "two_step", twoStepWorkflow))
+	fake.WaitForCond(t, 10*time.Second, func() bool { return runHasEventOfType(fake, nextID, "RunFailed") })
+
+	cancel()
+	waitAgent(t, errCh)
+}
+
+func TestAgent_CompileFailure_DuplicateTerminalEventAfterReconnect(t *testing.T) {
+	requireNoGoroutineLeak(t)
+	fake := applytest.New(t)
+	cancel, errCh := startTestAgent(t, fake)
+	defer cancel()
+
+	fake.WaitForCond(t, 5*time.Second, func() bool { return fake.ControlAttachCount() > 0 })
+
+	runID := uuid.NewString()
+	fake.QueueAssignment(makeAssignment(runID, "invalid", invalidWorkflowSource))
+	fake.WaitForCond(t, 10*time.Second, func() bool { return runHasEventOfType(fake, runID, "RunFailed") })
+
+	// Force a transport-level reconnect and wait for the control stream to
+	// reattach. The publisher's replay/dedup must not produce a second RunFailed
+	// for the same run id.
+	fake.DropControl()
+	fake.WaitForCond(t, 10*time.Second, func() bool { return fake.ControlAttachCount() >= 2 })
+
+	require.Equal(t, 1, runEventCountOfType(fake, runID, "RunFailed"), "reconnect must not duplicate RunFailed")
 
 	cancel()
 	waitAgent(t, errCh)
