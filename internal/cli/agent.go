@@ -352,23 +352,27 @@ func executeAgentAssignment(ctx context.Context, log *slog.Logger, client *serve
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 
-	graph, loader, err := compileAgentWorkflow(ctx, workflowPath, log, opts)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
-
-	// Start the per-run publisher with a context that ignores run-level
-	// cancellation so terminal events (including RunFailed after a cancel)
-	// can still be flushed before the publisher is closed.
+	// Start the per-run publisher early so that failures which occur before
+	// execution (workflow compile or run initialization) still report a
+	// terminal RunFailed event centrally. The publisher uses a context that
+	// ignores run-level cancellation so terminal events can be flushed even
+	// after the run context is cancelled.
 	publisher, err := client.NewRunPublisher(context.WithoutCancel(ctx), assignment.GetRunId())
 	if err != nil {
 		return fmt.Errorf("create run publisher: %w", err)
 	}
 	defer publisher.Close()
 
+	graph, loader, err := compileAgentWorkflow(ctx, workflowPath, log, opts)
+	if err != nil {
+		reportAgentAssignmentFailed(ctx, log, publisher, assignment.GetRunId(), err)
+		return err
+	}
+	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
+
 	eng, sink, runSink, state, err := buildAgentRun(ctx, log, client, assignment, opts, publisher, graph, loader, dir, workflowPath)
 	if err != nil {
+		reportAgentAssignmentFailed(ctx, log, publisher, assignment.GetRunId(), err)
 		return err
 	}
 
@@ -380,6 +384,25 @@ func executeAgentAssignment(ctx context.Context, log *slog.Logger, client *serve
 		return fmt.Errorf("run completed with terminal state %q (success=false)", finalState)
 	}
 	return nil
+}
+
+// reportAgentAssignmentFailed emits a terminal RunFailed event for a run that
+// failed before reaching execution, then drains the publisher so the event is
+// persisted centrally. Use this for compile-time and initialization-time
+// failures where the ordinary run sink has not yet been established.
+func reportAgentAssignmentFailed(ctx context.Context, log *slog.Logger, publisher *servertrans.RunPublisher, runID string, err error) {
+	log.Error("assignment failed before execution", "run_id", runID, "error", err)
+	sink := &run.Sink{
+		RunID:  runID,
+		Client: publisher,
+		Log:    log.With("run_id", runID),
+		Ctx:    ctx,
+	}
+	sink.RunFailed(ctx, err.Error(), "")
+
+	drainCtx, drainCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer drainCancel()
+	publisher.Drain(drainCtx)
 }
 
 // prepareAgentAssignmentDir writes the workflow (and optional lockfile) source
