@@ -279,14 +279,16 @@ func (a *activeRun) startNext(ctx context.Context, log *slog.Logger, defaultClie
 		if client != defaultClient {
 			defer client.Close()
 		}
-		if err := executeAgentAssignment(ctx, runCtx, log, client, q.assignment, opts, resumeCh); err != nil {
+		if err := executeAgentAssignment(ctx, runCtx, log, client, q.assignment, opts, resumeCh, a.markCompleted); err != nil {
 			log.Error("assignment execution failed", "run_id", q.assignment.GetRunId(), "error", err)
 		} else {
 			log.Info("assignment completed", "run_id", q.assignment.GetRunId())
 		}
 		// Remember terminal runs for the remainder of this process so duplicate
-		// deliveries are declined without re-executing the workflow.
-		if runCtx.Err() == nil {
+		// deliveries are declined without re-executing the workflow. Use the
+		// agent context so that run-level cancellation still marks the run as
+		// completed; only agent shutdown should leave recovery state intact.
+		if ctx.Err() == nil {
 			a.markCompleted(q.assignment.GetRunId())
 		}
 	}(qa)
@@ -520,10 +522,21 @@ func recoverSingleRun(ctx context.Context, log *slog.Logger, copts *servertrans.
 	log.Info("recovered run queued for execution", "run_id", st.RunID)
 }
 
+// errRunAlreadyTerminal signals that the server already considers a run
+// terminal, so the agent must decline the assignment without re-executing it.
+var errRunAlreadyTerminal = errors.New("run already terminal on server")
+
+// cleanupAgentRunState removes the durable local metadata and step checkpoint
+// for a run that has reached a terminal state.
+func cleanupAgentRunState(runID string) {
+	removeLocalRunState(runID)
+	RemoveStepCheckpoint(runID)
+}
+
 // executeAgentAssignment materialises the assignment source into a temporary
 // workflow directory, compiles and executes it, and reports progress via a
 // per-run publisher.
-func executeAgentAssignment(agentCtx, runCtx context.Context, log *slog.Logger, client *servertrans.Client, assignment *pb.WorkflowAssignment, opts *agentOptions, resumeCh <-chan *pb.ResumeRun) error {
+func executeAgentAssignment(agentCtx, runCtx context.Context, log *slog.Logger, client *servertrans.Client, assignment *pb.WorkflowAssignment, opts *agentOptions, resumeCh <-chan *pb.ResumeRun, markCompleted func(string)) error {
 	runID := assignment.GetRunId()
 	dir, workflowPath, err := prepareAgentAssignmentDir(assignment)
 	if err != nil {
@@ -548,6 +561,10 @@ func executeAgentAssignment(agentCtx, runCtx context.Context, log *slog.Logger, 
 	// reached a terminal state.
 	cp, reattachResp, err := loadResumeState(runCtx, log, client, runID)
 	if err != nil {
+		if errors.Is(err, errRunAlreadyTerminal) {
+			markCompleted(runID)
+			return nil
+		}
 		return err
 	}
 
@@ -558,9 +575,7 @@ func executeAgentAssignment(agentCtx, runCtx context.Context, log *slog.Logger, 
 	}
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(runCtx)) }()
 
-	engineOpts := resumeEngineOptions(cp, reattachResp, graph, log, runID)
-
-	eng, sink, runSink, state, err := buildAgentRun(agentCtx, runCtx, log, client, assignment, opts, publisher, graph, loader, dir, workflowPath, engineOpts...)
+	eng, sink, runSink, state, err := buildAgentRun(agentCtx, runCtx, log, client, assignment, opts, publisher, graph, loader, dir, workflowPath, resumeEngineOptions(cp, reattachResp, graph, log, runID)...)
 	if err != nil {
 		reportAgentAssignmentFailed(runCtx, log, publisher, runID, err)
 		return err
@@ -577,12 +592,11 @@ func executeAgentAssignment(agentCtx, runCtx context.Context, log *slog.Logger, 
 	}
 
 	// Terminal runs are no longer recoverable; clear local durable state while
-	// preserving it when the run context was cancelled so the next startup can
+	// preserving it when the agent is shutting down so the next startup can
 	// resume. The completed run is remembered in-memory for the remainder of
 	// this process so duplicate deliveries are declined.
-	if runCtx.Err() == nil {
-		removeLocalRunState(runID)
-		RemoveStepCheckpoint(runID)
+	if agentCtx.Err() == nil {
+		cleanupAgentRunState(runID)
 	}
 
 	return terminalRunError(runSink)
@@ -652,7 +666,7 @@ func loadResumeState(ctx context.Context, log *slog.Logger, client *servertrans.
 		log.Info("run is terminal on server; clearing local recovery state", "run_id", runID, "status", resp.Status)
 		removeLocalRunState(runID)
 		RemoveStepCheckpoint(runID)
-		return nil, nil, nil
+		return nil, nil, errRunAlreadyTerminal
 	}
 	return cp, resp, nil
 }

@@ -531,6 +531,13 @@ func TestAgent_DuplicateDelivery_Idempotent(t *testing.T) {
 	// The second run must have started exactly once despite the queued duplicate.
 	require.Equal(t, 1, runEventCountOfType(fake, secondID, "RunStarted"), "queued duplicate must not start a second run")
 
+	// The cancelled first run must be terminal before re-delivery.
+	require.True(t, runHasEventOfType(fake, firstID, "RunFailed"), "first run must be server-terminal after cancellation")
+
+	// Re-deliver the cancelled first assignment; it must not run again.
+	fake.QueueAssignment(makeAssignment(firstID, "cancel_test", cancelWorkflow))
+	requireStableEventCount(t, fake, firstID, "RunStarted", 1, 500*time.Millisecond)
+
 	// Re-deliver the now-terminal second assignment.
 	fake.QueueAssignment(secondAssignment)
 	// Wait deterministically for any ill-behaved duplicate execution.
