@@ -160,6 +160,14 @@ func loadWorkflowForSubmit(ctx context.Context, workflowPath string) (*workflow.
 			code: exitInvalidWorkflow,
 		}
 	}
+	// workflow.ParseFileOrDir guarantees a non-nil spec when it reports no
+	// errors, but guard against a nil spec defensively before dereferencing it.
+	if spec == nil {
+		return nil, &submitError{
+			msg:  "invalid workflow: empty spec",
+			code: exitInvalidWorkflow,
+		}
+	}
 	if spec.Header == nil || strings.TrimSpace(spec.Header.Name) == "" {
 		return nil, &submitError{
 			msg:  "invalid workflow: missing workflow name",
