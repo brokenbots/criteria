@@ -25,6 +25,76 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// WorkflowAssignmentState enumerates the possible states of an operator-
+// submitted workflow assignment. The assignment lifecycle is independent of
+// the run lifecycle: an assignment moves through queued -> leased, and may
+// end in terminal or rejected. The run itself progresses via events on the
+// agent Control stream.
+type WorkflowAssignmentState int32
+
+const (
+	WorkflowAssignmentState_WORKFLOW_ASSIGNMENT_STATE_UNSPECIFIED WorkflowAssignmentState = 0
+	// QUEUED — the assignment is waiting for an agent to lease it.
+	WorkflowAssignmentState_WORKFLOW_ASSIGNMENT_STATE_QUEUED WorkflowAssignmentState = 1
+	// LEASED — an agent has leased the assignment and is executing the run.
+	// This state covers both "leased" and "running" from the operator
+	// perspective.
+	WorkflowAssignmentState_WORKFLOW_ASSIGNMENT_STATE_LEASED WorkflowAssignmentState = 2
+	// TERMINAL — the run reached a terminal state, or the assignment was
+	// accepted and later ended (completed, failed, cancelled). The assignment
+	// is no longer active.
+	WorkflowAssignmentState_WORKFLOW_ASSIGNMENT_STATE_TERMINAL WorkflowAssignmentState = 3
+	// REJECTED — the assignment was rejected immediately upon submission
+	// (invalid source, no matching agent, policy failure, etc.). No run was
+	// created.
+	WorkflowAssignmentState_WORKFLOW_ASSIGNMENT_STATE_REJECTED WorkflowAssignmentState = 4
+)
+
+// Enum value maps for WorkflowAssignmentState.
+var (
+	WorkflowAssignmentState_name = map[int32]string{
+		0: "WORKFLOW_ASSIGNMENT_STATE_UNSPECIFIED",
+		1: "WORKFLOW_ASSIGNMENT_STATE_QUEUED",
+		2: "WORKFLOW_ASSIGNMENT_STATE_LEASED",
+		3: "WORKFLOW_ASSIGNMENT_STATE_TERMINAL",
+		4: "WORKFLOW_ASSIGNMENT_STATE_REJECTED",
+	}
+	WorkflowAssignmentState_value = map[string]int32{
+		"WORKFLOW_ASSIGNMENT_STATE_UNSPECIFIED": 0,
+		"WORKFLOW_ASSIGNMENT_STATE_QUEUED":      1,
+		"WORKFLOW_ASSIGNMENT_STATE_LEASED":      2,
+		"WORKFLOW_ASSIGNMENT_STATE_TERMINAL":    3,
+		"WORKFLOW_ASSIGNMENT_STATE_REJECTED":    4,
+	}
+)
+
+func (x WorkflowAssignmentState) Enum() *WorkflowAssignmentState {
+	p := new(WorkflowAssignmentState)
+	*p = x
+	return p
+}
+
+func (x WorkflowAssignmentState) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (WorkflowAssignmentState) Descriptor() protoreflect.EnumDescriptor {
+	return file_criteria_v1_server_proto_enumTypes[0].Descriptor()
+}
+
+func (WorkflowAssignmentState) Type() protoreflect.EnumType {
+	return &file_criteria_v1_server_proto_enumTypes[0]
+}
+
+func (x WorkflowAssignmentState) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use WorkflowAssignmentState.Descriptor instead.
+func (WorkflowAssignmentState) EnumDescriptor() ([]byte, []int) {
+	return file_criteria_v1_server_proto_rawDescGZIP(), []int{0}
+}
+
 type Agent struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	CriteriaId    string                 `protobuf:"bytes,1,opt,name=criteria_id,json=criteriaId,proto3" json:"criteria_id,omitempty"`
@@ -1125,6 +1195,315 @@ func (x *SendPromptResponse) GetIssuedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+type SubmitWorkflowAssignmentRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// workflow_name is the logical name of the workflow to execute.
+	WorkflowName string `protobuf:"bytes,1,opt,name=workflow_name,json=workflowName,proto3" json:"workflow_name,omitempty"`
+	// workflow_source is the raw HCL/CHCL source for the workflow module.
+	WorkflowSource string `protobuf:"bytes,2,opt,name=workflow_source,json=workflowSource,proto3" json:"workflow_source,omitempty"`
+	// lockfile_source is the optional raw HCL source of the workflow tree's
+	// .criteria.lock.hcl. When present the agent writes it next to the
+	// workflow source so adapter pins and digests are available during
+	// compilation.
+	LockfileSource string `protobuf:"bytes,3,opt,name=lockfile_source,json=lockfileSource,proto3" json:"lockfile_source,omitempty"`
+	// labels are optional key/value pairs used for routing/matching the
+	// assignment to an agent. They are also passed through to the executing
+	// agent.
+	Labels map[string]string `protobuf:"bytes,4,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// idempotency_key is an optional opaque caller-provided identifier. When
+	// non-empty, duplicate submissions with the same key in the same caller
+	// scope MUST return the existing run_id and current state without creating
+	// a duplicate run or assignment.
+	IdempotencyKey string `protobuf:"bytes,5,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *SubmitWorkflowAssignmentRequest) Reset() {
+	*x = SubmitWorkflowAssignmentRequest{}
+	mi := &file_criteria_v1_server_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubmitWorkflowAssignmentRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubmitWorkflowAssignmentRequest) ProtoMessage() {}
+
+func (x *SubmitWorkflowAssignmentRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_criteria_v1_server_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubmitWorkflowAssignmentRequest.ProtoReflect.Descriptor instead.
+func (*SubmitWorkflowAssignmentRequest) Descriptor() ([]byte, []int) {
+	return file_criteria_v1_server_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *SubmitWorkflowAssignmentRequest) GetWorkflowName() string {
+	if x != nil {
+		return x.WorkflowName
+	}
+	return ""
+}
+
+func (x *SubmitWorkflowAssignmentRequest) GetWorkflowSource() string {
+	if x != nil {
+		return x.WorkflowSource
+	}
+	return ""
+}
+
+func (x *SubmitWorkflowAssignmentRequest) GetLockfileSource() string {
+	if x != nil {
+		return x.LockfileSource
+	}
+	return ""
+}
+
+func (x *SubmitWorkflowAssignmentRequest) GetLabels() map[string]string {
+	if x != nil {
+		return x.Labels
+	}
+	return nil
+}
+
+func (x *SubmitWorkflowAssignmentRequest) GetIdempotencyKey() string {
+	if x != nil {
+		return x.IdempotencyKey
+	}
+	return ""
+}
+
+type SubmitWorkflowAssignmentResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// run_id is the server-created run identifier. For idempotent replays this
+	// is the run_id of the existing assignment.
+	RunId string `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	// state is the current assignment state.
+	State WorkflowAssignmentState `protobuf:"varint,2,opt,name=state,proto3,enum=criteria.v1.WorkflowAssignmentState" json:"state,omitempty"`
+	// created_at is the server time when the assignment was first recorded.
+	CreatedAt *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	// When state == REJECTED, a human-readable reason for the rejection.
+	RejectionReason string `protobuf:"bytes,4,opt,name=rejection_reason,json=rejectionReason,proto3" json:"rejection_reason,omitempty"`
+	// When state == LEASED or TERMINAL, the criteria ID of the agent that
+	// leased the assignment, if known.
+	LeasedCriteriaId string `protobuf:"bytes,5,opt,name=leased_criteria_id,json=leasedCriteriaId,proto3" json:"leased_criteria_id,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *SubmitWorkflowAssignmentResponse) Reset() {
+	*x = SubmitWorkflowAssignmentResponse{}
+	mi := &file_criteria_v1_server_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubmitWorkflowAssignmentResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubmitWorkflowAssignmentResponse) ProtoMessage() {}
+
+func (x *SubmitWorkflowAssignmentResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_criteria_v1_server_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubmitWorkflowAssignmentResponse.ProtoReflect.Descriptor instead.
+func (*SubmitWorkflowAssignmentResponse) Descriptor() ([]byte, []int) {
+	return file_criteria_v1_server_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *SubmitWorkflowAssignmentResponse) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *SubmitWorkflowAssignmentResponse) GetState() WorkflowAssignmentState {
+	if x != nil {
+		return x.State
+	}
+	return WorkflowAssignmentState_WORKFLOW_ASSIGNMENT_STATE_UNSPECIFIED
+}
+
+func (x *SubmitWorkflowAssignmentResponse) GetCreatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return nil
+}
+
+func (x *SubmitWorkflowAssignmentResponse) GetRejectionReason() string {
+	if x != nil {
+		return x.RejectionReason
+	}
+	return ""
+}
+
+func (x *SubmitWorkflowAssignmentResponse) GetLeasedCriteriaId() string {
+	if x != nil {
+		return x.LeasedCriteriaId
+	}
+	return ""
+}
+
+type GetAssignmentDispositionRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// run_id is the server-created run identifier returned by
+	// SubmitWorkflowAssignment.
+	RunId         string `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetAssignmentDispositionRequest) Reset() {
+	*x = GetAssignmentDispositionRequest{}
+	mi := &file_criteria_v1_server_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetAssignmentDispositionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetAssignmentDispositionRequest) ProtoMessage() {}
+
+func (x *GetAssignmentDispositionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_criteria_v1_server_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetAssignmentDispositionRequest.ProtoReflect.Descriptor instead.
+func (*GetAssignmentDispositionRequest) Descriptor() ([]byte, []int) {
+	return file_criteria_v1_server_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *GetAssignmentDispositionRequest) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+type GetAssignmentDispositionResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// run_id is the server-created run identifier.
+	RunId string `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	// state is the current assignment state.
+	State WorkflowAssignmentState `protobuf:"varint,2,opt,name=state,proto3,enum=criteria.v1.WorkflowAssignmentState" json:"state,omitempty"`
+	// created_at is the server time when the assignment was first recorded.
+	CreatedAt *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	// updated_at is the server time of the last assignment state change.
+	UpdatedAt *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	// When state == REJECTED, a human-readable reason for the rejection.
+	RejectionReason string `protobuf:"bytes,5,opt,name=rejection_reason,json=rejectionReason,proto3" json:"rejection_reason,omitempty"`
+	// When state == LEASED or TERMINAL, the criteria ID of the agent that
+	// leased the assignment, if known.
+	LeasedCriteriaId string `protobuf:"bytes,6,opt,name=leased_criteria_id,json=leasedCriteriaId,proto3" json:"leased_criteria_id,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *GetAssignmentDispositionResponse) Reset() {
+	*x = GetAssignmentDispositionResponse{}
+	mi := &file_criteria_v1_server_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetAssignmentDispositionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetAssignmentDispositionResponse) ProtoMessage() {}
+
+func (x *GetAssignmentDispositionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_criteria_v1_server_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetAssignmentDispositionResponse.ProtoReflect.Descriptor instead.
+func (*GetAssignmentDispositionResponse) Descriptor() ([]byte, []int) {
+	return file_criteria_v1_server_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *GetAssignmentDispositionResponse) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *GetAssignmentDispositionResponse) GetState() WorkflowAssignmentState {
+	if x != nil {
+		return x.State
+	}
+	return WorkflowAssignmentState_WORKFLOW_ASSIGNMENT_STATE_UNSPECIFIED
+}
+
+func (x *GetAssignmentDispositionResponse) GetCreatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return nil
+}
+
+func (x *GetAssignmentDispositionResponse) GetUpdatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.UpdatedAt
+	}
+	return nil
+}
+
+func (x *GetAssignmentDispositionResponse) GetRejectionReason() string {
+	if x != nil {
+		return x.RejectionReason
+	}
+	return ""
+}
+
+func (x *GetAssignmentDispositionResponse) GetLeasedCriteriaId() string {
+	if x != nil {
+		return x.LeasedCriteriaId
+	}
+	return ""
+}
+
 var File_criteria_v1_server_proto protoreflect.FileDescriptor
 
 const file_criteria_v1_server_proto_rawDesc = "" +
@@ -1208,7 +1587,40 @@ const file_criteria_v1_server_proto_rawDesc = "" +
 	"\x04step\x18\x02 \x01(\tR\x04step\x12\x16\n" +
 	"\x06prompt\x18\x03 \x01(\tR\x06prompt\"M\n" +
 	"\x12SendPromptResponse\x127\n" +
-	"\tissued_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\bissuedAt2\xb1\x06\n" +
+	"\tissued_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\bissuedAt\"\xce\x02\n" +
+	"\x1fSubmitWorkflowAssignmentRequest\x12#\n" +
+	"\rworkflow_name\x18\x01 \x01(\tR\fworkflowName\x12'\n" +
+	"\x0fworkflow_source\x18\x02 \x01(\tR\x0eworkflowSource\x12'\n" +
+	"\x0flockfile_source\x18\x03 \x01(\tR\x0elockfileSource\x12P\n" +
+	"\x06labels\x18\x04 \x03(\v28.criteria.v1.SubmitWorkflowAssignmentRequest.LabelsEntryR\x06labels\x12'\n" +
+	"\x0fidempotency_key\x18\x05 \x01(\tR\x0eidempotencyKey\x1a9\n" +
+	"\vLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x89\x02\n" +
+	" SubmitWorkflowAssignmentResponse\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12:\n" +
+	"\x05state\x18\x02 \x01(\x0e2$.criteria.v1.WorkflowAssignmentStateR\x05state\x129\n" +
+	"\n" +
+	"created_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12)\n" +
+	"\x10rejection_reason\x18\x04 \x01(\tR\x0frejectionReason\x12,\n" +
+	"\x12leased_criteria_id\x18\x05 \x01(\tR\x10leasedCriteriaId\"8\n" +
+	"\x1fGetAssignmentDispositionRequest\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\"\xc4\x02\n" +
+	" GetAssignmentDispositionResponse\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12:\n" +
+	"\x05state\x18\x02 \x01(\x0e2$.criteria.v1.WorkflowAssignmentStateR\x05state\x129\n" +
+	"\n" +
+	"created_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
+	"\n" +
+	"updated_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12)\n" +
+	"\x10rejection_reason\x18\x05 \x01(\tR\x0frejectionReason\x12,\n" +
+	"\x12leased_criteria_id\x18\x06 \x01(\tR\x10leasedCriteriaId*\xe0\x01\n" +
+	"\x17WorkflowAssignmentState\x12)\n" +
+	"%WORKFLOW_ASSIGNMENT_STATE_UNSPECIFIED\x10\x00\x12$\n" +
+	" WORKFLOW_ASSIGNMENT_STATE_QUEUED\x10\x01\x12$\n" +
+	" WORKFLOW_ASSIGNMENT_STATE_LEASED\x10\x02\x12&\n" +
+	"\"WORKFLOW_ASSIGNMENT_STATE_TERMINAL\x10\x03\x12&\n" +
+	"\"WORKFLOW_ASSIGNMENT_STATE_REJECTED\x10\x042\xa3\b\n" +
 	"\rServerService\x12M\n" +
 	"\n" +
 	"ListAgents\x12\x1e.criteria.v1.ListAgentsRequest\x1a\x1f.criteria.v1.ListAgentsResponse\x12<\n" +
@@ -1221,7 +1633,9 @@ const file_criteria_v1_server_proto_rawDesc = "" +
 	"\bPauseRun\x12\x1c.criteria.v1.PauseRunRequest\x1a\x1d.criteria.v1.PauseRunResponse\x12J\n" +
 	"\tResumeRun\x12\x1d.criteria.v1.ResumeRunRequest\x1a\x1e.criteria.v1.ResumeRunResponse\x12M\n" +
 	"\n" +
-	"InspectRun\x12\x1e.criteria.v1.InspectRunRequest\x1a\x1f.criteria.v1.InspectRunResponse\x12M\n" +
+	"InspectRun\x12\x1e.criteria.v1.InspectRunRequest\x1a\x1f.criteria.v1.InspectRunResponse\x12w\n" +
+	"\x18SubmitWorkflowAssignment\x12,.criteria.v1.SubmitWorkflowAssignmentRequest\x1a-.criteria.v1.SubmitWorkflowAssignmentResponse\x12w\n" +
+	"\x18GetAssignmentDisposition\x12,.criteria.v1.GetAssignmentDispositionRequest\x1a-.criteria.v1.GetAssignmentDispositionResponse\x12M\n" +
 	"\n" +
 	"SendPrompt\x12\x1e.criteria.v1.SendPromptRequest\x1a\x1f.criteria.v1.SendPromptResponseB>Z<github.com/brokenbots/criteria/sdk/pb/criteria/v1;criteriav1b\x06proto3"
 
@@ -1237,72 +1651,89 @@ func file_criteria_v1_server_proto_rawDescGZIP() []byte {
 	return file_criteria_v1_server_proto_rawDescData
 }
 
-var file_criteria_v1_server_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_criteria_v1_server_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_criteria_v1_server_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
 var file_criteria_v1_server_proto_goTypes = []any{
-	(*Agent)(nil),                 // 0: criteria.v1.Agent
-	(*ListAgentsRequest)(nil),     // 1: criteria.v1.ListAgentsRequest
-	(*ListAgentsResponse)(nil),    // 2: criteria.v1.ListAgentsResponse
-	(*GetAgentRequest)(nil),       // 3: criteria.v1.GetAgentRequest
-	(*ListRunsRequest)(nil),       // 4: criteria.v1.ListRunsRequest
-	(*ListRunsResponse)(nil),      // 5: criteria.v1.ListRunsResponse
-	(*GetRunRequest)(nil),         // 6: criteria.v1.GetRunRequest
-	(*ListRunEventsRequest)(nil),  // 7: criteria.v1.ListRunEventsRequest
-	(*ListRunEventsResponse)(nil), // 8: criteria.v1.ListRunEventsResponse
-	(*WatchRunRequest)(nil),       // 9: criteria.v1.WatchRunRequest
-	(*StopRunRequest)(nil),        // 10: criteria.v1.StopRunRequest
-	(*StopRunResponse)(nil),       // 11: criteria.v1.StopRunResponse
-	(*PauseRunRequest)(nil),       // 12: criteria.v1.PauseRunRequest
-	(*PauseRunResponse)(nil),      // 13: criteria.v1.PauseRunResponse
-	(*ResumeRunRequest)(nil),      // 14: criteria.v1.ResumeRunRequest
-	(*ResumeRunResponse)(nil),     // 15: criteria.v1.ResumeRunResponse
-	(*InspectRunRequest)(nil),     // 16: criteria.v1.InspectRunRequest
-	(*InspectRunResponse)(nil),    // 17: criteria.v1.InspectRunResponse
-	(*SendPromptRequest)(nil),     // 18: criteria.v1.SendPromptRequest
-	(*SendPromptResponse)(nil),    // 19: criteria.v1.SendPromptResponse
-	nil,                           // 20: criteria.v1.Agent.LabelsEntry
-	(*timestamppb.Timestamp)(nil), // 21: google.protobuf.Timestamp
-	(*Run)(nil),                   // 22: criteria.v1.Run
-	(*Envelope)(nil),              // 23: criteria.v1.Envelope
+	(WorkflowAssignmentState)(0),             // 0: criteria.v1.WorkflowAssignmentState
+	(*Agent)(nil),                            // 1: criteria.v1.Agent
+	(*ListAgentsRequest)(nil),                // 2: criteria.v1.ListAgentsRequest
+	(*ListAgentsResponse)(nil),               // 3: criteria.v1.ListAgentsResponse
+	(*GetAgentRequest)(nil),                  // 4: criteria.v1.GetAgentRequest
+	(*ListRunsRequest)(nil),                  // 5: criteria.v1.ListRunsRequest
+	(*ListRunsResponse)(nil),                 // 6: criteria.v1.ListRunsResponse
+	(*GetRunRequest)(nil),                    // 7: criteria.v1.GetRunRequest
+	(*ListRunEventsRequest)(nil),             // 8: criteria.v1.ListRunEventsRequest
+	(*ListRunEventsResponse)(nil),            // 9: criteria.v1.ListRunEventsResponse
+	(*WatchRunRequest)(nil),                  // 10: criteria.v1.WatchRunRequest
+	(*StopRunRequest)(nil),                   // 11: criteria.v1.StopRunRequest
+	(*StopRunResponse)(nil),                  // 12: criteria.v1.StopRunResponse
+	(*PauseRunRequest)(nil),                  // 13: criteria.v1.PauseRunRequest
+	(*PauseRunResponse)(nil),                 // 14: criteria.v1.PauseRunResponse
+	(*ResumeRunRequest)(nil),                 // 15: criteria.v1.ResumeRunRequest
+	(*ResumeRunResponse)(nil),                // 16: criteria.v1.ResumeRunResponse
+	(*InspectRunRequest)(nil),                // 17: criteria.v1.InspectRunRequest
+	(*InspectRunResponse)(nil),               // 18: criteria.v1.InspectRunResponse
+	(*SendPromptRequest)(nil),                // 19: criteria.v1.SendPromptRequest
+	(*SendPromptResponse)(nil),               // 20: criteria.v1.SendPromptResponse
+	(*SubmitWorkflowAssignmentRequest)(nil),  // 21: criteria.v1.SubmitWorkflowAssignmentRequest
+	(*SubmitWorkflowAssignmentResponse)(nil), // 22: criteria.v1.SubmitWorkflowAssignmentResponse
+	(*GetAssignmentDispositionRequest)(nil),  // 23: criteria.v1.GetAssignmentDispositionRequest
+	(*GetAssignmentDispositionResponse)(nil), // 24: criteria.v1.GetAssignmentDispositionResponse
+	nil,                                      // 25: criteria.v1.Agent.LabelsEntry
+	nil,                                      // 26: criteria.v1.SubmitWorkflowAssignmentRequest.LabelsEntry
+	(*timestamppb.Timestamp)(nil),            // 27: google.protobuf.Timestamp
+	(*Run)(nil),                              // 28: criteria.v1.Run
+	(*Envelope)(nil),                         // 29: criteria.v1.Envelope
 }
 var file_criteria_v1_server_proto_depIdxs = []int32{
-	20, // 0: criteria.v1.Agent.labels:type_name -> criteria.v1.Agent.LabelsEntry
-	21, // 1: criteria.v1.Agent.registered_at:type_name -> google.protobuf.Timestamp
-	21, // 2: criteria.v1.Agent.last_seen_at:type_name -> google.protobuf.Timestamp
-	0,  // 3: criteria.v1.ListAgentsResponse.agents:type_name -> criteria.v1.Agent
-	22, // 4: criteria.v1.ListRunsResponse.runs:type_name -> criteria.v1.Run
-	23, // 5: criteria.v1.ListRunEventsResponse.events:type_name -> criteria.v1.Envelope
-	21, // 6: criteria.v1.StopRunResponse.issued_at:type_name -> google.protobuf.Timestamp
-	21, // 7: criteria.v1.PauseRunResponse.issued_at:type_name -> google.protobuf.Timestamp
-	21, // 8: criteria.v1.ResumeRunResponse.issued_at:type_name -> google.protobuf.Timestamp
-	21, // 9: criteria.v1.InspectRunResponse.last_activity_at:type_name -> google.protobuf.Timestamp
-	21, // 10: criteria.v1.SendPromptResponse.issued_at:type_name -> google.protobuf.Timestamp
-	1,  // 11: criteria.v1.ServerService.ListAgents:input_type -> criteria.v1.ListAgentsRequest
-	3,  // 12: criteria.v1.ServerService.GetAgent:input_type -> criteria.v1.GetAgentRequest
-	4,  // 13: criteria.v1.ServerService.ListRuns:input_type -> criteria.v1.ListRunsRequest
-	6,  // 14: criteria.v1.ServerService.GetRun:input_type -> criteria.v1.GetRunRequest
-	7,  // 15: criteria.v1.ServerService.ListRunEvents:input_type -> criteria.v1.ListRunEventsRequest
-	9,  // 16: criteria.v1.ServerService.WatchRun:input_type -> criteria.v1.WatchRunRequest
-	10, // 17: criteria.v1.ServerService.StopRun:input_type -> criteria.v1.StopRunRequest
-	12, // 18: criteria.v1.ServerService.PauseRun:input_type -> criteria.v1.PauseRunRequest
-	14, // 19: criteria.v1.ServerService.ResumeRun:input_type -> criteria.v1.ResumeRunRequest
-	16, // 20: criteria.v1.ServerService.InspectRun:input_type -> criteria.v1.InspectRunRequest
-	18, // 21: criteria.v1.ServerService.SendPrompt:input_type -> criteria.v1.SendPromptRequest
-	2,  // 22: criteria.v1.ServerService.ListAgents:output_type -> criteria.v1.ListAgentsResponse
-	0,  // 23: criteria.v1.ServerService.GetAgent:output_type -> criteria.v1.Agent
-	5,  // 24: criteria.v1.ServerService.ListRuns:output_type -> criteria.v1.ListRunsResponse
-	22, // 25: criteria.v1.ServerService.GetRun:output_type -> criteria.v1.Run
-	8,  // 26: criteria.v1.ServerService.ListRunEvents:output_type -> criteria.v1.ListRunEventsResponse
-	23, // 27: criteria.v1.ServerService.WatchRun:output_type -> criteria.v1.Envelope
-	11, // 28: criteria.v1.ServerService.StopRun:output_type -> criteria.v1.StopRunResponse
-	13, // 29: criteria.v1.ServerService.PauseRun:output_type -> criteria.v1.PauseRunResponse
-	15, // 30: criteria.v1.ServerService.ResumeRun:output_type -> criteria.v1.ResumeRunResponse
-	17, // 31: criteria.v1.ServerService.InspectRun:output_type -> criteria.v1.InspectRunResponse
-	19, // 32: criteria.v1.ServerService.SendPrompt:output_type -> criteria.v1.SendPromptResponse
-	22, // [22:33] is the sub-list for method output_type
-	11, // [11:22] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	25, // 0: criteria.v1.Agent.labels:type_name -> criteria.v1.Agent.LabelsEntry
+	27, // 1: criteria.v1.Agent.registered_at:type_name -> google.protobuf.Timestamp
+	27, // 2: criteria.v1.Agent.last_seen_at:type_name -> google.protobuf.Timestamp
+	1,  // 3: criteria.v1.ListAgentsResponse.agents:type_name -> criteria.v1.Agent
+	28, // 4: criteria.v1.ListRunsResponse.runs:type_name -> criteria.v1.Run
+	29, // 5: criteria.v1.ListRunEventsResponse.events:type_name -> criteria.v1.Envelope
+	27, // 6: criteria.v1.StopRunResponse.issued_at:type_name -> google.protobuf.Timestamp
+	27, // 7: criteria.v1.PauseRunResponse.issued_at:type_name -> google.protobuf.Timestamp
+	27, // 8: criteria.v1.ResumeRunResponse.issued_at:type_name -> google.protobuf.Timestamp
+	27, // 9: criteria.v1.InspectRunResponse.last_activity_at:type_name -> google.protobuf.Timestamp
+	27, // 10: criteria.v1.SendPromptResponse.issued_at:type_name -> google.protobuf.Timestamp
+	26, // 11: criteria.v1.SubmitWorkflowAssignmentRequest.labels:type_name -> criteria.v1.SubmitWorkflowAssignmentRequest.LabelsEntry
+	0,  // 12: criteria.v1.SubmitWorkflowAssignmentResponse.state:type_name -> criteria.v1.WorkflowAssignmentState
+	27, // 13: criteria.v1.SubmitWorkflowAssignmentResponse.created_at:type_name -> google.protobuf.Timestamp
+	0,  // 14: criteria.v1.GetAssignmentDispositionResponse.state:type_name -> criteria.v1.WorkflowAssignmentState
+	27, // 15: criteria.v1.GetAssignmentDispositionResponse.created_at:type_name -> google.protobuf.Timestamp
+	27, // 16: criteria.v1.GetAssignmentDispositionResponse.updated_at:type_name -> google.protobuf.Timestamp
+	2,  // 17: criteria.v1.ServerService.ListAgents:input_type -> criteria.v1.ListAgentsRequest
+	4,  // 18: criteria.v1.ServerService.GetAgent:input_type -> criteria.v1.GetAgentRequest
+	5,  // 19: criteria.v1.ServerService.ListRuns:input_type -> criteria.v1.ListRunsRequest
+	7,  // 20: criteria.v1.ServerService.GetRun:input_type -> criteria.v1.GetRunRequest
+	8,  // 21: criteria.v1.ServerService.ListRunEvents:input_type -> criteria.v1.ListRunEventsRequest
+	10, // 22: criteria.v1.ServerService.WatchRun:input_type -> criteria.v1.WatchRunRequest
+	11, // 23: criteria.v1.ServerService.StopRun:input_type -> criteria.v1.StopRunRequest
+	13, // 24: criteria.v1.ServerService.PauseRun:input_type -> criteria.v1.PauseRunRequest
+	15, // 25: criteria.v1.ServerService.ResumeRun:input_type -> criteria.v1.ResumeRunRequest
+	17, // 26: criteria.v1.ServerService.InspectRun:input_type -> criteria.v1.InspectRunRequest
+	21, // 27: criteria.v1.ServerService.SubmitWorkflowAssignment:input_type -> criteria.v1.SubmitWorkflowAssignmentRequest
+	23, // 28: criteria.v1.ServerService.GetAssignmentDisposition:input_type -> criteria.v1.GetAssignmentDispositionRequest
+	19, // 29: criteria.v1.ServerService.SendPrompt:input_type -> criteria.v1.SendPromptRequest
+	3,  // 30: criteria.v1.ServerService.ListAgents:output_type -> criteria.v1.ListAgentsResponse
+	1,  // 31: criteria.v1.ServerService.GetAgent:output_type -> criteria.v1.Agent
+	6,  // 32: criteria.v1.ServerService.ListRuns:output_type -> criteria.v1.ListRunsResponse
+	28, // 33: criteria.v1.ServerService.GetRun:output_type -> criteria.v1.Run
+	9,  // 34: criteria.v1.ServerService.ListRunEvents:output_type -> criteria.v1.ListRunEventsResponse
+	29, // 35: criteria.v1.ServerService.WatchRun:output_type -> criteria.v1.Envelope
+	12, // 36: criteria.v1.ServerService.StopRun:output_type -> criteria.v1.StopRunResponse
+	14, // 37: criteria.v1.ServerService.PauseRun:output_type -> criteria.v1.PauseRunResponse
+	16, // 38: criteria.v1.ServerService.ResumeRun:output_type -> criteria.v1.ResumeRunResponse
+	18, // 39: criteria.v1.ServerService.InspectRun:output_type -> criteria.v1.InspectRunResponse
+	22, // 40: criteria.v1.ServerService.SubmitWorkflowAssignment:output_type -> criteria.v1.SubmitWorkflowAssignmentResponse
+	24, // 41: criteria.v1.ServerService.GetAssignmentDisposition:output_type -> criteria.v1.GetAssignmentDispositionResponse
+	20, // 42: criteria.v1.ServerService.SendPrompt:output_type -> criteria.v1.SendPromptResponse
+	30, // [30:43] is the sub-list for method output_type
+	17, // [17:30] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_criteria_v1_server_proto_init() }
@@ -1317,13 +1748,14 @@ func file_criteria_v1_server_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_criteria_v1_server_proto_rawDesc), len(file_criteria_v1_server_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   21,
+			NumEnums:      1,
+			NumMessages:   26,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_criteria_v1_server_proto_goTypes,
 		DependencyIndexes: file_criteria_v1_server_proto_depIdxs,
+		EnumInfos:         file_criteria_v1_server_proto_enumTypes,
 		MessageInfos:      file_criteria_v1_server_proto_msgTypes,
 	}.Build()
 	File_criteria_v1_server_proto = out.File

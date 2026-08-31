@@ -59,6 +59,12 @@ const (
 	// ServerServiceInspectRunProcedure is the fully-qualified name of the ServerService's InspectRun
 	// RPC.
 	ServerServiceInspectRunProcedure = "/criteria.v1.ServerService/InspectRun"
+	// ServerServiceSubmitWorkflowAssignmentProcedure is the fully-qualified name of the ServerService's
+	// SubmitWorkflowAssignment RPC.
+	ServerServiceSubmitWorkflowAssignmentProcedure = "/criteria.v1.ServerService/SubmitWorkflowAssignment"
+	// ServerServiceGetAssignmentDispositionProcedure is the fully-qualified name of the ServerService's
+	// GetAssignmentDisposition RPC.
+	ServerServiceGetAssignmentDispositionProcedure = "/criteria.v1.ServerService/GetAssignmentDisposition"
 	// ServerServiceSendPromptProcedure is the fully-qualified name of the ServerService's SendPrompt
 	// RPC.
 	ServerServiceSendPromptProcedure = "/criteria.v1.ServerService/SendPrompt"
@@ -91,6 +97,32 @@ type ServerServiceClient interface {
 	// InspectRun returns structured read-only state for a run. If session_id
 	// is empty the server may return a summary across all sessions.
 	InspectRun(context.Context, *connect.Request[v1.InspectRunRequest]) (*connect.Response[v1.InspectRunResponse], error)
+	// SubmitWorkflowAssignment enqueues a workflow for execution by a long-lived
+	// Criteria agent. The orchestrator creates the run, records the assignment,
+	// and returns the run id along with the current assignment state.
+	//
+	// Authorization: implementations MUST authenticate the caller. The
+	// assignment record is owned by the authenticated submitting caller;
+	// callers are permitted to inspect or cancel assignments they own.
+	// Implementations MAY additionally enforce service-level authorization
+	// (namespace, role, or policy checks). The run itself executes on the
+	// agent that later leases the assignment, but ownership of the assignment
+	// record remains with the submitting caller.
+	//
+	// Idempotency: if `idempotency_key` is non-empty and a previous submission
+	// with the same key already exists in the caller's scope, the server MUST
+	// return the existing `run_id` and current state without creating a
+	// duplicate run or assignment.
+	SubmitWorkflowAssignment(context.Context, *connect.Request[v1.SubmitWorkflowAssignmentRequest]) (*connect.Response[v1.SubmitWorkflowAssignmentResponse], error)
+	// GetAssignmentDisposition returns the current queue state of a previously
+	// submitted workflow assignment.
+	//
+	// Authorization: implementations MUST reject the request with
+	// PERMISSION_DENIED if the authenticated caller does not own the assignment.
+	// Run ownership is distinct from assignment ownership: agents lease and
+	// execute runs via the Control stream, but the assignment record remains
+	// owned by the submitting caller.
+	GetAssignmentDisposition(context.Context, *connect.Request[v1.GetAssignmentDispositionRequest]) (*connect.Response[v1.GetAssignmentDispositionResponse], error)
 	// SendPrompt — schema-only stub for Phase 2.3. UI clients can wire up
 	// against this method, but the server currently returns UNIMPLEMENTED.
 	SendPrompt(context.Context, *connect.Request[v1.SendPromptRequest]) (*connect.Response[v1.SendPromptResponse], error)
@@ -167,6 +199,18 @@ func NewServerServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(serverServiceMethods.ByName("InspectRun")),
 			connect.WithClientOptions(opts...),
 		),
+		submitWorkflowAssignment: connect.NewClient[v1.SubmitWorkflowAssignmentRequest, v1.SubmitWorkflowAssignmentResponse](
+			httpClient,
+			baseURL+ServerServiceSubmitWorkflowAssignmentProcedure,
+			connect.WithSchema(serverServiceMethods.ByName("SubmitWorkflowAssignment")),
+			connect.WithClientOptions(opts...),
+		),
+		getAssignmentDisposition: connect.NewClient[v1.GetAssignmentDispositionRequest, v1.GetAssignmentDispositionResponse](
+			httpClient,
+			baseURL+ServerServiceGetAssignmentDispositionProcedure,
+			connect.WithSchema(serverServiceMethods.ByName("GetAssignmentDisposition")),
+			connect.WithClientOptions(opts...),
+		),
 		sendPrompt: connect.NewClient[v1.SendPromptRequest, v1.SendPromptResponse](
 			httpClient,
 			baseURL+ServerServiceSendPromptProcedure,
@@ -178,17 +222,19 @@ func NewServerServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 
 // serverServiceClient implements ServerServiceClient.
 type serverServiceClient struct {
-	listAgents    *connect.Client[v1.ListAgentsRequest, v1.ListAgentsResponse]
-	getAgent      *connect.Client[v1.GetAgentRequest, v1.Agent]
-	listRuns      *connect.Client[v1.ListRunsRequest, v1.ListRunsResponse]
-	getRun        *connect.Client[v1.GetRunRequest, v1.Run]
-	listRunEvents *connect.Client[v1.ListRunEventsRequest, v1.ListRunEventsResponse]
-	watchRun      *connect.Client[v1.WatchRunRequest, v1.Envelope]
-	stopRun       *connect.Client[v1.StopRunRequest, v1.StopRunResponse]
-	pauseRun      *connect.Client[v1.PauseRunRequest, v1.PauseRunResponse]
-	resumeRun     *connect.Client[v1.ResumeRunRequest, v1.ResumeRunResponse]
-	inspectRun    *connect.Client[v1.InspectRunRequest, v1.InspectRunResponse]
-	sendPrompt    *connect.Client[v1.SendPromptRequest, v1.SendPromptResponse]
+	listAgents               *connect.Client[v1.ListAgentsRequest, v1.ListAgentsResponse]
+	getAgent                 *connect.Client[v1.GetAgentRequest, v1.Agent]
+	listRuns                 *connect.Client[v1.ListRunsRequest, v1.ListRunsResponse]
+	getRun                   *connect.Client[v1.GetRunRequest, v1.Run]
+	listRunEvents            *connect.Client[v1.ListRunEventsRequest, v1.ListRunEventsResponse]
+	watchRun                 *connect.Client[v1.WatchRunRequest, v1.Envelope]
+	stopRun                  *connect.Client[v1.StopRunRequest, v1.StopRunResponse]
+	pauseRun                 *connect.Client[v1.PauseRunRequest, v1.PauseRunResponse]
+	resumeRun                *connect.Client[v1.ResumeRunRequest, v1.ResumeRunResponse]
+	inspectRun               *connect.Client[v1.InspectRunRequest, v1.InspectRunResponse]
+	submitWorkflowAssignment *connect.Client[v1.SubmitWorkflowAssignmentRequest, v1.SubmitWorkflowAssignmentResponse]
+	getAssignmentDisposition *connect.Client[v1.GetAssignmentDispositionRequest, v1.GetAssignmentDispositionResponse]
+	sendPrompt               *connect.Client[v1.SendPromptRequest, v1.SendPromptResponse]
 }
 
 // ListAgents calls criteria.v1.ServerService.ListAgents.
@@ -241,6 +287,16 @@ func (c *serverServiceClient) InspectRun(ctx context.Context, req *connect.Reque
 	return c.inspectRun.CallUnary(ctx, req)
 }
 
+// SubmitWorkflowAssignment calls criteria.v1.ServerService.SubmitWorkflowAssignment.
+func (c *serverServiceClient) SubmitWorkflowAssignment(ctx context.Context, req *connect.Request[v1.SubmitWorkflowAssignmentRequest]) (*connect.Response[v1.SubmitWorkflowAssignmentResponse], error) {
+	return c.submitWorkflowAssignment.CallUnary(ctx, req)
+}
+
+// GetAssignmentDisposition calls criteria.v1.ServerService.GetAssignmentDisposition.
+func (c *serverServiceClient) GetAssignmentDisposition(ctx context.Context, req *connect.Request[v1.GetAssignmentDispositionRequest]) (*connect.Response[v1.GetAssignmentDispositionResponse], error) {
+	return c.getAssignmentDisposition.CallUnary(ctx, req)
+}
+
 // SendPrompt calls criteria.v1.ServerService.SendPrompt.
 func (c *serverServiceClient) SendPrompt(ctx context.Context, req *connect.Request[v1.SendPromptRequest]) (*connect.Response[v1.SendPromptResponse], error) {
 	return c.sendPrompt.CallUnary(ctx, req)
@@ -273,6 +329,32 @@ type ServerServiceHandler interface {
 	// InspectRun returns structured read-only state for a run. If session_id
 	// is empty the server may return a summary across all sessions.
 	InspectRun(context.Context, *connect.Request[v1.InspectRunRequest]) (*connect.Response[v1.InspectRunResponse], error)
+	// SubmitWorkflowAssignment enqueues a workflow for execution by a long-lived
+	// Criteria agent. The orchestrator creates the run, records the assignment,
+	// and returns the run id along with the current assignment state.
+	//
+	// Authorization: implementations MUST authenticate the caller. The
+	// assignment record is owned by the authenticated submitting caller;
+	// callers are permitted to inspect or cancel assignments they own.
+	// Implementations MAY additionally enforce service-level authorization
+	// (namespace, role, or policy checks). The run itself executes on the
+	// agent that later leases the assignment, but ownership of the assignment
+	// record remains with the submitting caller.
+	//
+	// Idempotency: if `idempotency_key` is non-empty and a previous submission
+	// with the same key already exists in the caller's scope, the server MUST
+	// return the existing `run_id` and current state without creating a
+	// duplicate run or assignment.
+	SubmitWorkflowAssignment(context.Context, *connect.Request[v1.SubmitWorkflowAssignmentRequest]) (*connect.Response[v1.SubmitWorkflowAssignmentResponse], error)
+	// GetAssignmentDisposition returns the current queue state of a previously
+	// submitted workflow assignment.
+	//
+	// Authorization: implementations MUST reject the request with
+	// PERMISSION_DENIED if the authenticated caller does not own the assignment.
+	// Run ownership is distinct from assignment ownership: agents lease and
+	// execute runs via the Control stream, but the assignment record remains
+	// owned by the submitting caller.
+	GetAssignmentDisposition(context.Context, *connect.Request[v1.GetAssignmentDispositionRequest]) (*connect.Response[v1.GetAssignmentDispositionResponse], error)
 	// SendPrompt — schema-only stub for Phase 2.3. UI clients can wire up
 	// against this method, but the server currently returns UNIMPLEMENTED.
 	SendPrompt(context.Context, *connect.Request[v1.SendPromptRequest]) (*connect.Response[v1.SendPromptResponse], error)
@@ -345,6 +427,18 @@ func NewServerServiceHandler(svc ServerServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(serverServiceMethods.ByName("InspectRun")),
 		connect.WithHandlerOptions(opts...),
 	)
+	serverServiceSubmitWorkflowAssignmentHandler := connect.NewUnaryHandler(
+		ServerServiceSubmitWorkflowAssignmentProcedure,
+		svc.SubmitWorkflowAssignment,
+		connect.WithSchema(serverServiceMethods.ByName("SubmitWorkflowAssignment")),
+		connect.WithHandlerOptions(opts...),
+	)
+	serverServiceGetAssignmentDispositionHandler := connect.NewUnaryHandler(
+		ServerServiceGetAssignmentDispositionProcedure,
+		svc.GetAssignmentDisposition,
+		connect.WithSchema(serverServiceMethods.ByName("GetAssignmentDisposition")),
+		connect.WithHandlerOptions(opts...),
+	)
 	serverServiceSendPromptHandler := connect.NewUnaryHandler(
 		ServerServiceSendPromptProcedure,
 		svc.SendPrompt,
@@ -373,6 +467,10 @@ func NewServerServiceHandler(svc ServerServiceHandler, opts ...connect.HandlerOp
 			serverServiceResumeRunHandler.ServeHTTP(w, r)
 		case ServerServiceInspectRunProcedure:
 			serverServiceInspectRunHandler.ServeHTTP(w, r)
+		case ServerServiceSubmitWorkflowAssignmentProcedure:
+			serverServiceSubmitWorkflowAssignmentHandler.ServeHTTP(w, r)
+		case ServerServiceGetAssignmentDispositionProcedure:
+			serverServiceGetAssignmentDispositionHandler.ServeHTTP(w, r)
 		case ServerServiceSendPromptProcedure:
 			serverServiceSendPromptHandler.ServeHTTP(w, r)
 		default:
@@ -422,6 +520,14 @@ func (UnimplementedServerServiceHandler) ResumeRun(context.Context, *connect.Req
 
 func (UnimplementedServerServiceHandler) InspectRun(context.Context, *connect.Request[v1.InspectRunRequest]) (*connect.Response[v1.InspectRunResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.ServerService.InspectRun is not implemented"))
+}
+
+func (UnimplementedServerServiceHandler) SubmitWorkflowAssignment(context.Context, *connect.Request[v1.SubmitWorkflowAssignmentRequest]) (*connect.Response[v1.SubmitWorkflowAssignmentResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.ServerService.SubmitWorkflowAssignment is not implemented"))
+}
+
+func (UnimplementedServerServiceHandler) GetAssignmentDisposition(context.Context, *connect.Request[v1.GetAssignmentDispositionRequest]) (*connect.Response[v1.GetAssignmentDispositionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.ServerService.GetAssignmentDisposition is not implemented"))
 }
 
 func (UnimplementedServerServiceHandler) SendPrompt(context.Context, *connect.Request[v1.SendPromptRequest]) (*connect.Response[v1.SendPromptResponse], error) {
