@@ -5,6 +5,7 @@ package servertrans
 import (
 	"context"
 	"errors"
+	"sort"
 
 	"connectrpc.com/connect"
 
@@ -23,8 +24,27 @@ func (c *Client) Register(ctx context.Context, name, hostname, version string) e
 	}
 	c.criteriaID = resp.Msg.CriteriaId
 	c.token = resp.Msg.Token
-	c.log.Info("registered with server", "criteria_id", c.criteriaID)
+	if creds := resp.Msg.GetBootstrapCredentials(); len(creds) > 0 {
+		c.bootstrapCredentials = make(map[string]string, len(creds))
+		for k, v := range creds {
+			c.bootstrapCredentials[k] = v
+		}
+	}
+	c.log.Info("registered with server", "criteria_id", c.criteriaID, "bootstrap_credential_keys", sortedKeys(c.bootstrapCredentials))
 	return nil
+}
+
+// sortedKeys returns the sorted keys of m, or nil if m is empty.
+func sortedKeys(m map[string]string) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // CreateRun registers a new run and returns its server-assigned id.

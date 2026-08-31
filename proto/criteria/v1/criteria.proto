@@ -95,6 +95,11 @@ message RegisterResponse {
   // One-time token. Clients should persist this securely and send it on all
   // subsequent RPCs.
   string token = 2;
+  // Bootstrap credentials supplied by the orchestrator for the registering
+  // agent. Agents MAY use these to authenticate to deployment-specific
+  // services (e.g. private OCI registries). Keys and semantics are
+  // deployment-defined; values are sensitive and MUST be handled securely.
+  map<string, string> bootstrap_credentials = 3;
 }
 
 message HeartbeatRequest {

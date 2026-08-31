@@ -90,9 +90,14 @@ type RegisterResponse struct {
 	CriteriaId string                 `protobuf:"bytes,1,opt,name=criteria_id,json=criteriaId,proto3" json:"criteria_id,omitempty"`
 	// One-time token. Clients should persist this securely and send it on all
 	// subsequent RPCs.
-	Token         string `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Token string `protobuf:"bytes,2,opt,name=token,proto3" json:"token,omitempty"`
+	// Bootstrap credentials supplied by the orchestrator for the registering
+	// agent. Agents MAY use these to authenticate to deployment-specific
+	// services (e.g. private OCI registries). Keys and semantics are
+	// deployment-defined; values are sensitive and MUST be handled securely.
+	BootstrapCredentials map[string]string `protobuf:"bytes,3,rep,name=bootstrap_credentials,json=bootstrapCredentials,proto3" json:"bootstrap_credentials,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *RegisterResponse) Reset() {
@@ -137,6 +142,13 @@ func (x *RegisterResponse) GetToken() string {
 		return x.Token
 	}
 	return ""
+}
+
+func (x *RegisterResponse) GetBootstrapCredentials() map[string]string {
+	if x != nil {
+		return x.BootstrapCredentials
+	}
+	return nil
 }
 
 type HeartbeatRequest struct {
@@ -1249,11 +1261,15 @@ const file_criteria_v1_criteria_proto_rawDesc = "" +
 	"\x06labels\x18\x02 \x03(\v2(.criteria.v1.RegisterRequest.LabelsEntryR\x06labels\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"I\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x80\x02\n" +
 	"\x10RegisterResponse\x12\x1f\n" +
 	"\vcriteria_id\x18\x01 \x01(\tR\n" +
 	"criteriaId\x12\x14\n" +
-	"\x05token\x18\x02 \x01(\tR\x05token\"3\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\x12l\n" +
+	"\x15bootstrap_credentials\x18\x03 \x03(\v27.criteria.v1.RegisterResponse.BootstrapCredentialsEntryR\x14bootstrapCredentials\x1aG\n" +
+	"\x19BootstrapCredentialsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"3\n" +
 	"\x10HeartbeatRequest\x12\x1f\n" +
 	"\vcriteria_id\x18\x01 \x01(\tR\n" +
 	"criteriaId\"P\n" +
@@ -1365,7 +1381,7 @@ func file_criteria_v1_criteria_proto_rawDescGZIP() []byte {
 	return file_criteria_v1_criteria_proto_rawDescData
 }
 
-var file_criteria_v1_criteria_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
+var file_criteria_v1_criteria_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
 var file_criteria_v1_criteria_proto_goTypes = []any{
 	(*RegisterRequest)(nil),         // 0: criteria.v1.RegisterRequest
 	(*RegisterResponse)(nil),        // 1: criteria.v1.RegisterResponse
@@ -1386,45 +1402,47 @@ var file_criteria_v1_criteria_proto_goTypes = []any{
 	(*ResumeRequest)(nil),           // 16: criteria.v1.ResumeRequest
 	(*ResumeResponse)(nil),          // 17: criteria.v1.ResumeResponse
 	nil,                             // 18: criteria.v1.RegisterRequest.LabelsEntry
-	nil,                             // 19: criteria.v1.WorkflowAssignment.LabelsEntry
-	nil,                             // 20: criteria.v1.ResumeRun.PayloadEntry
-	nil,                             // 21: criteria.v1.ResumeRequest.PayloadEntry
-	(*timestamppb.Timestamp)(nil),   // 22: google.protobuf.Timestamp
-	(*Envelope)(nil),                // 23: criteria.v1.Envelope
+	nil,                             // 19: criteria.v1.RegisterResponse.BootstrapCredentialsEntry
+	nil,                             // 20: criteria.v1.WorkflowAssignment.LabelsEntry
+	nil,                             // 21: criteria.v1.ResumeRun.PayloadEntry
+	nil,                             // 22: criteria.v1.ResumeRequest.PayloadEntry
+	(*timestamppb.Timestamp)(nil),   // 23: google.protobuf.Timestamp
+	(*Envelope)(nil),                // 24: criteria.v1.Envelope
 }
 var file_criteria_v1_criteria_proto_depIdxs = []int32{
 	18, // 0: criteria.v1.RegisterRequest.labels:type_name -> criteria.v1.RegisterRequest.LabelsEntry
-	22, // 1: criteria.v1.HeartbeatResponse.server_time:type_name -> google.protobuf.Timestamp
-	22, // 2: criteria.v1.Run.created_at:type_name -> google.protobuf.Timestamp
-	22, // 3: criteria.v1.Run.started_at:type_name -> google.protobuf.Timestamp
-	22, // 4: criteria.v1.Run.ended_at:type_name -> google.protobuf.Timestamp
-	12, // 5: criteria.v1.ControlMessage.run_cancel:type_name -> criteria.v1.RunCancel
-	13, // 6: criteria.v1.ControlMessage.agent_prompt:type_name -> criteria.v1.AgentPrompt
-	14, // 7: criteria.v1.ControlMessage.control_ready:type_name -> criteria.v1.ControlReady
-	15, // 8: criteria.v1.ControlMessage.resume_run:type_name -> criteria.v1.ResumeRun
-	11, // 9: criteria.v1.ControlMessage.workflow_assignment:type_name -> criteria.v1.WorkflowAssignment
-	19, // 10: criteria.v1.WorkflowAssignment.labels:type_name -> criteria.v1.WorkflowAssignment.LabelsEntry
-	20, // 11: criteria.v1.ResumeRun.payload:type_name -> criteria.v1.ResumeRun.PayloadEntry
-	21, // 12: criteria.v1.ResumeRequest.payload:type_name -> criteria.v1.ResumeRequest.PayloadEntry
-	0,  // 13: criteria.v1.CriteriaService.Register:input_type -> criteria.v1.RegisterRequest
-	2,  // 14: criteria.v1.CriteriaService.Heartbeat:input_type -> criteria.v1.HeartbeatRequest
-	4,  // 15: criteria.v1.CriteriaService.CreateRun:input_type -> criteria.v1.CreateRunRequest
-	6,  // 16: criteria.v1.CriteriaService.ReattachRun:input_type -> criteria.v1.ReattachRunRequest
-	16, // 17: criteria.v1.CriteriaService.Resume:input_type -> criteria.v1.ResumeRequest
-	23, // 18: criteria.v1.CriteriaService.SubmitEvents:input_type -> criteria.v1.Envelope
-	9,  // 19: criteria.v1.CriteriaService.Control:input_type -> criteria.v1.ControlSubscribeRequest
-	1,  // 20: criteria.v1.CriteriaService.Register:output_type -> criteria.v1.RegisterResponse
-	3,  // 21: criteria.v1.CriteriaService.Heartbeat:output_type -> criteria.v1.HeartbeatResponse
-	5,  // 22: criteria.v1.CriteriaService.CreateRun:output_type -> criteria.v1.Run
-	7,  // 23: criteria.v1.CriteriaService.ReattachRun:output_type -> criteria.v1.ReattachRunResponse
-	17, // 24: criteria.v1.CriteriaService.Resume:output_type -> criteria.v1.ResumeResponse
-	8,  // 25: criteria.v1.CriteriaService.SubmitEvents:output_type -> criteria.v1.Ack
-	10, // 26: criteria.v1.CriteriaService.Control:output_type -> criteria.v1.ControlMessage
-	20, // [20:27] is the sub-list for method output_type
-	13, // [13:20] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	19, // 1: criteria.v1.RegisterResponse.bootstrap_credentials:type_name -> criteria.v1.RegisterResponse.BootstrapCredentialsEntry
+	23, // 2: criteria.v1.HeartbeatResponse.server_time:type_name -> google.protobuf.Timestamp
+	23, // 3: criteria.v1.Run.created_at:type_name -> google.protobuf.Timestamp
+	23, // 4: criteria.v1.Run.started_at:type_name -> google.protobuf.Timestamp
+	23, // 5: criteria.v1.Run.ended_at:type_name -> google.protobuf.Timestamp
+	12, // 6: criteria.v1.ControlMessage.run_cancel:type_name -> criteria.v1.RunCancel
+	13, // 7: criteria.v1.ControlMessage.agent_prompt:type_name -> criteria.v1.AgentPrompt
+	14, // 8: criteria.v1.ControlMessage.control_ready:type_name -> criteria.v1.ControlReady
+	15, // 9: criteria.v1.ControlMessage.resume_run:type_name -> criteria.v1.ResumeRun
+	11, // 10: criteria.v1.ControlMessage.workflow_assignment:type_name -> criteria.v1.WorkflowAssignment
+	20, // 11: criteria.v1.WorkflowAssignment.labels:type_name -> criteria.v1.WorkflowAssignment.LabelsEntry
+	21, // 12: criteria.v1.ResumeRun.payload:type_name -> criteria.v1.ResumeRun.PayloadEntry
+	22, // 13: criteria.v1.ResumeRequest.payload:type_name -> criteria.v1.ResumeRequest.PayloadEntry
+	0,  // 14: criteria.v1.CriteriaService.Register:input_type -> criteria.v1.RegisterRequest
+	2,  // 15: criteria.v1.CriteriaService.Heartbeat:input_type -> criteria.v1.HeartbeatRequest
+	4,  // 16: criteria.v1.CriteriaService.CreateRun:input_type -> criteria.v1.CreateRunRequest
+	6,  // 17: criteria.v1.CriteriaService.ReattachRun:input_type -> criteria.v1.ReattachRunRequest
+	16, // 18: criteria.v1.CriteriaService.Resume:input_type -> criteria.v1.ResumeRequest
+	24, // 19: criteria.v1.CriteriaService.SubmitEvents:input_type -> criteria.v1.Envelope
+	9,  // 20: criteria.v1.CriteriaService.Control:input_type -> criteria.v1.ControlSubscribeRequest
+	1,  // 21: criteria.v1.CriteriaService.Register:output_type -> criteria.v1.RegisterResponse
+	3,  // 22: criteria.v1.CriteriaService.Heartbeat:output_type -> criteria.v1.HeartbeatResponse
+	5,  // 23: criteria.v1.CriteriaService.CreateRun:output_type -> criteria.v1.Run
+	7,  // 24: criteria.v1.CriteriaService.ReattachRun:output_type -> criteria.v1.ReattachRunResponse
+	17, // 25: criteria.v1.CriteriaService.Resume:output_type -> criteria.v1.ResumeResponse
+	8,  // 26: criteria.v1.CriteriaService.SubmitEvents:output_type -> criteria.v1.Ack
+	10, // 27: criteria.v1.CriteriaService.Control:output_type -> criteria.v1.ControlMessage
+	21, // [21:28] is the sub-list for method output_type
+	14, // [14:21] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_criteria_v1_criteria_proto_init() }
@@ -1446,7 +1464,7 @@ func file_criteria_v1_criteria_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_criteria_v1_criteria_proto_rawDesc), len(file_criteria_v1_criteria_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   22,
+			NumMessages:   23,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
