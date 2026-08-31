@@ -23,6 +23,8 @@ import (
 	"testing"
 	"time"
 
+	"maps"
+
 	"connectrpc.com/connect"
 	"go.uber.org/goleak"
 	"golang.org/x/net/http2"
@@ -158,6 +160,9 @@ type fakeServer struct {
 
 	// resumeErr, when non-nil, causes Resume to return that error.
 	resumeErr error
+
+	// bootstrapCredentials, when non-empty, is returned by Register.
+	bootstrapCredentials map[string]string
 }
 
 func newFakeServer() *fakeServer {
@@ -174,7 +179,7 @@ func (f *fakeServer) Register(_ context.Context, _ *connect.Request[pb.RegisterR
 	if f.registerErr != nil {
 		return nil, f.registerErr
 	}
-	return connect.NewResponse(&pb.RegisterResponse{CriteriaId: f.criteriaID, Token: f.token}), nil
+	return connect.NewResponse(&pb.RegisterResponse{CriteriaId: f.criteriaID, Token: f.token, BootstrapCredentials: f.bootstrapCredentials}), nil
 }
 
 func (f *fakeServer) Heartbeat(_ context.Context, _ *connect.Request[pb.HeartbeatRequest]) (*connect.Response[pb.HeartbeatResponse], error) {
@@ -450,6 +455,49 @@ func TestClientHappyPath(t *testing.T) {
 	}
 	if got := len(c.defaultPublisher.snapshotPending()); got != 0 {
 		t.Fatalf("pending should be empty after ack, got %d", got)
+	}
+}
+
+// TestClientRegisterBootstrapCredentials verifies that credentials returned by
+// the server's Register RPC are captured and exposed by the client.
+func TestClientRegisterBootstrapCredentials(t *testing.T) {
+	f := newFakeServer()
+	f.bootstrapCredentials = map[string]string{
+		"registry_user": "agent",
+		"registry_pass": "secret",
+	}
+	url := startFakeServer(t, f)
+
+	c, err := NewClient(url, newTestLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	if c.BootstrapCredentials() != nil {
+		t.Fatalf("expected nil credentials before Register, got %v", c.BootstrapCredentials())
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := c.Register(ctx, "n", "h", "v"); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	got := c.BootstrapCredentials()
+	want := map[string]string{
+		"registry_user": "agent",
+		"registry_pass": "secret",
+	}
+	if !maps.Equal(want, got) {
+		t.Fatalf("bootstrap credentials mismatch: got %v want %v", got, want)
+	}
+
+	// Exposed map must be a copy: mutating the returned map must not affect
+	// the client's internal state.
+	got["registry_pass"] = "tampered"
+	if c.BootstrapCredentials()["registry_pass"] != "secret" {
+		t.Fatal("BootstrapCredentials returned a mutable reference to internal state")
 	}
 }
 

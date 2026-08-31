@@ -69,8 +69,9 @@ type Client struct {
 	log     *slog.Logger
 	opts    Options
 
-	criteriaID string
-	token      string
+	criteriaID           string
+	token                string
+	bootstrapCredentials map[string]string
 
 	// defaultPublisher is the per-run publisher created by StartPublishStream
 	// and StartStreams for backward compatibility with single-run callers.
@@ -216,6 +217,21 @@ func (c *Client) CriteriaID() string { return c.criteriaID }
 
 // Token returns the auth token assigned during Register.
 func (c *Client) Token() string { return c.token }
+
+// BootstrapCredentials returns the credentials supplied by the server during
+// Register. The returned map is a copy; callers may mutate it without affecting
+// the client. Returns nil when Register has not yet completed or the server
+// sent no credentials.
+func (c *Client) BootstrapCredentials() map[string]string {
+	if c.bootstrapCredentials == nil {
+		return nil
+	}
+	out := make(map[string]string, len(c.bootstrapCredentials))
+	for k, v := range c.bootstrapCredentials {
+		out[k] = v
+	}
+	return out
+}
 
 // AssignmentCh returns the channel carrying WorkflowAssignment messages from
 // the server. Long-lived agent mode drains this channel and executes each
