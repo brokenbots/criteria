@@ -30,6 +30,14 @@ type RunPublisher struct {
 	pendingMu    sync.Mutex
 	pending      []*pb.Envelope
 
+	// published and acked track how many envelopes have been enqueued and
+	// how many have been acknowledged by the server. Drain waits until the two
+	// counters match so that an event which has left sendCh but not yet been
+	// added to pending (or whose ack is in flight) is not mistaken for an
+	// empty publisher and dropped by an immediate Close.
+	published atomic.Uint64
+	acked     atomic.Uint64
+
 	streamStarted atomic.Bool
 	closeOnce     sync.Once
 	closed        chan struct{}
@@ -71,6 +79,7 @@ func (p *RunPublisher) Publish(ctx context.Context, env *pb.Envelope) {
 	env.CorrelationId = uuid.NewString()
 	select {
 	case p.sendCh <- env:
+		p.published.Add(1)
 	case <-ctx.Done():
 	case <-p.closed:
 	}
@@ -99,7 +108,12 @@ func (p *RunPublisher) Drain(ctx context.Context) {
 	t := time.NewTicker(10 * time.Millisecond)
 	defer t.Stop()
 	for {
-		if len(p.snapshotPending()) == 0 && len(p.sendCh) == 0 {
+		// Wait until every published envelope has been acknowledged by the
+		// server, not just until buffers appear empty. A fast Publish/Drain
+		// sequence can otherwise observe an empty sendCh and pending while
+		// an event is in transit between the two, causing Close to tear down
+		// the stream before the server persists and acks it.
+		if p.published.Load() == p.acked.Load() && len(p.snapshotPending()) == 0 && len(p.sendCh) == 0 {
 			return
 		}
 		select {
@@ -203,6 +217,7 @@ func (p *RunPublisher) recvAcks(stream *connect.BidiStreamForClient[pb.Envelope,
 		}
 		if ack.Seq > p.lastAckedSeq.Load() {
 			p.lastAckedSeq.Store(ack.Seq)
+			p.acked.Add(1)
 		}
 		p.clearPending(ack.CorrelationId)
 	}
