@@ -21,12 +21,12 @@ import (
 // ends to satisfy goleak.
 func startTestAgent(t *testing.T, fake *applytest.Fake) (cancel context.CancelFunc, errCh <-chan error) {
 	t.Helper()
-	return startTestAgentOpts(t, fake, agentOptions{})
+	return startTestAgentOpts(t, fake, &agentOptions{})
 }
 
 // startTestAgentOpts starts runAgent with the supplied options merged over the
 // test defaults.
-func startTestAgentOpts(t *testing.T, fake *applytest.Fake, opts agentOptions) (cancel context.CancelFunc, errCh <-chan error) {
+func startTestAgentOpts(t *testing.T, fake *applytest.Fake, opts *agentOptions) (cancel context.CancelFunc, errCh <-chan error) {
 	t.Helper()
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 
@@ -44,7 +44,7 @@ func startTestAgentOpts(t *testing.T, fake *applytest.Fake, opts agentOptions) (
 	if opts.log == nil {
 		opts.log = newApplyLogger()
 	}
-	go func() { errChOut <- runAgent(ctx, &opts) }()
+	go func() { errChOut <- runAgent(ctx, opts) }()
 	return cancel, errChOut
 }
 
@@ -319,7 +319,7 @@ func TestAgent_InitFailureReportsRunFailed(t *testing.T) {
 	// Point the agent at a non-existent var-file so that run initialization
 	// (mergeVarSources inside buildAgentRun) fails before execution starts.
 	badVarFile := filepath.Join(t.TempDir(), "missing.json")
-	cancel, errCh := startTestAgentOpts(t, fake, agentOptions{
+	cancel, errCh := startTestAgentOpts(t, fake, &agentOptions{
 		varFiles: []string{badVarFile},
 	})
 	defer cancel()
