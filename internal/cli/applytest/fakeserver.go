@@ -111,10 +111,10 @@ func (f *Fake) ClientKeyPEM() []byte { return f.clientKeyPEM }
 func newFakeHandler(f *Fake) *fakeHandler {
 	return &fakeHandler{
 		parent:          f,
-		criteriaID:      "test-criteria-id",
-		token:           "test-token",
 		events:          make(map[string][]*pb.Envelope),
 		runStates:       make(map[string]*fakeRunState),
+		credentials:     make(map[string]string),
+		runOwners:       make(map[string]string),
 		controls:        make(chan *pb.ControlMessage, 32),
 		ctlAttached:     make(chan struct{}, 1),
 		assignmentAdded: make(chan struct{}, 1),
@@ -568,15 +568,19 @@ type fakeRunState struct {
 type fakeHandler struct {
 	criteriav1connect.UnimplementedCriteriaServiceHandler
 
-	parent     *Fake
-	criteriaID string
-	token      string
+	parent *Fake
 
 	mu          sync.Mutex
 	events      map[string][]*pb.Envelope // run_id → ordered, persisted envelopes
 	runStates   map[string]*fakeRunState  // run_id → server-side status for ReattachRun
 	sinceSeqHdr []string                  // since_seq header values per connection
 	dropDone    bool                      // true after DropStreamAt has fired once
+
+	// credentials maps issued bearer tokens to their criteria id. It is used
+	// to assign a unique identity per registration and to enforce that a run
+	// may only be reattached or published by the agent that owns it.
+	credentials map[string]string
+	runOwners   map[string]string // run_id → bearer token of the owning agent
 
 	controls        chan *pb.ControlMessage
 	ctlAttached     chan struct{}
@@ -586,13 +590,20 @@ type fakeHandler struct {
 	assignments        []*pb.WorkflowAssignment
 	controlAttachCount atomic.Int32
 	registrationCount  atomic.Int32
+	nextID             atomic.Int32
 }
 
 func (h *fakeHandler) Register(_ context.Context, _ *connect.Request[pb.RegisterRequest]) (*connect.Response[pb.RegisterResponse], error) {
 	h.registrationCount.Add(1)
+	id := h.nextID.Add(1)
+	criteriaID := fmt.Sprintf("criteria-%d", id)
+	token := fmt.Sprintf("token-%d", id)
+	h.mu.Lock()
+	h.credentials[token] = criteriaID
+	h.mu.Unlock()
 	return connect.NewResponse(&pb.RegisterResponse{
-		CriteriaId: h.criteriaID,
-		Token:      h.token,
+		CriteriaId: criteriaID,
+		Token:      token,
 	}), nil
 }
 
@@ -609,6 +620,8 @@ func (h *fakeHandler) ReattachRun(_ context.Context, req *connect.Request[pb.Rea
 	}
 	h.mu.Lock()
 	st, ok := h.runStates[req.Msg.RunId]
+	callerToken := extractBearerToken(req.Header())
+	ownerToken, hasOwner := h.runOwners[req.Msg.RunId]
 	h.mu.Unlock()
 	if !ok || st == nil {
 		// A run that the fake has not explicitly tracked is assumed to be a
@@ -616,7 +629,15 @@ func (h *fakeHandler) ReattachRun(_ context.Context, req *connect.Request[pb.Rea
 		// an empty current_step lets the agent start the run from the beginning.
 		return connect.NewResponse(&pb.ReattachRunResponse{Status: "running", CanResume: true}), nil
 	}
-	canResume := !st.terminal && req.Msg.CriteriaId == h.criteriaID
+	// Enforce run ownership: only the token that originally sent events for
+	// this run may reattach, and the request's criteria_id must match the one
+	// issued with that token.
+	canResume := !st.terminal && (!hasOwner || callerToken == ownerToken)
+	if canResume {
+		h.mu.Lock()
+		canResume = req.Msg.CriteriaId == h.credentials[callerToken]
+		h.mu.Unlock()
+	}
 	return connect.NewResponse(&pb.ReattachRunResponse{
 		Status:        st.status,
 		CurrentStep:   st.currentStep,
@@ -705,6 +726,17 @@ func (h *fakeHandler) SubmitEvents(_ context.Context, stream *connect.BidiStream
 // scripted actions. It returns (done=true, err) when the stream should be closed
 // (for injected drops), otherwise (done=false, nil).
 func (h *fakeHandler) handleSubmitMessage(stream *connect.BidiStream[pb.Envelope, pb.Ack], msg *pb.Envelope) (bool, error) {
+	callerToken := extractBearerToken(stream.RequestHeader())
+	h.mu.Lock()
+	if owner, ok := h.runOwners[msg.RunId]; ok && owner != callerToken {
+		h.mu.Unlock()
+		return true, connect.NewError(connect.CodePermissionDenied, errors.New("applytest: run owned by another agent"))
+	}
+	if _, ok := h.runOwners[msg.RunId]; !ok && callerToken != "" {
+		h.runOwners[msg.RunId] = callerToken
+	}
+	h.mu.Unlock()
+
 	seq, cid, shouldDrop, isDuplicate := h.persistMsg(msg)
 
 	if shouldDrop {
@@ -944,9 +976,17 @@ func (h *fakeHandler) checkAuthHeader(hd http.Header) error {
 	if required == "" {
 		return nil
 	}
-	auth := hd.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != required {
+	token := extractBearerToken(hd)
+	if token != required {
 		return connect.NewError(connect.CodeUnauthenticated, errors.New("applytest: invalid or missing bearer token"))
 	}
 	return nil
+}
+
+func extractBearerToken(hd http.Header) string {
+	auth := hd.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") {
+		return ""
+	}
+	return strings.TrimPrefix(auth, "Bearer ")
 }

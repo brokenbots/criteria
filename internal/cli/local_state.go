@@ -172,17 +172,6 @@ func removeLocalRunState(runID string) {
 	_ = os.Remove(p)
 }
 
-// updateLocalRunStateStatus rewrites the persisted run state with a new
-// status. It is a no-op when no run state exists.
-func updateLocalRunStateStatus(runID, status string) {
-	st, err := readLocalRunState(runID)
-	if err != nil {
-		return
-	}
-	st.Status = status
-	_ = writeLocalRunState(st)
-}
-
 // ListLocalRunStates returns all valid per-run state records found under the
 // runs subdirectory of the state dir. Corrupt or unreadable records are
 // silently skipped.

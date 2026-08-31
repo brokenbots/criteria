@@ -104,6 +104,20 @@ func makeAssignment(runID, workflowName, source string) *pb.WorkflowAssignment {
 	}
 }
 
+// requireStableEventCount waits up to d and fails if the count of events of
+// typeName for runID changes during the window. Use this instead of a raw
+// sleep for negative assertions ("no duplicate execution").
+func requireStableEventCount(t *testing.T, fake *applytest.Fake, runID, typeName string, count int, d time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		if got := runEventCountOfType(fake, runID, typeName); got != count {
+			t.Fatalf("event count changed unexpectedly: got %d %s events for %s, want %d", got, typeName, runID, count)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 // runHasEventOfType reports whether the fake received a terminal event of the
 // given type for the given run_id.
 func runHasEventOfType(fake *applytest.Fake, runID, typeName string) bool {
@@ -519,9 +533,8 @@ func TestAgent_DuplicateDelivery_Idempotent(t *testing.T) {
 
 	// Re-deliver the now-terminal second assignment.
 	fake.QueueAssignment(secondAssignment)
-	// Allow a short window for any ill-behaved duplicate execution.
-	time.Sleep(200 * time.Millisecond)
-	require.Equal(t, 1, runEventCountOfType(fake, secondID, "RunStarted"), "terminal duplicate must not restart the run")
+	// Wait deterministically for any ill-behaved duplicate execution.
+	requireStableEventCount(t, fake, secondID, "RunStarted", 1, 500*time.Millisecond)
 	require.Equal(t, 1, runEventCountOfType(fake, secondID, "RunCompleted"), "terminal run must remain terminal")
 
 	cancel()
@@ -558,8 +571,7 @@ func TestAgent_CrashRecovery_TerminalDuplicateDeclined(t *testing.T) {
 	// The agent should be back in its idle loop. Delivering the same assignment
 	// again must be declined; no new RunStarted is emitted.
 	fake.QueueAssignment(assignment)
-	time.Sleep(200 * time.Millisecond)
-	require.Equal(t, 1, runEventCountOfType(fake, runID, "RunStarted"), "terminal duplicate must not restart the run")
+	requireStableEventCount(t, fake, runID, "RunStarted", 1, 500*time.Millisecond)
 
 	cancel2()
 	waitAgent(t, errCh2)

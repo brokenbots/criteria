@@ -89,6 +89,15 @@ func agentClientOptions(opts *agentOptions) servertrans.Options {
 	}
 }
 
+// queuedAssignment pairs a workflow assignment with the server client that
+// owns the run. Fresh assignments use the long-lived agent client; recovered
+// runs use a temporary client authenticated with the persisted credentials of
+// the crashed incarnation.
+type queuedAssignment struct {
+	assignment *pb.WorkflowAssignment
+	client     *servertrans.Client
+}
+
 // activeRun tracks the currently executing assignment, pending queued
 // assignments, and the channels used to route control messages to the worker.
 // All mutable access is protected by activeRun.mu.
@@ -98,7 +107,7 @@ type activeRun struct {
 	cancel    context.CancelFunc
 	resumeCh  chan *pb.ResumeRun
 	done      chan struct{}
-	pending   []*pb.WorkflowAssignment
+	pending   []*queuedAssignment
 	completed map[string]struct{} // terminal run ids observed by this process
 }
 
@@ -138,7 +147,7 @@ func (a *activeRun) isKnown(runID string) bool {
 		return true
 	}
 	for _, p := range a.pending {
-		if p.GetRunId() == runID {
+		if p.assignment.GetRunId() == runID {
 			return true
 		}
 	}
@@ -178,21 +187,21 @@ func (s *shutdownSuppressingSink) OnStepOutcome(step, outcome string, duration t
 	s.Sink.OnStepOutcome(step, outcome, duration, err)
 }
 
-func (a *activeRun) enqueue(assignment *pb.WorkflowAssignment) {
+func (a *activeRun) enqueue(assignment *pb.WorkflowAssignment, client *servertrans.Client) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.pending = append(a.pending, assignment)
+	a.pending = append(a.pending, &queuedAssignment{assignment: assignment, client: client})
 }
 
-func (a *activeRun) nextPending() *pb.WorkflowAssignment {
+func (a *activeRun) nextPending() *queuedAssignment {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if len(a.pending) == 0 {
 		return nil
 	}
-	assignment := a.pending[0]
+	qa := a.pending[0]
 	a.pending = a.pending[1:]
-	return assignment
+	return qa
 }
 
 func (a *activeRun) beginRun(runID string, cancel context.CancelFunc, resumeCh chan *pb.ResumeRun, done chan struct{}) {
@@ -249,31 +258,38 @@ func (a *activeRun) shutdown() <-chan struct{} {
 	return a.done
 }
 
-func (a *activeRun) startNext(ctx context.Context, log *slog.Logger, client *servertrans.Client, opts *agentOptions) {
-	assignment := a.nextPending()
-	if assignment == nil {
+func (a *activeRun) startNext(ctx context.Context, log *slog.Logger, defaultClient *servertrans.Client, opts *agentOptions) {
+	qa := a.nextPending()
+	if qa == nil {
 		return
+	}
+	client := qa.client
+	if client == nil {
+		client = defaultClient
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
 	resumeCh := make(chan *pb.ResumeRun, 1)
 	done := make(chan struct{})
-	a.beginRun(assignment.GetRunId(), cancel, resumeCh, done)
+	a.beginRun(qa.assignment.GetRunId(), cancel, resumeCh, done)
 
-	log.Info("accepted assignment", "run_id", assignment.GetRunId(), "workflow", assignment.GetWorkflowName())
-	go func(aa *pb.WorkflowAssignment) {
+	log.Info("accepted assignment", "run_id", qa.assignment.GetRunId(), "workflow", qa.assignment.GetWorkflowName())
+	go func(q *queuedAssignment) {
 		defer a.finishRun()
-		if err := executeAgentAssignment(ctx, runCtx, log, client, aa, opts, resumeCh); err != nil {
-			log.Error("assignment execution failed", "run_id", aa.GetRunId(), "error", err)
+		if client != defaultClient {
+			defer client.Close()
+		}
+		if err := executeAgentAssignment(ctx, runCtx, log, client, q.assignment, opts, resumeCh); err != nil {
+			log.Error("assignment execution failed", "run_id", q.assignment.GetRunId(), "error", err)
 		} else {
-			log.Info("assignment completed", "run_id", aa.GetRunId())
+			log.Info("assignment completed", "run_id", q.assignment.GetRunId())
 		}
 		// Remember terminal runs for the remainder of this process so duplicate
 		// deliveries are declined without re-executing the workflow.
 		if runCtx.Err() == nil {
-			a.markCompleted(aa.GetRunId())
+			a.markCompleted(q.assignment.GetRunId())
 		}
-	}(assignment)
+	}(qa)
 }
 
 // agentLoop binds the agent event loop to its mutable state and dependencies.
@@ -310,7 +326,7 @@ func (l *agentLoop) handleAssignment(assignment *pb.WorkflowAssignment) {
 			"active_run_id", l.active.activeRunID())
 		return
 	}
-	l.active.enqueue(assignment)
+	l.active.enqueue(assignment, l.client)
 	if l.active.isIdle() {
 		l.active.startNext(l.ctx, l.log, l.client, l.opts)
 		return
@@ -434,8 +450,9 @@ func recoverAgentRuns(ctx context.Context, log *slog.Logger, client *servertrans
 		return
 	}
 
+	copts := agentClientOptions(opts)
 	for _, st := range states {
-		recoverSingleRun(ctx, log, client, active, st)
+		recoverSingleRun(ctx, log, &copts, active, st)
 	}
 
 	if active.isIdle() {
@@ -443,37 +460,54 @@ func recoverAgentRuns(ctx context.Context, log *slog.Logger, client *servertrans
 	}
 }
 
-func recoverSingleRun(ctx context.Context, log *slog.Logger, client *servertrans.Client, active *activeRun, st *localRunState) {
+func clearRecoveredRun(active *activeRun, runID string, rc *servertrans.Client) {
+	if active != nil {
+		active.markCompleted(runID)
+	}
+	removeLocalRunState(runID)
+	RemoveStepCheckpoint(runID)
+	if rc != nil {
+		rc.Close()
+	}
+}
+
+func recoverSingleRun(ctx context.Context, log *slog.Logger, copts *servertrans.Options, active *activeRun, st *localRunState) {
 	if st.RunID == "" {
 		return
 	}
-	if st.CriteriaID != "" && st.CriteriaID != client.CriteriaID() {
-		log.Info("skipping run state owned by another criteria agent", "run_id", st.RunID, "criteria_id", st.CriteriaID)
+	if st.CriteriaID == "" || st.Token == "" {
+		log.Warn("run state missing credentials; cannot recover", "run_id", st.RunID)
+		clearRecoveredRun(active, st.RunID, nil)
 		return
 	}
 	if st.Status == agentRunStatusTerminal {
-		active.markCompleted(st.RunID)
-		removeLocalRunState(st.RunID)
-		RemoveStepCheckpoint(st.RunID)
+		clearRecoveredRun(active, st.RunID, nil)
 		return
 	}
 
-	log.Info("attempting to recover in-flight run", "run_id", st.RunID)
-	resp, err := client.ReattachRun(ctx, st.RunID, client.CriteriaID())
+	rc, err := servertrans.NewClient(st.ServerURL, log, *copts)
+	if err != nil {
+		log.Warn("cannot build recovery client", "run_id", st.RunID, "error", err)
+		return
+	}
+	rc.SetCredentials(st.CriteriaID, st.Token)
+
+	log.Info("attempting to recover in-flight run", "run_id", st.RunID, "criteria_id", st.CriteriaID)
+	resp, err := rc.ReattachRun(ctx, st.RunID, st.CriteriaID)
 	if err != nil {
 		log.Warn("reattach failed during recovery", "run_id", st.RunID, "error", err)
+		rc.Close()
 		return
 	}
 	if !resp.CanResume || isTerminalRunStatus(resp.Status) {
 		log.Info("recovered run is terminal on server; clearing local state", "run_id", st.RunID, "status", resp.Status)
-		active.markCompleted(st.RunID)
-		removeLocalRunState(st.RunID)
-		RemoveStepCheckpoint(st.RunID)
+		clearRecoveredRun(active, st.RunID, rc)
 		return
 	}
 
 	if st.WorkflowSource == "" {
 		log.Warn("recovered run state missing workflow source; cannot resume", "run_id", st.RunID)
+		clearRecoveredRun(active, st.RunID, rc)
 		return
 	}
 	assignment := &pb.WorkflowAssignment{
@@ -482,7 +516,7 @@ func recoverSingleRun(ctx context.Context, log *slog.Logger, client *servertrans
 		WorkflowSource: st.WorkflowSource,
 		LockfileSource: st.LockfileSource,
 	}
-	active.enqueue(assignment)
+	active.enqueue(assignment, rc)
 	log.Info("recovered run queued for execution", "run_id", st.RunID)
 }
 
@@ -547,7 +581,6 @@ func executeAgentAssignment(agentCtx, runCtx context.Context, log *slog.Logger, 
 	// resume. The completed run is remembered in-memory for the remainder of
 	// this process so duplicate deliveries are declined.
 	if runCtx.Err() == nil {
-		updateLocalRunStateStatus(runID, agentRunStatusTerminal)
 		removeLocalRunState(runID)
 		RemoveStepCheckpoint(runID)
 	}
