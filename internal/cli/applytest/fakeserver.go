@@ -114,6 +114,7 @@ func newFakeHandler(f *Fake) *fakeHandler {
 		criteriaID:      "test-criteria-id",
 		token:           "test-token",
 		events:          make(map[string][]*pb.Envelope),
+		runStates:       make(map[string]*fakeRunState),
 		controls:        make(chan *pb.ControlMessage, 32),
 		ctlAttached:     make(chan struct{}, 1),
 		assignmentAdded: make(chan struct{}, 1),
@@ -555,6 +556,15 @@ func envelopeTypeName(env *pb.Envelope) string {
 
 // --- internal handler -------------------------------------------------------
 
+type fakeRunState struct {
+	status        string
+	currentStep   string
+	attempt       int32
+	variableScope string
+	pendingSignal string
+	terminal      bool
+}
+
 type fakeHandler struct {
 	criteriav1connect.UnimplementedCriteriaServiceHandler
 
@@ -564,6 +574,7 @@ type fakeHandler struct {
 
 	mu          sync.Mutex
 	events      map[string][]*pb.Envelope // run_id → ordered, persisted envelopes
+	runStates   map[string]*fakeRunState  // run_id → server-side status for ReattachRun
 	sinceSeqHdr []string                  // since_seq header values per connection
 	dropDone    bool                      // true after DropStreamAt has fired once
 
@@ -590,6 +601,46 @@ func (h *fakeHandler) Heartbeat(_ context.Context, req *connect.Request[pb.Heart
 		return nil, err
 	}
 	return connect.NewResponse(&pb.HeartbeatResponse{}), nil
+}
+
+func (h *fakeHandler) ReattachRun(_ context.Context, req *connect.Request[pb.ReattachRunRequest]) (*connect.Response[pb.ReattachRunResponse], error) {
+	if err := h.checkAuth(req); err != nil {
+		return nil, err
+	}
+	h.mu.Lock()
+	st, ok := h.runStates[req.Msg.RunId]
+	h.mu.Unlock()
+	if !ok || st == nil {
+		// A run that the fake has not explicitly tracked is assumed to be a
+		// fresh assignment owned by this agent. Returning CanResume=true with
+		// an empty current_step lets the agent start the run from the beginning.
+		return connect.NewResponse(&pb.ReattachRunResponse{Status: "running", CanResume: true}), nil
+	}
+	canResume := !st.terminal && req.Msg.CriteriaId == h.criteriaID
+	return connect.NewResponse(&pb.ReattachRunResponse{
+		Status:        st.status,
+		CurrentStep:   st.currentStep,
+		Attempt:       st.attempt,
+		CanResume:     canResume,
+		VariableScope: st.variableScope,
+		PendingSignal: st.pendingSignal,
+	}), nil
+}
+
+// SetReattachState configures the response returned by ReattachRun for a run.
+// Tests use it to simulate a server-side checkpoint for crash-recovery.
+func (f *Fake) SetReattachState(runID, status, currentStep string, attempt int32, variableScope, pendingSignal string) {
+	f.handler.mu.Lock()
+	defer f.handler.mu.Unlock()
+	terminal := status == "succeeded" || status == "failed" || status == "cancelled"
+	f.handler.runStates[runID] = &fakeRunState{
+		status:        status,
+		currentStep:   currentStep,
+		attempt:       attempt,
+		variableScope: variableScope,
+		pendingSignal: pendingSignal,
+		terminal:      terminal,
+	}
 }
 
 func (h *fakeHandler) CreateRun(_ context.Context, req *connect.Request[pb.CreateRunRequest]) (*connect.Response[pb.Run], error) {
@@ -665,6 +716,7 @@ func (h *fakeHandler) handleSubmitMessage(stream *connect.BidiStream[pb.Envelope
 	}
 
 	if !isDuplicate {
+		h.updateRunState(msg)
 		h.triggerActions(msg)
 	}
 	return false, nil
@@ -746,6 +798,40 @@ func (h *fakeHandler) triggerActions(env *pb.Envelope) {
 		if we := env.GetWaitEntered(); we != nil && we.Node == ex.InjectPauseAt {
 			h.schedulePauseResume(env.RunId)
 		}
+	}
+}
+
+// updateRunState derives server-side run status from submitted events so that
+// ReattachRun can return meaningful status without requiring tests to
+// manually seed state for the common path.
+func (h *fakeHandler) updateRunState(env *pb.Envelope) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	st, ok := h.runStates[env.RunId]
+	if !ok {
+		st = &fakeRunState{status: "running"}
+		h.runStates[env.RunId] = st
+	}
+	switch {
+	case env.GetRunStarted() != nil:
+		st.status = "running"
+	case env.GetStepEntered() != nil:
+		se := env.GetStepEntered()
+		st.currentStep = se.Step
+		st.attempt = se.Attempt
+	case env.GetWaitEntered() != nil:
+		we := env.GetWaitEntered()
+		st.status = "paused"
+		st.currentStep = we.Node
+		st.pendingSignal = we.Signal
+	case env.GetRunCompleted() != nil:
+		st.status = "succeeded"
+		st.terminal = true
+		st.currentStep = ""
+	case env.GetRunFailed() != nil:
+		st.status = "failed"
+		st.terminal = true
+		st.currentStep = ""
 	}
 }
 

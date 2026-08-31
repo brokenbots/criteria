@@ -93,13 +93,22 @@ func agentClientOptions(opts *agentOptions) servertrans.Options {
 // assignments, and the channels used to route control messages to the worker.
 // All mutable access is protected by activeRun.mu.
 type activeRun struct {
-	mu       sync.Mutex
-	runID    string
-	cancel   context.CancelFunc
-	resumeCh chan *pb.ResumeRun
-	done     chan struct{}
-	pending  []*pb.WorkflowAssignment
+	mu        sync.Mutex
+	runID     string
+	cancel    context.CancelFunc
+	resumeCh  chan *pb.ResumeRun
+	done      chan struct{}
+	pending   []*pb.WorkflowAssignment
+	completed map[string]struct{} // terminal run ids observed by this process
 }
+
+// agentRunStatus values persisted in localRunState.Status.
+const (
+	agentRunStatusRunning  = "running"
+	agentRunStatusTerminal = "terminal"
+	agentRunStatusPending  = "pending"
+	agentRunStatusPaused   = "paused"
+)
 
 func (a *activeRun) isIdle() bool {
 	a.mu.Lock()
@@ -117,6 +126,56 @@ func (a *activeRun) doneCh() <-chan struct{} {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.done
+}
+
+func (a *activeRun) isKnown(runID string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if runID == "" {
+		return false
+	}
+	if runID == a.runID {
+		return true
+	}
+	for _, p := range a.pending {
+		if p.GetRunId() == runID {
+			return true
+		}
+	}
+	_, ok := a.completed[runID]
+	return ok
+}
+
+func (a *activeRun) markCompleted(runID string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.completed == nil {
+		a.completed = make(map[string]struct{})
+	}
+	a.completed[runID] = struct{}{}
+}
+
+// shutdownSuppressingSink wraps a *run.Sink and drops OnRunFailed plus
+// error-bearing OnStepOutcome callbacks when the agent is shutting down.
+// Without this, a container exit mid-run would publish a terminal RunFailed
+// event and prevent crash recovery from resuming the run.
+type shutdownSuppressingSink struct {
+	*run.Sink
+	agentCtx context.Context
+}
+
+func (s *shutdownSuppressingSink) OnRunFailed(reason, step string) {
+	if s.agentCtx.Err() != nil {
+		return
+	}
+	s.Sink.OnRunFailed(reason, step)
+}
+
+func (s *shutdownSuppressingSink) OnStepOutcome(step, outcome string, duration time.Duration, err error) {
+	if err != nil && s.agentCtx.Err() != nil {
+		return
+	}
+	s.Sink.OnStepOutcome(step, outcome, duration, err)
 }
 
 func (a *activeRun) enqueue(assignment *pb.WorkflowAssignment) {
@@ -204,10 +263,15 @@ func (a *activeRun) startNext(ctx context.Context, log *slog.Logger, client *ser
 	log.Info("accepted assignment", "run_id", assignment.GetRunId(), "workflow", assignment.GetWorkflowName())
 	go func(aa *pb.WorkflowAssignment) {
 		defer a.finishRun()
-		if err := executeAgentAssignment(runCtx, log, client, aa, opts, resumeCh); err != nil {
+		if err := executeAgentAssignment(ctx, runCtx, log, client, aa, opts, resumeCh); err != nil {
 			log.Error("assignment execution failed", "run_id", aa.GetRunId(), "error", err)
 		} else {
 			log.Info("assignment completed", "run_id", aa.GetRunId())
+		}
+		// Remember terminal runs for the remainder of this process so duplicate
+		// deliveries are declined without re-executing the workflow.
+		if runCtx.Err() == nil {
+			a.markCompleted(aa.GetRunId())
 		}
 	}(assignment)
 }
@@ -239,6 +303,13 @@ func (l *agentLoop) handleResume(msg *pb.ResumeRun) {
 }
 
 func (l *agentLoop) handleAssignment(assignment *pb.WorkflowAssignment) {
+	runID := assignment.GetRunId()
+	if l.active.isKnown(runID) {
+		l.log.Info("declining duplicate assignment",
+			"run_id", runID,
+			"active_run_id", l.active.activeRunID())
+		return
+	}
 	l.active.enqueue(assignment)
 	if l.active.isIdle() {
 		l.active.startNext(l.ctx, l.log, l.client, l.opts)
@@ -246,7 +317,7 @@ func (l *agentLoop) handleAssignment(assignment *pb.WorkflowAssignment) {
 	}
 	l.log.Info("assignment queued behind active run",
 		"active_run_id", l.active.activeRunID(),
-		"queued_run_id", assignment.GetRunId())
+		"queued_run_id", runID)
 }
 
 func (l *agentLoop) handleDone() {
@@ -321,6 +392,11 @@ func runAgent(ctx context.Context, opts *agentOptions) error {
 		active: &activeRun{},
 	}
 
+	// Before accepting new assignments, reconstruct any in-flight runs this
+	// agent was executing before a crash. Recovered runs enter the same idle
+	// assignment loop as fresh assignments.
+	recoverAgentRuns(ctx, log, client, loop.active, opts)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -342,10 +418,79 @@ func runAgent(ctx context.Context, opts *agentOptions) error {
 	}
 }
 
+// recoverAgentRuns scans persisted per-run state left by a previous agent
+// process and reconstructs assignments that are still owned and resumable.
+// Terminal or foreign runs are removed from disk and remembered as completed
+// so duplicate deliveries are declined. The function enqueues recoverable runs
+// and starts the first one before the main loop begins accepting new
+// assignments.
+func recoverAgentRuns(ctx context.Context, log *slog.Logger, client *servertrans.Client, active *activeRun, opts *agentOptions) {
+	states, err := ListLocalRunStates()
+	if err != nil {
+		log.Warn("failed to list local run states", "error", err)
+		return
+	}
+	if len(states) == 0 {
+		return
+	}
+
+	for _, st := range states {
+		recoverSingleRun(ctx, log, client, active, st)
+	}
+
+	if active.isIdle() {
+		active.startNext(ctx, log, client, opts)
+	}
+}
+
+func recoverSingleRun(ctx context.Context, log *slog.Logger, client *servertrans.Client, active *activeRun, st *localRunState) {
+	if st.RunID == "" {
+		return
+	}
+	if st.CriteriaID != "" && st.CriteriaID != client.CriteriaID() {
+		log.Info("skipping run state owned by another criteria agent", "run_id", st.RunID, "criteria_id", st.CriteriaID)
+		return
+	}
+	if st.Status == agentRunStatusTerminal {
+		active.markCompleted(st.RunID)
+		removeLocalRunState(st.RunID)
+		RemoveStepCheckpoint(st.RunID)
+		return
+	}
+
+	log.Info("attempting to recover in-flight run", "run_id", st.RunID)
+	resp, err := client.ReattachRun(ctx, st.RunID, client.CriteriaID())
+	if err != nil {
+		log.Warn("reattach failed during recovery", "run_id", st.RunID, "error", err)
+		return
+	}
+	if !resp.CanResume || isTerminalRunStatus(resp.Status) {
+		log.Info("recovered run is terminal on server; clearing local state", "run_id", st.RunID, "status", resp.Status)
+		active.markCompleted(st.RunID)
+		removeLocalRunState(st.RunID)
+		RemoveStepCheckpoint(st.RunID)
+		return
+	}
+
+	if st.WorkflowSource == "" {
+		log.Warn("recovered run state missing workflow source; cannot resume", "run_id", st.RunID)
+		return
+	}
+	assignment := &pb.WorkflowAssignment{
+		RunId:          st.RunID,
+		WorkflowName:   st.Workflow,
+		WorkflowSource: st.WorkflowSource,
+		LockfileSource: st.LockfileSource,
+	}
+	active.enqueue(assignment)
+	log.Info("recovered run queued for execution", "run_id", st.RunID)
+}
+
 // executeAgentAssignment materialises the assignment source into a temporary
 // workflow directory, compiles and executes it, and reports progress via a
 // per-run publisher.
-func executeAgentAssignment(ctx context.Context, log *slog.Logger, client *servertrans.Client, assignment *pb.WorkflowAssignment, opts *agentOptions, resumeCh <-chan *pb.ResumeRun) error {
+func executeAgentAssignment(agentCtx, runCtx context.Context, log *slog.Logger, client *servertrans.Client, assignment *pb.WorkflowAssignment, opts *agentOptions, resumeCh <-chan *pb.ResumeRun) error {
+	runID := assignment.GetRunId()
 	dir, workflowPath, err := prepareAgentAssignmentDir(assignment)
 	if err != nil {
 		return err
@@ -357,33 +502,76 @@ func executeAgentAssignment(ctx context.Context, log *slog.Logger, client *serve
 	// terminal RunFailed event centrally. The publisher uses a context that
 	// ignores run-level cancellation so terminal events can be flushed even
 	// after the run context is cancelled.
-	publisher, err := client.NewRunPublisher(context.WithoutCancel(ctx), assignment.GetRunId())
+	publisher, closePublisher, err := newRunPublisher(runCtx, client, runID)
 	if err != nil {
-		return fmt.Errorf("create run publisher: %w", err)
-	}
-	defer publisher.Close()
-
-	graph, loader, err := compileAgentWorkflow(ctx, workflowPath, log, opts)
-	if err != nil {
-		reportAgentAssignmentFailed(ctx, log, publisher, assignment.GetRunId(), err)
 		return err
 	}
-	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
+	defer closePublisher()
 
-	eng, sink, runSink, state, err := buildAgentRun(ctx, log, client, assignment, opts, publisher, graph, loader, dir, workflowPath)
+	// If a previous execution of this assignment left a step checkpoint, the
+	// agent crashed mid-run. Query the server for the authoritative status and
+	// either resume from the checkpoint or clean up a run that has already
+	// reached a terminal state.
+	cp, reattachResp, err := loadResumeState(runCtx, log, client, runID)
 	if err != nil {
-		reportAgentAssignmentFailed(ctx, log, publisher, assignment.GetRunId(), err)
 		return err
 	}
 
-	if err := runAndDrain(ctx, log, eng, loader, sink, runSink, resumeCh, state, graph, dir, assignment.GetRunId(), publisher); err != nil {
+	graph, loader, err := compileAgentWorkflow(runCtx, workflowPath, log, opts)
+	if err != nil {
+		reportAgentAssignmentFailed(runCtx, log, publisher, runID, err)
+		return err
+	}
+	defer func() { _ = loader.Shutdown(context.WithoutCancel(runCtx)) }()
+
+	engineOpts := resumeEngineOptions(cp, reattachResp, graph, log, runID)
+
+	eng, sink, runSink, state, err := buildAgentRun(agentCtx, runCtx, log, client, assignment, opts, publisher, graph, loader, dir, workflowPath, engineOpts...)
+	if err != nil {
+		reportAgentAssignmentFailed(runCtx, log, publisher, runID, err)
 		return err
 	}
 
+	// Persist the in-flight run metadata before execution so a restarted agent
+	// can locate this assignment and avoid duplicate execution.
+	if err := writeLocalRunState(state); err != nil {
+		log.Error("failed to persist run state", "run_id", runID, "error", err)
+	}
+
+	if err := runAndDrain(agentCtx, runCtx, log, eng, loader, sink, runSink, resumeCh, state, graph, dir, runID, publisher, cp, reattachResp); err != nil {
+		return err
+	}
+
+	// Terminal runs are no longer recoverable; clear local durable state while
+	// preserving it when the run context was cancelled so the next startup can
+	// resume. The completed run is remembered in-memory for the remainder of
+	// this process so duplicate deliveries are declined.
+	if runCtx.Err() == nil {
+		updateLocalRunStateStatus(runID, agentRunStatusTerminal)
+		removeLocalRunState(runID)
+		RemoveStepCheckpoint(runID)
+	}
+
+	return terminalRunError(runSink)
+}
+
+// terminalRunError returns an error when the run finished in a terminal state
+// that is not successful.
+func terminalRunError(runSink *terminalSuccessSink) error {
 	if finalState, success, ok := runSink.TerminalSuccess(); ok && !success {
 		return fmt.Errorf("run completed with terminal state %q (success=false)", finalState)
 	}
 	return nil
+}
+
+// newRunPublisher starts the per-run event publisher for a run, returning the
+// publisher and a cleanup function that must be deferred by the caller.
+func newRunPublisher(ctx context.Context, client *servertrans.Client, runID string) (*servertrans.RunPublisher, func(), error) {
+	publisher, err := client.NewRunPublisher(context.WithoutCancel(ctx), runID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create run publisher: %w", err)
+	}
+	return publisher, func() { publisher.Close() }, nil
 }
 
 // reportAgentAssignmentFailed emits a terminal RunFailed event for a run that
@@ -403,6 +591,71 @@ func reportAgentAssignmentFailed(ctx context.Context, log *slog.Logger, publishe
 	drainCtx, drainCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer drainCancel()
 	publisher.Drain(drainCtx)
+}
+
+// loadResumeState checks for a local step checkpoint from a previous agent
+// process and queries the server to decide whether the run should resume.
+// If the server reports the run is already terminal, local recovery state is
+// cleaned up and the assignment can be ignored. A nil checkpoint means the
+// run has never been started by this agent.
+func loadResumeState(ctx context.Context, log *slog.Logger, client *servertrans.Client, runID string) (*StepCheckpoint, *pb.ReattachRunResponse, error) {
+	cp, err := readStepCheckpoint(runID)
+	if err != nil {
+		log.Warn("failed to read step checkpoint", "run_id", runID, "error", err)
+		return nil, nil, nil
+	}
+	if cp == nil {
+		return nil, nil, nil
+	}
+
+	log.Info("found step checkpoint, querying server for run status", "run_id", runID)
+	resp, err := client.ReattachRun(ctx, runID, client.CriteriaID())
+	if err != nil {
+		// Without the server's blessing we cannot safely resume. Leave the
+		// checkpoint in place so a future restart can try again.
+		return cp, nil, fmt.Errorf("reattach run %s: %w", runID, err)
+	}
+	if !resp.CanResume || isTerminalRunStatus(resp.Status) {
+		log.Info("run is terminal on server; clearing local recovery state", "run_id", runID, "status", resp.Status)
+		removeLocalRunState(runID)
+		RemoveStepCheckpoint(runID)
+		return nil, nil, nil
+	}
+	return cp, resp, nil
+}
+
+// isTerminalRunStatus reports whether the server status string represents a
+// finished run that must not be resumed.
+func isTerminalRunStatus(status string) bool {
+	switch status {
+	case "succeeded", "failed", "cancelled":
+		return true
+	default:
+		return false
+	}
+}
+
+// resumeEngineOptions builds engine options that restore a run's execution
+// state when a checkpoint and a resumable server response are available.
+func resumeEngineOptions(cp *StepCheckpoint, reattachResp *pb.ReattachRunResponse, graph *workflow.FSMGraph, log *slog.Logger, runID string) []engine.Option {
+	if cp == nil || reattachResp == nil || !reattachResp.CanResume || reattachResp.CurrentStep == "" {
+		return nil
+	}
+	var opts []engine.Option
+	restoredVars, restoredIter, err := workflow.RestoreVarScope(reattachResp.VariableScope, graph)
+	if err != nil {
+		log.Error("failed to restore variable scope", "run_id", runID, "error", err)
+	} else {
+		opts = append(opts,
+			engine.WithResumedVars(restoredVars),
+			engine.WithResumedIter(restoredIter),
+			engine.WithResumedVisits(cp.Visits),
+		)
+	}
+	if reattachResp.Status == agentRunStatusPaused {
+		opts = append(opts, engine.WithPendingSignal(reattachResp.PendingSignal))
+	}
+	return opts
 }
 
 // prepareAgentAssignmentDir writes the workflow (and optional lockfile) source
@@ -429,18 +682,27 @@ func prepareAgentAssignmentDir(assignment *pb.WorkflowAssignment) (dir, workflow
 }
 
 // buildAgentRun constructs the engine, sink, and local run state for an
-// assignment. The engine is returned ready to run but not started.
-func buildAgentRun(ctx context.Context, log *slog.Logger, client *servertrans.Client, assignment *pb.WorkflowAssignment, opts *agentOptions, publisher *servertrans.RunPublisher, graph *workflow.FSMGraph, loader adapterhost.Loader, workflowDir, workflowPath string) (*engine.Engine, *run.Sink, *terminalSuccessSink, *localRunState, error) {
+// assignment. The engine is returned ready to run but not started. Additional
+// engine options can be supplied for crash-recovery resume (restored variable
+// scope, iteration cursor, visit counts, and pending signal).
+func buildAgentRun(agentCtx, runCtx context.Context, log *slog.Logger, client *servertrans.Client, assignment *pb.WorkflowAssignment, opts *agentOptions, publisher *servertrans.RunPublisher, graph *workflow.FSMGraph, loader adapterhost.Loader, workflowDir, workflowPath string, engineOpts ...engine.Option) (*engine.Engine, *run.Sink, *terminalSuccessSink, *localRunState, error) {
 	state := newLocalRunState(assignment.GetRunId(), graph.Name, opts.serverURL)
+	state.CriteriaID = client.CriteriaID()
+	state.Token = client.Token()
+	state.WorkflowSource = assignment.GetWorkflowSource()
+	state.LockfileSource = assignment.GetLockfileSource()
+	state.Status = agentRunStatusRunning
+
 	var eng *engine.Engine
-	sink := buildServerSink(ctx, publisher, client, assignment.GetRunId(), graph, workflowPath, opts.serverURL, log,
+	sink := buildServerSink(runCtx, publisher, client, assignment.GetRunId(), graph, workflowPath, opts.serverURL, log,
 		func() map[string]int {
 			if eng != nil {
 				return eng.VisitCounts()
 			}
 			return nil
 		})
-	runSink := &terminalSuccessSink{Sink: sink}
+	engineSink := &shutdownSuppressingSink{Sink: sink, agentCtx: agentCtx}
+	runSink := &terminalSuccessSink{Sink: engineSink}
 
 	auditPath, _ := auditLogPath(assignment.GetRunId())
 	auditWriter := adapterhost.NewFileAuditWriter(auditPath)
@@ -449,33 +711,59 @@ func buildAgentRun(ctx context.Context, log *slog.Logger, client *servertrans.Cl
 		return nil, nil, nil, nil, err
 	}
 
-	eng = engine.New(graph, loader, runSink,
+	baseOpts := []engine.Option{
 		engine.WithVarOverrides(mergedVars),
 		engine.WithWorkflowDir(workflowDir),
 		engine.WithAuditWriter(auditWriter),
-	)
+	}
+	eng = engine.New(graph, loader, runSink, append(baseOpts, engineOpts...)...)
 	return eng, sink, runSink, state, nil
 }
 
 // runAndDrain runs the engine, drains resume cycles, and flushes terminal
 // events through the publisher. It returns the original run error (if any).
-func runAndDrain(ctx context.Context, log *slog.Logger, eng *engine.Engine, loader adapterhost.Loader, sink *run.Sink, runSink engine.Sink, resumeCh <-chan *pb.ResumeRun, state *localRunState, graph *workflow.FSMGraph, workflowDir, runID string, publisher *servertrans.RunPublisher) error {
-	runErr := eng.Run(ctx)
-	if runErr != nil {
-		log.Error("run failed", "run_id", runID, "error", runErr)
-		sink.RunFailed(ctx, runErr.Error(), "")
+// When cp and reattachResp are non-nil, the engine resumes from the server's
+// reported current step and attempt instead of starting from the beginning.
+func runAndDrain(agentCtx, runCtx context.Context, log *slog.Logger, eng *engine.Engine, loader adapterhost.Loader, sink *run.Sink, runSink engine.Sink, resumeCh <-chan *pb.ResumeRun, state *localRunState, graph *workflow.FSMGraph, workflowDir, runID string, publisher *servertrans.RunPublisher, cp *StepCheckpoint, reattachResp *pb.ReattachRunResponse) error {
+	var runErr error
+	resuming := cp != nil && reattachResp != nil && reattachResp.CanResume && reattachResp.CurrentStep != ""
+	if resuming {
+		log.Info("resuming run from checkpoint", "run_id", runID, "step", reattachResp.CurrentStep, "attempt", reattachResp.Attempt)
+		runErr = eng.RunFrom(runCtx, reattachResp.CurrentStep, int(reattachResp.Attempt))
 	} else {
+		runErr = eng.Run(runCtx)
+	}
+
+	shutdown := agentCtx.Err() != nil
+	if runErr != nil {
+		if shutdown {
+			// Agent shutdown is not a terminal failure. Do not emit RunFailed so
+			// the server leaves the run in-flight for crash recovery.
+			log.Info("run interrupted by agent shutdown", "run_id", runID, "error", runErr)
+		} else {
+			log.Error("run failed", "run_id", runID, "error", runErr)
+			sink.RunFailed(runCtx, runErr.Error(), "")
+		}
+	} else if !shutdown {
 		log.Info("run completed", "run_id", runID)
 	}
 
-	if err := drainResumeCycles(ctx, log, loader, sink, runSink, resumeCh, state, graph, workflowDir, eng); err != nil {
-		return err
+	// Only wait for resume cycles when the agent is not shutting down. Pending
+	// non-terminal events are still drained below so the server can ack them
+	// and the next process replays by correlation ID.
+	if !shutdown {
+		if err := drainResumeCycles(runCtx, log, loader, sink, runSink, resumeCh, state, graph, workflowDir, eng); err != nil {
+			return err
+		}
 	}
 
-	drainCtx, drainCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	drainCtx, drainCancel := context.WithTimeout(context.WithoutCancel(runCtx), 5*time.Second)
 	publisher.Drain(drainCtx)
 	drainCancel()
 
+	if shutdown {
+		return runCtx.Err()
+	}
 	return runErr
 }
 
