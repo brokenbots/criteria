@@ -18,6 +18,15 @@ type localRunState struct {
 	Workflow  string    `json:"workflow"`
 	ServerURL string    `json:"server_url"`
 	StartedAt time.Time `json:"started_at"`
+
+	// The following fields are populated for server-mode agent runs so that a
+	// restarted agent can identify, decline, or resume an in-flight assignment
+	// using the server's canonical run id.
+	Status         string `json:"status,omitempty"`
+	CriteriaID     string `json:"criteria_id,omitempty"`
+	Token          string `json:"token,omitempty"`
+	WorkflowSource string `json:"workflow_source,omitempty"`
+	LockfileSource string `json:"lockfile_source,omitempty"`
 }
 
 // StepCheckpoint is written to disk before each step is executed so that a
@@ -75,6 +84,30 @@ func checkpointFilePath(runID string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(d, "runs", runID+".json"), nil
+}
+
+// readStepCheckpoint loads the checkpoint file for a specific run id. It
+// returns nil, nil when the checkpoint does not exist.
+func readStepCheckpoint(runID string) (*StepCheckpoint, error) {
+	p, err := checkpointFilePath(runID)
+	if err != nil {
+		return nil, err
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var cp StepCheckpoint
+	if err := json.Unmarshal(b, &cp); err != nil {
+		return nil, fmt.Errorf("decode step checkpoint: %w", err)
+	}
+	if cp.RunID == "" {
+		return nil, nil
+	}
+	return &cp, nil
 }
 
 func auditLogPath(runID string) (string, error) {

@@ -111,9 +111,10 @@ func (f *Fake) ClientKeyPEM() []byte { return f.clientKeyPEM }
 func newFakeHandler(f *Fake) *fakeHandler {
 	return &fakeHandler{
 		parent:          f,
-		criteriaID:      "test-criteria-id",
-		token:           "test-token",
 		events:          make(map[string][]*pb.Envelope),
+		runStates:       make(map[string]*fakeRunState),
+		credentials:     make(map[string]string),
+		runOwners:       make(map[string]string),
 		controls:        make(chan *pb.ControlMessage, 32),
 		ctlAttached:     make(chan struct{}, 1),
 		assignmentAdded: make(chan struct{}, 1),
@@ -555,17 +556,31 @@ func envelopeTypeName(env *pb.Envelope) string {
 
 // --- internal handler -------------------------------------------------------
 
+type fakeRunState struct {
+	status        string
+	currentStep   string
+	attempt       int32
+	variableScope string
+	pendingSignal string
+	terminal      bool
+}
+
 type fakeHandler struct {
 	criteriav1connect.UnimplementedCriteriaServiceHandler
 
-	parent     *Fake
-	criteriaID string
-	token      string
+	parent *Fake
 
 	mu          sync.Mutex
 	events      map[string][]*pb.Envelope // run_id → ordered, persisted envelopes
+	runStates   map[string]*fakeRunState  // run_id → server-side status for ReattachRun
 	sinceSeqHdr []string                  // since_seq header values per connection
 	dropDone    bool                      // true after DropStreamAt has fired once
+
+	// credentials maps issued bearer tokens to their criteria id. It is used
+	// to assign a unique identity per registration and to enforce that a run
+	// may only be reattached or published by the agent that owns it.
+	credentials map[string]string
+	runOwners   map[string]string // run_id → bearer token of the owning agent
 
 	controls        chan *pb.ControlMessage
 	ctlAttached     chan struct{}
@@ -575,13 +590,20 @@ type fakeHandler struct {
 	assignments        []*pb.WorkflowAssignment
 	controlAttachCount atomic.Int32
 	registrationCount  atomic.Int32
+	nextID             atomic.Int32
 }
 
 func (h *fakeHandler) Register(_ context.Context, _ *connect.Request[pb.RegisterRequest]) (*connect.Response[pb.RegisterResponse], error) {
 	h.registrationCount.Add(1)
+	id := h.nextID.Add(1)
+	criteriaID := fmt.Sprintf("criteria-%d", id)
+	token := fmt.Sprintf("token-%d", id)
+	h.mu.Lock()
+	h.credentials[token] = criteriaID
+	h.mu.Unlock()
 	return connect.NewResponse(&pb.RegisterResponse{
-		CriteriaId: h.criteriaID,
-		Token:      h.token,
+		CriteriaId: criteriaID,
+		Token:      token,
 	}), nil
 }
 
@@ -590,6 +612,56 @@ func (h *fakeHandler) Heartbeat(_ context.Context, req *connect.Request[pb.Heart
 		return nil, err
 	}
 	return connect.NewResponse(&pb.HeartbeatResponse{}), nil
+}
+
+func (h *fakeHandler) ReattachRun(_ context.Context, req *connect.Request[pb.ReattachRunRequest]) (*connect.Response[pb.ReattachRunResponse], error) {
+	if err := h.checkAuth(req); err != nil {
+		return nil, err
+	}
+	h.mu.Lock()
+	st, ok := h.runStates[req.Msg.RunId]
+	callerToken := extractBearerToken(req.Header())
+	ownerToken, hasOwner := h.runOwners[req.Msg.RunId]
+	h.mu.Unlock()
+	if !ok || st == nil {
+		// A run that the fake has not explicitly tracked is assumed to be a
+		// fresh assignment owned by this agent. Returning CanResume=true with
+		// an empty current_step lets the agent start the run from the beginning.
+		return connect.NewResponse(&pb.ReattachRunResponse{Status: "running", CanResume: true}), nil
+	}
+	// Enforce run ownership: only the token that originally sent events for
+	// this run may reattach, and the request's criteria_id must match the one
+	// issued with that token.
+	canResume := !st.terminal && (!hasOwner || callerToken == ownerToken)
+	if canResume {
+		h.mu.Lock()
+		canResume = req.Msg.CriteriaId == h.credentials[callerToken]
+		h.mu.Unlock()
+	}
+	return connect.NewResponse(&pb.ReattachRunResponse{
+		Status:        st.status,
+		CurrentStep:   st.currentStep,
+		Attempt:       st.attempt,
+		CanResume:     canResume,
+		VariableScope: st.variableScope,
+		PendingSignal: st.pendingSignal,
+	}), nil
+}
+
+// SetReattachState configures the response returned by ReattachRun for a run.
+// Tests use it to simulate a server-side checkpoint for crash-recovery.
+func (f *Fake) SetReattachState(runID, status, currentStep string, attempt int32, variableScope, pendingSignal string) {
+	f.handler.mu.Lock()
+	defer f.handler.mu.Unlock()
+	terminal := status == "succeeded" || status == "failed" || status == "cancelled"
+	f.handler.runStates[runID] = &fakeRunState{
+		status:        status,
+		currentStep:   currentStep,
+		attempt:       attempt,
+		variableScope: variableScope,
+		pendingSignal: pendingSignal,
+		terminal:      terminal,
+	}
 }
 
 func (h *fakeHandler) CreateRun(_ context.Context, req *connect.Request[pb.CreateRunRequest]) (*connect.Response[pb.Run], error) {
@@ -654,6 +726,17 @@ func (h *fakeHandler) SubmitEvents(_ context.Context, stream *connect.BidiStream
 // scripted actions. It returns (done=true, err) when the stream should be closed
 // (for injected drops), otherwise (done=false, nil).
 func (h *fakeHandler) handleSubmitMessage(stream *connect.BidiStream[pb.Envelope, pb.Ack], msg *pb.Envelope) (bool, error) {
+	callerToken := extractBearerToken(stream.RequestHeader())
+	h.mu.Lock()
+	if owner, ok := h.runOwners[msg.RunId]; ok && owner != callerToken {
+		h.mu.Unlock()
+		return true, connect.NewError(connect.CodePermissionDenied, errors.New("applytest: run owned by another agent"))
+	}
+	if _, ok := h.runOwners[msg.RunId]; !ok && callerToken != "" {
+		h.runOwners[msg.RunId] = callerToken
+	}
+	h.mu.Unlock()
+
 	seq, cid, shouldDrop, isDuplicate := h.persistMsg(msg)
 
 	if shouldDrop {
@@ -665,6 +748,7 @@ func (h *fakeHandler) handleSubmitMessage(stream *connect.BidiStream[pb.Envelope
 	}
 
 	if !isDuplicate {
+		h.updateRunState(msg)
 		h.triggerActions(msg)
 	}
 	return false, nil
@@ -746,6 +830,40 @@ func (h *fakeHandler) triggerActions(env *pb.Envelope) {
 		if we := env.GetWaitEntered(); we != nil && we.Node == ex.InjectPauseAt {
 			h.schedulePauseResume(env.RunId)
 		}
+	}
+}
+
+// updateRunState derives server-side run status from submitted events so that
+// ReattachRun can return meaningful status without requiring tests to
+// manually seed state for the common path.
+func (h *fakeHandler) updateRunState(env *pb.Envelope) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	st, ok := h.runStates[env.RunId]
+	if !ok {
+		st = &fakeRunState{status: "running"}
+		h.runStates[env.RunId] = st
+	}
+	switch {
+	case env.GetRunStarted() != nil:
+		st.status = "running"
+	case env.GetStepEntered() != nil:
+		se := env.GetStepEntered()
+		st.currentStep = se.Step
+		st.attempt = se.Attempt
+	case env.GetWaitEntered() != nil:
+		we := env.GetWaitEntered()
+		st.status = "paused"
+		st.currentStep = we.Node
+		st.pendingSignal = we.Signal
+	case env.GetRunCompleted() != nil:
+		st.status = "succeeded"
+		st.terminal = true
+		st.currentStep = ""
+	case env.GetRunFailed() != nil:
+		st.status = "failed"
+		st.terminal = true
+		st.currentStep = ""
 	}
 }
 
@@ -858,9 +976,17 @@ func (h *fakeHandler) checkAuthHeader(hd http.Header) error {
 	if required == "" {
 		return nil
 	}
-	auth := hd.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != required {
+	token := extractBearerToken(hd)
+	if token != required {
 		return connect.NewError(connect.CodeUnauthenticated, errors.New("applytest: invalid or missing bearer token"))
 	}
 	return nil
+}
+
+func extractBearerToken(hd http.Header) string {
+	auth := hd.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") {
+		return ""
+	}
+	return strings.TrimPrefix(auth, "Bearer ")
 }
