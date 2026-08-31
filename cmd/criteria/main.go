@@ -45,12 +45,16 @@ func main() {
 	root.AddCommand(cli.NewPauseCmd())
 	root.AddCommand(cli.NewResumeCmd())
 	root.AddCommand(cli.NewWatchCmd())
+	root.AddCommand(cli.NewSubmitCmd())
 	root.AddCommand(cli.NewInspectCmd())
 	root.AddCommand(cli.NewAdapterCmd())
 	root.AddCommand(cli.NewLangserverCmd())
 	root.AddCommand(cli.NewVersionCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		if code := cli.OSErrorCode(err); code > 0 {
+			os.Exit(code)
+		}
 		os.Exit(1)
 	}
 }
