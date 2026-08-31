@@ -36,6 +36,7 @@ func main() {
 	root.AddCommand(cli.NewCompileCmd())
 	root.AddCommand(cli.NewPlanCmd())
 	root.AddCommand(cli.NewApplyCmd())
+	root.AddCommand(cli.NewAgentCmd())
 	root.AddCommand(cli.NewRunCmd())
 	root.AddCommand(cli.NewValidateCmd())
 	root.AddCommand(cli.NewSpecCmd())

@@ -186,7 +186,29 @@ message ControlMessage {
     // that owns the run. The agent should re-enter the paused node with the
     // supplied payload. Permanent (W05).
     ResumeRun resume_run = 4; // permanent (W05)
+    // WorkflowAssignment pushes a queued workflow to a long-lived agent.
+    // The agent compiles the supplied source and executes it under the provided
+    // run_id. The orchestrator is the source of run ids; the agent does not call
+    // CreateRun for assignments. Accepted implicitly when the agent starts the
+    // run and submits a RunStarted event.
+    WorkflowAssignment workflow_assignment = 5; // CRI-60
   }
+}
+
+// WorkflowAssignment delivers a queued workflow from the orchestrator to a
+// long-lived Criteria agent (CRI-60). The agent executes the workflow with
+// run_id as the run identity and reports progress via SubmitEvents.
+message WorkflowAssignment {
+  string run_id = 1;
+  string workflow_name = 2;
+  // workflow_source is the raw HCL/CHCL source for the workflow module.
+  string workflow_source = 3;
+  // Optional key/value labels passed through from the orchestrator queue.
+  map<string, string> labels = 4;
+  // lockfile_source is the optional raw HCL source of the workflow tree's
+  // .criteria.lock.hcl. When present the agent writes it next to the workflow
+  // source so adapter pins and digests are available during compilation.
+  string lockfile_source = 5;
 }
 
 // RunCancel asks the Criteria agent to cancel an in-flight run.

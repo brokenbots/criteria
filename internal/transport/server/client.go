@@ -72,18 +72,14 @@ type Client struct {
 	criteriaID string
 	token      string
 
-	// publish stream state
-	// sendCh is allocated in NewClient and is immutable for the client's
-	// lifetime so concurrent Publish/sendLoop don't race on the field.
-	runID         string
-	sendCh        chan *pb.Envelope
-	lastAckedSeq  atomic.Uint64
-	pendingMu     sync.Mutex
-	pending       []*pb.Envelope // ordered by send; matched on ack by correlation_id
-	streamStarted atomic.Bool
+	// defaultPublisher is the per-run publisher created by StartPublishStream
+	// and StartStreams for backward compatibility with single-run callers.
+	defaultPublisher *RunPublisher
+	defaultMu        sync.Mutex
 
 	// control stream
 	controlStarted atomic.Bool
+	assignmentCh   chan *pb.WorkflowAssignment
 	runCancelCh    chan string
 	resumeCh       chan *pb.ResumeRun
 
@@ -119,15 +115,15 @@ func NewClient(serverURL string, log *slog.Logger, opts ...Options) (*Client, er
 	grpc := criteriav1connect.NewCriteriaServiceClient(httpClient, u.String(), copts...)
 
 	return &Client{
-		baseURL:     u,
-		http:        httpClient,
-		grpc:        grpc,
-		log:         log,
-		opts:        o,
-		sendCh:      make(chan *pb.Envelope, o.SendBuffer),
-		runCancelCh: make(chan string, 32),
-		resumeCh:    make(chan *pb.ResumeRun, 32),
-		closed:      make(chan struct{}),
+		baseURL:      u,
+		http:         httpClient,
+		grpc:         grpc,
+		log:          log,
+		opts:         o,
+		assignmentCh: make(chan *pb.WorkflowAssignment, 32),
+		runCancelCh:  make(chan string, 32),
+		resumeCh:     make(chan *pb.ResumeRun, 32),
+		closed:       make(chan struct{}),
 	}, nil
 }
 
@@ -221,6 +217,11 @@ func (c *Client) CriteriaID() string { return c.criteriaID }
 // Token returns the auth token assigned during Register.
 func (c *Client) Token() string { return c.token }
 
+// AssignmentCh returns the channel carrying WorkflowAssignment messages from
+// the server. Long-lived agent mode drains this channel and executes each
+// assignment one-at-a-time.
+func (c *Client) AssignmentCh() <-chan *pb.WorkflowAssignment { return c.assignmentCh }
+
 // RunCancelCh returns the channel carrying run ids that the server has asked
 // the agent to cancel via the Control server-stream.
 func (c *Client) RunCancelCh() <-chan string { return c.runCancelCh }
@@ -233,22 +234,17 @@ func (c *Client) ResumeCh() <-chan *pb.ResumeRun { return c.resumeCh }
 func (c *Client) TLSMode() TLSMode { return c.opts.TLSMode }
 
 // Close stops the streams and releases resources. It is safe to call
-// concurrently with Publish; Close signals shutdown via c.closed and never
-// closes sendCh, so an in-flight Publish select unblocks cleanly.
+// concurrently with Publish; Close signals shutdown via c.closed.
 func (c *Client) Close() error {
 	c.closeOnce.Do(func() {
 		close(c.closed)
 	})
-	return nil
-}
-
-func (c *Client) isClosed() bool {
-	select {
-	case <-c.closed:
-		return true
-	default:
-		return false
+	c.defaultMu.Lock()
+	if p := c.defaultPublisher; p != nil {
+		_ = p.Close()
 	}
+	c.defaultMu.Unlock()
+	return nil
 }
 
 func (c *Client) authorize(h http.Header) {

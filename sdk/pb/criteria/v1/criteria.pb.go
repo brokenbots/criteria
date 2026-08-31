@@ -681,6 +681,7 @@ type ControlMessage struct {
 	//	*ControlMessage_AgentPrompt
 	//	*ControlMessage_ControlReady
 	//	*ControlMessage_ResumeRun
+	//	*ControlMessage_WorkflowAssignment
 	Command       isControlMessage_Command `protobuf_oneof:"command"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -759,6 +760,15 @@ func (x *ControlMessage) GetResumeRun() *ResumeRun {
 	return nil
 }
 
+func (x *ControlMessage) GetWorkflowAssignment() *WorkflowAssignment {
+	if x != nil {
+		if x, ok := x.Command.(*ControlMessage_WorkflowAssignment); ok {
+			return x.WorkflowAssignment
+		}
+	}
+	return nil
+}
+
 type isControlMessage_Command interface {
 	isControlMessage_Command()
 }
@@ -786,6 +796,15 @@ type ControlMessage_ResumeRun struct {
 	ResumeRun *ResumeRun `protobuf:"bytes,4,opt,name=resume_run,json=resumeRun,proto3,oneof"` // permanent (W05)
 }
 
+type ControlMessage_WorkflowAssignment struct {
+	// WorkflowAssignment pushes a queued workflow to a long-lived agent.
+	// The agent compiles the supplied source and executes it under the provided
+	// run_id. The orchestrator is the source of run ids; the agent does not call
+	// CreateRun for assignments. Accepted implicitly when the agent starts the
+	// run and submits a RunStarted event.
+	WorkflowAssignment *WorkflowAssignment `protobuf:"bytes,5,opt,name=workflow_assignment,json=workflowAssignment,proto3,oneof"` // CRI-60
+}
+
 func (*ControlMessage_RunCancel) isControlMessage_Command() {}
 
 func (*ControlMessage_AgentPrompt) isControlMessage_Command() {}
@@ -793,6 +812,92 @@ func (*ControlMessage_AgentPrompt) isControlMessage_Command() {}
 func (*ControlMessage_ControlReady) isControlMessage_Command() {}
 
 func (*ControlMessage_ResumeRun) isControlMessage_Command() {}
+
+func (*ControlMessage_WorkflowAssignment) isControlMessage_Command() {}
+
+// WorkflowAssignment delivers a queued workflow from the orchestrator to a
+// long-lived Criteria agent (CRI-60). The agent executes the workflow with
+// run_id as the run identity and reports progress via SubmitEvents.
+type WorkflowAssignment struct {
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	RunId        string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	WorkflowName string                 `protobuf:"bytes,2,opt,name=workflow_name,json=workflowName,proto3" json:"workflow_name,omitempty"`
+	// workflow_source is the raw HCL/CHCL source for the workflow module.
+	WorkflowSource string `protobuf:"bytes,3,opt,name=workflow_source,json=workflowSource,proto3" json:"workflow_source,omitempty"`
+	// Optional key/value labels passed through from the orchestrator queue.
+	Labels map[string]string `protobuf:"bytes,4,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// lockfile_source is the optional raw HCL source of the workflow tree's
+	// .criteria.lock.hcl. When present the agent writes it next to the workflow
+	// source so adapter pins and digests are available during compilation.
+	LockfileSource string `protobuf:"bytes,5,opt,name=lockfile_source,json=lockfileSource,proto3" json:"lockfile_source,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *WorkflowAssignment) Reset() {
+	*x = WorkflowAssignment{}
+	mi := &file_criteria_v1_criteria_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorkflowAssignment) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorkflowAssignment) ProtoMessage() {}
+
+func (x *WorkflowAssignment) ProtoReflect() protoreflect.Message {
+	mi := &file_criteria_v1_criteria_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorkflowAssignment.ProtoReflect.Descriptor instead.
+func (*WorkflowAssignment) Descriptor() ([]byte, []int) {
+	return file_criteria_v1_criteria_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *WorkflowAssignment) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *WorkflowAssignment) GetWorkflowName() string {
+	if x != nil {
+		return x.WorkflowName
+	}
+	return ""
+}
+
+func (x *WorkflowAssignment) GetWorkflowSource() string {
+	if x != nil {
+		return x.WorkflowSource
+	}
+	return ""
+}
+
+func (x *WorkflowAssignment) GetLabels() map[string]string {
+	if x != nil {
+		return x.Labels
+	}
+	return nil
+}
+
+func (x *WorkflowAssignment) GetLockfileSource() string {
+	if x != nil {
+		return x.LockfileSource
+	}
+	return ""
+}
 
 // RunCancel asks the Criteria agent to cancel an in-flight run.
 type RunCancel struct {
@@ -805,7 +910,7 @@ type RunCancel struct {
 
 func (x *RunCancel) Reset() {
 	*x = RunCancel{}
-	mi := &file_criteria_v1_criteria_proto_msgTypes[11]
+	mi := &file_criteria_v1_criteria_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -817,7 +922,7 @@ func (x *RunCancel) String() string {
 func (*RunCancel) ProtoMessage() {}
 
 func (x *RunCancel) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_criteria_proto_msgTypes[11]
+	mi := &file_criteria_v1_criteria_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -830,7 +935,7 @@ func (x *RunCancel) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunCancel.ProtoReflect.Descriptor instead.
 func (*RunCancel) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_criteria_proto_rawDescGZIP(), []int{11}
+	return file_criteria_v1_criteria_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *RunCancel) GetRunId() string {
@@ -859,7 +964,7 @@ type AgentPrompt struct {
 
 func (x *AgentPrompt) Reset() {
 	*x = AgentPrompt{}
-	mi := &file_criteria_v1_criteria_proto_msgTypes[12]
+	mi := &file_criteria_v1_criteria_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -871,7 +976,7 @@ func (x *AgentPrompt) String() string {
 func (*AgentPrompt) ProtoMessage() {}
 
 func (x *AgentPrompt) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_criteria_proto_msgTypes[12]
+	mi := &file_criteria_v1_criteria_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -884,7 +989,7 @@ func (x *AgentPrompt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentPrompt.ProtoReflect.Descriptor instead.
 func (*AgentPrompt) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_criteria_proto_rawDescGZIP(), []int{12}
+	return file_criteria_v1_criteria_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *AgentPrompt) GetRunId() string {
@@ -918,7 +1023,7 @@ type ControlReady struct {
 
 func (x *ControlReady) Reset() {
 	*x = ControlReady{}
-	mi := &file_criteria_v1_criteria_proto_msgTypes[13]
+	mi := &file_criteria_v1_criteria_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -930,7 +1035,7 @@ func (x *ControlReady) String() string {
 func (*ControlReady) ProtoMessage() {}
 
 func (x *ControlReady) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_criteria_proto_msgTypes[13]
+	mi := &file_criteria_v1_criteria_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -943,7 +1048,7 @@ func (x *ControlReady) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ControlReady.ProtoReflect.Descriptor instead.
 func (*ControlReady) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_criteria_proto_rawDescGZIP(), []int{13}
+	return file_criteria_v1_criteria_proto_rawDescGZIP(), []int{14}
 }
 
 // ResumeRun delivers a resume signal from the orchestrator to the Criteria agent (W05).
@@ -962,7 +1067,7 @@ type ResumeRun struct {
 
 func (x *ResumeRun) Reset() {
 	*x = ResumeRun{}
-	mi := &file_criteria_v1_criteria_proto_msgTypes[14]
+	mi := &file_criteria_v1_criteria_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -974,7 +1079,7 @@ func (x *ResumeRun) String() string {
 func (*ResumeRun) ProtoMessage() {}
 
 func (x *ResumeRun) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_criteria_proto_msgTypes[14]
+	mi := &file_criteria_v1_criteria_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -987,7 +1092,7 @@ func (x *ResumeRun) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeRun.ProtoReflect.Descriptor instead.
 func (*ResumeRun) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_criteria_proto_rawDescGZIP(), []int{14}
+	return file_criteria_v1_criteria_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ResumeRun) GetRunId() string {
@@ -1031,7 +1136,7 @@ type ResumeRequest struct {
 
 func (x *ResumeRequest) Reset() {
 	*x = ResumeRequest{}
-	mi := &file_criteria_v1_criteria_proto_msgTypes[15]
+	mi := &file_criteria_v1_criteria_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1043,7 +1148,7 @@ func (x *ResumeRequest) String() string {
 func (*ResumeRequest) ProtoMessage() {}
 
 func (x *ResumeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_criteria_proto_msgTypes[15]
+	mi := &file_criteria_v1_criteria_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1056,7 +1161,7 @@ func (x *ResumeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeRequest.ProtoReflect.Descriptor instead.
 func (*ResumeRequest) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_criteria_proto_rawDescGZIP(), []int{15}
+	return file_criteria_v1_criteria_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ResumeRequest) GetRunId() string {
@@ -1092,7 +1197,7 @@ type ResumeResponse struct {
 
 func (x *ResumeResponse) Reset() {
 	*x = ResumeResponse{}
-	mi := &file_criteria_v1_criteria_proto_msgTypes[16]
+	mi := &file_criteria_v1_criteria_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1104,7 +1209,7 @@ func (x *ResumeResponse) String() string {
 func (*ResumeResponse) ProtoMessage() {}
 
 func (x *ResumeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_criteria_proto_msgTypes[16]
+	mi := &file_criteria_v1_criteria_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1117,7 +1222,7 @@ func (x *ResumeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeResponse.ProtoReflect.Descriptor instead.
 func (*ResumeResponse) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_criteria_proto_rawDescGZIP(), []int{16}
+	return file_criteria_v1_criteria_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *ResumeResponse) GetAccepted() bool {
@@ -1195,15 +1300,25 @@ const file_criteria_v1_criteria_proto_rawDesc = "" +
 	"\x0ecorrelation_id\x18\x03 \x01(\tR\rcorrelationId\":\n" +
 	"\x17ControlSubscribeRequest\x12\x1f\n" +
 	"\vcriteria_id\x18\x01 \x01(\tR\n" +
-	"criteriaId\"\x8e\x02\n" +
+	"criteriaId\"\xe2\x02\n" +
 	"\x0eControlMessage\x127\n" +
 	"\n" +
 	"run_cancel\x18\x01 \x01(\v2\x16.criteria.v1.RunCancelH\x00R\trunCancel\x12=\n" +
 	"\fagent_prompt\x18\x02 \x01(\v2\x18.criteria.v1.AgentPromptH\x00R\vagentPrompt\x12@\n" +
 	"\rcontrol_ready\x18\x03 \x01(\v2\x19.criteria.v1.ControlReadyH\x00R\fcontrolReady\x127\n" +
 	"\n" +
-	"resume_run\x18\x04 \x01(\v2\x16.criteria.v1.ResumeRunH\x00R\tresumeRunB\t\n" +
-	"\acommand\":\n" +
+	"resume_run\x18\x04 \x01(\v2\x16.criteria.v1.ResumeRunH\x00R\tresumeRun\x12R\n" +
+	"\x13workflow_assignment\x18\x05 \x01(\v2\x1f.criteria.v1.WorkflowAssignmentH\x00R\x12workflowAssignmentB\t\n" +
+	"\acommand\"\xa2\x02\n" +
+	"\x12WorkflowAssignment\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12#\n" +
+	"\rworkflow_name\x18\x02 \x01(\tR\fworkflowName\x12'\n" +
+	"\x0fworkflow_source\x18\x03 \x01(\tR\x0eworkflowSource\x12C\n" +
+	"\x06labels\x18\x04 \x03(\v2+.criteria.v1.WorkflowAssignment.LabelsEntryR\x06labels\x12'\n" +
+	"\x0flockfile_source\x18\x05 \x01(\tR\x0elockfileSource\x1a9\n" +
+	"\vLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\":\n" +
 	"\tRunCancel\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\"P\n" +
@@ -1250,7 +1365,7 @@ func file_criteria_v1_criteria_proto_rawDescGZIP() []byte {
 	return file_criteria_v1_criteria_proto_rawDescData
 }
 
-var file_criteria_v1_criteria_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
+var file_criteria_v1_criteria_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
 var file_criteria_v1_criteria_proto_goTypes = []any{
 	(*RegisterRequest)(nil),         // 0: criteria.v1.RegisterRequest
 	(*RegisterResponse)(nil),        // 1: criteria.v1.RegisterResponse
@@ -1263,49 +1378,53 @@ var file_criteria_v1_criteria_proto_goTypes = []any{
 	(*Ack)(nil),                     // 8: criteria.v1.Ack
 	(*ControlSubscribeRequest)(nil), // 9: criteria.v1.ControlSubscribeRequest
 	(*ControlMessage)(nil),          // 10: criteria.v1.ControlMessage
-	(*RunCancel)(nil),               // 11: criteria.v1.RunCancel
-	(*AgentPrompt)(nil),             // 12: criteria.v1.AgentPrompt
-	(*ControlReady)(nil),            // 13: criteria.v1.ControlReady
-	(*ResumeRun)(nil),               // 14: criteria.v1.ResumeRun
-	(*ResumeRequest)(nil),           // 15: criteria.v1.ResumeRequest
-	(*ResumeResponse)(nil),          // 16: criteria.v1.ResumeResponse
-	nil,                             // 17: criteria.v1.RegisterRequest.LabelsEntry
-	nil,                             // 18: criteria.v1.ResumeRun.PayloadEntry
-	nil,                             // 19: criteria.v1.ResumeRequest.PayloadEntry
-	(*timestamppb.Timestamp)(nil),   // 20: google.protobuf.Timestamp
-	(*Envelope)(nil),                // 21: criteria.v1.Envelope
+	(*WorkflowAssignment)(nil),      // 11: criteria.v1.WorkflowAssignment
+	(*RunCancel)(nil),               // 12: criteria.v1.RunCancel
+	(*AgentPrompt)(nil),             // 13: criteria.v1.AgentPrompt
+	(*ControlReady)(nil),            // 14: criteria.v1.ControlReady
+	(*ResumeRun)(nil),               // 15: criteria.v1.ResumeRun
+	(*ResumeRequest)(nil),           // 16: criteria.v1.ResumeRequest
+	(*ResumeResponse)(nil),          // 17: criteria.v1.ResumeResponse
+	nil,                             // 18: criteria.v1.RegisterRequest.LabelsEntry
+	nil,                             // 19: criteria.v1.WorkflowAssignment.LabelsEntry
+	nil,                             // 20: criteria.v1.ResumeRun.PayloadEntry
+	nil,                             // 21: criteria.v1.ResumeRequest.PayloadEntry
+	(*timestamppb.Timestamp)(nil),   // 22: google.protobuf.Timestamp
+	(*Envelope)(nil),                // 23: criteria.v1.Envelope
 }
 var file_criteria_v1_criteria_proto_depIdxs = []int32{
-	17, // 0: criteria.v1.RegisterRequest.labels:type_name -> criteria.v1.RegisterRequest.LabelsEntry
-	20, // 1: criteria.v1.HeartbeatResponse.server_time:type_name -> google.protobuf.Timestamp
-	20, // 2: criteria.v1.Run.created_at:type_name -> google.protobuf.Timestamp
-	20, // 3: criteria.v1.Run.started_at:type_name -> google.protobuf.Timestamp
-	20, // 4: criteria.v1.Run.ended_at:type_name -> google.protobuf.Timestamp
-	11, // 5: criteria.v1.ControlMessage.run_cancel:type_name -> criteria.v1.RunCancel
-	12, // 6: criteria.v1.ControlMessage.agent_prompt:type_name -> criteria.v1.AgentPrompt
-	13, // 7: criteria.v1.ControlMessage.control_ready:type_name -> criteria.v1.ControlReady
-	14, // 8: criteria.v1.ControlMessage.resume_run:type_name -> criteria.v1.ResumeRun
-	18, // 9: criteria.v1.ResumeRun.payload:type_name -> criteria.v1.ResumeRun.PayloadEntry
-	19, // 10: criteria.v1.ResumeRequest.payload:type_name -> criteria.v1.ResumeRequest.PayloadEntry
-	0,  // 11: criteria.v1.CriteriaService.Register:input_type -> criteria.v1.RegisterRequest
-	2,  // 12: criteria.v1.CriteriaService.Heartbeat:input_type -> criteria.v1.HeartbeatRequest
-	4,  // 13: criteria.v1.CriteriaService.CreateRun:input_type -> criteria.v1.CreateRunRequest
-	6,  // 14: criteria.v1.CriteriaService.ReattachRun:input_type -> criteria.v1.ReattachRunRequest
-	15, // 15: criteria.v1.CriteriaService.Resume:input_type -> criteria.v1.ResumeRequest
-	21, // 16: criteria.v1.CriteriaService.SubmitEvents:input_type -> criteria.v1.Envelope
-	9,  // 17: criteria.v1.CriteriaService.Control:input_type -> criteria.v1.ControlSubscribeRequest
-	1,  // 18: criteria.v1.CriteriaService.Register:output_type -> criteria.v1.RegisterResponse
-	3,  // 19: criteria.v1.CriteriaService.Heartbeat:output_type -> criteria.v1.HeartbeatResponse
-	5,  // 20: criteria.v1.CriteriaService.CreateRun:output_type -> criteria.v1.Run
-	7,  // 21: criteria.v1.CriteriaService.ReattachRun:output_type -> criteria.v1.ReattachRunResponse
-	16, // 22: criteria.v1.CriteriaService.Resume:output_type -> criteria.v1.ResumeResponse
-	8,  // 23: criteria.v1.CriteriaService.SubmitEvents:output_type -> criteria.v1.Ack
-	10, // 24: criteria.v1.CriteriaService.Control:output_type -> criteria.v1.ControlMessage
-	18, // [18:25] is the sub-list for method output_type
-	11, // [11:18] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	18, // 0: criteria.v1.RegisterRequest.labels:type_name -> criteria.v1.RegisterRequest.LabelsEntry
+	22, // 1: criteria.v1.HeartbeatResponse.server_time:type_name -> google.protobuf.Timestamp
+	22, // 2: criteria.v1.Run.created_at:type_name -> google.protobuf.Timestamp
+	22, // 3: criteria.v1.Run.started_at:type_name -> google.protobuf.Timestamp
+	22, // 4: criteria.v1.Run.ended_at:type_name -> google.protobuf.Timestamp
+	12, // 5: criteria.v1.ControlMessage.run_cancel:type_name -> criteria.v1.RunCancel
+	13, // 6: criteria.v1.ControlMessage.agent_prompt:type_name -> criteria.v1.AgentPrompt
+	14, // 7: criteria.v1.ControlMessage.control_ready:type_name -> criteria.v1.ControlReady
+	15, // 8: criteria.v1.ControlMessage.resume_run:type_name -> criteria.v1.ResumeRun
+	11, // 9: criteria.v1.ControlMessage.workflow_assignment:type_name -> criteria.v1.WorkflowAssignment
+	19, // 10: criteria.v1.WorkflowAssignment.labels:type_name -> criteria.v1.WorkflowAssignment.LabelsEntry
+	20, // 11: criteria.v1.ResumeRun.payload:type_name -> criteria.v1.ResumeRun.PayloadEntry
+	21, // 12: criteria.v1.ResumeRequest.payload:type_name -> criteria.v1.ResumeRequest.PayloadEntry
+	0,  // 13: criteria.v1.CriteriaService.Register:input_type -> criteria.v1.RegisterRequest
+	2,  // 14: criteria.v1.CriteriaService.Heartbeat:input_type -> criteria.v1.HeartbeatRequest
+	4,  // 15: criteria.v1.CriteriaService.CreateRun:input_type -> criteria.v1.CreateRunRequest
+	6,  // 16: criteria.v1.CriteriaService.ReattachRun:input_type -> criteria.v1.ReattachRunRequest
+	16, // 17: criteria.v1.CriteriaService.Resume:input_type -> criteria.v1.ResumeRequest
+	23, // 18: criteria.v1.CriteriaService.SubmitEvents:input_type -> criteria.v1.Envelope
+	9,  // 19: criteria.v1.CriteriaService.Control:input_type -> criteria.v1.ControlSubscribeRequest
+	1,  // 20: criteria.v1.CriteriaService.Register:output_type -> criteria.v1.RegisterResponse
+	3,  // 21: criteria.v1.CriteriaService.Heartbeat:output_type -> criteria.v1.HeartbeatResponse
+	5,  // 22: criteria.v1.CriteriaService.CreateRun:output_type -> criteria.v1.Run
+	7,  // 23: criteria.v1.CriteriaService.ReattachRun:output_type -> criteria.v1.ReattachRunResponse
+	17, // 24: criteria.v1.CriteriaService.Resume:output_type -> criteria.v1.ResumeResponse
+	8,  // 25: criteria.v1.CriteriaService.SubmitEvents:output_type -> criteria.v1.Ack
+	10, // 26: criteria.v1.CriteriaService.Control:output_type -> criteria.v1.ControlMessage
+	20, // [20:27] is the sub-list for method output_type
+	13, // [13:20] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_criteria_v1_criteria_proto_init() }
@@ -1319,6 +1438,7 @@ func file_criteria_v1_criteria_proto_init() {
 		(*ControlMessage_AgentPrompt)(nil),
 		(*ControlMessage_ControlReady)(nil),
 		(*ControlMessage_ResumeRun)(nil),
+		(*ControlMessage_WorkflowAssignment)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -1326,7 +1446,7 @@ func file_criteria_v1_criteria_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_criteria_v1_criteria_proto_rawDesc), len(file_criteria_v1_criteria_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   20,
+			NumMessages:   22,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

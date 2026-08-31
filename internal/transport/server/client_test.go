@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -111,6 +112,52 @@ type fakeServer struct {
 	// simulates the persist-before-ack reconnect window (server wrote,
 	// connection dropped, ack never flushed).
 	dropAcksBeforeSend int
+
+	// submitEventsFailOnAttempt causes the Nth SubmitEvents stream open to
+	// return an error before reading any messages. 0 disables forced failure.
+	submitEventsFailOnAttempt int
+
+	// submitEventsAttempts counts calls to SubmitEvents.
+	submitEventsAttempts atomic.Int32
+
+	// reattachRunReq captures the most recent ReattachRun RPC request payload.
+	reattachRunReq *pb.ReattachRunRequest
+
+	// createRunErr, when non-nil, causes CreateRun to return that error.
+	createRunErr error
+
+	// controlSkipReady prevents Control from sending the initial ControlReady,
+	// causing StartControl to time out or wait for context cancellation.
+	controlSkipReady bool
+
+	// controlFailOnAttempt causes the Nth Control call to return an error
+	// before sending ControlReady. 0 disables forced failure.
+	controlFailOnAttempt int
+
+	// controlAttempts counts calls to Control.
+	controlAttempts atomic.Int32
+
+	// controlCloseAfterAttach, when true, causes Control to return
+	// immediately after sending ControlReady and signalling ctlAttached,
+	// forcing the client to reconnect.
+	controlCloseAfterAttach bool
+
+	// controlCloseBeforeReady causes Control to attach but return before
+	// sending ControlReady, exercising the "stream closed before ready" path.
+	controlCloseBeforeReady bool
+
+	// controlFailAfterMessageCount causes Control to return an error after
+	// sending that many control messages. 0 disables forced close.
+	controlFailAfterMessageCount int
+
+	// controlMessagesSent counts messages sent by the Control handler.
+	controlMessagesSent atomic.Int32
+
+	// registerErr, when non-nil, causes Register to return that error.
+	registerErr error
+
+	// resumeErr, when non-nil, causes Resume to return that error.
+	resumeErr error
 }
 
 func newFakeServer() *fakeServer {
@@ -124,6 +171,9 @@ func newFakeServer() *fakeServer {
 }
 
 func (f *fakeServer) Register(_ context.Context, _ *connect.Request[pb.RegisterRequest]) (*connect.Response[pb.RegisterResponse], error) {
+	if f.registerErr != nil {
+		return nil, f.registerErr
+	}
 	return connect.NewResponse(&pb.RegisterResponse{CriteriaId: f.criteriaID, Token: f.token}), nil
 }
 
@@ -137,6 +187,9 @@ func (f *fakeServer) Heartbeat(_ context.Context, _ *connect.Request[pb.Heartbea
 func (f *fakeServer) CreateRun(_ context.Context, req *connect.Request[pb.CreateRunRequest]) (*connect.Response[pb.Run], error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.createRunErr != nil {
+		return nil, f.createRunErr
+	}
 	id := "run-" + strconv.Itoa(len(f.runs)+1)
 	r := &pb.Run{RunId: id, CriteriaId: req.Msg.CriteriaId, WorkflowName: req.Msg.WorkflowName, Status: "pending"}
 	f.runs = append(f.runs, r)
@@ -144,6 +197,11 @@ func (f *fakeServer) CreateRun(_ context.Context, req *connect.Request[pb.Create
 }
 
 func (f *fakeServer) SubmitEvents(ctx context.Context, stream *connect.BidiStream[pb.Envelope, pb.Ack]) error {
+	attempt := int(f.submitEventsAttempts.Add(1))
+	if f.submitEventsFailOnAttempt > 0 && attempt == f.submitEventsFailOnAttempt {
+		return errors.New("forced submit events failure")
+	}
+
 	sinceRaw := stream.RequestHeader().Get("since_seq")
 	f.mu.Lock()
 	f.sinceSeqHdr = append(f.sinceSeqHdr, sinceRaw)
@@ -236,17 +294,40 @@ func (f *fakeServer) SubmitEvents(ctx context.Context, stream *connect.BidiStrea
 func (f *fakeServer) Resume(_ context.Context, req *connect.Request[pb.ResumeRequest]) (*connect.Response[pb.ResumeResponse], error) {
 	f.mu.Lock()
 	f.lastResumeReq = req.Msg
+	err := f.resumeErr
 	f.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
 	return connect.NewResponse(&pb.ResumeResponse{}), nil
 }
 
+func (f *fakeServer) ReattachRun(_ context.Context, req *connect.Request[pb.ReattachRunRequest]) (*connect.Response[pb.ReattachRunResponse], error) {
+	f.mu.Lock()
+	f.reattachRunReq = req.Msg
+	f.mu.Unlock()
+	return connect.NewResponse(&pb.ReattachRunResponse{}), nil
+}
+
 func (f *fakeServer) Control(ctx context.Context, _ *connect.Request[pb.ControlSubscribeRequest], stream *connect.ServerStream[pb.ControlMessage]) error {
-	if err := stream.Send(&pb.ControlMessage{Command: &pb.ControlMessage_ControlReady{ControlReady: &pb.ControlReady{}}}); err != nil {
-		return err
+	attempt := int(f.controlAttempts.Add(1))
+	if f.controlFailOnAttempt > 0 && attempt == f.controlFailOnAttempt {
+		return errors.New("forced control stream failure")
 	}
 	select {
 	case f.ctlAttached <- struct{}{}:
 	default:
+	}
+	if f.controlCloseBeforeReady {
+		return nil
+	}
+	if !f.controlSkipReady {
+		if err := stream.Send(&pb.ControlMessage{Command: &pb.ControlMessage_ControlReady{ControlReady: &pb.ControlReady{}}}); err != nil {
+			return err
+		}
+	}
+	if f.controlCloseAfterAttach {
+		return nil
 	}
 	for {
 		select {
@@ -258,6 +339,9 @@ func (f *fakeServer) Control(ctx context.Context, _ *connect.Request[pb.ControlS
 			}
 			if err := stream.Send(msg); err != nil {
 				return err
+			}
+			if f.controlFailAfterMessageCount > 0 && int(f.controlMessagesSent.Add(1)) >= f.controlFailAfterMessageCount {
+				return errors.New("forced control close after message")
 			}
 		}
 	}
@@ -360,11 +444,11 @@ func TestClientHappyPath(t *testing.T) {
 		t.Fatalf("event never persisted")
 	}
 	if !waitForCond(t, 2*time.Second, func() bool {
-		return c.lastAckedSeq.Load() == 1
+		return c.defaultPublisher.lastAckedSeq.Load() == 1
 	}) {
-		t.Fatalf("ack never observed: lastAcked=%d", c.lastAckedSeq.Load())
+		t.Fatalf("ack never observed: lastAcked=%d", c.defaultPublisher.lastAckedSeq.Load())
 	}
-	if got := len(c.snapshotPending()); got != 0 {
+	if got := len(c.defaultPublisher.snapshotPending()); got != 0 {
 		t.Fatalf("pending should be empty after ack, got %d", got)
 	}
 }
@@ -397,7 +481,7 @@ func TestClientReconnectSendsSinceSeq(t *testing.T) {
 
 	env1 := events.NewEnvelope(runID, &pb.StepEntered{Step: "s1", Adapter: "shell", Attempt: 1})
 	c.Publish(ctx, env1)
-	if !waitForCond(t, 2*time.Second, func() bool { return c.lastAckedSeq.Load() == 1 }) {
+	if !waitForCond(t, 2*time.Second, func() bool { return c.defaultPublisher.lastAckedSeq.Load() == 1 }) {
 		t.Fatalf("first ack not observed")
 	}
 
@@ -538,11 +622,11 @@ func TestClientPersistBeforeAckReconnect(t *testing.T) {
 	env := events.NewEnvelope(runID, &pb.StepEntered{Step: "s1", Adapter: "shell", Attempt: 1})
 	c.Publish(ctx, env)
 
-	if !waitForCond(t, 5*time.Second, func() bool { return c.lastAckedSeq.Load() == 1 }) {
-		t.Fatalf("ack never observed after persist-before-ack reconnect: lastAcked=%d", c.lastAckedSeq.Load())
+	if !waitForCond(t, 5*time.Second, func() bool { return c.defaultPublisher.lastAckedSeq.Load() == 1 }) {
+		t.Fatalf("ack never observed after persist-before-ack reconnect: lastAcked=%d", c.defaultPublisher.lastAckedSeq.Load())
 	}
-	if !waitForCond(t, 1*time.Second, func() bool { return len(c.snapshotPending()) == 0 }) {
-		t.Fatalf("pending should drain, got %d", len(c.snapshotPending()))
+	if !waitForCond(t, 1*time.Second, func() bool { return len(c.defaultPublisher.snapshotPending()) == 0 }) {
+		t.Fatalf("pending should drain, got %d", len(c.defaultPublisher.snapshotPending()))
 	}
 
 	f.mu.Lock()
@@ -603,8 +687,8 @@ func TestClientPublishBlocksWhenBufferFull(t *testing.T) {
 		t.Fatal("publish never unblocked after buffer drained")
 	}
 
-	if !waitForCond(t, 2*time.Second, func() bool { return c.lastAckedSeq.Load() == 3 }) {
-		t.Fatalf("expected 3 acks, got lastAcked=%d", c.lastAckedSeq.Load())
+	if !waitForCond(t, 2*time.Second, func() bool { return c.defaultPublisher.lastAckedSeq.Load() == 3 }) {
+		t.Fatalf("expected 3 acks, got lastAcked=%d", c.defaultPublisher.lastAckedSeq.Load())
 	}
 	c.Close()
 }
@@ -777,7 +861,7 @@ func TestClientSinceSeqZeroEventReplay(t *testing.T) {
 	// Publish and wait for first ack; triggers disconnect.
 	env1 := events.NewEnvelope(runID, &pb.StepEntered{Step: "s1", Adapter: "shell", Attempt: 1})
 	c.Publish(ctx, env1)
-	if !waitForCond(t, 2*time.Second, func() bool { return c.lastAckedSeq.Load() == 1 }) {
+	if !waitForCond(t, 2*time.Second, func() bool { return c.defaultPublisher.lastAckedSeq.Load() == 1 }) {
 		t.Fatalf("first ack not observed before disconnect")
 	}
 
@@ -1137,13 +1221,14 @@ func TestClientDrain(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// Publish without starting streams so the event stays in sendCh,
-		// causing Drain to block on the select rather than returning early.
+		// Create a run publisher without starting its stream so the event stays
+		// in sendCh, causing Drain to block on the select rather than returning early.
+		p := newRunPublisher(c, runID, c.opts.SendBuffer)
 		env := events.NewEnvelope(runID, &pb.StepEntered{Step: "s1", Adapter: "shell", Attempt: 1})
-		c.Publish(ctx, env)
+		p.Publish(ctx, env)
 
 		done := make(chan struct{})
-		go func() { c.Drain(ctx); close(done) }()
+		go func() { p.Drain(ctx); close(done) }()
 
 		// cancel() is safe to call immediately: Drain's select handles
 		// ctx.Done() whether or not the goroutine has started yet, so no
