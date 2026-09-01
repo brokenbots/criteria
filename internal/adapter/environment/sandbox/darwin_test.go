@@ -80,6 +80,30 @@ func TestProfile_Render(t *testing.T) {
 			want:    []string{"(deny process-exec)"},
 			wantNot: []string{"(allow process-exec"},
 		},
+		{
+			name: "local adapter network-bind",
+			profile: Profile{
+				DefaultDeny:      true,
+				AllowExec:        []string{"/usr/local/bin/adapter"},
+				AllowFileWrites:  []string{"/tmp"},
+				AllowNetworkBind: true,
+			},
+			want: []string{
+				"(allow file-write*",
+				"(subpath \"/private/tmp\")",
+				"(allow network-bind)",
+			},
+		},
+		{
+			name: "no network-bind without local adapter",
+			profile: Profile{
+				DefaultDeny:      true,
+				AllowFileWrites:  []string{"/tmp"},
+				AllowNetworkBind: false,
+			},
+			want:    []string{"(allow file-write*"},
+			wantNot: []string{"(allow network-bind)"},
+		},
 	}
 
 	for _, tc := range tests {
@@ -101,15 +125,16 @@ func TestProfile_Render(t *testing.T) {
 
 func TestFromPolicy(t *testing.T) {
 	tests := []struct {
-		name          string
-		policy        workflow.ResolvedPolicy
-		adapterBinary string
-		wantReads     []string
-		wantWrites    []string
-		wantNetwork   []string
-		wantWarnings  int
-		wantBlockKext bool
-		wantBlockMach bool
+		name            string
+		policy          workflow.ResolvedPolicy
+		adapterBinary   string
+		wantReads       []string
+		wantWrites      []string
+		wantNetwork     []string
+		wantNetworkBind bool
+		wantWarnings    int
+		wantBlockKext   bool
+		wantBlockMach   bool
 	}{
 		{
 			name: "filesystem read and write directories",
@@ -147,8 +172,9 @@ func TestFromPolicy(t *testing.T) {
 					}),
 				},
 			},
-			adapterBinary: "/usr/local/bin/adapter",
-			wantReads:     []string{"/etc/config.yaml", "/usr/local/bin/adapter", "/usr/local/bin"},
+			adapterBinary:   "/usr/local/bin/adapter",
+			wantReads:       []string{"/etc/config.yaml", "/usr/local/bin/adapter", "/usr/local/bin"},
+			wantNetworkBind: true,
 		},
 		{
 			name: "network allowed hosts",
@@ -211,6 +237,9 @@ func TestFromPolicy(t *testing.T) {
 			}
 			if prof.BlockMachLookup != tc.wantBlockMach {
 				t.Errorf("BlockMachLookup=%v, want %v", prof.BlockMachLookup, tc.wantBlockMach)
+			}
+			if prof.AllowNetworkBind != tc.wantNetworkBind {
+				t.Errorf("AllowNetworkBind=%v, want %v", prof.AllowNetworkBind, tc.wantNetworkBind)
 			}
 			if len(prof.resolveWarnings) != tc.wantWarnings {
 				t.Errorf("resolveWarnings=%d, want %d", len(prof.resolveWarnings), tc.wantWarnings)
@@ -417,6 +446,13 @@ func main() {
 		conn, err := net.Dial("tcp", net.JoinHostPort(os.Args[2], os.Args[3]))
 		if err != nil { fmt.Println("CONNECT_FAIL:", err); os.Exit(0) }
 		conn.Close(); fmt.Println("CONNECT_OK")
+	case "listenunix":
+		if len(os.Args) < 3 { os.Exit(1) }
+		ln, err := net.Listen("unix", os.Args[2])
+		if err != nil { fmt.Println("LISTEN_FAIL:", err); os.Exit(0) }
+		ln.Close()
+		_ = os.Remove(os.Args[2])
+		fmt.Println("LISTEN_OK")
 	default:
 		os.Exit(1)
 	}
@@ -705,5 +741,121 @@ func TestCRI82_DarwinSandboxDeniesWriteOutsideAllowedRoot(t *testing.T) {
 	}
 	if _, statErr := os.Stat(target); !os.IsNotExist(statErr) {
 		t.Errorf("blocked write: expected file %q to not exist, got stat err=%v", target, statErr)
+	}
+}
+
+func TestCRI83_FromPolicySetsNetworkBindForLocalAdapter(t *testing.T) {
+	prof := FromPolicy(workflow.ResolvedPolicy{
+		TypeSpecific: map[string]cty.Value{
+			"filesystem": cty.ObjectVal(map[string]cty.Value{
+				"write": cty.TupleVal([]cty.Value{cty.StringVal("/tmp")}),
+			}),
+			"network": cty.ObjectVal(map[string]cty.Value{
+				"allow_egress": cty.BoolVal(false),
+			}),
+		},
+	}, "/usr/local/bin/adapter")
+
+	if !prof.AllowNetworkBind {
+		t.Error("expected AllowNetworkBind=true for local adapter")
+	}
+	rendered := prof.Render()
+	if !strings.Contains(rendered, "(allow network-bind)") {
+		t.Errorf("expected rendered profile to contain (allow network-bind), got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, `(subpath "/private/tmp")`) {
+		t.Errorf("expected rendered profile to contain (subpath \"/private/tmp\"), got:\n%s", rendered)
+	}
+}
+
+func TestCRI83_FromPolicyOmitsNetworkBindWithoutAdapter(t *testing.T) {
+	prof := FromPolicy(workflow.ResolvedPolicy{
+		TypeSpecific: map[string]cty.Value{
+			"filesystem": cty.ObjectVal(map[string]cty.Value{
+				"write": cty.TupleVal([]cty.Value{cty.StringVal("/tmp")}),
+			}),
+		},
+	}, "")
+
+	if prof.AllowNetworkBind {
+		t.Error("expected AllowNetworkBind=false when no adapter binary is associated")
+	}
+	rendered := prof.Render()
+	if strings.Contains(rendered, "(allow network-bind)") {
+		t.Errorf("profile without adapter must not contain (allow network-bind), got:\n%s", rendered)
+	}
+}
+
+func TestCRI83_DarwinSandboxAllowsUnixBindForLocalAdapter(t *testing.T) {
+	if _, err := exec.LookPath("sandbox-exec"); err != nil {
+		t.Skip("sandbox-exec not available on this runner")
+	}
+
+	helper := buildDarwinTestHelper(t)
+	allowedDir := t.TempDir()
+
+	// Build the profile via FromPolicy, exactly as a local adapter run does,
+	// so this integration test exercises the full production translation chain.
+	prof := FromPolicy(workflow.ResolvedPolicy{
+		TypeSpecific: map[string]cty.Value{
+			"filesystem": cty.ObjectVal(map[string]cty.Value{
+				"write": cty.TupleVal([]cty.Value{cty.StringVal(allowedDir)}),
+			}),
+			"network": cty.ObjectVal(map[string]cty.Value{
+				"allow_egress": cty.BoolVal(false),
+			}),
+		},
+	}, helper)
+
+	if !prof.AllowNetworkBind {
+		t.Fatal("FromPolicy with a local adapter must set AllowNetworkBind")
+	}
+
+	profilePath, err := writeProfile(&prof)
+	if err != nil {
+		t.Fatalf("writeProfile: %v", err)
+	}
+	defer os.Remove(profilePath)
+
+	socketPath := filepath.Join(allowedDir, "plugin-transport.sock")
+	out, err := runUnderSandbox(t, helper, profilePath, "listenunix", socketPath)
+	if err != nil {
+		t.Fatalf("allowed unix bind failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "LISTEN_OK") {
+		t.Errorf("allowed unix bind: expected LISTEN_OK, got:\n%s", out)
+	}
+}
+
+func TestCRI83_DarwinSandboxDeniesUnixBindWithoutNetworkBind(t *testing.T) {
+	if _, err := exec.LookPath("sandbox-exec"); err != nil {
+		t.Skip("sandbox-exec not available on this runner")
+	}
+
+	helper := buildDarwinTestHelper(t)
+	allowedDir := t.TempDir()
+
+	// Same writable directory, but no network-bind rule. UDS bind must fail.
+	prof := Profile{
+		DefaultDeny:     true,
+		AllowExec:       []string{helper},
+		AllowFileWrites: []string{allowedDir},
+	}
+
+	profilePath, err := writeProfile(&prof)
+	if err != nil {
+		t.Fatalf("writeProfile: %v", err)
+	}
+	defer os.Remove(profilePath)
+
+	socketPath := filepath.Join(allowedDir, "plugin-transport.sock")
+	out, err := runUnderSandbox(t, helper, profilePath, "listenunix", socketPath)
+
+	denied := err != nil ||
+		strings.Contains(out, "LISTEN_FAIL") ||
+		strings.Contains(out, "Operation not permitted") ||
+		strings.Contains(out, "EPERM")
+	if !denied {
+		t.Errorf("expected unix bind denial without network-bind, got err=%v, output:\n%s", err, out)
 	}
 }
