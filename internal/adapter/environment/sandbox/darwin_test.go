@@ -128,8 +128,10 @@ func TestFromPolicy(t *testing.T) {
 		name            string
 		policy          workflow.ResolvedPolicy
 		adapterBinary   string
+		adapterType     string
 		wantReads       []string
 		wantWrites      []string
+		wantExec        []string
 		wantNetwork     []string
 		wantNetworkBind bool
 		wantWarnings    int
@@ -174,6 +176,37 @@ func TestFromPolicy(t *testing.T) {
 			},
 			adapterBinary:   "/usr/local/bin/adapter",
 			wantReads:       []string{"/etc/config.yaml", "/usr/local/bin/adapter", "/usr/local/bin"},
+			wantExec:        []string{"/usr/local/bin/adapter"},
+			wantNetworkBind: true,
+		},
+		{
+			name: "shell adapter includes interpreter",
+			policy: workflow.ResolvedPolicy{
+				TypeSpecific: map[string]cty.Value{
+					"filesystem": cty.ObjectVal(map[string]cty.Value{
+						"write": cty.TupleVal([]cty.Value{cty.StringVal("/tmp")}),
+					}),
+				},
+			},
+			adapterBinary:   "/usr/local/bin/criteria-adapter-shell",
+			adapterType:     "shell",
+			wantReads:       []string{"/usr/local/bin/criteria-adapter-shell", "/usr/local/bin", "/bin/sh"},
+			wantExec:        []string{"/usr/local/bin/criteria-adapter-shell", "/bin/sh"},
+			wantNetworkBind: true,
+		},
+		{
+			name: "non-shell adapter omits interpreter",
+			policy: workflow.ResolvedPolicy{
+				TypeSpecific: map[string]cty.Value{
+					"filesystem": cty.ObjectVal(map[string]cty.Value{
+						"write": cty.TupleVal([]cty.Value{cty.StringVal("/tmp")}),
+					}),
+				},
+			},
+			adapterBinary:   "/usr/local/bin/criteria-adapter-noop",
+			adapterType:     "noop",
+			wantReads:       []string{"/usr/local/bin/criteria-adapter-noop", "/usr/local/bin"},
+			wantExec:        []string{"/usr/local/bin/criteria-adapter-noop"},
 			wantNetworkBind: true,
 		},
 		{
@@ -216,7 +249,7 @@ func TestFromPolicy(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			prof := FromPolicy(tc.policy, tc.adapterBinary)
+			prof := FromPolicy(tc.policy, tc.adapterBinary, tc.adapterType)
 			for _, p := range tc.wantReads {
 				if !sliceContains(prof.AllowFileReads, p) {
 					t.Errorf("AllowFileReads missing %q, got %v", p, prof.AllowFileReads)
@@ -225,6 +258,11 @@ func TestFromPolicy(t *testing.T) {
 			for _, p := range tc.wantWrites {
 				if !sliceContains(prof.AllowFileWrites, p) {
 					t.Errorf("AllowFileWrites missing %q, got %v", p, prof.AllowFileWrites)
+				}
+			}
+			for _, p := range tc.wantExec {
+				if !sliceContains(prof.AllowExec, p) {
+					t.Errorf("AllowExec missing %q, got %v", p, prof.AllowExec)
 				}
 			}
 			for _, h := range tc.wantNetwork {
@@ -424,6 +462,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 )
 func main() {
 	if len(os.Args) < 2 { os.Exit(1) }
@@ -453,6 +492,13 @@ func main() {
 		ln.Close()
 		_ = os.Remove(os.Args[2])
 		fmt.Println("LISTEN_OK")
+	case "execsh":
+		if len(os.Args) < 4 { os.Exit(1) }
+		cmd := exec.Command("/bin/sh", "-c", os.Args[2])
+		cmd.Dir = os.Args[3]
+		out, err := cmd.CombinedOutput()
+		if err != nil { fmt.Println("EXECSH_FAIL:", err, string(out)); os.Exit(0) }
+		fmt.Print(string(out))
 	default:
 		os.Exit(1)
 	}
@@ -582,7 +628,7 @@ func TestFromPolicy_DNSResolution(t *testing.T) {
 				"allow": cty.TupleVal([]cty.Value{cty.StringVal("localhost:443")}),
 			}),
 		},
-	}, "")
+	}, "", "")
 	if len(prof.AllowNetworkHosts) == 0 {
 		t.Fatal("expected localhost:443 to resolve to at least one IP")
 	}
@@ -600,7 +646,7 @@ func TestFromPolicy_DNSFailure_Warning(t *testing.T) {
 				"allow": cty.TupleVal([]cty.Value{cty.StringVal("this-host-does-not-exist-12345.invalid:80")}),
 			}),
 		},
-	}, "")
+	}, "", "")
 	if len(prof.resolveWarnings) != 1 {
 		t.Fatalf("expected 1 resolve warning, got %d", len(prof.resolveWarnings))
 	}
@@ -668,7 +714,7 @@ func TestCRI82_FromPolicyDirectorySubpath(t *testing.T) {
 				"write": cty.TupleVal([]cty.Value{cty.StringVal("/tmp")}),
 			}),
 		},
-	}, "")
+	}, "", "")
 	rendered := prof.Render()
 	if !strings.Contains(rendered, `(subpath "/private/tmp")`) {
 		t.Errorf("expected FromPolicy to render /tmp as (subpath \"/private/tmp\"), got:\n%s", rendered)
@@ -754,7 +800,7 @@ func TestCRI83_FromPolicySetsNetworkBindForLocalAdapter(t *testing.T) {
 				"allow_egress": cty.BoolVal(false),
 			}),
 		},
-	}, "/usr/local/bin/adapter")
+	}, "/usr/local/bin/adapter", "")
 
 	if !prof.AllowNetworkBind {
 		t.Error("expected AllowNetworkBind=true for local adapter")
@@ -775,7 +821,7 @@ func TestCRI83_FromPolicyOmitsNetworkBindWithoutAdapter(t *testing.T) {
 				"write": cty.TupleVal([]cty.Value{cty.StringVal("/tmp")}),
 			}),
 		},
-	}, "")
+	}, "", "")
 
 	if prof.AllowNetworkBind {
 		t.Error("expected AllowNetworkBind=false when no adapter binary is associated")
@@ -805,7 +851,7 @@ func TestCRI83_DarwinSandboxAllowsUnixBindForLocalAdapter(t *testing.T) {
 				"allow_egress": cty.BoolVal(false),
 			}),
 		},
-	}, helper)
+	}, helper, "")
 
 	if !prof.AllowNetworkBind {
 		t.Fatal("FromPolicy with a local adapter must set AllowNetworkBind")
@@ -857,5 +903,83 @@ func TestCRI83_DarwinSandboxDeniesUnixBindWithoutNetworkBind(t *testing.T) {
 		strings.Contains(out, "EPERM")
 	if !denied {
 		t.Errorf("expected unix bind denial without network-bind, got err=%v, output:\n%s", err, out)
+	}
+}
+
+func TestCRI84_DarwinSandboxAllowsShellInterpreter(t *testing.T) {
+	if _, err := exec.LookPath("/usr/bin/sandbox-exec"); err != nil {
+		t.Skip("sandbox-exec not available on this runner")
+	}
+
+	helper := buildDarwinTestHelper(t)
+	helperDir := filepath.Dir(helper)
+
+	prof := FromPolicy(workflow.ResolvedPolicy{
+		TypeSpecific: map[string]cty.Value{
+			"filesystem": cty.ObjectVal(map[string]cty.Value{
+				"read": cty.TupleVal([]cty.Value{cty.StringVal(helperDir)}),
+			}),
+			"network": cty.ObjectVal(map[string]cty.Value{
+				"allow_egress": cty.BoolVal(false),
+			}),
+		},
+	}, helper, "shell")
+
+	if !sliceContains(prof.AllowExec, "/bin/sh") {
+		t.Fatalf("shell adapter profile must allow /bin/sh, got %v", prof.AllowExec)
+	}
+
+	profilePath, err := writeProfile(&prof)
+	if err != nil {
+		t.Fatalf("writeProfile: %v", err)
+	}
+	defer os.Remove(profilePath)
+
+	out, err := runUnderSandbox(t, helper, profilePath, "execsh", "echo SHELL_OK", helperDir)
+	if err != nil {
+		t.Fatalf("exec under sandbox failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "SHELL_OK") {
+		t.Errorf("expected shell command output SHELL_OK, got:\n%s", out)
+	}
+}
+
+func TestCRI84_DarwinSandboxDeniesShellInterpreterForNonShellAdapter(t *testing.T) {
+	if _, err := exec.LookPath("/usr/bin/sandbox-exec"); err != nil {
+		t.Skip("sandbox-exec not available on this runner")
+	}
+
+	helper := buildDarwinTestHelper(t)
+	helperDir := filepath.Dir(helper)
+
+	prof := FromPolicy(workflow.ResolvedPolicy{
+		TypeSpecific: map[string]cty.Value{
+			"filesystem": cty.ObjectVal(map[string]cty.Value{
+				"read": cty.TupleVal([]cty.Value{cty.StringVal(helperDir)}),
+			}),
+			"network": cty.ObjectVal(map[string]cty.Value{
+				"allow_egress": cty.BoolVal(false),
+			}),
+		},
+	}, helper, "noop")
+
+	if sliceContains(prof.AllowExec, "/bin/sh") {
+		t.Fatalf("non-shell adapter profile must not allow /bin/sh, got %v", prof.AllowExec)
+	}
+
+	profilePath, err := writeProfile(&prof)
+	if err != nil {
+		t.Fatalf("writeProfile: %v", err)
+	}
+	defer os.Remove(profilePath)
+
+	out, err := runUnderSandbox(t, helper, profilePath, "execsh", "echo SHELL_OK", helperDir)
+
+	denied := err != nil ||
+		strings.Contains(out, "EXECSH_FAIL") ||
+		strings.Contains(out, "Operation not permitted") ||
+		strings.Contains(out, "EPERM")
+	if !denied {
+		t.Errorf("expected /bin/sh exec denial for non-shell adapter, got err=%v, output:\n%s", err, out)
 	}
 }

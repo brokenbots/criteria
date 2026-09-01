@@ -31,6 +31,7 @@ type PrepareContext struct {
 	Env           *workflow.EnvironmentNode
 	Caps          Capabilities
 	AdapterBinary string // populated at prepare time for darwin sandbox allow-listing; unused on non-linux
+	AdapterType   string // adapter type (e.g. "shell"); used by the Darwin sandbox for interpreter allow-listing
 }
 
 // Prepare always returns an error on non-Linux.

@@ -28,8 +28,15 @@ type dnsEntry struct {
 	cachedAt time.Time
 }
 
+// interpreterPaths maps adapter types to the command interpreter they need to
+// fork/exec. The shell adapter spawns /bin/sh to run user commands; granting
+// only the adapter binary itself would block that child exec.
+var interpreterPaths = map[string]string{
+	"shell": "/bin/sh",
+}
+
 // FromPolicy translates a ResolvedPolicy into an SBPL Profile.
-func FromPolicy(p workflow.ResolvedPolicy, adapterBinary string) Profile {
+func FromPolicy(p workflow.ResolvedPolicy, adapterBinary, adapterType string) Profile {
 	prof := Profile{
 		DefaultDeny: true,
 		AllowExec:   []string{},
@@ -46,6 +53,15 @@ func FromPolicy(p workflow.ResolvedPolicy, adapterBinary string) Profile {
 		// macOS sandbox-exec classifies UDS bind() as network-bind, so grant it
 		// unconditionally; it is independent of user-declared network egress.
 		prof.AllowNetworkBind = true
+
+		// Adapters that fork a command interpreter need that interpreter
+		// allow-listed for process-exec while keeping the default-deny
+		// executable policy for unrelated binaries. File read access is also
+		// granted so the dynamic linker can map the interpreter binary.
+		if interp, ok := interpreterPaths[adapterType]; ok {
+			prof.AllowExec = append(prof.AllowExec, interp)
+			prof.AllowFileReads = append(prof.AllowFileReads, interp)
+		}
 	}
 
 	fsObj := typeSpecific(p, "filesystem")

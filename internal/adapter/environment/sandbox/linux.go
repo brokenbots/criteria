@@ -71,6 +71,7 @@ type PrepareContext struct {
 	Env           *workflow.EnvironmentNode
 	Caps          Capabilities
 	AdapterBinary string // adapter binary path used by the shim/bwrap as TargetPath (linux) and for darwin allow-listing
+	AdapterType   string // adapter type (e.g. "shell"); used by the Darwin sandbox for interpreter allow-listing
 	// ValidateOnly, when true, skips side-effecting preparation steps (e.g.
 	// creating transient cgroup directories) so the call can be used for eager
 	// host-side validation. The strict-mode primitive-availability checks still
