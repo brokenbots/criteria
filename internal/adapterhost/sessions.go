@@ -498,9 +498,10 @@ func (m *SessionManager) validateSandboxPrimitivesEagerly(instanceID string) err
 		return nil
 	}
 
-	var adapterBinary string
+	var adapterBinary, adapterType string
 	if m.graph != nil {
 		if adapterNode, ok := m.graph.Adapters[instanceID]; ok {
+			adapterType = adapterNode.Type
 			path, discoverErr := m.resolveAdapterBinaryForInstance(instanceID, adapterNode.Type)
 			if discoverErr == nil {
 				adapterBinary = path
@@ -528,6 +529,7 @@ func (m *SessionManager) validateSandboxPrimitivesEagerly(instanceID string) err
 		Env:           envNode,
 		Caps:          caps,
 		AdapterBinary: adapterBinary,
+		AdapterType:   adapterType,
 		ValidateOnly:  true,
 	}
 	_, err := sandbox.Handler{}.Prepare(ctx)
@@ -571,9 +573,10 @@ func (m *SessionManager) buildSandboxCustomizer(instanceID, workingDir string) (
 	// inside ApplyToCmd). For lockfile-pinned (OCI) adapters this must use the
 	// digest-addressed install path; flat discovery only sees dev/test binaries
 	// placed directly in the adapter root.
-	var adapterBinary string
+	var adapterBinary, adapterType string
 	if m.graph != nil {
 		if adapterNode, ok := m.graph.Adapters[instanceID]; ok {
+			adapterType = adapterNode.Type
 			path, discoverErr := m.resolveAdapterBinaryForInstance(instanceID, adapterNode.Type)
 			if discoverErr == nil {
 				adapterBinary = path
@@ -602,6 +605,7 @@ func (m *SessionManager) buildSandboxCustomizer(instanceID, workingDir string) (
 		Env:           envNode,
 		Caps:          caps,
 		AdapterBinary: adapterBinary,
+		AdapterType:   adapterType,
 	}
 	prep, err := sandbox.Handler{}.Prepare(ctx)
 	if err != nil {
