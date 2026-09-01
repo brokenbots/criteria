@@ -10,10 +10,13 @@ the bundle with cosign, then writes Formula/criteria.rb using the tarball hashes
 from the signed manifest.
 """
 import hashlib
+import http.client
 import os
 import re
+import shutil
 import subprocess
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -28,7 +31,51 @@ def error(msg: str) -> None:
 def download(tag: str, name: str, dest: Path) -> None:
     url = f"https://github.com/{REPO}/releases/download/{tag}/{name}"
     print(f"Downloading {url} ...")
-    urllib.request.urlretrieve(url, dest)
+
+    version = tag.lstrip("v")
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": f"criteria-ci-update-homebrew-tap/{version}"},
+    )
+
+    max_attempts = 5
+    backoff_seconds = [1, 2, 4, 8, 16]
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                if resp.status >= 400:
+                    raise urllib.error.HTTPError(
+                        url, resp.status, resp.reason, resp.headers, None
+                    )
+                with open(dest, "wb") as f:
+                    shutil.copyfileobj(resp, f, length=65536)
+            return
+        except urllib.error.HTTPError as e:
+            if 500 <= e.code < 600 and attempt < max_attempts:
+                delay = backoff_seconds[attempt - 1]
+                print(
+                    f"Server error {e.code} downloading {name}, "
+                    f"attempt {attempt}/{max_attempts}; retrying in {delay}s ..."
+                )
+                time.sleep(delay)
+                continue
+            raise
+        except (
+            urllib.error.URLError,
+            ConnectionResetError,
+            ConnectionRefusedError,
+            http.client.RemoteDisconnected,
+        ) as e:
+            if attempt < max_attempts:
+                delay = backoff_seconds[attempt - 1]
+                print(
+                    f"Transient error downloading {name}, "
+                    f"attempt {attempt}/{max_attempts}; retrying in {delay}s ... ({e})"
+                )
+                time.sleep(delay)
+                continue
+            raise
 
 
 def verify_bundle(tag: str, sums: Path, bundle: Path) -> None:

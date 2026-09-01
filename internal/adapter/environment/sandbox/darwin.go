@@ -54,15 +54,15 @@ func (p *Profile) Render() string {
 	b.WriteString("(allow process-fork)\n")
 
 	if len(p.AllowExec) > 0 {
-		writeFileRule(&b, "process-exec", p.AllowExec)
+		writeLiteralRule(&b, "process-exec", p.AllowExec)
 	} else {
 		b.WriteString("(deny process-exec)\n")
 	}
 	if len(p.AllowFileReads) > 0 {
-		writeFileRule(&b, "file-read*", p.AllowFileReads)
+		writeFilesystemRule(&b, "file-read*", p.AllowFileReads)
 	}
 	if len(p.AllowFileWrites) > 0 {
-		writeFileRule(&b, "file-write*", p.AllowFileWrites)
+		writeFilesystemRule(&b, "file-write*", p.AllowFileWrites)
 	}
 
 	if len(p.AllowNetworkHosts) > 0 {
@@ -83,14 +83,45 @@ func (p *Profile) Render() string {
 	return b.String()
 }
 
-// writeFileRule emits an (allow <op> (literal <path>)...) block with every
-// path symlink-resolved so the literals match the kernel's resolved view.
-func writeFileRule(b *strings.Builder, op string, paths []string) {
+// writeFilesystemRule emits an (allow <op> ...) block for filesystem paths.
+// Directory roots are emitted as (subpath <resolved>) so that sandbox-exec
+// authorizes access to all descendants; non-directory targets use (literal).
+func writeFilesystemRule(b *strings.Builder, op string, paths []string) {
+	b.WriteString("(allow " + op + "\n")
+	for _, path := range paths {
+		resolved := resolveSandboxPath(path)
+		if isDirectoryRoot(resolved) {
+			fmt.Fprintf(b, "  (subpath %q)\n", resolved)
+		} else {
+			fmt.Fprintf(b, "  (literal %q)\n", resolved)
+		}
+	}
+	b.WriteString(")\n")
+}
+
+// writeLiteralRule emits an (allow <op> (literal <resolved-path>)...) block.
+// It is used for process-exec entries, which must always be literal regardless
+// of whether the resolved path happens to be a directory.
+func writeLiteralRule(b *strings.Builder, op string, paths []string) {
 	b.WriteString("(allow " + op + "\n")
 	for _, path := range paths {
 		fmt.Fprintf(b, "  (literal %q)\n", resolveSandboxPath(path))
 	}
 	b.WriteString(")\n")
+}
+
+// isDirectoryRoot reports whether resolvedPath points to an existing directory.
+// Symlink and firmlink resolution must already have been applied. Non-existent
+// or non-directory paths return false so they are rendered as (literal) rules.
+func isDirectoryRoot(resolvedPath string) bool {
+	if resolvedPath == "" {
+		return false
+	}
+	info, err := os.Stat(resolvedPath)
+	if err != nil {
+		return false
+	}
+	return info.IsDir()
 }
 
 // resolveSandboxPath returns p with symlinks evaluated, so profile literals
