@@ -404,6 +404,14 @@ func main() {
 		f, err := os.Open(os.Args[2])
 		if err != nil { fmt.Println("READ_FAIL:", err); os.Exit(0) }
 		f.Close(); fmt.Println("READ_OK")
+	case "write":
+		if len(os.Args) < 3 { os.Exit(1) }
+		f, err := os.Create(os.Args[2])
+		if err != nil { fmt.Println("WRITE_FAIL:", err); os.Exit(0) }
+		_, werr := f.WriteString("WRITE_OK\n")
+		f.Close()
+		if werr != nil { fmt.Println("WRITE_FAIL:", werr); os.Exit(0) }
+		fmt.Println("WRITE_OK")
 	case "connect":
 		if len(os.Args) < 4 { os.Exit(1) }
 		conn, err := net.Dial("tcp", net.JoinHostPort(os.Args[2], os.Args[3]))
@@ -591,7 +599,7 @@ func TestPrepare_Strict_ResolveWarnings(t *testing.T) {
 
 func TestCRI82_DarwinSandboxDirectorySubpath(t *testing.T) {
 	prof := Profile{
-		DefaultDeny:    true,
+		DefaultDeny:     true,
 		AllowFileWrites: []string{"/tmp"},
 	}
 	rendered := prof.Render()
@@ -605,7 +613,7 @@ func TestCRI82_DarwinSandboxDirectorySubpath(t *testing.T) {
 
 func TestCRI82_DarwinSandboxFileLiteral(t *testing.T) {
 	prof := Profile{
-		DefaultDeny:    true,
+		DefaultDeny:     true,
 		AllowFileWrites: []string{"/tmp/adapter.log"},
 	}
 	rendered := prof.Render()
@@ -628,5 +636,74 @@ func TestCRI82_FromPolicyDirectorySubpath(t *testing.T) {
 	rendered := prof.Render()
 	if !strings.Contains(rendered, `(subpath "/private/tmp")`) {
 		t.Errorf("expected FromPolicy to render /tmp as (subpath \"/private/tmp\"), got:\n%s", rendered)
+	}
+}
+
+func TestCRI82_DarwinSandboxAllowsDescendantWrite(t *testing.T) {
+	if _, err := exec.LookPath("sandbox-exec"); err != nil {
+		t.Skip("sandbox-exec not available on this runner")
+	}
+
+	helper := buildDarwinTestHelper(t)
+	allowedDir := t.TempDir()
+
+	prof := Profile{
+		DefaultDeny:     true,
+		AllowExec:       []string{helper},
+		AllowFileWrites: []string{allowedDir},
+	}
+
+	profilePath, err := writeProfile(&prof)
+	if err != nil {
+		t.Fatalf("writeProfile: %v", err)
+	}
+	defer os.Remove(profilePath)
+
+	target := filepath.Join(allowedDir, "plugin-transport")
+	out, err := runUnderSandbox(t, helper, profilePath, "write", target)
+	if err != nil {
+		t.Fatalf("allowed write failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "WRITE_OK") {
+		t.Errorf("allowed write: expected WRITE_OK, got:\n%s", out)
+	}
+	if _, statErr := os.Stat(target); statErr != nil {
+		t.Errorf("allowed write: expected file %q to exist, got: %v", target, statErr)
+	}
+}
+
+func TestCRI82_DarwinSandboxDeniesWriteOutsideAllowedRoot(t *testing.T) {
+	if _, err := exec.LookPath("sandbox-exec"); err != nil {
+		t.Skip("sandbox-exec not available on this runner")
+	}
+
+	helper := buildDarwinTestHelper(t)
+	allowedDir := t.TempDir()
+	blockedDir := t.TempDir()
+
+	prof := Profile{
+		DefaultDeny:     true,
+		AllowExec:       []string{helper},
+		AllowFileWrites: []string{allowedDir},
+	}
+
+	profilePath, err := writeProfile(&prof)
+	if err != nil {
+		t.Fatalf("writeProfile: %v", err)
+	}
+	defer os.Remove(profilePath)
+
+	target := filepath.Join(blockedDir, "plugin-transport")
+	out, err := runUnderSandbox(t, helper, profilePath, "write", target)
+
+	denied := err != nil ||
+		strings.Contains(out, "WRITE_FAIL") ||
+		strings.Contains(out, "Operation not permitted") ||
+		strings.Contains(out, "EPERM")
+	if !denied {
+		t.Errorf("blocked write: expected denial, got err=%v, output:\n%s", err, out)
+	}
+	if _, statErr := os.Stat(target); !os.IsNotExist(statErr) {
+		t.Errorf("blocked write: expected file %q to not exist, got stat err=%v", target, statErr)
 	}
 }
