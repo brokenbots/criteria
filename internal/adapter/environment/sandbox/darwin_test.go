@@ -588,3 +588,45 @@ func TestPrepare_Strict_ResolveWarnings(t *testing.T) {
 		t.Errorf("expected 'policy validation failed' in error, got: %v", err)
 	}
 }
+
+func TestCRI82_DarwinSandboxDirectorySubpath(t *testing.T) {
+	prof := Profile{
+		DefaultDeny:    true,
+		AllowFileWrites: []string{"/tmp"},
+	}
+	rendered := prof.Render()
+	if !strings.Contains(rendered, `(subpath "/private/tmp")`) {
+		t.Errorf("expected (subpath \"/private/tmp\") for /tmp directory root, got:\n%s", rendered)
+	}
+	if strings.Contains(rendered, `(literal "/private/tmp")`) {
+		t.Errorf("directory root /tmp should not render as (literal \"/private/tmp\"), got:\n%s", rendered)
+	}
+}
+
+func TestCRI82_DarwinSandboxFileLiteral(t *testing.T) {
+	prof := Profile{
+		DefaultDeny:    true,
+		AllowFileWrites: []string{"/tmp/adapter.log"},
+	}
+	rendered := prof.Render()
+	if !strings.Contains(rendered, `(literal "/private/tmp/adapter.log")`) {
+		t.Errorf("expected (literal \"/private/tmp/adapter.log\") for non-existent file entry, got:\n%s", rendered)
+	}
+	if strings.Contains(rendered, `(subpath "/private/tmp/adapter.log")`) {
+		t.Errorf("file-level entry /tmp/adapter.log should not render as (subpath), got:\n%s", rendered)
+	}
+}
+
+func TestCRI82_FromPolicyDirectorySubpath(t *testing.T) {
+	prof := FromPolicy(workflow.ResolvedPolicy{
+		TypeSpecific: map[string]cty.Value{
+			"filesystem": cty.ObjectVal(map[string]cty.Value{
+				"write": cty.TupleVal([]cty.Value{cty.StringVal("/tmp")}),
+			}),
+		},
+	}, "")
+	rendered := prof.Render()
+	if !strings.Contains(rendered, `(subpath "/private/tmp")`) {
+		t.Errorf("expected FromPolicy to render /tmp as (subpath \"/private/tmp\"), got:\n%s", rendered)
+	}
+}
