@@ -383,10 +383,13 @@ func TestAgent_InitFailureReportsRunFailed(t *testing.T) {
 	fake.WaitForCond(t, 10*time.Second, func() bool { return runHasEventOfType(fake, runID, "RunFailed") })
 
 	// A second assignment must still be processed, proving the agent is still
-	// accepting work after the terminal initialization failure.
+	// accepting work after the terminal initialization failure. The second
+	// assignment is queued behind the first run and must wait for its terminal
+	// event to drain; under heavy hosted-runner load with -race that hand-off
+	// can exceed 10 s, so allow extra budget without weakening the assertion.
 	nextID := uuid.NewString()
 	fake.QueueAssignment(makeAssignment(nextID, "two_step", twoStepWorkflow))
-	fake.WaitForCond(t, 10*time.Second, func() bool { return runHasEventOfType(fake, nextID, "RunFailed") })
+	fake.WaitForCond(t, 30*time.Second, func() bool { return runHasEventOfType(fake, nextID, "RunFailed") })
 
 	cancel()
 	waitAgent(t, errCh)

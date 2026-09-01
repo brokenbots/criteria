@@ -42,6 +42,10 @@ func FromPolicy(p workflow.ResolvedPolicy, adapterBinary string) Profile {
 		if binDir != "" && binDir != "/" {
 			prof.AllowFileReads = append(prof.AllowFileReads, binDir)
 		}
+		// Local adapter execution uses go-plugin's Unix-domain socket transport.
+		// macOS sandbox-exec classifies UDS bind() as network-bind, so grant it
+		// unconditionally; it is independent of user-declared network egress.
+		prof.AllowNetworkBind = true
 	}
 
 	fsObj := typeSpecific(p, "filesystem")

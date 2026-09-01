@@ -23,6 +23,7 @@ type Profile struct {
 	AllowFileWrites   []string
 	AllowNetworkHosts []string
 	AllowExec         []string
+	AllowNetworkBind  bool // emit (allow network-bind) for local adapter UDS transport
 	BlockKextLoad     bool
 	BlockMachLookup   bool
 	DefaultDeny       bool
@@ -71,6 +72,10 @@ func (p *Profile) Render() string {
 			b.WriteString(fmt.Sprintf("  (remote ip %q)\n", sandboxRemoteAddr(host)))
 		}
 		b.WriteString(")\n")
+	}
+
+	if p.AllowNetworkBind {
+		b.WriteString("(allow network-bind)\n")
 	}
 
 	if p.BlockKextLoad {
