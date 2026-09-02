@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
@@ -1142,6 +1143,56 @@ func TestEngineSetLockfileOnSessions(t *testing.T) {
 	defer cancel()
 	if err := sessions.Open(ctx, "noop.default", "noop", "shutdown", nil, nil); err != nil {
 		t.Fatalf("session open: %v", err)
+	}
+}
+
+func TestMaybeStartRemoteShim_ExactProcessExecRejected(t *testing.T) {
+	sessions := adapterhost.NewSessionManager(nil)
+	eng := New(
+		&workflow.FSMGraph{
+			Environments: map[string]*workflow.EnvironmentNode{
+				"remote.dev": {
+					Type:    "remote",
+					Name:    "dev",
+					Process: &workflow.ProcessPolicy{Exec: []string{"/bin/zsh"}},
+				},
+			},
+		},
+		nil, // loader
+		&fakeSink{},
+	)
+
+	err := eng.maybeStartRemoteShim(context.Background(), sessions)
+	if err == nil {
+		t.Fatal("expected error for remote environment with exact process.exec allow-list")
+	}
+	if !strings.Contains(err.Error(), "does not support a process.exec allow-list") {
+		t.Errorf("expected unsupported allow-list error, got: %v", err)
+	}
+}
+
+func TestMaybeStartRemoteShim_WildcardProcessExecAccepted(t *testing.T) {
+	sessions := adapterhost.NewSessionManager(nil)
+	eng := New(
+		&workflow.FSMGraph{
+			Environments: map[string]*workflow.EnvironmentNode{
+				"remote.dev": {
+					Type:    "remote",
+					Name:    "dev",
+					Process: &workflow.ProcessPolicy{Exec: []string{"*"}},
+					RawBody: hcl.EmptyBody(),
+				},
+			},
+		},
+		nil,
+		&fakeSink{},
+	)
+
+	// With no lockfile the shim setup will fail after the process check, so we
+	// only verify that the wildcard does not trigger the early process check.
+	err := eng.maybeStartRemoteShim(context.Background(), sessions)
+	if err != nil && strings.Contains(err.Error(), "does not support a process.exec allow-list") {
+		t.Errorf("wildcard process.exec should be accepted, got: %v", err)
 	}
 }
 

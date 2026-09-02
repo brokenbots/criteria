@@ -954,6 +954,85 @@ func TestCRI86_DarwinSandboxAllowsDeclaredExecutable(t *testing.T) {
 	}
 }
 
+func TestCRI87_Profile_Render_Wildcard(t *testing.T) {
+	prof := Profile{
+		DefaultDeny:       true,
+		AllowExecWildcard: true,
+	}
+	rendered := prof.Render()
+	if !strings.Contains(rendered, "(allow process-exec)\n") {
+		t.Errorf("expected unrestricted (allow process-exec) for wildcard, got:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "(allow process-exec") && strings.Contains(rendered, "(literal") {
+		t.Errorf("wildcard process-exec must not enumerate literal paths, got:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "(deny process-exec)") {
+		t.Errorf("wildcard must not emit (deny process-exec), got:\n%s", rendered)
+	}
+}
+
+func TestCRI87_FromPolicy_Wildcard_DoesNotWidenFilesystem(t *testing.T) {
+	prof := FromPolicy(workflow.ResolvedPolicy{
+		Process: &workflow.ProcessPolicy{Exec: []string{"*"}},
+		TypeSpecific: map[string]cty.Value{
+			"filesystem": cty.ObjectVal(map[string]cty.Value{
+				"read": cty.TupleVal([]cty.Value{cty.StringVal("/tmp")}),
+			}),
+		},
+	}, "/usr/local/bin/adapter")
+
+	if !prof.AllowExecWildcard {
+		t.Fatal("expected AllowExecWildcard=true for process.exec=[\"*\"]")
+	}
+	if sliceContains(prof.AllowExec, "*") {
+		t.Errorf("wildcard must not be added to AllowExec literal list")
+	}
+	for _, p := range prof.AllowFileReads {
+		if p == "*" {
+			t.Errorf("wildcard must not widen file-read allow-list")
+		}
+	}
+}
+
+func TestCRI87_DarwinSandbox_AllowsWildcardExecutable(t *testing.T) {
+	if _, err := exec.LookPath("/usr/bin/sandbox-exec"); err != nil {
+		t.Skip("sandbox-exec not available on this runner")
+	}
+
+	helper := buildDarwinTestHelper(t)
+	helperDir := filepath.Dir(helper)
+
+	prof := FromPolicy(workflow.ResolvedPolicy{
+		Process: &workflow.ProcessPolicy{Exec: []string{"*"}},
+		TypeSpecific: map[string]cty.Value{
+			"filesystem": cty.ObjectVal(map[string]cty.Value{
+				"read": cty.TupleVal([]cty.Value{cty.StringVal(helperDir)}),
+			}),
+			"network": cty.ObjectVal(map[string]cty.Value{
+				"allow_egress": cty.BoolVal(false),
+			}),
+		},
+	}, helper)
+
+	if !prof.AllowExecWildcard {
+		t.Fatal("FromPolicy must set AllowExecWildcard for wildcard process policy")
+	}
+
+	profilePath, err := writeProfile(&prof)
+	if err != nil {
+		t.Fatalf("writeProfile: %v", err)
+	}
+	defer os.Remove(profilePath)
+
+	out, err := runUnderSandbox(t, helper, profilePath, "exec", "/bin/bash", "-c echo WILDCARD_OK", helperDir)
+	if err != nil {
+		t.Fatalf("exec under sandbox failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "WILDCARD_OK") {
+		t.Errorf("expected wildcard executable output WILDCARD_OK, got:\n%s", out)
+	}
+}
+
 func TestCRI86_DarwinSandboxDeniesUndeclaredExecutable(t *testing.T) {
 	if _, err := exec.LookPath("/usr/bin/sandbox-exec"); err != nil {
 		t.Skip("sandbox-exec not available on this runner")

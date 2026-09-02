@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
 )
@@ -525,6 +526,117 @@ func TestCompileEnvironments_ProcessExec_ShellEnvironmentRejected(t *testing.T) 
 	}
 	if !strings.Contains(diags.Error(), "unknown attribute \"process\"") {
 		t.Errorf("expected unknown attribute error, got: %s", diags.Error())
+	}
+}
+
+func TestCompileEnvironments_ProcessExec_WildcardAndValidation(t *testing.T) {
+	cases := []struct {
+		name         string
+		envName      string
+		src          string
+		wantExec     []string
+		wantWildcard bool
+		wantErr      string
+	}{
+		{
+			name:    "omitted process denies all child executables",
+			envName: "closed",
+			src: `environment "sandbox" "closed" {
+				working_directory = "/tmp/workdir"
+			}`,
+			wantExec: nil,
+		},
+		{
+			name:    "explicit empty process denies all child executables",
+			envName: "closed_explicit",
+			src: `environment "sandbox" "closed_explicit" {
+				process = { exec = [] }
+			}`,
+			wantExec: []string{},
+		},
+		{
+			name:    "exact absolute paths are allowed",
+			envName: "restricted",
+			src: `environment "sandbox" "restricted" {
+				process = { exec = ["/bin/zsh", "/usr/bin/git"] }
+			}`,
+			wantExec: []string{"/bin/zsh", "/usr/bin/git"},
+		},
+		{
+			name:    "wildcard opens all child executables",
+			envName: "open",
+			src: `environment "sandbox" "open" {
+				process = { exec = ["*"] }
+			}`,
+			wantExec:     []string{"*"},
+			wantWildcard: true,
+		},
+		{
+			name:    "wildcard combined with path is rejected",
+			envName: "bad",
+			src:     `environment "sandbox" "bad" { process = { exec = ["*", "/bin/zsh"] } }`,
+			wantErr: "wildcard",
+		},
+		{
+			name:    "other globs are rejected",
+			envName: "bad",
+			src:     `environment "sandbox" "bad" { process = { exec = ["/bin/*sh"] } }`,
+			wantErr: "glob",
+		},
+		{
+			name:    "empty string is rejected",
+			envName: "bad",
+			src:     `environment "sandbox" "bad" { process = { exec = [""] } }`,
+			wantErr: "non-empty",
+		},
+		{
+			name:    "non-string entry is rejected",
+			envName: "bad",
+			src:     `environment "sandbox" "bad" { process = { exec = [true] } }`,
+			wantErr: "non-empty strings",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := environmentWorkflow(tc.src, "")
+			spec, diags := Parse("test.hcl", []byte(src))
+			if diags.HasErrors() {
+				t.Fatalf("parse: %s", diags.Error())
+			}
+			g, diags := Compile(spec, nil)
+			if tc.wantErr != "" {
+				if !diags.HasErrors() {
+					t.Fatalf("expected compile error containing %q", tc.wantErr)
+				}
+				if !strings.Contains(strings.ToLower(diags.Error()), strings.ToLower(tc.wantErr)) {
+					t.Errorf("expected error containing %q, got: %s", tc.wantErr, diags.Error())
+				}
+				return
+			}
+			if diags.HasErrors() {
+				t.Fatalf("compile: %s", diags.Error())
+			}
+			env := g.Environments["sandbox."+tc.envName]
+			if env == nil {
+				t.Fatal("target environment not found")
+			}
+			if tc.wantExec == nil {
+				if env.Process != nil {
+					t.Fatalf("expected Process policy nil, got %v", env.Process.Exec)
+				}
+				return
+			}
+			if env.Process == nil {
+				t.Fatal("expected Process policy")
+			}
+			if diff := cmp.Diff(tc.wantExec, env.Process.Exec); diff != "" {
+				t.Errorf("process.exec mismatch (-want +got):\n%s", diff)
+			}
+			if env.Process.IsWildcard() != tc.wantWildcard {
+				t.Errorf("IsWildcard() = %v, want %v", env.Process.IsWildcard(), tc.wantWildcard)
+			}
+		})
 	}
 }
 
