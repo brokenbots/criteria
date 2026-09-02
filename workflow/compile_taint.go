@@ -174,12 +174,13 @@ func checkExprForTaint(expr hcl.Expression, g *FSMGraph, schemas map[string]Adap
 		case "data":
 			// data.<kind>.<name>.value — a data block declared secret = true
 			// is a taint source.
-			if len(traversal) < 3 {
+			if len(traversal) < 4 {
 				continue
 			}
 			kindAttr, ok2 := traversal[1].(hcl.TraverseAttr)
 			nameAttr, ok3 := traversal[2].(hcl.TraverseAttr)
-			if !ok2 || !ok3 {
+			valueAttr, ok4 := traversal[3].(hcl.TraverseAttr)
+			if !ok2 || !ok3 || !ok4 || valueAttr.Name != "value" {
 				continue
 			}
 			if m, ok := g.Data[kindAttr.Name]; ok {

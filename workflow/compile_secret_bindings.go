@@ -89,6 +89,190 @@ func validateStepSecretInputBinding(g *FSMGraph, step *StepNode, name string, ex
 	return nil
 }
 
+// ValidateEnvironmentTaint checks that environment.variables and
+// environment.config expressions do not reference secret-tainted origins.
+// Secret values must travel through dedicated secret channels (adapter.secrets
+// and step.secret_input), not the generic environment (CRI-88, EC4).
+func ValidateEnvironmentTaint(g *FSMGraph) hcl.Diagnostics {
+	if g == nil {
+		return nil
+	}
+
+	markTaintedLocals(g)
+
+	var diags hcl.Diagnostics
+	for key, env := range g.Environments {
+		for k, expr := range env.RawVariableExprs {
+			diags = append(diags, checkEnvironmentExprTaint(g, key, k, "variables", expr)...)
+		}
+		for k, expr := range env.RawConfigExprs {
+			diags = append(diags, checkEnvironmentExprTaint(g, key, k, "config", expr)...)
+		}
+	}
+	return diags
+}
+
+// checkEnvironmentExprTaint returns diagnostics if expr references a
+// secret-tainted origin in a non-secret environment channel.
+//
+// Direct references to secret data blocks (data.<kind>.<name>.value) are
+// diagnosed earlier in decodeEnvironmentVariables/decodeEnvironmentConfig so
+// that the compile-time-fold error is replaced with an explicit taint error.
+// This function still catches secret variables and secret-tainted locals.
+func checkEnvironmentExprTaint(g *FSMGraph, envKey, attrName, block string, expr hcl.Expression) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	if origin, tainted := checkExprForTaint(expr, g, nil); tainted {
+		diags = append(diags, newTaintError(origin, expr.Range().Ptr()))
+		diags = append(diags, taintDetail(envKey, attrName, block)...)
+		return diags
+	}
+	if _, tainted := exprReferencesTaintedLocal(expr, g); tainted {
+		diags = append(diags, taintDetail(envKey, attrName, block)...)
+		return diags
+	}
+	return nil
+}
+
+// checkExprForDataSecretTaint scans the expression for any traversal to
+// data.<kind>.<name>.value where the named data block is declared secret.
+// This is needed because environment variables/config are checked before data
+// values are resolvable, so the fold-aware taint check cannot see them.
+func checkExprForDataSecretTaint(expr hcl.Expression, g *FSMGraph) (taintOrigin, bool) {
+	for _, trav := range expr.Variables() {
+		if len(trav) < 4 {
+			continue
+		}
+		root, ok1 := trav[0].(hcl.TraverseRoot)
+		kindAttr, ok2 := trav[1].(hcl.TraverseAttr)
+		nameAttr, ok3 := trav[2].(hcl.TraverseAttr)
+		valueAttr, ok4 := trav[3].(hcl.TraverseAttr)
+		if !ok1 || !ok2 || !ok3 || !ok4 || root.Name != "data" || valueAttr.Name != "value" {
+			continue
+		}
+		if m, ok := g.Data[kindAttr.Name]; ok {
+			if dn, ok := m[nameAttr.Name]; ok && dn.Secret {
+				return taintOrigin{kind: "data_secret", name: "data." + kindAttr.Name + "." + nameAttr.Name}, true
+			}
+		}
+	}
+	return taintOrigin{}, false
+}
+
+// markTaintedLocals propagates taint through locals in dependency order.
+// A local is tainted when its value expression directly references a secret
+// variable, a secret data block, or another tainted local.
+func markTaintedLocals(g *FSMGraph) {
+	if g == nil || g.spec == nil {
+		return
+	}
+	for {
+		changed := false
+		for _, local := range g.Locals {
+			if local.Tainted {
+				continue
+			}
+			if taintLocal(local, g) {
+				local.Tainted = true
+				changed = true
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+}
+
+// taintLocal reports whether local's value expression is secret-tainted and
+// marks it when true.
+func taintLocal(local *LocalNode, g *FSMGraph) bool {
+	expr := localRawExpr(g, local.Name)
+	if expr == nil {
+		return false
+	}
+	if isExprSecretTainted(expr, g) {
+		return true
+	}
+	for _, traversal := range expr.Variables() {
+		if dep, ok := localRefFromTraversal(traversal, g); ok && dep.Tainted {
+			return true
+		}
+	}
+	return false
+}
+
+// isExprSecretTainted reports whether expr directly references a secret
+// variable or a secret data block.
+func isExprSecretTainted(expr hcl.Expression, g *FSMGraph) bool {
+	if _, tainted := checkExprForTaint(expr, g, nil); tainted {
+		return true
+	}
+	if _, tainted := checkExprForDataSecretTaint(expr, g); tainted {
+		return true
+	}
+	return false
+}
+
+// localRefFromTraversal returns the referenced local node when traversal is
+// local.<name>.
+func localRefFromTraversal(traversal hcl.Traversal, g *FSMGraph) (*LocalNode, bool) {
+	if len(traversal) < 2 {
+		return nil, false
+	}
+	root, ok1 := traversal[0].(hcl.TraverseRoot)
+	attr, ok2 := traversal[1].(hcl.TraverseAttr)
+	if !ok1 || !ok2 || root.Name != "local" {
+		return nil, false
+	}
+	dep, ok := g.Locals[attr.Name]
+	return dep, ok
+}
+
+// taintDetail appends a second, more specific diagnostic that names the
+// offending environment attribute so the message is actionable.
+func taintDetail(key, attrName, block string) hcl.Diagnostics {
+	return hcl.Diagnostics{&hcl.Diagnostic{
+		Severity: hcl.DiagError,
+		Summary:  fmt.Sprintf("environment %q %s.%s: cannot use a secret-tainted value here", key, block, attrName),
+		Detail:   "Environment variables and config are non-secret channels and cannot carry secret variables, secret data blocks, or sensitive outputs.",
+	}}
+}
+
+// localRawExpr recovers the original HCL expression for a local value from
+// the parsed spec so it can be checked for taint sources.
+func localRawExpr(g *FSMGraph, name string) hcl.Expression {
+	if g == nil || g.spec == nil {
+		return nil
+	}
+	for i := range g.spec.Locals {
+		if g.spec.Locals[i].Name == name {
+			attrs, _ := g.spec.Locals[i].Remain.JustAttributes()
+			if valAttr, ok := attrs["value"]; ok {
+				return valAttr.Expr
+			}
+		}
+	}
+	return nil
+}
+
+// exprReferencesTaintedLocal returns true when the expression directly
+// references a local that has been marked as tainted.
+func exprReferencesTaintedLocal(expr hcl.Expression, g *FSMGraph) (string, bool) {
+	for _, traversal := range expr.Variables() {
+		if len(traversal) < 2 {
+			continue
+		}
+		root, ok1 := traversal[0].(hcl.TraverseRoot)
+		attr, ok2 := traversal[1].(hcl.TraverseAttr)
+		if !ok1 || !ok2 || root.Name != "local" {
+			continue
+		}
+		if local, ok := g.Locals[attr.Name]; ok && local.Tainted {
+			return attr.Name, true
+		}
+	}
+	return "", false
+}
+
 // secretRef describes a direct secret reference extracted from an HCL
 // expression.
 type secretRef struct {

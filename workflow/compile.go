@@ -169,6 +169,9 @@ func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]Adap
 	// CRI-88: enforce that secret channels (adapter.secrets and
 	// step.secret_input) only reference declared, secret-tainted values.
 	diags = append(diags, ValidateSecretBindings(g)...)
+	// CRI-88: enforce that environment.variables and environment.config never
+	// carry secret-tainted values; they are non-secret channels.
+	diags = append(diags, ValidateEnvironmentTaint(g)...)
 	// Reserved-name checks only apply to user-authored top-level workflows.
 	// Sub-workflow bodies (SubworkflowChain non-empty) are synthetic and
 	// intentionally use the "_continue" name as a terminal state.
@@ -210,6 +213,7 @@ func newFSMGraph(spec *Spec) *FSMGraph {
 		CriteriaVersion:      spec.Header.CriteriaVersion,
 		CriteriaVersionRange: spec.Header.CriteriaVersionRange,
 		Verification:         spec.Header.Verification,
+		spec:                 spec,
 		Variables:            map[string]*VariableNode{},
 		Locals:               map[string]*LocalNode{},
 		Data:                 map[string]map[string]*DataNode{},
