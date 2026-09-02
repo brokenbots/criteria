@@ -106,9 +106,23 @@ func applyFilesystemPolicy(prof *Profile, fsObj cty.Value) {
 }
 
 // applyNetworkPolicy resolves the network object's allow hosts to IPs and
-// records warnings for hosts that fail to resolve.
+// records warnings for hosts that fail to resolve. A sole reserved wildcard
+// "*" opts in to unrestricted outbound networking and is not resolved.
 func applyNetworkPolicy(prof *Profile, netObj cty.Value) {
-	for _, host := range pathListFromObject(netObj, "allow") {
+	allow := pathListFromObject(netObj, "allow")
+	class, err := workflow.ClassifyNetworkAllow(allow)
+	if err != nil {
+		prof.resolveWarnings = append(prof.resolveWarnings, resolveWarn{
+			host: "network.allow",
+			err:  err,
+		})
+		return
+	}
+	if class == workflow.NetworkAllowWildcard {
+		prof.AllowNetworkWildcard = true
+		return
+	}
+	for _, host := range allow {
 		resolved := resolveHost(host)
 		if len(resolved) == 0 {
 			prof.resolveWarnings = append(prof.resolveWarnings, resolveWarn{

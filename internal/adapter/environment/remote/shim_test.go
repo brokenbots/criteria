@@ -1256,6 +1256,118 @@ state "done" { terminal = true }
 	}
 }
 
+func TestParseConfig_NetworkWildcardAccepted(t *testing.T) {
+	src := `
+workflow {
+  name = "net-wildcard-test"
+  version = "0.1"
+  initial_state = "done"
+  target_state = "done"
+}
+environment "remote" "prod" {
+  listen_address = "127.0.0.1:0"
+  network {
+    allow = ["*"]
+  }
+}
+state "done" { terminal = true }
+`
+	file, diags := workflow.Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	graph, diags := workflow.Compile(file, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+	env := graph.Environments["remote.prod"]
+	if env == nil {
+		t.Fatal("remote.prod environment not found")
+	}
+	if _, err := ParseConfig(env.RawBody); err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+}
+
+func TestParseConfig_NetworkExactRejected(t *testing.T) {
+	src := `
+workflow {
+  name = "net-exact-test"
+  version = "0.1"
+  initial_state = "done"
+  target_state = "done"
+}
+environment "remote" "prod" {
+  listen_address = "127.0.0.1:0"
+  network {
+    allow = ["api.example.com:443"]
+  }
+}
+state "done" { terminal = true }
+`
+	file, diags := workflow.Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	graph, diags := workflow.Compile(file, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+	env := graph.Environments["remote.prod"]
+	if env == nil {
+		t.Fatal("remote.prod environment not found")
+	}
+	_, err := ParseConfig(env.RawBody)
+	if err == nil {
+		t.Fatal("expected error for exact network.allow in remote environment")
+	}
+	if !strings.Contains(err.Error(), "cannot enforce an exact network.allow") {
+		t.Errorf("expected exact allow-list error, got: %v", err)
+	}
+}
+
+func TestParseConfig_NetworkInvalidGlobRejected(t *testing.T) {
+	src := `
+workflow {
+  name = "net-invalid-test"
+  version = "0.1"
+  initial_state = "done"
+  target_state = "done"
+}
+environment "remote" "prod" {
+  listen_address = "127.0.0.1:0"
+  network {
+    allow = ["*", "api.example.com:443"]
+  }
+}
+state "done" { terminal = true }
+`
+	file, diags := workflow.Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	graph, diags := workflow.Compile(file, nil)
+	if diags.HasErrors() {
+		// Compile-time classification rejects the invalid wildcard combination,
+		// which satisfies the test intent before ParseConfig is reached.
+		if !strings.Contains(diags.Error(), "wildcard") {
+			t.Errorf("expected wildcard combination error, got: %s", diags.Error())
+		}
+		return
+	}
+	env := graph.Environments["remote.prod"]
+	if env == nil {
+		t.Fatal("remote.prod environment not found")
+	}
+	_, err := ParseConfig(env.RawBody)
+	if err == nil {
+		t.Fatal("expected error for invalid network.allow combination")
+	}
+	if !strings.Contains(err.Error(), "wildcard") {
+		t.Errorf("expected wildcard combination error, got: %v", err)
+	}
+}
+
 // TestShim_ConcurrentAccept verifies that two adapters of the same type
 // dialing in rapid succession are handled correctly: the second session
 // replaces the first, waiters receive the new handle, and the old handle is

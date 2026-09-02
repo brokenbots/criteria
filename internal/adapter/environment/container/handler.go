@@ -108,13 +108,22 @@ func buildPolicyArgs(ts map[string]cty.Value, adapterRef string) (PolicyArgs, er
 
 	if net, ok := ts["network"]; ok && !net.IsNull() {
 		allow := stringListFromObject(net, "allow")
-		if len(allow) == 0 {
+		netClass, err := workflow.ClassifyNetworkAllow(allow)
+		if err != nil {
+			return policy, fmt.Errorf("network.allow: %w", err)
+		}
+		switch netClass {
+		case workflow.NetworkAllowDeny:
 			policy.NetworkMode = "none"
-		} else {
+		case workflow.NetworkAllowWildcard:
 			// Per-session bridge network naming. Full firewall rules are
 			// deferred to a future workstream, but the network name itself
 			// scopes the adapter to a session-scoped bridge.
 			policy.NetworkName = makeNetworkName(adapterRef)
+		case workflow.NetworkAllowExact:
+			return policy, fmt.Errorf(
+				"container environment cannot enforce an exact network.allow allow-list; " +
+					"use network.allow = [\"*\"] to explicitly allow unrestricted egress, or omit the block to deny egress")
 		}
 	}
 

@@ -104,6 +104,30 @@ func TestProfile_Render(t *testing.T) {
 			want:    []string{"(allow file-write*"},
 			wantNot: []string{"(allow network-bind)"},
 		},
+		{
+			name: "wildcard network-outbound is unrestricted",
+			profile: Profile{
+				DefaultDeny:         true,
+				AllowNetworkWildcard: true,
+			},
+			want: []string{
+				"(allow network-outbound)",
+			},
+			wantNot: []string{
+				"(remote ip",
+			},
+		},
+		{
+			name: "exact network-outbound keeps remote ip filter",
+			profile: Profile{
+				DefaultDeny:      true,
+				AllowNetworkHosts: []string{"127.0.0.1:443"},
+			},
+			want: []string{
+				"(allow network-outbound",
+				"(remote ip \"localhost:443\")",
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -131,11 +155,12 @@ func TestFromPolicy(t *testing.T) {
 		wantReads       []string
 		wantWrites      []string
 		wantExec        []string
-		wantNetwork     []string
-		wantNetworkBind bool
-		wantWarnings    int
-		wantBlockKext   bool
-		wantBlockMach   bool
+		wantNetwork          []string
+		wantNetworkWildcard  bool
+		wantNetworkBind      bool
+		wantWarnings         int
+		wantBlockKext        bool
+		wantBlockMach        bool
 	}{
 		{
 			name: "filesystem read and write directories",
@@ -221,6 +246,18 @@ func TestFromPolicy(t *testing.T) {
 			wantNetwork: []string{"127.0.0.1:443", "[::1]:80"},
 		},
 		{
+			name: "network wildcard allows unrestricted egress",
+			policy: workflow.ResolvedPolicy{
+				TypeSpecific: map[string]cty.Value{
+					"network": cty.ObjectVal(map[string]cty.Value{
+						"allow": cty.TupleVal([]cty.Value{cty.StringVal("*")}),
+					}),
+				},
+			},
+			wantNetworkWildcard: true,
+			wantWarnings:        0,
+		},
+		{
 			name: "unresolvable network host",
 			policy: workflow.ResolvedPolicy{
 				TypeSpecific: map[string]cty.Value{
@@ -278,6 +315,9 @@ func TestFromPolicy(t *testing.T) {
 			}
 			if prof.AllowNetworkBind != tc.wantNetworkBind {
 				t.Errorf("AllowNetworkBind=%v, want %v", prof.AllowNetworkBind, tc.wantNetworkBind)
+			}
+			if prof.AllowNetworkWildcard != tc.wantNetworkWildcard {
+				t.Errorf("AllowNetworkWildcard=%v, want %v", prof.AllowNetworkWildcard, tc.wantNetworkWildcard)
 			}
 			if len(prof.resolveWarnings) != tc.wantWarnings {
 				t.Errorf("resolveWarnings=%d, want %d", len(prof.resolveWarnings), tc.wantWarnings)

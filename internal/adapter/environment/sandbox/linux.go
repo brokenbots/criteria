@@ -216,10 +216,14 @@ func extractPolicyPaths(policy *workflow.ResolvedPolicy) (readPaths, writePaths,
 		}
 	}
 	netAllow = pathListFromObject(netObj, "allow")
+	netClass, err := workflow.ClassifyNetworkAllow(netAllow)
+	if err != nil {
+		return nil, nil, nil, false, fmt.Errorf("network.allow: %w", err)
+	}
 	if policy.Network != nil {
 		allowNet = policy.Network.AllowEgress
 	}
-	if !allowNet && len(netAllow) > 0 {
+	if !allowNet && (netClass == workflow.NetworkAllowExact || netClass == workflow.NetworkAllowWildcard) {
 		allowNet = true
 	}
 	return readPaths, writePaths, netAllow, allowNet, nil

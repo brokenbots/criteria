@@ -416,7 +416,7 @@ adapter (or per step) by reference:
 environment "container" "prod" {
   policy_mode = "strict"
   runtime     = "docker"
-  network  { allow = ["api.anthropic.com:443"] }
+  network  { allow = ["*"] }
   secrets  { provider = "vault:secret/anthropic" }
   resources { cpu = "2", memory = "1Gi", timeout = "5m" }
 }
@@ -453,11 +453,26 @@ Each policy field resolves per session:
 
 Fields: `policy_mode` (`permissive` default / `strict`), `sandbox`
 (`strict`/`permissive`/`off`), `filesystem { read, write }`,
-`network { allow }` (host:port list, `"any"`, or `"none"`), `secrets { provider,
+`network { allow }` (host:port list or `"*"`), `secrets { provider,
 allow }`, `resources { cpu, memory, timeout }`, `os` (compile-time host gate),
 and type-specific extras such as `runtime` for `container`. Compatibility between
 an adapter and an environment type is checked at compile time only when the
 adapter declares a `compatible_environments` constraint.
+
+`network { allow }` semantics:
+
+- Absent or empty `allow` denies outbound networking.
+- `allow = ["*"]` explicitly opts in to unrestricted outbound networking.
+- `"*"` must be the only entry; it cannot be combined with host:port values,
+  and no other glob-like values are accepted.
+- Exact host:port lists are enforced by the `sandbox` type:
+  - **macOS:** resolved to IP addresses and rendered as `sandbox-exec` remote
+    rules; unresolved declared hosts fail closed in strict mode.
+  - **Linux:** mapped to allowed TCP ports via landlock (host-level
+    restriction is not available).
+- Exact host:port lists are rejected for `container` and `remote` environments
+  because those backends cannot enforce per-endpoint egress; use `allow = ["*"]`
+  to declare unrestricted egress intent, or omit the block to deny egress.
 
 ### Per-OS support matrix
 
