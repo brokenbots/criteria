@@ -198,7 +198,7 @@ type PrepareContext struct {
 	Env           *workflow.EnvironmentNode
 	Caps          Capabilities
 	AdapterBinary string // resolved adapter plugin path; populated at prepare time
-	AdapterType   string // adapter type (e.g. "shell"); used for interpreter allow-listing
+	AdapterType   string // adapter type (e.g. "shell"); retained for call-site compatibility but no longer used for interpreter allow-listing (CRI-86)
 	// ValidateOnly is ignored on Darwin; present for cross-platform call-site
 	// compatibility and to keep the struct shape consistent with Linux builds.
 	ValidateOnly bool
@@ -240,7 +240,7 @@ func (h Handler) Prepare(ctx PrepareContext) (LinuxPrepared, error) {
 		return LinuxPrepared{Mode: mode, fallback: true}, nil
 	}
 
-	profile := FromPolicy(*ctx.Policy, ctx.AdapterBinary, ctx.AdapterType)
+	profile := FromPolicy(*ctx.Policy, ctx.AdapterBinary)
 	profile.DefaultDeny = true
 	if len(profile.resolveWarnings) > 0 {
 		if mode == "strict" {
