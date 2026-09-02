@@ -599,11 +599,11 @@ func decodeProcessExecList(execVal cty.Value, rng hcl.Range, diags hcl.Diagnosti
 		}
 		paths = append(paths, path)
 	}
-	if wildcardCount > 0 && len(paths) != wildcardCount {
+	if wildcardCount > 0 && len(paths) != 1 {
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  "process.exec wildcard \"*\" must be the only entry",
-			Detail:   fmt.Sprintf("Found %d wildcard entries and %d total entries; use either [\"*\"] or a list of absolute paths.", wildcardCount, len(paths)),
+			Detail:   fmt.Sprintf("Found %d wildcard entries and %d total entries; use exactly [\"*\"] or a list of absolute paths.", wildcardCount, len(paths)),
 			Subject:  rng.Ptr(),
 		})
 		return nil, diags

@@ -578,6 +578,18 @@ func TestCompileEnvironments_ProcessExec_WildcardAndValidation(t *testing.T) {
 			wantErr: "wildcard",
 		},
 		{
+			name:    "duplicate wildcard is rejected",
+			envName: "bad",
+			src:     `environment "sandbox" "bad" { process = { exec = ["*", "*"] } }`,
+			wantErr: "wildcard",
+		},
+		{
+			name:    "multiple duplicate wildcards are rejected",
+			envName: "bad",
+			src:     `environment "sandbox" "bad" { process = { exec = ["*", "*", "*"] } }`,
+			wantErr: "wildcard",
+		},
+		{
 			name:    "other globs are rejected",
 			envName: "bad",
 			src:     `environment "sandbox" "bad" { process = { exec = ["/bin/*sh"] } }`,
