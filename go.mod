@@ -24,7 +24,7 @@ require (
 	github.com/testcontainers/testcontainers-go v0.43.0
 	github.com/zclconf/go-cty v1.19.0
 	go.lsp.dev/protocol v0.12.0
-	go.lsp.dev/uri v0.3.0
+	go.lsp.dev/uri v1.0.1
 	go.uber.org/goleak v1.3.0
 	golang.org/x/mod v0.38.0
 	golang.org/x/net v0.57.0
