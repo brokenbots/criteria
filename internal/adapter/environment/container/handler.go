@@ -76,6 +76,12 @@ func (h *Handler) Prepare(ctx *PrepareContext) (Prepared, error) {
 			ctx.Environment.Name)
 	}
 
+	if ctx.Environment.Process != nil && !ctx.Environment.Process.IsWildcard() {
+		return Prepared{}, fmt.Errorf(
+			"container environment %q does not support a process.exec allow-list; use process.exec = [\"*\"] to opt into unrestricted child execution or omit the process block",
+			ctx.Environment.Name)
+	}
+
 	if ctx.Manifest.ContainerImage == nil {
 		return Prepared{}, FailClosed{
 			Reason:    "adapter does not publish a container image",

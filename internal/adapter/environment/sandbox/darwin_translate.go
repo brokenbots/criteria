@@ -50,11 +50,16 @@ func FromPolicy(p workflow.ResolvedPolicy, adapterBinary string) Profile {
 
 	// Process execution is owned by the environment policy, not inferred from
 	// adapter type. The adapter binary itself is already allow-listed above as
-	// bootstrap infrastructure.
+	// bootstrap infrastructure. The reserved wildcard "*" opts in to
+	// unrestricted process execution and must not widen filesystem grants.
 	if p.Process != nil {
-		for _, path := range p.Process.Exec {
-			prof.AllowExec = append(prof.AllowExec, path)
-			prof.AllowFileReads = append(prof.AllowFileReads, path)
+		if p.Process.IsWildcard() {
+			prof.AllowExecWildcard = true
+		} else {
+			for _, path := range p.Process.Exec {
+				prof.AllowExec = append(prof.AllowExec, path)
+				prof.AllowFileReads = append(prof.AllowFileReads, path)
+			}
 		}
 	}
 

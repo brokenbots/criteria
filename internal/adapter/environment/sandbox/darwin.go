@@ -19,14 +19,15 @@ const ProfileVersion = 1
 
 // Profile describes the SBPL rules for a single sandbox-exec session.
 type Profile struct {
-	AllowFileReads    []string
-	AllowFileWrites   []string
-	AllowNetworkHosts []string
-	AllowExec         []string
-	AllowNetworkBind  bool // emit (allow network-bind) for local adapter UDS transport
-	BlockKextLoad     bool
-	BlockMachLookup   bool
-	DefaultDeny       bool
+	AllowFileReads     []string
+	AllowFileWrites    []string
+	AllowNetworkHosts  []string
+	AllowExec          []string
+	AllowExecWildcard  bool // unrestricted process-exec when process.exec = ["*"]
+	AllowNetworkBind   bool // emit (allow network-bind) for local adapter UDS transport
+	BlockKextLoad      bool
+	BlockMachLookup    bool
+	DefaultDeny        bool
 
 	// resolveWarnings collects hostname resolution failures so Prepare
 	// can decide whether to fail closed in strict mode.
@@ -54,7 +55,9 @@ func (p *Profile) Render() string {
 	}
 	b.WriteString("(allow process-fork)\n")
 
-	if len(p.AllowExec) > 0 {
+	if p.AllowExecWildcard {
+		b.WriteString("(allow process-exec)\n")
+	} else if len(p.AllowExec) > 0 {
 		writeLiteralRule(&b, "process-exec", p.AllowExec)
 	} else {
 		b.WriteString("(deny process-exec)\n")
