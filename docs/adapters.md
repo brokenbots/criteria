@@ -360,20 +360,35 @@ serialization.
   `secret = true` is tainted from the moment it enters the workflow: never
   logged, never written to plan output, lockfile, or checkpoint — only its
   origin reference is persisted, and it is re-resolved on resume.
-- **Binding into an adapter.** Satisfy declared secrets from a workflow variable,
-  a sensitive step output, or a provider reference:
+- **Binding into an adapter.** Satisfy declared secrets from a workflow variable
+  or a secret data block. The value must already be secret-tainted; a literal
+  string or non-secret reference is rejected at compile time:
 
   ```hcl
+  variable "api_key" {
+    type   = string
+    secret = true
+  }
+
+  data "internal" "vault_token" {
+    type   = string
+    secret = true
+    value  = "env:VAULT_TOKEN"   # provider origin for the declared secret
+  }
+
   adapter "anthropic" "default" {
     source  = "ghcr.io/your-org/criteria-adapter-anthropic"
     version = "0.5.0"
     secrets {
-      ANTHROPIC_API_KEY = var.api_key                    # secret-tagged variable
-      VAULT_TOKEN       = step.vault_fetch.outputs.token  # sensitive output
-      OTHER             = "env:OTHER_SECRET"              # provider reference
+      ANTHROPIC_API_KEY = var.api_key
+      VAULT_TOKEN       = data.internal.vault_token.value
     }
   }
   ```
+
+  Provider references (`env:NAME`, `file:path`, keychain, vault, sops) are
+  allowed only as origins for declared secret variables or data blocks, never
+  directly inside `adapter.secrets` or `secret_input`.
 
 - **Taint propagation.** Once a value is secret, every value derived from it is
   too. The compiler refuses to interpolate a tainted value into `config`,

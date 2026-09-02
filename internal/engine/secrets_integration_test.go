@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zclconf/go-cty/cty"
+
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapter/secrets"
@@ -73,8 +75,7 @@ func (s *redactingSink) OnStepOutcome(step, outcome string, dur time.Duration, e
 func TestEndToEnd_SecretChannel_Redaction_Snapshot(t *testing.T) {
 	secretValue := "supersecret123"
 	secretEnvName := "CRITERIA_TEST_SECRET_WS13"
-	os.Setenv(secretEnvName, secretValue)
-	defer os.Unsetenv(secretEnvName)
+	t.Setenv(secretEnvName, secretValue)
 
 	g := compile(t, `
 workflow {
@@ -84,6 +85,11 @@ workflow {
   target_state  = "done"
 }
 
+variable "api_key" {
+  type   = string
+  secret = true
+}
+
 environment "sandbox" "default" {
   secrets = { provider = "env" }
 }
@@ -91,7 +97,7 @@ environment "sandbox" "default" {
 adapter "fake" "default" {
   environment = sandbox.default
   secrets {
-    api_key = "env:`+secretEnvName+`"
+    api_key = var.api_key
   }
 }
 
@@ -108,7 +114,11 @@ state "done" { terminal = true }`)
 	}}
 	sink := &redactingSink{}
 
-	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
+	eng := NewTestEngine(g, loader, sink)
+	eng.varOverrides = map[string]cty.Value{
+		"api_key": cty.StringVal("env:" + secretEnvName),
+	}
+	if err := eng.Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -171,8 +181,7 @@ state "done" { terminal = true }`)
 func TestEndToEnd_SecretRedactedInError(t *testing.T) {
 	secretValue := "supersecret456"
 	secretEnvName := "CRITERIA_TEST_SECRET_ERR"
-	os.Setenv(secretEnvName, secretValue)
-	defer os.Unsetenv(secretEnvName)
+	t.Setenv(secretEnvName, secretValue)
 
 	g := compile(t, `
 workflow {
@@ -182,6 +191,11 @@ workflow {
   target_state  = "done"
 }
 
+variable "api_key" {
+  type   = string
+  secret = true
+}
+
 environment "sandbox" "default" {
   secrets = { provider = "env" }
 }
@@ -189,7 +203,7 @@ environment "sandbox" "default" {
 adapter "fake" "default" {
   environment = sandbox.default
   secrets {
-    api_key = "env:`+secretEnvName+`"
+    api_key = var.api_key
   }
 }
 
@@ -210,8 +224,12 @@ state "done" { terminal = true }`)
 	}}
 	sink := &redactingSink{}
 
+	eng := NewTestEngine(g, loader, sink)
+	eng.varOverrides = map[string]cty.Value{
+		"api_key": cty.StringVal("env:" + secretEnvName),
+	}
 	// The run will fail because the adapter errors.
-	err := NewTestEngine(g, loader, sink).Run(context.Background())
+	err := eng.Run(context.Background())
 	if err == nil {
 		t.Fatal("expected run to fail")
 	}
@@ -228,6 +246,117 @@ state "done" { terminal = true }`)
 		if !strContains(errStr, "[REDACTED]") {
 			t.Logf("step outcome error[%d] did not contain [REDACTED] (may be expected if secret wasn't in original error): %s", i, errStr)
 		}
+	}
+}
+
+func TestEndToEnd_SecretProvider_MissingEnv_FailClosed(t *testing.T) {
+	envName := "CRITERIA_TEST_SECRET_MISSING"
+	// Ensure the provider env var is not set.
+	if err := os.Unsetenv(envName); err != nil {
+		t.Fatalf("unsetenv: %v", err)
+	}
+
+	g := compile(t, `
+workflow {
+  name    = "secret-missing-test"
+  version = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+}
+
+variable "api_key" {
+  type   = string
+  secret = true
+}
+
+environment "sandbox" "default" {
+  secrets = { provider = "env" }
+}
+
+adapter "fake" "default" {
+  environment = sandbox.default
+  secrets {
+    api_key = var.api_key
+  }
+}
+
+step "run" {
+  target = adapter.fake.default
+  outcome "success" { next = step.done }
+}
+
+state "done" { terminal = true }`)
+
+	ad := &secretRecordingAdapter{name: "fake", outcome: "success"}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"fake": ad,
+	}}
+
+	eng := NewTestEngine(g, loader, &fakeSink{})
+	eng.varOverrides = map[string]cty.Value{
+		"api_key": cty.StringVal("env:" + envName),
+	}
+	err := eng.Run(context.Background())
+	if err == nil {
+		t.Fatal("expected run to fail when secret env provider is missing")
+	}
+	want := "variable \"api_key\""
+	if !strContains(err.Error(), want) {
+		t.Fatalf("expected error to mention %q, got: %v", want, err)
+	}
+	if ad.openSecrets != nil && ad.openSecrets["api_key"] != "" {
+		t.Fatalf("adapter should not have received a secret value, got %v", ad.openSecrets)
+	}
+}
+
+func TestEndToEnd_SecretDataBlock_Referenceable(t *testing.T) {
+	secretValue := "supersecret-data"
+	secretEnvName := "CRITERIA_TEST_SECRET_DATA"
+	t.Setenv(secretEnvName, secretValue)
+
+	g := compile(t, `
+workflow {
+  name    = "secret-data-test"
+  version = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+}
+
+data "internal" "session_token" {
+  type   = string
+  secret = true
+  value  = "env:CRITERIA_TEST_SECRET_DATA"
+}
+
+environment "sandbox" "default" {
+  secrets = { provider = "env" }
+}
+
+adapter "fake" "default" {
+  environment = sandbox.default
+  secrets {
+    token = data.internal.session_token.value
+  }
+}
+
+step "run" {
+  target = adapter.fake.default
+  outcome "success" { next = step.done }
+}
+
+state "done" { terminal = true }`)
+
+	ad := &secretRecordingAdapter{name: "fake", outcome: "success"}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"fake": ad,
+	}}
+
+	eng := NewTestEngine(g, loader, &fakeSink{})
+	if err := eng.Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if ad.openSecrets == nil || ad.openSecrets["token"] != secretValue {
+		t.Fatalf("expected data secret to reach adapter via secret channel, got %v", ad.openSecrets)
 	}
 }
 

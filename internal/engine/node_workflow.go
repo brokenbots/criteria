@@ -94,7 +94,12 @@ func resolveBodyEntry(body *workflow.FSMGraph, bodyEntry string) (string, error)
 }
 
 func startWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry string, childVars map[string]cty.Value, workflowDir string, deps Deps, scopeName string, parallelCeiling int, parallelSem chan struct{}, parallelSemCache map[parallelSemKey]chan struct{}, parallelSemMu *sync.Mutex, ancestors []string) ([]string, *RunState, error) {
-	bodyOrder, err := initScopeAdapters(ctx, body, deps, childVars, workflowDir, scopeName)
+	// CRI-88: subworkflow secret origins are not independently tracked today; the
+	// child scope already carries resolved values from the parent. Passing nil
+	// means adapter session snapshots for child-scope secrets fall back to an
+	// untracked literal origin. This is acceptable for bodies that do not pause
+	// mid-execution with active adapter sessions.
+	bodyOrder, err := initScopeAdapters(ctx, body, deps, childVars, workflowDir, scopeName, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("workflow body init adapters: %w", err)
 	}

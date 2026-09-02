@@ -53,6 +53,11 @@ type LocalNode struct {
 	Type        cty.Type  // inferred from the folded value
 	Value       cty.Value // fully resolved at compile
 	Description string
+	// Tainted is true when the local's value expression references a secret
+	// variable or another tainted local. It is used by ValidateEnvironmentTaint
+	// to prevent indirect secret leakage via locals into environment channels
+	// (CRI-88, EC4).
+	Tainted bool
 }
 
 // EnvironmentSpec declares a typed execution environment in HCL.
@@ -134,6 +139,12 @@ type EnvironmentNode struct {
 	Name      string
 	Variables map[string]string    // resolved env vars (compile-folded)
 	Config    map[string]cty.Value // type-specific config (compile-folded; shape unenforced for v0.3.0)
+	// RawVariableExprs and RawConfigExprs preserve the original per-key HCL
+	// expressions from the environment block for post-fold taint validation.
+	// They are populated by decodeEnvironmentVariables and
+	// decodeEnvironmentConfig and are not used at runtime (CRI-88).
+	RawVariableExprs map[string]hcl.Expression
+	RawConfigExprs   map[string]hcl.Expression
 	// PolicyMode is "permissive" (default) or "strict".
 	PolicyMode string
 	// OS is "" (any) or a specific GOOS value like "linux" or "darwin".
@@ -575,6 +586,10 @@ type FSMGraph struct {
 	FileCache map[string]string
 	// Order of step declarations (stable for diagnostics).
 	stepOrder []string
+	// spec is the parsed (but not yet compiled) workflow spec. It is kept private
+	// so post-compilation passes can recover original expressions for local
+	// declarations and other compile-time-only checks (CRI-88).
+	spec *Spec
 }
 
 // VariableNode is a compiled variable declaration.

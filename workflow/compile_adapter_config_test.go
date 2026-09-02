@@ -185,9 +185,14 @@ workflow {
   target_state  = "done"
 }
 
+variable "api_key" {
+  type    = string
+  secret  = true
+}
+
 adapter "exec" "bot" {
   secrets {
-    api_key = "key123"
+    api_key = var.api_key
   }
 }
 

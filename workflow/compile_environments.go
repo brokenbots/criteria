@@ -144,15 +144,14 @@ func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileO
 		})
 	}
 
-	// Decode variables and config.
-	variables, d := decodeEnvironmentVariables(g, attrs, opts)
+	// Decode variables and config. Secret data references are rejected here with
+	// an explicit taint error because they are runtime-only and would otherwise
+	// produce a generic "must fold at compile time" message. Secret variables
+	// and secret-tainted locals are caught later by ValidateEnvironmentTaint.
+	variables, rawVariableExprs, d := decodeEnvironmentVariables(g, key, attrs, opts)
 	diags = append(diags, d...)
-	config, d := decodeEnvironmentConfig(g, attrs, opts)
+	config, rawConfigExprs, d := decodeEnvironmentConfig(g, key, attrs, opts)
 	diags = append(diags, d...)
-
-	if diags.HasErrors() {
-		return diags
-	}
 
 	// Decode secrets policy if present.
 	var secretsPolicy *SecretsPolicy
@@ -197,6 +196,8 @@ func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileO
 		Name:                 envSpec.Name,
 		Variables:            variables,
 		Config:               config,
+		RawVariableExprs:     rawVariableExprs,
+		RawConfigExprs:       rawConfigExprs,
 		PolicyMode:           policyMode,
 		OS:                   osVal,
 		WorkingDirectoryExpr: workingDirExpr,
@@ -350,19 +351,37 @@ func (e *EnvironmentNode) ResolveWorkingDir(vars map[string]cty.Value) (string, 
 
 // decodeEnvironmentVariables extracts and folds the optional "variables" attribute.
 // Must fold to cty.Map(cty.String) (every value coerced to string).
-func decodeEnvironmentVariables(g *FSMGraph, attrs hcl.Attributes, opts CompileOpts) (map[string]string, hcl.Diagnostics) {
-	var diags hcl.Diagnostics
-	result := make(map[string]string)
+// It also preserves the per-key expressions so a later taint pass can reject
+// secret-tainted values in the generic environment (CRI-88).
+func decodeEnvironmentVariables(g *FSMGraph, envKey string, attrs hcl.Attributes, opts CompileOpts) (variables map[string]string, rawExprs map[string]hcl.Expression, diags hcl.Diagnostics) {
+	variables = make(map[string]string)
+	rawExprs = make(map[string]hcl.Expression)
 
 	varAttr, ok := attrs["variables"]
 	if !ok {
-		return result, nil
+		return variables, rawExprs, nil
+	}
+
+	// Preserve per-key expressions for the taint pass even when the attribute
+	// cannot be fully folded (e.g. it references runtime-only namespaces).
+	rawExprs = extractRawMapExprs(varAttr.Expr)
+
+	// Secret data blocks are runtime-only, so they would fail the fold below
+	// with a generic error. Emit an explicit taint error instead.
+	for k, expr := range rawExprs {
+		if origin, tainted := checkExprForDataSecretTaint(expr, g); tainted {
+			diags = append(diags, newTaintError(origin, expr.Range().Ptr()))
+			diags = append(diags, taintDetail(envKey, k, "variables")...)
+		}
+	}
+	if diags.HasErrors() {
+		return variables, rawExprs, diags
 	}
 
 	// Fold the variables expression in the compile-time closure (var + local + literal + funcs).
 	// Environments are compiled after variables and locals (see CompileWithContext order),
 	// so declared var.* and local.* references resolve here; only runtime-only namespaces
-	// (each.*, steps.*) are deferred and rejected as non-foldable below.
+	// (each.*, steps.*, data.*) are deferred and rejected as non-foldable below.
 	val, foldable, d := FoldExpr(varAttr.Expr, graphVars(g), graphLocals(g), opts.WorkflowDir)
 	diags = append(diags, d...)
 
@@ -372,17 +391,17 @@ func decodeEnvironmentVariables(g *FSMGraph, attrs hcl.Attributes, opts CompileO
 			Summary:  "environment variables must fold at compile time (no runtime-only references like each.value or steps.X.outputs.Y)",
 			Subject:  varAttr.Expr.Range().Ptr(),
 		})
-		return result, diags
+		return variables, rawExprs, diags
 	}
 
 	if diags.HasErrors() {
-		return result, diags
+		return variables, rawExprs, diags
 	}
 
 	// Coerce the value to map(string).
-	d = coerceEnvironmentVariablesToString(val, result, varAttr)
+	d = coerceEnvironmentVariablesToString(val, variables, varAttr)
 	diags = append(diags, d...)
-	return result, diags
+	return variables, rawExprs, diags
 }
 
 // coerceEnvironmentVariablesToString coerces map/object values to strings, handling string/number/bool types.
@@ -425,14 +444,32 @@ func coerceEnvironmentVariablesToString(val cty.Value, result map[string]string,
 }
 
 // decodeEnvironmentConfig extracts and folds the optional "config" attribute.
-// For v0.3.0, shape is unenforced; the config is stored as-is for Phase 4 consumption.
-func decodeEnvironmentConfig(g *FSMGraph, attrs hcl.Attributes, opts CompileOpts) (map[string]cty.Value, hcl.Diagnostics) {
-	var diags hcl.Diagnostics
-	result := make(map[string]cty.Value)
+// For v0.3.0, shape is unenforced; the config is stored as-is for Phase 4
+// consumption. It also preserves the per-key expressions for a later taint
+// pass (CRI-88).
+func decodeEnvironmentConfig(g *FSMGraph, envKey string, attrs hcl.Attributes, opts CompileOpts) (config map[string]cty.Value, rawExprs map[string]hcl.Expression, diags hcl.Diagnostics) {
+	config = make(map[string]cty.Value)
+	rawExprs = make(map[string]hcl.Expression)
 
 	cfgAttr, ok := attrs["config"]
 	if !ok {
-		return result, nil
+		return config, rawExprs, nil
+	}
+
+	// Preserve per-key expressions for the taint pass even when the attribute
+	// cannot be fully folded.
+	rawExprs = extractRawMapExprs(cfgAttr.Expr)
+
+	// Secret data blocks are runtime-only, so they would fail the fold below
+	// with a generic error. Emit an explicit taint error instead.
+	for k, expr := range rawExprs {
+		if origin, tainted := checkExprForDataSecretTaint(expr, g); tainted {
+			diags = append(diags, newTaintError(origin, expr.Range().Ptr()))
+			diags = append(diags, taintDetail(envKey, k, "config")...)
+		}
+	}
+	if diags.HasErrors() {
+		return config, rawExprs, diags
 	}
 
 	// Fold the config expression in the compile-time closure (var + local + literal + funcs).
@@ -445,16 +482,16 @@ func decodeEnvironmentConfig(g *FSMGraph, attrs hcl.Attributes, opts CompileOpts
 			Summary:  "environment config must fold at compile time (no runtime-only references like each.value or steps.X.outputs.Y)",
 			Subject:  cfgAttr.Expr.Range().Ptr(),
 		})
-		return result, diags
+		return config, rawExprs, diags
 	}
 
 	if diags.HasErrors() {
-		return result, diags
+		return config, rawExprs, diags
 	}
 
 	// Store as map[string]cty.Value. Shape validation lands in Phase 4.
 	if val.Type().IsObjectType() || val.Type().IsMapType() {
-		result = val.AsValueMap()
+		config = val.AsValueMap()
 	} else {
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
@@ -463,7 +500,7 @@ func decodeEnvironmentConfig(g *FSMGraph, attrs hcl.Attributes, opts CompileOpts
 		})
 	}
 
-	return result, diags
+	return config, rawExprs, diags
 }
 
 // decodeSecretsPolicy parses the optional `secrets` attribute into a SecretsPolicy.
