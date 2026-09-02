@@ -452,6 +452,82 @@ func TestCompileEnvironments_InvalidPolicyMode(t *testing.T) {
 	}
 }
 
+func TestCompileEnvironments_ProcessExec(t *testing.T) {
+	src := environmentWorkflow(`
+  environment "sandbox" "proc_env" {
+    process = {
+      exec = ["/bin/zsh", "/usr/local/bin/custom"]
+    }
+  }
+`, "")
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+	env := g.Environments["sandbox.proc_env"]
+	if env == nil {
+		t.Fatal("environment sandbox.proc_env not found")
+	}
+	if env.Process == nil {
+		t.Fatal("expected Process policy")
+	}
+	want := []string{"/bin/zsh", "/usr/local/bin/custom"}
+	if len(env.Process.Exec) != len(want) {
+		t.Fatalf("expected process.exec %v, got %v", want, env.Process.Exec)
+	}
+	for i, p := range want {
+		if env.Process.Exec[i] != p {
+			t.Errorf("process.exec[%d] = %q, want %q", i, env.Process.Exec[i], p)
+		}
+	}
+}
+
+func TestCompileEnvironments_ProcessExec_RelativePathRejected(t *testing.T) {
+	src := environmentWorkflow(`
+  environment "sandbox" "bad" {
+    process = {
+      exec = ["bin/zsh"]
+    }
+  }
+`, "")
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = Compile(spec, nil)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for relative process.exec path")
+	}
+	if !strings.Contains(diags.Error(), "absolute path") {
+		t.Errorf("expected error about absolute path, got: %s", diags.Error())
+	}
+}
+
+func TestCompileEnvironments_ProcessExec_ShellEnvironmentRejected(t *testing.T) {
+	src := environmentWorkflow(`
+  environment "shell" "bad" {
+    process = {
+      exec = ["/bin/zsh"]
+    }
+  }
+`, "")
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = Compile(spec, nil)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for process in shell environment")
+	}
+	if !strings.Contains(diags.Error(), "unknown attribute \"process\"") {
+		t.Errorf("expected unknown attribute error, got: %s", diags.Error())
+	}
+}
+
 func TestCompileEnvironments_WorkingDirectory(t *testing.T) {
 	// shell, sandbox, and remote environments accept working_directory and store
 	// it on the compiled node; container environments reject it.
@@ -739,6 +815,7 @@ func TestResolveEnvironmentPolicy_ThreeRules(t *testing.T) {
 				Network:      netDeny,
 				Secrets:      secVault,
 				Resources:    res1G,
+				Process:      &ProcessPolicy{Exec: []string{"/bin/bash"}},
 				TypeSpecific: map[string]cty.Value{"runtime": cty.StringVal("docker")},
 			},
 			hints: &PolicyHints{
@@ -756,6 +833,7 @@ func TestResolveEnvironmentPolicy_ThreeRules(t *testing.T) {
 				Network:      netDeny,
 				Secrets:      secVault,
 				Resources:    res1G,
+				Process:      &ProcessPolicy{Exec: []string{"/bin/bash"}},
 				TypeSpecific: map[string]cty.Value{"runtime": cty.StringVal("docker")},
 			},
 		},
@@ -876,6 +954,9 @@ func TestResolveEnvironmentPolicy_ThreeRules(t *testing.T) {
 			if !resourcesPolicyEqual(got.Resources, tt.want.Resources) {
 				t.Errorf("Resources = %v, want %v", got.Resources, tt.want.Resources)
 			}
+			if !processPolicyEqual(got.Process, tt.want.Process) {
+				t.Errorf("Process = %v, want %v", got.Process, tt.want.Process)
+			}
 			if !ctyMapEqual(got.TypeSpecific, tt.want.TypeSpecific) {
 				t.Errorf("TypeSpecific = %v, want %v", got.TypeSpecific, tt.want.TypeSpecific)
 			}
@@ -981,6 +1062,24 @@ func resourcesPolicyEqual(a, b *ResourcesPolicy) bool {
 		return false
 	}
 	return a.MaxMemory == b.MaxMemory
+}
+
+func processPolicyEqual(a, b *ProcessPolicy) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	if len(a.Exec) != len(b.Exec) {
+		return false
+	}
+	for i := range a.Exec {
+		if a.Exec[i] != b.Exec[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func ctyMapEqual(a, b map[string]cty.Value) bool {

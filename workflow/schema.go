@@ -81,9 +81,20 @@ type SecretsPolicy struct {
 // ResourcesPolicy caps compute resources for an environment.
 type ResourcesPolicy struct{ MaxMemory string }
 
+// ProcessPolicy controls child-process execution for an environment. The Exec
+// list is an explicit absolute-path allow-list of binaries the bound adapter
+// and its descendants are permitted to execute. The adapter binary itself is
+// always allowed by the engine as bootstrap infrastructure and does not need to
+// be listed.
+type ProcessPolicy struct {
+	Exec []string
+}
+
 // PolicyHints provides default values for environment policy fields that an
 // adapter manifest may declare. These hints are consumed by the three-rule
-// field resolver when policy_mode = "permissive".
+// field resolver when policy_mode = "permissive". Process hints are not
+// supported: command-runtime requirements may be documented in adapter manifests
+// but never become an implicit authority grant (CRI-86).
 type PolicyHints struct {
 	PolicyMode   string
 	OS           string
@@ -103,6 +114,7 @@ type ResolvedPolicy struct {
 	Network      *NetworkPolicy
 	Secrets      *SecretsPolicy
 	Resources    *ResourcesPolicy
+	Process      *ProcessPolicy
 	TypeSpecific map[string]cty.Value
 }
 
@@ -130,6 +142,7 @@ type EnvironmentNode struct {
 	Network              *NetworkPolicy
 	Secrets              *SecretsPolicy
 	Resources            *ResourcesPolicy
+	Process              *ProcessPolicy
 	TypeSpecific         map[string]cty.Value // e.g. runtime="docker"
 	// RawBody preserves the original HCL body so runtime handlers can parse
 	// type-specific blocks (e.g. mtls { ... }) that the generic compiler does

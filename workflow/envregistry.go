@@ -133,14 +133,14 @@ func (h *builtinSandboxHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
 	for name := range attrs {
 		switch name {
 		case "variables", "policy_mode", "os", "working_directory",
-			"filesystem", "network", "resources", "secrets", "config":
+			"filesystem", "network", "resources", "secrets", "process", "config":
 			// accepted
 		default:
 			rng := attrs[name].Range
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  fmt.Sprintf("sandbox environment: unknown attribute %q", name),
-				Detail:   "sandbox environments accept variables, policy_mode, os, working_directory, filesystem, network, resources, and secrets.",
+				Detail:   "sandbox environments accept variables, policy_mode, os, working_directory, filesystem, network, resources, secrets, and process.",
 				Subject:  &rng,
 			})
 		}

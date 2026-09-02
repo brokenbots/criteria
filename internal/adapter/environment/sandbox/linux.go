@@ -105,6 +105,13 @@ type LinuxPrepared struct {
 	// socket/connect syscalls.
 	AllowNetwork bool
 
+	// ProcessExec is the environment-owned executable allow-list. Linux
+	// cannot currently enforce a per-path exec allow-list with seccomp or
+	// landlock, so in strict mode a non-empty list is rejected rather than
+	// silently widened. It is captured here for diagnostics and future
+	// platform support.
+	ProcessExec []string
+
 	// SkipShimRestrictions, when true, tells the shim helper to skip
 	// in-process landlock/seccomp/rlimits/PR_SET_NO_NEW_PRIVS installation
 	// and only syscall.Exec the target. It is used only by the test-only
@@ -148,6 +155,18 @@ func (h Handler) Prepare(ctx PrepareContext) (LinuxPrepared, error) {
 	prep := LinuxPrepared{Mode: mode}
 	if ctx.AdapterBinary != "" {
 		prep.TargetPath = ctx.AdapterBinary
+	}
+
+	if ctx.Policy.Process != nil {
+		prep.ProcessExec = ctx.Policy.Process.Exec
+		if len(prep.ProcessExec) > 0 {
+			if mode == "strict" {
+				return LinuxPrepared{}, fmt.Errorf("sandbox process.exec allow-list cannot be enforced on Linux in strict mode")
+			}
+			// Permissive mode: record the intent but continue without
+			// enforcement, matching the "reject rather than silently widen"
+			// rule for unsupported strict configurations.
+		}
 	}
 
 	readPaths, writePaths, netAllow, allowNet, err := extractPolicyPaths(ctx.Policy)

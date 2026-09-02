@@ -416,6 +416,43 @@ func TestHandlerPrepare_NetworkDenyEgress_HasNewNet(t *testing.T) {
 	}
 }
 
+func TestHandlerPrepare_ProcessExec_Strict_Rejects(t *testing.T) {
+	caps := Probe()
+	_, err := Handler{}.Prepare(PrepareContext{
+		Policy: &workflow.ResolvedPolicy{
+			OS:         "linux",
+			PolicyMode: "strict",
+			Process:    &workflow.ProcessPolicy{Exec: []string{"/bin/zsh"}},
+		},
+		Caps: caps,
+	})
+	if err == nil {
+		t.Fatal("expected Prepare error for process.exec in strict mode on Linux")
+	}
+	if !strings.Contains(err.Error(), "cannot be enforced on Linux") {
+		t.Errorf("expected Linux enforcement error, got: %v", err)
+	}
+}
+
+func TestHandlerPrepare_ProcessExec_Permissive_Records(t *testing.T) {
+	caps := Probe()
+	prep, err := Handler{}.Prepare(PrepareContext{
+		Policy: &workflow.ResolvedPolicy{
+			OS:         "linux",
+			PolicyMode: "permissive",
+			Process:    &workflow.ProcessPolicy{Exec: []string{"/bin/zsh", "/usr/bin/fish"}},
+		},
+		Caps: caps,
+	})
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	defer prep.Cleanup()
+	if len(prep.ProcessExec) != 2 || prep.ProcessExec[0] != "/bin/zsh" || prep.ProcessExec[1] != "/usr/bin/fish" {
+		t.Fatalf("expected ProcessExec to be preserved, got %v", prep.ProcessExec)
+	}
+}
+
 // TestShimIntegration compiles a tiny helper binary that imports this
 // package, calls RunIfEnv, and then tries prohibited operations. The
 // helper runs inside the shim so we can verify restrictions from the

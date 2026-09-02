@@ -6,6 +6,7 @@ package workflow
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 
 	"github.com/hashicorp/hcl/v2"
@@ -162,11 +163,21 @@ func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileO
 		}
 	}
 
+	// Decode process policy if present.
+	var processPolicy *ProcessPolicy
+	if attr, ok := attrs["process"]; ok {
+		pp, ppDiags := decodeProcessPolicy(attr)
+		diags = append(diags, ppDiags...)
+		if !ppDiags.HasErrors() {
+			processPolicy = pp
+		}
+	}
+
 	// Collect type-specific attributes (everything other than known ones).
 	typeSpecific := make(map[string]cty.Value)
 	for name, attr := range attrs {
 		switch name {
-		case "variables", "config", "policy_mode", "os", "working_directory", "secrets":
+		case "variables", "config", "policy_mode", "os", "working_directory", "secrets", "process":
 			continue
 		}
 		val, valDiags := attr.Expr.Value(nil)
@@ -189,6 +200,7 @@ func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileO
 		OS:                   osVal,
 		WorkingDirectoryExpr: workingDirExpr,
 		Secrets:              secretsPolicy,
+		Process:              processPolicy,
 		TypeSpecific:         typeSpecific,
 		RawBody:              envSpec.Remain,
 	}
@@ -522,6 +534,78 @@ func decodeSecretsFallback(fv cty.Value, diags hcl.Diagnostics, attr *hcl.Attrib
 	return out, diags
 }
 
+// decodeProcessPolicy parses the optional `process` attribute into a
+// ProcessPolicy. The `exec` member must be a list of absolute paths; any
+// relative entry is rejected at compile time so authors cannot accidentally
+// widen the sandbox with host-dependent PATH resolution.
+func decodeProcessPolicy(attr *hcl.Attribute) (*ProcessPolicy, hcl.Diagnostics) {
+	var diags hcl.Diagnostics
+
+	val, valDiags := attr.Expr.Value(nil)
+	diags = append(diags, valDiags...)
+	if valDiags.HasErrors() {
+		return nil, diags
+	}
+
+	if !val.Type().IsObjectType() && !val.Type().IsMapType() {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "process must be an object with exec",
+			Subject:  attr.Expr.Range().Ptr(),
+		})
+		return nil, diags
+	}
+
+	m := val.AsValueMap()
+	pp := &ProcessPolicy{}
+
+	execVal, ok := m["exec"]
+	if !ok {
+		// process = {} is valid: explicitly allows no child executables.
+		return pp, diags
+	}
+
+	if !execVal.Type().IsTupleType() && !execVal.Type().IsListType() {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "process.exec must be a list of strings",
+			Subject:  attr.Expr.Range().Ptr(),
+		})
+		return nil, diags
+	}
+
+	pp.Exec, diags = decodeProcessExecList(execVal, attr.Expr.Range(), diags)
+	return pp, diags
+}
+
+// decodeProcessExecList validates and returns the absolute executable paths
+// from a process.exec cty list value.
+func decodeProcessExecList(execVal cty.Value, rng hcl.Range, diags hcl.Diagnostics) ([]string, hcl.Diagnostics) {
+	elems := execVal.AsValueSlice()
+	paths := make([]string, 0, len(elems))
+	for _, elem := range elems {
+		if elem.Type() != cty.String || !elem.IsKnown() || elem.IsNull() {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  "process.exec entries must be strings",
+				Subject:  rng.Ptr(),
+			})
+			continue
+		}
+		path := elem.AsString()
+		if !filepath.IsAbs(path) {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("process.exec entry %q must be an absolute path", path),
+				Subject:  rng.Ptr(),
+			})
+			continue
+		}
+		paths = append(paths, path)
+	}
+	return paths, diags
+}
+
 // resolveEnvironmentExpr evaluates an environment expression (e.g. shell.ci) and
 // returns the "<type>.<name>" key, or "" if the expression is absent.
 // It emits a diagnostic if the expression is not a bare traversal.
@@ -640,8 +724,6 @@ func checkShellControlledSetConflicts(envType string, variables map[string]strin
 // resolveEnvironmentPolicy applies D37's three-rule field resolution to an
 // environment node and an adapter's optional manifest hints. It returns a
 // ResolvedPolicy with the final values for each policy field.
-//
-//nolint:gocyclo // WS09: sequential field-by-field resolution is clearer than a table-driven loop
 func resolveEnvironmentPolicy(env *EnvironmentNode, hints *PolicyHints) *ResolvedPolicy {
 	if env == nil {
 		return &ResolvedPolicy{PolicyMode: "permissive"}
@@ -653,49 +735,64 @@ func resolveEnvironmentPolicy(env *EnvironmentNode, hints *PolicyHints) *Resolve
 		mode = "permissive"
 	}
 
+	h := hints
+	if hints == nil {
+		h = &PolicyHints{}
+	}
+
 	rp := &ResolvedPolicy{PolicyMode: mode}
 
-	// OS
-	if env.OS != "" {
-		rp.OS = env.OS
-	} else if mode == "permissive" && hints != nil && hints.OS != "" {
-		rp.OS = hints.OS
-	} // strict → zero value ("")
+	// OS: env wins, then permissive hint, else zero value under strict.
+	rp.OS = resolveStringPolicy(mode, env.OS, h.OS)
 
-	// Filesystem
-	if env.Filesystem != nil {
-		rp.Filesystem = env.Filesystem
-	} else if mode == "permissive" && hints != nil && hints.Filesystem != nil {
-		rp.Filesystem = hints.Filesystem
-	} // strict → nil (default-deny)
+	// Filesystem, network, secrets, resources: env wins, then permissive hint.
+	rp.Filesystem = resolvePtrPolicy(mode, env.Filesystem, h.Filesystem)
+	rp.Network = resolvePtrPolicy(mode, env.Network, h.Network)
+	rp.Secrets = resolvePtrPolicy(mode, env.Secrets, h.Secrets)
+	rp.Resources = resolvePtrPolicy(mode, env.Resources, h.Resources)
 
-	// Network
-	if env.Network != nil {
-		rp.Network = env.Network
-	} else if mode == "permissive" && hints != nil && hints.Network != nil {
-		rp.Network = hints.Network
-	} // strict → nil
+	// Process: environment is the sole authority. Adapter hints are never used
+	// for executable allow-listing (CRI-86).
+	rp.Process = env.Process
 
-	// Secrets
-	if env.Secrets != nil {
-		rp.Secrets = env.Secrets
-	} else if mode == "permissive" && hints != nil && hints.Secrets != nil {
-		rp.Secrets = hints.Secrets
-	} // strict → nil
-
-	// Resources
-	if env.Resources != nil {
-		rp.Resources = env.Resources
-	} else if mode == "permissive" && hints != nil && hints.Resources != nil {
-		rp.Resources = hints.Resources
-	} // strict → nil
-
-	// TypeSpecific
-	if len(env.TypeSpecific) > 0 {
-		rp.TypeSpecific = env.TypeSpecific
-	} else if mode == "permissive" && hints != nil && len(hints.TypeSpecific) > 0 {
-		rp.TypeSpecific = hints.TypeSpecific
-	} // strict → nil
+	// TypeSpecific: env wins, then permissive hint.
+	rp.TypeSpecific = resolveMapPolicy(mode, env.TypeSpecific, h.TypeSpecific)
 
 	return rp
+}
+
+// resolveStringPolicy returns envVal if set, else the hint value in permissive
+// mode. Under strict mode unset env values stay at the zero value.
+func resolveStringPolicy(mode, envVal, hintVal string) string {
+	if envVal != "" {
+		return envVal
+	}
+	if mode == "permissive" && hintVal != "" {
+		return hintVal
+	}
+	return ""
+}
+
+// resolvePtrPolicy returns envVal if non-nil, else the hint value in permissive
+// mode. Under strict mode nil env values stay nil (default-deny).
+func resolvePtrPolicy[T any](mode string, envVal, hintVal *T) *T {
+	if envVal != nil {
+		return envVal
+	}
+	if mode == "permissive" && hintVal != nil {
+		return hintVal
+	}
+	return nil
+}
+
+// resolveMapPolicy returns envVal if non-empty, else the hint value in
+// permissive mode. Under strict mode an empty env map stays nil.
+func resolveMapPolicy(mode string, envVal, hintVal map[string]cty.Value) map[string]cty.Value {
+	if len(envVal) > 0 {
+		return envVal
+	}
+	if mode == "permissive" && len(hintVal) > 0 {
+		return hintVal
+	}
+	return nil
 }
