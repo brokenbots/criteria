@@ -434,9 +434,9 @@ func TestHandlerPrepare_ProcessExec_Strict_Rejects(t *testing.T) {
 	}
 }
 
-func TestHandlerPrepare_ProcessExec_Permissive_Records(t *testing.T) {
+func TestHandlerPrepare_ProcessExec_Permissive_RejectsExactList(t *testing.T) {
 	caps := Probe()
-	prep, err := Handler{}.Prepare(PrepareContext{
+	_, err := Handler{}.Prepare(PrepareContext{
 		Policy: &workflow.ResolvedPolicy{
 			OS:         "linux",
 			PolicyMode: "permissive",
@@ -444,12 +444,49 @@ func TestHandlerPrepare_ProcessExec_Permissive_Records(t *testing.T) {
 		},
 		Caps: caps,
 	})
+	if err == nil {
+		t.Fatal("expected Prepare error for exact process.exec allow-list in permissive mode on Linux")
+	}
+	if !strings.Contains(err.Error(), "cannot be enforced on Linux") {
+		t.Errorf("expected Linux enforcement error, got: %v", err)
+	}
+}
+
+func TestHandlerPrepare_ProcessExec_Wildcard_Strict(t *testing.T) {
+	caps := Probe()
+	prep, err := Handler{}.Prepare(PrepareContext{
+		Policy: &workflow.ResolvedPolicy{
+			OS:         "linux",
+			PolicyMode: "strict",
+			Process:    &workflow.ProcessPolicy{Exec: []string{"*"}},
+		},
+		Caps: caps,
+	})
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
 	defer prep.Cleanup()
-	if len(prep.ProcessExec) != 2 || prep.ProcessExec[0] != "/bin/zsh" || prep.ProcessExec[1] != "/usr/bin/fish" {
-		t.Fatalf("expected ProcessExec to be preserved, got %v", prep.ProcessExec)
+	if !prep.ProcessExecWildcard {
+		t.Fatal("expected ProcessExecWildcard=true for process.exec=[\"*\"]")
+	}
+}
+
+func TestHandlerPrepare_ProcessExec_Wildcard_Permissive(t *testing.T) {
+	caps := Probe()
+	prep, err := Handler{}.Prepare(PrepareContext{
+		Policy: &workflow.ResolvedPolicy{
+			OS:         "linux",
+			PolicyMode: "permissive",
+			Process:    &workflow.ProcessPolicy{Exec: []string{"*"}},
+		},
+		Caps: caps,
+	})
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	defer prep.Cleanup()
+	if !prep.ProcessExecWildcard {
+		t.Fatal("expected ProcessExecWildcard=true for process.exec=[\"*\"]")
 	}
 }
 

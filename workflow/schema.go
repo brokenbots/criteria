@@ -82,12 +82,22 @@ type SecretsPolicy struct {
 type ResourcesPolicy struct{ MaxMemory string }
 
 // ProcessPolicy controls child-process execution for an environment. The Exec
-// list is an explicit absolute-path allow-list of binaries the bound adapter
-// and its descendants are permitted to execute. The adapter binary itself is
-// always allowed by the engine as bootstrap infrastructure and does not need to
-// be listed.
+// list is either:
+//   - an explicit absolute-path allow-list of binaries the bound adapter and its
+//     descendants are permitted to execute, or
+//   - the single reserved wildcard entry "*", which explicitly opts in to
+//     unrestricted adapter-child process execution.
+//
+// The adapter binary itself is always allowed by the engine as bootstrap
+// infrastructure and does not need to be listed.
 type ProcessPolicy struct {
 	Exec []string
+}
+
+// IsWildcard reports whether the policy is the reserved wildcard that opts in to
+// unrestricted child-process execution.
+func (p *ProcessPolicy) IsWildcard() bool {
+	return p != nil && len(p.Exec) == 1 && p.Exec[0] == "*"
 }
 
 // PolicyHints provides default values for environment policy fields that an

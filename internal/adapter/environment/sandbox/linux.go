@@ -112,6 +112,11 @@ type LinuxPrepared struct {
 	// platform support.
 	ProcessExec []string
 
+	// ProcessExecWildcard, when true, indicates that process.exec = ["*"]
+	// was declared and the sandbox should preserve pre-CRI-86 open behavior
+	// for adapter-child process execution.
+	ProcessExecWildcard bool
+
 	// SkipShimRestrictions, when true, tells the shim helper to skip
 	// in-process landlock/seccomp/rlimits/PR_SET_NO_NEW_PRIVS installation
 	// and only syscall.Exec the target. It is used only by the test-only
@@ -158,14 +163,14 @@ func (h Handler) Prepare(ctx PrepareContext) (LinuxPrepared, error) {
 	}
 
 	if ctx.Policy.Process != nil {
-		prep.ProcessExec = ctx.Policy.Process.Exec
-		if len(prep.ProcessExec) > 0 {
-			if mode == "strict" {
-				return LinuxPrepared{}, fmt.Errorf("sandbox process.exec allow-list cannot be enforced on Linux in strict mode")
-			}
-			// Permissive mode: record the intent but continue without
-			// enforcement, matching the "reject rather than silently widen"
-			// rule for unsupported strict configurations.
+		if ctx.Policy.Process.IsWildcard() {
+			// Reserved wildcard explicitly restores pre-CRI-86 open behavior.
+			prep.ProcessExecWildcard = true
+		} else if len(ctx.Policy.Process.Exec) > 0 {
+			// Linux cannot enforce a per-path exec allow-list with seccomp or
+			// landlock, so an exact non-empty list is rejected rather than
+			// silently widened in both strict and permissive modes.
+			return LinuxPrepared{}, fmt.Errorf("sandbox process.exec allow-list cannot be enforced on Linux")
 		}
 	}
 

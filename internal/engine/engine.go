@@ -855,6 +855,9 @@ func (e *Engine) maybeStartRemoteShim(ctx context.Context, sessions *adapterhost
 	verifier := &lockfileDigestVerifier{lockfile: lf}
 
 	for _, env := range remoteEnvs {
+		if env.Process != nil && !env.Process.IsWildcard() {
+			return fmt.Errorf("remote environment %q does not support a process.exec allow-list; use process.exec = [\"*\"] to opt into unrestricted child execution or omit the process block", env.Name)
+		}
 		cfg, err := remote.ParseConfig(env.RawBody)
 		if err != nil {
 			return fmt.Errorf("remote environment %q: %w", env.Name, err)

@@ -201,6 +201,77 @@ func TestHandler_Prepare_NetworkDeny(t *testing.T) {
 	}
 }
 
+func TestHandler_Prepare_ProcessExec_ExactRejected(t *testing.T) {
+	h := &Handler{}
+	_, err := h.Prepare(&PrepareContext{
+		Environment: workflow.EnvironmentNode{
+			Name:    "dev",
+			Process: &workflow.ProcessPolicy{Exec: []string{"/bin/zsh"}},
+			TypeSpecific: map[string]cty.Value{
+				"runtime": cty.StringVal("docker"),
+			},
+		},
+		Manifest: &manifest.Manifest{
+			SourceURL:      "https://example.com",
+			ContainerImage: &manifest.ContainerImageRef{Ref: "alpine:latest"},
+		},
+		AdapterRef: "noop.default",
+	})
+	if err == nil {
+		t.Fatal("expected error for exact process.exec allow-list")
+	}
+	if !strings.Contains(err.Error(), "does not support a process.exec allow-list") {
+		t.Errorf("expected unsupported allow-list error, got: %v", err)
+	}
+}
+
+func TestHandler_Prepare_ProcessExec_WildcardAccepted(t *testing.T) {
+	h := &Handler{}
+	p, err := h.Prepare(&PrepareContext{
+		Environment: workflow.EnvironmentNode{
+			Name:    "dev",
+			Process: &workflow.ProcessPolicy{Exec: []string{"*"}},
+			TypeSpecific: map[string]cty.Value{
+				"runtime": cty.StringVal("docker"),
+			},
+		},
+		Manifest: &manifest.Manifest{
+			SourceURL:      "https://example.com",
+			ContainerImage: &manifest.ContainerImageRef{Ref: "alpine:latest"},
+		},
+		AdapterRef: "noop.default",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p.Runtime != "docker" {
+		t.Errorf("runtime = %q, want docker", p.Runtime)
+	}
+}
+
+func TestHandler_Prepare_ProcessExec_Omitted(t *testing.T) {
+	h := &Handler{}
+	p, err := h.Prepare(&PrepareContext{
+		Environment: workflow.EnvironmentNode{
+			Name: "dev",
+			TypeSpecific: map[string]cty.Value{
+				"runtime": cty.StringVal("docker"),
+			},
+		},
+		Manifest: &manifest.Manifest{
+			SourceURL:      "https://example.com",
+			ContainerImage: &manifest.ContainerImageRef{Ref: "alpine:latest"},
+		},
+		AdapterRef: "noop.default",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p.Runtime != "docker" {
+		t.Errorf("runtime = %q, want docker", p.Runtime)
+	}
+}
+
 func TestHandler_Prepare_InvalidPath(t *testing.T) {
 	h := &Handler{}
 	_, err := h.Prepare(&PrepareContext{
