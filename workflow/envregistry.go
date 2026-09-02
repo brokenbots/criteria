@@ -164,14 +164,17 @@ func (h *builtinContainerHandler) ValidateFields(body hcl.Body) hcl.Diagnostics 
 		switch name {
 		case "variables", "policy_mode", "os",
 			"runtime", "image",
-			"filesystem", "network", "resources", "secrets", "config":
-			// accepted
+			"filesystem", "network", "resources", "secrets", "process", "config":
+			// accepted; process.exec is validated at compile time and enforced at
+			// runtime: exact allow-lists are rejected because container isolation
+			// cannot enforce per-path exec restrictions, while the reserved "*"
+			// wildcard preserves the default-open behavior explicitly.
 		default:
 			rng := attrs[name].Range
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  fmt.Sprintf("container environment: unknown attribute %q", name),
-				Detail:   "container environments accept variables, policy_mode, os, runtime, image, filesystem, network, resources, and secrets.",
+				Detail:   "container environments accept variables, policy_mode, os, runtime, image, filesystem, network, resources, secrets, and process.",
 				Subject:  &rng,
 			})
 		}
@@ -199,14 +202,18 @@ func (h *builtinRemoteHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
 		switch name {
 		case "variables", "policy_mode", "os", "working_directory",
 			"listen_address", "mtls", "accept_token", "accept_digest_from", "insecure", "config",
+			"process",
 			"tls_handshake_deadline", "identity_handshake_deadline":
-			// accepted
+			// accepted; process.exec is validated at compile time and enforced at
+			// runtime: exact allow-lists are rejected because remote isolation
+			// cannot enforce per-path exec restrictions, while the reserved "*"
+			// wildcard preserves the default-open behavior explicitly.
 		default:
 			rng := attrs[name].Range
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  fmt.Sprintf("remote environment: unknown attribute %q", name),
-				Detail:   "remote environments accept variables, policy_mode, os, working_directory, listen_address, mtls, accept_token, accept_digest_from, insecure, config, tls_handshake_deadline, and identity_handshake_deadline.",
+				Detail:   "remote environments accept variables, policy_mode, os, working_directory, listen_address, mtls, accept_token, accept_digest_from, insecure, process, config, tls_handshake_deadline, and identity_handshake_deadline.",
 				Subject:  &rng,
 			})
 		}

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
@@ -578,32 +579,70 @@ func decodeProcessPolicy(attr *hcl.Attribute) (*ProcessPolicy, hcl.Diagnostics) 
 	return pp, diags
 }
 
-// decodeProcessExecList validates and returns the absolute executable paths
-// from a process.exec cty list value.
+// decodeProcessExecList validates the process.exec cty list value and returns
+// the parsed executable paths. The reserved wildcard "*" is accepted only as a
+// single-entry list; it is returned as []string{"*"}. All other entries must be
+// non-empty absolute paths with no glob characters.
 func decodeProcessExecList(execVal cty.Value, rng hcl.Range, diags hcl.Diagnostics) ([]string, hcl.Diagnostics) {
 	elems := execVal.AsValueSlice()
 	paths := make([]string, 0, len(elems))
+	wildcardCount := 0
 	for _, elem := range elems {
-		if elem.Type() != cty.String || !elem.IsKnown() || elem.IsNull() {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  "process.exec entries must be strings",
-				Subject:  rng.Ptr(),
-			})
+		path, isWildcard, diag := validateProcessExecEntry(elem)
+		if diag != nil {
+			diag.Subject = rng.Ptr()
+			diags = append(diags, diag)
 			continue
 		}
-		path := elem.AsString()
-		if !filepath.IsAbs(path) {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("process.exec entry %q must be an absolute path", path),
-				Subject:  rng.Ptr(),
-			})
-			continue
+		if isWildcard {
+			wildcardCount++
 		}
 		paths = append(paths, path)
 	}
+	if wildcardCount > 0 && len(paths) != wildcardCount {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "process.exec wildcard \"*\" must be the only entry",
+			Detail:   fmt.Sprintf("Found %d wildcard entries and %d total entries; use either [\"*\"] or a list of absolute paths.", wildcardCount, len(paths)),
+			Subject:  rng.Ptr(),
+		})
+		return nil, diags
+	}
 	return paths, diags
+}
+
+// validateProcessExecEntry checks a single cty process.exec element.
+// It returns the parsed path, a wildcard flag, and an optional diagnostic.
+func validateProcessExecEntry(elem cty.Value) (path string, isWildcard bool, diag *hcl.Diagnostic) {
+	if elem.Type() != cty.String || !elem.IsKnown() || elem.IsNull() {
+		return "", false, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "process.exec entries must be non-empty strings",
+		}
+	}
+	path = elem.AsString()
+	if path == "" {
+		return "", false, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  "process.exec entries must be non-empty strings",
+		}
+	}
+	if path == "*" {
+		return "*", true, nil
+	}
+	if strings.ContainsAny(path, "*?[]") {
+		return "", false, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("process.exec entry %q contains an invalid glob character; use an absolute path or the reserved wildcard \"*\"", path),
+		}
+	}
+	if !filepath.IsAbs(path) {
+		return "", false, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("process.exec entry %q must be an absolute path", path),
+		}
+	}
+	return path, false, nil
 }
 
 // resolveEnvironmentExpr evaluates an environment expression (e.g. shell.ci) and
