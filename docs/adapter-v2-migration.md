@@ -39,11 +39,34 @@ For the full reference, see [adapters.md](adapters.md).
    resulting `.criteria.lock.hcl`. Compilation fails with a pointer to this
    command if a workflow references OCI adapters without a lockfile.
 
-3. **Move secrets out of `config`.** Values the adapter needs as secrets now flow
-   through a `secrets { … }` block (or a step's `secret_input { … }`), not
-   `config`. The compiler rejects interpolating a secret-tagged value into
-   `config`/`input` with a hint. See
+3. **Move secrets out of `config` and declare them first.** Values the adapter
+   needs as secrets now flow through a `secrets { … }` block (or a step's
+   `secret_input { … }`), referenced as `var.<name>` or `data.<kind>.<name>.value`.
+   Declare the secret with `secret = true` and resolve it from a provider at the
+   environment or CLI boundary (`env:NAME`, `file:path`, vault, sops, keychain).
+   The compiler rejects interpolating a secret-tagged value into `config`/`input`
+   and rejects literal/provider strings directly inside `secrets { … }`. See
    [adapters.md → Secrets](adapters.md#secrets).
+
+   **Migration example:** replace `adapter.secrets { TOKEN = "env:TOKEN" }`
+   with a declared secret variable:
+
+   ```hcl
+   variable "token" {
+     type   = string
+     secret = true
+   }
+
+   adapter "example" "default" {
+     secrets {
+       TOKEN = var.token
+     }
+   }
+   ```
+
+   Then supply the value at runtime with `--var token=env:TOKEN` or via an
+   environment-specific default. The provider reference never appears in the
+   workflow file, and the secret is delivered over the dedicated secret channel.
 
 4. **Adopt environments as needed (optional).** `shell` behaves as before. To add
    isolation, declare a `sandbox`/`container`/`remote` environment and bind it via

@@ -12,9 +12,9 @@ import (
 )
 
 // resolveAdapterSecrets evaluates the adapter's secret expressions against the
-// provided variable scope and resolves each value through the provider stack
-// derived from the adapter's environment. Resolved values are registered with
-// the redaction registry.
+// provided variable scope. Secret variable and data values are already
+// resolved through their declared origins at run start, so the evaluated
+// results are used directly and registered with the redaction registry.
 func resolveAdapterSecrets(
 	ctx context.Context,
 	g *workflow.FSMGraph,
@@ -22,21 +22,15 @@ func resolveAdapterSecrets(
 	vars map[string]cty.Value,
 	reg *secrets.Registry,
 ) (map[string]string, error) {
+	_ = ctx
+	_ = g
 	if len(adapter.Secrets) == 0 {
 		return nil, nil
 	}
 
-	// Evaluate HCL expressions (e.g., var.api_key, env:FOO).
 	evaluated, err := workflow.ResolveInputExprs(adapter.Secrets, vars)
 	if err != nil {
 		return nil, fmt.Errorf("adapter %q secrets evaluation: %w", adapter.Name, err)
-	}
-
-	// Build provider stack from the adapter's environment.
-	envNode := getEnvironmentNode(g, adapter.Environment)
-	stack, err := secrets.StackFromEnvironment(envNode)
-	if err != nil {
-		return nil, fmt.Errorf("adapter %q secrets stack: %w", adapter.Name, err)
 	}
 
 	resolved := make(map[string]string, len(evaluated))
@@ -45,21 +39,18 @@ func resolveAdapterSecrets(
 			slog.Debug("adapter secret resolved to empty string", "adapter", adapter.Name, "secret", name)
 			continue
 		}
-		resolvedVal, resolveErr := secrets.ResolveString(ctx, val, stack)
-		if resolveErr != nil {
-			return nil, fmt.Errorf("adapter %q secret %q: %w", adapter.Name, name, resolveErr)
-		}
-		resolved[name] = resolvedVal
+		resolved[name] = val
 		if reg != nil {
-			reg.Register(resolvedVal)
+			reg.Register(val)
 		}
 	}
 	return resolved, nil
 }
 
-// resolveStepSecretInputs evaluates the step's secret_input expressions and
-// resolves each through the provider stack. Resolved values are registered
-// with the redaction registry.
+// resolveStepSecretInputs evaluates the step's secret_input expressions.
+// Secret variable and data values are already resolved through their
+// declared origins at run start, so the evaluated results are used directly
+// and registered with the redaction registry.
 func resolveStepSecretInputs(
 	ctx context.Context,
 	g *workflow.FSMGraph,
@@ -67,6 +58,8 @@ func resolveStepSecretInputs(
 	vars map[string]cty.Value,
 	reg *secrets.Registry,
 ) (map[string]string, error) {
+	_ = ctx
+	_ = g
 	if len(step.SecretInputExprs) == 0 {
 		return step.SecretInputs, nil
 	}
@@ -86,25 +79,15 @@ func resolveStepSecretInputs(
 		merged[k] = v
 	}
 
-	envNode := getEnvironmentNode(g, step.Environment)
-	stack, err := secrets.StackFromEnvironment(envNode)
-	if err != nil {
-		return nil, fmt.Errorf("step %q secrets stack: %w", step.Name, err)
-	}
-
 	resolved := make(map[string]string, len(merged))
 	for name, val := range merged {
 		if val == "" {
 			slog.Debug("step secret_input resolved to empty string", "step", step.Name, "secret", name)
 			continue
 		}
-		resolvedVal, resolveErr := secrets.ResolveString(ctx, val, stack)
-		if resolveErr != nil {
-			return nil, fmt.Errorf("step %q secret_input %q: %w", step.Name, name, resolveErr)
-		}
-		resolved[name] = resolvedVal
+		resolved[name] = val
 		if reg != nil {
-			reg.Register(resolvedVal)
+			reg.Register(val)
 		}
 	}
 	return resolved, nil

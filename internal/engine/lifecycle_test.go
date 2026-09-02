@@ -1143,12 +1143,17 @@ workflow {
   target_state  = "done"
 }
 
+variable "required_secret" {
+  type   = string
+  secret = true
+}
+
 adapter "configful" "x" {
   config {
     required_config = "ok"
   }
   secrets {
-    required_secret = "env:TEST_CFG_SECRET"
+    required_secret = var.required_secret
   }
 }
 
@@ -1175,6 +1180,9 @@ state "done" {
 
 	sink := &lifecycleTrackingSink{}
 	eng := New(g, loader, sink)
+	eng.varOverrides = map[string]cty.Value{
+		"required_secret": cty.StringVal("env:TEST_CFG_SECRET"),
+	}
 
 	if err := eng.Run(context.Background()); err != nil {
 		t.Fatalf("Run failed: %v", err)

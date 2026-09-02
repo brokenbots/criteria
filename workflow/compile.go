@@ -166,6 +166,9 @@ func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]Adap
 	// secret data via secret_input, input referencing secret variables, or
 	// predecessor taint propagation.
 	diags = append(diags, TaintPass(g, schemas)...)
+	// CRI-88: enforce that secret channels (adapter.secrets and
+	// step.secret_input) only reference declared, secret-tainted values.
+	diags = append(diags, ValidateSecretBindings(g)...)
 	// Reserved-name checks only apply to user-authored top-level workflows.
 	// Sub-workflow bodies (SubworkflowChain non-empty) are synthetic and
 	// intentionally use the "_continue" name as a terminal state.

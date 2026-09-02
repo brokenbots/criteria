@@ -136,6 +136,10 @@ type Engine struct {
 	// lastVisits captures the Visits map from RunState when execution stops so
 	// the caller can pass them to a resumed engine via WithResumedVisits (W07).
 	lastVisits map[string]int
+	// secretOrigins records the provider OriginRef for each declared secret
+	// variable so that adapter session snapshots can re-resolve values after
+	// resume without persisting raw secrets.
+	secretOrigins map[string]secrets.OriginRef
 	// liveRunState is set to the active RunState while runLoop is executing,
 	// allowing VisitCounts() to return live values for mid-run checkpoints (W07).
 	// Cleared by handleEvalError when the run ends.
@@ -317,6 +321,41 @@ func (e *Engine) setLockfileOnSessions(sessions *adapterhost.SessionManager) {
 	}
 }
 
+// seedRunScope seeds variables, resolves declared secret data blocks, and
+// returns the variable scope plus the populated DataStore. This helper keeps
+// the fresh-run and resume-run setup paths identical (CRI-88).
+func (e *Engine) seedRunScope(ctx context.Context, sink Sink, reg *secrets.Registry) (map[string]cty.Value, *DataStore, error) {
+	vars, err := e.seedRunVars(ctx, sink, reg)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	ds := NewDataStore(e.graph)
+	if err := e.resolveSecretDataOrigins(ctx, ds, reg); err != nil {
+		return nil, nil, err
+	}
+	vars = workflow.SeedDataSnapshot(vars, ds.Snapshot())
+	return vars, ds, nil
+}
+
+// initAdapters verifies the graph and provisions scope-level adapter sessions.
+// On failure it emits OnRunFailed and returns a wrapped error. The caller owns
+// the returned teardown order.
+func (e *Engine) initAdapters(ctx context.Context, sessions *adapterhost.SessionManager, sink Sink, vars map[string]cty.Value, failStep string) (Deps, []string, error) {
+	if err := sessions.VerifyGraph(ctx, e.graph, vars); err != nil {
+		sink.OnRunFailed(err.Error(), failStep)
+		return Deps{}, nil, err
+	}
+
+	deps := Deps{Sessions: sessions, Sink: sink}
+	scopeOrder, err := initScopeAdapters(ctx, e.graph, deps, vars, e.workflowDir, "", e.secretOrigins)
+	if err != nil {
+		sink.OnRunFailed(err.Error(), failStep)
+		return Deps{}, nil, err
+	}
+	return deps, scopeOrder, nil
+}
+
 // Run executes the workflow until a terminal state is reached, the global
 // step limit is exceeded, or ctx is cancelled.
 func (e *Engine) Run(ctx context.Context) error {
@@ -344,9 +383,9 @@ func (e *Engine) Run(ctx context.Context) error {
 	sessions.LifecycleSink = sink
 	sessions.SetAllowedWorkingDirRoots(e.workingDirAllowedRoots)
 
-	// Seed variables before adapter provisioning so secret expressions can be
-	// evaluated against the run scope (WS13).
-	vars, err := e.seedRunVars(sink)
+	// Seed variables and declared secret data blocks before adapter provisioning
+	// so secret expressions can be evaluated against the run scope (WS13, CRI-88).
+	vars, ds, err := e.seedRunScope(ctx, sink, redactionReg)
 	if err != nil {
 		return err
 	}
@@ -357,31 +396,15 @@ func (e *Engine) Run(ctx context.Context) error {
 		return err
 	}
 
-	// Verify every adapter declared anywhere in the compiled graph before the
-	// first step executes. This fails fast on a missing or unverifiable adapter
-	// in a subworkflow the run has not yet reached. Per-scope binding still
-	// opens sessions lazily at scope entry.
-	if err := sessions.VerifyGraph(ctx, e.graph, vars); err != nil {
-		sink.OnRunFailed(err.Error(), e.graph.InitialState)
-		return err
-	}
-
-	deps := Deps{
-		Sessions: sessions,
-		Sink:     sink,
-	}
-
-	// Provision adapter sessions at scope start (W12)
-	scopeOrder, err := initScopeAdapters(ctx, e.graph, deps, vars, e.workflowDir, "")
+	deps, scopeOrder, err := e.initAdapters(ctx, sessions, sink, vars, "")
 	if err != nil {
-		sink.OnRunFailed(err.Error(), e.graph.InitialState)
 		return err
 	}
 	defer func() { tearDownScopeAdapters(ctx, scopeOrder, deps) }()
 
 	current := e.graph.InitialState
 	sink.OnRunStarted(e.graph.Name, current)
-	return e.runLoop(ctx, sessions, current, 1, vars, sink)
+	return e.runLoop(ctx, sessions, current, 1, vars, sink, ds)
 }
 
 // RunFrom resumes a workflow at startStep with the given initialAttempt
@@ -412,7 +435,7 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	sessions.LifecycleSink = sink
 	sessions.SetAllowedWorkingDirRoots(e.workingDirAllowedRoots)
 
-	vars, err := e.seedRunVars(sink)
+	vars, ds, err := e.seedRunScope(ctx, sink, redactionReg)
 	if err != nil {
 		return err
 	}
@@ -423,23 +446,8 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 		return err
 	}
 
-	// Verify every adapter declared anywhere in the compiled graph before the
-	// resumed step executes, using the same merged pin set the engine uses.
-	if err := sessions.VerifyGraph(ctx, e.graph, vars); err != nil {
-		sink.OnRunFailed(err.Error(), startStep)
-		return err
-	}
-
-	deps := Deps{
-		Sessions: sessions,
-		Sink:     sink,
-	}
-
-	// For resumed runs, provision adapter sessions at scope start (W12).
-	// Sessions are always provisioned fresh, not restored from a prior run.
-	scopeOrder, err := initScopeAdapters(ctx, e.graph, deps, vars, e.workflowDir, "")
+	deps, scopeOrder, err := e.initAdapters(ctx, sessions, sink, vars, startStep)
 	if err != nil {
-		sink.OnRunFailed(err.Error(), startStep)
 		return err
 	}
 	defer func() { tearDownScopeAdapters(ctx, scopeOrder, deps) }()
@@ -447,12 +455,12 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	if err := e.bootstrapSessionsForResume(ctx, sessions, startStep); err != nil {
 		return err
 	}
-	return e.runLoop(ctx, sessions, startStep, initialAttempt, vars, sink)
+	return e.runLoop(ctx, sessions, startStep, initialAttempt, vars, sink, ds)
 }
 
 // runLoop is the shared execution loop. firstStepAttempt is the attempt index
 // used for the initial step when resuming; subsequent steps start at attempt 1.
-func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManager, current string, firstStepAttempt int, vars map[string]cty.Value, sink Sink) error {
+func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManager, current string, firstStepAttempt int, vars map[string]cty.Value, sink Sink, ds *DataStore) error {
 	st := &RunState{
 		Current:          current,
 		Vars:             vars,
@@ -461,7 +469,7 @@ func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManag
 		IterStack:        append([]workflow.IterCursor{}, e.resumedIterStack...),
 		Visits:           cloneVisits(e.resumedVisits),
 		WorkflowDir:      e.workflowDir,
-		DataStore:        NewDataStore(e.graph),
+		DataStore:        ds,
 		WorkflowName:     e.graph.Name,
 		firstStep:        true,
 		firstStepAttempt: firstStepAttempt,
@@ -650,13 +658,13 @@ func finishIterationInGraph(st *RunState, stepName string, graph *workflow.FSMGr
 }
 
 // seedRunVars returns the restored scope unchanged for resumed runs. For fresh
-// runs it seeds from graph defaults, applies any CLI overrides, and emits
-// OnVariableSet events.
-func (e *Engine) seedRunVars(sink Sink) (map[string]cty.Value, error) {
+// runs it seeds from graph defaults, applies any CLI overrides, resolves secret
+// variable provider origins, and emits OnVariableSet events.
+func (e *Engine) seedRunVars(ctx context.Context, sink Sink, reg *secrets.Registry) (map[string]cty.Value, error) {
 	if e.resumedVars != nil {
 		return e.seedResumedVars(), nil
 	}
-	return e.seedFreshVars(sink)
+	return e.seedFreshVars(ctx, sink, reg)
 }
 
 func (e *Engine) seedResumedVars() map[string]cty.Value {
@@ -671,7 +679,7 @@ func (e *Engine) seedResumedVars() map[string]cty.Value {
 	return resumed
 }
 
-func (e *Engine) seedFreshVars(sink Sink) (map[string]cty.Value, error) {
+func (e *Engine) seedFreshVars(ctx context.Context, sink Sink, reg *secrets.Registry) (map[string]cty.Value, error) {
 	vars := workflow.SeedVarsFromGraph(e.graph)
 	vars["local"] = workflow.SeedLocalsFromGraph(e.graph)
 	if len(e.varOverrides) > 0 {
@@ -681,8 +689,124 @@ func (e *Engine) seedFreshVars(sink Sink) (map[string]cty.Value, error) {
 			return nil, err
 		}
 	}
+	if reg != nil {
+		var err error
+		vars, err = e.resolveSecretVarOrigins(ctx, vars, reg)
+		if err != nil {
+			return nil, err
+		}
+	}
 	e.emitVarSetEvents(vars, sink)
 	return vars, nil
+}
+
+// resolveSecretVarOrigins walks declared secret variables and resolves any
+// string value that looks like a provider reference (env:NAME, file:path,
+// etc.) through the workflow's default environment provider stack. The
+// resolved value replaces the provider-ref string in vars["var"] and is
+// registered for redaction. The original OriginRef is stored in
+// e.secretOrigins so that adapter session snapshots can re-resolve the value on
+// resume without persisting the raw secret.
+func (e *Engine) resolveSecretVarOrigins(ctx context.Context, vars map[string]cty.Value, reg *secrets.Registry) (map[string]cty.Value, error) {
+	varObj := vars["var"]
+	if varObj == cty.NilVal || !varObj.Type().IsObjectType() || len(e.graph.Variables) == 0 {
+		return vars, nil
+	}
+
+	stack, err := secrets.StackFromEnvironment(getEnvironmentNode(e.graph, ""))
+	if err != nil {
+		return nil, fmt.Errorf("resolve secret variable origins: %w", err)
+	}
+
+	attrs := varObj.AsValueMap()
+	resolved := make(map[string]cty.Value, len(attrs))
+	origins := make(map[string]secrets.OriginRef, len(e.graph.Variables))
+	for name, node := range e.graph.Variables {
+		val, ok := attrs[name]
+		if !ok {
+			resolved[name] = cty.NullVal(node.Type)
+			continue
+		}
+		if !node.Secret || val.IsNull() || !val.IsKnown() || val.Type() != cty.String {
+			resolved[name] = val
+			continue
+		}
+		raw := val.AsString()
+		ref := secrets.ParseOriginRef(raw)
+		var final string
+		if ref.Kind == "literal" {
+			final = ref.Ref
+		} else {
+			resolvedVal, resolveErr := stack.Resolve(ctx, ref)
+			if resolveErr != nil {
+				return nil, fmt.Errorf("variable %q (origin %s): %w", name, ref, resolveErr)
+			}
+			final = resolvedVal
+		}
+		resolved[name] = cty.StringVal(final)
+		reg.Register(final)
+		origins[name] = ref
+	}
+
+	out := make(map[string]cty.Value, len(vars))
+	for k, v := range vars {
+		out[k] = v
+	}
+	out["var"] = cty.ObjectVal(resolved)
+	e.secretOrigins = origins
+	return out, nil
+}
+
+// resolveSecretDataOrigins walks declared secret data blocks and resolves any
+// initial string value that looks like a provider reference through the
+// default environment provider stack. The resolved value is written into the
+// run's DataStore and registered for redaction; the origin is stored in
+// e.secretOrigins under the key "data.KIND.NAME" so that adapter session
+// snapshots can re-resolve it on resume.
+func (e *Engine) resolveSecretDataOrigins(ctx context.Context, ds *DataStore, reg *secrets.Registry) error {
+	if len(e.graph.Data) == 0 {
+		return nil
+	}
+	stack, err := secrets.StackFromEnvironment(getEnvironmentNode(e.graph, ""))
+	if err != nil {
+		return fmt.Errorf("resolve secret data origins: %w", err)
+	}
+	for kind, byName := range e.graph.Data {
+		for name, node := range byName {
+			if !node.Secret {
+				continue
+			}
+			if err := e.resolveSecretDataValue(ctx, ds, reg, stack, kind, name, node.InitialValue); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (e *Engine) resolveSecretDataValue(ctx context.Context, ds *DataStore, reg *secrets.Registry, stack *secrets.Stack, kind, name string, val cty.Value) error {
+	if val.IsNull() || !val.IsKnown() || val.Type() != cty.String {
+		return nil
+	}
+	raw := val.AsString()
+	ref := secrets.ParseOriginRef(raw)
+	final := ref.Ref
+	if ref.Kind != "literal" {
+		resolvedVal, err := stack.Resolve(ctx, ref)
+		if err != nil {
+			return fmt.Errorf("data %q %q (origin %s): %w", kind, name, ref, err)
+		}
+		final = resolvedVal
+	}
+	if err := ds.Set(kind, name, cty.StringVal(final)); err != nil {
+		return fmt.Errorf("data %q %q: %w", kind, name, err)
+	}
+	reg.Register(final)
+	if e.secretOrigins == nil {
+		e.secretOrigins = make(map[string]secrets.OriginRef)
+	}
+	e.secretOrigins["data."+kind+"."+name] = ref
+	return nil
 }
 
 func (e *Engine) emitVarSetEvents(vars map[string]cty.Value, sink Sink) {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -19,7 +20,7 @@ import (
 // an event is emitted, and the error is returned.
 // Returns the ordered slice of provisioned adapter IDs (for correct LIFO teardown)
 // and an error if any adapter failed to initialize.
-func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, vars map[string]cty.Value, workflowDir, scopeName string) (order []string, err error) {
+func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, vars map[string]cty.Value, workflowDir, scopeName string, secretOrigins map[string]secrets.OriginRef) (order []string, err error) {
 	if len(g.Adapters) == 0 {
 		return nil, nil
 	}
@@ -33,7 +34,7 @@ func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, var
 		// Prepare the adapter inputs (secrets, origin refs, working dir, runtime
 		// config). A prepare error means the adapter was never opened, so we emit
 		// init_failed and return without rolling back already-provisioned peers.
-		config, secretMap, originRefs, workingDir, perr := prepareScopeAdapter(ctx, g, instanceID, adapter, vars, workflowDir, deps, scopeName)
+		config, secretMap, originRefs, workingDir, perr := prepareScopeAdapter(ctx, g, instanceID, adapter, vars, workflowDir, deps, scopeName, secretOrigins)
 		if perr != nil {
 			return nil, perr
 		}
@@ -89,6 +90,7 @@ func prepareScopeAdapter(
 	workflowDir string,
 	deps Deps,
 	scopeName string,
+	secretOrigins map[string]secrets.OriginRef,
 ) (config, secretMap map[string]string, originRefs map[string]secrets.OriginRef, workingDir string, err error) {
 	// Resolve adapter secrets (WS13).
 	if len(adapter.Secrets) > 0 {
@@ -99,7 +101,7 @@ func prepareScopeAdapter(
 		}
 	}
 
-	originRefs, err = buildOriginRefs(adapter, vars)
+	originRefs, err = buildOriginRefs(adapter, secretOrigins)
 	if err != nil {
 		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
 		return nil, nil, nil, "", fmt.Errorf("initialize adapter %q: %w", instanceID, err)
@@ -151,19 +153,37 @@ func resolveAdapterWorkingDir(g *workflow.FSMGraph, ad *workflow.AdapterNode, va
 	return g.Environments[envKey].ResolveWorkingDir(vars)
 }
 
-// buildOriginRefs evaluates an adapter's secret expressions and converts them into
-// unevaluated origin references for snapshot/restore (WS18).
-func buildOriginRefs(adapter *workflow.AdapterNode, vars map[string]cty.Value) (map[string]secrets.OriginRef, error) {
+// buildOriginRefs maps an adapter's secret expressions to the declared origins
+// of the referenced secret variables or data blocks. This keeps raw secret
+// values out of session snapshots while still allowing them to re-resolve on
+// resume (WS18, CRI-88).
+func buildOriginRefs(adapter *workflow.AdapterNode, secretOrigins map[string]secrets.OriginRef) (map[string]secrets.OriginRef, error) {
 	if len(adapter.Secrets) == 0 {
 		return nil, nil
 	}
-	evaluated, err := workflow.ResolveInputExprs(adapter.Secrets, vars)
-	if err != nil {
-		return nil, err
-	}
-	originRefs := make(map[string]secrets.OriginRef, len(evaluated))
-	for k, v := range evaluated {
-		originRefs[k] = secrets.ParseOriginRef(v)
+	originRefs := make(map[string]secrets.OriginRef, len(adapter.Secrets))
+	for k, expr := range adapter.Secrets {
+		isVar, key, ok := workflow.SecretBindingRefFromExpr(expr, nil)
+		if !ok {
+			return nil, fmt.Errorf("adapter %q.%q secrets.%s: cannot build origin ref: expression is not a direct secret reference", adapter.Type, adapter.Name, k)
+		}
+		var origin secrets.OriginRef
+		if isVar {
+			origin = secretOrigins[key]
+		} else {
+			parts := strings.SplitN(key, ".", 2)
+			if len(parts) != 2 {
+				return nil, fmt.Errorf("adapter %q.%q secrets.%s: invalid data origin key %q", adapter.Type, adapter.Name, k, key)
+			}
+			origin = secretOrigins["data."+key]
+		}
+		if origin.Kind == "" {
+			// No recorded origin means the value was a literal default. Persist it
+			// as a literal origin so snapshots remain restorable. This path is
+			// intended only for narrowly-controlled test fixtures.
+			origin = secrets.OriginRef{Kind: "literal", Ref: "(untracked)"}
+		}
+		originRefs[k] = origin
 	}
 	return originRefs, nil
 }

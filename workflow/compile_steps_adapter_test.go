@@ -278,7 +278,10 @@ workflow {
   target_state  = "done"
 }
 
-variable "api_key" { type = string }
+variable "api_key" {
+  type    = string
+  secret  = true
+}
 
 adapter "exec" "default" {}
 

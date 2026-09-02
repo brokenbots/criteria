@@ -5,9 +5,15 @@ workflow {
   target_state  = "done"
 }
 
+variable "api_key" {
+  type    = string
+  secret  = true
+  default = "key"
+}
+
 adapter "exec" "default" {
   secrets {
-    api_key = "key"
+    api_key = var.api_key
   }
 }
 
