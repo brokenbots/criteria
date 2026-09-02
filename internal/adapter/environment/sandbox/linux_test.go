@@ -416,6 +416,106 @@ func TestHandlerPrepare_NetworkDenyEgress_HasNewNet(t *testing.T) {
 	}
 }
 
+func TestHandlerPrepare_NetworkTypeSpecific_Wildcard_NoNewNet(t *testing.T) {
+	caps := Probe()
+	ctx := PrepareContext{
+		Policy: &workflow.ResolvedPolicy{
+			OS:         "linux",
+			PolicyMode: "permissive",
+			TypeSpecific: map[string]cty.Value{
+				"network": cty.ObjectVal(map[string]cty.Value{
+					"allow": cty.ListVal([]cty.Value{cty.StringVal("*")}),
+				}),
+			},
+		},
+		Caps: caps,
+	}
+	prep, err := Handler{}.Prepare(ctx)
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	if prep.SysProcAttr == nil {
+		t.Fatal("expected SysProcAttr in prepared config")
+	}
+	if prep.SysProcAttr.Cloneflags&syscall.CLONE_NEWNET != 0 {
+		t.Fatalf("CLONE_NEWNET set when network.allow=[\"*\"]: Cloneflags = %#x", prep.SysProcAttr.Cloneflags)
+	}
+	if !prep.AllowNetwork {
+		t.Fatal("expected AllowNetwork=true")
+	}
+	if len(prep.NetPorts) != 0 {
+		t.Fatalf("expected no NetPorts for wildcard, got %v", prep.NetPorts)
+	}
+}
+
+func TestHandlerPrepare_NetworkTypeSpecific_Exact_PopulatesNetPorts(t *testing.T) {
+	caps := Probe()
+	ctx := PrepareContext{
+		Policy: &workflow.ResolvedPolicy{
+			OS:         "linux",
+			PolicyMode: "permissive",
+			TypeSpecific: map[string]cty.Value{
+				"network": cty.ObjectVal(map[string]cty.Value{
+					"allow": cty.ListVal([]cty.Value{
+						cty.StringVal("127.0.0.1:443"),
+						cty.StringVal("[::1]:80"),
+					}),
+				}),
+			},
+		},
+		Caps: caps,
+	}
+	prep, err := Handler{}.Prepare(ctx)
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	if !prep.AllowNetwork {
+		t.Fatal("expected AllowNetwork=true")
+	}
+	wantPorts := map[uint16]bool{443: true, 80: true}
+	gotPorts := make(map[uint16]bool, len(prep.NetPorts))
+	for _, p := range prep.NetPorts {
+		gotPorts[p] = true
+	}
+	if len(gotPorts) != len(wantPorts) {
+		t.Fatalf("expected NetPorts %v, got %v", wantPorts, prep.NetPorts)
+	}
+	for p := range wantPorts {
+		if !gotPorts[p] {
+			t.Fatalf("missing port %d in NetPorts %v", p, prep.NetPorts)
+		}
+	}
+}
+
+func TestHandlerPrepare_NetworkTypeSpecific_Deny_HasNewNet(t *testing.T) {
+	caps := Probe()
+	ctx := PrepareContext{
+		Policy: &workflow.ResolvedPolicy{
+			OS:         "linux",
+			PolicyMode: "permissive",
+			TypeSpecific: map[string]cty.Value{
+				"network": cty.ObjectVal(map[string]cty.Value{
+					"allow": cty.ListValEmpty(cty.String),
+				}),
+			},
+		},
+		Caps: caps,
+	}
+	prep, err := Handler{}.Prepare(ctx)
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	if prep.SysProcAttr == nil {
+		t.Fatal("expected SysProcAttr in prepared config")
+	}
+	if prep.SysProcAttr.Cloneflags&syscall.CLONE_NEWNET == 0 {
+		t.Fatalf("CLONE_NEWNET not set when network.allow=[]: Cloneflags = %#x", prep.SysProcAttr.Cloneflags)
+	}
+	if prep.AllowNetwork {
+		t.Fatal("expected AllowNetwork=false")
+	}
+}
+
 func TestHandlerPrepare_ProcessExec_Strict_Rejects(t *testing.T) {
 	caps := Probe()
 	_, err := Handler{}.Prepare(PrepareContext{

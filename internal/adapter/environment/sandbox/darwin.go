@@ -19,15 +19,16 @@ const ProfileVersion = 1
 
 // Profile describes the SBPL rules for a single sandbox-exec session.
 type Profile struct {
-	AllowFileReads     []string
-	AllowFileWrites    []string
-	AllowNetworkHosts  []string
-	AllowExec          []string
-	AllowExecWildcard  bool // unrestricted process-exec when process.exec = ["*"]
-	AllowNetworkBind   bool // emit (allow network-bind) for local adapter UDS transport
-	BlockKextLoad      bool
-	BlockMachLookup    bool
-	DefaultDeny        bool
+	AllowFileReads       []string
+	AllowFileWrites      []string
+	AllowNetworkHosts    []string
+	AllowExec            []string
+	AllowExecWildcard    bool // unrestricted process-exec when process.exec = ["*"]
+	AllowNetworkBind     bool // emit (allow network-bind) for local adapter UDS transport
+	AllowNetworkWildcard bool // unrestricted network-outbound when network.allow = ["*"]
+	BlockKextLoad        bool
+	BlockMachLookup      bool
+	DefaultDeny          bool
 
 	// resolveWarnings collects hostname resolution failures so Prepare
 	// can decide whether to fail closed in strict mode.
@@ -69,7 +70,9 @@ func (p *Profile) Render() string {
 		writeFilesystemRule(&b, "file-write*", p.AllowFileWrites)
 	}
 
-	if len(p.AllowNetworkHosts) > 0 {
+	if p.AllowNetworkWildcard {
+		b.WriteString("(allow network-outbound)\n")
+	} else if len(p.AllowNetworkHosts) > 0 {
 		b.WriteString("(allow network-outbound\n")
 		for _, host := range p.AllowNetworkHosts {
 			b.WriteString(fmt.Sprintf("  (remote ip %q)\n", sandboxRemoteAddr(host)))

@@ -129,7 +129,7 @@ func TestHandler_Prepare_PolicyArgs(t *testing.T) {
 			TypeSpecific: map[string]cty.Value{
 				"runtime": cty.StringVal("podman"),
 				"network": cty.ObjectVal(map[string]cty.Value{
-					"allow": cty.ListVal([]cty.Value{cty.StringVal("api.example.com:443")}),
+					"allow": cty.ListVal([]cty.Value{cty.StringVal("*")}),
 				}),
 				"filesystem": cty.ObjectVal(map[string]cty.Value{
 					"read":  cty.ListVal([]cty.Value{cty.StringVal("/data")}),
@@ -173,6 +173,59 @@ func TestHandler_Prepare_PolicyArgs(t *testing.T) {
 	}
 	if p.Policy.Memory != "1Gi" {
 		t.Errorf("memory = %q, want 1Gi", p.Policy.Memory)
+	}
+}
+
+func TestHandler_Prepare_NetworkWildcard(t *testing.T) {
+	h := &Handler{}
+	p, err := h.Prepare(&PrepareContext{
+		Environment: workflow.EnvironmentNode{
+			Name: "dev",
+			TypeSpecific: map[string]cty.Value{
+				"network": cty.ObjectVal(map[string]cty.Value{
+					"allow": cty.ListVal([]cty.Value{cty.StringVal("*")}),
+				}),
+			},
+		},
+		Manifest: &manifest.Manifest{
+			SourceURL:      "https://example.com",
+			ContainerImage: &manifest.ContainerImageRef{Ref: "alpine:latest"},
+		},
+		AdapterRef: "noop.default",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p.Policy.NetworkMode != "" {
+		t.Errorf("networkMode = %q, want empty", p.Policy.NetworkMode)
+	}
+	if p.Policy.NetworkName != "criteria-net-noop-default" {
+		t.Errorf("networkName = %q, want criteria-net-noop-default", p.Policy.NetworkName)
+	}
+}
+
+func TestHandler_Prepare_NetworkExactRejected(t *testing.T) {
+	h := &Handler{}
+	_, err := h.Prepare(&PrepareContext{
+		Environment: workflow.EnvironmentNode{
+			Name: "dev",
+			TypeSpecific: map[string]cty.Value{
+				"network": cty.ObjectVal(map[string]cty.Value{
+					"allow": cty.ListVal([]cty.Value{cty.StringVal("api.example.com:443")}),
+				}),
+			},
+		},
+		Manifest: &manifest.Manifest{
+			SourceURL:      "https://example.com",
+			ContainerImage: &manifest.ContainerImageRef{Ref: "alpine:latest"},
+		},
+		AdapterRef: "noop.default",
+	})
+	if err == nil {
+		t.Fatal("expected error for exact network.allow allow-list")
+	}
+	if !strings.Contains(err.Error(), "cannot enforce an exact network.allow") {
+		t.Errorf("expected unsupported allow-list error, got: %v", err)
 	}
 }
 

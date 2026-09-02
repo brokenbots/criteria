@@ -113,8 +113,61 @@ func ParseConfig(rawBody hcl.Body) (*Config, error) {
 	if err := parseMTLSBlock(cfg, rawBody); err != nil {
 		return nil, err
 	}
+	if err := validateNetworkBlock(rawBody); err != nil {
+		return nil, err
+	}
 
 	return cfg, nil
+}
+
+// validateNetworkBlock checks that a remote environment's advisory network
+// block uses only supported forms. Exact allow-lists are rejected because the
+// host-side remote handler cannot enforce per-endpoint egress restrictions;
+// the reserved wildcard "*" is the explicit opt-in to unrestricted egress.
+func validateNetworkBlock(rawBody hcl.Body) error {
+	var netBlock hcl.Body
+	if raw, ok := rawBody.(*hclsyntax.Body); ok {
+		for _, block := range raw.Blocks {
+			if block.Type == "network" && len(block.Labels) == 0 {
+				netBlock = block.Body
+				break
+			}
+		}
+	}
+	if netBlock == nil {
+		return nil
+	}
+	attrs, diags := netBlock.JustAttributes()
+	if diags.HasErrors() {
+		return fmt.Errorf("remote environment: network block: %w", diags)
+	}
+	attr, ok := attrs["allow"]
+	if !ok {
+		return nil
+	}
+	val, diags := attr.Expr.Value(nil)
+	if diags.HasErrors() {
+		return fmt.Errorf("remote environment: network.allow: %w", diags)
+	}
+	allow, hasAllow, err := workflow.NetworkAllowFromObject(cty.ObjectVal(map[string]cty.Value{
+		"allow": val,
+	}))
+	if !hasAllow {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("remote environment: network.allow: %w", err)
+	}
+	class, err := workflow.ClassifyNetworkAllow(allow)
+	if err != nil {
+		return fmt.Errorf("remote environment: network.allow: %w", err)
+	}
+	if class == workflow.NetworkAllowExact {
+		return fmt.Errorf(
+			"remote environment cannot enforce an exact network.allow allow-list at the host; " +
+				"use network.allow = [\"*\"] to explicitly declare unrestricted egress intent, or omit the block")
+	}
+	return nil
 }
 
 func buildAttrGetter(rawBody hcl.Body) (func(string) (*hcl.Attribute, bool), error) {

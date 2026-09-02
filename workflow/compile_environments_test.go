@@ -886,6 +886,74 @@ func (h *testPermissiveHandler) ValidateFields(_ hcl.Body) hcl.Diagnostics   { r
 func (h *testPermissiveHandler) IsolationKind() EnvIsolationKind             { return EnvIsolationNone }
 func (h *testPermissiveHandler) Prepare(_ context.Context, _ hcl.Body) error { return nil }
 
+func TestCompileEnvironments_NetworkAllowWildcardValidation(t *testing.T) {
+	registry := &testEnvRegistry{handler: &testPermissiveHandler{typ: "permissive"}}
+
+	cases := []struct {
+		name      string
+		allow     string
+		wantError string
+	}{
+		{
+			name:  "wildcard alone is valid",
+			allow: `["*"]`,
+		},
+		{
+			name:  "empty allow list is valid (deny)",
+			allow: `[]`,
+		},
+		{
+			name:  "exact host:port is valid",
+			allow: `["api.linear.app:443"]`,
+		},
+		{
+			name:      "wildcard with other entries is rejected",
+			allow:     `["*", "api.linear.app:443"]`,
+			wantError: "wildcard",
+		},
+		{
+			name:      "partial glob is rejected",
+			allow:     `["api.*.app:443"]`,
+			wantError: "glob",
+		},
+		{
+			name:      "empty entry is rejected",
+			allow:     `["api.linear.app:443", ""]`,
+			wantError: "empty",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := environmentWorkflow(`
+  environment "permissive" "netenv" {
+    network = {
+      allow = `+tc.allow+`
+    }
+  }
+`, "")
+			spec, diags := Parse("test.hcl", []byte(src))
+			if diags.HasErrors() {
+				t.Fatalf("parse: %s", diags.Error())
+			}
+			g := newFSMGraph(spec)
+			diags = compileEnvironments(g, spec, CompileOpts{}, registry)
+			if tc.wantError != "" {
+				if !diags.HasErrors() {
+					t.Fatalf("expected compile error containing %q", tc.wantError)
+				}
+				if !strings.Contains(diags.Error(), tc.wantError) {
+					t.Errorf("expected error containing %q, got: %s", tc.wantError, diags.Error())
+				}
+				return
+			}
+			if diags.HasErrors() {
+				t.Fatalf("unexpected compile error: %s", diags.Error())
+			}
+		})
+	}
+}
+
 func TestCompileEnvironments_OSGateMismatch(t *testing.T) {
 	// If the environment declares an os that does not match the host GOOS,
 	// compilation should fail with a clear error.

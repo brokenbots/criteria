@@ -190,6 +190,29 @@ func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileO
 	// Check for controlled-set conflicts.
 	diags = append(diags, checkShellControlledSetConflicts(envSpec.Type, variables, attrs)...)
 
+	// Validate type-specific network.allow syntax early so parser/schema
+	// diagnostics cover wildcard alone and invalid combinations (CRI-89).
+	if netObj, ok := typeSpecific["network"]; ok {
+		allow, hasAllow, err := NetworkAllowFromObject(netObj)
+		if err != nil {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("environment %q: invalid network.allow", key),
+				Detail:   err.Error(),
+				Subject:  attrRangePtr(attrs, "network"),
+			})
+		} else if hasAllow {
+			if _, err := ClassifyNetworkAllow(allow); err != nil {
+				diags = append(diags, &hcl.Diagnostic{
+					Severity: hcl.DiagError,
+					Summary:  fmt.Sprintf("environment %q: invalid network.allow", key),
+					Detail:   err.Error(),
+					Subject:  attrRangePtr(attrs, "network"),
+				})
+			}
+		}
+	}
+
 	// Store the compiled environment.
 	g.Environments[key] = &EnvironmentNode{
 		Type:                 envSpec.Type,
