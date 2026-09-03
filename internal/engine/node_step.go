@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
 	"github.com/zclconf/go-cty/cty/convert"
 
@@ -458,20 +459,22 @@ func resolveDataWriteValue(w workflow.CompiledWrite, projectedCty, rawOutputs, s
 }
 
 // resolveBareOutputTraversal handles the common case where the write value
-// expression is a bare output.* traversal. It returns (value, true, nil) on
-// success, (cty.NilVal, false, nil) when the expression is not a bare
-// traversal, and (cty.NilVal, false, error) on lookup/coercion failure.
+// expression is exactly a bare output.<attr> traversal and nothing else. It
+// returns (value, true, nil) on success, (cty.NilVal, false, nil) when the
+// expression is not a bare traversal, and (cty.NilVal, false, error) on
+// lookup/coercion failure.
 func resolveBareOutputTraversal(w workflow.CompiledWrite, projectedCty, rawOutputs map[string]cty.Value, store *DataStore) (cty.Value, bool, error) {
-	vars := w.ValueExpr.Variables()
-	if len(vars) != 1 || len(vars[0]) != 2 {
+	// Inspect the AST: the expression must be a single scope traversal with
+	// exactly two segments, output.<attr>. Checking Variables() is not
+	// sufficient because richer expressions such as output.foo == "bar" or
+	// output.foo + 1 still report exactly one output.* variable traversal.
+	traversalExpr, ok := w.ValueExpr.(*hclsyntax.ScopeTraversalExpr)
+	if !ok || len(traversalExpr.Traversal) != 2 {
 		return cty.NilVal, false, nil
 	}
-	root, ok1 := vars[0][0].(hcl.TraverseRoot)
-	if !ok1 || root.Name != "output" {
-		return cty.NilVal, false, nil
-	}
-	attr, ok2 := vars[0][1].(hcl.TraverseAttr)
-	if !ok2 {
+	root, ok1 := traversalExpr.Traversal[0].(hcl.TraverseRoot)
+	attr, ok2 := traversalExpr.Traversal[1].(hcl.TraverseAttr)
+	if !ok1 || !ok2 || root.Name != "output" {
 		return cty.NilVal, false, nil
 	}
 	key := attr.Name
