@@ -388,7 +388,7 @@ jobs:
       - name: Check floor ratchet
         run: |
           approved=""
-          if [ "${{ contains(github.event.pull_request.labels.*name, 'floor-change-approved') }}" = "true" ]; then
+          if [ "${{ contains(github.event.pull_request.labels.*.name, 'floor-change-approved') }}" = "true" ]; then
             approved="--approved"
           fi
           go run ./tools/coverage-floor-guard --base /tmp/coverage-floors.base.txt --head /tmp/coverage-floors.head.txt $approved
