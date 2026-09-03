@@ -358,9 +358,10 @@ jobs:
   coverage-floor-ratchet-guard:
     name: Coverage floor ratchet guard
     runs-on: ubuntu-latest
-    # CRI-93: prevents an autonomous workflow from editing coverage floors
-    # downward and merging its own PR. A floor decrease is allowed only when
-    # the PR carries the explicit human-approval label.
+    # CRI-93 / CRI-96: prevents an autonomous workflow from editing coverage
+    # floors downward, removing an existing floor line, or merging its own PR.
+    # A floor decrease or removal is allowed only when the PR carries the
+    # explicit human-approval label.
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v7
