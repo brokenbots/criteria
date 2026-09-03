@@ -1,7 +1,8 @@
 // Command coverage-floor-guard prevents autonomous coverage-floor ratchet
-// relaxations (CRI-93). It compares two versions of the per-package coverage
-// floor file and fails if any package's numeric floor decreased, unless the
-// caller passes --approved to signal explicit human approval.
+// relaxations (CRI-93, CRI-96). It compares two versions of the per-package
+// coverage floor file and fails if any package's numeric floor decreased or
+// an existing package floor was removed, unless the caller passes --approved
+// to signal explicit human approval.
 //
 // The tool does not compute coverage; it only guards the committed floor file.
 //
@@ -23,8 +24,9 @@ import (
 const help = `Usage: coverage-floor-guard --base FILE --head FILE [--approved]
 
 Compare two coverage floor files and fail if any package's floor value
-decreased. Floor increases are always allowed. When --approved is set, a
-decrease is reported but does not fail the process.
+decreased or an existing package floor was removed. Floor increases and new
+package additions are always allowed. When --approved is set, a decrease or
+removal is reported but does not fail the process.
 `
 
 type floor struct {
@@ -33,37 +35,45 @@ type floor struct {
 }
 
 func main() {
-	base := flag.String("base", "", "base floor file path")
-	head := flag.String("head", "", "head floor file path")
-	approved := flag.Bool("approved", false, "allow floor decreases (human approval present)")
-	flag.Usage = func() { fmt.Fprint(os.Stderr, help) }
-	flag.Parse()
+	os.Exit(run(os.Args[1:]))
+}
+
+func run(args []string) int {
+	fs := flag.NewFlagSet("coverage-floor-guard", flag.ContinueOnError)
+	base := fs.String("base", "", "base floor file path")
+	head := fs.String("head", "", "head floor file path")
+	approved := fs.Bool("approved", false, "allow floor decreases and removals (human approval present)")
+	fs.Usage = func() { fmt.Fprint(os.Stderr, help) }
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
 
 	if *base == "" || *head == "" {
-		flag.Usage()
-		os.Exit(2)
+		fs.Usage()
+		return 2
 	}
 
 	baseFloors, err := readFloors(*base)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR reading base floors %q: %v\n", *base, err)
-		os.Exit(2)
+		return 2
 	}
 	headFloors, err := readFloors(*head)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR reading head floors %q: %v\n", *head, err)
-		os.Exit(2)
+		return 2
 	}
 
 	result := compareFloors(baseFloors, headFloors)
 	printResult(result, *approved)
 
-	if len(result.decreases) > 0 && !*approved {
+	if (len(result.decreases) > 0 || len(result.removed) > 0) && !*approved {
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "A coverage floor may not be lowered without human approval.")
-		fmt.Fprintln(os.Stderr, "If the decrease is intentional, add the 'floor-change-approved' label to this PR and document the reason in review.")
-		os.Exit(1)
+		fmt.Fprintln(os.Stderr, "A coverage floor may not be lowered or removed without human approval.")
+		fmt.Fprintln(os.Stderr, "If the change is intentional, add the 'floor-change-approved' label to this PR and document the reason in review.")
+		return 1
 	}
+	return 0
 }
 
 // readFloors parses a coverage-floors.txt file into a slice of floors.
@@ -114,7 +124,8 @@ type compareResult struct {
 
 // compareFloors compares base and head floor files and returns the set of
 // changes. Only packages present in both files can produce a numeric change;
-// additions and removals are tracked separately and do not fail the guard.
+// additions are tracked separately and do not fail the guard, while removals
+// are tracked separately and are treated as protected changes by the caller.
 func compareFloors(base, head []floor) compareResult {
 	baseMap := make(map[string]float64, len(base))
 	for _, f := range base {
@@ -164,14 +175,18 @@ func printResult(r compareResult, approved bool) {
 			fmt.Printf("FAIL: %s floor lowered from %.1f to %.1f\n", d.pkg, d.base, d.head)
 		}
 	}
+	for _, p := range r.removed {
+		if approved {
+			fmt.Printf("ALLOWED: %s removed from floors (human approval present)\n", p)
+		} else {
+			fmt.Printf("FAIL: %s removed from floors\n", p)
+		}
+	}
 	for _, i := range r.increases {
 		fmt.Printf("OK: %s floor raised from %.1f to %.1f\n", i.pkg, i.base, i.head)
 	}
 	for _, p := range r.added {
 		fmt.Printf("OK: %s added to floors\n", p)
-	}
-	for _, p := range r.removed {
-		fmt.Printf("OK: %s removed from floors\n", p)
 	}
 	if len(r.decreases) == 0 && len(r.increases) == 0 && len(r.added) == 0 && len(r.removed) == 0 {
 		fmt.Println("OK: no floor changes")

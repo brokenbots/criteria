@@ -65,13 +65,13 @@ func TestReadFloors(t *testing.T) {
 
 func TestCompareFloors(t *testing.T) {
 	cases := []struct {
-		name           string
-		base           []floor
-		head           []floor
-		wantDecreases  []floorChange
-		wantIncreases  []floorChange
-		wantAdded      []string
-		wantRemoved    []string
+		name          string
+		base          []floor
+		head          []floor
+		wantDecreases []floorChange
+		wantIncreases []floorChange
+		wantAdded     []string
+		wantRemoved   []string
 	}{
 		{
 			name: "no changes",
@@ -79,41 +79,41 @@ func TestCompareFloors(t *testing.T) {
 			head: []floor{{"a", 50.0}, {"b", 60.0}},
 		},
 		{
-			name: "decrease triggers",
-			base: []floor{{"a", 67.0}},
-			head: []floor{{"a", 65.5}},
+			name:          "decrease triggers",
+			base:          []floor{{"a", 67.0}},
+			head:          []floor{{"a", 65.5}},
 			wantDecreases: []floorChange{{"a", 67.0, 65.5}},
 		},
 		{
-			name: "increase allowed",
-			base: []floor{{"a", 50.0}},
-			head: []floor{{"a", 55.0}},
+			name:          "increase allowed",
+			base:          []floor{{"a", 50.0}},
+			head:          []floor{{"a", 55.0}},
 			wantIncreases: []floorChange{{"a", 50.0, 55.0}},
 		},
 		{
-			name: "decrease and increase together",
-			base: []floor{{"a", 67.0}, {"b", 50.0}},
-			head: []floor{{"a", 65.5}, {"b", 55.0}},
+			name:          "decrease and increase together",
+			base:          []floor{{"a", 67.0}, {"b", 50.0}},
+			head:          []floor{{"a", 65.5}, {"b", 55.0}},
 			wantDecreases: []floorChange{{"a", 67.0, 65.5}},
 			wantIncreases: []floorChange{{"b", 50.0, 55.0}},
 		},
 		{
-			name:       "addition allowed",
-			base: []floor{{"a", 50.0}},
-			head: []floor{{"a", 50.0}, {"b", 60.0}},
-			wantAdded:  []string{"b"},
+			name:      "addition allowed",
+			base:      []floor{{"a", 50.0}},
+			head:      []floor{{"a", 50.0}, {"b", 60.0}},
+			wantAdded: []string{"b"},
 		},
 		{
-			name:        "removal allowed",
-			base: []floor{{"a", 50.0}, {"b", 60.0}},
+			name:        "removal tracked",
+			base:        []floor{{"a", 50.0}, {"b", 60.0}},
 			head:        []floor{{"a", 50.0}},
 			wantRemoved: []string{"b"},
 		},
 		{
-			name:          "new package decrease is an addition not a decrease",
-			base: []floor{{"a", 50.0}},
-			head: []floor{{"a", 50.0}, {"b", 40.0}},
-			wantAdded:     []string{"b"},
+			name:      "new package decrease is an addition not a decrease",
+			base:      []floor{{"a", 50.0}},
+			head:      []floor{{"a", 50.0}, {"b", 40.0}},
+			wantAdded: []string{"b"},
 		},
 		{
 			name: "floating tolerance unchanged",
@@ -158,5 +158,82 @@ func TestCompareFloors_Sorted(t *testing.T) {
 func TestReadFloors_MissingFile(t *testing.T) {
 	if _, err := readFloors(filepath.Join(t.TempDir(), "missing.txt")); err == nil {
 		t.Fatal("expected error for missing file")
+	}
+}
+
+func TestRun(t *testing.T) {
+	cases := []struct {
+		name     string
+		base     string
+		head     string
+		approved bool
+		wantExit int
+	}{
+		{
+			name:     "removal requires approval",
+			base:     "a 50.0\nb 60.0\n",
+			head:     "a 50.0\n",
+			wantExit: 1,
+		},
+		{
+			name:     "removal allowed with approval",
+			base:     "a 50.0\nb 60.0\n",
+			head:     "a 50.0\n",
+			approved: true,
+			wantExit: 0,
+		},
+		{
+			name:     "decrease requires approval",
+			base:     "a 67.0\n",
+			head:     "a 65.5\n",
+			wantExit: 1,
+		},
+		{
+			name:     "decrease allowed with approval",
+			base:     "a 67.0\n",
+			head:     "a 65.5\n",
+			approved: true,
+			wantExit: 0,
+		},
+		{
+			name:     "addition passes without approval",
+			base:     "a 50.0\n",
+			head:     "a 50.0\nb 40.0\n",
+			wantExit: 0,
+		},
+		{
+			name:     "increase passes without approval",
+			base:     "a 50.0\n",
+			head:     "a 55.0\n",
+			wantExit: 0,
+		},
+		{
+			name:     "no changes passes",
+			base:     "a 50.0\n",
+			head:     "a 50.0\n",
+			wantExit: 0,
+		},
+		{
+			name:     "mixed removal and addition requires approval",
+			base:     "a 50.0\nb 60.0\n",
+			head:     "a 50.0\nc 40.0\n",
+			wantExit: 1,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			basePath := writeFloors(t, tc.base)
+			headPath := writeFloors(t, tc.head)
+			args := []string{"--base", basePath, "--head", headPath}
+			if tc.approved {
+				args = append(args, "--approved")
+			}
+
+			gotExit := run(args)
+			if gotExit != tc.wantExit {
+				t.Errorf("exit code = %d, want %d", gotExit, tc.wantExit)
+			}
+		})
 	}
 }
