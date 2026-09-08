@@ -5,6 +5,7 @@ package sandbox
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1147,6 +1148,9 @@ func TestMaxThreads_CopilotRegression(t *testing.T) {
 	if _, err := exec.LookPath("copilot"); err != nil {
 		t.Skip("copilot not on PATH")
 	}
+	if _, err := resolveNativeCopilot(); err != nil {
+		t.Skipf("copilot native binary not available: %v", err)
+	}
 
 	_, testFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -1242,6 +1246,40 @@ func isSignalExit(err error, sig syscall.Signal) bool {
 		}
 	}
 	return false
+}
+
+// resolveNativeCopilot locates the platform-specific Copilot native binary
+// the same way the testfixture/copilot helper does, so the regression test can
+// skip gracefully when the native runtime package is not installed (common in
+// CI runners that only have the npm wrapper).
+func resolveNativeCopilot() (string, error) {
+	loader, err := exec.LookPath("copilot")
+	if err != nil {
+		return "", err
+	}
+	loader, err = filepath.EvalSymlinks(loader)
+	if err != nil {
+		return "", err
+	}
+	baseDir := filepath.Dir(loader)
+	arch := runtime.GOARCH
+	candidates := []string{
+		filepath.Join(baseDir, "node_modules", "@github", "copilot-linux-"+arch, "copilot"),
+		filepath.Join(baseDir, "node_modules", "@github", "copilot-linuxmusl-"+arch, "copilot"),
+		filepath.Join(baseDir, "..", "copilot-linux-"+arch, "copilot"),
+		filepath.Join(baseDir, "..", "copilot-linuxmusl-"+arch, "copilot"),
+		filepath.Join(baseDir, "..", "node_modules", "@github", "copilot-linux-"+arch, "copilot"),
+		filepath.Join(baseDir, "..", "node_modules", "@github", "copilot-linuxmusl-"+arch, "copilot"),
+	}
+	for _, cand := range candidates {
+		if p, err := filepath.Abs(cand); err == nil {
+			cand = p
+		}
+		if info, err := os.Stat(cand); err == nil && !info.IsDir() {
+			return cand, nil
+		}
+	}
+	return "", fmt.Errorf("no native binary for %s under %s", arch, baseDir)
 }
 
 func TestApplyToCmd_EnvScrubBlockedVarsAbsent(t *testing.T) {
