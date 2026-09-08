@@ -70,47 +70,16 @@ func (c *remoteConfig) resolve(log *slog.Logger) error {
 		return errors.New("CRITERIA_REMOTE_HOST is required")
 	}
 
-	if c.Manifest != "" {
-		m, err := manifest.ParseFile(c.Manifest)
-		if err != nil {
-			return fmt.Errorf("read manifest %q: %w", c.Manifest, err)
-		}
-		if c.Name == "" {
-			c.Name = m.Name
-		}
-		if c.Version == "" {
-			c.Version = m.Version
-		}
-		if c.Binary == "" {
-			c.Binary = defaultBinaryPath(m.Name)
-		}
+	if err := c.resolveFromManifest(); err != nil {
+		return err
 	}
-
-	if c.Binary == "" {
-		c.Binary = defaultBinaryPath(c.Name)
-	}
-	if c.Binary == "" {
-		c.Binary = firstAdapterBinary()
-	}
-
-	if c.Name == "" {
-		c.Name = nameFromBinary(c.Binary)
-	}
-	if c.Version == "" {
-		c.Version = "0.0.0"
-	}
+	c.resolveDefaults()
 
 	if c.Binary == "" {
 		return errors.New("could not locate an adapter binary; set CRITERIA_ADAPTER_BINARY")
 	}
-
-	// Accept either an absolute/relative path or a name on PATH.
-	if !strings.Contains(c.Binary, string(filepath.Separator)) {
-		p, err := exec.LookPath(c.Binary)
-		if err != nil {
-			return fmt.Errorf("adapter binary %q not found on PATH: %w", c.Binary, err)
-		}
-		c.Binary = p
+	if err := c.resolveBinaryPath(); err != nil {
+		return err
 	}
 
 	log.Info("remote adapter resolved",
@@ -119,6 +88,53 @@ func (c *remoteConfig) resolve(log *slog.Logger) error {
 		"binary", c.Binary,
 		"host", c.Host,
 	)
+	return nil
+}
+
+func (c *remoteConfig) resolveFromManifest() error {
+	if c.Manifest == "" {
+		return nil
+	}
+	m, err := manifest.ParseFile(c.Manifest)
+	if err != nil {
+		return fmt.Errorf("read manifest %q: %w", c.Manifest, err)
+	}
+	if c.Name == "" {
+		c.Name = m.Name
+	}
+	if c.Version == "" {
+		c.Version = m.Version
+	}
+	if c.Binary == "" {
+		c.Binary = defaultBinaryPath(m.Name)
+	}
+	return nil
+}
+
+func (c *remoteConfig) resolveDefaults() {
+	if c.Binary == "" {
+		c.Binary = defaultBinaryPath(c.Name)
+	}
+	if c.Binary == "" {
+		c.Binary = firstAdapterBinary()
+	}
+	if c.Name == "" {
+		c.Name = nameFromBinary(c.Binary)
+	}
+	if c.Version == "" {
+		c.Version = "0.0.0"
+	}
+}
+
+func (c *remoteConfig) resolveBinaryPath() error {
+	if strings.Contains(c.Binary, string(filepath.Separator)) {
+		return nil
+	}
+	p, err := exec.LookPath(c.Binary)
+	if err != nil {
+		return fmt.Errorf("adapter binary %q not found on PATH: %w", c.Binary, err)
+	}
+	c.Binary = p
 	return nil
 }
 
@@ -199,6 +215,7 @@ func (p *pluginClient) GRPCServer(_ *hplugin.GRPCBroker, _ *grpc.Server) error {
 	return errors.New("GRPCServer should not be called on the adapter runner")
 }
 
+//nolint:unparam // hashicorp/go-plugin Plugin.GRPCClient interface requires an error return value.
 func (p *pluginClient) GRPCClient(_ context.Context, _ *hplugin.GRPCBroker, cc *grpc.ClientConn) (interface{}, error) {
 	return v2.NewAdapterServiceClient(cc), nil
 }
@@ -376,7 +393,7 @@ func runRemote(log *slog.Logger) error {
 	defer stop()
 
 	for ctx.Err() == nil {
-		if err := serveOnce(ctx, cfg, tlsConf, log); err != nil {
+		if err := serveOnce(ctx, &cfg, tlsConf, log); err != nil {
 			log.Error("remote adapter session ended", "error", err)
 		}
 		if ctx.Err() != nil {
@@ -393,7 +410,7 @@ func runRemote(log *slog.Logger) error {
 	return nil
 }
 
-func serveOnce(ctx context.Context, cfg remoteConfig, tlsConf *tls.Config, log *slog.Logger) error {
+func serveOnce(ctx context.Context, cfg *remoteConfig, tlsConf *tls.Config, log *slog.Logger) error {
 	client, kill, err := startAdapter(cfg.Binary)
 	if err != nil {
 		return err

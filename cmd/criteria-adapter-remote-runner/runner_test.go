@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
@@ -98,10 +99,10 @@ func newFakeClient(t *testing.T, srv v2.AdapterServiceServer) v2.AdapterServiceC
 		}
 	})
 
-	ctx := context.Background()
-	conn, err := grpc.DialContext(ctx, "bufnet", grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
-		return lis.Dial()
-	}), grpc.WithInsecure()) //nolint:staticcheck // test fixture only
+	conn, err := grpc.NewClient("passthrough:///bufnet",
+		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() }),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
 	if err != nil {
 		t.Fatalf("dial bufconn: %v", err)
 	}
