@@ -1,5 +1,9 @@
 .git/
+.github/
 bin/
 cover*.out
+dist/
 tmp/
 node_modules/
+*.md
+.DS_Store
