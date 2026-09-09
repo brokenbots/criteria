@@ -49,7 +49,7 @@ RUN go build -trimpath -ldflags="-s -w" \
     ./cmd/criteria-adapter-remote-runner
 
 # Pull the requested adapter binary from its own public module.
-RUN go install "github.com/brokenbots/criteria-adapter-${ADAPTER_NAME}@v${ADAPTER_VERSION}"
+RUN GOPROXY=direct GOSUMDB=off go install "github.com/brokenbots/criteria-adapter-${ADAPTER_NAME}@v${ADAPTER_VERSION}"
 
 FROM ${BASE_IMAGE}
 
