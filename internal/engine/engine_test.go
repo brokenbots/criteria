@@ -2,8 +2,11 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,10 +18,13 @@ import (
 	"time"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclparse"
 	"github.com/zclconf/go-cty/cty"
+	"google.golang.org/grpc"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/internal/adapter/environment/remote"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/testutil"
 	"github.com/brokenbots/criteria/workflow"
@@ -1194,6 +1200,157 @@ func TestMaybeStartRemoteShim_WildcardProcessExecAccepted(t *testing.T) {
 	if err != nil && strings.Contains(err.Error(), "does not support a process.exec allow-list") {
 		t.Errorf("wildcard process.exec should be accepted, got: %v", err)
 	}
+}
+
+func TestMaybeStartRemoteShim_PinSetWithoutWithLockfile(t *testing.T) {
+	// Regression test for CRI-111: the remote shim's digest verifier must be
+	// built from graph.PinSet when the engine is constructed without the
+	// WithLockfile option, which is the CLI code path.
+	pinSet := &lockfile.Lockfile{
+		Adapters: []lockfile.LockedAdapter{
+			{Type: "noop", ResolvedDigest: "sha256:deadbeef"},
+		},
+	}
+
+	// Use a short base dir for the Unix socket: macOS caps sockaddr_un.sun_path
+	// at ~104 bytes, and the default /var/folders TMPDIR overflows it.
+	sockDir, err := os.MkdirTemp("/tmp", "criteria-shim")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+	sockPath := filepath.Join(sockDir, "cri111.sock")
+
+	parser := hclparse.NewParser()
+	file, diags := parser.ParseHCL([]byte(fmt.Sprintf(`
+listen_address = %q
+insecure = true
+`, sockPath)), "remote.hcl")
+	if diags.HasErrors() {
+		t.Fatalf("parse remote body: %s", diags)
+	}
+
+	sessions := adapterhost.NewSessionManager(nil)
+	eng := New(
+		&workflow.FSMGraph{
+			PinSet: pinSet,
+			Environments: map[string]*workflow.EnvironmentNode{
+				"remote.dev": {
+					Type:    "remote",
+					Name:    "dev",
+					Process: &workflow.ProcessPolicy{Exec: []string{"*"}},
+					RawBody: file.Body,
+				},
+			},
+		},
+		nil,
+		&fakeSink{},
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := eng.maybeStartRemoteShim(ctx, sessions); err != nil {
+		t.Fatalf("maybeStartRemoteShim: %v", err)
+	}
+
+	shim, ok := sessions.RemoteShim().(*remote.Shim)
+	if !ok {
+		t.Fatalf("remote shim is %T, want *remote.Shim", sessions.RemoteShim())
+	}
+	defer func() { _ = shim.Stop(ctx) }()
+
+	// Phone home with a digest that matches the pin set.
+	go func() {
+		_ = dialCRI111FakeAdapter(sockPath, "noop", "1.0.0", "sha256:deadbeef")
+	}()
+
+	handle, err := shim.WaitForHandle(ctx, "noop")
+	if err != nil {
+		t.Fatalf("WaitForHandle: %v", err)
+	}
+	defer handle.Kill()
+
+	info, err := handle.Info(ctx)
+	if err != nil {
+		t.Fatalf("handle.Info: %v", err)
+	}
+	if info.Name != "noop" {
+		t.Errorf("info.Name = %q, want noop", info.Name)
+	}
+}
+
+// cri111SingleConnListener serves a single net.Conn and then EOFs, used to
+// bridge the gRPC server over the inbound remote adapter connection.
+type cri111SingleConnListener struct {
+	conn net.Conn
+	mu   sync.Mutex
+	done bool
+}
+
+func (l *cri111SingleConnListener) Accept() (net.Conn, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.done {
+		return nil, io.EOF
+	}
+	l.done = true
+	return l.conn, nil
+}
+
+func (l *cri111SingleConnListener) Close() error   { return nil }
+func (l *cri111SingleConnListener) Addr() net.Addr { return l.conn.LocalAddr() }
+
+// cri111FakeAdapterServer is a minimal v2.AdapterServiceServer for the
+// CRI-111 regression test.
+type cri111FakeAdapterServer struct {
+	v2.UnimplementedAdapterServiceServer
+	name    string
+	version string
+}
+
+func (s *cri111FakeAdapterServer) Info(ctx context.Context, req *v2.InfoRequest) (*v2.InfoResponse, error) {
+	return &v2.InfoResponse{Name: s.name, Version: s.version, Capabilities: []string{"execute"}}, nil
+}
+
+func (s *cri111FakeAdapterServer) OpenSession(ctx context.Context, req *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) {
+	return &v2.OpenSessionResponse{}, nil
+}
+
+func (s *cri111FakeAdapterServer) Execute(req *v2.ExecuteRequest, stream v2.AdapterService_ExecuteServer) error {
+	_ = stream.Send(&v2.ExecuteEvent{Event: &v2.ExecuteEvent_Result{
+		Result: &v2.ExecuteResult{
+			Outcome:     "success",
+			OutputsJson: []byte(`{}`),
+		},
+	}})
+	return nil
+}
+
+// dialCRI111FakeAdapter connects to the remote shim Unix socket, sends the
+// identity handshake, and serves a minimal gRPC adapter on the connection.
+func dialCRI111FakeAdapter(addr, name, version, digest string) error {
+	conn, err := net.Dial("unix", addr)
+	if err != nil {
+		return fmt.Errorf("dial shim: %w", err)
+	}
+
+	hs := struct {
+		Name    string `json:"name"`
+		Version string `json:"version"`
+		Digest  string `json:"digest"`
+	}{name, version, digest}
+	hsBytes, _ := json.Marshal(hs)
+	if _, err := conn.Write(append(hsBytes, '\n')); err != nil {
+		_ = conn.Close()
+		return fmt.Errorf("write handshake: %w", err)
+	}
+
+	grpcServer := grpc.NewServer()
+	v2.RegisterAdapterServiceServer(grpcServer, &cri111FakeAdapterServer{name: name, version: version})
+	lis := &cri111SingleConnListener{conn: conn}
+	go func() { _ = grpcServer.Serve(lis) }()
+	return nil
 }
 
 func TestEngineSetLockfileOnSessions_ReadFromDir(t *testing.T) {

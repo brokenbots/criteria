@@ -202,6 +202,13 @@ func (m *SessionManager) SetRemoteShim(shim RemoteShim) {
 	m.remoteShim = shim
 }
 
+// RemoteShim returns the currently registered remote shim (may be nil).
+func (m *SessionManager) RemoteShim() RemoteShim {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.remoteShim
+}
+
 // SetLockfile provides the parsed lockfile so the session manager can
 // resolve container images for adapters bound to container environments.
 func (m *SessionManager) SetLockfile(lf *lockfile.Lockfile) {
