@@ -220,14 +220,60 @@ func (p *pluginClient) GRPCClient(_ context.Context, _ *hplugin.GRPCBroker, cc *
 	return v2.NewAdapterServiceClient(cc), nil
 }
 
+// remoteEnvVars lists the runner's own remote-connection settings. They must
+// never be inherited by the child adapter, because adapters such as
+// criteria-adapter-shell (>= v0.5.3) and criteria-adapter-copilot (>= v0.5.5)
+// detect CRITERIA_REMOTE_HOST in their environment and switch into
+// ServeRemote/phone-home mode, abandoning the local go-plugin handshake.
+var remoteEnvVars = []string{
+	"CRITERIA_REMOTE_HOST",
+	"CRITERIA_REMOTE_TOKEN",
+	"CRITERIA_REMOTE_DIGEST",
+	"CRITERIA_REMOTE_TLS_CERT",
+	"CRITERIA_REMOTE_TLS_KEY",
+	"CRITERIA_REMOTE_CA",
+}
+
+// adapterEnv returns the current process environment with the runner's
+// remote-connection variables removed, suitable for starting a child adapter.
+func adapterEnv() []string {
+	env := os.Environ()
+	out := env[:0]
+	for _, kv := range env {
+		name, _, found := strings.Cut(kv, "=")
+		if !found {
+			continue
+		}
+		if slicesContains(remoteEnvVars, name) {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
+}
+
+func slicesContains(haystack []string, needle string) bool {
+	for _, v := range haystack {
+		if v == needle {
+			return true
+		}
+	}
+	return false
+}
+
 func startAdapter(binary string) (v2.AdapterServiceClient, func(), error) {
 	cmd := exec.Command(binary)
+	cmd.Env = adapterEnv()
 	client := hplugin.NewClient(&hplugin.ClientConfig{
 		HandshakeConfig:  adapterhost.HandshakeConfig,
 		Plugins:          map[string]hplugin.Plugin{"adapter": &pluginClient{}},
 		Cmd:              cmd,
 		AllowedProtocols: []hplugin.Protocol{hplugin.ProtocolGRPC},
 		StartTimeout:     30 * time.Second,
+		// go-plugin normally re-appends os.Environ() to cmd.Env. We construct
+		// the child environment explicitly (filtering the runner's own remote
+		// connection variables), so we must prevent that re-addition.
+		SkipHostEnv: true,
 	})
 
 	rpcClient, err := client.Client()
