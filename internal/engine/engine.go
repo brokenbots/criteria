@@ -976,6 +976,9 @@ func (e *Engine) maybeStartRemoteShim(ctx context.Context, sessions *adapterhost
 	}
 
 	lf := e.lockfile
+	if e.graph != nil && e.graph.PinSet != nil {
+		lf = e.graph.PinSet
+	}
 	verifier := &lockfileDigestVerifier{lockfile: lf}
 
 	for _, env := range remoteEnvs {
