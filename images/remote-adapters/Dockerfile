@@ -35,13 +35,14 @@ ARG ADAPTER_VERSION
 
 WORKDIR /src
 
-COPY go.mod go.sum go.work go.work.sum ./
+COPY go.mod go.sum ./
 COPY sdk/ sdk/
 COPY workflow/ workflow/
 COPY internal/ internal/
 COPY cmd/ cmd/
 
 ENV CGO_ENABLED=0
+ENV GOWORK=off
 
 RUN go build -trimpath -ldflags="-s -w" \
     -o /usr/local/bin/criteria-adapter-remote-runner \
