@@ -200,6 +200,11 @@ type RemoteShim interface {
 	CloseHandle(ctx context.Context, adapterType, scope string) error
 	// ListenAddr returns the shim's bound listen address.
 	ListenAddr() string
+	// Stop tears the shim down: it closes the listener (ending the accept
+	// loop), cancels all sessions, and wakes pending waiters with an error.
+	// Called by Shutdown so a shim registered with the session manager does
+	// not leak its accept goroutine after the run ends.
+	Stop(ctx context.Context) error
 }
 
 // LifecycleSink receives adapter lifecycle events from the session manager.
@@ -1664,6 +1669,7 @@ func (m *SessionManager) AdapterHandle(name string) (Handle, bool) {
 
 func (m *SessionManager) Shutdown(ctx context.Context) error {
 	m.mu.Lock()
+	shim := m.remoteShim
 	sessions := make([]*Session, 0, len(m.sessions))
 	for name, sess := range m.sessions {
 		sessions = append(sessions, sess)
@@ -1675,6 +1681,14 @@ func (m *SessionManager) Shutdown(ctx context.Context) error {
 	m.mu.Unlock()
 
 	var errs []error
+	// Stop the phone-home shim first so no new adapter connections are
+	// accepted during teardown, pending handle waiters are woken with an
+	// error, and the shim's accept goroutine never outlives the run.
+	if shim != nil {
+		if err := shim.Stop(ctx); err != nil {
+			errs = append(errs, err)
+		}
+	}
 	for _, sess := range sessions {
 		sess.closing.Store(true)
 		sess.logStreamAlive.Store(false)

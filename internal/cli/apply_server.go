@@ -73,17 +73,10 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 		})
 	runSink := &terminalSuccessSink{Sink: sink}
 
-	auditPath, _ := auditLogPath(state.RunID)
-	auditWriter := adapterhost.NewFileAuditWriter(auditPath)
-	mergedVars, err := mergeVarSources(opts.varFiles, opts.varOverrides)
+	eng, err := buildServerRunEngine(graph, loader, runSink, state, opts)
 	if err != nil {
 		return err
 	}
-	eng = engine.New(graph, loader, runSink,
-		engine.WithVarOverrides(mergedVars),
-		engine.WithWorkflowDir(workflowDirFromPath(opts.workflowPath)),
-		engine.WithAuditWriter(auditWriter),
-	)
 	if err := eng.Run(ctx); err != nil {
 		log.Error("run failed", "error", err)
 		return err
@@ -106,6 +99,27 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 	return nil
 }
 
+// buildServerRunEngine wires the engine for a fresh server-mode run, including
+// the run data dir so per-scope remote sessions can rotate tokens.
+func buildServerRunEngine(graph *workflow.FSMGraph, loader adapterhost.Loader, sink engine.Sink, state *localRunState, opts applyOptions) (*engine.Engine, error) {
+	auditPath, _ := auditLogPath(state.RunID)
+	auditWriter := adapterhost.NewFileAuditWriter(auditPath)
+	dataDir, err := runDataDir(state.RunID)
+	if err != nil {
+		return nil, err
+	}
+	mergedVars, err := mergeVarSources(opts.varFiles, opts.varOverrides)
+	if err != nil {
+		return nil, err
+	}
+	return engine.New(graph, loader, sink,
+		engine.WithVarOverrides(mergedVars),
+		engine.WithWorkflowDir(workflowDirFromPath(opts.workflowPath)),
+		engine.WithAuditWriter(auditWriter),
+		engine.WithDataDir(dataDir),
+	), nil
+}
+
 // drainResumeCycles handles the pause/resume loop: each time the sink is
 // paused it waits for a matching ResumeRun message on resumeCh and restarts
 // the engine from the paused node, updating eng to the most recently
@@ -113,6 +127,10 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 // that terminal-state capture is consistent across the original run and all
 // resume cycles.
 func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost.Loader, sink *run.Sink, runSink engine.Sink, resumeCh <-chan *pb.ResumeRun, state *localRunState, graph *workflow.FSMGraph, workflowDir string, eng *engine.Engine) error {
+	dataDir, err := runDataDir(state.RunID)
+	if err != nil {
+		return fmt.Errorf("resolve run data dir: %w", err)
+	}
 	for sink.IsPaused() {
 		log.Info("run paused; waiting for resume signal", "run_id", state.RunID, "node", sink.PausedAt())
 		var resumeMsg *pb.ResumeRun
@@ -136,6 +154,7 @@ func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost
 			engine.WithResumedVisits(eng.VisitCounts()),
 			engine.WithResumePayload(resumeMsg.Payload),
 			engine.WithWorkflowDir(workflowDir),
+			engine.WithDataDir(dataDir),
 		)
 		if err := resumedEng.RunFrom(ctx, pausedNode, 1); err != nil {
 			log.Error("run failed after resume", "error", err)

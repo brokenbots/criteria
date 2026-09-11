@@ -609,7 +609,10 @@ func TestBuildReattachTrackerAndEngine_VisitsPersisted(t *testing.T) {
 	defer loader.Shutdown(context.Background())
 
 	var out bytes.Buffer
-	_, _, _, eng := buildReattachTrackerAndEngine(cp, discardLogger(), graph, loader, &out, outputModeJSON, 1)
+	_, _, _, eng, engErr := buildReattachTrackerAndEngine(cp, discardLogger(), graph, loader, &out, outputModeJSON, 1)
+	if engErr != nil {
+		t.Fatalf("buildReattachTrackerAndEngine: %v", engErr)
+	}
 
 	// Run the engine. checkpointFn fires from OnStepEntered with liveRunState.Visits={"work":1}.
 	if runErr := eng.RunFrom(context.Background(), "work", 1); runErr != nil {

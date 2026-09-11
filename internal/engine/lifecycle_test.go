@@ -1290,6 +1290,8 @@ func (f *fakeRemoteShim) CloseHandle(_ context.Context, adapterType, scope strin
 
 func (f *fakeRemoteShim) ListenAddr() string { return f.listenAddr }
 
+func (f *fakeRemoteShim) Stop(context.Context) error { return nil }
+
 func (f *fakeRemoteShim) registeredToken(scope string) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
