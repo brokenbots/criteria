@@ -27,7 +27,7 @@ on:
       claude_agent_version:
         description: 'Claude agent adapter version (semver without leading v)'
         required: true
-        default: '0.5.1'
+        default: '0.5.7'
       claude_code_version:
         description: '@anthropic-ai/claude-code npm version for claude-agent image'
         required: true
@@ -56,7 +56,7 @@ jobs:
             base_image: node:20-alpine
             dockerfile: images/remote-adapters/Dockerfile
           - adapter: claude-agent
-            version: ${{ github.event.inputs.claude_agent_version || '0.5.1' }}
+            version: ${{ github.event.inputs.claude_agent_version || '0.5.7' }}
             base_image: node:20-alpine
             dockerfile: images/remote-adapters/Dockerfile.claude-agent
     steps:

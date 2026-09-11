@@ -25,7 +25,7 @@
 #     -f images/remote-adapters/Dockerfile.claude-agent \
 #     -t ghcr.io/brokenbots/criteria-adapter-claude-agent:0.5.1 .
 
-ARG ADAPTER_VERSION=0.5.1
+ARG ADAPTER_VERSION=0.5.7
 ARG BASE_IMAGE=node:20-alpine
 ARG CLAUDE_CODE_VERSION=2.1.268
 ARG BUN_IMAGE=oven/bun:1.2
@@ -80,7 +80,8 @@ WORKDIR /criteria-typescript-adapter-sdk
 RUN bun install && bun run build
 
 # Build the adapter binary, selecting the musl target so it runs on the
-# Alpine-based runtime image.
+# Alpine-based runtime image. PLUGIN_VERSION is baked into the binary so the
+# adapter reports the same version as the image tag.
 WORKDIR /criteria-typescript-adapter-claude-agent
 RUN bun install
 RUN case "${TARGETPLATFORM}" in \
@@ -88,10 +89,10 @@ RUN case "${TARGETPLATFORM}" in \
       linux/arm64) target=bun-linux-arm64-musl ;; \
       *) target="" ;; \
     esac && \
+    PLUGIN_VERSION="${ADAPTER_VERSION}" \
     bun scripts/build.ts \
       ${target:+--target=${target}} \
-      --outfile=/usr/local/bin/criteria-adapter-claude-agent && \
-    cp -r proto /usr/local/bin/proto
+      --outfile=/usr/local/bin/criteria-adapter-claude-agent
 
 FROM ${BASE_IMAGE}
 
