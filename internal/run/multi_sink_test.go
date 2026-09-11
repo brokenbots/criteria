@@ -86,3 +86,21 @@ func TestMultiSink_NilChildIgnored(t *testing.T) {
 		t.Errorf("expected 1 call to surviving child, got %d", got)
 	}
 }
+
+func TestMultiSink_OnAdapterLifecycleEventFansOut(t *testing.T) {
+	var a, b recordingSink
+	sink := NewMultiSink(&a, &b)
+
+	sink.OnAdapterLifecycleEvent(&engine.AdapterLifecycleEvent{
+		RunID:       "run-1",
+		AdapterName: "noop",
+		Status:      "provision_wanted",
+	})
+
+	if got := a.calls.Load(); got != 1 {
+		t.Errorf("child a calls: got %d want 1", got)
+	}
+	if got := b.calls.Load(); got != 1 {
+		t.Errorf("child b calls: got %d want 1", got)
+	}
+}
