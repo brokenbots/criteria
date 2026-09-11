@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/ext/typeexpr"
 	"github.com/spf13/cobra"
 	"github.com/zclconf/go-cty/cty"
@@ -662,14 +663,19 @@ func parseCompileForCli(ctx context.Context, workflowPath string, subworkflowRoo
 		return nil, nil, fmt.Errorf("compile errors in %s:\n%w", workflowPath, newDiagsError(diags))
 	}
 
-	// Unverified-adapter warnings: surface them, and fail when promoted by
-	// --warnings-as-errors so callers build verified graphs.
-	schemaDiags = promoteWarnings(schemaDiags, warnsAsErrors)
-	if err := newDiagsError(schemaDiags); err != nil {
-		return nil, nil, fmt.Errorf("compile errors in %s:\n%w", workflowPath, err)
+	// Merge compile-time diagnostics (e.g. allow_tools matchability warnings)
+	// with unverified-adapter diagnostics. Surface warnings to stderr, and
+	// promote them to errors when --warnings-as-errors is set so callers fail
+	// fast instead of building unverified graphs.
+	allDiags := make(hcl.Diagnostics, 0, len(schemaDiags)+len(diags))
+	allDiags = append(allDiags, schemaDiags...)
+	allDiags = append(allDiags, diags...)
+	allDiags = promoteWarnings(allDiags, warnsAsErrors)
+	if len(allDiags) > 0 {
+		fmt.Fprintln(os.Stderr, formatDiagnostics(allDiags))
 	}
-	if len(schemaDiags) > 0 {
-		fmt.Fprintln(os.Stderr, formatDiagnostics(schemaDiags))
+	if err := newDiagsError(allDiags); err != nil {
+		return nil, nil, fmt.Errorf("compile errors in %s:\n%w", workflowPath, err)
 	}
 	return spec, graph, nil
 }

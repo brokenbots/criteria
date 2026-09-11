@@ -193,10 +193,11 @@ var networkEgressVerbs = []string{
 // policy engine resolve those aliases so `allow_tools = ["read_file"]` grants the
 // "read" permission correctly.
 //
-// The workflow module (workflow/compile_steps.go) maintains a parallel static copy
-// of the copilot alias set for compile-time diagnostics. The workflow/ module cannot
-// import internal/ (import-boundary rule), so the two maps are intentionally separate.
-// When adding aliases here, also update copilotAllowToolsAliases in compile_steps.go.
+// The compiler obtains aliases from the adapter's InfoResponse via
+// internal/adapterhost/loader.go (AdapterInfoFromProto), so compile-time
+// diagnostics stay in sync with the live adapter vocabulary. This map is used
+// only by the runtime policy engine; keep it aligned with the aliases the
+// adapter publishes in its InfoResponse.
 var adapterPermissionAliases = map[string]map[string]string{
 	"copilot": {
 		"read_file":  "read",
