@@ -15,9 +15,10 @@ import (
 
 // TestSessionManager_RealEarlyLogAdapter_SurvivesIdleStall uses the real
 // nonheartbeating fixture binary to prove the host-side heartbeat-stall defense
-// works against an actual adapter whose Log stream returns immediately. A
-// correct host must disarm the stall detector and let Execute succeed after
-// idling past the threshold.
+// does not falsely crash an adapter whose Log handler returns immediately.
+// With criteria-go-adapter-sdk v0.5.3 the SDK keeps the log stream alive by
+// emitting heartbeats on the adapter's behalf, so the host must accept those
+// heartbeats and let Execute succeed after idling past the threshold.
 func TestSessionManager_RealEarlyLogAdapter_SurvivesIdleStall(t *testing.T) {
 	rec := &recordingSlogHandler{}
 	oldLogger := slog.Default()
@@ -37,7 +38,7 @@ func TestSessionManager_RealEarlyLogAdapter_SurvivesIdleStall(t *testing.T) {
 	sm := NewSessionManager(loader)
 	sm.HeartbeatStallThreshold = 10 * time.Second
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	if err := sm.Open(ctx, "agent", "nonheartbeating", "fail", nil, nil); err != nil {
@@ -45,9 +46,12 @@ func TestSessionManager_RealEarlyLogAdapter_SurvivesIdleStall(t *testing.T) {
 	}
 	defer func() { _ = sm.Close(context.Background(), "agent") }()
 
-	// Idle past the stall threshold. A host that did not disarm the stall
-	// detector after the early Log return would declare the session crashed.
-	time.Sleep(12 * time.Second)
+	// With criteria-go-adapter-sdk v0.5.3 the SDK itself keeps the log stream
+	// alive by emitting heartbeats on the adapter's behalf even when the
+	// adapter's Log handler returns early. Idle past one full heartbeat
+	// interval so the host has received a heartbeat, then confirm Execute is
+	// allowed to proceed without a false stall crash.
+	time.Sleep(35 * time.Second)
 
 	step := &workflow.StepNode{Name: "run"}
 	_, err := sm.Execute(ctx, "agent", step, &logEventCollector{})
@@ -55,14 +59,12 @@ func TestSessionManager_RealEarlyLogAdapter_SurvivesIdleStall(t *testing.T) {
 		t.Fatalf("expected Execute to succeed after idle past stall threshold, got %v", err)
 	}
 
-	var found int
+	// The stream is still being kept alive by SDK heartbeats, so the host
+	// should not have logged a contract-breaker diagnostic.
 	for _, r := range rec.all() {
 		if strings.Contains(r, "broke the log-stream contract") {
-			found++
+			t.Fatalf("unexpected contract-breaker diagnostic while SDK heartbeats keep stream alive: %s", r)
 		}
-	}
-	if found != 1 {
-		t.Fatalf("expected exactly one contract-breaker diagnostic from the real fixture, got %d", found)
 	}
 }
 
