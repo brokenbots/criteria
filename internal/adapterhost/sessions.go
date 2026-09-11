@@ -96,6 +96,13 @@ type SessionManager struct {
 	// sink so lifecycle observers see the event at the correct phase-2 moment.
 	LifecycleSink LifecycleSink
 
+	// deferredRemoteAdapters identifies remote adapters whose eager
+	// VerifyGraph handshake should be skipped. This is used when a remote
+	// environment enables per_scope_sessions so the per-scope token rotation and
+	// provisioning event happen in initScopeAdapters, not during graph
+	// verification.
+	deferredRemoteAdapters map[string]struct{}
+
 	// HeartbeatStallThreshold is the duration after which a log-stream heartbeat
 	// is considered stalled. If zero, the default 90s is used. This is primarily
 	// a test hook so conformance and regression tests can use a short threshold.
@@ -149,6 +156,10 @@ type verifiedRecord struct {
 	// attribute the phase-2 "opened" lifecycle event to the same scope as the
 	// "verified" event.
 	scopeName string
+	// scopeInstanceID is a unique identifier for this invocation of the scope.
+	// It is used to key per-scope shim sessions when per_scope_sessions is
+	// enabled; when empty the legacy adapter-type-only key is used.
+	scopeInstanceID string
 }
 
 func (m *SessionManager) heartbeatStallThreshold() time.Duration {
@@ -175,10 +186,20 @@ func (m *SessionManager) respawnLogStreamDrainTimeout() time.Duration {
 // RemoteShim is the interface the session manager uses to wait for remote
 // adapter connections.
 type RemoteShim interface {
-	WaitForHandle(ctx context.Context, adapterType string) (Handle, error)
+	WaitForHandle(ctx context.Context, adapterType, scope string) (Handle, error)
 	// WaitForFreshHandle waits for a connection whose handle is not `stale`,
 	// used on crash-respawn so the dead handle is never handed back.
-	WaitForFreshHandle(ctx context.Context, adapterType string, stale Handle) (Handle, error)
+	WaitForFreshHandle(ctx context.Context, adapterType, scope string, stale Handle) (Handle, error)
+	// RegisterScope registers (or rotates) the accept token for a scope.
+	// Only used when per-scope session isolation is enabled.
+	RegisterScope(scope, token string)
+	// UnregisterScope removes the accept token for a scope so reconnects
+	// using the old token are rejected.
+	UnregisterScope(scope string)
+	// CloseHandle closes the active session for the given adapter type + scope.
+	CloseHandle(ctx context.Context, adapterType, scope string) error
+	// ListenAddr returns the shim's bound listen address.
+	ListenAddr() string
 }
 
 // LifecycleSink receives adapter lifecycle events from the session manager.
@@ -207,6 +228,56 @@ func (m *SessionManager) RemoteShim() RemoteShim {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.remoteShim
+}
+
+// RegisterRemoteScope registers a rotated accept token for the given scope
+// with the remote shim. It returns an error when no remote shim is registered.
+func (m *SessionManager) RegisterRemoteScope(scope, token string) error {
+	m.mu.Lock()
+	shim := m.remoteShim
+	m.mu.Unlock()
+	if shim == nil {
+		return errors.New("no remote shim registered")
+	}
+	shim.RegisterScope(scope, token)
+	return nil
+}
+
+// UnregisterRemoteScope removes a scope's accept token so the shim rejects
+// future reconnects with the old token.
+func (m *SessionManager) UnregisterRemoteScope(scope string) error {
+	m.mu.Lock()
+	shim := m.remoteShim
+	m.mu.Unlock()
+	if shim == nil {
+		return errors.New("no remote shim registered")
+	}
+	shim.UnregisterScope(scope)
+	return nil
+}
+
+// CloseRemoteHandle closes the active remote session for the given adapter
+// type and scope. It is a no-op when no remote shim is registered.
+func (m *SessionManager) CloseRemoteHandle(ctx context.Context, adapterType, scope string) error {
+	m.mu.Lock()
+	shim := m.remoteShim
+	m.mu.Unlock()
+	if shim == nil {
+		return nil
+	}
+	return shim.CloseHandle(ctx, adapterType, scope)
+}
+
+// RemoteListenAddr returns the shim's bound listen address, or "" when no
+// remote shim is registered.
+func (m *SessionManager) RemoteListenAddr() string {
+	m.mu.Lock()
+	shim := m.remoteShim
+	m.mu.Unlock()
+	if shim == nil {
+		return ""
+	}
+	return shim.ListenAddr()
 }
 
 // SetLockfile provides the parsed lockfile so the session manager can
@@ -301,8 +372,13 @@ func (m *SessionManager) verifyGraphAdapter(ctx context.Context, root *workflow.
 		return err
 	}
 
-	if _, err := m.verifyAdapterInfo(ctx, ref.instanceID, ref.node.Type, config, secretMap); err != nil {
-		return fmt.Errorf("verify adapter %q in %q: %w; run 'criteria adapter lock %s'", ref.instanceID, ref.graph.WorkflowDir, err, ref.graph.WorkflowDir)
+	// CRI-115: remote adapters with per_scope_sessions rotate their accept token
+	// per scope in initScopeAdapters. Eager verification here would block before
+	// the token exists, so we defer the adapter-info handshake to scope entry.
+	if _, deferVerify := m.deferredRemoteAdapters[ref.instanceID]; !deferVerify {
+		if _, err := m.verifyAdapterInfo(ctx, ref.instanceID, ref.node.Type, "", config, secretMap); err != nil {
+			return fmt.Errorf("verify adapter %q in %q: %w; run 'criteria adapter lock %s'", ref.instanceID, ref.graph.WorkflowDir, err, ref.graph.WorkflowDir)
+		}
 	}
 
 	m.cacheGraphAdapterRef(ref)
@@ -413,6 +489,9 @@ type Session struct {
 	WorkingDir string
 	// AdapterDigest is the lockfile digest at the time the session was opened.
 	AdapterDigest digest.Digest
+	// ScopeInstanceID is the per-scope shim session key persisted for respawn
+	// and snapshot/restore so the same scope continues to receive the same token.
+	ScopeInstanceID string
 
 	// WS15: session-level log stream lifecycle and heartbeat tracking.
 	logMu          sync.Mutex
@@ -480,6 +559,19 @@ func NewSessionManager(loader Loader) *SessionManager {
 		loader:   loader,
 		sessions: map[string]*Session{},
 		verified: map[string]*verifiedRecord{},
+	}
+}
+
+// SetDeferredRemoteAdapters marks the given remote adapter instance IDs as ones
+// whose adapter-info handshake should be skipped during VerifyGraph. This is
+// required for remote environments that enable per_scope_sessions, where the
+// per-scope accept token is not available until initScopeAdapters.
+func (m *SessionManager) SetDeferredRemoteAdapters(instanceIDs []string) {
+	if m.deferredRemoteAdapters == nil {
+		m.deferredRemoteAdapters = make(map[string]struct{}, len(instanceIDs))
+	}
+	for _, id := range instanceIDs {
+		m.deferredRemoteAdapters[id] = struct{}{}
 	}
 }
 
@@ -741,7 +833,7 @@ func (m *SessionManager) OpenWithOriginRefs(ctx context.Context, name, adapterNa
 
 	var plug Handle
 	var err error
-	plug, err = m.resolveAdapterHandle(ctx, name, adapterName, customizer)
+	plug, err = m.resolveAdapterHandle(ctx, name, adapterName, "", customizer)
 	if err != nil {
 		if cleanup != nil {
 			cleanup()
@@ -764,7 +856,7 @@ func (m *SessionManager) OpenWithOriginRefs(ctx context.Context, name, adapterNa
 		return err
 	}
 
-	return m.registerSession(ctx, name, adapterName, onCrash, config, secrets, originRefs, caps, plug, cleanup, workingDir)
+	return m.registerSession(ctx, name, adapterName, onCrash, config, secrets, originRefs, caps, plug, cleanup, workingDir, "")
 }
 
 // Verify performs phase-1 adapter verification without binding the adapter to
@@ -778,7 +870,7 @@ func (m *SessionManager) OpenWithOriginRefs(ctx context.Context, name, adapterNa
 // If a verified or bound record already exists for name (e.g. a parent-scope
 // adapter re-declared in a subworkflow), Verify returns ErrSessionAlreadyOpen.
 // The caller should treat that as a no-op for re-declared adapters.
-func (m *SessionManager) Verify(ctx context.Context, name, adapterName, onCrash string, config, secrets map[string]string, originRefs map[string]secrets.OriginRef, workingDir, scopeName string) error {
+func (m *SessionManager) Verify(ctx context.Context, name, adapterName, onCrash string, config, secrets map[string]string, originRefs map[string]secrets.OriginRef, workingDir, scopeName, scopeInstanceID string) error {
 	if strings.TrimSpace(name) == "" {
 		return errors.New("session name is required")
 	}
@@ -790,12 +882,12 @@ func (m *SessionManager) Verify(ctx context.Context, name, adapterName, onCrash 
 		return err
 	}
 
-	caps, err := m.verifyAdapterInfo(ctx, name, adapterName, config, secrets)
+	caps, err := m.verifyAdapterInfo(ctx, name, adapterName, scopeInstanceID, config, secrets)
 	if err != nil {
 		return err
 	}
 
-	return m.storeVerifiedRecord(name, adapterName, onCrash, config, secrets, originRefs, workingDir, caps, scopeName)
+	return m.storeVerifiedRecord(name, adapterName, onCrash, config, secrets, originRefs, workingDir, caps, scopeName, scopeInstanceID)
 }
 
 // checkDuplicateLocked returns ErrSessionAlreadyOpen if the named session is
@@ -816,14 +908,14 @@ func (m *SessionManager) checkDuplicateLocked(name string) error {
 // directory: it resolves the binary, calls Info, validates config and secrets,
 // validates sandbox primitive availability for strict sandbox adapters, and
 // kills the temporary handle. It returns the adapter capabilities on success.
-func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterName string, config, secrets map[string]string) ([]string, error) {
+func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterName, scope string, config, secrets map[string]string) ([]string, error) {
 	// Phase 1 uses a neutral launch directory. The working-directory-dependent,
 	// side-effecting parts of sandbox setup (cgroup directory creation, the bwrap
 	// --chdir to the resolved working directory) remain a bind-time concern. The
 	// host-side primitive-availability and strict-mode validation can and do run
 	// eagerly here so that a strict-sandbox adapter with missing primitives fails
 	// before any step executes.
-	plug, err := m.resolveAdapterHandle(ctx, name, adapterName, nil)
+	plug, err := m.resolveAdapterHandle(ctx, name, adapterName, scope, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -850,7 +942,7 @@ func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterNam
 }
 
 // storeVerifiedRecord stores a verified adapter record, guarding against races.
-func (m *SessionManager) storeVerifiedRecord(name, adapterName, onCrash string, config, secrets map[string]string, originRefs map[string]secrets.OriginRef, workingDir string, capabilities []string, scopeName string) error {
+func (m *SessionManager) storeVerifiedRecord(name, adapterName, onCrash string, config, secrets map[string]string, originRefs map[string]secrets.OriginRef, workingDir string, capabilities []string, scopeName, scopeInstanceID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.sessions[name]; exists {
@@ -870,6 +962,7 @@ func (m *SessionManager) storeVerifiedRecord(name, adapterName, onCrash string, 
 		capabilities:     append([]string(nil), capabilities...),
 		workingDir:       workingDir,
 		scopeName:        scopeName,
+		scopeInstanceID:  scopeInstanceID,
 	}
 	if a := m.lockedAdapterFor(name); a != nil {
 		rec.adapterDigest = digest.Digest(a.ResolvedDigest)
@@ -878,11 +971,11 @@ func (m *SessionManager) storeVerifiedRecord(name, adapterName, onCrash string, 
 	return nil
 }
 
-func (m *SessionManager) resolveAdapterHandle(ctx context.Context, name, adapterName string, customizer func(string, *exec.Cmd)) (Handle, error) {
+func (m *SessionManager) resolveAdapterHandle(ctx context.Context, name, adapterName, scope string, customizer func(string, *exec.Cmd)) (Handle, error) {
 	// Remote-mode dispatch: if the adapter is bound to a remote environment,
 	// wait for the adapter to phone home via the shim.
 	if m.remoteShim != nil && m.isRemoteAdapter(name) {
-		return m.remoteShim.WaitForHandle(ctx, adapterName)
+		return m.remoteShim.WaitForHandle(ctx, adapterName, scope)
 	}
 
 	if dl, ok := m.loader.(*DefaultLoader); ok {
@@ -1043,7 +1136,7 @@ func makeSandboxCustomizer(prep *sandbox.LinuxPrepared, envNode *workflow.Enviro
 	}, cleanup
 }
 
-func (m *SessionManager) registerSession(ctx context.Context, name, adapterName, onCrash string, config, secrets map[string]string, originRefs map[string]secrets.OriginRef, caps []string, plug Handle, cleanup func(), workingDir string) error {
+func (m *SessionManager) registerSession(ctx context.Context, name, adapterName, onCrash string, config, secrets map[string]string, originRefs map[string]secrets.OriginRef, caps []string, plug Handle, cleanup func(), workingDir, scopeInstanceID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.sessions[name]; exists {
@@ -1065,6 +1158,7 @@ func (m *SessionManager) registerSession(ctx context.Context, name, adapterName,
 		handle:           plug,
 		SandboxCleanup:   cleanup,
 		WorkingDir:       workingDir,
+		ScopeInstanceID:  scopeInstanceID,
 	}
 	if a := m.lockedAdapterFor(name); a != nil {
 		sess.AdapterDigest = digest.Digest(a.ResolvedDigest)
@@ -1086,7 +1180,7 @@ func (m *SessionManager) bindVerifiedRecord(ctx context.Context, rec *verifiedRe
 		return fmt.Errorf("session %q: %w", rec.name, sandboxErr)
 	}
 
-	plug, err := m.resolveAdapterHandle(ctx, rec.name, rec.adapter, customizer)
+	plug, err := m.resolveAdapterHandle(ctx, rec.name, rec.adapter, rec.scopeInstanceID, customizer)
 	if err != nil {
 		if cleanup != nil {
 			cleanup()
@@ -1107,7 +1201,7 @@ func (m *SessionManager) bindVerifiedRecord(ctx context.Context, rec *verifiedRe
 		return err
 	}
 
-	if err := m.registerSession(ctx, rec.name, rec.adapter, rec.onCrash, rec.config, rec.secrets, rec.secretOriginRefs, caps, plug, cleanup, rec.workingDir); err != nil {
+	if err := m.registerSession(ctx, rec.name, rec.adapter, rec.onCrash, rec.config, rec.secrets, rec.secretOriginRefs, caps, plug, cleanup, rec.workingDir, rec.scopeInstanceID); err != nil {
 		return err
 	}
 
@@ -1660,7 +1754,7 @@ func (m *SessionManager) resolveAdapterForRespawn(ctx context.Context, sess *Ses
 	if m.remoteShim != nil && m.isRemoteAdapter(sess.Name) {
 		// Exclude the just-crashed handle so we wait for the replacement
 		// connection rather than the dead session still in the shim's map.
-		return m.remoteShim.WaitForFreshHandle(ctx, sess.Adapter, sess.handle)
+		return m.remoteShim.WaitForFreshHandle(ctx, sess.Adapter, sess.ScopeInstanceID, sess.handle)
 	}
 
 	if dl, ok := m.loader.(*DefaultLoader); ok {
@@ -1885,6 +1979,7 @@ type SessionSnapshot struct {
 	AdapterDigest    digest.Digest                `json:"adapter_digest"`     // adapter manifest digest at snapshot time
 	HostArch         string                       `json:"host_arch"`          // GOOS/GOARCH at snapshot
 	WorkingDir       string                       `json:"working_dir"`        // resolved environment working_directory at snapshot
+	ScopeInstanceID  string                       `json:"scope_instance_id"`  // shim scope key for remote per-scope sessions
 	CreatedAt        time.Time                    `json:"created_at"`
 }
 
@@ -1919,6 +2014,7 @@ func (s *Session) Snapshot(ctx context.Context) (*SessionSnapshot, error) {
 		AdapterDigest:    s.AdapterDigest,
 		HostArch:         runtime.GOOS + "/" + runtime.GOARCH,
 		WorkingDir:       s.WorkingDir,
+		ScopeInstanceID:  s.ScopeInstanceID,
 		CreatedAt:        time.Now(),
 	}, nil
 }
@@ -1954,7 +2050,7 @@ func (m *SessionManager) openAndRestoreAdapter(ctx context.Context, name, adapte
 		return nil, nil, fmt.Errorf("session %q: %w", name, sandboxErr)
 	}
 
-	plug, err := m.resolveAdapterHandle(ctx, name, adapterName, customizer)
+	plug, err := m.resolveAdapterHandle(ctx, name, adapterName, snap.ScopeInstanceID, customizer)
 	if err != nil {
 		if cleanup != nil {
 			cleanup()
@@ -1981,7 +2077,7 @@ func (m *SessionManager) openAndRestoreAdapter(ctx context.Context, name, adapte
 	return plug, cleanup, nil
 }
 
-func buildRestoredSession(name, adapterName, onCrash string, config, resolvedSecrets map[string]string, originRefs map[string]secrets.OriginRef, caps []string, plug Handle, cleanup func(), permState *permissionState, workingDir string) *Session {
+func buildRestoredSession(name, adapterName, onCrash string, config, resolvedSecrets map[string]string, originRefs map[string]secrets.OriginRef, caps []string, plug Handle, cleanup func(), permState *permissionState, workingDir, scopeInstanceID string) *Session {
 	return &Session{
 		Name:             name,
 		Adapter:          adapterName,
@@ -1994,6 +2090,7 @@ func buildRestoredSession(name, adapterName, onCrash string, config, resolvedSec
 		SandboxCleanup:   cleanup,
 		PermissionState:  permState,
 		WorkingDir:       workingDir,
+		ScopeInstanceID:  scopeInstanceID,
 	}
 }
 
@@ -2045,7 +2142,7 @@ func (m *SessionManager) Restore(ctx context.Context, name, adapterName, onCrash
 		return nil, err
 	}
 
-	sess := buildRestoredSession(name, adapterName, onCrash, config, resolvedSecrets, snap.SecretOriginRefs, caps, plug, cleanup, permState, snap.WorkingDir)
+	sess := buildRestoredSession(name, adapterName, onCrash, config, resolvedSecrets, snap.SecretOriginRefs, caps, plug, cleanup, permState, snap.WorkingDir, snap.ScopeInstanceID)
 	if err := m.registerRestoredSession(ctx, name, plug, cleanup, sess); err != nil {
 		return nil, err
 	}

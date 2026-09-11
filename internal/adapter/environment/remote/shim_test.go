@@ -178,7 +178,7 @@ func (l *singleConnListener) Addr() net.Addr { return l.conn.LocalAddr() }
 
 // dialFakeAdapter connects to the shim, sends the handshake, and serves a
 // minimal gRPC adapter on the connection.
-func dialFakeAdapter(addr string, hs handshakeMessage, tlsConf *tls.Config) error {
+func dialFakeAdapter(addr string, hs *handshakeMessage, tlsConf *tls.Config) error {
 	var conn net.Conn
 	var err error
 	if tlsConf != nil {
@@ -440,14 +440,14 @@ func TestShim_CustomDeadlinesSuccess(t *testing.T) {
 
 	addr := shim.listener.Addr().String()
 	go func() {
-		_ = dialFakeAdapter(addr, handshakeMessage{
+		_ = dialFakeAdapter(addr, &handshakeMessage{
 			Name:    "noop",
 			Version: "1.0.0",
 			Digest:  "sha256:abcd1234",
 		}, nil)
 	}()
 
-	handle, err := shim.WaitForHandle(ctx, "noop")
+	handle, err := shim.WaitForHandle(ctx, "noop", "")
 	if err != nil {
 		t.Fatalf("WaitForHandle: %v", err)
 	}
@@ -521,7 +521,7 @@ func TestShim_AcceptAndCallInfo(t *testing.T) {
 
 	// Dial fake adapter in background.
 	go func() {
-		_ = dialFakeAdapter(addr, handshakeMessage{
+		_ = dialFakeAdapter(addr, &handshakeMessage{
 			Name:    "noop",
 			Version: "1.0.0",
 			Digest:  "sha256:abcd1234",
@@ -529,7 +529,7 @@ func TestShim_AcceptAndCallInfo(t *testing.T) {
 	}()
 
 	// Wait for handle from session manager perspective.
-	handle, err := shim.WaitForHandle(ctx, "noop")
+	handle, err := shim.WaitForHandle(ctx, "noop", "")
 	if err != nil {
 		t.Fatalf("WaitForHandle: %v", err)
 	}
@@ -562,14 +562,14 @@ func TestShim_StopCancelsSessions(t *testing.T) {
 
 	addr := shim.listener.Addr().String()
 	go func() {
-		_ = dialFakeAdapter(addr, handshakeMessage{
+		_ = dialFakeAdapter(addr, &handshakeMessage{
 			Name:    "noop",
 			Version: "1.0.0",
 			Digest:  "sha256:abcd1234",
 		}, nil)
 	}()
 
-	handle, err := shim.WaitForHandle(ctx, "noop")
+	handle, err := shim.WaitForHandle(ctx, "noop", "")
 	if err != nil {
 		t.Fatalf("WaitForHandle: %v", err)
 	}
@@ -632,7 +632,7 @@ func TestShim_RejectUnknownDigest(t *testing.T) {
 	}
 	defer conn.Close()
 
-	hs := handshakeMessage{Name: "noop", Version: "1.0.0", Digest: "sha256:bad"}
+	hs := &handshakeMessage{Name: "noop", Version: "1.0.0", Digest: "sha256:bad"}
 	hsBytes, _ := json.Marshal(hs)
 	if _, err := conn.Write(append(hsBytes, '\n')); err != nil {
 		t.Fatalf("write handshake: %v", err)
@@ -685,14 +685,14 @@ func TestShim_mTLSAcceptAndReject(t *testing.T) {
 	}
 
 	go func() {
-		_ = dialFakeAdapter(addr, handshakeMessage{
+		_ = dialFakeAdapter(addr, &handshakeMessage{
 			Name:    "noop",
 			Version: "1.0.0",
 			Digest:  "sha256:abcd1234",
 		}, goodTLS)
 	}()
 
-	handle, err := shim.WaitForHandle(ctx, "noop")
+	handle, err := shim.WaitForHandle(ctx, "noop", "")
 	if err != nil {
 		t.Fatalf("WaitForHandle: %v", err)
 	}
@@ -726,14 +726,14 @@ func TestShim_ExecuteThroughBridge(t *testing.T) {
 	addr := shim.listener.Addr().String()
 
 	go func() {
-		_ = dialFakeAdapter(addr, handshakeMessage{
+		_ = dialFakeAdapter(addr, &handshakeMessage{
 			Name:    "noop",
 			Version: "1.0.0",
 			Digest:  "sha256:abcd1234",
 		}, nil)
 	}()
 
-	handle, err := shim.WaitForHandle(ctx, "noop")
+	handle, err := shim.WaitForHandle(ctx, "noop", "")
 	if err != nil {
 		t.Fatalf("WaitForHandle: %v", err)
 	}
@@ -784,14 +784,14 @@ func TestShim_Reconnect(t *testing.T) {
 
 	// First connection.
 	go func() {
-		_ = dialFakeAdapter(addr, handshakeMessage{
+		_ = dialFakeAdapter(addr, &handshakeMessage{
 			Name:    "noop",
 			Version: "1.0.0",
 			Digest:  "sha256:abcd1234",
 		}, nil)
 	}()
 
-	h1, err := shim.WaitForHandle(ctx, "noop")
+	h1, err := shim.WaitForHandle(ctx, "noop", "")
 	if err != nil {
 		t.Fatalf("first WaitForHandle: %v", err)
 	}
@@ -806,7 +806,7 @@ func TestShim_Reconnect(t *testing.T) {
 	reconnected := make(chan struct{})
 	go func() {
 		defer close(reconnected)
-		if err := dialFakeAdapter(addr, handshakeMessage{
+		if err := dialFakeAdapter(addr, &handshakeMessage{
 			Name:    "noop",
 			Version: "2.0.0",
 			Digest:  "sha256:abcd1234",
@@ -816,7 +816,7 @@ func TestShim_Reconnect(t *testing.T) {
 	}()
 
 	// WaitForHandle should block until the second connection arrives.
-	h2, err := shim.WaitForHandle(ctx, "noop")
+	h2, err := shim.WaitForHandle(ctx, "noop", "")
 	if err != nil {
 		t.Fatalf("second WaitForHandle: %v", err)
 	}
@@ -915,7 +915,7 @@ func TestShim_mTLSRejectBadCert(t *testing.T) {
 	// The important thing is that WaitForHandle should NOT succeed for "noop".
 	shortCtx, shortCancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer shortCancel()
-	_, err = shim.WaitForHandle(shortCtx, "noop")
+	_, err = shim.WaitForHandle(shortCtx, "noop", "")
 	if err == nil {
 		t.Fatal("expected WaitForHandle to fail for bad cert")
 	}
@@ -942,7 +942,7 @@ func TestShim_AcceptToken(t *testing.T) {
 
 	// 1. Missing token should be rejected.
 	go func() {
-		_ = dialFakeAdapter(addr, handshakeMessage{
+		_ = dialFakeAdapter(addr, &handshakeMessage{
 			Name:    "noop",
 			Version: "1.0.0",
 			Digest:  "sha256:abcd1234",
@@ -950,7 +950,7 @@ func TestShim_AcceptToken(t *testing.T) {
 		}, nil)
 	}()
 	shortCtx, shortCancel := context.WithTimeout(ctx, 500*time.Millisecond)
-	_, err = shim.WaitForHandle(shortCtx, "noop")
+	_, err = shim.WaitForHandle(shortCtx, "noop", "")
 	shortCancel()
 	if err == nil {
 		t.Fatal("expected rejection for missing token")
@@ -958,7 +958,7 @@ func TestShim_AcceptToken(t *testing.T) {
 
 	// 2. Wrong token should be rejected.
 	go func() {
-		_ = dialFakeAdapter(addr, handshakeMessage{
+		_ = dialFakeAdapter(addr, &handshakeMessage{
 			Name:    "noop",
 			Version: "1.0.0",
 			Digest:  "sha256:abcd1234",
@@ -966,7 +966,7 @@ func TestShim_AcceptToken(t *testing.T) {
 		}, nil)
 	}()
 	shortCtx2, shortCancel2 := context.WithTimeout(ctx, 500*time.Millisecond)
-	_, err = shim.WaitForHandle(shortCtx2, "noop")
+	_, err = shim.WaitForHandle(shortCtx2, "noop", "")
 	shortCancel2()
 	if err == nil {
 		t.Fatal("expected rejection for wrong token")
@@ -974,14 +974,14 @@ func TestShim_AcceptToken(t *testing.T) {
 
 	// 3. Correct token should be accepted.
 	go func() {
-		_ = dialFakeAdapter(addr, handshakeMessage{
+		_ = dialFakeAdapter(addr, &handshakeMessage{
 			Name:    "noop",
 			Version: "1.0.0",
 			Digest:  "sha256:abcd1234",
 			Token:   "secret-token",
 		}, nil)
 	}()
-	handle, err := shim.WaitForHandle(ctx, "noop")
+	handle, err := shim.WaitForHandle(ctx, "noop", "")
 	if err != nil {
 		t.Fatalf("WaitForHandle correct token: %v", err)
 	}
@@ -1025,7 +1025,7 @@ func TestShim_UnixSocketListen(t *testing.T) {
 		if err != nil {
 			return
 		}
-		hs := handshakeMessage{Name: "noop", Version: "1.0.0", Digest: "sha256:abcd1234"}
+		hs := &handshakeMessage{Name: "noop", Version: "1.0.0", Digest: "sha256:abcd1234"}
 		hsBytes, _ := json.Marshal(hs)
 		_, _ = conn.Write(append(hsBytes, '\n'))
 		// Serve gRPC on this single connection.
@@ -1035,7 +1035,7 @@ func TestShim_UnixSocketListen(t *testing.T) {
 		go func() { _ = grpcServer.Serve(lis) }()
 	}()
 
-	handle, err := shim.WaitForHandle(ctx, "noop")
+	handle, err := shim.WaitForHandle(ctx, "noop", "")
 	if err != nil {
 		t.Fatalf("WaitForHandle: %v", err)
 	}
@@ -1393,14 +1393,14 @@ func TestShim_ConcurrentAccept(t *testing.T) {
 
 	// First connection.
 	go func() {
-		_ = dialFakeAdapter(addr, handshakeMessage{
+		_ = dialFakeAdapter(addr, &handshakeMessage{
 			Name:    "noop",
 			Version: "1.0.0",
 			Digest:  "sha256:abcd1234",
 		}, nil)
 	}()
 
-	h1, err := shim.WaitForHandle(ctx, "noop")
+	h1, err := shim.WaitForHandle(ctx, "noop", "")
 	if err != nil {
 		t.Fatalf("first WaitForHandle: %v", err)
 	}
@@ -1410,7 +1410,7 @@ func TestShim_ConcurrentAccept(t *testing.T) {
 	secondReady := make(chan struct{})
 	go func() {
 		defer close(secondReady)
-		if err := dialFakeAdapter(addr, handshakeMessage{
+		if err := dialFakeAdapter(addr, &handshakeMessage{
 			Name:    "noop",
 			Version: "2.0.0",
 			Digest:  "sha256:abcd1234",
@@ -1441,7 +1441,7 @@ func TestShim_ConcurrentAccept(t *testing.T) {
 	}
 
 	// The map should now hold the newly replaced handle.
-	h2, err := shim.WaitForHandle(ctx, "noop")
+	h2, err := shim.WaitForHandle(ctx, "noop", "")
 	if err != nil {
 		t.Fatalf("second WaitForHandle: %v", err)
 	}
@@ -1546,7 +1546,7 @@ func TestShim_NonLoopbackAcceptToken(t *testing.T) {
 	addr := shim.listener.Addr().String()
 
 	go func() {
-		_ = dialFakeAdapter(addr, handshakeMessage{
+		_ = dialFakeAdapter(addr, &handshakeMessage{
 			Name:    "noop",
 			Version: "1.0.0",
 			Digest:  "sha256:abcd1234",
@@ -1554,7 +1554,7 @@ func TestShim_NonLoopbackAcceptToken(t *testing.T) {
 		}, nil)
 	}()
 
-	handle, err := shim.WaitForHandle(ctx, "noop")
+	handle, err := shim.WaitForHandle(ctx, "noop", "")
 	if err != nil {
 		t.Fatalf("WaitForHandle: %v", err)
 	}
@@ -1611,14 +1611,14 @@ func TestShim_NonLoopbackMTLS(t *testing.T) {
 	}
 
 	go func() {
-		_ = dialFakeAdapter(dialAddr, handshakeMessage{
+		_ = dialFakeAdapter(dialAddr, &handshakeMessage{
 			Name:    "noop",
 			Version: "1.0.0",
 			Digest:  "sha256:abcd1234",
 		}, clientTLS)
 	}()
 
-	handle, err := shim.WaitForHandle(ctx, "noop")
+	handle, err := shim.WaitForHandle(ctx, "noop", "")
 	if err != nil {
 		t.Fatalf("WaitForHandle: %v", err)
 	}
@@ -1662,18 +1662,18 @@ func TestShim_NonLoopbackInsecureOverride(t *testing.T) {
 	addr := shim.listener.Addr().String()
 
 	go func() {
-		_ = dialFakeAdapter(addr, handshakeMessage{
+		_ = dialFakeAdapter(addr, &handshakeMessage{
 			Name:    "noop",
 			Version: "1.0.0",
 			Digest:  "sha256:abcd1234",
 		}, nil)
 	}()
 
-	handle, err := shim.WaitForHandle(ctx, "noop")
+	handle, err := shim.WaitForHandle(ctx, "noop", "")
 	if err != nil {
 		t.Fatalf("WaitForHandle: %v", err)
 	}
-	defer handle.Kill()
+	t.Cleanup(func() { handle.Kill() })
 
 	info, err := handle.Info(ctx)
 	if err != nil {
@@ -1681,5 +1681,172 @@ func TestShim_NonLoopbackInsecureOverride(t *testing.T) {
 	}
 	if info.Name != "noop" {
 		t.Errorf("info.Name = %q, want noop", info.Name)
+	}
+}
+
+func TestShim_PerScope_TokenRejection(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	verifier := &fixedDigestVerifier{allowed: map[string]string{"noop": "sha256:abcd1234"}}
+	shim, err := NewShim(&Config{
+		ListenAddress: "127.0.0.1:0",
+		AcceptToken:   "legacy-token",
+	}, verifier)
+	if err != nil {
+		t.Fatalf("NewShim: %v", err)
+	}
+	if err := shim.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = shim.Stop(ctx) }()
+
+	shim.SetPerScopeSessions(true)
+	scope := "root/scope-1"
+	scopeToken := "scope-1-token"
+	shim.RegisterScope(scope, scopeToken)
+
+	addr := shim.listener.Addr().String()
+
+	go func() {
+		_ = dialFakeAdapter(addr, &handshakeMessage{
+			Name:    "noop",
+			Version: "1.0.0",
+			Digest:  "sha256:abcd1234",
+			Token:   scopeToken,
+		}, nil)
+	}()
+	go func() {
+		_ = dialFakeAdapter(addr, &handshakeMessage{
+			Name:    "noop",
+			Version: "1.0.0",
+			Digest:  "sha256:abcd1234",
+			Scope:   scope,
+			Token:   "wrong-token",
+		}, nil)
+	}()
+
+	shortCtx, shortCancel := context.WithTimeout(ctx, 200*time.Millisecond)
+	defer shortCancel()
+	if _, err := shim.WaitForHandle(shortCtx, "noop", scope); err == nil {
+		t.Fatal("expected WaitForHandle to fail when all handshakes are invalid")
+	}
+}
+
+func TestShim_PerScope_DistinctParallelScopeHandles(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	verifier := &fixedDigestVerifier{allowed: map[string]string{"noop": "sha256:abcd1234"}}
+	shim, err := NewShim(&Config{
+		ListenAddress: "127.0.0.1:0",
+		AcceptToken:   "legacy-token",
+	}, verifier)
+	if err != nil {
+		t.Fatalf("NewShim: %v", err)
+	}
+	if err := shim.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = shim.Stop(ctx) }()
+
+	shim.SetPerScopeSessions(true)
+	scopeA, scopeB := "root/scope-a", "root/scope-b"
+	tokenA, tokenB := "token-a", "token-b"
+	shim.RegisterScope(scopeA, tokenA)
+	shim.RegisterScope(scopeB, tokenB)
+
+	addr := shim.listener.Addr().String()
+	go func() {
+		_ = dialFakeAdapter(addr, &handshakeMessage{
+			Name:    "noop",
+			Version: "1.0.0",
+			Digest:  "sha256:abcd1234",
+			Scope:   scopeA,
+			Token:   tokenA,
+		}, nil)
+	}()
+	go func() {
+		_ = dialFakeAdapter(addr, &handshakeMessage{
+			Name:    "noop",
+			Version: "1.0.0",
+			Digest:  "sha256:abcd1234",
+			Scope:   scopeB,
+			Token:   tokenB,
+		}, nil)
+	}()
+
+	hA, err := shim.WaitForHandle(ctx, "noop", scopeA)
+	if err != nil {
+		t.Fatalf("WaitForHandle scopeA: %v", err)
+	}
+	t.Cleanup(func() { hA.Kill() })
+
+	hB, err := shim.WaitForHandle(ctx, "noop", scopeB)
+	if err != nil {
+		t.Fatalf("WaitForHandle scopeB: %v", err)
+	}
+	t.Cleanup(func() { hB.Kill() })
+
+	if hA == hB {
+		t.Fatal("expected distinct handles for parallel scopes")
+	}
+}
+
+func TestShim_PerScope_UnregisterRejectsRedial(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	verifier := &fixedDigestVerifier{allowed: map[string]string{"noop": "sha256:abcd1234"}}
+	shim, err := NewShim(&Config{
+		ListenAddress: "127.0.0.1:0",
+		AcceptToken:   "legacy-token",
+	}, verifier)
+	if err != nil {
+		t.Fatalf("NewShim: %v", err)
+	}
+	if err := shim.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = shim.Stop(ctx) }()
+
+	shim.SetPerScopeSessions(true)
+	scope := "root/scope-1"
+	scopeToken := "scope-1-token"
+	shim.RegisterScope(scope, scopeToken)
+
+	addr := shim.listener.Addr().String()
+	go func() {
+		_ = dialFakeAdapter(addr, &handshakeMessage{
+			Name:    "noop",
+			Version: "1.0.0",
+			Digest:  "sha256:abcd1234",
+			Scope:   scope,
+			Token:   scopeToken,
+		}, nil)
+	}()
+
+	h, err := shim.WaitForHandle(ctx, "noop", scope)
+	if err != nil {
+		t.Fatalf("WaitForHandle: %v", err)
+	}
+	h.Kill()
+	_ = shim.CloseHandle(ctx, "noop", scope)
+
+	shim.UnregisterScope(scope)
+	go func() {
+		_ = dialFakeAdapter(addr, &handshakeMessage{
+			Name:    "noop",
+			Version: "1.0.0",
+			Digest:  "sha256:abcd1234",
+			Scope:   scope,
+			Token:   scopeToken,
+		}, nil)
+	}()
+
+	shortCtx, shortCancel := context.WithTimeout(ctx, 200*time.Millisecond)
+	defer shortCancel()
+	if _, err := shim.WaitForHandle(shortCtx, "noop", scope); err == nil {
+		t.Fatal("expected WaitForHandle to fail after scope token was rotated away")
 	}
 }

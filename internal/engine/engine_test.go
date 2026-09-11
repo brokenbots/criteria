@@ -85,17 +85,18 @@ func (s *fakeSink) OnWaitResumed(string, string, string, map[string]string) {
 func (s *fakeSink) OnApprovalRequested(string, []string, string) {}
 func (s *fakeSink) OnApprovalDecision(string, string, string, map[string]string) {
 }
-func (s *fakeSink) OnBranchEvaluated(string, string, string, string)  {}
-func (s *fakeSink) OnForEachEntered(string, int)                      {}
-func (s *fakeSink) OnStepIterationStarted(string, int, string, bool)  {}
-func (s *fakeSink) OnStepIterationCompleted(string, string, string)   {}
-func (s *fakeSink) OnStepIterationItem(string, int, string)           {}
-func (s *fakeSink) OnScopeIterCursorSet(string)                       {}
-func (s *fakeSink) OnAdapterLifecycle(string, string, string, string) {}
-func (s *fakeSink) OnRunOutputs([]map[string]string)                  {}
-func (s *fakeSink) OnStepOutcomeDefaulted(string, string, string)     {}
-func (s *fakeSink) OnStepOutcomeUnknown(string, string)               {}
-func (s *fakeSink) StepEventSink(step string) adapter.EventSink       { return noopSink{} }
+func (s *fakeSink) OnBranchEvaluated(string, string, string, string)     {}
+func (s *fakeSink) OnForEachEntered(string, int)                         {}
+func (s *fakeSink) OnStepIterationStarted(string, int, string, bool)     {}
+func (s *fakeSink) OnStepIterationCompleted(string, string, string)      {}
+func (s *fakeSink) OnStepIterationItem(string, int, string)              {}
+func (s *fakeSink) OnScopeIterCursorSet(string)                          {}
+func (s *fakeSink) OnAdapterLifecycle(string, string, string, string)    {}
+func (s *fakeSink) OnAdapterLifecycleEvent(event *AdapterLifecycleEvent) {}
+func (s *fakeSink) OnRunOutputs([]map[string]string)                     {}
+func (s *fakeSink) OnStepOutcomeDefaulted(string, string, string)        {}
+func (s *fakeSink) OnStepOutcomeUnknown(string, string)                  {}
+func (s *fakeSink) StepEventSink(step string) adapter.EventSink          { return noopSink{} }
 
 type noopSink struct{}
 
@@ -400,6 +401,7 @@ func (s *lifecycleCaptureSink) OnAdapterLifecycle(step, _ /*adapter*/, status, _
 	}
 	s.lifecycle[step] = append(s.lifecycle[step], status)
 }
+func (s *lifecycleCaptureSink) OnAdapterLifecycleEvent(event *AdapterLifecycleEvent) {}
 
 func TestEngineLifecycleOpenTimeoutKeepsSessionAlive(t *testing.T) {
 	adapterBin := buildNoopAdapter(t)
@@ -1265,7 +1267,7 @@ insecure = true
 		_ = dialCRI111FakeAdapter(sockPath, "noop", "1.0.0", "sha256:deadbeef")
 	}()
 
-	handle, err := shim.WaitForHandle(ctx, "noop")
+	handle, err := shim.WaitForHandle(ctx, "noop", "")
 	if err != nil {
 		t.Fatalf("WaitForHandle: %v", err)
 	}

@@ -142,6 +142,15 @@ func WithRunID(id string) Option {
 	}
 }
 
+// WithDataDir sets the run data directory used for rotated remote adapter
+// accept-token files and other per-run transient state. When empty, token
+// rotation is disabled and the legacy run-wide accept token is used.
+func WithDataDir(dir string) Option {
+	return func(e *Engine) {
+		e.dataDir = dir
+	}
+}
+
 // WithWorkingDirAllowedRoots restricts the directories an environment may bind
 // to. A resolved working_directory that lies outside every configured root is
 // rejected at run start, before any step executes. Empty (the default) disables

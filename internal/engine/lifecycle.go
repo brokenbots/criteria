@@ -3,16 +3,197 @@ package engine
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 
+	"github.com/google/uuid"
 	"github.com/zclconf/go-cty/cty"
 
+	"github.com/brokenbots/criteria/internal/adapter/environment/remote"
 	"github.com/brokenbots/criteria/internal/adapter/secrets"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
+	"github.com/brokenbots/criteria/workflow/lockfile"
 )
+
+// adapterLifecycleRecord holds the metadata needed to emit a controller-visible
+// remote-adapter lifecycle event and to clean up the scope on teardown.
+type adapterLifecycleRecord struct {
+	scopeName       string
+	scopeInstanceID string
+	scopeKey        string
+	adapterName     string
+	adapterType     string
+	envName         string
+	digest          string
+	tokenPath       string
+	listenAddr      string
+	perScope        bool
+	runID           string
+}
+
+// remoteLifecycleContext carries the lockfile and per-scope provisioning state
+// that the engine needs to emit remote adapter lifecycle events. It travels
+// in RunState rather than Deps so that Deps stays small for node evaluators.
+type remoteLifecycleContext struct {
+	lockfile       *lockfile.Lockfile
+	scopeLifecycle *scopeLifecycleState
+}
+
+// scopeLifecycleState tracks per-scope remote-adapter provisioning metadata.
+type scopeLifecycleState struct {
+	dataDir string
+	runID   string
+	mu      sync.Mutex
+	records map[string]*adapterLifecycleRecord
+}
+
+func newScopeLifecycleState(dataDir string) *scopeLifecycleState {
+	return &scopeLifecycleState{
+		dataDir: dataDir,
+		records: make(map[string]*adapterLifecycleRecord),
+	}
+}
+
+func (ls *scopeLifecycleState) add(rec *adapterLifecycleRecord) {
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	ls.records[rec.adapterName] = rec
+}
+
+func (ls *scopeLifecycleState) get(adapterName string) *adapterLifecycleRecord {
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	return ls.records[adapterName]
+}
+
+func (ls *scopeLifecycleState) remove(adapterName string) {
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	delete(ls.records, adapterName)
+}
+
+func (ls *scopeLifecycleState) setRunID(id string) {
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	ls.runID = id
+}
+
+func generateAcceptToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+func writeRotatedToken(dataDir, scopeName, scopeInstanceID, adapterType, token string) (string, error) {
+	dir := filepath.Join(dataDir, "remote-tokens", scopeName, scopeInstanceID)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, adapterType+".token")
+	if err := os.WriteFile(path, []byte(token), 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func remoteEnvConfig(g *workflow.FSMGraph, ad *workflow.AdapterNode) (*remote.Config, *workflow.EnvironmentNode, bool) {
+	envKey := ad.Environment
+	if envKey == "" {
+		envKey = g.DefaultEnvironment
+	}
+	env := g.Environments[envKey]
+	if env == nil || env.Type != "remote" {
+		return nil, nil, false
+	}
+	cfg, err := remote.ParseConfig(env.RawBody)
+	if err != nil {
+		return nil, env, false
+	}
+	return cfg, env, true
+}
+
+func lockedDigest(lf *lockfile.Lockfile, adapterType, adapterName string) string {
+	if lf == nil {
+		return ""
+	}
+	for i := range lf.Adapters {
+		a := &lf.Adapters[i]
+		if a.Type == adapterType && a.Name == adapterName {
+			return a.ResolvedDigest
+		}
+	}
+	return ""
+}
+
+func emitProvisionWanted(deps Deps, lifecycle *remoteLifecycleContext, scopeName, scopeInstanceID, scopeKey, instanceID string, adapter *workflow.AdapterNode, envNode *workflow.EnvironmentNode, tokenPath string) {
+	digest := lockedDigest(lifecycle.lockfile, adapter.Type, adapter.Name)
+	listenAddr := deps.Sessions.RemoteListenAddr()
+	deps.Sink.OnAdapterLifecycleEvent(&AdapterLifecycleEvent{
+		RunID:             lifecycle.scopeLifecycle.runID,
+		ScopeName:         scopeName,
+		ScopeInstanceID:   scopeInstanceID,
+		AdapterName:       adapter.Name,
+		Digest:            digest,
+		ShimListenAddress: listenAddr,
+		TokenRef:          tokenPath,
+		Status:            "provision_wanted",
+	})
+	lifecycle.scopeLifecycle.add(&adapterLifecycleRecord{
+		scopeName:       scopeName,
+		scopeInstanceID: scopeInstanceID,
+		scopeKey:        scopeKey,
+		adapterName:     instanceID,
+		adapterType:     adapter.Type,
+		envName:         envNode.Name,
+		digest:          digest,
+		tokenPath:       tokenPath,
+		listenAddr:      listenAddr,
+		perScope:        true,
+		runID:           lifecycle.scopeLifecycle.runID,
+	})
+}
+
+// maybeRotateRemoteScope rotates the accept token for a per-scope remote adapter
+// and emits a provision-wanted lifecycle event. It returns the shim scope key to
+// pass to Verify, or an empty string when per-scope sessions are disabled.
+func maybeRotateRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, g *workflow.FSMGraph, adapter *workflow.AdapterNode, instanceID, scopeName string) (string, error) {
+	remCfg, envNode, ok := remoteEnvConfig(g, adapter)
+	if !ok || !remCfg.PerScopeSessions {
+		return "", nil
+	}
+	if lifecycle == nil || lifecycle.scopeLifecycle == nil || lifecycle.scopeLifecycle.dataDir == "" {
+		err := fmt.Errorf("remote environment %q uses per_scope_sessions but no run data directory is configured", envNode.Name)
+		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
+		return "", fmt.Errorf("initialize adapter %q: %w", instanceID, err)
+	}
+	scopeInstanceID := uuid.NewString()
+	scopeKey := scopeName + "/" + scopeInstanceID
+	token, err := generateAcceptToken()
+	if err != nil {
+		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
+		return "", fmt.Errorf("initialize adapter %q: rotate accept token: %w", instanceID, err)
+	}
+	tokenPath, err := writeRotatedToken(lifecycle.scopeLifecycle.dataDir, scopeName, scopeInstanceID, adapter.Type, token)
+	if err != nil {
+		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
+		return "", fmt.Errorf("initialize adapter %q: write accept token: %w", instanceID, err)
+	}
+	if err := deps.Sessions.RegisterRemoteScope(scopeKey, token); err != nil {
+		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
+		return "", fmt.Errorf("initialize adapter %q: register scope token: %w", instanceID, err)
+	}
+	emitProvisionWanted(deps, lifecycle, scopeName, scopeInstanceID, scopeKey, instanceID, adapter, envNode, tokenPath)
+	return scopeKey, nil
+}
 
 // initScopeAdapters provisions all adapters declared in the given FSMGraph at the start of its execution scope.
 // Adapters are provisioned in declaration order (from AdapterOrder).
@@ -20,7 +201,7 @@ import (
 // an event is emitted, and the error is returned.
 // Returns the ordered slice of provisioned adapter IDs (for correct LIFO teardown)
 // and an error if any adapter failed to initialize.
-func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, vars map[string]cty.Value, workflowDir, scopeName string, secretOrigins map[string]secrets.OriginRef) (order []string, err error) {
+func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, vars map[string]cty.Value, workflowDir, scopeName string, secretOrigins map[string]secrets.OriginRef, lifecycle *remoteLifecycleContext) (order []string, err error) {
 	if len(g.Adapters) == 0 {
 		return nil, nil
 	}
@@ -48,7 +229,16 @@ func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, var
 			return nil, fmt.Errorf("initialize adapter %q: %w", instanceID, fvErr)
 		}
 
-		verifyErr := deps.Sessions.Verify(ctx, instanceID, adapter.Type, adapter.OnCrash, config, secretMap, originRefs, workingDir, scopeName)
+		// CRI-115: when the bound remote environment enables per-scope sessions,
+		// rotate a fresh accept token for this scope, persist it under the run
+		// data directory, register it with the shim, and emit a provision-wanted
+		// event *before* blocking on WaitForHandle.
+		verifyScope, err := maybeRotateRemoteScope(deps, lifecycle, g, adapter, instanceID, scopeName)
+		if err != nil {
+			return nil, err
+		}
+
+		verifyErr := deps.Sessions.Verify(ctx, instanceID, adapter.Type, adapter.OnCrash, config, secretMap, originRefs, workingDir, scopeName, verifyScope)
 
 		// Silently swallow ErrSessionAlreadyOpen to support subworkflow bodies that
 		// re-declare parent adapters for safety through re-declaration. Same-scope
@@ -193,7 +383,7 @@ func buildOriginRefs(adapter *workflow.AdapterNode, secretOrigins map[string]sec
 // Errors during teardown are logged via the adapter lifecycle sink but do not change the run's terminal state.
 // Always called, even if the run errored or was cancelled.
 // Uses context.WithoutCancel to ensure teardown completes even if the run context was canceled.
-func tearDownScopeAdapters(ctx context.Context, order []string, deps Deps) {
+func tearDownScopeAdapters(ctx context.Context, order []string, deps Deps, lifecycle *remoteLifecycleContext) {
 	if len(order) == 0 {
 		return
 	}
@@ -205,6 +395,28 @@ func tearDownScopeAdapters(ctx context.Context, order []string, deps Deps) {
 	// Teardown in reverse order (LIFO)
 	for i := len(order) - 1; i >= 0; i-- {
 		adapterID := order[i]
+
+		// CRI-115: emit a release event for per-scope remote adapters before
+		// closing the session, then unregister the scope token so a torn-down
+		// pod cannot reconnect with the old token.
+		if lifecycle != nil && lifecycle.scopeLifecycle != nil {
+			if rec := lifecycle.scopeLifecycle.get(adapterID); rec != nil && rec.perScope {
+				deps.Sink.OnAdapterLifecycleEvent(&AdapterLifecycleEvent{
+					RunID:             rec.runID,
+					ScopeName:         rec.scopeName,
+					ScopeInstanceID:   rec.scopeInstanceID,
+					AdapterName:       rec.adapterName,
+					Digest:            rec.digest,
+					ShimListenAddress: rec.listenAddr,
+					TokenRef:          rec.tokenPath,
+					Status:            "released",
+				})
+				_ = deps.Sessions.UnregisterRemoteScope(rec.scopeKey)
+				_ = deps.Sessions.CloseRemoteHandle(cleanupCtx, rec.adapterType, rec.scopeKey)
+				lifecycle.scopeLifecycle.remove(adapterID)
+			}
+		}
+
 		err := deps.Sessions.Close(cleanupCtx, adapterID)
 		if err != nil {
 			// Emit lifecycle event for the failure but don't abort

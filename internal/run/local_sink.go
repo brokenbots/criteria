@@ -12,6 +12,7 @@ import (
 
 	"github.com/brokenbots/criteria/events"
 	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/internal/engine"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
@@ -151,6 +152,24 @@ func (s *LocalSink) OnScopeIterCursorSet(cursorJSON string) {
 // include a lifecycle envelope (W12). Lifecycle state is captured in the
 // session crash/respawn adapter events emitted by the session manager.
 func (s *LocalSink) OnAdapterLifecycle(stepName, adapterName, status, detail string) {}
+
+// OnAdapterLifecycleEvent emits an adapter.lifecycle event for remote
+// adapter reconcilers in local/ND-JSON mode.
+func (s *LocalSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent) {
+	s.emit("AdapterEvent", &pb.AdapterEvent{
+		Adapter: event.AdapterName,
+		Kind:    "adapter.lifecycle." + event.Status,
+		Data: encodeAdapterData(map[string]any{
+			"run_id":              event.RunID,
+			"scope_name":          event.ScopeName,
+			"scope_instance_id":   event.ScopeInstanceID,
+			"adapter":             event.AdapterName,
+			"digest":              event.Digest,
+			"shim_listen_address": event.ShimListenAddress,
+			"token_ref":           event.TokenRef,
+		}),
+	})
+}
 
 // OnRunOutputs emits a run.outputs envelope when declared outputs are evaluated (W09).
 func (s *LocalSink) OnRunOutputs(outputs []map[string]string) {

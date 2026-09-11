@@ -56,6 +56,10 @@ type RunState struct {
 	// WorkflowName is the name of the workflow body currently executing. Used
 	// for engine-version compatibility diagnostics in nested subworkflows.
 	WorkflowName string
+	// RemoteLifecycle carries lockfile-pinned digest and per-scope provisioning
+	// state for remote adapter lifecycle events (CRI-115). It is nil when the
+	// engine has no remote adapters or no data directory.
+	RemoteLifecycle *remoteLifecycleContext
 	// Ancestors is the chain of parent workflow names leading to the current
 	// workflow body. Empty for a root workflow.
 	Ancestors []string

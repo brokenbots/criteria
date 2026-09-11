@@ -19,6 +19,25 @@ product version). The release tag and date are finalized by the release gate.
 
 ### Adapter system rewrite
 
+### Engine / remote adapters
+
+- **Per-scope remote adapter isolation (CRI-115).** Remote environments gain an
+  opt-in `per_scope_sessions = true` attribute. When enabled, the engine
+  rotates a distinct accept token for each scope, persists it under the run data
+  directory, and emits `provision_wanted` / `released` lifecycle events (with a
+  token file reference, never the raw token) so an external reconciler can
+  manage adapter pods. The shim keys handles by adapter type plus scope, so
+  parallel subworkflow scopes using the same adapter type no longer collide.
+  Default `false` preserves byte-identical run-wide behavior and requires no
+  workflow changes.
+- **SDK coordination point.** `criteria-go-adapter-sdk` is bumped to v0.5.3.
+  The in-tree remote runner now forwards `CRITERIA_REMOTE_SCOPE` in its
+  handshake, but the SDK's public `ServeRemote` does not yet expose a scope
+  field. The standalone `criteria-adapter-shell` and `criteria-adapter-copilot`
+  releases must pick up SDK v0.5.4+ (or an equivalent scope-aware SDK version)
+  and forward the scope before per-scope isolation can be used with those
+  adapters.
+
 - **OCI-based distribution.** Adapters publish as multi-platform OCI artifacts
   (per-platform binary blobs + an `adapter.yaml` manifest) to any OCI-compliant
   registry. No central registry; adapters are referenced by `source` + `version`.

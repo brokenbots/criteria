@@ -64,7 +64,7 @@ func checkRequiredVars(body *workflow.FSMGraph, parentInput cty.Value) error {
 //
 // The returned child vars represent the body's final execution scope and are
 // used by the caller to evaluate output{} block expressions.
-func runWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry string, childVars map[string]cty.Value, workflowDir string, deps Deps, scopeName string, parallelCeiling int, parallelSem chan struct{}, parallelSemCache map[parallelSemKey]chan struct{}, parallelSemMu *sync.Mutex, ancestors ...string) (terminal string, returnOutputs, finalVars map[string]cty.Value, err error) {
+func runWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry string, childVars map[string]cty.Value, workflowDir string, deps Deps, rlc *remoteLifecycleContext, scopeName string, parallelCeiling int, parallelSem chan struct{}, parallelSemCache map[parallelSemKey]chan struct{}, parallelSemMu *sync.Mutex, ancestors ...string) (terminal string, returnOutputs, finalVars map[string]cty.Value, err error) {
 	bodyEntry, err = resolveBodyEntry(body, bodyEntry)
 	if err != nil {
 		return "", nil, nil, err
@@ -74,11 +74,11 @@ func runWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry str
 		return "", nil, nil, fmt.Errorf("%s", diags.Error())
 	}
 
-	bodyOrder, childSt, err := startWorkflowBody(ctx, body, bodyEntry, childVars, workflowDir, deps, scopeName, parallelCeiling, parallelSem, parallelSemCache, parallelSemMu, ancestors)
+	bodyOrder, childSt, err := startWorkflowBody(ctx, body, bodyEntry, childVars, workflowDir, deps, rlc, scopeName, parallelCeiling, parallelSem, parallelSemCache, parallelSemMu, ancestors)
 	if err != nil {
 		return "", nil, nil, err
 	}
-	defer func() { tearDownScopeAdapters(ctx, bodyOrder, deps) }()
+	defer func() { tearDownScopeAdapters(ctx, bodyOrder, deps, rlc) }()
 
 	return runWorkflowBodyLoop(ctx, body, childSt, deps)
 }
@@ -93,13 +93,13 @@ func resolveBodyEntry(body *workflow.FSMGraph, bodyEntry string) (string, error)
 	return bodyEntry, nil
 }
 
-func startWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry string, childVars map[string]cty.Value, workflowDir string, deps Deps, scopeName string, parallelCeiling int, parallelSem chan struct{}, parallelSemCache map[parallelSemKey]chan struct{}, parallelSemMu *sync.Mutex, ancestors []string) ([]string, *RunState, error) {
+func startWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry string, childVars map[string]cty.Value, workflowDir string, deps Deps, rlc *remoteLifecycleContext, scopeName string, parallelCeiling int, parallelSem chan struct{}, parallelSemCache map[parallelSemKey]chan struct{}, parallelSemMu *sync.Mutex, ancestors []string) ([]string, *RunState, error) {
 	// CRI-88: subworkflow secret origins are not independently tracked today; the
 	// child scope already carries resolved values from the parent. Passing nil
 	// means adapter session snapshots for child-scope secrets fall back to an
 	// untracked literal origin. This is acceptable for bodies that do not pause
 	// mid-execution with active adapter sessions.
-	bodyOrder, err := initScopeAdapters(ctx, body, deps, childVars, workflowDir, scopeName, nil)
+	bodyOrder, err := initScopeAdapters(ctx, body, deps, childVars, workflowDir, scopeName, nil, rlc)
 	if err != nil {
 		return nil, nil, fmt.Errorf("workflow body init adapters: %w", err)
 	}
@@ -118,6 +118,7 @@ func startWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry s
 		PendingSignal:    "",
 		ResumePayload:    nil,
 		DataStore:        NewDataStore(body),
+		RemoteLifecycle:  rlc,
 		firstStep:        false,
 		WorkflowName:     body.Name,
 		Ancestors:        ancestors,

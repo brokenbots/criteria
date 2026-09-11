@@ -157,6 +157,13 @@ func (m *MultiSink) OnAdapterLifecycle(stepName, adapterName, status, detail str
 	}
 }
 
+// OnAdapterLifecycleEvent fans remote adapter lifecycle events to all child sinks.
+func (m *MultiSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent) {
+	for _, c := range m.children {
+		c.OnAdapterLifecycleEvent(event)
+	}
+}
+
 // OnRunOutputs fans the outputs event to all child sinks (W09).
 func (m *MultiSink) OnRunOutputs(outputs []map[string]string) {
 	for _, c := range m.children {

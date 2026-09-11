@@ -36,6 +36,7 @@ type recordingSink struct {
 	onStepIterationItemArgs      []string
 	onScopeIterCursorSetArg      string
 	onAdapterLifecycleArgs       []string
+	onAdapterLifecycleEventArg   *AdapterLifecycleEvent
 	onRunOutputs                 []map[string]string
 	onStepOutcomeDefaultedArgs   []string
 	onStepOutcomeUnknownArgs     []string
@@ -108,6 +109,9 @@ func (s *recordingSink) OnScopeIterCursorSet(cursorJSON string) {
 }
 func (s *recordingSink) OnAdapterLifecycle(stepName, adapterName, status, detail string) {
 	s.onAdapterLifecycleArgs = []string{stepName, adapterName, status, detail}
+}
+func (s *recordingSink) OnAdapterLifecycleEvent(event *AdapterLifecycleEvent) {
+	s.onAdapterLifecycleEventArg = event
 }
 func (s *recordingSink) OnRunOutputs(outputs []map[string]string) {
 	s.onRunOutputs = outputs

@@ -130,6 +130,21 @@ func (s *RedactingSink) OnAdapterLifecycle(stepName, adapterName, status, detail
 	s.inner.OnAdapterLifecycle(s.reg.Redact(stepName), s.reg.Redact(adapterName), s.reg.Redact(status), s.reg.Redact(detail))
 }
 
+func (s *RedactingSink) OnAdapterLifecycleEvent(event *AdapterLifecycleEvent) {
+	// Redact all string fields before forwarding. TokenRef is a file path, not a
+	// secret, but redacting it is harmless and keeps the wrapper uniform.
+	s.inner.OnAdapterLifecycleEvent(&AdapterLifecycleEvent{
+		RunID:             s.reg.Redact(event.RunID),
+		ScopeName:         s.reg.Redact(event.ScopeName),
+		ScopeInstanceID:   s.reg.Redact(event.ScopeInstanceID),
+		AdapterName:       s.reg.Redact(event.AdapterName),
+		Digest:            s.reg.Redact(event.Digest),
+		ShimListenAddress: s.reg.Redact(event.ShimListenAddress),
+		TokenRef:          s.reg.Redact(event.TokenRef),
+		Status:            s.reg.Redact(event.Status),
+	})
+}
+
 func (s *RedactingSink) OnRunOutputs(outputs []map[string]string) {
 	redacted := make([]map[string]string, len(outputs))
 	for i, out := range outputs {

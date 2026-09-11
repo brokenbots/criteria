@@ -58,6 +58,7 @@ func (s *testSink) OnStepIterationCompleted(string, string, string)             
 func (s *testSink) OnStepIterationItem(string, int, string)                      {}
 func (s *testSink) OnScopeIterCursorSet(string)                                  {}
 func (s *testSink) OnAdapterLifecycle(string, string, string, string)            {}
+func (s *testSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent)  {}
 func (s *testSink) OnRunOutputs([]map[string]string)                             {}
 func (s *testSink) OnStepOutcomeDefaulted(string, string, string)                {}
 func (s *testSink) OnStepOutcomeUnknown(string, string)                          {}

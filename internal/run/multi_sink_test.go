@@ -31,16 +31,17 @@ func (r *recordingSink) OnApprovalRequested(string, []string, string)           
 func (r *recordingSink) OnApprovalDecision(string, string, string, map[string]string) {
 	r.bump()
 }
-func (r *recordingSink) OnBranchEvaluated(string, string, string, string)  { r.bump() }
-func (r *recordingSink) OnForEachEntered(string, int)                      { r.bump() }
-func (r *recordingSink) OnStepIterationStarted(string, int, string, bool)  { r.bump() }
-func (r *recordingSink) OnStepIterationCompleted(string, string, string)   { r.bump() }
-func (r *recordingSink) OnStepIterationItem(string, int, string)           { r.bump() }
-func (r *recordingSink) OnScopeIterCursorSet(string)                       { r.bump() }
-func (r *recordingSink) OnAdapterLifecycle(string, string, string, string) { r.bump() }
-func (r *recordingSink) OnRunOutputs([]map[string]string)                  { r.bump() }
-func (r *recordingSink) OnStepOutcomeDefaulted(string, string, string)     { r.bump() }
-func (r *recordingSink) OnStepOutcomeUnknown(string, string)               { r.bump() }
+func (r *recordingSink) OnBranchEvaluated(string, string, string, string)            { r.bump() }
+func (r *recordingSink) OnForEachEntered(string, int)                                { r.bump() }
+func (r *recordingSink) OnStepIterationStarted(string, int, string, bool)            { r.bump() }
+func (r *recordingSink) OnStepIterationCompleted(string, string, string)             { r.bump() }
+func (r *recordingSink) OnStepIterationItem(string, int, string)                     { r.bump() }
+func (r *recordingSink) OnScopeIterCursorSet(string)                                 { r.bump() }
+func (r *recordingSink) OnAdapterLifecycle(string, string, string, string)           { r.bump() }
+func (r *recordingSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent) { r.bump() }
+func (r *recordingSink) OnRunOutputs([]map[string]string)                            { r.bump() }
+func (r *recordingSink) OnStepOutcomeDefaulted(string, string, string)               { r.bump() }
+func (r *recordingSink) OnStepOutcomeUnknown(string, string)                         { r.bump() }
 func (r *recordingSink) StepEventSink(step string) adapter.EventSink {
 	return &recordingStepSink{parent: r}
 }

@@ -24,6 +24,20 @@ import (
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
+// AdapterLifecycleEvent carries the controller-visible state needed to
+// provision or release a remote adapter pod. Raw secrets or tokens must never
+// appear in this payload; token_ref is a filesystem path to the rotated token.
+type AdapterLifecycleEvent struct {
+	RunID             string
+	ScopeName         string // empty for the root scope
+	ScopeInstanceID   string // unique UUID for this scope invocation
+	AdapterName       string
+	Digest            string // lockfile-pinned digest
+	ShimListenAddress string
+	TokenRef          string // path to the accept-token file; never the token itself
+	Status            string // "provision_wanted" or "released"
+}
+
 // Sink receives engine-level events. Implementations (typically the server
 // transport) are responsible for assigning sequence numbers, persisting, and
 // streaming. The engine never blocks waiting for the sink. The interpreter
@@ -90,6 +104,10 @@ type Sink interface {
 	// (e.g. "noop", "copilot"); detail is a one-line description (empty for
 	// clean events).
 	OnAdapterLifecycle(stepName, adapterName, status, detail string)
+	// OnAdapterLifecycleEvent is emitted when the engine wants a remote adapter
+	// scope to be provisioned or released. It contains only controller-visible,
+	// non-secret metadata including a token file reference, never the raw token.
+	OnAdapterLifecycleEvent(event *AdapterLifecycleEvent)
 	// OnRunOutputs is emitted when a run reaches terminal state with declared outputs (W09).
 	// outputs is a list of (name, value, declared_type) tuples in declaration order.
 	// This method is called before OnRunCompleted.
@@ -162,6 +180,9 @@ type Engine struct {
 	snapshotBase string
 	// WS18: runID namespaces snapshot files within snapshotBase.
 	runID string
+	// CRI-115: dataDir is the per-run data directory used for rotated remote
+	// adapter accept-token files. Empty disables per-scope token rotation.
+	dataDir string
 
 	// WS17: liveSessions holds the active SessionManager while a run is in
 	// progress, enabling Pause/Resume/Inspect from outside runLoop.
@@ -341,19 +362,45 @@ func (e *Engine) seedRunScope(ctx context.Context, sink Sink, reg *secrets.Regis
 // initAdapters verifies the graph and provisions scope-level adapter sessions.
 // On failure it emits OnRunFailed and returns a wrapped error. The caller owns
 // the returned teardown order.
-func (e *Engine) initAdapters(ctx context.Context, sessions *adapterhost.SessionManager, sink Sink, vars map[string]cty.Value, failStep string) (Deps, []string, error) {
-	if err := sessions.VerifyGraph(ctx, e.graph, vars); err != nil {
-		sink.OnRunFailed(err.Error(), failStep)
-		return Deps{}, nil, err
+func (e *Engine) initAdapters(ctx context.Context, sessions *adapterhost.SessionManager, sink Sink, vars map[string]cty.Value, failStep string) (Deps, []string, *remoteLifecycleContext, error) {
+	// CRI-115: remote environments that enable per_scope_sessions rotate the
+	// accept token per scope. Defer their adapter-info verification from
+	// VerifyGraph to initScopeAdapters so the provisioning event and token
+	// rotation happen before the shim blocks for the adapter phone-home.
+	if e.graph != nil {
+		var deferredRemote []string
+		for id, node := range e.graph.Adapters {
+			envKey := node.Environment
+			if envKey == "" {
+				envKey = e.graph.DefaultEnvironment
+			}
+			if remote.EnvPerScopeSessions(e.graph.Environments[envKey]) {
+				deferredRemote = append(deferredRemote, id)
+			}
+		}
+		if len(deferredRemote) > 0 {
+			sessions.SetDeferredRemoteAdapters(deferredRemote)
+		}
 	}
 
+	if err := sessions.VerifyGraph(ctx, e.graph, vars); err != nil {
+		sink.OnRunFailed(err.Error(), failStep)
+		return Deps{}, nil, nil, err
+	}
+
+	lifecycle := newScopeLifecycleState(e.dataDir)
+	lifecycle.setRunID(e.runID)
+	rlc := &remoteLifecycleContext{
+		lockfile:       e.lockfile,
+		scopeLifecycle: lifecycle,
+	}
 	deps := Deps{Sessions: sessions, Sink: sink}
-	scopeOrder, err := initScopeAdapters(ctx, e.graph, deps, vars, e.workflowDir, "", e.secretOrigins)
+	scopeOrder, err := initScopeAdapters(ctx, e.graph, deps, vars, e.workflowDir, "", e.secretOrigins, rlc)
 	if err != nil {
 		sink.OnRunFailed(err.Error(), failStep)
-		return Deps{}, nil, err
+		return Deps{}, nil, nil, err
 	}
-	return deps, scopeOrder, nil
+	return deps, scopeOrder, rlc, nil
 }
 
 // Run executes the workflow until a terminal state is reached, the global
@@ -396,15 +443,15 @@ func (e *Engine) Run(ctx context.Context) error {
 		return err
 	}
 
-	deps, scopeOrder, err := e.initAdapters(ctx, sessions, sink, vars, "")
+	deps, scopeOrder, rlc, err := e.initAdapters(ctx, sessions, sink, vars, "")
 	if err != nil {
 		return err
 	}
-	defer func() { tearDownScopeAdapters(ctx, scopeOrder, deps) }()
+	defer func() { tearDownScopeAdapters(ctx, scopeOrder, deps, rlc) }()
 
 	current := e.graph.InitialState
 	sink.OnRunStarted(e.graph.Name, current)
-	return e.runLoop(ctx, sessions, current, 1, vars, sink, ds)
+	return e.runLoop(ctx, sessions, current, 1, vars, sink, ds, rlc)
 }
 
 // RunFrom resumes a workflow at startStep with the given initialAttempt
@@ -446,21 +493,21 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 		return err
 	}
 
-	deps, scopeOrder, err := e.initAdapters(ctx, sessions, sink, vars, startStep)
+	deps, scopeOrder, rlc, err := e.initAdapters(ctx, sessions, sink, vars, startStep)
 	if err != nil {
 		return err
 	}
-	defer func() { tearDownScopeAdapters(ctx, scopeOrder, deps) }()
+	defer func() { tearDownScopeAdapters(ctx, scopeOrder, deps, rlc) }()
 
 	if err := e.bootstrapSessionsForResume(ctx, sessions, startStep); err != nil {
 		return err
 	}
-	return e.runLoop(ctx, sessions, startStep, initialAttempt, vars, sink, ds)
+	return e.runLoop(ctx, sessions, startStep, initialAttempt, vars, sink, ds, rlc)
 }
 
 // runLoop is the shared execution loop. firstStepAttempt is the attempt index
 // used for the initial step when resuming; subsequent steps start at attempt 1.
-func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManager, current string, firstStepAttempt int, vars map[string]cty.Value, sink Sink, ds *DataStore) error {
+func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManager, current string, firstStepAttempt int, vars map[string]cty.Value, sink Sink, ds *DataStore, rlc *remoteLifecycleContext) error {
 	st := &RunState{
 		Current:          current,
 		Vars:             vars,
@@ -471,6 +518,7 @@ func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManag
 		WorkflowDir:      e.workflowDir,
 		DataStore:        ds,
 		WorkflowName:     e.graph.Name,
+		RemoteLifecycle:  rlc,
 		firstStep:        true,
 		firstStepAttempt: firstStepAttempt,
 	}
@@ -976,28 +1024,39 @@ func (e *Engine) maybeStartRemoteShim(ctx context.Context, sessions *adapterhost
 	}
 
 	lf := e.lockfile
-	if e.graph != nil && e.graph.PinSet != nil {
+	if e.graph.PinSet != nil {
 		lf = e.graph.PinSet
 	}
 	verifier := &lockfileDigestVerifier{lockfile: lf}
 
 	for _, env := range remoteEnvs {
-		if env.Process != nil && !env.Process.IsWildcard() {
-			return fmt.Errorf("remote environment %q does not support a process.exec allow-list; use process.exec = [\"*\"] to opt into unrestricted child execution or omit the process block", env.Name)
+		if err := e.startRemoteShimForEnv(ctx, env, sessions, verifier); err != nil {
+			return err
 		}
-		cfg, err := remote.ParseConfig(env.RawBody)
-		if err != nil {
-			return fmt.Errorf("remote environment %q: %w", env.Name, err)
-		}
-		shim, err := remote.NewShim(cfg, verifier)
-		if err != nil {
-			return fmt.Errorf("remote environment %q: %w", env.Name, err)
-		}
-		if err := shim.Start(ctx); err != nil {
-			return fmt.Errorf("remote environment %q: %w", env.Name, err)
-		}
-		sessions.SetRemoteShim(shim)
 	}
+	return nil
+}
+
+func (e *Engine) startRemoteShimForEnv(ctx context.Context, env *workflow.EnvironmentNode, sessions *adapterhost.SessionManager, verifier remote.DigestVerifier) error {
+	if env.Process != nil && !env.Process.IsWildcard() {
+		return fmt.Errorf("remote environment %q does not support a process.exec allow-list; use process.exec = [\"*\"] to opt into unrestricted child execution or omit the process block", env.Name)
+	}
+	cfg, err := remote.ParseConfig(env.RawBody)
+	if err != nil {
+		return fmt.Errorf("remote environment %q: %w", env.Name, err)
+	}
+	if cfg.PerScopeSessions && e.dataDir == "" {
+		return fmt.Errorf("remote environment %q: per_scope_sessions requires a run data directory (WithDataDir)", env.Name)
+	}
+	shim, err := remote.NewShim(cfg, verifier)
+	if err != nil {
+		return fmt.Errorf("remote environment %q: %w", env.Name, err)
+	}
+	shim.SetPerScopeSessions(cfg.PerScopeSessions)
+	if err := shim.Start(ctx); err != nil {
+		return fmt.Errorf("remote environment %q: %w", env.Name, err)
+	}
+	sessions.SetRemoteShim(shim)
 	return nil
 }
 
