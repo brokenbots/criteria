@@ -80,7 +80,9 @@ func TestNewRunPublisher_HappyPath(t *testing.T) {
 	}) {
 		t.Fatal("event never persisted")
 	}
-	if p.lastAckedSeq.Load() != 1 {
+	if !waitForCond(t, 2*time.Second, func() bool {
+		return p.lastAckedSeq.Load() == 1
+	}) {
 		t.Fatalf("expected lastAckedSeq=1, got %d", p.lastAckedSeq.Load())
 	}
 }
