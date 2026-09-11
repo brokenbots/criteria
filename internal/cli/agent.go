@@ -763,6 +763,11 @@ func buildAgentRun(agentCtx, runCtx context.Context, log *slog.Logger, client *s
 		engine.WithWorkflowDir(workflowDir),
 		engine.WithAuditWriter(auditWriter),
 	}
+	dataDir, err := runDataDir(assignment.GetRunId())
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	baseOpts = append(baseOpts, engine.WithDataDir(dataDir))
 	eng = engine.New(graph, loader, runSink, append(baseOpts, engineOpts...)...)
 	return eng, sink, runSink, state, nil
 }

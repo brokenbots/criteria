@@ -167,6 +167,12 @@ func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 	if restoreErr != nil {
 		log.Warn("could not restore variable scope after pause reattach; starting with defaults", "error", restoreErr)
 	}
+	dataDir, dataDirErr := runDataDir(cp.RunID)
+	if dataDirErr != nil {
+		log.Error("paused run re-entry failed to resolve run data dir", "run_id", cp.RunID, "error", dataDirErr)
+		drainAndCleanup(ctx, rc, cp)
+		return
+	}
 	auditPath, _ := auditLogPath(cp.RunID)
 	auditWriter := adapterhost.NewFileAuditWriter(auditPath)
 	eng := engine.New(graph, loader, sink,
@@ -177,6 +183,7 @@ func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		engine.WithWorkflowDir(workflowDirFromPath(cp.WorkflowPath)),
 		engine.WithLogger(log),
 		engine.WithAuditWriter(auditWriter),
+		engine.WithDataDir(dataDir),
 	)
 	if runErr := eng.RunFrom(ctx, resp.CurrentStep, int(resp.Attempt)); runErr != nil {
 		log.Error("paused run re-entry failed", "error", runErr)
@@ -206,6 +213,11 @@ func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc reattachTran
 		}
 		pausedNode := sink.PausedAt()
 		sink.ClearPaused()
+		dataDir, dataDirErr := runDataDir(cp.RunID)
+		if dataDirErr != nil {
+			log.Error("run failed after resume: cannot resolve run data dir", "run_id", cp.RunID, "error", dataDirErr)
+			break
+		}
 		auditPath2, _ := auditLogPath(cp.RunID)
 		resumedEng := engine.New(graph, loader, sink,
 			engine.WithResumedVars(eng.VarScope()),
@@ -213,6 +225,7 @@ func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc reattachTran
 			engine.WithResumePayload(resumeMsg.Payload),
 			engine.WithWorkflowDir(workflowDirFromPath(cp.WorkflowPath)),
 			engine.WithAuditWriter(adapterhost.NewFileAuditWriter(auditPath2)),
+			engine.WithDataDir(dataDir),
 		)
 		if runErr := resumedEng.RunFrom(ctx, pausedNode, 1); runErr != nil {
 			log.Error("run failed after resume", "error", runErr)
@@ -255,22 +268,28 @@ func checkIterationCursorValidity(graph *workflow.FSMGraph, variableScope string
 	return nil
 }
 
+// failResumeMaxRetries emits the failed run for a resume that exceeded
+// max_step_retries and cleans up the checkpoint.
+func failResumeMaxRetries(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, step string, nextAttempt, maxAttempts int) {
+	log.Warn("exceeded max_step_retries on resume; failing run",
+		"next_attempt", nextAttempt, "max_attempts", maxAttempts)
+	if streamErr := rc.StartStreams(ctx, cp.RunID); streamErr != nil {
+		abandonCheckpoint(log, cp, "failed to start streams for failed resume", streamErr)
+		return
+	}
+	sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log, Ctx: ctx}
+	reason := fmt.Sprintf("exceeded max_step_retries on resume at step %q (attempt %d)", step, nextAttempt)
+	sink.RunFailed(ctx, reason, step)
+	drainAndCleanup(ctx, rc, cp)
+}
+
 // resumeActiveRun handles the normal (non-paused) resume path, including
 // max_step_retries policy enforcement.
 func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse) {
 	nextAttempt := int(resp.Attempt) + 1
 	maxAttempts := 1 + graph.Policy.MaxStepRetries
 	if nextAttempt > maxAttempts {
-		log.Warn("exceeded max_step_retries on resume; failing run",
-			"next_attempt", nextAttempt, "max_attempts", maxAttempts)
-		if streamErr := rc.StartStreams(ctx, cp.RunID); streamErr != nil {
-			abandonCheckpoint(log, cp, "failed to start streams for failed resume", streamErr)
-			return
-		}
-		sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log, Ctx: ctx}
-		reason := fmt.Sprintf("exceeded max_step_retries on resume at step %q (attempt %d)", resp.CurrentStep, nextAttempt)
-		sink.RunFailed(ctx, reason, resp.CurrentStep)
-		drainAndCleanup(ctx, rc, cp)
+		failResumeMaxRetries(ctx, log, rc, cp, resp.CurrentStep, nextAttempt, maxAttempts)
 		return
 	}
 
@@ -291,6 +310,12 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 
 	auditPath, _ := auditLogPath(cp.RunID)
 	auditWriter := adapterhost.NewFileAuditWriter(auditPath)
+	dataDir, dataDirErr := runDataDir(cp.RunID)
+	if dataDirErr != nil {
+		log.Error("resumed run failed to resolve run data dir", "run_id", cp.RunID, "error", dataDirErr)
+		drainAndCleanup(ctx, rc, cp)
+		return
+	}
 	eng := engine.New(graph, loader, sink,
 		engine.WithResumedVars(restoredVars),
 		engine.WithResumedIter(restoredIter),
@@ -298,6 +323,7 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		engine.WithWorkflowDir(workflowDirFromPath(cp.WorkflowPath)),
 		engine.WithLogger(log),
 		engine.WithAuditWriter(auditWriter),
+		engine.WithDataDir(dataDir),
 	)
 	if runErr := eng.RunFrom(ctx, resp.CurrentStep, nextAttempt); runErr != nil {
 		log.Error("resumed run failed", "error", runErr)

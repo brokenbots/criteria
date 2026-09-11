@@ -93,6 +93,10 @@ func runApplyLocal(
 	_ = src
 	auditPath, _ := auditLogPath(runID)
 	auditWriter := adapterhost.NewFileAuditWriter(auditPath)
+	dataDir, err := runDataDir(runID)
+	if err != nil {
+		return err
+	}
 	mergedVars, err := mergeVarSources(opts.varFiles, opts.varOverrides)
 	if err != nil {
 		return err
@@ -101,6 +105,7 @@ func runApplyLocal(
 		engine.WithVarOverrides(mergedVars),
 		engine.WithWorkflowDir(workflowDirFromPath(opts.workflowPath)),
 		engine.WithAuditWriter(auditWriter),
+		engine.WithDataDir(dataDir),
 	)
 	if err := eng.Run(ctx); err != nil {
 		log.Error("local run failed", "run_id", runID, "error", err)
@@ -180,7 +185,12 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 		return
 	}
 
-	opts, tracker, runSink, eng := buildReattachTrackerAndEngine(cp, log, graph, loader, out, mode, nextAttempt)
+	opts, tracker, runSink, eng, engErr := buildReattachTrackerAndEngine(cp, log, graph, loader, out, mode, nextAttempt)
+	if engErr != nil {
+		log.Error("resumed local run failed to resolve run data dir", "run_id", cp.RunID, "error", engErr)
+		RemoveStepCheckpoint(cp.RunID)
+		return
+	}
 	if runErr := eng.RunFrom(ctx, cp.CurrentStep, nextAttempt); runErr != nil {
 		log.Error("resumed local run failed", "run_id", cp.RunID, "error", runErr)
 		RemoveStepCheckpoint(cp.RunID)
@@ -200,8 +210,12 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 // buildReattachTrackerAndEngine wires the checkpoint sink, pause tracker, and
 // engine for a crash-reattach run. The checkpointFn closure captures eng so
 // that each checkpoint write includes the current visit counts (W07).
-func buildReattachTrackerAndEngine(cp *StepCheckpoint, log *slog.Logger, graph *workflow.FSMGraph, loader adapterhost.Loader, out io.Writer, mode outputMode, nextAttempt int) (applyOptions, *pauseTracker, *terminalSuccessSink, *engine.Engine) {
+func buildReattachTrackerAndEngine(cp *StepCheckpoint, log *slog.Logger, graph *workflow.FSMGraph, loader adapterhost.Loader, out io.Writer, mode outputMode, nextAttempt int) (applyOptions, *pauseTracker, *terminalSuccessSink, *engine.Engine, error) {
 	opts := applyOptions{workflowPath: cp.WorkflowPath}
+	dataDir, err := runDataDir(cp.RunID)
+	if err != nil {
+		return opts, nil, nil, nil, err
+	}
 	var eng *engine.Engine // captured by checkpointFn; assigned below before any callbacks fire
 	checkpointFn := func(step string, attempt int) {
 		next := *cp
@@ -225,6 +239,7 @@ func buildReattachTrackerAndEngine(cp *StepCheckpoint, log *slog.Logger, graph *
 	eng = engine.New(graph, loader, runSink,
 		engine.WithWorkflowDir(workflowDirFromPath(cp.WorkflowPath)),
 		engine.WithResumedVisits(cp.Visits),
+		engine.WithDataDir(dataDir),
 	)
-	return opts, tracker, runSink, eng
+	return opts, tracker, runSink, eng, nil
 }

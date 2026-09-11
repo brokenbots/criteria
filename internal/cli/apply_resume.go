@@ -128,6 +128,10 @@ func buildLocalResumer(log *slog.Logger, stdin io.Reader) (localresume.LocalResu
 // every engine instance so that terminal-state capture is consistent across
 // the original run and all resume cycles.
 func drainLocalResumeCycles(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, loader adapterhost.Loader, tracker *pauseTracker, runSink engine.Sink, resumer localresume.LocalResumer, runID string, opts applyOptions, eng *engine.Engine) error {
+	dataDir, err := runDataDir(runID)
+	if err != nil {
+		return fmt.Errorf("resolve run data dir: %w", err)
+	}
 	for tracker.IsPaused() {
 		pausedNode := tracker.PausedAt()
 		log.Info("local run paused; resolving via local resumer", "run_id", runID, "node", pausedNode)
@@ -143,6 +147,7 @@ func drainLocalResumeCycles(ctx context.Context, log *slog.Logger, graph *workfl
 			engine.WithResumedVisits(eng.VisitCounts()),
 			engine.WithResumePayload(payload),
 			engine.WithWorkflowDir(workflowDirFromPath(opts.workflowPath)),
+			engine.WithDataDir(dataDir),
 		)
 		if runErr := resumedEng.RunFrom(ctx, pausedNode, 1); runErr != nil {
 			log.Error("local run failed after resume", "run_id", runID, "error", runErr)

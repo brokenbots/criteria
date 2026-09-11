@@ -70,6 +70,23 @@ func runStateFilePath(runID string) (string, error) {
 	return filepath.Join(d, "runs", runID, "run-state.json"), nil
 }
 
+// runDataDir returns the run's own state directory, used as the engine run
+// data directory (engine.WithDataDir). The path is derived solely from the
+// run id under the criteria state directory, so every engine instance of one
+// run (fresh, resume, reattach, crash-restart, server resume) resolves to the
+// same directory. Rotated remote-adapter accept token files are written under
+// it, so they are cleaned up together with the rest of the run state.
+func runDataDir(runID string) (string, error) {
+	if runID == "" {
+		return "", errors.New("run_id required")
+	}
+	d, err := stateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "runs", runID), nil
+}
+
 func legacyStateFilePath() (string, error) {
 	d, err := stateDir()
 	if err != nil {
