@@ -12,6 +12,7 @@ import (
 
 	"github.com/zclconf/go-cty/cty"
 
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
@@ -30,6 +31,7 @@ func (s *lifecycleTrackingSink) OnAdapterLifecycle(runID, adapter, status, detai
 	defer s.mu.Unlock()
 	s.adapterLifecycleEvents = append(s.adapterLifecycleEvents, adapter+":"+status)
 }
+func (s *lifecycleTrackingSink) OnAdapterLifecycleEvent(event *AdapterLifecycleEvent) {}
 
 // lifecycleTrackingAdapter tracks session open/close calls
 type lifecycleTrackingAdapter struct {
@@ -1205,5 +1207,386 @@ state "done" {
 	sink.mu.Unlock()
 	if steps != 1 {
 		t.Errorf("expected exactly one step to run, got %d", steps)
+	}
+}
+
+// fakeRemoteHandle is a minimal adapterhost.Handle for per-scope remote tests.
+type fakeRemoteHandle struct{}
+
+func (h *fakeRemoteHandle) Info(context.Context) (adapterhost.Info, error) {
+	return adapterhost.Info{Name: "noop", Version: "test"}, nil
+}
+func (h *fakeRemoteHandle) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
+func (h *fakeRemoteHandle) Execute(context.Context, string, *workflow.StepNode, adapter.EventSink) (adapter.Result, error) {
+	return adapter.Result{Outcome: "success"}, nil
+}
+func (h *fakeRemoteHandle) CloseSession(context.Context, string) error { return nil }
+func (h *fakeRemoteHandle) Kill()                                      {}
+func (h *fakeRemoteHandle) Pause(context.Context, string) error        { return nil }
+func (h *fakeRemoteHandle) Resume(context.Context, string) error       { return nil }
+func (h *fakeRemoteHandle) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return nil, nil
+}
+func (h *fakeRemoteHandle) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return nil, nil
+}
+func (h *fakeRemoteHandle) Restore(context.Context, string, []byte, uint32) error { return nil }
+
+// fakeRemoteShim records scope registrations and handle requests for tests.
+type fakeRemoteShim struct {
+	mu           sync.Mutex
+	handle       adapterhost.Handle
+	listenAddr   string
+	registered   map[string]string
+	unregistered []string
+	closed       []string
+	calls        []string
+}
+
+func newFakeRemoteShim(h adapterhost.Handle, addr string) *fakeRemoteShim {
+	return &fakeRemoteShim{
+		handle:     h,
+		listenAddr: addr,
+		registered: make(map[string]string),
+	}
+}
+
+func (f *fakeRemoteShim) record(call string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, call)
+}
+
+func (f *fakeRemoteShim) WaitForHandle(_ context.Context, adapterType, scope string) (adapterhost.Handle, error) {
+	f.record(fmt.Sprintf("WaitForHandle:%s:%s", adapterType, scope))
+	return f.handle, nil
+}
+
+func (f *fakeRemoteShim) WaitForFreshHandle(_ context.Context, adapterType, scope string, _ adapterhost.Handle) (adapterhost.Handle, error) {
+	f.record(fmt.Sprintf("WaitForFreshHandle:%s:%s", adapterType, scope))
+	return f.handle, nil
+}
+
+func (f *fakeRemoteShim) RegisterScope(scope, token string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.registered[scope] = token
+}
+
+func (f *fakeRemoteShim) UnregisterScope(scope string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.unregistered = append(f.unregistered, scope)
+}
+
+func (f *fakeRemoteShim) CloseHandle(_ context.Context, adapterType, scope string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closed = append(f.closed, fmt.Sprintf("%s:%s", adapterType, scope))
+	return nil
+}
+
+func (f *fakeRemoteShim) ListenAddr() string { return f.listenAddr }
+
+func (f *fakeRemoteShim) registeredToken(scope string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.registered[scope]
+}
+
+// eventTrackingSink captures both legacy and structured lifecycle events.
+type eventTrackingSink struct {
+	fakeSink
+	mu                sync.Mutex
+	lifecycleStatuses []string
+	provisionEvents   []AdapterLifecycleEvent
+}
+
+func (s *eventTrackingSink) OnAdapterLifecycle(runID, adapter, status, detail string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lifecycleStatuses = append(s.lifecycleStatuses, fmt.Sprintf("%s:%s:%s", runID, adapter, status))
+}
+
+func (s *eventTrackingSink) OnAdapterLifecycleEvent(event *AdapterLifecycleEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.provisionEvents = append(s.provisionEvents, *event)
+}
+
+func (s *eventTrackingSink) hasStatus(status string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.provisionEvents {
+		if s.provisionEvents[i].Status == status {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *eventTrackingSink) firstStatus(status string) (AdapterLifecycleEvent, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.provisionEvents {
+		if s.provisionEvents[i].Status == status {
+			return s.provisionEvents[i], true
+		}
+	}
+	return AdapterLifecycleEvent{}, false
+}
+
+// perScopeRemoteGraph returns a compiled workflow with a remote environment that
+// has per_scope_sessions enabled and a single noop adapter bound to it.
+func perScopeRemoteGraph(t *testing.T) *workflow.FSMGraph {
+	t.Helper()
+	return compile(t, `
+workflow {
+  name = "per-scope-test"
+  version = "0.1"
+  initial_state = "start"
+  target_state  = "done"
+}
+
+environment "remote" "prod" {
+  listen_address     = "127.0.0.1:0"
+  per_scope_sessions = true
+}
+
+adapter "noop" "default" {
+  environment = remote.prod
+}
+
+step "start" {
+  target = adapter.noop.default
+  outcome "success" { next = step.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}`)
+}
+
+func TestInitScopeAdapters_PerScope_EmitsProvisionWanted(t *testing.T) {
+	ctx := context.Background()
+	g := perScopeRemoteGraph(t)
+	dataDir := t.TempDir()
+
+	sessions := adapterhost.NewSessionManager(&fakeLoader{})
+	sessions.SetGraph(g)
+	shim := newFakeRemoteShim(&fakeRemoteHandle{}, "127.0.0.1:4242")
+	sessions.SetRemoteShim(shim)
+
+	lifecycle := newScopeLifecycleState(dataDir)
+	lifecycle.setRunID("run-123")
+	sink := &eventTrackingSink{}
+	rlc := &remoteLifecycleContext{scopeLifecycle: lifecycle}
+	deps := Deps{Sessions: sessions, Sink: sink}
+
+	order, err := initScopeAdapters(ctx, g, deps, nil, dataDir, "", nil, rlc)
+	if err != nil {
+		t.Fatalf("initScopeAdapters: %v", err)
+	}
+	if len(order) != 1 || order[0] != "noop.default" {
+		t.Fatalf("expected order [noop.default], got %v", order)
+	}
+
+	// A provision-wanted event must have been emitted before WaitForHandle returned.
+	if !sink.hasStatus("provision_wanted") {
+		t.Fatalf("expected provision_wanted event, got %v", sink.provisionEvents)
+	}
+
+	event, ok := sink.firstStatus("provision_wanted")
+	if !ok {
+		t.Fatal("provision_wanted event disappeared")
+	}
+	if event.RunID != "run-123" {
+		t.Errorf("RunID = %q, want run-123", event.RunID)
+	}
+	if event.ScopeName != "" {
+		t.Errorf("ScopeName = %q, want empty root scope", event.ScopeName)
+	}
+	if event.AdapterName != "default" {
+		t.Errorf("AdapterName = %q, want default", event.AdapterName)
+	}
+	if event.ShimListenAddress != "127.0.0.1:4242" {
+		t.Errorf("ShimListenAddress = %q, want 127.0.0.1:4242", event.ShimListenAddress)
+	}
+	if event.TokenRef == "" {
+		t.Fatal("TokenRef must be a non-empty file path")
+	}
+	if !strings.HasPrefix(event.TokenRef, dataDir) {
+		t.Errorf("TokenRef %q must be under dataDir %q", event.TokenRef, dataDir)
+	}
+
+	// The token reference must exist and contain the same token registered with the shim.
+	tokenBytes, err := os.ReadFile(event.TokenRef)
+	if err != nil {
+		t.Fatalf("read token file: %v", err)
+	}
+	token := string(tokenBytes)
+	scopeKey := event.ScopeName + "/" + event.ScopeInstanceID
+	if got := shim.registeredToken(scopeKey); got != token {
+		t.Errorf("shim registered token %q, want %q", got, token)
+	}
+
+	// Directory/file permissions must restrict access.
+	dir := filepath.Dir(event.TokenRef)
+	if info, err := os.Stat(dir); err != nil {
+		t.Fatalf("stat token dir: %v", err)
+	} else if info.Mode().Perm() != 0o700 {
+		t.Errorf("token dir permissions = %o, want 0o700", info.Mode().Perm())
+	}
+	if info, err := os.Stat(event.TokenRef); err != nil {
+		t.Fatalf("stat token file: %v", err)
+	} else if info.Mode().Perm() != 0o600 {
+		t.Errorf("token file permissions = %o, want 0o600", info.Mode().Perm())
+	}
+
+	// The raw token must not appear in any emitted event payload.
+	payload := fmt.Sprintf("%+v", sink.provisionEvents)
+	if strings.Contains(payload, token) {
+		t.Fatalf("event payload contains raw token; payload=%s", payload)
+	}
+
+	// WaitForHandle must have been keyed by adapter type + scope.
+	found := false
+	for _, c := range shim.calls {
+		if c == "WaitForHandle:noop:"+scopeKey {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected WaitForHandle call with scope %q, calls=%v", scopeKey, shim.calls)
+	}
+}
+
+func TestTearDownScopeAdapters_PerScope_EmitsReleased(t *testing.T) {
+	ctx := context.Background()
+	g := perScopeRemoteGraph(t)
+	dataDir := t.TempDir()
+
+	sessions := adapterhost.NewSessionManager(&fakeLoader{})
+	sessions.SetGraph(g)
+	shim := newFakeRemoteShim(&fakeRemoteHandle{}, "127.0.0.1:4242")
+	sessions.SetRemoteShim(shim)
+
+	lifecycle := newScopeLifecycleState(dataDir)
+	lifecycle.setRunID("run-123")
+	sink := &eventTrackingSink{}
+	rlc := &remoteLifecycleContext{scopeLifecycle: lifecycle}
+	deps := Deps{Sessions: sessions, Sink: sink}
+
+	order, err := initScopeAdapters(ctx, g, deps, nil, dataDir, "", nil, rlc)
+	if err != nil {
+		t.Fatalf("initScopeAdapters: %v", err)
+	}
+
+	tearDownScopeAdapters(ctx, order, deps, rlc)
+
+	if !sink.hasStatus("released") {
+		t.Fatalf("expected released event, got %v", sink.provisionEvents)
+	}
+
+	released, ok := sink.firstStatus("released")
+	if !ok {
+		t.Fatal("released event disappeared")
+	}
+	provision, _ := sink.firstStatus("provision_wanted")
+	if released.TokenRef != provision.TokenRef {
+		t.Errorf("released.TokenRef %q != provision.TokenRef %q", released.TokenRef, provision.TokenRef)
+	}
+	if released.ScopeInstanceID != provision.ScopeInstanceID {
+		t.Errorf("released.ScopeInstanceID %q != provision.ScopeInstanceID %q", released.ScopeInstanceID, provision.ScopeInstanceID)
+	}
+
+	scopeKey := provision.ScopeName + "/" + provision.ScopeInstanceID
+	if !containsString(shim.unregistered, scopeKey) {
+		t.Errorf("expected UnregisterScope %q, got %v", scopeKey, shim.unregistered)
+	}
+	wantClose := "noop:" + scopeKey
+	if !containsString(shim.closed, wantClose) {
+		t.Errorf("expected CloseRemoteHandle %q, got %v", wantClose, shim.closed)
+	}
+}
+
+func containsString(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func TestInitScopeAdapters_PerScopeDisabled_NoLifecycleEvents(t *testing.T) {
+	ctx := context.Background()
+	g := compile(t, `
+workflow {
+  name = "legacy-remote-test"
+  version = "0.1"
+  initial_state = "start"
+  target_state  = "done"
+}
+
+environment "remote" "prod" {
+  listen_address = "127.0.0.1:0"
+}
+
+adapter "noop" "default" {
+  environment = remote.prod
+}
+
+step "start" {
+  target = adapter.noop.default
+  outcome "success" { next = step.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}`)
+	dataDir := t.TempDir()
+
+	sessions := adapterhost.NewSessionManager(&fakeLoader{})
+	sessions.SetGraph(g)
+	shim := newFakeRemoteShim(&fakeRemoteHandle{}, "127.0.0.1:4242")
+	sessions.SetRemoteShim(shim)
+
+	lifecycle := newScopeLifecycleState(dataDir)
+	lifecycle.setRunID("run-legacy")
+	sink := &eventTrackingSink{}
+	rlc := &remoteLifecycleContext{scopeLifecycle: lifecycle}
+	deps := Deps{Sessions: sessions, Sink: sink}
+
+	order, err := initScopeAdapters(ctx, g, deps, nil, dataDir, "", nil, rlc)
+	if err != nil {
+		t.Fatalf("initScopeAdapters: %v", err)
+	}
+	if len(order) != 1 {
+		t.Fatalf("expected order [noop.default], got %v", order)
+	}
+
+	if len(sink.provisionEvents) != 0 {
+		t.Errorf("expected no provision events with per_scope_sessions disabled, got %v", sink.provisionEvents)
+	}
+	if len(shim.registered) != 0 {
+		t.Errorf("expected no scope registrations with per_scope_sessions disabled, got %v", shim.registered)
+	}
+
+	// WaitForHandle must have been called with an empty scope (legacy keying).
+	found := false
+	for _, c := range shim.calls {
+		if c == "WaitForHandle:noop:" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected legacy WaitForHandle with empty scope, calls=%v", shim.calls)
 	}
 }

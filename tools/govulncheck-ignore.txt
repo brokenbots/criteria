@@ -1,0 +1,27 @@
+# govulncheck documented suppressions (CRI-9)
+#
+# Default posture: NO ignores. Add an entry only when a finding is a documented,
+# auditable false positive with no available fix.
+#
+# Each entry MUST carry:
+#   - id           the GO advisory id (e.g. "GO-2026-1234")
+#   - reason       why it is safe to defer (unreachable code path, false positive,
+#                  upstream fix unavailable, etc.)
+#   - review by    a future review-expiry date (YYYY-MM-DD). On expiry the
+#                  finding re-surfaces and must be re-justified or cleared.
+#
+# Example (keep commented unless an exception is actually in force):
+# GO-2026-1234
+
+# GO-2026-5932 (golang.org/x/crypto/openpgp): re-checked 2026-09-11. The
+# advisory still has no fixed version and is reported against x/crypto v0.55.0
+# (the latest release). We never parse PGP: the package is linked only because
+# sigstore-go/pkg/sign imports rekor's pki registry, which registers a pgp
+# backend we never select (criteria verifies cosign keyless and key-pair
+# signatures via x509/fulcio). govulncheck reports init-time and
+# interface-dispatch traces, but criteria never calls into openpgp parsing.
+# Dropping the dependency would mean dropping signature verification, the trust
+# anchor for `criteria adapter lock` pinning. Re-check whether rekor has split
+# its pgp backend out of pkg/pki.
+# Review by: 2026-10-01
+GO-2026-5932

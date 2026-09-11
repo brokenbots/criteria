@@ -158,6 +158,7 @@ func (s *pauseSink) OnStepIterationCompleted(string, string, string)            
 func (s *pauseSink) OnStepIterationItem(string, int, string)                      {}
 func (s *pauseSink) OnScopeIterCursorSet(string)                                  {}
 func (s *pauseSink) OnAdapterLifecycle(string, string, string, string)            {}
+func (s *pauseSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent)  {}
 func (s *pauseSink) OnRunOutputs([]map[string]string)                             {}
 func (s *pauseSink) OnStepOutcomeDefaulted(string, string, string)                {}
 func (s *pauseSink) OnStepOutcomeUnknown(string, string)                          {}

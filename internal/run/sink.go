@@ -15,6 +15,7 @@ import (
 
 	"github.com/brokenbots/criteria/events"
 	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/internal/engine"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
@@ -223,6 +224,25 @@ func (s *Sink) OnScopeIterCursorSet(cursorJSON string) {
 // server does not have a lifecycle envelope in its proto contract; lifecycle
 // state is observable via the session crash/respawn adapter events.
 func (s *Sink) OnAdapterLifecycle(stepName, adapterName, status, detail string) {}
+
+// OnAdapterLifecycleEvent publishes an adapter.lifecycle event for the
+// remote-adapter reconciler. The payload uses pb.AdapterEvent so existing
+// server consumers can read it; the token is referenced by file path only.
+func (s *Sink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent) {
+	s.publish(&pb.AdapterEvent{
+		Adapter: event.AdapterName,
+		Kind:    "adapter.lifecycle." + event.Status,
+		Data: encodeAdapterData(map[string]any{
+			"run_id":              event.RunID,
+			"scope_name":          event.ScopeName,
+			"scope_instance_id":   event.ScopeInstanceID,
+			"adapter":             event.AdapterName,
+			"digest":              event.Digest,
+			"shim_listen_address": event.ShimListenAddress,
+			"token_ref":           event.TokenRef,
+		}),
+	})
+}
 
 // OnRunOutputs publishes a run.outputs envelope when declared outputs are evaluated (W09).
 func (s *Sink) OnRunOutputs(outputs []map[string]string) {

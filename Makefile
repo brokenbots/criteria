@@ -1,5 +1,5 @@
 .PHONY: help bootstrap tidy build plugins install proto proto-lint proto-check-drift \
-	test test-cover coverage-check test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint lint-sh vuln-scan deps-outdated deps-majors validate validate-docs example-plugin bench docker-runtime docker-runtime-smoke ci clean
+	test test-cover coverage-check test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint lint-sh vuln-scan vulncheck deps-outdated deps-majors validate validate-docs example-plugin bench docker-runtime docker-runtime-smoke ci clean
 
 # Default target: list available targets.
 help:
@@ -157,9 +157,10 @@ lint-no-todos: ## Fail if any TODO/FIXME/XXX marker appears in non-test producti
 	fi
 	@echo "OK: no TODO/FIXME/XXX markers in production code"
 
-lint-sh: ## Check POSIX shell syntax of install.sh
+lint-sh: ## Check POSIX shell syntax of install.sh and tools/govulncheck-filter.sh
 	@sh -n install.sh
-	@echo "install.sh: POSIX syntax OK"
+	@sh -n tools/govulncheck-filter.sh
+	@echo "Shell scripts: POSIX syntax OK"
 
 lint: lint-imports lint-go lint-baseline-check spec-check lint-no-todos lint-sh ## Run all linters
 
@@ -169,6 +170,19 @@ lint: lint-imports lint-go lint-baseline-check spec-check lint-no-todos lint-sh 
 OSV_SCANNER_VERSION := v2.3.8
 vuln-scan: ## Scan all workspace modules for known vulnerabilities (osv-scanner; local parity with CI osv-scan)
 	go run github.com/google/osv-scanner/v2/cmd/osv-scanner@$(OSV_SCANNER_VERSION) scan source -r .
+
+# Pinned govulncheck version — keep in sync with the govulncheck CI job.
+VULNCHECK_VERSION := v1.1.4
+
+bin/govulncheck: ## Build the govulncheck binary (pinned version; output: bin/govulncheck)
+	@install -d bin
+	GOBIN=$(CURDIR)/bin go install golang.org/x/vuln/cmd/govulncheck@$(VULNCHECK_VERSION)
+
+vulncheck: bin/govulncheck ## Scan all workspace modules for reachable Go vulnerabilities (govulncheck; local parity with CI)
+	./tools/govulncheck-filter.sh -ignore $(CURDIR)/tools/govulncheck-ignore.txt -govulncheck ./bin/govulncheck ./...
+	cd sdk      && ../tools/govulncheck-filter.sh -ignore $(CURDIR)/tools/govulncheck-ignore.txt -govulncheck ../bin/govulncheck ./...
+	cd tools    && ../tools/govulncheck-filter.sh -ignore $(CURDIR)/tools/govulncheck-ignore.txt -govulncheck ../bin/govulncheck ./...
+	cd workflow && ../tools/govulncheck-filter.sh -ignore $(CURDIR)/tools/govulncheck-ignore.txt -govulncheck ../bin/govulncheck ./...
 
 # Dependency-freshness tooling (WS50). gomajor + go-mod-outdated are pinned in
 # tools/go.mod, so these `go run` invocations resolve via the workspace (no

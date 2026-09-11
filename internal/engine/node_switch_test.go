@@ -67,16 +67,17 @@ func (s *switchSink) OnBranchEvaluated(node, matchedArm, target, condition strin
 	s.branchEvents = append(s.branchEvents, branchEvent{node: node, matchedArm: matchedArm, target: target, condition: condition})
 	s.mu.Unlock()
 }
-func (s *switchSink) OnForEachEntered(string, int)                      {}
-func (s *switchSink) OnStepIterationStarted(string, int, string, bool)  {}
-func (s *switchSink) OnStepIterationCompleted(string, string, string)   {}
-func (s *switchSink) OnStepIterationItem(string, int, string)           {}
-func (s *switchSink) OnScopeIterCursorSet(string)                       {}
-func (s *switchSink) OnAdapterLifecycle(string, string, string, string) {}
-func (s *switchSink) OnRunOutputs([]map[string]string)                  {}
-func (s *switchSink) OnStepOutcomeDefaulted(string, string, string)     {}
-func (s *switchSink) OnStepOutcomeUnknown(string, string)               {}
-func (s *switchSink) StepEventSink(string) adapter.EventSink            { return noopAdapterSink{} }
+func (s *switchSink) OnForEachEntered(string, int)                                {}
+func (s *switchSink) OnStepIterationStarted(string, int, string, bool)            {}
+func (s *switchSink) OnStepIterationCompleted(string, string, string)             {}
+func (s *switchSink) OnStepIterationItem(string, int, string)                     {}
+func (s *switchSink) OnScopeIterCursorSet(string)                                 {}
+func (s *switchSink) OnAdapterLifecycle(string, string, string, string)           {}
+func (s *switchSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent) {}
+func (s *switchSink) OnRunOutputs([]map[string]string)                            {}
+func (s *switchSink) OnStepOutcomeDefaulted(string, string, string)               {}
+func (s *switchSink) OnStepOutcomeUnknown(string, string)                         {}
+func (s *switchSink) StepEventSink(string) adapter.EventSink                      { return noopAdapterSink{} }
 
 // --- Unit tests for switchNode.Evaluate ---
 

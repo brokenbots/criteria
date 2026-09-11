@@ -169,6 +169,12 @@ func (s *lockedSink) OnAdapterLifecycle(stepName, adapterName, status, detail st
 	s.Sink.OnAdapterLifecycle(stepName, adapterName, status, detail)
 }
 
+func (s *lockedSink) OnAdapterLifecycleEvent(event *AdapterLifecycleEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Sink.OnAdapterLifecycleEvent(event)
+}
+
 func (s *lockedSink) OnRunOutputs(outputs []map[string]string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

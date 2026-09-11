@@ -202,7 +202,7 @@ func (h *builtinRemoteHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
 		switch name {
 		case "variables", "policy_mode", "os", "working_directory",
 			"listen_address", "mtls", "accept_token", "accept_digest_from", "insecure", "config",
-			"process",
+			"process", "per_scope_sessions",
 			"tls_handshake_deadline", "identity_handshake_deadline":
 			// accepted; process.exec is validated at compile time and enforced at
 			// runtime: exact allow-lists are rejected because remote isolation
@@ -213,7 +213,7 @@ func (h *builtinRemoteHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  fmt.Sprintf("remote environment: unknown attribute %q", name),
-				Detail:   "remote environments accept variables, policy_mode, os, working_directory, listen_address, mtls, accept_token, accept_digest_from, insecure, process, config, tls_handshake_deadline, and identity_handshake_deadline.",
+				Detail:   "remote environments accept variables, policy_mode, os, working_directory, listen_address, mtls, accept_token, accept_digest_from, insecure, process, per_scope_sessions, config, tls_handshake_deadline, and identity_handshake_deadline.",
 				Subject:  &rng,
 			})
 		}

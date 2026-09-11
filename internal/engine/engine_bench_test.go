@@ -36,6 +36,7 @@ func (benchSink) OnStepIterationCompleted(string, string, string)              {
 func (benchSink) OnStepIterationItem(string, int, string)                      {}
 func (benchSink) OnScopeIterCursorSet(string)                                  {}
 func (benchSink) OnAdapterLifecycle(string, string, string, string)            {}
+func (benchSink) OnAdapterLifecycleEvent(*AdapterLifecycleEvent)               {}
 func (benchSink) OnRunOutputs([]map[string]string)                             {}
 func (benchSink) OnStepOutcomeDefaulted(string, string, string)                {}
 func (benchSink) OnStepOutcomeUnknown(string, string)                          {}

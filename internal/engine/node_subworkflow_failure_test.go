@@ -55,6 +55,7 @@ func (s *captureSink) OnAdapterLifecycle(stepName, adapter, status, detail strin
 	defer s.mu.Unlock()
 	s.lifecycle = append(s.lifecycle, lifecycleEvent{stepName: stepName, adapter: adapter, status: status, detail: detail})
 }
+func (s *captureSink) OnAdapterLifecycleEvent(event *AdapterLifecycleEvent) {}
 
 func (s *captureSink) OnStepEntered(step, adapter string, attempt int) {
 	s.mu.Lock()

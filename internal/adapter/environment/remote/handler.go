@@ -35,6 +35,7 @@ type Config struct {
 	ClientCAPath              string
 	ClientIdentityPattern     string
 	Insecure                  bool
+	PerScopeSessions          bool
 	TLSHandshakeDeadline      time.Duration
 	IdentityHandshakeDeadline time.Duration
 }
@@ -59,7 +60,7 @@ func (h *RemoteHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
 		switch name {
 		case "variables", "policy_mode", "os", "working_directory",
 			"listen_address", "mtls", "accept_token", "accept_digest_from", "insecure",
-			"process",
+			"process", "per_scope_sessions",
 			"tls_handshake_deadline", "identity_handshake_deadline":
 			// accepted; process.exec is validated at compile time and enforced at
 			// runtime: exact allow-lists are rejected because remote isolation
@@ -70,7 +71,7 @@ func (h *RemoteHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  fmt.Sprintf("remote environment: unknown attribute %q", name),
-				Detail:   "remote environments accept variables, policy_mode, os, working_directory, listen_address, mtls, accept_token, accept_digest_from, insecure, process, tls_handshake_deadline, and identity_handshake_deadline.",
+				Detail:   "remote environments accept variables, policy_mode, os, working_directory, listen_address, mtls, accept_token, accept_digest_from, insecure, process, per_scope_sessions, tls_handshake_deadline, and identity_handshake_deadline.",
 				Subject:  &rng,
 			})
 		}
@@ -80,6 +81,21 @@ func (h *RemoteHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
 
 // IsolationKind returns workflow.EnvIsolationRemote.
 func (h *RemoteHandler) IsolationKind() workflow.EnvIsolationKind { return workflow.EnvIsolationRemote }
+
+// EnvPerScopeSessions reports whether the given environment node is a remote
+// environment with per_scope_sessions enabled. It returns false for nil or
+// non-remote environments and swallows parse errors so callers can treat the
+// attribute as opt-in.
+func EnvPerScopeSessions(env *workflow.EnvironmentNode) bool {
+	if env == nil || env.Type != "remote" {
+		return false
+	}
+	cfg, err := ParseConfig(env.RawBody)
+	if err != nil {
+		return false
+	}
+	return cfg.PerScopeSessions
+}
 
 // Prepare parses the HCL body into a typed Config.
 func (h *RemoteHandler) Prepare(_ context.Context, body hcl.Body) error {
@@ -195,7 +211,7 @@ func buildAttrGetter(rawBody hcl.Body) (func(string) (*hcl.Attribute, bool), err
 }
 
 func parseTopLevelAttrs(cfg *Config, getAttr func(string) (*hcl.Attribute, bool)) error {
-	for _, mapping := range []struct {
+	stringMappings := []struct {
 		name   string
 		target *string
 	}{
@@ -203,7 +219,38 @@ func parseTopLevelAttrs(cfg *Config, getAttr func(string) (*hcl.Attribute, bool)
 		{"accept_token", &cfg.AcceptToken},
 		{"policy_mode", &cfg.PolicyMode},
 		{"accept_digest_from", &cfg.AcceptDigestFrom},
-	} {
+	}
+	if err := parseStringAttrs(getAttr, stringMappings); err != nil {
+		return err
+	}
+
+	boolMappings := []struct {
+		name   string
+		target *bool
+	}{
+		{"insecure", &cfg.Insecure},
+		{"per_scope_sessions", &cfg.PerScopeSessions},
+	}
+	if err := parseBoolAttrs(getAttr, boolMappings); err != nil {
+		return err
+	}
+
+	durationMappings := []struct {
+		name   string
+		target *time.Duration
+		def    time.Duration
+	}{
+		{"tls_handshake_deadline", &cfg.TLSHandshakeDeadline, DefaultTLSHandshakeDeadline},
+		{"identity_handshake_deadline", &cfg.IdentityHandshakeDeadline, DefaultIdentityHandshakeDeadline},
+	}
+	return parseDurationAttrs(getAttr, durationMappings)
+}
+
+func parseStringAttrs(getAttr func(string) (*hcl.Attribute, bool), mappings []struct {
+	name   string
+	target *string
+}) error {
+	for _, mapping := range mappings {
 		if v, ok := getAttr(mapping.name); ok {
 			val, err := attrAsString(v)
 			if err != nil {
@@ -212,23 +259,31 @@ func parseTopLevelAttrs(cfg *Config, getAttr func(string) (*hcl.Attribute, bool)
 			*mapping.target = val
 		}
 	}
+	return nil
+}
 
-	if v, ok := getAttr("insecure"); ok {
-		val, err := attrAsBool(v)
-		if err != nil {
-			return fmt.Errorf("remote environment: insecure: %w", err)
+func parseBoolAttrs(getAttr func(string) (*hcl.Attribute, bool), mappings []struct {
+	name   string
+	target *bool
+}) error {
+	for _, mapping := range mappings {
+		if v, ok := getAttr(mapping.name); ok {
+			val, err := attrAsBool(v)
+			if err != nil {
+				return fmt.Errorf("remote environment: %s: %w", mapping.name, err)
+			}
+			*mapping.target = val
 		}
-		cfg.Insecure = val
 	}
+	return nil
+}
 
-	for _, mapping := range []struct {
-		name   string
-		target *time.Duration
-		def    time.Duration
-	}{
-		{"tls_handshake_deadline", &cfg.TLSHandshakeDeadline, DefaultTLSHandshakeDeadline},
-		{"identity_handshake_deadline", &cfg.IdentityHandshakeDeadline, DefaultIdentityHandshakeDeadline},
-	} {
+func parseDurationAttrs(getAttr func(string) (*hcl.Attribute, bool), mappings []struct {
+	name   string
+	target *time.Duration
+	def    time.Duration
+}) error {
+	for _, mapping := range mappings {
 		if v, ok := getAttr(mapping.name); ok {
 			d, err := attrAsDuration(v)
 			if err != nil {
@@ -242,7 +297,6 @@ func parseTopLevelAttrs(cfg *Config, getAttr func(string) (*hcl.Attribute, bool)
 			*mapping.target = mapping.def
 		}
 	}
-
 	return nil
 }
 

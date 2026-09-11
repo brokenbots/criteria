@@ -41,11 +41,56 @@ pinned in `tools/go.mod` (no floating `@latest`):
 | `make deps-outdated` | [`go-mod-outdated`](https://github.com/psampaz/go-mod-outdated) | Which **direct** deps are behind their latest minor/patch (workspace-wide). |
 | `make deps-majors` | [`gomajor`](https://github.com/icholy/gomajor) | Which **major** (`/vN`) upgrades are available, per module. |
 | `make vuln-scan` | [`osv-scanner`](https://github.com/google/osv-scanner) | Which deps carry a known advisory. |
+| `make vulncheck` | [`govulncheck`](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck) | Which **reachable** Go vulnerabilities affect compiled code paths, per module. |
 
 A non-blocking `deps-report` CI job runs `make deps-outdated` on every PR and
 posts the result to the job summary, so drift is visible without flaking the
 build. Enforcement of "latest" stays with review, not a hard gate — upstream
 release cadence would make a hard gate flap.
+
+## Vulnerability scanning
+
+Two scanners run in CI and have local Make targets:
+
+- `make vuln-scan` runs `osv-scanner` across the whole workspace (`go.work` plus
+  all modules). It reports any dependency with a known advisory, even if the
+  vulnerable symbol is not reachable from our code.
+- `make vulncheck` runs `govulncheck` separately on each module (root, `sdk/`,
+  `tools/`, `workflow/`). It only reports vulnerabilities whose affected symbols
+  are reachable from the module's compiled code paths, which dramatically reduces
+  false positives compared to advisory-only scanning.
+
+### Running locally
+
+```bash
+make vulncheck
+```
+
+The command scans the four workspace modules in sequence and prints one summary
+per module. Clean output looks like:
+
+```
+No vulnerabilities found.
+```
+
+If a reachable vulnerability is found, `govulncheck` prints the advisory id
+(e.g. `GO-2026-1234`), the affected package, the call stack that reaches it, and
+exits non-zero. Because the Make target joins the four module scans with `&&`,
+any finding aborts the whole run so the failing module is visible immediately.
+
+### What failure means
+
+A failing `govulncheck` result is a blocking CI failure. Resolve it by one of:
+
+1. **Upgrade the dependency** to a version that fixes the vulnerability
+   (`go get <module>@<version>` in the affected module, then `go mod tidy` and
+   `go work sync`).
+2. **Document a suppression** if the finding is a false positive for our code
+   (unreachable in practice, only linked by init-side-effect, or already covered
+   by an explicit `osv-scanner.toml` ignore with a review date). Suppressions
+   must include the advisory id, reason, and review date so they are re-checked.
+
+Both `make vuln-scan` and `make vulncheck` are required checks in CI.
 
 Applying the upgrades:
 

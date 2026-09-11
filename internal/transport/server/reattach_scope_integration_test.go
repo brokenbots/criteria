@@ -224,6 +224,7 @@ func (s *integrationSink) OnStepIterationCompleted(string, string, string)      
 func (s *integrationSink) OnStepIterationItem(string, int, string)                      {}
 func (s *integrationSink) OnScopeIterCursorSet(string)                                  {}
 func (s *integrationSink) OnAdapterLifecycle(string, string, string, string)            {}
+func (s *integrationSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent)  {}
 func (s *integrationSink) OnRunOutputs([]map[string]string)                             {}
 func (s *integrationSink) OnStepOutcomeDefaulted(string, string, string)                {}
 func (s *integrationSink) OnStepOutcomeUnknown(string, string)                          {}

@@ -39,6 +39,7 @@ type remoteConfig struct {
 	Host     string
 	Token    string
 	Digest   string
+	Scope    string
 	Name     string
 	Version  string
 	Binary   string
@@ -54,6 +55,7 @@ func loadConfig() remoteConfig {
 		Host:     os.Getenv("CRITERIA_REMOTE_HOST"),
 		Token:    os.Getenv("CRITERIA_REMOTE_TOKEN"),
 		Digest:   os.Getenv("CRITERIA_REMOTE_DIGEST"),
+		Scope:    os.Getenv("CRITERIA_REMOTE_SCOPE"),
 		Name:     os.Getenv("CRITERIA_ADAPTER_NAME"),
 		Version:  os.Getenv("CRITERIA_ADAPTER_VERSION"),
 		Binary:   os.Getenv("CRITERIA_ADAPTER_BINARY"),
@@ -470,19 +472,8 @@ func serveOnce(ctx context.Context, cfg *remoteConfig, tlsConf *tls.Config, log 
 	log.Info("adapter ready", "adapter_name", info.GetName(), "adapter_version", info.GetVersion())
 
 	proxy := &proxyService{client: client}
-	opts := &adapterhost.ServeRemoteOptions{
-		Host:        cfg.Host,
-		TLSConfig:   tlsConf,
-		AcceptToken: cfg.Token,
-		Identity: adapterhost.RemoteIdentity{
-			Name:    cfg.Name,
-			Version: cfg.Version,
-			Digest:  cfg.Digest,
-		},
-	}
-
 	serveErr := make(chan error, 1)
-	go func() { serveErr <- adapterhost.ServeRemote(proxy, opts) }()
+	go func() { serveErr <- serveRemoteOnce(ctx, cfg, tlsConf, proxy, log) }()
 
 	select {
 	case <-ctx.Done():

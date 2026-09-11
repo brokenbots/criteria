@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/brokenbots/criteria/internal/engine"
 )
 
 // stripANSI removes ANSI SGR escapes so assertions can match plain text.
@@ -202,5 +204,18 @@ func TestConsoleSink_LifecycleTagAbsent(t *testing.T) {
 	out := buf.String()
 	if strings.Contains(out, "[adapter:") {
 		t.Errorf("expected no lifecycle tag when no events emitted, got: %q", out)
+	}
+}
+
+// TestConsoleSink_OnAdapterLifecycleEventNoOp verifies that the console
+// progress view ignores remote adapter lifecycle events and emits nothing.
+func TestConsoleSink_OnAdapterLifecycleEventNoOp(t *testing.T) {
+	var buf bytes.Buffer
+	sink := NewConsoleSink(&buf, []string{"build"}, false, nil)
+
+	sink.OnAdapterLifecycleEvent(&engine.AdapterLifecycleEvent{AdapterName: "noop"})
+
+	if buf.Len() != 0 {
+		t.Errorf("expected no console output, got: %q", buf.String())
 	}
 }

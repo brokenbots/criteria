@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/internal/engine"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -245,6 +246,9 @@ func (c *ConsoleSink) OnAdapterLifecycle(stepName, adapterName, status, detail s
 	c.stepLifecycle[stepName] = append(c.stepLifecycle[stepName], entry)
 	c.mu.Unlock()
 }
+
+// OnAdapterLifecycleEvent is a no-op on the console progress view.
+func (c *ConsoleSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent) {}
 
 // OnRunOutputs renders workflow outputs to the console (W09).
 // Outputs are rendered after the terminal state line in concise output mode.

@@ -34,6 +34,7 @@ type handshakeMessage struct {
 	Version string `json:"version"`
 	Digest  string `json:"digest"`
 	Token   string `json:"token"`
+	Scope   string `json:"scope,omitempty"`
 }
 
 // DigestVerifier checks whether a reported adapter digest is acceptable.
@@ -54,11 +55,13 @@ type Shim struct {
 	tlsHandshakeDeadline  time.Duration
 	identityDeadline      time.Duration
 
-	mu       sync.Mutex
-	sessions map[string]*session // adapter type → active session
-	waiters  map[string][]chan waitResult
-	listener net.Listener
-	started  bool
+	mu               sync.Mutex
+	sessions         map[string]*session // adapter type → active session (legacy) or adapter type + scope → session
+	waiters          map[string][]chan waitResult
+	listener         net.Listener
+	started          bool
+	perScopeSessions bool
+	scopeTokens      map[string]string // scope → accept token (only when perScopeSessions is true)
 }
 
 type session struct {
@@ -118,6 +121,8 @@ func NewShim(cfg *Config, verifier DigestVerifier) (*Shim, error) {
 		identityDeadline:      identityDeadline,
 		sessions:              make(map[string]*session),
 		waiters:               make(map[string][]chan waitResult),
+		perScopeSessions:      cfg.PerScopeSessions,
+		scopeTokens:           make(map[string]string),
 	}, nil
 }
 
@@ -202,6 +207,57 @@ func (s *Shim) Stop(ctx context.Context) error {
 	return nil
 }
 
+// SetPerScopeSessions enables or disables per-scope session isolation.
+// When enabled, the shim keys active sessions and waiters by adapter type
+// plus scope, and each scope must register its own accept token before a
+// connection is accepted. This is used by the engine to support Phase 2a
+// remote-adapter lifecycle events and token rotation.
+func (s *Shim) SetPerScopeSessions(enabled bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.perScopeSessions = enabled
+}
+
+// RegisterScope registers (or updates) the accept token for a given scope.
+// It is only consulted when perScopeSessions is enabled.
+func (s *Shim) RegisterScope(scope, token string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.scopeTokens == nil {
+		s.scopeTokens = make(map[string]string)
+	}
+	s.scopeTokens[scope] = token
+}
+
+// UnregisterScope removes the accept token for a scope. After this call the
+// shim rejects any reconnect using the old token.
+func (s *Shim) UnregisterScope(scope string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.scopeTokens, scope)
+}
+
+// sessionKey returns the map key used for sessions and waiters. When scope
+// isolation is off (legacy behaviour) the key is the adapter type only so
+// existing callers and tests see byte-identical behaviour.
+func (s *Shim) sessionKey(adapterType, scope string) string {
+	if !s.perScopeSessions || scope == "" {
+		return adapterType
+	}
+	return adapterType + "\x00" + scope
+}
+
+// ListenAddr returns the shim's bound listen address, or the configured
+// listen address if the shim has not started.
+func (s *Shim) ListenAddr() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.listener != nil {
+		return s.listener.Addr().String()
+	}
+	return s.listenAddr
+}
+
 func (s *Shim) serve(ctx context.Context, lis net.Listener) {
 	for {
 		conn, err := lis.Accept()
@@ -236,7 +292,7 @@ func (s *Shim) Accept(ctx context.Context, conn net.Conn) error {
 		return err
 	}
 
-	if err := s.verifyAdapterIdentity(conn, hs); err != nil {
+	if err := s.verifyAdapterIdentity(conn, &hs); err != nil {
 		return err
 	}
 
@@ -252,7 +308,7 @@ func (s *Shim) Accept(ctx context.Context, conn net.Conn) error {
 		return err
 	}
 
-	return s.buildAndStoreHandle(ctx, hs.Name, conn, res.udsConn, lis, socketPath, res.client, res.pluginClient, res.bridgeCancel, res.bridgeCtx, res.bridgeWG)
+	return s.buildAndStoreHandle(ctx, hs.Name, hs.Scope, conn, res.udsConn, lis, socketPath, res.client, res.pluginClient, res.bridgeCancel, res.bridgeCtx, res.bridgeWG)
 }
 
 func (s *Shim) performHandshake(ctx context.Context, conn net.Conn) error {
@@ -310,15 +366,42 @@ func (s *Shim) readHandshakeMessage(conn net.Conn) (handshakeMessage, error) {
 	return hs, nil
 }
 
-func (s *Shim) verifyAdapterIdentity(conn net.Conn, hs handshakeMessage) error {
+func (s *Shim) verifyAdapterIdentity(conn net.Conn, hs *handshakeMessage) error {
 	if s.digestVerifier != nil {
 		if err := s.digestVerifier.Verify(hs.Name, hs.Digest); err != nil {
 			_ = conn.Close()
 			return fmt.Errorf("digest verification: %w", err)
 		}
 	}
-	if s.acceptToken != "" {
-		if subtle.ConstantTimeCompare([]byte(hs.Token), []byte(s.acceptToken)) != 1 {
+
+	s.mu.Lock()
+	perScope := s.perScopeSessions
+	s.mu.Unlock()
+
+	if perScope {
+		// In per-scope mode each scope must have registered its own token.
+		// An empty scope is rejected: when isolation is enabled every adapter
+		// must present a valid, registered scope.
+		s.mu.Lock()
+		expectedToken, ok := s.scopeTokens[hs.Scope]
+		s.mu.Unlock()
+		if !ok {
+			_ = conn.Close()
+			return fmt.Errorf("scope %q is not registered", hs.Scope)
+		}
+		if subtle.ConstantTimeCompare([]byte(hs.Token), []byte(expectedToken)) != 1 {
+			_ = conn.Close()
+			return fmt.Errorf("accept_token verification failed for scope %q", hs.Scope)
+		}
+		return nil
+	}
+
+	// Legacy run-wide token verification.
+	s.mu.Lock()
+	expectedToken := s.acceptToken
+	s.mu.Unlock()
+	if expectedToken != "" {
+		if subtle.ConstantTimeCompare([]byte(hs.Token), []byte(expectedToken)) != 1 {
 			_ = conn.Close()
 			return fmt.Errorf("accept_token verification failed")
 		}
@@ -463,6 +546,7 @@ func (s *Shim) bridgeAndDial(
 func (s *Shim) buildAndStoreHandle(
 	ctx context.Context,
 	adapterName string,
+	scope string,
 	conn net.Conn,
 	udsConn net.Conn,
 	lis net.Listener,
@@ -483,8 +567,9 @@ func (s *Shim) buildAndStoreHandle(
 	})
 
 	s.mu.Lock()
+	key := s.sessionKey(adapterName, scope)
 	var old *session
-	if existing, ok := s.sessions[adapterName]; ok {
+	if existing, ok := s.sessions[key]; ok {
 		old = existing
 	}
 
@@ -494,13 +579,13 @@ func (s *Shim) buildAndStoreHandle(
 		cancelCtx:  bridgeCtx,
 		socketPath: socketPath,
 	}
-	s.sessions[adapterName] = sess
+	s.sessions[key] = sess
 
-	if waiters, ok := s.waiters[adapterName]; ok {
+	if waiters, ok := s.waiters[key]; ok {
 		for _, ch := range waiters {
 			ch <- waitResult{handle: handle}
 		}
-		delete(s.waiters, adapterName)
+		delete(s.waiters, key)
 	}
 	s.mu.Unlock()
 
@@ -525,8 +610,8 @@ func (s *Shim) buildAndStoreHandle(
 		_ = os.RemoveAll(filepath.Dir(socketPath))
 
 		s.mu.Lock()
-		if cur, ok := s.sessions[adapterName]; ok && cur.handle == handle {
-			delete(s.sessions, adapterName)
+		if cur, ok := s.sessions[key]; ok && cur.handle == handle {
+			delete(s.sessions, key)
 		}
 		s.mu.Unlock()
 	}()
@@ -535,8 +620,8 @@ func (s *Shim) buildAndStoreHandle(
 }
 
 // WaitForHandle blocks until a remote adapter of the given type connects.
-func (s *Shim) WaitForHandle(ctx context.Context, adapterType string) (adapterhost.Handle, error) {
-	return s.WaitForFreshHandle(ctx, adapterType, nil)
+func (s *Shim) WaitForHandle(ctx context.Context, adapterType, scope string) (adapterhost.Handle, error) {
+	return s.WaitForFreshHandle(ctx, adapterType, scope, nil)
 }
 
 // WaitForFreshHandle blocks until a remote adapter of the given type connects,
@@ -544,14 +629,15 @@ func (s *Shim) WaitForHandle(ctx context.Context, adapterType string) (adapterho
 // handle may still be the current session entry (its bridge-teardown runs
 // asynchronously), so callers pass the dead handle as `stale` to ensure they
 // wait for a genuinely new connection rather than receiving the dead one back.
-func (s *Shim) WaitForFreshHandle(ctx context.Context, adapterType string, stale adapterhost.Handle) (adapterhost.Handle, error) {
+func (s *Shim) WaitForFreshHandle(ctx context.Context, adapterType, scope string, stale adapterhost.Handle) (adapterhost.Handle, error) {
+	key := s.sessionKey(adapterType, scope)
 	s.mu.Lock()
-	if sess, ok := s.sessions[adapterType]; ok && sess.handle != stale {
+	if sess, ok := s.sessions[key]; ok && sess.handle != stale {
 		s.mu.Unlock()
 		return sess.handle, nil
 	}
 	ch := make(chan waitResult, 1)
-	s.waiters[adapterType] = append(s.waiters[adapterType], ch)
+	s.waiters[key] = append(s.waiters[key], ch)
 	s.mu.Unlock()
 
 	select {
@@ -560,19 +646,43 @@ func (s *Shim) WaitForFreshHandle(ctx context.Context, adapterType string, stale
 	case <-ctx.Done():
 		// Remove ourselves from waiters on cancellation.
 		s.mu.Lock()
-		waiters := s.waiters[adapterType]
+		waiters := s.waiters[key]
 		for i, w := range waiters {
 			if w == ch {
-				s.waiters[adapterType] = append(waiters[:i], waiters[i+1:]...)
+				s.waiters[key] = append(waiters[:i], waiters[i+1:]...)
 				break
 			}
 		}
-		if len(s.waiters[adapterType]) == 0 {
-			delete(s.waiters, adapterType)
+		if len(s.waiters[key]) == 0 {
+			delete(s.waiters, key)
 		}
 		s.mu.Unlock()
 		return nil, ctx.Err()
 	}
+}
+
+// CloseHandle removes a session for the given adapter type + scope.
+func (s *Shim) CloseHandle(ctx context.Context, adapterType, scope string) error {
+	key := s.sessionKey(adapterType, scope)
+	s.mu.Lock()
+	sess, ok := s.sessions[key]
+	if !ok {
+		s.mu.Unlock()
+		return nil
+	}
+	delete(s.sessions, key)
+	s.mu.Unlock()
+	if sess.cancel != nil {
+		sess.cancel()
+	}
+	if sess.handle != nil {
+		_ = sess.handle.CloseSession(ctx, "")
+		sess.handle.Kill()
+	}
+	if sess.socketPath != "" {
+		_ = os.RemoveAll(filepath.Dir(sess.socketPath))
+	}
+	return nil
 }
 
 // isDeadlineTimeout reports whether err was caused by a net.Conn deadline.
@@ -642,7 +752,7 @@ func validateListenerSecurity(cfg *Config) error {
 	}
 
 	hasMTLS := cfg.ServerCertPath != "" && cfg.ServerKeyPath != "" && cfg.ClientCAPath != ""
-	hasToken := cfg.AcceptToken != ""
+	hasToken := cfg.AcceptToken != "" || cfg.PerScopeSessions
 	if hasMTLS || hasToken || cfg.Insecure {
 		return nil
 	}
