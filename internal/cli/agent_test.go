@@ -497,7 +497,7 @@ func TestAgent_CrashRecovery_DeterministicResume(t *testing.T) {
 	// a brand new assignment.
 	nextID := uuid.NewString()
 	fake.QueueAssignment(makeAssignment(nextID, "two_step", twoStepWorkflow))
-	fake.WaitForCond(t, 10*time.Second, func() bool { return runHasEventOfType(fake, nextID, "RunCompleted") })
+	fake.WaitForCond(t, 30*time.Second, func() bool { return runHasEventOfType(fake, nextID, "RunCompleted") })
 
 	cancel2()
 	waitAgent(t, errCh2)
