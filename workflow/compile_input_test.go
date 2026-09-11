@@ -41,6 +41,8 @@ var copilotSchema = AdapterInfo{
 		"max_turns":        {Type: ConfigFieldNumber},
 		"reasoning_effort": {Type: ConfigFieldString},
 	},
+	Permissions:       []string{"read", "write", "shell"},
+	PermissionAliases: map[string]string{"read_file": "read", "write_file": "write"},
 }
 
 var testSchemas = map[string]AdapterInfo{

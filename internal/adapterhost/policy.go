@@ -193,10 +193,11 @@ var networkEgressVerbs = []string{
 // policy engine resolve those aliases so `allow_tools = ["read_file"]` grants the
 // "read" permission correctly.
 //
-// The workflow module (workflow/compile_steps.go) maintains a parallel static copy
-// of the copilot alias set for compile-time diagnostics. The workflow/ module cannot
-// import internal/ (import-boundary rule), so the two maps are intentionally separate.
-// When adding aliases here, also update copilotAllowToolsAliases in compile_steps.go.
+// The compiler obtains aliases from the adapter's InfoResponse via
+// internal/adapterhost/loader.go (AdapterInfoFromProto), so compile-time
+// diagnostics stay in sync with the live adapter vocabulary. This map is used
+// only by the runtime policy engine; keep it aligned with the aliases the
+// adapter publishes in its InfoResponse.
 var adapterPermissionAliases = map[string]map[string]string{
 	"copilot": {
 		"read_file":  "read",
@@ -271,22 +272,65 @@ type allowlistPolicy struct {
 
 func (p *allowlistPolicy) Decide(req PermissionRequest) (allow bool, reason string) {
 	targets := permissionMatchTargets(req)
+	bad := &badPatternTracker{}
 	for _, pat := range p.patterns {
 		for _, target := range targets {
-			if matched, err := filepath.Match(pat, target); err == nil && matched {
-				return true, "matched: " + pat
-			}
-			// If pat is an alias (e.g. "read_file" → "read"), also try matching
-			// the canonical form against the target so allow_tools entries using
-			// the friendly alias work transparently.
-			if canonical, ok := p.aliases[pat]; ok {
-				if matched, err := filepath.Match(canonical, target); err == nil && matched {
-					return true, "matched: " + pat + " (alias for " + canonical + ")"
-				}
+			if matched, reason := p.matchPattern(pat, target, bad); matched {
+				return true, reason
 			}
 		}
 	}
-	return false, "no matching allow_tools entry"
+	return false, bad.denialReason()
+}
+
+// matchPattern evaluates a single pattern against a target. It returns (true, reason)
+// on a match, otherwise (false, ""). Malformed patterns are recorded in bad.
+func (p *allowlistPolicy) matchPattern(pat, target string, bad *badPatternTracker) (matched bool, reason string) {
+	if ok, err := filepath.Match(pat, target); err != nil {
+		bad.record(pat)
+		return false, ""
+	} else if ok {
+		return true, "matched: " + pat
+	}
+
+	// If pat is an alias (e.g. "read_file" → "read"), also try matching the
+	// canonical form against the target so allow_tools entries using the friendly
+	// alias work transparently.
+	if canonical, ok := p.aliases[pat]; ok {
+		if ok, err := filepath.Match(canonical, target); err != nil {
+			// A canonical alias pattern should never be malformed; if it is,
+			// surface it too.
+			bad.record(canonical)
+			return false, ""
+		} else if ok {
+			return true, "matched: " + pat + " (alias for " + canonical + ")"
+		}
+	}
+	return false, ""
+}
+
+// badPatternTracker records malformed glob patterns and builds a denial reason.
+type badPatternTracker struct {
+	patterns []string
+}
+
+func (b *badPatternTracker) record(pat string) {
+	if b == nil {
+		return
+	}
+	for _, v := range b.patterns {
+		if v == pat {
+			return
+		}
+	}
+	b.patterns = append(b.patterns, pat)
+}
+
+func (b *badPatternTracker) denialReason() string {
+	if b == nil || len(b.patterns) == 0 {
+		return "no matching allow_tools entry"
+	}
+	return "no matching allow_tools entry; invalid pattern(s): " + strings.Join(b.patterns, ", ")
 }
 
 // permissionMatchTargets returns ordered candidates for matching allow_tools:

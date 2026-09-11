@@ -1166,7 +1166,20 @@ func AdapterInfoFromProto(resp *v2.InfoResponse) workflow.AdapterInfo {
 		Capabilities:           append([]string(nil), resp.GetCapabilities()...),
 		CompatibleEnvironments: append([]string(nil), resp.GetCompatibleEnvironments()...),
 		SupportedFeatures:      append([]string(nil), resp.GetSupportedFeatures()...),
+		Permissions:            append([]string(nil), resp.GetPermissions()...),
+		PermissionAliases:      copyStringMap(adapterPermissionAliases[resp.GetName()]),
 	}
+}
+
+func copyStringMap(m map[string]string) map[string]string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 func protoToConfigSchema(s *v2.AdapterSchemaProto) map[string]workflow.ConfigField {

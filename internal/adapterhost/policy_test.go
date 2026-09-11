@@ -167,6 +167,35 @@ func TestPolicyInvalidPatternSkipped(t *testing.T) {
 	}
 }
 
+func TestPolicyInvalidPatternSurfacesError(t *testing.T) {
+	// When no valid pattern matches and there are invalid patterns, the denial
+	// reason must mention the invalid pattern(s) instead of silently swallowing
+	// ErrBadPattern.
+	p := NewPolicy([]string{"[invalid", "read_*"})
+
+	allow, reason := p.Decide(PermissionRequest{ID: "1", Tool: "write_file"})
+	if allow {
+		t.Fatal("expected deny for non-matching tool")
+	}
+	if !strings.Contains(reason, "invalid pattern") {
+		t.Fatalf("expected denial reason to surface invalid pattern, got: %q", reason)
+	}
+	if !strings.Contains(reason, "[invalid") {
+		t.Fatalf("expected invalid pattern name in reason, got: %q", reason)
+	}
+
+	// When a valid pattern does match, the invalid pattern should not pollute the
+	// allow reason (first-match-wins for valid patterns).
+	p2 := NewPolicy([]string{"[invalid", "read_file"})
+	allow, reason = p2.Decide(PermissionRequest{ID: "2", Tool: "read_file"})
+	if !allow {
+		t.Fatalf("expected allow for valid literal match, got deny (%q)", reason)
+	}
+	if strings.Contains(reason, "invalid pattern") {
+		t.Fatalf("allow reason should not mention invalid pattern, got: %q", reason)
+	}
+}
+
 func TestPolicyWithAliasesReadFile(t *testing.T) {
 	// UF#02: allow_tools = ["read_file"] must grant the SDK kind "read".
 	aliases := map[string]string{"read_file": "read", "write_file": "write"}

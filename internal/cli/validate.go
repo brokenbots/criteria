@@ -95,9 +95,13 @@ func compileAndSchemas(ctx context.Context, workflowDir string, spec *workflow.S
 		SubWorkflowResolver: &workflow.LocalSubWorkflowResolver{AllowedRoots: subworkflowRoots},
 		Schemas:             schemas,
 	})
-	// Fold unverified-adapter warnings into the diagnostics; --warnings-as-errors
-	// promotes them so they fail validation rather than only printing.
-	return append(diags, promoteWarnings(schemaDiags, warnsAsErrors)...)
+	// Merge compile-time diagnostics (e.g. allow_tools matchability warnings)
+	// with unverified-adapter diagnostics; --warnings-as-errors promotes all of
+	// them so validation fails fast.
+	allDiags := make(hcl.Diagnostics, 0, len(diags)+len(schemaDiags))
+	allDiags = append(allDiags, diags...)
+	allDiags = append(allDiags, schemaDiags...)
+	return promoteWarnings(allDiags, warnsAsErrors)
 }
 
 func printValidationCompileError(path string, diags hcl.Diagnostics, diagJSON bool) {
