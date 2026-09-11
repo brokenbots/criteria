@@ -429,6 +429,15 @@ type AdapterInfo struct {
 	// Well-known values: "pause", "resume", "snapshot", "restore", "inspect".
 	// The host gates UI and behavior on this list; unknown values are ignored.
 	SupportedFeatures []string // NEW v2 (D76)
+	// Permissions is the adapter's declared tool/permission vocabulary. When
+	// non-empty, the compiler warns about allow_tools entries whose literal
+	// tool name is not present in this list (or in PermissionAliases).
+	Permissions []string
+	// PermissionAliases maps user-facing allow_tools names to the canonical
+	// SDK permission kind reported at runtime by this adapter. The compiler
+	// uses this to emit alias warnings and to treat aliases as valid during
+	// vocabulary checks.
+	PermissionAliases map[string]string
 }
 
 // OutcomeSpec maps an adapter outcome name to the next node.

@@ -317,3 +317,243 @@ state "done" { terminal = true }
 		t.Errorf("expected SecretInputExprs to contain api_key expression, got %v", step.SecretInputExprs)
 	}
 }
+
+// TestAllowToolsInvalidGlobWarning verifies that an allow_tools entry with an
+// unclosed character class emits a compile-time warning pointing to the pattern
+// syntax documentation.
+func TestAllowToolsInvalidGlobWarning(t *testing.T) {
+	schemas := map[string]AdapterInfo{
+		"claude-agent": {
+			InputSchema:       map[string]ConfigField{"prompt": {Required: true, Type: ConfigFieldString}},
+			Permissions:       []string{"Read", "Bash"},
+			PermissionAliases: map[string]string{},
+		},
+	}
+	src := `
+workflow {
+  name = "x"
+  version       = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+}
+
+adapter "claude-agent" "default" {}
+step "run" {
+  target = adapter.claude-agent.default
+  allow_tools = ["Bash[unclosed"]
+  input { prompt = "hello" }
+  outcome "success" { next = step.done }
+}
+state "done" { terminal = true }
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = Compile(spec, schemas)
+	if diags.HasErrors() {
+		t.Fatalf("invalid glob must be a warning, not an error: %s", diags.Error())
+	}
+	found := false
+	for _, d := range diags {
+		if d.Severity == hcl.DiagWarning && strings.Contains(d.Summary, "not a valid glob pattern") {
+			found = true
+			if !strings.Contains(d.Detail, "pattern-matching") {
+				t.Errorf("expected pattern syntax doc reference in detail, got: %s", d.Detail)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected invalid-glob warning, got: %s", diags.Error())
+	}
+}
+
+// TestAllowToolsWrongScopingFormWarning verifies that an allow_tools entry using
+// the Claude Code "Tool(...)" argument-scoping form emits a compile-time warning.
+func TestAllowToolsWrongScopingFormWarning(t *testing.T) {
+	schemas := map[string]AdapterInfo{
+		"claude-agent": {
+			InputSchema:       map[string]ConfigField{"prompt": {Required: true, Type: ConfigFieldString}},
+			Permissions:       []string{"Read", "Bash"},
+			PermissionAliases: map[string]string{},
+		},
+	}
+	src := `
+workflow {
+  name = "x"
+  version       = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+}
+
+adapter "claude-agent" "default" {}
+step "run" {
+  target = adapter.claude-agent.default
+  allow_tools = ["Bash(git log:*)"]
+  input { prompt = "hello" }
+  outcome "success" { next = step.done }
+}
+state "done" { terminal = true }
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = Compile(spec, schemas)
+	if diags.HasErrors() {
+		t.Fatalf("wrong scoping form must be a warning, not an error: %s", diags.Error())
+	}
+	found := false
+	for _, d := range diags {
+		if d.Severity == hcl.DiagWarning && strings.Contains(d.Summary, "argument-scoping form") {
+			found = true
+			if !strings.Contains(d.Detail, "colon form") || !strings.Contains(d.Detail, "pattern-matching") {
+				t.Errorf("expected colon-form hint and pattern syntax doc, got: %s", d.Detail)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected wrong-scoping-form warning, got: %s", diags.Error())
+	}
+}
+
+// TestAllowToolsUnknownToolWarning verifies that an allow_tools entry naming a
+// tool not in the adapter's declared permissions vocabulary emits a warning.
+func TestAllowToolsUnknownToolWarning(t *testing.T) {
+	schemas := map[string]AdapterInfo{
+		"claude-agent": {
+			InputSchema:       map[string]ConfigField{"prompt": {Required: true, Type: ConfigFieldString}},
+			Permissions:       []string{"Read"},
+			PermissionAliases: map[string]string{},
+		},
+	}
+	src := `
+workflow {
+  name = "x"
+  version       = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+}
+
+adapter "claude-agent" "default" {}
+step "run" {
+  target = adapter.claude-agent.default
+  allow_tools = ["Bash:git *"]
+  input { prompt = "hello" }
+  outcome "success" { next = step.done }
+}
+state "done" { terminal = true }
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = Compile(spec, schemas)
+	if diags.HasErrors() {
+		t.Fatalf("unknown tool must be a warning, not an error: %s", diags.Error())
+	}
+	found := false
+	for _, d := range diags {
+		if d.Severity == hcl.DiagWarning && strings.Contains(d.Summary, "not declared in the adapter's permissions vocabulary") {
+			found = true
+			if !strings.Contains(d.Summary, "Bash") {
+				t.Errorf("expected summary to mention tool name Bash, got: %s", d.Summary)
+			}
+			if !strings.Contains(d.Detail, "Read") {
+				t.Errorf("expected detail to list declared permissions, got: %s", d.Detail)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected unknown-tool warning, got: %s", diags.Error())
+	}
+}
+
+// TestAllowToolsAliasWarningGeneralized verifies that alias warnings are emitted
+// for any adapter that declares PermissionAliases, not only the hard-coded copilot
+// adapter.
+func TestAllowToolsAliasWarningGeneralized(t *testing.T) {
+	schemas := map[string]AdapterInfo{
+		"my-agent": {
+			InputSchema:       map[string]ConfigField{"prompt": {Required: true, Type: ConfigFieldString}},
+			Permissions:       []string{"fetch", "edit"},
+			PermissionAliases: map[string]string{"get_file": "fetch", "patch_file": "edit"},
+		},
+	}
+	src := `
+workflow {
+  name = "x"
+  version       = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+}
+
+adapter "my-agent" "default" {}
+step "run" {
+  target = adapter.my-agent.default
+  allow_tools = ["get_file"]
+  input { prompt = "hello" }
+  outcome "success" { next = step.done }
+}
+state "done" { terminal = true }
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = Compile(spec, schemas)
+	if diags.HasErrors() {
+		t.Fatalf("alias must be accepted without error: %s", diags.Error())
+	}
+	found := false
+	for _, d := range diags {
+		if d.Severity == hcl.DiagWarning && strings.Contains(d.Summary, "get_file") && strings.Contains(d.Summary, "fetch") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected alias warning for non-copilot adapter, got: %s", diags.Error())
+	}
+}
+
+// TestAllowToolsNoVocabularyNoUnknownWarning verifies that when an adapter does
+// not declare a permissions vocabulary, allow_tools entries are not flagged as
+// unknown tools.
+func TestAllowToolsNoVocabularyNoUnknownWarning(t *testing.T) {
+	schemas := map[string]AdapterInfo{
+		"permissive": {
+			InputSchema: map[string]ConfigField{"prompt": {Required: true, Type: ConfigFieldString}},
+			// Permissions left empty.
+		},
+	}
+	src := `
+workflow {
+  name = "x"
+  version       = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+}
+
+adapter "permissive" "default" {}
+step "run" {
+  target = adapter.permissive.default
+  allow_tools = ["AnythingGoes"]
+  input { prompt = "hello" }
+  outcome "success" { next = step.done }
+}
+state "done" { terminal = true }
+`
+	spec, diags := Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	_, diags = Compile(spec, schemas)
+	if diags.HasErrors() {
+		t.Fatalf("permissive adapter must not error: %s", diags.Error())
+	}
+	for _, d := range diags {
+		if d.Severity == hcl.DiagWarning && strings.Contains(d.Summary, "permissions vocabulary") {
+			t.Errorf("unexpected vocabulary warning for adapter with empty permissions: %s", d.Summary)
+		}
+	}
+}

@@ -4,25 +4,17 @@ package workflow
 
 import (
 	"fmt"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/hashicorp/hcl/v2"
 )
 
-// copilotAllowToolsAliases maps legacy user-facing allow_tools names to the
-// canonical Copilot SDK permission kind. When a step using the copilot adapter
-// lists one of these aliases, a compile-time warning is emitted pointing toward
-// the canonical form.
-//
-// This map is a workflow-package copy of the alias table in
-// internal/adapterhost/policy.go (adapterPermissionAliases["copilot"]). The two must
-// stay in sync; the duplication is intentional since the workflow package cannot
-// import internal/adapterhost due to import-boundary rules.
-var copilotAllowToolsAliases = map[string]string{
-	"read_file":  "read",
-	"write_file": "write",
-}
+// allowToolsPatternSyntaxDoc is the canonical documentation reference used in
+// diagnostics when an allow_tools entry is malformed.
+const allowToolsPatternSyntaxDoc = "see docs/workflow.md#pattern-matching for the criteria Tool:<command-glob> syntax"
 
 // compileAdapterStep compiles a non-iterating adapter-targeted step and registers
 // it in g. adapterRef is the pre-resolved "<type>.<name>" string from resolveStepTarget.
@@ -84,7 +76,7 @@ func compileAdapterStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[strin
 	outputSchema := resolveOutputSchema(adapterType, schemas)
 
 	node := newAdapterStepNode(sp, spec, adapterRef, effectiveOnCrash, envKey, timeout, inputMap, inputExprs, secretInputMap, secretInputExprs, outputSchema, maxVisits)
-	diags = append(diags, maybeCopilotAliasWarnings(sp.Name, adapterType, node.AllowTools)...)
+	diags = append(diags, validateAllowTools(sp.Name, adapterType, node.AllowTools, schemas)...)
 	diags = append(diags, compileOutcomeBlock(sp, node, g, opts, schemas[adapterRef].OutputSchema)...)
 
 	if len(node.Outcomes) == 0 {
@@ -127,22 +119,106 @@ func validateOnFailureForNonIterating(sp *StepSpec) hcl.Diagnostics {
 	return diags
 }
 
-// maybeCopilotAliasWarnings emits per-tool alias warnings when adapterName is
-// "copilot" and a tool in tools is a known alias of a canonical SDK kind.
-func maybeCopilotAliasWarnings(stepName, adapterName string, tools []string) hcl.Diagnostics {
-	if adapterName != "copilot" {
-		return nil
+// validateAllowTools checks each allow_tools entry for problems that would
+// prevent it from ever granting a runtime tool request against the target
+// adapter. It emits at least one warning per problematic entry for:
+//   - invalid filepath.Match glob syntax (e.g. an unclosed '['),
+//   - the Claude Code settings.json argument-scoping form (e.g. "Tool(...)"),
+//     which is not criteria's "Tool:<command-glob>" form,
+//   - tool names not declared in the adapter's permissions vocabulary,
+//   - recognized aliases, pointing toward the canonical SDK kind.
+func validateAllowTools(stepName, adapterType string, tools []string, schemas map[string]AdapterInfo) hcl.Diagnostics {
+	info, _ := adapterInfo(schemas, adapterType)
+	perms := make(map[string]struct{}, len(info.Permissions))
+	for _, p := range info.Permissions {
+		perms[p] = struct{}{}
 	}
+	aliases := info.PermissionAliases
+	if aliases == nil {
+		aliases = map[string]string{}
+	}
+
 	var diags hcl.Diagnostics
 	for _, tool := range tools {
-		if canonical, ok := copilotAllowToolsAliases[tool]; ok {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagWarning,
-				Summary:  fmt.Sprintf("step %q allow_tools: %q is a recognized alias for the Copilot SDK kind %q; consider using the canonical form for clarity", stepName, tool, canonical),
-			})
-		}
+		diags = append(diags, validateAllowToolsEntry(stepName, tool, perms, aliases)...)
 	}
 	return diags
+}
+
+// validateAllowToolsEntry checks a single allow_tools pattern.
+func validateAllowToolsEntry(stepName, tool string, perms map[string]struct{}, aliases map[string]string) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+
+	// 1. Glob syntax check. filepath.Match with an empty name is enough to
+	// surface ErrBadPattern without producing a false-positive match.
+	if _, err := filepath.Match(tool, ""); err != nil {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagWarning,
+			Summary:  fmt.Sprintf("step %q allow_tools: %q is not a valid glob pattern", stepName, tool),
+			Detail:   fmt.Sprintf("%v. %s", err, allowToolsPatternSyntaxDoc),
+		})
+	}
+
+	// 2. Wrong argument-scoping form check. The Claude Code settings.json shape
+	// uses parentheses to scope arguments ("Tool(command:pattern)"); criteria
+	// uses a colon ("Tool:<command-glob>").
+	if strings.ContainsRune(tool, '(') {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagWarning,
+			Summary:  fmt.Sprintf("step %q allow_tools: %q looks like the Claude Code argument-scoping form", stepName, tool),
+			Detail:   fmt.Sprintf("criteria uses the colon form (e.g. \"shell:git *\"), not parentheses. %s", allowToolsPatternSyntaxDoc),
+		})
+	}
+
+	// 3. Alias warning. Aliases are accepted at runtime, but we warn so users
+	// can move to the canonical form.
+	if canonical, ok := aliases[tool]; ok {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagWarning,
+			Summary:  fmt.Sprintf("step %q allow_tools: %q is a recognized alias for the %q SDK kind; consider using the canonical form for clarity", stepName, tool, canonical),
+		})
+		// An alias resolves to a canonical permission at runtime, so skip the
+		// raw vocabulary check for the alias string itself.
+		return diags
+	}
+
+	// 4. Vocabulary check. Only check when the adapter declares a vocabulary and
+	// the tool-name prefix is a literal (no glob metacharacters).
+	if len(perms) == 0 {
+		return diags
+	}
+	toolName := tool
+	if i := strings.Index(tool, ":"); i >= 0 {
+		toolName = tool[:i]
+	}
+	if toolName == "" || hasGlobMetacharacters(toolName) {
+		return diags
+	}
+	if _, ok := perms[toolName]; !ok {
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagWarning,
+			Summary:  fmt.Sprintf("step %q allow_tools: %q names tool %q which is not declared in the adapter's permissions vocabulary", stepName, tool, toolName),
+			Detail:   fmt.Sprintf("Declared permissions: %s. %s", sortedPermList(perms), allowToolsPatternSyntaxDoc),
+		})
+	}
+	return diags
+}
+
+// hasGlobMetacharacters reports whether s contains filepath.Match wildcard
+// characters. A tool name containing them cannot be checked statically against
+// the permissions vocabulary.
+func hasGlobMetacharacters(s string) bool {
+	return strings.ContainsAny(s, "*?[")
+}
+
+// sortedPermList returns the vocabulary keys as a sorted, comma-separated string.
+func sortedPermList(perms map[string]struct{}) string {
+	list := make([]string, 0, len(perms))
+	for p := range perms {
+		list = append(list, p)
+	}
+	sort.Strings(list)
+	return strings.Join(list, ", ")
 }
 
 // newAdapterStepNode constructs a StepNode for an adapter-targeted step.

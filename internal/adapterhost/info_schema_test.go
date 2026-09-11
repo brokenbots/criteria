@@ -130,6 +130,57 @@ func TestAdapterInfoFromProto_PropagatesSupportedFeatures(t *testing.T) {
 	}
 }
 
+// TestAdapterInfoFromProto_PropagatesPermissions verifies that InfoResponse.permissions
+// are copied into AdapterInfo.Permissions and that any adapter-specific aliases are
+// copied into AdapterInfo.PermissionAliases so the compiler can validate allow_tools.
+// The test uses the existing "copilot" adapter aliases so it does not need to mutate
+// unexported state from the external test package.
+func TestAdapterInfoFromProto_PropagatesPermissions(t *testing.T) {
+	resp := &v2.InfoResponse{
+		Name:        "copilot",
+		Version:     "1.0.0",
+		Permissions: []string{"read", "write", "shell"},
+	}
+
+	info := adapterhostpkg.AdapterInfoFromProto(resp)
+
+	if len(info.Permissions) != 3 {
+		t.Fatalf("Permissions len = %d; want 3", len(info.Permissions))
+	}
+	found := map[string]bool{}
+	for _, p := range info.Permissions {
+		found[p] = true
+	}
+	for _, want := range []string{"read", "write", "shell"} {
+		if !found[want] {
+			t.Errorf("Permissions does not contain %q; got %v", want, info.Permissions)
+		}
+	}
+
+	if len(info.PermissionAliases) != 2 {
+		t.Fatalf("PermissionAliases len = %d; want 2", len(info.PermissionAliases))
+	}
+	if info.PermissionAliases["read_file"] != "read" {
+		t.Errorf("PermissionAliases[read_file] = %q; want read", info.PermissionAliases["read_file"])
+	}
+	if info.PermissionAliases["write_file"] != "write" {
+		t.Errorf("PermissionAliases[write_file] = %q; want write", info.PermissionAliases["write_file"])
+	}
+}
+
+// TestAdapterInfoFromProto_EmptyPermissions verifies that when InfoResponse has no
+// permissions, AdapterInfo.Permissions is nil/empty and aliases are nil.
+func TestAdapterInfoFromProto_EmptyPermissions(t *testing.T) {
+	resp := &v2.InfoResponse{Name: "bare", Version: "0.1"}
+	info := adapterhostpkg.AdapterInfoFromProto(resp)
+	if len(info.Permissions) != 0 {
+		t.Errorf("expected empty Permissions for bare InfoResponse; got %v", info.Permissions)
+	}
+	if len(info.PermissionAliases) != 0 {
+		t.Errorf("expected empty PermissionAliases for bare InfoResponse; got %v", info.PermissionAliases)
+	}
+}
+
 // TestAdapterInfoFromProto_EmptySupportedFeatures verifies that when
 // InfoResponse has no supported_features, AdapterInfo.SupportedFeatures is nil.
 func TestAdapterInfoFromProto_EmptySupportedFeatures(t *testing.T) {
