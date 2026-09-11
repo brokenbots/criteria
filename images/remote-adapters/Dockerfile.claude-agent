@@ -1,0 +1,127 @@
+# syntax=docker/dockerfile:1
+
+# Build a remote-capable "fat" container image for the claude-agent adapter.
+#
+# The image packages the generic remote runner along with the claude-agent
+# adapter binary, the Claude Code CLI, and the runtime tooling the CLI and the
+# adapter need (Node.js, git, gh, CA certificates). At runtime the runner
+# starts the local adapter via hashicorp/go-plugin and forwards the v2 contract
+# to a remote host using adapterhost.ServeRemote.
+#
+# Required build arguments:
+#   ADAPTER_VERSION     - Semver without leading v (e.g. "0.5.1")
+#
+# Optional build arguments:
+#   BASE_IMAGE          - Runtime base image (default: node:20-alpine)
+#   CLAUDE_CODE_VERSION - npm version of @anthropic-ai/claude-code
+#                         (default: 2.1.268)
+#   BUN_IMAGE           - Bun builder image (default: oven/bun:1.2)
+#   SDK_REF             - Git ref for criteria-typescript-adapter-sdk
+#                         (default: main)
+#
+# Example:
+#   docker buildx build \
+#     --build-arg ADAPTER_VERSION=0.5.1 \
+#     -f images/remote-adapters/Dockerfile.claude-agent \
+#     -t ghcr.io/brokenbots/criteria-adapter-claude-agent:0.5.1 .
+
+ARG ADAPTER_VERSION=0.5.1
+ARG BASE_IMAGE=node:20-alpine
+ARG CLAUDE_CODE_VERSION=2.1.268
+ARG BUN_IMAGE=oven/bun:1.2
+ARG SDK_REF=main
+
+FROM golang:1.26.6-bookworm AS remote-runner-builder
+
+WORKDIR /src
+
+COPY go.mod go.sum ./
+COPY sdk/ sdk/
+COPY workflow/ workflow/
+COPY internal/ internal/
+COPY cmd/ cmd/
+
+ENV CGO_ENABLED=0
+ENV GOWORK=off
+
+RUN go build -trimpath -ldflags="-s -w" \
+    -o /usr/local/bin/criteria-adapter-remote-runner \
+    ./cmd/criteria-adapter-remote-runner
+
+FROM ${BUN_IMAGE} AS claude-agent-builder
+
+ARG ADAPTER_VERSION
+ARG SDK_REF
+ARG TARGETPLATFORM
+
+WORKDIR /src
+
+# Install git so we can clone the adapter and its SDK sibling, plus
+# certificates for the HTTPS clone.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates git && \
+    rm -rf /var/lib/apt/lists/*
+
+# Check out the SDK and adapter as siblings. The adapter's package.json
+# overrides @criteria/adapter-sdk to a file: path relative to the adapter
+# directory, so the sibling layout is required. The SDK is checked out from
+# its default branch (main) to match the claude-agent repo's own publish
+# workflow, which builds the SDK from HEAD.
+RUN git clone --depth 1 --branch "${SDK_REF}" \
+      https://github.com/brokenbots/criteria-typescript-adapter-sdk.git \
+      /criteria-typescript-adapter-sdk && \
+    git clone --depth 1 --branch "v${ADAPTER_VERSION}" \
+      https://github.com/brokenbots/criteria-typescript-adapter-claude-agent.git \
+      /criteria-typescript-adapter-claude-agent
+
+# Build the SDK first so the adapter's file: dependency resolves to built
+# artifacts (dist/index.js, etc.).
+WORKDIR /criteria-typescript-adapter-sdk
+RUN bun install && bun run build
+
+# Build the adapter binary, selecting the musl target so it runs on the
+# Alpine-based runtime image.
+WORKDIR /criteria-typescript-adapter-claude-agent
+RUN bun install
+RUN case "${TARGETPLATFORM}" in \
+      linux/amd64) target=bun-linux-x64-musl ;; \
+      linux/arm64) target=bun-linux-arm64-musl ;; \
+      *) target="" ;; \
+    esac && \
+    bun scripts/build.ts \
+      ${target:+--target=${target}} \
+      --outfile=/usr/local/bin/criteria-adapter-claude-agent && \
+    cp -r proto /usr/local/bin/proto
+
+FROM ${BASE_IMAGE}
+
+ARG ADAPTER_VERSION
+ARG CLAUDE_CODE_VERSION
+
+USER root
+
+# Install CA certificates (for TLS to the remote host), git (used by the
+# adapter and agent), and the GitHub CLI (gh).
+RUN apk add --no-cache ca-certificates git github-cli
+
+# Install the Claude Code CLI globally so the adapter can spawn it.
+RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" && \
+    npm cache clean --force
+
+RUN addgroup -g 10001 -S criteria && \
+    adduser -u 10001 -S criteria -G criteria
+
+COPY --from=remote-runner-builder /usr/local/bin/criteria-adapter-remote-runner /usr/local/bin/
+COPY --from=claude-agent-builder /usr/local/bin/criteria-adapter-claude-agent /usr/local/bin/
+COPY --from=claude-agent-builder /usr/local/bin/proto /usr/local/bin/proto
+
+ENV CRITERIA_ADAPTER_NAME=claude-agent \
+    CRITERIA_ADAPTER_BINARY=/usr/local/bin/criteria-adapter-claude-agent \
+    CRITERIA_ADAPTER_VERSION=${ADAPTER_VERSION} \
+    HOME=/home/criteria \
+    PATH=/home/criteria/.local/bin:${PATH}
+
+USER criteria
+WORKDIR /home/criteria
+
+ENTRYPOINT ["/usr/local/bin/criteria-adapter-remote-runner"]

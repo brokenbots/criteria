@@ -1,7 +1,7 @@
 name: Publish Remote Adapter Images
 
-# Build and push multi-platform container images for the shell and copilot
-# adapters packaged with the generic remote runner (ServeRemote).
+# Build and push multi-platform container images for the shell, copilot, and
+# claude-agent adapters packaged with the generic remote runner (ServeRemote).
 #
 # The workflow can be triggered by a tag of the form remote-adapters/v* or
 # manually, in which case the adapter versions are taken from workflow inputs.
@@ -24,6 +24,14 @@ on:
         description: '@github/copilot npm version for copilot image'
         required: true
         default: '1.0.82'
+      claude_agent_version:
+        description: 'Claude agent adapter version (semver without leading v)'
+        required: true
+        default: '0.5.1'
+      claude_code_version:
+        description: '@anthropic-ai/claude-code npm version for claude-agent image'
+        required: true
+        default: '2.1.268'
 
 permissions:
   contents: read
@@ -42,9 +50,15 @@ jobs:
           - adapter: shell
             version: ${{ github.event.inputs.shell_version || '0.5.2' }}
             base_image: alpine:3.20
+            dockerfile: images/remote-adapters/Dockerfile
           - adapter: copilot
             version: ${{ github.event.inputs.copilot_version || '0.5.4' }}
             base_image: node:20-alpine
+            dockerfile: images/remote-adapters/Dockerfile
+          - adapter: claude-agent
+            version: ${{ github.event.inputs.claude_agent_version || '0.5.1' }}
+            base_image: node:20-alpine
+            dockerfile: images/remote-adapters/Dockerfile.claude-agent
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -66,7 +80,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: images/remote-adapters/Dockerfile
+          file: ${{ matrix.dockerfile }}
           platforms: linux/amd64,linux/arm64
           push: true
           build-args: |
@@ -74,6 +88,7 @@ jobs:
             ADAPTER_VERSION=${{ matrix.version }}
             BASE_IMAGE=${{ matrix.base_image }}
             COPILOT_VERSION=${{ github.event.inputs.copilot_cli_version || '1.0.82' }}
+            CLAUDE_CODE_VERSION=${{ github.event.inputs.claude_code_version || '2.1.268' }}
           tags: |
             ${{ env.REGISTRY }}/${{ github.repository_owner }}/criteria-adapter-${{ matrix.adapter }}:${{ matrix.version }}
             ${{ env.REGISTRY }}/${{ github.repository_owner }}/criteria-adapter-${{ matrix.adapter }}:latest
