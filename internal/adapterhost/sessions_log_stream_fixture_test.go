@@ -35,7 +35,7 @@ func TestSessionManager_RealEarlyLogAdapter_SurvivesIdleStall(t *testing.T) {
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
 	sm := NewSessionManager(loader)
-	sm.HeartbeatStallThreshold = 100 * time.Millisecond
+	sm.HeartbeatStallThreshold = 1 * time.Millisecond
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -47,7 +47,7 @@ func TestSessionManager_RealEarlyLogAdapter_SurvivesIdleStall(t *testing.T) {
 
 	// Idle past the stall threshold. A host that did not disarm the stall
 	// detector after the early Log return would declare the session crashed.
-	time.Sleep(250 * time.Millisecond)
+	time.Sleep(10 * time.Millisecond)
 
 	step := &workflow.StepNode{Name: "run"}
 	_, err := sm.Execute(ctx, "agent", step, &logEventCollector{})
