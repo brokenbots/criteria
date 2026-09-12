@@ -17,6 +17,10 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter/environment/remote"
 	"github.com/brokenbots/criteria/internal/adapter/environment/sandbox"
 	"github.com/brokenbots/criteria/internal/adapter/secrets"
+	"os"
+	"path/filepath"
+	"strings"
+
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	engineruntime "github.com/brokenbots/criteria/internal/engine/runtime"
 	"github.com/brokenbots/criteria/internal/runtime/state"
@@ -396,6 +400,42 @@ func (e *Engine) initAdapters(ctx context.Context, sessions *adapterhost.Session
 		scopeLifecycle: lifecycle,
 	}
 	deps := Deps{Sessions: sessions, Sink: sink}
+	// CRI-137 gap fix: a runner restart loses the shim's in-memory scope
+	// registrations. Re-register every surviving rotated token under
+	// <dataDir>/remote-tokens/<scope>/<instance>/ so pods of OTHER scopes
+	// (not just the one being re-initialized here) can complete their
+	// identity handshake against the fresh shim.
+	if e.dataDir != "" {
+		if entries, err := os.ReadDir(filepath.Join(e.dataDir, "remote-tokens")); err == nil {
+			for _, scopeEntry := range entries {
+				if !scopeEntry.IsDir() {
+					continue
+				}
+				scopeDir := filepath.Join(e.dataDir, "remote-tokens", scopeEntry.Name())
+				if insts, err := os.ReadDir(scopeDir); err == nil {
+					for _, inst := range insts {
+						if !inst.IsDir() || inst.Name() == "current" {
+							continue
+						}
+						// Each instance dir holds one token per adapter type.
+						if toks, err := os.ReadDir(filepath.Join(scopeDir, inst.Name())); err == nil {
+							for _, tk := range toks {
+								if tk.IsDir() || !strings.HasSuffix(tk.Name(), ".token") {
+									continue
+								}
+								_ = filepath.Join(scopeDir, inst.Name(), tk.Name())
+								tokPath := filepath.Join(scopeDir, inst.Name(), tk.Name())
+								if data, err := os.ReadFile(tokPath); err == nil && len(data) > 0 {
+									key := scopeEntry.Name() + "/" + inst.Name()
+									_ = sessions.RegisterRemoteScope(key, string(data))
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
 	scopeOrder, err := initScopeAdapters(ctx, e.graph, deps, vars, e.workflowDir, "", e.secretOrigins, rlc)
 	if err != nil {
 		sink.OnRunFailed(err.Error(), failStep)
