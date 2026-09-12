@@ -1245,10 +1245,10 @@ type fakeRemoteShim struct {
 	calls        []string
 }
 
-func newFakeRemoteShim(h adapterhost.Handle, addr string) *fakeRemoteShim {
+func newFakeRemoteShim(h adapterhost.Handle) *fakeRemoteShim {
 	return &fakeRemoteShim{
 		handle:     h,
-		listenAddr: addr,
+		listenAddr: "127.0.0.1:4242",
 		registered: make(map[string]string),
 	}
 }
@@ -1379,7 +1379,7 @@ func TestInitScopeAdapters_PerScope_EmitsProvisionWanted(t *testing.T) {
 
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
-	shim := newFakeRemoteShim(&fakeRemoteHandle{}, "127.0.0.1:4242")
+	shim := newFakeRemoteShim(&fakeRemoteHandle{})
 	sessions.SetRemoteShim(shim)
 
 	lifecycle := newScopeLifecycleState(dataDir)
@@ -1474,7 +1474,7 @@ func TestTearDownScopeAdapters_PerScope_EmitsReleased(t *testing.T) {
 
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
-	shim := newFakeRemoteShim(&fakeRemoteHandle{}, "127.0.0.1:4242")
+	shim := newFakeRemoteShim(&fakeRemoteHandle{})
 	sessions.SetRemoteShim(shim)
 
 	lifecycle := newScopeLifecycleState(dataDir)
@@ -1556,7 +1556,7 @@ state "done" {
 
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
-	shim := newFakeRemoteShim(&fakeRemoteHandle{}, "127.0.0.1:4242")
+	shim := newFakeRemoteShim(&fakeRemoteHandle{})
 	sessions.SetRemoteShim(shim)
 
 	lifecycle := newScopeLifecycleState(dataDir)

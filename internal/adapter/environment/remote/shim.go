@@ -42,6 +42,34 @@ type DigestVerifier interface {
 	Verify(adapterType string, digest string) error
 }
 
+// identityRejectClass classifies why an adapter dial failed identity
+// verification, so the surfaced terminal error can name the right diagnosis
+// instead of blaming the accept token for every rejection kind.
+type identityRejectClass int
+
+const (
+	rejectNone identityRejectClass = iota
+	rejectDigest
+	rejectScopeNotRegistered
+	rejectBadToken
+)
+
+// verifyFailureState remembers the most recent identity-verification
+// rejection for a session key while a session waiter is pending on it. It is
+// diagnostics only: the pending wait itself is bounded by the wall-clock
+// budget, so no dialer can drive or trip the bound (CRI-137 review hardening).
+type verifyFailureState struct {
+	lastErr string
+	class   identityRejectClass
+}
+
+// DefaultVerifyFailureBudget is the authoritative wall-clock bound for a
+// pending session wait: if no adapter re-handshakes within the budget, the
+// wait fails terminally. It covers both the stale-pod case (dials keep being
+// rejected) and the dead-Job case (no dials at all); there is deliberately no
+// separate rejection-count bound (CRI-137 review: one authoritative bound).
+const DefaultVerifyFailureBudget = 5 * time.Minute
+
 // Shim listens for inbound adapter connections, terminates mTLS, verifies
 // identity, and presents each connection as a local-looking Handle.
 type Shim struct {
@@ -62,6 +90,9 @@ type Shim struct {
 	started          bool
 	perScopeSessions bool
 	scopeTokens      map[string]string // scope → accept token (only when perScopeSessions is true)
+
+	verifyFailures      map[string]*verifyFailureState // session key → last identity-verification rejection (diagnostics while a waiter is pending)
+	verifyFailureBudget time.Duration
 }
 
 type session struct {
@@ -123,6 +154,8 @@ func NewShim(cfg *Config, verifier DigestVerifier) (*Shim, error) {
 		waiters:               make(map[string][]chan waitResult),
 		perScopeSessions:      cfg.PerScopeSessions,
 		scopeTokens:           make(map[string]string),
+		verifyFailures:        make(map[string]*verifyFailureState),
+		verifyFailureBudget:   DefaultVerifyFailureBudget,
 	}, nil
 }
 
@@ -367,10 +400,99 @@ func (s *Shim) readHandshakeMessage(conn net.Conn) (handshakeMessage, error) {
 }
 
 func (s *Shim) verifyAdapterIdentity(conn net.Conn, hs *handshakeMessage) error {
+	class, err := s.checkAdapterIdentity(conn, hs)
+	if err != nil {
+		s.noteVerifyFailure(hs.Name, hs.Scope, class, err)
+		return err
+	}
+	s.clearVerifyFailure(hs.Name, hs.Scope)
+	return nil
+}
+
+// noteVerifyFailure records an identity-verification rejection as diagnostics
+// for pending session waiters. The pending wait itself is bounded by the
+// wall-clock budget in WaitForFreshHandle, so these records only shape the
+// terminal error an operator sees when the budget expires (stale adapter pod
+// holding a pre-rotation accept token, digest mismatch, or no dials at all —
+// CRI-137). Failures observed while nobody is waiting are not recorded.
+//
+// Attribution is scoped to the pending waiter's expected identity: a dial
+// whose presented scope is not registered (the stale-pod-on-old-key shape
+// after a runner restart) is attributed only to waiters of the same adapter
+// type whose scope shares the dial's scope name prefix. An unrelated adapter
+// type — or an unrelated scope name — can never have its wait poisoned by
+// another dialer's rejections.
+func (s *Shim) noteVerifyFailure(adapterType, scope string, class identityRejectClass, cause error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, key := range s.failureAttributionKeys(adapterType, scope, class) {
+		if len(s.waiters[key]) == 0 {
+			delete(s.verifyFailures, key)
+			continue
+		}
+		if s.verifyFailures == nil {
+			s.verifyFailures = make(map[string]*verifyFailureState)
+		}
+		s.verifyFailures[key] = &verifyFailureState{lastErr: cause.Error(), class: class}
+	}
+}
+
+// failureAttributionKeys returns the session keys a rejected dial may enrich
+// with its last-failure diagnostics. A dial that failed for its own exact
+// session key only records there. A dial rejected because its presented scope
+// is not registered (stale pre-rotation key) additionally reaches pending
+// waiters of the same adapter type whose scope shares the dial's scope-name
+// prefix; in per-scope mode an unregistered scope can never match a waiter's
+// expected identity exactly, so this prefix affinity is the only way the
+// stale-pod diagnosis reaches the pending wait's terminal error.
+func (s *Shim) failureAttributionKeys(adapterType, scope string, class identityRejectClass) []string {
+	key := s.sessionKey(adapterType, scope)
+	keys := []string{key}
+	if s.perScopeSessions && class == rejectScopeNotRegistered && scope != "" {
+		for waiterKey := range s.waiters {
+			if waiterKey == key {
+				continue
+			}
+			waiterType, waiterScope, ok := strings.Cut(waiterKey, "\x00")
+			if !ok || waiterType != adapterType {
+				continue
+			}
+			if scopeNamePrefix(waiterScope) != scopeNamePrefix(scope) {
+				continue
+			}
+			keys = append(keys, waiterKey)
+		}
+	}
+	return keys
+}
+
+// scopeNamePrefix splits a "<scopeName>/<scopeInstanceID>" session scope key
+// into its workflow-level scope name. Both the dialer's stale key and the
+// waiter's current key share the same scope name across a runner restart.
+func scopeNamePrefix(scope string) string {
+	if i := strings.LastIndex(scope, "/"); i >= 0 {
+		return scope[:i]
+	}
+	return scope
+}
+
+// clearVerifyFailure resets the last-failure tracker for a session key after
+// a successful identity verification.
+func (s *Shim) clearVerifyFailure(adapterType, scope string) {
+	key := s.sessionKey(adapterType, scope)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.verifyFailures != nil {
+		delete(s.verifyFailures, key)
+	}
+}
+
+func (s *Shim) checkAdapterIdentity(conn net.Conn, hs *handshakeMessage) (identityRejectClass, error) {
 	if s.digestVerifier != nil {
 		if err := s.digestVerifier.Verify(hs.Name, hs.Digest); err != nil {
 			_ = conn.Close()
-			return fmt.Errorf("digest verification: %w", err)
+			return rejectDigest, fmt.Errorf("digest verification: %w", err)
 		}
 	}
 
@@ -387,13 +509,13 @@ func (s *Shim) verifyAdapterIdentity(conn net.Conn, hs *handshakeMessage) error 
 		s.mu.Unlock()
 		if !ok {
 			_ = conn.Close()
-			return fmt.Errorf("scope %q is not registered", hs.Scope)
+			return rejectScopeNotRegistered, fmt.Errorf("scope %q is not registered", hs.Scope)
 		}
 		if subtle.ConstantTimeCompare([]byte(hs.Token), []byte(expectedToken)) != 1 {
 			_ = conn.Close()
-			return fmt.Errorf("accept_token verification failed for scope %q", hs.Scope)
+			return rejectBadToken, fmt.Errorf("accept_token verification failed for scope %q", hs.Scope)
 		}
-		return nil
+		return rejectNone, nil
 	}
 
 	// Legacy run-wide token verification.
@@ -403,10 +525,10 @@ func (s *Shim) verifyAdapterIdentity(conn net.Conn, hs *handshakeMessage) error 
 	if expectedToken != "" {
 		if subtle.ConstantTimeCompare([]byte(hs.Token), []byte(expectedToken)) != 1 {
 			_ = conn.Close()
-			return fmt.Errorf("accept_token verification failed")
+			return rejectBadToken, fmt.Errorf("accept_token verification failed")
 		}
 	}
-	return nil
+	return rejectNone, nil
 }
 
 func (s *Shim) setupUDS(conn net.Conn) (string, net.Listener, error) {
@@ -629,6 +751,13 @@ func (s *Shim) WaitForHandle(ctx context.Context, adapterType, scope string) (ad
 // handle may still be the current session entry (its bridge-teardown runs
 // asynchronously), so callers pass the dead handle as `stale` to ensure they
 // wait for a genuinely new connection rather than receiving the dead one back.
+//
+// The wait is bounded by the verify-failure wall-clock budget: if no adapter
+// successfully re-handshakes within the budget, the wait fails with a
+// terminal error naming the scope and its accept-token state (CRI-137). This
+// covers both a stale adapter pod whose dials keep being rejected on a
+// pre-rotation scope key and an adapter Job that is complete or dead and
+// never dials again.
 func (s *Shim) WaitForFreshHandle(ctx context.Context, adapterType, scope string, stale adapterhost.Handle) (adapterhost.Handle, error) {
 	key := s.sessionKey(adapterType, scope)
 	s.mu.Lock()
@@ -638,27 +767,69 @@ func (s *Shim) WaitForFreshHandle(ctx context.Context, adapterType, scope string
 	}
 	ch := make(chan waitResult, 1)
 	s.waiters[key] = append(s.waiters[key], ch)
+	budget := s.verifyFailureBudget
+	if budget <= 0 {
+		budget = DefaultVerifyFailureBudget
+	}
 	s.mu.Unlock()
+
+	budgetTimer := time.NewTimer(budget)
+	defer budgetTimer.Stop()
 
 	select {
 	case res := <-ch:
 		return res.handle, res.err
+	case <-budgetTimer.C:
+		s.removeWaiter(key, ch)
+		return nil, s.waitTimeoutError(adapterType, scope, key, budget)
 	case <-ctx.Done():
 		// Remove ourselves from waiters on cancellation.
-		s.mu.Lock()
-		waiters := s.waiters[key]
-		for i, w := range waiters {
-			if w == ch {
-				s.waiters[key] = append(waiters[:i], waiters[i+1:]...)
-				break
-			}
-		}
-		if len(s.waiters[key]) == 0 {
-			delete(s.waiters, key)
-		}
-		s.mu.Unlock()
+		s.removeWaiter(key, ch)
 		return nil, ctx.Err()
 	}
+}
+
+// removeWaiter drops a registered waiter channel from the waiters map.
+func (s *Shim) removeWaiter(key string, ch chan waitResult) {
+	s.mu.Lock()
+	waiters := s.waiters[key]
+	for i, w := range waiters {
+		if w == ch {
+			s.waiters[key] = append(waiters[:i], waiters[i+1:]...)
+			break
+		}
+	}
+	if len(s.waiters[key]) == 0 {
+		delete(s.waiters, key)
+	}
+	s.mu.Unlock()
+}
+
+// waitTimeoutError builds the terminal error for a pending session wait that
+// exceeded the wall-clock budget. It names the scope, distinguishes the last
+// observed rejection by class (digest mismatch vs accept-token/scope state),
+// and calls out the dead-Job shape when no identity handshake was observed at
+// all (CRI-137).
+func (s *Shim) waitTimeoutError(adapterType, scope, key string, budget time.Duration) error {
+	s.mu.Lock()
+	st := s.verifyFailures[key]
+	delete(s.verifyFailures, key)
+	s.mu.Unlock()
+
+	detail := fmt.Sprintf("no identity handshake observed at all for scope %q; adapter Job may be complete or dead (CRI-137)", scope)
+	if st != nil {
+		detail = fmt.Sprintf("last identity rejection for scope %q: %s", scope, st.lastErr)
+		switch st.class {
+		case rejectDigest:
+			// Digest failures are their own diagnosis; do not blame the
+			// accept token for them.
+			detail += "; digest verification failed — stale or wrong adapter build? (CRI-137)"
+		case rejectScopeNotRegistered, rejectBadToken:
+			detail += "; stale adapter pod holding a pre-rotation accept token? (CRI-137)"
+		}
+	}
+	return fmt.Errorf("remote adapter %q session wait for scope %q exceeded %s without a successful identity handshake: %s",
+		adapterType, scope, budget, detail)
 }
 
 // CloseHandle removes a session for the given adapter type + scope.
