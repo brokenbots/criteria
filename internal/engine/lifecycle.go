@@ -588,6 +588,9 @@ func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, var
 		// provision_wanted (leaking a second per-scope pod) for an engagement
 		// the parent already owns, and the parent's teardown would never
 		// release it.
+		//
+		// The child's declaration is intentionally not re-validated here; the skip is not accidental.
+		// Concurrency bound is evidence-based, not enforced: reuse-only keeps at most one live per-scope instance per adapter (CRI-145 test observes peak 1).
 		if deps.Sessions.SessionOpen(instanceID) {
 			slog.Info("re-declared adapter already provisioned by parent scope; reusing",
 				"scope", scopeName, "adapter_instance", instanceID)
