@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -724,6 +725,90 @@ func (n *stepNode) incrementVisit(st *RunState) error {
 	return nil
 }
 
+// bestEffortCommentStepPrefix identifies tail notification steps (CRI-130).
+// Steps whose names start with this prefix run after the workflow's real work
+// is complete — the ticket state was already set by an earlier step — so a
+// crash or failure there must not flip the run's terminal state to failed and
+// trigger a scratch re-run of the whole workflow.
+const bestEffortCommentStepPrefix = "comment_"
+
+// isBestEffortCommentStep reports whether the step is a tail comment step that
+// the engine treats as best-effort (CRI-130).
+func isBestEffortCommentStep(step *workflow.StepNode) bool {
+	return step != nil && strings.HasPrefix(step.Name, bestEffortCommentStepPrefix)
+}
+
+// commentStepFailureContinues reports whether a failed comment_* step is
+// treated as best-effort (CRI-130): the run continues along the step's success
+// transition instead of routing via the failure outcome and flipping the run's
+// terminal state to failed. Requires a success (or default) transition to
+// continue along; comment steps that declare only a failure outcome — e.g. a
+// tail comment step on the workflow's failure branch — keep their declared
+// routing. An explicit on_crash=abort_run still aborts the run (the caller
+// checks FatalRunError before consulting this).
+func commentStepFailureContinues(step *workflow.StepNode, result adapter.Result, err error) bool {
+	if !isBestEffortCommentStep(step) {
+		return false
+	}
+	if err == nil && !strings.EqualFold(result.Outcome, "failure") {
+		return false
+	}
+	_, hasSuccess := step.Outcomes["success"]
+	return hasSuccess || step.DefaultOutcome != nil
+}
+
+// logCommentStepContinuation records the suppressed comment-step failure.
+func logCommentStepContinuation(step *workflow.StepNode, result adapter.Result, err error) {
+	args := []any{"step", step.Name, "outcome", result.Outcome}
+	if err != nil {
+		args = append(args, "error", err)
+	}
+	slog.Warn("comment step failed; continuing run (best-effort tail step)", args...)
+}
+
+// commentStepContinuation is the synthesized result for a suppressed
+// comment-step failure (CRI-130): the success transition is taken with the
+// failed step's outputs cleared, so the continuation never consumes outputs
+// produced by a failed step.
+func commentStepContinuation() adapter.Result {
+	return adapter.Result{Outcome: "success"}
+}
+
+// commentStepResult rewrites a completed comment_* step result as a best-effort
+// success continuation (CRI-130) when the failure is suppressible; otherwise
+// the result is returned unchanged.
+func commentStepResult(step *workflow.StepNode, result adapter.Result) (adapter.Result, error) {
+	if !commentStepFailureContinues(step, result, nil) {
+		return result, nil
+	}
+	logCommentStepContinuation(step, result, nil)
+	return commentStepContinuation(), nil
+}
+
+// commentStepFailureOutcome maps a failed attempt of a comment_* step to its
+// outcome: a suppressible failure becomes the best-effort success continuation
+// (CRI-130); otherwise the failure outcome is kept. The error is swallowed to
+// match the engine's existing failure-outcome routing.
+func commentStepFailureOutcome(step *workflow.StepNode, err error) adapter.Result {
+	failure := adapter.Result{Outcome: "failure"}
+	if commentStepFailureContinues(step, failure, err) {
+		logCommentStepContinuation(step, failure, err)
+		return commentStepContinuation()
+	}
+	return failure
+}
+
+// commentStepExhausted handles retry exhaustion for a comment_* step (CRI-130):
+// a suppressible failure becomes the best-effort success continuation;
+// otherwise the wrapped error propagates and fails the run.
+func commentStepExhausted(step *workflow.StepNode, wrappedErr error) (adapter.Result, error) {
+	if !commentStepFailureContinues(step, adapter.Result{Outcome: "failure"}, wrappedErr) {
+		return adapter.Result{}, wrappedErr
+	}
+	logCommentStepContinuation(step, adapter.Result{Outcome: "failure"}, wrappedErr)
+	return commentStepContinuation(), nil
+}
+
 func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps Deps, step *workflow.StepNode, startAttempt int) (adapter.Result, error) {
 	maxAttempts := 1 + n.graph.Policy.MaxStepRetries
 	if startAttempt > maxAttempts {
@@ -758,7 +843,7 @@ func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps De
 
 		if err == nil {
 			deps.Sink.OnStepOutcome(step.Name, result.Outcome, dur, nil)
-			return result, nil
+			return commentStepResult(step, result)
 		}
 
 		var fatal *adapterhost.FatalRunError
@@ -770,12 +855,12 @@ func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps De
 		lastErr = err
 		if _, hasFailure := step.Outcomes["failure"]; hasFailure {
 			deps.Sink.OnStepOutcome(step.Name, "failure", dur, err)
-			return adapter.Result{Outcome: "failure"}, nil
+			return commentStepFailureOutcome(step, err), nil
 		}
 		deps.Sink.OnStepOutcome(step.Name, "", dur, err)
 	}
 
-	return adapter.Result{}, fmt.Errorf("step %q failed after %d attempts: %w", step.Name, maxAttempts-startAttempt+1, lastErr)
+	return commentStepExhausted(step, fmt.Errorf("step %q failed after %d attempts: %w", step.Name, maxAttempts-startAttempt+1, lastErr))
 }
 
 func (n *stepNode) executeStep(ctx context.Context, deps Deps, step *workflow.StepNode) (adapter.Result, error) {
