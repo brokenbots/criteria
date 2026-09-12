@@ -797,11 +797,47 @@ func isSessionCrashError(err error) bool {
 // whether or not the comment step's own failure was suppressible: the session
 // is equally dead either way, and follow-on steps on the same reference
 // observe the crash through commentSessionCrashContinues.
+//
+// Arming is gated on the entry route (CRI-115): the poison is recorded only
+// when the comment step was reached along a success transition (or a
+// structural entry — the initial step, a subworkflow body entry, an iteration
+// entry). A comment step entered down a declared non-success outcome (e.g.
+// run_handler failure → comment_handler_failed) belongs to a run whose
+// functional work did NOT succeed on this path; tail suppression must stay
+// disarmed there so the follow-on state write keeps its genuine failure
+// routing and the run still finishes failed. Without this gate a functionally
+// failed run could be reported as a success.
+//
+// Known conservatisms, both in the safe (non-suppressing) direction unless
+// noted: routing through a switch node inherits the last step's outcome (a
+// switch route is a condition match, not a functional outcome); an unmapped
+// adapter outcome handled by the default outcome records the raw outcome name
+// (only the literal "success" arms); and the set is shared across parallel
+// iterations, so a crash in one iteration arms the reference for the others.
 func recordCommentSessionCrash(st *RunState, step *workflow.StepNode, err error) {
 	if st == nil || !isBestEffortCommentStep(step) || !isSessionCrashError(err) {
 		return
 	}
+	if !enteredViaSuccessRoute(st) {
+		return
+	}
 	st.CrashedCommentSessions.record(step.AdapterRef)
+}
+
+// enteredViaSuccessRoute reports whether the current node was entered along a
+// success-class transition (CRI-130). st.LastOutcome at this point holds the
+// outcome the previous step routed with (the current step's own result has
+// not been recorded yet). An empty LastOutcome is a structural entry — the
+// initial step, a subworkflow body entry, an iteration entry, or a wait/
+// approval resumption — which is success-path by convention: reaching it
+// required no functional failure. Only the literal "success" outcome arms
+// tail suppression; every other declared outcome (failure, invalid_close, …)
+// marks the path as a failure route.
+func enteredViaSuccessRoute(st *RunState) bool {
+	if st.LastOutcome == "" {
+		return true
+	}
+	return isSuccessOutcome(st.LastOutcome)
 }
 
 // sessionCrashedAfterComment reports whether the step targets an adapter
@@ -828,6 +864,15 @@ func sessionCrashedAfterComment(st *RunState, step *workflow.StepNode) bool {
 // declared outcomes, so functional failures are never silently downgraded.
 // An explicit on_crash=abort_run still aborts the run (the caller checks
 // FatalRunError before consulting this).
+//
+// Residual (documented, accepted for the ticket's authorized class): on an
+// armed success tail the run's terminal state may be reported even though the
+// post-comment state write never executed; the session-crash WARN from
+// adapterhost and the continuation WARN here identify such runs for operators.
+// Recorded references are never cleared: if the session later heals via
+// on_crash = "respawn", a genuine later crash on the same reference can still
+// be suppressed in a tail-shaped spot — workflows that rely on respawn should
+// order comment steps last or pin on_crash on the tail steps.
 func (n *stepNode) commentSessionCrashContinues(st *RunState, step *workflow.StepNode, err error) bool {
 	if err == nil || !isSessionCrashError(err) {
 		return false

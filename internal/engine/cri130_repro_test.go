@@ -40,18 +40,27 @@ const cri130CrashErr = "rpc error: code = Canceled desc = grpc: the client conne
 // on_crash=fail policy — and once crashed, the session stays dead: every
 // subsequent Execute on it returns the same crash error, exactly as the
 // production shell.intake session did after its teardown race.
+//
+// failMode "failure" keeps the session alive (clean failure outcome, nil
+// error) for a functional failure; failMode "crash" and any crashStep hit arm
+// the sticky dead session.
 type cri130Adapter struct {
 	*fakeAdapter
-	failStep string
-	failMode string
-	mu       sync.Mutex
-	crashed  bool
+	failStep  string
+	failMode  string
+	crashStep string
+	mu        sync.Mutex
+	crashed   bool
 }
 
 func (p *cri130Adapter) Execute(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
 	p.mu.Lock()
 	crashed := p.crashed
-	if !crashed && step != nil && step.Name == p.failStep && p.failMode == "crash" {
+	stepName := ""
+	if step != nil {
+		stepName = step.Name
+	}
+	if !crashed && ((stepName == p.failStep && p.failMode == "crash") || (p.crashStep != "" && stepName == p.crashStep)) {
 		p.crashed = true
 		crashed = true
 	}
@@ -59,7 +68,7 @@ func (p *cri130Adapter) Execute(ctx context.Context, name string, step *workflow
 	if crashed {
 		return adapter.Result{Outcome: "failure"}, errors.New(cri130CrashErr)
 	}
-	if step != nil && step.Name == p.failStep {
+	if stepName == p.failStep {
 		return adapter.Result{Outcome: "failure"}, nil
 	}
 	return p.fakeAdapter.Execute(ctx, name, step, sink)
@@ -173,6 +182,82 @@ func TestCRI130_ProductionTailCommentCrashContinues(t *testing.T) {
 	ran := strings.Join(sink.stepsRun, ",")
 	if !strings.Contains(ran, "set_done_state") {
 		t.Errorf("steps run %q; the follow-on set_done_state must still execute on the crashed session", ran)
+	}
+}
+
+// cri130FailureBranchWorkflow mirrors the shipped linear_intake_v1 failure
+// branch: run_handler (the functional step) routes its failure outcome to the
+// notification comment step, which is followed by the ticket-state update on
+// the same adapter session. comment_handler_failed is reachable only via
+// run_handler's failure outcome, so a comment crash there must NOT arm tail
+// suppression: the run's functional work did not succeed on this path.
+func cri130FailureBranchWorkflow() string {
+	return `
+workflow {
+  name = "linear_intake_cri130"
+  version = "0.1"
+  initial_state = "run_handler"
+  target_state  = "awaiting_human"
+}
+step "run_handler" {
+  target = adapter.fake
+  outcome "success" { next = state.handler_complete }
+  outcome "failure" { next = step.comment_handler_failed }
+}
+step "comment_handler_failed" {
+  target = adapter.fake
+  outcome "success" { next = step.set_review_state }
+  outcome "failure" { next = state.failed }
+}
+step "set_review_state" {
+  target = adapter.fake
+  outcome "success" { next = state.awaiting_human }
+  outcome "failure" { next = state.failed }
+}
+state "handler_complete" { terminal = true }
+state "awaiting_human" { terminal = true }
+state "failed" {
+  terminal = true
+  success  = false
+}`
+}
+
+// TestCRI130_FunctionalFailureBranchNotReportedSuccess guards the arming gate
+// (CRI-115): a functional step fails, the run takes the notification branch,
+// and the shared adapter session dies at comment_handler_failed. The comment
+// crash must not arm tail suppression (the comment step was entered down a
+// failure route), so set_review_state keeps its declared failure routing and
+// the run finishes failed — a functionally failed run must never be reported
+// as a success terminal.
+func TestCRI130_FunctionalFailureBranchNotReportedSuccess(t *testing.T) {
+	g := compile(t, cri130FailureBranchWorkflow())
+	p := &cri130Adapter{
+		fakeAdapter: &fakeAdapter{name: "fake", outcome: "success"},
+		failStep:    "run_handler",
+		failMode:    "failure",
+		crashStep:   "comment_handler_failed",
+	}
+	sink := &fakeSink{}
+	if err := NewTestEngine(g, cri130NewLoader(p), sink).Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if sink.terminal != "failed" || sink.terminalOK {
+		t.Errorf("terminal state %q success=%v; want failed/false (a functionally failed run must not report a success terminal)", sink.terminal, sink.terminalOK)
+	}
+	joined := strings.Join(sink.transitions, ",")
+	for _, want := range []string{"run_handler->comment_handler_failed", "comment_handler_failed->set_review_state", "set_review_state->failed"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("transitions %q; missing %q (comment crash stays best-effort; follow-on state write keeps its failure routing)", joined, want)
+		}
+	}
+	if strings.Contains(joined, "->awaiting_human") {
+		t.Errorf("transitions %q; the crashed tail state write must route to failed, not the success terminal", joined)
+	}
+	ran := strings.Join(sink.stepsRun, ",")
+	for _, want := range []string{"comment_handler_failed", "set_review_state"} {
+		if !strings.Contains(ran, want) {
+			t.Errorf("steps run %q; missing %q", ran, want)
+		}
 	}
 }
 

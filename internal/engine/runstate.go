@@ -94,10 +94,15 @@ type RunState struct {
 	// subsequent Execute on the same reference returns the crash error again,
 	// so follow-on steps (e.g. set_done_state after comment_handler_done)
 	// would otherwise fail the run after its real work already completed.
-	// Nil-safe: a nil set records nothing and matches nothing. The set is
-	// shared by reference across parallel iteration states and subworkflow
-	// bodies (like Visits) so the crash is observed wherever a follow-on step
-	// executes in the run.
+	// A reference is recorded only when the crashing comment step was entered
+	// along a success transition (see recordCommentSessionCrash): tail
+	// suppression must stay disarmed when the run reached the comment step
+	// down a failure route, because the functional work did not succeed there.
+	// Entries are never cleared — see commentSessionCrashContinues for the
+	// respawn caveat. Nil-safe: a nil set records nothing and matches
+	// nothing. The set is shared by reference across parallel iteration
+	// states and subworkflow bodies (like Visits) so the crash is observed
+	// wherever a follow-on step executes in the run.
 	CrashedCommentSessions *crashedSessionRefs
 
 	firstStep        bool
