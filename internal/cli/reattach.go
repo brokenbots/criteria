@@ -284,9 +284,10 @@ func failResumeMaxRetries(ctx context.Context, log *slog.Logger, rc reattachTran
 		return
 	}
 	sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log, Ctx: ctx}
+	local := eventsFileSink(cp.RunID, eventsOut)
 	reason := fmt.Sprintf("exceeded max_step_retries on resume at step %q (attempt %d)", step, nextAttempt)
 	sink.RunFailed(ctx, reason, step)
-	if local := eventsFileSink(cp.RunID, eventsOut); local != nil {
+	if local != nil {
 		local.OnRunFailed(reason, step)
 	}
 	drainAndCleanup(ctx, rc, cp)
@@ -309,8 +310,13 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 
 	sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log, Ctx: ctx}
 	sink.StepResumed(ctx, resp.CurrentStep, nextAttempt, "criteria_restart")
+	// Build the ND-JSON mirror once so the StepResumed marker and every
+	// engine event share a single LocalSink instance; a second instance
+	// would restart seq at 1 and emit duplicate seq values for this run.
+	var engineSink engine.Sink = sink
 	if local := eventsFileSink(cp.RunID, eventsOut); local != nil {
 		local.OnStepResumed(resp.CurrentStep, nextAttempt, "criteria_restart")
+		engineSink = run.NewMultiSink(sink, local)
 	}
 	loader := adapterhost.NewLoader()
 
@@ -328,7 +334,7 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		drainAndCleanup(ctx, rc, cp)
 		return
 	}
-	eng := engine.New(graph, loader, dualWriteSink(sink, cp.RunID, eventsOut),
+	eng := engine.New(graph, loader, engineSink,
 		engine.WithResumedVars(restoredVars),
 		engine.WithResumedIter(restoredIter),
 		engine.WithResumedVisits(cp.Visits),

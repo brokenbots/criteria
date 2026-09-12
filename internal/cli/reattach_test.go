@@ -966,6 +966,138 @@ func TestResumeActiveRun_HappyPath(t *testing.T) {
 	}
 }
 
+// assertSingleRunStrictSeq asserts the ND-JSON file invariants for one
+// resumed run: exactly one run id (runID) and strictly increasing seq values
+// with no duplicates.
+func assertSingleRunStrictSeq(t *testing.T, fileEvents []fileEnvelope, runID string) {
+	t.Helper()
+	runIDs := make(map[string]bool)
+	lastSeq := int64(0)
+	for i, env := range fileEvents {
+		if i > 0 && env.Seq <= lastSeq {
+			t.Errorf("file seq not strictly increasing: line %d has seq %d after %d", i+1, env.Seq, lastSeq)
+		}
+		lastSeq = env.Seq
+		runIDs[env.RunID] = true
+	}
+	if len(runIDs) != 1 || !runIDs[runID] {
+		t.Errorf("expected exactly run id %q in the file, got %v", runID, runIDs)
+	}
+}
+
+// TestResumeActiveRun_DualWriteMirrorsEventsFile covers the server-mode
+// dual-write on the active-resume path: the StepResumed marker and every
+// engine event must flow through a single LocalSink so the file carries one
+// strictly-increasing seq sequence, and each mirrored payload must match what
+// the transport received for the same run id. A second LocalSink (as in the
+// pre-fix resumeActiveRun) restarts seq at 1 and produces a duplicate seq
+// next to the resume marker.
+func TestResumeActiveRun_DualWriteMirrorsEventsFile(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	wfFile := writeWorkflowFile(t, minimalWorkflow)
+	cp := &StepCheckpoint{RunID: "rar-dualwrite", WorkflowPath: wfFile}
+	writeCheckpointDirect(t, stateDir, cp)
+
+	resp := &pb.ReattachRunResponse{
+		CanResume:   true,
+		Status:      "running",
+		CurrentStep: "done", // terminal state → engine finishes immediately
+		Attempt:     0,      // nextAttempt=1 ≤ maxAttempts=1 (MaxStepRetries=0 default)
+	}
+	graph, err := parseWorkflowFromPath(context.Background(), wfFile)
+	if err != nil {
+		t.Fatalf("parseWorkflowFromPath: %v", err)
+	}
+
+	ft := &fakeTransport{}
+	var eventsBuf bytes.Buffer
+	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp, &eventsBuf)
+
+	fileEvents := parseNDJSONEnvelopes(t, eventsBuf.Bytes())
+	assertSingleRunStrictSeq(t, fileEvents, cp.RunID)
+
+	// The resume marker opens both streams so file and server payloads stay
+	// mirrored 1:1; dual-write must not drop StepResumed from the server.
+	if fileEvents[0].PayloadType != "StepResumed" {
+		t.Errorf("first file event is %q, want StepResumed", fileEvents[0].PayloadType)
+	}
+	if len(ft.published) == 0 || ft.published[0].GetStepResumed() == nil {
+		t.Errorf("server stream must still open with StepResumed under dual-write, got %d envelopes", len(ft.published))
+	}
+
+	assertPayloadParity(t, ft.published, fileEvents)
+}
+
+// TestResumePausedRun_DualWriteMirrorsEventsFile mirrors the active-resume
+// dual-write check for the paused path: engine events flow through the single
+// dualWriteSink mirror with strictly increasing seq and payload parity
+// against the transport stream.
+func TestResumePausedRun_DualWriteMirrorsEventsFile(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	wfFile := writeWorkflowFile(t, minimalWorkflow)
+	cp := &StepCheckpoint{RunID: "rpr-dualwrite", WorkflowPath: wfFile}
+	writeCheckpointDirect(t, stateDir, cp)
+
+	resp := &pb.ReattachRunResponse{
+		CanResume:     true,
+		Status:        "paused",
+		CurrentStep:   "done", // terminal → engine completes immediately
+		PendingSignal: "start",
+	}
+	graph, err := parseWorkflowFromPath(context.Background(), wfFile)
+	if err != nil {
+		t.Fatalf("parseWorkflowFromPath: %v", err)
+	}
+
+	ft := &fakeTransport{}
+	var eventsBuf bytes.Buffer
+	resumePausedRun(context.Background(), discardLogger(), ft, cp, graph, resp, &eventsBuf)
+
+	fileEvents := parseNDJSONEnvelopes(t, eventsBuf.Bytes())
+	assertSingleRunStrictSeq(t, fileEvents, cp.RunID)
+	assertPayloadParity(t, ft.published, fileEvents)
+}
+
+// TestResumeActiveRun_MaxRetriesDualWriteMirrorsEventsFile covers the
+// failResumeMaxRetries terminal path under dual-write: the file receives
+// exactly one RunFailed envelope (seq 1) mirroring the transport's RunFailed.
+func TestResumeActiveRun_MaxRetriesDualWriteMirrorsEventsFile(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	wfFile := writeWorkflowFile(t, minimalWorkflow)
+	cp := &StepCheckpoint{RunID: "rar-dualwrite-fail", WorkflowPath: wfFile}
+	writeCheckpointDirect(t, stateDir, cp)
+
+	// Attempt=1 with MaxStepRetries=0 means maxAttempts=1; nextAttempt=2 > 1,
+	// so resumeActiveRun dispatches to failResumeMaxRetries.
+	resp := &pb.ReattachRunResponse{
+		CanResume:   true,
+		Status:      "running",
+		CurrentStep: "done",
+		Attempt:     1,
+	}
+	graph, err := parseWorkflowFromPath(context.Background(), wfFile)
+	if err != nil {
+		t.Fatalf("parseWorkflowFromPath: %v", err)
+	}
+
+	ft := &fakeTransport{}
+	var eventsBuf bytes.Buffer
+	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp, &eventsBuf)
+
+	fileEvents := parseNDJSONEnvelopes(t, eventsBuf.Bytes())
+	assertSingleRunStrictSeq(t, fileEvents, cp.RunID)
+	if len(fileEvents) != 1 || fileEvents[0].PayloadType != "RunFailed" {
+		t.Errorf("expected exactly one RunFailed file event, got %d events (first: %v)", len(fileEvents), fileEvents)
+	}
+	assertPayloadParity(t, ft.published, fileEvents)
+}
+
 // maxVisitsWorkflow has max_visits = 1 on step "work" for testing visit-count
 // persistence across reattach.
 const maxVisitsWorkflow = `

@@ -41,9 +41,16 @@ func readNDJSONEnvelopes(t *testing.T, path string) []fileEnvelope {
 	if err != nil {
 		t.Fatalf("read events file %s: %v", path, err)
 	}
+	return parseNDJSONEnvelopes(t, raw)
+}
+
+// parseNDJSONEnvelopes parses raw ND-JSON event bytes (file content or an
+// in-memory events buffer), rejecting blank or non-JSON lines.
+func parseNDJSONEnvelopes(t *testing.T, raw []byte) []fileEnvelope {
+	t.Helper()
 	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
 	if len(lines) == 1 && lines[0] == "" {
-		t.Fatalf("events file %s is empty", path)
+		t.Fatalf("events file is empty")
 	}
 	envs := make([]fileEnvelope, 0, len(lines))
 	for i, line := range lines {
