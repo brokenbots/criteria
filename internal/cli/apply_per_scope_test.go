@@ -26,6 +26,8 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	applytest "github.com/brokenbots/criteria/internal/cli/applytest"
@@ -1082,7 +1084,7 @@ func TestExecuteServerRunPerScopeSessionsWiresDataDir(t *testing.T) {
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
 	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
-	client, runID, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri128-server", &copts, cancel)
+	client, runID, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri128-server", &copts, cancel, nil)
 	if err != nil {
 		t.Fatalf("setupServerRun: %v", err)
 	}
@@ -1093,7 +1095,7 @@ func TestExecuteServerRunPerScopeSessionsWiresDataDir(t *testing.T) {
 	errCh := make(chan error, 1)
 	done := make(chan struct{})
 	go func() {
-		errCh <- executeServerRun(ctx, log, loader, client, state, graph, opts)
+		errCh <- executeServerRun(ctx, log, loader, client, state, graph, opts, nil)
 		close(done)
 	}()
 
@@ -1137,7 +1139,7 @@ func TestDrainResumeCyclesPerScopeSessionsWiresDataDir(t *testing.T) {
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
 	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
-	client, runID, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri128-resume", &copts, cancel)
+	client, runID, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri128-resume", &copts, cancel, nil)
 	if err != nil {
 		t.Fatalf("setupServerRun: %v", err)
 	}
@@ -1212,7 +1214,7 @@ func TestBuildAgentRunPerScopeSessionsWiresDataDir(t *testing.T) {
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
 	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
-	client, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri128-agent", &copts, cancel)
+	client, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri128-agent", &copts, cancel, nil)
 	if err != nil {
 		t.Fatalf("setupServerRun: %v", err)
 	}
@@ -1286,7 +1288,7 @@ func TestReattachPerScopeSessionsWiresDataDir(t *testing.T) {
 		resp := &pb.ReattachRunResponse{Status: "paused", CurrentStep: "start", Attempt: 0, CanResume: true}
 		done := make(chan struct{})
 		go func() {
-			resumePausedRun(ctx, discardLogger(), ft, cp, graph, resp)
+			resumePausedRun(ctx, discardLogger(), ft, cp, graph, resp, nil)
 			close(done)
 		}()
 
@@ -1314,7 +1316,7 @@ func TestReattachPerScopeSessionsWiresDataDir(t *testing.T) {
 
 		done := make(chan struct{})
 		go func() {
-			serviceResumeSignals(ctx, discardLogger(), ft, cp, graph, loader, sink, initialEng)
+			serviceResumeSignals(ctx, discardLogger(), ft, cp, graph, loader, sink, sink, initialEng)
 			close(done)
 		}()
 
@@ -1336,7 +1338,7 @@ func TestReattachPerScopeSessionsWiresDataDir(t *testing.T) {
 		resp := &pb.ReattachRunResponse{Status: "running", CurrentStep: "start", Attempt: 0, CanResume: true}
 		done := make(chan struct{})
 		go func() {
-			resumeActiveRun(ctx, discardLogger(), ft, cp, graph, resp)
+			resumeActiveRun(ctx, discardLogger(), ft, cp, graph, resp, nil)
 			close(done)
 		}()
 
@@ -1348,4 +1350,104 @@ func TestReattachPerScopeSessionsWiresDataDir(t *testing.T) {
 		}
 		requireTokenFilePerms(t, token)
 	})
+}
+
+// TestRunApplyServerDualWriteAdapterLifecycle is the CRI-134 dual-write
+// flagship: a full server-mode run with --events-file set must mirror the
+// per-scope adapter.lifecycle contract (scope_instance_id,
+// shim_listen_address, token_ref) into the ND-JSON file exactly as the
+// server stream carries it.
+func TestRunApplyServerDualWriteAdapterLifecycle(t *testing.T) {
+	requireNoGoroutineLeak(t)
+	home := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", home)
+
+	fake := applytest.New(t)
+	wfPath := writeScopeSessionWorkflow(t, scopeSessionWorkflowHCL)
+	eventsFile := filepath.Join(t.TempDir(), "events.ndjson")
+
+	dialer := newPhoneHomeDialer(t)
+	dialer.watch(eventsFile)
+
+	runCtx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runApplyServer(runCtx, applyOptions{
+			workflowPath: wfPath,
+			serverURL:    fake.URL(),
+			eventsPath:   eventsFile,
+			name:         "cri134-dual-write",
+		})
+	}()
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("runApplyServer: %v", err)
+		}
+	case <-time.After(40 * time.Second):
+		t.Fatalf("server-mode dual-write run did not complete in time; events=%s", mustReadEventsForDiag(t, eventsFile))
+	}
+	dialer.stop()
+
+	// File side: identical guarantees to the local-mode flagship run.
+	assertCompletedPerScopeRun(t, eventsFile, home, dialer.runID, 1)
+
+	// Server side: the provision_wanted AdapterEvent must survive the
+	// Envelope mapping with the same per-scope contract fields and be
+	// proto-equal to the mirrored file payload.
+	assertServerPerScopeLifecycleParity(t, fake, eventsFile)
+}
+
+// assertServerPerScopeLifecycleParity checks that the server stream received
+// the adapter.lifecycle.provision_wanted AdapterEvent with the CRI-115
+// per-scope contract fields populated, and that the dual-write file payload
+// for that event is proto-equal.
+func assertServerPerScopeLifecycleParity(t *testing.T, fake *applytest.Fake, eventsFile string) {
+	t.Helper()
+
+	var serverProvisions []*pb.AdapterEvent
+	for _, env := range fake.Events() {
+		if ae := env.GetAdapterEvent(); ae != nil && ae.Kind == "adapter.lifecycle.provision_wanted" {
+			serverProvisions = append(serverProvisions, ae)
+		}
+	}
+	if len(serverProvisions) != 1 {
+		t.Fatalf("server stream provision_wanted events: got %d, want 1", len(serverProvisions))
+	}
+	data := serverProvisions[0].Data.AsMap()
+	for _, field := range []string{"scope_instance_id", "shim_listen_address", "token_ref"} {
+		if v, _ := data[field].(string); v == "" {
+			t.Errorf("server adapter.lifecycle event missing %s", field)
+		}
+	}
+
+	var fileProvisions []*pb.AdapterEvent
+	for _, line := range splitNDJSONLines(mustReadEventsForDiag(t, eventsFile)) {
+		var env struct {
+			PayloadType string          `json:"payload_type"`
+			Payload     json.RawMessage `json:"payload"`
+		}
+		if err := json.Unmarshal([]byte(line), &env); err != nil {
+			t.Fatalf("unmarshal file envelope: %v", err)
+		}
+		if env.PayloadType != "AdapterEvent" {
+			continue
+		}
+		var ae pb.AdapterEvent
+		if err := protojson.Unmarshal(env.Payload, &ae); err != nil {
+			t.Fatalf("unmarshal file AdapterEvent: %v", err)
+		}
+		if ae.Kind == "adapter.lifecycle.provision_wanted" {
+			fileProvisions = append(fileProvisions, &ae)
+		}
+	}
+	if len(fileProvisions) != 1 {
+		t.Fatalf("file provision_wanted events: got %d, want 1", len(fileProvisions))
+	}
+	if !proto.Equal(fileProvisions[0], serverProvisions[0]) {
+		want, _ := protojson.Marshal(serverProvisions[0])
+		t.Errorf("file and server adapter.lifecycle payloads differ\n file: %s\n server: %s", fileProvisions[0], want)
+	}
 }

@@ -59,6 +59,10 @@ type Options struct {
 	// SendBuffer is the size of the bounded channel between Publish() and
 	// the SubmitEvents sender goroutine. Defaults to 64.
 	SendBuffer int
+	// BootstrapToken, when set, is sent as the X-Server-Bootstrap header on
+	// the Register RPC. Servers that require out-of-band registration
+	// (bootstrap) authentication reject Register without it.
+	BootstrapToken string
 }
 
 // Client talks to a server via Connect.

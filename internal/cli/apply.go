@@ -14,23 +14,24 @@ import (
 )
 
 type applyOptions struct {
-	workflowPath     string
-	serverURL        string
-	eventsPath       string
-	name             string
-	codec            string
-	tlsMode          string
-	tlsCA            string
-	tlsCert          string
-	tlsKey           string
-	varOverrides     []string     // raw "key=value" pairs from --var flags
-	varFiles         []string     // paths from --var-file flags
-	output           string       // "auto" | "concise" | "json"
-	subworkflowRoots []string     // --subworkflow-root flag (repeatable); populates AllowedRoots on LocalSubWorkflowResolver
-	warnsAsErrors    bool         // --warnings-as-errors: refuse to run when an adapter schema can't be verified
-	allowUnsigned    bool         // --allow-unsigned: skip adapter signature verification (WS46)
-	stdin            io.Reader    // stdin for local-mode approval prompts; nil → os.Stdin
-	log              *slog.Logger // nil → newApplyLogger(); injectable for tests
+	workflowPath         string
+	serverURL            string
+	eventsPath           string
+	name                 string
+	codec                string
+	tlsMode              string
+	tlsCA                string
+	tlsCert              string
+	tlsKey               string
+	varOverrides         []string     // raw "key=value" pairs from --var flags
+	varFiles             []string     // paths from --var-file flags
+	output               string       // "auto" | "concise" | "json"
+	serverBootstrapToken string       // --server-bootstrap-token: X-Server-Bootstrap value sent on Register; "file:<path>" reads the token from a file
+	subworkflowRoots     []string     // --subworkflow-root flag (repeatable); populates AllowedRoots on LocalSubWorkflowResolver
+	warnsAsErrors        bool         // --warnings-as-errors: refuse to run when an adapter schema can't be verified
+	allowUnsigned        bool         // --allow-unsigned: skip adapter signature verification (WS46)
+	stdin                io.Reader    // stdin for local-mode approval prompts; nil → os.Stdin
+	log                  *slog.Logger // nil → newApplyLogger(); injectable for tests
 }
 
 func NewApplyCmd() *cobra.Command {
@@ -51,8 +52,9 @@ func NewApplyCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&opts.serverURL, "server", envOrDefault("CRITERIA_SERVER_URL", ""), "server base URL (optional for local mode)")
-	cmd.Flags().StringVar(&opts.eventsPath, "events-file", "", "Write ND-JSON events to this path in local mode (always written when set, regardless of --output)")
+	cmd.Flags().StringVar(&opts.eventsPath, "events-file", "", "Write ND-JSON events to this path (local mode: primary event stream; server mode: also mirrored from the server stream)")
 	cmd.Flags().StringVar(&opts.name, "name", envOrDefault("CRITERIA_NAME", ""), "Agent name (server mode, defaults to hostname)")
+	cmd.Flags().StringVar(&opts.serverBootstrapToken, "server-bootstrap-token", envOrDefault("CRITERIA_SERVER_BOOTSTRAP_TOKEN", ""), "Token sent as the X-Server-Bootstrap header on Register in server mode (\"file:<path>\" reads it from a mounted secret file; also via CRITERIA_SERVER_BOOTSTRAP_TOKEN)")
 	cmd.Flags().StringVar(&opts.codec, "server-codec", envOrDefault("CRITERIA_SERVER_CODEC", "proto"), "Connect codec: proto or json")
 	cmd.Flags().StringVar(&opts.tlsMode, "server-tls", envOrDefault("CRITERIA_SERVER_TLS", ""), "TLS mode: disable|tls|mtls")
 	cmd.Flags().StringVar(&opts.tlsCA, "tls-ca", envOrDefault("CRITERIA_TLS_CA", ""), "Path to CA bundle PEM")

@@ -896,7 +896,7 @@ func TestResumeActiveRun_ExceedsMaxRetries(t *testing.T) {
 	}
 
 	ft := &fakeTransport{}
-	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp)
+	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp, nil)
 
 	// Checkpoint must be removed.
 	list, _ := ListStepCheckpoints()
@@ -941,7 +941,7 @@ func TestResumeActiveRun_HappyPath(t *testing.T) {
 	}
 
 	ft := &fakeTransport{}
-	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp)
+	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp, nil)
 
 	// Checkpoint must be removed after the run completes.
 	list, _ := ListStepCheckpoints()
@@ -1023,7 +1023,7 @@ func TestResumeActiveRun_VisitsRestored(t *testing.T) {
 	}
 
 	ft := &fakeTransport{}
-	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp)
+	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp, nil)
 
 	// The engine must emit RunFailed because visits["work"]=1 >= max_visits=1.
 	var gotFailed bool
@@ -1064,7 +1064,7 @@ func TestResumePausedRun_StartsStreamsAndRunsEngine(t *testing.T) {
 	}
 
 	ft := &fakeTransport{}
-	resumePausedRun(context.Background(), discardLogger(), ft, cp, graph, resp)
+	resumePausedRun(context.Background(), discardLogger(), ft, cp, graph, resp, nil)
 
 	// Checkpoint must be removed.
 	list, _ := ListStepCheckpoints()
@@ -1107,7 +1107,7 @@ func TestResumePausedRun_StartStreamsError(t *testing.T) {
 	}
 
 	ft := &fakeTransport{startStreamsErr: fmt.Errorf("connection refused")}
-	resumePausedRun(context.Background(), discardLogger(), ft, cp, graph, resp)
+	resumePausedRun(context.Background(), discardLogger(), ft, cp, graph, resp, nil)
 
 	// Checkpoint must be removed (abandoned on stream error).
 	list, _ := ListStepCheckpoints()

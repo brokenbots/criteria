@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"time"
 
@@ -32,8 +33,10 @@ type reattachTransport interface {
 // from the recorded step. Non-resumable runs have their checkpoint cleared.
 //
 // The clientOpts are used to build temporary clients for each resumed run.
+// eventsOut, when non-nil, mirrors the resumed runs' events into the ND-JSON
+// events file (server-mode dual-write).
 // This function blocks until all resumable runs have completed (or failed).
-func resumeInFlightRuns(ctx context.Context, log *slog.Logger, clientOpts *servertrans.Options) {
+func resumeInFlightRuns(ctx context.Context, log *slog.Logger, clientOpts *servertrans.Options, eventsOut io.Writer) {
 	checkpoints, err := ListStepCheckpoints()
 	if err != nil {
 		log.Warn("could not list step checkpoints; skipping crash recovery", "error", err)
@@ -44,11 +47,11 @@ func resumeInFlightRuns(ctx context.Context, log *slog.Logger, clientOpts *serve
 	}
 	log.Info("found in-flight checkpoint(s); attempting crash recovery", "count", len(checkpoints))
 	for _, cp := range checkpoints {
-		resumeOneRun(ctx, log, cp, clientOpts)
+		resumeOneRun(ctx, log, cp, clientOpts, eventsOut)
 	}
 }
 
-func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, clientOpts *servertrans.Options) {
+func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, clientOpts *servertrans.Options, eventsOut io.Writer) {
 	log = log.With("run_id", cp.RunID, "step", cp.CurrentStep)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -75,10 +78,10 @@ func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, cli
 	}
 
 	if resp.Status == "paused" {
-		resumePausedRun(ctx, log, rc, cp, graph, resp)
+		resumePausedRun(ctx, log, rc, cp, graph, resp, eventsOut)
 		return
 	}
-	resumeActiveRun(ctx, log, rc, cp, graph, resp)
+	resumeActiveRun(ctx, log, rc, cp, graph, resp, eventsOut)
 }
 
 // abandonCheckpoint logs a warning (with optional error) and removes the checkpoint.
@@ -155,7 +158,7 @@ func drainAndCleanup(ctx context.Context, rc reattachTransport, cp *StepCheckpoi
 
 // resumePausedRun re-enters a paused run using WithPendingSignal, then
 // services further resume signals until the run reaches a terminal state.
-func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse) {
+func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse, eventsOut io.Writer) {
 	if streamErr := rc.StartStreams(ctx, cp.RunID); streamErr != nil {
 		abandonCheckpoint(log, cp, "failed to start server streams for paused run", streamErr)
 		return
@@ -175,7 +178,8 @@ func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 	}
 	auditPath, _ := auditLogPath(cp.RunID)
 	auditWriter := adapterhost.NewFileAuditWriter(auditPath)
-	eng := engine.New(graph, loader, sink,
+	engineSink := dualWriteSink(sink, cp.RunID, eventsOut)
+	eng := engine.New(graph, loader, engineSink,
 		engine.WithResumedVars(restoredVars),
 		engine.WithResumedIter(restoredIter),
 		engine.WithResumedVisits(cp.Visits),
@@ -190,12 +194,14 @@ func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		drainAndCleanup(ctx, rc, cp)
 		return
 	}
-	serviceResumeSignals(ctx, log, rc, cp, graph, loader, sink, eng)
+	serviceResumeSignals(ctx, log, rc, cp, graph, loader, sink, engineSink, eng)
 }
 
 // serviceResumeSignals waits for and dispatches resume signals while the run
-// remains paused, then drains and removes the checkpoint.
-func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, loader adapterhost.Loader, sink *run.Sink, initialEng *engine.Engine) {
+// remains paused, then drains and removes the checkpoint. sink tracks the
+// paused state; engineSink (possibly the dual-write wrapper around sink) is
+// handed to every resumed engine instance.
+func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, loader adapterhost.Loader, sink *run.Sink, engineSink engine.Sink, initialEng *engine.Engine) {
 	eng := initialEng
 	for sink.IsPaused() {
 		log.Info("run remains paused after reattach; waiting for resume",
@@ -219,7 +225,7 @@ func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc reattachTran
 			break
 		}
 		auditPath2, _ := auditLogPath(cp.RunID)
-		resumedEng := engine.New(graph, loader, sink,
+		resumedEng := engine.New(graph, loader, engineSink,
 			engine.WithResumedVars(eng.VarScope()),
 			engine.WithResumedVisits(eng.VisitCounts()),
 			engine.WithResumePayload(resumeMsg.Payload),
@@ -270,7 +276,7 @@ func checkIterationCursorValidity(graph *workflow.FSMGraph, variableScope string
 
 // failResumeMaxRetries emits the failed run for a resume that exceeded
 // max_step_retries and cleans up the checkpoint.
-func failResumeMaxRetries(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, step string, nextAttempt, maxAttempts int) {
+func failResumeMaxRetries(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, step string, nextAttempt, maxAttempts int, eventsOut io.Writer) {
 	log.Warn("exceeded max_step_retries on resume; failing run",
 		"next_attempt", nextAttempt, "max_attempts", maxAttempts)
 	if streamErr := rc.StartStreams(ctx, cp.RunID); streamErr != nil {
@@ -280,16 +286,19 @@ func failResumeMaxRetries(ctx context.Context, log *slog.Logger, rc reattachTran
 	sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log, Ctx: ctx}
 	reason := fmt.Sprintf("exceeded max_step_retries on resume at step %q (attempt %d)", step, nextAttempt)
 	sink.RunFailed(ctx, reason, step)
+	if local := eventsFileSink(cp.RunID, eventsOut); local != nil {
+		local.OnRunFailed(reason, step)
+	}
 	drainAndCleanup(ctx, rc, cp)
 }
 
 // resumeActiveRun handles the normal (non-paused) resume path, including
 // max_step_retries policy enforcement.
-func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse) {
+func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse, eventsOut io.Writer) {
 	nextAttempt := int(resp.Attempt) + 1
 	maxAttempts := 1 + graph.Policy.MaxStepRetries
 	if nextAttempt > maxAttempts {
-		failResumeMaxRetries(ctx, log, rc, cp, resp.CurrentStep, nextAttempt, maxAttempts)
+		failResumeMaxRetries(ctx, log, rc, cp, resp.CurrentStep, nextAttempt, maxAttempts, eventsOut)
 		return
 	}
 
@@ -300,6 +309,9 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 
 	sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log, Ctx: ctx}
 	sink.StepResumed(ctx, resp.CurrentStep, nextAttempt, "criteria_restart")
+	if local := eventsFileSink(cp.RunID, eventsOut); local != nil {
+		local.OnStepResumed(resp.CurrentStep, nextAttempt, "criteria_restart")
+	}
 	loader := adapterhost.NewLoader()
 
 	// Restore variable scope and iter cursor from the server (W04/W07).
@@ -316,7 +328,7 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		drainAndCleanup(ctx, rc, cp)
 		return
 	}
-	eng := engine.New(graph, loader, sink,
+	eng := engine.New(graph, loader, dualWriteSink(sink, cp.RunID, eventsOut),
 		engine.WithResumedVars(restoredVars),
 		engine.WithResumedIter(restoredIter),
 		engine.WithResumedVisits(cp.Visits),

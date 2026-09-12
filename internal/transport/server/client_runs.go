@@ -18,6 +18,12 @@ func (c *Client) Register(ctx context.Context, name, hostname, version string) e
 		Name:   name,
 		Labels: map[string]string{"hostname": hostname, "version": version},
 	})
+	// Bootstrap (registration) auth: servers configured with a bootstrap
+	// token require this header; without it Register is rejected as
+	// unauthenticated. Servers without bootstrap auth ignore the header.
+	if c.opts.BootstrapToken != "" {
+		req.Header().Set("X-Server-Bootstrap", c.opts.BootstrapToken)
+	}
 	resp, err := c.grpc.Register(ctx, req)
 	if err != nil {
 		return err

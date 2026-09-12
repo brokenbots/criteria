@@ -48,6 +48,7 @@ type ApplyExecution struct {
 	ResumeAfter   time.Duration // delay before ResumeRun; defaults to 10ms when zero
 	DropStreamAt  string        // step name; empty = no stream drop
 	CancelAt      string        // step name; empty = no cancellation
+	CancelAfter   time.Duration // delay before RunCancel is sent after CancelAt matches; 0 = immediate
 }
 
 // Fake stands up an in-memory server endpoint over loopback and exposes
@@ -418,6 +419,17 @@ func (f *Fake) SinceSeqHeaders() []string {
 	return out
 }
 
+// BootstrapHeaders returns a snapshot of the X-Server-Bootstrap header values
+// received on Register calls, in call order. An empty string means the call
+// carried no bootstrap header.
+func (f *Fake) BootstrapHeaders() []string {
+	f.handler.mu.Lock()
+	defer f.handler.mu.Unlock()
+	out := make([]string, len(f.handler.bootstrapHeaders))
+	copy(out, f.handler.bootstrapHeaders)
+	return out
+}
+
 // trackConn is an http.ConnState hook that records live connections so tests
 // can drop them without closing the server listener.
 func (f *Fake) trackConn(c net.Conn, cs http.ConnState) {
@@ -576,6 +588,8 @@ type fakeHandler struct {
 	sinceSeqHdr []string                  // since_seq header values per connection
 	dropDone    bool                      // true after DropStreamAt has fired once
 
+	bootstrapHeaders []string // X-Server-Bootstrap header values per Register call
+
 	// credentials maps issued bearer tokens to their criteria id. It is used
 	// to assign a unique identity per registration and to enforce that a run
 	// may only be reattached or published by the agent that owns it.
@@ -593,8 +607,11 @@ type fakeHandler struct {
 	nextID             atomic.Int32
 }
 
-func (h *fakeHandler) Register(_ context.Context, _ *connect.Request[pb.RegisterRequest]) (*connect.Response[pb.RegisterResponse], error) {
+func (h *fakeHandler) Register(_ context.Context, req *connect.Request[pb.RegisterRequest]) (*connect.Response[pb.RegisterResponse], error) {
 	h.registrationCount.Add(1)
+	h.mu.Lock()
+	h.bootstrapHeaders = append(h.bootstrapHeaders, req.Header().Get("X-Server-Bootstrap"))
+	h.mu.Unlock()
 	id := h.nextID.Add(1)
 	criteriaID := fmt.Sprintf("criteria-%d", id)
 	token := fmt.Sprintf("token-%d", id)
@@ -818,11 +835,16 @@ func (h *fakeHandler) triggerActions(env *pb.Envelope) {
 
 	if ex.CancelAt != "" {
 		if se := env.GetStepEntered(); se != nil && se.Step == ex.CancelAt {
-			h.sendControl(&pb.ControlMessage{
+			cancel := &pb.ControlMessage{
 				Command: &pb.ControlMessage_RunCancel{
 					RunCancel: &pb.RunCancel{RunId: env.RunId, Reason: "applytest: cancel injected"},
 				},
-			})
+			}
+			if ex.CancelAfter > 0 {
+				time.AfterFunc(ex.CancelAfter, func() { h.sendControl(cancel) })
+			} else {
+				h.sendControl(cancel)
+			}
 		}
 	}
 
