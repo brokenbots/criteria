@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -494,7 +496,9 @@ func TestAgent_CrashRecovery_DeterministicResume(t *testing.T) {
 	require.Equal(t, 0, runEventCountOfType(fake, runID, "RunFailed"), "agent shutdown must not report a terminal failure")
 
 	// After recovery the agent must be back in its idle loop and able to accept
-	// a brand new assignment.
+	// a brand new assignment. Gate on the restarted agent's control stream
+	// being attached so the delivery below does not depend on reconnect timing.
+	fake.WaitForCond(t, 10*time.Second, func() bool { return fake.ControlAttachCount() >= 2 })
 	nextID := uuid.NewString()
 	fake.QueueAssignment(makeAssignment(nextID, "two_step", twoStepWorkflow))
 	fake.WaitForCond(t, 30*time.Second, func() bool { return runHasEventOfType(fake, nextID, "RunCompleted") })
@@ -607,5 +611,74 @@ func TestAgent_AuthFailureRejected(t *testing.T) {
 		require.False(t, fake.HasEventOfType("RunStarted"), "auth failure should prevent assignment execution")
 		cancel()
 		waitAgent(t, errCh)
+	}
+}
+
+// TestActiveRun_ClaimNext_HandsOffQueuedRunAfterFinish is the unit-level
+// regression for the CI failure of TestAgent_CrashRecovery_DeterministicResume
+// (agent stops accepting assignments until restart): a queued assignment must
+// be claimable the instant the finishing run clears its state, even when no
+// one re-enters the agent loop's select at that moment. The hand-off is driven
+// by the finishing goroutine through claimNext, so there is no done channel to
+// lose a wakeup on.
+func TestActiveRun_ClaimNext_HandsOffQueuedRunAfterFinish(t *testing.T) {
+	a := &activeRun{}
+	a.mu.Lock()
+	a.runID = "run-a"
+	a.mu.Unlock()
+	a.enqueue(&pb.WorkflowAssignment{RunId: "run-b"}, nil)
+
+	// While run-a is active the queued assignment must not be claimed.
+	if qa := a.claimNext(func() {}, make(chan *pb.ResumeRun, 1), make(chan struct{})); qa != nil {
+		t.Fatalf("claimNext claimed %q while run-a is still active", qa.assignment.GetRunId())
+	}
+
+	// The failing CI interleaving: the run finishes while the agent loop is
+	// busy elsewhere, so the done channel is cleared before anyone observes
+	// it. The queued assignment must still be claimable.
+	a.finishRun()
+	qa := a.claimNext(func() {}, make(chan *pb.ResumeRun, 1), make(chan struct{}))
+	if qa == nil || qa.assignment.GetRunId() != "run-b" {
+		t.Fatalf("claimNext after finishRun returned %v, want run-b", qa)
+	}
+	if got := a.activeRunID(); got != "run-b" {
+		t.Fatalf("activeRunID after claim = %q, want run-b", got)
+	}
+	if a.claimNext(func() {}, make(chan *pb.ResumeRun, 1), make(chan struct{})) != nil {
+		t.Fatal("second claimNext succeeded while run-b is active")
+	}
+}
+
+// TestActiveRun_ClaimNext_ConcurrentClaimsSingleWinner pins the atomicity of
+// the idle check plus claim: when a finishing run's goroutine and the agent
+// loop race to start the next assignment, exactly one caller may win.
+func TestActiveRun_ClaimNext_ConcurrentClaimsSingleWinner(t *testing.T) {
+	a := &activeRun{}
+	a.enqueue(&pb.WorkflowAssignment{RunId: "run-1"}, nil)
+
+	const claimers = 8
+	var (
+		wg   sync.WaitGroup
+		wins atomic.Int32
+	)
+	start := make(chan struct{})
+	for range claimers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			if a.claimNext(func() {}, make(chan *pb.ResumeRun, 1), make(chan struct{})) != nil {
+				wins.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if got := wins.Load(); got != 1 {
+		t.Fatalf("concurrent claims won by %d goroutines, want exactly 1", got)
+	}
+	if got := a.activeRunID(); got != "run-1" {
+		t.Fatalf("activeRunID = %q, want run-1", got)
 	}
 }

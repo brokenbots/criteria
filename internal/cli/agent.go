@@ -131,12 +131,6 @@ func (a *activeRun) activeRunID() string {
 	return a.runID
 }
 
-func (a *activeRun) doneCh() <-chan struct{} {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.done
-}
-
 func (a *activeRun) isKnown(runID string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -193,24 +187,25 @@ func (a *activeRun) enqueue(assignment *pb.WorkflowAssignment, client *servertra
 	a.pending = append(a.pending, &queuedAssignment{assignment: assignment, client: client})
 }
 
-func (a *activeRun) nextPending() *queuedAssignment {
+// claimNext atomically transitions the agent from idle to running: it pops
+// the oldest queued assignment and records it as the active run in one
+// critical section. The finishing run's goroutine and the agent loop can race
+// to start the next assignment; claiming and activating together makes a
+// double-start impossible. It returns nil when a run is already active or the
+// queue is empty.
+func (a *activeRun) claimNext(cancel context.CancelFunc, resumeCh chan *pb.ResumeRun, done chan struct{}) *queuedAssignment {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if len(a.pending) == 0 {
+	if a.runID != "" || len(a.pending) == 0 {
 		return nil
 	}
 	qa := a.pending[0]
 	a.pending = a.pending[1:]
-	return qa
-}
-
-func (a *activeRun) beginRun(runID string, cancel context.CancelFunc, resumeCh chan *pb.ResumeRun, done chan struct{}) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.runID = runID
+	a.runID = qa.assignment.GetRunId()
 	a.cancel = cancel
 	a.resumeCh = resumeCh
 	a.done = done
+	return qa
 }
 
 func (a *activeRun) finishRun() {
@@ -258,9 +253,22 @@ func (a *activeRun) shutdown() <-chan struct{} {
 	return a.done
 }
 
+// startNext starts the oldest queued assignment if the agent is idle. The
+// hand-off from a finishing run is driven by that run's goroutine (see the
+// worker below) rather than by the agent loop: the loop can be busy in another
+// select case at the moment the run finishes, and re-entering select on the
+// just-cleared done channel would silently drop the completion signal and
+// wedge the agent with a queued run that never starts.
 func (a *activeRun) startNext(ctx context.Context, log *slog.Logger, defaultClient *servertrans.Client, opts *agentOptions) {
-	qa := a.nextPending()
+	if ctx.Err() != nil {
+		return
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	resumeCh := make(chan *pb.ResumeRun, 1)
+	done := make(chan struct{})
+	qa := a.claimNext(cancel, resumeCh, done)
 	if qa == nil {
+		cancel()
 		return
 	}
 	client := qa.client
@@ -268,14 +276,17 @@ func (a *activeRun) startNext(ctx context.Context, log *slog.Logger, defaultClie
 		client = defaultClient
 	}
 
-	runCtx, cancel := context.WithCancel(ctx)
-	resumeCh := make(chan *pb.ResumeRun, 1)
-	done := make(chan struct{})
-	a.beginRun(qa.assignment.GetRunId(), cancel, resumeCh, done)
-
 	log.Info("accepted assignment", "run_id", qa.assignment.GetRunId(), "workflow", qa.assignment.GetWorkflowName())
 	go func(q *queuedAssignment) {
-		defer a.finishRun()
+		defer func() {
+			a.finishRun()
+			// Hand off to the next queued run from this goroutine after the
+			// run state is cleared. Signalling the agent loop instead loses
+			// the wakeup when the loop is busy in another select case at this
+			// instant: it re-reads a nil done channel and the queued
+			// assignment is never claimed.
+			a.startNext(ctx, log, defaultClient, opts)
+		}()
 		if client != defaultClient {
 			defer client.Close()
 		}
@@ -336,10 +347,6 @@ func (l *agentLoop) handleAssignment(assignment *pb.WorkflowAssignment) {
 	l.log.Info("assignment queued behind active run",
 		"active_run_id", l.active.activeRunID(),
 		"queued_run_id", runID)
-}
-
-func (l *agentLoop) handleDone() {
-	l.active.startNext(l.ctx, l.log, l.client, l.opts)
 }
 
 func (l *agentLoop) shutdown() {
@@ -415,6 +422,10 @@ func runAgent(ctx context.Context, opts *agentOptions) error {
 	// assignment loop as fresh assignments.
 	recoverAgentRuns(ctx, log, client, loop.active, opts)
 
+	// Run completions do not need a select case here: the finishing run's
+	// goroutine clears the run state and starts the next queued assignment
+	// itself. Watching a done channel from this loop would lose the wakeup
+	// whenever the loop is busy in another case at the moment of completion.
 	for {
 		select {
 		case <-ctx.Done():
@@ -429,9 +440,6 @@ func runAgent(ctx context.Context, opts *agentOptions) error {
 
 		case assignment := <-client.AssignmentCh():
 			loop.handleAssignment(assignment)
-
-		case <-loop.active.doneCh():
-			loop.handleDone()
 		}
 	}
 }
