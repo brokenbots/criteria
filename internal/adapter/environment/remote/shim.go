@@ -42,6 +42,27 @@ type DigestVerifier interface {
 	Verify(adapterType string, digest string) error
 }
 
+// verifyFailureState tracks consecutive identity-verification rejections for
+// a session key while a session waiter is pending on it.
+type verifyFailureState struct {
+	count         int
+	firstFailedAt time.Time
+	lastErr       string
+}
+
+// CRI-137: bounds for identity-verification failures while a session waiter
+// is pending. A stale adapter pod holding a pre-rotation accept token (for
+// example after a runner-pod restart) can never pass verification; exceeding
+// either bound fails the pending wait terminally instead of retrying forever.
+const (
+	// DefaultVerifyFailureBudget is the wall-clock budget after which a
+	// pending session wait fails when identity verification keeps failing.
+	DefaultVerifyFailureBudget = 5 * time.Minute
+	// DefaultMaxConsecutiveVerifyFailures is the consecutive-rejection count
+	// after which a pending session wait fails early.
+	DefaultMaxConsecutiveVerifyFailures = 150
+)
+
 // Shim listens for inbound adapter connections, terminates mTLS, verifies
 // identity, and presents each connection as a local-looking Handle.
 type Shim struct {
@@ -62,6 +83,10 @@ type Shim struct {
 	started          bool
 	perScopeSessions bool
 	scopeTokens      map[string]string // scope → accept token (only when perScopeSessions is true)
+
+	verifyFailures               map[string]*verifyFailureState // session key → consecutive identity-verification failures
+	maxConsecutiveVerifyFailures int
+	verifyFailureBudget          time.Duration
 }
 
 type session struct {
@@ -110,19 +135,22 @@ func NewShim(cfg *Config, verifier DigestVerifier) (*Shim, error) {
 	}
 
 	return &Shim{
-		listenAddr:            cfg.ListenAddress,
-		tlsConfig:             tlsConf,
-		acceptToken:           cfg.AcceptToken,
-		clientIdentityPattern: cfg.ClientIdentityPattern,
-		clientIdentityRe:      re,
-		digestVerifier:        verifier,
-		insecure:              cfg.Insecure,
-		tlsHandshakeDeadline:  tlsDeadline,
-		identityDeadline:      identityDeadline,
-		sessions:              make(map[string]*session),
-		waiters:               make(map[string][]chan waitResult),
-		perScopeSessions:      cfg.PerScopeSessions,
-		scopeTokens:           make(map[string]string),
+		listenAddr:                   cfg.ListenAddress,
+		tlsConfig:                    tlsConf,
+		acceptToken:                  cfg.AcceptToken,
+		clientIdentityPattern:        cfg.ClientIdentityPattern,
+		clientIdentityRe:             re,
+		digestVerifier:               verifier,
+		insecure:                     cfg.Insecure,
+		tlsHandshakeDeadline:         tlsDeadline,
+		identityDeadline:             identityDeadline,
+		sessions:                     make(map[string]*session),
+		waiters:                      make(map[string][]chan waitResult),
+		perScopeSessions:             cfg.PerScopeSessions,
+		scopeTokens:                  make(map[string]string),
+		verifyFailures:               make(map[string]*verifyFailureState),
+		maxConsecutiveVerifyFailures: DefaultMaxConsecutiveVerifyFailures,
+		verifyFailureBudget:          DefaultVerifyFailureBudget,
 	}, nil
 }
 
@@ -367,6 +395,71 @@ func (s *Shim) readHandshakeMessage(conn net.Conn) (handshakeMessage, error) {
 }
 
 func (s *Shim) verifyAdapterIdentity(conn net.Conn, hs *handshakeMessage) error {
+	if err := s.checkAdapterIdentity(conn, hs); err != nil {
+		s.noteVerifyFailure(hs.Name, hs.Scope, err)
+		return err
+	}
+	s.clearVerifyFailure(hs.Name, hs.Scope)
+	return nil
+}
+
+// noteVerifyFailure records an identity-verification rejection. While a
+// waiter is pending for the same session key, exceeding the consecutive-
+// failure cap or the wall-clock budget wakes the waiter with a terminal
+// error so a run wedged by stale adapter pods fails fast instead of looping
+// forever (CRI-137). Failures observed while nobody is waiting are not
+// accumulated.
+func (s *Shim) noteVerifyFailure(adapterType, scope string, cause error) {
+	key := s.sessionKey(adapterType, scope)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.waiters[key]) == 0 {
+		delete(s.verifyFailures, key)
+		return
+	}
+	if s.verifyFailures == nil {
+		s.verifyFailures = make(map[string]*verifyFailureState)
+	}
+	maxFails := s.maxConsecutiveVerifyFailures
+	if maxFails <= 0 {
+		maxFails = DefaultMaxConsecutiveVerifyFailures
+	}
+	budget := s.verifyFailureBudget
+	if budget <= 0 {
+		budget = DefaultVerifyFailureBudget
+	}
+	now := time.Now()
+	st := s.verifyFailures[key]
+	if st == nil {
+		st = &verifyFailureState{firstFailedAt: now}
+		s.verifyFailures[key] = st
+	}
+	st.count++
+	st.lastErr = cause.Error()
+	if st.count < maxFails && now.Sub(st.firstFailedAt) < budget {
+		return
+	}
+	err := fmt.Errorf("remote adapter %q identity verification failed %d consecutive times over %s for scope %q; last error: %s; failing the pending session wait instead of retrying indefinitely (stale adapter pod holding a pre-rotation accept token? CRI-137)",
+		adapterType, st.count, now.Sub(st.firstFailedAt).Round(time.Second), scope, st.lastErr)
+	delete(s.verifyFailures, key)
+	for _, ch := range s.waiters[key] {
+		ch <- waitResult{err: err}
+	}
+	delete(s.waiters, key)
+}
+
+// clearVerifyFailure resets the consecutive-failure tracker for a session key
+// after a successful identity verification.
+func (s *Shim) clearVerifyFailure(adapterType, scope string) {
+	key := s.sessionKey(adapterType, scope)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.verifyFailures != nil {
+		delete(s.verifyFailures, key)
+	}
+}
+
+func (s *Shim) checkAdapterIdentity(conn net.Conn, hs *handshakeMessage) error {
 	if s.digestVerifier != nil {
 		if err := s.digestVerifier.Verify(hs.Name, hs.Digest); err != nil {
 			_ = conn.Close()

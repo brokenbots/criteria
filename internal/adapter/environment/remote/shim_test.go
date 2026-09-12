@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -28,6 +29,8 @@ import (
 	"google.golang.org/grpc"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
+
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -1848,5 +1851,213 @@ func TestShim_PerScope_UnregisterRejectsRedial(t *testing.T) {
 	defer shortCancel()
 	if _, err := shim.WaitForHandle(shortCtx, "noop", scope); err == nil {
 		t.Fatal("expected WaitForHandle to fail after scope token was rotated away")
+	}
+}
+
+// --- CRI-137: bounded identity-verification failure loop ---
+//
+// A stale adapter pod holding a pre-rotation accept token (for example after a
+// runner-pod restart) re-dials forever and is rejected forever. The shim must
+// wake a pending session waiter once the failure bound trips instead of
+// letting the retry loop spin until an operator deletes the run.
+
+// dialStaleTokenLoop repeatedly dials the shim with a token that cannot verify
+// until stop is closed, mimicking the adapter runner reconnect loop.
+func dialStaleTokenLoop(addr, scope string, stop <-chan struct{}) {
+	hs := &handshakeMessage{Name: "noop", Version: "1.0.0", Digest: "sha256:abcd1234", Scope: scope, Token: "stale-token"}
+	for {
+		select {
+		case <-stop:
+			return
+		default:
+		}
+		_ = dialFakeAdapter(addr, hs, nil)
+		select {
+		case <-stop:
+			return
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+// newCri137TestShim starts a per-scope shim with tightened failure bounds.
+func newCri137TestShim(t *testing.T, scope string, maxFails int, budget time.Duration) (shim *Shim, addr string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+
+	verifier := &fixedDigestVerifier{allowed: map[string]string{"noop": "sha256:abcd1234"}}
+	shim, err := NewShim(&Config{ListenAddress: "127.0.0.1:0", AcceptToken: "legacy-token"}, verifier)
+	if err != nil {
+		t.Fatalf("NewShim: %v", err)
+	}
+	if err := shim.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = shim.Stop(ctx) })
+
+	shim.SetPerScopeSessions(true)
+	shim.RegisterScope(scope, "current-token")
+	shim.maxConsecutiveVerifyFailures = maxFails
+	shim.verifyFailureBudget = budget
+	return shim, shim.listener.Addr().String()
+}
+
+// waitForWaiterRegistration blocks until the shim has a waiter registered for
+// the session key, since failures are only tracked while someone waits.
+func waitForWaiterRegistration(t *testing.T, shim *Shim, scope string) {
+	t.Helper()
+	key := shim.sessionKey("noop", scope)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		shim.mu.Lock()
+		n := len(shim.waiters[key])
+		shim.mu.Unlock()
+		if n > 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("session waiter never registered")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestShim_VerifyFailureBudget_WakesWaiterWithTerminalError(t *testing.T) {
+	scope := "root/cri137-budget"
+	shim, addr := newCri137TestShim(t, scope, 1_000_000, 300*time.Millisecond)
+
+	stop := make(chan struct{})
+	go dialStaleTokenLoop(addr, scope, stop)
+	defer close(stop)
+
+	waitResult := make(chan error, 1)
+	go func() {
+		_, err := shim.WaitForHandle(context.Background(), "noop", scope)
+		waitResult <- err
+	}()
+	waitForWaiterRegistration(t, shim, scope)
+
+	select {
+	case err := <-waitResult:
+		if err == nil {
+			t.Fatal("expected WaitForHandle to fail once the failure budget is exhausted")
+		}
+		if !strings.Contains(err.Error(), "accept_token verification failed for scope") {
+			t.Errorf("terminal error must surface the last accept_token failure, got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "identity verification failed") {
+			t.Errorf("terminal error must explain the bounded failure, got: %v", err)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatal("WaitForHandle did not fail within the failure budget; the accept loop is still unbounded")
+	}
+}
+
+func TestShim_ConsecutiveVerifyFailures_WakeWaiterBeforeBudget(t *testing.T) {
+	scope := "root/cri137-count"
+	shim, addr := newCri137TestShim(t, scope, 3, 10*time.Minute)
+
+	stop := make(chan struct{})
+	go dialStaleTokenLoop(addr, scope, stop)
+	defer close(stop)
+
+	waitResult := make(chan error, 1)
+	go func() {
+		_, err := shim.WaitForHandle(context.Background(), "noop", scope)
+		waitResult <- err
+	}()
+	waitForWaiterRegistration(t, shim, scope)
+
+	select {
+	case err := <-waitResult:
+		if err == nil {
+			t.Fatal("expected WaitForHandle to fail once the consecutive-failure cap is hit")
+		}
+		if !strings.Contains(err.Error(), "3 consecutive times") {
+			t.Errorf("terminal error must report the consecutive-failure count, got: %v", err)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatal("WaitForHandle did not fail after the consecutive-failure cap was exceeded")
+	}
+}
+
+func TestShim_VerifyFailuresWithoutWaiter_DoNotAccumulate(t *testing.T) {
+	scope := "root/cri137-nowait"
+	shim, addr := newCri137TestShim(t, scope, 2, 10*time.Minute)
+
+	// Two rejected dials before anyone waits: they must not pre-arm the bound.
+	_ = dialFakeAdapter(addr, &handshakeMessage{Name: "noop", Version: "1.0.0", Digest: "sha256:abcd1234", Scope: scope, Token: "stale-token"}, nil)
+	_ = dialFakeAdapter(addr, &handshakeMessage{Name: "noop", Version: "1.0.0", Digest: "sha256:abcd1234", Scope: scope, Token: "stale-token"}, nil)
+	time.Sleep(200 * time.Millisecond)
+
+	waitCtx, waitCancel := context.WithCancel(context.Background())
+	defer waitCancel()
+	waitResult := make(chan error, 1)
+	go func() {
+		_, err := shim.WaitForHandle(waitCtx, "noop", scope)
+		waitResult <- err
+	}()
+	waitForWaiterRegistration(t, shim, scope)
+
+	// A single post-wait rejection must not trip the cap (counter restarts at 1).
+	_ = dialFakeAdapter(addr, &handshakeMessage{Name: "noop", Version: "1.0.0", Digest: "sha256:abcd1234", Scope: scope, Token: "stale-token"}, nil)
+	select {
+	case err := <-waitResult:
+		t.Fatalf("waiter was woken after a single tracked failure; unbounded retry would still be reachable: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	waitCancel()
+	select {
+	case err := <-waitResult:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("cancellation should end the wait, got: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancelled waiter never returned")
+	}
+}
+
+func TestShim_SuccessfulHandshake_ResetsVerifyFailureTracker(t *testing.T) {
+	scope := "root/cri137-reset"
+	shim, addr := newCri137TestShim(t, scope, 2, 10*time.Minute)
+
+	waitCtx, waitCancel := context.WithCancel(context.Background())
+	defer waitCancel()
+	type waitOutcome struct {
+		handle adapterhost.Handle
+		err    error
+	}
+	waitResult := make(chan waitOutcome, 1)
+	go func() {
+		h, err := shim.WaitForHandle(waitCtx, "noop", scope)
+		waitResult <- waitOutcome{handle: h, err: err}
+	}()
+	waitForWaiterRegistration(t, shim, scope)
+
+	// One tracked failure (counter at 1), then a valid re-handshake.
+	_ = dialFakeAdapter(addr, &handshakeMessage{Name: "noop", Version: "1.0.0", Digest: "sha256:abcd1234", Scope: scope, Token: "stale-token"}, nil)
+	time.Sleep(100 * time.Millisecond)
+	_ = dialFakeAdapter(addr, &handshakeMessage{Name: "noop", Version: "1.0.0", Digest: "sha256:abcd1234", Scope: scope, Token: "current-token"}, nil)
+
+	select {
+	case out := <-waitResult:
+		if out.err != nil {
+			t.Fatalf("valid handshake should satisfy the waiter, got: %v", out.err)
+		}
+		if out.handle == nil {
+			t.Fatal("expected a handle from the valid handshake")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("waiter was not satisfied by the valid handshake")
+	}
+
+	shim.mu.Lock()
+	key := shim.sessionKey("noop", scope)
+	_, tracked := shim.verifyFailures[key]
+	shim.mu.Unlock()
+	if tracked {
+		t.Error("successful handshake must reset the consecutive-failure tracker")
 	}
 }
