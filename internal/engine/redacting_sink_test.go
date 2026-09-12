@@ -391,6 +391,35 @@ func TestRedactingSink_OnAdapterLifecycle(t *testing.T) {
 	assertRedacted(t, inner.onAdapterLifecycleArgs[2:], []string{"status_[REDACTED]", "detail_[REDACTED]"})
 }
 
+func TestRedactingSink_OnAdapterLifecycleEvent(t *testing.T) {
+	inner := &recordingSink{}
+	reg := secrets.NewRegistry()
+	reg.Register("secret123")
+	sink := NewRedactingSink(inner, reg)
+
+	sink.OnAdapterLifecycleEvent(&AdapterLifecycleEvent{
+		RunID:             "run_secret123",
+		ScopeName:         "scope_secret123",
+		ScopeInstanceID:   "inst_secret123",
+		AdapterName:       "adapter_secret123",
+		AdapterType:       "shell",
+		Digest:            "digest_secret123",
+		ShimListenAddress: "addr_secret123",
+		TokenRef:          "token_ref_secret123",
+		Status:            "provision_wanted",
+	})
+
+	ev := inner.onAdapterLifecycleEventArg
+	if ev == nil {
+		t.Fatal("expected event forwarded to inner sink")
+	}
+	if ev.AdapterType != "shell" {
+		t.Errorf("AdapterType = %q, want shell (not a secret; must pass through)", ev.AdapterType)
+	}
+	assertRedacted(t, []string{ev.RunID, ev.ScopeName, ev.ScopeInstanceID, ev.AdapterName, ev.Digest, ev.ShimListenAddress, ev.TokenRef, ev.Status},
+		[]string{"run_[REDACTED]", "scope_[REDACTED]", "inst_[REDACTED]", "adapter_[REDACTED]", "digest_[REDACTED]", "addr_[REDACTED]", "token_ref_[REDACTED]", "provision_wanted"})
+}
+
 func TestRedactingSink_OnRunOutputs(t *testing.T) {
 	inner := &recordingSink{}
 	reg := secrets.NewRegistry()

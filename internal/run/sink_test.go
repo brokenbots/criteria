@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/brokenbots/criteria/internal/engine"
 	servertrans "github.com/brokenbots/criteria/internal/transport/server"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
@@ -300,6 +301,44 @@ func TestSink_StepResumed_InheritsContextValuesAndDetachesCancellation(t *testin
 	sr := p.envelopes[0].GetStepResumed()
 	if sr == nil || sr.GetStep() != "step1" || sr.GetAttempt() != 2 {
 		t.Errorf("StepResumed payload mismatch: %v", p.envelopes[0])
+	}
+}
+
+// TestSink_OnAdapterLifecycleEvent_PublishesAdapterType verifies the CRI-141
+// contract: the published adapter.lifecycle payload carries adapter_type — the
+// adapter implementation kind (e.g. shell|copilot) from the workflow's adapter
+// declaration — so a per-scope builder can resolve criteria-adapter-<type>
+// images directly from the event instead of guessing from the node name.
+func TestSink_OnAdapterLifecycleEvent_PublishesAdapterType(t *testing.T) {
+	fp := &fakePublisher{}
+	s := &Sink{RunID: "test-run-1", Client: fp, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	s.OnAdapterLifecycleEvent(&engine.AdapterLifecycleEvent{
+		RunID:             "test-run-1",
+		ScopeInstanceID:   "11111111-1111-1111-1111-111111111111",
+		AdapterName:       "intake",
+		AdapterType:       "shell",
+		Digest:            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ShimListenAddress: "127.0.0.1:7778",
+		TokenRef:          "/run/data/tokens/intake.token",
+		Status:            "provision_wanted",
+	})
+
+	if len(fp.published) != 1 {
+		t.Fatalf("expected 1 published envelope, got %d", len(fp.published))
+	}
+	ae := fp.published[0].GetAdapterEvent()
+	if ae == nil {
+		t.Fatalf("payload is %T, want *pb.AdapterEvent", fp.published[0].Payload)
+	}
+	if ae.Kind != "adapter.lifecycle.provision_wanted" {
+		t.Errorf("kind: got %q want adapter.lifecycle.provision_wanted", ae.Kind)
+	}
+	if ae.Adapter != "intake" {
+		t.Errorf("adapter: got %q want intake", ae.Adapter)
+	}
+	if got := ae.Data.Fields["adapter_type"].GetStringValue(); got != "shell" {
+		t.Errorf("adapter_type: got %q want shell", got)
 	}
 }
 

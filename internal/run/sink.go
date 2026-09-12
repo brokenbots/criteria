@@ -237,6 +237,7 @@ func (s *Sink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent) {
 			"scope_name":          event.ScopeName,
 			"scope_instance_id":   event.ScopeInstanceID,
 			"adapter":             event.AdapterName,
+			"adapter_type":        event.AdapterType,
 			"digest":              event.Digest,
 			"shim_listen_address": event.ShimListenAddress,
 			"token_ref":           event.TokenRef,
