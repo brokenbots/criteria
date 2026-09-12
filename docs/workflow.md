@@ -1436,7 +1436,8 @@ bin/criteria apply <workflow.hcl> --server http://localhost:8080
 ```
 
 Notable flags: `--server <url>`, `--server-tls disable|tls|mtls`,
-`--events-file <path>` (write events to a file instead of stdout),
+`--server-bootstrap-token <token>` (sent as the `X-Server-Bootstrap` header on `Register` in server mode; `file:<path>` reads it from a mounted secret file; also via `CRITERIA_SERVER_BOOTSTRAP_TOKEN`),
+`--events-file <path>` (write the ND-JSON event stream to a file; in `--server` mode the file mirrors the server stream so both carry the same envelope content, including `adapter.lifecycle` events with `scope_instance_id`, `shim_listen_address`, and `token_ref`),
 `--output auto|concise|json`, `--name <id>` (server-mode agent name),
 `--subworkflow-root <path>`.
 
