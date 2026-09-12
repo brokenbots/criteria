@@ -19,6 +19,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -88,6 +89,42 @@ adapter "noop" "demo" {
 
 step "run_adapter" {
   target = adapter.noop.demo
+  input {
+    prompt = "hello"
+  }
+  outcome "success" { next = step.done }
+  outcome "failure" { next = step.failed }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+state "failed" {
+  terminal = true
+  success  = false
+}
+`
+
+// cri125FailWorkflow is a minimal single-step workflow whose adapter always
+// returns outcome "failure", so the run reaches a terminal success=false
+// state (used to pin the resumed-run failure contract, F1b).
+const cri125FailWorkflow = `
+workflow {
+  name          = "cri125_fail"
+  version       = "0.1"
+  initial_state = "run_adapter"
+  target_state  = "done"
+}
+
+adapter "fail" "default" {
+  config {
+    bootstrap = "true"
+  }
+}
+
+step "run_adapter" {
+  target = adapter.fail.default
   input {
     prompt = "hello"
   }
@@ -446,7 +483,7 @@ func TestCRI125_ServerRestartResumesOriginalRun(t *testing.T) {
 	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
 	// First invocation: fresh run (no checkpoints yet), which registers a
 	// client and creates the run.
-	client, runID, resumed, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri125-server", &copts, cancel, nil, fp)
+	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri125-server", &copts, cancel, nil, fp)
 	if err != nil {
 		t.Fatalf("first setupServerRun: %v", err)
 	}
@@ -461,7 +498,7 @@ func TestCRI125_ServerRestartResumesOriginalRun(t *testing.T) {
 	fake.SetReattachState(runID, "running", "run_adapter", 0, "", "")
 	writeRunCheckpoint(log, runID, graph.Name, wfPath, fake.URL(), fp, "run_adapter", 0, client.CriteriaID(), client.Token(), nil)
 
-	client2, runID2, resumed2, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri125-server-restart", &copts, cancel, nil, fp)
+	client2, runID2, resumed2, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri125-server-restart", &copts, cancel, nil, fp)
 	if err != nil {
 		t.Fatalf("second setupServerRun: %v", err)
 	}
@@ -497,7 +534,7 @@ func TestCRI125_ServerRestartDifferentFingerprintProceeds(t *testing.T) {
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
 	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
-	client, runID, resumed, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri125-server", &copts, cancel, nil, fp)
+	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri125-server", &copts, cancel, nil, fp)
 	if err != nil {
 		t.Fatalf("first setupServerRun: %v", err)
 	}
@@ -512,7 +549,7 @@ func TestCRI125_ServerRestartDifferentFingerprintProceeds(t *testing.T) {
 	fake.SetReattachState(runID, "running", "run_adapter", 0, "", "")
 	writeRunCheckpoint(log, runID, graph.Name, wfPath, fake.URL(), "unrelated-fingerprint", "run_adapter", 0, client.CriteriaID(), client.Token(), nil)
 
-	client2, runID2, resumed2, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri125-server-fresh", &copts, cancel, nil, fp)
+	client2, runID2, resumed2, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri125-server-fresh", &copts, cancel, nil, fp)
 	if err != nil {
 		t.Fatalf("second setupServerRun: %v", err)
 	}
@@ -532,6 +569,18 @@ func cri125SetupAdapter(t *testing.T) {
 	adapterBin := buildNoopAdapterBinary(t)
 	adapterDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(adapterDir, "criteria-adapter-noop"), mustRead(t, adapterBin), 0o755); err != nil {
+		t.Fatalf("write adapter binary: %v", err)
+	}
+	t.Setenv("CRITERIA_ADAPTERS", adapterDir)
+}
+
+// cri125SetupFailAdapter installs the always-failing adapter binary into a
+// fresh adapter directory and points CRITERIA_ADAPTERS at it.
+func cri125SetupFailAdapter(t *testing.T) {
+	t.Helper()
+	adapterBin := buildFailAdapterBinary(t)
+	adapterDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(adapterDir, "criteria-adapter-fail"), mustRead(t, adapterBin), 0o755); err != nil {
 		t.Fatalf("write adapter binary: %v", err)
 	}
 	t.Setenv("CRITERIA_ADAPTERS", adapterDir)
@@ -579,4 +628,134 @@ func cri125DistinctRunIDs(events []map[string]interface{}) []string {
 		out = append(out, id)
 	}
 	return out
+}
+
+// TestCRI125_ResumedFailedRunReportsFailure pins the F1b contract: when a
+// restarted invocation consumes a matching in-flight checkpoint and drives
+// the original run to a terminal success=false state, the invocation must
+// return a non-nil error (OS exit 1 through the CLI) — exactly like the
+// fresh path — while still suppressing the second run (no new RunStarted,
+// single run identity).
+func TestCRI125_ResumedFailedRunReportsFailure(t *testing.T) {
+	requireNoGoroutineLeak(t)
+	cri125SetupFailAdapter(t)
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	wfPath := writeWorkflowFile(t, cri125FailWorkflow)
+	eventsFile := filepath.Join(t.TempDir(), "events.ndjson")
+	fp := runIdentityFingerprint(wfPath, "", nil, nil)
+
+	// A checkpoint from a crashed run of the same invocation identity.
+	writeCheckpointDirect(t, stateDir, &StepCheckpoint{
+		RunID:        "cri125-fail-orig",
+		Workflow:     "cri125_fail",
+		WorkflowPath: wfPath,
+		CurrentStep:  "run_adapter",
+		Attempt:      0,
+		StartedAt:    time.Now().UTC(),
+		Fingerprint:  fp,
+	})
+
+	runErr := runApply(context.Background(), applyOptions{workflowPath: wfPath, eventsPath: eventsFile})
+	if runErr == nil {
+		t.Fatal("a resumed run ending in terminal success=false must return a non-nil error")
+	}
+	if !strings.Contains(runErr.Error(), "success=false") {
+		t.Fatalf("error should report success=false like the fresh path, got: %v", runErr)
+	}
+
+	events, err := parseNDJSON(eventsFile)
+	if err != nil {
+		t.Fatalf("parse events: %v", err)
+	}
+	started, completed := cri125StartedAndCompleted(events)
+	if started != 0 {
+		// The suppression path must not fork a second run even when the
+		// resumed run fails.
+		t.Fatalf("failed resume must not fork a second run: got %d RunStarted events", started)
+	}
+	if completed != 1 {
+		t.Fatalf("expected exactly 1 RunCompleted for the resumed run, got %d", completed)
+	}
+	if ids := cri125DistinctRunIDs(events); len(ids) != 1 || ids[0] != "cri125-fail-orig" {
+		t.Fatalf("all events must carry the original run_id, got %v", ids)
+	}
+	rc := findRunCompleted(t, events)
+	payload, ok := rc["payload"].(map[string]interface{})
+	if !ok {
+		t.Fatal("RunCompleted payload missing")
+	}
+	if finalState, _ := payload["finalState"].(string); finalState != "failed" {
+		t.Fatalf("RunCompleted.finalState = %q, want failed", finalState)
+	}
+	checkpoints, err := ListStepCheckpoints()
+	if err != nil {
+		t.Fatalf("list checkpoints: %v", err)
+	}
+	if len(checkpoints) != 0 {
+		t.Fatalf("checkpoint must be consumed after resume, got %v", checkpoints)
+	}
+}
+
+// TestCRI125_ServerResumedFailedRunReportsFailure pins the F1b contract for
+// the server path: a restarted setupServerRun whose fingerprint matches an
+// in-flight checkpoint resumes the original run, must NOT create a second
+// run, and must surface the run's terminal failure instead of returning nil.
+func TestCRI125_ServerResumedFailedRunReportsFailure(t *testing.T) {
+	requireNoGoroutineLeak(t)
+	cri125SetupFailAdapter(t)
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	fake := applytest.New(t)
+	wfPath := writeWorkflowFile(t, cri125FailWorkflow)
+	fp := runIdentityFingerprint(wfPath, fake.URL(), nil, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	log := discardLogger()
+	src, graph, loader, err := compileForExecution(ctx, wfPath, log, false, false)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
+
+	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
+	// First invocation: fresh run (no checkpoints yet), which registers a
+	// client and creates the run.
+	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri125-fail-server", &copts, cancel, nil, fp)
+	if err != nil {
+		t.Fatalf("first setupServerRun: %v", err)
+	}
+	if resumed {
+		t.Fatal("first setupServerRun unexpectedly resumed")
+	}
+	client.Close()
+
+	// Simulate a runner restart mid-step: the server still reports the run
+	// as in-flight and the crashed runner left a matching checkpoint.
+	fake.SetReattachState(runID, "running", "run_adapter", 0, "", "")
+	writeRunCheckpoint(log, runID, graph.Name, wfPath, fake.URL(), fp, "run_adapter", 0, client.CriteriaID(), client.Token(), nil)
+
+	client2, runID2, resumed2, resumeErr2, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri125-fail-server-restart", &copts, cancel, nil, fp)
+	if err != nil {
+		t.Fatalf("second setupServerRun: %v", err)
+	}
+	defer client2.Close()
+	if !resumed2 {
+		t.Fatal("matching checkpoint must be resumed on restart")
+	}
+	if runID2 != "" {
+		t.Fatalf("a resumed invocation must not create a second run, got run_id %q", runID2)
+	}
+	if resumeErr2 == nil {
+		t.Fatal("a resumed run ending in terminal success=false must surface a non-nil outcome")
+	}
+	if !strings.Contains(resumeErr2.Error(), "success=false") {
+		t.Fatalf("resume outcome should report success=false, got: %v", resumeErr2)
+	}
+	if fake.CreatedRunCount() != 1 {
+		t.Fatalf("CreateRun must be called exactly once across the restart, got %d", fake.CreatedRunCount())
+	}
 }

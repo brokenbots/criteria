@@ -821,8 +821,10 @@ func TestAttemptReattach_RPCError(t *testing.T) {
 	}
 }
 
-// TestAttemptReattach_NotResumable verifies that CanResume=false causes the
-// checkpoint to be removed and (nil, nil) to be returned.
+// TestAttemptReattach_NotResumable verifies that CanResume=false leaves the
+// checkpoint removed and returns the response unchanged: the caller (resumeOneRun)
+// maps a server-reported "failed" status to an outcome error, so
+// attemptReattach must not swallow the status by returning nil.
 func TestAttemptReattach_NotResumable(t *testing.T) {
 	stateDir := t.TempDir()
 	cp := newCheckpointWithWorkflow(t, stateDir, "ra-not-resumable", minimalWorkflow)
@@ -835,8 +837,11 @@ func TestAttemptReattach_NotResumable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resp != nil {
-		t.Errorf("expected nil response for non-resumable run, got %v", resp)
+	if resp == nil {
+		t.Fatal("expected the non-resumable response to be returned for status mapping")
+	}
+	if resp.CanResume || resp.GetStatus() != "failed" {
+		t.Errorf("unexpected response: %v", resp)
 	}
 	// Checkpoint must be removed.
 	list, _ := ListStepCheckpoints()

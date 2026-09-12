@@ -83,12 +83,12 @@ func buildServerSink(ctx context.Context, publisher run.Publisher, authClient *s
 	}
 }
 
-// dualWriteSink wraps a server sink with a LocalSink mirroring events into
+// dualWriteSink wraps an engine sink with a LocalSink mirroring events into
 // the ND-JSON events file so server-mode runs keep dual-writing after a
-// crash resume. Returns the server sink unchanged when eventsOut is nil.
+// crash resume. Returns the sink unchanged when eventsOut is nil.
 // Pause/resume tracking must keep using the raw *run.Sink; only the engine
 // sink is wrapped.
-func dualWriteSink(sink *run.Sink, runID string, eventsOut io.Writer) engine.Sink {
+func dualWriteSink(sink engine.Sink, runID string, eventsOut io.Writer) engine.Sink {
 	local := eventsFileSink(runID, eventsOut)
 	if local == nil {
 		return sink
@@ -263,7 +263,7 @@ func runApplyServer(ctx context.Context, opts applyOptions) error {
 	// keeps failed) the original run instead of forking a second run with a
 	// fresh run_id against stale adapter state.
 	fingerprint := runIdentityFingerprint(opts.workflowPath, opts.serverURL, opts.varFiles, opts.varOverrides)
-	client, runID, resumedMatching, err := setupServerRun(runCtx, log, graph, src, opts.serverURL, opts.name, &copts, cancelRun, eventsOut, fingerprint)
+	client, runID, resumedMatching, resumeErr, err := setupServerRun(runCtx, log, graph, src, opts.serverURL, opts.name, &copts, cancelRun, eventsOut, fingerprint)
 	if err != nil {
 		return err
 	}
@@ -272,7 +272,9 @@ func runApplyServer(ctx context.Context, opts applyOptions) error {
 		log.Info("in-flight run for this identity resumed; not starting a second run",
 			"file", filepath.Base(opts.workflowPath),
 			"server", opts.serverURL)
-		return nil
+		// CRI-125: surface the resumed run's outcome — suppressing the second
+		// run must not also mask the original run's failure with exit 0.
+		return resumeErr
 	}
 
 	state := newLocalRunState(runID, graph.Name, opts.serverURL)
@@ -280,14 +282,15 @@ func runApplyServer(ctx context.Context, opts applyOptions) error {
 }
 
 // setupServerRun registers with the server and creates a fresh run, resuming
-// any in-flight checkpointed runs first (CRI-125 crash recovery). The final
-// return value reports whether a checkpoint matching fingerprint was consumed
-// by the resume pass: the caller must then NOT create a fresh run (runID is
-// empty in that case).
-func setupServerRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, src []byte, serverURL, name string, clientOpts *servertrans.Options, cancelRun func(), eventsOut io.Writer, fingerprint string) (client *servertrans.Client, runID string, resumed bool, err error) {
+// any in-flight checkpointed runs first (CRI-125 crash recovery). resumed
+// reports whether a checkpoint matching fingerprint was consumed by the
+// resume pass: the caller must then NOT create a fresh run (runID is empty in
+// that case) and must propagate resumeErr, which carries the resumed run's
+// outcome.
+func setupServerRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, src []byte, serverURL, name string, clientOpts *servertrans.Options, cancelRun func(), eventsOut io.Writer, fingerprint string) (client *servertrans.Client, runID string, resumed bool, resumeErr, err error) {
 	client, err = servertrans.NewClient(serverURL, log, *clientOpts)
 	if err != nil {
-		return nil, "", false, err
+		return nil, "", false, nil, err
 	}
 	hostname, _ := os.Hostname()
 	if name == "" {
@@ -295,21 +298,22 @@ func setupServerRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGr
 	}
 	if err := client.Register(ctx, name, hostname, "0.1.0"); err != nil {
 		client.Close()
-		return nil, "", false, fmt.Errorf("register: %w", err)
+		return nil, "", false, nil, fmt.Errorf("register: %w", err)
 	}
 
-	if resumeInFlightRuns(ctx, log, clientOpts, eventsOut, fingerprint) {
-		return client, "", true, nil
+	matched, outcome := resumeInFlightRuns(ctx, log, clientOpts, eventsOut, fingerprint)
+	if matched {
+		return client, "", true, outcome, nil
 	}
 
 	runID, err = client.CreateRun(ctx, graph.Name, string(src))
 	if err != nil {
 		client.Close()
-		return nil, "", false, fmt.Errorf("create run: %w", err)
+		return nil, "", false, nil, fmt.Errorf("create run: %w", err)
 	}
 	if err := client.StartStreams(ctx, runID); err != nil {
 		client.Close()
-		return nil, "", false, fmt.Errorf("server streams: %w", err)
+		return nil, "", false, nil, fmt.Errorf("server streams: %w", err)
 	}
 	client.StartHeartbeat(ctx, 10*time.Second)
 
@@ -329,5 +333,5 @@ func setupServerRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGr
 		}
 	}()
 
-	return client, runID, false, nil
+	return client, runID, false, nil, nil
 }

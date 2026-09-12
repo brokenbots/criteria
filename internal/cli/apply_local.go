@@ -44,14 +44,17 @@ func runApplyLocal(
 	// fails fast: the invocation cannot faithfully re-enter the original run
 	// with its (unreadable) variable inputs, so suppressing a fresh run and
 	// resuming without the overrides would silently drop them.
-	identity, suppressed := prepareLocalRunIdentity(ctx, log, jsonOut, mode, opts.workflowPath, opts.varFiles, opts.varOverrides)
+	identity, suppressed, prepErr := prepareLocalRunIdentity(ctx, log, jsonOut, mode, opts.workflowPath, opts.varFiles, opts.varOverrides)
+	if prepErr != nil {
+		return prepErr
+	}
 	if suppressed {
 		log.Info("in-flight run for this identity resumed; not starting a second run",
 			"file", filepath.Base(opts.workflowPath))
+		// CRI-125: a resumed run's outcome error was already returned via
+		// prepErr above; reaching here means the resumed run completed
+		// successfully, so the invocation must not start a second run.
 		return nil
-	}
-	if identity.mergeErr != nil {
-		return identity.mergeErr
 	}
 
 	src, graph, loader, err := compileForExecution(ctx, opts.workflowPath, log, opts.warnsAsErrors, opts.allowUnsigned, opts.subworkflowRoots...)
@@ -153,36 +156,34 @@ func buildLocalRunSink(log *slog.Logger, runID, workflowPath, fingerprint string
 type localRunIdentity struct {
 	mergedVars  map[string]cty.Value
 	fingerprint string
-	mergeErr    error
 }
 
 // prepareLocalRunIdentity merges the invocation's CLI variables and computes
 // the CRI-125 run identity fingerprint, then resumes any in-flight local
 // runs whose checkpoint matches this identity. The boolean reports whether a
 // matching run was consumed, in which case the caller must not start a
-// second run. A variable-source error is returned in identity.mergeErr with
-// the sweep skipped: the invocation cannot faithfully re-enter the original
-// run without its variable inputs.
-func prepareLocalRunIdentity(ctx context.Context, log *slog.Logger, jsonOut io.Writer, mode outputMode, workflowPath string, varFiles, varOverrides []string) (localRunIdentity, bool) {
+// second run; the error carries either a variable-source failure or the
+// resumed run's outcome (nil on success). A variable-source error aborts the
+// sweep: the invocation cannot faithfully re-enter the original run without
+// its variable inputs.
+func prepareLocalRunIdentity(ctx context.Context, log *slog.Logger, jsonOut io.Writer, mode outputMode, workflowPath string, varFiles, varOverrides []string) (localRunIdentity, bool, error) {
 	identity := localRunIdentity{}
-	merged, mergeErr := mergeVarSources(varFiles, varOverrides)
-	if mergeErr != nil {
-		identity.mergeErr = mergeErr
-		return identity, false
+	merged, err := mergeVarSources(varFiles, varOverrides)
+	if err != nil {
+		return identity, false, err
 	}
 	identity.mergedVars = merged
 	identity.fingerprint = runIdentityFingerprint(workflowPath, "", varFiles, varOverrides)
-	suppressed := resumeLocalInFlightRuns(ctx, log, jsonOut, mode, identity.fingerprint, identity.mergedVars)
-	return identity, suppressed
+	suppressed, outcomeErr := resumeLocalInFlightRuns(ctx, log, jsonOut, mode, identity.fingerprint, identity.mergedVars)
+	return identity, suppressed, outcomeErr
 }
 
-func resumeLocalInFlightRuns(ctx context.Context, log *slog.Logger, out io.Writer, mode outputMode, fingerprint string, mergedVars map[string]cty.Value) bool {
+func resumeLocalInFlightRuns(ctx context.Context, log *slog.Logger, out io.Writer, mode outputMode, fingerprint string, mergedVars map[string]cty.Value) (matched bool, outcome error) {
 	checkpoints, err := ListStepCheckpoints()
 	if err != nil {
 		log.Warn("could not list step checkpoints; skipping local crash recovery", "error", err)
-		return false
+		return false, nil
 	}
-	matched := false
 	for _, cp := range checkpoints {
 		if strings.TrimSpace(cp.ServerURL) != "" {
 			continue
@@ -197,11 +198,15 @@ func resumeLocalInFlightRuns(ctx context.Context, log *slog.Logger, out io.Write
 		if fingerprint != "" && cp.Fingerprint == fingerprint {
 			vars = mergedVars
 		}
-		if resumeOneLocalRun(ctx, log, cp, out, mode, vars) && fingerprint != "" && cp.Fingerprint == fingerprint {
+		consumed, cpOutcome := resumeOneLocalRun(ctx, log, cp, out, mode, vars)
+		if consumed && fingerprint != "" && cp.Fingerprint == fingerprint {
 			matched = true
+			if outcome == nil {
+				outcome = cpOutcome
+			}
 		}
 	}
-	return matched
+	return matched, outcome
 }
 
 // prepareReattach validates the checkpoint, builds an adapter loader, and
@@ -234,10 +239,10 @@ func prepareReattach(ctx context.Context, log *slog.Logger, cp *StepCheckpoint) 
 // a marked failure) by this process. It returns false only when the
 // checkpoint was abandoned as unusable and no run outcome was recorded, so
 // the caller may proceed with a fresh run.
-func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, out io.Writer, mode outputMode, mergedVars map[string]cty.Value) bool {
+func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, out io.Writer, mode outputMode, mergedVars map[string]cty.Value) (bool, error) {
 	graph, loader, resumer, ok := prepareReattach(ctx, log, cp)
 	if !ok {
-		return false
+		return false, nil
 	}
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
@@ -248,30 +253,37 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 		reason := fmt.Sprintf("exceeded max_step_retries on resume at step %q (attempt %d)", cp.CurrentStep, nextAttempt)
 		sink.OnRunFailed(reason, cp.CurrentStep)
 		RemoveStepCheckpoint(cp.RunID)
-		return true
+		return true, fmt.Errorf("%s", reason)
 	}
 
 	opts, tracker, runSink, eng, engErr := buildReattachTrackerAndEngine(cp, log, graph, loader, out, mode, nextAttempt, mergedVars)
 	if engErr != nil {
 		log.Error("resumed local run failed to resolve run data dir", "run_id", cp.RunID, "error", engErr)
 		RemoveStepCheckpoint(cp.RunID)
-		return false
+		return false, nil
 	}
+	var outcome error
 	if runErr := eng.RunFrom(ctx, cp.CurrentStep, nextAttempt); runErr != nil {
 		log.Error("resumed local run failed", "run_id", cp.RunID, "error", runErr)
 		RemoveStepCheckpoint(cp.RunID)
-		return true
+		return true, runErr
 	}
 	if resumer != nil {
 		if cycleErr := drainLocalResumeCycles(ctx, log, graph, loader, tracker, runSink, resumer, cp.RunID, opts, eng); cycleErr != nil {
 			log.Error("resumed local run failed during approval", "run_id", cp.RunID, "error", cycleErr)
 			RemoveStepCheckpoint(cp.RunID)
-			return true
+			return true, cycleErr
 		}
 	}
 	log.Info("resumed local run completed", "run_id", cp.RunID)
 	RemoveStepCheckpoint(cp.RunID)
-	return true
+	// CRI-125: a resumed run that reaches a terminal success=false state must
+	// fail the invocation exactly like the fresh path does; otherwise the
+	// suppression branch would mask the original run's failure with exit 0.
+	if finalState, success, ok := runSink.TerminalSuccess(); ok && !success {
+		outcome = fmt.Errorf("run completed with terminal state %q (success=false)", finalState)
+	}
+	return true, outcome
 }
 
 // buildReattachTrackerAndEngine wires the checkpoint sink, pause tracker, and

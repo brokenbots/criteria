@@ -1084,7 +1084,7 @@ func TestExecuteServerRunPerScopeSessionsWiresDataDir(t *testing.T) {
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
 	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
-	client, runID, resumed, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri128-server", &copts, cancel, nil, "")
+	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri128-server", &copts, cancel, nil, "")
 	if err != nil {
 		t.Fatalf("setupServerRun: %v", err)
 	}
@@ -1142,7 +1142,7 @@ func TestDrainResumeCyclesPerScopeSessionsWiresDataDir(t *testing.T) {
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
 	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
-	client, runID, resumed, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri128-resume", &copts, cancel, nil, "")
+	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri128-resume", &copts, cancel, nil, "")
 	if err != nil {
 		t.Fatalf("setupServerRun: %v", err)
 	}
@@ -1220,7 +1220,7 @@ func TestBuildAgentRunPerScopeSessionsWiresDataDir(t *testing.T) {
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
 	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
-	client, _, resumed, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri128-agent", &copts, cancel, nil, "")
+	client, _, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri128-agent", &copts, cancel, nil, "")
 	if err != nil {
 		t.Fatalf("setupServerRun: %v", err)
 	}
