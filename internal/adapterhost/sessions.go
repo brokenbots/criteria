@@ -921,6 +921,21 @@ func (m *SessionManager) Verify(ctx context.Context, name, adapterName, onCrash 
 	return m.storeVerifiedRecord(name, adapterName, onCrash, config, secrets, originRefs, workingDir, caps, scopeName, scopeInstanceID)
 }
 
+// SessionOpen reports whether a session with the given name is already
+// bound or verified. Subworkflow bodies re-declare parent adapters for
+// safety; the engine uses this to skip a second per-scope rotation (and
+// its provision_wanted emission) for an adapter the parent scope already
+// provisioned (CRI-145).
+func (m *SessionManager) SessionOpen(name string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.sessions[name]; exists {
+		return true
+	}
+	_, exists := m.verified[name]
+	return exists
+}
+
 // checkDuplicateLocked returns ErrSessionAlreadyOpen if the named session is
 // already bound or verified. It is the caller's responsibility to hold no lock.
 func (m *SessionManager) checkDuplicateLocked(name string) error {
