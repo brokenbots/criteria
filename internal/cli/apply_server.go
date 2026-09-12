@@ -59,9 +59,11 @@ func resolveServerBootstrapToken(spec string) (string, error) {
 // buildServerSink constructs a run.Sink wired to the given publisher.
 // authClient provides the criteria id and token persisted in crash-recovery
 // checkpoints; it may be nil in tests that do not exercise checkpoints.
-// getVisits, if non-nil, is called on each checkpoint to capture the current
-// per-step visit counts for crash-recovery persistence (W07).
-func buildServerSink(ctx context.Context, publisher run.Publisher, authClient *servertrans.Client, runID string, graph *workflow.FSMGraph, workflowPath, serverURL string, log *slog.Logger, getVisits func() map[string]int) *run.Sink {
+// fingerprint is the invocation identity (CRI-125) persisted in checkpoints so
+// a restarted runner can match them and resume instead of forking a second
+// run. getVisits, if non-nil, is called on each checkpoint to capture the
+// current per-step visit counts for crash-recovery persistence (W07).
+func buildServerSink(ctx context.Context, publisher run.Publisher, authClient *servertrans.Client, runID string, graph *workflow.FSMGraph, workflowPath, serverURL, fingerprint string, log *slog.Logger, getVisits func() map[string]int) *run.Sink {
 	criteriaID, token := "", ""
 	if authClient != nil {
 		criteriaID, token = authClient.CriteriaID(), authClient.Token()
@@ -76,17 +78,17 @@ func buildServerSink(ctx context.Context, publisher run.Publisher, authClient *s
 			if getVisits != nil {
 				visits = getVisits()
 			}
-			writeRunCheckpoint(log, runID, graph.Name, workflowPath, serverURL, step, attempt, criteriaID, token, visits)
+			writeRunCheckpoint(log, runID, graph.Name, workflowPath, serverURL, fingerprint, step, attempt, criteriaID, token, visits)
 		},
 	}
 }
 
-// dualWriteSink wraps a server sink with a LocalSink mirroring events into
+// dualWriteSink wraps an engine sink with a LocalSink mirroring events into
 // the ND-JSON events file so server-mode runs keep dual-writing after a
-// crash resume. Returns the server sink unchanged when eventsOut is nil.
+// crash resume. Returns the sink unchanged when eventsOut is nil.
 // Pause/resume tracking must keep using the raw *run.Sink; only the engine
 // sink is wrapped.
-func dualWriteSink(sink *run.Sink, runID string, eventsOut io.Writer) engine.Sink {
+func dualWriteSink(sink engine.Sink, runID string, eventsOut io.Writer) engine.Sink {
 	local := eventsFileSink(runID, eventsOut)
 	if local == nil {
 		return sink
@@ -115,7 +117,11 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 
 	// Declare eng first so the checkpoint closure can capture live visit counts.
 	var eng *engine.Engine
-	sink := buildServerSink(ctx, client, client, state.RunID, graph, opts.workflowPath, opts.serverURL, log,
+	// CRI-125: checkpoints written during this run carry the invocation
+	// fingerprint so a restarted runner can match and resume this run
+	// instead of forking a second one.
+	fingerprint := runIdentityFingerprint(opts.workflowPath, opts.serverURL, opts.varFiles, opts.varOverrides)
+	sink := buildServerSink(ctx, client, client, state.RunID, graph, opts.workflowPath, opts.serverURL, fingerprint, log,
 		func() map[string]int {
 			if eng != nil {
 				return eng.VisitCounts()
@@ -253,20 +259,38 @@ func runApplyServer(ctx context.Context, opts applyOptions) error {
 
 	copts := applyClientOptions(opts)
 	copts.BootstrapToken = bootstrapToken
-	client, runID, err := setupServerRun(runCtx, log, graph, src, opts.serverURL, opts.name, &copts, cancelRun, eventsOut)
+	// CRI-125: identify this invocation so a restarted runner resumes (or
+	// keeps failed) the original run instead of forking a second run with a
+	// fresh run_id against stale adapter state.
+	fingerprint := runIdentityFingerprint(opts.workflowPath, opts.serverURL, opts.varFiles, opts.varOverrides)
+	client, runID, resumedMatching, resumeErr, err := setupServerRun(runCtx, log, graph, src, opts.serverURL, opts.name, &copts, cancelRun, eventsOut, fingerprint)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
+	if resumedMatching {
+		log.Info("in-flight run for this identity resumed; not starting a second run",
+			"file", filepath.Base(opts.workflowPath),
+			"server", opts.serverURL)
+		// CRI-125: surface the resumed run's outcome — suppressing the second
+		// run must not also mask the original run's failure with exit 0.
+		return resumeErr
+	}
 
 	state := newLocalRunState(runID, graph.Name, opts.serverURL)
 	return executeServerRun(runCtx, log, loader, client, state, graph, opts, eventsOut)
 }
 
-func setupServerRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, src []byte, serverURL, name string, clientOpts *servertrans.Options, cancelRun func(), eventsOut io.Writer) (*servertrans.Client, string, error) {
-	client, err := servertrans.NewClient(serverURL, log, *clientOpts)
+// setupServerRun registers with the server and creates a fresh run, resuming
+// any in-flight checkpointed runs first (CRI-125 crash recovery). resumed
+// reports whether a checkpoint matching fingerprint was consumed by the
+// resume pass: the caller must then NOT create a fresh run (runID is empty in
+// that case) and must propagate resumeErr, which carries the resumed run's
+// outcome.
+func setupServerRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, src []byte, serverURL, name string, clientOpts *servertrans.Options, cancelRun func(), eventsOut io.Writer, fingerprint string) (client *servertrans.Client, runID string, resumed bool, resumeErr, err error) {
+	client, err = servertrans.NewClient(serverURL, log, *clientOpts)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, nil, err
 	}
 	hostname, _ := os.Hostname()
 	if name == "" {
@@ -274,19 +298,22 @@ func setupServerRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGr
 	}
 	if err := client.Register(ctx, name, hostname, "0.1.0"); err != nil {
 		client.Close()
-		return nil, "", fmt.Errorf("register: %w", err)
+		return nil, "", false, nil, fmt.Errorf("register: %w", err)
 	}
 
-	resumeInFlightRuns(ctx, log, clientOpts, eventsOut)
+	matched, outcome := resumeInFlightRuns(ctx, log, clientOpts, eventsOut, fingerprint)
+	if matched {
+		return client, "", true, outcome, nil
+	}
 
-	runID, err := client.CreateRun(ctx, graph.Name, string(src))
+	runID, err = client.CreateRun(ctx, graph.Name, string(src))
 	if err != nil {
 		client.Close()
-		return nil, "", fmt.Errorf("create run: %w", err)
+		return nil, "", false, nil, fmt.Errorf("create run: %w", err)
 	}
 	if err := client.StartStreams(ctx, runID); err != nil {
 		client.Close()
-		return nil, "", fmt.Errorf("server streams: %w", err)
+		return nil, "", false, nil, fmt.Errorf("server streams: %w", err)
 	}
 	client.StartHeartbeat(ctx, 10*time.Second)
 
@@ -306,5 +333,5 @@ func setupServerRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGr
 		}
 	}()
 
-	return client, runID, nil
+	return client, runID, false, nil, nil
 }

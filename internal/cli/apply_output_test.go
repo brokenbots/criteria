@@ -87,6 +87,48 @@ func TestOpenNDJSONWriter_PrecedenceRules(t *testing.T) {
 	}
 }
 
+// TestOpenServerEventsWriter_AppendsAcrossRuns pins the CRI-125 append-only
+// obligation for the server-mode events writer: reopening the same events
+// path must append rather than truncate, so pre-restart events survive a
+// runner restart.
+func TestOpenServerEventsWriter_AppendsAcrossRuns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.ndjson")
+	if err := os.WriteFile(path, []byte(`{"pre":"restart"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("seed events file: %v", err)
+	}
+
+	w, cleanup, err := openServerEventsWriter(path)
+	if err != nil {
+		t.Fatalf("open server events writer: %v", err)
+	}
+	defer cleanup()
+	if _, err := w.Write([]byte(`{"post":"restart"}` + "\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read events file: %v", err)
+	}
+	want := `{"pre":"restart"}` + "\n" + `{"post":"restart"}` + "\n"
+	if string(got) != want {
+		t.Fatalf("events file must be append-only, got:\n%s", got)
+	}
+}
+
+// TestOpenServerEventsWriter_EmptyPathReturnsNil pins that an empty
+// --events-file disables the server-side events writer.
+func TestOpenServerEventsWriter_EmptyPathReturnsNil(t *testing.T) {
+	w, cleanup, err := openServerEventsWriter("  ")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer cleanup()
+	if w != nil {
+		t.Fatal("expected nil writer for empty events path")
+	}
+}
+
 func TestBuildLocalSink_ConciseModeReturnsMultiSink(t *testing.T) {
 	// concise mode must produce a MultiSink (LocalSink + ConsoleSink) not bare LocalSink.
 	sink := buildLocalSink("run-1", io.Discard, outputModeConcise, []string{"step-a"}, nil, nil)

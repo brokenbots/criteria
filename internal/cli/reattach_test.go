@@ -462,7 +462,7 @@ func TestBuildServerSink(t *testing.T) {
 
 	c := newOfflineClient(t)
 	log := discardLogger()
-	sink := buildServerSink(context.Background(), c, c, "run-srv-1", graph, wfFile, "http://srv", log, nil)
+	sink := buildServerSink(context.Background(), c, c, "run-srv-1", graph, wfFile, "http://srv", "", log, nil)
 	if sink == nil {
 		t.Fatal("expected non-nil Sink")
 	}
@@ -509,7 +509,7 @@ func TestBuildServerSink_VisitsPersisted(t *testing.T) {
 
 	wantVisits := map[string]int{"build": 2, "test": 1}
 	c := newOfflineClient(t)
-	sink := buildServerSink(context.Background(), c, c, "run-srv-visits", graph, wfFile, "http://srv", discardLogger(),
+	sink := buildServerSink(context.Background(), c, c, "run-srv-visits", graph, wfFile, "http://srv", "", discardLogger(),
 		func() map[string]int { return wantVisits })
 
 	sink.CheckpointFn("build", 3)
@@ -547,7 +547,7 @@ func TestBuildLocalCheckpointFn_VisitsPersisted(t *testing.T) {
 	wfFile := writeWorkflowFile(t, maxVisitsWorkflow)
 	wantVisits := map[string]int{"work": 2, "review": 1}
 
-	fn := buildLocalCheckpointFn(discardLogger(), "local-fn-visits", "max_visits_test", wfFile,
+	fn := buildLocalCheckpointFn(discardLogger(), "local-fn-visits", "max_visits_test", wfFile, "",
 		func() map[string]int { return wantVisits })
 	fn("work", 1)
 
@@ -609,7 +609,7 @@ func TestBuildReattachTrackerAndEngine_VisitsPersisted(t *testing.T) {
 	defer loader.Shutdown(context.Background())
 
 	var out bytes.Buffer
-	_, _, _, eng, engErr := buildReattachTrackerAndEngine(cp, discardLogger(), graph, loader, &out, outputModeJSON, 1)
+	_, _, _, eng, engErr := buildReattachTrackerAndEngine(cp, discardLogger(), graph, loader, &out, outputModeJSON, 1, nil)
 	if engErr != nil {
 		t.Fatalf("buildReattachTrackerAndEngine: %v", engErr)
 	}
@@ -659,7 +659,7 @@ func TestResumeOneLocalRun_HappyPath(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON)
+	resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON, nil)
 
 	// Checkpoint must be cleaned up after successful resume.
 	checkpoints, _ := ListStepCheckpoints()
@@ -687,7 +687,7 @@ func TestResumeOneLocalRun_MissingWorkflow(t *testing.T) {
 	writeCheckpointDirect(t, stateDir, cp)
 
 	var out bytes.Buffer
-	resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON)
+	resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON, nil)
 
 	// Checkpoint must be removed (abandoned).
 	checkpoints, _ := ListStepCheckpoints()
@@ -718,7 +718,7 @@ func TestResumeOneLocalRun_ExceedsMaxRetries(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON)
+	resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON, nil)
 
 	// Checkpoint removed regardless.
 	checkpoints, _ := ListStepCheckpoints()
@@ -758,7 +758,7 @@ func TestResumeOneLocalRun_VisitsRestored(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON)
+	resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON, nil)
 
 	// Checkpoint must be cleaned up regardless of failure.
 	checkpoints, _ := ListStepCheckpoints()
@@ -821,8 +821,10 @@ func TestAttemptReattach_RPCError(t *testing.T) {
 	}
 }
 
-// TestAttemptReattach_NotResumable verifies that CanResume=false causes the
-// checkpoint to be removed and (nil, nil) to be returned.
+// TestAttemptReattach_NotResumable verifies that CanResume=false leaves the
+// checkpoint removed and returns the response unchanged: the caller (resumeOneRun)
+// maps a server-reported "failed" status to an outcome error, so
+// attemptReattach must not swallow the status by returning nil.
 func TestAttemptReattach_NotResumable(t *testing.T) {
 	stateDir := t.TempDir()
 	cp := newCheckpointWithWorkflow(t, stateDir, "ra-not-resumable", minimalWorkflow)
@@ -835,8 +837,11 @@ func TestAttemptReattach_NotResumable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resp != nil {
-		t.Errorf("expected nil response for non-resumable run, got %v", resp)
+	if resp == nil {
+		t.Fatal("expected the non-resumable response to be returned for status mapping")
+	}
+	if resp.CanResume || resp.GetStatus() != "failed" {
+		t.Errorf("unexpected response: %v", resp)
 	}
 	// Checkpoint must be removed.
 	list, _ := ListStepCheckpoints()
@@ -1292,7 +1297,7 @@ state "done" {
 	}
 
 	var out bytes.Buffer
-	resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON)
+	resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON, nil)
 
 	// Checkpoint must be cleared (unsupported in local mode).
 	checkpoints, _ := ListStepCheckpoints()

@@ -434,7 +434,7 @@ func TestApplyLocal_Reattach_ReusePersistedDecision(t *testing.T) {
 	var logBuf bytes.Buffer
 	captLog := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	resumeOneLocalRun(ctx, captLog, cp, io.Discard, outputModeJSON)
+	resumeOneLocalRun(ctx, captLog, cp, io.Discard, outputModeJSON, nil)
 
 	logOutput := logBuf.String()
 	if strings.Contains(logOutput, "resumed local run failed") {
@@ -488,7 +488,7 @@ func TestApplyLocal_Reattach_InvalidPersistedSignalOutcome_Error(t *testing.T) {
 	var logBuf bytes.Buffer
 	captLog := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	resumeOneLocalRun(ctx, captLog, cp, io.Discard, outputModeJSON)
+	resumeOneLocalRun(ctx, captLog, cp, io.Discard, outputModeJSON, nil)
 
 	logOutput := logBuf.String()
 	if !strings.Contains(logOutput, "resumed local run failed") {

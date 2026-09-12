@@ -44,9 +44,14 @@ func resolveOutputMode(flag string, stdout *os.File) (outputMode, error) {
 //
 // In concise mode the LocalSink still runs because it owns the canonical
 // payload encoding; the bytes simply have no consumer.
+//
+// The file is opened for append (never O_TRUNC): every envelope carries its
+// run_id, and a runner-pod restart mid-run re-invokes criteria apply against
+// the same path, so truncating here would destroy the pre-restart events
+// (CRI-125). Consumers filter by run_id.
 func openNDJSONWriter(eventsPath string, mode outputMode) (io.Writer, func(), error) {
 	if strings.TrimSpace(eventsPath) != "" {
-		f, err := os.OpenFile(eventsPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+		f, err := os.OpenFile(eventsPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -61,11 +66,14 @@ func openNDJSONWriter(eventsPath string, mode outputMode) (io.Writer, func(), er
 // openServerEventsWriter opens the ND-JSON events file for a server-mode
 // dual-write. A nil writer (with a no-op closer) is returned when no events
 // path is configured, leaving server-only behavior unchanged.
+// Like openNDJSONWriter this is append-only (CRI-125): a restarted runner
+// re-invokes criteria apply against the same path and must not destroy the
+// events the pre-restart generation already wrote.
 func openServerEventsWriter(eventsPath string) (io.Writer, func(), error) {
 	if strings.TrimSpace(eventsPath) == "" {
 		return nil, func() {}, nil
 	}
-	f, err := os.OpenFile(eventsPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	f, err := os.OpenFile(eventsPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open events file: %w", err)
 	}
