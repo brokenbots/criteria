@@ -173,6 +173,39 @@ server in as an adapter and serves as a reference.
 
 Reference: [docs/adapters.md](docs/adapters.md).
 
+## Run data directory
+
+Each run owns a data directory under `$CRITERIA_HOME` (defaults to
+`~/.local/criteria`; `CRITERIA_STATE_DIR` is a deprecated alias):
+
+```
+$CRITERIA_HOME/runs/<run_id>/
+├── run-state.json                                     # run record, reused on resume
+├── audit.log                                          # adapter decision audit trail
+├── approvals/                                         # persisted approval/signal decisions
+└── remote-tokens/
+    └── <scope>/
+        ├── <scope_instance_id>/<adapter_type>.token   # rotated accept-token files
+        └── current/<adapter_instance>.json            # scope instance records
+```
+
+- **Crash-recovery checkpoints** live under `$CRITERIA_HOME/runs/<run_id>/`: the
+  run record and persisted decisions survive a crash, and a step checkpoint is
+  written before each step (at `runs/<run_id>.json`) so a restarted
+  `criteria apply` reattaches and resumes from the last in-flight step.
+- **Rotated per-scope accept-token files** live under
+  `remote-tokens/<scope>/<scope_instance_id>/<adapter_type>.token` — one file
+  per adapter type, rewritten whenever the scope's session rotates. They are
+  written for remote environments with `per_scope_sessions`.
+- **Scope instance records** live under `remote-tokens/<scope>/current/` (one
+  `<adapter_instance>.json` per adapter instance), so a restarted runner finds
+  the scope instance whose accept tokens are still valid.
+- **Shared volume.** `CRITERIA_HOME` can be pointed at a shared volume when
+  adapter pods need direct access to the token files — the k8s deployment does
+  this with `/data/criteria`, so token paths in lifecycle events resolve inside
+  every adapter pod. Token directories are created `0700` and token files
+  written `0600`.
+
 ## License
 
 See [LICENSE](LICENSE).
