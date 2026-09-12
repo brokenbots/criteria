@@ -582,6 +582,21 @@ func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, var
 	for _, instanceID := range g.AdapterOrder {
 		adapter := g.Adapters[instanceID]
 
+		// CRI-145: subworkflow bodies re-declare parent adapters for safety.
+		// If the parent scope already provisioned this session, skip the whole
+		// init - rotating another token here would emit a second
+		// provision_wanted (leaking a second per-scope pod) for an engagement
+		// the parent already owns, and the parent's teardown would never
+		// release it.
+		//
+		// The child's declaration is intentionally not re-validated here; the skip is not accidental.
+		// Concurrency bound is evidence-based, not enforced: reuse-only keeps at most one live per-scope instance per adapter (CRI-145 test observes peak 1).
+		if deps.Sessions.SessionOpen(instanceID) {
+			slog.Info("re-declared adapter already provisioned by parent scope; reusing",
+				"scope", scopeName, "adapter_instance", instanceID)
+			continue
+		}
+
 		// Prepare the adapter inputs (secrets, origin refs, working dir, runtime
 		// config). A prepare error means the adapter was never opened, so we emit
 		// init_failed and return without rolling back already-provisioned peers.
