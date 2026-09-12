@@ -8,10 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/zclconf/go-cty/cty"
@@ -95,11 +98,15 @@ func generateAcceptToken() (string, error) {
 }
 
 func writeRotatedToken(dataDir, scopeName, scopeInstanceID, adapterType, token string) (string, error) {
-	dir := filepath.Join(dataDir, "remote-tokens", scopeName, scopeInstanceID)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	// Route through the same checked path builder as the readers so the
+	// validation rules cannot drift between reads and writes.
+	path, err := rotatedTokenPath(dataDir, scopeName, scopeInstanceID, adapterType)
+	if err != nil {
 		return "", err
 	}
-	path := filepath.Join(dir, adapterType+".token")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return "", err
+	}
 	if err := os.WriteFile(path, []byte(token), 0o600); err != nil {
 		return "", err
 	}
@@ -145,10 +152,13 @@ func remoteTokensDir(dataDir, scopeName string) (string, error) {
 func rotatedTokenPath(dataDir, scopeName, scopeInstanceID, adapterType string) (string, error) {
 	dir, err := remoteTokensDir(dataDir, scopeName)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("scope %q: %w", scopeName, err)
+	}
+	if err := checkPathLabel(scopeInstanceID); err != nil {
+		return "", fmt.Errorf("scope instance %q: %w", scopeInstanceID, err)
 	}
 	if err := checkPathLabel(adapterType); err != nil {
-		return "", err
+		return "", fmt.Errorf("adapter type %q: %w", adapterType, err)
 	}
 	return filepath.Join(dir, scopeInstanceID, adapterType+".token"), nil
 }
@@ -156,10 +166,10 @@ func rotatedTokenPath(dataDir, scopeName, scopeInstanceID, adapterType string) (
 func currentScopeInstancePath(dataDir, scopeName, adapterInstance string) (string, error) {
 	dir, err := remoteTokensDir(dataDir, scopeName)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("scope %q: %w", scopeName, err)
 	}
 	if err := checkPathLabel(adapterInstance); err != nil {
-		return "", err
+		return "", fmt.Errorf("adapter instance %q: %w", adapterInstance, err)
 	}
 	return filepath.Join(dir, "current", adapterInstance+".json"), nil
 }
@@ -205,6 +215,29 @@ func writeCurrentScopeInstance(dataDir, scopeName, adapterInstance string, rec c
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// releaseScopeInstance tombstones a deliberately released scope instance so
+// the token-file scan cannot resurrect it on the next scope entry. The live
+// record is dropped (rotating a fresh instance on re-entry, as before), the
+// rotated token file is kept for post-run forensics, and a claim file under
+// current/ records the released instance so it stays excluded from scan reuse
+// even after later rotations overwrite the live record.
+func releaseScopeInstance(dataDir, scopeName, adapterInstance, scopeInstanceID, adapterType string) {
+	if err := writeCurrentScopeInstance(dataDir, scopeName, releasedScopeClaimName(scopeInstanceID), currentScopeInstanceRecord{
+		ScopeInstanceID: scopeInstanceID,
+		AdapterType:     adapterType,
+	}); err != nil {
+		slog.Warn("persisting released scope instance tombstone failed; a later token-file scan may reuse the released token",
+			"scope", scopeName, "scope_instance", scopeInstanceID, "error", err.Error())
+	}
+	clearCurrentScopeInstance(dataDir, scopeName, adapterInstance)
+}
+
+// releasedScopeClaimName is the record file name under current/ holding a
+// released scope instance's tombstone claim.
+func releasedScopeClaimName(scopeInstanceID string) string {
+	return "released-" + scopeInstanceID
 }
 
 // clearCurrentScopeInstance removes the persisted record for an adapter
@@ -332,42 +365,203 @@ func maybeRotateRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, g *wor
 // tryReuseScopeInstance reuses the scope instance persisted by a prior runner
 // generation when the record is valid and its rotated token file is still
 // readable, registering the token with the shim and emitting provision_wanted.
-// It returns reused=false when the caller should fall through to a fresh
-// rotation, and a non-nil error only when reuse was possible but registration
-// with the shim failed.
+// When the record itself is missing or unusable, it scans the scope's token
+// directory for rotated tokens left behind by the previous runner generation
+// (the first restart after this code deploys has only the token files — the
+// records did not exist yet), registering every surviving token so surviving
+// pods remain valid, and reusing the newest unclaimed one. It returns
+// reused=false when the caller should fall through to a fresh rotation, and a
+// non-nil error only when reuse was possible but registration with the shim
+// failed.
 func tryReuseScopeInstance(deps Deps, lifecycle *remoteLifecycleContext, envNode *workflow.EnvironmentNode, adapter *workflow.AdapterNode, instanceID, scopeName string) (scopeKey string, reused bool, err error) {
 	dataDir := lifecycle.scopeLifecycle.dataDir
-	scopeInstanceID, tokenPath, token, ok := reusableScopeToken(dataDir, scopeName, instanceID, adapter.Type)
-	if !ok {
+	scopeInstanceID, tokenPath, token, reason, ok := reusableScopeToken(dataDir, scopeName, instanceID, adapter.Type)
+	if ok {
+		scopeKey = scopeName + "/" + scopeInstanceID
+		if rerr := deps.Sessions.RegisterRemoteScope(scopeKey, token); rerr != nil {
+			deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", rerr.Error())
+			return "", false, fmt.Errorf("initialize adapter %q: register scope token: %w", instanceID, rerr)
+		}
+		emitProvisionWanted(deps, lifecycle, scopeName, scopeInstanceID, scopeKey, instanceID, adapter, envNode, tokenPath)
+		return scopeKey, true, nil
+	}
+	logScopeReuseFallback(scopeName, instanceID, reason)
+
+	// Record-based reuse is impossible: scan for rotated token files the
+	// previous runner generation left behind and reuse the newest unclaimed
+	// instance instead of rotating a fresh one.
+	candidates, scanErr := scanScopeTokenFiles(dataDir, scopeName, adapter.Type)
+	if scanErr != nil {
+		slog.Warn("remote scope token scan failed; rotating fresh scope instance",
+			"scope", scopeName, "adapter_instance", instanceID, "error", scanErr.Error())
 		return "", false, nil
 	}
-	scopeKey = scopeName + "/" + scopeInstanceID
-	if err = deps.Sessions.RegisterRemoteScope(scopeKey, token); err != nil {
-		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
-		return "", false, fmt.Errorf("initialize adapter %q: register scope token: %w", instanceID, err)
+	candidates = filterUnclaimedScopeInstances(dataDir, scopeName, candidates)
+	if len(candidates) == 0 {
+		return "", false, nil
 	}
-	emitProvisionWanted(deps, lifecycle, scopeName, scopeInstanceID, scopeKey, instanceID, adapter, envNode, tokenPath)
+	chosen := candidates[0]
+	// Self-heal the record before registering so a persist failure cleanly
+	// falls through to a fresh rotation, whose own record write then fails
+	// loudly instead of leaving an unregistered token behind.
+	if werr := writeCurrentScopeInstance(dataDir, scopeName, instanceID, currentScopeInstanceRecord{
+		ScopeInstanceID: chosen.instanceID,
+		AdapterType:     adapter.Type,
+	}); werr != nil {
+		slog.Warn("persisting scanned scope instance failed; rotating fresh scope instance",
+			"scope", scopeName, "adapter_instance", instanceID, "error", werr.Error())
+		return "", false, nil
+	}
+	scopeKey = scopeName + "/" + chosen.instanceID
+	if rerr := deps.Sessions.RegisterRemoteScope(scopeKey, chosen.token); rerr != nil {
+		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", rerr.Error())
+		return "", false, fmt.Errorf("initialize adapter %q: register scope token: %w", instanceID, rerr)
+	}
+	// Register every other surviving token too so all of the previous
+	// runner's pods remain valid across the restart, not just the one this
+	// adapter reuses.
+	for _, cand := range candidates[1:] {
+		if rerr := deps.Sessions.RegisterRemoteScope(scopeName+"/"+cand.instanceID, cand.token); rerr != nil {
+			slog.Warn("registering surviving scope token failed; the matching pod may fail its handshake",
+				"scope", scopeName, "scope_instance", cand.instanceID, "error", rerr.Error())
+		}
+	}
+	slog.Info("reusing scope instance recovered from surviving rotated token",
+		"scope", scopeName, "adapter_instance", instanceID, "scope_instance", chosen.instanceID)
+	emitProvisionWanted(deps, lifecycle, scopeName, chosen.instanceID, scopeKey, instanceID, adapter, envNode, chosen.tokenPath)
 	return scopeKey, true, nil
+}
+
+// Reuse-fallback reasons surfaced by reusableScopeToken. A missing record is
+// the normal first-entry shape; every other reason means a previous runner
+// left something behind that could not be reused as-is.
+const reuseFallbackNoRecord = "no persisted scope instance record"
+
+func logScopeReuseFallback(scopeName, instanceID, reason string) {
+	if reason == reuseFallbackNoRecord {
+		slog.Info("no persisted scope instance record; scanning for surviving rotated tokens",
+			"scope", scopeName, "adapter_instance", instanceID)
+		return
+	}
+	slog.Warn("persisted scope instance record unusable; scanning for surviving rotated tokens",
+		"scope", scopeName, "adapter_instance", instanceID, "reason", reason)
+}
+
+// scannedScopeToken is a rotated token file found under a scope directory,
+// newest first after sorting.
+type scannedScopeToken struct {
+	instanceID string
+	tokenPath  string
+	token      string
+	modified   time.Time
+}
+
+// scanScopeTokenFiles scans <dataDir>/remote-tokens/<scopeName>/ for rotated
+// token files left behind by a prior runner generation. Only directory names
+// that parse as UUIDs are considered instance directories ("current" holds
+// records, not instances); each must contain a non-empty <adapterType>.token.
+func scanScopeTokenFiles(dataDir, scopeName, adapterType string) ([]scannedScopeToken, error) {
+	scopeDir, err := remoteTokensDir(dataDir, scopeName)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(scopeDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	found := make([]scannedScopeToken, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Name() == "current" {
+			continue
+		}
+		if _, err := uuid.Parse(entry.Name()); err != nil {
+			continue
+		}
+		path, err := rotatedTokenPath(dataDir, scopeName, entry.Name(), adapterType)
+		if err != nil {
+			continue
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil || len(raw) == 0 {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		found = append(found, scannedScopeToken{instanceID: entry.Name(), tokenPath: path, token: string(raw), modified: info.ModTime()})
+	}
+	sort.Slice(found, func(i, j int) bool { return found[i].modified.After(found[j].modified) })
+	return found, nil
+}
+
+// filterUnclaimedScopeInstances drops scan candidates whose instance is
+// already referenced by a readable current record — another adapter's active
+// claim or a deliberately released tombstone — so two adapters can never
+// share one scope instance and a released token cannot be resurrected.
+func filterUnclaimedScopeInstances(dataDir, scopeName string, candidates []scannedScopeToken) []scannedScopeToken {
+	scopeDir, err := remoteTokensDir(dataDir, scopeName)
+	if err != nil {
+		return candidates
+	}
+	currentDir := filepath.Join(scopeDir, "current")
+	entries, err := os.ReadDir(currentDir)
+	if err != nil {
+		return candidates
+	}
+	claimed := make(map[string]bool)
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		rec, err := readCurrentScopeInstance(dataDir, scopeName, strings.TrimSuffix(entry.Name(), ".json"))
+		if err != nil {
+			continue
+		}
+		claimed[rec.ScopeInstanceID] = true
+	}
+	kept := candidates[:0]
+	for _, cand := range candidates {
+		if !claimed[cand.instanceID] {
+			kept = append(kept, cand)
+		}
+	}
+	return kept
 }
 
 // reusableScopeToken returns the persisted scope instance ID, token file path
 // and token when the persisted record is valid for adapterType and the token
-// file is still readable; ok=false means the caller must rotate a fresh scope
-// instance, which also self-heals an unusable record.
-func reusableScopeToken(dataDir, scopeName, instanceID, adapterType string) (scopeInstanceID, tokenPath, token string, ok bool) {
+// file is still readable. On failure it returns a reason naming the check
+// that failed (missing record, corrupt record, adapter-type mismatch, missing
+// token file) so the fallback leaves a diagnostic trail, plus ok=false meaning
+// the caller must rotate a fresh scope instance, which also self-heals an
+// unusable record.
+func reusableScopeToken(dataDir, scopeName, instanceID, adapterType string) (scopeInstanceID, tokenPath, token, reason string, ok bool) {
 	rec, recErr := readCurrentScopeInstance(dataDir, scopeName, instanceID)
-	if recErr != nil || rec.AdapterType != adapterType {
-		return "", "", "", false
+	if recErr != nil {
+		if errors.Is(recErr, os.ErrNotExist) {
+			return "", "", "", reuseFallbackNoRecord, false
+		}
+		return "", "", "", fmt.Sprintf("corrupt or unreadable record: %v", recErr), false
+	}
+	if rec.AdapterType != adapterType {
+		return "", "", "", fmt.Sprintf("adapter type changed from %q to %q", rec.AdapterType, adapterType), false
 	}
 	path, pathErr := rotatedTokenPath(dataDir, scopeName, rec.ScopeInstanceID, rec.AdapterType)
 	if pathErr != nil {
-		return "", "", "", false
+		return "", "", "", fmt.Sprintf("token path is invalid: %v", pathErr), false
 	}
 	tokenRaw, tokErr := os.ReadFile(path)
-	if tokErr != nil || len(tokenRaw) == 0 {
-		return "", "", "", false
+	if tokErr != nil {
+		return "", "", "", fmt.Sprintf("token file unreadable: %v", tokErr), false
 	}
-	return rec.ScopeInstanceID, path, string(tokenRaw), true
+	if len(tokenRaw) == 0 {
+		return "", "", "", "token file is empty", false
+	}
+	return rec.ScopeInstanceID, path, string(tokenRaw), "", true
 }
 
 // initScopeAdapters provisions all adapters declared in the given FSMGraph at the start of its execution scope.
@@ -588,10 +782,11 @@ func tearDownScopeAdapters(ctx context.Context, order []string, deps Deps, lifec
 				})
 				_ = deps.Sessions.UnregisterRemoteScope(rec.scopeKey)
 				_ = deps.Sessions.CloseRemoteHandle(cleanupCtx, rec.adapterType, rec.scopeKey)
-				// CRI-137: drop the persisted scope instance so the next
-				// deliberate scope entry rotates a fresh token instead of
-				// reusing the released one.
-				clearCurrentScopeInstance(lifecycle.scopeLifecycle.dataDir, rec.scopeName, rec.adapterName)
+				// CRI-137: tombstone the persisted scope instance so the
+				// next deliberate scope entry rotates a fresh token instead
+				// of the token-file scan resurrecting the released one. The
+				// rotated token file is kept for post-run forensics.
+				releaseScopeInstance(lifecycle.scopeLifecycle.dataDir, rec.scopeName, rec.adapterName, rec.scopeInstanceID, rec.adapterType)
 				lifecycle.scopeLifecycle.remove(adapterID)
 			}
 		}
