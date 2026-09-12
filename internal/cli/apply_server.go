@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
@@ -25,6 +27,33 @@ func applyClientOptions(opts applyOptions) servertrans.Options {
 		CertFile: opts.tlsCert,
 		KeyFile:  opts.tlsKey,
 	}
+}
+
+// resolveServerBootstrapToken resolves the --server-bootstrap-token value for
+// the X-Server-Bootstrap Register header. A "file:" prefix reads the token
+// from a file so mounted secrets never appear in process arguments or
+// environment listings. Empty input disables bootstrap auth.
+func resolveServerBootstrapToken(spec string) (string, error) {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return "", nil
+	}
+	if !strings.HasPrefix(spec, "file:") {
+		return spec, nil
+	}
+	path := strings.TrimPrefix(spec, "file:")
+	if strings.TrimSpace(path) == "" {
+		return "", errors.New("invalid --server-bootstrap-token file: prefix without a path")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read server bootstrap token from %q: %w", path, err)
+	}
+	token := strings.TrimSpace(string(raw))
+	if token == "" {
+		return "", fmt.Errorf("server bootstrap token file %q is empty", path)
+	}
+	return token, nil
 }
 
 // buildServerSink constructs a run.Sink wired to the given publisher.
@@ -52,7 +81,29 @@ func buildServerSink(ctx context.Context, publisher run.Publisher, authClient *s
 	}
 }
 
-func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.Loader, client *servertrans.Client, state *localRunState, graph *workflow.FSMGraph, opts applyOptions) error {
+// dualWriteSink wraps a server sink with a LocalSink mirroring events into
+// the ND-JSON events file so server-mode runs keep dual-writing after a
+// crash resume. Returns the server sink unchanged when eventsOut is nil.
+// Pause/resume tracking must keep using the raw *run.Sink; only the engine
+// sink is wrapped.
+func dualWriteSink(sink *run.Sink, runID string, eventsOut io.Writer) engine.Sink {
+	local := eventsFileSink(runID, eventsOut)
+	if local == nil {
+		return sink
+	}
+	return run.NewMultiSink(sink, local)
+}
+
+// eventsFileSink returns a LocalSink mirroring events for the given run into
+// the events file, or nil when dual-write is off (no --events-file).
+func eventsFileSink(runID string, eventsOut io.Writer) *run.LocalSink {
+	if eventsOut == nil {
+		return nil
+	}
+	return &run.LocalSink{RunID: runID, Out: eventsOut}
+}
+
+func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.Loader, client *servertrans.Client, state *localRunState, graph *workflow.FSMGraph, opts applyOptions, eventsOut io.Writer) error {
 	_ = writeLocalRunState(state)
 	defer removeLocalRunState(state.RunID)
 	defer RemoveStepCheckpoint(state.RunID)
@@ -72,6 +123,12 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 			return nil
 		})
 	runSink := &terminalSuccessSink{Sink: sink}
+	if eventsOut != nil {
+		// Dual-write: mirror every engine event into the ND-JSON events file
+		// in addition to the server stream, so operators consuming the file
+		// keep working while the direct server stream is validated.
+		runSink = &terminalSuccessSink{Sink: run.NewMultiSink(sink, &run.LocalSink{RunID: state.RunID, Out: eventsOut})}
+	}
 
 	eng, err := buildServerRunEngine(graph, loader, runSink, state, opts)
 	if err != nil {
@@ -170,6 +227,23 @@ func runApplyServer(ctx context.Context, opts applyOptions) error {
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
 
+	// Resolve bootstrap auth before any server interaction so a bad token
+	// spec fails fast with a CLI-adjacent error.
+	bootstrapToken, err := resolveServerBootstrapToken(opts.serverBootstrapToken)
+	if err != nil {
+		return err
+	}
+
+	// Open the events file up front so a bad events path fails fast before
+	// any server interaction, mirroring local mode (the file is created even
+	// when compilation later fails). A nil writer disables dual-write and
+	// leaves server-only behavior unchanged.
+	eventsOut, closeEvents, err := openServerEventsWriter(opts.eventsPath)
+	if err != nil {
+		return err
+	}
+	defer closeEvents()
+
 	log := newApplyLogger()
 	src, graph, loader, err := compileForExecution(runCtx, opts.workflowPath, log, opts.warnsAsErrors, opts.allowUnsigned, opts.subworkflowRoots...)
 	if err != nil {
@@ -178,17 +252,18 @@ func runApplyServer(ctx context.Context, opts applyOptions) error {
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(runCtx)) }()
 
 	copts := applyClientOptions(opts)
-	client, runID, err := setupServerRun(runCtx, log, graph, src, opts.serverURL, opts.name, &copts, cancelRun)
+	copts.BootstrapToken = bootstrapToken
+	client, runID, err := setupServerRun(runCtx, log, graph, src, opts.serverURL, opts.name, &copts, cancelRun, eventsOut)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
 
 	state := newLocalRunState(runID, graph.Name, opts.serverURL)
-	return executeServerRun(runCtx, log, loader, client, state, graph, opts)
+	return executeServerRun(runCtx, log, loader, client, state, graph, opts, eventsOut)
 }
 
-func setupServerRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, src []byte, serverURL, name string, clientOpts *servertrans.Options, cancelRun func()) (*servertrans.Client, string, error) {
+func setupServerRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, src []byte, serverURL, name string, clientOpts *servertrans.Options, cancelRun func(), eventsOut io.Writer) (*servertrans.Client, string, error) {
 	client, err := servertrans.NewClient(serverURL, log, *clientOpts)
 	if err != nil {
 		return nil, "", err
@@ -202,7 +277,7 @@ func setupServerRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGr
 		return nil, "", fmt.Errorf("register: %w", err)
 	}
 
-	resumeInFlightRuns(ctx, log, clientOpts)
+	resumeInFlightRuns(ctx, log, clientOpts, eventsOut)
 
 	runID, err := client.CreateRun(ctx, graph.Name, string(src))
 	if err != nil {

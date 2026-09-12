@@ -58,6 +58,20 @@ func openNDJSONWriter(eventsPath string, mode outputMode) (io.Writer, func(), er
 	return io.Discard, func() {}, nil
 }
 
+// openServerEventsWriter opens the ND-JSON events file for a server-mode
+// dual-write. A nil writer (with a no-op closer) is returned when no events
+// path is configured, leaving server-only behavior unchanged.
+func openServerEventsWriter(eventsPath string) (io.Writer, func(), error) {
+	if strings.TrimSpace(eventsPath) == "" {
+		return nil, func() {}, nil
+	}
+	f, err := os.OpenFile(eventsPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open events file: %w", err)
+	}
+	return f, func() { _ = f.Close() }, nil
+}
+
 // buildLocalSink composes the engine sink for standalone mode. LocalSink
 // always runs (drives the ND-JSON record and the checkpoint hook). When mode
 // is concise, a ConsoleSink is added in front of stdout and the two are

@@ -253,7 +253,7 @@ func TestExecuteServerRun_Cancellation(t *testing.T) {
 	stateDir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	fake := applytest.New(t)
-	fake.Execution = applytest.ApplyExecution{CancelAt: "step_two"}
+	fake.Execution = applytest.ApplyExecution{CancelAt: "step_two", CancelAfter: 500 * time.Millisecond}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -267,7 +267,7 @@ func TestExecuteServerRun_Cancellation(t *testing.T) {
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
 	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
-	client, runID, err := setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel)
+	client, runID, err := setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel, nil)
 	if err != nil {
 		t.Fatalf("setupServerRun: %v", err)
 	}
@@ -281,13 +281,13 @@ func TestExecuteServerRun_Cancellation(t *testing.T) {
 	// removes it on return, so we must read it while the function is still
 	// executing).
 	runErr := make(chan error, 1)
-	go func() { runErr <- executeServerRun(ctx, log, loader, client, state, graph, opts) }()
+	go func() { runErr <- executeServerRun(ctx, log, loader, client, state, graph, opts, nil) }()
 
-	// Poll the checkpoint file at 1ms intervals, capturing data the moment the
-	// step_two checkpoint appears. The window between OnStepEntered writing it
-	// and executeServerRun's deferred cleanup spans multiple goroutine switches
-	// (loopback I/O, control channel hops, process kill), so 1ms polling
-	// reliably captures it before deletion.
+	// CancelAfter delays the fake's RunCancel by 500ms, so the step_two
+	// checkpoint (written on OnStepEntered before the adapter's 30s sleep is
+	// killed) stays on disk for at least that long. Polling at 20ms then
+	// observes it deterministically; a tight 1ms poll raced with the
+	// sub-millisecond write/remove window and failed intermittently.
 	cpPath := filepath.Join(stateDir, "runs", runID+".json")
 	var cpData []byte
 	deadline := time.Now().Add(5 * time.Second)
@@ -300,7 +300,7 @@ func TestExecuteServerRun_Cancellation(t *testing.T) {
 				break
 			}
 		}
-		time.Sleep(1 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 	if cpData == nil {
 		t.Fatal("step_two checkpoint not observed within 5s")
@@ -354,7 +354,7 @@ func TestExecuteServerRun_TimeoutPropagation(t *testing.T) {
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(bgCtx)) }()
 
 	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
-	client, runID, err := setupServerRun(bgCtx, log, graph, src, fake.URL(), "test", &copts, cancel)
+	client, runID, err := setupServerRun(bgCtx, log, graph, src, fake.URL(), "test", &copts, cancel, nil)
 	if err != nil {
 		t.Fatalf("setupServerRun: %v", err)
 	}
@@ -366,7 +366,7 @@ func TestExecuteServerRun_TimeoutPropagation(t *testing.T) {
 
 	state := newLocalRunState(runID, graph.Name, fake.URL())
 	opts := applyOptions{workflowPath: wfPath, serverURL: fake.URL()}
-	err = executeServerRun(timeoutCtx, log, loader, client, state, graph, opts)
+	err = executeServerRun(timeoutCtx, log, loader, client, state, graph, opts, nil)
 	if err == nil {
 		t.Fatal("expected error from timed-out run")
 	}
@@ -394,7 +394,7 @@ func TestSetupServerRun_TLSDisable(t *testing.T) {
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
 	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
-	client, runID, err := setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel)
+	client, runID, err := setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel, nil)
 	if err != nil {
 		t.Fatalf("setupServerRun: %v", err)
 	}
@@ -437,7 +437,7 @@ func TestSetupServerRun_TLSEnable(t *testing.T) {
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
 	copts := servertrans.Options{TLSMode: servertrans.TLSEnable, CAFile: caFile}
-	client, runID, err := setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel)
+	client, runID, err := setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel, nil)
 	if err != nil {
 		t.Fatalf("setupServerRun with TLS: %v", err)
 	}
@@ -493,7 +493,7 @@ func TestSetupServerRun_MTLS(t *testing.T) {
 		CertFile: certFile,
 		KeyFile:  keyFile,
 	}
-	client, runID, err := setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel)
+	client, runID, err := setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel, nil)
 	if err != nil {
 		t.Fatalf("setupServerRun with mTLS: %v", err)
 	}
@@ -518,7 +518,7 @@ func TestSetupServerRun_MTLSMissingCert(t *testing.T) {
 
 	log := newApplyLogger()
 	copts := servertrans.Options{TLSMode: servertrans.TLSMutual}
-	_, _, err := setupServerRun(context.Background(), log, nil, nil, "https://localhost:9999", "test", &copts, nil)
+	_, _, err := setupServerRun(context.Background(), log, nil, nil, "https://localhost:9999", "test", &copts, nil, nil)
 	if err == nil {
 		t.Fatal("expected error for mtls without cert")
 	}
@@ -569,7 +569,7 @@ func TestSetupServerRun_MTLSRejectsCACert(t *testing.T) {
 		CertFile: certFile,
 		KeyFile:  keyFile,
 	}
-	_, _, err = setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel)
+	_, _, err = setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel, nil)
 	if err == nil {
 		t.Fatal("expected setupServerRun to fail: CA cert must be rejected as a client credential")
 	}
@@ -604,7 +604,7 @@ func TestDrainResumeCycles_PauseThenResume(t *testing.T) {
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
 	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
-	client, runID, err := setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel)
+	client, runID, err := setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel, nil)
 	if err != nil {
 		t.Fatalf("setupServerRun: %v", err)
 	}
@@ -707,7 +707,7 @@ func TestDrainResumeCycles_StreamDropAndReconnect(t *testing.T) {
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
 	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
-	client, runID, err := setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel)
+	client, runID, err := setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel, nil)
 	if err != nil {
 		t.Fatalf("setupServerRun: %v", err)
 	}
