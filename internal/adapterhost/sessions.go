@@ -58,6 +58,32 @@ func (e *FatalRunError) Unwrap() error {
 	return e.Err
 }
 
+// SessionCrashError reports that an adapter session crashed and the session
+// manager surfaced the crash as a step failure (the default on_crash=fail
+// policy, or a respawn policy whose recovery also failed). The engine
+// distinguishes it from adapter-reported functional failures via errors.As
+// (CRI-130): a session crash means the adapter process is gone and every
+// subsequent Execute on the same session returns the crash error again, while
+// an adapter-reported failure outcome leaves the session alive.
+type SessionCrashError struct {
+	Session string
+	Err     error
+}
+
+func (e *SessionCrashError) Error() string {
+	if e == nil {
+		return "session crashed"
+	}
+	return fmt.Sprintf("session %q crashed: %v", e.Session, e.Err)
+}
+
+func (e *SessionCrashError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
 type SessionManager struct {
 	loader Loader
 	graph  *workflow.FSMGraph
@@ -1860,7 +1886,7 @@ func (m *SessionManager) failResult(sink adapter.EventSink, sess *Session, err e
 		"policy":  sess.OnCrash,
 		"error":   err.Error(),
 	})
-	return adapter.Result{Outcome: "failure"}, fmt.Errorf("session %q crashed: %w", sess.Name, err)
+	return adapter.Result{Outcome: "failure"}, &SessionCrashError{Session: sess.Name, Err: err}
 }
 
 func normalizeOnCrash(v string) string {
