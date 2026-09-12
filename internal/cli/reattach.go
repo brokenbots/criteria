@@ -35,53 +35,68 @@ type reattachTransport interface {
 // The clientOpts are used to build temporary clients for each resumed run.
 // eventsOut, when non-nil, mirrors the resumed runs' events into the ND-JSON
 // events file (server-mode dual-write).
+//
+// fingerprint is the invocation identity (CRI-125). The return value reports
+// whether any checkpoint whose fingerprint matches was consumed here — driven
+// to a terminal outcome or already accounted for server-side — in which case
+// the caller must not start a second run for the same identity.
 // This function blocks until all resumable runs have completed (or failed).
-func resumeInFlightRuns(ctx context.Context, log *slog.Logger, clientOpts *servertrans.Options, eventsOut io.Writer) {
+func resumeInFlightRuns(ctx context.Context, log *slog.Logger, clientOpts *servertrans.Options, eventsOut io.Writer, fingerprint string) bool {
 	checkpoints, err := ListStepCheckpoints()
 	if err != nil {
 		log.Warn("could not list step checkpoints; skipping crash recovery", "error", err)
-		return
+		return false
 	}
-	if len(checkpoints) == 0 {
-		return
-	}
-	log.Info("found in-flight checkpoint(s); attempting crash recovery", "count", len(checkpoints))
+	matched := false
 	for _, cp := range checkpoints {
-		resumeOneRun(ctx, log, cp, clientOpts, eventsOut)
+		if resumeOneRun(ctx, log, cp, clientOpts, eventsOut) && fingerprint != "" && cp.Fingerprint == fingerprint {
+			matched = true
+		}
 	}
+	return matched
 }
 
-func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, clientOpts *servertrans.Options, eventsOut io.Writer) {
+// resumeOneRun resumes a crashed server-mode run from cp and returns whether
+// the checkpoint's run was consumed: driven to a terminal outcome (success or
+// a marked failure) by this process, or already accounted for server-side
+// (terminal or owned by another agent — starting a fresh run would duplicate
+// it). It returns false only when the checkpoint was abandoned as unusable
+// and no run outcome was recorded, so the caller may proceed with a fresh run.
+func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, clientOpts *servertrans.Options, eventsOut io.Writer) bool {
 	log = log.With("run_id", cp.RunID, "step", cp.CurrentStep)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	rc, err := buildRecoveryClient(log, cp, clientOpts)
 	if err != nil {
-		return // buildRecoveryClient logged and cleared the checkpoint
+		return false // buildRecoveryClient logged and cleared the checkpoint
 	}
 	defer rc.Close()
 
 	resp, err := attemptReattach(ctx, log, rc, cp)
-	if err != nil || resp == nil {
-		return
+	if err != nil {
+		return false
+	}
+	if resp == nil {
+		// The server reports the run as terminal or owned by another agent:
+		// its fate is accounted for and a fresh run would duplicate it.
+		return true
 	}
 
 	graph, err := loadCheckpointWorkflow(ctx, log, cp)
 	if err != nil {
-		return
+		return false
 	}
 
 	if err := checkIterationCursorValidity(graph, resp.VariableScope); err != nil {
 		abandonCheckpoint(log, cp, "checkpoint step is no longer valid after workflow edit", err)
-		return
+		return false
 	}
 
 	if resp.Status == "paused" {
-		resumePausedRun(ctx, log, rc, cp, graph, resp, eventsOut)
-		return
+		return resumePausedRun(ctx, log, rc, cp, graph, resp, eventsOut)
 	}
-	resumeActiveRun(ctx, log, rc, cp, graph, resp, eventsOut)
+	return resumeActiveRun(ctx, log, rc, cp, graph, resp, eventsOut)
 }
 
 // abandonCheckpoint logs a warning (with optional error) and removes the checkpoint.
@@ -158,10 +173,11 @@ func drainAndCleanup(ctx context.Context, rc reattachTransport, cp *StepCheckpoi
 
 // resumePausedRun re-enters a paused run using WithPendingSignal, then
 // services further resume signals until the run reaches a terminal state.
-func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse, eventsOut io.Writer) {
+// It returns whether the run was consumed (see resumeOneRun).
+func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse, eventsOut io.Writer) bool {
 	if streamErr := rc.StartStreams(ctx, cp.RunID); streamErr != nil {
 		abandonCheckpoint(log, cp, "failed to start server streams for paused run", streamErr)
-		return
+		return false
 	}
 	sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log, Ctx: ctx}
 	loader := adapterhost.NewLoader()
@@ -174,7 +190,7 @@ func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 	if dataDirErr != nil {
 		log.Error("paused run re-entry failed to resolve run data dir", "run_id", cp.RunID, "error", dataDirErr)
 		drainAndCleanup(ctx, rc, cp)
-		return
+		return false
 	}
 	auditPath, _ := auditLogPath(cp.RunID)
 	auditWriter := adapterhost.NewFileAuditWriter(auditPath)
@@ -192,9 +208,10 @@ func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 	if runErr := eng.RunFrom(ctx, resp.CurrentStep, int(resp.Attempt)); runErr != nil {
 		log.Error("paused run re-entry failed", "error", runErr)
 		drainAndCleanup(ctx, rc, cp)
-		return
+		return true
 	}
 	serviceResumeSignals(ctx, log, rc, cp, graph, loader, sink, engineSink, eng)
+	return true
 }
 
 // serviceResumeSignals waits for and dispatches resume signals while the run
@@ -275,13 +292,14 @@ func checkIterationCursorValidity(graph *workflow.FSMGraph, variableScope string
 }
 
 // failResumeMaxRetries emits the failed run for a resume that exceeded
-// max_step_retries and cleans up the checkpoint.
-func failResumeMaxRetries(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, step string, nextAttempt, maxAttempts int, eventsOut io.Writer) {
+// max_step_retries and cleans up the checkpoint. It returns whether the run
+// outcome was recorded (see resumeOneRun).
+func failResumeMaxRetries(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, step string, nextAttempt, maxAttempts int, eventsOut io.Writer) bool {
 	log.Warn("exceeded max_step_retries on resume; failing run",
 		"next_attempt", nextAttempt, "max_attempts", maxAttempts)
 	if streamErr := rc.StartStreams(ctx, cp.RunID); streamErr != nil {
 		abandonCheckpoint(log, cp, "failed to start streams for failed resume", streamErr)
-		return
+		return false
 	}
 	sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log, Ctx: ctx}
 	local := eventsFileSink(cp.RunID, eventsOut)
@@ -291,21 +309,22 @@ func failResumeMaxRetries(ctx context.Context, log *slog.Logger, rc reattachTran
 		local.OnRunFailed(reason, step)
 	}
 	drainAndCleanup(ctx, rc, cp)
+	return true
 }
 
 // resumeActiveRun handles the normal (non-paused) resume path, including
-// max_step_retries policy enforcement.
-func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse, eventsOut io.Writer) {
+// max_step_retries policy enforcement. It returns whether the run was
+// consumed (see resumeOneRun).
+func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse, eventsOut io.Writer) bool {
 	nextAttempt := int(resp.Attempt) + 1
 	maxAttempts := 1 + graph.Policy.MaxStepRetries
 	if nextAttempt > maxAttempts {
-		failResumeMaxRetries(ctx, log, rc, cp, resp.CurrentStep, nextAttempt, maxAttempts, eventsOut)
-		return
+		return failResumeMaxRetries(ctx, log, rc, cp, resp.CurrentStep, nextAttempt, maxAttempts, eventsOut)
 	}
 
 	if streamErr := rc.StartStreams(ctx, cp.RunID); streamErr != nil {
 		abandonCheckpoint(log, cp, "failed to start server streams for resumed run", streamErr)
-		return
+		return false
 	}
 
 	sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log, Ctx: ctx}
@@ -332,7 +351,7 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 	if dataDirErr != nil {
 		log.Error("resumed run failed to resolve run data dir", "run_id", cp.RunID, "error", dataDirErr)
 		drainAndCleanup(ctx, rc, cp)
-		return
+		return false
 	}
 	eng := engine.New(graph, loader, engineSink,
 		engine.WithResumedVars(restoredVars),
@@ -349,6 +368,7 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		log.Info("resumed run completed")
 	}
 	drainAndCleanup(ctx, rc, cp)
+	return true
 }
 
 func parseWorkflowFromPath(ctx context.Context, path string) (*workflow.FSMGraph, error) {

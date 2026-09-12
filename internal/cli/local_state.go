@@ -49,6 +49,13 @@ type StepCheckpoint struct {
 	// Omitted from JSON when empty; older checkpoints without this field load
 	// with a nil map which the engine treats as all-zero counts.
 	Visits map[string]int `json:"visits,omitempty"`
+	// Fingerprint identifies the invocation that created this checkpoint
+	// (CRI-125): workflow path, server URL, and CLI variable inputs. A
+	// restarted runner matches this digest to resume — or keep failed — the
+	// original run instead of starting a second run with a fresh run_id.
+	// Empty on legacy checkpoints, which therefore never match (preserving
+	// the pre-CRI-125 behavior for old state on disk).
+	Fingerprint string `json:"fingerprint,omitempty"`
 }
 
 // stateDir returns the base directory for Criteria state files.

@@ -1084,9 +1084,12 @@ func TestExecuteServerRunPerScopeSessionsWiresDataDir(t *testing.T) {
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
 	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
-	client, runID, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri128-server", &copts, cancel, nil)
+	client, runID, resumed, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri128-server", &copts, cancel, nil, "")
 	if err != nil {
 		t.Fatalf("setupServerRun: %v", err)
+	}
+	if resumed {
+		t.Fatal("setupServerRun unexpectedly resumed a matching checkpoint")
 	}
 	defer client.Close()
 
@@ -1139,16 +1142,19 @@ func TestDrainResumeCyclesPerScopeSessionsWiresDataDir(t *testing.T) {
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
 	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
-	client, runID, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri128-resume", &copts, cancel, nil)
+	client, runID, resumed, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri128-resume", &copts, cancel, nil, "")
 	if err != nil {
 		t.Fatalf("setupServerRun: %v", err)
+	}
+	if resumed {
+		t.Fatal("setupServerRun unexpectedly resumed a matching checkpoint")
 	}
 	defer client.Close()
 
 	state := newLocalRunState(runID, graph.Name, fake.URL())
 
 	var eng *engine.Engine
-	sink := buildServerSink(ctx, client, client, runID, graph, wfPath, fake.URL(), log,
+	sink := buildServerSink(ctx, client, client, runID, graph, wfPath, fake.URL(), "", log,
 		func() map[string]int {
 			if eng != nil {
 				return eng.VisitCounts()
@@ -1214,9 +1220,12 @@ func TestBuildAgentRunPerScopeSessionsWiresDataDir(t *testing.T) {
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
 	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
-	client, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri128-agent", &copts, cancel, nil)
+	client, _, resumed, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri128-agent", &copts, cancel, nil, "")
 	if err != nil {
 		t.Fatalf("setupServerRun: %v", err)
+	}
+	if resumed {
+		t.Fatal("setupServerRun unexpectedly resumed a matching checkpoint")
 	}
 	defer client.Close()
 

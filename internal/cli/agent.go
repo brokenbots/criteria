@@ -749,7 +749,11 @@ func buildAgentRun(agentCtx, runCtx context.Context, log *slog.Logger, client *s
 	state.Status = agentRunStatusRunning
 
 	var eng *engine.Engine
-	sink := buildServerSink(runCtx, publisher, client, assignment.GetRunId(), graph, workflowPath, opts.serverURL, log,
+	// Agent-mode restarts are orchestrated by the server (decline/resume
+	// semantics), and the agent's workflow path is a per-pod scratch dir, so
+	// no run-identity fingerprint is persisted here (CRI-125 covers the
+	// runner/CLI path).
+	sink := buildServerSink(runCtx, publisher, client, assignment.GetRunId(), graph, workflowPath, opts.serverURL, "", log,
 		func() map[string]int {
 			if eng != nil {
 				return eng.VisitCounts()

@@ -542,6 +542,13 @@ func (f *Fake) RegistrationCount() int {
 	return int(f.handler.registrationCount.Load())
 }
 
+// CreatedRunCount returns how many CreateRun calls the server has received
+// (CRI-125). A run that resumes from a checkpoint must never trigger a second
+// CreateRun for the same identity.
+func (f *Fake) CreatedRunCount() int {
+	return int(f.handler.createRunCount.Load())
+}
+
 // envelopeTypeName returns a human-readable payload type name for an envelope.
 func envelopeTypeName(env *pb.Envelope) string {
 	switch {
@@ -604,6 +611,7 @@ type fakeHandler struct {
 	assignments        []*pb.WorkflowAssignment
 	controlAttachCount atomic.Int32
 	registrationCount  atomic.Int32
+	createRunCount     atomic.Int32
 	nextID             atomic.Int32
 }
 
@@ -689,6 +697,7 @@ func (h *fakeHandler) CreateRun(_ context.Context, req *connect.Request[pb.Creat
 	h.mu.Lock()
 	h.events[id] = nil
 	h.mu.Unlock()
+	h.createRunCount.Add(1)
 	return connect.NewResponse(&pb.Run{
 		RunId:        id,
 		CriteriaId:   req.Msg.CriteriaId,

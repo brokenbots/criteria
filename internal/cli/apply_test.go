@@ -142,7 +142,7 @@ func TestResumeLocalInFlightRuns_EmptyCheckpoints(t *testing.T) {
 	var buf bytes.Buffer
 	log := newApplyLogger()
 	// Must not panic or fail with no checkpoints.
-	resumeLocalInFlightRuns(context.Background(), log, &buf, outputModeJSON)
+	resumeLocalInFlightRuns(context.Background(), log, &buf, outputModeJSON, "", nil)
 	if buf.Len() != 0 {
 		t.Fatalf("expected no output with empty checkpoints, got %q", buf.String())
 	}
@@ -162,7 +162,7 @@ func TestResumeLocalInFlightRuns_SkipsServerCheckpoints(t *testing.T) {
 
 	var buf bytes.Buffer
 	log := newApplyLogger()
-	resumeLocalInFlightRuns(context.Background(), log, &buf, outputModeJSON)
+	resumeLocalInFlightRuns(context.Background(), log, &buf, outputModeJSON, "", nil)
 	// Server checkpoint must not produce any ND-JSON output.
 	if buf.Len() != 0 {
 		t.Fatalf("expected no output for server checkpoint, got %q", buf.String())
@@ -180,7 +180,7 @@ func TestWriteRunCheckpoint_Success(t *testing.T) {
 	log := newApplyLogger()
 
 	// Must not panic; checkpoint written to stateDir.
-	writeRunCheckpoint(log, "run-1", "my-workflow", wfFile, "", "build", 1, "cid-1", "tok-1", nil)
+	writeRunCheckpoint(log, "run-1", "my-workflow", wfFile, "", "", "build", 1, "cid-1", "tok-1", nil)
 
 	checkpoints, err := ListStepCheckpoints()
 	if err != nil {
@@ -232,7 +232,7 @@ func TestResumeInFlightRuns_ServerFn_EmptyCheckpoints(t *testing.T) {
 	t.Setenv("CRITERIA_STATE_DIR", dir)
 	log := newApplyLogger()
 	// Must not panic.
-	resumeInFlightRuns(context.Background(), log, &servertrans.Options{}, nil)
+	resumeInFlightRuns(context.Background(), log, &servertrans.Options{}, nil, "")
 }
 
 func TestRunApplyLocal_InvalidOutputMode_ReturnsError(t *testing.T) {
