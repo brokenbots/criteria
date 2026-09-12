@@ -88,8 +88,55 @@ type RunState struct {
 	// parent iterations.
 	ParallelSemMu *sync.Mutex
 
+	// CrashedCommentSessions records adapter references whose adapter session
+	// crashed during a comment_* step (CRI-130). Under the default
+	// on_crash=fail policy the session stays registered but dead: every
+	// subsequent Execute on the same reference returns the crash error again,
+	// so follow-on steps (e.g. set_done_state after comment_handler_done)
+	// would otherwise fail the run after its real work already completed.
+	// Nil-safe: a nil set records nothing and matches nothing. The set is
+	// shared by reference across parallel iteration states and subworkflow
+	// bodies (like Visits) so the crash is observed wherever a follow-on step
+	// executes in the run.
+	CrashedCommentSessions *crashedSessionRefs
+
 	firstStep        bool
 	firstStepAttempt int
+}
+
+// crashedSessionRefs records adapter references whose adapter session crashed
+// during a best-effort comment step (CRI-130). The zero value is ready to use
+// and every method tolerates a nil receiver, so RunStates that never
+// initialize the set behave as if no session had crashed.
+type crashedSessionRefs struct {
+	mu   sync.Mutex
+	refs map[string]struct{}
+}
+
+func newCrashedSessionRefs() *crashedSessionRefs {
+	return &crashedSessionRefs{refs: make(map[string]struct{})}
+}
+
+func (s *crashedSessionRefs) record(ref string) {
+	if s == nil || ref == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.refs == nil {
+		s.refs = make(map[string]struct{})
+	}
+	s.refs[ref] = struct{}{}
+}
+
+func (s *crashedSessionRefs) contains(ref string) bool {
+	if s == nil || ref == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.refs[ref]
+	return ok
 }
 
 // TopCursor returns a pointer to the innermost IterCursor, or nil when no

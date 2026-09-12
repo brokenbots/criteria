@@ -746,6 +746,12 @@ func isBestEffortCommentStep(step *workflow.StepNode) bool {
 // tail comment step on the workflow's failure branch — keep their declared
 // routing. An explicit on_crash=abort_run still aborts the run (the caller
 // checks FatalRunError before consulting this).
+//
+// The best-effort rule applies to every comment_* step in the graph, not only
+// literal tail steps. A mid-graph comment step whose failure previously routed
+// to a recovery branch now continues along its success transition instead; a
+// workflow that needs a comment step to gate a recovery branch should pin
+// on_crash = "respawn" on it or order the comment after the recovery step.
 func commentStepFailureContinues(step *workflow.StepNode, result adapter.Result, err error) bool {
 	if !isBestEffortCommentStep(step) {
 		return false
@@ -753,8 +759,128 @@ func commentStepFailureContinues(step *workflow.StepNode, result adapter.Result,
 	if err == nil && !strings.EqualFold(result.Outcome, "failure") {
 		return false
 	}
-	_, hasSuccess := step.Outcomes["success"]
-	return hasSuccess || step.DefaultOutcome != nil
+	return stepHasContinuation(step)
+}
+
+// stepContinuationTarget returns the node the step's success (or default)
+// outcome routes to, or "" when the step has no continuation.
+func stepContinuationTarget(step *workflow.StepNode) string {
+	if step == nil {
+		return ""
+	}
+	if outcome, ok := step.Outcomes["success"]; ok && outcome != nil {
+		return outcome.Next
+	}
+	if step.DefaultOutcome != nil {
+		return step.DefaultOutcome.Next
+	}
+	return ""
+}
+
+// stepHasContinuation reports whether the step has a success or default
+// transition the engine can take when a best-effort failure is suppressed.
+func stepHasContinuation(step *workflow.StepNode) bool {
+	return stepContinuationTarget(step) != ""
+}
+
+// isSessionCrashError reports whether err was produced by the adapterhost
+// session-crash path (the default on_crash=fail policy, or a respawn policy
+// whose recovery also failed), as opposed to an adapter-reported failure
+// outcome or a plain execute error.
+func isSessionCrashError(err error) bool {
+	var crash *adapterhost.SessionCrashError
+	return errors.As(err, &crash)
+}
+
+// recordCommentSessionCrash records the adapter reference of a comment_* step
+// whose failure was an adapter session crash (CRI-130). Recording happens
+// whether or not the comment step's own failure was suppressible: the session
+// is equally dead either way, and follow-on steps on the same reference
+// observe the crash through commentSessionCrashContinues.
+func recordCommentSessionCrash(st *RunState, step *workflow.StepNode, err error) {
+	if st == nil || !isBestEffortCommentStep(step) || !isSessionCrashError(err) {
+		return
+	}
+	st.CrashedCommentSessions.record(step.AdapterRef)
+}
+
+// sessionCrashedAfterComment reports whether the step targets an adapter
+// reference whose session crashed during an earlier comment_* step (CRI-130).
+func sessionCrashedAfterComment(st *RunState, step *workflow.StepNode) bool {
+	if st == nil || step == nil {
+		return false
+	}
+	return st.CrashedCommentSessions.contains(step.AdapterRef)
+}
+
+// commentSessionCrashContinues reports whether a failure on an adapter
+// reference whose session already crashed during a comment_* step is treated
+// as best-effort (CRI-130). Under the default on_crash=fail policy the
+// crashed session stays registered but dead, so the follow-on step — typically
+// the post-comment ticket-state update such as set_done_state — would re-
+// observe the same crash error and flip the run's terminal state to failed
+// after the workflow's real work already completed, triggering a scratch
+// re-run. Continuing past such a step is safe: it is the workflow's tail
+// bookkeeping (its continuation path reaches a terminal state without
+// crossing another adapter step) and the state write it performs is
+// idempotent/re-runnable. Suppression requires a genuine adapterhost session
+// crash error — adapter-reported failure outcomes still route via their
+// declared outcomes, so functional failures are never silently downgraded.
+// An explicit on_crash=abort_run still aborts the run (the caller checks
+// FatalRunError before consulting this).
+func (n *stepNode) commentSessionCrashContinues(st *RunState, step *workflow.StepNode, err error) bool {
+	if err == nil || !isSessionCrashError(err) {
+		return false
+	}
+	if !sessionCrashedAfterComment(st, step) {
+		return false
+	}
+	if !stepHasContinuation(step) {
+		return false
+	}
+	return n.tailReachesTerminalWithoutAdapterStep(step)
+}
+
+// tailReachesTerminalWithoutAdapterStep reports whether the step's
+// continuation path (success outcome if declared, else the default outcome)
+// reaches a terminal state without crossing another adapter or subworkflow
+// step. Such steps are the workflow's tail bookkeeping (CRI-130): continuing
+// past them on a crashed session cannot skip real adapter work later in the
+// run. comment_* steps on the path are followed because they are best-effort
+// by contract; waits, approvals, switches, and non-terminal states are treated
+// as unknown territory (false) to stay conservative.
+func (n *stepNode) tailReachesTerminalWithoutAdapterStep(step *workflow.StepNode) bool {
+	if n.graph == nil {
+		return false
+	}
+	next := stepContinuationTarget(step)
+	if next == "" {
+		return false
+	}
+	visited := make(map[string]struct{})
+	queue := []string{next}
+	for len(queue) > 0 {
+		name := queue[0]
+		queue = queue[1:]
+		if _, seen := visited[name]; seen {
+			continue
+		}
+		visited[name] = struct{}{}
+		if s, ok := n.graph.Steps[name]; ok {
+			if !isBestEffortCommentStep(s) {
+				return false
+			}
+			if t := stepContinuationTarget(s); t != "" {
+				queue = append(queue, t)
+			}
+			continue
+		}
+		if state, ok := n.graph.States[name]; ok {
+			return state.Terminal
+		}
+		return false
+	}
+	return false
 }
 
 // logCommentStepContinuation records the suppressed comment-step failure.
@@ -764,6 +890,14 @@ func logCommentStepContinuation(step *workflow.StepNode, result adapter.Result, 
 		args = append(args, "error", err)
 	}
 	slog.Warn("comment step failed; continuing run (best-effort tail step)", args...)
+}
+
+// logCommentSessionCrashContinuation records a suppressed failure on an
+// adapter reference whose session crashed during an earlier comment step
+// (CRI-130).
+func logCommentSessionCrashContinuation(step *workflow.StepNode, err error) {
+	slog.Warn("adapter session crashed during earlier comment step; continuing run (best-effort tail step)",
+		"step", step.Name, "session", step.AdapterRef, "error", err)
 }
 
 // commentStepContinuation is the synthesized result for a suppressed
@@ -777,22 +911,27 @@ func commentStepContinuation() adapter.Result {
 // commentStepResult rewrites a completed comment_* step result as a best-effort
 // success continuation (CRI-130) when the failure is suppressible; otherwise
 // the result is returned unchanged.
-func commentStepResult(step *workflow.StepNode, result adapter.Result) (adapter.Result, error) {
+func commentStepResult(step *workflow.StepNode, result adapter.Result) adapter.Result {
 	if !commentStepFailureContinues(step, result, nil) {
-		return result, nil
+		return result
 	}
 	logCommentStepContinuation(step, result, nil)
-	return commentStepContinuation(), nil
+	return commentStepContinuation()
 }
 
 // commentStepFailureOutcome maps a failed attempt of a comment_* step to its
 // outcome: a suppressible failure becomes the best-effort success continuation
 // (CRI-130); otherwise the failure outcome is kept. The error is swallowed to
 // match the engine's existing failure-outcome routing.
-func commentStepFailureOutcome(step *workflow.StepNode, err error) adapter.Result {
+func (n *stepNode) commentStepFailureOutcome(st *RunState, step *workflow.StepNode, err error) adapter.Result {
 	failure := adapter.Result{Outcome: "failure"}
+	recordCommentSessionCrash(st, step, err)
 	if commentStepFailureContinues(step, failure, err) {
 		logCommentStepContinuation(step, failure, err)
+		return commentStepContinuation()
+	}
+	if n.commentSessionCrashContinues(st, step, err) {
+		logCommentSessionCrashContinuation(step, err)
 		return commentStepContinuation()
 	}
 	return failure
@@ -801,12 +940,18 @@ func commentStepFailureOutcome(step *workflow.StepNode, err error) adapter.Resul
 // commentStepExhausted handles retry exhaustion for a comment_* step (CRI-130):
 // a suppressible failure becomes the best-effort success continuation;
 // otherwise the wrapped error propagates and fails the run.
-func commentStepExhausted(step *workflow.StepNode, wrappedErr error) (adapter.Result, error) {
-	if !commentStepFailureContinues(step, adapter.Result{Outcome: "failure"}, wrappedErr) {
-		return adapter.Result{}, wrappedErr
+func (n *stepNode) commentStepExhausted(st *RunState, step *workflow.StepNode, wrappedErr error) (adapter.Result, error) {
+	failure := adapter.Result{Outcome: "failure"}
+	recordCommentSessionCrash(st, step, wrappedErr)
+	if commentStepFailureContinues(step, failure, wrappedErr) {
+		logCommentStepContinuation(step, failure, wrappedErr)
+		return commentStepContinuation(), nil
 	}
-	logCommentStepContinuation(step, adapter.Result{Outcome: "failure"}, wrappedErr)
-	return commentStepContinuation(), nil
+	if n.commentSessionCrashContinues(st, step, wrappedErr) {
+		logCommentSessionCrashContinuation(step, wrappedErr)
+		return commentStepContinuation(), nil
+	}
+	return adapter.Result{}, wrappedErr
 }
 
 func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps Deps, step *workflow.StepNode, startAttempt int) (adapter.Result, error) {
@@ -843,7 +988,7 @@ func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps De
 
 		if err == nil {
 			deps.Sink.OnStepOutcome(step.Name, result.Outcome, dur, nil)
-			return commentStepResult(step, result)
+			return commentStepResult(step, result), nil
 		}
 
 		var fatal *adapterhost.FatalRunError
@@ -855,12 +1000,12 @@ func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps De
 		lastErr = err
 		if _, hasFailure := step.Outcomes["failure"]; hasFailure {
 			deps.Sink.OnStepOutcome(step.Name, "failure", dur, err)
-			return commentStepFailureOutcome(step, err), nil
+			return n.commentStepFailureOutcome(st, step, err), nil
 		}
 		deps.Sink.OnStepOutcome(step.Name, "", dur, err)
 	}
 
-	return commentStepExhausted(step, fmt.Errorf("step %q failed after %d attempts: %w", step.Name, maxAttempts-startAttempt+1, lastErr))
+	return n.commentStepExhausted(st, step, fmt.Errorf("step %q failed after %d attempts: %w", step.Name, maxAttempts-startAttempt+1, lastErr))
 }
 
 func (n *stepNode) executeStep(ctx context.Context, deps Deps, step *workflow.StepNode) (adapter.Result, error) {

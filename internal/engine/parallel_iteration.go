@@ -502,15 +502,16 @@ func (n *stepNode) runParallelSubworkflowOnce(
 // visitsMu serializes concurrent check-and-increment in incrementVisit.
 func buildParallelIterState(i, total int, item, key cty.Value, st *RunState, visitsMu *sync.Mutex, sem chan struct{}, ceiling int) *RunState {
 	return &RunState{
-		Current:          st.Current,
-		WorkflowDir:      st.WorkflowDir,
-		DataStore:        st.DataStore,
-		Visits:           st.Visits,
-		VisitsMu:         visitsMu,
-		ParallelCeiling:  ceiling,
-		ParallelSem:      sem,
-		ParallelSemCache: st.ParallelSemCache,
-		ParallelSemMu:    st.ParallelSemMu,
+		Current:                st.Current,
+		WorkflowDir:            st.WorkflowDir,
+		DataStore:              st.DataStore,
+		Visits:                 st.Visits,
+		VisitsMu:               visitsMu,
+		ParallelCeiling:        ceiling,
+		ParallelSem:            sem,
+		ParallelSemCache:       st.ParallelSemCache,
+		ParallelSemMu:          st.ParallelSemMu,
+		CrashedCommentSessions: st.CrashedCommentSessions,
 		Vars: workflow.WithEachBinding(st.Vars, &workflow.EachBinding{
 			Value: item,
 			Key:   key,
