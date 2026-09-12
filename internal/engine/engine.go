@@ -32,6 +32,7 @@ type AdapterLifecycleEvent struct {
 	ScopeName         string // empty for the root scope
 	ScopeInstanceID   string // unique UUID for this scope invocation
 	AdapterName       string
+	AdapterType       string // adapter implementation kind (e.g. "shell", "copilot")
 	Digest            string // lockfile-pinned digest
 	ShimListenAddress string
 	TokenRef          string // path to the accept-token file; never the token itself

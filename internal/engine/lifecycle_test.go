@@ -1414,6 +1414,9 @@ func TestInitScopeAdapters_PerScope_EmitsProvisionWanted(t *testing.T) {
 	if event.AdapterName != "default" {
 		t.Errorf("AdapterName = %q, want default", event.AdapterName)
 	}
+	if event.AdapterType != "noop" {
+		t.Errorf("AdapterType = %q, want noop (the adapter declaration's type)", event.AdapterType)
+	}
 	if event.ShimListenAddress != "127.0.0.1:4242" {
 		t.Errorf("ShimListenAddress = %q, want 127.0.0.1:4242", event.ShimListenAddress)
 	}
@@ -1505,6 +1508,9 @@ func TestTearDownScopeAdapters_PerScope_EmitsReleased(t *testing.T) {
 	if released.ScopeInstanceID != provision.ScopeInstanceID {
 		t.Errorf("released.ScopeInstanceID %q != provision.ScopeInstanceID %q", released.ScopeInstanceID, provision.ScopeInstanceID)
 	}
+	if released.AdapterType != provision.AdapterType || released.AdapterType != "noop" {
+		t.Errorf("released.AdapterType = %q, want %q", released.AdapterType, provision.AdapterType)
+	}
 
 	scopeKey := provision.ScopeName + "/" + provision.ScopeInstanceID
 	if !containsString(shim.unregistered, scopeKey) {
@@ -1523,6 +1529,92 @@ func containsString(haystack []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+// TestInitScopeAdapters_PerScope_ProvisionWantedCarriesAdapterType verifies the
+// CRI-141 contract: provision_wanted (and released) events carry the adapter
+// implementation kind from the workflow's adapter declaration — not the adapter
+// instance name — so an operator can resolve criteria-adapter-<type> images
+// without a name-based fallback.
+func TestInitScopeAdapters_PerScope_ProvisionWantedCarriesAdapterType(t *testing.T) {
+	ctx := context.Background()
+	g := compile(t, `
+workflow {
+  name = "adapter-type-test"
+  version = "0.1"
+  initial_state = "start"
+  target_state  = "done"
+}
+
+environment "remote" "prod" {
+  listen_address     = "127.0.0.1:0"
+  per_scope_sessions = true
+}
+
+adapter "shell" "intake" {
+  environment = remote.prod
+}
+
+adapter "copilot" "planner" {
+  environment = remote.prod
+}
+
+step "start" {
+  target = adapter.shell.intake
+  outcome "success" { next = step.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}`)
+	dataDir := t.TempDir()
+
+	sessions := adapterhost.NewSessionManager(&fakeLoader{})
+	sessions.SetGraph(g)
+	shim := newFakeRemoteShim(&fakeRemoteHandle{})
+	sessions.SetRemoteShim(shim)
+
+	lifecycle := newScopeLifecycleState(dataDir)
+	lifecycle.setRunID("run-123")
+	sink := &eventTrackingSink{}
+	rlc := &remoteLifecycleContext{scopeLifecycle: lifecycle}
+	deps := Deps{Sessions: sessions, Sink: sink}
+
+	order, err := initScopeAdapters(ctx, g, deps, nil, dataDir, "", nil, rlc)
+	if err != nil {
+		t.Fatalf("initScopeAdapters: %v", err)
+	}
+	if len(order) != 2 {
+		t.Fatalf("expected 2 adapters provisioned, got %v", order)
+	}
+
+	provisioned := map[string]string{} // adapter_type → adapter instance name
+	for _, ev := range sink.provisionEvents {
+		if ev.Status == "provision_wanted" {
+			provisioned[ev.AdapterType] = ev.AdapterName
+		}
+	}
+	if provisioned["shell"] != "intake" || provisioned["copilot"] != "planner" {
+		t.Fatalf("provision_wanted adapter_type: got %v, want shell→intake, copilot→planner", provisioned)
+	}
+
+	tearDownScopeAdapters(ctx, order, deps, rlc)
+	released := map[string]string{}
+	for _, ev := range sink.provisionEvents {
+		if ev.Status == "released" {
+			released[ev.AdapterType] = ev.AdapterName
+		}
+	}
+	if released["shell"] != "shell.intake" || released["copilot"] != "copilot.planner" {
+		t.Fatalf("released adapter_type: got %v, want shell→shell.intake, copilot→copilot.planner", released)
+	}
+
+	// The shim handshake must stay keyed by the adapter implementation kind.
+	calls := strings.Join(shim.calls, ",")
+	if !strings.Contains(calls, "WaitForHandle:shell:") || !strings.Contains(calls, "WaitForHandle:copilot:") {
+		t.Errorf("expected WaitForHandle keyed by each adapter type, calls=%v", shim.calls)
+	}
 }
 
 func TestInitScopeAdapters_PerScopeDisabled_NoLifecycleEvents(t *testing.T) {

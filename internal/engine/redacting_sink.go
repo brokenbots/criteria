@@ -138,6 +138,7 @@ func (s *RedactingSink) OnAdapterLifecycleEvent(event *AdapterLifecycleEvent) {
 		ScopeName:         s.reg.Redact(event.ScopeName),
 		ScopeInstanceID:   s.reg.Redact(event.ScopeInstanceID),
 		AdapterName:       s.reg.Redact(event.AdapterName),
+		AdapterType:       s.reg.Redact(event.AdapterType),
 		Digest:            s.reg.Redact(event.Digest),
 		ShimListenAddress: s.reg.Redact(event.ShimListenAddress),
 		TokenRef:          s.reg.Redact(event.TokenRef),
