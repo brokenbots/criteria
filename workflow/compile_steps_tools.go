@@ -17,9 +17,9 @@ package workflow
 //  3. dynamic_tools = true adapters are extensible: the name check is skipped
 //     and nothing is emitted (the runtime resolves names; M7 hook).
 //  4. strict default: an adapter that declares neither tool blocks nor
-//     dynamic_tools, and whose handshake (InfoResponse.tools, CRI-171)
-//     exposes no tools, rejects named refs — callee presents no tool surface
-//     (error).
+//     dynamic_tools, and whose handshake (InfoResponse.tools, CRI-171) is
+//     unavailable to the compiler or exposes no tools, rejects named refs —
+//     callee presents no tool surface (error).
 //  5. pointless caller: a caller adapter that does not declare the
 //     adapter_tools capability in its Info().Capabilities cannot issue tool
 //     calls, so passing tools is pointless (warning; compilation proceeds).
@@ -51,9 +51,12 @@ package workflow
 // specific source; runtime-discovered names stay a runtime concern gated by
 // allow_tools). Without static blocks, dynamic_tools = true skips the check
 // entirely. Without either, the handshake surface (AdapterInfo.RuntimeTools)
-// is consulted when available, and named refs must resolve against it. With
-//	no source at all, named refs are rejected (mode 4) and bare refs get the
-//	mode 7 advisory.
+// is consulted when the schemas map carried an entry for the adapter's type,
+// and named refs must resolve against it. With no source at all, named refs
+// are rejected (mode 4) and bare refs get the mode 7 advisory. When no
+// handshake was consulted at all (standalone compile, nil schemas), the
+// strict-default diagnostics say so instead of claiming the handshake was
+// empty.
 
 import (
 	"fmt"
@@ -80,6 +83,11 @@ type toolSurface struct {
 	// (AdapterInfo.RuntimeTools). nil when the handshake was unavailable to
 	// the compiler or exposed no tools.
 	runtimeToolNames []string
+	// handshakeKnown reports whether the schemas map carried an entry for the
+	// adapter's type. When false the compiler had no handshake to consult
+	// (standalone compile or a partial schema map), so diagnostics must not
+	// claim the handshake exposed no tools.
+	handshakeKnown bool
 }
 
 func (s toolSurface) hasStaticTools() bool { return len(s.staticToolNames) > 0 }
@@ -137,13 +145,16 @@ func buildToolSurfaces(spec *Spec, schemas map[string]AdapterInfo) map[string]to
 			names = append(names, t.Name)
 		}
 		var runtimeTools []string
+		var handshakeKnown bool
 		if info, ok := adapterInfo(schemas, ad.Type); ok {
 			runtimeTools = info.RuntimeTools
+			handshakeKnown = true
 		}
 		out[ad.Type+"."+ad.Name] = toolSurface{
 			staticToolNames:  names,
 			dynamic:          ad.DynamicTools,
 			runtimeToolNames: runtimeTools,
+			handshakeKnown:   handshakeKnown,
 		}
 	}
 	return out
@@ -362,10 +373,10 @@ func validateToolRefAgainstSurface(sp *StepSpec, surface toolSurface, key, targe
 		return nil
 	case named == "":
 		// Mode 7: no source at all — bare ref is advisory (runtime-validated).
-		return hcl.Diagnostics{bareToolRefInfoDiag(sp, target, tr)}
+		return hcl.Diagnostics{bareToolRefInfoDiag(sp, target, surface, tr)}
 	default:
 		// Mode 4: strict default — callee presents no tool surface.
-		return hcl.Diagnostics{noToolSurfaceDiag(sp, key, tr)}
+		return hcl.Diagnostics{noToolSurfaceDiag(sp, key, surface, tr)}
 	}
 }
 
@@ -383,32 +394,43 @@ func unknownAdapterToolRefDiag(sp *StepSpec, key string, tr hcl.Traversal) *hcl.
 
 // bareToolRefInfoDiag is the mode 7 advisory ("info") diagnostic for a bare
 // .tools ref on an adapter with no known tool surface. It is emitted as a
-// warning because hcl has no info severity; see the file comment.
-func bareToolRefInfoDiag(sp *StepSpec, target string, tr hcl.Traversal) *hcl.Diagnostic {
+// warning because hcl has no info severity; see the file comment. The detail
+// distinguishes a consulted-but-empty handshake from no handshake at all.
+func bareToolRefInfoDiag(sp *StepSpec, target string, surface toolSurface, tr hcl.Traversal) *hcl.Diagnostic {
 	return &hcl.Diagnostic{
 		Severity: hcl.DiagWarning,
 		Summary:  fmt.Sprintf("step %q: bare tools reference %q on an adapter with no declared tool surface", sp.Name, target),
 		Detail: fmt.Sprintf(
-			"the adapter declares neither tool blocks nor dynamic_tools = true, and its adapter handshake exposes "+
-				"no tools; this reference is validated at runtime and resolves to nothing unless the adapter "+
-				"presents tools at runtime. %s", toolRefSyntaxDoc),
+			"the adapter declares neither tool blocks nor dynamic_tools = true, and %s; this reference is validated at "+
+				"runtime and resolves to nothing unless the adapter presents tools at runtime. %s",
+			handshakeSurfacePhrase(surface), toolRefSyntaxDoc),
 		Subject: tr.SourceRange().Ptr(),
 	}
 }
 
 // noToolSurfaceDiag is the mode 4 error for a named ref on an adapter that
-// declares neither tool blocks nor dynamic_tools and exposes no handshake
-// tools.
-func noToolSurfaceDiag(sp *StepSpec, key string, tr hcl.Traversal) *hcl.Diagnostic {
+// declares neither tool blocks nor dynamic_tools and has no handshake tool
+// surface available to the compiler.
+func noToolSurfaceDiag(sp *StepSpec, key string, surface toolSurface, tr hcl.Traversal) *hcl.Diagnostic {
 	return &hcl.Diagnostic{
 		Severity: hcl.DiagError,
 		Summary:  fmt.Sprintf("step %q: callee %q presents no tool surface", sp.Name, key),
 		Detail: fmt.Sprintf(
-			"adapter %q declares neither tool blocks nor dynamic_tools = true, and its adapter handshake exposes "+
-				"no tools, so tools entries cannot name tools on it; declare tool blocks or set dynamic_tools = true "+
-				"on the adapter. %s", key, toolRefSyntaxDoc),
+			"adapter %q declares neither tool blocks nor dynamic_tools = true, and %s, so tools entries cannot name "+
+				"tools on it; declare tool blocks or set dynamic_tools = true on the adapter. %s",
+			key, handshakeSurfacePhrase(surface), toolRefSyntaxDoc),
 		Subject: tr.SourceRange().Ptr(),
 	}
+}
+
+// handshakeSurfacePhrase renders the handshake portion of the mode 4/7
+// diagnostic details: a consulted handshake that reported no tools, or the
+// absence of any handshake available to the compiler.
+func handshakeSurfacePhrase(surface toolSurface) string {
+	if surface.handshakeKnown {
+		return "its adapter handshake exposes no tools"
+	}
+	return "no adapter handshake was available to the compiler"
 }
 
 // runtimeToolRefDiag is the mode 9 error (CRI-173) for a named ref that does

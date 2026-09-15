@@ -582,9 +582,22 @@ func TestToolRefToolSourcePrecedence(t *testing.T) {
 	})
 
 	t.Run("neither source rejects refs", func(t *testing.T) {
-		t.Run("named ref errors when handshake exposes no tools", func(t *testing.T) {
-			compileCase(t, ``, `tools  = [adapter.mcp.registry.tools.search]`, nil,
-				false, hcl.DiagError, `callee "mcp.registry" presents no tool surface`, "")
+		t.Run("named ref errors when the schemas map is nil (no handshake consulted)", func(t *testing.T) {
+			// Strict default retained on standalone compiles: the diagnostic
+			// must state that no handshake was available, not that a consulted
+			// handshake was empty (CRI-173 B1 acceptance).
+			src := toolsWorkflowSrc(``, `tools  = [adapter.mcp.registry.tools.search]`)
+			_, diags := compileToolsWorkflow(t, src, nil)
+			expectToolDiag(t, diags, hcl.DiagError, `callee "mcp.registry" presents no tool surface`, src, "adapter.mcp.registry.tools.search")
+			if len(diags) != 1 {
+				t.Fatalf("expected exactly one diagnostic, got %d: %s", len(diags), diags.Error())
+			}
+			if !strings.Contains(diags[0].Detail, "no adapter handshake was available to the compiler") {
+				t.Errorf("detail %q must state that no handshake was available", diags[0].Detail)
+			}
+			if strings.Contains(diags[0].Detail, "exposes no tools") {
+				t.Errorf("detail %q must not claim a handshake was consulted", diags[0].Detail)
+			}
 		})
 		t.Run("named ref errors when the adapter type is registered but exposes no tools", func(t *testing.T) {
 			compileCase(t, ``, `tools  = [adapter.mcp.registry.tools.search]`, []string{},
@@ -593,6 +606,17 @@ func TestToolRefToolSourcePrecedence(t *testing.T) {
 		t.Run("bare ref stays advisory when the adapter type is registered but exposes no tools", func(t *testing.T) {
 			compileCase(t, ``, `tools  = [adapter.mcp.registry.tools]`, []string{},
 				false, hcl.DiagWarning, `bare tools reference "adapter.mcp.registry.tools" on an adapter with no declared tool surface`, "")
+		})
+		t.Run("bare ref advisory states no handshake was available when the schemas map is nil", func(t *testing.T) {
+			src := toolsWorkflowSrc(``, `tools  = [adapter.mcp.registry.tools]`)
+			_, diags := compileToolsWorkflow(t, src, nil)
+			expectToolDiag(t, diags, hcl.DiagWarning, `bare tools reference "adapter.mcp.registry.tools" on an adapter with no declared tool surface`, src, "adapter.mcp.registry.tools")
+			if len(diags) != 1 {
+				t.Fatalf("expected exactly one diagnostic, got %d: %s", len(diags), diags.Error())
+			}
+			if !strings.Contains(diags[0].Detail, "no adapter handshake was available to the compiler") {
+				t.Errorf("detail %q must state that no handshake was available", diags[0].Detail)
+			}
 		})
 	})
 }
