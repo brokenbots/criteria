@@ -47,11 +47,11 @@ workflow {
   version       = "1"
   initial_state = "validate"
   target_state  = "deployed"
-}
 
-policy {
-  max_total_steps  = 100
-  max_step_retries = 3
+  policy {
+    max_total_steps  = 100
+    max_step_retries = 3
+  }
 }
 
 permissions {
@@ -67,10 +67,11 @@ permissions {
 - **`initial_state`** (required): The starting node or state name.
 - **`target_state`** (required): The intended terminal state. Must reference a terminal state.
 - **`verification`** (optional): Signature-verification posture for OCI adapters — `"strict"`, `"warn"`, or `"off"`. Governs how a failed/missing adapter signature is handled at `lock`/`compile`/`apply`. The CLI override `--allow-unsigned` (or `CRITERIA_ALLOW_UNSIGNED=1`) takes precedence over this attribute. When omitted, the CLI transition default applies (currently `warn`; returns to `strict` once keyless verification is confirmed). See [adapters.md → Signing and trust](adapters.md).
-- **`policy`** (optional, top-level block): Execution guards.
+- **`policy`** (optional, block nested inside the `workflow` header): Execution guards. A top-level `policy` block is rejected at parse time with a migration hint.
   - **`max_total_steps`** (default 100): Caps the total number of step executions across the run, including retries and iteration steps. Set this to a positive integer to override the cap. If unset, or set to `0`, the default cap of `100` applies. Acts as a coarse backstop; for fine-grained loop control, prefer `max_visits` on individual steps.
   - **`max_step_retries`** (default 0 = no retries): Per-step retry limit for transient failures.
   - **`max_visits_warn_threshold`** (default 200): Controls when the compiler emits a back-edge warning for steps without `max_visits`. When `max_total_steps` exceeds this threshold and a step has a back-edge (can reach itself via outcome transitions) but no `max_visits`, the compiler emits a warning suggesting `max_visits` be set. Supported values: omit (or leave unset) to use the default threshold of 200; set to `0` to disable warnings entirely; set to a positive integer to override the default. Negative values are invalid and cause a compile error.
+  - **`max_tool_depth`** (default 8): Bounds the tool-call stack depth for adapter-to-adapter tool calls. See [Adapter tools](#adapter-tools).
 - **`permissions`** (optional, top-level block): Workflow-level permission allowlist.
   - **`allow_tools`**: List of glob patterns for tool invocations. Step-level `allow_tools` is unioned with this list.
 
@@ -1064,7 +1065,7 @@ step "draft" {
 - Missing keys in `vars` are a render-time error (`missingkey=error` is set). Use `{{ if .key }}{{ .key }}{{ end }}` for optional keys.
 - Null values in `vars` become `nil` in the template context and render as `<no value>` (Go `text/template`'s default for nil map entries).
 - Numbers prefer integer rendering when exactly representable; `42.0` and `42` both render as `42`. Use `{{ printf "%.1f" .x }}` for explicit decimal output.
-- Same path confinement and size-cap rules as [`file()`](#filePath).
+- Same path confinement and size-cap rules as [`file()`](#filepath).
 
 > **Differences from Terraform's `templatefile`:** Terraform's `templatefile` uses HCL native template syntax (`${field}`). Criteria's uses Go `text/template` syntax (`{{ .field }}`). This is intentional — `text/template` is in the Go stdlib and does not auto-escape output, which is desirable for LLM prompt content.
 
@@ -1379,6 +1380,189 @@ Examples:
 An empty or absent `allow_tools` list denies all tool requests. The first matching pattern wins.
 
 See [adapters.md](adapters.md) for the tool invocation wire protocol.
+
+---
+
+## Adapter tools
+
+Beyond executing steps, an adapter may **present tools** — named operations
+that other adapters call mid-execution and receive results from inline. The
+step still targets the adapter that *issues* the call; the callee is
+consulted as a resource while that step runs, and its result comes back
+inline. This is what makes tool-presenting adapters natural **resources**:
+the MCP adapter, which fronts the tool surface of MCP servers, and adapters
+that expose a data or event surface — a lookup, a query, a subscription — as
+named operations all fit the same shape. Their value to a workflow is the
+tool surface they present, not the steps they run.
+
+> **Status:** compiler acceptance and diagnostics for these forms land with
+> the adapter-tools compiler workstream (CRI-156); runtime tool discovery is
+> CRI-173. Earlier binaries reject `tool` blocks and the `dynamic_tools` /
+> `max_tool_depth` attributes as unsupported, and ignore step-level `tools`.
+> The normative grammar table lives in
+> [LANGUAGE-SPEC.md → Adapter tools](LANGUAGE-SPEC.md#adapter-tools); the
+> wire, cycle, and versioning contract is
+> [ADR-0004](adrs/ADR-0004-adapter-tools.md).
+
+### What a tool call does — and does not do
+
+A tool call is **not a step**:
+
+- **It bypasses outcome routing.** The callee's result returns to the caller
+  as tool-result data — never as an FSM transition. No `outcome` block fires
+  for a tool call, and `next` cannot reference a tool target.
+- **The callee returns to the caller.** The call always returns to the
+  calling adapter. The callee's success/failure is payload carried on the
+  tool result, not a branch the engine routes.
+- **The caller's own outcomes still gate its own transition.** The calling
+  step completes exactly as it would have without the call, and its
+  `outcome` blocks route it through the graph as normal. A failed tool call
+  is data for the caller to react to; on its own it does not fail the run.
+- **The callee never enters the FSM.** Tool calls create no nodes, add no
+  outcome plumbing, and stay invisible to reachability and terminal-state
+  checks.
+
+### Naming and the permission surface
+
+A tool target is one string, serving two roles at once — the HCL reference
+form and the permission-surface target:
+
+```text
+adapter.<type>.<name>.tools[.<tool>]
+```
+
+- `adapter.shell.worker.tools` — the instance's **entire tool surface**.
+- `adapter.shell.worker.tools.git_status` — **exactly one** tool.
+
+Declaring the callee's surface and granting calls to it:
+
+```hcl
+# Callee: declares the tools it presents (static form).
+adapter "shell" "worker" {
+  source = "ghcr.io/brokenbots/criteria-adapter-shell"
+  tool "git_status" {}
+  tool "git_diff" {}
+}
+
+# Caller, adapter config level: every step targeting this instance may call
+# the granted tools.
+adapter "copilot" "assistant" {
+  source = "ghcr.io/brokenbots/criteria-adapter-copilot"
+  tools  = [adapter.shell.worker.tools]           # the whole tool surface
+}
+
+# Caller, step level: unions onto the adapter-level list.
+step "review" {
+  target = adapter.copilot.assistant
+  tools  = [adapter.shell.worker.tools.git_diff]  # one specific tool
+  input {
+    prompt = "Review the working tree."
+  }
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
+}
+```
+
+The reference string **doubles as the `allow_tools` target**. When an
+adapter attempts a call, the host matches the effective `allow_tools`
+patterns — the union of the workflow `permissions.allow_tools` and the
+step's `allow_tools`; see [Pattern matching](#pattern-matching) — against
+the full target string of the attempted call, using Go `path/filepath.Match`
+semantics:
+
+- **Dots are literal characters**, not wildcards and not separators.
+- **`*` matches any run of non-`/` characters**, so it may span dots — but
+  it never crosses `/`.
+- **There is no `**` recursive syntax.**
+- Matching is anchored full-string matching, and the first matching pattern
+  wins.
+
+Example patterns:
+
+| `allow_tools` pattern | Matches |
+|---|---|
+| `adapter.shell.*` | every string under any `shell` instance — any instance, any tool call (the `*` spans the rest of the string, dots included) |
+| `adapter.mcp.default.tools.search` | exactly the `search` tool of the `mcp` instance `default` (an exact literal — every dot must be present) |
+| `adapter.*.tools` | every instance's bare tool surface |
+| `adapter.shell.worker.tools.git_*` | every `git_*` tool of that instance |
+
+One subtlety: because matching is anchored and exact, a bare `…tools`
+*pattern* matches only bare-form strings — used in `allow_tools` it permits
+the whole-surface grant itself, not individual calls. A glob that should
+cover every tool call of an instance is spelled
+`adapter.<type>.<name>.tools.*`.
+
+### When a tools list has effect
+
+A step-level `tools` list is **determined by the adapter declarations** — it
+only has effect when the adapters involved actually support tools:
+
+- the **callee** must present a tool surface: static `tool "<name>" { }`
+  blocks and/or `dynamic_tools = true`; and
+- the **caller** must be able to issue calls, which it advertises through
+  the `adapter_tools` capability string.
+
+When an entry is granted against an adapter pair that cannot support it, the
+compiler flags the **pointless entry**:
+
+- *warning* — the entry names a callee that presents no tool surface (no
+  `tool` blocks, `dynamic_tools` unset);
+- *warning* — the entry sits on a step whose target adapter lacks the
+  `adapter_tools` capability;
+- *warning* — duplicate entries in one list.
+
+Entries that do not resolve at all are *errors*: an entry naming an adapter
+not declared in the workflow, or — when the callee declares only static
+tools — naming a tool outside its declared `tool` blocks. The full
+validation-rules table lives in
+[LANGUAGE-SPEC.md → Adapter tools](LANGUAGE-SPEC.md#adapter-tools).
+
+The compiler only *flags*; it does not derive runtime behavior from the
+list. Runtime gating happens on the actual permission surface: every call is
+checked against `allow_tools` at call time, whatever the list said.
+
+`dynamic_tools = true` loosens the compile-time name check: with a
+runtime-discovered surface the compiler cannot verify static tool names, so
+enforcement moves to run time, where each call is gated by `allow_tools`.
+Static `tool` blocks and `dynamic_tools = true` may combine — the blocks
+name the stable surface, and the flag additionally admits
+runtime-discovered tools.
+
+### Bounding call depth — `policy.max_tool_depth`
+
+Tool calls can chain — adapter A's step calls B, B calls C, and so on — and
+cycles are permitted (A calls B calls A), so a run needs a cap on how deep
+the chain may grow. `policy.max_tool_depth` bounds the tool-call stack
+depth; the engine default is `8`:
+
+```hcl
+workflow {
+  name          = "review_pipeline"
+  version       = "1"
+  initial_state = "start"
+  target_state  = "done"
+
+  policy {
+    max_tool_depth = 12
+  }
+}
+```
+
+Set it when the workflow legitimately uses deep A→B→C chains or adapters
+that recurse through tools; leave it unset otherwise.
+
+When the depth is exceeded (or a runtime cycle is detected), the failure is
+**typed and returned to the calling adapter as the tool result**. The run
+continues — a failed tool call is data for the caller, not a run failure —
+and an **audit entry** is written for the enforcement event, as for other
+permission decisions.
+
+Compile time only **warns** on call-graph cycles; the runtime cap is the
+enforcement point. Compile-time call graphs **over-approximate** what a run
+will do: a `tools` grant describes what *may* be called, and dynamic tool
+surfaces are not fully knowable before the run, so a static cycle is not
+proof that one actually occurs. Depth is what actually stops pathological
+recursion at run time.
 
 ---
 
