@@ -141,6 +141,16 @@ type SessionManager struct {
 	// regression test can use a short value.
 	RespawnLogStreamDrainTimeout time.Duration
 
+	// PauseToolCallDrainTimeout is the bounded wait the drain-first pause
+	// posture (CRI-169, ADR-0004 §11) gives in-flight nested adapter tool
+	// calls to settle before canceling them: Session.Pause sets the pause
+	// gate (no new nested calls start), waits for the in-flight calls within
+	// this window, cancels the stragglers with a typed `canceled` reply, then
+	// pauses the stream. If zero, the default 60s is used. This is primarily
+	// a test hook so conformance tests can exercise the straggler path in
+	// bounded time.
+	PauseToolCallDrainTimeout time.Duration
+
 	mu       sync.Mutex
 	sessions map[string]*Session
 	// verified holds adapters that have passed eager verification (phase 1)
@@ -548,20 +558,63 @@ type Session struct {
 	pauseMu sync.Mutex
 }
 
-// Pause halts work on the session without losing state.
-// It calls the adapter handle first, then pauses the permission state.
+// pauseToolCallDrainTimeout returns the effective drain-first pause window
+// for in-flight nested tool calls (CRI-169). Zero means the default 60s.
+func (m *SessionManager) pauseToolCallDrainTimeout() time.Duration {
+	if m.PauseToolCallDrainTimeout <= 0 {
+		return defaultToolCallPauseWindow
+	}
+	return m.PauseToolCallDrainTimeout
+}
+
+// Pause halts work on the session without losing state. It implements the
+// drain-first pause posture (CRI-169, ADR-0004 §11): before the stream stops,
+// the pause gate is set so no new nested tool call starts, then in-flight
+// nested tool calls drain within a bounded window; calls that do not drain
+// are canceled with a typed `canceled` reply (a wedged straggler that never
+// settles is abandoned with a warning and audited at session close). Only
+// then is the adapter handle paused and the permission stream stopped.
 // Calling Pause on an already-paused session is a no-op.
+//
+// Rationale (recorded in ADR-0004 §11): nested in-flight Executes crossing a
+// snapshot would require callee-session state capture, which is out of scope;
+// draining first keeps snapshots to a quiescent permission state.
 func (s *Session) Pause(ctx context.Context) error {
 	s.pauseMu.Lock()
 	defer s.pauseMu.Unlock()
 	if s.paused {
 		return nil
 	}
+	ps := s.PermissionState
+	if ps != nil {
+		// 1. Set the pause gate. New nested tool-call dispatch is refused
+		// typed `paused` from here on; the pending set only shrinks.
+		ps.beginToolCallPause()
+		// 2. Drain in-flight nested calls within the bounded window; the
+		// stragglers are canceled (typed `canceled` reply on every path)
+		// while the stream is still active.
+		if still := ps.awaitToolCallDrain(ps.toolCallDrainWindow()); len(still) > 0 {
+			requestIDs := make([]string, 0, len(still))
+			for _, call := range still {
+				requestIDs = append(requestIDs, call.requestID)
+			}
+			slog.Warn("pause drain abandoned in-flight tool calls",
+				"session", s.Name, "request_ids", requestIDs)
+		}
+	}
 	if err := s.handle.Pause(ctx, s.Name); err != nil {
+		if ps != nil {
+			// The pause did not take effect at the adapter; lift the gate so
+			// the caller is not wedged. Drained calls stay drained.
+			ps.resumeToolCalls()
+		}
 		return err
 	}
-	if s.PermissionState != nil {
-		s.PermissionState.Pause()
+	// 3. Stop the permission stream. The gate is re-set atomically with the
+	// stream flag; tool-call replies keep buffering on the stream channel
+	// while paused.
+	if ps != nil {
+		ps.Pause()
 	}
 	s.paused = true
 	return nil
@@ -1283,9 +1336,16 @@ func (m *SessionManager) bindVerifiedRecord(ctx context.Context, rec *verifiedRe
 }
 
 // startPermissionStream starts the session-scoped Permissions stream if the
-// adapter supports it.
+// adapter supports it. An existing PermissionState is preserved (CRI-169
+// opportunistic fix, restored in WS18): on the snapshot/restore path the
+// session already carries a rehydrated permission state, and replacing it
+// here silently discarded the restored decisions. The pause drain window is
+// stamped from the manager's configured value at every creation site.
 func (m *SessionManager) startPermissionStream(ctx context.Context, sess *Session, plug Handle) {
-	sess.PermissionState = NewPermissionState(sess.Name, m.auditWriterForSessions())
+	if sess.PermissionState == nil {
+		sess.PermissionState = NewPermissionState(sess.Name, m.auditWriterForSessions())
+	}
+	sess.PermissionState.SetPauseDrainWindow(m.pauseToolCallDrainTimeout())
 	if streamer, ok := plug.(PermissionStreamer); ok {
 		cancel, err := streamer.StartPermissionStream(ctx, sess.Name, sess.PermissionState.Requests())
 		if err != nil {
@@ -1924,6 +1984,7 @@ func (m *SessionManager) restartPermissionStream(ctx context.Context, sess *Sess
 	}
 	sess.PermissionState.Stop()
 	sess.PermissionState = NewPermissionState(sess.Name, m.auditWriterForSessions())
+	sess.PermissionState.SetPauseDrainWindow(m.pauseToolCallDrainTimeout())
 	if streamer, ok := plug.(PermissionStreamer); ok {
 		cancel, err := streamer.StartPermissionStream(ctx, sess.Name, sess.PermissionState.Requests())
 		if err != nil {
@@ -2307,6 +2368,7 @@ func (m *SessionManager) restorePermissionState(name string, blob []byte) (*perm
 		return nil, nil
 	}
 	permState := NewPermissionState(name, m.auditWriterForSessions())
+	permState.SetPauseDrainWindow(m.pauseToolCallDrainTimeout())
 	if err := permState.RestoreState(blob, nil, m.auditWriterForSessions()); err != nil {
 		return nil, fmt.Errorf("restore permission state: %w", err)
 	}

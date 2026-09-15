@@ -741,12 +741,12 @@ func (a *permissionEmittingAdapter) Execute(_ context.Context, _ string, _ *work
 func TestPermissionState_PendingToolCalls(t *testing.T) {
 	ps := newToolCallState(t, &sliceAuditWriter{})
 
-	ps.registerPendingToolCall("call-1", "adapter.callee.helper.tools.a")
-	ps.registerPendingToolCall("call-2", "adapter.callee.helper.tools.b")
+	ps.registerPendingToolCall("call-1", "adapter.callee.helper.tools.a", nil)
+	ps.registerPendingToolCall("call-2", "adapter.callee.helper.tools.b", nil)
 
 	// A duplicate registration for an in-flight request_id is a no-op:
 	// first-writer-wins, one registry entry per request_id.
-	ps.registerPendingToolCall("call-1", "adapter.callee.helper.tools.a")
+	ps.registerPendingToolCall("call-1", "adapter.callee.helper.tools.a", nil)
 
 	ps.mu.Lock()
 	if got := len(ps.pendingToolCalls); got != 2 {
@@ -778,7 +778,7 @@ func TestPermissionState_PendingToolCalls(t *testing.T) {
 	ps.mu.Unlock()
 
 	// RestoreState resets the registry.
-	ps.registerPendingToolCall("call-3", "adapter.callee.helper.tools.c")
+	ps.registerPendingToolCall("call-3", "adapter.callee.helper.tools.c", nil)
 	if err := ps.RestoreState([]byte(`{"version":1}`), nil, nil); err != nil {
 		t.Fatalf("RestoreState: %v", err)
 	}

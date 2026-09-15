@@ -66,7 +66,22 @@ type permissionState struct {
 	// arrive in any order (the Permissions stream contract explicitly
 	// allows it) and each completing goroutine correlates by request_id.
 	pendingToolCalls map[string]*pendingToolCall
+
+	// toolCallPauseGate is the CRI-169 pause gate: when set, nested
+	// adapter tool-call dispatch is refused with the typed `paused`
+	// call_error until Resume clears it. It is set by beginToolCallPause
+	// (Session.Pause drain phase) and atomically by Pause.
+	toolCallPauseGate bool
+	// pauseDrainWindow is the bounded wait a Session.Pause drain gives
+	// in-flight nested tool calls before canceling stragglers. Zero means
+	// defaultToolCallPauseWindow.
+	pauseDrainWindow time.Duration
 }
+
+// defaultToolCallPauseWindow is the drain-first pause window (CRI-169):
+// Session.Pause waits this long for in-flight nested tool calls to settle
+// before canceling them.
+const defaultToolCallPauseWindow = 60 * time.Second
 
 type requestState struct {
 	requestID  string
@@ -90,6 +105,17 @@ type pendingToolCall struct {
 	requestID  string
 	target     string
 	registered time.Time
+	// cancel aborts the call's derived context (CRI-169): the pause drain
+	// cancels non-draining calls so they settle with a typed `canceled`
+	// reply. Nil for legacy registrations without a derived context.
+	cancel func()
+	// settled is closed when the call's goroutine cleared its pending
+	// registration (i.e. the call settled). It lets the pause drain wait
+	// for each in-flight call without waiting on per-Execute machinery.
+	// Nil when the call was registered without a settle marker.
+	settled chan struct{}
+	// settledClosed guards the one-shot close of settled under ps.mu.
+	settledClosed bool
 }
 
 // snapshotV1 is the on-disk format for MarshalState / RestoreState.
@@ -255,27 +281,53 @@ func (ps *permissionState) sendEvent(requestID string, allow bool, reason string
 // so the duplicate is a no-op — each issued call still gets its own typed
 // reply, but the registry keeps one entry per request_id for teardown
 // accounting.
-func (ps *permissionState) registerPendingToolCall(requestID, target string) {
+//
+// CRI-169: the second half of the pause gate lives here. A dispatch that
+// passed the gate in handleToolCallRequest but registers after the pause gate
+// was set is refused (returns false) — the pending set only ever shrinks once
+// the gate is set, so the Session.Pause drain takes a single snapshot. cancel
+// is the call's derived-context cancel used by the pause drain; nil keeps a
+// legacy registration (no cancelation, no settle marker).
+func (ps *permissionState) registerPendingToolCall(requestID, target string, cancel func()) bool {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	if ps.pendingToolCalls == nil {
 		ps.pendingToolCalls = make(map[string]*pendingToolCall)
 	}
 	if _, exists := ps.pendingToolCalls[requestID]; exists {
-		return
+		return true
 	}
-	ps.pendingToolCalls[requestID] = &pendingToolCall{
+	if ps.toolCallPauseGate {
+		return false
+	}
+	entry := &pendingToolCall{
 		requestID:  requestID,
 		target:     target,
 		registered: time.Now(),
 	}
+	if cancel != nil {
+		entry.cancel = cancel
+		entry.settled = make(chan struct{})
+	}
+	ps.pendingToolCalls[requestID] = entry
+	return true
 }
 
 // clearPendingToolCall removes the registration of a settled tool call so
-// session teardown does not audit a delivered result as abandoned.
+// session teardown does not audit a delivered result as abandoned. The call's
+// settled marker (when present) is closed exactly once so the pause drain can
+// observe the settle.
 func (ps *permissionState) clearPendingToolCall(requestID string) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
+	call, ok := ps.pendingToolCalls[requestID]
+	if !ok {
+		return
+	}
+	if call.settled != nil && !call.settledClosed {
+		close(call.settled)
+		call.settledClosed = true
+	}
 	delete(ps.pendingToolCalls, requestID)
 }
 
@@ -341,10 +393,150 @@ func (ps *permissionState) Stop() {
 	}
 }
 
+// SetPauseDrainWindow stamps the pause drain window (CRI-169). Called at
+// permissionState creation sites from the SessionManager's configured window.
+func (ps *permissionState) SetPauseDrainWindow(window time.Duration) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	ps.pauseDrainWindow = window
+}
+
+// toolCallDrainWindow returns the effective drain window for Session.Pause.
+func (ps *permissionState) toolCallDrainWindow() time.Duration {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	if ps.pauseDrainWindow <= 0 {
+		return defaultToolCallPauseWindow
+	}
+	return ps.pauseDrainWindow
+}
+
+// drainSettleGrace is the bounded settle grace the pause drain grants each
+// canceled straggler's goroutine to deliver its typed reply after its pending
+// registration is cleared (clearPendingToolCall closes the settle marker
+// before the reply is sent). Clamped to [100ms, 2s], derived from the window
+// so a short conformance window keeps a proportionally short grace.
+func drainSettleGrace(window time.Duration) time.Duration {
+	grace := window / 10
+	if grace < 100*time.Millisecond {
+		grace = 100 * time.Millisecond
+	}
+	if grace > 2*time.Second {
+		grace = 2 * time.Second
+	}
+	return grace
+}
+
+// beginToolCallPause sets the CRI-169 pause gate: new nested tool-call
+// dispatch is refused with the typed `paused` call_error (via
+// handleToolCallRequest gate and the registerPendingToolCall re-check) until
+// resumeToolCalls clears it. The stream consumer flag is untouched here —
+// Session.Pause keeps it live so drain-phase replies (typed `canceled` for
+// stragglers) are delivered immediately; PermissionState.Pause stops the
+// stream afterwards.
+func (ps *permissionState) beginToolCallPause() {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	ps.toolCallPauseGate = true
+}
+
+// resumeToolCalls clears the pause gate without touching the stream flag.
+func (ps *permissionState) resumeToolCalls() {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	ps.toolCallPauseGate = false
+}
+
+// toolCallsPaused reports whether the pause gate is set.
+func (ps *permissionState) toolCallsPaused() bool {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	return ps.toolCallPauseGate
+}
+
+// snapshotPendingToolCalls returns the currently pending tool-call entries.
+// Once the pause gate is set the set only shrinks, so a Session.Pause drain
+// snapshots it once.
+func (ps *permissionState) snapshotPendingToolCalls() []*pendingToolCall {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	snapshot := make([]*pendingToolCall, 0, len(ps.pendingToolCalls))
+	for _, call := range ps.pendingToolCalls {
+		snapshot = append(snapshot, call)
+	}
+	return snapshot
+}
+
+// awaitToolCallDrain is the Session.Pause drain (CRI-169 drain-first
+// posture): it waits up to window for every pending nested tool call to
+// settle (bounded wait), cancels the stragglers, then grants them a bounded
+// settle grace to deliver their typed replies. It returns the calls still
+// pending after the grace — the wedged stragglers the pause abandons (the
+// session-close abandonment audit reports them later; Stop must keep that
+// contract).
+func (ps *permissionState) awaitToolCallDrain(window time.Duration) []*pendingToolCall {
+	deadline := time.Now().Add(window)
+	grace := drainSettleGrace(window)
+
+	// Wait for the in-flight calls to settle within the bounded window.
+	// The set only shrinks while the pause gate is set, so the snapshot
+	// taken at entry is complete.
+	for _, call := range ps.snapshotPendingToolCalls() {
+		if call.settled == nil {
+			continue
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+		select {
+		case <-call.settled:
+		case <-time.After(remaining):
+		}
+	}
+
+	// Cancel whatever did not drain in the window: the call's goroutine
+	// observes a canceled context, maps it to the typed `canceled`
+	// call_error, and clears its registration.
+	pending := ps.snapshotPendingToolCalls()
+	stragglers := make([]*pendingToolCall, 0, len(pending))
+	for _, call := range pending {
+		if call.cancel != nil {
+			call.cancel()
+		}
+		stragglers = append(stragglers, call)
+	}
+	if len(stragglers) == 0 {
+		return nil
+	}
+
+	// Bounded settle grace: the canceled goroutine still has to run its
+	// failure-report path (clear registration, deliver the typed reply).
+	graceDeadline := time.Now().Add(grace)
+	for _, call := range stragglers {
+		if call.settled == nil {
+			continue
+		}
+		remaining := time.Until(graceDeadline)
+		if remaining <= 0 {
+			break
+		}
+		select {
+		case <-call.settled:
+		case <-time.After(remaining):
+		}
+	}
+
+	return ps.snapshotPendingToolCalls()
+}
+
 // Pause cancels the stream goroutine's context. The stream is held open at the
-// adapter side; no new decisions are dispatched.
+// adapter side; no new decisions are dispatched. The CRI-169 pause gate is
+// set atomically on the same mutex, so no nested tool call can be registered
+// between the gate and the stream flag.
 func (ps *permissionState) Pause() {
 	ps.mu.Lock()
+	ps.toolCallPauseGate = true
 	cancel := ps.cancel
 	ps.active = false
 	ps.mu.Unlock()
@@ -353,12 +545,13 @@ func (ps *permissionState) Pause() {
 	}
 }
 
-// Resume restarts the consumer goroutine by resetting the active flag.
-// The caller (SessionManager) is responsible for spawning a new Permissions
-// stream via StartPermissionStream.
+// Resume restarts the consumer goroutine by resetting the active flag and
+// clearing the pause gate atomically. The caller (SessionManager) is
+// responsible for spawning a new Permissions stream via StartPermissionStream.
 func (ps *permissionState) Resume() {
 	ps.mu.Lock()
 	ps.active = true
+	ps.toolCallPauseGate = false
 	ps.mu.Unlock()
 }
 

@@ -78,6 +78,8 @@ type nestedCalleeAdapter struct {
 	permTools []string // plain permission.request tools to emit (distinct request ids)
 	outputs   map[string]cty.Value
 	execErr   error
+	// holdRelease unblocks the "hold" task (CRI-169 test hook).
+	holdRelease chan struct{}
 
 	ctxErrMu sync.Mutex
 	ctxErrs  []error // ctx.Err() values observed by blocking executes
@@ -123,6 +125,15 @@ func (a *nestedCalleeAdapter) Execute(ctx context.Context, sessionID string, ste
 		<-ctx.Done()
 		a.recordCtxErr(ctx.Err())
 		return adapter.Result{Outcome: "failure"}, ctx.Err()
+	case "hold":
+		// CRI-169: hold the nested Execute open until the test releases it,
+		// or the host's context reaches it first (pause drain cancel).
+		select {
+		case <-a.holdRelease:
+		case <-ctx.Done():
+			a.recordCtxErr(ctx.Err())
+			return adapter.Result{Outcome: "failure"}, ctx.Err()
+		}
 	case "slow":
 		time.Sleep(150 * time.Millisecond)
 	}
