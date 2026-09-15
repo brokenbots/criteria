@@ -346,8 +346,8 @@ func checkDuplicateNames(entries []fileEntry) hcl.Diagnostics {
 		for _, s := range entry.spec.States {
 			addDup("state", s.Name, entry.ranges)
 		}
-		for _, a := range entry.spec.Adapters {
-			addDup("adapter", a.Type+"."+a.Name, entry.ranges)
+		for i := range entry.spec.Adapters {
+			addDup("adapter", entry.spec.Adapters[i].Type+"."+entry.spec.Adapters[i].Name, entry.ranges)
 		}
 		for _, v := range entry.spec.Variables {
 			addDup("variable", v.Name, entry.ranges)

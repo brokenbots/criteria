@@ -49,8 +49,8 @@ func adapterConfigEvalContext(vars, locals map[string]cty.Value, workflowDir str
 func compileAdapters(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	configEvalCtx := adapterConfigEvalContext(graphVars(g), graphLocals(g), opts.WorkflowDir, g.FileCache)
-	for _, ad := range spec.Adapters {
-		diags = append(diags, compileOneAdapter(g, &ad, schemas, configEvalCtx)...)
+	for i := range spec.Adapters {
+		diags = append(diags, compileOneAdapter(g, &spec.Adapters[i], schemas, configEvalCtx)...)
 	}
 	return diags
 }

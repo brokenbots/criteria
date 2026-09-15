@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/hashicorp/hcl/v2"
@@ -58,6 +59,12 @@ func Parse(filename string, src []byte) (*Spec, hcl.Diagnostics) {
 		diags = append(diags, annotateDiags...)
 		return nil, diags
 	}
+	if toolDiags := captureStepToolRefs(&spec); toolDiags.HasErrors() {
+		return nil, append(diags, toolDiags...)
+	}
+	if depthDiags := checkMaxToolDepthRange(&spec, f.Body); depthDiags.HasErrors() {
+		return nil, append(diags, depthDiags...)
+	}
 	return &spec, diags
 }
 
@@ -89,6 +96,107 @@ func captureCriteriaVersionRange(spec *Spec, body hcl.Body) {
 			break
 		}
 	}
+}
+
+// captureStepToolRefs decodes each step's `tools` attribute into raw traversal
+// grants on StepSpec.Tools. The attribute is captured by StepSpec.Remain (it
+// has no gohcl tag because gohcl cannot decode hcl.Traversal targets
+// directly), so the parse pass extracts it per step. Only bare traversal
+// entries are kept; anything else is silently dropped here — shape diagnostics
+// land in CRI-156, which re-walks the Remain bodies with positions (CRI-155:
+// no reference resolution, no graph changes).
+func captureStepToolRefs(spec *Spec) hcl.Diagnostics {
+	if spec == nil {
+		return nil
+	}
+	var diags hcl.Diagnostics
+	toolsSchema := &hcl.BodySchema{
+		Attributes: []hcl.AttributeSchema{{Name: "tools"}},
+	}
+	for i := range spec.Steps {
+		if spec.Steps[i].Remain == nil {
+			continue
+		}
+		attrs, _, attrDiags := spec.Steps[i].Remain.PartialContent(toolsSchema)
+		if attrDiags.HasErrors() {
+			diags = append(diags, attrDiags...)
+			continue
+		}
+		attr, ok := attrs.Attributes["tools"]
+		if !ok {
+			continue
+		}
+		spec.Steps[i].Tools = decodeToolRefTraversals(attr.Expr)
+	}
+	return diags
+}
+
+// decodeToolRefTraversals converts a `tools` list expression into raw
+// traversals, skipping entries that are not bare traversals (their diagnostics
+// are deferred to CRI-156). A non-list value yields nil.
+func decodeToolRefTraversals(expr hcl.Expression) []hcl.Traversal {
+	exprs, listDiags := hcl.ExprList(expr)
+	if listDiags.HasErrors() {
+		return nil
+	}
+	traversals := make([]hcl.Traversal, 0, len(exprs))
+	for _, item := range exprs {
+		traversal, _ := hcl.AbsTraversalForExpr(item)
+		if len(traversal) == 0 {
+			continue
+		}
+		traversals = append(traversals, traversal)
+	}
+	if len(traversals) == 0 {
+		return nil
+	}
+	return traversals
+}
+
+// checkMaxToolDepthRange reports a decode diagnostic when a declared
+// policy.max_tool_depth is < 1. An absent attribute is valid (0 = engine
+// default of 8). CRI-155 placement decision: the >= 1 range check lands at
+// parse time as a plain decode diagnostic; CRI-157 owns graph-level wiring
+// only.
+func checkMaxToolDepthRange(spec *Spec, body hcl.Body) hcl.Diagnostics {
+	if spec == nil || spec.Header == nil || spec.Header.Policy == nil || body == nil {
+		return nil
+	}
+	if spec.Header.Policy.MaxToolDepth >= 1 {
+		return nil
+	}
+	rng := maxToolDepthAttrRange(body)
+	if rng == nil {
+		return nil
+	}
+	return hcl.Diagnostics{{
+		Severity: hcl.DiagError,
+		Summary:  "invalid policy.max_tool_depth",
+		Detail: fmt.Sprintf("max_tool_depth must be an integer >= 1 (got %d); unset uses the engine default of 8",
+			spec.Header.Policy.MaxToolDepth),
+		Subject: rng,
+	}}
+}
+
+// maxToolDepthAttrRange locates the max_tool_depth attribute inside the
+// workflow header's policy block to source a decode diagnostic. Returns nil
+// when the attribute is not declared.
+func maxToolDepthAttrRange(body hcl.Body) *hcl.Range {
+	wfSchema := &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "workflow"}}}
+	content, _, _ := body.PartialContent(wfSchema)
+	for _, wf := range content.Blocks {
+		policySchema := &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "policy"}}}
+		policyContent, _, _ := wf.Body.PartialContent(policySchema)
+		for _, pol := range policyContent.Blocks {
+			attrSchema := &hcl.BodySchema{Attributes: []hcl.AttributeSchema{{Name: "max_tool_depth"}}}
+			attrs, _, _ := pol.Body.PartialContent(attrSchema)
+			if attr, ok := attrs.Attributes["max_tool_depth"]; ok {
+				rng := attr.Expr.Range()
+				return &rng
+			}
+		}
+	}
+	return nil
 }
 
 // checkLegacyAttributes runs all legacy attribute and block rejection checks.
