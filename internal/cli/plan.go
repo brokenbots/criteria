@@ -122,6 +122,10 @@ func renderPlanOutput(ctx context.Context, workflowPath string, overrides map[st
 			b.WriteString(fmt.Sprintf("    allow_tools: %s\n", strings.Join(step.AllowTools, ", ")))
 		}
 
+		if targets := stepToolTargets(step); len(targets) > 0 {
+			b.WriteString(fmt.Sprintf("    tools: %s\n", strings.Join(targets, ", ")))
+		}
+
 		b.WriteString("    outcomes: ")
 		b.WriteString(formatOutcomes(step, spec))
 		b.WriteString("\n")
@@ -163,6 +167,25 @@ func renderPlanOutput(ctx context.Context, workflowPath string, overrides map[st
 	}
 
 	return b.String(), nil
+}
+
+// stepToolTargets renders a step's compiled `tools` grants as tool-target
+// strings ("adapter.<type>.<name>.tools[.<tool>]") in declaration order,
+// matching the HCL reference form. Empty for steps without tool grants so
+// plain workflows keep their previous plan output.
+func stepToolTargets(step *workflow.StepNode) []string {
+	if len(step.Tools) == 0 {
+		return nil
+	}
+	targets := make([]string, 0, len(step.Tools))
+	for _, ref := range step.Tools {
+		t := ref.CalleeRef + ".tools"
+		if ref.Tool != "" {
+			t += "." + ref.Tool
+		}
+		targets = append(targets, t)
+	}
+	return targets
 }
 
 func formatStepHeader(step *workflow.StepNode) string {

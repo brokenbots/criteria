@@ -1,0 +1,17 @@
+digraph "adapter-calls" {
+  rankdir=LR;
+
+  "start" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "audit" [shape=box, style="filled", fillcolor="#E8DAEF"];
+  "done" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
+
+  "__start__" [shape=point,width=0.12,label=""];
+  "__start__" -> "start" [label="initial"];
+  "start" -> "audit" [label="success"];
+  "audit" -> "done" [label="success"];
+  "adapter:mcp.registry" [shape=note, style="filled", fillcolor="#D6EAF8", label="mcp.registry\ntools: *"];
+  "adapter:shell.worker" [shape=note, style="filled", fillcolor="#E8DAEF", label="shell.worker\ntools: git_status"];
+  "start" -> "adapter:mcp.registry" [style=dashed, color="#D6EAF8"];
+  "start" -> "adapter:shell.worker" [style=dashed, color="#D6EAF8", label="git_status"];
+  "audit" -> "adapter:shell.worker" [style=dashed, color="#E8DAEF", label="git_status"];
+}

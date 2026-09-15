@@ -1,0 +1,91 @@
+{
+  "name": "adapter-calls",
+  "initial_state": "start",
+  "target_state": "done",
+  "policy": {
+    "MaxTotalSteps": 100,
+    "MaxStepRetries": 0,
+    "MaxToolDepth": 8,
+    "MaxVisitsWarnThreshold": 200
+  },
+  "adapters": [
+    {
+      "type": "mcp",
+      "name": "registry",
+      "on_crash": "fail",
+      "config_keys": null
+    },
+    {
+      "type": "shell",
+      "name": "worker",
+      "on_crash": "fail",
+      "config_keys": null
+    }
+  ],
+  "steps": [
+    {
+      "name": "start",
+      "adapter": "mcp.registry",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "success",
+          "next": "audit"
+        }
+      ]
+    },
+    {
+      "name": "audit",
+      "adapter": "shell.worker",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "success",
+          "next": "done"
+        }
+      ]
+    }
+  ],
+  "adapter_call_edges": [
+    {
+      "caller": "mcp.registry",
+      "callee": "mcp.registry",
+      "tool": "*",
+      "step": "start"
+    },
+    {
+      "caller": "mcp.registry",
+      "callee": "shell.worker",
+      "tool": "git_status",
+      "step": "start"
+    },
+    {
+      "caller": "shell.worker",
+      "callee": "shell.worker",
+      "tool": "git_status",
+      "step": "audit"
+    }
+  ],
+  "states": [
+    {
+      "name": "done",
+      "terminal": true,
+      "success": true
+    }
+  ],
+  "outputs": [],
+  "switches": [],
+  "step_order": [
+    "start",
+    "audit"
+  ],
+  "plugins_required": [
+    "mcp",
+    "shell"
+  ],
+  "metadata": {
+    "schema_version": 1
+  }
+}
