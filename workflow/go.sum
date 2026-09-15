@@ -81,8 +81,7 @@ github.com/blang/semver v3.5.1+incompatible h1:cQNTCjp13qL8KC3Nbxr/y2Bqb63oX6wdn
 github.com/blang/semver v3.5.1+incompatible/go.mod h1:kRBLl5iJ+tD4TcOOxsy/0fnwebNt5EWlYSAyrTnjyyk=
 github.com/brokenbots/criteria v0.5.7 h1:OaZfKIk1IjEtudKQY3Efb6HiQmOC026f0Vhi0LGMNK0=
 github.com/brokenbots/criteria v0.5.7/go.mod h1:x9OQgmtePoNyoC5sKOUINsq84aeIAQUOSPzyOu9FZo0=
-github.com/brokenbots/criteria-adapter-proto v0.5.1 h1:URfvObjuA0S+AUSUyhXwfeikExEuqZeBzRGoHVZbicY=
-github.com/brokenbots/criteria-adapter-proto v0.5.1/go.mod h1:ZlnbfwK9phBl6XndXSjeaaCwwW3Y/pXTtq6ag2qqFjo=
+github.com/brokenbots/criteria-adapter-proto v0.5.2-0.20260915031317-3884049505b7 h1:22YAzlmp+QpZXKdWxFZ08PL2uJKb2NdxSg4EXAiQum4=
 github.com/cenkalti/backoff/v4 v4.3.0 h1:MyRJ/UdXutAwSAT+s3wNd7MfTIcy71VQueUuFK343L8=
 github.com/cenkalti/backoff/v4 v4.3.0/go.mod h1:Y3VNntkOUPxTVeUxJ/G5vcM//AlwfmyYozVcomhLiZE=
 github.com/cenkalti/backoff/v5 v5.0.3 h1:ZN+IMa753KfX5hd8vVaMixjnqRZ3y8CuJKRKj1xcsSM=

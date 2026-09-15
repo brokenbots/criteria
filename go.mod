@@ -4,7 +4,7 @@ go 1.26.6
 
 require (
 	connectrpc.com/connect v1.20.0
-	github.com/brokenbots/criteria-adapter-proto v0.5.1
+	github.com/brokenbots/criteria-adapter-proto v0.5.2-0.20260915031317-3884049505b7
 	github.com/brokenbots/criteria-go-adapter-sdk v0.5.3
 	github.com/brokenbots/criteria/sdk v0.0.0
 	github.com/brokenbots/criteria/workflow v0.0.0
