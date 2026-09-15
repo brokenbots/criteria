@@ -488,7 +488,7 @@ Each step, wait, and approval node declares one or more `outcome` blocks mapping
 
 ## Adapter tools
 
-Adapters may present **tools** — named operations that other adapters invoke mid-execution and receive results from inline. A tool call is **not a step**: the callee never enters the FSM, and a call never routes through outcome blocks (see Outcome model). The wire, cycle, and versioning contract is [ADR-0004](adrs/ADR-0004-adapter-tools.md).
+Adapters may present **tools** — named operations that other adapters invoke mid-execution and receive results from inline. A tool call is **not a step**: the callee never enters the FSM, and a call never routes through outcome blocks (see Outcome model). The wire, cycle, and versioning contract is [ADR-0004](adrs/ADR-0004-adapter-tools.md); the prose companion is [Adapter tools](workflow.md#adapter-tools) in docs/workflow.md.
 
 > **Status:** grammar specified by this revision. Compiler acceptance and diagnostics for these forms land with the adapter-tools compiler workstream (CRI-156); run-time tool discovery is CRI-173. Earlier binaries reject `tool` blocks and the `dynamic_tools` / `max_tool_depth` attributes as unsupported, and ignore step-level `tools`.
 

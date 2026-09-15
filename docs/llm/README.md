@@ -26,6 +26,7 @@ For smaller-context models, drop individual patterns; each file is self-containe
 | 06 | Human-in-the-loop | Pause for an external signal or human approval. |
 | 07 | Mutable shared state | Two or more steps read and write a common variable. |
 | 08 | File-driven prompts | Load step inputs from files at runtime using `file()`. |
+| 09 | Adapter tool calls | *(planned, CRI-175)* One adapter calls another adapter's tools mid-step. |
 
 ## Maintenance
 

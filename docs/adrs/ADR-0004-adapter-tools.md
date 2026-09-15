@@ -370,6 +370,9 @@ tickets must not assume either behavior for mid-call pause/resume.
 - [ADR-0003](ADR-0003-conformance-scope.md) — conformance scope (host +
   imported SDK): tool-call wire behavior is exercised by host conformance
   once the implementing tickets land.
+- [Adapter tools](../workflow.md#adapter-tools) — the prose companion in
+  `docs/workflow.md` (naming and permission surface, capability semantics,
+  `policy.max_tool_depth`).
 - CRI-169 (M6.3) — pause/resume-mid-call posture; appends its resolution to
   §11 of this ADR.
 - `awaitPermission` in
