@@ -5,6 +5,7 @@
   "policy": {
     "MaxTotalSteps": 100,
     "MaxStepRetries": 0,
+    "MaxToolDepth": 8,
     "MaxVisitsWarnThreshold": 200
   },
   "adapters": [

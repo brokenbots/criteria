@@ -155,6 +155,13 @@ func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]Adap
 	// Warn after all nodes are compiled so branch/wait/approval targets are
 	// available for the back-edge walk (W07).
 	diags = append(diags, warnBackEdges(g)...)
+	// CRI-157: record adapter tool-call relationships as generic graph edges
+	// (plus per-step tool lists) and warn on call-graph cycles. This pass is
+	// metadata-only: it must not affect nodeTargets, checkReachability, or FSM
+	// routing, so it runs after all steps are registered without touching
+	// transitions.
+	buildAdapterCallEdges(g)
+	diags = append(diags, warnAdapterCallCycles(g)...)
 	diags = append(diags, compileOutputRefs(g)...)
 	// Check cross-step field references after all nodes are compiled so
 	// forward-references resolve correctly.
@@ -243,6 +250,12 @@ func newFSMGraph(spec *Spec) *FSMGraph {
 		// Negative values are rejected at compile time before this point.
 		if spec.Header.Policy.MaxVisitsWarnThreshold != nil {
 			g.Policy.MaxVisitsWarnThreshold = *spec.Header.Policy.MaxVisitsWarnThreshold
+		}
+		// MaxToolDepth: unset (0) keeps DefaultPolicy's engine default of 8;
+		// positive values override it. Declared values < 1 are rejected at
+		// parse time by checkMaxToolDepthRange (CRI-155) and cannot reach here.
+		if spec.Header.Policy.MaxToolDepth > 0 {
+			g.Policy.MaxToolDepth = spec.Header.Policy.MaxToolDepth
 		}
 	}
 	return g

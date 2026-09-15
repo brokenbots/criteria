@@ -615,8 +615,14 @@ type FSMGraph struct {
 	Waits              map[string]*WaitNode            // by wait node name (W05)
 	Approvals          map[string]*ApprovalNode        // by approval node name (W05)
 	Switches           map[string]*SwitchNode          // by switch node name (W16)
-	ResolvedPolicies   map[string]*ResolvedPolicy      // cached per (adapter, environment); key = "adapterRef:envKey"
-	Policy             Policy
+	// AdapterCallEdges records adapter-to-adapter tool-call relationships
+	// discovered during compilation (CRI-157). Edges are metadata only: they
+	// never feed nodeTargets, checkReachability, or FSM routing. Future edge
+	// producers (subworkflow-as-tool, external registry tools) append to the
+	// same set rather than forking the compiler.
+	AdapterCallEdges []AdapterCallEdge
+	ResolvedPolicies map[string]*ResolvedPolicy // cached per (adapter, environment); key = "adapterRef:envKey"
+	Policy           Policy
 	// WorkflowDir is the absolute directory of the workflow that produced this
 	// graph. It is used at runtime to attribute adapter resolution errors to a
 	// workflow directory.
@@ -747,6 +753,13 @@ type StepNode struct {
 	// AllowTools is the union of step-level and workflow-level allow_tools glob
 	// patterns. An empty slice means deny-all (default). Only valid for adapter steps.
 	AllowTools []string
+	// Tools records this step's `tools = [...]` grants as compiled references
+	// (CRI-157): one entry per tools entry, in declaration order. CallerIsSelf
+	// marks grants where the callee is the step's own target adapter (the
+	// adapter calls tools presented by itself); for subworkflow-targeted steps
+	// there is no caller adapter, so CallerIsSelf is always false there.
+	// Runtime policy consumers (CRI-159/CRI-160) read this list.
+	Tools []AdapterToolRef
 	// ForEach is the raw HCL expression for step-level iteration over a list or
 	// map. Evaluated at runtime on first step entry. Mutually exclusive with Count.
 	ForEach hcl.Expression
@@ -844,6 +857,11 @@ type SwitchCondition struct {
 type Policy struct {
 	MaxTotalSteps  int
 	MaxStepRetries int
+	// MaxToolDepth bounds the adapter-to-adapter tool-call stack depth
+	// (policy.max_tool_depth, ADR-0004 §6). Unset keeps the engine default
+	// of 8 (DefaultPolicy); declared values < 1 are rejected at parse time
+	// by checkMaxToolDepthRange (CRI-155) and cannot reach this struct.
+	MaxToolDepth int
 	// MaxVisitsWarnThreshold is the threshold value that max_total_steps is
 	// compared against to determine whether to emit a warning when a step with a
 	// back-edge has no max_visits set (W07). 0 disables the warning. Default is 200.
@@ -854,7 +872,39 @@ type Policy struct {
 var DefaultPolicy = Policy{
 	MaxTotalSteps:          100,
 	MaxStepRetries:         0,
+	MaxToolDepth:           8,
 	MaxVisitsWarnThreshold: 200,
+}
+
+// AdapterCallEdge records one adapter-to-adapter tool-call relationship in
+// the compiled graph (CRI-157). The structure is deliberately generic so
+// future edge producers — subworkflow-as-tool, external registry tools —
+// can populate the same set without forking the compiler. Edges are pure
+// metadata: they must not feed nodeTargets, checkReachability, or FSM routing.
+type AdapterCallEdge struct {
+	// CallerAdapterRef is the calling adapter as "<type>.<name>".
+	CallerAdapterRef string
+	// CalleeAdapterRef is the adapter presenting the tool, as "<type>.<name>".
+	CalleeAdapterRef string
+	// Tool is the granted tool name; empty for a bare `.tools` grant that
+	// exposes the callee's full tool surface.
+	Tool string
+	// StepName is the originating step, retained as provenance. Multiple
+	// steps may produce edges between the same adapter pair.
+	StepName string
+}
+
+// AdapterToolRef records one entry of a compiled step's tools list (CRI-157).
+// Tool is the granted tool name; empty for a bare `.tools` grant.
+type AdapterToolRef struct {
+	// CallerIsSelf marks grants where the callee is the step's own target
+	// adapter. Always false for subworkflow-targeted steps, which have no
+	// caller adapter.
+	CallerIsSelf bool
+	// CalleeRef is the adapter presenting the tool, as "<type>.<name>".
+	CalleeRef string
+	// Tool is the granted tool name; empty for a bare `.tools` grant.
+	Tool string
 }
 
 // IsTerminal reports whether the named node is a terminal state.
