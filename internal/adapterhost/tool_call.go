@@ -1,8 +1,9 @@
 package adapterhost
 
 // tool_call.go — CRI-159: the M4.1 host seam for adapter tool calls
-// (ADR-0004 §8), extended in CRI-160 with real nested execution. A tool call
-// arrives as a permission.request AdapterEvent on the Execute stream carrying
+// (ADR-0004 §8), extended in CRI-160 with real nested execution and in
+// CRI-161 with async reply correlation. A tool call arrives as a
+// permission.request AdapterEvent on the Execute stream carrying
 // kind == "adapter_tool" (or a §2 target key). The seam detects those
 // payloads, gates them in a fixed order, and answers with a typed
 // PermissionEvent.tool_call_result on the caller's Permissions stream keyed
@@ -29,6 +30,19 @@ package adapterhost
 //     returned to the caller as the tool result. The callee's own on_crash
 //     governs its session; the caller receives a typed failure (callee_crash)
 //     and its outcome routing is unaffected (ADR-0004 §5).
+//
+// CRI-161: gate 6 dispatches asynchronously. The gates above stay on the
+// caller's Execute event loop, but the nested Execute runs on its own
+// goroutine, registered in the caller session's pending map keyed by
+// request_id (the host-side mirror of the MCP bridge's
+// registerPendingPerm/decisionCh pattern). The completing goroutine delivers
+// the typed reply — allow + result, or the typed failure — on the caller's
+// Permissions stream, so multiple in-flight calls per caller session
+// interleave and replies may arrive in any order (the Permissions stream
+// contract explicitly allows it; correlation is by request_id). Timeout and
+// cancellation propagate into the callee through the caller's Execute
+// context; the reply is always delivered (typed callee_timeout / canceled),
+// so a caller never wedges waiting for a result.
 //
 // Plain (non-tool) permission requests never reach this file's decision path:
 // the sink routes them to the untouched plain flow, so workflows without tool
@@ -69,6 +83,8 @@ const (
 	callErrorDepthExceeded     = "depth_exceeded"
 	callErrorCalleeCrash       = "callee_crash"
 	callErrorInvalidArgs       = "invalid_args"
+	callErrorCalleeTimeout     = "callee_timeout"
+	callErrorCanceled          = "canceled"
 )
 
 // toolCallTarget is the parsed shape of an adapter tool-call target string
@@ -442,9 +458,12 @@ func (s *permissionInterceptSink) handleToolCallRequest(payload map[string]any) 
 		return
 	}
 
-	// Gate 6: nested execution (CRI-160). An otherwise-allowed call runs the
-	// callee in its own session and replies with the callee's result.
-	s.executeNestedToolCall(&req, parsed)
+	// Gate 6: nested execution (CRI-160/CRI-161). An otherwise-allowed call
+	// runs the callee in its own session and replies with the callee's
+	// result. Dispatch is asynchronous so in-flight calls interleave; the
+	// typed reply is delivered on the caller's Permissions stream by the
+	// completing goroutine.
+	s.dispatchNestedToolCall(&req, parsed)
 }
 
 // nestedToolCallMaxDepth returns the effective policy.max_tool_depth for the
@@ -458,14 +477,41 @@ func (s *permissionInterceptSink) nestedToolCallMaxDepth() int {
 	return workflow.DefaultPolicy.MaxToolDepth
 }
 
-// executeNestedToolCall dispatches an allowed adapter tool call to the callee
+// nestedToolCall captures a dispatched adapter tool call: everything the
+// completing goroutine needs to run the callee and deliver the typed reply
+// (CRI-161). The dispatch path copies these fields before returning to the
+// caller's Execute event loop, which immediately moves on to the next
+// Permissions event.
+type nestedToolCall struct {
+	requestID  string
+	target     string
+	tool       string
+	argsDigest string
+	calleeRef  string
+	calleeStep *workflow.StepNode
+	depth      int
+}
+
+// dispatchNestedToolCall dispatches an allowed adapter tool call to the callee
 // adapter in its own session (CRI-160, ADR-0004 §8) and answers the caller
 // with the callee's result as the tool result.
 //
+// CRI-161: the gates stay synchronous on the caller's Execute event loop, but
+// the callee Execute itself is dispatched asynchronously — the call is
+// registered in the caller session's pending map keyed by request_id and
+// executed on its own goroutine, so the caller's Execute keeps reading its
+// Permissions stream while calls are in flight. Multiple in-flight calls per
+// caller session therefore interleave, and replies are delivered in whatever
+// order they complete (the Permissions stream contract explicitly allows any
+// order; correlation is by request_id), mirroring the MCP bridge's
+// registerPendingPerm/decisionCh pending map
+// (cmd/criteria-adapter-mcp/bridge.go).
+//
 // Locking: the nested Execute runs under the caller's in-flight Execute with
 // no SessionManager lock held here (see SessionManager.Execute for the
-// contract).
-func (s *permissionInterceptSink) executeNestedToolCall(req *toolCallPayload, parsed toolCallTarget) {
+// contract). SessionManager.execute waits for every dispatched call to settle
+// (sink.waitPending) before the step completes.
+func (s *permissionInterceptSink) dispatchNestedToolCall(req *toolCallPayload, parsed toolCallTarget) {
 	// A sink without a wired manager cannot execute a callee (directly
 	// constructed test fixtures). The real host always wires the manager.
 	if s.mgr == nil {
@@ -500,20 +546,52 @@ func (s *permissionInterceptSink) executeNestedToolCall(req *toolCallPayload, pa
 		return
 	}
 
-	result, execErr := s.mgr.execute(s.nestedExecCtx(), parsed.AdapterRef, calleeStep, s.inner, s.toolDepth+1)
+	// Register for reply correlation, then hand the call to its own
+	// goroutine so the caller's Execute event loop stays live. Only calls
+	// that pass every gate are registered, so teardown never audits a
+	// synchronously rejected call as abandoned.
+	s.permState.registerPendingToolCall(req.requestID, req.target)
+	s.nested.Add(1)
+	go s.runNestedToolCall(&nestedToolCall{
+		requestID:  req.requestID,
+		target:     req.target,
+		tool:       req.tool,
+		argsDigest: req.argsDigest,
+		calleeRef:  parsed.AdapterRef,
+		calleeStep: calleeStep,
+		depth:      s.toolDepth + 1,
+	})
+}
+
+// runNestedToolCall executes the nested callee and delivers the typed reply
+// on the caller's Permissions stream (CRI-161). It runs on its own goroutine;
+// its context is the caller's Execute context, so the caller's step timeout
+// and run cancellation both reach the callee. The reply is delivered on every
+// path — including the typed timeout and cancellation failures — so the
+// caller's pending correlation map always unblocks: a wedged stream is a bug,
+// never a timeout mode.
+func (s *permissionInterceptSink) runNestedToolCall(call *nestedToolCall) {
+	defer s.nested.Done()
+
+	result, execErr := s.mgr.execute(s.nestedExecCtx(), call.calleeRef, call.calleeStep, s.inner, call.depth)
+
+	// Clear the pending registration before delivering, so a concurrent
+	// session teardown never audits a call whose result was already sent.
+	s.permState.clearPendingToolCall(call.requestID)
+
 	if execErr != nil {
-		s.reportNestedCallFailure(req, execErr)
+		s.reportNestedCallFailure(call, execErr)
 		return
 	}
 
 	outputsJSON, encErr := encodeToolCallOutputs(result.Outputs)
 	if encErr != nil {
-		s.rejectToolCall(req.requestID, req.target, req.argsDigest, callErrorCalleeCrash)
+		s.reportNestedCallFailure(call, encErr)
 		return
 	}
 
 	s.permState.sendToolCallResultEvent(&v2.ToolCallResult{
-		RequestId:   req.requestID,
+		RequestId:   call.requestID,
 		Outcome:     result.Outcome,
 		OutputsJson: outputsJSON,
 	})
@@ -521,34 +599,45 @@ func (s *permissionInterceptSink) executeNestedToolCall(req *toolCallPayload, pa
 
 // reportNestedCallFailure reports a failed nested callee execution to the
 // caller: an audit deny entry plus the typed failure reply, so the caller's
-// Execute unblocks.
+// correlation map unblocks. The reply is sent on every path.
 //
-// An abort_run crash in the callee's own session aborts the run: the callee's
-// on_crash governs its session, so that policy decision propagates as a fatal
-// run error rather than being swallowed into a tool result. The caller still
-// receives the typed callee_crash reply; the fatal error rides the sink back
-// to SessionManager.execute, which propagates it to the engine once the
-// caller's adapter call returns.
-func (s *permissionInterceptSink) reportNestedCallFailure(req *toolCallPayload, execErr error) {
+// Error mapping (typed call_error registry, ADR-0004 §8):
+//   - an abort_run crash in the callee's own session aborts the run: the
+//     callee's on_crash governs its session, so that policy decision
+//     propagates as a fatal run error rather than being swallowed into a
+//     tool result. The caller still receives the typed callee_crash reply;
+//     the fatal error rides the sink back to SessionManager.execute, which
+//     propagates it to the engine once the caller's adapter call returns;
+//   - the caller's step deadline (context.DeadlineExceeded) maps to
+//     callee_timeout: the callee did not answer within its deadline;
+//   - run cancellation (context.Canceled) maps to canceled: the call was
+//     abandoned while in flight;
+//   - an unknown callee session maps to unknown_adapter;
+//   - anything else is callee_crash.
+func (s *permissionInterceptSink) reportNestedCallFailure(call *nestedToolCall, execErr error) {
 	code := callErrorCalleeCrash
 	var fatal *FatalRunError
 	switch {
 	case errors.As(execErr, &fatal):
 		s.setNestedFatalErr(execErr)
+	case errors.Is(execErr, context.DeadlineExceeded):
+		code = callErrorCalleeTimeout
+	case errors.Is(execErr, context.Canceled):
+		code = callErrorCanceled
 	case errors.Is(execErr, ErrUnknownSession):
 		// Unknown at runtime: not in the verified set and not bindable.
 		code = callErrorUnknownAdapter
 	}
 	s.permState.writeAudit(&DecisionLogEntry{
 		SessionID:   s.permState.sessionID,
-		RequestID:   req.requestID,
-		Tool:        req.target,
-		ArgsDigest:  req.argsDigest,
+		RequestID:   call.requestID,
+		Tool:        call.target,
+		ArgsDigest:  call.argsDigest,
 		Decision:    "deny",
 		Reason:      "nested callee execution failed: " + code + ": " + execErr.Error(),
 		EvaluatedAt: time.Now(),
 	})
-	s.permState.sendToolCallResult(req.requestID, code)
+	s.permState.sendToolCallResult(call.requestID, code)
 }
 
 // nestedExecCtx returns the Execute context this sink serves, so the nested

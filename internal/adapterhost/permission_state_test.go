@@ -734,3 +734,57 @@ func (a *permissionEmittingAdapter) Execute(_ context.Context, _ string, _ *work
 	sink.Adapter("permission.request", payload)
 	return adapter.Result{Outcome: "success"}, nil
 }
+
+// TestPermissionState_PendingToolCalls (CRI-161): the pending tool-call
+// registry — first-writer-wins registration keyed by request_id, per-call
+// clearing on settle, and the teardown drain.
+func TestPermissionState_PendingToolCalls(t *testing.T) {
+	ps := newToolCallState(t, &sliceAuditWriter{})
+
+	ps.registerPendingToolCall("call-1", "adapter.callee.helper.tools.a")
+	ps.registerPendingToolCall("call-2", "adapter.callee.helper.tools.b")
+
+	// A duplicate registration for an in-flight request_id is a no-op:
+	// first-writer-wins, one registry entry per request_id.
+	ps.registerPendingToolCall("call-1", "adapter.callee.helper.tools.a")
+
+	ps.mu.Lock()
+	if got := len(ps.pendingToolCalls); got != 2 {
+		ps.mu.Unlock()
+		t.Fatalf("pending registry = %d entries, want 2", got)
+	}
+	ps.mu.Unlock()
+
+	// A settled call is cleared so teardown never audits it as abandoned.
+	ps.clearPendingToolCall("call-1")
+	ps.mu.Lock()
+	if _, still := ps.pendingToolCalls["call-1"]; still {
+		ps.mu.Unlock()
+		t.Error("call-1 still registered after clear")
+	} else {
+		ps.mu.Unlock()
+	}
+
+	// Drain removes and returns the remaining entries.
+	drained := ps.drainPendingToolCalls()
+	if len(drained) != 1 || drained[0].requestID != "call-2" {
+		t.Errorf("drained = %+v, want exactly call-2", drained)
+	}
+	ps.mu.Lock()
+	if got := len(ps.pendingToolCalls); got != 0 {
+		ps.mu.Unlock()
+		t.Fatalf("pending registry = %d entries after drain, want 0", got)
+	}
+	ps.mu.Unlock()
+
+	// RestoreState resets the registry.
+	ps.registerPendingToolCall("call-3", "adapter.callee.helper.tools.c")
+	if err := ps.RestoreState([]byte(`{"version":1}`), nil, nil); err != nil {
+		t.Fatalf("RestoreState: %v", err)
+	}
+	ps.mu.Lock()
+	if got := len(ps.pendingToolCalls); got != 0 {
+		t.Errorf("pending registry = %d entries after RestoreState, want 0", got)
+	}
+	ps.mu.Unlock()
+}

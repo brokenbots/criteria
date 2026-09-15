@@ -53,6 +53,13 @@ type permissionState struct {
 	requests chan *v2.PermissionEvent
 	cancel   func()
 	active   bool
+
+	// pendingToolCalls tracks in-flight adapter tool calls by request_id for
+	// reply correlation (CRI-161). Multiple calls per caller session are
+	// in flight concurrently, so this is a map, not a queue: replies may
+	// arrive in any order (the Permissions stream contract explicitly
+	// allows it) and each completing goroutine correlates by request_id.
+	pendingToolCalls map[string]*pendingToolCall
 }
 
 type requestState struct {
@@ -63,6 +70,20 @@ type requestState struct {
 	decision   string // "allow" | "deny" | "cancelled"
 	reason     string
 	decidedAt  time.Time
+}
+
+// pendingToolCall is one in-flight adapter tool call registered for reply
+// correlation (CRI-161), keyed by request_id — the host-side mirror of the
+// MCP bridge's registerPendingPerm/decisionCh pending map
+// (cmd/criteria-adapter-mcp/bridge.go). The bridge's per-request channel
+// exists because the awaiting adapter goroutine blocks on it; on the host the
+// completing goroutine delivers the typed reply to the caller's Permissions
+// stream directly, so the entry is a completion marker: it is cleared when
+// the call settles and drained with an abandonment audit at session close.
+type pendingToolCall struct {
+	requestID  string
+	target     string
+	registered time.Time
 }
 
 // snapshotV1 is the on-disk format for MarshalState / RestoreState.
@@ -213,6 +234,50 @@ func (ps *permissionState) sendEvent(requestID string, allow bool, reason string
 	}
 }
 
+// registerPendingToolCall records an in-flight adapter tool call keyed by
+// request_id. First registration wins: a caller that reuses an in-flight
+// request_id violates the correlation contract (unique request ids per call),
+// so the duplicate is a no-op — each issued call still gets its own typed
+// reply, but the registry keeps one entry per request_id for teardown
+// accounting.
+func (ps *permissionState) registerPendingToolCall(requestID, target string) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	if ps.pendingToolCalls == nil {
+		ps.pendingToolCalls = make(map[string]*pendingToolCall)
+	}
+	if _, exists := ps.pendingToolCalls[requestID]; exists {
+		return
+	}
+	ps.pendingToolCalls[requestID] = &pendingToolCall{
+		requestID:  requestID,
+		target:     target,
+		registered: time.Now(),
+	}
+}
+
+// clearPendingToolCall removes the registration of a settled tool call so
+// session teardown does not audit a delivered result as abandoned.
+func (ps *permissionState) clearPendingToolCall(requestID string) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	delete(ps.pendingToolCalls, requestID)
+}
+
+// drainPendingToolCalls removes and returns every still-pending tool-call
+// registration. Called at session close: each returned entry is a call whose
+// nested execute never settled before the session went away.
+func (ps *permissionState) drainPendingToolCalls() []*pendingToolCall {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	drained := make([]*pendingToolCall, 0, len(ps.pendingToolCalls))
+	for _, call := range ps.pendingToolCalls {
+		drained = append(drained, call)
+	}
+	ps.pendingToolCalls = nil
+	return drained
+}
+
 // Stop closes the request channel and cancels the stream goroutine.
 // Pending requests are audit-logged.
 func (ps *permissionState) Stop() {
@@ -243,6 +308,21 @@ func (ps *permissionState) Stop() {
 			Reason:      fmt.Sprintf("pending: %d", len(inflight)),
 			EvaluatedAt: time.Now(),
 		})
+	}
+
+	// Tool calls still in flight at close (CRI-161): audit each abandonment.
+	// No reply is sent — the caller's stream goes away with the session.
+	for _, call := range ps.drainPendingToolCalls() {
+		if ps.audit != nil {
+			ps.audit.Write(&DecisionLogEntry{
+				SessionID:   ps.sessionID,
+				RequestID:   call.requestID,
+				Tool:        call.target,
+				Decision:    "cancelled",
+				Reason:      "tool call abandoned: session closed while in flight",
+				EvaluatedAt: time.Now(),
+			})
+		}
 	}
 }
 
@@ -310,6 +390,7 @@ func (ps *permissionState) RestoreState(data []byte, policy PermissionPolicy, au
 	ps.audit = audit
 	ps.inflight = make(map[string]*requestState)
 	ps.decisions = append([]DecisionLogEntry(nil), snap.Decisions...)
+	ps.pendingToolCalls = nil
 
 	// Build a lookup of previously-answered requests.
 	answered := make(map[string]DecisionLogEntry, len(snap.Decisions))
@@ -386,23 +467,48 @@ type permissionInterceptSink struct {
 	// runs under it so run cancellation (timeout, user abort) reaches the
 	// callee too.
 	execCtx context.Context
+	// nested counts in-flight nested tool-call executes (CRI-161). They run
+	// on their own goroutines so the caller's Execute event loop keeps
+	// reading its Permissions stream while calls are in flight (replies may
+	// arrive in any order). SessionManager.execute waits on it right after
+	// the adapter call returns, before reading the sink's latches.
+	nested sync.WaitGroup
+	// mu guards the nested-execution latches below: dispatch is asynchronous
+	// (CRI-161), so completing goroutines can set them while SessionManager
+	// reads.
+	mu sync.Mutex
 	// fatalErr latches a FatalRunError raised by a nested callee Execute
 	// (callee on_crash=abort_run, CRI-160). SessionManager.execute reads it
 	// after the adapter call returns and propagates the error so the run
-	// aborts. Set and read on the Execute goroutine, like anyDenied.
+	// aborts.
 	nestedFatalErr error
-	anyDenied      bool
+	// anyDenied is set and read on the Execute goroutine only (the sink is
+	// not shared); nested completers touch only setNestedFatalErr and the
+	// permission state.
+	anyDenied bool
 }
 
 // setNestedFatalErr records a fatal run error raised by a nested callee
 // Execute so SessionManager.execute can propagate it.
 func (s *permissionInterceptSink) setNestedFatalErr(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.nestedFatalErr = err
 }
 
 // nestedFatal returns the latched fatal run error, if any.
 func (s *permissionInterceptSink) nestedFatal() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.nestedFatalErr
+}
+
+// waitPending blocks until every nested tool-call dispatched by this sink has
+// settled and delivered its reply (CRI-161). Called by SessionManager.execute
+// immediately after the adapter call returns so the run observes every
+// nested outcome before the step completes.
+func (s *permissionInterceptSink) waitPending() {
+	s.nested.Wait()
 }
 
 func (s *permissionInterceptSink) Log(stream string, chunk []byte) {

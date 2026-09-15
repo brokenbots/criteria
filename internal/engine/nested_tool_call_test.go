@@ -89,11 +89,45 @@ func (r *nestedEngineRecorder) calleeStep() *workflow.StepNode {
 	return r.steps[0]
 }
 
+func (r *nestedEngineRecorder) allSessions() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.sessions...)
+}
+
 // nestedEngineCallee is the callee fake: typed outputs, plain permission
 // requests, and full session/step recording.
+//
+// CRI-161 test hooks are args-driven so one adapter instance can serve
+// concurrent nested Executes: task "block" holds the nested Execute open
+// until its context is done (recording what the callee observed), "slow"
+// delays long enough for a faster sibling call to complete first, and outputs
+// are derived per call so interleaved replies can be matched to their own
+// call.
 type nestedEngineCallee struct {
 	rec       *nestedEngineRecorder
 	permTools []string
+	// outputs overrides the per-call derived outputs; set by tests that
+	// assert specific output values (CRI-160 end-to-end).
+	outputs map[string]cty.Value
+
+	ctxErrMu sync.Mutex
+	ctxErrs  []error
+}
+
+func (a *nestedEngineCallee) recordCtxErr(err error) {
+	a.ctxErrMu.Lock()
+	defer a.ctxErrMu.Unlock()
+	a.ctxErrs = append(a.ctxErrs, err)
+}
+
+func (a *nestedEngineCallee) recordedCtxErr(i int) error {
+	a.ctxErrMu.Lock()
+	defer a.ctxErrMu.Unlock()
+	if i >= len(a.ctxErrs) {
+		return nil
+	}
+	return a.ctxErrs[i]
 }
 
 func (a *nestedEngineCallee) Info(context.Context) (adapterhost.Info, error) {
@@ -113,18 +147,35 @@ func (a *nestedEngineCallee) Info(context.Context) (adapterhost.Info, error) {
 func (a *nestedEngineCallee) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (a *nestedEngineCallee) Execute(_ context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (a *nestedEngineCallee) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
 	a.rec.record(sessionID, step)
+	task := step.Input["task"]
+	switch task {
+	case "block":
+		// CRI-161: hold the nested Execute open until the host's context
+		// (the caller step's timeout or run cancellation) reaches it.
+		<-ctx.Done()
+		a.recordCtxErr(ctx.Err())
+		return adapter.Result{Outcome: "failure"}, ctx.Err()
+	case "slow":
+		time.Sleep(150 * time.Millisecond)
+	}
 	for i, tool := range a.permTools {
 		sink.Adapter("permission.request", map[string]any{
 			"request_id": "callee-perm-" + string(rune('0'+i)),
 			"tool":       tool,
 		})
 	}
-	return adapter.Result{Outcome: "success", Outputs: map[string]cty.Value{
-		"report": cty.StringVal("done"),
-		"count":  cty.NumberIntVal(3),
-	}}, nil
+	outputs := a.outputs
+	if outputs == nil {
+		// Derive per-call outputs from the input so interleaved replies can
+		// be matched to their own call.
+		outputs = map[string]cty.Value{
+			"report": cty.StringVal(task),
+			"count":  cty.NumberIntVal(int64(len(task))),
+		}
+	}
+	return adapter.Result{Outcome: "success", Outputs: outputs}, nil
 }
 func (a *nestedEngineCallee) CloseSession(context.Context, string) error { return nil }
 func (a *nestedEngineCallee) Kill()                                      {}
@@ -299,6 +350,10 @@ func TestNestedToolCall_EngineEndToEnd(t *testing.T) {
 			"callee.helpers.read_file", // allowed by the callee's own policy
 			"caller.only.tool",         // allowed by the CALLER's step policy, denied on the callee
 		},
+		outputs: map[string]cty.Value{
+			"report": cty.StringVal("done"),
+			"count":  cty.NumberIntVal(3),
+		},
 	}
 	caller := &nestedEngineCaller{}
 
@@ -393,4 +448,361 @@ func TestNestedToolCall_EngineEndToEnd(t *testing.T) {
 	if !sink.lifecycleSaw(nestedEngineCalleeSess, "opened") {
 		t.Error("expected lifecycle 'opened' event for the callee session")
 	}
+}
+
+// nestedToolCallTimeoutWorkflowHCL is the CRI-161 exit-criterion fixture: the
+// same nested tool-call workflow with a 200ms timeout on the caller step so a
+// blocked nested Execute is torn down by the step deadline, not by the callee.
+const nestedToolCallTimeoutWorkflowHCL = `
+workflow {
+  name = "nested_tool_call_timeout"
+  version       = "0.1"
+  initial_state = "call"
+  target_state  = "done"
+}
+
+environment "shell" "prod" {
+  os = "linux"
+}
+
+adapter "caller" "default" {}
+adapter "callee" "default" {
+  environment   = shell.prod
+  dynamic_tools = true
+}
+
+step "call" {
+  target = adapter.caller.default
+  allow_tools = ["adapter.callee.default.tools.*"]
+  timeout = "200ms"
+  outcome "success" { next = step.done }
+}
+state "done" { terminal = true }
+`
+
+// nestedEngineInterleavedCaller issues two tool calls back-to-back on one
+// caller session and collects the replies as they arrive, in arrival order.
+// It never assumes the Permissions stream delivers replies in request order.
+type nestedEngineInterleavedCaller struct {
+	mu       sync.Mutex
+	requests <-chan *v2.PermissionEvent
+	results  map[string]*v2.ToolCallResult
+	order    []string
+}
+
+func (a *nestedEngineInterleavedCaller) Info(context.Context) (adapterhost.Info, error) {
+	return adapterhost.Info{Capabilities: []string{"adapter_tools", "execute"}}, nil
+}
+func (a *nestedEngineInterleavedCaller) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
+func (a *nestedEngineInterleavedCaller) StartPermissionStream(_ context.Context, _ string, requests <-chan *v2.PermissionEvent) (func(), error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.requests = requests
+	return func() {}, nil
+}
+func (a *nestedEngineInterleavedCaller) recordLocked(tcr *v2.ToolCallResult) {
+	if a.results == nil {
+		a.results = map[string]*v2.ToolCallResult{}
+	}
+	a.results[tcr.RequestId] = tcr
+	a.order = append(a.order, tcr.RequestId)
+}
+func (a *nestedEngineInterleavedCaller) Execute(ctx context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+	sink.Adapter("permission.request", map[string]any{
+		"request_id": "call-1",
+		"target":     nestedEngineTarget,
+		"args":       map[string]any{"task": "slow"},
+	})
+	sink.Adapter("permission.request", map[string]any{
+		"request_id": "call-2",
+		"target":     nestedEngineTarget,
+		"args":       map[string]any{"task": "fast"},
+	})
+
+	a.mu.Lock()
+	requests := a.requests
+	a.mu.Unlock()
+	if requests == nil {
+		return adapter.Result{Outcome: "failure"}, errors.New("permission stream not started")
+	}
+	// A single absolute deadline outside the receive loop: an empty stream
+	// with two pending calls must not wedge the run.
+	deadline := time.After(5 * time.Second)
+	for len(a.snapshotResults()) < 2 {
+		select {
+		case ev, ok := <-requests:
+			if !ok {
+				return adapter.Result{Outcome: "failure"}, errors.New("permission stream closed")
+			}
+			if tcr := ev.GetToolCallResult(); tcr != nil {
+				a.mu.Lock()
+				a.recordLocked(tcr)
+				a.mu.Unlock()
+			}
+		case <-ctx.Done():
+			return adapter.Result{Outcome: "failure"}, ctx.Err()
+		case <-deadline:
+			return adapter.Result{Outcome: "failure"}, errors.New("timed out waiting for tool_call_results")
+		}
+	}
+	return adapter.Result{Outcome: "success"}, nil
+}
+func (a *nestedEngineInterleavedCaller) CloseSession(context.Context, string) error { return nil }
+func (a *nestedEngineInterleavedCaller) Kill()                                      {}
+func (a *nestedEngineInterleavedCaller) Pause(context.Context, string) error        { return nil }
+func (a *nestedEngineInterleavedCaller) Resume(context.Context, string) error       { return nil }
+func (a *nestedEngineInterleavedCaller) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+func (a *nestedEngineInterleavedCaller) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (a *nestedEngineInterleavedCaller) Restore(context.Context, string, []byte, uint32) error {
+	return nil
+}
+
+func (a *nestedEngineInterleavedCaller) snapshotResults() map[string]*v2.ToolCallResult {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make(map[string]*v2.ToolCallResult, len(a.results))
+	for id, tcr := range a.results {
+		out[id] = tcr
+	}
+	return out
+}
+func (a *nestedEngineInterleavedCaller) arrivalOrder() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]string(nil), a.order...)
+}
+
+// nestedEngineTimeoutCaller issues one blocking tool call under a caller-step
+// timeout and waits only on the reply stream: the typed call_error reply is
+// the expected unblock, so it must not race the (already expired) step ctx.
+type nestedEngineTimeoutCaller struct {
+	mu       sync.Mutex
+	requests <-chan *v2.PermissionEvent
+	result   *v2.ToolCallResult
+}
+
+func (a *nestedEngineTimeoutCaller) Info(context.Context) (adapterhost.Info, error) {
+	return adapterhost.Info{Capabilities: []string{"adapter_tools", "execute"}}, nil
+}
+func (a *nestedEngineTimeoutCaller) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
+func (a *nestedEngineTimeoutCaller) StartPermissionStream(_ context.Context, _ string, requests <-chan *v2.PermissionEvent) (func(), error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.requests = requests
+	return func() {}, nil
+}
+func (a *nestedEngineTimeoutCaller) Execute(ctx context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+	sink.Adapter("permission.request", map[string]any{
+		"request_id": "call-1",
+		"target":     nestedEngineTarget,
+		"args":       map[string]any{"task": "block"},
+	})
+
+	a.mu.Lock()
+	requests := a.requests
+	a.mu.Unlock()
+	if requests == nil {
+		return adapter.Result{Outcome: "failure"}, errors.New("permission stream not started")
+	}
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case ev, ok := <-requests:
+			if !ok {
+				return adapter.Result{Outcome: "failure"}, errors.New("permission stream closed")
+			}
+			if tcr := ev.GetToolCallResult(); tcr != nil {
+				a.mu.Lock()
+				a.result = tcr
+				a.mu.Unlock()
+				// The typed failure is the caller's data; the step itself
+				// completes so the run continues past the timeout.
+				return adapter.Result{Outcome: "success"}, nil
+			}
+		case <-deadline:
+			// Wedged: the host never delivered the typed failure.
+			return adapter.Result{Outcome: "failure"}, errors.New("wedged: no tool_call_result after step timeout")
+		}
+	}
+}
+func (a *nestedEngineTimeoutCaller) CloseSession(context.Context, string) error { return nil }
+func (a *nestedEngineTimeoutCaller) Kill()                                      {}
+func (a *nestedEngineTimeoutCaller) Pause(context.Context, string) error        { return nil }
+func (a *nestedEngineTimeoutCaller) Resume(context.Context, string) error       { return nil }
+func (a *nestedEngineTimeoutCaller) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+func (a *nestedEngineTimeoutCaller) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (a *nestedEngineTimeoutCaller) Restore(context.Context, string, []byte, uint32) error {
+	return nil
+}
+
+func (a *nestedEngineTimeoutCaller) gotResult() *v2.ToolCallResult {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.result
+}
+
+// TestNestedToolCall_EngineInterleavedReplies (CRI-161 exit criterion 1): two
+// concurrent tool calls from one caller session, with the fast call's reply
+// overtaking the slow call's on the Permissions stream. Both callers' results
+// must arrive correctly correlated by request_id.
+func TestNestedToolCall_EngineInterleavedReplies(t *testing.T) {
+	g := compileNestedToolCallGraph(t, nestedToolCallWorkflowHCL)
+
+	rec := &nestedEngineRecorder{}
+	callee := &nestedEngineCallee{rec: rec}
+	caller := &nestedEngineInterleavedCaller{}
+
+	sink := &nestedEngineSink{}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"caller": caller,
+		"callee": callee,
+	}}
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !sink.terminalOK {
+		t.Fatalf("run did not complete successfully: terminal=%q failure=%q", sink.terminal, sink.failure)
+	}
+
+	results := caller.snapshotResults()
+	if len(results) != 2 {
+		t.Fatalf("caller received %d tool_call_results, want 2", len(results))
+	}
+	for _, id := range []string{"call-1", "call-2"} {
+		tcr, ok := results[id]
+		if !ok {
+			t.Fatalf("caller never received a result for %s (got %v)", id, results)
+		}
+		if tcr.CallError != "" || tcr.Outcome != "success" {
+			t.Errorf("%s result = %q/%q, want clean success", id, tcr.Outcome, tcr.CallError)
+		}
+	}
+	// Each reply carries its own call's derived outputs.
+	if got := outputsField(t, results["call-1"], "report"); got != "slow" {
+		t.Errorf("call-1 outputs.report = %q, want slow", got)
+	}
+	if got := outputsField(t, results["call-2"], "report"); got != "fast" {
+		t.Errorf("call-2 outputs.report = %q, want fast", got)
+	}
+
+	// The fast reply overtook the slow reply: ordered delivery is NOT
+	// assumed on the Permissions stream.
+	order := caller.arrivalOrder()
+	if len(order) != 2 || order[0] != "call-2" || order[1] != "call-1" {
+		t.Errorf("arrival order = %v, want [call-2 call-1] (interleaved)", order)
+	}
+
+	// Both nested Executes ran in the callee's own session.
+	sessions := rec.allSessions()
+	if len(sessions) != 2 {
+		t.Fatalf("callee executed %d times, want 2", len(sessions))
+	}
+	for i, sess := range sessions {
+		if sess != nestedEngineCalleeSess {
+			t.Errorf("callee execution %d ran in session %q, want %q", i, sess, nestedEngineCalleeSess)
+		}
+	}
+}
+
+// TestNestedToolCall_EngineStepTimeout (CRI-161 exit criterion 2): a caller
+// step timeout mid-call delivers the typed callee_timeout failure to the
+// caller, cancels the nested context cleanly, and the run continues — the
+// pending map unblocks instead of wedging the Permissions stream.
+func TestNestedToolCall_EngineStepTimeout(t *testing.T) {
+	g, err := compileNestedToolCallGraphErr(nestedToolCallTimeoutWorkflowHCL)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+
+	callee := &nestedEngineCallee{rec: &nestedEngineRecorder{}}
+	caller := &nestedEngineTimeoutCaller{}
+
+	sink := &nestedEngineSink{}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"caller": caller,
+		"callee": callee,
+	}}
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// The run continued past the timed-out call: the caller treated the typed
+	// failure as data and completed its step.
+	if !sink.terminalOK {
+		t.Fatalf("run did not continue after callee timeout: terminal=%q failure=%q", sink.terminal, sink.failure)
+	}
+
+	// The caller received the typed failure instead of wedging.
+	tcr := caller.gotResult()
+	if tcr == nil {
+		t.Fatal("caller never received tool_call_result after step timeout")
+	}
+	if tcr.RequestId != "call-1" || tcr.CallError != "callee_timeout" {
+		t.Errorf("tool_call_result = req %q err %q, want call-1/callee_timeout", tcr.RequestId, tcr.CallError)
+	}
+	if tcr.Outcome != "" {
+		t.Errorf("tool_call_result outcome = %q, want empty on failure reply", tcr.Outcome)
+	}
+
+	// The nested context was cancelled cleanly inside the callee.
+	if got := callee.recordedCtxErr(0); !errors.Is(got, context.DeadlineExceeded) {
+		t.Errorf("callee observed ctx error %v, want %v", got, context.DeadlineExceeded)
+	}
+}
+
+func compileNestedToolCallGraph(t *testing.T, hcl string) *workflow.FSMGraph {
+	t.Helper()
+	g, err := compileNestedToolCallGraphErr(hcl)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	return g
+}
+
+func compileNestedToolCallGraphErr(hcl string) (*workflow.FSMGraph, error) {
+	spec, diags := workflow.Parse("nested.hcl", []byte(hcl))
+	if diags.HasErrors() {
+		return nil, errors.New("parse: " + diags.Error())
+	}
+	g, diags := workflow.Compile(spec, map[string]workflow.AdapterInfo{
+		"caller.default": {InputSchema: map[string]workflow.ConfigField{}, OutputSchema: map[string]workflow.ConfigField{}},
+		"callee.default": {
+			InputSchema: map[string]workflow.ConfigField{
+				"task": {Required: true},
+			},
+			OutputSchema: map[string]workflow.ConfigField{
+				"report": {CtyType: cty.String},
+				"count":  {CtyType: cty.Number},
+			},
+		},
+	})
+	if diags.HasErrors() {
+		return nil, errors.New("compile: " + diags.Error())
+	}
+	return g, nil
+}
+
+// outputsField decodes a tool_call_result's outputs_json and returns one
+// string attribute for assertions.
+func outputsField(t *testing.T, tcr *v2.ToolCallResult, field string) string {
+	t.Helper()
+	typed, err := ctyjson.Unmarshal(tcr.OutputsJson, cty.Object(map[string]cty.Type{
+		"report": cty.String,
+		"count":  cty.Number,
+	}))
+	if err != nil {
+		t.Fatalf("decode outputs_json %q: %v", tcr.OutputsJson, err)
+	}
+	return typed.GetAttr(field).AsString()
 }

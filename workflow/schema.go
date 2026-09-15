@@ -651,7 +651,7 @@ type FSMGraph struct {
 // callee's session policy is the declaring workflow's — never the calling
 // step's. Returns nil when no workflow-level allow_tools is declared.
 func (g *FSMGraph) WorkflowAllowTools() []string {
-	if g.spec == nil {
+	if g.spec == nil || g.spec.Permissions == nil {
 		return nil
 	}
 	return append([]string(nil), g.spec.Permissions.AllowTools...)

@@ -1589,9 +1589,16 @@ func (m *SessionManager) bindVerifiedAndLookup(ctx context.Context, name string,
 //
 // Ordering invariant: never block the caller session's stream while holding a
 // lock the nested Execute needs — that would deadlock the tool call. The
-// nested path (permissionInterceptSink.executeNestedToolCall) holds no
-// SessionManager locks while executing the callee and replies on the
-// caller's Permissions stream with non-blocking channel sends.
+// nested path (permissionInterceptSink.dispatchNestedToolCall) holds no
+// SessionManager locks while dispatching, executes the callee on its own
+// goroutine (CRI-161), and replies on the caller's Permissions stream with
+// non-blocking channel sends.
+//
+// CRI-161: nested tool-call executes are asynchronous, so execute waits for
+// them (permSink.waitPending) immediately after the adapter call returns —
+// before any sink latch is read or the sink unbound — so every nested
+// outcome (result delivery, fatal error latch, typed failure) is settled and
+// observed before the step completes.
 //
 // toolDepth is the number of nested tool-call Executes above this one; 0 for
 // a step-level Execute.
@@ -1632,6 +1639,13 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 	permSink := newPermissionInterceptSink(ctx, execSink, sess, step, m.graph, m, toolDepth)
 
 	result, execErr := sess.handle.Execute(ctx, name, step, permSink)
+
+	// CRI-161: nested tool calls were dispatched on their own goroutines;
+	// wait for them to settle (and deliver their replies) before reading the
+	// sink's latches or unbinding the sink. No lock is held here, so the
+	// nested goroutine's own manager interactions cannot deadlock against
+	// this wait.
+	permSink.waitPending()
 
 	m.maybeOverrideOutcome(permSink, &result)
 
