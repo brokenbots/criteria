@@ -170,9 +170,9 @@ func renderPlanOutput(ctx context.Context, workflowPath string, overrides map[st
 }
 
 // stepToolTargets renders a step's compiled `tools` grants as tool-target
-// strings ("adapter.<type>.<name>.tools[.<tool>]") in declaration order,
-// matching the HCL reference form. Empty for steps without tool grants so
-// plain workflows keep their previous plan output.
+// strings ("<calleeRef>.tools[.<tool>]", e.g. "mcp.registry.tools.fetch") in
+// declaration order. Empty for steps without tool grants so plain workflows
+// keep their previous plan output.
 func stepToolTargets(step *workflow.StepNode) []string {
 	if len(step.Tools) == 0 {
 		return nil
