@@ -13,7 +13,7 @@ import (
 // resolveStepTarget.
 //
 //nolint:funlen // sequential compile+validate phases for subworkflow step; splitting adds indirection without clarity gain
-func compileSubworkflowStep(g *FSMGraph, sp *StepSpec, _ *Spec, subworkflowRef string, opts CompileOpts) hcl.Diagnostics {
+func compileSubworkflowStep(g *FSMGraph, sp *StepSpec, spec *Spec, subworkflowRef string, opts CompileOpts) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 
 	ok, d := validateStepRegistration(g, sp)
@@ -23,6 +23,10 @@ func compileSubworkflowStep(g *FSMGraph, sp *StepSpec, _ *Spec, subworkflowRef s
 	}
 
 	diags = append(diags, validateOnFailureForNonIterating(sp)...)
+	// Subworkflow targets have no caller adapter, so the pointless-caller
+	// warning does not apply; entries are still validated for shape and
+	// resolution against this workflow's adapters.
+	diags = append(diags, validateStepToolRefs(g, sp, spec, nil, "")...)
 
 	if len(sp.AllowTools) > 0 {
 		diags = append(diags, &hcl.Diagnostic{

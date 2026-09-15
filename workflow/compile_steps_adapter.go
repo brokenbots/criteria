@@ -46,6 +46,7 @@ func compileAdapterStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[strin
 	diags = append(diags, validateAllowToolsWithAdapter(sp, adapterRef)...)
 	diags = append(diags, validateLegacyConfig(sp)...)
 	diags = append(diags, validateOnFailureForNonIterating(sp)...)
+	diags = append(diags, validateStepToolRefs(g, sp, spec, schemas, adapterTypeFromRef(adapterRef))...)
 
 	effectiveOnCrash, d := resolveStepOnCrashWithAdapter(g, sp, adapterRef)
 	diags = append(diags, d...)
