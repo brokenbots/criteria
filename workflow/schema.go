@@ -674,6 +674,14 @@ type AdapterNode struct {
 	// `config { }` block. Preserved so that TaintPass can detect tainted values
 	// flowing into non-secret adapter config channels (D65).
 	ConfigExprs map[string]hcl.Expression
+	// StaticTools lists the tool names declared via tool "<name>" { } blocks on
+	// this adapter (CRI-159). Runtime tool-call validation checks named calls
+	// against this surface when the adapter does not admit dynamic discovery.
+	StaticTools []string
+	// DynamicTools reports whether the adapter declared dynamic_tools = true
+	// (CRI-155): its surface is extensible, so runtime tool-name validation is
+	// skipped and names resolve when the call executes (CRI-173).
+	DynamicTools bool
 }
 
 // StepTargetKind enumerates the kinds of compiled step targets.

@@ -87,15 +87,22 @@ func compileOneAdapter(g *FSMGraph, ad *AdapterDeclSpec, schemas map[string]Adap
 
 	cacheResolvedPolicy(g, key, effectiveEnv, typeName, schemas)
 
+	staticTools := make([]string, 0, len(ad.Tools))
+	for _, t := range ad.Tools {
+		staticTools = append(staticTools, t.Name)
+	}
+
 	g.Adapters[key] = &AdapterNode{
-		Type:        typeName,
-		Name:        instanceName,
-		Source:      ad.Source,
-		Environment: effectiveEnv,
-		OnCrash:     effectiveOnCrash,
-		Config:      adapterConfig,
-		ConfigExprs: configExprs,
-		Secrets:     secrets,
+		Type:         typeName,
+		Name:         instanceName,
+		Source:       ad.Source,
+		Environment:  effectiveEnv,
+		OnCrash:      effectiveOnCrash,
+		Config:       adapterConfig,
+		ConfigExprs:  configExprs,
+		Secrets:      secrets,
+		StaticTools:  staticTools,
+		DynamicTools: ad.DynamicTools,
 	}
 	// Track adapter declaration order for stable iteration
 	g.AdapterOrder = append(g.AdapterOrder, key)
