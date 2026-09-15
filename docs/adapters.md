@@ -377,10 +377,14 @@ adapter "git" "repo" {
 - **Static tool blocks.** `tool "<name>" { }` declares, at configuration
   time, a stable named tool. Names are unique within the adapter; the block
   body takes no attributes today and is reserved for future use. Static
-  declarations take precedence over every other tool source: once static
-  blocks exist, a call naming an undeclared tool is rejected (a compile
-  error for the caller's `tools` entry; typed `unknown_tool` at run time),
-  even when `dynamic_tools = true` is also set.
+  declarations take precedence at compile time over every other tool
+  source: once static blocks exist, the caller's `tools` entry naming an
+  undeclared tool is rejected with a compile error, even when
+  `dynamic_tools = true` is also set. At run time a static+dynamic callee
+  is lenient — `staticToolErrorCode` short-circuits on
+  `dynamic_tools = true`, so the call is dispatched (gated only by
+  `allow_tools`) and only the callee itself can report `unknown_tool` via
+  the reserved `call_error` output.
 - **Dynamic tools.** `dynamic_tools = true` admits a tool surface discovered
   at run time — the MCP adapter populates its surface from the MCP server's
   `tools/list` at `OpenSession` and reports it in `InfoResponse.tools`. The
@@ -419,6 +423,12 @@ workflow {
   version       = "1"
   initial_state = "review"
   target_state  = "done"
+}
+
+state "done" { terminal = true }
+state "failed" {
+  terminal = true
+  success  = false
 }
 
 permissions {
@@ -525,15 +535,20 @@ The host gates the call in a fixed order before anything runs:
    host answers `PermissionEvent.cancel`.
 5. **Graph validation** — the callee must be declared in the workflow, and a
    named call must exist on a callee that declares a static surface (typed
-   `unknown_adapter` / `unknown_tool`); call arguments are validated against
-   the callee's input schema (typed `invalid_args`).
+   `unknown_adapter` / `unknown_tool`).
 6. **Self-call rejection** — a call to the calling adapter's own instance is
    rejected typed `self_call`.
 7. **Call-chain checks** — the call may not re-enter an adapter already on
    the call chain (typed `cycle_detected`) and may not exceed
    `policy.max_tool_depth`, default 8 (typed `depth_exceeded`); each
    rejection is audited and the run continues.
-8. **Nested execution** — an allowed call runs the callee in its own
+8. **Argument validation** — call arguments are validated against the
+   callee's input schema inside dispatch, after every gate above (typed
+   `invalid_args`). Because this runs inside `dispatchNestedToolCall`, a
+   self-call, cyclic call, or depth-exceeding call carrying malformed args
+   returns the gate code (`self_call` / `cycle_detected` /
+   `depth_exceeded`), not `invalid_args`.
+9. **Nested execution** — an allowed call runs the callee in its own
    session and replies with the callee's result.
 
 Every gate decision is audited — one audit entry per decision, attributed to
