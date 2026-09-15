@@ -1,0 +1,27 @@
+workflow: adapter-calls-subworkflow  (version 1)
+initial_state: begin   target_state: done
+policy: max_total_steps=100  max_step_retries=0
+
+variables:
+  (none)
+
+adapters:
+  shell.host   type=shell   on_crash=fail
+    config: (none)
+
+steps (declaration order):
+  begin
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> finish
+  finish   adapter=shell.host
+    input keys: (none)
+    allow_tools: (none)
+    tools: shell.host.tools.status
+    outcomes: success -> done
+
+states:
+  done    terminal=true   success=true
+
+adapters required:
+  shell   (search: $CRITERIA_ADAPTERS, then $CRITERIA_HOME/adapters, default ~/.local/criteria/adapters)
