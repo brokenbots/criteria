@@ -345,6 +345,269 @@ pin on every run. A changed signer surfaces as a `SignerChanged` lockfile diff.
   Rekor entry created while online at signing time. Fully air-gapped consumers
   use explicit-key mode or `--allow-unsigned`.
 
+## Adapter tools
+
+An adapter may present **tools** — named operations that other adapters call
+mid-execution and receive results from inline. A tool call is **not a step**:
+the callee never enters the FSM, is never outcome-routed, and its result is
+data returned to the caller. The workflow-grammar view (HCL forms,
+compile-time validation) lives in
+[workflow.md → Adapter tools](workflow.md#adapter-tools) and
+[LANGUAGE-SPEC.md → Adapter tools](LANGUAGE-SPEC.md#adapter-tools); the
+normative wire contract is
+[ADR-0004 — Adapter-as-tool contract](adrs/ADR-0004-adapter-tools.md). This
+section is the adapter-author reference: declaring a tool surface, granting
+and consuming calls on the caller side, how a call travels the wire, and how
+the host secures it.
+
+### Authoring a callable adapter
+
+A callable adapter declares the tools it presents on its adapter declaration:
+
+```hcl
+adapter "git" "repo" {
+  source  = "ghcr.io/your-org/criteria-adapter-git"
+  version = "0.3.0"
+
+  tool "git_status" {}
+  tool "git_diff" {}
+}
+```
+
+- **Static tool blocks.** `tool "<name>" { }` declares, at configuration
+  time, a stable named tool. Names are unique within the adapter; the block
+  body takes no attributes today and is reserved for future use. Static
+  declarations take precedence over every other tool source: once static
+  blocks exist, a call naming an undeclared tool is rejected (a compile
+  error for the caller's `tools` entry; typed `unknown_tool` at run time),
+  even when `dynamic_tools = true` is also set.
+- **Dynamic tools.** `dynamic_tools = true` admits a tool surface discovered
+  at run time — the MCP adapter populates its surface from the MCP server's
+  `tools/list` at `OpenSession` and reports it in `InfoResponse.tools`. The
+  compile-time name check is lenient for dynamic surfaces (the surface is
+  not knowable ahead of the run); every call is gated by `allow_tools` at
+  call time instead. Static blocks and `dynamic_tools = true` may combine —
+  the blocks name the stable surface, and the flag additionally admits
+  runtime-discovered tools.
+- **Handshake-reported tools.** An adapter that declares neither static
+  blocks nor `dynamic_tools = true` may still report a runtime tool surface
+  in its `Info` handshake (`InfoResponse.tools`); the compiler checks
+  callers' `tools` entries against it when the handshake is available. An
+  adapter that presents none of the three has no tool surface, and
+  references naming its tools are rejected.
+- **Output schemas.** A successful tool result carries the callee's
+  `ExecuteResult` outcome plus its typed outputs, JSON-encoded the same way
+  step outputs are. Declare the output schema in your manifest (the
+  `serve({...})` schema) so the host decodes outputs with the same typing as
+  ordinary step outputs, and mark outputs that carry sensitive values
+  `sensitive: true`: those are registered with the run's redaction registry
+  and masked on every host surface (see [Security model](#security-model)).
+
+The callee implements nothing tool-specific beyond the declaration: the host
+runs a tool call as a nested `Execute` against the callee's ordinary
+session, with the call arguments rendered as the callee's input keys and
+validated against its declared input schema.
+
+### Consuming tools
+
+A caller grants calls with a step-level `tools` list — bare traversals in
+the target-naming form `adapter.<type>.<name>.tools[.<tool>]`:
+
+```hcl
+workflow {
+  name          = "review_pipeline"
+  version       = "1"
+  initial_state = "review"
+  target_state  = "done"
+}
+
+permissions {
+  allow_tools = ["adapter.git.*.tools.git_*"]
+}
+
+adapter "git" "repo" {
+  source  = "ghcr.io/your-org/criteria-adapter-git"
+  version = "0.3.0"
+  tool "git_status" {}
+  tool "git_diff" {}
+}
+
+adapter "copilot" "assistant" {
+  source = "ghcr.io/brokenbots/criteria-adapter-copilot"
+}
+
+step "review" {
+  target = adapter.copilot.assistant
+  tools  = [adapter.git.repo.tools.git_status,
+            adapter.git.repo.tools.git_diff]
+  input { prompt = "Review the working tree." }
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
+}
+```
+
+Grant semantics:
+
+- Entries are **literals, not glob patterns**. A bare `…tools` entry grants
+  the instance's **entire tool surface** (it covers any named call to that
+  instance); `…tools.<tool>` grants **exactly one** tool.
+- Every entry **grants the call**: entries are unioned into the step's
+  effective allow set, keyed by the target string.
+  [LANGUAGE-SPEC](LANGUAGE-SPEC.md#adapter-tools) also specifies the same
+  list shape on the `adapter` declaration (configuration level), where it
+  applies to every step that targets the instance; step-level lists union
+  onto it.
+- The compiler **flags** pointless entries — a callee that presents no tool
+  surface, a caller that lacks the `adapter_tools` capability, duplicate
+  entries — and warns on call-graph cycles. It does not derive runtime
+  behavior from the list: runtime gating happens on the actual permission
+  surface, per call.
+
+`allow_tools` interplay: the target string doubles as the
+permission-surface target. When an adapter attempts a call, the host matches
+the effective `allow_tools` patterns — the union of the workflow
+`permissions.allow_tools` and the step's `allow_tools` — against the **full
+target string** with Go `path/filepath.Match` semantics:
+
+| `allow_tools` pattern | Matches |
+|---|---|
+| `adapter.git.repo.tools` | the bare surface grant string only (anchored exact match) |
+| `adapter.git.repo.tools.git_status` | exactly that call (every dot must be present) |
+| `adapter.*.tools` | every instance's bare tool surface |
+| `adapter.git.*.tools.git_*` | every `git_*` tool of any `git` instance |
+
+- Dots are literal characters (not wildcards and not separators); there is
+  no `**` recursive syntax; `*` matches any run of non-`/` characters, so it
+  may span dots but never crosses `/`.
+- Matching is anchored full-string matching, and the first matching pattern
+  wins; an empty or absent list denies all tool requests.
+- A glob that should cover every tool call of an instance is spelled
+  `adapter.<type>.<name>.tools.*` — a bare `…tools` *pattern* matches only
+  bare-form strings, because matching is anchored and exact.
+
+Capability: the calling adapter must declare the `adapter_tools` capability
+string in `InfoResponse.capabilities`. The host gates **per call**, not at
+session open: a call attempted by an adapter that never declared the
+capability is answered with the typed `capability_missing` failure, and the
+compiler warns when a `tools` entry sits on a step whose target adapter
+lacks the capability. Against a host that predates adapter tools, a granted
+call comes back as a bare allow-grant with no result, which the caller
+surfaces as the typed `host_unsupported` failure; a denied call returns
+`cancel` as usual.
+
+### The call/return lifecycle
+
+A tool call **is** a gated permission request with a payload (ADR-0004 §8).
+The calling adapter emits a `permission.request` AdapterEvent on the Execute
+stream, in map form:
+
+| Field | Meaning |
+|---|---|
+| `kind` | `"adapter_tool"` — distinguishes tool calls from other permission requests |
+| `request_id` | correlation id, minted by the calling adapter |
+| `target` | the full target string `adapter.<type>.<name>.tools[.<tool>]` |
+| `tool` | the tool name only (no adapter prefix) |
+| `args` | JSON object of typed call arguments |
+| `args_digest` | `sha256(canonical_json(args))`, for audit and correlation |
+
+The host gates the call in a fixed order before anything runs:
+
+1. **Capability** — the caller session must have declared `adapter_tools`
+   (typed `capability_missing`).
+2. **Target shape** — the strict `adapter.<type>.<name>.tools[.<tool>]` form
+   (typed `malformed_target`).
+3. **Pause gate** — while a pause is draining in-flight calls, new calls are
+   refused typed `paused` before the policy runs (ADR-0004 §11); the caller
+   sees the typed failure and may re-issue the call once the run resumes.
+4. **Permission policy** — the step's `tools` grants are checked first
+   (literals), then the effective `allow_tools` globs on the full target
+   string. A deny takes the existing permission-deny path unchanged: the
+   host answers `PermissionEvent.cancel`.
+5. **Graph validation** — the callee must be declared in the workflow, and a
+   named call must exist on a callee that declares a static surface (typed
+   `unknown_adapter` / `unknown_tool`); call arguments are validated against
+   the callee's input schema (typed `invalid_args`).
+6. **Self-call rejection** — a call to the calling adapter's own instance is
+   rejected typed `self_call`.
+7. **Call-chain checks** — the call may not re-enter an adapter already on
+   the call chain (typed `cycle_detected`) and may not exceed
+   `policy.max_tool_depth`, default 8 (typed `depth_exceeded`); each
+   rejection is audited and the run continues.
+8. **Nested execution** — an allowed call runs the callee in its own
+   session and replies with the callee's result.
+
+Every gate decision is audited — one audit entry per decision, attributed to
+the call's own nesting layer, at
+`$CRITERIA_HOME/runs/<run-id>/audit.log` (default
+`~/.local/criteria/runs/<run-id>/audit.log`) — so caller-layer and
+callee-side decisions are separately distinguishable.
+
+What the callee sees: its **own session**, resolved through the ordinary
+lazy-bind path, governed by its **own environment** and its **own
+`allow_tools`** — the declaring workflow's `permissions.allow_tools`, never
+the caller's step grants. Its outputs are decoded against its own output
+schema, typed exactly as step outputs, and its own `on_crash` governs its
+session: an `abort_run` crash in the callee's session aborts the run (the
+caller still receives the typed `callee_crash` result).
+
+What the caller sees: a typed `PermissionEvent.tool_call_result` on its
+Permissions stream, correlated by `request_id` — the callee's outcome plus
+JSON-encoded typed outputs on success, or a typed `call_error` code on
+failure (`callee_crash`, `callee_timeout`, `canceled`, and the gate codes
+above; a callee may also report its own typed rejection — e.g. `unknown_tool`
+for a call outside its discovered surface — via the reserved `call_error`
+output). The caller's own outcome routing is unaffected: it completes its
+step exactly as it would have without the call and routes through its
+`outcome` blocks as normal — a failed tool call is data for the caller, not
+a run failure. Multiple in-flight calls per caller session interleave;
+replies may arrive in any order and are correlated by `request_id`.
+
+### Message directions (for adapter authors)
+
+The two streams have fixed directions. Implement against them exactly as
+[ADR-0004 §8](adrs/ADR-0004-adapter-tools.md) specifies:
+
+- **The call travels on the `Execute` stream** (adapter → host) as a
+  `permission.request` AdapterEvent with the payload table above. The
+  adapter emits it and blocks until the host answers on the Permissions
+  stream.
+- **The answer travels on the `Permissions` bidi stream** (host → adapter)
+  as a `PermissionEvent`: `request` (allow-grant) followed by
+  `tool_call_result` for a granted call; `cancel` for a denied call.
+- **`PermissionDecision` is the adapter-to-host direction** and is drained
+  and discarded by the host — it is an ACK channel, not a result channel.
+  Never carry a tool result on it.
+
+```text
+caller adapter                host                          callee adapter
+     |                         |                                |
+     |  1. permission.request  |                                |
+     | ---- Execute stream --> |                                |
+     |    { request_id, target, tool, args, args_digest }       |
+     |                         |                                |
+     |                         |  2. allow_tools policy check   |
+     |                         |     + audit entry              |
+     |                         |                                |
+     |                         |  3. nested Execute             |
+     |                         | -----------------------------> |
+     |                         |                                |
+     |                         |  4. ExecuteResult              |
+     |                         | <----------------------------- |
+     |                         |    (outcome + typed outputs)   |
+     |                         |                                |
+     |  5. PermissionEvent     |                                |
+     |     .tool_call_result   |                                |
+     | <--- Permissions stream |                                |
+     |    { request_id, result }                                |
+```
+
+Degradation: a granted call answered only by a bare `request` with no
+subsequent `tool_call_result` means the host predates adapter tools —
+surface that as the typed `host_unsupported` failure. Unknown
+`PermissionEvent` oneof members are ignored by older adapters, and adapters
+that never declare `adapter_tools` never initiate calls, so old adapters are
+unaffected.
+
 ## Secrets
 
 Adapters declare the secrets they need in their manifest; the host resolves and
@@ -576,7 +839,36 @@ heartbeats, and it must remain open for the entire lifetime of the session:
   and then against the resolved environment filesystem and network policy.
   Each layer produces a distinguishable denial reason and one audit entry per
   decision at `$CRITERIA_HOME/runs/<run-id>/audit.log` (default
-`~/.local/criteria/runs/<run-id>/audit.log`).
+  `~/.local/criteria/runs/<run-id>/audit.log`).
+- **Adapter tool calls.** An adapter-to-adapter tool call is a gated
+  permission request plus a nested session (see
+  [Adapter tools](#adapter-tools)); the call is secured per layer:
+  - **Deny-by-default per layer.** The call itself is gated by the caller's
+    permission policy — an empty or absent `allow_tools` list denies all
+    tool requests, with the step's `tools` entries granting covered calls —
+    and the callee session is separately governed by its **own** `allow_tools`
+    (the declaring workflow's `permissions.allow_tools`) and its own
+    environment filesystem/network policy. Neither layer inherits the
+    other's grants, and every decision is audited with distinguishable
+    layer attribution.
+  - **Redaction of nested outputs.** The callee's outputs are decoded by the
+    same path as ordinary step outputs, so `sensitive: true` fields are
+    registered with the run's redaction registry, and registered values are
+    masked across all host log surfaces before display or persistence —
+    including the nested call's own event and audit traffic (a call's
+    target/tool echo in `tool.call` / `tool.call_result` events, permission
+    decision events, and audit entries is masked). `args_digest` is a
+    one-way digest of the call arguments, so calls are auditable without
+    carrying plaintext.
+  - **Depth cap.** `policy.max_tool_depth` (default 8) bounds the tool-call
+    stack, and runtime cycle detection rejects a call that would re-enter an
+    adapter already on the call chain; both are typed failures returned to
+    the calling adapter as the tool result. The run continues — a failed
+    call is data for the caller, not a run failure — and each enforcement is
+    audited.
+  - **Self-call prohibition.** A call whose callee is the calling adapter's
+    own instance is rejected with the typed `self_call` failure;
+    same-session reentry is out of scope for v1.
 
 ## Troubleshooting
 
