@@ -851,7 +851,7 @@ func calleeReportedCallError(result adapter.Result) string {
 		return ""
 	}
 	raw, ok := result.Outputs[calleeReportedCallErrorCode]
-	if !ok || !raw.Type().Equals(cty.String) {
+	if !ok || !raw.IsKnown() || raw.IsNull() || !raw.Type().Equals(cty.String) {
 		return ""
 	}
 	code := strings.TrimSpace(raw.AsString())

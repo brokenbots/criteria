@@ -617,3 +617,33 @@ func TestRedactingAuditWriter(t *testing.T) {
 		t.Error("nil inner must return nil")
 	}
 }
+
+// TestCalleeReportedCallError_NullString guards against a host-level panic
+// (CRI-172 review): a failure result decoded from a hostile callee's
+// outputs_json may carry the reserved call_error key as a typed cty null
+// string — Type().Equals(cty.String) is true for a null value, so the guard
+// must reject null (and unknown) values before calling AsString.
+func TestCalleeReportedCallError_NullString(t *testing.T) {
+	got := calleeReportedCallError(adapter.Result{
+		Outcome: "failure",
+		Outputs: map[string]cty.Value{
+			calleeReportedCallErrorCode: cty.NullVal(cty.String),
+		},
+	})
+	if got != "" {
+		t.Fatalf("calleeReportedCallError with null call_error = %q, want \"\"", got)
+	}
+}
+
+// A known-but-dynamic value is likewise not a usable string code.
+func TestCalleeReportedCallError_UnknownValue(t *testing.T) {
+	got := calleeReportedCallError(adapter.Result{
+		Outcome: "failure",
+		Outputs: map[string]cty.Value{
+			calleeReportedCallErrorCode: cty.UnknownVal(cty.String),
+		},
+	})
+	if got != "" {
+		t.Fatalf("calleeReportedCallError with unknown call_error = %q, want \"\"", got)
+	}
+}
