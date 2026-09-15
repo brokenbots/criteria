@@ -75,6 +75,7 @@ import (
 	ctyjson "github.com/zclconf/go-cty/cty/json"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
+	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -104,6 +105,11 @@ const (
 	callErrorCanceled          = "canceled"
 	callErrorPaused            = "paused"
 )
+
+// calleeReportedCallErrorCode is the reserved output key on a failure result
+// carrying a callee-reported typed call_error code (CRI-172). Only
+// callee-meaningful registry codes are honored (see calleeReportedCallError).
+const calleeReportedCallErrorCode = "call_error"
 
 // toolCallTarget is the parsed shape of an adapter tool-call target string
 // (ADR-0004 §2): adapter.<type>.<name>.tools[.<tool>].
@@ -750,6 +756,29 @@ func (s *permissionInterceptSink) runNestedToolCall(nestedCtx context.Context, n
 		return
 	}
 
+	// Callee-reported typed failure (CRI-172): a failure result carrying the
+	// reserved call_error output is the callee's own typed rejection — e.g.
+	// the mcp adapter refusing a tool outside its discovered tools/list
+	// surface. Deliver it as the well-known call_error reply, distinguishable
+	// from a policy deny and from a callee crash.
+	if code := calleeReportedCallError(result); code != "" {
+		s.permState.writeAudit(&DecisionLogEntry{
+			SessionID:  s.permState.sessionID,
+			RequestID:  call.requestID,
+			Tool:       call.target,
+			ArgsDigest: call.argsDigest,
+			Decision:   "deny",
+			Reason:     "nested callee rejected call: " + code,
+			// The call was evaluated in this sink's own layer; the callee's
+			// typed rejection is attributed there, not here.
+			Layer:       s.nesting.depth,
+			EvaluatedAt: time.Now(),
+		})
+		s.emitNestedToolCallResultEvent(call, "", code)
+		s.permState.sendToolCallResult(call.requestID, code)
+		return
+	}
+
 	outputsJSON, encErr := encodeToolCallOutputs(result.Outputs)
 	if encErr != nil {
 		s.reportNestedCallFailure(call, encErr)
@@ -809,6 +838,29 @@ func (s *permissionInterceptSink) reportNestedCallFailure(call *nestedToolCall, 
 	})
 	s.emitNestedToolCallResultEvent(call, "", code)
 	s.permState.sendToolCallResult(call.requestID, code)
+}
+
+// calleeReportedCallError recognizes a callee's own typed call_error
+// (CRI-172): a failure result whose outputs carry the reserved call_error key
+// with a well-known code whose semantics belong to the callee. Only
+// callee-meaningful codes are honored — host-computed codes (unknown adapter,
+// cycle, depth, self-call, pause, cancellation, ...) stay host-computed so a
+// callee cannot forge host gate decisions. Returns "" for any other result.
+func calleeReportedCallError(result adapter.Result) string {
+	if result.Outcome != "failure" {
+		return ""
+	}
+	raw, ok := result.Outputs[calleeReportedCallErrorCode]
+	if !ok || !raw.IsKnown() || raw.IsNull() || !raw.Type().Equals(cty.String) {
+		return ""
+	}
+	code := strings.TrimSpace(raw.AsString())
+	switch code {
+	case callErrorUnknownTool, callErrorCapabilityMissing, callErrorNotYetSupported:
+		return code
+	default:
+		return ""
+	}
 }
 
 // nestedExecCtx returns the Execute context this sink serves, so the nested

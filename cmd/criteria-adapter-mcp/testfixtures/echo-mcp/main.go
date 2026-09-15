@@ -53,46 +53,61 @@ func main() {
 					"name":        "echo",
 					"description": "Echoes the argument map as text",
 					"inputSchema": map[string]any{"type": "object"},
+				}, {
+					"name":        "structured",
+					"description": "Returns text content plus a structuredContent payload",
+					"inputSchema": map[string]any{"type": "object"},
 				}},
 			}})
 		case "tools/call":
 			_ = writeNotification("notifications/progress", map[string]any{"progress": 1, "total": 1})
-			name, _ := req.Params["name"].(string)
-			args, _ := req.Params["arguments"].(map[string]any)
-			if name != "echo" {
-				_ = writeResponse(response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
-					"isError": true,
-					"content": []map[string]any{{"type": "text", "text": "unknown tool"}},
-				}})
-				continue
-			}
-			if _, leaked := args["tool"]; leaked {
-				_ = writeResponse(response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
-					"isError": true,
-					"content": []map[string]any{{"type": "text", "text": "reserved key leaked: tool"}},
-				}})
-				continue
-			}
-			if _, leaked := args["success_outcome"]; leaked {
-				_ = writeResponse(response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
-					"isError": true,
-					"content": []map[string]any{{"type": "text", "text": "reserved key leaked: success_outcome"}},
-				}})
-				continue
-			}
-			text := encodeArgs(args)
-			_ = writeResponse(response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
-				"isError": false,
-				"content": []map[string]any{
-					{"type": "text", "text": text},
-					{"type": "resource", "uri": "memory://echo"},
-				},
-			}})
+			_ = writeResponse(handleToolCall(req))
 		case "notifications/cancelled":
 			// Best-effort notification from the bridge during shutdown.
 		default:
 			_ = writeResponse(response{JSONRPC: "2.0", ID: req.ID, Error: map[string]any{"code": -32601, "message": "method not found"}})
 		}
+	}
+}
+
+// handleToolCall answers a tools/call request. echo returns the argument map
+// JSON-encoded as text (plus a resource content block); structured returns
+// text plus structuredContent; reserved adapter routing keys must not leak
+// into MCP arguments.
+func handleToolCall(req request) response {
+	reply := func(result map[string]any) response {
+		return response{JSONRPC: "2.0", ID: req.ID, Result: result}
+	}
+	name, _ := req.Params["name"].(string)
+	args, _ := req.Params["arguments"].(map[string]any)
+	switch name {
+	case "structured":
+		return reply(map[string]any{
+			"isError":           false,
+			"content":           []map[string]any{{"type": "text", "text": "structured payload"}},
+			"structuredContent": map[string]any{"count": 2, "items": []string{"a", "b"}},
+		})
+	case "echo":
+		for _, reserved := range []string{"tool", "success_outcome"} {
+			if _, leaked := args[reserved]; leaked {
+				return reply(map[string]any{
+					"isError": true,
+					"content": []map[string]any{{"type": "text", "text": "reserved key leaked: " + reserved}},
+				})
+			}
+		}
+		return reply(map[string]any{
+			"isError": false,
+			"content": []map[string]any{
+				{"type": "text", "text": encodeArgs(args)},
+				{"type": "resource", "uri": "memory://echo"},
+			},
+		})
+	default:
+		return reply(map[string]any{
+			"isError": true,
+			"content": []map[string]any{{"type": "text", "text": "unknown tool"}},
+		})
 	}
 }
 

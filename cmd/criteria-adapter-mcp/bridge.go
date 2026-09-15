@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +33,17 @@ const (
 	closeGrace  = 5 * time.Second
 	initTimeout = 5 * time.Second
 )
+
+// callErrorUnknownTool is the well-known typed call_error code (ADR-0004 §8
+// registry) reported when a call names an MCP tool outside the set discovered
+// via tools/list. It is carried in the reserved "call_error" output of a
+// failure result; the host's adapter-tools seam delivers it to the caller as
+// the typed call_error, distinguishable from a policy deny.
+const callErrorUnknownTool = "unknown_tool"
+
+// callErrorOutputKey is the reserved output key carrying a callee-reported
+// typed call_error code on a failure result (CRI-172).
+const callErrorOutputKey = "call_error"
 
 var reservedExecuteKeys = map[string]struct{}{
 	"tool":            {},
@@ -78,33 +91,89 @@ func (s *sessionState) clearSink() {
 type MCPBridge struct {
 	mu       sync.Mutex
 	sessions map[string]*sessionState
+	// discovered holds the MCP tools seen by the most recent OpenSession,
+	// keyed by tool name. It outlives sessions so Info can advertise the
+	// dynamic tool surface (CRI-171/CRI-172) between and after runs.
+	discovered map[string]mcpclient.Tool
 
 	pendingPermsMu sync.Mutex
 	pendingPerms   map[string]chan<- string
 }
 
 func (b *MCPBridge) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse, error) {
-	return &v2.InfoResponse{
+	resp := &v2.InfoResponse{
 		Name:         adapterName,
 		Version:      adapterVersion,
 		SourceUrl:    "https://github.com/brokenbots/criteria/tree/main/cmd/criteria-adapter-mcp",
 		Platforms:    []string{"linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64"},
-		Capabilities: []string{"single_shot", "permission_gating"},
+		Capabilities: []string{"single_shot", "permission_gating", "adapter_tools"},
 		ConfigSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
 			"command": {Required: true, Type: "string", Description: "MCP server binary to launch."},
 			"args":    {Type: "string", Description: "Comma-separated argument list for the server binary."},
 			"env":     {Type: "string", Description: "Comma-separated KEY=VALUE environment variable pairs."},
 			"cwd":     {Type: "string", Description: "Working directory for the MCP server process."},
 		}},
-		InputSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
-			"tool":            {Required: true, Type: "string", Description: "MCP tool name to invoke."},
-			"success_outcome": {Type: "string", Description: "Outcome to report on success (default: success)."},
-		}},
-	}, nil
+		// InputSchema stays undeclared on purpose: the mcp adapter's input
+		// surface is dynamic (CRI-172). "tool" is the routing key, enforced
+		// by Execute, and every other key is a per-call MCP tool argument
+		// that varies with the discovered tool — a closed static schema
+		// would reject those arguments both at compile time and in the
+		// nested adapter-tool call path.
+	}
+	resp.Tools = b.infoTools()
+	return resp, nil
 }
 
-func (b *MCPBridge) OpenSession(ctx context.Context, req *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) { //nolint:funlen,gocyclo // complex session setup across MCP config, TLS, and stdio transport
-	cfg := req.GetConfig()
+// infoTools renders the discovered MCP tools as InfoResponse.tools (CRI-171),
+// sorted by name for deterministic responses. Empty until the first
+// OpenSession discovers the MCP server's tools/list surface.
+func (b *MCPBridge) infoTools() []*v2.ToolInfo {
+	b.mu.Lock()
+	names := make([]string, 0, len(b.discovered))
+	for name := range b.discovered {
+		names = append(names, name)
+	}
+	tools := make([]mcpclient.Tool, 0, len(names))
+	sort.Strings(names)
+	for _, name := range names {
+		tools = append(tools, b.discovered[name])
+	}
+	b.mu.Unlock()
+
+	if len(tools) == 0 {
+		return nil
+	}
+	infos := make([]*v2.ToolInfo, 0, len(tools))
+	for _, tool := range tools {
+		schema := string(tool.InputSchema)
+		infos = append(infos, &v2.ToolInfo{
+			Name:           tool.Name,
+			Description:    tool.Description,
+			ArgsSchemaJson: &schema,
+		})
+	}
+	return infos
+}
+
+func (b *MCPBridge) OpenSession(ctx context.Context, req *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) {
+	state, err := startMCPServer(req.GetConfig())
+	if err != nil {
+		return nil, err
+	}
+	tools, err := initializeAndDiscover(ctx, state)
+	if err != nil {
+		_ = shutdownSession(ctx, state)
+		return nil, err
+	}
+	if err := b.registerSession(ctx, req.GetSessionId(), state, tools); err != nil {
+		return nil, err
+	}
+	return &v2.OpenSessionResponse{}, nil
+}
+
+// startMCPServer parses the adapter config, launches the MCP server process
+// over a stdio transport, and wires the progress-notification forwarder.
+func startMCPServer(cfg map[string]string) (*sessionState, error) {
 	command := strings.TrimSpace(cfg["command"])
 	if command == "" {
 		return nil, fmt.Errorf("mcp: config.command is required")
@@ -153,16 +222,19 @@ func (b *MCPBridge) OpenSession(ctx context.Context, req *v2.OpenSessionRequest)
 		}
 		_ = sink.Send(adapterEvent("mcp.progress", n.Params))
 	})
+	return state, nil
+}
 
+// initializeAndDiscover performs the MCP handshake and the tools/list
+// discovery that populates the session's dynamic tool surface (CRI-171).
+func initializeAndDiscover(ctx context.Context, state *sessionState) ([]mcpclient.Tool, error) {
 	handshakeCtx, cancel := context.WithTimeout(ctx, initTimeout)
 	defer cancel()
 	if err := state.client.Initialize(handshakeCtx, "criteria-adapter-mcp", adapterVersion); err != nil {
-		_ = shutdownSession(ctx, state)
 		return nil, fmt.Errorf("mcp: initialize: %w", err)
 	}
 	tools, err := state.client.ListTools(handshakeCtx)
 	if err != nil {
-		_ = shutdownSession(ctx, state)
 		return nil, fmt.Errorf("mcp: tools/list: %w", err)
 	}
 	for _, tool := range tools {
@@ -170,18 +242,27 @@ func (b *MCPBridge) OpenSession(ctx context.Context, req *v2.OpenSessionRequest)
 			state.tools[tool.Name] = struct{}{}
 		}
 	}
+	return tools, nil
+}
 
+// registerSession installs the session under its ID and records the
+// discovered tools as the adapter's dynamic tool surface (CRI-172).
+func (b *MCPBridge) registerSession(ctx context.Context, sessionID string, state *sessionState, tools []mcpclient.Tool) error {
 	b.mu.Lock()
-	if existing, ok := b.sessions[req.GetSessionId()]; ok {
-		b.mu.Unlock()
+	defer b.mu.Unlock()
+	if existing, ok := b.sessions[sessionID]; ok {
 		_ = shutdownSession(ctx, state)
 		_ = shutdownSession(ctx, existing)
-		return nil, fmt.Errorf("mcp: session %q already open", req.GetSessionId())
+		return fmt.Errorf("mcp: session %q already open", sessionID)
 	}
-	b.sessions[req.GetSessionId()] = state
-	b.mu.Unlock()
-
-	return &v2.OpenSessionResponse{}, nil
+	b.sessions[sessionID] = state
+	b.discovered = make(map[string]mcpclient.Tool, len(tools))
+	for _, tool := range tools {
+		if tool.Name != "" {
+			b.discovered[tool.Name] = tool
+		}
+	}
+	return nil
 }
 
 func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink adapterhost.ExecuteEventSender) error {
@@ -195,7 +276,11 @@ func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ad
 		return fmt.Errorf("mcp: config.tool is required")
 	}
 	if _, ok := s.tools[toolName]; !ok {
-		return fmt.Errorf("mcp: unknown tool %q", toolName)
+		// Typed unknown_tool (CRI-172): report a failure result carrying the
+		// reserved call_error output instead of a bare error, so the
+		// adapter-tools seam delivers a typed call_error to the caller —
+		// distinguishable from a policy deny and from a callee crash.
+		return sink.Send(typedFailureEvent(callErrorUnknownTool))
 	}
 
 	arguments := buildToolArguments(req.GetInput())
@@ -206,7 +291,10 @@ func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ad
 	defer s.clearSink()
 
 	// Permission gate: emit permission.request and block for host decision
-	// before invoking the tool. This ensures denied tools never run.
+	// before invoking the tool. This ensures denied tools never run. For
+	// adapter-tools calls the request IS the permission event; the host
+	// answers it from the caller's grant and the MCP call proceeds with no
+	// second permission round-trip.
 	allowed, permErr := b.awaitPermission(ctx, sink, toolName)
 	if permErr != nil {
 		return permErr
@@ -217,6 +305,9 @@ func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ad
 
 	result, err := s.client.CallTool(ctx, toolName, arguments)
 	if err != nil {
+		// Transport and protocol failures propagate: the host maps the
+		// callee's failure to typed callee_crash, and a deadline to
+		// callee_timeout.
 		return fmt.Errorf("mcp: tools/call %q: %w", toolName, err)
 	}
 
@@ -233,7 +324,35 @@ func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ad
 	if result.IsError {
 		outcome = "failure"
 	}
-	return sink.Send(resultEvent(outcome))
+	return sink.Send(resultEventWithOutputs(outcome, mcpOutputs(result)))
+}
+
+// mcpOutputs maps an MCP tools/call result into adapter outputs (CRI-172):
+// text content blocks are the primary payload, joined in server order under
+// "text", and structuredContent, when present, is passed through verbatim
+// under "structured". Other content kinds stay available via mcp.content
+// adapter events.
+func mcpOutputs(result mcpclient.CallToolResult) map[string]any {
+	outputs := map[string]any{}
+	var texts []string
+	for _, item := range result.Content {
+		if kind, ok := item["type"].(string); !ok || kind != "text" {
+			continue
+		}
+		if text, ok := item["text"].(string); ok {
+			texts = append(texts, text)
+		}
+	}
+	if len(texts) > 0 {
+		outputs["text"] = strings.Join(texts, "\n")
+	}
+	if len(result.StructuredContent) > 0 {
+		var structured any
+		if err := json.Unmarshal(result.StructuredContent, &structured); err == nil {
+			outputs["structured"] = structured
+		}
+	}
+	return outputs
 }
 
 // buildToolArguments converts the Execute input map into the arguments map
@@ -405,6 +524,27 @@ func resultEvent(outcome string) *v2.ExecuteEvent {
 	return &v2.ExecuteEvent{
 		Event: &v2.ExecuteEvent_Result{Result: &v2.ExecuteResult{Outcome: outcome}},
 	}
+}
+
+// resultEventWithOutputs builds a result event carrying outputs_json. Marshal
+// failures leave outputs empty rather than failing the run; outputs are
+// advisory payload data, and the mcp.content events remain authoritative.
+func resultEventWithOutputs(outcome string, outputs map[string]any) *v2.ExecuteEvent {
+	res := &v2.ExecuteResult{Outcome: outcome}
+	if len(outputs) > 0 {
+		if raw, err := json.Marshal(outputs); err == nil {
+			res.OutputsJson = raw
+		}
+	}
+	return &v2.ExecuteEvent{
+		Event: &v2.ExecuteEvent_Result{Result: res},
+	}
+}
+
+// typedFailureEvent builds a failure result carrying a well-known call_error
+// code in the reserved "call_error" output (CRI-172).
+func typedFailureEvent(code string) *v2.ExecuteEvent {
+	return resultEventWithOutputs("failure", map[string]any{callErrorOutputKey: code})
 }
 
 func adapterEvent(kind string, data map[string]any) *v2.ExecuteEvent {
