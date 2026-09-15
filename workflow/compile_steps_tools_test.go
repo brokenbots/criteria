@@ -494,3 +494,105 @@ func TestLegacyWorkflowWithoutToolsNoToolDiags(t *testing.T) {
 		t.Errorf("workflow without tools must compile without diagnostics, got: %s", diags.Error())
 	}
 }
+
+// toolSourceSchemas returns schemas registering the "mcp" adapter type with
+// the given runtime tool names (the handshake's InfoResponse.tools) and the
+// adapter_tools capability, so a self-targeted step does not trip the
+// pointless-caller warning. Used by the CRI-173 tool-source precedence tests.
+func toolSourceSchemas(runtimeTools ...string) map[string]AdapterInfo {
+	return map[string]AdapterInfo{
+		"mcp": {
+			InputSchema:  map[string]ConfigField{},
+			Capabilities: []string{adapterToolsCapability},
+			RuntimeTools: runtimeTools,
+		},
+	}
+}
+
+// TestToolRefToolSourcePrecedence pins the CRI-173 tool-source precedence for
+// all four tool-source combinations: static tool blocks, dynamic_tools = true,
+// InfoResponse.tools-exposed runtime tools, and neither. The ladder is
+//
+//	static tool blocks > dynamic_tools (skip check) >
+//	InfoResponse.tools (check when present) > neither (reject refs)
+//
+// and each rung's diagnostics are asserted exactly (golden).
+func TestToolRefToolSourcePrecedence(t *testing.T) {
+	// compileCase compiles one tools attribute against one adapter
+	// declaration with the given runtime tools, and asserts either a clean
+	// compile or exactly one diagnostic matching severity + summary/detail
+	// substrings.
+	compileCase := func(t *testing.T, adapterDecl, toolsAttr string, runtimeTools []string, wantClean bool, severity hcl.DiagnosticSeverity, summarySub, detailSub string) {
+		t.Helper()
+		src := toolsWorkflowSrc(adapterDecl, toolsAttr)
+		_, diags := compileToolsWorkflow(t, src, toolSourceSchemas(runtimeTools...))
+		if wantClean {
+			if len(diags) != 0 {
+				t.Fatalf("expected clean compile, got %d diagnostic(s): %s", len(diags), diags.Error())
+			}
+			return
+		}
+		expectToolDiag(t, diags, severity, summarySub, src, toolsAttr)
+		if len(diags) != 1 {
+			t.Fatalf("expected exactly one diagnostic, got %d: %s", len(diags), diags.Error())
+		}
+		if detailSub != "" && !strings.Contains(diags[0].Detail, detailSub) {
+			t.Errorf("diagnostic detail %q does not contain %q", diags[0].Detail, detailSub)
+		}
+	}
+
+	t.Run("static tool blocks", func(t *testing.T) {
+		t.Run("declared name compiles", func(t *testing.T) {
+			compileCase(t, `tool "search" {}`, `tools  = [adapter.mcp.registry.tools.search]`, []string{"fetch"}, true, 0, "", "")
+		})
+		t.Run("unknown name errors even when handshake reports tools", func(t *testing.T) {
+			// Static blocks outrank InfoResponse.tools: the name must resolve
+			// against the static blocks, and the runtime-only "fetch" is not
+			// consulted.
+			compileCase(t, `tool "search" {}`, `tools  = [adapter.mcp.registry.tools.fetch]`, []string{"fetch"},
+				false, hcl.DiagError, `references unknown tool "adapter.mcp.registry.tools.fetch"`, "declares tools search")
+		})
+	})
+
+	t.Run("dynamic_tools skips the check", func(t *testing.T) {
+		t.Run("unknown name compiles even when handshake reports tools", func(t *testing.T) {
+			compileCase(t, `dynamic_tools = true`, `tools  = [adapter.mcp.registry.tools.anything]`, []string{"search"}, true, 0, "", "")
+		})
+		t.Run("bare ref compiles", func(t *testing.T) {
+			compileCase(t, `dynamic_tools = true`, `tools  = [adapter.mcp.registry.tools]`, []string{"search"}, true, 0, "", "")
+		})
+		t.Run("static blocks win over dynamic flag", func(t *testing.T) {
+			compileCase(t, "tool \"search\" {}\n  dynamic_tools = true", `tools  = [adapter.mcp.registry.tools.search]`, []string{"other"}, true, 0, "", "")
+			compileCase(t, "tool \"search\" {}\n  dynamic_tools = true", `tools  = [adapter.mcp.registry.tools.runtime_only]`, []string{"runtime_only"},
+				false, hcl.DiagError, `references unknown tool "adapter.mcp.registry.tools.runtime_only"`, "declares tools search")
+		})
+	})
+
+	t.Run("InfoResponse.tools runtime surface", func(t *testing.T) {
+		t.Run("reported name compiles", func(t *testing.T) {
+			compileCase(t, ``, `tools  = [adapter.mcp.registry.tools.search]`, []string{"search", "fetch"}, true, 0, "", "")
+		})
+		t.Run("unreported name fails the check", func(t *testing.T) {
+			compileCase(t, ``, `tools  = [adapter.mcp.registry.tools.git]`, []string{"search", "fetch"},
+				false, hcl.DiagError, `references unknown tool "adapter.mcp.registry.tools.git"`, "InfoResponse.tools: search, fetch")
+		})
+		t.Run("bare ref grants the known runtime surface", func(t *testing.T) {
+			compileCase(t, ``, `tools  = [adapter.mcp.registry.tools]`, []string{"search"}, true, 0, "", "")
+		})
+	})
+
+	t.Run("neither source rejects refs", func(t *testing.T) {
+		t.Run("named ref errors when handshake exposes no tools", func(t *testing.T) {
+			compileCase(t, ``, `tools  = [adapter.mcp.registry.tools.search]`, nil,
+				false, hcl.DiagError, `callee "mcp.registry" presents no tool surface`, "")
+		})
+		t.Run("named ref errors when the adapter type is registered but exposes no tools", func(t *testing.T) {
+			compileCase(t, ``, `tools  = [adapter.mcp.registry.tools.search]`, []string{},
+				false, hcl.DiagError, `callee "mcp.registry" presents no tool surface`, "adapter handshake exposes no tools")
+		})
+		t.Run("bare ref stays advisory when the adapter type is registered but exposes no tools", func(t *testing.T) {
+			compileCase(t, ``, `tools  = [adapter.mcp.registry.tools]`, []string{},
+				false, hcl.DiagWarning, `bare tools reference "adapter.mcp.registry.tools" on an adapter with no declared tool surface`, "")
+		})
+	})
+}

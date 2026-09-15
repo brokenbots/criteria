@@ -201,13 +201,25 @@ permission decisions.
 - **Static tools** (§3 `tool` blocks): tool names in `tools = [...]` are
   checked at **compile time** against the callee's declared static tool
   blocks; unknown names are compile errors (per §4, the compiler works from
-  adapter-declared info).
+  adapter-declared info). Static declarations take precedence over every
+  other tool source — even when `dynamic_tools = true` is also set.
 - **Dynamic tools** (`dynamic_tools = true`): the compile-time check is
   **lenient** — static names are not available — so enforcement happens at
   runtime, gated by `allow_tools` as for any permission surface.
-- **Neither:** an adapter that declares no `tool` blocks and no
-  `dynamic_tools = true` presents no tool surface; references to its tools
-  are **rejected at compile time**.
+- **Handshake-reported tools** (`InfoResponse.tools`, CRI-171): a callee
+  that declares neither static `tool` blocks nor `dynamic_tools = true` may
+  still report a runtime tool surface in its adapter handshake. When that
+  surface is available to the compiler (through the collected adapter
+  schemas), entry names are checked against it at compile time; entries
+  naming unreported tools are compile errors.
+- **Neither:** an adapter that declares no `tool` blocks, no
+  `dynamic_tools = true`, and exposes no handshake-reported tools presents
+  no tool surface; references naming its tools are **rejected at compile
+  time**.
+
+The precedence across sources is fixed: static `tool` blocks >
+`dynamic_tools` (check skipped) > `InfoResponse.tools` (checked when
+present) > neither (references rejected).
 
 ### 8. Wire decision — Option A (message directions corrected against the live tree)
 

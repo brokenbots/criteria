@@ -193,7 +193,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `state "name" { ... }`
 
-- **Source:** [`workflow/schema.go:518`](../workflow/schema.go#L518)
+- **Source:** [`workflow/schema.go:524`](../workflow/schema.go#L524)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -206,7 +206,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `wait "name" { ... }`
 
-- **Source:** [`workflow/schema.go:501`](../workflow/schema.go#L501)
+- **Source:** [`workflow/schema.go:507`](../workflow/schema.go#L507)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -219,7 +219,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `approval "name" { ... }`
 
-- **Source:** [`workflow/schema.go:510`](../workflow/schema.go#L510)
+- **Source:** [`workflow/schema.go:516`](../workflow/schema.go#L516)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -232,13 +232,13 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `switch "name" { ... }`
 
-- **Source:** [`workflow/schema.go:529`](../workflow/schema.go#L529)
+- **Source:** [`workflow/schema.go:535`](../workflow/schema.go#L535)
 - **Labels:** `name`
 - **Nested blocks:** [`match`](#match---), [`default`](#default---)
 
 ### `permissions { ... }`
 
-- **Source:** [`workflow/schema.go:575`](../workflow/schema.go#L575)
+- **Source:** [`workflow/schema.go:581`](../workflow/schema.go#L581)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -248,7 +248,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `policy { ... }`
 
-- **Source:** [`workflow/schema.go:549`](../workflow/schema.go#L549)
+- **Source:** [`workflow/schema.go:555`](../workflow/schema.go#L555)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -283,7 +283,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `outcome "name" { ... }`
 
-- **Source:** [`workflow/schema.go:479`](../workflow/schema.go#L479)
+- **Source:** [`workflow/schema.go:485`](../workflow/schema.go#L485)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -296,17 +296,17 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `match { ... }`
 
-- **Source:** [`workflow/schema.go:538`](../workflow/schema.go#L538)
+- **Source:** [`workflow/schema.go:544`](../workflow/schema.go#L544)
 - **Additional attributes:** captures: condition (required), next (required), output (optional)
 
 ### `default { ... }`
 
-- **Source:** [`workflow/schema.go:544`](../workflow/schema.go#L544)
+- **Source:** [`workflow/schema.go:550`](../workflow/schema.go#L550)
 - **Additional attributes:** captures: next (required), output (optional)
 
 ### `write { ... }`
 
-- **Source:** [`workflow/schema.go:487`](../workflow/schema.go#L487)
+- **Source:** [`workflow/schema.go:493`](../workflow/schema.go#L493)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -498,7 +498,7 @@ Each step, wait, and approval node declares one or more `outcome` blocks mapping
 
 Adapters may present **tools** — named operations that other adapters invoke mid-execution and receive results from inline. A tool call is **not a step**: the callee never enters the FSM, and a call never routes through outcome blocks (see Outcome model). The wire, cycle, and versioning contract is [ADR-0004](adrs/ADR-0004-adapter-tools.md); the prose companion is [Adapter tools](workflow.md#adapter-tools) in docs/workflow.md.
 
-> **Status:** grammar specified by this revision. Compiler acceptance and diagnostics for these forms land with the adapter-tools compiler workstream (CRI-156); run-time tool discovery is CRI-173. Earlier binaries reject `tool` blocks and the `dynamic_tools` / `max_tool_depth` attributes as unsupported, and ignore step-level `tools`.
+> **Status:** grammar specified by this revision. Compiler acceptance and diagnostics for these forms landed with CRI-156, and CRI-173 extends validation with the lenient `dynamic_tools` path and the handshake-reported `InfoResponse.tools` fallback (see Validation rules). Earlier binaries reject `tool` blocks and the `dynamic_tools` / `max_tool_depth` attributes as unsupported, and ignore step-level `tools`.
 
 ### Grammar forms
 
@@ -545,13 +545,20 @@ Each rule maps 1:1 to a compiler diagnostic (CRI-156):
 |---|---|---|
 | 1 | error | Every `tools` entry resolves to an adapter declared in the same workflow. |
 | 2 | error | Entry shape is `adapter.<type>.<name>[.tools[.<tool>]]`. |
-| 3 | error | When the callee declares static `tool` blocks, entry tool names must match a declared static tool. |
+| 3 | error | When the callee declares static `tool` blocks, entry tool names must match a declared static tool (static declarations take precedence over every other tool source). |
 | 4 | lenient | Adapters declaring `dynamic_tools = true` skip the static-name check; enforcement happens at run time via `allow_tools`. |
 | 5 | warning | Duplicate entries in one `tools` list. |
-| 6 | warning | Entry names a callee that presents no tool surface (no `tool` blocks, `dynamic_tools` unset). |
+| 6 | warning | Entry names a callee that presents no tool surface (no `tool` blocks, no `dynamic_tools`, and no handshake-reported tools). |
 | 7 | warning | Entry on a step whose target adapter lacks the `adapter_tools` capability. |
 | 8 | warning | Cycle in the adapter-to-adapter call graph (A calls B calls A, directly or transitively). |
 | 9 | error | `max_tool_depth` is an integer ≥ 1; default `8`. |
+
+**Tool-source precedence (CRI-173).** When checking a named `tools` entry, the compiler consults the callee's tool surface in this order, and the first applicable source wins:
+
+1. **Static `tool` blocks** — entry names must match a declared static tool; this check applies even when `dynamic_tools = true` is also set.
+2. **`dynamic_tools = true`** — the static-name check is skipped entirely; the runtime tool surface is unknown at compile time and enforcement happens at run time via `allow_tools`.
+3. **Handshake-reported tools (`InfoResponse.tools`, CRI-171)** — for callees that declare neither static tool blocks nor `dynamic_tools` but report tools in their adapter handshake, the compiler checks entry names against the reported surface when the handshake is available (through the collected adapter schemas).
+4. **Neither** — named entries are rejected with the rule-6 diagnostic; bare `…tools` entries remain valid and are advisory only.
 
 ### Reserved interactions
 
