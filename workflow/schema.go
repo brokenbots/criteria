@@ -285,6 +285,25 @@ type AdapterDeclSpec struct {
 	OnCrash     string         `hcl:"on_crash,optional"`
 	Config      *ConfigSpec    `hcl:"config,block"`
 	Secrets     *ConfigSpec    `hcl:"secrets,block"` // optional secrets block
+	// Tools lists the statically presented tools declared via tool "<name>" { }
+	// blocks on this adapter (CRI-155, parse pass only). Each entry records the
+	// tool's name label; the block body is reserved for future use and is
+	// decoded and ignored today.
+	Tools []ToolDeclSpec `hcl:"tool,block"`
+	// DynamicTools admits a runtime-discovered tool surface alongside any
+	// static tool blocks (dynamic_tools = bool, default false). Parsed in
+	// CRI-155; consumed by CRI-156 validation (lenient static-name check) and
+	// the CRI-173 runtime-discovery path.
+	DynamicTools bool `hcl:"dynamic_tools,optional"`
+}
+
+// ToolDeclSpec declares one statically presented tool on an adapter
+// declaration: tool "<name>" { }. The name label is the tool's stable name;
+// the body is reserved for future use — CRI-155 decodes and ignores it so the
+// schema stays honest without constraining future extensions.
+type ToolDeclSpec struct {
+	Name   string   `hcl:"name,label"`
+	Remain hcl.Body `hcl:",remain"` // reserved body; decoded and ignored (CRI-155)
 }
 
 // StepSpec describes a single step in the workflow.
@@ -311,6 +330,16 @@ type StepSpec struct {
 	// and arguments; bare * permits all tools. An empty or absent list denies
 	// all tool requests. The first matching pattern wins.
 	AllowTools []string `hcl:"allow_tools,optional"`
+	// Tools lists the bare traversal grants from the step-level `tools`
+	// attribute, e.g. [adapter.shell.worker.tools,
+	// adapter.shell.worker.tools.git_status]. Entries are stored as raw
+	// hcl.Traversal values with no reference resolution and no graph changes
+	// (CRI-155, parse pass only); shape diagnostics (string literals instead
+	// of traversals, non-adapter roots) land in CRI-156 with positions.
+	// The attribute is not a gohcl-tagged field because gohcl cannot decode
+	// hcl.Traversal targets directly — it is captured by Remain and extracted
+	// per step by captureStepToolRefs.
+	Tools []hcl.Traversal
 	// Outcomes lists the declared outcome blocks for this step.
 	// Environment (e.g. shell.ci) is not decoded as a struct field; it is a bare
 	// traversal captured from Remain by resolveStepEnvironmentOverride. A
@@ -533,6 +562,13 @@ type PolicySpec struct {
 	// should typically be <= MaxTotalSteps when a max is configured so warnings
 	// can be emitted before execution is terminated.
 	MaxVisitsWarnThreshold *int `hcl:"max_visits_warn_threshold,optional"`
+	// MaxToolDepth bounds the adapter-to-adapter tool-call stack depth
+	// (policy.max_tool_depth). Grammar: integer >= 1; unset (0) uses the
+	// engine default of 8. Parsed in CRI-155; graph-level wiring lands in
+	// CRI-157. The >= 1 range check is enforced here at parse time as a plain
+	// decode diagnostic by checkMaxToolDepthRange (CRI-155 placement decision:
+	// checked at parse, CRI-157 owns wiring only).
+	MaxToolDepth int `hcl:"max_tool_depth,optional"`
 }
 
 // PermissionsSpec defines workflow-level permission allowlists applied to all steps.

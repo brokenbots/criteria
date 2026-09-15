@@ -43,9 +43,9 @@ func CollectSchemas(ctx context.Context, loader adapterhost.Loader, workflowDir 
 
 	// Collect unique adapter types from declared adapters and step references.
 	seen := map[string]bool{}
-	for _, ad := range spec.Adapters {
-		if ad.Type != "" {
-			seen[ad.Type] = true
+	for i := range spec.Adapters {
+		if spec.Adapters[i].Type != "" {
+			seen[spec.Adapters[i].Type] = true
 		}
 	}
 	for i := range spec.Steps {

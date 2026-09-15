@@ -134,7 +134,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `output "name" { ... }`
 
-- **Source:** [`workflow/schema.go:376`](../workflow/schema.go#L376)
+- **Source:** [`workflow/schema.go:405`](../workflow/schema.go#L405)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -157,12 +157,13 @@ The following block types are defined. Tables are auto-generated from [`workflow
 | `version` | string | no | Version is the semver constraint resolved at lock time: exact ("1.2.3"), caret ("^1.2"), tilde ("~1.2.0"), wildcard ("1.x"), or "latest". The lockfile pins the resolved digest for run-to-run reproducibility. |
 | `environment` | hcl.Expression | no | _(no description)_ |
 | `on_crash` | string | no | _(no description)_ |
+| `dynamic_tools` | bool | no | DynamicTools admits a runtime-discovered tool surface alongside any static tool blocks (dynamic_tools = bool, default false). Parsed in CRI-155; consumed by CRI-156 validation (lenient static-name check) and the CRI-173 runtime-discovery path. |
 
-- **Nested blocks:** [`config`](#config---), [`secrets`](#secrets---)
+- **Nested blocks:** [`config`](#config---), [`secrets`](#secrets---), [`tool`](#tool-name---)
 
 ### `subworkflow "name" { ... }`
 
-- **Source:** [`workflow/schema.go:386`](../workflow/schema.go#L386)
+- **Source:** [`workflow/schema.go:415`](../workflow/schema.go#L415)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -175,7 +176,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `step "name" { ... }`
 
-- **Source:** [`workflow/schema.go:291`](../workflow/schema.go#L291)
+- **Source:** [`workflow/schema.go:310`](../workflow/schema.go#L310)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -192,7 +193,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `state "name" { ... }`
 
-- **Source:** [`workflow/schema.go:489`](../workflow/schema.go#L489)
+- **Source:** [`workflow/schema.go:518`](../workflow/schema.go#L518)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -205,7 +206,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `wait "name" { ... }`
 
-- **Source:** [`workflow/schema.go:472`](../workflow/schema.go#L472)
+- **Source:** [`workflow/schema.go:501`](../workflow/schema.go#L501)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -218,7 +219,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `approval "name" { ... }`
 
-- **Source:** [`workflow/schema.go:481`](../workflow/schema.go#L481)
+- **Source:** [`workflow/schema.go:510`](../workflow/schema.go#L510)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -231,13 +232,13 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `switch "name" { ... }`
 
-- **Source:** [`workflow/schema.go:500`](../workflow/schema.go#L500)
+- **Source:** [`workflow/schema.go:529`](../workflow/schema.go#L529)
 - **Labels:** `name`
 - **Nested blocks:** [`match`](#match---), [`default`](#default---)
 
 ### `permissions { ... }`
 
-- **Source:** [`workflow/schema.go:539`](../workflow/schema.go#L539)
+- **Source:** [`workflow/schema.go:575`](../workflow/schema.go#L575)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -247,7 +248,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `policy { ... }`
 
-- **Source:** [`workflow/schema.go:520`](../workflow/schema.go#L520)
+- **Source:** [`workflow/schema.go:549`](../workflow/schema.go#L549)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -255,6 +256,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 | `max_total_steps` | number | no | _(no description)_ |
 | `max_step_retries` | number | no | _(no description)_ |
 | `max_visits_warn_threshold` | number | no | MaxVisitsWarnThreshold controls when the engine emits a warning for excessive revisits while executing a workflow. |
+| `max_tool_depth` | number | no | MaxToolDepth bounds the adapter-to-adapter tool-call stack depth (policy.max_tool_depth). Grammar: integer >= 1; unset (0) uses the engine default of 8. Parsed in CRI-155; graph-level wiring lands in CRI-157. The >= 1 range check is enforced here at parse time as a plain decode diagnostic by checkMaxToolDepthRange (CRI-155 placement decision: checked at parse, CRI-157 owns wiring only). |
 
 
 ### `config { ... }`
@@ -264,6 +266,12 @@ The following block types are defined. Tables are auto-generated from [`workflow
 ### `secrets { ... }`
 
 - **Source:** [`workflow/schema.go:257`](../workflow/schema.go#L257)
+
+### `tool "name" { ... }`
+
+- **Source:** [`workflow/schema.go:304`](../workflow/schema.go#L304)
+- **Labels:** `name`
+- **Additional attributes:** reserved body; decoded and ignored (CRI-155)
 
 ### `input { ... }`
 
@@ -275,7 +283,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `outcome "name" { ... }`
 
-- **Source:** [`workflow/schema.go:450`](../workflow/schema.go#L450)
+- **Source:** [`workflow/schema.go:479`](../workflow/schema.go#L479)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -288,17 +296,17 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `match { ... }`
 
-- **Source:** [`workflow/schema.go:509`](../workflow/schema.go#L509)
+- **Source:** [`workflow/schema.go:538`](../workflow/schema.go#L538)
 - **Additional attributes:** captures: condition (required), next (required), output (optional)
 
 ### `default { ... }`
 
-- **Source:** [`workflow/schema.go:515`](../workflow/schema.go#L515)
+- **Source:** [`workflow/schema.go:544`](../workflow/schema.go#L544)
 - **Additional attributes:** captures: next (required), output (optional)
 
 ### `write { ... }`
 
-- **Source:** [`workflow/schema.go:458`](../workflow/schema.go#L458)
+- **Source:** [`workflow/schema.go:487`](../workflow/schema.go#L487)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
