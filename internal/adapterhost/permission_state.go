@@ -11,6 +11,7 @@ import (
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/workflow"
 )
 
 // PermissionStreamer is implemented by handles that support a dedicated
@@ -359,10 +360,19 @@ func resolvePermissionRequestID(payload map[string]any) (string, bool) {
 // permission.request events. It delegates evaluation to the session's
 // PermissionState, emits permission.granted / permission.denied events, and
 // tracks whether any request was denied so Execute can override the outcome.
+// Adapter tool-call requests (CRI-159) are routed to the typed reply path in
+// tool_call.go; plain requests keep the untouched plain flow.
 type permissionInterceptSink struct {
 	inner     adapter.EventSink
 	permState *permissionState
 	session   *Session
+	// step is the step being executed; its recorded tools grants (CRI-157)
+	// are unioned into the effective allow set for tool-call policy. Nil for
+	// plain permission-only use (then no grant matching applies).
+	step *workflow.StepNode
+	// graph is the compiled workflow graph used for tool-call validation
+	// (callee declared, static tool surface). Nil skips graph validation.
+	graph     *workflow.FSMGraph
 	anyDenied bool
 }
 
@@ -372,6 +382,10 @@ func (s *permissionInterceptSink) Log(stream string, chunk []byte) {
 
 func (s *permissionInterceptSink) Adapter(kind string, data any) {
 	if kind == "permission.request" && s.permState != nil {
+		if payload, ok := data.(map[string]any); ok && toolCallRequestDetected(payload) {
+			s.handleToolCallRequest(payload)
+			return
+		}
 		s.handlePermissionRequest(data)
 		return
 	}

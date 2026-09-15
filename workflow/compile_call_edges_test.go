@@ -655,3 +655,50 @@ adapter "b" "two" {
 		t.Errorf("AdapterCallEdges = %+v, want exactly 1 edge", gWith.AdapterCallEdges)
 	}
 }
+
+// TestAdapterNode_CarriesToolSurface verifies that the compiled graph's
+// AdapterNodes expose the declared tool surface (CRI-159): tool-block names
+// in declaration order for static adapters and the dynamic_tools flag for
+// dynamic ones. The runtime seam (internal/adapterhost) reads these fields
+// when validating callee adapters and static tools.
+func TestAdapterNode_CarriesToolSurface(t *testing.T) {
+	src := callEdgesSrc("",
+		`adapter "shell" "runner" {
+  tool "git_status" {}
+  tool "run" {}
+}
+
+adapter "mcp" "fs" {
+  dynamic_tools = true
+}`,
+		`step "start" {
+  target = adapter.shell.runner
+  outcome "success" { next = state.done }
+}`)
+	g, diags := compileCallEdges(t, src, callEdgesSchemas("shell", "mcp"))
+	if len(diags) != 0 {
+		t.Fatalf("expected clean compile, got: %s", diags.Error())
+	}
+
+	shell := g.Adapters["shell.runner"]
+	if shell == nil {
+		t.Fatal("expected adapter shell.runner in graph")
+	}
+	if want := []string{"git_status", "run"}; !reflect.DeepEqual(shell.StaticTools, want) {
+		t.Errorf("StaticTools = %+v, want %+v", shell.StaticTools, want)
+	}
+	if shell.DynamicTools {
+		t.Error("expected DynamicTools=false for tool-block adapter")
+	}
+
+	fs := g.Adapters["mcp.fs"]
+	if fs == nil {
+		t.Fatal("expected adapter mcp.fs in graph")
+	}
+	if !fs.DynamicTools {
+		t.Error("expected DynamicTools=true for dynamic_tools adapter")
+	}
+	if len(fs.StaticTools) != 0 {
+		t.Errorf("StaticTools = %+v, want empty", fs.StaticTools)
+	}
+}

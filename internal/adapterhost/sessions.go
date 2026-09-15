@@ -1579,7 +1579,7 @@ func (m *SessionManager) Execute(ctx context.Context, name string, step *workflo
 	defer m.unbindCurrentSink(sess)
 
 	execSink := m.execSinkForSession(sess, sink)
-	permSink := newPermissionInterceptSink(execSink, sess)
+	permSink := newPermissionInterceptSink(execSink, sess, step, m.graph)
 
 	result, execErr := sess.handle.Execute(ctx, name, step, permSink)
 
@@ -1653,11 +1653,13 @@ func (m *SessionManager) execSinkForSession(sess *Session, sink adapter.EventSin
 	return sink
 }
 
-func newPermissionInterceptSink(inner adapter.EventSink, sess *Session) *permissionInterceptSink {
+func newPermissionInterceptSink(inner adapter.EventSink, sess *Session, step *workflow.StepNode, graph *workflow.FSMGraph) *permissionInterceptSink {
 	return &permissionInterceptSink{
 		inner:     inner,
 		permState: sess.PermissionState,
 		session:   sess,
+		step:      step,
+		graph:     graph,
 	}
 }
 
