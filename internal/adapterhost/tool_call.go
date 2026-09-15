@@ -53,6 +53,13 @@ package adapterhost
 // Plain (non-tool) permission requests never reach this file's decision path:
 // the sink routes them to the untouched plain flow, so workflows without tool
 // refs execute through identical code paths.
+//
+// CRI-163: a dispatched call is observable on the run's adapter event stream,
+// attributed under the caller step — tool.call when the call starts (payload:
+// target, tool, depth, request_id) and tool.call_result when it settles
+// (adding outcome and duration; call_error on failure). Audit entries carry
+// the nested tool-call layer (DecisionLogEntry.Layer) so caller-layer and
+// callee-side decisions are separately distinguishable.
 
 import (
 	"context"
@@ -279,8 +286,9 @@ func toolCallMatchedPattern(reason string) string {
 // same bookkeeping as Evaluate (decision record, PermissionEvent on the
 // session stream, audit entry) so the permission decision is logged
 // identically for both request shapes. The session policy itself is untouched,
-// so concurrent plain requests keep their existing semantics.
-func (ps *permissionState) evaluateToolCall(requestID, target string, parsed toolCallTarget, argsDigest, fullCmd string, grants []workflow.AdapterToolRef) (allow bool, reason string) {
+// so concurrent plain requests keep their existing semantics. The layer is
+// the nested tool-call layer the call is evaluated in (CRI-163).
+func (ps *permissionState) evaluateToolCall(requestID, target string, parsed toolCallTarget, argsDigest, fullCmd string, grants []workflow.AdapterToolRef, layer int) (allow bool, reason string) {
 	ps.mu.Lock()
 	policy := ps.policy
 	ps.mu.Unlock()
@@ -298,7 +306,7 @@ func (ps *permissionState) evaluateToolCall(requestID, target string, parsed too
 		allow, reason = policy.Decide(req)
 	}
 
-	decision := ps.recordDecision(requestID, target, argsDigest, allow, reason)
+	decision := ps.recordDecision(requestID, target, argsDigest, allow, reason, layer)
 	ps.sendEvent(requestID, allow, reason)
 	ps.writeAudit(&decision)
 
@@ -386,7 +394,7 @@ func (s *permissionInterceptSink) applyToolCallPolicy(req *toolCallPayload, pars
 	if s.step != nil {
 		grants = s.step.Tools
 	}
-	allow, reason := s.permState.evaluateToolCall(req.requestID, req.target, parsed, req.argsDigest, req.fullCmd, grants)
+	allow, reason := s.permState.evaluateToolCall(req.requestID, req.target, parsed, req.argsDigest, req.fullCmd, grants, s.nesting.depth)
 	if !allow {
 		s.anyDenied = true
 		deniedTool := req.tool
@@ -395,7 +403,7 @@ func (s *permissionInterceptSink) applyToolCallPolicy(req *toolCallPayload, pars
 		}
 		deniedPayload := map[string]any{
 			"request_id": req.requestID,
-			"tool":       deniedTool,
+			"tool":       s.redactEventValue(deniedTool),
 			"reason":     reason,
 		}
 		if suggestion := PermissionDenialSuggestion(s.session.Adapter, deniedTool); suggestion != "" {
@@ -522,13 +530,64 @@ func (n toolCallNesting) descends(ref string) toolCallNesting {
 // caller's Execute event loop, which immediately moves on to the next
 // Permissions event.
 type nestedToolCall struct {
-	requestID  string
-	target     string
+	requestID string
+	target    string
+	// tool is the resolved tool name: the §2 target's tool segment, falling
+	// back to the request's tool field when the target omits it (dynamic
+	// tool surface) — the same resolution validateToolCallGraph applies.
 	tool       string
 	argsDigest string
 	calleeRef  string
 	calleeStep *workflow.StepNode
 	nesting    toolCallNesting
+	// startedAt is the dispatch time; the tool.call_result event's duration
+	// (CRI-163) is measured from it.
+	startedAt time.Time
+}
+
+// Nested adapter tool-call observability event kinds (CRI-163), attributed
+// under the caller step on the run's adapter event stream.
+const (
+	nestedToolCallEventKind       = "tool.call"
+	nestedToolCallResultEventKind = "tool.call_result"
+)
+
+// nestedToolCallEventPayload builds the shared CRI-163 event payload: the
+// call target, the resolved tool name, the nested call's own depth (1 for a
+// step-level caller's first-level nested call), and the request id the typed
+// reply is correlated by.
+func nestedToolCallEventPayload(call *nestedToolCall) map[string]any {
+	return map[string]any{
+		"target":     call.target,
+		"tool":       call.tool,
+		"depth":      call.nesting.depth,
+		"request_id": call.requestID,
+	}
+}
+
+// emitNestedToolCallEvent emits the tool.call event for a dispatched nested
+// adapter tool call, attributed under the caller step via the caller's
+// execute sink. It runs synchronously at dispatch, before the callee Execute
+// goroutine is spawned, so it strictly precedes every event the callee emits.
+func (s *permissionInterceptSink) emitNestedToolCallEvent(call *nestedToolCall) {
+	s.inner.Adapter(nestedToolCallEventKind, nestedToolCallEventPayload(call))
+}
+
+// emitNestedToolCallResultEvent emits the tool.call_result event for a
+// settled nested adapter tool call, after the callee Execute returned. On a
+// successful call the payload adds outcome (the callee's own outcome) and
+// duration (wall-clock from dispatch, integer milliseconds); on a failed call
+// outcome is omitted and call_error carries the typed failure code instead.
+func (s *permissionInterceptSink) emitNestedToolCallResultEvent(call *nestedToolCall, outcome, callError string) {
+	payload := nestedToolCallEventPayload(call)
+	payload["duration"] = time.Since(call.startedAt).Milliseconds()
+	if outcome != "" {
+		payload["outcome"] = outcome
+	}
+	if callError != "" {
+		payload["call_error"] = callError
+	}
+	s.inner.Adapter(nestedToolCallResultEventKind, payload)
 }
 
 // dispatchNestedToolCall dispatches an allowed adapter tool call to the callee
@@ -602,17 +661,24 @@ func (s *permissionInterceptSink) dispatchNestedToolCall(req *toolCallPayload, p
 	// goroutine so the caller's Execute event loop stays live. Only calls
 	// that pass every gate are registered, so teardown never audits a
 	// synchronously rejected call as abandoned.
-	s.permState.registerPendingToolCall(req.requestID, req.target)
-	s.nested.Add(1)
-	go s.runNestedToolCall(&nestedToolCall{
+	tool := parsed.Tool
+	if tool == "" {
+		tool = req.tool
+	}
+	call := &nestedToolCall{
 		requestID:  req.requestID,
 		target:     req.target,
-		tool:       req.tool,
+		tool:       tool,
 		argsDigest: req.argsDigest,
 		calleeRef:  parsed.AdapterRef,
 		calleeStep: calleeStep,
 		nesting:    nesting,
-	})
+		startedAt:  time.Now(),
+	}
+	s.permState.registerPendingToolCall(req.requestID, req.target)
+	s.emitNestedToolCallEvent(call)
+	s.nested.Add(1)
+	go s.runNestedToolCall(call)
 }
 
 // runNestedToolCall executes the nested callee and delivers the typed reply
@@ -642,6 +708,7 @@ func (s *permissionInterceptSink) runNestedToolCall(call *nestedToolCall) {
 		return
 	}
 
+	s.emitNestedToolCallResultEvent(call, result.Outcome, "")
 	s.permState.sendToolCallResultEvent(&v2.ToolCallResult{
 		RequestId:   call.requestID,
 		Outcome:     result.Outcome,
@@ -681,14 +748,18 @@ func (s *permissionInterceptSink) reportNestedCallFailure(call *nestedToolCall, 
 		code = callErrorUnknownAdapter
 	}
 	s.permState.writeAudit(&DecisionLogEntry{
-		SessionID:   s.permState.sessionID,
-		RequestID:   call.requestID,
-		Tool:        call.target,
-		ArgsDigest:  call.argsDigest,
-		Decision:    "deny",
-		Reason:      "nested callee execution failed: " + code + ": " + execErr.Error(),
+		SessionID:  s.permState.sessionID,
+		RequestID:  call.requestID,
+		Tool:       call.target,
+		ArgsDigest: call.argsDigest,
+		Decision:   "deny",
+		Reason:     "nested callee execution failed: " + code + ": " + execErr.Error(),
+		// The call was evaluated in this sink's own layer; the failure is
+		// attributed there, not to the callee's deeper layer.
+		Layer:       s.nesting.depth,
 		EvaluatedAt: time.Now(),
 	})
+	s.emitNestedToolCallResultEvent(call, "", code)
 	s.permState.sendToolCallResult(call.requestID, code)
 }
 
@@ -855,6 +926,7 @@ func (s *permissionInterceptSink) rejectToolCall(requestID, target, argsDigest, 
 		ArgsDigest:  argsDigest,
 		Decision:    "deny",
 		Reason:      "adapter tool call rejected: " + code,
+		Layer:       s.nesting.depth,
 		EvaluatedAt: time.Now(),
 	})
 	s.permState.sendToolCallResult(requestID, code)

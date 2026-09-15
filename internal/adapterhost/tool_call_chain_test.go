@@ -171,7 +171,8 @@ func startToolCallChain(t *testing.T, betaTarget string, maxToolDepth int) *tool
 // denyAuditReason returns the deny audit entry's reason for a session and
 // typed code, or "" when no matching entry exists.
 func denyAuditReason(entries []DecisionLogEntry, sessionID, code string) string {
-	for _, e := range entries {
+	for i := range entries {
+		e := &entries[i]
 		if e.Decision == "deny" && e.SessionID == sessionID && strings.Contains(e.Reason, code) {
 			return e.Reason
 		}
