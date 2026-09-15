@@ -11,6 +11,7 @@ package adapterhost
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -67,11 +68,19 @@ func (r *nestedCalleeRecorder) calleeStep() *workflow.StepNode {
 // (input requires "task"; outputs "report" string + "count" number), records
 // the session/step it executed under, optionally emits plain permission
 // requests, and returns configurable outputs or an error.
+// CRI-161 test hooks are args-driven so one adapter instance can serve
+// concurrent nested Executes: a task value of "block" blocks until the
+// nested Execute context is done (recording what the callee observed), and
+// "slow" delays long enough for a faster sibling call to complete first —
+// which is what makes interleaved reply delivery observable.
 type nestedCalleeAdapter struct {
 	rec       *nestedCalleeRecorder
 	permTools []string // plain permission.request tools to emit (distinct request ids)
 	outputs   map[string]cty.Value
 	execErr   error
+
+	ctxErrMu sync.Mutex
+	ctxErrs  []error // ctx.Err() values observed by blocking executes
 }
 
 func (a *nestedCalleeAdapter) Info(_ context.Context) (Info, error) {
@@ -106,6 +115,17 @@ func (a *nestedCalleeAdapter) Restore(context.Context, string, []byte, uint32) e
 
 func (a *nestedCalleeAdapter) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
 	a.rec.record(sessionID, step)
+	task := step.Input["task"]
+	switch task {
+	case "block":
+		// CRI-161: hold the nested Execute open until the host's context
+		// (step timeout or run cancellation) reaches it.
+		<-ctx.Done()
+		a.recordCtxErr(ctx.Err())
+		return adapter.Result{Outcome: "failure"}, ctx.Err()
+	case "slow":
+		time.Sleep(150 * time.Millisecond)
+	}
 	for i, tool := range a.permTools {
 		sink.Adapter("permission.request", map[string]any{
 			"request_id": "callee-perm-" + string(rune('0'+i)),
@@ -115,7 +135,31 @@ func (a *nestedCalleeAdapter) Execute(ctx context.Context, sessionID string, ste
 	if a.execErr != nil {
 		return adapter.Result{Outcome: "failure"}, a.execErr
 	}
-	return adapter.Result{Outcome: "success", Outputs: a.outputs}, nil
+	outputs := a.outputs
+	if outputs == nil {
+		// Derive per-call outputs from the input so interleaved replies can
+		// be matched to their own call.
+		outputs = map[string]cty.Value{
+			"report": cty.StringVal(task),
+			"count":  cty.NumberIntVal(int64(len(task))),
+		}
+	}
+	return adapter.Result{Outcome: "success", Outputs: outputs}, nil
+}
+
+func (a *nestedCalleeAdapter) recordCtxErr(err error) {
+	a.ctxErrMu.Lock()
+	defer a.ctxErrMu.Unlock()
+	a.ctxErrs = append(a.ctxErrs, err)
+}
+
+func (a *nestedCalleeAdapter) recordedCtxErr(i int) error {
+	a.ctxErrMu.Lock()
+	defer a.ctxErrMu.Unlock()
+	if i >= len(a.ctxErrs) {
+		return nil
+	}
+	return a.ctxErrs[i]
 }
 
 // nestedCallerAdapter is the caller-side fake. It emits one adapter tool call
@@ -585,11 +629,13 @@ func TestNestedToolCall_LazyBind_VerifiedOnlyCallee(t *testing.T) {
 }
 
 // directToolCallSink builds an intercept sink wired to a real manager for the
-// direct-dispatch tests (unknown callee, crash, depth, invalid args).
+// direct-dispatch tests (unknown callee, crash, depth, invalid args). It opens
+// the caller session with a background context: session lifetime is the run
+// scope. Tests that need to drive a step timeout or run cancellation into the
+// nested dispatch assign sink.execCtx after construction (withExecCtx).
 func directToolCallSink(t *testing.T, sm *SessionManager, audit *sliceAuditWriter, step *workflow.StepNode, graph *workflow.FSMGraph, toolDepth int) (*permissionInterceptSink, *permissionState) {
 	t.Helper()
-	ctx := context.Background()
-	if err := sm.Open(ctx, nestedCallerSession, "caller", "", nil, nil); err != nil {
+	if err := sm.Open(context.Background(), nestedCallerSession, "caller", "", nil, nil); err != nil {
 		t.Fatalf("Open caller: %v", err)
 	}
 	sess, err := sm.lookup(nestedCallerSession)
@@ -607,7 +653,6 @@ func directToolCallSink(t *testing.T, sm *SessionManager, audit *sliceAuditWrite
 		graph:     graph,
 		mgr:       sm,
 		toolDepth: toolDepth,
-		execCtx:   ctx,
 	}
 	return sink, ps
 }
@@ -766,4 +811,325 @@ func TestNestedToolCall_CalleeAbortRunPropagates(t *testing.T) {
 	if !inner.saw("session.crash") {
 		t.Error("expected session.crash event from the callee's abort_run handling")
 	}
+}
+
+// ---------- CRI-161: async dispatch, reply correlation, timeout/cancel ----------
+
+// withExecCtx configures the sink to serve the given Execute context. The
+// production path assigns execCtx in newPermissionInterceptSink; tests set it
+// explicitly to drive step timeouts and run cancellation into the nested
+// dispatch (CRI-161).
+func withExecCtx(sink *permissionInterceptSink, execCtx context.Context) *permissionInterceptSink {
+	sink.execCtx = execCtx
+	return sink
+}
+
+// readToolCallResults drains stream events until n tool_call_result events
+// arrive, returning them in arrival order (any interleaved grant/cancel
+// events are skipped). Arrival order is the observable for interleaved
+// in-flight calls: ordered replies are explicitly NOT assumed by the
+// Permissions stream contract, but the slow/fast fixture makes the fast
+// sibling deterministic first.
+func readToolCallResults(t *testing.T, ps *permissionState, n int) []*v2.ToolCallResult {
+	t.Helper()
+	var results []*v2.ToolCallResult
+	for len(results) < n {
+		ev := readStreamEvent(t, ps)
+		if tcr := ev.GetToolCallResult(); tcr != nil {
+			results = append(results, tcr)
+		}
+	}
+	return results
+}
+
+// pendingCount snapshots the caller session's pending tool-call registry.
+func pendingCount(t *testing.T, ps *permissionState) int {
+	t.Helper()
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	return len(ps.pendingToolCalls)
+}
+
+// TestNestedToolCall_InterleavedReplies (CRI-161): two tool calls issued from
+// one caller session with the second call faster than the first. The calls
+// run concurrently, the fast call's reply arrives first, and each reply
+// carries its own call's outputs — correlation is by request_id, not by
+// reply order.
+func TestNestedToolCall_InterleavedReplies(t *testing.T) {
+	audit := &sliceAuditWriter{}
+	calleeRec := &nestedCalleeRecorder{}
+	sm := newNestedToolCallManager(t,
+		&nestedCallerAdapter{target: nestedCallTarget},
+		&nestedCalleeAdapter{rec: calleeRec},
+	)
+	sm.Audit = audit
+	sm.SetGraph(compileNestedToolCallGraph(t))
+	ctx := context.Background()
+	if err := sm.VerifyGraph(ctx, sm.graph, nil); err != nil {
+		t.Fatalf("VerifyGraph: %v", err)
+	}
+	if err := sm.Open(ctx, nestedCalleeSession, "callee", "", nil, nil); err != nil {
+		t.Fatalf("Open callee: %v", err)
+	}
+	defer func() { _ = sm.Close(ctx, nestedCalleeSession) }()
+
+	// directToolCallSink opens the caller session itself.
+	sink, ps := directToolCallSink(t, sm, audit, nestedCallerStep(), sm.graph, 0)
+
+	// Issue both calls back-to-back: dispatch is asynchronous, so both are
+	// in flight before either completes. The first call is slow, the second
+	// fast, so the fast sibling's reply must arrive first.
+	sink.Adapter("permission.request", map[string]any{
+		"request_id": "call-1",
+		"target":     nestedCallTarget,
+		"args":       map[string]any{"task": "slow"},
+	})
+	sink.Adapter("permission.request", map[string]any{
+		"request_id": "call-2",
+		"target":     nestedCallTarget,
+		"args":       map[string]any{"task": "fast"},
+	})
+	if got := pendingCount(t, ps); got != 2 {
+		t.Fatalf("pending registry = %d entries, want 2 in-flight calls", got)
+	}
+
+	results := readToolCallResults(t, ps, 2)
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2", len(results))
+	}
+	if id := results[0].RequestId; id != "call-2" {
+		t.Errorf("first result = %q, want call-2 (fast call completed first)", id)
+	}
+	if id := results[1].RequestId; id != "call-1" {
+		t.Errorf("second result = %q, want call-1", id)
+	}
+	for _, tcr := range results {
+		if tcr.CallError != "" || tcr.Outcome != "success" {
+			t.Errorf("result %s = %q/%q, want success with no error", tcr.RequestId, tcr.Outcome, tcr.CallError)
+		}
+	}
+	// Each reply carries its own call's outputs.
+	var report1, report2 string
+	for _, tcr := range results {
+		typed, err := ctyjson.Unmarshal(tcr.OutputsJson, cty.Object(map[string]cty.Type{"report": cty.String, "count": cty.Number}))
+		if err != nil {
+			t.Fatalf("decode outputs for %s: %v", tcr.RequestId, err)
+		}
+		switch tcr.RequestId {
+		case "call-1":
+			report1 = typed.GetAttr("report").AsString()
+		case "call-2":
+			report2 = typed.GetAttr("report").AsString()
+		}
+	}
+	if report1 != "slow" || report2 != "fast" {
+		t.Errorf("outputs reports = call-1:%q call-2:%q, want slow/fast (correlated by request_id)", report1, report2)
+	}
+
+	// Both nested executes ran the callee in its own session and settled.
+	sink.waitPending()
+	if got := pendingCount(t, ps); got != 0 {
+		t.Errorf("pending registry = %d entries after settle, want 0", got)
+	}
+	calleeRec.mu.Lock()
+	sessions := append([]string(nil), calleeRec.sess...)
+	calleeRec.mu.Unlock()
+	if len(sessions) != 2 {
+		t.Fatalf("callee executed %d times, want 2", len(sessions))
+	}
+	for _, got := range sessions {
+		if got != nestedCalleeSession {
+			t.Errorf("callee executed in session %q, want %q", got, nestedCalleeSession)
+		}
+	}
+}
+
+// TestNestedToolCall_StepTimeoutMidCall (CRI-161): the caller step's deadline
+// expires while a nested tool call is in flight. The caller receives the
+// typed callee_timeout failure, the nested Execute context is cancelled so
+// the callee observes the deadline, and the correlation machinery stays live
+// — a follow-up call still gets its reply (no stream wedge).
+func TestNestedToolCall_StepTimeoutMidCall(t *testing.T) {
+	audit := &sliceAuditWriter{}
+	calleeRec := &nestedCalleeRecorder{}
+	callee := &nestedCalleeAdapter{rec: calleeRec}
+	sm := newNestedToolCallManager(t,
+		&nestedCallerAdapter{target: nestedCallTarget},
+		callee,
+	)
+	sm.Audit = audit
+	sm.SetGraph(nestedToolCallGraph())
+	execCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := sm.Open(context.Background(), nestedCalleeSession, "callee", "", nil, nil); err != nil {
+		t.Fatalf("Open callee: %v", err)
+	}
+	defer func() { _ = sm.Close(context.Background(), nestedCalleeSession) }()
+
+	sink, ps := directToolCallSink(t, sm, audit, nestedCallerStep(), sm.graph, 0)
+	sink = withExecCtx(sink, execCtx)
+
+	sink.Adapter("permission.request", map[string]any{
+		"request_id": "call-1",
+		"target":     nestedCallTarget,
+		"args":       map[string]any{"task": "block"},
+	})
+
+	tcr := readToolCallResult(t, ps)
+	if tcr.CallError != callErrorCalleeTimeout {
+		t.Errorf("call_error = %q, want %q", tcr.CallError, callErrorCalleeTimeout)
+	}
+	if tcr.Outcome != "" {
+		t.Errorf("outcome = %q, want empty (failure replies carry call_error only)", tcr.Outcome)
+	}
+	// The deadline reached the nested Execute: the callee observed the
+	// cancelled context, so it unblocked cleanly.
+	sink.waitPending()
+	if got := callee.recordedCtxErr(0); !errors.Is(got, context.DeadlineExceeded) {
+		t.Errorf("callee ctx err = %v, want context.DeadlineExceeded", got)
+	}
+
+	// No wedge: after the timeout the correlation machinery still delivers
+	// replies for follow-up calls.
+	sink.Adapter("permission.request", map[string]any{
+		"request_id": "call-2",
+		"target":     nestedCallTarget,
+		"args":       map[string]any{"task": "fast"},
+	})
+	tcr2 := readToolCallResult(t, ps)
+	if tcr2.RequestId != "call-2" || tcr2.CallError != "" || tcr2.Outcome != "success" {
+		t.Errorf("follow-up result = %+v, want call-2 success (no wedge)", tcr2)
+	}
+
+	// The audit recorded the typed timeout for the abandoned call.
+	var timeoutEntry bool
+	for _, entry := range audit.all() {
+		if entry.SessionID == nestedCallerSession && entry.RequestID == "call-1" &&
+			entry.Decision == "deny" && strings.Contains(entry.Reason, callErrorCalleeTimeout) {
+			timeoutEntry = true
+		}
+	}
+	if !timeoutEntry {
+		t.Errorf("audit missing callee_timeout deny entry; entries = %+v", audit.all())
+	}
+}
+
+// TestNestedToolCall_RunCanceledMidCall (CRI-161): the run is cancelled while
+// a nested tool call is in flight. The caller receives the typed canceled
+// failure and the callee observes the cancelled context; a follow-up call
+// still gets its reply (no stream wedge).
+func TestNestedToolCall_RunCanceledMidCall(t *testing.T) {
+	audit := &sliceAuditWriter{}
+	calleeRec := &nestedCalleeRecorder{}
+	callee := &nestedCalleeAdapter{rec: calleeRec}
+	sm := newNestedToolCallManager(t,
+		&nestedCallerAdapter{target: nestedCallTarget},
+		callee,
+	)
+	sm.Audit = audit
+	sm.SetGraph(nestedToolCallGraph())
+	execCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := sm.Open(context.Background(), nestedCalleeSession, "callee", "", nil, nil); err != nil {
+		t.Fatalf("Open callee: %v", err)
+	}
+	defer func() { _ = sm.Close(context.Background(), nestedCalleeSession) }()
+
+	sink, ps := directToolCallSink(t, sm, audit, nestedCallerStep(), sm.graph, 0)
+	sink = withExecCtx(sink, execCtx)
+
+	sink.Adapter("permission.request", map[string]any{
+		"request_id": "call-1",
+		"target":     nestedCallTarget,
+		"args":       map[string]any{"task": "block"},
+	})
+	// Let the callee reach its blocking point, then cancel the run.
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	tcr := readToolCallResult(t, ps)
+	if tcr.CallError != callErrorCanceled {
+		t.Errorf("call_error = %q, want %q", tcr.CallError, callErrorCanceled)
+	}
+	sink.waitPending()
+	if got := callee.recordedCtxErr(0); !errors.Is(got, context.Canceled) {
+		t.Errorf("callee ctx err = %v, want context.Canceled", got)
+	}
+
+	// No wedge: the machinery still delivers replies after cancellation.
+	sink.Adapter("permission.request", map[string]any{
+		"request_id": "call-2",
+		"target":     nestedCallTarget,
+		"args":       map[string]any{"task": "fast"},
+	})
+	tcr2 := readToolCallResult(t, ps)
+	if tcr2.RequestId != "call-2" || tcr2.CallError != "" || tcr2.Outcome != "success" {
+		t.Errorf("follow-up result = %+v, want call-2 success (no wedge)", tcr2)
+	}
+
+	var cancelEntry bool
+	for _, entry := range audit.all() {
+		if entry.SessionID == nestedCallerSession && entry.RequestID == "call-1" &&
+			entry.Decision == "deny" && strings.Contains(entry.Reason, callErrorCanceled) {
+			cancelEntry = true
+		}
+	}
+	if !cancelEntry {
+		t.Errorf("audit missing canceled deny entry; entries = %+v", audit.all())
+	}
+}
+
+// TestNestedToolCall_SessionCloseDrainsPending (CRI-161): a tool call still
+// in flight when the caller session closes is drained from the pending
+// registry and audited as abandoned; the completing goroutine still settles
+// without wedging or delivering onto the closed stream.
+func TestNestedToolCall_SessionCloseDrainsPending(t *testing.T) {
+	audit := &sliceAuditWriter{}
+	calleeRec := &nestedCalleeRecorder{}
+	sm := newNestedToolCallManager(t,
+		&nestedCallerAdapter{target: nestedCallTarget},
+		&nestedCalleeAdapter{rec: calleeRec},
+	)
+	sm.Audit = audit
+	sm.SetGraph(nestedToolCallGraph())
+	if err := sm.Verify(context.Background(), nestedCalleeSession, "callee", "", nil, nil, nil, "", "wf", "inst-1"); err != nil {
+		t.Fatalf("Verify callee: %v", err)
+	}
+	execCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sink, ps := directToolCallSink(t, sm, audit, nestedCallerStep(), sm.graph, 0)
+	sink = withExecCtx(sink, execCtx)
+
+	sink.Adapter("permission.request", map[string]any{
+		"request_id": "call-1",
+		"target":     nestedCallTarget,
+		"args":       map[string]any{"task": "block"},
+	})
+	if got := pendingCount(t, ps); got != 1 {
+		t.Fatalf("pending registry = %d entries, want 1 in-flight call", got)
+	}
+
+	// Session close: the stream is torn down and the pending call audited.
+	ps.Stop()
+	if got := pendingCount(t, ps); got != 0 {
+		t.Errorf("pending registry = %d entries after Stop, want 0 (drained)", got)
+	}
+	if ps.Requests() != nil {
+		t.Error("expected the requests channel to be closed/nil after Stop")
+	}
+	var abandonment bool
+	for _, entry := range audit.all() {
+		if entry.RequestID == "call-1" && entry.Decision == "cancelled" &&
+			strings.Contains(entry.Reason, "session closed while in flight") {
+			abandonment = true
+		}
+	}
+	if !abandonment {
+		t.Errorf("audit missing tool-call abandonment entry; entries = %+v", audit.all())
+	}
+
+	// The completing goroutine still settles: its delivery is dropped (the
+	// stream is dead) and nothing wedges.
+	cancel()
+	sink.waitPending()
 }
