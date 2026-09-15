@@ -97,7 +97,18 @@ type Info struct {
 	Version           string
 	Capabilities      []string
 	SupportedFeatures []string // NEW v2 (D76)
-	AdapterInfo       workflow.AdapterInfo
+	// Tools is the adapter's declared tool surface (CRI-171). Dynamic-tools
+	// adapters (mcp, CRI-172) populate it from tools/list at OpenSession;
+	// empty until the adapter has discovered a surface.
+	Tools       []ToolInfo
+	AdapterInfo workflow.AdapterInfo
+}
+
+// ToolInfo describes one tool on an adapter's declared tool surface (CRI-171).
+type ToolInfo struct {
+	Name           string
+	Description    string
+	ArgsSchemaJSON string
 }
 
 type DiscoveryFunc func(name string) (string, error)
@@ -394,6 +405,7 @@ func (p *rpcHandle) Info(ctx context.Context) (Info, error) {
 		Version:           resp.GetVersion(),
 		Capabilities:      append([]string(nil), resp.GetCapabilities()...),
 		SupportedFeatures: append([]string(nil), resp.GetSupportedFeatures()...),
+		Tools:             toolsFromProto(resp.GetTools()),
 		AdapterInfo:       AdapterInfoFromProto(resp),
 	}, nil
 }
@@ -1169,6 +1181,23 @@ func AdapterInfoFromProto(resp *v2.InfoResponse) workflow.AdapterInfo {
 		Permissions:            append([]string(nil), resp.GetPermissions()...),
 		PermissionAliases:      copyStringMap(adapterPermissionAliases[resp.GetName()]),
 	}
+}
+
+// toolsFromProto translates InfoResponse.tools (CRI-171) into host-side
+// ToolInfo values.
+func toolsFromProto(tools []*v2.ToolInfo) []ToolInfo {
+	if len(tools) == 0 {
+		return nil
+	}
+	out := make([]ToolInfo, 0, len(tools))
+	for _, t := range tools {
+		out = append(out, ToolInfo{
+			Name:           t.GetName(),
+			Description:    t.GetDescription(),
+			ArgsSchemaJSON: t.GetArgsSchemaJson(),
+		})
+	}
+	return out
 }
 
 func copyStringMap(m map[string]string) map[string]string {

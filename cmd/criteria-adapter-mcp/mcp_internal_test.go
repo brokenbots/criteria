@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
@@ -142,17 +145,27 @@ func TestMCPBridge_Info(t *testing.T) {
 		t.Fatal("config_schema.command must be required")
 	}
 
-	// InputSchema must have "tool" as required.
-	in := resp.GetInputSchema()
-	if in == nil {
-		t.Fatal("input_schema is nil")
+	// CRI-172: the input surface is dynamic — no static InputSchema is
+	// declared, because every non-reserved input key is an MCP tool argument
+	// that varies with the discovered tool surface. Execute enforces the
+	// "tool" routing key at call time.
+	if in := resp.GetInputSchema(); in != nil && len(in.GetFields()) != 0 {
+		t.Fatalf("input_schema = %v, want absent: the mcp input surface is dynamic", in.GetFields())
 	}
-	toolField, ok := in.GetFields()["tool"]
-	if !ok {
-		t.Fatal("input_schema missing 'tool' field")
+
+	// CRI-172: the adapter declares the adapter_tools capability and the
+	// CRI-171 tools list is empty until a session discovers a surface.
+	found := false
+	for _, c := range resp.GetCapabilities() {
+		if c == "adapter_tools" {
+			found = true
+		}
 	}
-	if !toolField.GetRequired() {
-		t.Fatal("input_schema.tool must be required")
+	if !found {
+		t.Fatalf("capabilities %v must include adapter_tools", resp.GetCapabilities())
+	}
+	if len(resp.GetTools()) != 0 {
+		t.Fatalf("tools = %v, want empty before any OpenSession discovery", resp.GetTools())
 	}
 }
 
@@ -271,8 +284,11 @@ func TestMCPBridge_FullRoundTrip(t *testing.T) {
 	}
 }
 
-// TestMCPBridge_Execute_UnknownTool verifies Execute returns an error when the
-// requested tool was not advertised by the MCP server.
+// TestMCPBridge_Execute_UnknownTool verifies Execute reports a typed
+// unknown_tool failure (CRI-172): a failure result carrying the reserved
+// call_error output, not a bare Execute error — the host's adapter-tools seam
+// delivers it as the well-known call_error, distinguishable from a policy
+// deny and from a callee crash.
 func TestMCPBridge_Execute_UnknownTool(t *testing.T) {
 	if testEchoBin == "" {
 		t.Skip("echo-mcp binary not available")
@@ -288,12 +304,159 @@ func TestMCPBridge_Execute_UnknownTool(t *testing.T) {
 	}
 	defer func() { _, _ = b.CloseSession(ctx, &v2.CloseSessionRequest{SessionId: "sess-unk"}) }()
 
-	err := b.Execute(ctx, &v2.ExecuteRequest{
+	sender := &permittingEventSender{bridge: b}
+	if err := b.Execute(ctx, &v2.ExecuteRequest{
 		SessionId: "sess-unk",
 		Input:     map[string]string{"tool": "no-such-tool"},
-	}, &fakeEventSender{})
-	if err == nil {
-		t.Fatal("expected error for unknown tool")
+	}, sender); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	assertTypedUnknownToolResult(t, sender.inner.events)
+}
+
+// assertTypedUnknownToolResult asserts the last Execute event is a failure
+// result whose outputs carry the reserved call_error=unknown_tool shape, and
+// that no MCP tool content was produced.
+func assertTypedUnknownToolResult(t *testing.T, events []*v2.ExecuteEvent) {
+	t.Helper()
+	if len(events) == 0 {
+		t.Fatal("expected events, got none")
+	}
+	last := events[len(events)-1]
+	res := last.GetResult()
+	if res == nil {
+		t.Fatalf("last event must be a Result; got %T", last.GetEvent())
+	}
+	if res.GetOutcome() != "failure" {
+		t.Fatalf("outcome=%q want failure", res.GetOutcome())
+	}
+	var outputs map[string]any
+	if err := json.Unmarshal(res.GetOutputsJson(), &outputs); err != nil {
+		t.Fatalf("decode outputs_json: %v", err)
+	}
+	if outputs["call_error"] != callErrorUnknownTool {
+		t.Fatalf("outputs = %v, want call_error %q", outputs, callErrorUnknownTool)
+	}
+	for _, ev := range events {
+		if a := ev.GetAdapter(); a != nil && a.GetEventKind() == "mcp.content" {
+			t.Fatal("unknown tool must not produce mcp.content events")
+		}
+	}
+}
+
+// TestMCPBridge_Info_ToolsAfterDiscovery verifies the CRI-171 tools list
+// reflects the tools/list surface discovered at OpenSession, with names,
+// descriptions, and input schemas (CRI-172).
+func TestMCPBridge_Info_ToolsAfterDiscovery(t *testing.T) {
+	if testEchoBin == "" {
+		t.Skip("echo-mcp binary not available")
+	}
+	b := &MCPBridge{sessions: map[string]*sessionState{}}
+	ctx := context.Background()
+
+	if _, err := b.OpenSession(ctx, &v2.OpenSessionRequest{
+		SessionId: "sess-info",
+		Config:    map[string]string{"command": testEchoBin},
+	}); err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	defer func() { _, _ = b.CloseSession(ctx, &v2.CloseSessionRequest{SessionId: "sess-info"}) }()
+
+	resp, err := b.Info(ctx, &v2.InfoRequest{})
+	if err != nil {
+		t.Fatalf("Info: %v", err)
+	}
+	tools := map[string]*v2.ToolInfo{}
+	for _, tool := range resp.GetTools() {
+		tools[tool.GetName()] = tool
+	}
+	echo, ok := tools["echo"]
+	if !ok {
+		t.Fatalf("tools %v must contain the discovered \"echo\" tool", resp.GetTools())
+	}
+	if echo.GetDescription() == "" {
+		t.Fatal("echo tool description must be populated from tools/list")
+	}
+	if echo.GetArgsSchemaJson() == "" {
+		t.Fatal("echo tool args_schema_json must carry the input schema")
+	}
+	structured, ok := tools["structured"]
+	if !ok {
+		t.Fatalf("tools %v must contain the discovered \"structured\" tool", resp.GetTools())
+	}
+	if structured.GetDescription() == "" {
+		t.Fatal("structured tool description must be populated from tools/list")
+	}
+}
+
+// TestMCPBridge_Execute_ResultOutputs verifies successful tool calls map MCP
+// content into outputs_json (CRI-172): text content as the primary "text"
+// payload, structuredContent passed through verbatim under "structured".
+func TestMCPBridge_Execute_ResultOutputs(t *testing.T) {
+	if testEchoBin == "" {
+		t.Skip("echo-mcp binary not available")
+	}
+	b := &MCPBridge{sessions: map[string]*sessionState{}}
+	ctx := context.Background()
+
+	if _, err := b.OpenSession(ctx, &v2.OpenSessionRequest{
+		SessionId: "sess-out",
+		Config:    map[string]string{"command": testEchoBin},
+	}); err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	defer func() { _, _ = b.CloseSession(ctx, &v2.CloseSessionRequest{SessionId: "sess-out"}) }()
+
+	execute := func(tool string, input map[string]string) *v2.ExecuteResult {
+		t.Helper()
+		full := map[string]string{"tool": tool, "success_outcome": "success"}
+		for k, v := range input {
+			full[k] = v
+		}
+		sender := &permittingEventSender{bridge: b}
+		if err := b.Execute(ctx, &v2.ExecuteRequest{SessionId: "sess-out", Input: full}, sender); err != nil {
+			t.Fatalf("Execute %s: %v", tool, err)
+		}
+		last := sender.inner.events[len(sender.inner.events)-1]
+		res := last.GetResult()
+		if res == nil {
+			t.Fatalf("last event must be a Result; got %T", last.GetEvent())
+		}
+		return res
+	}
+
+	echoRes := execute("echo", map[string]string{"message": "hi"})
+	if echoRes.GetOutcome() != "success" {
+		t.Fatalf("echo outcome=%q want success", echoRes.GetOutcome())
+	}
+	var echoOut map[string]any
+	if err := json.Unmarshal(echoRes.GetOutputsJson(), &echoOut); err != nil {
+		t.Fatalf("decode echo outputs: %v", err)
+	}
+	if echoOut["text"] != `{"message":"hello"}` && !strings.Contains(fmt.Sprint(echoOut["text"]), "message") {
+		t.Fatalf("echo outputs text = %v, want the echoed args payload", echoOut["text"])
+	}
+	if _, hasStructured := echoOut["structured"]; hasStructured {
+		t.Fatalf("echo outputs = %v, must not carry structured content", echoOut)
+	}
+
+	structRes := execute("structured", nil)
+	if structRes.GetOutcome() != "success" {
+		t.Fatalf("structured outcome=%q want success", structRes.GetOutcome())
+	}
+	var structOut map[string]any
+	if err := json.Unmarshal(structRes.GetOutputsJson(), &structOut); err != nil {
+		t.Fatalf("decode structured outputs: %v", err)
+	}
+	if structOut["text"] != "structured payload" {
+		t.Fatalf("structured outputs text = %v, want the text content payload", structOut["text"])
+	}
+	structured, ok := structOut["structured"].(map[string]any)
+	if !ok {
+		t.Fatalf("structured outputs = %v, want structuredContent passthrough", structOut)
+	}
+	if structured["count"] != float64(2) {
+		t.Fatalf("structured passthrough = %v, want the server's structuredContent", structured)
 	}
 }
 

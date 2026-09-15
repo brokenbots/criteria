@@ -33,6 +33,9 @@ type Tool struct {
 type CallToolResult struct {
 	Content []map[string]any `json:"content"`
 	IsError bool             `json:"isError,omitempty"`
+	// StructuredContent carries the MCP structuredContent field verbatim when
+	// the server provides one (CRI-172: passthrough into adapter outputs).
+	StructuredContent json.RawMessage `json:"structuredContent,omitempty"`
 }
 
 type rpcError struct {
