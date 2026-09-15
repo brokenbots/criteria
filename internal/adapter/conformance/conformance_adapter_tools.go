@@ -110,6 +110,10 @@ type matrixCallerAdapter struct {
 	capabilities []string
 	script       []matrixCall
 	outcome      string
+	// beforeCall (CRI-169) is invoked with the script index before the call
+	// is issued; a conformance case holds the caller's Execute open at a
+	// chosen point so it can pause the run mid-call. Nil-safe.
+	beforeCall func(index int)
 
 	mu       sync.Mutex
 	requests <-chan *v2.PermissionEvent
@@ -141,7 +145,10 @@ func (a *matrixCallerAdapter) StartPermissionStream(_ context.Context, _ string,
 }
 
 func (a *matrixCallerAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
-	for _, call := range a.script {
+	for i, call := range a.script {
+		if a.beforeCall != nil {
+			a.beforeCall(i)
+		}
 		sink.Adapter("permission.request", map[string]any{
 			"request_id": call.requestID,
 			"target":     call.target,
@@ -257,13 +264,18 @@ type matrixCalleeExecution struct {
 
 // matrixCalleeAdapter is the callee fake. Its runtime handshake declares the
 // typed schema surface the host uses for the synthetic nested step; tasks
-// script three behaviors: "block" waits for the nested context cancellation
-// (the timeout case), "explode" fails the Execute with a plain error (the
-// crash case), everything else succeeds with report/count outputs.
+// script four behaviors: "block" waits for the nested context cancellation
+// (the timeout case), "hold" waits for the case's release channel or the
+// nested context cancellation (the CRI-169 pause cases), "explode" fails the
+// Execute with a plain error (the crash case), everything else succeeds with
+// report/count outputs.
 type matrixCalleeAdapter struct {
 	mu    sync.Mutex
 	sess  map[string]struct{}
 	execs []matrixCalleeExecution
+	// holdRelease unblocks the scripted "hold" task (CRI-169); a nil
+	// channel makes "hold" wait for the nested context cancellation only.
+	holdRelease chan struct{}
 }
 
 func newMatrixCallee() *matrixCalleeAdapter {
@@ -298,6 +310,15 @@ func (a *matrixCalleeAdapter) OpenSession(_ context.Context, id string, _, _ map
 
 func (a *matrixCalleeAdapter) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
 	task := step.Input["task"]
+	// Record at Execute entry so in-flight executions are observable (the
+	// CRI-169 pause cases poll for them); a canceled task updates its
+	// recorded context error on completion.
+	exec := matrixCalleeExecution{sessionID: sessionID, stepName: step.Name, task: task}
+	a.mu.Lock()
+	idx := len(a.execs)
+	a.execs = append(a.execs, exec)
+	a.mu.Unlock()
+
 	var ctxErr error
 	outcome := "success"
 	switch task {
@@ -305,13 +326,23 @@ func (a *matrixCalleeAdapter) Execute(ctx context.Context, sessionID string, ste
 		<-ctx.Done()
 		ctxErr = ctx.Err()
 		outcome = "failure"
+	case "hold":
+		// CRI-169: hold until the case releases it (drain case) or the
+		// pause drain cancels the nested context (straggler case).
+		select {
+		case <-a.holdRelease:
+		case <-ctx.Done():
+			ctxErr = ctx.Err()
+			outcome = "failure"
+		}
 	case "explode":
 		outcome = "failure"
 	}
-	exec := matrixCalleeExecution{sessionID: sessionID, stepName: step.Name, task: task, ctxErr: ctxErr}
-	a.mu.Lock()
-	a.execs = append(a.execs, exec)
-	a.mu.Unlock()
+	if ctxErr != nil {
+		a.mu.Lock()
+		a.execs[idx].ctxErr = ctxErr
+		a.mu.Unlock()
+	}
 	if ctxErr != nil {
 		return adapter.Result{Outcome: outcome}, ctxErr
 	}

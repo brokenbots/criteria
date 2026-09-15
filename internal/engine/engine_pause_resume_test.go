@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
@@ -208,4 +209,15 @@ func TestEngine_PauseResume_Concurrent(t *testing.T) {
 	// This test exists to verify the race detector is clean.
 	_ = h.pauseCount
 	_ = h.resumeCount
+}
+
+// TestEngine_WithPauseToolCallDrainTimeout (CRI-169): the option sets the
+// bounded drain window handed to every SessionManager the engine constructs
+// (Run, RunFrom, snapshot restore), so conformance tests can exercise the
+// straggler path in bounded time.
+func TestEngine_WithPauseToolCallDrainTimeout(t *testing.T) {
+	e := New(nil, nil, nil, WithPauseToolCallDrainTimeout(300*time.Millisecond))
+	if e.pauseToolCallDrainTimeout != 300*time.Millisecond {
+		t.Fatalf("pauseToolCallDrainTimeout = %v, want 300ms", e.pauseToolCallDrainTimeout)
+	}
 }

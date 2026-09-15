@@ -86,7 +86,9 @@ const adapterToolsCapability = "adapter_tools"
 // ToolCallResult.call_error). malformed_target extends the registry for
 // detected tool calls whose target does not parse as the §2 form;
 // invalid_args extends it for call arguments that fail the callee's input
-// schema (required keys missing, unknown keys on a declared surface).
+// schema (required keys missing, unknown keys on a declared surface);
+// paused extends it for calls refused by the CRI-169 pause gate while the
+// session's nested tool calls are being drained (ADR-0004 §11).
 const (
 	callErrorCapabilityMissing = "capability_missing"
 	callErrorMalformedTarget   = "malformed_target"
@@ -100,6 +102,7 @@ const (
 	callErrorInvalidArgs       = "invalid_args"
 	callErrorCalleeTimeout     = "callee_timeout"
 	callErrorCanceled          = "canceled"
+	callErrorPaused            = "paused"
 )
 
 // toolCallTarget is the parsed shape of an adapter tool-call target string
@@ -326,13 +329,19 @@ func (ps *permissionState) sendToolCallResult(requestID, callError string) {
 // sendToolCallResultEvent delivers an assembled tool-call reply on the
 // session Permissions stream, non-blocking with drop-on-backlog like
 // sendEvent.
+//
+// CRI-169: unlike plain permission traffic, tool-call replies are buffered
+// while the session is paused (active == false) — the reply is the only
+// unblock for the caller's pending correlation map, so dropping it while
+// paused would wedge the awaiting caller until resume with no way to learn
+// the outcome. Plain permission request/cancel events keep the drop when
+// inactive (they are re-presented on resume / restore instead).
 func (ps *permissionState) sendToolCallResultEvent(res *v2.ToolCallResult) {
 	ps.mu.Lock()
 	requests := ps.requests
-	active := ps.active
 	ps.mu.Unlock()
 
-	if !active || requests == nil {
+	if requests == nil {
 		return
 	}
 
@@ -452,6 +461,16 @@ func (s *permissionInterceptSink) handleToolCallRequest(payload map[string]any) 
 	parsed, ok := parseToolCallTarget(req.target)
 	if !ok {
 		s.rejectToolCall(req.requestID, req.target, req.argsDigest, callErrorMalformedTarget)
+		return
+	}
+
+	// Gate 2.5 (CRI-169, ADR-0004 §11): the pause gate. While the session is
+	// pausing (drain-first posture) or paused, new nested tool calls are
+	// refused with the typed `paused` call_error instead of starting; the
+	// in-flight ones are drained (or canceled) by Session.Pause. The caller
+	// re-issues after resume.
+	if s.permState.toolCallsPaused() {
+		s.rejectToolCall(req.requestID, req.target, req.argsDigest, callErrorPaused)
 		return
 	}
 
@@ -665,7 +684,8 @@ func (s *permissionInterceptSink) dispatchNestedToolCall(req *toolCallPayload, p
 	// Register for reply correlation, then hand the call to its own
 	// goroutine so the caller's Execute event loop stays live. Only calls
 	// that pass every gate are registered, so teardown never audits a
-	// synchronously rejected call as abandoned.
+	// synchronously rejected call as abandoned. See startNestedToolCall
+	// for the pause-gate interaction (CRI-169).
 	tool := parsed.Tool
 	if tool == "" {
 		tool = req.tool
@@ -680,23 +700,46 @@ func (s *permissionInterceptSink) dispatchNestedToolCall(req *toolCallPayload, p
 		nesting:    nesting,
 		startedAt:  time.Now(),
 	}
-	s.permState.registerPendingToolCall(req.requestID, req.target)
+	s.startNestedToolCall(call)
+}
+
+// startNestedToolCall registers the gated call for reply correlation and
+// hands it to its own goroutine. CRI-169: the call runs on a derived,
+// cancelable context so the pause drain can cancel non-draining calls
+// (typed `canceled` reply) without touching the caller's Execute context.
+// The registration re-checks the pause gate atomically under the permission
+// state's mutex, closing the race between the gate in handleToolCallRequest
+// and registration: a call that passes gate 2.5 but registers after the
+// pause gate was set is refused typed `paused` (it never starts), so once
+// the gate is set the pending set only shrinks.
+func (s *permissionInterceptSink) startNestedToolCall(call *nestedToolCall) {
+	nestedCtx, nestedCancel := context.WithCancel(s.nestedExecCtx())
+	if !s.permState.registerPendingToolCall(call.requestID, call.target, nestedCancel) {
+		nestedCancel()
+		s.rejectToolCall(call.requestID, call.target, call.argsDigest, callErrorPaused)
+		return
+	}
 	s.emitNestedToolCallEvent(call)
 	s.nested.Add(1)
-	go s.runNestedToolCall(call)
+	go s.runNestedToolCall(nestedCtx, nestedCancel, call)
 }
 
 // runNestedToolCall executes the nested callee and delivers the typed reply
 // on the caller's Permissions stream (CRI-161). It runs on its own goroutine;
-// its context is the caller's Execute context, so the caller's step timeout
-// and run cancellation both reach the callee. The reply is delivered on every
-// path — including the typed timeout and cancellation failures — so the
+// its context is derived from the caller's Execute context (CRI-169 adds the
+// per-call cancel used by the pause drain), so the caller's step timeout, run
+// cancellation, and a pause drain's cancelation of non-draining calls all
+// reach the callee. The reply is delivered on every path — including the
+// typed timeout, pause-drain cancellation, and cancellation failures — so the
 // caller's pending correlation map always unblocks: a wedged stream is a bug,
 // never a timeout mode.
-func (s *permissionInterceptSink) runNestedToolCall(call *nestedToolCall) {
+func (s *permissionInterceptSink) runNestedToolCall(nestedCtx context.Context, nestedCancel context.CancelFunc, call *nestedToolCall) {
+	// Release both waiters: the SessionManager's waitPending latch and the
+	// derived context's resources (vet lostcancel).
+	defer nestedCancel()
 	defer s.nested.Done()
 
-	result, execErr := s.mgr.execute(s.nestedExecCtx(), call.calleeRef, call.calleeStep, s.inner, call.nesting)
+	result, execErr := s.mgr.execute(nestedCtx, call.calleeRef, call.calleeStep, s.inner, call.nesting)
 
 	// Clear the pending registration before delivering, so a concurrent
 	// session teardown never audits a call whose result was already sent.

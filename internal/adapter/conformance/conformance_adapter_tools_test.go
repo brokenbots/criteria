@@ -14,3 +14,13 @@ import (
 func TestAdapterToolsFailureMatrix(t *testing.T) {
 	conformance.RunAdapterToolsFailureMatrix(t)
 }
+
+// TestAdapterToolsPauseMidCallConformance drives the CRI-169 pause/resume
+// mid-call conformance suite (drain-first pause posture, straggler
+// cancellation, pause gate, resume continuity, snapshot/restore with no
+// in-flight call) through the real engine. Host-side and unconditional: it
+// is not gated on any adapter's declared capabilities, so it always runs in
+// CI.
+func TestAdapterToolsPauseMidCallConformance(t *testing.T) {
+	conformance.RunAdapterToolsPauseMidCallConformance(t)
+}

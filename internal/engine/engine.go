@@ -184,6 +184,10 @@ type Engine struct {
 	// CRI-115: dataDir is the per-run data directory used for rotated remote
 	// adapter accept-token files. Empty disables per-scope token rotation.
 	dataDir string
+	// CRI-169: pauseToolCallDrainTimeout is the bounded wait the drain-first
+	// pause posture gives in-flight nested adapter tool calls before
+	// canceling them. Zero means the SessionManager default (60s).
+	pauseToolCallDrainTimeout time.Duration
 
 	// WS17: liveSessions holds the active SessionManager while a run is in
 	// progress, enabling Pause/Resume/Inspect from outside runLoop.
@@ -287,6 +291,7 @@ func (e *Engine) restoreSessionsFromSnapshots(ctx context.Context) (*adapterhost
 	sessions.RedactionRegistry = secrets.NewRegistry()
 	sessions.LifecycleSink = e.sink
 	sessions.SetAllowedWorkingDirRoots(e.workingDirAllowedRoots)
+	sessions.PauseToolCallDrainTimeout = e.pauseToolCallDrainTimeout
 	if e.sandboxProbeOverride != nil {
 		sessions.SetSandboxProbeOverride(e.sandboxProbeOverride)
 	}
@@ -410,6 +415,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	sessions := adapterhost.NewSessionManager(e.loader)
 	sessions.SetGraph(e.graph)
 	sessions.Audit = e.auditWriter
+	sessions.PauseToolCallDrainTimeout = e.pauseToolCallDrainTimeout
 	if e.sandboxProbeOverride != nil {
 		sessions.SetSandboxProbeOverride(e.sandboxProbeOverride)
 	}
@@ -466,6 +472,7 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	sessions := adapterhost.NewSessionManager(e.loader)
 	sessions.SetGraph(e.graph)
 	sessions.Audit = e.auditWriter
+	sessions.PauseToolCallDrainTimeout = e.pauseToolCallDrainTimeout
 	if e.sandboxProbeOverride != nil {
 		sessions.SetSandboxProbeOverride(e.sandboxProbeOverride)
 	}

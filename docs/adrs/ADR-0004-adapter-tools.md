@@ -301,10 +301,57 @@ tool result. Same-session reentry is out of scope for v1.
 
 ### 11. Pause/resume mid-call
 
-The posture for pausing and resuming a run while a tool call is in flight is
-decided in **M6.3 (CRI-169)**. This ADR deliberately does not fix it.
-CRI-169 appends its resolution to this section when it lands; until then,
-tickets must not assume either behavior for mid-call pause/resume.
+Resolved in **M6.3 (CRI-169)**: pausing a run while a nested adapter tool
+call is in flight uses the **drain-first** posture. The host pause sequence
+is:
+
+1. **Gate first.** The pause raises the tool-call gate before anything else;
+   any nested tool call attempted after that point is refused with a typed
+   `paused` `call_error` before the callee starts. The gate is raised
+   *before* policy evaluation, so a gated call produces no allow/deny audit
+   entries from the policy gate.
+2. **Drain in-flight calls within a bounded window.** The pause then waits
+   for in-flight nested calls to settle (default window 60s, tunable per
+   manager via `SessionManager.PauseToolCallDrainTimeout` and at the engine
+   via `WithPauseToolCallDrainTimeout`). A call that settles inside the
+   window is **not** canceled: its typed `tool_call_result` reply is
+   delivered to the caller while the permission stream is still live
+   (replies arriving while the session is paused are buffered and delivered
+   on resume — a dropped typed reply would wedge the caller's
+   request-correlation map).
+3. **Cancel stragglers.** Calls that do not settle inside the window are
+   canceled: their nested context is canceled, the callee observes the
+   context cancellation, and the caller receives a typed `canceled`
+   `call_error` as the tool result. A late reply from a canceled call is
+   discarded as stale. The session then pauses (on `handle.Pause` failure
+   the gate is rolled back so the session stays live).
+
+**Rationale (why drain-first, and why snapshot crossing is out of scope).**
+The posture fell out cheaply: the host already tracked pending nested calls
+for reply correlation, so a bounded drain was a small addition over
+machinery that exists. In-flight Executes must not be allowed to cross a
+pause-driven snapshot/restore — a nested call in flight at snapshot time
+would require capturing the *callee* session's in-flight state, which is out
+of scope for M6.3. Drain-first keeps the snapshot boundary clean by
+construction: by the time `handle.Pause` runs (and any subsequent
+snapshot is persisted), no nested call is in flight; stragglers that failed
+to drain have been canceled.
+
+**Resume continuity and snapshot/restore.** Pausing after in-flight calls
+have completed, then resuming, leaves the session able to make further calls
+that work. A snapshot taken when no nested call is in flight (which is every
+snapshot that follows a drained pause) round-trips through restore: the
+restored session rehydrates its permission state — including the drain
+window stamp from the paused session — and new tool calls dispatch
+normally. Restore resets the pending-call registry, so nothing in-flight is
+carried across the boundary.
+
+**Semantics summary.** Pause never abandons an in-flight call that can still
+settle (drain-first), never takes a snapshot with a nested call in flight,
+never leaves a wedged caller (stragglers get typed `canceled`), and never
+rejects an in-flight call's reply (buffered while paused). New calls started
+after the gate goes up are refused with typed `paused`; the caller re-issues
+the call after resume.
 
 ## Consequences
 
@@ -322,7 +369,8 @@ tickets must not assume either behavior for mid-call pause/resume.
 - **Wire / SDK.** One `PermissionEvent` oneof member (`tool_call_result`) in
   the external [`criteria-adapter-proto`](https://github.com/brokenbots/criteria-adapter-proto)
   package, plus the `adapter_tools` capability string (§8, §9).
-- **M6.3.** Appends the pause/resume-mid-call resolution to §11.
+- **M6.3.** ~~Appends the pause/resume-mid-call resolution to §11.~~ Done
+  (CRI-169): §11 records the drain-first resolution.
 
 ### What stays unchanged
 
@@ -373,7 +421,7 @@ tickets must not assume either behavior for mid-call pause/resume.
 - [Adapter tools](../workflow.md#adapter-tools) — the prose companion in
   `docs/workflow.md` (naming and permission surface, capability semantics,
   `policy.max_tool_depth`).
-- CRI-169 (M6.3) — pause/resume-mid-call posture; appends its resolution to
+- CRI-169 (M6.3) — pause/resume-mid-call posture; resolved as drain-first in
   §11 of this ADR.
 - `awaitPermission` in
   [cmd/criteria-adapter-mcp/bridge.go](../../cmd/criteria-adapter-mcp/bridge.go)

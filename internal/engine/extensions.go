@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -148,6 +149,17 @@ func WithRunID(id string) Option {
 func WithDataDir(dir string) Option {
 	return func(e *Engine) {
 		e.dataDir = dir
+	}
+}
+
+// WithPauseToolCallDrainTimeout sets the bounded wait the drain-first pause
+// posture (CRI-169, ADR-0004 §11) gives in-flight nested adapter tool calls
+// to settle before canceling them. Zero means the SessionManager default
+// (60s). Primarily a test hook so conformance tests can exercise the pause
+// straggler path in bounded time.
+func WithPauseToolCallDrainTimeout(d time.Duration) Option {
+	return func(e *Engine) {
+		e.pauseToolCallDrainTimeout = d
 	}
 }
 
