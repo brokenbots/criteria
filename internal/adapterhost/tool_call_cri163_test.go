@@ -9,6 +9,7 @@ package adapterhost
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -22,6 +23,10 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter/secrets"
 	"github.com/brokenbots/criteria/workflow"
 )
+
+// cri163RedactedMask is the literal the redaction registry substitutes for
+// registered sensitive values.
+const cri163RedactedMask = "[REDACTED]"
 
 // cri163Callee is the callee fake for the CRI-163 tests. It emits marker
 // adapter events around its Execute (so event ordering is observable), delays
@@ -175,6 +180,13 @@ func (a *cri163Caller) gotResult() *v2.ToolCallResult {
 	return a.result
 }
 
+// collectAllEvents snapshots the collector's captured event stream.
+func collectAllEvents(c *adapterEventCollector) []adapterEvent {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]adapterEvent(nil), c.events...)
+}
+
 // eventIndexes returns the index of the first event of each kind in the
 // collector's stream (or -1) so relative ordering can be asserted.
 func eventIndexes(t *testing.T, c *adapterEventCollector, kinds ...string) []int {
@@ -213,8 +225,9 @@ func assertEventPayload(t *testing.T, kind string, data map[string]any, reqID, w
 }
 
 // runCri163Call opens both sessions and executes the caller step, returning
-// the collector, audit writer, and the caller result.
-func runCri163Call(t *testing.T, caller *cri163Caller, callee *cri163Callee, step *workflow.StepNode) (*adapterEventCollector, *sliceAuditWriter, adapter.Result, error) {
+// the collector, audit writer, and the caller result. A non-nil registry is
+// installed on the SessionManager as the run's redaction registry.
+func runCri163Call(t *testing.T, caller *cri163Caller, callee *cri163Callee, step *workflow.StepNode, registry *secrets.Registry) (*adapterEventCollector, *sliceAuditWriter, adapter.Result, error) {
 	t.Helper()
 	audit := &sliceAuditWriter{}
 	loader := NewLoaderWithDiscovery(func(string) (string, error) { return "", nil })
@@ -222,6 +235,9 @@ func runCri163Call(t *testing.T, caller *cri163Caller, callee *cri163Callee, ste
 	loader.RegisterBuiltin("callee", func() Handle { return callee })
 	sm := NewSessionManager(loader)
 	sm.Audit = audit
+	if registry != nil {
+		sm.RedactionRegistry = registry
+	}
 
 	graph := compileNestedToolCallGraph(t)
 	sm.SetGraph(graph)
@@ -254,7 +270,7 @@ func TestNestedToolCallEvents_Success(t *testing.T) {
 	}
 	caller := &cri163Caller{requestID: "call-1", target: nestedCallTarget}
 
-	inner, audit, res, err := runCri163Call(t, caller, callee, nestedCallerStep())
+	inner, audit, res, err := runCri163Call(t, caller, callee, nestedCallerStep(), nil)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -343,7 +359,7 @@ func TestNestedToolCallEvents_ToolFieldFallback(t *testing.T) {
 	callee := &cri163Callee{rec: &nestedCalleeRecorder{}}
 	caller := &cri163Caller{requestID: "call-2", target: bareTarget, tool: "fallback_tool"}
 
-	inner, _, res, err := runCri163Call(t, caller, callee, step)
+	inner, _, res, err := runCri163Call(t, caller, callee, step, nil)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -364,7 +380,7 @@ func TestNestedToolCallEvents_Failure(t *testing.T) {
 	callee := &cri163Callee{rec: &nestedCalleeRecorder{}, execErr: errors.New("boom inside callee")}
 	caller := &cri163Caller{requestID: "call-3", target: nestedCallTarget}
 
-	inner, audit, res, err := runCri163Call(t, caller, callee, nestedCallerStep())
+	inner, audit, res, err := runCri163Call(t, caller, callee, nestedCallerStep(), nil)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -422,7 +438,7 @@ func TestNestedToolCallEvents_AuditLayers(t *testing.T) {
 	}
 	caller := &cri163Caller{requestID: "call-4", target: nestedCallTarget}
 
-	_, audit, res, err := runCri163Call(t, caller, callee, nestedCallerStep())
+	_, audit, res, err := runCri163Call(t, caller, callee, nestedCallerStep(), nil)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -468,6 +484,86 @@ func TestNestedToolCallEvents_AuditLayers(t *testing.T) {
 	// callee-side decisions carry the callee session at layer 1.
 	if callAllow.SessionID == calleeDeny.SessionID || callAllow.Layer == calleeDeny.Layer {
 		t.Errorf("caller and callee entries not distinguishable: caller=%+v callee=%+v", callAllow, calleeDeny)
+	}
+}
+
+// TestNestedToolCallEvents_TargetRedacted proves the event-side redaction of
+// adapter-supplied target/tool values (CRI-163): a value registered in the
+// run's redaction registry that rides the nested call's §2 target as the
+// parsed tool label (bareword labels admit real token formats such as
+// sk_live_…) is masked in both the tool.call and tool.call_result payloads
+// and in the permission.granted decision event, while the host-computed
+// depth/request_id/duration/outcome fields stay untouched. The audit entry
+// for the same call is masked by the redacting audit writer.
+func TestNestedToolCallEvents_TargetRedacted(t *testing.T) {
+	secret := "sk_live_abcdefgh123456"
+	secretTarget := "adapter.callee.helper.tools." + secret
+
+	callee := &cri163Callee{rec: &nestedCalleeRecorder{}}
+	caller := &cri163Caller{requestID: "call-5", target: secretTarget}
+	registry := secrets.NewRegistry()
+	registry.Register(secret)
+
+	inner, audit, res, err := runCri163Call(t, caller, callee, nestedCallerStep(), registry)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.Outcome != "success" {
+		t.Fatalf("caller outcome = %q, want success", res.Outcome)
+	}
+
+	maskedTarget := "adapter.callee.helper.tools." + cri163RedactedMask
+	for _, kind := range []string{"tool.call", "tool.call_result"} {
+		data, ok := inner.first(kind)
+		if !ok {
+			t.Fatalf("no %s event", kind)
+		}
+		assertEventPayload(t, kind, data, "call-5", maskedTarget, cri163RedactedMask)
+	}
+	// Result-side extras stay host-computed.
+	resData, _ := inner.first("tool.call_result")
+	if resData["outcome"] != "success" {
+		t.Errorf("tool.call_result outcome = %v, want success (redaction must not touch it)", resData["outcome"])
+	}
+	if _, ok := resData["duration"].(int64); !ok {
+		t.Errorf("tool.call_result duration = %v (%T), want int64 milliseconds", resData["duration"], resData["duration"])
+	}
+
+	// The tool-call granted decision carries the target too; it must be
+	// masked the same way.
+	granted, ok := inner.first("permission.granted")
+	if !ok {
+		t.Fatal("no permission.granted event for the tool call")
+	}
+	if granted["tool"] != maskedTarget {
+		t.Errorf("permission.granted tool = %v, want %q", granted["tool"], maskedTarget)
+	}
+
+	// No registered value may appear anywhere in the captured event stream.
+	for _, evt := range collectAllEvents(inner) {
+		encoded, err := json.Marshal(evt.data)
+		if err != nil {
+			t.Fatalf("marshal %s payload: %v", evt.kind, err)
+		}
+		if strings.Contains(string(encoded), secret) {
+			t.Errorf("%s payload carries the raw registered value: %s", evt.kind, encoded)
+		}
+	}
+
+	// The audit entry for the same call is masked by the redacting audit
+	// writer (same registry, same run).
+	var callAllow *DecisionLogEntry
+	for _, e := range audit.entries {
+		if e.RequestID == "call-5" && e.Decision == "allow" && e.SessionID == nestedCallerSession {
+			callAllow = e
+			break
+		}
+	}
+	if callAllow == nil {
+		t.Fatalf("no caller-layer allow audit entry; entries: %+v", audit.entries)
+	}
+	if callAllow.Tool != maskedTarget {
+		t.Errorf("audit entry tool = %q, want %q", callAllow.Tool, maskedTarget)
 	}
 }
 

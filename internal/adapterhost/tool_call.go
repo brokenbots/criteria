@@ -418,7 +418,7 @@ func (s *permissionInterceptSink) applyToolCallPolicy(req *toolCallPayload, pars
 	// follows separately on the Permissions stream.
 	s.inner.Adapter("permission.granted", map[string]any{
 		"request_id": req.requestID,
-		"tool":       req.target,
+		"tool":       s.redactEventValue(req.target),
 		"pattern":    toolCallMatchedPattern(reason),
 	})
 	return true
@@ -556,10 +556,15 @@ const (
 // call target, the resolved tool name, the nested call's own depth (1 for a
 // step-level caller's first-level nested call), and the request id the typed
 // reply is correlated by.
-func nestedToolCallEventPayload(call *nestedToolCall) map[string]any {
+//
+// The target and the resolved tool echo adapter-supplied permission.request
+// values and may embed values registered in the run's redaction registry, so
+// both are masked before emission (CRI-163) — the same treatment the decision
+// payloads and audit entries get. depth and request_id are host-computed.
+func (s *permissionInterceptSink) nestedToolCallEventPayload(call *nestedToolCall) map[string]any {
 	return map[string]any{
-		"target":     call.target,
-		"tool":       call.tool,
+		"target":     s.redactEventValue(call.target),
+		"tool":       s.redactEventValue(call.tool),
 		"depth":      call.nesting.depth,
 		"request_id": call.requestID,
 	}
@@ -570,7 +575,7 @@ func nestedToolCallEventPayload(call *nestedToolCall) map[string]any {
 // execute sink. It runs synchronously at dispatch, before the callee Execute
 // goroutine is spawned, so it strictly precedes every event the callee emits.
 func (s *permissionInterceptSink) emitNestedToolCallEvent(call *nestedToolCall) {
-	s.inner.Adapter(nestedToolCallEventKind, nestedToolCallEventPayload(call))
+	s.inner.Adapter(nestedToolCallEventKind, s.nestedToolCallEventPayload(call))
 }
 
 // emitNestedToolCallResultEvent emits the tool.call_result event for a
@@ -579,7 +584,7 @@ func (s *permissionInterceptSink) emitNestedToolCallEvent(call *nestedToolCall) 
 // duration (wall-clock from dispatch, integer milliseconds); on a failed call
 // outcome is omitted and call_error carries the typed failure code instead.
 func (s *permissionInterceptSink) emitNestedToolCallResultEvent(call *nestedToolCall, outcome, callError string) {
-	payload := nestedToolCallEventPayload(call)
+	payload := s.nestedToolCallEventPayload(call)
 	payload["duration"] = time.Since(call.startedAt).Milliseconds()
 	if outcome != "" {
 		payload["outcome"] = outcome

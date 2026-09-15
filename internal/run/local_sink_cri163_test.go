@@ -36,6 +36,7 @@ const cri163Redacted = "[REDACTED]"
 
 const (
 	cri163Target     = "adapter.callee.default.tools.helper_task"
+	cri163BareTarget = "adapter.callee.default.tools"
 	cri163CallerSess = "caller.default"
 	cri163CalleeSess = "callee.default"
 	cri163CallerStep = "call"
@@ -140,13 +141,25 @@ func (a *cri163CallerFake) Execute(ctx context.Context, _ string, _ *workflow.St
 	}
 	deadline := time.After(5 * time.Second)
 
-	token, err := cri163AwaitToolCallResult(ctx, requests, deadline)
+	token, err := cri163AwaitToolCallResult(ctx, requests, deadline, "call-1")
 	if err != nil {
 		return adapter.Result{Outcome: "failure"}, err
 	}
 	a.mu.Lock()
 	a.token = token
 	a.mu.Unlock()
+
+	// Second nested call whose target embeds the (by now registered)
+	// sensitive value as the parsed tool label — the tool.call /
+	// tool.call_result payloads and the granted decision must mask it.
+	sink.Adapter("permission.request", map[string]any{
+		"request_id": "call-2",
+		"target":     cri163BareTarget + "." + token,
+		"args":       map[string]any{"task": "fetch-token"},
+	})
+	if _, err := cri163AwaitToolCallResult(ctx, requests, deadline, "call-2"); err != nil {
+		return adapter.Result{Outcome: "failure"}, err
+	}
 
 	// Re-export the sensitive callee output as the caller's own step output
 	// (this is what the engine's redacting sink must mask in ND-JSON), then
@@ -190,8 +203,9 @@ func (a *cri163CallerFake) Snapshot(context.Context, string) (*v2.SnapshotRespon
 func (a *cri163CallerFake) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // cri163AwaitToolCallResult drains the permission stream until the typed
-// result for the nested call arrives, returning the decoded sensitive output.
-func cri163AwaitToolCallResult(ctx context.Context, requests <-chan *v2.PermissionEvent, deadline <-chan time.Time) (string, error) {
+// result for the named nested call arrives, returning the decoded sensitive
+// output.
+func cri163AwaitToolCallResult(ctx context.Context, requests <-chan *v2.PermissionEvent, deadline <-chan time.Time, reqID string) (string, error) {
 	for {
 		select {
 		case ev, ok := <-requests:
@@ -199,7 +213,7 @@ func cri163AwaitToolCallResult(ctx context.Context, requests <-chan *v2.Permissi
 				return "", errors.New("permission stream closed")
 			}
 			tcr := ev.GetToolCallResult()
-			if tcr == nil || tcr.RequestId != "call-1" {
+			if tcr == nil || tcr.RequestId != reqID {
 				continue
 			}
 			if tcr.CallError != "" {
@@ -386,6 +400,10 @@ func TestLocalSink_CRI163NestedCallEventsAuditRedaction(t *testing.T) {
 	sink := &LocalSink{RunID: "cri163", Out: &ndjson}
 
 	if err := engine.New(g, loader, sink, engine.WithAuditWriter(audit)).Run(context.Background()); err != nil {
+		for _, e := range audit.all() {
+			t.Logf("DBG audit: sess=%s layer=%d decision=%s tool=%q reason=%q req=%s", e.SessionID, e.Layer, e.Decision, e.Tool, e.Reason, e.RequestID)
+		}
+		t.Logf("DBG ndjson:\n%s", ndjson.String())
 		t.Fatalf("Run: %v", err)
 	}
 
@@ -396,51 +414,77 @@ func TestLocalSink_CRI163NestedCallEventsAuditRedaction(t *testing.T) {
 
 	// --- tool.call appears before the callee starts; tool.call_result after
 	// the callee finishes; payloads carry target, tool, depth, request_id,
-	// outcome, duration.
-	callIdx, resultIdx := -1, -1
-	calleeStartedIdx, calleeFinishedIdx := -1, -1
+	// outcome, duration. Two sequential nested calls run (call-1 plain,
+	// call-2 with the sensitive value riding the target as the parsed tool
+	// label), so events are located by request id and the two calls must
+	// not interleave.
+	call1Idx, result1Idx, call2Idx, result2Idx := -1, -1, -1, -1
+	var calleeStartedIdxs, calleeFinishedIdxs []int
 	for i, env := range envelopes {
 		ev, ok := cri163AdapterEvent(t, env)
 		if !ok {
 			continue
 		}
+		reqID, _ := ev.Data["request_id"].(string)
 		switch ev.Kind {
 		case "tool.call":
 			if ev.Step != cri163CallerStep {
 				continue
 			}
-			callIdx = i
+			switch reqID {
+			case "call-1":
+				if call1Idx < 0 {
+					call1Idx = i
+				}
+			case "call-2":
+				if call2Idx < 0 {
+					call2Idx = i
+				}
+			}
 		case "tool.call_result":
 			if ev.Step != cri163CallerStep {
 				continue
 			}
-			resultIdx = i
+			switch reqID {
+			case "call-1":
+				if result1Idx < 0 {
+					result1Idx = i
+				}
+			case "call-2":
+				if result2Idx < 0 {
+					result2Idx = i
+				}
+			}
 		case "callee.started":
-			calleeStartedIdx = i
+			calleeStartedIdxs = append(calleeStartedIdxs, i)
 		case "callee.finished":
-			calleeFinishedIdx = i
+			calleeFinishedIdxs = append(calleeFinishedIdxs, i)
 		}
 	}
-	if callIdx < 0 {
-		t.Fatal("no tool.call event in ND-JSON stream")
+	if call1Idx < 0 || result1Idx < 0 || call2Idx < 0 || result2Idx < 0 {
+		t.Fatalf("nested-call events missing: call1=%d result1=%d call2=%d result2=%d", call1Idx, result1Idx, call2Idx, result2Idx)
 	}
-	if resultIdx < 0 {
-		t.Fatal("no tool.call_result event in ND-JSON stream")
+	if len(calleeStartedIdxs) != 2 || len(calleeFinishedIdxs) != 2 {
+		t.Fatalf("callee markers: started=%v finished=%v, want two of each (two nested calls)", calleeStartedIdxs, calleeFinishedIdxs)
 	}
-	if calleeStartedIdx < 0 {
-		t.Fatal("no callee.started marker event (callee did not run)")
+	// Call-1: start before the callee's first marker; result after the first
+	// callee finished and before the second call begins.
+	if !(call1Idx < calleeStartedIdxs[0]) {
+		t.Errorf("tool.call (idx %d) must appear before the nested call starts (callee.started idx %d)", call1Idx, calleeStartedIdxs[0])
 	}
-	if callIdx > calleeStartedIdx {
-		t.Errorf("tool.call (idx %d) must appear before the nested call starts (callee.started idx %d)", callIdx, calleeStartedIdx)
+	if !(result1Idx > calleeFinishedIdxs[0] && result1Idx < calleeStartedIdxs[1]) {
+		t.Errorf("call-1 tool.call_result (idx %d) must follow the first callee.finished (idx %d) and precede the second nested call (callee.started idx %d)", result1Idx, calleeFinishedIdxs[0], calleeStartedIdxs[1])
 	}
-	if calleeFinishedIdx < 0 {
-		t.Fatal("no callee.finished marker event")
+	// Call-2: start after call-1's result, before the second callee's first
+	// marker; result after the second callee finished.
+	if !(call2Idx > result1Idx && call2Idx < calleeStartedIdxs[1]) {
+		t.Errorf("call-2 tool.call (idx %d) must follow call-1's result (idx %d) and precede the second callee start (idx %d)", call2Idx, result1Idx, calleeStartedIdxs[1])
 	}
-	if resultIdx < calleeFinishedIdx {
-		t.Errorf("tool.call_result (idx %d) must appear after the nested call finishes (callee.finished idx %d)", resultIdx, calleeFinishedIdx)
+	if !(result2Idx > calleeFinishedIdxs[1]) {
+		t.Errorf("call-2 tool.call_result (idx %d) must appear after the nested call finishes (callee.finished idx %d)", result2Idx, calleeFinishedIdxs[1])
 	}
 
-	callEv, _ := cri163AdapterEvent(t, envelopes[callIdx])
+	callEv, _ := cri163AdapterEvent(t, envelopes[call1Idx])
 	if callEv.Step != cri163CallerStep {
 		t.Errorf("tool.call step = %q, want caller step %q (attributed under the caller)", callEv.Step, cri163CallerStep)
 	}
@@ -451,7 +495,7 @@ func TestLocalSink_CRI163NestedCallEventsAuditRedaction(t *testing.T) {
 		"request_id": "call-1",
 	})
 
-	resultEv, _ := cri163AdapterEvent(t, envelopes[resultIdx])
+	resultEv, _ := cri163AdapterEvent(t, envelopes[result1Idx])
 	assertCri163PayloadFields(t, "tool.call_result", resultEv.Data, map[string]any{
 		"target":     cri163Target,
 		"tool":       "helper_task",
@@ -464,6 +508,26 @@ func TestLocalSink_CRI163NestedCallEventsAuditRedaction(t *testing.T) {
 	} else if dur < 80 {
 		t.Errorf("tool.call_result duration = %v ms, want >= 80 (callee sleeps 100ms)", dur)
 	}
+
+	// --- Redaction of the event payloads: call-2's target embeds the
+	// (registered) sensitive value as the parsed tool label; the
+	// tool.call / tool.call_result payloads must carry the masked form.
+	secretTargetMasked := cri163BareTarget + "." + cri163Redacted
+	call2Ev, _ := cri163AdapterEvent(t, envelopes[call2Idx])
+	assertCri163PayloadFields(t, "tool.call (call-2)", call2Ev.Data, map[string]any{
+		"target":     secretTargetMasked,
+		"tool":       cri163Redacted,
+		"depth":      float64(1),
+		"request_id": "call-2",
+	})
+	result2Ev, _ := cri163AdapterEvent(t, envelopes[result2Idx])
+	assertCri163PayloadFields(t, "tool.call_result (call-2)", result2Ev.Data, map[string]any{
+		"target":     secretTargetMasked,
+		"tool":       cri163Redacted,
+		"depth":      float64(1),
+		"request_id": "call-2",
+		"outcome":    "success",
+	})
 
 	// --- Redaction in events: the caller re-exported the sensitive callee
 	// output as its own step output; the engine's redacting sink must mask it
@@ -505,6 +569,7 @@ func TestLocalSink_CRI163NestedCallEventsAuditRedaction(t *testing.T) {
 	}
 	wants := []auditWant{
 		{session: cri163CallerSess, layer: 0, decision: "allow", tool: cri163Target},
+		{session: cri163CallerSess, layer: 0, decision: "allow", tool: cri163BareTarget + "." + cri163Redacted},
 		{session: cri163CalleeSess, layer: 1, decision: "allow", tool: "callee.helpers.read_file"},
 		{session: cri163CallerSess, layer: 0, decision: "allow", tool: "shell:echo " + cri163Redacted},
 	}
