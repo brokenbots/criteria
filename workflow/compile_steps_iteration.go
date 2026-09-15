@@ -30,6 +30,14 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 	diags = append(diags, validateLegacyConfig(sp)...)
 	diags = append(diags, validateOnFailureValue(sp)...)
 
+	// Tool grants are validated on every step kind. Subworkflow targets have no
+	// caller adapter, so the pointless-caller warning does not apply there.
+	toolCallerType := ""
+	if targetKind != StepTargetSubworkflow {
+		toolCallerType = adapterTypeFromRef(adapterRef)
+	}
+	diags = append(diags, validateStepToolRefs(g, sp, spec, schemas, toolCallerType)...)
+
 	// Environment override: valid only for adapter targets; subworkflow targets
 	// use the environment declared on the subworkflow block.
 	var envKey string
