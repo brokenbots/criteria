@@ -22,7 +22,7 @@ workflow_module  := content_decl*
 content_decl     := workflow_block | variable_block | local_block | data_block
                   | environment_block | output_block | adapter_block | subworkflow_block
                   | step_block | state_block | wait_block | approval_block
-                  | switch_block | policy_block | permissions_block
+                  | switch_block | permissions_block
 
 workflow_block   := "workflow" "{" workflow_attr* "}"
 workflow_attr    := "name" "=" STRING
@@ -38,7 +38,8 @@ local_block      := "local" STRING "{" local_attr* "}"
 data_block       := "data" STRING STRING "{" data_attr* "}"
 environment_block:= "environment" STRING STRING "{" "}"
 output_block     := "output" STRING "{" output_attr* "}"
-adapter_block    := "adapter" STRING STRING "{" adapter_attr* config_block? "}"
+adapter_block    := "adapter" STRING STRING "{" adapter_attr* tool_block* config_block? "}"
+tool_block       := "tool" STRING "{" "}"
 subworkflow_block:= "subworkflow" STRING "{" subworkflow_attr* "}"
 step_block       := "step" STRING "{" step_attr* input_block? outcome_block* "}"
 state_block      := "state" STRING "{" state_attr* "}"
@@ -320,11 +321,11 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 **`output`** — Declares a named output value surfaced at run completion. `value` expression is evaluated at termination time.
 
-**`adapter`** — Declares a long-lived adapter session. `type`/`name` labels route steps; `source`/`version` locate the OCI artifact; `config` sub-block provides adapter-specific configuration. `on_crash` controls crash semantics: `fail` (default), `respawn`, or `abort_run`. Adapter initialization is two-phase: every adapter is verified eagerly at run start (binary, signature, handshake, config schema, secrets), but the working-directory session binding is deferred until the first step that targets it.
+**`adapter`** — Declares a long-lived adapter session. `type`/`name` labels route steps; `source`/`version` locate the OCI artifact; `config` sub-block provides adapter-specific configuration. `on_crash` controls crash semantics: `fail` (default), `respawn`, or `abort_run`. Adapter initialization is two-phase: every adapter is verified eagerly at run start (binary, signature, handshake, config schema, secrets), but the working-directory session binding is deferred until the first step that targets it. Tool surface: static `tool "<name>" { }` declarations and `dynamic_tools`; see [Adapter tools](#adapter-tools) and [ADR-0004](adrs/ADR-0004-adapter-tools.md).
 
 **`subworkflow`** — Declares a reusable sub-workflow. `source` is a local directory path. Invoked via a step with `target = subworkflow.<name>`.
 
-**`step`** — The primary execution node. `target` (captured via remain) references the adapter or subworkflow to invoke: `adapter.<type>.<name>` or `subworkflow.<name>`. `input` sub-block provides per-invocation key-value inputs. `outcome` sub-blocks map adapter return values to next nodes. `for_each` / `count` (captured via remain) enable iteration.
+**`step`** — The primary execution node. `target` (captured via remain) references the adapter or subworkflow to invoke: `adapter.<type>.<name>` or `subworkflow.<name>`. `input` sub-block provides per-invocation key-value inputs. `outcome` sub-blocks map adapter return values to next nodes. `for_each` / `count` (captured via remain) enable iteration. `tools` grants adapter-to-adapter tool calls; see [Adapter tools](#adapter-tools).
 
 **`state`** — A named non-executing node. `terminal = true` marks a terminal state. `success = true/false` marks the run outcome. `requires` names a prerequisite state that must be visited first.
 
@@ -334,7 +335,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 **`switch`** — Conditional routing. `match` sub-blocks are evaluated in declaration order; the first truthy `condition` expression wins. `default` is the fallback; absence without an exhaustive condition set produces a runtime error.
 
-**`policy`** — Global execution guards. Zero or one per module. Attributes set hard limits on step execution counts.
+**`policy`** — Global execution guards, declared inside the `workflow` header block. Attributes set hard limits on step execution counts and the tool-call depth; see [Adapter tools](#adapter-tools).
 
 **`permissions`** — Workflow-level tool allowlist. `allow_tools` is a list of glob patterns unioned with any step-level `allow_tools`.
 
@@ -484,6 +485,73 @@ Each step, wait, and approval node declares one or more `outcome` blocks mapping
 **Terminal routing:** A `state` block with `terminal = true` terminates the run. `success = true` marks the run as succeeded; `success = false` marks it as failed. A run that reaches no terminal state is a runtime error (infinite loop guard via `policy.max_total_steps`).
 
 **Default outcome:** If a step declares only one `outcome` block and the adapter returns no named outcome, the engine routes to that single outcome automatically (implicit default). With multiple outcomes, an `outcome "default"` block must be declared.
+
+## Adapter tools
+
+Adapters may present **tools** — named operations that other adapters invoke mid-execution and receive results from inline. A tool call is **not a step**: the callee never enters the FSM, and a call never routes through outcome blocks (see Outcome model). The wire, cycle, and versioning contract is [ADR-0004](adrs/ADR-0004-adapter-tools.md).
+
+> **Status:** grammar specified by this revision. Compiler acceptance and diagnostics for these forms land with the adapter-tools compiler workstream (CRI-156); run-time tool discovery is CRI-173. Earlier binaries reject `tool` blocks and the `dynamic_tools` / `max_tool_depth` attributes as unsupported, and ignore step-level `tools`.
+
+### Grammar forms
+
+| Form | Block | Type | Required | Description |
+|---|---|---|---|---|
+| `tool "<name>" { }` | `adapter` | block, 0+ | no | Declares one statically presented tool. Zero attributes today; the block body is reserved for future use. Tool names must be unique within the adapter. |
+| `dynamic_tools` | `adapter` | bool | no | Admits a tool surface discovered at run time, gated by `allow_tools` at call time. Default `false`. May combine with static `tool` blocks. |
+| `tools` | `step`, `adapter` | list(traversal) | no | Grants adapter-to-adapter tool calls; see tools entry semantics below. |
+| `max_tool_depth` | `policy` | number | no | Bounds the tool-call stack depth. Integer ≥ 1; unset uses the engine default `8`. |
+
+### Tools entry semantics
+
+A `tools` entry is a bare traversal of the form `adapter.<type>.<name>.tools[.<tool>]` — no string literals, no expressions, no function calls:
+
+- A bare `…tools` grants the instance's **entire tool surface**; `…tools.<tool>` grants **exactly one** tool. Entries are literals, not glob patterns.
+- Every entry **grants the call**: entries are unioned into the step's effective allow set, keyed by the target string `adapter.<type>.<name>.tools[.<tool>]`.
+- The same list shape is accepted on the `adapter` declaration (configuration level), where it applies to every step that targets the instance; step-level lists union onto it.
+- `allow_tools` glob evaluation applies unchanged: `path/filepath.Match` over the full target string — dots are literal characters, there is no `**` recursive syntax, and `*` does not cross `/` (a pattern's `*` may span dots); first matching pattern wins. A glob covering every tool of an instance is spelled `…tools.*`.
+
+Example shape (compiled from CRI-156):
+
+```hcl
+adapter "shell" "worker" {
+  tool "git_status" {}
+  tool "git_diff" {}
+
+  dynamic_tools = false
+}
+
+step "lint" {
+  target = adapter.copilot.worker
+  tools  = [adapter.shell.worker.tools.git_status]
+
+  input { path = "pkg/engine" }
+  outcome "success" { next = state.done }
+}
+```
+
+### Validation rules
+
+Each rule maps 1:1 to a compiler diagnostic (CRI-156):
+
+| # | Severity | Rule |
+|---|---|---|
+| 1 | error | Every `tools` entry resolves to an adapter declared in the same workflow. |
+| 2 | error | Entry shape is `adapter.<type>.<name>[.tools[.<tool>]]`. |
+| 3 | error | When the callee declares static `tool` blocks, entry tool names must match a declared static tool. |
+| 4 | lenient | Adapters declaring `dynamic_tools = true` skip the static-name check; enforcement happens at run time via `allow_tools`. |
+| 5 | warning | Duplicate entries in one `tools` list. |
+| 6 | warning | Entry names a callee that presents no tool surface (no `tool` blocks, `dynamic_tools` unset). |
+| 7 | warning | Entry on a step whose target adapter lacks the `adapter_tools` capability. |
+| 8 | warning | Cycle in the adapter-to-adapter call graph (A calls B calls A, directly or transitively). |
+| 9 | error | `max_tool_depth` is an integer ≥ 1; default `8`. |
+
+### Reserved interactions
+
+- Tool refs are **not outcome targets**: `next` cannot reference `adapter.<type>.<name>.tools...`.
+- A tool call never fires the caller's outcome blocks; the caller's outcome routing is unaffected.
+- The callee never enters the FSM and is never outcome-routed; its result is data returned to the caller.
+- Call edges are not FSM edges: tool grants create no nodes and are not wired into node targets or reachability analysis; `policy.max_total_steps` and terminal-state checks are unaffected.
+- `allow_tools` glob semantics apply unchanged to the `adapter.<type>.<name>.tools[.<tool>]` target string.
 
 ## Error model
 
