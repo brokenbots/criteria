@@ -28,12 +28,18 @@ type AuditWriter interface {
 
 // DecisionLogEntry is a single permission decision written to the audit log.
 type DecisionLogEntry struct {
-	SessionID   string    `json:"session_id"`
-	RequestID   string    `json:"request_id"`
-	Tool        string    `json:"tool"`
-	ArgsDigest  string    `json:"args_digest"`
-	Decision    string    `json:"decision"` // "allow" | "deny" | "cancelled"
-	Reason      string    `json:"reason"`
+	SessionID  string `json:"session_id"`
+	RequestID  string `json:"request_id"`
+	Tool       string `json:"tool"`
+	ArgsDigest string `json:"args_digest"`
+	Decision   string `json:"decision"` // "allow" | "deny" | "cancelled"
+	Reason     string `json:"reason"`
+	// Layer is the nested tool-call layer the decision was made in (CRI-163):
+	// 0 for a step-level caller's decisions, 1 for the first nested callee's
+	// own decisions, and so on. Together with SessionID it lets audit readers
+	// tell the caller's allow/deny decision apart from the callee-side
+	// decisions evaluated under the callee's own allow_tools.
+	Layer       int       `json:"layer"`
 	EvaluatedAt time.Time `json:"evaluated_at"`
 }
 
@@ -133,6 +139,14 @@ func (ps *permissionState) SetPolicy(policy PermissionPolicy) {
 // corresponding PermissionEvent on the session stream, writes an audit entry,
 // and returns the decision.
 func (ps *permissionState) Evaluate(requestID, tool, argsDigest, fullCmd string) (allow bool, reason string) {
+	return ps.evaluateAtLayer(requestID, tool, argsDigest, fullCmd, 0)
+}
+
+// evaluateAtLayer is Evaluate with the nested tool-call layer recorded in the
+// audit entry (CRI-163): layer 0 is a step-level caller's decision, deeper
+// layers are the callee-side decisions evaluated inside a nested Execute
+// under the callee's own allow_tools.
+func (ps *permissionState) evaluateAtLayer(requestID, tool, argsDigest, fullCmd string, layer int) (allow bool, reason string) {
 	ps.mu.Lock()
 	policy := ps.policy
 	ps.mu.Unlock()
@@ -147,7 +161,7 @@ func (ps *permissionState) Evaluate(requestID, tool, argsDigest, fullCmd string)
 	}
 	allow, reason = policy.Decide(req)
 
-	decision := ps.recordDecision(requestID, tool, argsDigest, allow, reason)
+	decision := ps.recordDecision(requestID, tool, argsDigest, allow, reason, layer)
 	ps.sendEvent(requestID, allow, reason)
 	ps.writeAudit(&decision)
 
@@ -155,7 +169,7 @@ func (ps *permissionState) Evaluate(requestID, tool, argsDigest, fullCmd string)
 }
 
 // recordDecision updates the inflight map and decisions window under mu.
-func (ps *permissionState) recordDecision(requestID, tool, argsDigest string, allow bool, reason string) DecisionLogEntry {
+func (ps *permissionState) recordDecision(requestID, tool, argsDigest string, allow bool, reason string, layer int) DecisionLogEntry {
 	now := time.Now()
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
@@ -182,6 +196,7 @@ func (ps *permissionState) recordDecision(requestID, tool, argsDigest string, al
 		ArgsDigest:  argsDigest,
 		Decision:    rs.decision,
 		Reason:      reason,
+		Layer:       layer,
 		EvaluatedAt: now,
 	}
 	ps.decisions = append(ps.decisions, entry)
@@ -394,8 +409,8 @@ func (ps *permissionState) RestoreState(data []byte, policy PermissionPolicy, au
 
 	// Build a lookup of previously-answered requests.
 	answered := make(map[string]DecisionLogEntry, len(snap.Decisions))
-	for _, d := range snap.Decisions {
-		answered[d.RequestID] = d
+	for i := range snap.Decisions {
+		answered[snap.Decisions[i].RequestID] = snap.Decisions[i]
 	}
 	ps.mu.Unlock()
 
@@ -517,6 +532,17 @@ func (s *permissionInterceptSink) Log(stream string, chunk []byte) {
 	s.inner.Log(stream, chunk)
 }
 
+// redactEventValue masks registered sensitive values out of an adapter-provided
+// payload field before it is re-emitted as an event (CRI-163). Decision
+// payloads echo adapter-supplied strings such as tool arguments, which may
+// carry values the redaction registry has registered for this run.
+func (s *permissionInterceptSink) redactEventValue(v string) string {
+	if s.mgr == nil || s.mgr.RedactionRegistry == nil {
+		return v
+	}
+	return s.mgr.RedactionRegistry.Redact(v)
+}
+
 func (s *permissionInterceptSink) Adapter(kind string, data any) {
 	if kind == "permission.request" && s.permState != nil {
 		if payload, ok := data.(map[string]any); ok && toolCallRequestDetected(payload) {
@@ -550,7 +576,10 @@ func (s *permissionInterceptSink) handlePermissionRequest(data any) {
 	tool, _ := payload["tool"].(string)
 	fullCmd, _ := payload["full_command_text"].(string)
 
-	allow, reason := s.permState.Evaluate(requestID, tool, "", fullCmd)
+	// The layer is the caller Execute this sink serves: a step-level caller
+	// records layer 0, a nested callee records its own deeper layer, so the
+	// audit log distinguishes the two decision surfaces.
+	allow, reason := s.permState.evaluateAtLayer(requestID, tool, "", fullCmd, s.nesting.depth)
 	if allow {
 		// Strip "matched: " prefix to get the raw pattern for the payload.
 		pattern := strings.TrimPrefix(reason, "matched: ")
@@ -559,7 +588,7 @@ func (s *permissionInterceptSink) handlePermissionRequest(data any) {
 		}
 		s.inner.Adapter("permission.granted", map[string]any{
 			"request_id": requestID,
-			"tool":       tool,
+			"tool":       s.redactEventValue(tool),
 			"pattern":    pattern,
 		})
 	} else {
@@ -567,7 +596,7 @@ func (s *permissionInterceptSink) handlePermissionRequest(data any) {
 		suggestion := PermissionDenialSuggestion(s.session.Adapter, tool)
 		deniedPayload := map[string]any{
 			"request_id": requestID,
-			"tool":       tool,
+			"tool":       s.redactEventValue(tool),
 			"reason":     reason,
 		}
 		if suggestion != "" {

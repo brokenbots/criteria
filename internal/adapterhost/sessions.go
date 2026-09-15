@@ -1285,7 +1285,7 @@ func (m *SessionManager) bindVerifiedRecord(ctx context.Context, rec *verifiedRe
 // startPermissionStream starts the session-scoped Permissions stream if the
 // adapter supports it.
 func (m *SessionManager) startPermissionStream(ctx context.Context, sess *Session, plug Handle) {
-	sess.PermissionState = NewPermissionState(sess.Name, m.Audit)
+	sess.PermissionState = NewPermissionState(sess.Name, m.auditWriterForSessions())
 	if streamer, ok := plug.(PermissionStreamer); ok {
 		cancel, err := streamer.StartPermissionStream(ctx, sess.Name, sess.PermissionState.Requests())
 		if err != nil {
@@ -1476,6 +1476,15 @@ func (m *SessionManager) wrapSink(sink adapter.EventSink) adapter.EventSink {
 		return sink
 	}
 	return &secrets.RedactingEventSink{Registry: m.RedactionRegistry, Inner: sink}
+}
+
+// auditWriterForSessions returns the audit writer the sessions' permission
+// states write to: m.Audit wrapped in redaction (CRI-163) when a redaction
+// registry is configured, so sensitive values — callee outputs echoed into a
+// tool string or an adapter error message — never reach the audit log in
+// plaintext.
+func (m *SessionManager) auditWriterForSessions() AuditWriter {
+	return NewRedactingAuditWriter(m.Audit, m.RedactionRegistry)
 }
 
 func (m *SessionManager) registerSensitiveOutputs(result adapter.Result, step *workflow.StepNode) {
@@ -1914,7 +1923,7 @@ func (m *SessionManager) restartPermissionStream(ctx context.Context, sess *Sess
 		return
 	}
 	sess.PermissionState.Stop()
-	sess.PermissionState = NewPermissionState(sess.Name, m.Audit)
+	sess.PermissionState = NewPermissionState(sess.Name, m.auditWriterForSessions())
 	if streamer, ok := plug.(PermissionStreamer); ok {
 		cancel, err := streamer.StartPermissionStream(ctx, sess.Name, sess.PermissionState.Requests())
 		if err != nil {
@@ -2297,8 +2306,8 @@ func (m *SessionManager) restorePermissionState(name string, blob []byte) (*perm
 	if len(blob) == 0 {
 		return nil, nil
 	}
-	permState := NewPermissionState(name, m.Audit)
-	if err := permState.RestoreState(blob, nil, m.Audit); err != nil {
+	permState := NewPermissionState(name, m.auditWriterForSessions())
+	if err := permState.RestoreState(blob, nil, m.auditWriterForSessions()); err != nil {
 		return nil, fmt.Errorf("restore permission state: %w", err)
 	}
 	return permState, nil
