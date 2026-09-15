@@ -633,6 +633,12 @@ func TestNestedToolCall_LazyBind_VerifiedOnlyCallee(t *testing.T) {
 // the caller session with a background context: session lifetime is the run
 // scope. Tests that need to drive a step timeout or run cancellation into the
 // nested dispatch assign sink.execCtx after construction (withExecCtx).
+//
+// toolDepth seeds the sink's per-call nesting state at the given depth with a
+// call chain containing only the caller session's own ref (nestedCallerSession,
+// which is the caller's adapter ref) — the caller's baseline, with no simulated
+// caller above it. Tests that need a specific call chain (runtime cycle
+// detection) assign sink.nesting directly after construction, like withExecCtx.
 func directToolCallSink(t *testing.T, sm *SessionManager, audit *sliceAuditWriter, step *workflow.StepNode, graph *workflow.FSMGraph, toolDepth int) (*permissionInterceptSink, *permissionState) {
 	t.Helper()
 	if err := sm.Open(context.Background(), nestedCallerSession, "caller", "", nil, nil); err != nil {
@@ -652,7 +658,10 @@ func directToolCallSink(t *testing.T, sm *SessionManager, audit *sliceAuditWrite
 		step:      step,
 		graph:     graph,
 		mgr:       sm,
-		toolDepth: toolDepth,
+		nesting: toolCallNesting{
+			depth: toolDepth,
+			chain: []string{nestedCallerSession},
+		},
 	}
 	return sink, ps
 }
@@ -729,7 +738,7 @@ func TestNestedToolCall_DepthExceeded(t *testing.T) {
 	)
 	graph := nestedToolCallGraph()
 	graph.Policy = workflow.Policy{MaxToolDepth: 1}
-	// toolDepth 1 means this call would nest at depth 2 > 1.
+	// Nesting depth 1 means this call would nest at depth 2 > 1.
 	sink, ps := directToolCallSink(t, sm, audit, nestedCallerStep(), graph, 1)
 
 	sink.Adapter("permission.request", map[string]any{
