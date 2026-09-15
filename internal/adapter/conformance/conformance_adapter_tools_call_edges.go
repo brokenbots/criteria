@@ -22,13 +22,15 @@ package conformance
 //     value on the granted/denied audit path without dispatching a second
 //     nested call.
 //  2. deny_by_default_survives_call_edges — callee allow_tools are its own.
-//     The caller step holds a broad allow_tools glob for the first callee;
-//     the declaring workflow carries NO permissions block, so the nested
-//     callee session's policy is empty and its own call to the next hop is
-//     denied with "no matching allow_tools entry". The caller's patterns
-//     never auto-grant: the third hop never executes, the denial is a
-//     permission cancel (not a typed reply), and the audit carries the
-//     callee-side deny at the callee's own nesting layer.
+//     The caller step's allow_tools is deliberately broad enough to cover
+//     not only the first callee but also the callee's own nested target (so
+//     a host that leaked the caller's patterns into the callee's session
+//     would grant it); the declaring workflow carries NO permissions block,
+//     so the nested callee session's policy is empty and its own call to
+//     the next hop is denied with "no matching allow_tools entry". The
+//     caller's patterns never auto-grant: the third hop never executes, the
+//     denial is a permission cancel (not a typed reply), and the audit
+//     carries the callee-side deny at the callee's own nesting layer.
 //
 // The compile-time half of the ticket (call edges are non-data-flow for
 // workflow/compile_taint.go) lives in workflow/compile_taint_call_edges_test.go:
@@ -90,12 +92,13 @@ const (
 	// label it rides.
 	callEdgesMaskedEchoTarget = callEdgesEchoTargetBase + "." + callEdgesRedacted
 
-	// callEdgesHopBTarget/Glob and callEdgesHopCTarget alias the depth-cycle
-	// suite's shared hop-chain surface constants: the deny-by-default
-	// scenario reuses the matrix's three-hop chain verbatim.
+	// callEdgesHopBTarget/Glob, callEdgesHopCTarget, and callEdgesHopCGlob
+	// alias the depth-cycle suite's shared hop-chain surface constants: the
+	// deny-by-default scenario reuses the matrix's three-hop chain verbatim.
 	callEdgesHopBTarget = depthCycleHopBTarget
 	callEdgesHopBGlob   = depthCycleHopBGlob
 	callEdgesHopCTarget = depthCycleHopCTarget
+	callEdgesHopCGlob   = depthCycleHopCGlob
 )
 
 // callEdgesSink extends the matrix engine sink with step-output capture, so
@@ -122,11 +125,20 @@ func (s *callEdgesSink) OnStepOutputCaptured(step string, outputs map[string]str
 	s.outputs[step] = cp
 }
 
-// stepOutputs returns the outputs captured for a step (nil when none were).
+// stepOutputs returns a copy of the outputs captured for a step (nil when
+// none were), so callers cannot race the sink's writer.
 func (s *callEdgesSink) stepOutputs(step string) map[string]string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.outputs[step]
+	captured := s.outputs[step]
+	if captured == nil {
+		return nil
+	}
+	out := make(map[string]string, len(captured))
+	for k, v := range captured {
+		out[k] = v
+	}
+	return out
 }
 
 // snapshotEvents copies every recorded event, grouped by step, for the
@@ -204,7 +216,9 @@ func (a *callEdgesEchoCaller) Execute(_ context.Context, _ string, step *workflo
 		"target":     callEdgesEchoTargetBase + "." + echo,
 		"args":       map[string]any{"task": "echo-again"},
 	})
-	a.awaitReply(matrixCall{requestID: "call-2", target: callEdgesEchoTargetBase + "." + echo})
+	if !a.awaitReply(matrixCall{requestID: "call-2", target: callEdgesEchoTargetBase + "." + echo}) {
+		return adapter.Result{Outcome: "failure"}, errors.New("call-edges caller: call-2 did not settle")
+	}
 	// The caller re-exports the echoed callee output as its own step output
 	// (the CRI-163 leak chain): this is what puts the value on the engine's
 	// step-output surface, where the redacting sink must mask it via the
@@ -314,9 +328,11 @@ func callEdgesRedactionSchemas() map[string]workflow.AdapterInfo {
 }
 
 // callEdgesDenyWorkflowHCL is the deny-by-default scenario workflow: the
-// caller step's allow_tools covers only the first callee, and the declaring
-// workflow carries NO permissions block — so the nested callee session's own
-// policy is empty and its call to the next hop must be denied by default.
+// caller step's allow_tools covers both the first callee AND the callee's
+// own nested target (a pattern-leak regression would therefore grant the
+// nested call and fail the case), while the declaring workflow carries NO
+// permissions block — so the nested callee session's own policy is empty and
+// its call to the next hop must be denied by default.
 func callEdgesDenyWorkflowHCL() string {
 	return `
 workflow {
@@ -336,7 +352,7 @@ adapter "hopc" "default" {
 
 step "call" {
   target = adapter.caller.default
-  allow_tools = ["` + callEdgesHopBGlob + `"]
+  allow_tools = ["` + callEdgesHopBGlob + `", "` + callEdgesHopCGlob + `"]
 
   outcome "success" { next = step.success }
 }
@@ -602,13 +618,16 @@ func callEdgesAssertAbsent(t *testing.T, blob, raw, where string) {
 }
 
 // callEdgesCaseDenyByDefault covers invariant 3: deny-by-default survives
-// call edges. The caller step's broad allow_tools covers the first callee
-// only; the declaring workflow carries no permissions block, so the nested
-// callee session's own policy is empty and its call to the next hop is denied
-// with "no matching allow_tools entry". The caller's patterns never
-// auto-grant: the denial is a permission cancel on the callee's own session
-// (audit at the callee's own nesting layer), the denied call is never
-// dispatched, and the third hop never executes at all.
+// call edges. The caller step's allow_tools is broad enough to cover the
+// first callee and the callee's own nested target, but the declaring
+// workflow carries no permissions block, so the nested callee session's own
+// policy is empty and its call to the next hop is denied with "no matching
+// allow_tools entry". The caller's patterns never auto-grant — the deny
+// holds even though the caller's patterns would have matched the nested
+// call had the host leaked them into the callee's session — the denial is a
+// permission cancel on the callee's own session (audit at the callee's own
+// nesting layer), the denied call is never dispatched, and the third hop
+// never executes at all.
 func callEdgesCaseDenyByDefault(t *testing.T) {
 	caller := newChainHop("call-edges-deny-caller", matrixCall{
 		requestID: "call-1",
