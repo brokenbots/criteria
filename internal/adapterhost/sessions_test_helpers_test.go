@@ -79,4 +79,16 @@ func (c *adapterEventCollector) first(kind string) (map[string]any, bool) {
 	return nil, false
 }
 
+// firstWhere returns the first event of the given kind whose payload matches.
+func (c *adapterEventCollector) firstWhere(kind string, match func(map[string]any) bool) (map[string]any, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, evt := range c.events {
+		if evt.kind == kind && match(evt.data) {
+			return evt.data, true
+		}
+	}
+	return nil, false
+}
+
 var _ adapter.EventSink = (*adapterEventCollector)(nil)

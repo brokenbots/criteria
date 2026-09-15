@@ -372,8 +372,37 @@ type permissionInterceptSink struct {
 	step *workflow.StepNode
 	// graph is the compiled workflow graph used for tool-call validation
 	// (callee declared, static tool surface). Nil skips graph validation.
-	graph     *workflow.FSMGraph
-	anyDenied bool
+	graph *workflow.FSMGraph
+	// mgr is the owning SessionManager; nested adapter tool calls (CRI-160)
+	// resolve and execute the callee through it. Nil means nested execution
+	// is not wired (directly constructed sinks), and allowed calls fall back
+	// to the typed not_yet_supported reply.
+	mgr *SessionManager
+	// toolDepth is the number of nested tool-call Executes above the Execute
+	// this sink serves; 0 for a step-level Execute. Compared against the
+	// graph's policy.max_tool_depth before dispatching a nested call.
+	toolDepth int
+	// execCtx is the Execute context the sink serves. A nested callee Execute
+	// runs under it so run cancellation (timeout, user abort) reaches the
+	// callee too.
+	execCtx context.Context
+	// fatalErr latches a FatalRunError raised by a nested callee Execute
+	// (callee on_crash=abort_run, CRI-160). SessionManager.execute reads it
+	// after the adapter call returns and propagates the error so the run
+	// aborts. Set and read on the Execute goroutine, like anyDenied.
+	nestedFatalErr error
+	anyDenied      bool
+}
+
+// setNestedFatalErr records a fatal run error raised by a nested callee
+// Execute so SessionManager.execute can propagate it.
+func (s *permissionInterceptSink) setNestedFatalErr(err error) {
+	s.nestedFatalErr = err
+}
+
+// nestedFatal returns the latched fatal run error, if any.
+func (s *permissionInterceptSink) nestedFatal() error {
+	return s.nestedFatalErr
 }
 
 func (s *permissionInterceptSink) Log(stream string, chunk []byte) {

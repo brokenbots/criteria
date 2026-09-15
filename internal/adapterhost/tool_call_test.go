@@ -3,9 +3,10 @@ package adapterhost
 // tool_call_test.go — tests for the CRI-159 host seam: §2 target parsing and
 // detection, the full tool-call decision matrix (capability-missing, policy
 // deny, unknown adapter, unknown static tool, malformed target, self-call,
-// stub not-yet-supported, grant union), and the plain-request regression that
+// nil-manager fallback, grant union), and the plain-request regression that
 // non-adapter-root dotted tool names keep flowing through the plain
-// permission path.
+// permission path. Nested execution against a real SessionManager lives in
+// tool_call_exec_test.go.
 
 import (
 	"testing"
@@ -411,7 +412,12 @@ func TestToolCall_SelfCall(t *testing.T) {
 	}
 }
 
-func TestToolCall_StubNotYetSupported(t *testing.T) {
+// TestToolCall_NilManagerFallback pins the defensive nil-manager fallback: a
+// sink constructed without a wired SessionManager (directly built test
+// fixtures) cannot execute a callee, so the allowed call is rejected with the
+// typed not_yet_supported call_error. The real host always wires the manager
+// (see tool_call_exec_test.go for the nested-execution path).
+func TestToolCall_NilManagerFallback(t *testing.T) {
 	audit := &sliceAuditWriter{}
 	ps := newToolCallState(t, audit)
 	policy := allowAllPolicy()
