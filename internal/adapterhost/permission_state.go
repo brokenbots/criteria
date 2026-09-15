@@ -459,10 +459,12 @@ type permissionInterceptSink struct {
 	// is not wired (directly constructed sinks), and allowed calls fall back
 	// to the typed not_yet_supported reply.
 	mgr *SessionManager
-	// toolDepth is the number of nested tool-call Executes above the Execute
-	// this sink serves; 0 for a step-level Execute. Compared against the
-	// graph's policy.max_tool_depth before dispatching a nested call.
-	toolDepth int
+	// nesting is the per-call tool-call nesting state (CRI-162): the depth of
+	// nested tool-call Executes above the Execute this sink serves (0 for a
+	// step-level Execute) plus the caller adapter ref chain, checked for
+	// runtime cycles before dispatching a nested call and compared against
+	// the graph's policy.max_tool_depth.
+	nesting toolCallNesting
 	// execCtx is the Execute context the sink serves. A nested callee Execute
 	// runs under it so run cancellation (timeout, user abort) reaches the
 	// callee too.

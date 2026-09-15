@@ -1557,12 +1557,16 @@ continues — a failed tool call is data for the caller, not a run failure —
 and an **audit entry** is written for the enforcement event, as for other
 permission decisions.
 
-Compile time only **warns** on call-graph cycles; the runtime cap is the
-enforcement point. Compile-time call graphs **over-approximate** what a run
-will do: a `tools` grant describes what *may* be called, and dynamic tool
-surfaces are not fully knowable before the run, so a static cycle is not
-proof that one actually occurs. Depth is what actually stops pathological
-recursion at run time.
+Enforcement happens in the **host runtime**, not the compiler: at each
+adapter tool call the host tracks the per-call depth and the caller adapter
+refs on the call chain. Compile time only **warns** on call-graph cycles —
+and its call graphs **over-approximate** what a run will do: a `tools` grant
+describes what *may* be called, and dynamic tool surfaces are not fully
+knowable before the run, so a static cycle is not proof that one actually
+occurs. The runtime gates stop pathological recursion: a call that would
+exceed `max_tool_depth` fails with the typed `depth_exceeded` call error,
+and a call that would re-enter an adapter already on the call chain fails
+with the typed `cycle_detected` call error.
 
 ---
 

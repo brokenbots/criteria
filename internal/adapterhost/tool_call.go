@@ -21,7 +21,13 @@ package adapterhost
 //  4. graph validation: callee adapter declared (FSMGraph.Adapters) and a
 //     named tool present on a callee that declares a static surface;
 //  5. self-call rejection (ADR-0004 §10);
-//  6. nested execution (CRI-160): the callee runs in its OWN session via a
+//  6. runtime call-chain checks (CRI-162, the enforcement point for
+//     policy.max_tool_depth — the compiler only warns): a nested call may
+//     not re-enter an adapter already on the caller adapter ref chain
+//     (runtime cycle detection, typed cycle_detected) and may not exceed
+//     the graph's policy.max_tool_depth (default 8, typed depth_exceeded);
+//     each rejected call is audited and the run continues;
+//  7. nested execution (CRI-160): the callee runs in its OWN session via a
 //     nested SessionManager.Execute issued under the caller's in-flight
 //     Execute. The callee session is resolved through the lazy-bind path,
 //     governed by the callee's own environment and allow_tools (the declaring
@@ -31,7 +37,7 @@ package adapterhost
 //     governs its session; the caller receives a typed failure (callee_crash)
 //     and its outcome routing is unaffected (ADR-0004 §5).
 //
-// CRI-161: gate 6 dispatches asynchronously. The gates above stay on the
+// CRI-161: gate 7 dispatches asynchronously. The gates above stay on the
 // caller's Execute event loop, but the nested Execute runs on its own
 // goroutine, registered in the caller session's pending map keyed by
 // request_id (the host-side mirror of the MCP bridge's
@@ -53,6 +59,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -81,6 +88,7 @@ const (
 	callErrorSelfCall          = "self_call"
 	callErrorNotYetSupported   = "not_yet_supported"
 	callErrorDepthExceeded     = "depth_exceeded"
+	callErrorCycleDetected     = "cycle_detected"
 	callErrorCalleeCrash       = "callee_crash"
 	callErrorInvalidArgs       = "invalid_args"
 	callErrorCalleeTimeout     = "callee_timeout"
@@ -458,7 +466,7 @@ func (s *permissionInterceptSink) handleToolCallRequest(payload map[string]any) 
 		return
 	}
 
-	// Gate 6: nested execution (CRI-160/CRI-161). An otherwise-allowed call
+	// Gate 7: nested execution (CRI-160/CRI-161). An otherwise-allowed call
 	// runs the callee in its own session and replies with the callee's
 	// result. Dispatch is asynchronous so in-flight calls interleave; the
 	// typed reply is delivered on the caller's Permissions stream by the
@@ -477,6 +485,37 @@ func (s *permissionInterceptSink) nestedToolCallMaxDepth() int {
 	return workflow.DefaultPolicy.MaxToolDepth
 }
 
+// toolCallNesting is the per-call nesting state threaded through nested
+// SessionManager.Execute calls (CRI-162): depth counts the nested tool-call
+// Executes above the current one (the caller step's own depth baseline is 0,
+// compared against policy.max_tool_depth, default 8), and chain is the
+// caller adapter refs visited on the call chain, seeded with the executing
+// step's own adapter ref. The chain backs runtime cycle detection: a nested
+// call whose callee ref already appears on the chain re-enters an adapter on
+// the chain.
+type toolCallNesting struct {
+	depth int
+	chain []string
+}
+
+// enters reports whether ref is already on the call chain — i.e. the nested
+// call would re-enter an adapter on the chain (a runtime cycle).
+func (n toolCallNesting) enters(ref string) bool {
+	return slices.Contains(n.chain, ref)
+}
+
+// descends returns the nesting state for a call to ref: one level deeper,
+// with ref appended to a fresh chain. The chain is copied rather than
+// appended in place because CRI-161 dispatches sibling calls concurrently —
+// sharing a backing array across the completing goroutines would be a data
+// hazard.
+func (n toolCallNesting) descends(ref string) toolCallNesting {
+	chain := make([]string, len(n.chain)+1)
+	copy(chain, n.chain)
+	chain[len(n.chain)] = ref
+	return toolCallNesting{depth: n.depth + 1, chain: chain}
+}
+
 // nestedToolCall captures a dispatched adapter tool call: everything the
 // completing goroutine needs to run the callee and deliver the typed reply
 // (CRI-161). The dispatch path copies these fields before returning to the
@@ -489,7 +528,7 @@ type nestedToolCall struct {
 	argsDigest string
 	calleeRef  string
 	calleeStep *workflow.StepNode
-	depth      int
+	nesting    toolCallNesting
 }
 
 // dispatchNestedToolCall dispatches an allowed adapter tool call to the callee
@@ -519,10 +558,23 @@ func (s *permissionInterceptSink) dispatchNestedToolCall(req *toolCallPayload, p
 		return
 	}
 
+	// Runtime call-chain checks (CRI-162, ADR-0004 §6). The compile-time
+	// cycle warning stays advisory; this is the enforcement point. Cycle
+	// gate first: it is the cheapest and most specific diagnosis — a call
+	// that re-enters an adapter already on the caller adapter ref chain
+	// fails typed; the run continues.
+	if s.nesting.enters(parsed.AdapterRef) {
+		s.rejectToolCall(req.requestID, req.target, req.argsDigest, callErrorCycleDetected)
+		return
+	}
+
 	// Depth gate (ADR-0004 §6): the tool-call stack is bounded by
-	// policy.max_tool_depth. A call that would exceed the bound is a typed
-	// failure for the caller; the run continues.
-	if newDepth := s.toolDepth + 1; newDepth > s.nestedToolCallMaxDepth() {
+	// policy.max_tool_depth (default 8). A call that would exceed the bound
+	// is a typed failure for the caller; the run continues. The callee ref
+	// is appended to the call chain here so the callee's own nested calls
+	// see it.
+	nesting := s.nesting.descends(parsed.AdapterRef)
+	if nesting.depth > s.nestedToolCallMaxDepth() {
 		s.rejectToolCall(req.requestID, req.target, req.argsDigest, callErrorDepthExceeded)
 		return
 	}
@@ -559,7 +611,7 @@ func (s *permissionInterceptSink) dispatchNestedToolCall(req *toolCallPayload, p
 		argsDigest: req.argsDigest,
 		calleeRef:  parsed.AdapterRef,
 		calleeStep: calleeStep,
-		depth:      s.toolDepth + 1,
+		nesting:    nesting,
 	})
 }
 
@@ -573,7 +625,7 @@ func (s *permissionInterceptSink) dispatchNestedToolCall(req *toolCallPayload, p
 func (s *permissionInterceptSink) runNestedToolCall(call *nestedToolCall) {
 	defer s.nested.Done()
 
-	result, execErr := s.mgr.execute(s.nestedExecCtx(), call.calleeRef, call.calleeStep, s.inner, call.depth)
+	result, execErr := s.mgr.execute(s.nestedExecCtx(), call.calleeRef, call.calleeStep, s.inner, call.nesting)
 
 	// Clear the pending registration before delivering, so a concurrent
 	// session teardown never audits a call whose result was already sent.

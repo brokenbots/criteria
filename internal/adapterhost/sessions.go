@@ -1600,13 +1600,21 @@ func (m *SessionManager) bindVerifiedAndLookup(ctx context.Context, name string,
 // outcome (result delivery, fatal error latch, typed failure) is settled and
 // observed before the step completes.
 //
-// toolDepth is the number of nested tool-call Executes above this one; 0 for
-// a step-level Execute.
+// nesting carries the per-call tool-call nesting state (CRI-162): the number
+// of nested tool-call Executes above this one (0 for a step-level Execute)
+// plus the caller adapter ref chain visited so far, seeded with the
+// executing step's own adapter ref.
 func (m *SessionManager) Execute(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
-	return m.execute(ctx, name, step, sink, 0)
+	// The chain is seeded with the executing step's own adapter ref — the
+	// caller's baseline on the call chain.
+	seed := name
+	if step != nil && step.AdapterRef != "" {
+		seed = step.AdapterRef
+	}
+	return m.execute(ctx, name, step, sink, toolCallNesting{chain: []string{seed}})
 }
 
-func (m *SessionManager) execute(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink, toolDepth int) (adapter.Result, error) {
+func (m *SessionManager) execute(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink, nesting toolCallNesting) (adapter.Result, error) {
 	sess, err := m.lookup(name)
 	if err != nil {
 		if !errors.Is(err, ErrUnknownSession) {
@@ -1636,7 +1644,7 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 	defer m.unbindCurrentSink(sess)
 
 	execSink := m.execSinkForSession(sess, sink)
-	permSink := newPermissionInterceptSink(ctx, execSink, sess, step, m.graph, m, toolDepth)
+	permSink := newPermissionInterceptSink(ctx, execSink, sess, step, m.graph, m, nesting)
 
 	result, execErr := sess.handle.Execute(ctx, name, step, permSink)
 
@@ -1724,7 +1732,7 @@ func (m *SessionManager) execSinkForSession(sess *Session, sink adapter.EventSin
 	return sink
 }
 
-func newPermissionInterceptSink(ctx context.Context, inner adapter.EventSink, sess *Session, step *workflow.StepNode, graph *workflow.FSMGraph, mgr *SessionManager, toolDepth int) *permissionInterceptSink {
+func newPermissionInterceptSink(ctx context.Context, inner adapter.EventSink, sess *Session, step *workflow.StepNode, graph *workflow.FSMGraph, mgr *SessionManager, nesting toolCallNesting) *permissionInterceptSink {
 	return &permissionInterceptSink{
 		inner:     inner,
 		permState: sess.PermissionState,
@@ -1732,7 +1740,7 @@ func newPermissionInterceptSink(ctx context.Context, inner adapter.EventSink, se
 		step:      step,
 		graph:     graph,
 		mgr:       mgr,
-		toolDepth: toolDepth,
+		nesting:   nesting,
 		execCtx:   ctx,
 	}
 }
