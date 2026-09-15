@@ -1,11 +1,12 @@
 package adapterhost
 
 // tool_call.go — CRI-159: the M4.1 host seam for adapter tool calls
-// (ADR-0004 §8). A tool call arrives as a permission.request AdapterEvent on
-// the Execute stream carrying kind == "adapter_tool" (or a §2 target key).
-// The seam detects those payloads, gates them in a fixed order, and answers
-// with a typed PermissionEvent.tool_call_result on the caller's Permissions
-// stream keyed by request_id:
+// (ADR-0004 §8), extended in CRI-160 with real nested execution. A tool call
+// arrives as a permission.request AdapterEvent on the Execute stream carrying
+// kind == "adapter_tool" (or a §2 target key). The seam detects those
+// payloads, gates them in a fixed order, and answers with a typed
+// PermissionEvent.tool_call_result on the caller's Permissions stream keyed
+// by request_id:
 //
 //  1. capability gate (deterministic, no policy call): the caller session's
 //     handshake capabilities must include adapter_tools;
@@ -19,16 +20,31 @@ package adapterhost
 //  4. graph validation: callee adapter declared (FSMGraph.Adapters) and a
 //     named tool present on a callee that declares a static surface;
 //  5. self-call rejection (ADR-0004 §10);
-//  6. stub reply: an otherwise-allowed call receives call_error
-//     not_yet_supported — real nested execution lands in CRI-160.
+//  6. nested execution (CRI-160): the callee runs in its OWN session via a
+//     nested SessionManager.Execute issued under the caller's in-flight
+//     Execute. The callee session is resolved through the lazy-bind path,
+//     governed by the callee's own environment and allow_tools (the declaring
+//     workflow's permissions.allow_tools — never the caller's step grants),
+//     its outputs are decoded against its own OutputSchema, and the result is
+//     returned to the caller as the tool result. The callee's own on_crash
+//     governs its session; the caller receives a typed failure (callee_crash)
+//     and its outcome routing is unaffected (ADR-0004 §5).
 //
 // Plain (non-tool) permission requests never reach this file's decision path:
 // the sink routes them to the untouched plain flow, so workflows without tool
 // refs execute through identical code paths.
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sort"
 	"strings"
 	"time"
+
+	"github.com/zclconf/go-cty/cty"
+	ctyjson "github.com/zclconf/go-cty/cty/json"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/workflow"
@@ -40,7 +56,9 @@ const adapterToolsCapability = "adapter_tools"
 
 // Typed call_error codes (ADR-0004 §8 registry; free-form string values on
 // ToolCallResult.call_error). malformed_target extends the registry for
-// detected tool calls whose target does not parse as the §2 form.
+// detected tool calls whose target does not parse as the §2 form;
+// invalid_args extends it for call arguments that fail the callee's input
+// schema (required keys missing, unknown keys on a declared surface).
 const (
 	callErrorCapabilityMissing = "capability_missing"
 	callErrorMalformedTarget   = "malformed_target"
@@ -48,6 +66,9 @@ const (
 	callErrorUnknownTool       = "unknown_tool"
 	callErrorSelfCall          = "self_call"
 	callErrorNotYetSupported   = "not_yet_supported"
+	callErrorDepthExceeded     = "depth_exceeded"
+	callErrorCalleeCrash       = "callee_crash"
+	callErrorInvalidArgs       = "invalid_args"
 )
 
 // toolCallTarget is the parsed shape of an adapter tool-call target string
@@ -260,10 +281,20 @@ func (ps *permissionState) evaluateToolCall(requestID, target string, parsed too
 	return allow, reason
 }
 
-// sendToolCallResult delivers a typed tool-call reply (CRI-152
+// sendToolCallResult delivers a typed tool-call failure reply (CRI-152
 // PermissionEvent.tool_call_result) on the session Permissions stream,
 // non-blocking with drop-on-backlog like sendEvent.
 func (ps *permissionState) sendToolCallResult(requestID, callError string) {
+	ps.sendToolCallResultEvent(&v2.ToolCallResult{
+		RequestId: requestID,
+		CallError: callError,
+	})
+}
+
+// sendToolCallResultEvent delivers an assembled tool-call reply on the
+// session Permissions stream, non-blocking with drop-on-backlog like
+// sendEvent.
+func (ps *permissionState) sendToolCallResultEvent(res *v2.ToolCallResult) {
 	ps.mu.Lock()
 	requests := ps.requests
 	active := ps.active
@@ -276,10 +307,7 @@ func (ps *permissionState) sendToolCallResult(requestID, callError string) {
 	select {
 	case requests <- &v2.PermissionEvent{
 		Event: &v2.PermissionEvent_ToolCallResult{
-			ToolCallResult: &v2.ToolCallResult{
-				RequestId: requestID,
-				CallError: callError,
-			},
+			ToolCallResult: res,
 		},
 	}:
 	default:
@@ -295,6 +323,9 @@ type toolCallPayload struct {
 	tool       string
 	argsDigest string
 	fullCmd    string
+	// args carries the typed call arguments (§8) that become the callee's
+	// input keys. Nil when the caller sent no args.
+	args map[string]any
 }
 
 // parseToolCallPayload extracts the request id and call fields from a
@@ -313,6 +344,9 @@ func parseToolCallPayload(payload map[string]any) (toolCallPayload, bool) {
 		p.argsDigest, _ = payload["argsDigest"].(string)
 	}
 	p.fullCmd, _ = payload["full_command_text"].(string)
+	if args, ok := payload["args"].(map[string]any); ok {
+		p.args = args
+	}
 	return p, true
 }
 
@@ -408,10 +442,243 @@ func (s *permissionInterceptSink) handleToolCallRequest(payload map[string]any) 
 		return
 	}
 
-	// Stub reply for an otherwise-allowed call: the seam is exercised end to
-	// end (request in, typed reply out, caller unblocked) before real nested
-	// execution lands in CRI-160.
-	s.rejectToolCall(req.requestID, req.target, req.argsDigest, callErrorNotYetSupported)
+	// Gate 6: nested execution (CRI-160). An otherwise-allowed call runs the
+	// callee in its own session and replies with the callee's result.
+	s.executeNestedToolCall(&req, parsed)
+}
+
+// nestedToolCallMaxDepth returns the effective policy.max_tool_depth for the
+// caller's graph. A compiled graph normalizes the unset default to 8
+// (workflow.DefaultPolicy); hand-built graphs may carry 0, so the engine
+// default applies there too.
+func (s *permissionInterceptSink) nestedToolCallMaxDepth() int {
+	if s.graph != nil && s.graph.Policy.MaxToolDepth > 0 {
+		return s.graph.Policy.MaxToolDepth
+	}
+	return workflow.DefaultPolicy.MaxToolDepth
+}
+
+// executeNestedToolCall dispatches an allowed adapter tool call to the callee
+// adapter in its own session (CRI-160, ADR-0004 §8) and answers the caller
+// with the callee's result as the tool result.
+//
+// Locking: the nested Execute runs under the caller's in-flight Execute with
+// no SessionManager lock held here (see SessionManager.Execute for the
+// contract).
+func (s *permissionInterceptSink) executeNestedToolCall(req *toolCallPayload, parsed toolCallTarget) {
+	// A sink without a wired manager cannot execute a callee (directly
+	// constructed test fixtures). The real host always wires the manager.
+	if s.mgr == nil {
+		s.rejectToolCall(req.requestID, req.target, req.argsDigest, callErrorNotYetSupported)
+		return
+	}
+
+	// Depth gate (ADR-0004 §6): the tool-call stack is bounded by
+	// policy.max_tool_depth. A call that would exceed the bound is a typed
+	// failure for the caller; the run continues.
+	if newDepth := s.toolDepth + 1; newDepth > s.nestedToolCallMaxDepth() {
+		s.rejectToolCall(req.requestID, req.target, req.argsDigest, callErrorDepthExceeded)
+		return
+	}
+
+	// The callee adapter node: gate 4 already validated the declaration
+	// against this graph, so a nil node here means graph validation was
+	// skipped (nil graph) and the session lookup will decide resolvability.
+	calleeNode := (*workflow.AdapterNode)(nil)
+	if s.graph != nil {
+		calleeNode = s.graph.Adapters[parsed.AdapterRef]
+	}
+
+	// The callee's declared schema surface, captured at its verify-time
+	// handshake. Drives input validation and output typing for the synthetic
+	// step; nil means permissive (no declared schema).
+	calleeInfo := s.mgr.cachedAdapterInfo(parsed.AdapterRef)
+
+	calleeStep, inputErr := syntheticCalleeStep(parsed, calleeNode, s.graph, calleeInfo, req.args)
+	if inputErr != nil {
+		s.rejectToolCall(req.requestID, req.target, req.argsDigest, callErrorInvalidArgs)
+		return
+	}
+
+	result, execErr := s.mgr.execute(s.nestedExecCtx(), parsed.AdapterRef, calleeStep, s.inner, s.toolDepth+1)
+	if execErr != nil {
+		s.reportNestedCallFailure(req, execErr)
+		return
+	}
+
+	outputsJSON, encErr := encodeToolCallOutputs(result.Outputs)
+	if encErr != nil {
+		s.rejectToolCall(req.requestID, req.target, req.argsDigest, callErrorCalleeCrash)
+		return
+	}
+
+	s.permState.sendToolCallResultEvent(&v2.ToolCallResult{
+		RequestId:   req.requestID,
+		Outcome:     result.Outcome,
+		OutputsJson: outputsJSON,
+	})
+}
+
+// reportNestedCallFailure reports a failed nested callee execution to the
+// caller: an audit deny entry plus the typed failure reply, so the caller's
+// Execute unblocks.
+//
+// An abort_run crash in the callee's own session aborts the run: the callee's
+// on_crash governs its session, so that policy decision propagates as a fatal
+// run error rather than being swallowed into a tool result. The caller still
+// receives the typed callee_crash reply; the fatal error rides the sink back
+// to SessionManager.execute, which propagates it to the engine once the
+// caller's adapter call returns.
+func (s *permissionInterceptSink) reportNestedCallFailure(req *toolCallPayload, execErr error) {
+	code := callErrorCalleeCrash
+	var fatal *FatalRunError
+	switch {
+	case errors.As(execErr, &fatal):
+		s.setNestedFatalErr(execErr)
+	case errors.Is(execErr, ErrUnknownSession):
+		// Unknown at runtime: not in the verified set and not bindable.
+		code = callErrorUnknownAdapter
+	}
+	s.permState.writeAudit(&DecisionLogEntry{
+		SessionID:   s.permState.sessionID,
+		RequestID:   req.requestID,
+		Tool:        req.target,
+		ArgsDigest:  req.argsDigest,
+		Decision:    "deny",
+		Reason:      "nested callee execution failed: " + code + ": " + execErr.Error(),
+		EvaluatedAt: time.Now(),
+	})
+	s.permState.sendToolCallResult(req.requestID, code)
+}
+
+// nestedExecCtx returns the Execute context this sink serves, so the nested
+// callee Execute honors run cancellation. Sinks constructed without a context
+// (direct test fixtures) fall back to context.Background().
+func (s *permissionInterceptSink) nestedExecCtx() context.Context {
+	if s.execCtx == nil {
+		return context.Background()
+	}
+	return s.execCtx
+}
+
+// syntheticCalleeStep builds the StepNode that executes a tool-called callee
+// (CRI-160). The step carries:
+//   - the callee input keys from the call args, rendered to the wire shape
+//     (plain strings raw, structured values JSON-encoded) and validated
+//     against the callee's declared input schema;
+//   - the callee adapter's own environment (AdapterNode.Environment, already
+//     resolved to the workflow default at compile time) — never the caller's;
+//   - the callee's own allow_tools policy: the declaring workflow's
+//     permissions.allow_tools, the same union base any step targeting the
+//     callee would receive. The caller's allow_tools gated the call itself
+//     (CRI-159 gate 3) and does not carry into the callee session;
+//   - the callee's declared OutputSchema so its outputs are typed by the same
+//     decode path as normal step outputs;
+//   - no OnCrash: the callee's own adapter-level on_crash, captured at bind,
+//     governs its session.
+//
+// owningGraph is the graph that validated the callee (the caller's graph —
+// CRI-159 gate 4 restricts callees to adapters declared there), whose
+// workflow-level allow_tools governs the callee session. A nil callee node
+// (nil graph, gate 4 skipped) yields a permissive step; session resolution
+// decides resolvability.
+func syntheticCalleeStep(parsed toolCallTarget, calleeNode *workflow.AdapterNode, owningGraph *workflow.FSMGraph, calleeInfo *workflow.AdapterInfo, args map[string]any) (*workflow.StepNode, error) {
+	input, err := calleeInputFromArgs(args, calleeInfo)
+	if err != nil {
+		return nil, err
+	}
+
+	step := &workflow.StepNode{
+		Name:        "tool." + parsed.String(),
+		TargetKind:  workflow.StepTargetAdapter,
+		AdapterRef:  parsed.AdapterRef,
+		Input:       input,
+		Environment: calleeNodeEnvironment(calleeNode),
+		AllowTools:  workflowAllowToolsForCallee(owningGraph),
+	}
+	if calleeInfo != nil {
+		step.OutputSchema = calleeInfo.OutputSchema
+	}
+	return step, nil
+}
+
+// calleeNodeEnvironment resolves the callee adapter's own environment.
+func calleeNodeEnvironment(calleeNode *workflow.AdapterNode) string {
+	if calleeNode == nil {
+		return ""
+	}
+	return calleeNode.Environment
+}
+
+// workflowAllowToolsForCallee returns the callee's own allow_tools: the
+// declaring workflow's permissions.allow_tools.
+func workflowAllowToolsForCallee(owningGraph *workflow.FSMGraph) []string {
+	if owningGraph == nil {
+		return nil
+	}
+	return owningGraph.WorkflowAllowTools()
+}
+
+// calleeInputFromArgs renders the §8 typed call arguments as the callee's
+// wire input map (map<string,string>, the same shape a step's input{} block
+// produces): string values pass through raw; every other JSON type is
+// encoded. When the callee declares an input schema, the args are validated
+// against it — required keys must be present and non-empty, and on a declared
+// surface no undeclared keys may appear (the compiler enforces the same
+// posture for static input{} blocks).
+func calleeInputFromArgs(args map[string]any, calleeInfo *workflow.AdapterInfo) (map[string]string, error) {
+	input := make(map[string]string, len(args))
+	for key, val := range args {
+		if s, ok := val.(string); ok {
+			input[key] = s
+			continue
+		}
+		encoded, err := json.Marshal(val)
+		if err != nil {
+			return nil, fmt.Errorf("render call argument %q: %w", key, err)
+		}
+		input[key] = string(encoded)
+	}
+
+	if calleeInfo == nil || len(calleeInfo.InputSchema) == 0 {
+		return input, nil
+	}
+	for key := range input {
+		if _, declared := calleeInfo.InputSchema[key]; !declared {
+			return nil, fmt.Errorf("undeclared input key %q for callee", key)
+		}
+	}
+	var missing []string
+	for name, field := range calleeInfo.InputSchema {
+		if !field.Required {
+			continue
+		}
+		val, ok := input[name]
+		if !ok || strings.TrimSpace(val) == "" {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return nil, fmt.Errorf("missing required input key(s): %s", strings.Join(missing, ", "))
+	}
+	return input, nil
+}
+
+// encodeToolCallOutputs serializes the callee's decoded typed outputs as the
+// native-JSON outputs_json of a successful tool result (ADR-0004 §5: the
+// callee's ExecuteResult flows back to the caller as the tool result).
+func encodeToolCallOutputs(outputs map[string]cty.Value) ([]byte, error) {
+	if len(outputs) == 0 {
+		return []byte("{}"), nil
+	}
+	vals := make(map[string]cty.Value, len(outputs))
+	types := make(map[string]cty.Type, len(outputs))
+	for k, v := range outputs {
+		vals[k] = v
+		types[k] = v.Type()
+	}
+	return ctyjson.Marshal(cty.ObjectVal(vals), cty.Object(types))
 }
 
 // validateToolCallGraph validates the parsed callee against the compiled

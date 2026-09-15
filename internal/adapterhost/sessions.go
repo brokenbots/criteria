@@ -147,6 +147,12 @@ type SessionManager struct {
 	// but have not yet been bound to their working directory (phase 2).
 	// Binding happens automatically on the first Execute call.
 	verified map[string]*verifiedRecord
+	// adapterInfos caches each adapter's declared schema surface
+	// (workflow.AdapterInfo) captured from the phase-1 Info handshake. It
+	// drives nested tool-call execution (CRI-160): the synthetic callee step's
+	// input validation and OutputSchema decode come from here, so a callee
+	// verified but never step-targeted still carries its declared types.
+	adapterInfos map[string]*workflow.AdapterInfo
 	// bindMu serializes the one-time promotion of a verified adapter to a
 	// bound session. This prevents concurrent Execute callers from racing to
 	// bind the same adapter and seeing ErrSessionAlreadyOpen from the winner.
@@ -984,7 +990,26 @@ func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterNam
 		return nil, fmt.Errorf("adapter %q sandbox validation: %w", adapterName, sandboxErr)
 	}
 
+	// Cache the declared schema surface for nested tool-call execution
+	// (CRI-160). Callees verified but never step-targeted have no compiled
+	// step to carry their schema, so the host keeps it here instead.
+	m.mu.Lock()
+	if m.adapterInfos == nil {
+		m.adapterInfos = make(map[string]*workflow.AdapterInfo)
+	}
+	m.adapterInfos[name] = &info.AdapterInfo
+	m.mu.Unlock()
+
 	return info.Capabilities, nil
+}
+
+// cachedAdapterInfo returns the AdapterInfo captured during the adapter's
+// phase-1 handshake, or nil when the adapter has no cached surface (directly
+// bound test fixtures). Thread-safe.
+func (m *SessionManager) cachedAdapterInfo(name string) *workflow.AdapterInfo {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.adapterInfos[name]
 }
 
 // storeVerifiedRecord stores a verified adapter record, guarding against races.
@@ -1549,7 +1574,32 @@ func (m *SessionManager) bindVerifiedAndLookup(ctx context.Context, name string,
 	return m.lookup(name)
 }
 
+// Execute runs a step against the named adapter session, binding a
+// verified-only session lazily on first use.
+//
+// Locking contract (CRI-160, nested adapter tool calls): Execute holds no
+// lock across the adapter call itself — bindMu is taken only inside
+// bindVerifiedAndLookup during the bind phase, and mu is taken only for short
+// map operations. A nested Execute issued under this one (a callee session
+// running while the caller's Execute is in flight) is therefore safe on a
+// DIFFERENT session: the nested call serializes on bindMu only if it must
+// bind, never while the caller holds it. Callee session != caller session is
+// guaranteed by the CRI-159 self-call rejection, so the nested call cannot
+// re-enter the caller session's Execute.
+//
+// Ordering invariant: never block the caller session's stream while holding a
+// lock the nested Execute needs — that would deadlock the tool call. The
+// nested path (permissionInterceptSink.executeNestedToolCall) holds no
+// SessionManager locks while executing the callee and replies on the
+// caller's Permissions stream with non-blocking channel sends.
+//
+// toolDepth is the number of nested tool-call Executes above this one; 0 for
+// a step-level Execute.
 func (m *SessionManager) Execute(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+	return m.execute(ctx, name, step, sink, 0)
+}
+
+func (m *SessionManager) execute(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink, toolDepth int) (adapter.Result, error) {
 	sess, err := m.lookup(name)
 	if err != nil {
 		if !errors.Is(err, ErrUnknownSession) {
@@ -1579,13 +1629,20 @@ func (m *SessionManager) Execute(ctx context.Context, name string, step *workflo
 	defer m.unbindCurrentSink(sess)
 
 	execSink := m.execSinkForSession(sess, sink)
-	permSink := newPermissionInterceptSink(execSink, sess, step, m.graph)
+	permSink := newPermissionInterceptSink(ctx, execSink, sess, step, m.graph, m, toolDepth)
 
 	result, execErr := sess.handle.Execute(ctx, name, step, permSink)
 
 	m.maybeOverrideOutcome(permSink, &result)
 
 	if execErr == nil {
+		// A nested callee Execute that crashed with on_crash=abort_run latches
+		// its fatal error on the sink (CRI-160): the callee's own crash policy
+		// governs its session, so the error propagates to the engine instead
+		// of the caller's Execute reporting success.
+		if fatalErr := permSink.nestedFatal(); fatalErr != nil {
+			return result, fatalErr
+		}
 		m.registerSensitiveOutputs(result, step)
 		return result, nil
 	}
@@ -1653,13 +1710,16 @@ func (m *SessionManager) execSinkForSession(sess *Session, sink adapter.EventSin
 	return sink
 }
 
-func newPermissionInterceptSink(inner adapter.EventSink, sess *Session, step *workflow.StepNode, graph *workflow.FSMGraph) *permissionInterceptSink {
+func newPermissionInterceptSink(ctx context.Context, inner adapter.EventSink, sess *Session, step *workflow.StepNode, graph *workflow.FSMGraph, mgr *SessionManager, toolDepth int) *permissionInterceptSink {
 	return &permissionInterceptSink{
 		inner:     inner,
 		permState: sess.PermissionState,
 		session:   sess,
 		step:      step,
 		graph:     graph,
+		mgr:       mgr,
+		toolDepth: toolDepth,
+		execCtx:   ctx,
 	}
 }
 

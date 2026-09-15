@@ -643,6 +643,20 @@ type FSMGraph struct {
 	spec *Spec
 }
 
+// WorkflowAllowTools returns the workflow-level permissions.allow_tools list
+// (CRI-160). It is the union base every adapter step declared in this graph
+// receives at compile time, and it governs adapter tool calls issued from
+// sessions bound in this graph's scope: the synthetic step that executes a
+// nested tool-call callee carries this list as its own allow_tools, so the
+// callee's session policy is the declaring workflow's — never the calling
+// step's. Returns nil when no workflow-level allow_tools is declared.
+func (g *FSMGraph) WorkflowAllowTools() []string {
+	if g.spec == nil {
+		return nil
+	}
+	return append([]string(nil), g.spec.Permissions.AllowTools...)
+}
+
 // VariableNode is a compiled variable declaration.
 // Variables are read-only in W04; write support is tracked as future work.
 type VariableNode struct {
