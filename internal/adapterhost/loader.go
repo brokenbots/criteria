@@ -1180,7 +1180,22 @@ func AdapterInfoFromProto(resp *v2.InfoResponse) workflow.AdapterInfo {
 		SupportedFeatures:      append([]string(nil), resp.GetSupportedFeatures()...),
 		Permissions:            append([]string(nil), resp.GetPermissions()...),
 		PermissionAliases:      copyStringMap(adapterPermissionAliases[resp.GetName()]),
+		RuntimeTools:           runtimeToolNamesFromProto(resp.GetTools()),
 	}
+}
+
+// runtimeToolNamesFromProto extracts the tool names carried by
+// InfoResponse.tools (CRI-171) so the compiler can check named tool refs
+// against the runtime surface (CRI-173). Returns nil for an empty list.
+func runtimeToolNamesFromProto(tools []*v2.ToolInfo) []string {
+	if len(tools) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(tools))
+	for _, t := range tools {
+		out = append(out, t.GetName())
+	}
+	return out
 }
 
 // toolsFromProto translates InfoResponse.tools (CRI-171) into host-side

@@ -25,8 +25,9 @@ func compileSubworkflowStep(g *FSMGraph, sp *StepSpec, spec *Spec, subworkflowRe
 	diags = append(diags, validateOnFailureForNonIterating(sp)...)
 	// Subworkflow targets have no caller adapter, so the pointless-caller
 	// warning does not apply; entries are still validated for shape and
-	// resolution against this workflow's adapters.
-	diags = append(diags, validateStepToolRefs(g, sp, spec, nil, "")...)
+	// resolution against this workflow's adapters, consulting the handshake
+	// tool surface when schemas were supplied (CRI-173).
+	diags = append(diags, validateStepToolRefs(g, sp, spec, opts.Schemas, "")...)
 
 	if len(sp.AllowTools) > 0 {
 		diags = append(diags, &hcl.Diagnostic{
@@ -64,8 +65,6 @@ func compileSubworkflowStep(g *FSMGraph, sp *StepSpec, spec *Spec, subworkflowRe
 		})
 		effectiveOnCrash = ""
 	}
-
-	_ = opts // reserved for future use (e.g. depth limiting)
 
 	node := &StepNode{
 		Name:           sp.Name,

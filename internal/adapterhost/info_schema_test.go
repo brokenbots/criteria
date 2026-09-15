@@ -104,6 +104,53 @@ func TestAdapterInfoFromProto_EmptyCapabilities(t *testing.T) {
 	}
 }
 
+// protoString returns a pointer to s, matching the proto accessor shape for
+// optional string fields used in these fixtures.
+func protoString(s string) *string { return &s }
+
+// TestAdapterInfoFromProto_PropagatesRuntimeTools verifies that the tool names
+// in InfoResponse.tools (CRI-171) are copied into AdapterInfo.RuntimeTools by
+// AdapterInfoFromProto, so the compiler can check named tool refs against the
+// handshake's runtime surface (CRI-173). An empty or absent tools list yields
+// nil, keeping the strict-default path for adapters that expose no tools.
+func TestAdapterInfoFromProto_PropagatesRuntimeTools(t *testing.T) {
+	resp := &v2.InfoResponse{
+		Name:    "test-adapter",
+		Version: "1.0.0",
+		Tools: []*v2.ToolInfo{
+			{Name: "fetch", ArgsSchemaJson: protoString(`{"type":"object"}`)},
+			{Name: "search"},
+		},
+	}
+
+	info := adapterhostpkg.AdapterInfoFromProto(resp)
+
+	if len(info.RuntimeTools) != 2 {
+		t.Fatalf("RuntimeTools len = %d; want 2", len(info.RuntimeTools))
+	}
+	if info.RuntimeTools[0] != "fetch" || info.RuntimeTools[1] != "search" {
+		t.Errorf("RuntimeTools = %v; want [fetch search]", info.RuntimeTools)
+	}
+}
+
+// TestAdapterInfoFromProto_EmptyRuntimeTools verifies that an InfoResponse
+// without tools (or with an empty tools list) yields a nil RuntimeTools so the
+// compiler sees no runtime tool surface.
+func TestAdapterInfoFromProto_EmptyRuntimeTools(t *testing.T) {
+	t.Run("absent tools", func(t *testing.T) {
+		info := adapterhostpkg.AdapterInfoFromProto(&v2.InfoResponse{Name: "bare", Version: "0.1"})
+		if info.RuntimeTools != nil {
+			t.Errorf("expected nil RuntimeTools for absent InfoResponse.tools; got %v", info.RuntimeTools)
+		}
+	})
+	t.Run("empty tools list", func(t *testing.T) {
+		info := adapterhostpkg.AdapterInfoFromProto(&v2.InfoResponse{Name: "bare", Version: "0.1", Tools: []*v2.ToolInfo{}})
+		if info.RuntimeTools != nil {
+			t.Errorf("expected nil RuntimeTools for empty InfoResponse.tools; got %v", info.RuntimeTools)
+		}
+	})
+}
+
 // TestAdapterInfoFromProto_PropagatesSupportedFeatures verifies that
 // supported_features in the InfoResponse are copied into
 // AdapterInfo.SupportedFeatures by AdapterInfoFromProto.

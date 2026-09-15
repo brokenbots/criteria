@@ -299,6 +299,98 @@ step "run" {
 	}
 }
 
+// TestToolRefSubworkflowStepHandshakeSurface verifies a subworkflow-targeted
+// step's named tools ref is checked against the handshake's InfoResponse.tools
+// surface (CRI-173): it must compile clean when the name is reported, fail
+// with the mode 9 diagnostic when absent, and fall back to the strict default
+// with an accurate "no handshake available" detail when no schemas were
+// supplied (standalone compile).
+func TestToolRefSubworkflowStepHandshakeSurface(t *testing.T) {
+	dir := t.TempDir()
+	childDir := filepath.Join(dir, "child")
+	if err := os.MkdirAll(childDir, 0o755); err != nil {
+		t.Fatalf("mkdir child: %v", err)
+	}
+	childSrc := `
+workflow {
+  name          = "child"
+  version       = "0.1"
+  initial_state = "done"
+  target_state  = "done"
+}
+
+state "done" { terminal = true }
+`
+	if err := os.WriteFile(filepath.Join(childDir, "child.hcl"), []byte(childSrc), 0o644); err != nil {
+		t.Fatalf("write child: %v", err)
+	}
+	src := callEdgesSrcNamed("run", "",
+		`adapter "mcp" "registry" {}`,
+		`subworkflow "child" { source = "./child" }
+
+step "run" {
+  target = subworkflow.child
+  tools  = [adapter.mcp.registry.tools.search]
+  outcome "success" { next = state.done }
+}`)
+	opts := func(schemas map[string]AdapterInfo) CompileOpts {
+		return CompileOpts{
+			WorkflowDir:         dir,
+			Schemas:             schemas,
+			SubWorkflowResolver: &LocalSubWorkflowResolver{AllowedRoots: []string{dir}},
+		}
+	}
+	handshakeSchemas := func(runtimeTools ...string) map[string]AdapterInfo {
+		return map[string]AdapterInfo{
+			"mcp": {InputSchema: map[string]ConfigField{}, RuntimeTools: runtimeTools},
+		}
+	}
+
+	t.Run("reported name compiles clean", func(t *testing.T) {
+		spec, diags := Parse("t.hcl", []byte(src))
+		if diags.HasErrors() {
+			t.Fatalf("parse: %s", diags.Error())
+		}
+		_, diags = CompileWithOpts(spec, nil, opts(handshakeSchemas("search")))
+		if len(diags) != 0 {
+			t.Fatalf("expected clean compile, got %d diagnostic(s): %s", len(diags), diags.Error())
+		}
+	})
+
+	t.Run("unreported name fails the mode 9 check", func(t *testing.T) {
+		spec, diags := Parse("t.hcl", []byte(src))
+		if diags.HasErrors() {
+			t.Fatalf("parse: %s", diags.Error())
+		}
+		_, diags = CompileWithOpts(spec, nil, opts(handshakeSchemas("fetch")))
+		expectToolDiag(t, diags, hcl.DiagError, `tools entry references unknown tool "adapter.mcp.registry.tools.search"`, src, "adapter.mcp.registry.tools.search")
+		if len(diags) != 1 {
+			t.Fatalf("expected exactly one diagnostic, got %d: %s", len(diags), diags.Error())
+		}
+		if !strings.Contains(diags[0].Detail, "InfoResponse.tools: fetch") {
+			t.Errorf("detail %q must name the reported runtime surface", diags[0].Detail)
+		}
+	})
+
+	t.Run("nil schemas fall back to the strict default with an accurate detail", func(t *testing.T) {
+		spec, diags := Parse("t.hcl", []byte(src))
+		if diags.HasErrors() {
+			t.Fatalf("parse: %s", diags.Error())
+		}
+		_, diags = CompileWithOpts(spec, nil, opts(nil))
+		expectToolDiag(t, diags, hcl.DiagError, `callee "mcp.registry" presents no tool surface`, src, "adapter.mcp.registry.tools.search")
+		if len(diags) != 1 {
+			t.Fatalf("expected exactly one diagnostic, got %d: %s", len(diags), diags.Error())
+		}
+		if !strings.Contains(diags[0].Detail, "no adapter handshake was available to the compiler") {
+			t.Errorf("detail %q must state that no handshake was available", diags[0].Detail)
+		}
+		if strings.Contains(diags[0].Detail, "exposes no tools") {
+			t.Errorf("detail %q must not claim a handshake was consulted", diags[0].Detail)
+		}
+	})
+}
+
 // TestCallEdges_CycleWarning pins the ADR-0004 §6 cycle warning: a two-adapter
 // tool-call cycle is a compile WARNING (not an error), reported once, with the
 // call path in the summary and the runtime cap named in the detail.

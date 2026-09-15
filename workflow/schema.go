@@ -467,6 +467,12 @@ type AdapterInfo struct {
 	// uses this to emit alias warnings and to treat aliases as valid during
 	// vocabulary checks.
 	PermissionAliases map[string]string
+	// RuntimeTools lists the tool names the adapter reported in its handshake
+	// (InfoResponse.tools, CRI-171). The compiler consults them as a tool
+	// source for adapters that declare neither static tool blocks nor
+	// dynamic_tools = true (CRI-173); empty when the handshake was
+	// unavailable or exposed no tools.
+	RuntimeTools []string
 }
 
 // OutcomeSpec maps an adapter outcome name to the next node.

@@ -1498,7 +1498,8 @@ A step-level `tools` list is **determined by the adapter declarations** — it
 only has effect when the adapters involved actually support tools:
 
 - the **callee** must present a tool surface: static `tool "<name>" { }`
-  blocks and/or `dynamic_tools = true`; and
+  blocks, `dynamic_tools = true`, or a runtime surface reported in the
+  adapter handshake (`InfoResponse.tools`); and
 - the **caller** must be able to issue calls, which it advertises through
   the `adapter_tools` capability string.
 
@@ -1506,7 +1507,7 @@ When an entry is granted against an adapter pair that cannot support it, the
 compiler flags the **pointless entry**:
 
 - *warning* — the entry names a callee that presents no tool surface (no
-  `tool` blocks, `dynamic_tools` unset);
+  `tool` blocks, no `dynamic_tools`, and no handshake-reported tools);
 - *warning* — the entry sits on a step whose target adapter lacks the
   `adapter_tools` capability;
 - *warning* — duplicate entries in one list.
@@ -1526,7 +1527,18 @@ runtime-discovered surface the compiler cannot verify static tool names, so
 enforcement moves to run time, where each call is gated by `allow_tools`.
 Static `tool` blocks and `dynamic_tools = true` may combine — the blocks
 name the stable surface, and the flag additionally admits
-runtime-discovered tools.
+runtime-discovered tools. (When both are set, the static blocks take
+precedence for the compile-time name check.)
+
+When a callee declares neither static `tool` blocks nor `dynamic_tools` but
+reports tools in its adapter handshake (`InfoResponse.tools`, CRI-171), the
+compiler uses that reported surface as a fallback tool source and checks
+named entries against it; a name outside the reported surface is a compile
+error. If the handshake is not available to the compiler — or the adapter
+exposes no tools at all — named entries fall back to the strict default and
+are rejected. The full precedence order (static `tool` blocks >
+`dynamic_tools` > `InfoResponse.tools` > neither) lives in
+[LANGUAGE-SPEC.md → Adapter tools](LANGUAGE-SPEC.md#adapter-tools).
 
 ### Bounding call depth — `policy.max_tool_depth`
 
