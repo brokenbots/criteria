@@ -1,0 +1,31 @@
+workflow: adapter-calls  (version 1)
+initial_state: start   target_state: done
+policy: max_total_steps=100  max_step_retries=0
+
+variables:
+  (none)
+
+adapters:
+  mcp.registry   type=mcp   on_crash=fail
+    config: (none)
+  shell.worker   type=shell   on_crash=fail
+    config: (none)
+
+steps (declaration order):
+  start   adapter=mcp.registry
+    input keys: (none)
+    allow_tools: (none)
+    tools: mcp.registry.tools, shell.worker.tools.git_status
+    outcomes: success -> audit
+  audit   adapter=shell.worker
+    input keys: (none)
+    allow_tools: (none)
+    tools: shell.worker.tools.git_status
+    outcomes: success -> done
+
+states:
+  done    terminal=true   success=true
+
+adapters required:
+  mcp   (search: $CRITERIA_ADAPTERS, then $CRITERIA_HOME/adapters, default ~/.local/criteria/adapters)
+  shell   (search: $CRITERIA_ADAPTERS, then $CRITERIA_HOME/adapters, default ~/.local/criteria/adapters)

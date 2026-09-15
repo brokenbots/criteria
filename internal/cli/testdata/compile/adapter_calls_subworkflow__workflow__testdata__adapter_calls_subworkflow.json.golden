@@ -1,0 +1,156 @@
+{
+  "name": "adapter-calls-subworkflow",
+  "initial_state": "begin",
+  "target_state": "done",
+  "policy": {
+    "MaxTotalSteps": 100,
+    "MaxStepRetries": 0,
+    "MaxToolDepth": 8,
+    "MaxVisitsWarnThreshold": 200
+  },
+  "adapters": [
+    {
+      "type": "shell",
+      "name": "host",
+      "on_crash": "fail",
+      "config_keys": null
+    }
+  ],
+  "steps": [
+    {
+      "name": "begin",
+      "subworkflow": "call",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "success",
+          "next": "finish"
+        }
+      ]
+    },
+    {
+      "name": "finish",
+      "adapter": "shell.host",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "success",
+          "next": "done"
+        }
+      ]
+    }
+  ],
+  "adapter_call_edges": [
+    {
+      "caller": "shell.host",
+      "callee": "shell.host",
+      "tool": "status",
+      "step": "finish"
+    }
+  ],
+  "states": [
+    {
+      "name": "done",
+      "terminal": true,
+      "success": true
+    }
+  ],
+  "outputs": [],
+  "switches": [],
+  "subworkflows": [
+    {
+      "name": "call",
+      "source_path": "<repo>/workflow/testdata/adapter_calls_subworkflow/subworkflows/call",
+      "body": {
+        "name": "call",
+        "initial_state": "probe",
+        "target_state": "ready",
+        "policy": {
+          "MaxTotalSteps": 100,
+          "MaxStepRetries": 0,
+          "MaxToolDepth": 8,
+          "MaxVisitsWarnThreshold": 200
+        },
+        "adapters": [
+          {
+            "type": "mcp",
+            "name": "registry",
+            "on_crash": "fail",
+            "config_keys": null
+          }
+        ],
+        "steps": [
+          {
+            "name": "probe",
+            "adapter": "mcp.registry",
+            "input_keys": null,
+            "allow_tools": null,
+            "outcomes": [
+              {
+                "name": "success",
+                "next": "fetch"
+              }
+            ]
+          },
+          {
+            "name": "fetch",
+            "adapter": "mcp.registry",
+            "input_keys": null,
+            "allow_tools": null,
+            "outcomes": [
+              {
+                "name": "success",
+                "next": "ready"
+              }
+            ]
+          }
+        ],
+        "adapter_call_edges": [
+          {
+            "caller": "mcp.registry",
+            "callee": "mcp.registry",
+            "tool": "*",
+            "step": "probe"
+          },
+          {
+            "caller": "mcp.registry",
+            "callee": "mcp.registry",
+            "tool": "fetch",
+            "step": "fetch"
+          }
+        ],
+        "states": [
+          {
+            "name": "ready",
+            "terminal": true,
+            "success": true
+          }
+        ],
+        "outputs": [],
+        "switches": [],
+        "step_order": [
+          "probe",
+          "fetch"
+        ],
+        "plugins_required": [
+          "mcp"
+        ],
+        "metadata": {
+          "schema_version": 1
+        }
+      }
+    }
+  ],
+  "step_order": [
+    "begin",
+    "finish"
+  ],
+  "plugins_required": [
+    "shell"
+  ],
+  "metadata": {
+    "schema_version": 1
+  }
+}

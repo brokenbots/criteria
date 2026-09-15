@@ -1,0 +1,28 @@
+digraph "adapter-calls-subworkflow" {
+  rankdir=LR;
+
+  "finish" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "done" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
+  subgraph cluster_begin {
+    label="call";
+    fillcolor="#D5F5E3";
+    style=filled;
+    "begin/probe" [shape=box, style="filled", fillcolor="#E8DAEF"];
+    "begin/fetch" [shape=box, style="filled", fillcolor="#E8DAEF"];
+    "begin/ready" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
+    "begin/__start__" [shape=point,width=0.12,label=""];
+    "begin/__start__" -> "begin/probe" [label="initial"];
+    "begin/probe" -> "begin/fetch" [label="success"];
+    "begin/fetch" -> "begin/ready" [label="success"];
+    "begin/adapter:mcp.registry" [shape=note, style="filled", fillcolor="#E8DAEF", label="mcp.registry\ntools: *"];
+    "begin/probe" -> "begin/adapter:mcp.registry" [style=dashed, color="#E8DAEF"];
+    "begin/fetch" -> "begin/adapter:mcp.registry" [style=dashed, color="#E8DAEF", label="fetch"];
+  }
+
+  "__start__" [shape=point,width=0.12,label=""];
+  "__start__" -> "begin/__start__" [label="initial"];
+  "begin/ready" -> "finish" [label="success"];
+  "finish" -> "done" [label="success"];
+  "adapter:shell.host" [shape=note, style="filled", fillcolor="#D6EAF8", label="shell.host\ntools: status"];
+  "finish" -> "adapter:shell.host" [style=dashed, color="#D6EAF8", label="status"];
+}

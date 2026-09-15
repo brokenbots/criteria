@@ -75,19 +75,20 @@ func compileWorkflowOutput(ctx context.Context, workflowPath, format string, sub
 }
 
 type compileJSON struct {
-	Name             string               `json:"name"`
-	InitialState     string               `json:"initial_state"`
-	TargetState      string               `json:"target_state"`
-	Policy           workflow.Policy      `json:"policy"`
-	Adapters         []compileAdapter     `json:"adapters"`
-	Steps            []compileStep        `json:"steps"`
-	States           []compileState       `json:"states"`
-	Outputs          []compileOutput      `json:"outputs"`
-	Switches         []compileSwitch      `json:"switches"`
-	Subworkflows     []compileSubworkflow `json:"subworkflows,omitempty"`
-	StepOrder        []string             `json:"step_order"`
-	RequiredAdapters []string             `json:"plugins_required"`
-	Metadata         compileOutputMeta    `json:"metadata"`
+	Name             string                   `json:"name"`
+	InitialState     string                   `json:"initial_state"`
+	TargetState      string                   `json:"target_state"`
+	Policy           workflow.Policy          `json:"policy"`
+	Adapters         []compileAdapter         `json:"adapters"`
+	Steps            []compileStep            `json:"steps"`
+	AdapterCallEdges []compileAdapterCallEdge `json:"adapter_call_edges,omitempty"`
+	States           []compileState           `json:"states"`
+	Outputs          []compileOutput          `json:"outputs"`
+	Switches         []compileSwitch          `json:"switches"`
+	Subworkflows     []compileSubworkflow     `json:"subworkflows,omitempty"`
+	StepOrder        []string                 `json:"step_order"`
+	RequiredAdapters []string                 `json:"plugins_required"`
+	Metadata         compileOutputMeta        `json:"metadata"`
 }
 
 type compileOutputMeta struct {
@@ -109,6 +110,17 @@ type compileStep struct {
 	InputKeys   []string         `json:"input_keys"`
 	AllowTools  []string         `json:"allow_tools"`
 	Outcomes    []compileOutcome `json:"outcomes"`
+}
+
+// compileAdapterCallEdge is one adapter-to-adapter tool-call edge in the
+// compiled JSON output (CRI-158). Tool mirrors the graph's AdapterCallEdge:
+// the granted tool name, or "*" for a bare `.tools` grant that exposes the
+// callee's whole tool surface (matching the dot rendering's marker).
+type compileAdapterCallEdge struct {
+	Caller string `json:"caller"`
+	Callee string `json:"callee"`
+	Tool   string `json:"tool"`
+	Step   string `json:"step"`
 }
 
 type compileSubworkflow struct {
@@ -180,6 +192,7 @@ func buildCompileJSON(graph *workflow.FSMGraph) compileJSON {
 		Policy:           graph.Policy,
 		Adapters:         buildAdaptersJSON(graph),
 		Steps:            buildStepsJSON(graph),
+		AdapterCallEdges: buildAdapterCallEdgesJSON(graph),
 		States:           states,
 		Outputs:          buildCompileOutputs(graph),
 		Switches:         switches,
@@ -234,6 +247,31 @@ func buildStepsJSON(graph *workflow.FSMGraph) []compileStep {
 		})
 	}
 	return steps
+}
+
+// buildAdapterCallEdgesJSON renders the graph's adapter tool-call edges for
+// the compiled JSON output. Edges keep their compile-time declaration order
+// (step order, then grant order within each step). The result is nil when the
+// graph records no call edges, so workflows without tool refs keep their
+// previous output byte-for-byte.
+func buildAdapterCallEdgesJSON(graph *workflow.FSMGraph) []compileAdapterCallEdge {
+	if len(graph.AdapterCallEdges) == 0 {
+		return nil
+	}
+	edges := make([]compileAdapterCallEdge, 0, len(graph.AdapterCallEdges))
+	for _, e := range graph.AdapterCallEdges {
+		tool := e.Tool
+		if tool == "" {
+			tool = "*"
+		}
+		edges = append(edges, compileAdapterCallEdge{
+			Caller: e.CallerAdapterRef,
+			Callee: e.CalleeAdapterRef,
+			Tool:   tool,
+			Step:   e.StepName,
+		})
+	}
+	return edges
 }
 
 func buildCompileOutputs(graph *workflow.FSMGraph) []compileOutput {
@@ -353,7 +391,7 @@ func renderDOT(graph *workflow.FSMGraph) string {
 	b.WriteString("\n")
 	dotWriteNodes(&b, graph, adapterColors, "  ", "")
 	b.WriteString("\n")
-	dotWriteEdges(&b, graph, "  ", "")
+	dotWriteEdges(&b, graph, adapterColors, "  ", "")
 	b.WriteString("}\n")
 	return b.String()
 }
@@ -448,18 +486,20 @@ func dotWriteClusterBody(b *strings.Builder, graph *workflow.FSMGraph, adapterCo
 	fmt.Fprintf(b, "%s%q -> %q [label=%q];\n", indent, namespace+"__start__", initialTarget, "initial")
 	dotWriteStepEdges(b, graph, indent, namespace)
 	dotWriteSwitchEdges(b, graph, indent, namespace)
+	dotWriteCallEdges(b, graph, adapterColors, indent, namespace)
 }
 
 // dotWriteEdges writes the top-level edge declarations for the root digraph:
 // the __start__ node, the initial state edge (rewired if the initial state is
 // a subworkflow step), step outcome edges, exit edges from subworkflow clusters,
-// and switch edges.
-func dotWriteEdges(b *strings.Builder, graph *workflow.FSMGraph, indent, namespace string) {
+// switch edges, and adapter tool-call edges.
+func dotWriteEdges(b *strings.Builder, graph *workflow.FSMGraph, adapterColors map[string]string, indent, namespace string) {
 	initialTarget := dotResolveRef(graph, namespace, graph.InitialState)
 	fmt.Fprintf(b, "%s%q [shape=point,width=0.12,label=\"\"];\n", indent, namespace+"__start__")
 	fmt.Fprintf(b, "%s%q -> %q [label=%q];\n", indent, namespace+"__start__", initialTarget, "initial")
 	dotWriteStepEdges(b, graph, indent, namespace)
 	dotWriteSwitchEdges(b, graph, indent, namespace)
+	dotWriteCallEdges(b, graph, adapterColors, indent, namespace)
 }
 
 // dotWriteStepEdges writes outcome edges for adapter steps and, for subworkflow
@@ -501,6 +541,101 @@ func dotWriteSwitchEdges(b *strings.Builder, graph *workflow.FSMGraph, indent, n
 			nextRef := dotResolveRef(graph, namespace, sw.DefaultNext)
 			fmt.Fprintf(b, "%s%q -> %q [label=%q];\n", indent, namespace+switchName, nextRef, "default")
 		}
+	}
+}
+
+// dotToolNodeIDPrefix namespaces tool-surface node IDs so they can never
+// collide with step, state, switch, or __start__ node IDs.
+const dotToolNodeIDPrefix = "adapter:"
+
+// dotCalleeSurface is one callee adapter's granted tool surface, collapsed
+// from the graph's call edges.
+type dotCalleeSurface struct {
+	ref   string
+	label string // rendered label, e.g. "mcp.registry\ntools: search, fetch"
+}
+
+// dotCalleeToolSurfaces collapses call edges into one surface per distinct
+// callee adapter ref, in first-seen order. A bare `.tools` grant wins over
+// named tools ("tools: *"); named tools are sorted for deterministic labels.
+// Returns nil when edges is empty so plain workflows render no extra nodes.
+func dotCalleeToolSurfaces(edges []workflow.AdapterCallEdge) []dotCalleeSurface {
+	if len(edges) == 0 {
+		return nil
+	}
+	type surface struct {
+		named    []string
+		bare     bool
+		seenTool map[string]bool
+	}
+	byRef := make(map[string]*surface)
+	order := make([]string, 0, len(edges))
+	for _, e := range edges {
+		s, ok := byRef[e.CalleeAdapterRef]
+		if !ok {
+			s = &surface{seenTool: make(map[string]bool)}
+			byRef[e.CalleeAdapterRef] = s
+			order = append(order, e.CalleeAdapterRef)
+		}
+		if e.Tool == "" {
+			s.bare = true
+			continue
+		}
+		if !s.seenTool[e.Tool] {
+			s.seenTool[e.Tool] = true
+			s.named = append(s.named, e.Tool)
+		}
+	}
+	out := make([]dotCalleeSurface, 0, len(order))
+	for _, ref := range order {
+		s := byRef[ref]
+		tools := "*"
+		if !s.bare {
+			sort.Strings(s.named)
+			tools = strings.Join(s.named, ", ")
+		}
+		out = append(out, dotCalleeSurface{ref: ref, label: fmt.Sprintf("%s\ntools: %s", ref, tools)})
+	}
+	return out
+}
+
+// dotWriteCallEdges renders the graph's adapter tool-call edges (CRI-158):
+// one tool-surface node per distinct callee adapter — labeled with the
+// granted tool surface ("tools: <names>", or "tools: *" for a bare `.tools`
+// grant) and filled with the callee type's palette color — then one dashed
+// edge per call edge from the calling step node, colored with the caller
+// type's palette color and labeled with the granted tool name when the call
+// names one. Call edges are metadata (ADR-0004 §1: the callee never enters
+// the FSM), so they are visually distinct from the solid FSM outcome edges
+// and target a dedicated tool-surface node rather than any FSM node.
+// Nothing is written when the graph records no call edges.
+func dotWriteCallEdges(b *strings.Builder, graph *workflow.FSMGraph, adapterColors map[string]string, indent, namespace string) {
+	if graph == nil || len(graph.AdapterCallEdges) == 0 {
+		return
+	}
+	for _, s := range dotCalleeToolSurfaces(graph.AdapterCallEdges) {
+		fill := dotUnknownFill
+		if adapterColors != nil {
+			if c, ok := adapterColors[adapterTypeOf(s.ref)]; ok {
+				fill = c
+			}
+		}
+		fmt.Fprintf(b, "%s%q [shape=note, style=%q, fillcolor=%q, label=%q];\n",
+			indent, namespace+dotToolNodeIDPrefix+s.ref, "filled", fill, s.label)
+	}
+	for _, e := range graph.AdapterCallEdges {
+		color := dotUnknownFill
+		if adapterColors != nil {
+			if c, ok := adapterColors[adapterTypeOf(e.CallerAdapterRef)]; ok {
+				color = c
+			}
+		}
+		attrs := fmt.Sprintf("style=dashed, color=%q", color)
+		if e.Tool != "" {
+			attrs += fmt.Sprintf(", label=%q", e.Tool)
+		}
+		fmt.Fprintf(b, "%s%q -> %q [%s];\n",
+			indent, namespace+e.StepName, namespace+dotToolNodeIDPrefix+e.CalleeAdapterRef, attrs)
 	}
 }
 
