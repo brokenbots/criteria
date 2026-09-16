@@ -335,6 +335,11 @@ func (a *matrixCalleeAdapter) Execute(ctx context.Context, sessionID string, ste
 			ctxErr = ctx.Err()
 			outcome = "failure"
 		}
+	case "slow":
+		// Delay long enough for a faster sibling call's reply to overtake
+		// this one on the permissions stream (the CRI-161 interleave
+		// precedent; the agent-caller matrix's concurrent-calls case).
+		time.Sleep(150 * time.Millisecond)
 	case "explode":
 		outcome = "failure"
 	}
@@ -530,11 +535,11 @@ func (s *matrixEngineSink) stepOutcomes() []string {
 	return append([]string(nil), s.outcomes...)
 }
 
-func (s *matrixEngineSink) stepEventCount(step, kind string) int {
+func (s *matrixEngineSink) stepEventCount(kind string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	n := 0
-	for _, ev := range s.stepEvents[step] {
+	for _, ev := range s.stepEvents[matrixCallerStep] {
 		if ev.kind == kind {
 			n++
 		}
@@ -653,8 +658,10 @@ func compileMatrixGraph(t *testing.T, src string) *workflow.FSMGraph {
 	return g
 }
 
-// runMatrixCase drives one matrix case through the real engine.
-func runMatrixCase(t *testing.T, src string, caller *matrixCallerAdapter, callee *matrixCalleeAdapter) (*matrixEngineSink, *matrixAuditCollector) {
+// runMatrixCase drives one matrix case through the real engine. The caller
+// is accepted as a bare adapterhost.Handle so the agent-caller matrix
+// (CRI-183) can ride the same wiring with its own caller fake.
+func runMatrixCase(t *testing.T, src string, caller adapterhost.Handle, callee *matrixCalleeAdapter) (*matrixEngineSink, *matrixAuditCollector) {
 	t.Helper()
 	sink := &matrixEngineSink{}
 	audit := &matrixAuditCollector{}
@@ -710,7 +717,7 @@ func assertCalleeNeverExecuted(t *testing.T, callee *matrixCalleeAdapter) {
 // caller's step.
 func assertNoStepEvents(t *testing.T, sink *matrixEngineSink, kind string) {
 	t.Helper()
-	if n := sink.stepEventCount(matrixCallerStep, kind); n != 0 {
+	if n := sink.stepEventCount(kind); n != 0 {
 		t.Fatalf("caller step emitted %d %q event(s), want 0", n, kind)
 	}
 }
@@ -834,7 +841,7 @@ func assertCrashReplies(t *testing.T, caller *matrixCallerAdapter) {
 // carrying the call and its typed failure with no outcome on the failure.
 func assertCalleeCrashObservability(t *testing.T, sink *matrixEngineSink) {
 	t.Helper()
-	if grants := sink.stepEventCount(matrixCallerStep, "permission.granted"); grants != 2 {
+	if grants := sink.stepEventCount("permission.granted"); grants != 2 {
 		t.Fatalf("permission.granted events = %d, want 2 (both calls policy-allowed)", grants)
 	}
 	assertNoStepEvents(t, sink, "permission.denied")

@@ -521,7 +521,7 @@ func callEdgesAssertRedactionEvents(t *testing.T, sink *callEdgesSink) {
 		"request_id": "call-1",
 		"outcome":    "success",
 	})
-	if n := sink.stepEventCount(matrixCallerStep, "tool.call"); n != 1 {
+	if n := sink.stepEventCount("tool.call"); n != 1 {
 		t.Fatalf("tool.call events = %d, want 1 (the typed-rejected call-2 must never dispatch)", n)
 	}
 }
