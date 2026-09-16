@@ -1,5 +1,5 @@
 .PHONY: help bootstrap tidy build plugins install proto proto-lint proto-check-drift \
-	test test-cover coverage-check test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint lint-sh vuln-scan vulncheck deps-outdated deps-majors validate validate-docs example-plugin example-adapter-tools example-adapter-tools-copilot bench docker-runtime docker-runtime-smoke ci clean
+	test test-cover coverage-check test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint lint-sh vuln-scan vulncheck deps-outdated deps-majors validate validate-docs example-plugin example-adapter-tools example-adapter-tools-copilot example-adapter-tools-claude bench docker-runtime docker-runtime-smoke ci clean
 
 # Default target: list available targets.
 help:
@@ -207,6 +207,7 @@ validate: build ## Validate all example workflow directories
 		examples/build_and_test examples/copilot_planning_then_execution \
 		examples/adapter_tools/noop_passthrough examples/adapter_tools/mcp_resource \
 		examples/adapter_tools/copilot_mcp_resource \
+		examples/adapter_tools/claude_mcp_resource \
 		examples/llm-pack/01-linear \
 		examples/llm-pack/02-branching-switch \
 		examples/llm-pack/03-iteration-for-each \
@@ -360,6 +361,84 @@ example-adapter-tools-copilot: build plugins ## Build and run the copilot-agent 
 	fi; \
 	rm -rf "$$tmpdir" "$$eventsfile" "$$log"; \
 	echo "example-adapter-tools-copilot: OK (agent tool-called the mcp resource mid-task)"
+
+# Variant 4 mirrors variant 3 for the claude-agent adapter (CRI-180): it
+# needs the real agent runtime (Claude Code CLI + an adapter_tools-era
+# criteria-adapter-claude-agent + Anthropic credentials), so it is NOT wired
+# into `ci`: it skips with a reason when the runtime is absent or the
+# installed claude adapter predates the CRI-178 caller capability, and runs
+# for real otherwise.
+#
+# The adapter-roots list mirrors the engine's discovery resolution
+# (internal/dirs): $CRITERIA_ADAPTERS, $CRITERIA_HOME/adapters when
+# CRITERIA_HOME is set, the legacy ~/.criteria/adapters (which the
+# claude-agent repo's binary:install writes to), then
+# ~/.local/criteria/adapters. CRITERIA_CLAUDE_BIN, when set, is staged as
+# `claude` on the run PATH so the adapter's resolveClaudeExecutable finds
+# it — the make-side equivalent of the adapter config's claude_executable
+# field.
+#
+# Event assertions are order-independent: the tool.call_result payload is a
+# JSON map (encoding/json sorts map keys), so no grep may rely on the
+# relative order of two data keys. Facts are checked per captured line,
+# piped through the step/kind filters so attribution to the caller step is
+# kept without depending on key order. The recipe body must stay ONE
+# logical (backslash-continued) line so shell variables survive across the
+# staging/run/assert phases and the SKIP branches end the whole recipe.
+example-adapter-tools-claude: build plugins ## Build and run the claude-agent x mcp-resource sample (real Claude Code agent tool-calling the mcp callee; skips cleanly without the claude runtime)
+	@echo "Building adapter-tools claude example fixtures..."
+	go build -o bin/criteria-echo-mcp ./cmd/criteria-adapter-mcp/testfixtures/echo-mcp
+	@if ! command -v claude >/dev/null 2>&1 && [ -z "$$CRITERIA_CLAUDE_BIN" ]; then \
+		echo "SKIP example-adapter-tools-claude: claude CLI not on PATH (CRITERIA_CLAUDE_BIN unset); sample needs the real agent runtime"; \
+		exit 0; \
+	fi; \
+	adapter_bin=""; \
+	for root in "$${CRITERIA_ADAPTERS:-}" "$${CRITERIA_HOME:+$$CRITERIA_HOME/adapters}" "$$HOME/.criteria/adapters" "$$HOME/.local/criteria/adapters"; do \
+		[ -n "$$root" ] || continue; \
+		if [ -x "$$root/criteria-adapter-claude-agent" ]; then \
+			adapter_bin="$$root/criteria-adapter-claude-agent"; break; \
+		fi; \
+		if [ -d "$$root" ]; then \
+			found=$$(find "$$root" -type f -name criteria-adapter-claude-agent 2>/dev/null | head -1); \
+			if [ -n "$$found" ]; then adapter_bin="$$found"; break; fi; \
+		fi; \
+	done; \
+	if [ -z "$$adapter_bin" ]; then \
+		echo "SKIP example-adapter-tools-claude: criteria-adapter-claude-agent not found in $$CRITERIA_ADAPTERS, $$CRITERIA_HOME/adapters, ~/.criteria/adapters, or ~/.local/criteria/adapters"; \
+		exit 0; \
+	fi; \
+	if ! grep -aq adapter_tools "$$adapter_bin"; then \
+		echo "SKIP example-adapter-tools-claude: installed criteria-adapter-claude-agent does not declare the adapter_tools capability (pre-CRI-178 caller build); reinstall a current build to run for real"; \
+		exit 0; \
+	fi; \
+	tmpdir=$$(mktemp -d); \
+	cp bin/criteria-adapter-mcp bin/criteria-echo-mcp "$$tmpdir/"; \
+	cp "$$adapter_bin" "$$tmpdir/criteria-adapter-claude-agent"; \
+	chmod +x "$$tmpdir"/*; \
+	if [ -n "$$CRITERIA_CLAUDE_BIN" ]; then cp "$$CRITERIA_CLAUDE_BIN" "$$tmpdir/claude" && chmod +x "$$tmpdir/claude"; fi; \
+	eventsfile=$$(mktemp); log=$$(mktemp); \
+	PATH="$$tmpdir:$$PATH" CRITERIA_ADAPTERS="$$tmpdir" timeout 300 ./bin/criteria apply examples/adapter_tools/claude_mcp_resource/claude_mcp_resource.hcl \
+		--events-file "$$eventsfile" >"$$log" 2>&1; \
+	rc=$$?; \
+	if [ $$rc -ne 0 ]; then \
+		echo "ERROR: claude mcp-resource sample apply failed (rc=$$rc)"; \
+		grep -v '"level":"WARN"' "$$log"; \
+		cat "$$eventsfile"; \
+		rm -rf "$$tmpdir" "$$eventsfile" "$$log"; exit 1; \
+	fi; \
+	if ! grep '"step":"call"' "$$eventsfile" | grep '"kind":"tool.call"' | grep -q '"target":"adapter.mcp.tools.tools.echo"' || \
+	   ! grep '"step":"call"' "$$eventsfile" | grep '"kind":"tool.call_result"' | grep -q '"target":"adapter.mcp.tools.tools.echo"' || \
+	   ! grep '"step":"call"' "$$eventsfile" | grep '"kind":"tool.call_result"' | grep -q '"outcome":"success"' || \
+	   ! grep -q '"callee.outcome":"success"' "$$eventsfile" || \
+	   ! grep -q '"payload_type":"RunCompleted","payload":{"finalState":"done","success":true}' "$$eventsfile"; then \
+		echo "ERROR: claude mcp-resource sample expected events not found (tool.call/tool.call_result under step call, target adapter.mcp.tools.tools.echo, outcome success, callee.outcome, RunCompleted)"; \
+		cat "$$eventsfile"; \
+		echo "--- apply log ---"; \
+		grep -v '"level":"WARN"' "$$log"; \
+		rm -rf "$$tmpdir" "$$eventsfile" "$$log"; exit 1; \
+	fi; \
+	rm -rf "$$tmpdir" "$$eventsfile" "$$log"; \
+	echo "example-adapter-tools-claude: OK (agent tool-called the mcp resource mid-task)"
 
 ci: build test lint validate example-plugin example-adapter-tools ## Run all CI gates (build, test, lint, validate, examples)
 
