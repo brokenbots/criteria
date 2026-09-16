@@ -22,8 +22,10 @@ type toolTestHost struct {
 	events    []*v2.ExecuteEvent
 	decisions []*v2.PermissionDecision
 
-	permCh chan *v2.PermissionEvent
-	reqCh  chan map[string]any
+	permCh     chan *v2.PermissionEvent
+	permMu     sync.Mutex
+	permClosed bool
+	reqCh      chan map[string]any
 
 	closeOnce sync.Once
 }
@@ -99,6 +101,20 @@ func (h *toolTestHost) awaitRequest(t *testing.T) map[string]any {
 	}
 }
 
+// sendPerm delivers one PermissionEvent to the dispatch loop unless the
+// stream is already closed. It is safe to race with closeStream: a late event
+// after cleanup is dropped, mirroring a torn-down stream, instead of
+// panicking on a send to a closed channel.
+func (h *toolTestHost) sendPerm(ev *v2.PermissionEvent) bool {
+	h.permMu.Lock()
+	defer h.permMu.Unlock()
+	if h.permClosed {
+		return false
+	}
+	h.permCh <- ev
+	return true
+}
+
 // grant sends the allow-grant for the call the host detected.
 func (h *toolTestHost) grant(t *testing.T, payload map[string]any) {
 	t.Helper()
@@ -106,46 +122,59 @@ func (h *toolTestHost) grant(t *testing.T, payload map[string]any) {
 	if id == "" {
 		t.Fatalf("permission.request payload without request_id: %v", payload)
 	}
-	h.permCh <- &v2.PermissionEvent{
+	h.sendPerm(&v2.PermissionEvent{
 		Event: &v2.PermissionEvent_Request{Request: &v2.PermissionRequest{RequestId: id}},
-	}
+	})
 }
 
 // cancel sends a policy denial for id.
 func (h *toolTestHost) cancel(id, reason string) {
-	h.permCh <- &v2.PermissionEvent{
+	h.sendPerm(&v2.PermissionEvent{
 		Event: &v2.PermissionEvent_Cancel{Cancel: &v2.PermissionCancel{RequestId: id, Reason: reason}},
-	}
+	})
 }
 
 // reply sends the correlated typed result for id.
 func (h *toolTestHost) reply(id string, res *v2.ToolCallResult) {
 	res.RequestId = id
-	h.permCh <- &v2.PermissionEvent{
+	h.sendPerm(&v2.PermissionEvent{
 		Event: &v2.PermissionEvent_ToolCallResult{ToolCallResult: res},
-	}
+	})
 }
 
 // closeStream ends the Permissions stream once (tests may close it early to
 // simulate a stream cut; the cleanup closes it at test end).
 func (h *toolTestHost) closeStream() {
-	h.closeOnce.Do(func() { close(h.permCh) })
+	h.closeOnce.Do(func() {
+		h.permMu.Lock()
+		defer h.permMu.Unlock()
+		h.permClosed = true
+		close(h.permCh)
+	})
 }
 
 // startBridge runs the fixture's dispatch loop for the host, mirroring the
-// SDK Service Permissions call; the cleanup closes the stream.
-func startBridge(t *testing.T, h *toolTestHost, svc *noopService) {
+// SDK Service Permissions call. The returned func ends the stream and waits
+// for the loop to exit; it is idempotent and also registered as cleanup, so
+// tests that assert on state only reachable after the loop exits can call it
+// directly.
+func startBridge(t *testing.T, h *toolTestHost, svc *noopService) func() {
 	t.Helper()
 	done := make(chan error, 1)
 	go func() { done <- svc.bridge().Permissions(context.Background(), &fakePermStream{h: h}) }()
-	t.Cleanup(func() {
-		h.closeStream()
-		select {
-		case <-done:
-		case <-time.After(2 * time.Second):
-			t.Error("bridge dispatch loop did not exit")
-		}
-	})
+	var joinOnce sync.Once
+	join := func() {
+		joinOnce.Do(func() {
+			h.closeStream()
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				t.Error("bridge dispatch loop did not exit")
+			}
+		})
+	}
+	t.Cleanup(join)
+	return join
 }
 
 // newTestService returns a fixture service with the test session pre-opened,
@@ -322,7 +351,9 @@ func TestToolCallDenied(t *testing.T) {
 		payload := h.awaitRequest(t)
 		id, _ := payload["request_id"].(string)
 		h.cancel(id, "policy denied")
-		// A late result for the denied id must be dropped, not panic.
+		// A late result for the denied id must be dropped, not panic — and
+		// it may legitimately arrive after the stream was torn down, where
+		// sendPerm drops it.
 		h.reply(id, &v2.ToolCallResult{Outcome: "success"})
 	}()
 
@@ -340,6 +371,23 @@ func TestToolCallDenied(t *testing.T) {
 	out := resultOutputs(t, res)
 	if got, _ := out[calleeErrorKey].(string); got != "tool call to adapter.callee.default.tools.echo_data: denied: policy denied" {
 		t.Errorf("callee.error = %v", out)
+	}
+}
+
+func TestPermissionsSkipsEmptyRequestID(t *testing.T) {
+	h := newToolTestHost()
+	svc := newTestService()
+	join := startBridge(t, h, svc)
+
+	// Plain auto-allow traffic can arrive without a correlation id; there is
+	// no pending call to grant and nothing to ACK, so the bridge must skip
+	// the event without wedging the stream.
+	h.sendPerm(&v2.PermissionEvent{
+		Event: &v2.PermissionEvent_Request{Request: &v2.PermissionRequest{}},
+	})
+	join()
+	if ds := h.decisionsSnapshot(); len(ds) != 0 {
+		t.Errorf("decisions = %+v, want none for an empty request_id", ds)
 	}
 }
 
@@ -476,7 +524,7 @@ func TestNoopPassthrough(t *testing.T) {
 			t.Errorf("outputs = %v, want %v", got, want)
 		}
 	})
-	t.Run("unset outputs", func(t *testing.T) {
+	t.Run("no input falls through to the default noop path", func(t *testing.T) {
 		h := newToolTestHost()
 		if err := runPassthrough(t, h, map[string]string{}); err != nil {
 			t.Fatalf("Execute: %v", err)

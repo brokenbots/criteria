@@ -78,7 +78,7 @@ func buildNoopFixture(t *testing.T, outPath string) {
 	repoRoot, err := filepath.Abs("../..")
 	require.NoError(t, err)
 
-	cmd := exec.Command("go", "build", "-o", outPath, "./internal/adapter/conformance/testdata/noop/main.go")
+	cmd := exec.Command("go", "build", "-o", outPath, "./internal/adapter/conformance/testdata/noop")
 	cmd.Dir = repoRoot
 	out, err := cmd.CombinedOutput()
 	if err != nil {

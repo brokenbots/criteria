@@ -37,7 +37,7 @@ outcome routing then finishes the run — the callee never enters the FSM.
 Variant 1 (`noop_passthrough/noop_passthrough.hcl`):
 
 - `callee_outcome` = `"success"` — the callee's own outcome.
-- `callee_outputs` = `{"rows": 2, "items": ["alpha", "beta"], "note": "echoed back by the callee"}` — the callee's typed outputs, passed through unchanged.
+- `callee_outputs` = `{"items": ["alpha", "beta"], "note": "echoed back by the callee", "rows": 2}` — the callee's typed outputs, passed through unchanged.
 - `callee_rows` = `2` — nested attribute access into the typed object.
 
 Variant 2 (`mcp_resource/mcp_resource.hcl`):
