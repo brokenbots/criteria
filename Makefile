@@ -1,5 +1,5 @@
 .PHONY: help bootstrap tidy build plugins install proto proto-lint proto-check-drift \
-	test test-cover coverage-check test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint lint-sh vuln-scan vulncheck deps-outdated deps-majors validate validate-docs example-plugin example-adapter-tools bench docker-runtime docker-runtime-smoke ci clean
+	test test-cover coverage-check test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint lint-sh vuln-scan vulncheck deps-outdated deps-majors validate validate-docs example-plugin example-adapter-tools example-adapter-tools-copilot bench docker-runtime docker-runtime-smoke ci clean
 
 # Default target: list available targets.
 help:
@@ -206,6 +206,7 @@ validate: build ## Validate all example workflow directories
 	@for d in examples/hello examples/tour examples/subworkflow \
 		examples/build_and_test examples/copilot_planning_then_execution \
 		examples/adapter_tools/noop_passthrough examples/adapter_tools/mcp_resource \
+		examples/adapter_tools/copilot_mcp_resource \
 		examples/llm-pack/01-linear \
 		examples/llm-pack/02-branching-switch \
 		examples/llm-pack/03-iteration-for-each \
@@ -292,6 +293,73 @@ example-adapter-tools: build plugins ## Build and run the adapter-tools example 
 	fi; \
 	rm -rf "$$tmpdir" "$$eventsfile" "$$log"; \
 	echo "example-adapter-tools: variant 2 (mcp resource) OK"
+
+# Variant 3 needs the real agent runtime (copilot CLI + an adapter_tools-era
+# criteria-adapter-copilot + a reachable BYOK provider), so it is NOT wired
+# into `ci`: it skips with a reason when the runtime is absent or the
+# installed copilot adapter predates the CRI-178 caller capability, and runs
+# for real otherwise.
+#
+# Event assertions are order-independent: the tool.call_result payload is a
+# JSON map (encoding/json sorts map keys), so no grep may rely on the
+# relative order of two data keys. Facts are checked per captured line,
+# piped through the step/kind filters so attribution to the caller step is
+# kept without depending on key order. The recipe body must stay ONE
+# logical (backslash-continued) line so shell variables survive across the
+# staging/run/assert phases and the SKIP branches end the whole recipe.
+example-adapter-tools-copilot: build plugins ## Build and run the copilot-agent x mcp-resource sample (real agent tool-calling the mcp callee; skips cleanly without the copilot runtime)
+	@echo "Building adapter-tools copilot example fixtures..."
+	go build -o bin/criteria-echo-mcp ./cmd/criteria-adapter-mcp/testfixtures/echo-mcp
+	@if ! command -v copilot >/dev/null 2>&1 && [ -z "$$CRITERIA_COPILOT_BIN" ]; then \
+		echo "SKIP example-adapter-tools-copilot: copilot CLI not on PATH (CRITERIA_COPILOT_BIN unset); sample needs the real agent runtime"; \
+		exit 0; \
+	fi; \
+	adapter_bin=""; \
+	for root in "$${CRITERIA_ADAPTERS:-}" "$$HOME/.local/criteria/adapters" "$${CRITERIA_HOME:-$$HOME/.local/criteria}/adapters"; do \
+		[ -n "$$root" ] || continue; \
+		if [ -x "$$root/criteria-adapter-copilot" ]; then \
+			adapter_bin="$$root/criteria-adapter-copilot"; break; \
+		fi; \
+		if [ -d "$$root" ]; then \
+			found=$$(find "$$root" -type f -name criteria-adapter-copilot 2>/dev/null | head -1); \
+			if [ -n "$$found" ]; then adapter_bin="$$found"; break; fi; \
+		fi; \
+	done; \
+	if [ -z "$$adapter_bin" ]; then \
+		echo "SKIP example-adapter-tools-copilot: criteria-adapter-copilot not found in $$CRITERIA_ADAPTERS, ~/.local/criteria/adapters, or $$CRITERIA_HOME/adapters"; \
+		exit 0; \
+	fi; \
+	if ! grep -aq adapter_tools "$$adapter_bin"; then \
+		echo "SKIP example-adapter-tools-copilot: installed criteria-adapter-copilot does not declare the adapter_tools capability (pre-CRI-178 caller build); reinstall a current build to run for real"; \
+		exit 0; \
+	fi; \
+	tmpdir=$$(mktemp -d); \
+	cp bin/criteria-adapter-mcp bin/criteria-echo-mcp "$$tmpdir/"; \
+	cp "$$adapter_bin" "$$tmpdir/criteria-adapter-copilot"; \
+	chmod +x "$$tmpdir"/*; \
+	eventsfile=$$(mktemp); log=$$(mktemp); \
+	PATH="$$tmpdir:$$PATH" CRITERIA_ADAPTERS="$$tmpdir" timeout 300 ./bin/criteria apply examples/adapter_tools/copilot_mcp_resource/copilot_mcp_resource.hcl \
+		--events-file "$$eventsfile" >"$$log" 2>&1; \
+	rc=$$?; \
+	if [ $$rc -ne 0 ]; then \
+		echo "ERROR: copilot mcp-resource sample apply failed (rc=$$rc)"; \
+		grep -v '"level":"WARN"' "$$log"; \
+		cat "$$eventsfile"; \
+		rm -rf "$$tmpdir" "$$eventsfile" "$$log"; exit 1; \
+	fi; \
+	if ! grep '"step":"call"' "$$eventsfile" | grep '"kind":"tool.call"' | grep -q '"target":"adapter.mcp.tools.tools.echo"' || \
+	   ! grep '"step":"call"' "$$eventsfile" | grep '"kind":"tool.call_result"' | grep -q '"target":"adapter.mcp.tools.tools.echo"' || \
+	   ! grep '"step":"call"' "$$eventsfile" | grep '"kind":"tool.call_result"' | grep -q '"outcome":"success"' || \
+	   ! grep -q '"callee.outcome":"success"' "$$eventsfile" || \
+	   ! grep -q '"payload_type":"RunCompleted","payload":{"finalState":"done","success":true}' "$$eventsfile"; then \
+		echo "ERROR: copilot mcp-resource sample expected events not found (tool.call/tool.call_result under step call, target adapter.mcp.tools.tools.echo, outcome success, callee.outcome, RunCompleted)"; \
+		cat "$$eventsfile"; \
+		echo "--- apply log ---"; \
+		grep -v '"level":"WARN"' "$$log"; \
+		rm -rf "$$tmpdir" "$$eventsfile" "$$log"; exit 1; \
+	fi; \
+	rm -rf "$$tmpdir" "$$eventsfile" "$$log"; \
+	echo "example-adapter-tools-copilot: OK (agent tool-called the mcp resource mid-task)"
 
 ci: build test lint validate example-plugin example-adapter-tools ## Run all CI gates (build, test, lint, validate, examples)
 

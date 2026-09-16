@@ -18,5 +18,5 @@ criteria apply examples/<name>/<file>.hcl
 | [`build_and_test/build_and_test.hcl`](build_and_test/build_and_test.hcl) | Linear shell build → test pipeline with a retry policy. |
 | [`copilot_planning_then_execution/`](copilot_planning_then_execution/copilot_planning_then_execution.hcl) | Two-phase agent workflow (plan, then execute) using the `copilot` adapter. |
 | [`plugins/greeter/`](plugins/greeter/) | A minimal adapter implementation plus a workflow that runs it (`make example-plugin`). |
-| [`adapter_tools/`](adapter_tools/) | A caller adapter tool-calling a callee mid-step: variant 1 through the noop fixture's outputs passthrough, variant 2 through the mcp adapter as a resource (`make example-adapter-tools`). |
+| [`adapter_tools/`](adapter_tools/) | A caller adapter tool-calling a callee mid-step: variant 1 through the noop fixture's outputs passthrough, variant 2 through the mcp adapter as a resource, variant 3 with a real copilot agent as the caller (`make example-adapter-tools`, `make example-adapter-tools-copilot`). |
 | [`llm-pack/`](llm-pack/) | Prompt-pack patterns surfaced by `criteria spec --with-patterns`. |

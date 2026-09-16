@@ -1,14 +1,17 @@
 # Adapter tools example
 
-Two runnable variants of the M8.3 adapter-tools story (CRI-176): a caller
+Three runnable variants of the M8.3 adapter-tools story (CRI-176): a caller
 adapter tool-calls a callee mid-step, and the callee's result passes back
-typed under `callee.*` keys. Both variants use the in-tree noop fixture as
+typed under `callee.*` keys. Variants 1–2 use the in-tree noop fixture as
 the caller and stay self-contained — no external OCI pull, no network.
+Variant 3 makes the caller a real copilot agent and needs the agent
+runtime, so its `make` target skips with a reason where that is absent.
 
 | File | Variant | Callee |
 |---|---|---|
 | [`noop_passthrough/noop_passthrough.hcl`](noop_passthrough/noop_passthrough.hcl) | 1 | The noop fixture as a data-ish callee in its outputs-passthrough mode (CRI-165). |
 | [`mcp_resource/mcp_resource.hcl`](mcp_resource/mcp_resource.hcl) | 2 | The mcp adapter as a resource, driven by the scripted echo MCP fixture server over stdio (CRI-172). |
+| [`copilot_mcp_resource/copilot_mcp_resource.hcl`](copilot_mcp_resource/copilot_mcp_resource.hcl) | 3 | The mcp adapter as a resource, tool-called by a real copilot agent mid-task (CRI-181) — see [its README](copilot_mcp_resource/README.md). |
 
 ## How a caller tool-call works
 
@@ -77,8 +80,13 @@ and ADR-0004 for the full gate order.
 ## Run
 
 ```sh
-make example-adapter-tools   # runs both variants with assertions (CI smoke)
-make validate                # compiles every example, including this one
+make example-adapter-tools           # runs variants 1–2 with assertions (CI smoke)
+make example-adapter-tools-copilot   # variant 3: real agent; skips without the copilot runtime
+make validate                        # compiles every example, including this one
 ```
 
-Both variants run without a server (no `wait`/`approval` nodes).
+Variants 1–2 run without a server (no `wait`/`approval` nodes). Variant 3
+additionally needs the copilot CLI, an `adapter_tools`-era
+`criteria-adapter-copilot`, and a reachable model provider — it skips
+with a reason when those are absent, so it is deliberately not wired into
+`ci`.
