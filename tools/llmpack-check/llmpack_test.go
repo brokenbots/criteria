@@ -22,7 +22,7 @@ func repoRoot(t *testing.T) string {
 	return abs
 }
 
-// canonicalFiles lists the 8 expected pattern files in canonical order.
+// canonicalFiles lists the 9 expected pattern files in canonical order.
 var canonicalFiles = []string{
 	"01-linear.md",
 	"02-branching-switch.md",
@@ -32,6 +32,7 @@ var canonicalFiles = []string{
 	"06-approval-and-wait.md",
 	"07-shared-variable.md",
 	"08-fileset-template.md",
+	"09-adapter-tools.md",
 }
 
 // requiredHeaders lists the level-2 headers every pattern file must contain,
@@ -52,7 +53,7 @@ var readmeHeaders = []string{
 }
 
 // TestPromptPack_ExactFileSet asserts docs/llm/ contains exactly README.md
-// plus the 8 canonical pattern files — no extras, no missing, no renames.
+// plus the 9 canonical pattern files — no extras, no missing, no renames.
 func TestPromptPack_ExactFileSet(t *testing.T) {
 	root := repoRoot(t)
 	dir := filepath.Join(root, "docs", "llm")
@@ -165,7 +166,7 @@ func TestPromptPack_PerFileWordBudget(t *testing.T) {
 }
 
 // TestPromptPack_TotalWordBudget asserts that the combined word count of all
-// 8 pattern files is ≤ 2800 (≈ 4,000 tokens).
+// 9 pattern files is ≤ 2800 (≈ 4,000 tokens).
 func TestPromptPack_TotalWordBudget(t *testing.T) {
 	root := repoRoot(t)
 	dir := filepath.Join(root, "docs", "llm")
@@ -265,7 +266,7 @@ var allowedExampleFiles = func() map[string]bool {
 		filepath.Join("08-fileset-template", "prompts", "alpha.md"): true,
 		filepath.Join("08-fileset-template", "prompts", "beta.md"):  true,
 	}
-	// The 8 canonical main.hcl mirrors.
+	// The 9 canonical main.hcl mirrors.
 	for _, name := range canonicalFiles {
 		base := strings.TrimSuffix(name, ".md")
 		m[filepath.Join(base, "main.hcl")] = true

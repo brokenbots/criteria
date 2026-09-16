@@ -2,16 +2,16 @@
 
 ## How to assemble the prompt
 
-Concatenate `docs/LANGUAGE-SPEC.md` with the 8 pattern files to produce a
+Concatenate `docs/LANGUAGE-SPEC.md` with the 9 pattern files to produce a
 complete LLM authoring system prompt:
 
 ```bash
 cat docs/LANGUAGE-SPEC.md docs/llm/0*.md > prompt.md
 ```
 
-**System prompt = `docs/LANGUAGE-SPEC.md` + the 8 pattern files concatenated in order.**
+**System prompt = `docs/LANGUAGE-SPEC.md` + the 9 pattern files concatenated in order.**
 
-Total token budget: ~7,200 tokens (≈4,300 for the spec + ≈2,900 for the pack).
+Total token budget: ~7,600 tokens (≈4,300 for the spec + ≈3,300 for the pack).
 For smaller-context models, drop individual patterns; each file is self-contained.
 
 ## Pattern index
@@ -26,7 +26,7 @@ For smaller-context models, drop individual patterns; each file is self-containe
 | 06 | Human-in-the-loop | Pause for an external signal or human approval. |
 | 07 | Mutable shared state | Two or more steps read and write a common variable. |
 | 08 | File-driven prompts | Load step inputs from files at runtime using `file()`. |
-| 09 | Adapter tool calls | *(planned, CRI-175)* One adapter calls another adapter's tools mid-step. |
+| 09 | Adapter tool calls | One adapter calls another adapter's tools mid-step; results return inline. |
 
 ## Maintenance
 

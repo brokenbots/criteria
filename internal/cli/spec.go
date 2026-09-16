@@ -19,7 +19,7 @@ func NewSpecCmd() *cobra.Command {
 		Short: "Print the Criteria workflow language specification",
 		Long: `Print the Criteria workflow language specification to stdout.
 
-With --with-patterns, also appends the eight LLM prompt-pack pattern files,
+With --with-patterns, also appends the nine LLM prompt-pack pattern files,
 producing a complete system prompt for LLM-assisted workflow authoring.
 
 Examples:
@@ -35,7 +35,7 @@ Examples:
 	}
 
 	cmd.Flags().BoolVar(&withPatterns, "with-patterns", false,
-		"Append the eight LLM prompt-pack pattern files after the spec")
+		"Append the nine LLM prompt-pack pattern files after the spec")
 
 	return cmd
 }

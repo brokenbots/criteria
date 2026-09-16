@@ -28,12 +28,13 @@ func TestPrintSpec_WithPatterns(t *testing.T) {
 		t.Fatalf("printSpec error: %v", err)
 	}
 	out := buf.String()
-	// All eight patterns must appear
+	// All nine patterns must appear
 	for _, marker := range []string{
 		"Pattern: Linear", "Pattern: Branching switch",
 		"Pattern: Sequential iteration", "Pattern: Concurrent iteration",
 		"Pattern: Subworkflow", "Pattern: Human-in-the-loop",
 		"Pattern: Mutable shared state", "Pattern: File-driven",
+		"Pattern: Adapter tool calls",
 	} {
 		if !strings.Contains(out, marker) {
 			t.Errorf("combined output missing pattern marker %q", marker)

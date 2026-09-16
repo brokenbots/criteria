@@ -31,7 +31,11 @@ var LLMPattern07 string
 //go:embed docs/llm/08-fileset-template.md
 var LLMPattern08 string
 
+//go:embed docs/llm/09-adapter-tools.md
+var LLMPattern09 string
+
 var LLMPatterns = []string{
 	LLMPattern01, LLMPattern02, LLMPattern03, LLMPattern04,
 	LLMPattern05, LLMPattern06, LLMPattern07, LLMPattern08,
+	LLMPattern09,
 }
