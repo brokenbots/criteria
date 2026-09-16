@@ -17,9 +17,27 @@ import (
 )
 
 type noopService struct {
-	adapterhost.UnimplementedPermissions
 	mu       sync.Mutex
 	sessions map[string]struct{}
+
+	toolBridgeOnce sync.Once
+	toolBridge     *toolCallBridge
+}
+
+// Permissions drives the tool-call bridge: typed tool_call_result replies,
+// denials, and allow-grant ACKs all arrive on this stream, so the bridge must
+// run here (the SDK's embedded UnimplementedPermissions would auto-allow and
+// drop the typed replies, wedging every tool call). Plain permission traffic
+// keeps the auto-allow semantics the fixture has always had.
+func (s *noopService) Permissions(ctx context.Context, stream adapterhost.PermissionsStream) error {
+	return s.bridge().Permissions(ctx, stream)
+}
+
+// bridge returns the adapter's tool-call bridge, creating it on first use so
+// adapters that never call tools keep the zero value.
+func (s *noopService) bridge() *toolCallBridge {
+	s.toolBridgeOnce.Do(func() { s.toolBridge = &toolCallBridge{} })
+	return s.toolBridge
 }
 
 func (s *noopService) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse, error) {
@@ -29,7 +47,7 @@ func (s *noopService) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoRespon
 		SourceUrl:          "https://github.com/brokenbots/criteria",
 		SdkProtocolVersion: "2",
 		Platforms:          []string{"linux/amd64", "linux/arm64", "darwin/arm64"},
-		Capabilities:       []string{"parallel_safe", "permission_gating", "permission_request_forwarding"},
+		Capabilities:       []string{"parallel_safe", "adapter_tools", "permission_gating", "permission_request_forwarding"},
 	}, nil
 }
 
@@ -81,6 +99,23 @@ func (s *noopService) Execute(ctx context.Context, req *v2.ExecuteRequest, sink 
 		}); err != nil {
 			return err
 		}
+	}
+	// Tool-call modes (CRI-165): tool_target selects the caller mode; the
+	// outputs passthrough is its data-ish callee counterpart. The modes are
+	// mutually exclusive with each other.
+	input := req.GetInput()
+	_, hasToolTarget := input[inputToolTarget]
+	_, hasToolName := input[inputToolName]
+	_, hasToolArgs := input[inputToolArgs]
+	_, hasOutputs := input[inputOutputs]
+	toolCallMode := hasToolTarget || hasToolName || hasToolArgs
+	switch {
+	case toolCallMode && hasOutputs:
+		return fmt.Errorf("invalid input: %q and %q are mutually exclusive", inputToolTarget, inputOutputs)
+	case toolCallMode:
+		return s.executeToolCall(ctx, input, sink)
+	case hasOutputs:
+		return executeNoopPassthrough(input, sink)
 	}
 	if connectAddr := req.GetInput()["connect"]; connectAddr != "" {
 		outcome := probeConnect(connectAddr)
