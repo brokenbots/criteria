@@ -71,8 +71,11 @@ mid-task.
 
 ## What the agent sees
 
-The host surfaces each granted callee tool to the copilot session through
-the adapter's `adapter_tool` tool. The agent's tool call carries the §2
+The `adapter_tool` tool is the copilot adapter's own, not a host-provided
+channel: the host does not announce the step's grant list to the session,
+so the agent discovers the callee tool by calling it, and a call through
+`adapter_tool` succeeds exactly when the step's `tools`/`allow_tools`
+policy authorizes the target. The agent's tool call carries the §2
 target (`adapter.mcp.tools.tools.echo`) plus the MCP tool arguments
 (`{"tool": "echo", "message": "..."}` — the mcp callee takes the MCP tool
 name under `tool`, every other key becomes an MCP argument). The typed

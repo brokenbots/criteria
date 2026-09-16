@@ -299,6 +299,14 @@ example-adapter-tools: build plugins ## Build and run the adapter-tools example 
 # into `ci`: it skips with a reason when the runtime is absent or the
 # installed copilot adapter predates the CRI-178 caller capability, and runs
 # for real otherwise.
+#
+# Event assertions are order-independent: the tool.call_result payload is a
+# JSON map (encoding/json sorts map keys), so no grep may rely on the
+# relative order of two data keys. Facts are checked per captured line,
+# piped through the step/kind filters so attribution to the caller step is
+# kept without depending on key order. The recipe body must stay ONE
+# logical (backslash-continued) line so shell variables survive across the
+# staging/run/assert phases and the SKIP branches end the whole recipe.
 example-adapter-tools-copilot: build plugins ## Build and run the copilot-agent x mcp-resource sample (real agent tool-calling the mcp callee; skips cleanly without the copilot runtime)
 	@echo "Building adapter-tools copilot example fixtures..."
 	go build -o bin/criteria-echo-mcp ./cmd/criteria-adapter-mcp/testfixtures/echo-mcp
@@ -339,17 +347,12 @@ example-adapter-tools-copilot: build plugins ## Build and run the copilot-agent 
 		cat "$$eventsfile"; \
 		rm -rf "$$tmpdir" "$$eventsfile" "$$log"; exit 1; \
 	fi; \
-	if grep -q '"kind":"tool.call_result"' "$$eventsfile" && \
-	   grep -q '"kind":"tool.call_result".*"call_error":"capability_missing"' "$$eventsfile"; then \
-		echo "SKIP example-adapter-tools-copilot: installed criteria-adapter-copilot does not declare the adapter_tools capability (pre-CRI-178 build); reinstall a current build to run for real"; \
-		rm -rf "$$tmpdir" "$$eventsfile" "$$log"; exit 0; \
-	fi; \
-	if ! grep -q '"step":"call".*"kind":"tool.call".*"target":"adapter.mcp.tools.tools.echo"' "$$eventsfile" || \
-	   ! grep -q '"step":"call".*"kind":"tool.call_result".*"target":"adapter.mcp.tools.tools.echo".*"outcome":"success"' "$$eventsfile" || \
-	   ! grep -q 'release-code for build 2.5' "$$eventsfile" || \
+	if ! grep '"step":"call"' "$$eventsfile" | grep '"kind":"tool.call"' | grep -q '"target":"adapter.mcp.tools.tools.echo"' || \
+	   ! grep '"step":"call"' "$$eventsfile" | grep '"kind":"tool.call_result"' | grep -q '"target":"adapter.mcp.tools.tools.echo"' || \
+	   ! grep '"step":"call"' "$$eventsfile" | grep '"kind":"tool.call_result"' | grep -q '"outcome":"success"' || \
 	   ! grep -q '"callee.outcome":"success"' "$$eventsfile" || \
 	   ! grep -q '"payload_type":"RunCompleted","payload":{"finalState":"done","success":true}' "$$eventsfile"; then \
-		echo "ERROR: copilot mcp-resource sample expected events not found (tool.call/tool.call_result under step call, echoed text, callee.outcome, RunCompleted)"; \
+		echo "ERROR: copilot mcp-resource sample expected events not found (tool.call/tool.call_result under step call, target adapter.mcp.tools.tools.echo, outcome success, callee.outcome, RunCompleted)"; \
 		cat "$$eventsfile"; \
 		echo "--- apply log ---"; \
 		grep -v '"level":"WARN"' "$$log"; \

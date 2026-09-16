@@ -86,15 +86,16 @@ step "call" {
   input {
     prompt = <<-EOT
       You are finalizing release bookkeeping for adapter tools wave 2.5.
-      The release code for build 2.5 is NOT in this prompt: the only way to
-      learn it is to call the adapter_tool tool with:
+      The release code is not guessable: the only way to obtain it is to
+      call the adapter_tool tool, exactly once, with:
 
         target = "adapter.mcp.tools.tools.echo"
         arguments = { "tool": "echo", "message": "release-code for build 2.5" }
 
-      Call it exactly once and read the echoed text from the tool result.
-      Do not guess or invent the release code, and do not use any other tool.
-      After you have read the echoed text, report it and end
+      The release code comes back inside the tool result's text: read it
+      from the tool result. Do not guess or invent the release code, and
+      do not use any other tool.
+      After you have read the tool result, report the release code and end
       your final line with exactly: RESULT: success
       If the tool call fails, end your final line with exactly: RESULT: failure
     EOT
