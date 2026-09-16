@@ -1,5 +1,5 @@
 .PHONY: help bootstrap tidy build plugins install proto proto-lint proto-check-drift \
-	test test-cover coverage-check test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint lint-sh vuln-scan vulncheck deps-outdated deps-majors validate validate-docs example-plugin bench docker-runtime docker-runtime-smoke ci clean
+	test test-cover coverage-check test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint lint-sh vuln-scan vulncheck deps-outdated deps-majors validate validate-docs example-plugin example-adapter-tools bench docker-runtime docker-runtime-smoke ci clean
 
 # Default target: list available targets.
 help:
@@ -76,6 +76,7 @@ proto-check-drift: ## Fail if generated proto code is out of sync with proto sou
 
 test: ## Run all unit tests
 	go test -race ./...
+	go test -race ./internal/adapter/conformance/testdata/noop
 	cd sdk      && go test -race ./...
 	cd tools    && go test -race ./...
 	cd workflow && go test -race ./...
@@ -204,6 +205,7 @@ deps-majors: ## List available major-version (/vN) upgrades per module (gomajor)
 validate: build ## Validate all example workflow directories
 	@for d in examples/hello examples/tour examples/subworkflow \
 		examples/build_and_test examples/copilot_planning_then_execution \
+		examples/adapter_tools/noop_passthrough examples/adapter_tools/mcp_resource \
 		examples/llm-pack/01-linear \
 		examples/llm-pack/02-branching-switch \
 		examples/llm-pack/03-iteration-for-each \
@@ -249,7 +251,49 @@ example-plugin: build ## Build and run the greeter example plugin end-to-end
 	rm -rf "$$tmpdir" "$$eventsfile"; \
 	echo "example-plugin: OK"
 
-ci: build test lint validate example-plugin ## Run all CI gates (build, test, lint, validate, example-plugin)
+example-adapter-tools: build plugins ## Build and run the adapter-tools example end to end (both variants; self-contained, no OCI pull)
+	@echo "Building adapter-tools example fixtures..."
+	go build -o bin/criteria-echo-mcp ./cmd/criteria-adapter-mcp/testfixtures/echo-mcp
+	@tmpdir=$$(mktemp -d); \
+	cp bin/criteria-adapter-noop bin/criteria-adapter-mcp bin/criteria-echo-mcp "$$tmpdir/"; \
+	eventsfile=$$(mktemp); log=$$(mktemp); \
+	CRITERIA_ADAPTERS="$$tmpdir" ./bin/criteria apply examples/adapter_tools/noop_passthrough/noop_passthrough.hcl \
+		--events-file "$$eventsfile" >"$$log" 2>&1; \
+	rc=$$?; \
+	if [ $$rc -ne 0 ]; then \
+		echo "ERROR: variant 1 (noop passthrough) apply failed"; \
+		grep -v '"level":"WARN"' "$$log"; \
+		rm -rf "$$tmpdir" "$$eventsfile" "$$log"; exit 1; \
+	fi; \
+	if ! grep -q '"callee.outcome":"success"' "$$eventsfile" || \
+	   ! grep -q '"callee_rows"' "$$eventsfile" || \
+	   ! grep -q 'alpha' "$$eventsfile" || \
+	   ! grep -q '"payload_type":"RunCompleted","payload":{"finalState":"done","success":true}' "$$eventsfile"; then \
+		echo "ERROR: variant 1 (noop passthrough) expected outputs not found in events"; \
+		cat "$$eventsfile"; \
+		rm -rf "$$tmpdir" "$$eventsfile" "$$log"; exit 1; \
+	fi; \
+	echo "example-adapter-tools: variant 1 (noop passthrough) OK"; \
+	: > "$$eventsfile"; : > "$$log"; \
+	PATH="$$tmpdir:$$PATH" CRITERIA_ADAPTERS="$$tmpdir" ./bin/criteria apply examples/adapter_tools/mcp_resource/mcp_resource.hcl \
+		--events-file "$$eventsfile" >"$$log" 2>&1; \
+	rc=$$?; \
+	if [ $$rc -ne 0 ]; then \
+		echo "ERROR: variant 2 (mcp resource) apply failed"; \
+		grep -v '"level":"WARN"' "$$log"; \
+		rm -rf "$$tmpdir" "$$eventsfile" "$$log"; exit 1; \
+	fi; \
+	if ! grep -q '"callee.outcome":"success"' "$$eventsfile" || \
+	   ! grep -q 'hello from adapter tools' "$$eventsfile" || \
+	   ! grep -q '"payload_type":"RunCompleted","payload":{"finalState":"done","success":true}' "$$eventsfile"; then \
+		echo "ERROR: variant 2 (mcp resource) expected outputs not found in events"; \
+		cat "$$eventsfile"; \
+		rm -rf "$$tmpdir" "$$eventsfile" "$$log"; exit 1; \
+	fi; \
+	rm -rf "$$tmpdir" "$$eventsfile" "$$log"; \
+	echo "example-adapter-tools: variant 2 (mcp resource) OK"
+
+ci: build test lint validate example-plugin example-adapter-tools ## Run all CI gates (build, test, lint, validate, examples)
 
 clean: ## Remove build artifacts
 	rm -rf bin conformance.test

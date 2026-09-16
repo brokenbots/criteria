@@ -37,6 +37,15 @@ product version). The release tag and date are finalized by the release gate.
   releases must pick up SDK v0.5.4+ (or an equivalent scope-aware SDK version)
   and forward the scope before per-scope isolation can be used with those
   adapters.
+- **Adapter-tools example (CRI-176).** `examples/adapter_tools/` runs the
+  adapter-tools story end to end in two self-contained variants: a caller noop
+  adapter tool-calling a data-ish callee noop in its outputs-passthrough mode,
+  and the mcp adapter consumed as a resource against the scripted echo fixture
+  server over stdio (no network). The noop conformance fixture gains the
+  tool-call mode (caller and callee halves, with typed `tool_call_result`
+  replies correlated on its `Permissions` stream) and is exercised by the new
+  `make example-adapter-tools` smoke target; `make validate` covers both
+  example workflows.
 
 - **OCI-based distribution.** Adapters publish as multi-platform OCI artifacts
   (per-platform binary blobs + an `adapter.yaml` manifest) to any OCI-compliant
