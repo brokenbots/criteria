@@ -450,8 +450,15 @@ func printLockDiff(oldLF, newLF *lockfile.Lockfile, out io.Writer, adapterCount 
 	for _, c := range signerChanges {
 		fmt.Fprintf(out, "! %s signer changed\n", c.Adapter)
 	}
-	for i := range otherChanges {
-		c := &otherChanges[i]
+	printLockChanges(otherChanges, out)
+}
+
+// printLockChanges renders non-signer lockfile changes, including workflow_ref
+// pin changes (M4.2). Workflow-ref sources are redacted because they may embed
+// credentials.
+func printLockChanges(changes []lockfile.Change, out io.Writer) {
+	for i := range changes {
+		c := &changes[i]
 		switch c.Kind {
 		case lockfile.Added:
 			fmt.Fprintf(out, "+ %s\n", c.Adapter)
@@ -467,8 +474,36 @@ func printLockDiff(oldLF, newLF *lockfile.Lockfile, out io.Writer, adapterCount 
 			fmt.Fprintf(out, "~ %s remote changed\n", c.Adapter)
 		case lockfile.OverrideChanged:
 			fmt.Fprintf(out, "~ %s override changed\n", c.Adapter)
+		case lockfile.WorkflowRefChanged:
+			fmt.Fprintf(out, "%s\n", describeWorkflowRefChange(c.Adapter, c.Before, c.After))
 		}
 	}
+}
+
+// describeWorkflowRefChange renders a workflow_ref change. Added changes carry
+// no Before payload, removed changes no After payload; discrimination uses the
+// payload rather than pin names because legacy lockfiles (written before M4.2)
+// record direct pins without a name. Sources are redacted because they may
+// embed credentials.
+func describeWorkflowRefChange(name string, before, after any) string {
+	oldRef, _ := before.(lockfile.LockedWorkflowRef)
+	newRef, _ := after.(lockfile.LockedWorkflowRef)
+
+	switch {
+	case before == nil:
+		return fmt.Sprintf("+ %s %s", name, describeWorkflowRef(newRef))
+	case after == nil:
+		return fmt.Sprintf("- %s (stale)", name)
+	default:
+		return fmt.Sprintf("~ %s workflow ref changed: %s -> %s",
+			name, describeWorkflowRef(oldRef), describeWorkflowRef(newRef))
+	}
+}
+
+// describeWorkflowRef renders a pin's kind, resolved identifier and redacted
+// source for the lock diff.
+func describeWorkflowRef(w lockfile.LockedWorkflowRef) string {
+	return fmt.Sprintf("%s %s (%s)", w.Kind, w.ResolvedRef, workflow.RedactSource(w.Source))
 }
 
 // workflowAdapter holds the parsed adapter declaration: its OCI location
