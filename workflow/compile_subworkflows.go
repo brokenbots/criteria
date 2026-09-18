@@ -170,7 +170,7 @@ func enforceSubworkflowPin(swSpec *SubworkflowSpec, pin *lockfile.LockedWorkflow
 		return hcl.Diagnostics{{
 			Severity: hcl.DiagError,
 			Summary: fmt.Sprintf("subworkflow %q: ref %q declared but source %q is local; "+
-				"expected pins apply only to remote git or archive sources", swSpec.Name, swSpec.Ref, swSpec.Source),
+				"expected pins apply only to remote git or archive sources", swSpec.Name, swSpec.Ref, RedactSource(swSpec.Source)),
 		}}
 	}
 	if pin.ResolvedRef != swSpec.Ref {
@@ -179,7 +179,7 @@ func enforceSubworkflowPin(swSpec *SubworkflowSpec, pin *lockfile.LockedWorkflow
 			Summary: fmt.Sprintf("subworkflow %q: expected-pin mismatch: expected %q, resolved %q; refusing to run",
 				swSpec.Name, swSpec.Ref, pin.ResolvedRef),
 			Detail: fmt.Sprintf("source %q resolved to %q, which does not match the declared ref %q",
-				swSpec.Source, pin.ResolvedRef, swSpec.Ref),
+				RedactSource(swSpec.Source), pin.ResolvedRef, swSpec.Ref),
 		}}
 	}
 	return nil

@@ -4,8 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"time"
+
+	"github.com/brokenbots/criteria/workflow"
 )
 
 // WorkflowOrigin records the resolved provenance of a workflow source
@@ -44,11 +45,13 @@ type WorkflowOrigin struct {
 // expectedRef is the caller-declared expected pin (ADR-0005 D7, CRI-226):
 // the git commit SHA or "sha256:<digest>" the resolved source must match.
 // When set, resolution fails closed on mismatch — or on a local source,
-// where the expectation cannot be verified — before any execution. When
-// empty, behavior is unchanged.
+// where the expectation cannot be verified — before any execution. The
+// declared value is compared exactly, so a whitespace-only pin is a declared
+// (and unfulfillable) pin, matching the compiler's subworkflow ref semantics.
+// When empty, behavior is unchanged.
 func resolveWorkflowSource(ctx context.Context, source, expectedRef string) (string, *WorkflowOrigin, error) {
 	if !isRemoteWorkflowSource(source) {
-		if strings.TrimSpace(expectedRef) != "" {
+		if expectedRef != "" {
 			return "", nil, fmt.Errorf("workflow source %q is local; ref %q declared but expected pins apply only to remote git or archive sources", redactSourceForLog(source), expectedRef)
 		}
 		return source, nil, nil
@@ -62,7 +65,7 @@ func resolveWorkflowSource(ctx context.Context, source, expectedRef string) (str
 		return "", nil, fmt.Errorf("remote workflow source %q resolved without a pin", redactSourceForLog(source))
 	}
 
-	if expectedRef := strings.TrimSpace(expectedRef); expectedRef != "" && pin.ResolvedRef != expectedRef {
+	if expectedRef != "" && pin.ResolvedRef != expectedRef {
 		return "", nil, fmt.Errorf("workflow source %s: expected-pin mismatch: expected %q, resolved %q; refusing to run",
 			redactSourceForLog(source), expectedRef, pin.ResolvedRef)
 	}
@@ -90,28 +93,15 @@ func fetchedAt(dir string) time.Time {
 }
 
 // redactSourceForLog masks userinfo credentials in a URL-shaped source
-// ("https://user:token@host/x.tar.gz" → "https://redacted@host/x.tar.gz") so
+// ("******host/x.tar.gz" → "https://redacted@host/x.tar.gz") so
 // secrets never reach structured logs — or the recorded RunMetadata
 // provenance, which stores this redacted form (CRI-225). WorkflowOrigin in
 // memory and the lockfile keep the raw source. Sources without a "://"
 // separator (local paths, scp-style git forms) are returned unchanged.
+//
+// The implementation is shared with the workflow module's compile-time
+// diagnostics (workflow.RedactSource, CRI-226 review R1) so every rendered
+// surface redacts identically.
 func redactSourceForLog(source string) string {
-	idx := strings.Index(source, "://")
-	if idx == -1 {
-		return source
-	}
-	rest := source[idx+3:]
-	// The userinfo delimiter can only appear in the authority component,
-	// which ends at the first "/", "?" or "#"; an "@" later in the path must
-	// not be mistaken for one. Within the authority, the first "@" is the
-	// delimiter (userinfo cannot contain a literal "@").
-	authority := rest
-	if end := strings.IndexAny(rest, "/?#"); end != -1 {
-		authority = rest[:end]
-	}
-	at := strings.Index(authority, "@")
-	if at == -1 {
-		return source
-	}
-	return source[:idx+3] + "redacted@" + rest[at+1:]
+	return workflow.RedactSource(source)
 }

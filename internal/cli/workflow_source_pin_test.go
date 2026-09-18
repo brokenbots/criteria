@@ -164,9 +164,12 @@ func TestResolveWorkflowSource_ExpectedPin_LocalSourceRefused(t *testing.T) {
 	assert.Contains(t, err.Error(), "local")
 	assert.Contains(t, err.Error(), fx.headSHA, "error must name the declared pin")
 
-	// A whitespace-only pin is treated as absent: unchanged behavior.
+	// A whitespace-only pin is a declared (and unfulfillable) pin: fail
+	// closed, consistent with the compiler's exact ref comparison.
 	_, _, err = resolveWorkflowSource(context.Background(), dir, " \t ")
-	assert.NoError(t, err)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "local")
+	assert.Contains(t, err.Error(), `ref " \t " declared`, "error must name the declared pin verbatim")
 }
 
 // ---------------------------------------------------------------------------
@@ -412,4 +415,39 @@ func TestApply_TopLevelPin_AbsentUnchanged(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, countPayloadType(types, "RunStarted"))
 	assert.Equal(t, 1, countPayloadType(types, "RunCompleted"))
+}
+
+// TestApply_TopLevelPin_Archive pins the archive-digest kind for the top
+// level end to end: a matching sha256 pin runs, a mismatching one fails
+// closed before execution.
+func TestApply_TopLevelPin_Archive(t *testing.T) {
+	setWorkflowCacheHome(t)
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+	fx := createWorkflowArchiveFixture(t)
+
+	// Match: the run proceeds.
+	eventsFile := filepath.Join(t.TempDir(), "events.ndjson")
+	require.NoError(t, runApply(context.Background(), applyOptions{
+		workflowPath: fx.tarGzURL,
+		workflowRef:  fx.tarGzRef,
+		eventsPath:   eventsFile,
+	}))
+	types, err := readPayloadTypes(eventsFile)
+	require.NoError(t, err)
+	assert.Equal(t, 1, countPayloadType(types, "RunStarted"))
+	assert.Equal(t, 1, countPayloadType(types, "RunCompleted"))
+
+	// Mismatch on the digest: the run fails closed before execution.
+	wrongDigest := "sha256:" + strings.Repeat("cd", 32)
+	mismatchEvents := filepath.Join(t.TempDir(), "events.ndjson")
+	err = runApply(context.Background(), applyOptions{
+		workflowPath: fx.tarGzURL,
+		workflowRef:  wrongDigest,
+		eventsPath:   mismatchEvents,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "expected-pin mismatch")
+	assert.Contains(t, err.Error(), fx.tarGzRef, "error must name the resolved digest")
+	assert.Contains(t, err.Error(), wrongDigest, "error must name the expected digest")
+	assertNoRunEvents(t, mismatchEvents)
 }
