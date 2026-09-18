@@ -480,17 +480,19 @@ func printLockChanges(changes []lockfile.Change, out io.Writer) {
 	}
 }
 
-// describeWorkflowRefChange renders a workflow_ref change. Added pins carry
-// an empty Before, removed pins an empty After; sources are redacted because
-// they may embed credentials.
+// describeWorkflowRefChange renders a workflow_ref change. Added changes carry
+// no Before payload, removed changes no After payload; discrimination uses the
+// payload rather than pin names because legacy lockfiles (written before M4.2)
+// record direct pins without a name. Sources are redacted because they may
+// embed credentials.
 func describeWorkflowRefChange(name string, before, after any) string {
 	oldRef, _ := before.(lockfile.LockedWorkflowRef)
 	newRef, _ := after.(lockfile.LockedWorkflowRef)
 
 	switch {
-	case oldRef.Name == "":
+	case before == nil:
 		return fmt.Sprintf("+ %s %s", name, describeWorkflowRef(newRef))
-	case newRef.Name == "":
+	case after == nil:
 		return fmt.Sprintf("- %s (stale)", name)
 	default:
 		return fmt.Sprintf("~ %s workflow ref changed: %s -> %s",

@@ -48,11 +48,11 @@ func createCascadeGitFixture(t *testing.T, workflowContent, lockContent string) 
 }
 
 // workflowRefPinHCL renders a workflow_ref lockfile block.
-func workflowRefPinHCL(name, source, resolvedRef, kind string) string {
+func workflowRefPinHCL(name, source, resolvedRef string) string {
 	return "workflow_ref \"" + name + "\" {\n" +
 		"  source = \"" + source + "\"\n" +
 		"  resolved_ref = \"" + resolvedRef + "\"\n" +
-		"  kind = \"" + kind + "\"\n" +
+		"  kind = \"git\"\n" +
 		"}\n"
 }
 
@@ -92,7 +92,7 @@ func readLockfileFrom(t *testing.T, dir string) *lockfile.Lockfile {
 func writeDepthTwoCascade(t *testing.T) (root string, middle, child workflowGitFixture) {
 	t.Helper()
 	child = createCascadeGitFixture(t, pinCalleeWorkflowHCL, "schema_version = 1\n")
-	childPinHCL := "schema_version = 1\n" + workflowRefPinHCL("inner", gitFileSource(child), child.headSHA, "git")
+	childPinHCL := "schema_version = 1\n" + workflowRefPinHCL("inner", gitFileSource(child), child.headSHA)
 	middle = createCascadeGitFixture(t, cascadeWorkflowHCL("cascade_middle", gitFileSource(child), ""), childPinHCL)
 	return writeCascadeRootDir(t, gitFileSource(middle)), middle, child
 }
@@ -185,7 +185,7 @@ func TestRunLock_RecursiveCascade_FakeFetcherDepthTwo(t *testing.T) {
 	middleDir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(middleDir, "workflow.hcl"),
 		[]byte(cascadeWorkflowHCL("cascade_middle", sourceChild, "")), 0o644))
-	middleLock := "schema_version = 1\n" + workflowRefPinHCL("inner", sourceChild, "shaB", "git")
+	middleLock := "schema_version = 1\n" + workflowRefPinHCL("inner", sourceChild, "shaB")
 	require.NoError(t, os.WriteFile(filepath.Join(middleDir, lockfile.LockfileName), []byte(middleLock), 0o644))
 
 	childDir := t.TempDir()
@@ -324,36 +324,58 @@ func TestRunLock_RecursiveCascade_LockDiffReportsWorkflowRefChange(t *testing.T)
 	assert.NotContains(t, output, "workflow_ref.inner/inner")
 }
 
-func TestPrintLockDiff_WorkflowRefChanged(t *testing.T) {
+// TestPrintLockDiff_WorkflowRefChangeRendering pins the exact diff lines for
+// workflow_ref changes. Removed legacy pins are unnamed (lockfiles written
+// before M4.2 record direct pins without a name), so the renderer must
+// discriminate by the change payload, never by pin names.
+func TestPrintLockDiff_WorkflowRefChangeRendering(t *testing.T) {
 	const secretSource = "git::https://user:secret@old.example/moved?ref=v1"
-	oldLF := &lockfile.Lockfile{
-		SchemaVersion: 1,
-		WorkflowRefs: []lockfile.LockedWorkflowRef{
-			{Name: "gone", Source: "git::https://old.example/gone?ref=v1", ResolvedRef: "aaa", Kind: "git"},
-			{Name: "moved", Source: secretSource, ResolvedRef: "111", Kind: "git"},
-			{Name: "stay", Source: "git::https://old.example/stay?ref=v1", ResolvedRef: "333", Kind: "git"},
+	redacted := "git::https://redacted@old.example/moved?ref=v1"
+
+	tests := []struct {
+		name   string
+		before []lockfile.LockedWorkflowRef
+		after  []lockfile.LockedWorkflowRef
+		want   string
+	}{
+		{
+			name:  "added pin renders an addition with redacted source",
+			after: []lockfile.LockedWorkflowRef{{Name: "inner", Source: secretSource, ResolvedRef: "222", Kind: "git"}},
+			want:  "+ workflow_ref.inner git 222 (" + redacted + ")",
 		},
-	}
-	newLF := &lockfile.Lockfile{
-		SchemaVersion: 1,
-		WorkflowRefs: []lockfile.LockedWorkflowRef{
-			{Name: "moved", Source: secretSource, ResolvedRef: "222", Kind: "git"},
-			{Name: "fresh", Source: "git::https://new.example/fresh?ref=v2", ResolvedRef: "bbb", Kind: "git"},
-			{Name: "stay", Source: "git::https://old.example/stay?ref=v1", ResolvedRef: "333", Kind: "git"},
+		{
+			name:   "removed named pin renders a removal",
+			before: []lockfile.LockedWorkflowRef{{Name: "inner", Source: "git::https://old.example/middle?ref=main", ResolvedRef: "111", Kind: "git"}},
+			want:   "- workflow_ref.inner (stale)",
+		},
+		{
+			name:   "removed legacy unnamed pin renders a removal",
+			before: []lockfile.LockedWorkflowRef{{Source: "git::https://old.example/middle?ref=main", ResolvedRef: "111", Kind: "git"}},
+			want:   "- workflow_ref. (stale)",
+		},
+		{
+			name:   "changed pin renders old and new with redacted sources",
+			before: []lockfile.LockedWorkflowRef{{Name: "inner", Source: secretSource, ResolvedRef: "111", Kind: "git"}},
+			after:  []lockfile.LockedWorkflowRef{{Name: "inner", Source: secretSource, ResolvedRef: "222", Kind: "git"}},
+			want:   "~ workflow_ref.inner workflow ref changed: git 111 (" + redacted + ") -> git 222 (" + redacted + ")",
 		},
 	}
 
-	var out bytes.Buffer
-	printLockDiff(oldLF, newLF, &out, 0, "/workflows/root")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			oldLF := &lockfile.Lockfile{SchemaVersion: 1, WorkflowRefs: tt.before}
+			newLF := &lockfile.Lockfile{SchemaVersion: 1, WorkflowRefs: tt.after}
 
-	line := out.String()
-	assert.Contains(t, line, "- workflow_ref.gone (stale)")
-	assert.Contains(t, line, "+ workflow_ref.fresh")
-	assert.Contains(t, line, "~ workflow_ref.moved workflow ref changed:")
-	assert.Contains(t, line, "111")
-	assert.Contains(t, line, "222")
-	assert.NotContains(t, line, "secret", "lock diff output must redact credentials embedded in sources")
-	assert.False(t, strings.Contains(line, "workflow_ref.stay"), "unchanged pins must not appear in the diff")
+			var out bytes.Buffer
+			printLockDiff(oldLF, newLF, &out, 0, "/workflows/root")
+
+			got := strings.Split(strings.TrimSpace(out.String()), "\n")
+			assert.Equal(t, []string{"# /workflows/root", tt.want}, got,
+				"the diff must render exactly the expected change line")
+			assert.NotContains(t, out.String(), "secret",
+				"lock diff output must redact credentials embedded in sources")
+		})
+	}
 }
 
 func TestPrintLockDiff_WorkflowRefUpToDate(t *testing.T) {
@@ -368,4 +390,179 @@ func TestPrintLockDiff_WorkflowRefUpToDate(t *testing.T) {
 	printLockDiff(lf, lf, &out, 0, "/workflows/root")
 
 	assert.Equal(t, "lockfile up to date, 0 adapter(s)\n", out.String())
+}
+
+// TestRunLock_RecursiveCascade_MigratesLegacyUnnamedPin re-locks a cascade
+// whose parent lockfile was written before M4.2: direct pins are unnamed and
+// the fetched child's authored pins are unnamed too. The diff must report the
+// unnamed pin's removal exactly — never as an addition with empty fields —
+// and the re-named pin must keep the pinned resolved identifier so the tree
+// stays reproducible.
+func TestRunLock_RecursiveCascade_MigratesLegacyUnnamedPin(t *testing.T) {
+	setWorkflowCacheHome(t)
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+	ctx := context.Background()
+
+	child := createCascadeGitFixture(t, pinCalleeWorkflowHCL, "schema_version = 1\n")
+	legacyChildPin := "schema_version = 1\n" + workflowRefPinHCL("", gitFileSource(child), child.headSHA)
+	middle := createCascadeGitFixture(t, cascadeWorkflowHCL("cascade_middle", gitFileSource(child), ""), legacyChildPin)
+	root := writeCascadeRootDir(t, gitFileSource(middle))
+
+	// Seed the parent lockfile with the pre-M4.2 shape: an unnamed direct pin
+	// for the still-declared middle workflow.
+	legacyParentLock := "schema_version = 1\n" +
+		workflowRefPinHCL("", gitFileSource(middle), middle.headSHA)
+	require.NoError(t, os.WriteFile(filepath.Join(root, lockfile.LockfileName), []byte(legacyParentLock), 0o644))
+
+	var out bytes.Buffer
+	require.NoError(t, runLock(ctx, root, false, true, true, nil, &out, nil, nil))
+
+	var refs []string
+	for _, line := range strings.Split(out.String(), "\n") {
+		if strings.HasPrefix(line, "+ workflow_ref.") ||
+			strings.HasPrefix(line, "- workflow_ref.") ||
+			strings.HasPrefix(line, "~ workflow_ref.") {
+			refs = append(refs, line)
+		}
+	}
+	assert.ElementsMatch(t, []string{
+		"+ workflow_ref.inner git " + middle.headSHA + " (" + gitFileSource(middle) + ")",
+		"- workflow_ref. (stale)",
+	}, refs, "the legacy unnamed pin must be reported as a removal, never as an addition with empty fields")
+
+	rootLF := readLockfileFrom(t, root)
+	direct := findWorkflowRef(rootLF, "inner")
+	require.NotNil(t, direct)
+	assert.Equal(t, middle.headSHA, direct.ResolvedRef,
+		"re-locking must keep the pinned resolved identifier")
+	assert.Nil(t, findWorkflowRef(rootLF, "inner/inner"),
+		"the child's legacy unnamed pin must not be propagated")
+}
+
+// TestRunLock_RecursiveCascade_RemovesStaleLegacyUnnamedPin re-locks a
+// cascade root whose pre-M4.2 lockfile still carries the unnamed pin of a
+// remote subworkflow that has since been removed (the root now declares only
+// a local subworkflow, which produces no pin). Re-locking must emit exactly
+// one removal line for the stale unnamed pin and no additions.
+func TestRunLock_RecursiveCascade_RemovesStaleLegacyUnnamedPin(t *testing.T) {
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+	ctx := context.Background()
+
+	root := t.TempDir()
+	inner := filepath.Join(root, "inner")
+	require.NoError(t, os.MkdirAll(inner, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(inner, "workflow.hcl"), []byte(pinCalleeWorkflowHCL), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "workflow.hcl"),
+		[]byte(cascadeWorkflowHCL("cascade_root", "./inner", "")), 0o644))
+	legacyLock := "schema_version = 1\n" +
+		workflowRefPinHCL("", "git::https://old.example/gone?ref=v1", "aaa")
+	require.NoError(t, os.WriteFile(filepath.Join(root, lockfile.LockfileName), []byte(legacyLock), 0o644))
+
+	var out bytes.Buffer
+	require.NoError(t, runLock(ctx, root, false, true, true, nil, &out, nil, nil))
+
+	var refs []string
+	for _, line := range strings.Split(out.String(), "\n") {
+		if strings.HasPrefix(line, "+ workflow_ref.") ||
+			strings.HasPrefix(line, "- workflow_ref.") ||
+			strings.HasPrefix(line, "~ workflow_ref.") {
+			refs = append(refs, line)
+		}
+	}
+	assert.Equal(t, []string{"- workflow_ref. (stale)"}, refs,
+		"the stale unnamed pin must be reported exactly once as a removal, with no additions")
+
+	rootLF := readLockfileFrom(t, root)
+	assert.Empty(t, rootLF.WorkflowRefs, "the removed subworkflow's pin must not survive")
+}
+
+// TestRunLock_RecursiveCascade_DoesNotAdoptPropagatedPinForSameSource locks a
+// root whose parent lockfile already carries a propagated grandchild pin that
+// shares a newly added subworkflow's source. The new subworkflow must resolve
+// freshly instead of adopting the propagated pin's resolved identifier; pins
+// are matched by declaring subworkflow name, not by source alone.
+func TestRunLock_RecursiveCascade_DoesNotAdoptPropagatedPinForSameSource(t *testing.T) {
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+	ctx := context.Background()
+
+	const sourceShared = "git::https://fixtures.example/shared?ref=main"
+	const sourceBeta = "git::https://fixtures.example/beta?ref=main"
+	const resolvedBeta = "git::https://fixtures.example/beta?ref=shaBeta"
+	const resolvedShared = "git::https://fixtures.example/shared?ref=shaFromChild"
+
+	// The fetched beta workflow ships an authored pin for its child, which
+	// shares alpha's source once the root declares alpha too.
+	betaDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(betaDir, "workflow.hcl"),
+		[]byte(cascadeWorkflowHCL("cascade_beta", sourceShared, "")), 0o644))
+	betaLock := "schema_version = 1\n" + workflowRefPinHCL("inner", sourceShared, "shaFromChild")
+	require.NoError(t, os.WriteFile(filepath.Join(betaDir, lockfile.LockfileName), []byte(betaLock), 0o644))
+
+	sharedDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(sharedDir, "workflow.hcl"), []byte(pinCalleeWorkflowHCL), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(sharedDir, lockfile.LockfileName), []byte("schema_version = 1\n"), 0o644))
+
+	fetcher := &fakeCascadeFetcher{
+		callers: map[string]string{
+			sourceShared:   sharedDir,
+			resolvedShared: sharedDir,
+			sourceBeta:     betaDir,
+			resolvedBeta:   betaDir,
+		},
+		pins: map[string]lockfile.LockedWorkflowRef{
+			sourceShared:   {Source: sourceShared, ResolvedRef: "shaFresh", Kind: "git"},
+			resolvedShared: {Source: resolvedShared, ResolvedRef: "shaFromChild", Kind: "git"},
+			sourceBeta:     {Source: sourceBeta, ResolvedRef: "shaBetaFresh", Kind: "git"},
+			resolvedBeta:   {Source: resolvedBeta, ResolvedRef: "shaBetaFresh", Kind: "git"},
+		},
+	}
+
+	rootWorkflow := "workflow {\n" +
+		"  name = \"cascade_root\"\n" +
+		"  version = \"0.1\"\n" +
+		"  initial_state = \"run\"\n" +
+		"  target_state  = \"done\"\n" +
+		"}\n\n" +
+		"subworkflow \"alpha\" {\n" +
+		"  source = \"" + sourceShared + "\"\n" +
+		"}\n\n" +
+		"subworkflow \"beta\" {\n" +
+		"  source = \"" + sourceBeta + "\"\n" +
+		"}\n\n" +
+		"step \"run\" {\n" +
+		"  target = subworkflow.alpha\n" +
+		"  outcome \"success\" { next = step.done }\n" +
+		"}\n\n" +
+		"state \"done\" {\n" +
+		"  terminal = true\n" +
+		"  success  = true\n" +
+		"}\n"
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "workflow.hcl"), []byte(rootWorkflow), 0o644))
+
+	// Seed the parent lockfile with the state after locking only beta: the
+	// direct beta pin plus the propagated grandchild pin sharing alpha's
+	// source. A fresh re-lock must not adopt that pin for alpha.
+	seed := "schema_version = 1\n" +
+		workflowRefPinHCL("beta", sourceBeta, "shaBeta") +
+		workflowRefPinHCL("beta/inner", sourceShared, "shaFromChild")
+	require.NoError(t, os.WriteFile(filepath.Join(root, lockfile.LockfileName), []byte(seed), 0o644))
+
+	var out bytes.Buffer
+	require.NoError(t, runLock(ctx, root, false, true, true, nil, &out, nil, fetcher))
+
+	rootLF := readLockfileFrom(t, root)
+	alpha := findWorkflowRef(rootLF, "alpha")
+	require.NotNil(t, alpha)
+	assert.Equal(t, "shaFresh", alpha.ResolvedRef,
+		"a subworkflow must resolve freshly instead of adopting a propagated pin's resolved identifier")
+
+	beta := findWorkflowRef(rootLF, "beta")
+	require.NotNil(t, beta)
+	assert.Equal(t, "shaBeta", beta.ResolvedRef,
+		"the direct pin must be matched by its declaring subworkflow name")
+
+	propagated := findWorkflowRef(rootLF, "beta/inner")
+	require.NotNil(t, propagated)
+	assert.Equal(t, "shaFromChild", propagated.ResolvedRef)
 }

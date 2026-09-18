@@ -144,19 +144,13 @@ func resolveSubworkflowForLock(ctx context.Context, callerDir, source, subworkfl
 		if fetcher == nil {
 			return "", nil, fmt.Errorf("remote workflow sources are not yet supported in this build")
 		}
-		// If the parent already has a pin for this source, fetch by the resolved
-		// identifier so re-locking does not re-resolve a mutable branch or tag, and
-		// preserve the existing pin so the tree remains reproducible.
+		// If the parent already pins this subworkflow, fetch by the resolved
+		// identifier so re-locking does not re-resolve a mutable branch or tag,
+		// and preserve the existing pin so the tree remains reproducible.
 		fetchSource := source
-		existingRef := ""
-		if parentLF, _ := lockfile.ReadFromDir(callerDir); parentLF != nil {
-			for _, wr := range parentLF.WorkflowRefs {
-				if wr.Source == source && wr.ResolvedRef != "" {
-					existingRef = wr.ResolvedRef
-					fetchSource = resolvedWorkflowSource(source, wr.ResolvedRef)
-					break
-				}
-			}
+		existingRef := parentWorkflowPin(callerDir, source, subworkflowName)
+		if existingRef != "" {
+			fetchSource = resolvedWorkflowSource(source, existingRef)
 		}
 		dir, pin, err := fetcher.Fetch(ctx, callerDir, fetchSource)
 		if err != nil {
@@ -179,6 +173,32 @@ func resolveSubworkflowForLock(ctx context.Context, callerDir, source, subworkfl
 		return "", nil, err
 	}
 	return dir, nil, nil
+}
+
+// parentWorkflowPin returns the resolved identifier the caller's lockfile
+// already carries for a direct pin of source. Pins are matched by declaring
+// subworkflow name first; legacy lockfiles (pre-M4.2) recorded direct pins
+// without a name, so unnamed pins are matched second. Propagated grandchild
+// pins (<child>/<grandchild>) are ignored so two subworkflows sharing a
+// source do not adopt each other's resolved identifier.
+func parentWorkflowPin(callerDir, source, subworkflowName string) string {
+	parentLF, _ := lockfile.ReadFromDir(callerDir)
+	if parentLF == nil {
+		return ""
+	}
+	legacy := ""
+	for _, wr := range parentLF.WorkflowRefs {
+		if wr.Source != source || wr.ResolvedRef == "" {
+			continue
+		}
+		if wr.Name == subworkflowName {
+			return wr.ResolvedRef
+		}
+		if wr.Name == "" && legacy == "" {
+			legacy = wr.ResolvedRef
+		}
+	}
+	return legacy
 }
 
 // resolvedWorkflowSource replaces the ref portion of a git URL with the resolved
