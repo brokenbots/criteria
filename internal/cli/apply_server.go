@@ -278,6 +278,10 @@ func runApplyServer(ctx context.Context, opts applyOptions) error {
 	}
 
 	state := newLocalRunState(runID, graph.Name, opts.serverURL)
+	// CRI-225: publish the resolved workflow origin for this fresh server
+	// run; resumed-matching invocations return above and leave the original
+	// run's record untouched. Local sources (nil origin) record nothing.
+	publishRunMetadata(runID, opts.origin, log)
 	return executeServerRun(runCtx, log, loader, client, state, graph, opts, eventsOut)
 }
 

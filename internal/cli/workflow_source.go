@@ -3,7 +3,9 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
+	"time"
 )
 
 // WorkflowOrigin records the resolved provenance of a workflow source
@@ -26,6 +28,10 @@ type WorkflowOrigin struct {
 	// cache/workflows/<slug>/<version> for remote sources, the declared
 	// path for local ones.
 	Path string
+	// FetchedAt is the UTC fetch timestamp (ADR-0005 D5/D6): when the
+	// resolved tree was materialized into the cache. A warm-cache resolution
+	// reports the original materialization time, not the resolution time.
+	FetchedAt time.Time
 }
 
 // resolveWorkflowSource resolves a workflow source to a local directory.
@@ -52,13 +58,28 @@ func resolveWorkflowSource(ctx context.Context, source string) (string, *Workflo
 		Source:      source,
 		ResolvedRef: pin.ResolvedRef,
 		Path:        dir,
+		FetchedAt:   fetchedAt(dir),
 	}, nil
+}
+
+// fetchedAt reports the fetch timestamp of a resolved cache tree, taken from
+// the tree directory's mtime: a fresh fetch renames the just-materialized
+// tree into place, so the mtime is the materialization time, and a
+// warm-cache hit keeps the original materialization time unchanged. If the
+// directory cannot be stat'ed, the resolution time is the best available
+// answer.
+func fetchedAt(dir string) time.Time {
+	if info, err := os.Stat(dir); err == nil {
+		return info.ModTime().UTC()
+	}
+	return time.Now().UTC()
 }
 
 // redactSourceForLog masks userinfo credentials in a URL-shaped source
 // ("https://user:token@host/x.tar.gz" → "https://redacted@host/x.tar.gz") so
-// secrets never reach structured logs. WorkflowOrigin and the lockfile keep
-// the raw source; only log rendering is redacted. Sources without a "://"
+// secrets never reach structured logs — or the recorded RunMetadata
+// provenance, which stores this redacted form (CRI-225). WorkflowOrigin in
+// memory and the lockfile keep the raw source. Sources without a "://"
 // separator (local paths, scp-style git forms) are returned unchanged.
 func redactSourceForLog(source string) string {
 	idx := strings.Index(source, "://")
