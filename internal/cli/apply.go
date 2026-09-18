@@ -32,6 +32,9 @@ type applyOptions struct {
 	allowUnsigned        bool         // --allow-unsigned: skip adapter signature verification (WS46)
 	stdin                io.Reader    // stdin for local-mode approval prompts; nil → os.Stdin
 	log                  *slog.Logger // nil → newApplyLogger(); injectable for tests
+	// origin is the resolved remote workflow source provenance (CRI-225);
+	// nil for local sources. Populated by runApply from resolveWorkflowSource.
+	origin *WorkflowOrigin
 }
 
 func NewApplyCmd() *cobra.Command {
@@ -91,8 +94,12 @@ func runApply(ctx context.Context, opts applyOptions) error {
 			"kind", origin.Kind,
 			"source", redactSourceForLog(origin.Source),
 			"resolved_ref", origin.ResolvedRef,
-			"cache_path", origin.Path)
+			"cache_path", origin.Path,
+			"fetched_at", origin.FetchedAt)
 		opts.workflowPath = resolvedPath
+		// CRI-225: thread the resolved origin to the run admission points,
+		// which publish it into the run's metadata record.
+		opts.origin = origin
 	}
 
 	if strings.TrimSpace(opts.serverURL) != "" {

@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -464,6 +465,26 @@ func TestRedactSourceForLog(t *testing.T) {
 	}
 }
 
+// TestResolveWorkflowSource_FetchedAt pins the fetch timestamp semantics
+// (CRI-225): a fresh fetch reports the materialization time, and a
+// warm-cache resolution reports the original materialization time rather
+// than the resolution time.
+func TestResolveWorkflowSource_FetchedAt(t *testing.T) {
+	setWorkflowCacheHome(t)
+	fx := createWorkflowArchiveFixture(t)
+
+	_, origin1, err := resolveWorkflowSource(context.Background(), fx.tarGzURL)
+	require.NoError(t, err)
+	require.False(t, origin1.FetchedAt.IsZero())
+	require.WithinDuration(t, time.Now().UTC(), origin1.FetchedAt, 10*time.Second,
+		"a fresh fetch's fetched_at is the materialization time")
+
+	_, origin2, err := resolveWorkflowSource(context.Background(), fx.tarGzURL)
+	require.NoError(t, err)
+	assert.True(t, origin2.FetchedAt.Equal(origin1.FetchedAt),
+		"a warm-cache resolution must report the original materialization time")
+}
+
 // ---------------------------------------------------------------------------
 // apply
 // ---------------------------------------------------------------------------
@@ -501,11 +522,49 @@ func capturedOriginLog(t *testing.T, buf *bytes.Buffer) map[string]any {
 	return found
 }
 
+// runIDFromEvents discovers the run id from a local ND-JSON events file
+// (each envelope carries the top-level run_id).
+func runIDFromEvents(t *testing.T, eventsFile string) string {
+	t.Helper()
+	b, err := os.ReadFile(eventsFile)
+	require.NoError(t, err)
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var env struct {
+			RunID string `json:"run_id"`
+		}
+		if err := json.Unmarshal([]byte(line), &env); err == nil && env.RunID != "" {
+			return env.RunID
+		}
+	}
+	t.Fatal("no run_id found in the events file")
+	return ""
+}
+
+// requireRunMetadata reads the run's RunMetadata admission record from the
+// run's state directory, discovering the run id from the events file
+// (CRI-225: the run must publish its resolved workflow origin).
+func requireRunMetadata(t *testing.T, eventsFile string) *RunMetadata {
+	t.Helper()
+	runID := runIDFromEvents(t, eventsFile)
+	state, err := stateDir()
+	require.NoError(t, err)
+	b, err := os.ReadFile(filepath.Join(state, "runs", runID, "run-metadata.json"))
+	require.NoError(t, err, "the run must publish its resolved workflow origin record")
+	var md RunMetadata
+	require.NoError(t, json.Unmarshal(b, &md))
+	return &md
+}
+
 // TestApply_RemoteGitSource_EndToEnd runs apply with a git ref source: the
 // workflow must execute from the fetched cache tree and the resolved origin
 // (source URL, resolved ref, cache path) must be logged for RunMetadata
 // recording (CRI-225).
 func TestApply_RemoteGitSource_EndToEnd(t *testing.T) {
+	start := time.Now().UTC().Add(-2 * time.Second)
 	setWorkflowCacheHome(t)
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 	fx := createWorkflowGitFixture(t)
@@ -529,11 +588,21 @@ func TestApply_RemoteGitSource_EndToEnd(t *testing.T) {
 	assert.Equal(t, fx.headSHA, rec["resolved_ref"])
 	assert.Equal(t, origin.Path, rec["cache_path"])
 	requireResolvedWorkflow(t, origin.Path)
+
+	md := requireRunMetadata(t, eventsFile)
+	assert.Equal(t, "git", md.Kind)
+	assert.Equal(t, source, md.Source)
+	assert.Equal(t, fx.headSHA, md.ResolvedRef)
+	assert.Equal(t, origin.Path, md.CachePath)
+	assert.False(t, md.FetchedAt.IsZero(), "the record must carry the fetch timestamp")
+	assert.False(t, md.FetchedAt.Before(start), "fetched_at must not predate the test")
+	assert.False(t, md.FetchedAt.After(time.Now().UTC().Add(time.Second)), "fetched_at must not be in the future")
 }
 
 // TestApply_RemoteArchiveSource_EndToEnd runs apply with an http archive
 // source, asserting the same origin contract with the sha256 digest ref.
 func TestApply_RemoteArchiveSource_EndToEnd(t *testing.T) {
+	start := time.Now().UTC().Add(-2 * time.Second)
 	setWorkflowCacheHome(t)
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 	fx := createWorkflowArchiveFixture(t)
@@ -557,6 +626,15 @@ func TestApply_RemoteArchiveSource_EndToEnd(t *testing.T) {
 	assert.Equal(t, fx.tarGzRef, rec["resolved_ref"])
 	assert.Equal(t, origin.Path, rec["cache_path"])
 	requireResolvedWorkflow(t, origin.Path)
+
+	md := requireRunMetadata(t, eventsFile)
+	assert.Equal(t, "archive", md.Kind)
+	assert.Equal(t, source, md.Source)
+	assert.Equal(t, fx.tarGzRef, md.ResolvedRef)
+	assert.Equal(t, origin.Path, md.CachePath)
+	assert.False(t, md.FetchedAt.IsZero(), "the record must carry the fetch timestamp")
+	assert.False(t, md.FetchedAt.Before(start), "fetched_at must not predate the test")
+	assert.False(t, md.FetchedAt.After(time.Now().UTC().Add(time.Second)), "fetched_at must not be in the future")
 }
 
 // TestApply_RemoteSource_CredentialsNotLogged pins the apply log boundary for
@@ -592,6 +670,14 @@ func TestApply_RemoteSource_CredentialsNotLogged(t *testing.T) {
 	assert.Equal(t, fx.tarGzRef, rec["resolved_ref"])
 	assert.Equal(t, origin.Path, rec["cache_path"])
 	requireResolvedWorkflow(t, origin.Path)
+
+	// CRI-225: the recorded provenance carries the same redaction guarantee.
+	md := requireRunMetadata(t, eventsFile)
+	assert.Equal(t, "archive", md.Kind)
+	assert.Equal(t, redactSourceForLog(source), md.Source, "the record must store the redacted source")
+	assert.Equal(t, fx.tarGzRef, md.ResolvedRef)
+	assert.Equal(t, origin.Path, md.CachePath)
+	assert.False(t, md.FetchedAt.IsZero(), "the record must carry the fetch timestamp")
 }
 
 // TestApply_RemoteSource_CacheReuse demonstrates cache reuse: the second

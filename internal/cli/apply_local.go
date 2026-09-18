@@ -98,6 +98,9 @@ func executeFreshLocalRun(ctx context.Context, log *slog.Logger, graph *workflow
 
 	state := newLocalRunState(runID, graph.Name, "")
 	_ = writeLocalRunState(state)
+	// CRI-225: publish the resolved workflow origin as the run's metadata
+	// admission record; local sources (nil origin) record nothing.
+	publishRunMetadata(runID, opts.origin, log)
 	defer removeLocalRunState(runID)
 	defer RemoveStepCheckpoint(runID)
 
