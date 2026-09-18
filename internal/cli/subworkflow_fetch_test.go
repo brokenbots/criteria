@@ -424,6 +424,23 @@ func TestFetchGit_ScpStyleForm(t *testing.T) {
 	lockedRefEqual(t, locked, source, fx.headSHA, "git")
 }
 
+// TestFetchGit_ScpStyleBareForm covers the bare scp-style "git@host:path" form
+// without the git:: prefix. url.Parse rejects it, so Fetch must route it to
+// the git getter through the parse-failure branch instead of failing with an
+// unsupported-scheme or local-resolution error.
+func TestFetchGit_ScpStyleBareForm(t *testing.T) {
+	fx := createGitFixture(t)
+	installFakeSSH(t)
+	f := newTestFetcher(t, http.DefaultClient)
+	source := "git@127.0.0.1:" + fx.path + "?ref=main"
+
+	dir, locked, err := f.Fetch(context.Background(), t.TempDir(), source)
+	require.NoError(t, err)
+
+	requireGitTree(t, dir)
+	lockedRefEqual(t, locked, source, fx.headSHA, "git")
+}
+
 // TestFetchGit_GitURLPatternForm covers the ".git" recognition branch of
 // looksLikeGitURL: an https URL ending in .git is classified as a git source
 // by the lock resolver, and the fetcher routes git-looking https URLs to the
@@ -440,8 +457,10 @@ func TestFetchGit_GitURLPatternForm(t *testing.T) {
 // URL pattern must not capture archive URLs: an http(s) URL whose path ends
 // in a supported archive suffix routes to the archive fetcher even when it
 // matches a git pattern (a ".git" segment earlier in the path, or a
-// github.com/gitlab.com host), while ".git"-suffixed paths and the explicit
-// git::/git:///ssh:// forms keep routing to the git getter.
+// github.com/gitlab.com host), while ".git"-suffixed paths, the
+// git::/git:///ssh:// forms, and the scheme-less scp-style form keep routing
+// to the git getter. scp-style sources are rejected by url.Parse, so the
+// classifier is exercised with a scheme-less placeholder URL for them.
 func TestRoutesToGit(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -451,6 +470,8 @@ func TestRoutesToGit(t *testing.T) {
 		{"https-git-suffix", "https://host.example/org/repo.git?ref=main", true},
 		{"git-scheme", "git://host.example/org/repo.git", true},
 		{"ssh-scheme", "ssh://git@host.example/org/repo.git", true},
+		{"scp-style-git-form", "git@host.example:org/repo.git?ref=main", true},
+		{"scp-style-git-form-with-port", "git@github.com:org/repo.git", true},
 		{"git-force-prefix", "git::https://host.example/org/repo.git?ref=main", true},
 		{"git-force-prefix-archive-suffix", "git::https://host.example/flow.tar.gz", true},
 		{"github-host-repo", "https://github.com/org/repo?ref=main", true},
@@ -470,7 +491,14 @@ func TestRoutesToGit(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			u, err := url.Parse(tc.source)
-			require.NoError(t, err)
+			if err != nil {
+				// Only scp-style git forms are unparseable; the fetcher
+				// routes them to the git getter from the source string alone
+				// (Fetch's parse-failure branch), so the classifier is pinned
+				// against a placeholder URL carrying no scheme.
+				require.True(t, looksLikeGitURL(tc.source), "unparseable case %q must be a git form", tc.source)
+				u = &url.URL{}
+			}
 			assert.Equal(t, tc.want, routesToGit(tc.source, u))
 		})
 	}

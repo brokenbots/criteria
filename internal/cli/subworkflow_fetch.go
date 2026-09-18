@@ -94,20 +94,22 @@ func (f *defaultWorkflowFetcher) Fetch(ctx context.Context, callerDir, source st
 }
 
 // routesToGit reports whether a parsed, non-local workflow source must go to
-// the git getter rather than the archive fetcher. Explicit git forms (the
-// git:: force prefix, git:// and ssh:// schemes) always do. For http(s) URLs
-// an archive-suffix path wins over the git URL pattern — a ".git" segment
-// earlier in the path or a github.com/gitlab.com host does not make
-// ".../flow.tar.gz" a git repository — and the pattern decides only for
-// what remains.
+// the git getter rather than the archive fetcher. Unambiguous git forms
+// always do: the git:: force prefix, the explicit git and ssh schemes, and
+// the scp-style form ("git@host:path"), which carries no scheme at all
+// (url.Parse rejects it) and is classified from the source string via the
+// git URL pattern. For http(s) URLs an archive-suffix path wins over the git
+// URL pattern — a ".git" segment earlier in the path or a
+// github.com/gitlab.com host does not make ".../flow.tar.gz" a git
+// repository — and the pattern decides only for what remains.
 func routesToGit(source string, u *url.URL) bool {
-	if strings.HasPrefix(source, "git::") || u.Scheme == "git" || u.Scheme == "ssh" {
+	if strings.HasPrefix(source, "git::") {
 		return true
 	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return false
+	if u.Scheme == "http" || u.Scheme == "https" {
+		return !isArchivePath(u.Path) && looksLikeGitURL(source)
 	}
-	return !isArchivePath(u.Path) && looksLikeGitURL(source)
+	return u.Scheme == "git" || u.Scheme == "ssh" || looksLikeGitURL(source)
 }
 
 // isArchivePath reports whether a URL path ends in an archive suffix
