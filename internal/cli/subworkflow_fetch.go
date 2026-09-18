@@ -61,7 +61,7 @@ func (f *defaultWorkflowFetcher) Fetch(ctx context.Context, callerDir, source st
 		// scp-style git sources ("git@host:path") are not valid URLs but are
 		// valid git ref forms; route them to the git getter.
 		if looksLikeGitURL(source) {
-			return f.fetchGit(ctx, source)
+			return f.fetchGit(ctx, callerDir, source)
 		}
 		return "", nil, fmt.Errorf("parse workflow source %q: %w", redactSourceForLog(source), err)
 	}
@@ -83,14 +83,39 @@ func (f *defaultWorkflowFetcher) Fetch(ctx context.Context, callerDir, source st
 	// with ".git" earlier in the path — are plain archive downloads that the
 	// git URL pattern must not capture.
 	if routesToGit(source, u) {
-		return f.fetchGit(ctx, source)
+		return f.fetchGit(ctx, callerDir, source)
 	}
 
 	if u.Scheme == "http" || u.Scheme == "https" {
-		return f.fetchArchive(ctx, source)
+		return f.fetchArchive(ctx, callerDir, source)
 	}
 
 	return "", nil, fmt.Errorf("unsupported workflow source scheme %q for %q", u.Scheme, redactSourceForLog(source))
+}
+
+// cascadeSlugDir returns the cache directory that holds the fetched tree for a
+// subworkflow source declared in callerDir (ADR-0005 D4, M4.1/CRI-227). When
+// the caller itself is a fetched tree inside the cache — a cascaded
+// resolution, where a remote subworkflow declares further remote subworkflows
+// — the child nests under the cascade root's slug in a "subworkflows"
+// subfolder: cache/workflows/<root-slug>/subworkflows/<child-slug>/<version>.
+// The root slug (the first path component below cacheRoot) is used instead of
+// the immediate parent so the destination is a deterministic function of the
+// cascade root and the child source; cycle detection compares resolved cache
+// paths, and nesting under the full ancestor chain would give every revisit a
+// fresh path and defeat it. Callers outside the cache (top-level workflow
+// sources, local-path subworkflows) keep the flat cache/workflows/<slug>
+// layout unchanged.
+func (f *defaultWorkflowFetcher) cascadeSlugDir(callerDir, slug string) string {
+	rel, err := filepath.Rel(f.cacheRoot, callerDir)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return filepath.Join(f.cacheRoot, slug)
+	}
+	rootSlug := rel
+	if i := strings.Index(rel, string(filepath.Separator)); i != -1 {
+		rootSlug = rel[:i]
+	}
+	return filepath.Join(f.cacheRoot, rootSlug, "subworkflows", slug)
 }
 
 // routesToGit reports whether a parsed, non-local workflow source must go to
@@ -134,14 +159,14 @@ func looksLikeGitURL(source string) bool {
 // match with errors.Is.
 var errUnsafeGitSource = errors.New(`repository URL and ref must not start with "-"`)
 
-func (f *defaultWorkflowFetcher) fetchGit(ctx context.Context, source string) (string, *lockfile.LockedWorkflowRef, error) {
+func (f *defaultWorkflowFetcher) fetchGit(ctx context.Context, callerDir, source string) (string, *lockfile.LockedWorkflowRef, error) {
 	repoURL, ref, err := splitGitSource(source)
 	if err != nil {
 		return "", nil, err
 	}
 
 	slug := slugForSource(repoURL)
-	repoDir := filepath.Join(f.cacheRoot, slug)
+	repoDir := f.cascadeSlugDir(callerDir, slug)
 	if err := os.MkdirAll(repoDir, 0o755); err != nil {
 		return "", nil, fmt.Errorf("create workflow cache %q: %w", repoDir, err)
 	}
@@ -265,9 +290,9 @@ func parseFirstLSRemote(out string) string {
 	return ""
 }
 
-func (f *defaultWorkflowFetcher) fetchArchive(ctx context.Context, source string) (string, *lockfile.LockedWorkflowRef, error) {
+func (f *defaultWorkflowFetcher) fetchArchive(ctx context.Context, callerDir, source string) (string, *lockfile.LockedWorkflowRef, error) {
 	slug := slugForSource(source)
-	slugDir := filepath.Join(f.cacheRoot, slug)
+	slugDir := f.cascadeSlugDir(callerDir, slug)
 	if err := os.MkdirAll(slugDir, 0o755); err != nil {
 		return "", nil, fmt.Errorf("create workflow cache %q: %w", slugDir, err)
 	}
