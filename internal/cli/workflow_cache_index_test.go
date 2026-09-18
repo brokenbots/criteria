@@ -270,3 +270,53 @@ func TestCompile_RemoteCascade_IndexesNestedEntries(t *testing.T) {
 	assert.Equal(t, child.headSHA, childEntry.ResolvedRef)
 	assert.False(t, childEntry.FetchedAt.IsZero())
 }
+
+func TestRecordWorkflowCacheEntry_SkipsSymlinkedAncestor(t *testing.T) {
+	f := newTestFetcher(t, http.DefaultClient)
+	require.NoError(t, os.MkdirAll(f.cacheRoot, 0o755))
+	outside := filepath.Join(t.TempDir(), "outside")
+	require.NoError(t, os.MkdirAll(outside, 0o755))
+	require.NoError(t, os.Symlink(outside, filepath.Join(f.cacheRoot, "evil")))
+
+	// A tree path whose ancestor component is a symlink must never be
+	// indexed: gc joins entry paths for deletion, and a symlinked ancestor
+	// could make that act outside the cache root.
+	f.recordWorkflowCacheEntry("git", "https://example.invalid/repo.git", "abc123",
+		filepath.Join(f.cacheRoot, "evil", "b"), time.Now().UTC())
+
+	_, err := os.Stat(filepath.Join(f.cacheRoot, workflowCacheIndexFileName))
+	require.ErrorIs(t, err, os.ErrNotExist, "index must stay absent when the only candidate entry is unsafe")
+}
+
+func TestPublishWorkflowCacheTree_ExcludesConcurrentSweep(t *testing.T) {
+	f := newTestFetcher(t, http.DefaultClient)
+	require.NoError(t, os.MkdirAll(f.cacheRoot, 0o755))
+
+	srcTree := filepath.Join(t.TempDir(), "prepared")
+	require.NoError(t, os.MkdirAll(srcTree, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(srcTree, "workflow.hcl"), []byte("workflow {}"), 0o644))
+	treeDir := filepath.Join(f.cacheRoot, "sluga", "abc123")
+	// The fetcher MkdirAll's the slug dir before publishing.
+	require.NoError(t, os.MkdirAll(filepath.Dir(treeDir), 0o755))
+
+	// A simulated gc holding the index lock must block rename-in: publish
+	// cannot land the tree or record it while the sweep is running, or the
+	// sweep could delete the tree before its entry exists.
+	unlock, err := lockWorkflowCacheIndex(f.cacheRoot)
+	require.NoError(t, err)
+	done := make(chan error, 1)
+	go func() {
+		done <- f.publishWorkflowCacheTree("git", "https://example.invalid/repo.git", "abc123", srcTree, treeDir)
+	}()
+	time.Sleep(200 * time.Millisecond)
+	assert.NoDirExists(t, treeDir, "rename-in must wait for the index lock")
+	unlock()
+
+	require.NoError(t, <-done)
+	_, statErr := os.Stat(treeDir)
+	require.NoError(t, statErr, "the tree must be published once the lock is released")
+	index := readWorkflowCacheIndexForTest(t, f.cacheRoot)
+	entry := findWorkflowCacheEntry(t, index, "sluga/abc123")
+	assert.Equal(t, "git", entry.Kind)
+	assert.False(t, entry.FetchedAt.IsZero())
+}

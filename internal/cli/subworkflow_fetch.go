@@ -100,18 +100,69 @@ func (f *defaultWorkflowFetcher) Fetch(ctx context.Context, callerDir, source st
 // failure, including a corrupt index, never fails the fetch. The source is
 // recorded in its redacted form so credentials never persist on disk.
 func (f *defaultWorkflowFetcher) recordWorkflowCacheEntry(kind, source, resolvedRef, treeDir string, at time.Time) {
-	rel, err := filepath.Rel(f.cacheRoot, treeDir)
-	if err != nil || !isValidWorkflowCacheRelPath(rel) {
+	unlock, err := lockWorkflowCacheIndex(f.cacheRoot)
+	if err != nil {
 		return
 	}
-	entry := workflowCacheEntry{
+	defer unlock()
+	f.recordWorkflowCacheEntryLocked(kind, source, resolvedRef, treeDir, at)
+}
+
+// recordWorkflowCacheEntryLocked is recordWorkflowCacheEntry for callers that
+// already hold the index lock. Besides the lexical path check it rejects tree
+// paths whose ancestor components are symlinks: the index must only record
+// trees the cache root can address safely, because gc joins entry paths for
+// deletion.
+func (f *defaultWorkflowFetcher) recordWorkflowCacheEntryLocked(kind, source, resolvedRef, treeDir string, at time.Time) {
+	entry, ok := f.newWorkflowCacheEntry(kind, source, resolvedRef, treeDir, at)
+	if !ok {
+		return
+	}
+	_ = upsertWorkflowCacheEntryLocked(f.cacheRoot, &entry)
+}
+
+// newWorkflowCacheEntry validates treeDir against the cache root — lexically
+// and for symlinked ancestor components — and redacts the source for disk.
+func (f *defaultWorkflowFetcher) newWorkflowCacheEntry(kind, source, resolvedRef, treeDir string, at time.Time) (workflowCacheEntry, bool) {
+	rel, err := filepath.Rel(f.cacheRoot, treeDir)
+	if err != nil || !isValidWorkflowCacheRelPath(rel) {
+		return workflowCacheEntry{}, false
+	}
+	if crosses, err := workflowCacheRelPathCrossesSymlink(f.cacheRoot, rel); err != nil || crosses {
+		return workflowCacheEntry{}, false
+	}
+	return workflowCacheEntry{
 		Kind:        kind,
 		Source:      redactSourceForLog(source),
 		ResolvedRef: resolvedRef,
 		CachePath:   filepath.ToSlash(rel),
 		FetchedAt:   at,
+	}, true
+}
+
+// publishWorkflowCacheTree moves a prepared tree (srcPath) into its final
+// cache location (treeDir) and records it in the index. The index lock is held
+// across both steps so a concurrent `criteria cache gc` — which sweeps under
+// that same lock — can neither delete the tree between its rename-in and its
+// index record, nor sweep a freshly renamed tree that has no entry yet.
+// Locking is best-effort (ADR-0005 D5): when the lock cannot be acquired the
+// move and the recording still proceed, matching the fetcher's
+// never-fail-on-bookkeeping contract.
+func (f *defaultWorkflowFetcher) publishWorkflowCacheTree(kind, source, resolvedRef, srcPath, treeDir string) error {
+	unlock, err := lockWorkflowCacheIndex(f.cacheRoot)
+	if err == nil {
+		defer unlock()
 	}
-	_ = upsertWorkflowCacheEntry(f.cacheRoot, &entry)
+	if rerr := os.Rename(srcPath, treeDir); rerr != nil {
+		// Another goroutine may have created treeDir in a race.
+		if info, serr := os.Stat(treeDir); serr == nil && info.IsDir() {
+			f.recordWorkflowCacheEntryLocked(kind, source, resolvedRef, treeDir, fetchedAt(treeDir))
+			return nil
+		}
+		return rerr
+	}
+	f.recordWorkflowCacheEntryLocked(kind, source, resolvedRef, treeDir, time.Now().UTC())
+	return nil
 }
 
 // cascadeSlugDir returns the cache directory that holds the fetched tree for a
@@ -250,16 +301,10 @@ func (f *defaultWorkflowFetcher) materializeGitTree(ctx context.Context, source,
 		return "", nil, fmt.Errorf("clone %q: %w", redactSourceForLog(repoURL), err)
 	}
 
-	if err := os.Rename(filepath.Join(tmpDir, "tree"), treeDir); err != nil {
-		// Another goroutine may have created treeDir in a race.
-		if info, err := os.Stat(treeDir); err == nil && info.IsDir() {
-			f.recordWorkflowCacheEntry("git", source, resolvedRef, treeDir, fetchedAt(treeDir))
-			return treeDir, gitLockedWorkflowRef(source, resolvedRef), nil
-		}
+	if err := f.publishWorkflowCacheTree("git", source, resolvedRef, filepath.Join(tmpDir, "tree"), treeDir); err != nil {
 		return "", nil, fmt.Errorf("move cloned workflow into cache: %w", err)
 	}
 
-	f.recordWorkflowCacheEntry("git", source, resolvedRef, treeDir, time.Now().UTC())
 	return treeDir, gitLockedWorkflowRef(source, resolvedRef), nil
 }
 
@@ -343,16 +388,10 @@ func (f *defaultWorkflowFetcher) fetchArchive(ctx context.Context, callerDir, so
 		return "", nil, err
 	}
 
-	if err := os.Rename(extractDir, archiveDir); err != nil {
-		// Another goroutine may have created archiveDir in a race.
-		if info, err := os.Stat(archiveDir); err == nil && info.IsDir() {
-			f.recordWorkflowCacheEntry("archive", source, digest, archiveDir, fetchedAt(archiveDir))
-			return archiveDir, archiveLockedWorkflowRef(source, digest), nil
-		}
+	if err := f.publishWorkflowCacheTree("archive", source, digest, extractDir, archiveDir); err != nil {
 		return "", nil, fmt.Errorf("move extracted workflow into cache: %w", err)
 	}
 
-	f.recordWorkflowCacheEntry("archive", source, digest, archiveDir, time.Now().UTC())
 	return archiveDir, archiveLockedWorkflowRef(source, digest), nil
 }
 

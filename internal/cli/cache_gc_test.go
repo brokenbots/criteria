@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,7 +65,9 @@ func TestCacheGc_RemovesUnreachableRetainsReferenced(t *testing.T) {
 	// protected, but the orphan version is not in the index.
 	writeGcTree(t, cacheRoot, "sluga/subworkflows/orphan/v1", "workflow.hcl")
 
-	result, err := gcWorkflowCache(cacheRoot, workflowCacheGcOptions{})
+	// Negative SweepGraceWindow disables the freshness grace: these fixtures
+	// create fresh unindexed trees that must be swept immediately.
+	result, err := gcWorkflowCache(cacheRoot, workflowCacheGcOptions{SweepGraceWindow: -1})
 	require.NoError(t, err)
 
 	assert.Equal(t, 2, result.RemovedTrees, "unreferenced slug and nested orphan are pruned")
@@ -132,7 +135,7 @@ func TestCacheGc_OlderThanEvictsStale(t *testing.T) {
 	writeGcTree(t, cacheRoot, "slugb/freshsha", "workflow.hcl")
 	writeGcTree(t, cacheRoot, "slugc/zerosha", "workflow.hcl")
 
-	result, err := gcWorkflowCache(cacheRoot, workflowCacheGcOptions{OlderThan: 24 * time.Hour})
+	result, err := gcWorkflowCache(cacheRoot, workflowCacheGcOptions{OlderThan: 24 * time.Hour, SweepGraceWindow: -1})
 	require.NoError(t, err)
 
 	// Two removals: the stale version tree and the slug dir it emptied.
@@ -191,6 +194,92 @@ func TestCacheGc_NeverDeletesOutsideCacheRoot(t *testing.T) {
 	assert.Equal(t, 2, result.DroppedEntries, "path-escape and absolute entries are dropped")
 }
 
+func TestCacheGc_SweepRetainsFreshUnindexedDirs(t *testing.T) {
+	cacheRoot := gcTestCacheRoot(t)
+	writeGcIndex(t, cacheRoot, []workflowCacheEntry{gcEntry("sluga/v1", time.Now().UTC())})
+	writeGcTree(t, cacheRoot, "sluga/v1", "workflow.hcl")
+	// A fresh, unindexed directory models an in-flight fetch's temp area
+	// under its slug dir: the fetch cannot hold the index lock for its whole
+	// download, so the sweep must retain it (default grace window applies).
+	writeGcTree(t, cacheRoot, "inflight/clone-xyz/tree", "workflow.hcl")
+	// A stale unindexed tree is swept once the window has elapsed.
+	writeGcTree(t, cacheRoot, "stale/v1", "workflow.hcl")
+	stale := time.Now().Add(-2 * workflowCacheSweepGraceWindow)
+	for _, dir := range []string{
+		filepath.Join(cacheRoot, "stale"),
+		filepath.Join(cacheRoot, "stale", "v1"),
+	} {
+		require.NoError(t, os.Chtimes(dir, stale, stale))
+	}
+
+	result, err := gcWorkflowCache(cacheRoot, workflowCacheGcOptions{})
+	require.NoError(t, err)
+
+	assert.DirExists(t, filepath.Join(cacheRoot, "inflight", "clone-xyz", "tree"),
+		"fresh unindexed dirs may belong to an in-flight fetch and must be retained")
+	assert.NoDirExists(t, filepath.Join(cacheRoot, "stale"), "stale unindexed trees are swept")
+	assert.Equal(t, 1, result.RemovedTrees)
+}
+
+func TestCacheGc_NeverDeletesOutsideCacheRoot_SymlinkedAncestor(t *testing.T) {
+	base := t.TempDir()
+	cacheRoot := filepath.Join(base, "cache", "workflows")
+	outside := filepath.Join(base, "outside")
+	require.NoError(t, os.MkdirAll(outside, 0o755))
+	victim := filepath.Join(outside, "b")
+	require.NoError(t, os.WriteFile(victim, []byte("do not delete"), 0o644))
+	require.NoError(t, os.MkdirAll(cacheRoot, 0o755))
+	require.NoError(t, os.Symlink(outside, filepath.Join(cacheRoot, "evil")))
+
+	// A stale entry whose ancestor component is a symlink pointing outside
+	// the cache root: eviction must not delete through the link.
+	writeGcIndex(t, cacheRoot, []workflowCacheEntry{
+		gcEntry("evil/b", time.Now().Add(-48*time.Hour)),
+	})
+
+	result, err := gcWorkflowCache(cacheRoot, workflowCacheGcOptions{OlderThan: 24 * time.Hour})
+	require.NoError(t, err)
+
+	got, readErr := os.ReadFile(victim)
+	require.NoError(t, readErr, "nothing outside the cache root may ever be deleted")
+	assert.Equal(t, "do not delete", string(got))
+	assert.Contains(t, strings.Join(result.Warnings, "\n"), "symlink",
+		"the skipped entry must be reported as a warning")
+	// The link itself is removed by the stray sweep (os.Remove on the link,
+	// never through it); its target directory stays.
+	assert.NoFileExists(t, filepath.Join(cacheRoot, "evil"))
+	assert.DirExists(t, outside)
+
+	// Eviction retained the symlink-crossing entry, but once the sweep has
+	// removed the link the entry's path no longer resolves, so prune drops
+	// the now-dangling record. Nothing outside the cache root was touched.
+	assert.Zero(t, result.RemovedTrees)
+	assert.Equal(t, 1, result.DroppedEntries)
+	index := readWorkflowCacheIndexForTest(t, cacheRoot)
+	assert.Empty(t, index.Entries)
+}
+
+func TestPruneWorkflowCacheIndex_RetainsEntryWhenStatFails(t *testing.T) {
+	cacheRoot := gcTestCacheRoot(t)
+	writeGcTree(t, cacheRoot, "locked/v1", "workflow.hcl")
+	entries := []workflowCacheEntry{gcEntry("locked/v1", time.Now().UTC())}
+	writeGcIndex(t, cacheRoot, entries)
+
+	// Make the version dir unreadable so os.Stat fails with EACCES rather
+	// than ErrNotExist. (Running as root bypasses the mode bits; the entry
+	// is retained either way, so the assertions hold on both paths.)
+	require.NoError(t, os.Chmod(filepath.Join(cacheRoot, "locked"), 0o000))
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(cacheRoot, "locked"), 0o755) })
+
+	var result workflowCacheGcResult
+	require.NoError(t, pruneWorkflowCacheIndex(cacheRoot, entries, false, &result))
+
+	assert.Zero(t, result.DroppedEntries, "unknown stat failure keeps the entry conservatively")
+	index := readWorkflowCacheIndexForTest(t, cacheRoot)
+	require.Len(t, index.Entries, 1)
+	assert.Equal(t, "locked/v1", index.Entries[0].CachePath)
+}
+
 func TestCacheGc_RemovesStrayFilesUnderRoot(t *testing.T) {
 	cacheRoot := gcTestCacheRoot(t)
 	writeGcIndex(t, cacheRoot, []workflowCacheEntry{gcEntry("sluga/v1", time.Now().UTC())})
@@ -229,6 +318,16 @@ func TestCacheGcCommand_RemovesUnreferenced(t *testing.T) {
 	writeGcIndex(t, cacheRoot, []workflowCacheEntry{gcEntry("sluga/v1", time.Now().UTC())})
 	writeGcTree(t, cacheRoot, "sluga/v1", "workflow.hcl")
 	writeGcTree(t, cacheRoot, "slugb/v1", "workflow.hcl")
+
+	// Age slugb past the sweep grace window: the command has no test seam,
+	// so the default window applies.
+	stale := time.Now().Add(-2 * workflowCacheSweepGraceWindow)
+	for _, dir := range []string{
+		filepath.Join(cacheRoot, "slugb"),
+		filepath.Join(cacheRoot, "slugb", "v1"),
+	} {
+		require.NoError(t, os.Chtimes(dir, stale, stale))
+	}
 
 	var buf bytes.Buffer
 	cmd := NewCacheCmd()

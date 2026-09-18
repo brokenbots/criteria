@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -92,16 +93,22 @@ func readWorkflowCacheIndex(cacheRoot string) (workflowCacheIndex, bool, error) 
 // rewriting the file on warm-cache hits. The returned error is bookkeeping
 // only; fetch callers treat it as best-effort.
 func upsertWorkflowCacheEntry(cacheRoot string, entry *workflowCacheEntry) error {
-	if err := validWorkflowCacheRelPath(entry.CachePath); err != nil {
-		return err
-	}
-	entry.CachePath = filepath.ToSlash(filepath.Clean(entry.CachePath))
-
 	unlock, err := lockWorkflowCacheIndex(cacheRoot)
 	if err != nil {
 		return err
 	}
 	defer unlock()
+	return upsertWorkflowCacheEntryLocked(cacheRoot, entry)
+}
+
+// upsertWorkflowCacheEntryLocked is upsertWorkflowCacheEntry for callers that
+// already hold the index lock — the fetcher's publish path holds it across
+// rename-in and recording so a concurrent gc cannot sweep the tree in between.
+func upsertWorkflowCacheEntryLocked(cacheRoot string, entry *workflowCacheEntry) error {
+	if err := validWorkflowCacheRelPath(entry.CachePath); err != nil {
+		return err
+	}
+	entry.CachePath = filepath.ToSlash(filepath.Clean(entry.CachePath))
 
 	index, _, err := readWorkflowCacheIndex(cacheRoot)
 	if err != nil {
@@ -217,4 +224,39 @@ func validWorkflowCacheRelPath(p string) error {
 // the cache root. The caller must have validated the rel path first.
 func workflowCacheRelPathToAbsolute(cacheRoot, rel string) string {
 	return filepath.Join(cacheRoot, filepath.FromSlash(rel))
+}
+
+// workflowCacheRelPathCrossesSymlink reports whether any ancestor component of
+// the validated rel path below cacheRoot is a symlink. Deletion through such a
+// path — e.g. os.RemoveAll on an evicted entry — would act on the symlink's
+// target outside the cache root, so callers must treat the entry as unsafe:
+// retain it and never join it for deletion. The final component is not
+// checked: os.Remove removes a symlinked leaf as a link, never through it,
+// so a symlinked leaf stays inside the cache root either way. A missing
+// ancestor component reports false (nothing to traverse); other stat errors
+// surface so callers can retain conservatively.
+func workflowCacheRelPathCrossesSymlink(cacheRoot, rel string) (bool, error) {
+	cleaned := filepath.Clean(filepath.FromSlash(rel))
+	if cleaned == "." {
+		return false, nil
+	}
+	parts := strings.Split(cleaned, string(filepath.Separator))
+	cur := cacheRoot
+	for _, part := range parts[:len(parts)-1] {
+		if part == "" || part == "." {
+			continue
+		}
+		cur = filepath.Join(cur, part)
+		info, err := os.Lstat(cur)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return false, nil
+			}
+			return false, err
+		}
+		if info.Mode()&fs.ModeSymlink != 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
