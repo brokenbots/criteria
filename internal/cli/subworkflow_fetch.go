@@ -76,12 +76,18 @@ func (f *defaultWorkflowFetcher) Fetch(ctx context.Context, callerDir, source st
 		return dir, nil, nil
 	}
 
-	if u.Scheme == "http" || u.Scheme == "https" {
-		return f.fetchArchive(ctx, source)
-	}
-
+	// Git ref forms are evaluated before the http(s) archive branch so the
+	// ssh/https git URL forms documented in docs/workflow.md ("Source
+	// schemes") reach the git getter: https://host/repo.git?ref=main matches
+	// looksLikeGitURL but would otherwise be misrouted to fetchArchive and
+	// fail with "unsupported archive format". Plain archive URLs (no .git
+	// suffix, no github/gitlab host) fall through to the archive branch.
 	if strings.HasPrefix(source, "git::") || looksLikeGitURL(source) || u.Scheme == "git" || u.Scheme == "ssh" {
 		return f.fetchGit(ctx, source)
+	}
+
+	if u.Scheme == "http" || u.Scheme == "https" {
+		return f.fetchArchive(ctx, source)
 	}
 
 	return "", nil, fmt.Errorf("unsupported workflow source scheme %q for %q", u.Scheme, source)
@@ -99,7 +105,7 @@ func (f *defaultWorkflowFetcher) fetchGit(ctx context.Context, source string) (s
 		return "", nil, err
 	}
 
-	slug := slugify(repoURL)
+	slug := slugForSource(repoURL)
 	repoDir := filepath.Join(f.cacheRoot, slug)
 	if err := os.MkdirAll(repoDir, 0o755); err != nil {
 		return "", nil, fmt.Errorf("create workflow cache %q: %w", repoDir, err)
@@ -214,7 +220,7 @@ func parseFirstLSRemote(out string) string {
 }
 
 func (f *defaultWorkflowFetcher) fetchArchive(ctx context.Context, source string) (string, *lockfile.LockedWorkflowRef, error) {
-	slug := slugify(source)
+	slug := slugForSource(source)
 	slugDir := filepath.Join(f.cacheRoot, slug)
 	if err := os.MkdirAll(slugDir, 0o755); err != nil {
 		return "", nil, fmt.Errorf("create workflow cache %q: %w", slugDir, err)
@@ -390,6 +396,25 @@ func slugify(s string) string {
 	s = strings.ReplaceAll(s, "=", "_")
 	s = strings.ReplaceAll(s, "@", "_")
 	return s
+}
+
+// slugForSource derives the on-disk cache directory slug for a workflow
+// source. URL userinfo is replaced with a fixed marker before slugifying so
+// credentials never persist in the cache path — or, by construction, in the
+// "cache_path" log field derived from it. Sources that do not parse as
+// absolute URLs — local paths, file:// forms, scp-style git forms — keep the
+// plain slugify result so existing cache entries remain reachable.
+func slugForSource(source string) string {
+	u, err := url.Parse(source)
+	if err != nil || u.Scheme == "" || u.Scheme == "file" || u.User == nil {
+		return slugify(source)
+	}
+	if u.User.Username() == "" {
+		if _, hasPassword := u.User.Password(); !hasPassword {
+			return slugify(source)
+		}
+	}
+	return slugify(redactSourceForLog(source))
 }
 
 // safeExtractPath joins dst with the archive entry name and confirms the result

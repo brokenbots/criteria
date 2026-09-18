@@ -43,38 +43,40 @@ func NewValidateCmd() *cobra.Command {
 }
 
 func validatePath(ctx context.Context, path string, subworkflowRoots []string, diagJSON, warnsAsErrors bool) (ok bool) {
+	// User-facing messages echo the path as the user supplied it (with URL
+	// userinfo redacted); the resolved workflow cache path stays internal.
+	displayPath := redactSourceForLog(path)
 	// ADR-0005 D1/D3: remote workflow sources materialize into the workflow
 	// cache before validation; local paths pass through unchanged.
 	resolvedPath, _, err := resolveWorkflowSource(ctx, path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: error: %v\n", path, err)
+		fmt.Fprintf(os.Stderr, "%s: error: %v\n", displayPath, err)
 		return false
 	}
-	path = resolvedPath
 
-	spec, diags := workflow.ParseFileOrDir(path)
+	spec, diags := workflow.ParseFileOrDir(resolvedPath)
 	if diags.HasErrors() {
-		printValidationParseError(path, diags, diagJSON)
+		printValidationParseError(displayPath, diags, diagJSON)
 		return false
 	}
-	workflowDir := workflowDirForPath(path)
+	workflowDir := workflowDirForPath(resolvedPath)
 
 	if unpinned, err := collectUnpinnedAdapters(ctx, workflowDir); err != nil {
-		fmt.Fprintf(os.Stderr, "%s: lockfile coverage check failed: %v\n", path, err)
+		fmt.Fprintf(os.Stderr, "%s: lockfile coverage check failed: %v\n", displayPath, err)
 		return false
 	} else if len(unpinned) > 0 {
 		for _, e := range unpinned {
-			fmt.Fprintf(os.Stderr, "%s: error: %v\n", path, e)
+			fmt.Fprintf(os.Stderr, "%s: error: %v\n", displayPath, e)
 		}
 		return false
 	}
 
 	diags = compileAndSchemas(ctx, workflowDir, spec, subworkflowRoots, warnsAsErrors)
 	if diags.HasErrors() {
-		printValidationCompileError(path, diags, diagJSON)
+		printValidationCompileError(displayPath, diags, diagJSON)
 		return false
 	}
-	printValidationOK(path, diags, diagJSON)
+	printValidationOK(displayPath, diags, diagJSON)
 	return true
 }
 

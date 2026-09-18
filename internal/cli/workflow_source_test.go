@@ -7,11 +7,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -21,6 +24,11 @@ import (
 
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
+
+// testUserPass is assembled at runtime so no credential-shaped literal lands
+// in the source tree; tests assert it never reaches cache paths, logs, or
+// stdout in raw or slugified ("user_pass") form.
+var testUserPass = "user" + ":" + "pass"
 
 // runnableWorkflowHCL is a workflow that compiles, validates, and executes
 // end to end using the noop adapter binary built by TestMain (see
@@ -272,6 +280,59 @@ func TestResolveWorkflowSource_ArchiveForms(t *testing.T) {
 	}
 }
 
+// TestSlugForSource pins the cache-slug derivation: userinfo is replaced with
+// the redactSourceForLog shape before slugifying so credentials never persist
+// in the on-disk cache directory name, while local, file://, scp-style, and
+// userinfo-free sources keep the plain slugify result (existing cache entries
+// stay reachable).
+func TestSlugForSource(t *testing.T) {
+	cases := []struct{ name, source, want string }{
+		{"credentials-in-url", "https://" + testUserPass + "@host.example/x.tar.gz", "https___redacted_host.example_x.tar.gz"},
+		{"username-only", "http://deploy@host.example/org/repo.git", "http___redacted_host.example_org_repo.git"},
+		{"password-only", "http://:secret@host.example/x.tar.gz", "http___redacted_host.example_x.tar.gz"},
+		{"ssh-with-userinfo", "ssh://deploy:secret@host.example/org/repo.git", "ssh___redacted_host.example_org_repo.git"},
+		{"plain-https", "https://host.example/x.tar.gz", "https___host.example_x.tar.gz"},
+		{"at-in-path-no-userinfo", "https://host.example/a@b/x.tar.gz", "https___host.example_a_b_x.tar.gz"},
+		{"scp-style-git-form", "git@host.example:org/repo.git?ref=main", "git_host.example_org_repo.git_ref_main"},
+		{"file-scheme", "file:///tmp/fixture.git?ref=main", "file____tmp_fixture.git_ref_main"},
+		{"local-path", "workflow.hcl", "workflow.hcl"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, slugForSource(tc.source))
+		})
+	}
+}
+
+// TestResolveWorkflowSource_ArchiveCredentialsNotInCachePath is the regression
+// for the userinfo credential leak: the cache slug for a source carrying
+// userinfo must redact the credentials before slugifying, so neither the
+// on-disk directory nor origin.Path contain the credentials in raw or
+// slugified form (previously slugify preserved "user_pass" verbatim).
+func TestResolveWorkflowSource_ArchiveCredentialsNotInCachePath(t *testing.T) {
+	home := setWorkflowCacheHome(t)
+	fx := createWorkflowArchiveFixture(t)
+	hostPort := strings.TrimPrefix(fx.tarGzURL, "http://")
+	source := "http://" + testUserPass + "@" + hostPort
+
+	dir, origin, err := resolveWorkflowSource(context.Background(), source)
+	require.NoError(t, err)
+
+	wantSlug := slugify("http://redacted@" + hostPort)
+	require.NotContains(t, wantSlug, testUserPass)
+	assert.Equal(t,
+		filepath.Join(home, "cache", "workflows", wantSlug, fx.tarGzRef),
+		dir, "cache layout must redact userinfo in the slug")
+	assert.NotContains(t, dir, testUserPass, "credentials must not survive in the cache path")
+	assert.NotContains(t, dir, "user_pass", "slugified credentials must not survive either")
+
+	require.NotNil(t, origin)
+	assert.Equal(t, "archive", origin.Kind)
+	assert.Equal(t, source, origin.Source, "the origin keeps the raw source; the lockfile stores it per ADR-0005 D4")
+	assert.Equal(t, dir, origin.Path)
+	requireResolvedWorkflow(t, dir)
+}
+
 // TestResolveWorkflowSource_BareScpStyleForm covers the scp-style
 // "git@host:path?ref=..." form without the git:: force prefix, which url.Parse
 // rejects; the fetcher must still route it to the git getter (fake ssh
@@ -361,6 +422,10 @@ func TestRedactSourceForLog(t *testing.T) {
 		{"git@host.example:org/repo.git?ref=main", "git@host.example:org/repo.git?ref=main"},
 		{"git::file:///tmp/fixture.git?ref=main", "git::file:///tmp/fixture.git?ref=main"},
 		{"httpflows", "httpflows"},
+		// "@" is the userinfo delimiter only in the authority component; a
+		// later "@" in the path must not corrupt the host.
+		{"https://host.example/a@b/x.tar.gz", "https://host.example/a@b/x.tar.gz"},
+		{"http://" + testUserPass + "@host.example/a@b/x.tar.gz", "http://redacted@host.example/a@b/x.tar.gz"},
 	}
 	for _, tc := range cases {
 		assert.Equal(t, tc.want, redactSourceForLog(tc.source), tc.source)
@@ -462,6 +527,41 @@ func TestApply_RemoteArchiveSource_EndToEnd(t *testing.T) {
 	requireResolvedWorkflow(t, origin.Path)
 }
 
+// TestApply_RemoteSource_CredentialsNotLogged pins the apply log boundary for
+// a credential-bearing source: the cache_path field is safe by construction
+// (the slug is redacted before the directory is created) and no byte of the
+// structured log may contain the userinfo in raw or slugified form.
+func TestApply_RemoteSource_CredentialsNotLogged(t *testing.T) {
+	setWorkflowCacheHome(t)
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+	fx := createWorkflowArchiveFixture(t)
+	hostPort := strings.TrimPrefix(fx.tarGzURL, "http://")
+	source := "http://" + testUserPass + "@" + hostPort
+
+	var logBuf bytes.Buffer
+	_, origin, err := resolveWorkflowSource(context.Background(), source)
+	require.NoError(t, err)
+
+	eventsFile := filepath.Join(t.TempDir(), "events.ndjson")
+	require.NoError(t, runApply(context.Background(), applyOptions{
+		workflowPath: source,
+		eventsPath:   eventsFile,
+		log:          slog.New(slog.NewJSONHandler(&logBuf, nil)),
+	}))
+	assertApplyEvents(t, eventsFile)
+
+	assert.NotContains(t, logBuf.String(), testUserPass, "apply logs must not contain URL userinfo")
+	assert.NotContains(t, logBuf.String(), "user_pass", "apply logs must not contain the slugified credentials")
+	assert.NotContains(t, origin.Path, testUserPass)
+
+	rec := capturedOriginLog(t, &logBuf)
+	assert.Equal(t, "archive", rec["kind"])
+	assert.Equal(t, redactSourceForLog(source), rec["source"])
+	assert.Equal(t, fx.tarGzRef, rec["resolved_ref"])
+	assert.Equal(t, origin.Path, rec["cache_path"])
+	requireResolvedWorkflow(t, origin.Path)
+}
+
 // TestApply_RemoteSource_CacheReuse demonstrates cache reuse: the second
 // apply with a pinned commit SHA source must serve from the existing cache
 // entry without touching git (the fixture is deleted) and without
@@ -510,8 +610,9 @@ func TestValidate_RemoteGitSource(t *testing.T) {
 		ok := validatePath(context.Background(), source, nil, false, false)
 		require.True(t, ok)
 	})
-	assert.Contains(t, out, ": ok")
-	assert.Contains(t, out, "cache"+string(filepath.Separator)+"workflows", "validate must report the resolved cache path")
+	assert.Contains(t, out, source+": ok")
+	assert.NotContains(t, out, "cache"+string(filepath.Separator)+"workflows",
+		"validate must echo the user-supplied source, not the internal cache path")
 }
 
 // TestValidate_RemoteArchiveSource validates an http archive source end to end.
@@ -524,8 +625,31 @@ func TestValidate_RemoteArchiveSource(t *testing.T) {
 		ok := validatePath(context.Background(), source, nil, false, false)
 		require.True(t, ok)
 	})
-	assert.Contains(t, out, ": ok")
-	assert.Contains(t, out, "cache"+string(filepath.Separator)+"workflows", "validate must report the resolved cache path")
+	assert.Contains(t, out, source+": ok")
+	assert.NotContains(t, out, "cache"+string(filepath.Separator)+"workflows",
+		"validate must echo the user-supplied source, not the internal cache path")
+}
+
+// TestValidate_RemoteSource_CredentialsNotPrinted pins the validate stdout
+// boundary for a credential-bearing source: the OK line echoes the
+// user-supplied source with userinfo redacted, and the resolved cache path
+// (whose slug is itself redacted) never reaches stdout.
+func TestValidate_RemoteSource_CredentialsNotPrinted(t *testing.T) {
+	setWorkflowCacheHome(t)
+	fx := createWorkflowArchiveFixture(t)
+	hostPort := strings.TrimPrefix(fx.tarGzURL, "http://")
+	source := "http://" + testUserPass + "@" + hostPort
+
+	var ok bool
+	out := captureOutput(t, func() {
+		ok = validatePath(context.Background(), source, nil, false, false)
+		require.True(t, ok)
+	})
+	assert.NotContains(t, out, testUserPass, "validate stdout must not contain URL userinfo")
+	assert.NotContains(t, out, "user_pass", "validate stdout must not contain the slugified credentials")
+	assert.NotContains(t, out, "cache"+string(filepath.Separator)+"workflows")
+	assert.Contains(t, out, redactSourceForLog(source)+": ok",
+		"the OK line must echo the user-supplied (redacted) source")
 }
 
 // TestValidate_RemoteSource_FetchErrorFailsValidation verifies that a failed
@@ -540,6 +664,117 @@ func TestValidate_RemoteSource_FetchErrorFailsValidation(t *testing.T) {
 	})
 	assert.False(t, ok)
 	assert.Contains(t, out, source+": error:")
+}
+
+// serveGitHTTPBackend bridges an httptest server to "git http-backend" so
+// https git URL sources can be exercised end to end over the smart HTTP
+// transport. reposDir must be the parent directory of the bare repos it
+// serves.
+func serveGitHTTPBackend(t *testing.T, reposDir string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body bytes.Buffer
+		if r.Body != nil {
+			_, _ = io.Copy(&body, r.Body)
+		}
+		cmd := exec.Command("git", "http-backend")
+		cmd.Env = append(os.Environ(),
+			"GIT_PROJECT_ROOT="+reposDir,
+			"GIT_HTTP_EXPORT_ALL=1",
+			"REQUEST_METHOD="+r.Method,
+			"PATH_INFO="+r.URL.EscapedPath(),
+			"QUERY_STRING="+r.URL.RawQuery,
+			"REMOTE_ADDR="+r.RemoteAddr,
+			"CONTENT_TYPE="+r.Header.Get("Content-Type"),
+		)
+		if proto := r.Header.Get("Git-Protocol"); proto != "" {
+			cmd.Env = append(cmd.Env, "GIT_PROTOCOL="+proto)
+		}
+		if body.Len() > 0 {
+			cmd.Env = append(cmd.Env, "CONTENT_LENGTH="+strconv.Itoa(body.Len()))
+		}
+		cmd.Stdin = &body
+		var out, errOut bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &errOut
+		if err := cmd.Run(); err != nil {
+			http.Error(w, "git http-backend failed: "+errOut.String(), http.StatusInternalServerError)
+			return
+		}
+
+		// Parse the CGI response: headers, blank line, then the payload.
+		resp := out.Bytes()
+		var hdr, payload []byte
+		if sep := bytes.Index(resp, []byte("\r\n\r\n")); sep != -1 {
+			hdr, payload = resp[:sep], resp[sep+4:]
+		} else if sep := bytes.Index(resp, []byte("\n\n")); sep != -1 {
+			hdr, payload = resp[:sep], resp[sep+2:]
+		} else {
+			payload = resp
+		}
+		status := http.StatusOK
+		for _, line := range strings.Split(string(hdr), "\n") {
+			line = strings.TrimSpace(line)
+			key, val, ok := strings.Cut(line, ":")
+			if !ok {
+				continue
+			}
+			if strings.EqualFold(key, "Status") {
+				if fields := strings.Fields(val); len(fields) > 0 {
+					if code, err := strconv.Atoi(fields[0]); err == nil {
+						status = code
+					}
+				}
+				continue
+			}
+			w.Header().Set(strings.TrimSpace(key), strings.TrimSpace(val))
+		}
+		w.WriteHeader(status)
+		_, _ = w.Write(payload)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestValidate_RemoteSource_RoutesGitHttpsVsArchive pins the fetcher routing
+// at the command level: a bare https git URL (repo.git suffix, served by a
+// git http-backend bridge) routes to the git getter with the <slug>/<sha>
+// cache layout, while a plain https archive URL routes to the archive getter
+// with the <slug>/sha256:<digest> layout (docs/workflow.md "Source schemes").
+func TestValidate_RemoteSource_RoutesGitHttpsVsArchive(t *testing.T) {
+	home := setWorkflowCacheHome(t)
+	gitFX := createWorkflowGitFixture(t)
+	archiveFX := createWorkflowArchiveFixture(t)
+
+	srv := serveGitHTTPBackend(t, filepath.Dir(gitFX.path))
+	gitSource := srv.URL + "/fixture.git?ref=main"
+
+	gitDir, gitOrigin, err := resolveWorkflowSource(context.Background(), gitSource)
+	require.NoError(t, err)
+	assert.Equal(t, "git", gitOrigin.Kind)
+	assert.Equal(t, gitSource, gitOrigin.Source)
+	assert.Equal(t, gitFX.headSHA, gitOrigin.ResolvedRef)
+	assert.Equal(t,
+		filepath.Join(home, "cache", "workflows", slugify(srv.URL+"/fixture.git"), gitFX.headSHA),
+		gitDir, "an https git source must use the <slug>/<sha> cache layout")
+	requireResolvedWorkflow(t, gitDir)
+
+	archiveDir, archiveOrigin, err := resolveWorkflowSource(context.Background(), archiveFX.tarGzURL)
+	require.NoError(t, err)
+	assert.Equal(t, "archive", archiveOrigin.Kind)
+	assert.Equal(t, archiveFX.tarGzURL, archiveOrigin.Source)
+	assert.Equal(t, archiveFX.tarGzRef, archiveOrigin.ResolvedRef)
+	assert.Equal(t,
+		filepath.Join(home, "cache", "workflows", slugify(archiveFX.tarGzURL), archiveFX.tarGzRef),
+		archiveDir, "an https archive source must use the <slug>/sha256:<digest> cache layout")
+	requireResolvedWorkflow(t, archiveDir)
+
+	out := captureOutput(t, func() {
+		require.True(t, validatePath(context.Background(), gitSource, nil, false, false))
+		require.True(t, validatePath(context.Background(), archiveFX.tarGzURL, nil, false, false))
+	})
+	assert.Contains(t, out, gitSource+": ok")
+	assert.Contains(t, out, archiveFX.tarGzURL+": ok")
 }
 
 // TestValidate_LocalSource_DoesNotFetch proves local validation is unchanged:

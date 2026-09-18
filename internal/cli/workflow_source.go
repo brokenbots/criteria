@@ -66,7 +66,15 @@ func redactSourceForLog(source string) string {
 		return source
 	}
 	rest := source[idx+3:]
-	at := strings.LastIndex(rest, "@")
+	// The userinfo delimiter can only appear in the authority component,
+	// which ends at the first "/", "?" or "#"; an "@" later in the path must
+	// not be mistaken for one. Within the authority, the first "@" is the
+	// delimiter (userinfo cannot contain a literal "@").
+	authority := rest
+	if end := strings.IndexAny(rest, "/?#"); end != -1 {
+		authority = rest[:end]
+	}
+	at := strings.Index(authority, "@")
 	if at == -1 {
 		return source
 	}

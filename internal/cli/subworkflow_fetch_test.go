@@ -425,8 +425,9 @@ func TestFetchGit_ScpStyleForm(t *testing.T) {
 
 // TestFetchGit_GitURLPatternForm covers the ".git" recognition branch of
 // looksLikeGitURL: an https URL ending in .git is classified as a git source
-// by the lock resolver while the fetcher routes it by scheme (archive), so a
-// plain ssh form remains the observable ssh contract.
+// by the lock resolver and the fetcher routes git-looking https URLs to the
+// git getter before the archive branch, so a plain ssh form remains the
+// observable ssh contract.
 func TestFetchGit_GitURLPatternForm(t *testing.T) {
 	assert.True(t, looksLikeGitURL("https://example.com/org/repo.git"))
 	assert.True(t, looksLikeGitURL("git@github.com:org/repo.git"))
