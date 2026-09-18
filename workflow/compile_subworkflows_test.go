@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/hashicorp/hcl/v2"
+
+	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
 // minimalCalleeHCL returns a minimal valid callee workflow HCL with the given name.
@@ -552,7 +554,7 @@ func TestLocalSubWorkflowResolver_LocalRelative(t *testing.T) {
 	}
 
 	resolver := &LocalSubWorkflowResolver{}
-	resolved, err := resolver.ResolveSource(context.Background(), tmpDir, "./inner")
+	resolved, _, err := resolver.ResolveSource(context.Background(), tmpDir, "./inner")
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
@@ -578,7 +580,7 @@ func TestLocalSubWorkflowResolver_LocalAbsolute(t *testing.T) {
 
 	resolver := &LocalSubWorkflowResolver{}
 	// Resolve using the absolute path directly.
-	resolved, err := resolver.ResolveSource(context.Background(), "/irrelevant/caller/dir", swDir)
+	resolved, _, err := resolver.ResolveSource(context.Background(), "/irrelevant/caller/dir", swDir)
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
@@ -593,7 +595,7 @@ func TestLocalSubWorkflowResolver_LocalAbsolute(t *testing.T) {
 func TestLocalSubWorkflowResolver_RemoteScheme_Error(t *testing.T) {
 	for _, scheme := range []string{"https://github.com/org/repo", "git://example.com/repo"} {
 		resolver := &LocalSubWorkflowResolver{}
-		_, err := resolver.ResolveSource(context.Background(), "/caller", scheme)
+		_, _, err := resolver.ResolveSource(context.Background(), "/caller", scheme)
 		if err == nil {
 			t.Errorf("expected error for %q, got none", scheme)
 			continue
@@ -620,7 +622,7 @@ func TestLocalSubWorkflowResolver_AllowedRootsRestriction(t *testing.T) {
 	otherRoot := t.TempDir()
 
 	resolver := &LocalSubWorkflowResolver{AllowedRoots: []string{otherRoot}}
-	_, err := resolver.ResolveSource(context.Background(), tmpDir, "./inner")
+	_, _, err := resolver.ResolveSource(context.Background(), tmpDir, "./inner")
 	if err == nil {
 		t.Fatal("expected error: path outside allowed roots, got none")
 	}
@@ -630,7 +632,7 @@ func TestLocalSubWorkflowResolver_AllowedRootsRestriction(t *testing.T) {
 
 	// Same resolver, but use the actual tmpDir as an allowed root — should succeed.
 	resolver2 := &LocalSubWorkflowResolver{AllowedRoots: []string{tmpDir}}
-	_, err = resolver2.ResolveSource(context.Background(), tmpDir, "./inner")
+	_, _, err = resolver2.ResolveSource(context.Background(), tmpDir, "./inner")
 	if err != nil {
 		t.Fatalf("expected success when path is under allowed root, got: %v", err)
 	}
@@ -646,7 +648,7 @@ func TestLocalSubWorkflowResolver_NotADirectory_Error(t *testing.T) {
 	}
 
 	resolver := &LocalSubWorkflowResolver{}
-	_, err := resolver.ResolveSource(context.Background(), tmpDir, "./myfile.hcl")
+	_, _, err := resolver.ResolveSource(context.Background(), tmpDir, "./myfile.hcl")
 	if err == nil {
 		t.Fatal("expected error: source is a file not a directory, got none")
 	}
@@ -677,7 +679,7 @@ func TestLocalSubWorkflowResolver_SymlinkBypass(t *testing.T) {
 	}
 
 	resolver := &LocalSubWorkflowResolver{AllowedRoots: []string{allowedRoot}}
-	_, err := resolver.ResolveSource(context.Background(), allowedRoot, "./escape")
+	_, _, err := resolver.ResolveSource(context.Background(), allowedRoot, "./escape")
 	if err == nil {
 		t.Fatal("expected error: symlink escapes allowed root, got none")
 	}
@@ -737,7 +739,7 @@ type recordingResolver struct {
 	receivedCtxs []context.Context
 }
 
-func (r *recordingResolver) ResolveSource(ctx context.Context, callerDir, source string) (string, error) {
+func (r *recordingResolver) ResolveSource(ctx context.Context, callerDir, source string) (string, *lockfile.LockedWorkflowRef, error) {
 	r.receivedCtxs = append(r.receivedCtxs, ctx)
 	return r.inner.ResolveSource(ctx, callerDir, source)
 }
@@ -747,8 +749,8 @@ func (r *recordingResolver) ResolveSource(ctx context.Context, callerDir, source
 // tests assert that a cancelled context causes compilation to fail.
 type cancellationHonouringResolver struct{}
 
-func (cancellationHonouringResolver) ResolveSource(ctx context.Context, _, _ string) (string, error) {
-	return "", ctx.Err()
+func (cancellationHonouringResolver) ResolveSource(ctx context.Context, _, _ string) (string, *lockfile.LockedWorkflowRef, error) {
+	return "", nil, ctx.Err()
 }
 
 // TestCompileWithContext_ContextPropagation verifies that the context passed to

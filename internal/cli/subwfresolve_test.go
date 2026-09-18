@@ -27,7 +27,7 @@ func TestLocalResolver_LocalRelative(t *testing.T) {
 	}
 
 	r := &workflow.LocalSubWorkflowResolver{}
-	resolved, err := r.ResolveSource(context.Background(), tmpDir, "./inner")
+	resolved, _, err := r.ResolveSource(context.Background(), tmpDir, "./inner")
 	if err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestLocalResolver_LocalAbsolute(t *testing.T) {
 
 	r := &workflow.LocalSubWorkflowResolver{}
 	// callerDir is irrelevant when source is absolute.
-	resolved, _ := r.ResolveSource(context.Background(), "/irrelevant", swDir)
+	resolved, _, _ := r.ResolveSource(context.Background(), "/irrelevant", swDir)
 	expected, _ := filepath.EvalSymlinks(swDir)
 	if resolved != expected {
 		t.Errorf("expected %q, got %q", expected, resolved)
@@ -67,7 +67,7 @@ func TestLocalResolver_RemoteScheme_Error(t *testing.T) {
 	}
 	r := &workflow.LocalSubWorkflowResolver{}
 	for _, remote := range remotes {
-		_, err := r.ResolveSource(context.Background(), "/caller", remote)
+		_, _, err := r.ResolveSource(context.Background(), "/caller", remote)
 		if err == nil {
 			t.Errorf("expected error for %q, got none", remote)
 			continue
@@ -105,12 +105,12 @@ func TestLocalResolver_AllowedRootsRestriction(t *testing.T) {
 	r := &workflow.LocalSubWorkflowResolver{AllowedRoots: []string{allowed}}
 
 	// Resolving a path under `allowed` should succeed.
-	if _, err := r.ResolveSource(context.Background(), allowed, "./inner"); err != nil {
+	if _, _, err := r.ResolveSource(context.Background(), allowed, "./inner"); err != nil {
 		t.Errorf("expected success for path under allowed root, got: %v", err)
 	}
 
 	// Resolving a path under `notAllowed` should fail.
-	_, err := r.ResolveSource(context.Background(), notAllowed, "./inner")
+	_, _, err := r.ResolveSource(context.Background(), notAllowed, "./inner")
 	if err == nil {
 		t.Fatal("expected error for path outside allowed root, got none")
 	}
@@ -129,7 +129,7 @@ func TestLocalResolver_NotADirectory_Error(t *testing.T) {
 	}
 
 	r := &workflow.LocalSubWorkflowResolver{}
-	_, err := r.ResolveSource(context.Background(), tmpDir, "./workflow.hcl")
+	_, _, err := r.ResolveSource(context.Background(), tmpDir, "./workflow.hcl")
 	if err == nil {
 		t.Fatal("expected error: source is a file not a directory, got none")
 	}

@@ -100,7 +100,7 @@ func compileForExecution(ctx context.Context, workflowPath string, log *slog.Log
 	loader.SetDevBindings(devBindingPaths())
 	schemas, schemaDiags := diagutil.CollectSchemas(ctx, loader, workflowDir, spec, log)
 
-	resolver := &workflow.LocalSubWorkflowResolver{AllowedRoots: subworkflowRoots}
+	resolver := newFetchingSubWorkflowResolver(subworkflowRoots)
 	graph, diags := workflow.CompileWithContext(ctx, spec, schemas, workflow.CompileOpts{
 		WorkflowDir:         workflowDir,
 		SubWorkflowResolver: resolver,

@@ -27,6 +27,7 @@ func NewCompileCmd() *cobra.Command {
 		subworkflowRoots []string
 		warnsAsErrors    bool
 		allowUnsigned    bool
+		workflowRef      string
 	)
 
 	cmd := &cobra.Command{
@@ -36,7 +37,7 @@ func NewCompileCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
 			workflowPath := args[0]
-			output, err := compileWorkflowOutput(cmd.Context(), workflowPath, format, subworkflowRoots, warnsAsErrors, allowUnsigned)
+			output, err := compileWorkflowOutput(cmd.Context(), workflowPath, workflowRef, format, subworkflowRoots, warnsAsErrors, allowUnsigned)
 			if err != nil {
 				return err
 			}
@@ -49,13 +50,15 @@ func NewCompileCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&subworkflowRoots, "subworkflow-root", nil, "Restrict subworkflow source resolution to this root path (repeatable; empty = no restriction)")
 	cmd.Flags().BoolVar(&warnsAsErrors, "warnings-as-errors", false, "Treat warnings (e.g. an adapter whose schema could not be verified) as errors")
 	cmd.Flags().BoolVar(&allowUnsigned, "allow-unsigned", false, "Skip adapter signature verification (also via CRITERIA_ALLOW_UNSIGNED)")
+	cmd.Flags().StringVar(&workflowRef, "workflow-ref", "", "Expected ref/digest the workflow source must resolve to — a git commit SHA or sha256:<digest>; compilation fails closed on mismatch (CRI-226)")
 	return cmd
 }
 
-func compileWorkflowOutput(ctx context.Context, workflowPath, format string, subworkflowRoots []string, warnsAsErrors, allowUnsigned bool) ([]byte, error) {
+func compileWorkflowOutput(ctx context.Context, workflowPath, workflowRef, format string, subworkflowRoots []string, warnsAsErrors, allowUnsigned bool) ([]byte, error) {
 	// ADR-0005 D1/D3: remote workflow sources materialize into the workflow
-	// cache before compilation; local paths pass through unchanged.
-	resolvedPath, _, err := resolveWorkflowSource(ctx, workflowPath)
+	// cache before compilation; local paths pass through unchanged. ADR-0005
+	// D7 (CRI-226): a declared --workflow-ref pin is enforced at resolve time.
+	resolvedPath, _, err := resolveWorkflowSource(ctx, workflowPath, workflowRef)
 	if err != nil {
 		return nil, err
 	}
@@ -796,7 +799,7 @@ func parseCompileForCli(ctx context.Context, workflowPath string, subworkflowRoo
 
 	graph, diags := workflow.CompileWithContext(ctx, spec, schemas, workflow.CompileOpts{
 		WorkflowDir:         workflowDir,
-		SubWorkflowResolver: &workflow.LocalSubWorkflowResolver{AllowedRoots: subworkflowRoots},
+		SubWorkflowResolver: newFetchingSubWorkflowResolver(subworkflowRoots),
 		Schemas:             schemas,
 		PinSet:              pinSet,
 	})

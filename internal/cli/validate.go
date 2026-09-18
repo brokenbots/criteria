@@ -21,6 +21,7 @@ func NewValidateCmd() *cobra.Command {
 		subworkflowRoots []string
 		diagJSONFlag     bool
 		warnsAsErrors    bool
+		workflowRef      string
 	)
 
 	cmd := &cobra.Command{
@@ -29,7 +30,7 @@ func NewValidateCmd() *cobra.Command {
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
-			if runValidate(args, subworkflowRoots, diagJSONFlag, warnsAsErrors) {
+			if runValidate(args, subworkflowRoots, workflowRef, diagJSONFlag, warnsAsErrors) {
 				os.Exit(1)
 			}
 			return nil
@@ -39,16 +40,18 @@ func NewValidateCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&subworkflowRoots, "subworkflow-root", nil, "Restrict subworkflow source resolution to this root path (repeatable; empty = no restriction)")
 	cmd.Flags().BoolVar(&diagJSONFlag, "diag-json", false, "Emit diagnostics as structured JSON to stdout instead of human-readable text to stderr")
 	cmd.Flags().BoolVar(&warnsAsErrors, "warnings-as-errors", false, "Treat warnings (e.g. an adapter whose schema could not be verified) as errors")
+	cmd.Flags().StringVar(&workflowRef, "workflow-ref", "", "Expected ref/digest the workflow source must resolve to — a git commit SHA or sha256:<digest>; validation fails closed on mismatch (CRI-226)")
 	return cmd
 }
 
-func validatePath(ctx context.Context, path string, subworkflowRoots []string, diagJSON, warnsAsErrors bool) (ok bool) {
+func validatePath(ctx context.Context, path, workflowRef string, subworkflowRoots []string, diagJSON, warnsAsErrors bool) (ok bool) {
 	// User-facing messages echo the path as the user supplied it (with URL
 	// userinfo redacted); the resolved workflow cache path stays internal.
 	displayPath := redactSourceForLog(path)
 	// ADR-0005 D1/D3: remote workflow sources materialize into the workflow
-	// cache before validation; local paths pass through unchanged.
-	resolvedPath, _, err := resolveWorkflowSource(ctx, path)
+	// cache before validation; local paths pass through unchanged. ADR-0005
+	// D7 (CRI-226): a declared --workflow-ref pin is enforced at resolve time.
+	resolvedPath, _, err := resolveWorkflowSource(ctx, path, workflowRef)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: error: %v\n", displayPath, err)
 		return false
@@ -103,7 +106,7 @@ func compileAndSchemas(ctx context.Context, workflowDir string, spec *workflow.S
 
 	_, diags := workflow.CompileWithContext(ctx, spec, schemas, workflow.CompileOpts{
 		WorkflowDir:         workflowDir,
-		SubWorkflowResolver: &workflow.LocalSubWorkflowResolver{AllowedRoots: subworkflowRoots},
+		SubWorkflowResolver: newFetchingSubWorkflowResolver(subworkflowRoots),
 		Schemas:             schemas,
 	})
 	// Merge compile-time diagnostics (e.g. allow_tools matchability warnings)
@@ -134,11 +137,11 @@ func printValidationOK(path string, diags hcl.Diagnostics, diagJSON bool) {
 	}
 }
 
-func runValidate(paths, subworkflowRoots []string, diagJSON, warnsAsErrors bool) bool {
+func runValidate(paths, subworkflowRoots []string, workflowRef string, diagJSON, warnsAsErrors bool) bool {
 	ctx := context.Background()
 	anyErr := false
 	for _, path := range paths {
-		if !validatePath(ctx, path, subworkflowRoots, diagJSON, warnsAsErrors) {
+		if !validatePath(ctx, path, workflowRef, subworkflowRoots, diagJSON, warnsAsErrors) {
 			anyErr = true
 		}
 	}

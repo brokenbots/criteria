@@ -26,7 +26,7 @@ func TestCompileGolden_JSONAndDOT(t *testing.T) {
 		relPath, _ := filepath.Rel(repoRoot, path)
 		name := stripHCLExt(filepath.Base(path)) + "__" + sanitizeFixturePath(relPath)
 		t.Run(name+"_json", func(t *testing.T) {
-			out, err := compileWorkflowOutput(context.Background(), path, "json", nil, false, false)
+			out, err := compileWorkflowOutput(context.Background(), path, "", "json", nil, false, false)
 			if err != nil {
 				t.Fatalf("compile json: %v", err)
 			}
@@ -34,7 +34,7 @@ func TestCompileGolden_JSONAndDOT(t *testing.T) {
 		})
 
 		t.Run(name+"_dot", func(t *testing.T) {
-			out, err := compileWorkflowOutput(context.Background(), path, "dot", nil, false, false)
+			out, err := compileWorkflowOutput(context.Background(), path, "", "dot", nil, false, false)
 			if err != nil {
 				t.Fatalf("compile dot: %v", err)
 			}
@@ -161,7 +161,7 @@ func TestCompileWorkflowOutput_InvalidFormat(t *testing.T) {
 	if len(fixtures) == 0 {
 		t.Skip("no fixtures")
 	}
-	_, err := compileWorkflowOutput(context.Background(), fixtures[0], "xml", nil, false, false)
+	_, err := compileWorkflowOutput(context.Background(), fixtures[0], "", "xml", nil, false, false)
 	if err == nil {
 		t.Fatal("expected error for unsupported format")
 	}

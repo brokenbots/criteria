@@ -11,9 +11,9 @@ import (
 // WorkflowOrigin records the resolved provenance of a workflow source
 // (ADR-0005 D4/D6): where the content came from, the immutable version that
 // was resolved, and the local path it was materialized into. RunMetadata
-// provenance recording (CRI-225) consumes this record; expected-pin
-// enforcement on the resolved ref is CRI-226's job and deliberately not
-// checked here.
+// provenance recording (CRI-225) consumes this record. Expected-pin
+// enforcement on ResolvedRef (CRI-226) happens in resolveWorkflowSource,
+// before the origin is produced.
 type WorkflowOrigin struct {
 	// Kind is the source form: "git" or "archive" (the fetcher's pin kinds).
 	// Local sources produce no origin record.
@@ -40,8 +40,17 @@ type WorkflowOrigin struct {
 // cache/workflows/<slug>/<version> and described by the returned origin.
 // Local paths are returned unchanged with a nil origin: local behavior is
 // unchanged and local sources never enter the fetcher (ADR-0005 D3).
-func resolveWorkflowSource(ctx context.Context, source string) (string, *WorkflowOrigin, error) {
+//
+// expectedRef is the caller-declared expected pin (ADR-0005 D7, CRI-226):
+// the git commit SHA or "sha256:<digest>" the resolved source must match.
+// When set, resolution fails closed on mismatch — or on a local source,
+// where the expectation cannot be verified — before any execution. When
+// empty, behavior is unchanged.
+func resolveWorkflowSource(ctx context.Context, source, expectedRef string) (string, *WorkflowOrigin, error) {
 	if !isRemoteWorkflowSource(source) {
+		if strings.TrimSpace(expectedRef) != "" {
+			return "", nil, fmt.Errorf("workflow source %q is local; ref %q declared but expected pins apply only to remote git or archive sources", redactSourceForLog(source), expectedRef)
+		}
 		return source, nil, nil
 	}
 
@@ -50,7 +59,12 @@ func resolveWorkflowSource(ctx context.Context, source string) (string, *Workflo
 		return "", nil, err
 	}
 	if pin == nil {
-		return "", nil, fmt.Errorf("remote workflow source %q resolved without a pin", source)
+		return "", nil, fmt.Errorf("remote workflow source %q resolved without a pin", redactSourceForLog(source))
+	}
+
+	if expectedRef := strings.TrimSpace(expectedRef); expectedRef != "" && pin.ResolvedRef != expectedRef {
+		return "", nil, fmt.Errorf("workflow source %s: expected-pin mismatch: expected %q, resolved %q; refusing to run",
+			redactSourceForLog(source), expectedRef, pin.ResolvedRef)
 	}
 
 	return dir, &WorkflowOrigin{

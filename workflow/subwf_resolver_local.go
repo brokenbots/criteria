@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
 // LocalSubWorkflowResolver resolves source strings against the local filesystem only.
@@ -26,26 +28,28 @@ type LocalSubWorkflowResolver struct {
 // 4. Verify the resolved path is a directory; error if not.
 // 5. Verify the directory contains at least one .chcl or .hcl file; error if empty.
 // 6. Return the absolute path.
-func (r *LocalSubWorkflowResolver) ResolveSource(ctx context.Context, callerDir, source string) (string, error) {
+func (r *LocalSubWorkflowResolver) ResolveSource(ctx context.Context, callerDir, source string) (string, *lockfile.LockedWorkflowRef, error) {
 	// Check for remote schemes.
 	if err := r.checkRemoteScheme(source); err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	resolvedPath := r.resolvePath(source, callerDir)
 	if err := r.checkAllowedRoots(resolvedPath); err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	if err := r.checkDirectory(resolvedPath); err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	if err := r.checkHCLFiles(resolvedPath); err != nil {
-		return "", err
+		return "", nil, err
 	}
 
-	return resolvedPath, nil
+	// Local sources carry no pin: there is no resolved ref/digest to compare
+	// against an operator-declared expected pin (CRI-226).
+	return resolvedPath, nil, nil
 }
 
 // checkRemoteScheme returns an error if source has a remote scheme.

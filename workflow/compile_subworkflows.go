@@ -26,7 +26,7 @@ func compileSubworkflows(ctx context.Context, g *FSMGraph, spec *Spec, opts Comp
 	seenNames := make(map[string]bool)
 	var diags hcl.Diagnostics
 	for _, swSpec := range spec.Subworkflows {
-		diags = append(diags, compileSingleSubworkflow(ctx, g, swSpec, opts, seenNames)...)
+		diags = append(diags, compileSingleSubworkflow(ctx, g, &swSpec, opts, seenNames)...)
 	}
 	return diags
 }
@@ -46,7 +46,7 @@ func missingResolverDiags(subworkflows []SubworkflowSpec) hcl.Diagnostics {
 
 // compileSingleSubworkflow resolves, parses, and compiles one subworkflow entry.
 // seenNames tracks duplicate names within the same parent call.
-func compileSingleSubworkflow(ctx context.Context, g *FSMGraph, swSpec SubworkflowSpec, opts CompileOpts, seenNames map[string]bool) hcl.Diagnostics {
+func compileSingleSubworkflow(ctx context.Context, g *FSMGraph, swSpec *SubworkflowSpec, opts CompileOpts, seenNames map[string]bool) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	if seenNames[swSpec.Name] {
 		return hcl.Diagnostics{{
@@ -56,12 +56,18 @@ func compileSingleSubworkflow(ctx context.Context, g *FSMGraph, swSpec Subworkfl
 	}
 	seenNames[swSpec.Name] = true
 
-	resolvedDir, err := opts.SubWorkflowResolver.ResolveSource(ctx, opts.WorkflowDir, swSpec.Source)
+	resolvedDir, pin, err := opts.SubWorkflowResolver.ResolveSource(ctx, opts.WorkflowDir, swSpec.Source)
 	if err != nil {
 		return hcl.Diagnostics{{
 			Severity: hcl.DiagError,
 			Summary:  fmt.Sprintf("failed to resolve subworkflow %q source: %v", swSpec.Name, err),
 		}}
+	}
+
+	// ADR-0005 D7 (CRI-226): enforce the operator-declared expected pin at
+	// resolve time, before the callee is parsed or any execution happens.
+	if diags := enforceSubworkflowPin(swSpec, pin); len(diags) > 0 {
+		return diags
 	}
 
 	if cycleDiag := detectSubworkflowCycle(resolvedDir, opts.SubworkflowChain); cycleDiag != nil {
@@ -105,7 +111,7 @@ func mergeCalleeGraph(g, callee *FSMGraph) {
 }
 
 // recordSubworkflowNode stores the compiled subworkflow in the parent graph.
-func recordSubworkflowNode(g *FSMGraph, swSpec SubworkflowSpec, resolvedDir string, calleeGraph *FSMGraph, inputs map[string]hcl.Expression, envKey string) {
+func recordSubworkflowNode(g *FSMGraph, swSpec *SubworkflowSpec, resolvedDir string, calleeGraph *FSMGraph, inputs map[string]hcl.Expression, envKey string) {
 	g.Subworkflows[swSpec.Name] = &SubworkflowNode{
 		Name:         swSpec.Name,
 		SourcePath:   resolvedDir,
@@ -150,6 +156,35 @@ func detectSubworkflowCycle(resolvedDir string, chain []subworkflowFrame) *hcl.D
 	return nil
 }
 
+// enforceSubworkflowPin fails closed (CRI-226) when the operator-declared
+// expected ref/digest does not match the resolved pin of the fetched source.
+// A declared ref on a source that carries no pin — a local directory — is
+// refused: the expectation cannot be verified there, and silently ignoring a
+// declared pin would violate fail-closed semantics. A nil declared ref means
+// no expectation and leaves resolution unchanged.
+func enforceSubworkflowPin(swSpec *SubworkflowSpec, pin *lockfile.LockedWorkflowRef) hcl.Diagnostics {
+	if swSpec.Ref == "" {
+		return nil
+	}
+	if pin == nil {
+		return hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary: fmt.Sprintf("subworkflow %q: ref %q declared but source %q is local; "+
+				"expected pins apply only to remote git or archive sources", swSpec.Name, swSpec.Ref, swSpec.Source),
+		}}
+	}
+	if pin.ResolvedRef != swSpec.Ref {
+		return hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary: fmt.Sprintf("subworkflow %q: expected-pin mismatch: expected %q, resolved %q; refusing to run",
+				swSpec.Name, swSpec.Ref, pin.ResolvedRef),
+			Detail: fmt.Sprintf("source %q resolved to %q, which does not match the declared ref %q",
+				swSpec.Source, pin.ResolvedRef, swSpec.Ref),
+		}}
+	}
+	return nil
+}
+
 // extractSubworkflowInputs decodes the "input = { ... }" attribute from the
 // subworkflow block's Remain body, and validates the input keys against the
 // callee's declared variables: every required variable must be bound, and
@@ -157,7 +192,7 @@ func detectSubworkflowCycle(resolvedDir string, chain []subworkflowFrame) *hcl.D
 //
 // The returned map contains the parent-scope hcl.Expression for each input
 // key, for later runtime evaluation against the parent's eval context.
-func extractSubworkflowInputs(swSpec SubworkflowSpec, declaredVars map[string]*VariableNode) (map[string]hcl.Expression, hcl.Diagnostics) {
+func extractSubworkflowInputs(swSpec *SubworkflowSpec, declaredVars map[string]*VariableNode) (map[string]hcl.Expression, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
 	inputs := make(map[string]hcl.Expression)
 
@@ -219,7 +254,7 @@ func checkUnknownSubworkflowAttrs(swName string, attrs hcl.Attributes) hcl.Diagn
 		r := attr.NameRange
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
-			Summary:  fmt.Sprintf("subworkflow %q: unknown attribute %q; only \"source\", \"environment\", and \"input\" are allowed", swName, k),
+			Summary:  fmt.Sprintf("subworkflow %q: unknown attribute %q; only \"source\", \"ref\", \"environment\", and \"input\" are allowed", swName, k),
 			Subject:  &r,
 		})
 	}

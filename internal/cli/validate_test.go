@@ -37,7 +37,7 @@ step "hello" {
 	require.NoError(t, err)
 
 	out := captureOutput(t, func() {
-		ok := validatePath(context.Background(), path, nil, true, false)
+		ok := validatePath(context.Background(), path, "", nil, true, false)
 		assert.True(t, ok)
 	})
 
@@ -78,7 +78,7 @@ step "hello" {
 	require.NoError(t, err)
 
 	out := captureOutput(t, func() {
-		ok := validatePath(context.Background(), path, nil, true, false)
+		ok := validatePath(context.Background(), path, "", nil, true, false)
 		assert.False(t, ok)
 	})
 
@@ -118,7 +118,7 @@ step "hello" {
 	require.NoError(t, err)
 
 	out := captureOutput(t, func() {
-		ok := validatePath(context.Background(), path, nil, true, false)
+		ok := validatePath(context.Background(), path, "", nil, true, false)
 		assert.False(t, ok) // unresolved next reference is treated as error by current compiler
 	})
 
@@ -217,7 +217,7 @@ state "done" {
 	require.NoError(t, err)
 
 	out := captureOutput(t, func() {
-		ok := validatePath(context.Background(), path, nil, false, false)
+		ok := validatePath(context.Background(), path, "", nil, false, false)
 		assert.False(t, ok)
 	})
 
@@ -247,7 +247,7 @@ state "done" {
 	require.NoError(t, err)
 
 	out := captureOutput(t, func() {
-		ok := validatePath(context.Background(), path, nil, false, false)
+		ok := validatePath(context.Background(), path, "", nil, false, false)
 		assert.True(t, ok)
 	})
 
