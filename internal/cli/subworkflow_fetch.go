@@ -127,6 +127,13 @@ func looksLikeGitURL(source string) bool {
 	return gitURLPattern.MatchString(source)
 }
 
+// errUnsafeGitSource marks a git workflow source whose repository URL or ref
+// would be parsed by git as a command-line option (leading "-"): a leading-dash
+// token in the repository position is option-injectable (e.g.
+// "--upload-pack=<cmd>" runs <cmd> locally through the shell). Callers can
+// match with errors.Is.
+var errUnsafeGitSource = errors.New(`repository URL and ref must not start with "-"`)
+
 func (f *defaultWorkflowFetcher) fetchGit(ctx context.Context, source string) (string, *lockfile.LockedWorkflowRef, error) {
 	repoURL, ref, err := splitGitSource(source)
 	if err != nil {
@@ -157,7 +164,7 @@ func resolveGitRef(ctx context.Context, repoURL, ref string) (string, error) {
 	if isCommitSHA(ref) {
 		return ref, nil
 	}
-	out, err := exec.CommandContext(ctx, "git", "ls-remote", repoURL, ref).Output()
+	out, err := exec.CommandContext(ctx, "git", "ls-remote", "--", repoURL, ref).Output()
 	if err != nil {
 		return "", fmt.Errorf("resolve git ref %q in %q: %w", ref, redactSourceForLog(repoURL), err)
 	}
@@ -210,8 +217,9 @@ func (f *defaultWorkflowFetcher) materializeGitTree(ctx context.Context, source,
 func splitGitSource(source string) (repoURL, ref string, err error) {
 	source = strings.TrimPrefix(source, "git::")
 
+	var q url.Values
 	if idx := strings.Index(source, "?"); idx != -1 {
-		q, err := url.ParseQuery(source[idx+1:])
+		q, err = url.ParseQuery(source[idx+1:])
 		if err != nil {
 			return "", "", fmt.Errorf("parse git source query %q: %w", redactSourceForLog(source), err)
 		}
@@ -225,10 +233,20 @@ func splitGitSource(source string) (repoURL, ref string, err error) {
 		if ref == "" {
 			ref = "HEAD"
 		}
-		return repoURL, ref, nil
+	} else {
+		repoURL, ref = source, "HEAD"
 	}
 
-	return source, "HEAD", nil
+	// Both the ls-remote here and the go-getter clone downstream receive
+	// repoURL/ref verbatim on a git command line, so an option-like token
+	// (leading "-") must be rejected before any git invocation: git parses it
+	// as an option, e.g. --upload-pack=<cmd>, which runs <cmd> locally through
+	// the shell.
+	if strings.HasPrefix(repoURL, "-") || strings.HasPrefix(ref, "-") {
+		return "", "", fmt.Errorf("invalid git workflow source %q: %w", redactSourceForLog(source), errUnsafeGitSource)
+	}
+
+	return repoURL, ref, nil
 }
 
 var commitSHAPattern = regexp.MustCompile(`^[0-9a-f]+$`)

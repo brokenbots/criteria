@@ -394,6 +394,26 @@ func TestResolveWorkflowSource_MissingGitSourceFails(t *testing.T) {
 	assert.Nil(t, origin)
 }
 
+// TestResolveWorkflowSource_OptionLikeGitSourceRejected is the command-level
+// regression for the git argv injection class: a git source whose repository
+// position starts with "-" would make git parse it as a command-line option
+// (e.g. "--upload-pack=<cmd>", which runs <cmd> locally through the shell).
+// Resolution must fail closed with the typed unsafe-source error, return no
+// origin, and never execute the injected command.
+func TestResolveWorkflowSource_OptionLikeGitSourceRejected(t *testing.T) {
+	setWorkflowCacheHome(t)
+	sentinel := filepath.Join(t.TempDir(), "pwned")
+	source := "git::--upload-pack=touch " + sentinel
+
+	dir, origin, err := resolveWorkflowSource(context.Background(), source)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errUnsafeGitSource)
+	assert.Contains(t, err.Error(), "invalid git workflow source")
+	assert.Empty(t, dir)
+	assert.Nil(t, origin)
+	assert.NoFileExists(t, sentinel, "the injected command must never run")
+}
+
 // TestCommands_HttpPrefixedLocalPath_Unchanged is the command-level
 // regression for the remote/local classifier: validate and compile on a local
 // relative path whose first element starts with "http" must behave exactly as

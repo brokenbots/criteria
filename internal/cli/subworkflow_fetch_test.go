@@ -441,6 +441,39 @@ func TestFetchGit_ScpStyleBareForm(t *testing.T) {
 	lockedRefEqual(t, locked, source, fx.headSHA, "git")
 }
 
+// TestFetchGit_RejectsOptionLikeSource is the regression for the git argv
+// injection class: a git source whose repository position (or ref) starts
+// with "-" is parsed by git as a command-line option (e.g.
+// "--upload-pack=<cmd>", which runs <cmd> locally through the shell), so
+// splitGitSource must reject it before any git invocation. Each case embeds
+// a sentinel file path in the injected command and asserts the sentinel is
+// never created.
+func TestFetchGit_RejectsOptionLikeSource(t *testing.T) {
+	cases := []struct {
+		name   string
+		source string
+	}{
+		{"repo-dash-no-query", "git::--upload-pack=touch %s"},
+		{"repo-dash-with-query", "git::--upload-pack=touch %s?ref=main"},
+		{"ref-dash", "git::https://git.example.com/org/repo.git?ref=--upload-pack=touch %s"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sentinel := filepath.Join(t.TempDir(), "pwned")
+			f := newTestFetcher(t, http.DefaultClient)
+
+			dir, locked, err := f.Fetch(context.Background(), t.TempDir(), fmt.Sprintf(tc.source, sentinel))
+
+			require.Error(t, err)
+			assert.ErrorIs(t, err, errUnsafeGitSource)
+			assert.Contains(t, err.Error(), `must not start with "-"`)
+			assert.Empty(t, dir)
+			assert.Nil(t, locked)
+			assert.NoFileExists(t, sentinel, "the injected command must never run")
+		})
+	}
+}
+
 // TestFetchGit_GitURLPatternForm covers the ".git" recognition branch of
 // looksLikeGitURL: an https URL ending in .git is classified as a git source
 // by the lock resolver, and the fetcher routes git-looking https URLs to the
@@ -460,7 +493,9 @@ func TestFetchGit_GitURLPatternForm(t *testing.T) {
 // github.com/gitlab.com host), while ".git"-suffixed paths, the
 // git::/git:///ssh:// forms, and the scheme-less scp-style form keep routing
 // to the git getter. scp-style sources are rejected by url.Parse, so the
-// classifier is exercised with a scheme-less placeholder URL for them.
+// classifier is exercised with a scheme-less placeholder URL for them; the
+// real scp-style path (parse failure branch in Fetch) is covered end to end
+// by TestFetchGit_ScpStyleBareForm and TestResolveWorkflowSource_BareScpStyleForm.
 func TestRoutesToGit(t *testing.T) {
 	cases := []struct {
 		name   string
