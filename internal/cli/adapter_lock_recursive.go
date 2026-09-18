@@ -187,13 +187,31 @@ func resolvedWorkflowSource(source, resolvedRef string) string {
 	return source + "?ref=" + resolvedRef
 }
 
+// isRemoteWorkflowSource reports whether a workflow source names a remote
+// location that must be fetched (ADR-0005 D1). Only unambiguous markers are
+// matched: the git:: force prefix, URL schemes with their scheme separator,
+// and the git URL patterns of looksLikeGitURL. Bare prefixes like "http" are
+// deliberately not matched — a local relative path such as "httpflows" must
+// stay local.
 func isRemoteWorkflowSource(source string) bool {
-	if len(source) < 4 {
-		return false
-	}
-	prefix := source[:4]
-	if prefix == "git+" || prefix == "http" || prefix == "ftp:" || prefix == "ftps" {
+	// The git:: force prefix is not a URL scheme.
+	if strings.HasPrefix(source, "git::") {
 		return true
+	}
+	// go-getter force schemes ("git+ssh://...") are remote only with a scheme
+	// separator, so a local path like "git+fixture" stays local.
+	if strings.HasPrefix(source, "git+") && strings.Contains(source, "://") {
+		return true
+	}
+	// URL schemes. "ftp:"/"ftps:" need only the scheme separator: a path whose
+	// first segment contains a colon is already scheme-shaped, and the fetcher
+	// routes or rejects it by that scheme. http(s) URLs in the wild always
+	// carry "://", and matching without it misclassifies local paths whose
+	// first element merely starts with "http".
+	for _, scheme := range []string{"http://", "https://", "ftp:", "ftps:", "git://", "ssh://"} {
+		if strings.HasPrefix(source, scheme) {
+			return true
+		}
 	}
 	return looksLikeGitURL(source)
 }

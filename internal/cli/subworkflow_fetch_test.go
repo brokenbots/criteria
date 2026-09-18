@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -423,15 +424,119 @@ func TestFetchGit_ScpStyleForm(t *testing.T) {
 	lockedRefEqual(t, locked, source, fx.headSHA, "git")
 }
 
+// TestFetchGit_ScpStyleBareForm covers the bare scp-style "git@host:path" form
+// without the git:: prefix. url.Parse rejects it, so Fetch must route it to
+// the git getter through the parse-failure branch instead of failing with an
+// unsupported-scheme or local-resolution error.
+func TestFetchGit_ScpStyleBareForm(t *testing.T) {
+	fx := createGitFixture(t)
+	installFakeSSH(t)
+	f := newTestFetcher(t, http.DefaultClient)
+	source := "git@127.0.0.1:" + fx.path + "?ref=main"
+
+	dir, locked, err := f.Fetch(context.Background(), t.TempDir(), source)
+	require.NoError(t, err)
+
+	requireGitTree(t, dir)
+	lockedRefEqual(t, locked, source, fx.headSHA, "git")
+}
+
+// TestFetchGit_RejectsOptionLikeSource is the regression for the git argv
+// injection class: a git source whose repository position (or ref) starts
+// with "-" is parsed by git as a command-line option (e.g.
+// "--upload-pack=<cmd>", which runs <cmd> locally through the shell), so
+// splitGitSource must reject it before any git invocation. Each case embeds
+// a sentinel file path in the injected command and asserts the sentinel is
+// never created.
+func TestFetchGit_RejectsOptionLikeSource(t *testing.T) {
+	cases := []struct {
+		name   string
+		source string
+	}{
+		{"repo-dash-no-query", "git::--upload-pack=touch %s"},
+		{"repo-dash-with-query", "git::--upload-pack=touch %s?ref=main"},
+		{"ref-dash", "git::https://git.example.com/org/repo.git?ref=--upload-pack=touch %s"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sentinel := filepath.Join(t.TempDir(), "pwned")
+			f := newTestFetcher(t, http.DefaultClient)
+
+			dir, locked, err := f.Fetch(context.Background(), t.TempDir(), fmt.Sprintf(tc.source, sentinel))
+
+			require.Error(t, err)
+			assert.ErrorIs(t, err, errUnsafeGitSource)
+			assert.Contains(t, err.Error(), `must not start with "-"`)
+			assert.Empty(t, dir)
+			assert.Nil(t, locked)
+			assert.NoFileExists(t, sentinel, "the injected command must never run")
+		})
+	}
+}
+
 // TestFetchGit_GitURLPatternForm covers the ".git" recognition branch of
 // looksLikeGitURL: an https URL ending in .git is classified as a git source
-// by the lock resolver while the fetcher routes it by scheme (archive), so a
-// plain ssh form remains the observable ssh contract.
+// by the lock resolver, and the fetcher routes git-looking https URLs to the
+// git getter unless their path ends in an archive suffix (an archive-suffix
+// path always wins), so a plain ssh form remains the observable ssh contract.
 func TestFetchGit_GitURLPatternForm(t *testing.T) {
 	assert.True(t, looksLikeGitURL("https://example.com/org/repo.git"))
 	assert.True(t, looksLikeGitURL("git@github.com:org/repo.git"))
 	assert.True(t, looksLikeGitURL("git://example.com/org/repo.git"))
 	assert.False(t, looksLikeGitURL("https://example.com/release.tar.gz"))
+}
+
+// TestRoutesToGit pins the fetcher's git-vs-archive classification. The git
+// URL pattern must not capture archive URLs: an http(s) URL whose path ends
+// in a supported archive suffix routes to the archive fetcher even when it
+// matches a git pattern (a ".git" segment earlier in the path, or a
+// github.com/gitlab.com host), while ".git"-suffixed paths, the
+// git::/git:///ssh:// forms, and the scheme-less scp-style form keep routing
+// to the git getter. scp-style sources are rejected by url.Parse, so the
+// classifier is exercised with a scheme-less placeholder URL for them; the
+// real scp-style path (parse failure branch in Fetch) is covered end to end
+// by TestFetchGit_ScpStyleBareForm and TestResolveWorkflowSource_BareScpStyleForm.
+func TestRoutesToGit(t *testing.T) {
+	cases := []struct {
+		name   string
+		source string
+		want   bool
+	}{
+		{"https-git-suffix", "https://host.example/org/repo.git?ref=main", true},
+		{"git-scheme", "git://host.example/org/repo.git", true},
+		{"ssh-scheme", "ssh://git@host.example/org/repo.git", true},
+		{"scp-style-git-form", "git@host.example:org/repo.git?ref=main", true},
+		{"scp-style-git-form-with-port", "git@github.com:org/repo.git", true},
+		{"git-force-prefix", "git::https://host.example/org/repo.git?ref=main", true},
+		{"git-force-prefix-archive-suffix", "git::https://host.example/flow.tar.gz", true},
+		{"github-host-repo", "https://github.com/org/repo?ref=main", true},
+		{"gitlab-host-repo", "https://gitlab.com/org/repo.git", true},
+		{"plain-targz-archive", "https://host.example/flow.tar.gz", false},
+		{"zip-archive", "http://host.example/flow.zip", false},
+		{"tgz-archive", "https://host.example/flow.tgz", false},
+		{"archive-with-query", "https://host.example/flow.tar.gz?download=1", false},
+		// The regression boundary: git-pattern-matching archive URLs stay
+		// archives (previously misrouted to the git fetcher).
+		{"dot-git-earlier-in-path", "http://host.example/v1.git/flow.tar.gz?download=1", false},
+		{"github-release-asset", "https://github.com/org/repo/releases/download/v1/workflows.tar.gz", false},
+		{"github-repo-archive", "https://github.com/org/repo/archive/v1.tar.gz", false},
+		{"gitlab-repo-archive", "https://gitlab.com/org/repo/-/archive/v1/repo-v1.zip", false},
+		{"non-git-scheme", "ftp://host.example/repo.git", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			u, err := url.Parse(tc.source)
+			if err != nil {
+				// Only scp-style git forms are unparseable; the fetcher
+				// routes them to the git getter from the source string alone
+				// (Fetch's parse-failure branch), so the classifier is pinned
+				// against a placeholder URL carrying no scheme.
+				require.True(t, looksLikeGitURL(tc.source), "unparseable case %q must be a git form", tc.source)
+				u = &url.URL{}
+			}
+			assert.Equal(t, tc.want, routesToGit(tc.source, u))
+		})
+	}
 }
 
 // TestFetchArchive_TarGz covers the http(s) archive form end to end: the

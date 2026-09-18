@@ -58,7 +58,12 @@ func newWorkflowFetcher() workflowFetcher {
 func (f *defaultWorkflowFetcher) Fetch(ctx context.Context, callerDir, source string) (string, *lockfile.LockedWorkflowRef, error) {
 	u, err := url.Parse(source)
 	if err != nil {
-		return "", nil, fmt.Errorf("parse workflow source %q: %w", source, err)
+		// scp-style git sources ("git@host:path") are not valid URLs but are
+		// valid git ref forms; route them to the git getter.
+		if looksLikeGitURL(source) {
+			return f.fetchGit(ctx, source)
+		}
+		return "", nil, fmt.Errorf("parse workflow source %q: %w", redactSourceForLog(source), err)
 	}
 
 	// Local path sources are resolved before calling the fetcher; this is a guard.
@@ -71,15 +76,49 @@ func (f *defaultWorkflowFetcher) Fetch(ctx context.Context, callerDir, source st
 		return dir, nil, nil
 	}
 
+	// Route git ref forms before the archive branch so the ssh/https git URL
+	// forms documented in docs/workflow.md ("Source schemes") reach the git
+	// getter. For http(s) URLs an archive-suffix path decides first: release
+	// assets and repo archives hosted on github.com/gitlab.com — or any URL
+	// with ".git" earlier in the path — are plain archive downloads that the
+	// git URL pattern must not capture.
+	if routesToGit(source, u) {
+		return f.fetchGit(ctx, source)
+	}
+
 	if u.Scheme == "http" || u.Scheme == "https" {
 		return f.fetchArchive(ctx, source)
 	}
 
-	if strings.HasPrefix(source, "git::") || looksLikeGitURL(source) || u.Scheme == "git" || u.Scheme == "ssh" {
-		return f.fetchGit(ctx, source)
-	}
+	return "", nil, fmt.Errorf("unsupported workflow source scheme %q for %q", u.Scheme, redactSourceForLog(source))
+}
 
-	return "", nil, fmt.Errorf("unsupported workflow source scheme %q for %q", u.Scheme, source)
+// routesToGit reports whether a parsed, non-local workflow source must go to
+// the git getter rather than the archive fetcher. Unambiguous git forms
+// always do: the git:: force prefix, the explicit git and ssh schemes, and
+// the scp-style form ("git@host:path"), which carries no scheme at all
+// (url.Parse rejects it) and is classified from the source string via the
+// git URL pattern. For http(s) URLs an archive-suffix path wins over the git
+// URL pattern — a ".git" segment earlier in the path or a
+// github.com/gitlab.com host does not make ".../flow.tar.gz" a git
+// repository — and the pattern decides only for what remains.
+func routesToGit(source string, u *url.URL) bool {
+	if strings.HasPrefix(source, "git::") {
+		return true
+	}
+	if u.Scheme == "http" || u.Scheme == "https" {
+		return !isArchivePath(u.Path) && looksLikeGitURL(source)
+	}
+	return u.Scheme == "git" || u.Scheme == "ssh" || looksLikeGitURL(source)
+}
+
+// isArchivePath reports whether a URL path ends in an archive suffix
+// understood by extractArchive. Query strings and fragments are not part of
+// u.Path, so "https://host/flow.tar.gz?download=1" is still an archive.
+func isArchivePath(path string) bool {
+	return strings.HasSuffix(path, ".tar.gz") ||
+		strings.HasSuffix(path, ".tgz") ||
+		strings.HasSuffix(path, ".zip")
 }
 
 var gitURLPattern = regexp.MustCompile(`^(git@|git://|ssh://|https?://.*\.git|https?://github\.com|https?://gitlab\.com)`)
@@ -88,13 +127,20 @@ func looksLikeGitURL(source string) bool {
 	return gitURLPattern.MatchString(source)
 }
 
+// errUnsafeGitSource marks a git workflow source whose repository URL or ref
+// would be parsed by git as a command-line option (leading "-"): a leading-dash
+// token in the repository position is option-injectable (e.g.
+// "--upload-pack=<cmd>" runs <cmd> locally through the shell). Callers can
+// match with errors.Is.
+var errUnsafeGitSource = errors.New(`repository URL and ref must not start with "-"`)
+
 func (f *defaultWorkflowFetcher) fetchGit(ctx context.Context, source string) (string, *lockfile.LockedWorkflowRef, error) {
 	repoURL, ref, err := splitGitSource(source)
 	if err != nil {
 		return "", nil, err
 	}
 
-	slug := slugify(repoURL)
+	slug := slugForSource(repoURL)
 	repoDir := filepath.Join(f.cacheRoot, slug)
 	if err := os.MkdirAll(repoDir, 0o755); err != nil {
 		return "", nil, fmt.Errorf("create workflow cache %q: %w", repoDir, err)
@@ -118,13 +164,13 @@ func resolveGitRef(ctx context.Context, repoURL, ref string) (string, error) {
 	if isCommitSHA(ref) {
 		return ref, nil
 	}
-	out, err := exec.CommandContext(ctx, "git", "ls-remote", repoURL, ref).Output()
+	out, err := exec.CommandContext(ctx, "git", "ls-remote", "--", repoURL, ref).Output()
 	if err != nil {
-		return "", fmt.Errorf("resolve git ref %q in %q: %w", ref, repoURL, err)
+		return "", fmt.Errorf("resolve git ref %q in %q: %w", ref, redactSourceForLog(repoURL), err)
 	}
 	resolvedRef := parseFirstLSRemote(string(out))
 	if resolvedRef == "" {
-		return "", fmt.Errorf("git ref %q not found in %q", ref, repoURL)
+		return "", fmt.Errorf("git ref %q not found in %q", ref, redactSourceForLog(repoURL))
 	}
 	return resolvedRef, nil
 }
@@ -154,7 +200,7 @@ func (f *defaultWorkflowFetcher) materializeGitTree(ctx context.Context, source,
 		Decompressors: map[string]getter.Decompressor{},
 	}
 	if err := client.Get(); err != nil {
-		return "", nil, fmt.Errorf("clone %q: %w", repoURL, err)
+		return "", nil, fmt.Errorf("clone %q: %w", redactSourceForLog(repoURL), err)
 	}
 
 	if err := os.Rename(filepath.Join(tmpDir, "tree"), treeDir); err != nil {
@@ -171,10 +217,11 @@ func (f *defaultWorkflowFetcher) materializeGitTree(ctx context.Context, source,
 func splitGitSource(source string) (repoURL, ref string, err error) {
 	source = strings.TrimPrefix(source, "git::")
 
+	var q url.Values
 	if idx := strings.Index(source, "?"); idx != -1 {
-		q, err := url.ParseQuery(source[idx+1:])
+		q, err = url.ParseQuery(source[idx+1:])
 		if err != nil {
-			return "", "", fmt.Errorf("parse git source query %q: %w", source, err)
+			return "", "", fmt.Errorf("parse git source query %q: %w", redactSourceForLog(source), err)
 		}
 		repoURL = source[:idx]
 		for _, key := range []string{"ref", "branch", "tag"} {
@@ -186,10 +233,20 @@ func splitGitSource(source string) (repoURL, ref string, err error) {
 		if ref == "" {
 			ref = "HEAD"
 		}
-		return repoURL, ref, nil
+	} else {
+		repoURL, ref = source, "HEAD"
 	}
 
-	return source, "HEAD", nil
+	// Both the ls-remote here and the go-getter clone downstream receive
+	// repoURL/ref verbatim on a git command line, so an option-like token
+	// (leading "-") must be rejected before any git invocation: git parses it
+	// as an option, e.g. --upload-pack=<cmd>, which runs <cmd> locally through
+	// the shell.
+	if strings.HasPrefix(repoURL, "-") || strings.HasPrefix(ref, "-") {
+		return "", "", fmt.Errorf("invalid git workflow source %q: %w", redactSourceForLog(source), errUnsafeGitSource)
+	}
+
+	return repoURL, ref, nil
 }
 
 var commitSHAPattern = regexp.MustCompile(`^[0-9a-f]+$`)
@@ -209,7 +266,7 @@ func parseFirstLSRemote(out string) string {
 }
 
 func (f *defaultWorkflowFetcher) fetchArchive(ctx context.Context, source string) (string, *lockfile.LockedWorkflowRef, error) {
-	slug := slugify(source)
+	slug := slugForSource(source)
 	slugDir := filepath.Join(f.cacheRoot, slug)
 	if err := os.MkdirAll(slugDir, 0o755); err != nil {
 		return "", nil, fmt.Errorf("create workflow cache %q: %w", slugDir, err)
@@ -277,7 +334,7 @@ func (f *defaultWorkflowFetcher) downloadArchive(ctx context.Context, source, tm
 		Decompressors: map[string]getter.Decompressor{},
 	}
 	if err := client.Get(); err != nil {
-		return "", "", fmt.Errorf("download archive %q: %w", source, err)
+		return "", "", fmt.Errorf("download archive %q: %w", redactSourceForLog(source), err)
 	}
 
 	h := sha256.New()
@@ -292,21 +349,24 @@ func (f *defaultWorkflowFetcher) downloadArchive(ctx context.Context, source, tm
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), archivePath, nil
 }
 
-// extractArchive dispatches to the correct go-getter decompressor based on the
-// source suffix. Archive entries are pre-scanned so absolute paths and
-// traversal attempts are rejected with the same errors as the previous
-// extractor; go-getter would otherwise silently confine such entries inside
-// the destination directory.
+// extractArchive dispatches to the correct go-getter decompressor based on
+// the source path suffix. Query strings and fragments are ignored so a URL
+// like "https://host/flow.tar.gz?download=1" is recognized — the same rule
+// the fetcher uses to route archive sources. Archive entries are pre-scanned
+// so absolute paths and traversal attempts are rejected with the same errors
+// as the previous extractor; go-getter would otherwise silently confine such
+// entries inside the destination directory.
 func extractArchive(source, archivePath, dst string) error {
 	var decompressor getter.Decompressor
 	var scan func(archivePath string) ([]string, error)
+	archiveSource := sourceWithoutQuery(source)
 	switch {
-	case strings.HasSuffix(source, ".tar.gz") || strings.HasSuffix(source, ".tgz"):
+	case strings.HasSuffix(archiveSource, ".tar.gz") || strings.HasSuffix(archiveSource, ".tgz"):
 		decompressor, scan = &getter.TarGzipDecompressor{}, scanTarGzEntries
-	case strings.HasSuffix(source, ".zip"):
+	case strings.HasSuffix(archiveSource, ".zip"):
 		decompressor, scan = &getter.ZipDecompressor{}, scanZipEntries
 	default:
-		return fmt.Errorf("unsupported archive format for %q", source)
+		return fmt.Errorf("unsupported archive format for %q", redactSourceForLog(source))
 	}
 
 	names, err := scan(archivePath)
@@ -385,6 +445,36 @@ func slugify(s string) string {
 	s = strings.ReplaceAll(s, "=", "_")
 	s = strings.ReplaceAll(s, "@", "_")
 	return s
+}
+
+// slugForSource derives the on-disk cache directory slug for a workflow
+// source. URL userinfo is replaced with a fixed marker before slugifying so
+// credentials never persist in the cache path — or, by construction, in the
+// "cache_path" log field derived from it. Sources that do not parse as
+// absolute URLs — local paths, file:// forms, scp-style git forms — keep the
+// plain slugify result so existing cache entries remain reachable.
+func slugForSource(source string) string {
+	u, err := url.Parse(source)
+	if err != nil || u.Scheme == "" || u.Scheme == "file" || u.User == nil {
+		return slugify(source)
+	}
+	if u.User.Username() == "" {
+		if _, hasPassword := u.User.Password(); !hasPassword {
+			return slugify(source)
+		}
+	}
+	return slugify(redactSourceForLog(source))
+}
+
+// sourceWithoutQuery strips any query string or fragment from a workflow
+// source so archive-format detection sees only the path, mirroring the
+// archive-suffix routing rule in Fetch. Sources that do not parse as URLs —
+// local paths, scp-style git forms — are returned unchanged.
+func sourceWithoutQuery(source string) string {
+	if u, err := url.Parse(source); err == nil && u.Path != "" {
+		return u.Path
+	}
+	return source
 }
 
 // safeExtractPath joins dst with the archive entry name and confirms the result
