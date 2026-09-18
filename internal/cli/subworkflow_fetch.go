@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/go-getter"
 
@@ -91,6 +92,26 @@ func (f *defaultWorkflowFetcher) Fetch(ctx context.Context, callerDir, source st
 	}
 
 	return "", nil, fmt.Errorf("unsupported workflow source scheme %q for %q", u.Scheme, redactSourceForLog(source))
+}
+
+// recordWorkflowCacheEntry records a fetched tree in the workflow cache index
+// under CRITERIA_HOME (ADR-0005 D5). The index is bookkeeping only — the pin
+// lockfile stays the pin authority (D7) — so recording is best-effort: any
+// failure, including a corrupt index, never fails the fetch. The source is
+// recorded in its redacted form so credentials never persist on disk.
+func (f *defaultWorkflowFetcher) recordWorkflowCacheEntry(kind, source, resolvedRef, treeDir string, at time.Time) {
+	rel, err := filepath.Rel(f.cacheRoot, treeDir)
+	if err != nil || !isValidWorkflowCacheRelPath(rel) {
+		return
+	}
+	entry := workflowCacheEntry{
+		Kind:        kind,
+		Source:      redactSourceForLog(source),
+		ResolvedRef: resolvedRef,
+		CachePath:   filepath.ToSlash(rel),
+		FetchedAt:   at,
+	}
+	_ = upsertWorkflowCacheEntry(f.cacheRoot, &entry)
 }
 
 // cascadeSlugDir returns the cache directory that holds the fetched tree for a
@@ -178,6 +199,7 @@ func (f *defaultWorkflowFetcher) fetchGit(ctx context.Context, callerDir, source
 
 	treeDir := filepath.Join(repoDir, resolvedRef)
 	if info, err := os.Stat(treeDir); err == nil && info.IsDir() {
+		f.recordWorkflowCacheEntry("git", source, resolvedRef, treeDir, fetchedAt(treeDir))
 		return treeDir, gitLockedWorkflowRef(source, resolvedRef), nil
 	}
 
@@ -231,11 +253,13 @@ func (f *defaultWorkflowFetcher) materializeGitTree(ctx context.Context, source,
 	if err := os.Rename(filepath.Join(tmpDir, "tree"), treeDir); err != nil {
 		// Another goroutine may have created treeDir in a race.
 		if info, err := os.Stat(treeDir); err == nil && info.IsDir() {
+			f.recordWorkflowCacheEntry("git", source, resolvedRef, treeDir, fetchedAt(treeDir))
 			return treeDir, gitLockedWorkflowRef(source, resolvedRef), nil
 		}
 		return "", nil, fmt.Errorf("move cloned workflow into cache: %w", err)
 	}
 
+	f.recordWorkflowCacheEntry("git", source, resolvedRef, treeDir, time.Now().UTC())
 	return treeDir, gitLockedWorkflowRef(source, resolvedRef), nil
 }
 
@@ -310,6 +334,7 @@ func (f *defaultWorkflowFetcher) fetchArchive(ctx context.Context, callerDir, so
 
 	archiveDir := filepath.Join(slugDir, digest)
 	if info, err := os.Stat(archiveDir); err == nil && info.IsDir() {
+		f.recordWorkflowCacheEntry("archive", source, digest, archiveDir, fetchedAt(archiveDir))
 		return archiveDir, archiveLockedWorkflowRef(source, digest), nil
 	}
 
@@ -321,11 +346,13 @@ func (f *defaultWorkflowFetcher) fetchArchive(ctx context.Context, callerDir, so
 	if err := os.Rename(extractDir, archiveDir); err != nil {
 		// Another goroutine may have created archiveDir in a race.
 		if info, err := os.Stat(archiveDir); err == nil && info.IsDir() {
+			f.recordWorkflowCacheEntry("archive", source, digest, archiveDir, fetchedAt(archiveDir))
 			return archiveDir, archiveLockedWorkflowRef(source, digest), nil
 		}
 		return "", nil, fmt.Errorf("move extracted workflow into cache: %w", err)
 	}
 
+	f.recordWorkflowCacheEntry("archive", source, digest, archiveDir, time.Now().UTC())
 	return archiveDir, archiveLockedWorkflowRef(source, digest), nil
 }
 

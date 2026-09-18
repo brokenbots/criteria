@@ -48,6 +48,7 @@ func main() {
 	root.AddCommand(cli.NewSubmitCmd())
 	root.AddCommand(cli.NewInspectCmd())
 	root.AddCommand(cli.NewAdapterCmd())
+	root.AddCommand(cli.NewCacheCmd())
 	root.AddCommand(cli.NewLangserverCmd())
 	root.AddCommand(cli.NewVersionCmd())
 	if err := root.Execute(); err != nil {
