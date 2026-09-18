@@ -318,6 +318,8 @@ func TestSink_OnAdapterLifecycleEvent_PublishesAdapterType(t *testing.T) {
 		ScopeInstanceID:   "11111111-1111-1111-1111-111111111111",
 		AdapterName:       "intake",
 		AdapterType:       "shell",
+		EnvironmentType:   "remote",
+		EnvironmentName:   "prod",
 		Digest:            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		ShimListenAddress: "127.0.0.1:7778",
 		TokenRef:          "/run/data/tokens/intake.token",
@@ -339,6 +341,12 @@ func TestSink_OnAdapterLifecycleEvent_PublishesAdapterType(t *testing.T) {
 	}
 	if got := ae.Data.Fields["adapter_type"].GetStringValue(); got != "shell" {
 		t.Errorf("adapter_type: got %q want shell", got)
+	}
+	if got := ae.Data.Fields["environment_type"].GetStringValue(); got != "remote" {
+		t.Errorf("environment_type: got %q want remote", got)
+	}
+	if got := ae.Data.Fields["environment_name"].GetStringValue(); got != "prod" {
+		t.Errorf("environment_name: got %q want prod", got)
 	}
 }
 

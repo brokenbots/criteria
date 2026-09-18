@@ -1417,6 +1417,12 @@ func TestInitScopeAdapters_PerScope_EmitsProvisionWanted(t *testing.T) {
 	if event.AdapterType != "noop" {
 		t.Errorf("AdapterType = %q, want noop (the adapter declaration's type)", event.AdapterType)
 	}
+	if event.EnvironmentType != "remote" {
+		t.Errorf("EnvironmentType = %q, want remote (the environment declaration's type)", event.EnvironmentType)
+	}
+	if event.EnvironmentName != "prod" {
+		t.Errorf("EnvironmentName = %q, want prod (the environment declaration's name)", event.EnvironmentName)
+	}
 	if event.ShimListenAddress != "127.0.0.1:4242" {
 		t.Errorf("ShimListenAddress = %q, want 127.0.0.1:4242", event.ShimListenAddress)
 	}
@@ -1511,6 +1517,12 @@ func TestTearDownScopeAdapters_PerScope_EmitsReleased(t *testing.T) {
 	if released.AdapterType != provision.AdapterType || released.AdapterType != "noop" {
 		t.Errorf("released.AdapterType = %q, want %q", released.AdapterType, provision.AdapterType)
 	}
+	if released.EnvironmentType != provision.EnvironmentType || released.EnvironmentType != "remote" {
+		t.Errorf("released.EnvironmentType = %q, want %q", released.EnvironmentType, provision.EnvironmentType)
+	}
+	if released.EnvironmentName != provision.EnvironmentName || released.EnvironmentName != "prod" {
+		t.Errorf("released.EnvironmentName = %q, want %q", released.EnvironmentName, provision.EnvironmentName)
+	}
 
 	scopeKey := provision.ScopeName + "/" + provision.ScopeInstanceID
 	if !containsString(shim.unregistered, scopeKey) {
@@ -1593,6 +1605,9 @@ state "done" {
 	for _, ev := range sink.provisionEvents {
 		if ev.Status == "provision_wanted" {
 			provisioned[ev.AdapterType] = ev.AdapterName
+			if ev.EnvironmentType != "remote" || ev.EnvironmentName != "prod" {
+				t.Errorf("provision_wanted environment identity: got (%q, %q), want (remote, prod)", ev.EnvironmentType, ev.EnvironmentName)
+			}
 		}
 	}
 	if provisioned["shell"] != "intake" || provisioned["copilot"] != "planner" {
@@ -1604,6 +1619,9 @@ state "done" {
 	for _, ev := range sink.provisionEvents {
 		if ev.Status == "released" {
 			released[ev.AdapterType] = ev.AdapterName
+			if ev.EnvironmentType != "remote" || ev.EnvironmentName != "prod" {
+				t.Errorf("released environment identity: got (%q, %q), want (remote, prod)", ev.EnvironmentType, ev.EnvironmentName)
+			}
 		}
 	}
 	if released["shell"] != "shell.intake" || released["copilot"] != "copilot.planner" {

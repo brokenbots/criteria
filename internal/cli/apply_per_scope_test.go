@@ -1431,6 +1431,14 @@ func assertServerPerScopeLifecycleParity(t *testing.T, fake *applytest.Fake, eve
 			t.Errorf("server adapter.lifecycle event missing %s", field)
 		}
 	}
+	// CRI-233: the event must carry the environment identity of the adapter
+	// session (the compiled environment declaration's type + name).
+	if v, _ := data["environment_type"].(string); v != "remote" {
+		t.Errorf("server adapter.lifecycle event environment_type: got %v, want remote", data["environment_type"])
+	}
+	if v, _ := data["environment_name"].(string); v != "prod" {
+		t.Errorf("server adapter.lifecycle event environment_name: got %v, want prod", data["environment_name"])
+	}
 
 	var fileProvisions []*pb.AdapterEvent
 	for _, line := range splitNDJSONLines(mustReadEventsForDiag(t, eventsFile)) {

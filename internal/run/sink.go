@@ -238,6 +238,8 @@ func (s *Sink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent) {
 			"scope_instance_id":   event.ScopeInstanceID,
 			"adapter":             event.AdapterName,
 			"adapter_type":        event.AdapterType,
+			"environment_type":    event.EnvironmentType,
+			"environment_name":    event.EnvironmentName,
 			"digest":              event.Digest,
 			"shim_listen_address": event.ShimListenAddress,
 			"token_ref":           event.TokenRef,
