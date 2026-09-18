@@ -73,6 +73,28 @@ func runApply(ctx context.Context, opts applyOptions) error {
 	if strings.TrimSpace(opts.workflowPath) == "" {
 		return errors.New("workflow path is required")
 	}
+
+	// ADR-0005 D1/D3: remote workflow sources (git refs, http(s) archives)
+	// materialize into cache/workflows/<slug>/<version> before any run
+	// plumbing starts; local paths pass through unchanged.
+	resolvedPath, origin, err := resolveWorkflowSource(ctx, opts.workflowPath)
+	if err != nil {
+		return err
+	}
+	if origin != nil {
+		log := opts.log
+		if log == nil {
+			log = newApplyLogger()
+			opts.log = log
+		}
+		log.Info("workflow source resolved",
+			"kind", origin.Kind,
+			"source", origin.Source,
+			"resolved_ref", origin.ResolvedRef,
+			"cache_path", origin.Path)
+		opts.workflowPath = resolvedPath
+	}
+
 	if strings.TrimSpace(opts.serverURL) != "" {
 		return runApplyServer(ctx, opts)
 	}

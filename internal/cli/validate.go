@@ -43,6 +43,15 @@ func NewValidateCmd() *cobra.Command {
 }
 
 func validatePath(ctx context.Context, path string, subworkflowRoots []string, diagJSON, warnsAsErrors bool) (ok bool) {
+	// ADR-0005 D1/D3: remote workflow sources materialize into the workflow
+	// cache before validation; local paths pass through unchanged.
+	resolvedPath, _, err := resolveWorkflowSource(ctx, path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: error: %v\n", path, err)
+		return false
+	}
+	path = resolvedPath
+
 	spec, diags := workflow.ParseFileOrDir(path)
 	if diags.HasErrors() {
 		printValidationParseError(path, diags, diagJSON)

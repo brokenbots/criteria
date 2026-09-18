@@ -188,6 +188,11 @@ func resolvedWorkflowSource(source, resolvedRef string) string {
 }
 
 func isRemoteWorkflowSource(source string) bool {
+	// The git:: force prefix is not a URL scheme; check it before the
+	// generic prefix table below.
+	if strings.HasPrefix(source, "git::") {
+		return true
+	}
 	if len(source) < 4 {
 		return false
 	}

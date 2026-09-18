@@ -53,7 +53,13 @@ func NewCompileCmd() *cobra.Command {
 }
 
 func compileWorkflowOutput(ctx context.Context, workflowPath, format string, subworkflowRoots []string, warnsAsErrors, allowUnsigned bool) ([]byte, error) {
-	spec, graph, err := parseCompileForCli(ctx, workflowPath, subworkflowRoots, warnsAsErrors, allowUnsigned)
+	// ADR-0005 D1/D3: remote workflow sources materialize into the workflow
+	// cache before compilation; local paths pass through unchanged.
+	resolvedPath, _, err := resolveWorkflowSource(ctx, workflowPath)
+	if err != nil {
+		return nil, err
+	}
+	spec, graph, err := parseCompileForCli(ctx, resolvedPath, subworkflowRoots, warnsAsErrors, allowUnsigned)
 	if err != nil {
 		return nil, err
 	}

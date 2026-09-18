@@ -58,6 +58,11 @@ func newWorkflowFetcher() workflowFetcher {
 func (f *defaultWorkflowFetcher) Fetch(ctx context.Context, callerDir, source string) (string, *lockfile.LockedWorkflowRef, error) {
 	u, err := url.Parse(source)
 	if err != nil {
+		// scp-style git sources ("git@host:path") are not valid URLs but are
+		// valid git ref forms; route them to the git getter.
+		if looksLikeGitURL(source) {
+			return f.fetchGit(ctx, source)
+		}
 		return "", nil, fmt.Errorf("parse workflow source %q: %w", source, err)
 	}
 
