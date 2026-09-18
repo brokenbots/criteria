@@ -416,7 +416,14 @@ type SubworkflowSpec struct {
 	Name        string         `hcl:"name,label"`
 	Source      string         `hcl:"source"`               // directory path; local or remote
 	Environment hcl.Expression `hcl:"environment,optional"` // bare traversal reference (e.g. shell.default)
-	Remain      hcl.Body       `hcl:",remain"`              // captures the "input" block
+	// Ref is the operator-declared expected pin (ADR-0005 D7, CRI-226): the
+	// resolved ref/digest the source must resolve to — a git commit SHA for
+	// git sources or the "sha256:<digest>" content digest for archive
+	// sources. When set, resolution fails closed on mismatch, before any
+	// execution. Remote sources only: a declared ref on a local source is
+	// refused because it cannot be verified.
+	Ref    string   `hcl:"ref,optional"`
+	Remain hcl.Body `hcl:",remain"` // captures the "input" block
 }
 
 // ConfigFieldType enumerates the types a config or input field may carry.

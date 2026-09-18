@@ -178,7 +178,7 @@ func loadWorkflowForSubmit(ctx context.Context, workflowPath string) (*workflow.
 	workflowDir := workflowDirFromPath(workflowPath)
 	_, diags = workflow.CompileWithContext(ctx, spec, nil, workflow.CompileOpts{
 		WorkflowDir:         workflowDir,
-		SubWorkflowResolver: &workflow.LocalSubWorkflowResolver{},
+		SubWorkflowResolver: newFetchingSubWorkflowResolver(nil),
 	})
 	if diags.HasErrors() {
 		return nil, &submitError{

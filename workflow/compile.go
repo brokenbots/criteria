@@ -23,10 +23,12 @@ const (
 // ResolveSource resolves a source string ("./path" or "scheme://...")
 // to a directory containing one or more .chcl or .hcl files.
 // callerDir is the directory containing the parent workflow (used to resolve relative paths).
-// For local paths, the returned dir is the absolute path; for remote sources,
-// the resolver fetches into a cache dir.
+// For local paths, the returned dir is the absolute path and pin is nil; for
+// remote sources, the resolver fetches into a cache dir and returns the
+// fetcher's pin (git SHA or archive digest) so the compiler can enforce
+// operator-declared expected pins (CRI-226).
 type SubWorkflowResolver interface {
-	ResolveSource(ctx context.Context, callerDir, source string) (dir string, err error)
+	ResolveSource(ctx context.Context, callerDir, source string) (dir string, pin *lockfile.LockedWorkflowRef, err error)
 }
 
 // subworkflowFrame records one level of subworkflow recursion during

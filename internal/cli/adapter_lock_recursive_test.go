@@ -219,7 +219,7 @@ func TestValidate_FailsOnUnpinnedAdapterInTree(t *testing.T) {
 
 	workflowPath := filepath.Join(root, "workflow.hcl")
 	out := captureStderr(t, func() {
-		_ = validatePath(ctx, workflowPath, nil, false, false)
+		_ = validatePath(ctx, workflowPath, "", nil, false, false)
 	})
 	require.Contains(t, out, sub, "validate stderr must name the workflow directory")
 	require.Contains(t, out, "copilot", "validate stderr must name the adapter")

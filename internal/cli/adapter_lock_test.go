@@ -717,7 +717,7 @@ step "hello" {
 	// "declares no output schema" notice from the real noop adapter; there must
 	// be no "schema unverified" permissive-validation warning.
 	out := captureOutput(t, func() {
-		ok := validatePath(ctx, workflowPath, nil, true, false)
+		ok := validatePath(ctx, workflowPath, "", nil, true, false)
 		assert.True(t, ok)
 	})
 

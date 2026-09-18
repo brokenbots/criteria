@@ -60,7 +60,7 @@ state "done" {
 func compileCallEdgesJSON(t *testing.T, hcl string) string {
 	t.Helper()
 	path := writeWorkflowFile(t, hcl)
-	out, err := compileWorkflowOutput(context.Background(), path, "json", nil, false, false)
+	out, err := compileWorkflowOutput(context.Background(), path, "", "json", nil, false, false)
 	if err != nil {
 		t.Fatalf("compile json: %v", err)
 	}

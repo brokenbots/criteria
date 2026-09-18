@@ -69,7 +69,7 @@ func (f *defaultWorkflowFetcher) Fetch(ctx context.Context, callerDir, source st
 	// Local path sources are resolved before calling the fetcher; this is a guard.
 	if u.Scheme == "" || u.Scheme == "file" {
 		local := &workflow.LocalSubWorkflowResolver{}
-		dir, err := local.ResolveSource(ctx, callerDir, source)
+		dir, _, err := local.ResolveSource(ctx, callerDir, source)
 		if err != nil {
 			return "", nil, err
 		}

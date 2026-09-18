@@ -166,7 +166,7 @@ func resolveSubworkflowForLock(ctx context.Context, callerDir, source string, fe
 		return dir, pin, assertFetchedWorkflowLockfileComplete(dir, source)
 	}
 	local := &workflow.LocalSubWorkflowResolver{}
-	dir, err := local.ResolveSource(ctx, callerDir, source)
+	dir, _, err := local.ResolveSource(ctx, callerDir, source)
 	if err != nil {
 		return "", nil, err
 	}

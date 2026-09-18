@@ -16,7 +16,7 @@ func TestCompile_AllowToolsWarningsSurface(t *testing.T) {
 	dir := writeAllowToolsRepro(t)
 
 	stderr := captureStderr(t, func() {
-		_, err := compileWorkflowOutput(context.Background(), dir, "json", nil, false, false)
+		_, err := compileWorkflowOutput(context.Background(), dir, "", "json", nil, false, false)
 		require.NoError(t, err)
 	})
 
@@ -30,7 +30,7 @@ func TestCompile_AllowToolsWarningsAsErrors(t *testing.T) {
 	dir := writeAllowToolsRepro(t)
 
 	stderr := captureStderr(t, func() {
-		_, err := compileWorkflowOutput(context.Background(), dir, "json", nil, true, false)
+		_, err := compileWorkflowOutput(context.Background(), dir, "", "json", nil, true, false)
 		require.Error(t, err, "compile must fail when allow_tools warnings are promoted")
 	})
 
@@ -58,7 +58,7 @@ func TestValidate_AllowToolsWarningsSurface(t *testing.T) {
 	dir := writeAllowToolsRepro(t)
 
 	stderr := captureStderr(t, func() {
-		ok := validatePath(context.Background(), dir, nil, false, false)
+		ok := validatePath(context.Background(), dir, "", nil, false, false)
 		require.True(t, ok, "validate must succeed when warnings are not promoted")
 	})
 
@@ -72,7 +72,7 @@ func TestValidate_AllowToolsWarningsAsErrors(t *testing.T) {
 	dir := writeAllowToolsRepro(t)
 
 	stderr := captureStderr(t, func() {
-		ok := validatePath(context.Background(), dir, nil, false, true)
+		ok := validatePath(context.Background(), dir, "", nil, false, true)
 		require.False(t, ok, "validate must fail when allow_tools warnings are promoted")
 	})
 

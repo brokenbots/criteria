@@ -28,6 +28,7 @@ type applyOptions struct {
 	output               string       // "auto" | "concise" | "json"
 	serverBootstrapToken string       // --server-bootstrap-token: X-Server-Bootstrap value sent on Register; "file:<path>" reads the token from a file
 	subworkflowRoots     []string     // --subworkflow-root flag (repeatable); populates AllowedRoots on LocalSubWorkflowResolver
+	workflowRef          string       // --workflow-ref: caller-declared expected pin (git SHA or sha256:<digest>); run fails closed on mismatch (CRI-226)
 	warnsAsErrors        bool         // --warnings-as-errors: refuse to run when an adapter schema can't be verified
 	allowUnsigned        bool         // --allow-unsigned: skip adapter signature verification (WS46)
 	stdin                io.Reader    // stdin for local-mode approval prompts; nil → os.Stdin
@@ -67,6 +68,7 @@ func NewApplyCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&opts.varFiles, "var-file", nil, "Load variable overrides from a .chcl, .hcl, or .json file (repeatable; --var takes precedence)")
 	cmd.Flags().StringVar(&opts.output, "output", envOrDefault("CRITERIA_OUTPUT", "auto"), "Standalone output format: auto|concise|json (auto: concise on TTY, json when piped)")
 	cmd.Flags().StringArrayVar(&opts.subworkflowRoots, "subworkflow-root", nil, "Restrict subworkflow source resolution to this root path (repeatable; empty = no restriction)")
+	cmd.Flags().StringVar(&opts.workflowRef, "workflow-ref", "", "Expected ref/digest the workflow source must resolve to — a git commit SHA or sha256:<digest>; the run fails closed on mismatch (CRI-226)")
 	cmd.Flags().BoolVar(&opts.warnsAsErrors, "warnings-as-errors", false, "Refuse to run when a warning is raised (e.g. an adapter whose schema could not be verified)")
 	cmd.Flags().BoolVar(&opts.allowUnsigned, "allow-unsigned", false, "Skip adapter signature verification (also via CRITERIA_ALLOW_UNSIGNED)")
 	return cmd
@@ -79,8 +81,10 @@ func runApply(ctx context.Context, opts applyOptions) error {
 
 	// ADR-0005 D1/D3: remote workflow sources (git refs, http(s) archives)
 	// materialize into cache/workflows/<slug>/<version> before any run
-	// plumbing starts; local paths pass through unchanged.
-	resolvedPath, origin, err := resolveWorkflowSource(ctx, opts.workflowPath)
+	// plumbing starts; local paths pass through unchanged. ADR-0005 D7
+	// (CRI-226): a declared --workflow-ref pin is enforced at resolve time,
+	// before any execution.
+	resolvedPath, origin, err := resolveWorkflowSource(ctx, opts.workflowPath, opts.workflowRef)
 	if err != nil {
 		return err
 	}

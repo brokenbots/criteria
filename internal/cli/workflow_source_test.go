@@ -217,7 +217,7 @@ func TestResolveWorkflowSource_LocalForms_Unchanged(t *testing.T) {
 	}
 	for _, source := range cases {
 		t.Run(source, func(t *testing.T) {
-			dir, origin, err := resolveWorkflowSource(context.Background(), source)
+			dir, origin, err := resolveWorkflowSource(context.Background(), source, "")
 			require.NoError(t, err)
 			assert.Equal(t, source, dir, "local source must be returned unchanged")
 			assert.Nil(t, origin, "local sources must not produce an origin")
@@ -245,7 +245,7 @@ func TestResolveWorkflowSource_GitRefForms(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			dir, origin, err := resolveWorkflowSource(context.Background(), tc.source)
+			dir, origin, err := resolveWorkflowSource(context.Background(), tc.source, "")
 			require.NoError(t, err)
 
 			require.NotNil(t, origin)
@@ -277,7 +277,7 @@ func TestResolveWorkflowSource_ArchiveForms(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			dir, origin, err := resolveWorkflowSource(context.Background(), tc.source)
+			dir, origin, err := resolveWorkflowSource(context.Background(), tc.source, "")
 			require.NoError(t, err)
 
 			require.NotNil(t, origin)
@@ -328,7 +328,7 @@ func TestResolveWorkflowSource_ArchiveCredentialsNotInCachePath(t *testing.T) {
 	hostPort := strings.TrimPrefix(fx.tarGzURL, "http://")
 	source := "http://" + testUserPass + "@" + hostPort
 
-	dir, origin, err := resolveWorkflowSource(context.Background(), source)
+	dir, origin, err := resolveWorkflowSource(context.Background(), source, "")
 	require.NoError(t, err)
 
 	wantSlug := slugify("http://redacted@" + hostPort)
@@ -356,7 +356,7 @@ func TestResolveWorkflowSource_BareScpStyleForm(t *testing.T) {
 	installFakeSSH(t)
 
 	source := "git@127.0.0.1:" + fx.path + "?ref=main"
-	dir, origin, err := resolveWorkflowSource(context.Background(), source)
+	dir, origin, err := resolveWorkflowSource(context.Background(), source, "")
 	require.NoError(t, err)
 
 	require.NotNil(t, origin)
@@ -376,7 +376,7 @@ func TestResolveWorkflowSource_UnsupportedRemoteForm(t *testing.T) {
 	setWorkflowCacheHome(t)
 	source := "ftp://example.com/workflow.tar.gz"
 
-	dir, origin, err := resolveWorkflowSource(context.Background(), source)
+	dir, origin, err := resolveWorkflowSource(context.Background(), source, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported workflow source scheme")
 	assert.Empty(t, dir)
@@ -389,7 +389,7 @@ func TestResolveWorkflowSource_MissingGitSourceFails(t *testing.T) {
 	setWorkflowCacheHome(t)
 	source := "git::file:///nonexistent/repo.git?ref=main"
 
-	dir, origin, err := resolveWorkflowSource(context.Background(), source)
+	dir, origin, err := resolveWorkflowSource(context.Background(), source, "")
 	require.Error(t, err)
 	assert.Empty(t, dir)
 	assert.Nil(t, origin)
@@ -406,7 +406,7 @@ func TestResolveWorkflowSource_OptionLikeGitSourceRejected(t *testing.T) {
 	sentinel := filepath.Join(t.TempDir(), "pwned")
 	source := "git::--upload-pack=touch " + sentinel
 
-	dir, origin, err := resolveWorkflowSource(context.Background(), source)
+	dir, origin, err := resolveWorkflowSource(context.Background(), source, "")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, errUnsafeGitSource)
 	assert.Contains(t, err.Error(), "invalid git workflow source")
@@ -428,12 +428,12 @@ func TestCommands_HttpPrefixedLocalPath_Unchanged(t *testing.T) {
 	t.Chdir(root)
 
 	out := captureOutput(t, func() {
-		ok := validatePath(context.Background(), "httpflows", nil, false, false)
+		ok := validatePath(context.Background(), "httpflows", "", nil, false, false)
 		require.True(t, ok)
 	})
 	assert.Contains(t, out, "httpflows: ok")
 
-	compiled, err := compileWorkflowOutput(context.Background(), "httpflows/workflow.hcl", "json", nil, false, false)
+	compiled, err := compileWorkflowOutput(context.Background(), "httpflows/workflow.hcl", "", "json", nil, false, false)
 	require.NoError(t, err)
 	var parsed struct {
 		Name string `json:"name"`
@@ -473,13 +473,13 @@ func TestResolveWorkflowSource_FetchedAt(t *testing.T) {
 	setWorkflowCacheHome(t)
 	fx := createWorkflowArchiveFixture(t)
 
-	_, origin1, err := resolveWorkflowSource(context.Background(), fx.tarGzURL)
+	_, origin1, err := resolveWorkflowSource(context.Background(), fx.tarGzURL, "")
 	require.NoError(t, err)
 	require.False(t, origin1.FetchedAt.IsZero())
 	require.WithinDuration(t, time.Now().UTC(), origin1.FetchedAt, 10*time.Second,
 		"a fresh fetch's fetched_at is the materialization time")
 
-	_, origin2, err := resolveWorkflowSource(context.Background(), fx.tarGzURL)
+	_, origin2, err := resolveWorkflowSource(context.Background(), fx.tarGzURL, "")
 	require.NoError(t, err)
 	assert.True(t, origin2.FetchedAt.Equal(origin1.FetchedAt),
 		"a warm-cache resolution must report the original materialization time")
@@ -571,7 +571,7 @@ func TestApply_RemoteGitSource_EndToEnd(t *testing.T) {
 	source := "git::file://" + fx.path + "?ref=main"
 
 	var logBuf bytes.Buffer
-	_, origin, err := resolveWorkflowSource(context.Background(), source)
+	_, origin, err := resolveWorkflowSource(context.Background(), source, "")
 	require.NoError(t, err)
 
 	eventsFile := filepath.Join(t.TempDir(), "events.ndjson")
@@ -609,7 +609,7 @@ func TestApply_RemoteArchiveSource_EndToEnd(t *testing.T) {
 	source := fx.tarGzURL
 
 	var logBuf bytes.Buffer
-	_, origin, err := resolveWorkflowSource(context.Background(), source)
+	_, origin, err := resolveWorkflowSource(context.Background(), source, "")
 	require.NoError(t, err)
 
 	eventsFile := filepath.Join(t.TempDir(), "events.ndjson")
@@ -649,7 +649,7 @@ func TestApply_RemoteSource_CredentialsNotLogged(t *testing.T) {
 	source := "http://" + testUserPass + "@" + hostPort
 
 	var logBuf bytes.Buffer
-	_, origin, err := resolveWorkflowSource(context.Background(), source)
+	_, origin, err := resolveWorkflowSource(context.Background(), source, "")
 	require.NoError(t, err)
 
 	eventsFile := filepath.Join(t.TempDir(), "events.ndjson")
@@ -690,7 +690,7 @@ func TestApply_RemoteSource_CacheReuse(t *testing.T) {
 	fx := createWorkflowGitFixture(t)
 	source := "git::file://" + fx.path + "?ref=" + fx.tagSHA
 
-	_, origin1, err := resolveWorkflowSource(context.Background(), source)
+	_, origin1, err := resolveWorkflowSource(context.Background(), source, "")
 	require.NoError(t, err)
 	requireResolvedWorkflow(t, origin1.Path)
 
@@ -701,7 +701,7 @@ func TestApply_RemoteSource_CacheReuse(t *testing.T) {
 	// git operation for a cache hit.
 	require.NoError(t, os.RemoveAll(fx.path))
 
-	_, origin2, err := resolveWorkflowSource(context.Background(), source)
+	_, origin2, err := resolveWorkflowSource(context.Background(), source, "")
 	require.NoError(t, err)
 	assert.Equal(t, origin1.Path, origin2.Path, "second resolution must hit the cache")
 	assert.Equal(t, fx.tagSHA, origin2.ResolvedRef)
@@ -752,7 +752,7 @@ func TestValidate_RemoteGitSource(t *testing.T) {
 	source := "git::file://" + fx.path + "?ref=main"
 
 	out := captureOutput(t, func() {
-		ok := validatePath(context.Background(), source, nil, false, false)
+		ok := validatePath(context.Background(), source, "", nil, false, false)
 		require.True(t, ok)
 	})
 	assert.Contains(t, out, source+": ok")
@@ -767,7 +767,7 @@ func TestValidate_RemoteArchiveSource(t *testing.T) {
 	source := fx.zipURL
 
 	out := captureOutput(t, func() {
-		ok := validatePath(context.Background(), source, nil, false, false)
+		ok := validatePath(context.Background(), source, "", nil, false, false)
 		require.True(t, ok)
 	})
 	assert.Contains(t, out, source+": ok")
@@ -787,7 +787,7 @@ func TestValidate_RemoteSource_CredentialsNotPrinted(t *testing.T) {
 
 	var ok bool
 	out := captureOutput(t, func() {
-		ok = validatePath(context.Background(), source, nil, false, false)
+		ok = validatePath(context.Background(), source, "", nil, false, false)
 		require.True(t, ok)
 	})
 	assert.NotContains(t, out, testUserPass, "validate stdout must not contain URL userinfo")
@@ -805,7 +805,7 @@ func TestValidate_RemoteSource_FetchErrorFailsValidation(t *testing.T) {
 
 	var ok bool
 	out := captureOutput(t, func() {
-		ok = validatePath(context.Background(), source, nil, false, false)
+		ok = validatePath(context.Background(), source, "", nil, false, false)
 	})
 	assert.False(t, ok)
 	assert.Contains(t, out, source+": error:")
@@ -822,7 +822,7 @@ func TestValidate_RemoteSource_FetchErrorRedactsCredentials(t *testing.T) {
 
 	var ok bool
 	out := captureOutput(t, func() {
-		ok = validatePath(context.Background(), source, nil, false, false)
+		ok = validatePath(context.Background(), source, "", nil, false, false)
 	})
 	assert.False(t, ok)
 	assert.Contains(t, out, ": error:")
@@ -914,7 +914,7 @@ func TestValidate_RemoteSource_RoutesGitHttpsVsArchive(t *testing.T) {
 	srv := serveGitHTTPBackend(t, filepath.Dir(gitFX.path))
 	gitSource := srv.URL + "/fixture.git?ref=main"
 
-	gitDir, gitOrigin, err := resolveWorkflowSource(context.Background(), gitSource)
+	gitDir, gitOrigin, err := resolveWorkflowSource(context.Background(), gitSource, "")
 	require.NoError(t, err)
 	assert.Equal(t, "git", gitOrigin.Kind)
 	assert.Equal(t, gitSource, gitOrigin.Source)
@@ -924,7 +924,7 @@ func TestValidate_RemoteSource_RoutesGitHttpsVsArchive(t *testing.T) {
 		gitDir, "an https git source must use the <slug>/<sha> cache layout")
 	requireResolvedWorkflow(t, gitDir)
 
-	archiveDir, archiveOrigin, err := resolveWorkflowSource(context.Background(), archiveFX.tarGzURL)
+	archiveDir, archiveOrigin, err := resolveWorkflowSource(context.Background(), archiveFX.tarGzURL, "")
 	require.NoError(t, err)
 	assert.Equal(t, "archive", archiveOrigin.Kind)
 	assert.Equal(t, archiveFX.tarGzURL, archiveOrigin.Source)
@@ -935,8 +935,8 @@ func TestValidate_RemoteSource_RoutesGitHttpsVsArchive(t *testing.T) {
 	requireResolvedWorkflow(t, archiveDir)
 
 	out := captureOutput(t, func() {
-		require.True(t, validatePath(context.Background(), gitSource, nil, false, false))
-		require.True(t, validatePath(context.Background(), archiveFX.tarGzURL, nil, false, false))
+		require.True(t, validatePath(context.Background(), gitSource, "", nil, false, false))
+		require.True(t, validatePath(context.Background(), archiveFX.tarGzURL, "", nil, false, false))
 	})
 	assert.Contains(t, out, gitSource+": ok")
 	assert.Contains(t, out, archiveFX.tarGzURL+": ok")
@@ -954,7 +954,7 @@ func TestValidate_RemoteSource_RoutesGitPatternArchiveURL(t *testing.T) {
 	fx := createWorkflowArchiveFixture(t)
 	source := fx.gitPatternTarGzURL // ".../v1.git/flow.tar.gz?download=1"
 
-	dir, origin, err := resolveWorkflowSource(context.Background(), source)
+	dir, origin, err := resolveWorkflowSource(context.Background(), source, "")
 	require.NoError(t, err)
 	require.NotNil(t, origin)
 	assert.Equal(t, "archive", origin.Kind)
@@ -965,14 +965,14 @@ func TestValidate_RemoteSource_RoutesGitPatternArchiveURL(t *testing.T) {
 		dir, "a git-pattern-matching archive must use the <slug>/sha256:<digest> cache layout")
 	requireResolvedWorkflow(t, dir)
 
-	zipDir, zipOrigin, err := resolveWorkflowSource(context.Background(), fx.gitPatternZipURL)
+	zipDir, zipOrigin, err := resolveWorkflowSource(context.Background(), fx.gitPatternZipURL, "")
 	require.NoError(t, err)
 	assert.Equal(t, "archive", zipOrigin.Kind)
 	assert.Equal(t, fx.zipRef, zipOrigin.ResolvedRef)
 	requireResolvedWorkflow(t, zipDir)
 
 	out := captureOutput(t, func() {
-		require.True(t, validatePath(context.Background(), source, nil, false, false))
+		require.True(t, validatePath(context.Background(), source, "", nil, false, false))
 	})
 	assert.Contains(t, out, source+": ok")
 	assert.NotContains(t, out, "cache"+string(filepath.Separator)+"workflows",
@@ -986,7 +986,7 @@ func TestValidate_LocalSource_DoesNotFetch(t *testing.T) {
 	workflowPath := writeWorkflowFile(t, runnableWorkflowHCL)
 
 	out := captureOutput(t, func() {
-		ok := validatePath(context.Background(), workflowPath, nil, false, false)
+		ok := validatePath(context.Background(), workflowPath, "", nil, false, false)
 		require.True(t, ok)
 	})
 	assert.Contains(t, out, workflowPath+": ok")
@@ -1003,7 +1003,7 @@ func TestCompile_RemoteGitSource(t *testing.T) {
 	fx := createWorkflowGitFixture(t)
 	source := "git::file://" + fx.path + "?ref=main"
 
-	out, err := compileWorkflowOutput(context.Background(), source, "json", nil, false, false)
+	out, err := compileWorkflowOutput(context.Background(), source, "", "json", nil, false, false)
 	require.NoError(t, err)
 	var compiled struct {
 		Name string `json:"name"`
@@ -1018,7 +1018,7 @@ func TestCompile_RemoteArchiveSource(t *testing.T) {
 	fx := createWorkflowArchiveFixture(t)
 	source := fx.tarGzURL
 
-	out, err := compileWorkflowOutput(context.Background(), source, "json", nil, false, false)
+	out, err := compileWorkflowOutput(context.Background(), source, "", "json", nil, false, false)
 	require.NoError(t, err)
 	var compiled struct {
 		Name string `json:"name"`
@@ -1033,7 +1033,7 @@ func TestCompile_RemoteSource_FetchErrorFails(t *testing.T) {
 	setWorkflowCacheHome(t)
 	source := "git::file:///nonexistent/repo.git?ref=main"
 
-	_, err := compileWorkflowOutput(context.Background(), source, "json", nil, false, false)
+	_, err := compileWorkflowOutput(context.Background(), source, "", "json", nil, false, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "nonexistent"+string(filepath.Separator)+"repo.git")
 }
@@ -1043,7 +1043,7 @@ func TestCompile_LocalSource_DoesNotFetch(t *testing.T) {
 	stub := installStubFetcher(t)
 	workflowPath := writeWorkflowFile(t, runnableWorkflowHCL)
 
-	out, err := compileWorkflowOutput(context.Background(), workflowPath, "json", nil, false, false)
+	out, err := compileWorkflowOutput(context.Background(), workflowPath, "", "json", nil, false, false)
 	require.NoError(t, err)
 	var compiled struct {
 		Name string `json:"name"`
