@@ -176,7 +176,9 @@ func requireResolvedWorkflow(t *testing.T, dir string) {
 
 // TestResolveWorkflowSource_LocalForms_Unchanged verifies local sources pass
 // through byte-for-byte with a nil origin and never reach the fetcher
-// (ADR-0005 D3: local behavior is unchanged).
+// (ADR-0005 D3: local behavior is unchanged). The http/ftps/git+ prefixed
+// cases are the classifier regression class: local relative paths whose first
+// element merely starts with a scheme word must stay local.
 func TestResolveWorkflowSource_LocalForms_Unchanged(t *testing.T) {
 	stub := installStubFetcher(t)
 	cases := []string{
@@ -185,6 +187,12 @@ func TestResolveWorkflowSource_LocalForms_Unchanged(t *testing.T) {
 		"/abs/path/workflow.hcl",
 		"flow-dir",
 		"file:///abs/path/workflow.hcl",
+		"httpflows",
+		"httpflows/workflow.hcl",
+		"httpsx",
+		"httpx",
+		"ftpsync",
+		"git+fixture",
 	}
 	for _, source := range cases {
 		t.Run(source, func(t *testing.T) {
@@ -311,6 +319,52 @@ func TestResolveWorkflowSource_MissingGitSourceFails(t *testing.T) {
 	require.Error(t, err)
 	assert.Empty(t, dir)
 	assert.Nil(t, origin)
+}
+
+// TestCommands_HttpPrefixedLocalPath_Unchanged is the command-level
+// regression for the remote/local classifier: validate and compile on a local
+// relative path whose first element starts with "http" must behave exactly as
+// before remote sources were accepted, and must never touch the fetcher.
+func TestCommands_HttpPrefixedLocalPath_Unchanged(t *testing.T) {
+	stub := installStubFetcher(t)
+	root := t.TempDir()
+	dir := filepath.Join(root, "httpflows")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "workflow.hcl"), []byte(runnableWorkflowHCL), 0o644))
+	t.Chdir(root)
+
+	out := captureOutput(t, func() {
+		ok := validatePath(context.Background(), "httpflows", nil, false, false)
+		require.True(t, ok)
+	})
+	assert.Contains(t, out, "httpflows: ok")
+
+	compiled, err := compileWorkflowOutput(context.Background(), "httpflows/workflow.hcl", "json", nil, false, false)
+	require.NoError(t, err)
+	var parsed struct {
+		Name string `json:"name"`
+	}
+	require.NoError(t, json.Unmarshal(compiled, &parsed))
+	assert.Equal(t, "remote_source_flow", parsed.Name)
+
+	assert.Empty(t, stub.fetchCalls(), "local http-prefixed paths must not reach the fetcher")
+}
+
+// TestRedactSourceForLog pins the log-boundary credential redaction applied
+// to the "workflow source resolved" record.
+func TestRedactSourceForLog(t *testing.T) {
+	cases := []struct{ source, want string }{
+		{"https://user:token@host.example/x.tar.gz", "https://redacted@host.example/x.tar.gz"},
+		{"git::https://user:token@host.example/repo.git?ref=main", "git::https://redacted@host.example/repo.git?ref=main"},
+		{"ssh://deploy@host.example/org/repo.git", "ssh://redacted@host.example/org/repo.git"},
+		{"https://host.example/x.tar.gz", "https://host.example/x.tar.gz"},
+		{"git@host.example:org/repo.git?ref=main", "git@host.example:org/repo.git?ref=main"},
+		{"git::file:///tmp/fixture.git?ref=main", "git::file:///tmp/fixture.git?ref=main"},
+		{"httpflows", "httpflows"},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, redactSourceForLog(tc.source), tc.source)
+	}
 }
 
 // ---------------------------------------------------------------------------

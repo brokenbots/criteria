@@ -1976,8 +1976,13 @@ step "report" {
 
 ### Source schemes
 
-Only local filesystem paths (`./relative/path` or `/absolute/path`) are
-supported. Remote schemes (`git://`, `https://`, `url://`) are **not supported**.
+Workflow sources are local paths (`./relative/path` or `/absolute/path`) or
+remote sources resolved through the fetcher into
+`cache/workflows/<slug>/<version>`: git ref forms (`git::https://host/repo.git?ref=v1`,
+`git@host:org/repo.git`, ssh/https git URLs) and http(s) archives
+(`https://host/flow.tar.gz`, `.zip`). This applies to the workflow argument of
+`criteria apply`, `criteria validate`, and `criteria compile`, and to
+sub-workflow `source` attributes. See ADR-0005 for the decisions.
 
 ---
 

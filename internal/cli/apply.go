@@ -89,7 +89,7 @@ func runApply(ctx context.Context, opts applyOptions) error {
 		}
 		log.Info("workflow source resolved",
 			"kind", origin.Kind,
-			"source", origin.Source,
+			"source", redactSourceForLog(origin.Source),
 			"resolved_ref", origin.ResolvedRef,
 			"cache_path", origin.Path)
 		opts.workflowPath = resolvedPath
