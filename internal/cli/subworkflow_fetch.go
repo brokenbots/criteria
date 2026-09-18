@@ -18,6 +18,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/hashicorp/go-getter"
+
 	"github.com/brokenbots/criteria/internal/dirs"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
@@ -25,6 +27,13 @@ import (
 
 // defaultWorkflowFetcher resolves git refs and HTTP(S) archives into the local
 // cache and returns the materialized directory plus a pin for the parent lockfile.
+//
+// Remote sources are fetched with hashicorp/go-getter behind the workflowFetcher
+// interface (ADR-0005 D3). The getter surface is a fixed allowlist of the audited
+// built-ins git, http(s), and file: the default detectors, decompressors, and
+// getters shipped by go-getter are all replaced with restricted sets, so no
+// additional scheme (S3, GCS, ...) is reachable. Local path sources never enter
+// go-getter: they are resolved by LocalSubWorkflowResolver before Fetch.
 type defaultWorkflowFetcher struct {
 	cacheRoot string
 	http      *http.Client
@@ -98,10 +107,10 @@ func (f *defaultWorkflowFetcher) fetchGit(ctx context.Context, source string) (s
 
 	treeDir := filepath.Join(repoDir, resolvedRef)
 	if info, err := os.Stat(treeDir); err == nil && info.IsDir() {
-		return treeDir, &lockfile.LockedWorkflowRef{Name: "", Source: source, ResolvedRef: resolvedRef, Kind: "git"}, nil
+		return treeDir, gitLockedWorkflowRef(source, resolvedRef), nil
 	}
 
-	return materializeGitTree(ctx, source, repoURL, resolvedRef, repoDir)
+	return f.materializeGitTree(ctx, source, repoURL, resolvedRef, repoDir)
 }
 
 // resolveGitRef maps a branch/tag/HEAD reference to a commit SHA.
@@ -120,8 +129,11 @@ func resolveGitRef(ctx context.Context, repoURL, ref string) (string, error) {
 	return resolvedRef, nil
 }
 
-// materializeGitTree clones and checks out the resolved ref into the cache.
-func materializeGitTree(ctx context.Context, source, repoURL, resolvedRef, repoDir string) (string, *lockfile.LockedWorkflowRef, error) {
+// materializeGitTree clones and checks out the resolved ref into the cache via
+// go-getter's git getter. The destination must not exist: go-getter only takes
+// the clone path for a fresh destination, and its update path cannot resolve a
+// raw commit SHA.
+func (f *defaultWorkflowFetcher) materializeGitTree(ctx context.Context, source, repoURL, resolvedRef, repoDir string) (string, *lockfile.LockedWorkflowRef, error) {
 	treeDir := filepath.Join(repoDir, resolvedRef)
 	tmpDir, err := os.MkdirTemp(repoDir, "clone-")
 	if err != nil {
@@ -129,23 +141,31 @@ func materializeGitTree(ctx context.Context, source, repoURL, resolvedRef, repoD
 	}
 	defer os.RemoveAll(tmpDir)
 
-	if _, err := exec.CommandContext(ctx, "git", "clone", "--no-checkout", "--filter=blob:none", repoURL, tmpDir).Output(); err != nil {
+	client := &getter.Client{
+		Ctx:  ctx,
+		Src:  "git::" + repoURL + "?ref=" + resolvedRef,
+		Dst:  filepath.Join(tmpDir, "tree"),
+		Mode: getter.ClientModeDir,
+		// ADR-0005 D3: only the git getter is reachable for git sources, and
+		// the scp-style detector converts "git@host:path" forms to ssh://.
+		// The default detector, decompressor, and getter sets are replaced.
+		Getters:       map[string]getter.Getter{"git": &getter.GitGetter{}},
+		Detectors:     []getter.Detector{&getter.GitDetector{}},
+		Decompressors: map[string]getter.Decompressor{},
+	}
+	if err := client.Get(); err != nil {
 		return "", nil, fmt.Errorf("clone %q: %w", repoURL, err)
 	}
-	if _, err := exec.CommandContext(ctx, "git", "-C", tmpDir, "checkout", resolvedRef).Output(); err != nil {
-		return "", nil, fmt.Errorf("checkout %q in %q: %w", resolvedRef, repoURL, err)
-	}
 
-	if err := os.Rename(tmpDir, treeDir); err != nil {
+	if err := os.Rename(filepath.Join(tmpDir, "tree"), treeDir); err != nil {
 		// Another goroutine may have created treeDir in a race.
 		if info, err := os.Stat(treeDir); err == nil && info.IsDir() {
-			os.RemoveAll(tmpDir)
-			return treeDir, &lockfile.LockedWorkflowRef{Name: "", Source: source, ResolvedRef: resolvedRef, Kind: "git"}, nil
+			return treeDir, gitLockedWorkflowRef(source, resolvedRef), nil
 		}
 		return "", nil, fmt.Errorf("move cloned workflow into cache: %w", err)
 	}
 
-	return treeDir, &lockfile.LockedWorkflowRef{Name: "", Source: source, ResolvedRef: resolvedRef, Kind: "git"}, nil
+	return treeDir, gitLockedWorkflowRef(source, resolvedRef), nil
 }
 
 func splitGitSource(source string) (repoURL, ref string, err error) {
@@ -169,29 +189,13 @@ func splitGitSource(source string) (repoURL, ref string, err error) {
 		return repoURL, ref, nil
 	}
 
-	if strings.Contains(source, "//") {
-		parts := strings.SplitN(source, "//", 2)
-		repoURL = parts[0]
-		remainder := parts[1]
-		if idx := strings.Index(remainder, "?"); idx != -1 {
-			q, _ := url.ParseQuery(remainder[idx+1:])
-			if q.Has("ref") {
-				ref = q.Get("ref")
-			}
-			remainder = remainder[:idx]
-		}
-		if ref == "" {
-			ref = "HEAD"
-		}
-		_ = remainder
-		return repoURL, ref, nil
-	}
-
 	return source, "HEAD", nil
 }
 
+var commitSHAPattern = regexp.MustCompile(`^[0-9a-f]+$`)
+
 func isCommitSHA(s string) bool {
-	return len(s) == 40 && regexp.MustCompile(`^[0-9a-f]+$`).MatchString(s)
+	return len(s) == 40 && commitSHAPattern.MatchString(s)
 }
 
 func parseFirstLSRemote(out string) string {
@@ -205,79 +209,172 @@ func parseFirstLSRemote(out string) string {
 }
 
 func (f *defaultWorkflowFetcher) fetchArchive(ctx context.Context, source string) (string, *lockfile.LockedWorkflowRef, error) {
-	body, digest, err := f.downloadArchive(ctx, source)
-	if err != nil {
-		return "", nil, err
-	}
-
 	slug := slugify(source)
-	archiveDir := filepath.Join(f.cacheRoot, slug, digest)
-	if info, err := os.Stat(archiveDir); err == nil && info.IsDir() {
-		return archiveDir, &lockfile.LockedWorkflowRef{Name: "", Source: source, ResolvedRef: digest, Kind: "archive"}, nil
+	slugDir := filepath.Join(f.cacheRoot, slug)
+	if err := os.MkdirAll(slugDir, 0o755); err != nil {
+		return "", nil, fmt.Errorf("create workflow cache %q: %w", slugDir, err)
 	}
 
-	tmpDir, err := os.MkdirTemp(filepath.Join(f.cacheRoot, slug), "extract-")
+	tmpDir, err := os.MkdirTemp(slugDir, "fetch-")
 	if err != nil {
-		return "", nil, fmt.Errorf("create temp extract dir: %w", err)
+		return "", nil, fmt.Errorf("create temp fetch dir: %w", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
-	if err := extractArchive(source, tmpDir, body); err != nil {
+	digest, archivePath, err := f.downloadArchive(ctx, source, tmpDir)
+	if err != nil {
 		return "", nil, err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(archiveDir), 0o755); err != nil {
+	archiveDir := filepath.Join(slugDir, digest)
+	if info, err := os.Stat(archiveDir); err == nil && info.IsDir() {
+		return archiveDir, archiveLockedWorkflowRef(source, digest), nil
+	}
+
+	extractDir := filepath.Join(tmpDir, "tree")
+	if err := extractArchive(source, archivePath, extractDir); err != nil {
 		return "", nil, err
 	}
-	if err := os.Rename(tmpDir, archiveDir); err != nil {
+
+	if err := os.Rename(extractDir, archiveDir); err != nil {
+		// Another goroutine may have created archiveDir in a race.
 		if info, err := os.Stat(archiveDir); err == nil && info.IsDir() {
-			os.RemoveAll(tmpDir)
-			return archiveDir, &lockfile.LockedWorkflowRef{Name: "", Source: source, ResolvedRef: digest, Kind: "archive"}, nil
+			return archiveDir, archiveLockedWorkflowRef(source, digest), nil
 		}
 		return "", nil, fmt.Errorf("move extracted workflow into cache: %w", err)
 	}
 
-	return archiveDir, &lockfile.LockedWorkflowRef{Name: "", Source: source, ResolvedRef: digest, Kind: "archive"}, nil
+	return archiveDir, archiveLockedWorkflowRef(source, digest), nil
 }
 
-// downloadArchive fetches the archive body and returns its sha256 content digest.
-func (f *defaultWorkflowFetcher) downloadArchive(ctx context.Context, source string) (archiveBody []byte, contentDigest string, downloadErr error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, source, http.NoBody)
-	if err != nil {
-		return nil, "", fmt.Errorf("build archive request: %w", err)
+// httpGetters returns the http(s) getters used for archive downloads, wired to
+// the fetcher's shared HTTP client (ADR-0005 D3 allowlist).
+func (f *defaultWorkflowFetcher) httpGetters() map[string]getter.Getter {
+	httpGetter := &getter.HttpGetter{Client: f.http, DoNotCheckHeadFirst: true}
+	return map[string]getter.Getter{
+		"http":  httpGetter,
+		"https": httpGetter,
 	}
-	resp, err := f.http.Do(req)
-	if err != nil {
-		return nil, "", fmt.Errorf("download archive %q: %w", source, err)
+}
+
+// downloadArchive fetches the raw archive via go-getter into tmpDir and
+// returns its sha256 content digest plus the path of the downloaded file.
+// Decompression and detection are disabled so the digest is always computed
+// over the untouched archive bytes, exactly as the previous extractor did.
+// The caller owns tmpDir cleanup.
+func (f *defaultWorkflowFetcher) downloadArchive(ctx context.Context, source, tmpDir string) (digest, archivePath string, err error) {
+	archivePath = filepath.Join(tmpDir, "archive")
+
+	client := &getter.Client{
+		Ctx:  ctx,
+		Src:  source,
+		Dst:  archivePath,
+		Mode: getter.ClientModeFile,
+		// ADR-0005 D3: only the http(s) getters are reachable here; the
+		// empty detector and decompressor sets keep the download byte-exact.
+		Getters:       f.httpGetters(),
+		Detectors:     []getter.Detector{},
+		Decompressors: map[string]getter.Decompressor{},
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("download archive %q returned status %d", source, resp.StatusCode)
+	if err := client.Get(); err != nil {
+		return "", "", fmt.Errorf("download archive %q: %w", source, err)
 	}
 
 	h := sha256.New()
-	body, err := io.ReadAll(io.TeeReader(resp.Body, h))
+	file, err := os.Open(archivePath)
 	if err != nil {
-		return nil, "", fmt.Errorf("read archive body: %w", err)
+		return "", "", err
 	}
-	return body, "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+	defer file.Close()
+	if _, err := io.Copy(h, file); err != nil {
+		return "", "", fmt.Errorf("read archive body: %w", err)
+	}
+	return "sha256:" + hex.EncodeToString(h.Sum(nil)), archivePath, nil
 }
 
-// extractArchive dispatches to the correct extractor based on the source suffix.
-func extractArchive(source, dst string, body []byte) error {
+// extractArchive dispatches to the correct go-getter decompressor based on the
+// source suffix. Archive entries are pre-scanned so absolute paths and
+// traversal attempts are rejected with the same errors as the previous
+// extractor; go-getter would otherwise silently confine such entries inside
+// the destination directory.
+func extractArchive(source, archivePath, dst string) error {
+	var decompressor getter.Decompressor
+	var scan func(archivePath string) ([]string, error)
 	switch {
 	case strings.HasSuffix(source, ".tar.gz") || strings.HasSuffix(source, ".tgz"):
-		if err := extractTarGz(dst, body); err != nil {
-			return fmt.Errorf("extract tar.gz %q: %w", source, err)
-		}
+		decompressor, scan = &getter.TarGzipDecompressor{}, scanTarGzEntries
 	case strings.HasSuffix(source, ".zip"):
-		if err := extractZip(dst, body); err != nil {
-			return fmt.Errorf("extract zip %q: %w", source, err)
-		}
+		decompressor, scan = &getter.ZipDecompressor{}, scanZipEntries
 	default:
 		return fmt.Errorf("unsupported archive format for %q", source)
 	}
-	return nil
+
+	names, err := scan(archivePath)
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		if _, err := safeExtractPath(entryScanRoot, name); err != nil {
+			return err
+		}
+	}
+
+	return decompressor.Decompress(dst, archivePath, true, 0)
+}
+
+// entryScanRoot is the virtual destination used to validate archive entry
+// names before extraction; see safeExtractPath.
+const entryScanRoot = string(filepath.Separator) + "criteria-archive-scan"
+
+func scanTarGzEntries(archivePath string) ([]string, error) {
+	f, err := os.Open(archivePath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return nil, err
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	var names []string
+	for {
+		h, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return names, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if h.Typeflag == tar.TypeXGlobalHeader {
+			continue
+		}
+		names = append(names, h.Name)
+	}
+}
+
+func scanZipEntries(archivePath string) ([]string, error) {
+	r, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+
+	names := make([]string, 0, len(r.File))
+	for _, zf := range r.File {
+		names = append(names, zf.Name)
+	}
+	return names, nil
+}
+
+func gitLockedWorkflowRef(source, resolvedRef string) *lockfile.LockedWorkflowRef {
+	return &lockfile.LockedWorkflowRef{Name: "", Source: source, ResolvedRef: resolvedRef, Kind: "git"}
+}
+
+func archiveLockedWorkflowRef(source, digest string) *lockfile.LockedWorkflowRef {
+	return &lockfile.LockedWorkflowRef{Name: "", Source: source, ResolvedRef: digest, Kind: "archive"}
 }
 
 func slugify(s string) string {
@@ -306,83 +403,4 @@ func safeExtractPath(dst, name string) (string, error) {
 		return "", fmt.Errorf("archive entry %q escapes destination directory", name)
 	}
 	return target, nil
-}
-
-func extractTarGz(dst string, data []byte) error {
-	gz, err := gzip.NewReader(strings.NewReader(string(data)))
-	if err != nil {
-		return err
-	}
-	defer gz.Close()
-	tr := tar.NewReader(gz)
-	for {
-		h, err := tr.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		if !validTarHeader(h) {
-			continue
-		}
-		target, err := safeExtractPath(dst, h.Name)
-		if err != nil {
-			return err
-		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return err
-		}
-		f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(h.Mode&0o777))
-		if err != nil {
-			return err
-		}
-		_, copyErr := io.Copy(f, tr)
-		if err := errors.Join(copyErr, f.Close()); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func extractZip(dst string, data []byte) error {
-	r, err := zip.NewReader(strings.NewReader(string(data)), int64(len(data)))
-	if err != nil {
-		return err
-	}
-	for _, zf := range r.File {
-		if zf.FileInfo().IsDir() {
-			continue
-		}
-		target, err := safeExtractPath(dst, zf.Name)
-		if err != nil {
-			return err
-		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return err
-		}
-		f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, zf.Mode())
-		if err != nil {
-			return err
-		}
-		rc, err := zf.Open()
-		if err != nil {
-			return errors.Join(err, f.Close())
-		}
-		_, copyErr := io.Copy(f, rc)
-		if err := errors.Join(copyErr, rc.Close(), f.Close()); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func validTarHeader(h *tar.Header) bool {
-	if h == nil {
-		return false
-	}
-	if h.Typeflag != tar.TypeReg && h.Typeflag != 0 {
-		return false
-	}
-	return true
 }
