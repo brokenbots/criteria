@@ -138,6 +138,12 @@ type archiveFixture struct {
 	zipURL   string
 	tarGzRef string
 	zipRef   string
+	// gitPatternTarGzURL and gitPatternZipURL serve the same archives from
+	// paths that also match a git URL pattern (a ".git" segment earlier in
+	// the path) and carry a query string, pinning that an archive-suffix
+	// path wins over the git pattern and that the query is ignored.
+	gitPatternTarGzURL string
+	gitPatternZipURL   string
 }
 
 // createWorkflowArchiveFixture serves runnable workflow archives (tar.gz and
@@ -161,6 +167,10 @@ func createWorkflowArchiveFixture(t *testing.T) archiveFixture {
 			_, _ = w.Write(tarBody)
 		case "flow.zip":
 			_, _ = w.Write(zipBody)
+		case "v1.git/flow.tar.gz":
+			_, _ = w.Write(tarBody)
+		case "repo.git/releases/flow.zip":
+			_, _ = w.Write(zipBody)
 		default:
 			http.NotFound(w, r)
 		}
@@ -168,6 +178,8 @@ func createWorkflowArchiveFixture(t *testing.T) archiveFixture {
 	t.Cleanup(srv.Close)
 	fx.tarGzURL = srv.URL + "/flow.tar.gz"
 	fx.zipURL = srv.URL + "/flow.zip"
+	fx.gitPatternTarGzURL = srv.URL + "/v1.git/flow.tar.gz?download=1"
+	fx.gitPatternZipURL = srv.URL + "/repo.git/releases/flow.zip?download=1"
 	return fx
 }
 
@@ -596,6 +608,33 @@ func TestApply_RemoteSource_CacheReuse(t *testing.T) {
 	assertApplyEvents(t, eventsFile)
 }
 
+// TestApply_RemoteSource_RoutesGitPatternArchiveURL runs apply with a
+// git-pattern-matching archive source (".git" segment earlier in the path,
+// query string attached), asserting the archive origin contract end to end:
+// pre-fix this source was misrouted to the git fetcher and failed with a
+// git ls-remote error.
+func TestApply_RemoteSource_RoutesGitPatternArchiveURL(t *testing.T) {
+	setWorkflowCacheHome(t)
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+	fx := createWorkflowArchiveFixture(t)
+	source := fx.gitPatternTarGzURL
+
+	var logBuf bytes.Buffer
+	eventsFile := filepath.Join(t.TempDir(), "events.ndjson")
+	require.NoError(t, runApply(context.Background(), applyOptions{
+		workflowPath: source,
+		eventsPath:   eventsFile,
+		log:          slog.New(slog.NewJSONHandler(&logBuf, nil)),
+	}))
+	assertApplyEvents(t, eventsFile)
+
+	rec := capturedOriginLog(t, &logBuf)
+	assert.Equal(t, "archive", rec["kind"])
+	assert.Equal(t, source, rec["source"])
+	assert.Equal(t, fx.tarGzRef, rec["resolved_ref"])
+	requireResolvedWorkflow(t, rec["cache_path"].(string))
+}
+
 // ---------------------------------------------------------------------------
 // validate
 // ---------------------------------------------------------------------------
@@ -664,6 +703,26 @@ func TestValidate_RemoteSource_FetchErrorFailsValidation(t *testing.T) {
 	})
 	assert.False(t, ok)
 	assert.Contains(t, out, source+": error:")
+}
+
+// TestValidate_RemoteSource_FetchErrorRedactsCredentials pins the fetch-error
+// boundary for a credential-bearing source: the failure text must carry the
+// redacted source, never the raw userinfo, in raw or slugified form.
+func TestValidate_RemoteSource_FetchErrorRedactsCredentials(t *testing.T) {
+	setWorkflowCacheHome(t)
+	fx := createWorkflowArchiveFixture(t)
+	hostPort := strings.TrimPrefix(fx.tarGzURL, "http://")
+	source := "http://" + testUserPass + "@" + hostPort + "/missing.tar.gz"
+
+	var ok bool
+	out := captureOutput(t, func() {
+		ok = validatePath(context.Background(), source, nil, false, false)
+	})
+	assert.False(t, ok)
+	assert.Contains(t, out, ": error:")
+	assert.Contains(t, out, redactSourceForLog(source))
+	assert.NotContains(t, out, testUserPass, "fetch errors must not echo URL userinfo")
+	assert.NotContains(t, out, "user_pass", "fetch errors must not echo slugified credentials")
 }
 
 // serveGitHTTPBackend bridges an httptest server to "git http-backend" so
@@ -775,6 +834,43 @@ func TestValidate_RemoteSource_RoutesGitHttpsVsArchive(t *testing.T) {
 	})
 	assert.Contains(t, out, gitSource+": ok")
 	assert.Contains(t, out, archiveFX.tarGzURL+": ok")
+}
+
+// TestValidate_RemoteSource_RoutesGitPatternArchiveURL is the regression for
+// the routing reorder: an http(s) archive URL that also matches a git URL
+// pattern — a ".git" segment earlier in the path, here with a query string —
+// must reach the archive fetcher and resolve to
+// cache/workflows/<slug>/sha256:<digest>, not fail with a git ls-remote
+// error. Real-world forms like
+// https://github.com/org/repo/archive/v1.tar.gz hit the same boundary.
+func TestValidate_RemoteSource_RoutesGitPatternArchiveURL(t *testing.T) {
+	home := setWorkflowCacheHome(t)
+	fx := createWorkflowArchiveFixture(t)
+	source := fx.gitPatternTarGzURL // ".../v1.git/flow.tar.gz?download=1"
+
+	dir, origin, err := resolveWorkflowSource(context.Background(), source)
+	require.NoError(t, err)
+	require.NotNil(t, origin)
+	assert.Equal(t, "archive", origin.Kind)
+	assert.Equal(t, source, origin.Source)
+	assert.Equal(t, fx.tarGzRef, origin.ResolvedRef)
+	assert.Equal(t,
+		filepath.Join(home, "cache", "workflows", slugify(source), fx.tarGzRef),
+		dir, "a git-pattern-matching archive must use the <slug>/sha256:<digest> cache layout")
+	requireResolvedWorkflow(t, dir)
+
+	zipDir, zipOrigin, err := resolveWorkflowSource(context.Background(), fx.gitPatternZipURL)
+	require.NoError(t, err)
+	assert.Equal(t, "archive", zipOrigin.Kind)
+	assert.Equal(t, fx.zipRef, zipOrigin.ResolvedRef)
+	requireResolvedWorkflow(t, zipDir)
+
+	out := captureOutput(t, func() {
+		require.True(t, validatePath(context.Background(), source, nil, false, false))
+	})
+	assert.Contains(t, out, source+": ok")
+	assert.NotContains(t, out, "cache"+string(filepath.Separator)+"workflows",
+		"validate must echo the user-supplied source, not the internal cache path")
 }
 
 // TestValidate_LocalSource_DoesNotFetch proves local validation is unchanged:

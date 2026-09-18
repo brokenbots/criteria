@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -425,14 +426,54 @@ func TestFetchGit_ScpStyleForm(t *testing.T) {
 
 // TestFetchGit_GitURLPatternForm covers the ".git" recognition branch of
 // looksLikeGitURL: an https URL ending in .git is classified as a git source
-// by the lock resolver and the fetcher routes git-looking https URLs to the
-// git getter before the archive branch, so a plain ssh form remains the
-// observable ssh contract.
+// by the lock resolver, and the fetcher routes git-looking https URLs to the
+// git getter unless their path ends in an archive suffix (an archive-suffix
+// path always wins), so a plain ssh form remains the observable ssh contract.
 func TestFetchGit_GitURLPatternForm(t *testing.T) {
 	assert.True(t, looksLikeGitURL("https://example.com/org/repo.git"))
 	assert.True(t, looksLikeGitURL("git@github.com:org/repo.git"))
 	assert.True(t, looksLikeGitURL("git://example.com/org/repo.git"))
 	assert.False(t, looksLikeGitURL("https://example.com/release.tar.gz"))
+}
+
+// TestRoutesToGit pins the fetcher's git-vs-archive classification. The git
+// URL pattern must not capture archive URLs: an http(s) URL whose path ends
+// in a supported archive suffix routes to the archive fetcher even when it
+// matches a git pattern (a ".git" segment earlier in the path, or a
+// github.com/gitlab.com host), while ".git"-suffixed paths and the explicit
+// git::/git:///ssh:// forms keep routing to the git getter.
+func TestRoutesToGit(t *testing.T) {
+	cases := []struct {
+		name   string
+		source string
+		want   bool
+	}{
+		{"https-git-suffix", "https://host.example/org/repo.git?ref=main", true},
+		{"git-scheme", "git://host.example/org/repo.git", true},
+		{"ssh-scheme", "ssh://git@host.example/org/repo.git", true},
+		{"git-force-prefix", "git::https://host.example/org/repo.git?ref=main", true},
+		{"git-force-prefix-archive-suffix", "git::https://host.example/flow.tar.gz", true},
+		{"github-host-repo", "https://github.com/org/repo?ref=main", true},
+		{"gitlab-host-repo", "https://gitlab.com/org/repo.git", true},
+		{"plain-targz-archive", "https://host.example/flow.tar.gz", false},
+		{"zip-archive", "http://host.example/flow.zip", false},
+		{"tgz-archive", "https://host.example/flow.tgz", false},
+		{"archive-with-query", "https://host.example/flow.tar.gz?download=1", false},
+		// The regression boundary: git-pattern-matching archive URLs stay
+		// archives (previously misrouted to the git fetcher).
+		{"dot-git-earlier-in-path", "http://host.example/v1.git/flow.tar.gz?download=1", false},
+		{"github-release-asset", "https://github.com/org/repo/releases/download/v1/workflows.tar.gz", false},
+		{"github-repo-archive", "https://github.com/org/repo/archive/v1.tar.gz", false},
+		{"gitlab-repo-archive", "https://gitlab.com/org/repo/-/archive/v1/repo-v1.zip", false},
+		{"non-git-scheme", "ftp://host.example/repo.git", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			u, err := url.Parse(tc.source)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, routesToGit(tc.source, u))
+		})
+	}
 }
 
 // TestFetchArchive_TarGz covers the http(s) archive form end to end: the
