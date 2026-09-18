@@ -582,7 +582,7 @@ func artifactPlatforms(artFS fs.FS) []string {
 func pullSubworkflowAdapters(ctx context.Context, workflowDir string, spec *workflow.Spec, layout *oci.Layout, puller puller, policy *signing.Policy, pinSet *lockfile.Lockfile) error {
 	fetcher := newWorkflowFetcherFunc()
 	for _, swSpec := range spec.Subworkflows {
-		subDir, _, err := resolveSubworkflowForLock(ctx, workflowDir, swSpec.Source, fetcher)
+		subDir, _, err := resolveSubworkflowForLock(ctx, workflowDir, swSpec.Source, swSpec.Name, fetcher)
 		if err != nil {
 			return fmt.Errorf("subworkflow %q in %q: %w", swSpec.Name, workflowDir, err)
 		}

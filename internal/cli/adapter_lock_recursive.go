@@ -33,7 +33,7 @@ func lockTree(ctx context.Context, rootDir string, upgrade, allowUnsigned bool, 
 		return err
 	}
 
-	written, err := writeLockNode(root)
+	written, err := writeLockNode(root, out)
 	if err != nil {
 		return err
 	}
@@ -72,9 +72,15 @@ func buildLockNode(ctx context.Context, workflowDir string, allowUnsigned bool, 
 
 	node := &lockNode{state: state}
 
+	seenNames := make(map[string]bool)
 	for _, sw := range state.spec.Subworkflows {
+		if seenNames[sw.Name] {
+			return nil, fmt.Errorf("duplicate subworkflow name %q in %q; give each subworkflow block a unique name", sw.Name, state.workflowDir)
+		}
+		seenNames[sw.Name] = true
+
 		source := sw.Source
-		resolved, pin, err := resolveSubworkflowForLock(ctx, state.workflowDir, source, fetcher)
+		resolved, pin, err := resolveSubworkflowForLock(ctx, state.workflowDir, source, sw.Name, fetcher)
 		if err != nil {
 			return nil, fmt.Errorf("subworkflow %q in %q: %w", sw.Name, state.workflowDir, err)
 		}
@@ -133,7 +139,7 @@ func buildFetchedLockNode(resolvedDir string) (*lockNode, error) {
 	}, nil
 }
 
-func resolveSubworkflowForLock(ctx context.Context, callerDir, source string, fetcher workflowFetcher) (string, *lockfile.LockedWorkflowRef, error) {
+func resolveSubworkflowForLock(ctx context.Context, callerDir, source, subworkflowName string, fetcher workflowFetcher) (string, *lockfile.LockedWorkflowRef, error) {
 	if isRemoteWorkflowSource(source) {
 		if fetcher == nil {
 			return "", nil, fmt.Errorf("remote workflow sources are not yet supported in this build")
@@ -158,8 +164,10 @@ func resolveSubworkflowForLock(ctx context.Context, callerDir, source string, fe
 		}
 		// Preserve the original source reference in the lockfile. Carry over the
 		// existing resolved identifier when re-locking from a pin, otherwise use the
-		// value returned by the fresh fetch.
+		// value returned by the fresh fetch. The pin is named after the declaring
+		// subworkflow so the lockfile and the diff identify pins by name (M4.2).
 		pin.Source = source
+		pin.Name = subworkflowName
 		if existingRef != "" {
 			pin.ResolvedRef = existingRef
 		}
@@ -287,6 +295,12 @@ func resolveLockNode(ctx context.Context, node *lockNode, upgrade bool, out io.W
 		}
 		if child.remotePin != nil {
 			newLF.WorkflowRefs = append(newLF.WorkflowRefs, *child.remotePin)
+			// M4.2 (CRI-228, ADR-0005 D4): a fetched child ships its own pins
+			// for the rest of its cascade. Propagate them into the parent's
+			// lockfile, renamed with the declaring chain, so the parent's
+			// .criteria.lock.hcl pins the whole cascade. The child's lockfile
+			// stays frozen; its pins only flow through here.
+			newLF.WorkflowRefs = appendChildWorkflowRefs(newLF.WorkflowRefs, child.name, child.childNode.newLF.WorkflowRefs)
 		}
 	}
 
@@ -294,7 +308,25 @@ func resolveLockNode(ctx context.Context, node *lockNode, upgrade bool, out io.W
 	return nil
 }
 
-func writeLockNode(node *lockNode) (int, error) {
+// appendChildWorkflowRefs renames a fetched child's lockfile pins with the
+// declaring subworkflow name and appends them to the parent's lockfile pins.
+// Unnamed pins (legacy authored pins with an empty HCL label) are skipped:
+// they stay in the child's own lockfile and reach the startup gate through
+// the tree-wide merge instead.
+func appendChildWorkflowRefs(parent []lockfile.LockedWorkflowRef, childName string, childRefs []lockfile.LockedWorkflowRef) []lockfile.LockedWorkflowRef {
+	for i := range childRefs {
+		wr := &childRefs[i]
+		if wr.Name == "" {
+			continue
+		}
+		renamed := *wr
+		renamed.Name = childName + "/" + wr.Name
+		parent = append(parent, renamed)
+	}
+	return parent
+}
+
+func writeLockNode(node *lockNode, out io.Writer) (int, error) {
 	if node.frozen {
 		// Fetched workflow lockfiles are intentionally left untouched.
 		return 0, nil
@@ -302,7 +334,7 @@ func writeLockNode(node *lockNode) (int, error) {
 
 	written := 0
 	for _, child := range node.children {
-		n, err := writeLockNode(child.childNode)
+		n, err := writeLockNode(child.childNode, out)
 		if err != nil {
 			return written, err
 		}
@@ -312,6 +344,8 @@ func writeLockNode(node *lockNode) (int, error) {
 	changed := lockfileChanged(node.state.oldLF, node.newLF)
 	lockPath := filepath.Join(node.state.workflowDir, workflow.LockfileName)
 	if changed {
+		// Report what is being written, matching the non-recursive diff output.
+		printLockDiff(node.state.oldLF, node.newLF, out, len(node.state.wfAdapters), node.state.workflowDir)
 		if err := lockfile.Write(lockPath, node.newLF); err != nil {
 			return written, fmt.Errorf("write lockfile %q: %w", lockPath, err)
 		}

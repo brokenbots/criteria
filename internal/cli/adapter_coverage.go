@@ -117,7 +117,7 @@ func walkWorkflowDirs(ctx context.Context, rootDir string, nameChain []string, s
 	copy(childChain, nameChain)
 	childChain[len(nameChain)] = spec.Header.Name
 	for _, sw := range spec.Subworkflows {
-		resolved, _, err := resolveSubworkflowForLock(ctx, abs, sw.Source, fetcher)
+		resolved, _, err := resolveSubworkflowForLock(ctx, abs, sw.Source, sw.Name, fetcher)
 		if err != nil {
 			return fmt.Errorf("subworkflow %q in %q: %w", sw.Name, abs, err)
 		}

@@ -266,3 +266,37 @@ func adaptersByKey(adapters []lockfile.LockedAdapter) map[string]lockfile.Locked
 func nameFor(i int) string {
 	return string(rune('a' + i))
 }
+
+// CRI-228 M4.2: the recursive lock propagates a fetched child's pins into the
+// parent's lockfile, and lockfile.Merge is re-applied at every level of the
+// gate walk. Identical (name, source, resolved ref, kind) tuples from parent
+// and child describe the same pin, so the merge must not duplicate them.
+func TestMerge_DedupesIdenticalWorkflowRefs(t *testing.T) {
+	parent := &lockfile.Lockfile{
+		SchemaVersion: 1,
+		WorkflowRefs: []lockfile.LockedWorkflowRef{
+			{Name: "inner", Source: "git::https://example/inner?ref=v1", ResolvedRef: "abc", Kind: "git"},
+			{Name: "root", Source: "./root", ResolvedRef: "def", Kind: "git"},
+		},
+	}
+	child := &lockfile.Lockfile{
+		SchemaVersion: 1,
+		WorkflowRefs: []lockfile.LockedWorkflowRef{
+			// Exact duplicate of the parent's "inner" pin.
+			{Name: "inner", Source: "git::https://example/inner?ref=v1", ResolvedRef: "abc", Kind: "git"},
+			// Same name but a different pin: must be kept.
+			{Name: "moved", Source: "git::https://example/moved?ref=v1", ResolvedRef: "111", Kind: "git"},
+			// Same name and source but a different resolved ref: must be kept.
+			{Name: "moved", Source: "git::https://example/moved?ref=v2", ResolvedRef: "222", Kind: "git"},
+		},
+	}
+
+	out := lockfile.Merge(parent, child)
+	require.Len(t, out.WorkflowRefs, 4)
+	assert.Equal(t, "inner", out.WorkflowRefs[0].Name, "dedupe keeps the parent-first order")
+	assert.Equal(t, "root", out.WorkflowRefs[1].Name)
+	assert.Equal(t, "moved", out.WorkflowRefs[2].Name)
+	assert.Equal(t, "111", out.WorkflowRefs[2].ResolvedRef)
+	assert.Equal(t, "moved", out.WorkflowRefs[3].Name)
+	assert.Equal(t, "222", out.WorkflowRefs[3].ResolvedRef)
+}
