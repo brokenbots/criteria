@@ -1052,3 +1052,29 @@ func TestCompile_LocalSource_DoesNotFetch(t *testing.T) {
 	assert.Equal(t, "remote_source_flow", compiled.Name)
 	assert.Empty(t, stub.fetchCalls())
 }
+
+func TestResolveWorkflowSource_GitSubtreeSuffix(t *testing.T) {
+	// The git:: subtree form appends the in-repo workflow directory to the
+	// repository URL (CRI-227 convention used by top-level k8s url-mode
+	// routes, CRI-262): repo part fetched, resolved dir = tree + subdir.
+	if testing.Short() {
+		t.Skip("requires network git access")
+	}
+	dir, origin, err := resolveWorkflowSource(context.Background(),
+		"git::https://github.com/brokenbots/workflow-example.git//linear_develop_v1?ref=7645feb42e6f2c473696bd63997fca111d41453d", "7645feb42e6f2c473696bd63997fca111d41453d")
+	if err != nil {
+		t.Fatalf("subtree resolution: %v", err)
+	}
+	if origin == nil {
+		t.Fatal("expected a git origin for a remote source")
+	}
+	if origin.ResolvedRef != "7645feb42e6f2c473696bd63997fca111d41453d" {
+		t.Fatalf("resolved ref = %q, want the pinned SHA", origin.ResolvedRef)
+	}
+	if filepath.Base(dir) != "linear_develop_v1" {
+		t.Fatalf("resolved dir = %q, want the //subdir joined", dir)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "main.chcl")); err != nil {
+		t.Fatalf("subtree main.chcl missing: %v", err)
+	}
+}

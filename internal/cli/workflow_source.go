@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/brokenbots/criteria/workflow"
@@ -57,12 +59,25 @@ func resolveWorkflowSource(ctx context.Context, source, expectedRef string) (str
 		return source, nil, nil
 	}
 
-	dir, pin, err := newWorkflowFetcherFunc().Fetch(ctx, ".", source)
+	// The git:: subtree form (CRI-227 convention) appends the in-repo
+	// workflow directory to the repository URL: git::<repo>//<subdir>. The
+	// fetcher fetches the REPOSITORY (the part before //); the resolved
+	// workflow directory is the fetched tree joined with the subdir, which
+	// must exist and contain .chcl/.hcl files (fail closed otherwise).
+	repoSource, subdir := splitGitSubtreeSuffix(source)
+
+	dir, pin, err := newWorkflowFetcherFunc().Fetch(ctx, ".", repoSource)
 	if err != nil {
 		return "", nil, err
 	}
 	if pin == nil {
-		return "", nil, fmt.Errorf("remote workflow source %q resolved without a pin", redactSourceForLog(source))
+		return "", nil, fmt.Errorf("remote workflow source %q resolved without a pin", redactSourceForLog(repoSource))
+	}
+	if subdir != "" {
+		dir, err = joinWorkflowSubtree(dir, subdir, source)
+		if err != nil {
+			return "", nil, err
+		}
 	}
 
 	if expectedRef != "" && pin.ResolvedRef != expectedRef {
@@ -77,6 +92,62 @@ func resolveWorkflowSource(ctx context.Context, source, expectedRef string) (str
 		Path:        dir,
 		FetchedAt:   fetchedAt(dir),
 	}, nil
+}
+
+// splitGitSubtreeSuffix splits the git:: //subdir convention (CRI-227):
+// "git::<repo>//<subdir>" into the fetchable repository source and the
+// in-repo workflow directory. Only remote forms (http/https/ssh repository
+// URLs) split; file: URLs keep verbatim behavior (their "file:///path"
+// authority is not a subtree split). Returns repoSource == source when no
+// suffix is present.
+func splitGitSubtreeSuffix(source string) (repoSource, subdir string) {
+	if !strings.HasPrefix(source, "git::") {
+		return source, ""
+	}
+	trimmed := strings.TrimPrefix(source, "git::")
+	isRemoteForm := strings.HasPrefix(trimmed, "http://") ||
+		strings.HasPrefix(trimmed, "https://") ||
+		strings.HasPrefix(trimmed, "ssh://")
+	if !isRemoteForm {
+		return source, ""
+	}
+	// The ?ref=/branch=/tag= query (splitGitSource's ref syntax) lives at
+	// the END of the full form: "<repo>//<subdir>?ref=x". Strip the query
+	// BEFORE splitting the //subdir, and keep it on the repo part so
+	// splitGitSource still sees the ref.
+	query := ""
+	if qIdx := strings.Index(trimmed, "?"); qIdx != -1 {
+		query = trimmed[qIdx:]
+		trimmed = trimmed[:qIdx]
+	}
+	idx := strings.LastIndex(trimmed, "//")
+	if idx == -1 || query == "" {
+		return source, ""
+	}
+	return "git::" + trimmed[:idx] + query, trimmed[idx+2:]
+}
+
+// joinWorkflowSubtree joins the fetched tree with the //subdir workflow
+// directory, failing closed when the subdir is missing or contains no
+// .chcl/.hcl workflow files. source is the caller-declared full form,
+// used only for error messages.
+func joinWorkflowSubtree(treeDir, subdir, source string) (string, error) {
+	sub := filepath.Join(treeDir, subdir)
+	info, serr := os.Stat(sub)
+	if serr != nil || !info.IsDir() {
+		return "", fmt.Errorf("workflow source %q: //subdir %q does not exist in the fetched tree", redactSourceForLog(source), subdir)
+	}
+	entries, err := os.ReadDir(sub)
+	if err != nil {
+		return "", fmt.Errorf("workflow source %q: read //subdir %q: %w", redactSourceForLog(source), subdir, err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasSuffix(name, ".chcl") || strings.HasSuffix(name, ".hcl") {
+			return sub, nil
+		}
+	}
+	return "", fmt.Errorf("workflow source %q: //subdir %q contains no .chcl or .hcl files", redactSourceForLog(source), subdir)
 }
 
 // fetchedAt reports the fetch timestamp of a resolved cache tree, taken from
