@@ -25,8 +25,12 @@ import (
 )
 
 // AdapterLifecycleEvent carries the controller-visible state needed to
-// provision or release a remote adapter pod. Raw secrets or tokens must never
-// appear in this payload; token_ref is a filesystem path to the rotated token.
+// provision or release a remote adapter pod. Raw secrets must never appear in
+// this payload with one deliberate exception (CRI-236): the per-scope accept
+// token rides the already-authenticated provision/accept wire so operators do
+// not need a criteria-side shared volume to read it from the token_ref file.
+// TokenRef stays populated during the transition window so file-based
+// operators keep working (removed operator-side in CRI-237).
 type AdapterLifecycleEvent struct {
 	RunID             string
 	ScopeName         string // empty for the root scope
@@ -35,7 +39,8 @@ type AdapterLifecycleEvent struct {
 	AdapterType       string // adapter implementation kind (e.g. "shell", "copilot")
 	Digest            string // lockfile-pinned digest
 	ShimListenAddress string
-	TokenRef          string // path to the accept-token file; never the token itself
+	TokenRef          string // path to the accept-token file; transition-window handoff
+	Token             string // wire-delivered per-scope accept token; empty for released events
 	Status            string // "provision_wanted" or "released"
 	// Environment identity of the adapter session (CRI-233): the compiled
 	// environment declaration's type + name from the workflow's environment

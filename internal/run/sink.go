@@ -227,7 +227,10 @@ func (s *Sink) OnAdapterLifecycle(stepName, adapterName, status, detail string) 
 
 // OnAdapterLifecycleEvent publishes an adapter.lifecycle event for the
 // remote-adapter reconciler. The payload uses pb.AdapterEvent so existing
-// server consumers can read it; the token is referenced by file path only.
+// server consumers can read it. CRI-236: the per-scope accept token rides the
+// already-authenticated runner↔server channel (accept_token) so the operator
+// no longer depends on a criteria-side shared volume to read the token_ref
+// file; token_ref stays populated during the transition window.
 func (s *Sink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent) {
 	s.publish(&pb.AdapterEvent{
 		Adapter: event.AdapterName,
@@ -243,6 +246,7 @@ func (s *Sink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent) {
 			"digest":              event.Digest,
 			"shim_listen_address": event.ShimListenAddress,
 			"token_ref":           event.TokenRef,
+			"accept_token":        event.Token,
 		}),
 	})
 }

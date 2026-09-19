@@ -1457,10 +1457,13 @@ func TestInitScopeAdapters_PerScope_EmitsProvisionWanted(t *testing.T) {
 		t.Errorf("token file permissions = %o, want 0o600", info.Mode().Perm())
 	}
 
-	// The raw token must not appear in any emitted event payload.
-	payload := fmt.Sprintf("%+v", sink.provisionEvents)
-	if strings.Contains(payload, token) {
-		t.Fatalf("event payload contains raw token; payload=%s", payload)
+	// CRI-236: the raw token rides the wire inside the provision_wanted event
+	// (the already-authenticated provision/accept handshake surface) and must
+	// equal the rotated token material asserted against the shim above; only
+	// that event carries it (released events carry none — pinned by
+	// TestTearDownScopeAdapters_PerScope_ReleasedEventCarriesNoToken).
+	if event.Token != token {
+		t.Fatalf("provision event wire token %q, want the rotated token %q", event.Token, token)
 	}
 
 	// WaitForHandle must have been keyed by adapter type + scope.
@@ -1510,6 +1513,10 @@ func TestTearDownScopeAdapters_PerScope_EmitsReleased(t *testing.T) {
 	provision, _ := sink.firstStatus("provision_wanted")
 	if released.TokenRef != provision.TokenRef {
 		t.Errorf("released.TokenRef %q != provision.TokenRef %q", released.TokenRef, provision.TokenRef)
+	}
+	// CRI-236: released events never carry a wire token.
+	if released.Token != "" {
+		t.Errorf("released.Token = %q, want empty (provision-time only)", released.Token)
 	}
 	if released.ScopeInstanceID != provision.ScopeInstanceID {
 		t.Errorf("released.ScopeInstanceID %q != provision.ScopeInstanceID %q", released.ScopeInstanceID, provision.ScopeInstanceID)

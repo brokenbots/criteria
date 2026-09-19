@@ -133,6 +133,11 @@ func (s *RedactingSink) OnAdapterLifecycle(stepName, adapterName, status, detail
 func (s *RedactingSink) OnAdapterLifecycleEvent(event *AdapterLifecycleEvent) {
 	// Redact all string fields before forwarding. TokenRef is a file path, not a
 	// secret, but redacting it is harmless and keeps the wrapper uniform.
+	// CRI-236: Token is forwarded verbatim — it is the engine-generated
+	// per-scope accept token riding the authenticated provision/accept wire
+	// (it is never a workflow secret, so registry redaction could only mangle
+	// the handoff, and a redacted token would desync the handshake the
+	// crash-class failures came from).
 	s.inner.OnAdapterLifecycleEvent(&AdapterLifecycleEvent{
 		RunID:             s.reg.Redact(event.RunID),
 		ScopeName:         s.reg.Redact(event.ScopeName),
@@ -142,6 +147,7 @@ func (s *RedactingSink) OnAdapterLifecycleEvent(event *AdapterLifecycleEvent) {
 		Digest:            s.reg.Redact(event.Digest),
 		ShimListenAddress: s.reg.Redact(event.ShimListenAddress),
 		TokenRef:          s.reg.Redact(event.TokenRef),
+		Token:             event.Token,
 		Status:            s.reg.Redact(event.Status),
 		EnvironmentType:   s.reg.Redact(event.EnvironmentType),
 		EnvironmentName:   s.reg.Redact(event.EnvironmentName),

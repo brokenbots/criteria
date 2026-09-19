@@ -280,7 +280,7 @@ func lockedDigest(lf *lockfile.Lockfile, adapterType, adapterName string) string
 	return ""
 }
 
-func emitProvisionWanted(deps Deps, lifecycle *remoteLifecycleContext, scopeName, scopeInstanceID, scopeKey, instanceID string, adapter *workflow.AdapterNode, envNode *workflow.EnvironmentNode, tokenPath string) {
+func emitProvisionWanted(deps Deps, lifecycle *remoteLifecycleContext, scopeName, scopeInstanceID, scopeKey, instanceID string, adapter *workflow.AdapterNode, envNode *workflow.EnvironmentNode, tokenPath, token string) {
 	digest := lockedDigest(lifecycle.lockfile, adapter.Type, adapter.Name)
 	listenAddr := deps.Sessions.RemoteListenAddr()
 	deps.Sink.OnAdapterLifecycleEvent(&AdapterLifecycleEvent{
@@ -292,6 +292,7 @@ func emitProvisionWanted(deps Deps, lifecycle *remoteLifecycleContext, scopeName
 		Digest:            digest,
 		ShimListenAddress: listenAddr,
 		TokenRef:          tokenPath,
+		Token:             token,
 		Status:            "provision_wanted",
 		EnvironmentType:   envNode.Type,
 		EnvironmentName:   envNode.Name,
@@ -363,7 +364,7 @@ func maybeRotateRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, g *wor
 		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
 		return "", fmt.Errorf("initialize adapter %q: register scope token: %w", instanceID, err)
 	}
-	emitProvisionWanted(deps, lifecycle, scopeName, scopeInstanceID, scopeKey, instanceID, adapter, envNode, tokenPath)
+	emitProvisionWanted(deps, lifecycle, scopeName, scopeInstanceID, scopeKey, instanceID, adapter, envNode, tokenPath, token)
 	return scopeKey, nil
 }
 
@@ -387,7 +388,7 @@ func tryReuseScopeInstance(deps Deps, lifecycle *remoteLifecycleContext, envNode
 			deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", rerr.Error())
 			return "", false, fmt.Errorf("initialize adapter %q: register scope token: %w", instanceID, rerr)
 		}
-		emitProvisionWanted(deps, lifecycle, scopeName, scopeInstanceID, scopeKey, instanceID, adapter, envNode, tokenPath)
+		emitProvisionWanted(deps, lifecycle, scopeName, scopeInstanceID, scopeKey, instanceID, adapter, envNode, tokenPath, token)
 		return scopeKey, true, nil
 	}
 	logScopeReuseFallback(scopeName, instanceID, reason)
@@ -433,7 +434,7 @@ func tryReuseScopeInstance(deps Deps, lifecycle *remoteLifecycleContext, envNode
 	}
 	slog.Info("reusing scope instance recovered from surviving rotated token",
 		"scope", scopeName, "adapter_instance", instanceID, "scope_instance", chosen.instanceID)
-	emitProvisionWanted(deps, lifecycle, scopeName, chosen.instanceID, scopeKey, instanceID, adapter, envNode, chosen.tokenPath)
+	emitProvisionWanted(deps, lifecycle, scopeName, chosen.instanceID, scopeKey, instanceID, adapter, envNode, chosen.tokenPath, chosen.token)
 	return scopeKey, true, nil
 }
 
