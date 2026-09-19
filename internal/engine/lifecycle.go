@@ -267,6 +267,39 @@ func remoteEnvConfig(g *workflow.FSMGraph, ad *workflow.AdapterNode) (*remote.Co
 	return cfg, env, true
 }
 
+// deferredPerScopeRemoteAdapters collects the instance IDs of every adapter in
+// g (including adapters declared in subworkflow bodies) that is bound to a
+// per-scope remote environment. CRI-269: subworkflow adapters were missed by
+// the root-only walk, so VerifyGraph eagerly ran a local Info handshake for
+// them and binds dispatched local OCI-cache handles even though
+// initScopeAdapters had already emitted provision_wanted for the same
+// adapters. Environments resolve against the declaring graph, so the walk
+// recurses into each subworkflow body exactly like collectGraphAdapters.
+func deferredPerScopeRemoteAdapters(g *workflow.FSMGraph) []string {
+	if g == nil {
+		return nil
+	}
+	var deferred []string
+	for _, id := range g.AdapterOrder {
+		node := g.Adapters[id]
+		if node == nil {
+			continue
+		}
+		cfg, _, ok := remoteEnvConfig(g, node)
+		if ok && cfg.PerScopeSessions {
+			deferred = append(deferred, id)
+		}
+	}
+	for _, name := range g.SubworkflowOrder {
+		sub := g.Subworkflows[name]
+		if sub == nil || sub.Body == nil {
+			continue
+		}
+		deferred = append(deferred, deferredPerScopeRemoteAdapters(sub.Body)...)
+	}
+	return deferred
+}
+
 func lockedDigest(lf *lockfile.Lockfile, adapterType, adapterName string) string {
 	if lf == nil {
 		return ""

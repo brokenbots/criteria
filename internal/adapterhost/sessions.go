@@ -174,8 +174,12 @@ type SessionManager struct {
 
 	// graphAdapters caches every adapter node in the compiled graph tree, keyed
 	// by instance ID. It is populated by VerifyGraph and used at resolution time
-	// to know whether an adapter is OCI-backed without re-reading workflow files.
-	graphAdapters map[string]*workflow.AdapterNode
+	// to know whether an adapter is OCI-backed or bound to a remote environment
+	// without re-reading workflow files. The owning graph is kept so
+	// per-scope environments resolve against the declaring subworkflow body
+	// (CRI-269: the root graph's adapter map never contains subworkflow
+	// adapters).
+	graphAdapters map[string]graphAdapterRef
 	// adapterDirs records the workflow directory each adapter was declared in,
 	// keyed by instance ID. Populated by VerifyGraph.
 	adapterDirs map[string]string
@@ -419,6 +423,11 @@ func (m *SessionManager) verifyGraphAdapter(ctx context.Context, root *workflow.
 		return err
 	}
 
+	// The per-instance cache must be populated before any dispatch decision:
+	// resolveAdapterHandle consults it for subworkflow adapters, whose
+	// declarations never appear in the root graph's adapter map (CRI-269).
+	m.cacheGraphAdapterRef(ref)
+
 	// CRI-115: remote adapters with per_scope_sessions rotate their accept token
 	// per scope in initScopeAdapters. Eager verification here would block before
 	// the token exists, so we defer the adapter-info handshake to scope entry.
@@ -428,16 +437,15 @@ func (m *SessionManager) verifyGraphAdapter(ctx context.Context, root *workflow.
 		}
 	}
 
-	m.cacheGraphAdapterRef(ref)
 	return nil
 }
 
 func (m *SessionManager) cacheGraphAdapterRef(ref graphAdapterRef) {
 	if m.graphAdapters == nil {
-		m.graphAdapters = make(map[string]*workflow.AdapterNode)
+		m.graphAdapters = make(map[string]graphAdapterRef)
 	}
 	if _, ok := m.graphAdapters[ref.instanceID]; !ok {
-		m.graphAdapters[ref.instanceID] = ref.node
+		m.graphAdapters[ref.instanceID] = ref
 	}
 	if m.adapterDirs == nil {
 		m.adapterDirs = make(map[string]string)
@@ -1165,24 +1173,41 @@ func (m *SessionManager) lockedAdapterFor(instanceID string) *lockfile.LockedAda
 	return nil
 }
 
-// isRemoteAdapter returns true when the adapter declaration is bound to a
-// remote environment (or the default environment is remote).
-func (m *SessionManager) isRemoteAdapter(instanceID string) bool {
-	if m.graph == nil {
-		return false
+// adapterDeclaration returns the adapter node for instanceID together with the
+// graph that declares it. Root-graph declarations win so a re-declared instance
+// keeps its parent binding (CRI-145); subworkflow declarations come from the
+// per-instance cache populated by VerifyGraph (CRI-269: the root graph's
+// adapter map never contains subworkflow adapters).
+func (m *SessionManager) adapterDeclaration(instanceID string) (*workflow.AdapterNode, *workflow.FSMGraph) {
+	if m.graph != nil {
+		if node, ok := m.graph.Adapters[instanceID]; ok {
+			return node, m.graph
+		}
 	}
-	adapterNode, ok := m.graph.Adapters[instanceID]
-	if !ok {
+	if ref, ok := m.graphAdapters[instanceID]; ok && ref.node != nil && ref.graph != nil {
+		return ref.node, ref.graph
+	}
+	return nil, nil
+}
+
+// isRemoteAdapter returns true when the adapter declaration is bound to a
+// remote environment (or the declaring graph's default environment is remote).
+// The environment resolves against the DECLARING graph so subworkflow adapters
+// bound to a per-scope remote env dispatch remotely at VerifyGraph and at bind
+// time, matching the provisioning path (CRI-269).
+func (m *SessionManager) isRemoteAdapter(instanceID string) bool {
+	adapterNode, graph := m.adapterDeclaration(instanceID)
+	if adapterNode == nil || graph == nil {
 		return false
 	}
 	envKey := adapterNode.Environment
 	if envKey == "" {
-		envKey = m.graph.DefaultEnvironment
+		envKey = graph.DefaultEnvironment
 	}
 	if envKey == "" {
 		return false
 	}
-	envNode, ok := m.graph.Environments[envKey]
+	envNode, ok := graph.Environments[envKey]
 	if !ok {
 		return false
 	}
@@ -1195,17 +1220,8 @@ func (m *SessionManager) isRemoteAdapter(instanceID string) bool {
 // subworkflow adapters are covered even though the root graph does not contain
 // them.
 func (m *SessionManager) isOCIAdapter(instanceID string) bool {
-	if m.graphAdapters != nil {
-		if node, ok := m.graphAdapters[instanceID]; ok {
-			return node.Source != ""
-		}
-	}
-	if m.graph != nil {
-		if node, ok := m.graph.Adapters[instanceID]; ok {
-			return node.Source != ""
-		}
-	}
-	return false
+	node, _ := m.adapterDeclaration(instanceID)
+	return node != nil && node.Source != ""
 }
 
 // adapterDir returns the workflow directory associated with instanceID,

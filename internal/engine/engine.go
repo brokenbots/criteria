@@ -395,17 +395,7 @@ func (e *Engine) initAdapters(ctx context.Context, sessions *adapterhost.Session
 	// VerifyGraph to initScopeAdapters so the provisioning event and token
 	// rotation happen before the shim blocks for the adapter phone-home.
 	if e.graph != nil {
-		var deferredRemote []string
-		for id, node := range e.graph.Adapters {
-			envKey := node.Environment
-			if envKey == "" {
-				envKey = e.graph.DefaultEnvironment
-			}
-			if remote.EnvPerScopeSessions(e.graph.Environments[envKey]) {
-				deferredRemote = append(deferredRemote, id)
-			}
-		}
-		if len(deferredRemote) > 0 {
+		if deferredRemote := deferredPerScopeRemoteAdapters(e.graph); len(deferredRemote) > 0 {
 			sessions.SetDeferredRemoteAdapters(deferredRemote)
 		}
 	}
