@@ -143,6 +143,8 @@ func (s *RedactingSink) OnAdapterLifecycleEvent(event *AdapterLifecycleEvent) {
 		ShimListenAddress: s.reg.Redact(event.ShimListenAddress),
 		TokenRef:          s.reg.Redact(event.TokenRef),
 		Status:            s.reg.Redact(event.Status),
+		EnvironmentType:   s.reg.Redact(event.EnvironmentType),
+		EnvironmentName:   s.reg.Redact(event.EnvironmentName),
 	})
 }
 

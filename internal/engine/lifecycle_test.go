@@ -1417,6 +1417,12 @@ func TestInitScopeAdapters_PerScope_EmitsProvisionWanted(t *testing.T) {
 	if event.AdapterType != "noop" {
 		t.Errorf("AdapterType = %q, want noop (the adapter declaration's type)", event.AdapterType)
 	}
+	if event.EnvironmentType != "remote" {
+		t.Errorf("EnvironmentType = %q, want remote (the environment declaration's type)", event.EnvironmentType)
+	}
+	if event.EnvironmentName != "prod" {
+		t.Errorf("EnvironmentName = %q, want prod (the environment declaration's name)", event.EnvironmentName)
+	}
 	if event.ShimListenAddress != "127.0.0.1:4242" {
 		t.Errorf("ShimListenAddress = %q, want 127.0.0.1:4242", event.ShimListenAddress)
 	}
@@ -1511,6 +1517,12 @@ func TestTearDownScopeAdapters_PerScope_EmitsReleased(t *testing.T) {
 	if released.AdapterType != provision.AdapterType || released.AdapterType != "noop" {
 		t.Errorf("released.AdapterType = %q, want %q", released.AdapterType, provision.AdapterType)
 	}
+	if released.EnvironmentType != provision.EnvironmentType || released.EnvironmentType != "remote" {
+		t.Errorf("released.EnvironmentType = %q, want %q", released.EnvironmentType, provision.EnvironmentType)
+	}
+	if released.EnvironmentName != provision.EnvironmentName || released.EnvironmentName != "prod" {
+		t.Errorf("released.EnvironmentName = %q, want %q", released.EnvironmentName, provision.EnvironmentName)
+	}
 
 	scopeKey := provision.ScopeName + "/" + provision.ScopeInstanceID
 	if !containsString(shim.unregistered, scopeKey) {
@@ -1529,6 +1541,118 @@ func containsString(haystack []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+// TestInitScopeAdapters_PerScope_EnvironmentIdentityPerAdapter verifies the
+// CRI-233 contract: every provision_wanted and released event carries the
+// environment identity of the adapter session — the compiled environment
+// declaration bound to that adapter — not the workflow's default environment.
+// Two adapters bound to different remote environments must each report their
+// own (type, name) pair on both statuses.
+func TestInitScopeAdapters_PerScope_EnvironmentIdentityPerAdapter(t *testing.T) {
+	ctx := context.Background()
+	g := compile(t, `
+workflow {
+  name = "per-scope-env-identity-test"
+  version = "0.1"
+  initial_state = "start"
+  target_state  = "done"
+  environment = remote.prod
+}
+
+environment "remote" "prod" {
+  listen_address     = "127.0.0.1:0"
+  per_scope_sessions = true
+}
+
+environment "remote" "staging" {
+  listen_address     = "127.0.0.1:0"
+  per_scope_sessions = true
+}
+
+adapter "shell" "intake" {
+  environment = remote.prod
+}
+
+adapter "copilot" "planner" {
+  environment = remote.staging
+}
+
+step "start" {
+  target = adapter.shell.intake
+  outcome "success" { next = step.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}`)
+	dataDir := t.TempDir()
+
+	sessions := adapterhost.NewSessionManager(&fakeLoader{})
+	sessions.SetGraph(g)
+	shim := newFakeRemoteShim(&fakeRemoteHandle{})
+	sessions.SetRemoteShim(shim)
+
+	lifecycle := newScopeLifecycleState(dataDir)
+	lifecycle.setRunID("run-env-identity")
+	sink := &eventTrackingSink{}
+	rlc := &remoteLifecycleContext{scopeLifecycle: lifecycle}
+	deps := Deps{Sessions: sessions, Sink: sink}
+
+	order, err := initScopeAdapters(ctx, g, deps, nil, dataDir, "", nil, rlc)
+	if err != nil {
+		t.Fatalf("initScopeAdapters: %v", err)
+	}
+	if len(order) != 2 {
+		t.Fatalf("expected 2 adapters provisioned, got %v", order)
+	}
+
+	// Each adapter type is bound to a different environment; the workflow
+	// default (remote.prod) must not leak into the copilot.planner event.
+	wantEnvName := map[string]string{"shell": "prod", "copilot": "staging"}
+
+	provisioned := map[string]AdapterLifecycleEvent{}
+	for _, ev := range sink.provisionEvents {
+		if ev.Status == "provision_wanted" {
+			provisioned[ev.AdapterType] = ev
+		}
+	}
+	if len(provisioned) != 2 {
+		t.Fatalf("provision_wanted events for %d adapter types (%+v), want 2", len(provisioned), sink.provisionEvents)
+	}
+	for typ, envName := range wantEnvName {
+		ev, ok := provisioned[typ]
+		if !ok {
+			t.Fatalf("no provision_wanted event for adapter type %q", typ)
+		}
+		if ev.EnvironmentType != "remote" || ev.EnvironmentName != envName {
+			t.Errorf("provision_wanted for %q: environment identity = (%q, %q), want (remote, %q)",
+				typ, ev.EnvironmentType, ev.EnvironmentName, envName)
+		}
+	}
+
+	tearDownScopeAdapters(ctx, order, deps, rlc)
+
+	released := map[string]AdapterLifecycleEvent{}
+	for _, ev := range sink.provisionEvents {
+		if ev.Status == "released" {
+			released[ev.AdapterType] = ev
+		}
+	}
+	if len(released) != 2 {
+		t.Fatalf("released events for %d adapter types (%+v), want 2", len(released), sink.provisionEvents)
+	}
+	for typ, envName := range wantEnvName {
+		ev, ok := released[typ]
+		if !ok {
+			t.Fatalf("no released event for adapter type %q", typ)
+		}
+		if ev.EnvironmentType != "remote" || ev.EnvironmentName != envName {
+			t.Errorf("released for %q: environment identity = (%q, %q), want (remote, %q)",
+				typ, ev.EnvironmentType, ev.EnvironmentName, envName)
+		}
+	}
 }
 
 // TestInitScopeAdapters_PerScope_ProvisionWantedCarriesAdapterType verifies the
@@ -1593,6 +1717,9 @@ state "done" {
 	for _, ev := range sink.provisionEvents {
 		if ev.Status == "provision_wanted" {
 			provisioned[ev.AdapterType] = ev.AdapterName
+			if ev.EnvironmentType != "remote" || ev.EnvironmentName != "prod" {
+				t.Errorf("provision_wanted environment identity: got (%q, %q), want (remote, prod)", ev.EnvironmentType, ev.EnvironmentName)
+			}
 		}
 	}
 	if provisioned["shell"] != "intake" || provisioned["copilot"] != "planner" {
@@ -1604,6 +1731,9 @@ state "done" {
 	for _, ev := range sink.provisionEvents {
 		if ev.Status == "released" {
 			released[ev.AdapterType] = ev.AdapterName
+			if ev.EnvironmentType != "remote" || ev.EnvironmentName != "prod" {
+				t.Errorf("released environment identity: got (%q, %q), want (remote, prod)", ev.EnvironmentType, ev.EnvironmentName)
+			}
 		}
 	}
 	if released["shell"] != "shell.intake" || released["copilot"] != "copilot.planner" {

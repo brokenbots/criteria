@@ -37,6 +37,12 @@ type AdapterLifecycleEvent struct {
 	ShimListenAddress string
 	TokenRef          string // path to the accept-token file; never the token itself
 	Status            string // "provision_wanted" or "released"
+	// Environment identity of the adapter session (CRI-233): the compiled
+	// environment declaration's type + name from the workflow's environment
+	// blocks. Additive fields; consumers must tolerate older events that
+	// carry neither.
+	EnvironmentType string // e.g. "remote"
+	EnvironmentName string // declaration name, e.g. "prod"
 }
 
 // Sink receives engine-level events. Implementations (typically the server

@@ -407,6 +407,8 @@ func TestRedactingSink_OnAdapterLifecycleEvent(t *testing.T) {
 		ShimListenAddress: "addr_secret123",
 		TokenRef:          "token_ref_secret123",
 		Status:            "provision_wanted",
+		EnvironmentType:   "remote",
+		EnvironmentName:   "env_secret123",
 	})
 
 	ev := inner.onAdapterLifecycleEventArg
@@ -416,8 +418,11 @@ func TestRedactingSink_OnAdapterLifecycleEvent(t *testing.T) {
 	if ev.AdapterType != "shell" {
 		t.Errorf("AdapterType = %q, want shell (not a secret; must pass through)", ev.AdapterType)
 	}
-	assertRedacted(t, []string{ev.RunID, ev.ScopeName, ev.ScopeInstanceID, ev.AdapterName, ev.Digest, ev.ShimListenAddress, ev.TokenRef, ev.Status},
-		[]string{"run_[REDACTED]", "scope_[REDACTED]", "inst_[REDACTED]", "adapter_[REDACTED]", "digest_[REDACTED]", "addr_[REDACTED]", "token_ref_[REDACTED]", "provision_wanted"})
+	if ev.EnvironmentType != "remote" {
+		t.Errorf("EnvironmentType = %q, want remote (not a secret; must pass through)", ev.EnvironmentType)
+	}
+	assertRedacted(t, []string{ev.RunID, ev.ScopeName, ev.ScopeInstanceID, ev.AdapterName, ev.Digest, ev.ShimListenAddress, ev.TokenRef, ev.Status, ev.EnvironmentName},
+		[]string{"run_[REDACTED]", "scope_[REDACTED]", "inst_[REDACTED]", "adapter_[REDACTED]", "digest_[REDACTED]", "addr_[REDACTED]", "token_ref_[REDACTED]", "provision_wanted", "env_[REDACTED]"})
 }
 
 func TestRedactingSink_OnRunOutputs(t *testing.T) {

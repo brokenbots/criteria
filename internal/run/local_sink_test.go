@@ -80,6 +80,8 @@ func TestLocalSink_OnAdapterLifecycleEvent(t *testing.T) {
 		ScopeInstanceID:   "11111111-1111-1111-1111-111111111111",
 		AdapterName:       "noop",
 		AdapterType:       "noop",
+		EnvironmentType:   "remote",
+		EnvironmentName:   "prod",
 		Digest:            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		ShimListenAddress: "127.0.0.1:0",
 		TokenRef:          "/run/data/tokens/noop-root.token",
@@ -127,6 +129,8 @@ func TestLocalSink_OnAdapterLifecycleEvent(t *testing.T) {
 		"scope_instance_id":   "11111111-1111-1111-1111-111111111111",
 		"adapter":             "noop",
 		"adapter_type":        "noop",
+		"environment_type":    "remote",
+		"environment_name":    "prod",
 		"digest":              "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"shim_listen_address": "127.0.0.1:0",
 		"token_ref":           "/run/data/tokens/noop-root.token",
@@ -172,5 +176,15 @@ func TestLocalSink_OnAdapterLifecycleEvent(t *testing.T) {
 	}
 	if secondPayload.Kind != "adapter.lifecycle.released" {
 		t.Errorf("second kind: got %q want adapter.lifecycle.released", secondPayload.Kind)
+	}
+	// CRI-233: an event carrying no environment identity (the zero value — the
+	// shape an old-criteria producer emits) must still produce a valid payload;
+	// the identity keys surface as empty strings so consumers treat them as
+	// "no environment grouping" without special-casing missing keys.
+	if got := secondPayload.Data["environment_type"]; got != "" {
+		t.Errorf("second environment_type: got %v, want empty string (no identity on this event)", got)
+	}
+	if got := secondPayload.Data["environment_name"]; got != "" {
+		t.Errorf("second environment_name: got %v, want empty string (no identity on this event)", got)
 	}
 }

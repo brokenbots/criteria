@@ -35,6 +35,7 @@ type adapterLifecycleRecord struct {
 	adapterName     string
 	adapterType     string
 	envName         string
+	envType         string
 	digest          string
 	tokenPath       string
 	listenAddr      string
@@ -292,6 +293,8 @@ func emitProvisionWanted(deps Deps, lifecycle *remoteLifecycleContext, scopeName
 		ShimListenAddress: listenAddr,
 		TokenRef:          tokenPath,
 		Status:            "provision_wanted",
+		EnvironmentType:   envNode.Type,
+		EnvironmentName:   envNode.Name,
 	})
 	lifecycle.scopeLifecycle.add(&adapterLifecycleRecord{
 		scopeName:       scopeName,
@@ -300,6 +303,7 @@ func emitProvisionWanted(deps Deps, lifecycle *remoteLifecycleContext, scopeName
 		adapterName:     instanceID,
 		adapterType:     adapter.Type,
 		envName:         envNode.Name,
+		envType:         envNode.Type,
 		digest:          digest,
 		tokenPath:       tokenPath,
 		listenAddr:      listenAddr,
@@ -796,6 +800,8 @@ func tearDownScopeAdapters(ctx context.Context, order []string, deps Deps, lifec
 					ShimListenAddress: rec.listenAddr,
 					TokenRef:          rec.tokenPath,
 					Status:            "released",
+					EnvironmentType:   rec.envType,
+					EnvironmentName:   rec.envName,
 				})
 				_ = deps.Sessions.UnregisterRemoteScope(rec.scopeKey)
 				_ = deps.Sessions.CloseRemoteHandle(cleanupCtx, rec.adapterType, rec.scopeKey)
