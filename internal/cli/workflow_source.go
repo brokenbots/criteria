@@ -111,11 +111,20 @@ func splitGitSubtreeSuffix(source string) (repoSource, subdir string) {
 	if !isRemoteForm {
 		return source, ""
 	}
+	// The ?ref=/branch=/tag= query (splitGitSource's ref syntax) lives at
+	// the END of the full form: "<repo>//<subdir>?ref=x". Strip the query
+	// BEFORE splitting the //subdir, and keep it on the repo part so
+	// splitGitSource still sees the ref.
+	query := ""
+	if qIdx := strings.Index(trimmed, "?"); qIdx != -1 {
+		query = trimmed[qIdx:]
+		trimmed = trimmed[:qIdx]
+	}
 	idx := strings.LastIndex(trimmed, "//")
-	if idx == -1 {
+	if idx == -1 || query == "" {
 		return source, ""
 	}
-	return "git::" + trimmed[:idx], trimmed[idx+2:]
+	return "git::" + trimmed[:idx] + query, trimmed[idx+2:]
 }
 
 // joinWorkflowSubtree joins the fetched tree with the //subdir workflow
