@@ -298,7 +298,7 @@ func (e *Engine) Resume(ctx context.Context) error {
 func (e *Engine) restoreSessionsFromSnapshots(ctx context.Context) (*adapterhost.SessionManager, error) {
 	sessions := adapterhost.NewSessionManager(e.loader)
 	sessions.SetGraph(e.graph)
-	sessions.SetLockfile(e.lockfile)
+	sessions.SetLockfile(e.effectivePinSet())
 	sessions.RedactionRegistry = secrets.NewRegistry()
 	sessions.LifecycleSink = e.sink
 	sessions.SetAllowedWorkingDirRoots(e.workingDirAllowedRoots)
@@ -346,16 +346,26 @@ func (e *Engine) InspectSession(ctx context.Context, name string) (*v2.InspectRe
 	return sessions.InspectSession(ctx, name)
 }
 
-// setLockfileOnSessions ensures the session manager has the compiled graph's
-// merged pin set. The merged lockfile is resolved once at compile time and is
-// the single source of truth for the run; no workflow files are read here.
-func (e *Engine) setLockfileOnSessions(sessions *adapterhost.SessionManager) {
+// effectivePinSet resolves the run's effective lockfile by one shared rule:
+// the compiled graph's merged pin set wins when present, and the explicit
+// WithLockfile value is the fallback. The merged pin set is built once at
+// compile time from every workflow directory's .criteria.lock.hcl — including
+// the fetched tree of a URL-sourced workflow, where WithLockfile is never set
+// (CRI-263) — and is the single source of truth for the run; no workflow files
+// are read here. Every consumer of pinned digests (session manager, remote
+// shim verifier, remote lifecycle context) must resolve through this helper so
+// the paths cannot disagree.
+func (e *Engine) effectivePinSet() *lockfile.Lockfile {
 	if e.graph != nil && e.graph.PinSet != nil {
-		sessions.SetLockfile(e.graph.PinSet)
-		return
+		return e.graph.PinSet
 	}
-	if e.lockfile != nil {
-		sessions.SetLockfile(e.lockfile)
+	return e.lockfile
+}
+
+// setLockfileOnSessions ensures the session manager has the effective pin set.
+func (e *Engine) setLockfileOnSessions(sessions *adapterhost.SessionManager) {
+	if lf := e.effectivePinSet(); lf != nil {
+		sessions.SetLockfile(lf)
 	}
 }
 
@@ -408,7 +418,7 @@ func (e *Engine) initAdapters(ctx context.Context, sessions *adapterhost.Session
 	lifecycle := newScopeLifecycleState(e.dataDir)
 	lifecycle.setRunID(e.runID)
 	rlc := &remoteLifecycleContext{
-		lockfile:       e.lockfile,
+		lockfile:       e.effectivePinSet(),
 		scopeLifecycle: lifecycle,
 	}
 	deps := Deps{Sessions: sessions, Sink: sink}
@@ -1043,11 +1053,7 @@ func (e *Engine) maybeStartRemoteShim(ctx context.Context, sessions *adapterhost
 		return nil
 	}
 
-	lf := e.lockfile
-	if e.graph.PinSet != nil {
-		lf = e.graph.PinSet
-	}
-	verifier := &lockfileDigestVerifier{lockfile: lf}
+	verifier := &lockfileDigestVerifier{lockfile: e.effectivePinSet()}
 
 	for _, env := range remoteEnvs {
 		if err := e.startRemoteShimForEnv(ctx, env, sessions, verifier); err != nil {
