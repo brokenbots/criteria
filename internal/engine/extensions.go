@@ -101,8 +101,10 @@ func WithWorkflowDir(dir string) Option {
 }
 
 // WithLockfile sets the parsed adapter lockfile used for container-mode
-// adapter resolution. When nil and workflowDir is set, the engine auto-reads
-// the lockfile from the workflow directory at run start.
+// adapter resolution. It is the fallback in the engine's effective pin set
+// rule (Engine.effectivePinSet): a compiled graph pin set — built at compile
+// time from the workflow tree's .criteria.lock.hcl files — always wins, so
+// URL-sourced runs never need this option.
 func WithLockfile(lf *lockfile.Lockfile) Option {
 	return func(e *Engine) {
 		e.lockfile = lf

@@ -16,6 +16,7 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
+	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
 // lifecycleTrackingSink captures lifecycle events for verification
@@ -1476,6 +1477,148 @@ func TestInitScopeAdapters_PerScope_EmitsProvisionWanted(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected WaitForHandle call with scope %q, calls=%v", scopeKey, shim.calls)
+	}
+}
+
+// TestInitAdapters_PerScope_ProvisionWantedDigestFromCompiledPinSet (CRI-263):
+// a URL-sourced run compiles the fetched tree's .criteria.lock.hcl into the
+// graph pin set, and the CLI never calls WithLockfile on that path. The
+// lifecycle context must resolve the effective pin set from the compiled
+// graph — not from the nil engine lockfile — or the per-scope provision_wanted
+// event carries an empty digest and the operator's adapter pod wedges forever
+// polling a digest file that is never written.
+func TestInitAdapters_PerScope_ProvisionWantedDigestFromCompiledPinSet(t *testing.T) {
+	ctx := context.Background()
+
+	// A fetched workflow tree: the workflow plus its own lockfile carrying the
+	// pinned adapter digest.
+	dir := t.TempDir()
+	wfSrc := `
+workflow {
+  name = "per-scope-test"
+  version = "0.1"
+  initial_state = "start"
+  target_state  = "done"
+}
+
+environment "remote" "prod" {
+  listen_address     = "127.0.0.1:0"
+  per_scope_sessions = true
+}
+
+adapter "noop" "default" {
+  environment = remote.prod
+}
+
+step "start" {
+  target = adapter.noop.default
+  outcome "success" { next = step.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}`
+	wfPath := filepath.Join(dir, "linear_wf.hcl")
+	if err := os.WriteFile(wfPath, []byte(wfSrc), 0o600); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+	pinnedDigest := "sha256:d9f306c2feedbeef42"
+	lf := &lockfile.Lockfile{
+		Adapters: []lockfile.LockedAdapter{
+			{Type: "noop", Name: "default", ResolvedDigest: pinnedDigest},
+		},
+	}
+	if err := lockfile.Write(filepath.Join(dir, lockfile.LockfileName), lf); err != nil {
+		t.Fatalf("write lockfile: %v", err)
+	}
+
+	// Compile exactly as the URL-source apply path does: initGraphPinSet reads
+	// the fetched tree's lockfile into the graph pin set (no CompileOpts.PinSet
+	// is precomputed for the direct-compile path exercised here).
+	spec, diags := workflow.Parse(wfPath, []byte(wfSrc))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := workflow.CompileWithOpts(spec, nil, workflow.CompileOpts{WorkflowDir: dir})
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+	if g.PinSet == nil {
+		t.Fatal("expected the compiled graph to carry the tree's lockfile as its pin set")
+	}
+
+	// Engine constructed with WithWorkflowDir and no WithLockfile — the shape of
+	// every CLI-driven URL-sourced run.
+	dataDir := t.TempDir()
+	eng := New(g, &fakeLoader{}, &eventTrackingSink{},
+		WithWorkflowDir(dir), WithDataDir(dataDir), WithRunID("run-263"))
+	if eng.effectivePinSet() != g.PinSet {
+		t.Fatal("engine effective pin set must be the compiled graph pin set")
+	}
+
+	sessions := adapterhost.NewSessionManager(&fakeLoader{})
+	sessions.SetGraph(g)
+	shim := newFakeRemoteShim(&fakeRemoteHandle{})
+	sessions.SetRemoteShim(shim)
+	sink := &eventTrackingSink{}
+
+	deps, order, rlc, err := eng.initAdapters(ctx, sessions, sink, nil, "")
+	if err != nil {
+		t.Fatalf("initAdapters: %v", err)
+	}
+	defer tearDownScopeAdapters(ctx, order, deps, rlc)
+
+	// The handoff under test: the lifecycle context must carry the same
+	// effective pin set the session manager already got.
+	if rlc.lockfile != g.PinSet {
+		t.Fatal("lifecycle context must carry the compiled graph pin set, not the nil engine lockfile")
+	}
+
+	event, ok := sink.firstStatus("provision_wanted")
+	if !ok {
+		t.Fatalf("expected provision_wanted event, got %v", sink.provisionEvents)
+	}
+	if event.Digest == "" {
+		t.Fatal("provision_wanted digest must not be empty: the tree's lockfile pins the adapter (CRI-263)")
+	}
+	if event.Digest != pinnedDigest {
+		t.Errorf("provision_wanted digest = %q, want the lockfile resolved_digest %q", event.Digest, pinnedDigest)
+	}
+}
+
+// TestInitAdapters_PerScope_ProvisionWantedDigestStaysEmptyWithoutPins pins the
+// fail-closed half of the CRI-263 rule: when no pin is resolvable anywhere (no
+// compiled pin set, no WithLockfile), the provision_wanted digest stays empty
+// and is never synthesized by the engine.
+func TestInitAdapters_PerScope_ProvisionWantedDigestStaysEmptyWithoutPins(t *testing.T) {
+	ctx := context.Background()
+	g := perScopeRemoteGraph(t) // compiled without a workflow dir: no pin set
+	dataDir := t.TempDir()
+
+	eng := New(g, &fakeLoader{}, &eventTrackingSink{}, WithDataDir(dataDir), WithRunID("run-263"))
+
+	sessions := adapterhost.NewSessionManager(&fakeLoader{})
+	sessions.SetGraph(g)
+	shim := newFakeRemoteShim(&fakeRemoteHandle{})
+	sessions.SetRemoteShim(shim)
+	sink := &eventTrackingSink{}
+
+	deps, order, rlc, err := eng.initAdapters(ctx, sessions, sink, nil, "")
+	if err != nil {
+		t.Fatalf("initAdapters: %v", err)
+	}
+	defer tearDownScopeAdapters(ctx, order, deps, rlc)
+
+	if rlc.lockfile != nil {
+		t.Fatalf("rlc.lockfile = %+v, want nil (no pins resolvable)", rlc.lockfile)
+	}
+	event, ok := sink.firstStatus("provision_wanted")
+	if !ok {
+		t.Fatalf("expected provision_wanted event, got %v", sink.provisionEvents)
+	}
+	if event.Digest != "" {
+		t.Errorf("provision_wanted digest = %q, want empty (fail-closed: never synthesized)", event.Digest)
 	}
 }
 
