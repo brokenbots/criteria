@@ -154,7 +154,9 @@ func (s *LocalSink) OnScopeIterCursorSet(cursorJSON string) {
 func (s *LocalSink) OnAdapterLifecycle(stepName, adapterName, status, detail string) {}
 
 // OnAdapterLifecycleEvent emits an adapter.lifecycle event for remote
-// adapter reconcilers in local/ND-JSON mode.
+// adapter reconcilers in local/ND-JSON mode. CRI-236: the per-scope accept
+// token rides the wire (accept_token) alongside the transition-window
+// token_ref file path; released events carry no token.
 func (s *LocalSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent) {
 	s.emit("AdapterEvent", &pb.AdapterEvent{
 		Adapter: event.AdapterName,
@@ -170,6 +172,7 @@ func (s *LocalSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent)
 			"digest":              event.Digest,
 			"shim_listen_address": event.ShimListenAddress,
 			"token_ref":           event.TokenRef,
+			"accept_token":        event.Token,
 		}),
 	})
 }

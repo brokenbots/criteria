@@ -323,6 +323,7 @@ func TestSink_OnAdapterLifecycleEvent_PublishesAdapterType(t *testing.T) {
 		Digest:            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		ShimListenAddress: "127.0.0.1:7778",
 		TokenRef:          "/run/data/tokens/intake.token",
+		Token:             "wire-accept-token-value",
 		Status:            "provision_wanted",
 	})
 
@@ -347,6 +348,13 @@ func TestSink_OnAdapterLifecycleEvent_PublishesAdapterType(t *testing.T) {
 	}
 	if got := ae.Data.Fields["environment_name"].GetStringValue(); got != "prod" {
 		t.Errorf("environment_name: got %q want prod", got)
+	}
+	// CRI-236: the per-scope accept token rides the wire alongside token_ref.
+	if got := ae.Data.Fields["accept_token"].GetStringValue(); got != "wire-accept-token-value" {
+		t.Errorf("accept_token: got %q want wire-accept-token-value", got)
+	}
+	if got := ae.Data.Fields["token_ref"].GetStringValue(); got != "/run/data/tokens/intake.token" {
+		t.Errorf("token_ref: got %q want /run/data/tokens/intake.token", got)
 	}
 }
 

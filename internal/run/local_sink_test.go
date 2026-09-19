@@ -74,6 +74,9 @@ func TestLocalSink_OnAdapterLifecycleEvent(t *testing.T) {
 	var buf bytes.Buffer
 	sink := &LocalSink{RunID: "run-local-1", Out: &buf}
 
+	// CRI-236: the token rides the wire in the provision event; the secret
+	// value is deliberately part of the serialized line now.
+	secretToken := "super-secret-token-value"
 	event := &engine.AdapterLifecycleEvent{
 		RunID:             sink.RunID,
 		ScopeName:         "root",
@@ -85,9 +88,9 @@ func TestLocalSink_OnAdapterLifecycleEvent(t *testing.T) {
 		Digest:            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		ShimListenAddress: "127.0.0.1:0",
 		TokenRef:          "/run/data/tokens/noop-root.token",
+		Token:             secretToken,
 		Status:            "provision_wanted",
 	}
-	secretToken := "super-secret-token-value"
 
 	sink.OnAdapterLifecycleEvent(event)
 
@@ -134,6 +137,7 @@ func TestLocalSink_OnAdapterLifecycleEvent(t *testing.T) {
 		"digest":              "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"shim_listen_address": "127.0.0.1:0",
 		"token_ref":           "/run/data/tokens/noop-root.token",
+		"accept_token":        secretToken,
 	}
 	for k, want := range wantData {
 		got, ok := payload.Data[k]
@@ -148,9 +152,10 @@ func TestLocalSink_OnAdapterLifecycleEvent(t *testing.T) {
 	if len(payload.Data) != len(wantData) {
 		t.Errorf("data field count: got %d want %d", len(payload.Data), len(wantData))
 	}
-	if strings.Contains(buf.String(), secretToken) {
-		t.Errorf("buffer must not contain raw token value, only token_ref path")
-	}
+	// CRI-236: the raw token value is now deliberately carried on the wire in
+	// the provision event's accept_token field (asserted via wantData above);
+	// the redaction registry (workflow secrets) is a separate channel and must
+	// never receive adapter accept tokens.
 
 	// Second call with a different status should produce a new line and increment seq.
 	sink.OnAdapterLifecycleEvent(&engine.AdapterLifecycleEvent{
@@ -186,5 +191,9 @@ func TestLocalSink_OnAdapterLifecycleEvent(t *testing.T) {
 	}
 	if got := secondPayload.Data["environment_name"]; got != "" {
 		t.Errorf("second environment_name: got %v, want empty string (no identity on this event)", got)
+	}
+	// CRI-236: released events never carry a token.
+	if got := secondPayload.Data["accept_token"]; got != "" {
+		t.Errorf("second accept_token: got %v, want empty string (released events carry no token)", got)
 	}
 }

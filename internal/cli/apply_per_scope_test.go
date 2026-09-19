@@ -9,7 +9,8 @@ package cli
 //     "per_scope_sessions requires a run data directory (WithDataDir)" gate;
 //   - a rotated accept token file is written under the run's own state dir
 //     (runs/<runID>/remote-tokens), with 0700 dirs / 0600 files;
-//   - the raw token never appears in any emitted event;
+//   - the raw token rides the wire ONLY inside its provision_wanted event's
+//     accept_token field (CRI-236) and appears nowhere else in the stream;
 //   - non-per-scope runs are unaffected.
 
 import (
@@ -362,8 +363,21 @@ type provisionPayload struct {
 		Digest          string `json:"digest"`
 		ShimListenAddr  string `json:"shim_listen_address"`
 		TokenRef        string `json:"token_ref"`
+		AcceptToken     string `json:"accept_token"`
 	} `json:"data"`
 }
+
+// tokenMode selects where the dialer gets the accept token to present in the
+// pre-gRPC handshake frame: tokenModeWire uses the token delivered on the
+// wire inside the provision_wanted event (CRI-236, the post-transition
+// behavior), tokenModeFile reads the token_ref file like a pre-CRI-236
+// operator (the transition-window compatibility surface).
+type tokenMode int
+
+const (
+	tokenModeWire tokenMode = iota
+	tokenModeFile
+)
 
 // phoneHomeDialer watches a run's ND-JSON events file and plays the role of
 // the phone-homing adapter: when the engine emits a provision_wanted event the
@@ -382,6 +396,7 @@ type phoneHomeDialer struct {
 	negativeOK  bool
 	negativeErr string
 	runID       string
+	tokenMode   tokenMode
 }
 
 type scopeProvision struct {
@@ -389,6 +404,7 @@ type scopeProvision struct {
 	scopeKey  string
 	shimAddr  string
 	tokenPath string
+	wireToken string
 }
 
 // provisionSnapshot copies the current provision state for all adapters.
@@ -439,9 +455,32 @@ func newPhoneHomeDialer(t *testing.T) *phoneHomeDialer {
 		cancel:      cancel,
 		seen:        make(map[string]bool),
 		provisioned: make(map[string]scopeProvision),
+		tokenMode:   tokenModeWire,
 	}
 	t.Cleanup(d.stop)
 	return d
+}
+
+// scopeToken returns the accept token the dialer presents for a provisioned
+// scope under its configured token mode.
+func (d *phoneHomeDialer) scopeToken(p *scopeProvision) (string, error) {
+	if d.tokenMode == tokenModeFile {
+		b, err := os.ReadFile(p.tokenPath)
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(string(b)), nil
+	}
+	if p.wireToken != "" {
+		return p.wireToken, nil
+	}
+	// Wire token missing (e.g. an old-criteria producer): fall back to the
+	// transition-window file surface so the dialer degrades gracefully.
+	b, err := os.ReadFile(p.tokenPath)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(b)), nil
 }
 
 // watch polls the events file until the dialer is stopped.
@@ -497,6 +536,7 @@ func (d *phoneHomeDialer) consume(raw []byte) {
 					scopeKey:  payload.Data.ScopeName + "/" + payload.Data.ScopeInstanceID,
 					shimAddr:  payload.Data.ShimListenAddr,
 					tokenPath: payload.Data.TokenRef,
+					wireToken: payload.Data.AcceptToken,
 				}
 			}
 			total := len(d.provisioned)
@@ -541,7 +581,7 @@ func (d *phoneHomeDialer) dialAllProvisions() {
 		d.wg.Add(1)
 		go func(p scopeProvision) {
 			defer d.wg.Done()
-			token, err := os.ReadFile(p.tokenPath)
+			token, err := d.scopeToken(&p)
 			if err != nil {
 				return // token vanished: nothing to present
 			}
@@ -566,7 +606,7 @@ func (d *phoneHomeDialer) dialAllProvisions() {
 				Name:    "noop",
 				Version: "1.0.0",
 				Digest:  cri128NoopDigest,
-				Token:   strings.TrimSpace(string(token)),
+				Token:   token,
 				Scope:   p.scopeKey,
 			})
 			if _, err := conn.Write(append(frame, '\n')); err != nil {
@@ -600,11 +640,11 @@ func (d *phoneHomeDialer) startNegativeDial() {
 			second = p
 		}
 		victimKey := first.scopeKey
-		wrongTokenPath := second.tokenPath
+		wrongScope := second
 		shimAddr := first.shimAddr
 		d.mu.Unlock()
 
-		token, err := os.ReadFile(wrongTokenPath)
+		wrongToken, err := d.scopeToken(&wrongScope)
 		if err != nil {
 			d.setNegative("read wrong token: " + err.Error())
 			return
@@ -618,7 +658,7 @@ func (d *phoneHomeDialer) startNegativeDial() {
 			Name:    "noop",
 			Version: "1.0.0",
 			Digest:  cri128NoopDigest,
-			Token:   strings.TrimSpace(string(token)),
+			Token:   wrongToken,
 			Scope:   victimKey,
 		})
 		if _, err := conn.Write(append(frame, '\n')); err != nil {
@@ -735,6 +775,46 @@ func TestApplyLocalPerScopeSessionsCompletes(t *testing.T) {
 	assertCompletedPerScopeRun(t, eventsFile, home, dialer.runID, 1)
 }
 
+// TestApplyLocalPerScopeSessionsTokenRefFileDial is the CRI-236
+// transition-window regression: an operator that still reads the token_ref
+// file (the pre-CRI-236 shape) completes the same run, because the file
+// surface keeps working until CRI-237 removes it operator-side.
+func TestApplyLocalPerScopeSessionsTokenRefFileDial(t *testing.T) {
+	requireNoGoroutineLeak(t)
+	home := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", home)
+
+	wfPath := writeScopeSessionWorkflow(t, scopeSessionWorkflowHCL)
+	eventsFile := filepath.Join(t.TempDir(), "events.ndjson")
+
+	dialer := newPhoneHomeDialer(t)
+	dialer.tokenMode = tokenModeFile
+	dialer.watch(eventsFile)
+
+	runCtx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runApply(runCtx, applyOptions{
+			workflowPath: wfPath,
+			eventsPath:   eventsFile,
+			log:          discardLogger(),
+		})
+	}()
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("runApply: %v", err)
+		}
+	case <-time.After(40 * time.Second):
+		t.Fatalf("runApply did not complete in time; events=%s", mustReadEventsForDiag(t, eventsFile))
+	}
+	dialer.stop()
+
+	assertCompletedPerScopeRun(t, eventsFile, home, dialer.runID, 1)
+}
+
 // assertCompletedPerScopeRun checks the events and token files for a
 // completed local per-scope run.
 func assertCompletedPerScopeRun(t *testing.T, eventsFile, home, runID string, wantProvision int) {
@@ -802,13 +882,12 @@ func assertCompletedPerScopeRun(t *testing.T, eventsFile, home, runID string, wa
 			t.Errorf("token reused across scopes: %s", p)
 		}
 		seenTokens[token] = true
-		if strings.Contains(string(raw), token) {
-			t.Errorf("raw accept token leaked into emitted events: %s", p)
-		}
+		assertTokenOnlyInOwnProvisionEvent(t, string(raw), token, p)
 	}
 
 	// token_ref in each provision event points at the token file for that
-	// adapter under the run data dir (never the workflow dir).
+	// adapter under the run data dir (never the workflow dir), and the wire
+	// token matches the file (CRI-236 transition-window agreement).
 	for adapter := range provisions {
 		payload := provisions[adapter]
 		ref := payload.Data.TokenRef
@@ -819,6 +898,57 @@ func assertCompletedPerScopeRun(t *testing.T, eventsFile, home, runID string, wa
 		if _, err := os.Stat(ref); err != nil {
 			t.Errorf("token file from token_ref missing: %v", err)
 		}
+		if payload.Data.AcceptToken == "" {
+			t.Errorf("provision event for %s carries no accept_token (CRI-236 wire handoff missing)", adapter)
+			continue
+		}
+		fileBytes, err := os.ReadFile(ref)
+		if err != nil {
+			t.Errorf("read token file %s: %v", ref, err)
+			continue
+		}
+		if string(fileBytes) != payload.Data.AcceptToken {
+			t.Errorf("token file %s disagrees with the wire accept_token for %s (transition-window agreement broken)", ref, adapter)
+		}
+	}
+}
+
+// assertTokenOnlyInOwnProvisionEvent pins the CRI-236 wire contract: the raw
+// accept token appears in the event stream exactly once — inside its own
+// provision_wanted envelope's accept_token field, which is the
+// already-authenticated provision/accept handshake surface — and nowhere
+// else. Any other appearance is a leak of token material.
+func assertTokenOnlyInOwnProvisionEvent(t *testing.T, raw, token, tokenFile string) {
+	t.Helper()
+	hits := 0
+	for _, line := range strings.Split(raw, "\n") {
+		if strings.TrimSpace(line) == "" || !strings.Contains(line, token) {
+			continue
+		}
+		hits++
+		var env cri128Envelope
+		if err := json.Unmarshal([]byte(line), &env); err != nil {
+			t.Errorf("token file %s's token appears in an unmarshalable envelope: %v", tokenFile, err)
+			continue
+		}
+		if env.PayloadType != "AdapterEvent" {
+			t.Errorf("token file %s's token leaked into a %s envelope", tokenFile, env.PayloadType)
+			continue
+		}
+		var payload provisionPayload
+		if err := json.Unmarshal(env.Payload, &payload); err != nil {
+			t.Errorf("token file %s's token appears in an unmarshalable adapter event: %v", tokenFile, err)
+			continue
+		}
+		if payload.Kind != "adapter.lifecycle.provision_wanted" {
+			t.Errorf("token file %s's token leaked into %q event", tokenFile, payload.Kind)
+		}
+		if payload.Data.AcceptToken != token {
+			t.Errorf("accept_token = %q, want the rotated token from %s", payload.Data.AcceptToken, tokenFile)
+		}
+	}
+	if hits != 1 {
+		t.Errorf("token from %s appears in %d event lines, want exactly 1 (its own provision_wanted envelope)", tokenFile, hits)
 	}
 }
 
