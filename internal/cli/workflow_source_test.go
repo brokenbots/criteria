@@ -1061,12 +1061,15 @@ func TestResolveWorkflowSource_GitSubtreeSuffix(t *testing.T) {
 		t.Skip("requires network git access")
 	}
 	dir, origin, err := resolveWorkflowSource(context.Background(),
-		"git::https://github.com/brokenbots/workflow-example.git//linear_develop_v1", "")
+		"git::https://github.com/brokenbots/workflow-example.git//linear_develop_v1?ref=7645feb42e6f2c473696bd63997fca111d41453d", "7645feb42e6f2c473696bd63997fca111d41453d")
 	if err != nil {
 		t.Fatalf("subtree resolution: %v", err)
 	}
 	if origin == nil {
 		t.Fatal("expected a git origin for a remote source")
+	}
+	if origin.ResolvedRef != "7645feb42e6f2c473696bd63997fca111d41453d" {
+		t.Fatalf("resolved ref = %q, want the pinned SHA", origin.ResolvedRef)
 	}
 	if filepath.Base(dir) != "linear_develop_v1" {
 		t.Fatalf("resolved dir = %q, want the //subdir joined", dir)
