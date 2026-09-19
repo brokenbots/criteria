@@ -177,4 +177,14 @@ func TestLocalSink_OnAdapterLifecycleEvent(t *testing.T) {
 	if secondPayload.Kind != "adapter.lifecycle.released" {
 		t.Errorf("second kind: got %q want adapter.lifecycle.released", secondPayload.Kind)
 	}
+	// CRI-233: an event carrying no environment identity (the zero value — the
+	// shape an old-criteria producer emits) must still produce a valid payload;
+	// the identity keys surface as empty strings so consumers treat them as
+	// "no environment grouping" without special-casing missing keys.
+	if got := secondPayload.Data["environment_type"]; got != "" {
+		t.Errorf("second environment_type: got %v, want empty string (no identity on this event)", got)
+	}
+	if got := secondPayload.Data["environment_name"]; got != "" {
+		t.Errorf("second environment_name: got %v, want empty string (no identity on this event)", got)
+	}
 }
