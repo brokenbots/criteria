@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -792,6 +793,45 @@ func isSessionCrashError(err error) bool {
 	return errors.As(err, &crash)
 }
 
+// crashReopenEnabled reports whether the engine should re-open a crashed
+// session before follow-on steps execute on it (CRI-271). Set
+// CRITERIA_SESSION_CRASH_REOPEN=0|false|off to restore the pre-CRI-271
+// behavior: a crashed session stays dead and follow-on steps replay its
+// crash error. The value is read per call so operators (and tests) can flip
+// it between runs without restarting the process.
+func crashReopenEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("CRITERIA_SESSION_CRASH_REOPEN"))) {
+	case "0", "false", "off":
+		return false
+	default:
+		return true
+	}
+}
+
+// reopenCrashedSession re-opens the adapter session behind a step whose
+// session crashed at an earlier functional step (CRI-271). Under the default
+// on_crash=fail policy that session stays registered but dead, so the
+// follow-on step would replay the crash error; re-opening gives the step a
+// live session so the run's bookkeeping (comment_handler_failed,
+// set_review_state, …) completes for real. The entry is forgotten on
+// success so a later genuine crash is recorded afresh; on failure the step
+// proceeds anyway and its Execute replays the crash error through the
+// normal routing (the crash is logged here either way).
+func (n *stepNode) reopenCrashedSession(ctx context.Context, st *RunState, deps Deps, step *workflow.StepNode) {
+	if !crashReopenEnabled() || st == nil || step == nil || step.AdapterRef == "" {
+		return
+	}
+	if !st.CrashedFunctionalSessions.contains(step.AdapterRef) {
+		return
+	}
+	if err := deps.Sessions.ReopenCrashedSession(ctx, step.AdapterRef); err != nil {
+		slog.Warn("adapter session re-open failed; step keeps the dead session",
+			"step", step.Name, "session", step.AdapterRef, "error", err)
+		return
+	}
+	st.CrashedFunctionalSessions.forget(step.AdapterRef)
+}
+
 // recordCommentSessionCrash records the adapter reference of a comment_* step
 // whose failure was an adapter session crash (CRI-130). Recording happens
 // whether or not the comment step's own failure was suppressible: the session
@@ -1011,6 +1051,10 @@ func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps De
 			return adapter.Result{}, err
 		}
 
+		// CRI-271: give the step a live session when an earlier functional
+		// step crashed on the same adapter reference.
+		n.reopenCrashedSession(ctx, st, deps, step)
+
 		// W07: each attempt (including retries) counts as one visit toward max_visits.
 		if err := n.incrementVisit(st); err != nil {
 			return adapter.Result{}, err
@@ -1043,6 +1087,13 @@ func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps De
 		}
 
 		lastErr = err
+		// CRI-271: record a session crash at a functional (non-comment_*) step
+		// so follow-on steps re-open the dead session instead of replaying
+		// its crash error. Comment-step crashes stay with the CRI-130
+		// machinery (CrashedCommentSessions).
+		if isSessionCrashError(err) && !isBestEffortCommentStep(step) {
+			st.CrashedFunctionalSessions.record(step.AdapterRef)
+		}
 		if _, hasFailure := step.Outcomes["failure"]; hasFailure {
 			deps.Sink.OnStepOutcome(step.Name, "failure", dur, err)
 			return n.commentStepFailureOutcome(st, step, err), nil

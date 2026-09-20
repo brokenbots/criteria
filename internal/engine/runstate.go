@@ -105,6 +105,21 @@ type RunState struct {
 	// wherever a follow-on step executes in the run.
 	CrashedCommentSessions *crashedSessionRefs
 
+	// CrashedFunctionalSessions records adapter references whose adapter
+	// session crashed at a functional (non-comment_*) step (CRI-271). The
+	// default on_crash=fail policy leaves the session registered but dead,
+	// so follow-on steps on the same reference — the run's bookkeeping, e.g.
+	// comment_handler_failed and set_review_state after a mid-turn develop
+	// crash — replay the crash error and bury the run's state. Before
+	// executing a step whose reference is registered here, the engine
+	// re-opens the session (SessionManager.ReopenCrashedSession) and forgets
+	// the entry on success, so a later genuine crash is recorded afresh.
+	// Comment-step crashes are governed by CrashedCommentSessions (CRI-130)
+	// and are never recorded here. Nil-safe: a nil set records nothing and
+	// matches nothing. The set is shared by reference across parallel
+	// iteration states and subworkflow bodies (like Visits).
+	CrashedFunctionalSessions *crashedSessionRefs
+
 	firstStep        bool
 	firstStepAttempt int
 }
@@ -142,6 +157,18 @@ func (s *crashedSessionRefs) contains(ref string) bool {
 	defer s.mu.Unlock()
 	_, ok := s.refs[ref]
 	return ok
+}
+
+// forget removes a reference from the set (CRI-271). Called after a
+// successful re-open: the session is live again, so a later genuine crash
+// must be recorded afresh instead of finding the stale entry.
+func (s *crashedSessionRefs) forget(ref string) {
+	if s == nil || ref == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.refs, ref)
 }
 
 // TopCursor returns a pointer to the innermost IterCursor, or nil when no

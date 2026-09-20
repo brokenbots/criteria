@@ -512,6 +512,10 @@ func buildParallelIterState(i, total int, item, key cty.Value, st *RunState, vis
 		ParallelSemCache:       st.ParallelSemCache,
 		ParallelSemMu:          st.ParallelSemMu,
 		CrashedCommentSessions: st.CrashedCommentSessions,
+		// CRI-271: parallel iterations share the crashed-functional-session set
+		// so a crash recorded in one iteration is re-opened by follow-on steps
+		// in any other.
+		CrashedFunctionalSessions: st.CrashedFunctionalSessions,
 		Vars: workflow.WithEachBinding(st.Vars, &workflow.EachBinding{
 			Value: item,
 			Key:   key,
