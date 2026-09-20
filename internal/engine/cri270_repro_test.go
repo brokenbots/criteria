@@ -13,7 +13,12 @@ package engine
 // adapter through the per-step input key it already honors
 // ("working_directory"), injected only when the step does not set one —
 // per-step inputs keep winning, local/container sessions keep their
-// customizer-owned cwd, and the compiled step node is never mutated.
+// customizer-owned cwd, and the compiled step node is never mutated. The
+// injection is additionally gated on the adapter's declared input surface
+// (the InputSchema captured at the verify handshake): a non-empty surface
+// that does not declare working_directory never receives the key, so
+// adapters that forward arbitrary input keys onward (e.g. mcp tool
+// arguments) are not corrupted; nil/empty surfaces stay permissive.
 //
 // These tests pin that contract at the session boundary: a remote-path step
 // Execute must deliver the resolved environment working_directory as input
@@ -35,10 +40,13 @@ import (
 
 // recordingHandle is an adapterhost.Handle that records the Input map of every
 // step handed to Execute, so tests can assert exactly what the adapter
-// received on the wire.
+// received on the wire. schema, when non-nil, is returned from Info so the
+// host caches the adapter's declared input surface during the verify
+// handshake (the withRemoteWorkingDir gate reads it).
 type recordingHandle struct {
 	mu     sync.Mutex
 	inputs []map[string]string
+	schema *workflow.AdapterInfo
 }
 
 func (h *recordingHandle) record(step *workflow.StepNode) {
@@ -67,7 +75,11 @@ func (h *recordingHandle) inputAt(i int) map[string]string {
 }
 
 func (h *recordingHandle) Info(context.Context) (adapterhost.Info, error) {
-	return adapterhost.Info{Name: "noop", Version: "test"}, nil
+	info := adapterhost.Info{Name: "noop", Version: "test"}
+	if h.schema != nil {
+		info.AdapterInfo = *h.schema
+	}
+	return info, nil
 }
 func (h *recordingHandle) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
@@ -294,5 +306,133 @@ state "done" {
 	}
 	if got, ok := handle.inputAt(0)["working_directory"]; ok {
 		t.Fatalf("local session must receive no injected working_directory, got %q", got)
+	}
+}
+
+// compileCRI270RemoteSchemaGraph compiles the same per-scope remote shape as
+// compileCRI270RemoteGraph, but its single step carries a regular input key
+// (no working_directory), so the gating tests can pin exactly what the
+// adapter receives when the engine's declared-input-surface gate is in play.
+// The declared surface itself is authored by the adapter binary (returned
+// from Info during the verify handshake), mirroring how a manifest-declared
+// adapter surface reaches the host.
+func compileCRI270RemoteSchemaGraph(t *testing.T, envWorkingDir string) *workflow.FSMGraph {
+	t.Helper()
+	return compile(t, fmt.Sprintf(`
+workflow {
+  name = "cri270-remote-schema"
+  version = "0.1"
+  initial_state = "work"
+  target_state  = "done"
+}
+
+environment "remote" "prod" {
+  listen_address     = "127.0.0.1:0"
+  per_scope_sessions = true
+  working_directory  = %q
+}
+
+adapter "noop" "default" {
+  environment = remote.prod
+}
+
+step "work" {
+  target = adapter.noop.default
+  input {
+    task = "run-intake"
+  }
+  outcome "success" { next = state.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}`, envWorkingDir))
+}
+
+// TestEngine_CRI270_InjectionGatedOnDeclaredInputSchema pins the review gate:
+// a remote adapter whose declared input surface does NOT include
+// working_directory must never receive the engine-injected key. The mcp
+// adapter forwards every non-reserved input key to its MCP server as a tool
+// argument, so an injected undeclared key would corrupt every tool call, and
+// the nested callee path (calleeInputFromArgs) already rejects undeclared
+// keys — the engine injection must not create them.
+func TestEngine_CRI270_InjectionGatedOnDeclaredInputSchema(t *testing.T) {
+	ctx := context.Background()
+	envWorkingDir := t.TempDir()
+	g := compileCRI270RemoteSchemaGraph(t, envWorkingDir)
+
+	handle := &recordingHandle{schema: &workflow.AdapterInfo{
+		InputSchema: map[string]workflow.ConfigField{
+			"task": {Type: workflow.ConfigFieldString},
+		},
+	}}
+	sessions := adapterhost.NewSessionManager(&fakeLoader{})
+	sessions.SetGraph(g)
+	sessions.SetRemoteShim(newFakeRemoteShim(handle))
+	initCRI270Scope(t, g, sessions)
+
+	work := g.Steps["work"]
+	if work == nil {
+		t.Fatal("fixture must declare step work")
+	}
+	if _, err := sessions.Execute(ctx, "noop.default", work, noopEventSink{}); err != nil {
+		t.Fatalf("execute work: %v", err)
+	}
+	if n := handle.inputCount(); n != 1 {
+		t.Fatalf("adapter executed %d time(s), want 1", n)
+	}
+	got := handle.inputAt(0)
+	if _, ok := got["working_directory"]; ok {
+		t.Fatal("adapter with a declared input surface lacking working_directory must not receive the engine-injected key (CRI-270 review gate)")
+	}
+	if got["task"] != "run-intake" {
+		t.Fatalf("adapter input task = %q, want run-intake (the step input must reach the adapter verbatim)", got["task"])
+	}
+	if _, ok := work.Input["working_directory"]; ok {
+		t.Fatal("compiled step Input was mutated by the gated injection")
+	}
+}
+
+// TestEngine_CRI270_InjectionOnDeclaredWorkingDirKey pins the positive side
+// of the gate: a remote adapter whose declared input surface explicitly
+// includes working_directory still receives the engine-injected environment
+// working_directory (the standard per-scope shell-style adapter shape), with
+// the step's own input keys preserved and the compiled step unmutated.
+func TestEngine_CRI270_InjectionOnDeclaredWorkingDirKey(t *testing.T) {
+	ctx := context.Background()
+	envWorkingDir := t.TempDir()
+	g := compileCRI270RemoteSchemaGraph(t, envWorkingDir)
+
+	handle := &recordingHandle{schema: &workflow.AdapterInfo{
+		InputSchema: map[string]workflow.ConfigField{
+			"task":              {Type: workflow.ConfigFieldString},
+			"working_directory": {Type: workflow.ConfigFieldString},
+		},
+	}}
+	sessions := adapterhost.NewSessionManager(&fakeLoader{})
+	sessions.SetGraph(g)
+	sessions.SetRemoteShim(newFakeRemoteShim(handle))
+	initCRI270Scope(t, g, sessions)
+
+	work := g.Steps["work"]
+	if work == nil {
+		t.Fatal("fixture must declare step work")
+	}
+	if _, err := sessions.Execute(ctx, "noop.default", work, noopEventSink{}); err != nil {
+		t.Fatalf("execute work: %v", err)
+	}
+	if n := handle.inputCount(); n != 1 {
+		t.Fatalf("adapter executed %d time(s), want 1", n)
+	}
+	got := handle.inputAt(0)
+	if got["working_directory"] != envWorkingDir {
+		t.Fatalf("adapter input working_directory = %q, want the injected environment working_directory %q", got["working_directory"], envWorkingDir)
+	}
+	if got["task"] != "run-intake" {
+		t.Fatalf("adapter input task = %q, want run-intake (the injection must not displace step input)", got["task"])
+	}
+	if _, ok := work.Input["working_directory"]; ok {
+		t.Fatal("compiled step Input was mutated by the injection")
 	}
 }

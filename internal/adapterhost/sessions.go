@@ -1066,7 +1066,10 @@ func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterNam
 
 // cachedAdapterInfo returns the AdapterInfo captured during the adapter's
 // phase-1 handshake, or nil when the adapter has no cached surface (directly
-// bound test fixtures). Thread-safe.
+// bound test fixtures). A nil or empty InputSchema on the captured surface
+// means the adapter declares no input keys (any input key accepted); a
+// non-empty surface is authoritative — keys it does not declare must not be
+// delivered to the adapter. Thread-safe.
 func (m *SessionManager) cachedAdapterInfo(name string) *workflow.AdapterInfo {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1192,12 +1195,14 @@ func (m *SessionManager) adapterDeclaration(instanceID string) (*workflow.Adapte
 
 // withRemoteWorkingDir returns the step to hand to the adapter handle,
 // injecting the session's resolved environment working_directory as the
-// "working_directory" input for remote adapters (CRI-270). A remote adapter
-// process is launched by the remote host (e.g. a per-scope operator pod), not
-// by this engine, so buildCommandCustomizer's launch-cwd path never applies
-// to it and the directory only reaches the adapter through the per-step
-// input key it already honors. Injection is additive: a step that declares
-// its own working_directory input wins. The compiled step is never mutated —
+// "working_directory" input for remote adapters (CRI-270) whose declared
+// input surface accepts the key, so the key never reaches an adapter that
+// does not honor it. A remote adapter process is launched by the remote host
+// (e.g. a per-scope operator pod), not by this engine, so
+// buildCommandCustomizer's launch-cwd path never applies to it and the
+// directory only reaches the adapter through the per-step input key it
+// already honors. Injection is additive: a step that declares its own
+// working_directory input wins. The compiled step is never mutated —
 // a shallow copy carries the augmented input map. Local and container
 // adapters keep their customizer/runner cwd behavior and receive no
 // injection.
@@ -1207,6 +1212,17 @@ func (m *SessionManager) withRemoteWorkingDir(sess *Session, step *workflow.Step
 	}
 	if _, ok := step.Input["working_directory"]; ok {
 		return step
+	}
+	// A declared, non-empty input surface is authoritative: delivering an
+	// undeclared key would leak the engine-authored key into adapters that
+	// forward arbitrary input keys onward (e.g. the mcp adapter turns every
+	// non-reserved input key into an MCP tool argument). A nil or empty
+	// surface stays permissive — the rest of the engine treats the zero-value
+	// AdapterInfo as "any keys accepted".
+	if info := m.cachedAdapterInfo(sess.Name); info != nil && len(info.InputSchema) > 0 {
+		if _, declared := info.InputSchema["working_directory"]; !declared {
+			return step
+		}
 	}
 	cp := *step
 	cp.Input = make(map[string]string, len(step.Input)+1)
