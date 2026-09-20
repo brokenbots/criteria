@@ -124,6 +124,12 @@ func TestCriteriaVersionConstraintAllow(t *testing.T) {
 		{"build metadata ignored", ">=0.5.8", "v0.5.8+dirty", true},
 		{"exact build metadata allowed", "=0.5.8", "0.5.8+dirty", true},
 
+		// git-describe dev builds evaluate as the stable base version with
+		// build metadata (the normalization is exercised at the version
+		// package level; here it is the plain semver result).
+		{"describe build metadata satisfies stable range", ">=0.5.9, <0.6.0", "0.5.24+build.12.g870e28f", true},
+		{"describe build metadata below next patch", ">=0.5.25, <0.6.0", "0.5.24+build.12.g870e28f", false},
+
 		// prerelease precedence
 		{"prerelease below stable lower bound", ">=0.5.8", "0.5.9-rc1", false},
 		{"prerelease satisfies explicit prerelease bound", ">=0.5.9-rc1", "0.5.9-rc1", true},
@@ -163,6 +169,55 @@ func TestCriteriaVersionConstraintExampleVersion(t *testing.T) {
 			assert.Equal(t, tc.want, c.ExampleVersion())
 		})
 	}
+}
+
+// TestCheckCriteriaVersionGitDescribeBuilds exercises the end-to-end engine
+// version gate with raw git describe build identifiers embedded by the build
+// (CRI-266): dev builds cut after a stable tag must satisfy stable ranges,
+// while prerelease forms keep the stable-lower-bound rejection.
+func TestCheckCriteriaVersionGitDescribeBuilds(t *testing.T) {
+	orig := version.Version
+	defer func() { version.Version = orig }()
+
+	t.Run("dev build ahead of tag satisfies stable range", func(t *testing.T) {
+		version.Version = "v0.5.24-12-g870e28f"
+		diags := checkCriteriaVersion("wf", ">=0.5.9, <0.6.0", nil, nil)
+		assert.False(t, diags.HasErrors())
+	})
+
+	t.Run("dev build stays bound by its stable base", func(t *testing.T) {
+		version.Version = "v0.5.24-12-g870e28f"
+		diags := checkCriteriaVersion("wf", ">=0.5.25, <0.6.0", nil, nil)
+		require.True(t, diags.HasErrors())
+		assert.Contains(t, diags.Error(), `workflow "wf" requires Criteria >=0.5.25, <0.6.0; running engine is v0.5.24+build.12.g870e28f`)
+	})
+
+	t.Run("dev build exact match ignores build metadata", func(t *testing.T) {
+		version.Version = "v0.5.24-12-g870e28f"
+		diags := checkCriteriaVersion("wf", "=0.5.24", nil, nil)
+		assert.False(t, diags.HasErrors())
+	})
+
+	t.Run("rc prerelease still rejected against stable lower bound", func(t *testing.T) {
+		version.Version = "v0.5.25-rc1"
+		diags := checkCriteriaVersion("wf", ">=0.5.24, <0.6.0", nil, nil)
+		require.True(t, diags.HasErrors())
+		assert.Contains(t, diags.Error(), `running engine is v0.5.25-rc1`)
+	})
+
+	t.Run("describe off a prerelease tag still rejected", func(t *testing.T) {
+		version.Version = "v0.5.25-rc1-3-g870e28f"
+		diags := checkCriteriaVersion("wf", ">=0.5.24, <0.6.0", nil, nil)
+		require.True(t, diags.HasErrors())
+		assert.Contains(t, diags.Error(), `running engine is v0.5.25-rc1-3-g870e28f`)
+	})
+
+	t.Run("invalid describe with dirty suffix still rejected", func(t *testing.T) {
+		version.Version = "v0.5.24-12-g870e28f-dirty"
+		diags := checkCriteriaVersion("wf", ">=0.5.9, <0.6.0", nil, nil)
+		require.True(t, diags.HasErrors())
+		assert.Contains(t, diags.Error(), `running engine is v0.5.24-12-g870e28f-dirty`)
+	})
 }
 
 func TestCheckCriteriaVersionDiagnostics(t *testing.T) {
