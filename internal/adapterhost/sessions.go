@@ -576,8 +576,8 @@ type Session struct {
 	// processes for one crash.
 	reopenMu sync.Mutex
 
-	currentSink    adapter.EventSink
-	currentSinkMu  sync.Mutex
+	currentSink   adapter.EventSink
+	currentSinkMu sync.Mutex
 
 	// WS15: MergeBuffer interleaves log and adapter events by timestamp.
 	mergeBuf *log.MergeBuffer
@@ -1787,10 +1787,10 @@ func (m *SessionManager) handleCrash(ctx context.Context, name string, step *wor
 	switch onCrash {
 	case OnCrashRespawn:
 		sink.Adapter("session.respawned", map[string]any{
-			"session": sess.Name,
-			"adapter": sess.Adapter,
-			"error":   execErr.Error(),
-			"crash_reason":  reason,
+			"session":               sess.Name,
+			"adapter":               sess.Adapter,
+			"error":                 execErr.Error(),
+			"crash_reason":          reason,
 			"idle_since_last_event": idleStringOrEmpty(sess),
 		})
 		if respawnErr := m.respawn(ctx, sess); respawnErr != nil {
@@ -1808,11 +1808,11 @@ func (m *SessionManager) handleCrash(ctx context.Context, name string, step *wor
 		return m.failResult(sink, sess, retryErr)
 	case OnCrashAbortRun:
 		sink.Adapter("session.crash", map[string]any{
-			"session": sess.Name,
-			"adapter": sess.Adapter,
-			"policy":  onCrash,
-			"error":   execErr.Error(),
-			"crash_reason":         reason,
+			"session":               sess.Name,
+			"adapter":               sess.Adapter,
+			"policy":                onCrash,
+			"error":                 execErr.Error(),
+			"crash_reason":          reason,
 			"idle_since_last_event": idleStringOrEmpty(sess),
 		})
 		return adapter.Result{Outcome: "failure"}, &FatalRunError{Err: fmt.Errorf("session %q crashed and on_crash=abort_run", name)}
@@ -2274,11 +2274,11 @@ func (s *Session) resetLogStreamState() {
 
 func (m *SessionManager) failResult(sink adapter.EventSink, sess *Session, err error) (adapter.Result, error) {
 	sink.Adapter("session.crash", map[string]any{
-		"session": sess.Name,
-		"adapter": sess.Adapter,
-		"policy":  sess.OnCrash,
-		"error":   err.Error(),
-		"crash_reason":         classifySessionCrash(sess, err),
+		"session":               sess.Name,
+		"adapter":               sess.Adapter,
+		"policy":                sess.OnCrash,
+		"error":                 err.Error(),
+		"crash_reason":          classifySessionCrash(sess, err),
 		"idle_since_last_event": idleStringOrEmpty(sess),
 	})
 	return adapter.Result{Outcome: "failure"}, &SessionCrashError{Session: sess.Name, Err: err}
