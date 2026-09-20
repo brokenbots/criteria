@@ -64,7 +64,7 @@ func checkRequiredVars(body *workflow.FSMGraph, parentInput cty.Value) error {
 //
 // The returned child vars represent the body's final execution scope and are
 // used by the caller to evaluate output{} block expressions.
-func runWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry string, childVars map[string]cty.Value, workflowDir string, deps Deps, rlc *remoteLifecycleContext, scopeName string, parallelCeiling int, parallelSem chan struct{}, parallelSemCache map[parallelSemKey]chan struct{}, parallelSemMu *sync.Mutex, crashedCommentSessions *crashedSessionRefs, crashedFunctionalSessions *crashedSessionRefs, ancestors ...string) (terminal string, returnOutputs, finalVars map[string]cty.Value, err error) {
+func runWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry string, childVars map[string]cty.Value, workflowDir string, deps Deps, rlc *remoteLifecycleContext, scopeName string, parallelCeiling int, parallelSem chan struct{}, parallelSemCache map[parallelSemKey]chan struct{}, parallelSemMu *sync.Mutex, crashedCommentSessions, crashedFunctionalSessions *crashedSessionRefs, ancestors ...string) (terminal string, returnOutputs, finalVars map[string]cty.Value, err error) {
 	bodyEntry, err = resolveBodyEntry(body, bodyEntry)
 	if err != nil {
 		return "", nil, nil, err
@@ -93,7 +93,7 @@ func resolveBodyEntry(body *workflow.FSMGraph, bodyEntry string) (string, error)
 	return bodyEntry, nil
 }
 
-func startWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry string, childVars map[string]cty.Value, workflowDir string, deps Deps, rlc *remoteLifecycleContext, scopeName string, parallelCeiling int, parallelSem chan struct{}, parallelSemCache map[parallelSemKey]chan struct{}, parallelSemMu *sync.Mutex, crashedCommentSessions *crashedSessionRefs, crashedFunctionalSessions *crashedSessionRefs, ancestors []string) ([]string, *RunState, error) {
+func startWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry string, childVars map[string]cty.Value, workflowDir string, deps Deps, rlc *remoteLifecycleContext, scopeName string, parallelCeiling int, parallelSem chan struct{}, parallelSemCache map[parallelSemKey]chan struct{}, parallelSemMu *sync.Mutex, crashedCommentSessions, crashedFunctionalSessions *crashedSessionRefs, ancestors []string) ([]string, *RunState, error) {
 	// CRI-88: subworkflow secret origins are not independently tracked today; the
 	// child scope already carries resolved values from the parent. Passing nil
 	// means adapter session snapshots for child-scope secrets fall back to an

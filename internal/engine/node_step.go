@@ -832,6 +832,34 @@ func (n *stepNode) reopenCrashedSession(ctx context.Context, st *RunState, deps 
 	st.CrashedFunctionalSessions.forget(step.AdapterRef)
 }
 
+// executeStepTimed runs one attempt under the step's timeout (if any) and
+// returns the result with its wall-clock duration.
+func (n *stepNode) executeStepTimed(ctx context.Context, deps Deps, step *workflow.StepNode) (adapter.Result, time.Duration, error) {
+	stepCtx := ctx
+	var cancel context.CancelFunc
+	if step.Timeout > 0 {
+		stepCtx, cancel = context.WithTimeout(ctx, step.Timeout)
+	}
+
+	start := time.Now()
+	result, err := n.executeStep(stepCtx, deps, step)
+	if cancel != nil {
+		cancel()
+	}
+	return result, time.Since(start), err
+}
+
+// recordFunctionalSessionCrash records an adapter reference whose session
+// crashed at a functional (non-comment_*) step (CRI-271) so follow-on steps
+// re-open the dead session instead of replaying its crash error. Comment-step
+// crashes stay with the CRI-130 machinery (CrashedCommentSessions).
+func (n *stepNode) recordFunctionalSessionCrash(st *RunState, step *workflow.StepNode, err error) {
+	if !isSessionCrashError(err) || isBestEffortCommentStep(step) {
+		return
+	}
+	st.CrashedFunctionalSessions.record(step.AdapterRef)
+}
+
 // recordCommentSessionCrash records the adapter reference of a comment_* step
 // whose failure was an adapter session crash (CRI-130). Recording happens
 // whether or not the comment step's own failure was suppressible: the session
@@ -1062,18 +1090,7 @@ func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps De
 
 		deps.Sink.OnStepEntered(step.Name, n.stepAdapterName(), attempt)
 
-		stepCtx := ctx
-		var cancel context.CancelFunc
-		if step.Timeout > 0 {
-			stepCtx, cancel = context.WithTimeout(ctx, step.Timeout)
-		}
-
-		start := time.Now()
-		result, err := n.executeStep(stepCtx, deps, step)
-		if cancel != nil {
-			cancel()
-		}
-		dur := time.Since(start)
+		result, dur, err := n.executeStepTimed(ctx, deps, step)
 
 		if err == nil {
 			deps.Sink.OnStepOutcome(step.Name, result.Outcome, dur, nil)
@@ -1087,13 +1104,7 @@ func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps De
 		}
 
 		lastErr = err
-		// CRI-271: record a session crash at a functional (non-comment_*) step
-		// so follow-on steps re-open the dead session instead of replaying
-		// its crash error. Comment-step crashes stay with the CRI-130
-		// machinery (CrashedCommentSessions).
-		if isSessionCrashError(err) && !isBestEffortCommentStep(step) {
-			st.CrashedFunctionalSessions.record(step.AdapterRef)
-		}
+		n.recordFunctionalSessionCrash(st, step, err)
 		if _, hasFailure := step.Outcomes["failure"]; hasFailure {
 			deps.Sink.OnStepOutcome(step.Name, "failure", dur, err)
 			return n.commentStepFailureOutcome(st, step, err), nil

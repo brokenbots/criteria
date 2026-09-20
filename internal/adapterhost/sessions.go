@@ -1958,6 +1958,13 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 		return result, nil
 	}
 
+	return m.executeError(ctx, name, step, sess, sink, result, execErr)
+}
+
+// executeError classifies a failed Execute call: expected closes (an explicit
+// Close/Shutdown or a host-canceled context) and plain step errors are
+// returned as-is; likely session crashes route to handleCrash (CRI-271).
+func (m *SessionManager) executeError(ctx context.Context, name string, step *workflow.StepNode, sess *Session, sink adapter.EventSink, result adapter.Result, execErr error) (adapter.Result, error) {
 	// An explicit Close/Shutdown (closing flag) or a host-canceled context
 	// (run timeout, user abort) both cause the gRPC stream to produce
 	// EOF/broken-pipe errors. Check this before the string heuristic so
