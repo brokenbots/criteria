@@ -66,13 +66,18 @@ var probeTruePath = "/bin/true"
 
 func probeUserNamespaces() bool {
 	// The canonical check is /proc/sys/kernel/unprivileged_userns_clone
-	// (Debian/Ubuntu specific). If absent, test in a child process so we
-	// never pollute the Go thread pool with a thread in a different
+	// (Debian/Ubuntu specific). A value of 1 only means the kernel would
+	// permit unprivileged user namespaces — a container runtime seccomp
+	// profile can still deny the clone, so the value is never trusted on
+	// its own: the authoritative answer comes from the child-process probe,
+	// which also keeps the Go thread pool free of a thread in a different
 	// user namespace.
 	b, err := os.ReadFile("/proc/sys/kernel/unprivileged_userns_clone")
 	if err == nil {
 		val, _ := strconv.Atoi(strings.TrimSpace(string(b)))
-		return val == 1
+		if val == 0 {
+			return false
+		}
 	}
 	return probeUserNamespacesFallback()
 }

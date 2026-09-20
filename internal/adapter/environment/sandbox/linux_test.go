@@ -599,6 +599,9 @@ func TestShimIntegration(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("linux only")
 	}
+	if caps := Probe(); !caps.UserNamespaces {
+		t.Skip("user namespaces not available")
+	}
 
 	dir := t.TempDir()
 	helper := filepath.Join(dir, "sandbox_helper")
