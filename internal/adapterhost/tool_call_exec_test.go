@@ -70,9 +70,11 @@ func (r *nestedCalleeRecorder) calleeStep() *workflow.StepNode {
 // requests, and returns configurable outputs or an error.
 // CRI-161 test hooks are args-driven so one adapter instance can serve
 // concurrent nested Executes: a task value of "block" blocks until the
-// nested Execute context is done (recording what the callee observed), and
-// "slow" delays long enough for a faster sibling call to complete first —
-// which is what makes interleaved reply delivery observable.
+// nested Execute context is done (recording what the callee observed),
+// "slow" delays long enough for a released sibling call to complete first
+// — which is what makes interleaved reply delivery observable — and "hold"
+// blocks until the test releases it, so a call's reply order can be pinned
+// deterministically.
 type nestedCalleeAdapter struct {
 	rec       *nestedCalleeRecorder
 	permTools []string // plain permission.request tools to emit (distinct request ids)
@@ -848,7 +850,7 @@ func withExecCtx(sink *permissionInterceptSink, execCtx context.Context) *permis
 // arrive, returning them in arrival order (any interleaved grant/cancel
 // events are skipped). Arrival order is the observable for interleaved
 // in-flight calls: ordered replies are explicitly NOT assumed by the
-// Permissions stream contract, but the slow/fast fixture makes the fast
+// Permissions stream contract, but the hold/slow fixture makes the released
 // sibling deterministic first.
 func readToolCallResults(t *testing.T, ps *permissionState, n int) []*v2.ToolCallResult {
 	t.Helper()
@@ -871,16 +873,17 @@ func pendingCount(t *testing.T, ps *permissionState) int {
 }
 
 // TestNestedToolCall_InterleavedReplies (CRI-161): two tool calls issued from
-// one caller session with the second call faster than the first. The calls
-// run concurrently, the fast call's reply arrives first, and each reply
-// carries its own call's outputs — correlation is by request_id, not by
-// reply order.
+// one caller session, the second held open until the first is confirmed
+// in flight. The calls run concurrently, the released call's reply arrives
+// first, and each reply carries its own call's outputs — correlation is by
+// request_id, not by reply order.
 func TestNestedToolCall_InterleavedReplies(t *testing.T) {
 	audit := &sliceAuditWriter{}
 	calleeRec := &nestedCalleeRecorder{}
+	callee := &nestedCalleeAdapter{rec: calleeRec, holdRelease: make(chan struct{})}
 	sm := newNestedToolCallManager(t,
 		&nestedCallerAdapter{target: nestedCallTarget},
-		&nestedCalleeAdapter{rec: calleeRec},
+		callee,
 	)
 	sm.Audit = audit
 	sm.SetGraph(compileNestedToolCallGraph(t))
@@ -897,8 +900,11 @@ func TestNestedToolCall_InterleavedReplies(t *testing.T) {
 	sink, ps := directToolCallSink(t, sm, audit, nestedCallerStep(), sm.graph, 0)
 
 	// Issue both calls back-to-back: dispatch is asynchronous, so both are
-	// in flight before either completes. The first call is slow, the second
-	// fast, so the fast sibling's reply must arrive first.
+	// in flight before either completes. The first call is slow; the second
+	// holds until the test releases it below, so it cannot complete — and
+	// clear its pending entry — before the in-flight assertion observes both
+	// registrations. After the release, the held call finishes while the slow
+	// sibling still sleeps, so its reply deterministically arrives first.
 	sink.Adapter("permission.request", map[string]any{
 		"request_id": "call-1",
 		"target":     nestedCallTarget,
@@ -907,18 +913,19 @@ func TestNestedToolCall_InterleavedReplies(t *testing.T) {
 	sink.Adapter("permission.request", map[string]any{
 		"request_id": "call-2",
 		"target":     nestedCallTarget,
-		"args":       map[string]any{"task": "fast"},
+		"args":       map[string]any{"task": "hold"},
 	})
 	if got := pendingCount(t, ps); got != 2 {
 		t.Fatalf("pending registry = %d entries, want 2 in-flight calls", got)
 	}
+	close(callee.holdRelease)
 
 	results := readToolCallResults(t, ps, 2)
 	if len(results) != 2 {
 		t.Fatalf("got %d results, want 2", len(results))
 	}
 	if id := results[0].RequestId; id != "call-2" {
-		t.Errorf("first result = %q, want call-2 (fast call completed first)", id)
+		t.Errorf("first result = %q, want call-2 (released call completed first)", id)
 	}
 	if id := results[1].RequestId; id != "call-1" {
 		t.Errorf("second result = %q, want call-1", id)
@@ -942,8 +949,8 @@ func TestNestedToolCall_InterleavedReplies(t *testing.T) {
 			report2 = typed.GetAttr("report").AsString()
 		}
 	}
-	if report1 != "slow" || report2 != "fast" {
-		t.Errorf("outputs reports = call-1:%q call-2:%q, want slow/fast (correlated by request_id)", report1, report2)
+	if report1 != "slow" || report2 != "hold" {
+		t.Errorf("outputs reports = call-1:%q call-2:%q, want slow/hold (correlated by request_id)", report1, report2)
 	}
 
 	// Both nested executes ran the callee in its own session and settled.
