@@ -1,15 +1,20 @@
 // Package version provides the single authoritative Criteria engine version.
 //
 // Release builds inject Version via ldflags (e.g.
-// -X github.com/brokenbots/criteria/workflow/version.Version=v0.5.8). When the
-// embedded value cannot be parsed as a semantic version, the engine falls back
-// to the CRITERIA_OVERRIDE_VERSION environment variable for development and
-// testing, but only when the build itself did not ship a release version.
+// -X github.com/brokenbots/criteria/workflow/version.Version=v0.5.8). Git
+// describe output from development builds cut after a stable release tag
+// (vX.Y.Z-N-g<sha>) is normalized to X.Y.Z+build.N.g<sha> so the engine
+// version gate evaluates those builds as the stable base version they are
+// ahead of, never as a prerelease. When the embedded value cannot be parsed
+// as a semantic version, the engine falls back to the CRITERIA_OVERRIDE_VERSION
+// environment variable for development and testing, but only when the build
+// itself did not ship a release version.
 package version
 
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/blang/semver"
@@ -51,7 +56,9 @@ type Info struct {
 //
 // If the embedded Version is a valid semantic version (with an optional leading
 // "v"), it is used unchanged and CRITERIA_OVERRIDE_VERSION is ignored. This
-// prevents environment variables from weakening release builds.
+// prevents environment variables from weakening release builds. Git describe
+// output from a build cut after a stable tag (vX.Y.Z-N-g<sha>) is normalized to
+// X.Y.Z+build.N.g<sha> and likewise counts as a known version.
 //
 // If the embedded Version is "dev" or otherwise unparseable, the function
 // consults CRITERIA_OVERRIDE_VERSION. When that variable is set to a valid
@@ -103,11 +110,42 @@ func With(s string) Info {
 
 func parseVersion(s string) (semver.Version, bool) {
 	s = strings.TrimSpace(s)
-	s = strings.TrimPrefix(s, "v")
 	if s == "" {
 		return semver.Version{}, false
 	}
-	v, err := semver.Parse(s)
+	// Git describe dev builds (vX.Y.Z-N-g<sha>) are N commits AHEAD of the
+	// stable tag X.Y.Z, not prereleases of it; encode the distance as build
+	// metadata so the version gate evaluates them as the stable base version.
+	if v, ok := parseDescribe(s); ok {
+		return v, true
+	}
+	v, err := semver.Parse(strings.TrimPrefix(s, "v"))
+	if err != nil {
+		return semver.Version{}, false
+	}
+	return v, true
+}
+
+// describeRe matches git describe output for a build cut after a stable
+// release tag: vX.Y.Z-<N>-g<sha>, where N is the decimal commit distance from
+// the tag and the last segment is "g" followed by the abbreviated commit SHA.
+var describeRe = regexp.MustCompile(`^v?(\d+\.\d+\.\d+)-(\d+)-(g[0-9a-f]+)$`)
+
+// parseDescribe rewrites git describe output into the semantic version it
+// denotes: vX.Y.Z-N-g<sha> becomes X.Y.Z+build.N.g<sha>, so constraint
+// evaluation treats the build as a stable version with build metadata.
+//
+// Describes cut from prerelease tags (e.g. v0.5.25-rc1-3-g<sha>) do not match:
+// their extra label segment keeps them plain-prerelease parses, which the
+// engine version gate rejects against stable lower bounds. Malformed describes
+// (dirty suffixes, non-numeric distances, non-hex shas) likewise keep the
+// plain parse.
+func parseDescribe(s string) (semver.Version, bool) {
+	m := describeRe.FindStringSubmatch(s)
+	if m == nil {
+		return semver.Version{}, false
+	}
+	v, err := semver.Parse(m[1] + "+build." + m[2] + "." + m[3])
 	if err != nil {
 		return semver.Version{}, false
 	}
