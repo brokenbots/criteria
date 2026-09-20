@@ -1190,6 +1190,33 @@ func (m *SessionManager) adapterDeclaration(instanceID string) (*workflow.Adapte
 	return nil, nil
 }
 
+// withRemoteWorkingDir returns the step to hand to the adapter handle,
+// injecting the session's resolved environment working_directory as the
+// "working_directory" input for remote adapters (CRI-270). A remote adapter
+// process is launched by the remote host (e.g. a per-scope operator pod), not
+// by this engine, so buildCommandCustomizer's launch-cwd path never applies
+// to it and the directory only reaches the adapter through the per-step
+// input key it already honors. Injection is additive: a step that declares
+// its own working_directory input wins. The compiled step is never mutated —
+// a shallow copy carries the augmented input map. Local and container
+// adapters keep their customizer/runner cwd behavior and receive no
+// injection.
+func (m *SessionManager) withRemoteWorkingDir(sess *Session, step *workflow.StepNode) *workflow.StepNode {
+	if step == nil || sess.WorkingDir == "" || !m.isRemoteAdapter(sess.Name) {
+		return step
+	}
+	if _, ok := step.Input["working_directory"]; ok {
+		return step
+	}
+	cp := *step
+	cp.Input = make(map[string]string, len(step.Input)+1)
+	for k, v := range step.Input {
+		cp.Input[k] = v
+	}
+	cp.Input["working_directory"] = sess.WorkingDir
+	return &cp
+}
+
 // isRemoteAdapter returns true when the adapter declaration is bound to a
 // remote environment (or the declaring graph's default environment is remote).
 // The environment resolves against the DECLARING graph so subworkflow adapters
@@ -1712,6 +1739,11 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 		}
 	}
 
+	// CRI-270: remotely dispatched adapters never see the launch-cwd
+	// customizer, so deliver the session's resolved working_directory
+	// through the input contract (per-step input wins).
+	step = m.withRemoteWorkingDir(sess, step)
+
 	sink = m.wrapSink(sink)
 
 	// WS15: heartbeat-stall detection. If no heartbeat has been received for
@@ -1739,7 +1771,6 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 	// nested goroutine's own manager interactions cannot deadlock against
 	// this wait.
 	permSink.waitPending()
-
 	m.maybeOverrideOutcome(permSink, &result)
 
 	if execErr == nil {
