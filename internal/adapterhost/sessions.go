@@ -1054,19 +1054,35 @@ func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterNam
 	// Cache the declared schema surface for nested tool-call execution
 	// (CRI-160). Callees verified but never step-targeted have no compiled
 	// step to carry their schema, so the host keeps it here instead.
-	m.mu.Lock()
-	if m.adapterInfos == nil {
-		m.adapterInfos = make(map[string]*workflow.AdapterInfo)
-	}
-	m.adapterInfos[name] = &info.AdapterInfo
-	m.mu.Unlock()
+	m.cacheAdapterInfo(name, &info.AdapterInfo)
 
 	return info.Capabilities, nil
 }
 
+// cacheAdapterInfo stores the adapter's captured declared surface. It backs
+// the phase-1 verify handshake and the snapshot-restore relaunch (so a
+// restored session keeps its declared surface without re-verifying).
+// Thread-safe.
+func (m *SessionManager) cacheAdapterInfo(name string, info *workflow.AdapterInfo) {
+	if info == nil {
+		return
+	}
+	captured := *info
+	m.mu.Lock()
+	if m.adapterInfos == nil {
+		m.adapterInfos = make(map[string]*workflow.AdapterInfo)
+	}
+	m.adapterInfos[name] = &captured
+	m.mu.Unlock()
+}
+
 // cachedAdapterInfo returns the AdapterInfo captured during the adapter's
-// phase-1 handshake, or nil when the adapter has no cached surface (directly
-// bound test fixtures). Thread-safe.
+// phase-1 handshake or snapshot-restore relaunch, or nil when the adapter
+// has no cached surface (directly bound test fixtures). A nil or empty
+// InputSchema on the captured surface means the adapter declares no input
+// keys (any input key accepted); a non-empty surface is authoritative —
+// keys it does not declare must not be delivered to the adapter.
+// Thread-safe.
 func (m *SessionManager) cachedAdapterInfo(name string) *workflow.AdapterInfo {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1188,6 +1204,67 @@ func (m *SessionManager) adapterDeclaration(instanceID string) (*workflow.Adapte
 		return ref.node, ref.graph
 	}
 	return nil, nil
+}
+
+// withRemoteWorkingDir returns the step to hand to the adapter handle,
+// injecting the session's resolved environment working_directory as the
+// "working_directory" input for remote adapters (CRI-270) that accept the
+// key, so the key never reaches an adapter that does not honor it: an
+// adapter must declare working_directory on a non-empty input surface, or
+// (for a pre-schema binary with no declared surface) be of a type known to
+// honor the input contract. A remote adapter process is launched by the
+// remote host (e.g. a per-scope operator pod), not by this engine, so
+// buildCommandCustomizer's launch-cwd path never applies to it and the
+// directory only reaches the adapter through the per-step input key it
+// already honors. Injection is additive: a step that declares its own
+// working_directory input wins. The compiled step is never mutated —
+// a shallow copy carries the augmented input map. Local and container
+// adapters keep their customizer/runner cwd behavior and receive no
+// injection.
+func (m *SessionManager) withRemoteWorkingDir(sess *Session, step *workflow.StepNode) *workflow.StepNode {
+	if step == nil || sess.WorkingDir == "" || !m.isRemoteAdapter(sess.Name) {
+		return step
+	}
+	if _, ok := step.Input["working_directory"]; ok {
+		return step
+	}
+	if !m.remoteWorkingDirAccepted(sess) {
+		return step
+	}
+	cp := *step
+	cp.Input = make(map[string]string, len(step.Input)+1)
+	for k, v := range step.Input {
+		cp.Input[k] = v
+	}
+	cp.Input["working_directory"] = sess.WorkingDir
+	return &cp
+}
+
+// workingDirInputHonorers lists the adapter types known to honor the
+// engine-authored "working_directory" per-step input key even when their
+// binary declares no input surface (pre-schema releases; the CRI-270 remote
+// delivery reuses the shell adapter's confinement-checked input contract).
+// Dynamic-tool adapters (e.g. mcp) are deliberately absent: they declare no
+// surface and forward every non-reserved input key onward as a tool
+// argument, so an injected undeclared key would corrupt every call.
+var workingDirInputHonorers = map[string]bool{
+	"shell": true,
+}
+
+// remoteWorkingDirAccepted reports whether the target adapter accepts the
+// engine-authored "working_directory" per-step input key. A non-empty
+// declared input surface (cached from the adapter's phase-1 handshake, and
+// re-captured at snapshot restore) is authoritative: the key is delivered
+// only when the adapter declares it. An undeclared surface (nil/empty
+// InputSchema — e.g. a dynamic-tool adapter) receives the key only from an
+// adapter type known to honor the input contract, independently of the
+// cache.
+func (m *SessionManager) remoteWorkingDirAccepted(sess *Session) bool {
+	if info := m.cachedAdapterInfo(sess.Name); info != nil && len(info.InputSchema) > 0 {
+		_, declared := info.InputSchema["working_directory"]
+		return declared
+	}
+	return workingDirInputHonorers[sess.Adapter]
 }
 
 // isRemoteAdapter returns true when the adapter declaration is bound to a
@@ -1712,6 +1789,11 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 		}
 	}
 
+	// CRI-270: remotely dispatched adapters never see the launch-cwd
+	// customizer, so deliver the session's resolved working_directory
+	// through the input contract (per-step input wins).
+	step = m.withRemoteWorkingDir(sess, step)
+
 	sink = m.wrapSink(sink)
 
 	// WS15: heartbeat-stall detection. If no heartbeat has been received for
@@ -1739,7 +1821,6 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 	// nested goroutine's own manager interactions cannot deadlock against
 	// this wait.
 	permSink.waitPending()
-
 	m.maybeOverrideOutcome(permSink, &result)
 
 	if execErr == nil {
@@ -2356,6 +2437,10 @@ func (m *SessionManager) Restore(ctx context.Context, name, adapterName, onCrash
 	var caps []string
 	if info, infoErr := plug.Info(ctx); infoErr == nil {
 		caps = append([]string(nil), info.Capabilities...)
+		// Re-capture the declared surface after a snapshot relaunch so a
+		// restored session keeps gating on its declared input contract
+		// (CRI-270) without a re-verify round-trip.
+		m.cacheAdapterInfo(name, &info.AdapterInfo)
 	}
 
 	permState, err := m.restorePermissionState(name, snap.PermissionState)
