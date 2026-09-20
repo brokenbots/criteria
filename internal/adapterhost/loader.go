@@ -32,13 +32,14 @@ import (
 // adapterClientLogger returns the hclog logger handed to go-plugin clients.
 // go-plugin's default logger emits TRACE/DEBUG lines for every handshake and
 // stdio frame, which dominates standalone output, so the floor stays above
-// DEBUG. INFO is kept: go-plugin's "plugin process exited" line is emitted
-// at INFO when the plugin exits cleanly (exit 0), and that line is the
-// observable trace of the silent adapter-process death CRI-271 investigates
-// (a clean shim exit previously disappeared because the floor hid INFO).
+// DEBUG. It also stays above INFO: go-plugin's "plugin process exited" line
+// is emitted at INFO, and CLI commands (validate/lock) stream JSON on stdout
+// while tests capture stderr into the same pipe, where that line corrupts
+// the JSON. Clean- and crash-exit diagnosability comes from ProcessExited
+// and classifySessionCrash instead (CRI-271).
 // Override via CRITERIA_LOG_LEVEL=trace|debug|info|warn|error.
 func adapterClientLogger() hclog.Logger {
-	level := hclog.Info
+	level := hclog.Warn
 	if v := strings.TrimSpace(os.Getenv("CRITERIA_LOG_LEVEL")); v != "" {
 		if parsed := hclog.LevelFromString(v); parsed != hclog.NoLevel {
 			level = parsed
