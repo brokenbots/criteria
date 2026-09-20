@@ -539,8 +539,10 @@ func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManag
 		WorkflowName:           e.graph.Name,
 		RemoteLifecycle:        rlc,
 		CrashedCommentSessions: newCrashedSessionRefs(),
-		firstStep:              true,
-		firstStepAttempt:       firstStepAttempt,
+		// CRI-271: functional-step crash registry for re-open-before-follow-on.
+		CrashedFunctionalSessions: newCrashedSessionRefs(),
+		firstStep:                 true,
+		firstStepAttempt:          firstStepAttempt,
 	}
 	deps := e.buildDeps(sessions, sink)
 
@@ -562,11 +564,11 @@ func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManag
 		}
 		next, err := node.Evaluate(ctx, st, deps)
 		if err != nil {
-			return e.handleEvalError(st, err, sink)
+			return e.handleEvalError(ctx, st, err, sink)
 		}
 		next, err = e.routeIteratingStep(st, next, sink)
 		if err != nil {
-			return e.handleEvalError(st, err, sink)
+			return e.handleEvalError(ctx, st, err, sink)
 		}
 		if next == workflow.ReturnSentinel {
 			e.handleReturnExit(st, sink)
@@ -927,7 +929,10 @@ func (e *Engine) advanceTo(st *RunState, next string) {
 
 // handleEvalError dispatches errors from node.Evaluate. It handles ErrTerminal
 // and ErrPaused specially; all other errors are propagated as run failures.
-func (e *Engine) handleEvalError(st *RunState, err error, sink Sink) error {
+// CRI-271: when the run fails, the error class is logged explicitly so the
+// engine log distinguishes an adapter session crash (a dead session, not a
+// user action) from a host-initiated run cancellation.
+func (e *Engine) handleEvalError(ctx context.Context, st *RunState, err error, sink Sink) error {
 	// Capture the visit state and clear the live pointer so VisitCounts()
 	// returns a stable snapshot after the run ends (W07).
 	e.liveRunState = nil
@@ -964,6 +969,16 @@ func (e *Engine) handleEvalError(st *RunState, err error, sink Sink) error {
 		e.lastVars = st.Vars
 		sink.OnRunPaused(st.Current, mode, st.PendingSignal)
 		return nil
+	}
+	// CRI-271: name the failure class before the generic failure event so
+	// operators can tell an adapter session crash (the shim connection died
+	// mid-turn) from a host-initiated cancellation (run timeout, user abort).
+	var crash *adapterhost.SessionCrashError
+	if errors.As(err, &crash) {
+		slog.Warn("run failed by adapter session crash (not a run cancellation)",
+			"step", st.Current, "session", crash.Session, "error", err)
+	} else if ctxErr := ctx.Err(); ctxErr != nil {
+		slog.Warn("run canceled", "step", st.Current, "reason", ctxErr.Error())
 	}
 	sink.OnRunFailed(err.Error(), st.Current)
 	return err

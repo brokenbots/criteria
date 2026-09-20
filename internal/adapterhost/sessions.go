@@ -555,8 +555,29 @@ type Session struct {
 	logHostCancel  chan struct{} // closed by the host before cancelLog(); per-stream
 	logStreamAlive atomic.Bool
 	hbMonitor      adapter.HeartbeatMonitor
-	currentSink    adapter.EventSink
-	currentSinkMu  sync.Mutex
+
+	// CRI-271: lastEventNs records the unix-nano timestamp of the last
+	// adapter activity observed for this session (log chunk, log-stream
+	// heartbeat, or completed Execute). It powers the
+	// idle_since_last_event field in the crash diagnostics so operators can
+	// tell a long-silent provider connection from a mid-turn drop. Zero
+	// means no activity has been recorded yet.
+	lastEventNs atomic.Int64
+
+	// CRI-271: crashed marks a session whose Execute was classified as a
+	// session crash. Under the default on_crash=fail policy the session
+	// stays registered but dead — every Execute on it replays the crash
+	// error — so the engine consults ReopenCrashedSession before follow-on
+	// steps. Cleared by a successful respawn/re-open.
+	crashed atomic.Bool
+
+	// CRI-271: reopenMu serializes concurrent re-open attempts for this
+	// session so a parallel fan-out does not spawn several replacement
+	// processes for one crash.
+	reopenMu sync.Mutex
+
+	currentSink   adapter.EventSink
+	currentSinkMu sync.Mutex
 
 	// WS15: MergeBuffer interleaves log and adapter events by timestamp.
 	mergeBuf *log.MergeBuffer
@@ -652,12 +673,50 @@ func (s *Session) Inspect(ctx context.Context) (*v2.InspectResponse, error) {
 	return s.handle.Inspect(ctx, s.Name)
 }
 
+// noteActivity records that the adapter showed signs of life (CRI-271).
+// Called for log chunks, log-stream heartbeats, session open, respawn, and
+// completed Executes.
+func (s *Session) noteActivity() {
+	s.lastEventNs.Store(time.Now().UnixNano())
+}
+
+// idleSinceLastEvent reports how long since the adapter's last observable
+// activity (CRI-271). The second return is false when nothing has been
+// recorded yet, in which case no idle claim can be made.
+func (s *Session) idleSinceLastEvent() (time.Duration, bool) {
+	last := s.lastEventNs.Load()
+	if last == 0 {
+		return 0, false
+	}
+	return time.Since(time.Unix(0, last)), true
+}
+
+// NewSessionManager builds a SessionManager with the operator-configurable
+// heartbeat stall threshold (CRI-271). The env override lets operators raise
+// the stall boundary for adapters with long quiet streaming turns without a
+// code change; an empty or malformed value keeps the built-in default.
 func NewSessionManager(loader Loader) *SessionManager {
 	return &SessionManager{
-		loader:   loader,
-		sessions: map[string]*Session{},
-		verified: map[string]*verifiedRecord{},
+		loader:                  loader,
+		sessions:                map[string]*Session{},
+		verified:                map[string]*verifiedRecord{},
+		HeartbeatStallThreshold: heartbeatStallThresholdFromEnv(),
 	}
+}
+
+// heartbeatStallThresholdFromEnv reads CRITERIA_SESSION_HEARTBEAT_STALL
+// (a Go duration such as "5m") and returns it when positive. Any other value
+// yields 0 so the built-in default applies.
+func heartbeatStallThresholdFromEnv() time.Duration {
+	v := strings.TrimSpace(os.Getenv("CRITERIA_SESSION_HEARTBEAT_STALL"))
+	if v == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return 0
+	}
+	return d
 }
 
 // SetDeferredRemoteAdapters marks the given remote adapter instance IDs as ones
@@ -1381,6 +1440,7 @@ func (m *SessionManager) registerSession(ctx context.Context, name, adapterName,
 		sess.AdapterDigest = digest.Digest(a.ResolvedDigest)
 	}
 	m.sessions[name] = sess
+	sess.noteActivity()
 
 	m.startPermissionStream(ctx, sess, plug)
 	m.startLogStream(ctx, sess, plug)
@@ -1468,6 +1528,7 @@ func (m *SessionManager) beginLogStream(ctx context.Context, sess *Session, star
 		sink: sess.mergeBuf,
 		onHeartbeat: func() {
 			sess.hbMonitor.Record()
+			sess.noteActivity()
 		},
 	}
 	cancel, done, err := starter.StartLogStream(ctx, sess.Name, logSink)
@@ -1655,8 +1716,64 @@ func (m *SessionManager) registerSensitiveOutputs(result adapter.Result, step *w
 	}
 }
 
+// classifySessionCrash names the likely cause of an adapter session crash so
+// engine logs answer "which session died and why" (CRI-271). The
+// adapter-process checks come first because a dead process is the most
+// precise diagnosis; the message heuristics then distinguish the transport
+// failure shapes the go-plugin/gRPC stack produces.
+func classifySessionCrash(sess *Session, execErr error) string {
+	if sess != nil && ProcessExited(sess.handle) {
+		return "adapter process exited before the call completed"
+	}
+	if execErr == nil {
+		return "unknown"
+	}
+	msg := strings.ToLower(execErr.Error())
+	switch {
+	case strings.Contains(msg, "heartbeat stall"):
+		return "log-stream heartbeat stall (adapter stopped streaming)"
+	case strings.Contains(msg, "transport is closing"),
+		strings.Contains(msg, "the client connection is closing"):
+		return "gRPC client transport closed (adapter or shim closed the connection)"
+	case strings.Contains(msg, "unavailable"):
+		return "gRPC endpoint unavailable (adapter process gone)"
+	case strings.Contains(msg, "broken pipe"):
+		return "plugin stdio pipe broken (adapter process died)"
+	case strings.Contains(msg, "eof"):
+		return "plugin stdio EOF (adapter process exited or closed its stream)"
+	case strings.Contains(msg, "terminated"):
+		return "adapter process terminated"
+	}
+	return "unknown adapter error"
+}
+
+// crashDiagnostics builds the shared crash-reason fields for logs and sink
+// events (CRI-271): the named cause plus, when known, the idle window since
+// the adapter's last event — the "silent gap" between the last streamed
+// token and the teardown.
+func (s *Session) crashDiagnostics(reason string) []any {
+	args := []any{"crash_reason", reason}
+	if idle, ok := s.idleSinceLastEvent(); ok {
+		args = append(args, "idle_since_last_event", idle.String())
+	}
+	return args
+}
+
+// idleStringOrEmpty renders the idle-since-last-event duration, or "" when
+// the session recorded no activity yet (used inside sink event payloads,
+// which always carry every key).
+func idleStringOrEmpty(sess *Session) string {
+	if idle, ok := sess.idleSinceLastEvent(); ok {
+		return idle.String()
+	}
+	return ""
+}
+
 func (m *SessionManager) handleCrash(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink, sess *Session, execErr error) (adapter.Result, error) {
-	slog.Warn("adapter session crashed", "session", sess.Name, "adapter", sess.Adapter, "error", execErr)
+	reason := classifySessionCrash(sess, execErr)
+	sess.crashed.Store(true)
+	slog.Warn("adapter session crashed",
+		append([]any{"session", sess.Name, "adapter", sess.Adapter, "error", execErr}, sess.crashDiagnostics(reason)...)...)
 
 	// The effective crash policy is the step's (the compiler resolves it as
 	// step-overrides-adapter), falling back to the session's adapter-level policy.
@@ -1670,9 +1787,11 @@ func (m *SessionManager) handleCrash(ctx context.Context, name string, step *wor
 	switch onCrash {
 	case OnCrashRespawn:
 		sink.Adapter("session.respawned", map[string]any{
-			"session": sess.Name,
-			"adapter": sess.Adapter,
-			"error":   execErr.Error(),
+			"session":               sess.Name,
+			"adapter":               sess.Adapter,
+			"error":                 execErr.Error(),
+			"crash_reason":          reason,
+			"idle_since_last_event": idleStringOrEmpty(sess),
 		})
 		if respawnErr := m.respawn(ctx, sess); respawnErr != nil {
 			return m.failResult(sink, sess, fmt.Errorf("respawn after crash failed: %w (original crash: %w)", respawnErr, execErr))
@@ -1689,10 +1808,12 @@ func (m *SessionManager) handleCrash(ctx context.Context, name string, step *wor
 		return m.failResult(sink, sess, retryErr)
 	case OnCrashAbortRun:
 		sink.Adapter("session.crash", map[string]any{
-			"session": sess.Name,
-			"adapter": sess.Adapter,
-			"policy":  onCrash,
-			"error":   execErr.Error(),
+			"session":               sess.Name,
+			"adapter":               sess.Adapter,
+			"policy":                onCrash,
+			"error":                 execErr.Error(),
+			"crash_reason":          reason,
+			"idle_since_last_event": idleStringOrEmpty(sess),
 		})
 		return adapter.Result{Outcome: "failure"}, &FatalRunError{Err: fmt.Errorf("session %q crashed and on_crash=abort_run", name)}
 	default:
@@ -1824,6 +1945,8 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 	m.maybeOverrideOutcome(permSink, &result)
 
 	if execErr == nil {
+		// A completed call proves the session transport was alive (CRI-271).
+		sess.noteActivity()
 		// A nested callee Execute that crashed with on_crash=abort_run latches
 		// its fatal error on the sink (CRI-160): the callee's own crash policy
 		// governs its session, so the error propagates to the engine instead
@@ -1835,6 +1958,13 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 		return result, nil
 	}
 
+	return m.executeError(ctx, name, step, sess, sink, result, execErr)
+}
+
+// executeError classifies a failed Execute call: expected closes (an explicit
+// Close/Shutdown or a host-canceled context) and plain step errors are
+// returned as-is; likely session crashes route to handleCrash (CRI-271).
+func (m *SessionManager) executeError(ctx context.Context, name string, step *workflow.StepNode, sess *Session, sink adapter.EventSink, result adapter.Result, execErr error) (adapter.Result, error) {
 	// An explicit Close/Shutdown (closing flag) or a host-canceled context
 	// (run timeout, user abort) both cause the gRPC stream to produce
 	// EOF/broken-pipe errors. Check this before the string heuristic so
@@ -2046,6 +2176,10 @@ func (m *SessionManager) respawn(ctx context.Context, sess *Session) error {
 	sess.handle = plug
 	sess.SandboxCleanup = cleanup
 	sess.respawned = true
+	// CRI-271: a fresh process is a fresh activity baseline, and the crash
+	// classification no longer applies to the re-opened session.
+	sess.noteActivity()
+	sess.crashed.Store(false)
 
 	m.restartPermissionStream(ctx, sess, plug)
 	m.restartLogStream(ctx, sess, plug)
@@ -2147,10 +2281,12 @@ func (s *Session) resetLogStreamState() {
 
 func (m *SessionManager) failResult(sink adapter.EventSink, sess *Session, err error) (adapter.Result, error) {
 	sink.Adapter("session.crash", map[string]any{
-		"session": sess.Name,
-		"adapter": sess.Adapter,
-		"policy":  sess.OnCrash,
-		"error":   err.Error(),
+		"session":               sess.Name,
+		"adapter":               sess.Adapter,
+		"policy":                sess.OnCrash,
+		"error":                 err.Error(),
+		"crash_reason":          classifySessionCrash(sess, err),
+		"idle_since_last_event": idleStringOrEmpty(sess),
 	})
 	return adapter.Result{Outcome: "failure"}, &SessionCrashError{Session: sess.Name, Err: err}
 }
@@ -2164,6 +2300,48 @@ func normalizeOnCrash(v string) string {
 	default:
 		return OnCrashFail
 	}
+}
+
+// ReopenCrashedSession replaces the dead process behind a crashed adapter
+// session with a fresh one and re-opens the session in place (CRI-271).
+//
+// Under the default on_crash=fail policy a crashed session stays registered
+// but dead: every Execute on the same reference replays the crash error, so
+// follow-on steps (bookkeeping such as comment_handler_failed /
+// set_review_state) fail on the corpse and bury the run's real state. The
+// engine calls this before a follow-on step whose reference is registered as
+// crashed, so the step executes on a live session instead.
+//
+// Semantics: an unknown session is an error; a session that is not marked
+// crashed is healthy (already respawned, or never crashed) and is left
+// untouched; concurrent callers are serialized per session and the first
+// successful re-open wins. The crashing step itself is NOT retried — only
+// follow-on work runs on the fresh session.
+func (m *SessionManager) ReopenCrashedSession(ctx context.Context, name string) error {
+	m.mu.Lock()
+	sess, ok := m.sessions[name]
+	m.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrUnknownSession, name)
+	}
+	if sess.closing.Load() {
+		return fmt.Errorf("session %q is closing; cannot re-open", name)
+	}
+	if !sess.crashed.Load() {
+		return nil
+	}
+	// Single-flight per session: parallel fan-out steps sharing a crashed
+	// reference must not spawn several replacement processes.
+	sess.reopenMu.Lock()
+	defer sess.reopenMu.Unlock()
+	if !sess.crashed.Load() {
+		return nil
+	}
+	if err := m.respawn(ctx, sess); err != nil {
+		return fmt.Errorf("session %q re-open: %w", name, err)
+	}
+	slog.Info("adapter session re-opened after crash", "session", name, "adapter", sess.Adapter)
+	return nil
 }
 
 func isLikelySessionCrash(sess *Session, err error) bool {
@@ -2191,6 +2369,9 @@ type sessionLogAdapterSink struct {
 }
 
 func (s *sessionLogAdapterSink) Log(stream string, chunk []byte) {
+	// Any delivered log chunk is observable adapter activity (CRI-271); the
+	// crash diagnostics report the idle window since the last one.
+	s.sess.noteActivity()
 	s.sess.currentSinkMu.Lock()
 	sink := s.sess.currentSink
 	s.sess.currentSinkMu.Unlock()
