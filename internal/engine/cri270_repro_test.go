@@ -14,21 +14,29 @@ package engine
 // ("working_directory"), injected only when the step does not set one —
 // per-step inputs keep winning, local/container sessions keep their
 // customizer-owned cwd, and the compiled step node is never mutated. The
-// injection is additionally gated on the adapter's declared input surface
-// (the InputSchema captured at the verify handshake): a non-empty surface
-// that does not declare working_directory never receives the key, so
-// adapters that forward arbitrary input keys onward (e.g. mcp tool
-// arguments) are not corrupted; nil/empty surfaces stay permissive.
+// injection additionally requires a positive signal from the adapter's
+// declared input surface (the InputSchema captured at the verify handshake
+// and re-captured at snapshot restore): a non-empty surface must declare
+// working_directory to receive it, and an undeclared surface (nil/empty
+// InputSchema — e.g. the dynamic-tool mcp shape, which forwards every
+// non-reserved input key to its MCP server as a tool argument) only
+// receives the key from an adapter type known to honor the input contract
+// (the shell adapter's confinement-checked contract). The key never reaches
+// an adapter that does not accept it, and the nested callee path
+// (calleeInputFromArgs) already rejects undeclared keys — the engine
+// injection must not create them.
 //
 // These tests pin that contract at the session boundary: a remote-path step
 // Execute must deliver the resolved environment working_directory as input
-// working_directory, a per-step working_directory input must not be
-// overridden, a remote session without a working_directory must inject
-// nothing, and a local session must receive no injection.
+// working_directory (for an adapter that declares the key), a per-step
+// working_directory input must not be overridden, a remote session without
+// a working_directory must inject nothing, and a local session must receive
+// no injection.
 
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"sync"
 	"testing"
 
@@ -145,8 +153,9 @@ state "done" {
 
 // initCRI270Scope provisions the compiled graph's adapters exactly as the
 // engine does at scope entry, so the session carries the resolved environment
-// working_directory before any step runs.
-func initCRI270Scope(t *testing.T, g *workflow.FSMGraph, sessions *adapterhost.SessionManager) {
+// working_directory before any step runs. wantInstance is the "<type>.<name>"
+// instance id the fixture's single adapter must verify.
+func initCRI270Scope(t *testing.T, g *workflow.FSMGraph, sessions *adapterhost.SessionManager, wantInstance string) {
 	t.Helper()
 	ctx := context.Background()
 	dataDir := t.TempDir()
@@ -159,8 +168,8 @@ func initCRI270Scope(t *testing.T, g *workflow.FSMGraph, sessions *adapterhost.S
 	if err != nil {
 		t.Fatalf("initScopeAdapters: %v", err)
 	}
-	if len(order) != 1 || order[0] != "noop.default" {
-		t.Fatalf("expected order [noop.default], got %v", order)
+	if len(order) != 1 || order[0] != wantInstance {
+		t.Fatalf("expected order [%s], got %v", wantInstance, order)
 	}
 	t.Cleanup(func() { _ = sessions.Shutdown(context.Background()) })
 }
@@ -168,17 +177,24 @@ func initCRI270Scope(t *testing.T, g *workflow.FSMGraph, sessions *adapterhost.S
 // TestEngine_CRI270_RemoteAdapterReceivesEnvironmentWorkingDir drives step
 // Executes through the session manager over the remote (per-scope shim) path
 // and asserts the adapter receives the environment's resolved
-// working_directory as its working_directory input.
+// working_directory as its working_directory input. The fixture adapter
+// declares working_directory on its input surface — the standard shell-style
+// shape — so the injection rides the positive signal, not a permissive
+// fallback.
 func TestEngine_CRI270_RemoteAdapterReceivesEnvironmentWorkingDir(t *testing.T) {
 	ctx := context.Background()
 	envWorkingDir := t.TempDir()
 	g := compileCRI270RemoteGraph(t, envWorkingDir)
 
-	handle := &recordingHandle{}
+	handle := &recordingHandle{schema: &workflow.AdapterInfo{
+		InputSchema: map[string]workflow.ConfigField{
+			"working_directory": {Type: workflow.ConfigFieldString},
+		},
+	}}
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
 	sessions.SetRemoteShim(newFakeRemoteShim(handle))
-	initCRI270Scope(t, g, sessions)
+	initCRI270Scope(t, g, sessions, "noop.default")
 
 	// A step with no working_directory input must receive the environment's
 	// resolved working_directory.
@@ -235,7 +251,7 @@ func TestEngine_CRI270_RemoteWithoutWorkingDirInjectsNothing(t *testing.T) {
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
 	sessions.SetRemoteShim(newFakeRemoteShim(handle))
-	initCRI270Scope(t, g, sessions)
+	initCRI270Scope(t, g, sessions, "noop.default")
 
 	work := g.Steps["start"]
 	if work == nil {
@@ -370,7 +386,7 @@ func TestEngine_CRI270_InjectionGatedOnDeclaredInputSchema(t *testing.T) {
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
 	sessions.SetRemoteShim(newFakeRemoteShim(handle))
-	initCRI270Scope(t, g, sessions)
+	initCRI270Scope(t, g, sessions, "noop.default")
 
 	work := g.Steps["work"]
 	if work == nil {
@@ -413,7 +429,7 @@ func TestEngine_CRI270_InjectionOnDeclaredWorkingDirKey(t *testing.T) {
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
 	sessions.SetRemoteShim(newFakeRemoteShim(handle))
-	initCRI270Scope(t, g, sessions)
+	initCRI270Scope(t, g, sessions, "noop.default")
 
 	work := g.Steps["work"]
 	if work == nil {
@@ -428,6 +444,181 @@ func TestEngine_CRI270_InjectionOnDeclaredWorkingDirKey(t *testing.T) {
 	got := handle.inputAt(0)
 	if got["working_directory"] != envWorkingDir {
 		t.Fatalf("adapter input working_directory = %q, want the injected environment working_directory %q", got["working_directory"], envWorkingDir)
+	}
+	if got["task"] != "run-intake" {
+		t.Fatalf("adapter input task = %q, want run-intake (the injection must not displace step input)", got["task"])
+	}
+	if _, ok := work.Input["working_directory"]; ok {
+		t.Fatal("compiled step Input was mutated by the injection")
+	}
+}
+
+// compileCRI270RemoteAdapterTypeGraph compiles a per-scope remote workflow
+// whose adapter has the given type (e.g. "mcp" or "shell") and whose binary —
+// not the compiler — authors the declared input surface, mirroring how a
+// manifest-declared adapter surface reaches the host. The single step carries
+// a regular input key so the tests can pin exactly what the adapter receives
+// when the engine's declared-input-surface gate is in play.
+func compileCRI270RemoteAdapterTypeGraph(t *testing.T, adapterType, envWorkingDir string) *workflow.FSMGraph {
+	t.Helper()
+	return compile(t, fmt.Sprintf(`
+workflow {
+  name = "cri270-remote-%s"
+  version = "0.1"
+  initial_state = "work"
+  target_state  = "done"
+}
+
+environment "remote" "prod" {
+  listen_address     = "127.0.0.1:0"
+  per_scope_sessions = true
+  working_directory  = %q
+}
+
+adapter "%s" "default" {
+  environment = remote.prod
+}
+
+step "work" {
+  target = adapter.%s.default
+  input {
+    task = "run-intake"
+  }
+  outcome "success" { next = state.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}`, adapterType, envWorkingDir, adapterType, adapterType))
+}
+
+// TestEngine_CRI270_UndeclaredSurfaceGetsNoInjection pins the strict side of
+// the gate for dynamic-tool adapters: a remote adapter bound to an
+// environment that declares working_directory, but whose binary declares no
+// input surface at all (nil InputSchema — the in-tree mcp shape, which
+// forwards every non-reserved input key to its MCP server as a tool
+// argument), must never receive the engine-authored key.
+func TestEngine_CRI270_UndeclaredSurfaceGetsNoInjection(t *testing.T) {
+	ctx := context.Background()
+	envWorkingDir := t.TempDir()
+	g := compileCRI270RemoteAdapterTypeGraph(t, "mcp", envWorkingDir)
+
+	handle := &recordingHandle{}
+	sessions := adapterhost.NewSessionManager(&fakeLoader{})
+	sessions.SetGraph(g)
+	sessions.SetRemoteShim(newFakeRemoteShim(handle))
+	initCRI270Scope(t, g, sessions, "mcp.default")
+
+	work := g.Steps["work"]
+	if work == nil {
+		t.Fatal("fixture must declare step work")
+	}
+	if _, err := sessions.Execute(ctx, "mcp.default", work, noopEventSink{}); err != nil {
+		t.Fatalf("execute work: %v", err)
+	}
+	if n := handle.inputCount(); n != 1 {
+		t.Fatalf("adapter executed %d time(s), want 1", n)
+	}
+	got := handle.inputAt(0)
+	if _, ok := got["working_directory"]; ok {
+		t.Fatal("remote adapter with an undeclared input surface must not receive the engine-authored working_directory (CRI-270 review gate)")
+	}
+	if got["task"] != "run-intake" {
+		t.Fatalf("adapter input task = %q, want run-intake (the step input must reach the adapter verbatim)", got["task"])
+	}
+	if _, ok := work.Input["working_directory"]; ok {
+		t.Fatal("compiled step Input was mutated by the gated injection")
+	}
+}
+
+// TestEngine_CRI270_ShellTypeWithoutDeclaredSurfaceStillInjects pins the
+// known-honorer fallback: a remote shell adapter whose binary declares no
+// input surface (pre-schema release) still receives the engine-authored key,
+// because the remote delivery reuses the shell adapter's confinement-checked
+// input contract. The fallback is keyed on the session's adapter type, so
+// the delivery stays independent of the declared-surface cache — including
+// after a snapshot restore/respawn, where a pre-schema binary reports no
+// surface to cache.
+func TestEngine_CRI270_ShellTypeWithoutDeclaredSurfaceStillInjects(t *testing.T) {
+	ctx := context.Background()
+	envWorkingDir := t.TempDir()
+	g := compileCRI270RemoteAdapterTypeGraph(t, "shell", envWorkingDir)
+
+	handle := &recordingHandle{}
+	sessions := adapterhost.NewSessionManager(&fakeLoader{})
+	sessions.SetGraph(g)
+	sessions.SetRemoteShim(newFakeRemoteShim(handle))
+	initCRI270Scope(t, g, sessions, "shell.default")
+
+	work := g.Steps["work"]
+	if work == nil {
+		t.Fatal("fixture must declare step work")
+	}
+	if _, err := sessions.Execute(ctx, "shell.default", work, noopEventSink{}); err != nil {
+		t.Fatalf("execute work: %v", err)
+	}
+	if n := handle.inputCount(); n != 1 {
+		t.Fatalf("adapter executed %d time(s), want 1", n)
+	}
+	got := handle.inputAt(0)
+	if got["working_directory"] != envWorkingDir {
+		t.Fatalf("adapter input working_directory = %q, want the injected environment working_directory %q (shell adapters honor the input contract)", got["working_directory"], envWorkingDir)
+	}
+	if got["task"] != "run-intake" {
+		t.Fatalf("adapter input task = %q, want run-intake (the injection must not displace step input)", got["task"])
+	}
+	if _, ok := work.Input["working_directory"]; ok {
+		t.Fatal("compiled step Input was mutated by the injection")
+	}
+}
+
+// TestEngine_CRI270_RestoredRemoteSessionStillInjectsDeclaredKey pins the
+// restore path of the gate: SessionManager.Restore re-captures the adapter's
+// declared surface from plug.Info, so a session resumed after a snapshot
+// relaunch keeps gating on — and receiving through — its declared
+// working_directory input without a re-verify round-trip.
+func TestEngine_CRI270_RestoredRemoteSessionStillInjectsDeclaredKey(t *testing.T) {
+	ctx := context.Background()
+	envWorkingDir := t.TempDir()
+	g := compileCRI270RemoteSchemaGraph(t, envWorkingDir)
+
+	handle := &recordingHandle{schema: &workflow.AdapterInfo{
+		InputSchema: map[string]workflow.ConfigField{
+			"task":              {Type: workflow.ConfigFieldString},
+			"working_directory": {Type: workflow.ConfigFieldString},
+		},
+	}}
+	sessions := adapterhost.NewSessionManager(&fakeLoader{})
+	sessions.SetGraph(g)
+	sessions.SetRemoteShim(newFakeRemoteShim(handle))
+	// The session comes back from a snapshot relaunch, not from the verify
+	// handshake, so nothing else warms the declared-surface cache.
+	t.Cleanup(func() { _ = sessions.Shutdown(context.Background()) })
+
+	snap := &adapterhost.SessionSnapshot{
+		SchemaVersion:   1,
+		HostArch:        runtime.GOOS + "/" + runtime.GOARCH,
+		WorkingDir:      envWorkingDir,
+		ScopeInstanceID: "scope-270",
+	}
+	if _, err := sessions.Restore(ctx, "noop.default", "noop", "", nil, nil, snap); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+
+	work := g.Steps["work"]
+	if work == nil {
+		t.Fatal("fixture must declare step work")
+	}
+	if _, err := sessions.Execute(ctx, "noop.default", work, noopEventSink{}); err != nil {
+		t.Fatalf("execute work: %v", err)
+	}
+	if n := handle.inputCount(); n != 1 {
+		t.Fatalf("adapter executed %d time(s), want 1", n)
+	}
+	got := handle.inputAt(0)
+	if got["working_directory"] != envWorkingDir {
+		t.Fatalf("adapter input working_directory = %q, want the injected environment working_directory %q (the restored session must keep its declared surface)", got["working_directory"], envWorkingDir)
 	}
 	if got["task"] != "run-intake" {
 		t.Fatalf("adapter input task = %q, want run-intake (the injection must not displace step input)", got["task"])
