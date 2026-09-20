@@ -132,6 +132,8 @@ func TestCriteriaVersionConstraintAllow(t *testing.T) {
 
 		// prerelease precedence
 		{"prerelease below stable lower bound", ">=0.5.8", "0.5.9-rc1", false},
+		{"beta prerelease below stable lower bound", ">=0.5.8", "0.5.9-beta.1", false},
+		{"alpha prerelease below stable lower bound", ">=0.5.8", "0.5.9-alpha.2", false},
 		{"prerelease satisfies explicit prerelease bound", ">=0.5.9-rc1", "0.5.9-rc1", true},
 		{"prerelease satisfies explicit stable+prerelease bounds", ">=0.5.8, >=0.5.9-rc1", "0.5.9-rc1", true},
 		{"prerelease below explicit prerelease bound", ">=0.5.9-rc2", "0.5.9-rc1", false},
@@ -203,6 +205,13 @@ func TestCheckCriteriaVersionGitDescribeBuilds(t *testing.T) {
 		diags := checkCriteriaVersion("wf", ">=0.5.24, <0.6.0", nil, nil)
 		require.True(t, diags.HasErrors())
 		assert.Contains(t, diags.Error(), `running engine is v0.5.25-rc1`)
+	})
+
+	t.Run("beta prerelease still rejected against stable lower bound", func(t *testing.T) {
+		version.Version = "v0.5.25-beta.1"
+		diags := checkCriteriaVersion("wf", ">=0.5.24, <0.6.0", nil, nil)
+		require.True(t, diags.HasErrors())
+		assert.Contains(t, diags.Error(), `running engine is v0.5.25-beta.1`)
 	})
 
 	t.Run("describe off a prerelease tag still rejected", func(t *testing.T) {
