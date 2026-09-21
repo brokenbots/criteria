@@ -7,10 +7,54 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	hplugin "github.com/hashicorp/go-plugin"
 	"github.com/hashicorp/go-plugin/runner"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 )
+
+// remoteClientKeepalive policy for the engine's reattach client (CRI-274):
+// ping every 30s (with or without active streams) so the shim bridge stays
+// open across arbitrarily long idle gaps between steps, and treat a ping
+// unanswered for 10s as transport death. The runner's phone-home server
+// permits without-stream pings at the same interval.
+const (
+	remoteClientKeepaliveTime    = 30 * time.Second
+	remoteClientKeepaliveTimeout = 10 * time.Second
+)
+
+// reattachClientConfig builds the go-plugin client configuration for
+// reattaching to an adapter socket. CRI-274: a remote adapter through the
+// shim must behave as if it were local — idleness alone must never close a
+// live session. grpc-go's default client idle timeout (30 minutes) closed
+// the transport when the workflow sat between steps, killing the whole
+// phone-home bridge. The idle timeout is disabled and the transport kept
+// warm with client-initiated pings; the runner's phone-home server permits
+// without-stream pings, so these never trip its enforcement policy.
+func reattachClientConfig(socketPath string) *hplugin.ClientConfig {
+	return &hplugin.ClientConfig{
+		HandshakeConfig:  HandshakeConfig,
+		Plugins:          AdapterMap(),
+		AllowedProtocols: []hplugin.Protocol{hplugin.ProtocolGRPC},
+		Logger:           adapterClientLogger(),
+		GRPCDialOptions: []grpc.DialOption{
+			grpc.WithIdleTimeout(0),
+			grpc.WithKeepaliveParams(keepalive.ClientParameters{
+				Time:                remoteClientKeepaliveTime,
+				Timeout:             remoteClientKeepaliveTimeout,
+				PermitWithoutStream: true,
+			}),
+		},
+		Reattach: &hplugin.ReattachConfig{
+			Protocol:        hplugin.ProtocolGRPC,
+			ProtocolVersion: int(HandshakeConfig.ProtocolVersion),
+			Addr:            &net.UnixAddr{Name: socketPath, Net: "unix"},
+			ReattachFunc:    externalProcessReattach(socketPath),
+		},
+	}
+}
 
 // LocalSocketDialer returns a Client that is reattached to an already-listening
 // Unix domain socket. Used by the remote-adapter shim (WS20) to hand the host
@@ -29,18 +73,7 @@ func LocalSocketDialer(ctx context.Context, socketPath string) (adapterClient Cl
 	if err := validateSocketSecurity(socketPath); err != nil {
 		return nil, nil, err
 	}
-	cfg := &hplugin.ClientConfig{
-		HandshakeConfig:  HandshakeConfig,
-		Plugins:          AdapterMap(),
-		AllowedProtocols: []hplugin.Protocol{hplugin.ProtocolGRPC},
-		Logger:           adapterClientLogger(),
-		Reattach: &hplugin.ReattachConfig{
-			Protocol:        hplugin.ProtocolGRPC,
-			ProtocolVersion: int(HandshakeConfig.ProtocolVersion),
-			Addr:            &net.UnixAddr{Name: socketPath, Net: "unix"},
-			ReattachFunc:    externalProcessReattach(socketPath),
-		},
-	}
+	cfg := reattachClientConfig(socketPath)
 	client := hplugin.NewClient(cfg)
 	rpcClient, err := client.Client()
 	if err != nil {

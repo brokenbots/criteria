@@ -10,12 +10,47 @@ import (
 	"net"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	adapterhost "github.com/brokenbots/criteria-go-adapter-sdk/adapterhost"
 )
+
+// remoteServerKeepalive policy (CRI-274): the phone-home connection carries
+// the whole AdapterService for a remote session and must stay open across
+// arbitrarily long idle gaps between steps. The server pings its client every
+// 60s and permits client-initiated pings (the engine's reattach client pings
+// every 30s with PermitWithoutStream), so idleness alone never closes the
+// bridge — matching go-plugin stdio semantics for local adapters.
+var (
+	remoteServerKeepaliveParams = keepalive.ServerParameters{
+		Time:    60 * time.Second,
+		Timeout: 10 * time.Second,
+	}
+	remoteServerKeepaliveEnforcement = keepalive.EnforcementPolicy{
+		MinTime:             10 * time.Second,
+		PermitWithoutStream: true,
+	}
+)
+
+// newPhoneHomeServer builds the grpc server served over the phone-home
+// connection: the v2 adapter contract proxied to the local adapter plus the
+// standard health service whose status reflects adapter liveness (CRI-274).
+func newPhoneHomeServer(proxy *proxyService) *grpc.Server {
+	server := grpc.NewServer(
+		grpc.KeepaliveParams(remoteServerKeepaliveParams),
+		grpc.KeepaliveEnforcementPolicy(remoteServerKeepaliveEnforcement),
+	)
+	v2.RegisterAdapterServiceServer(server, &grpcAdapterServer{impl: proxy})
+	grpc_health_v1.RegisterHealthServer(server, &adapterHealthServer{probe: proxy})
+	return server
+}
 
 // remoteHandshake is the JSON line sent immediately after the transport
 // connection is established. It extends the criteria-go-adapter-sdk v0.5.3
@@ -45,8 +80,7 @@ func serveRemoteOnce(ctx context.Context, cfg *remoteConfig, tlsConf *tls.Config
 		return fmt.Errorf("handshake: %w", err)
 	}
 
-	server := grpc.NewServer()
-	v2.RegisterAdapterServiceServer(server, &grpcAdapterServer{impl: proxy})
+	server := newPhoneHomeServer(proxy)
 
 	wrapped := &closeSignalConn{Conn: conn, doneCh: make(chan struct{})}
 	lis := newSingleConnListener(wrapped)
@@ -245,4 +279,28 @@ func (s *grpcPermissionsServer) Send(dec *v2.PermissionDecision) error {
 
 func (s *grpcPermissionsServer) Context() context.Context {
 	return s.stream.Context()
+}
+
+// adapterHealthServer implements the standard gRPC health protocol by probing
+// the local adapter (CRI-274): SERVING while the adapter answers Info,
+// NOT_SERVING otherwise. A health check forwarded across the shim bridge thus
+// reports the adapter process, not the transport.
+type adapterHealthServer struct {
+	grpc_health_v1.UnimplementedHealthServer
+	probe *proxyService
+}
+
+func (h *adapterHealthServer) Check(ctx context.Context, _ *grpc_health_v1.HealthCheckRequest) (*grpc_health_v1.HealthCheckResponse, error) {
+	if _, err := h.probe.Info(ctx, &v2.InfoRequest{}); err != nil {
+		return &grpc_health_v1.HealthCheckResponse{Status: grpc_health_v1.HealthCheckResponse_NOT_SERVING}, nil
+	}
+	return &grpc_health_v1.HealthCheckResponse{Status: grpc_health_v1.HealthCheckResponse_SERVING}, nil
+}
+
+func (h *adapterHealthServer) Watch(_ *grpc_health_v1.HealthCheckRequest, stream grpc_health_v1.Health_WatchServer) error {
+	if err := stream.Send(&grpc_health_v1.HealthCheckResponse{Status: grpc_health_v1.HealthCheckResponse_SERVING}); err != nil {
+		return status.Error(codes.Unavailable, err.Error())
+	}
+	<-stream.Context().Done()
+	return nil
 }

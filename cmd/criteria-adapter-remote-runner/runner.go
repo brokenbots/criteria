@@ -272,6 +272,15 @@ func startAdapter(binary string) (v2.AdapterServiceClient, func(), error) {
 		Cmd:              cmd,
 		AllowedProtocols: []hplugin.Protocol{hplugin.ProtocolGRPC},
 		StartTimeout:     30 * time.Second,
+		// CRI-274: the adapter server's keepalive enforcement is defined by
+		// the criteria-go-adapter-sdk (not editable here) and permits pings
+		// only during active streams, so the runner's client must NOT ping
+		// while idle — it must simply never idle out. Disabling the default
+		// 30-minute grpc-go idle timeout keeps the stdio bridge open across
+		// arbitrarily long idle gaps, matching local adapter semantics.
+		GRPCDialOptions: []grpc.DialOption{
+			grpc.WithIdleTimeout(0),
+		},
 		// go-plugin normally re-appends os.Environ() to cmd.Env. We construct
 		// the child environment explicitly (filtering the runner's own remote
 		// connection variables), so we must prevent that re-addition.
