@@ -319,62 +319,74 @@ func deriveRun(dir string, st *localState, events []EventEnvelope) *Run {
 		}
 	}
 	for _, ev := range events {
-		switch ev.Type {
-		case "RunStarted":
-			if st != nil {
-				continue // run-state.json is the better source
-			}
-			var p struct {
-				WorkflowName string `json:"workflow_name"`
-			}
-			if json.Unmarshal(ev.Payload, &p) == nil && p.WorkflowName != "" {
-				run.WorkflowName = p.WorkflowName
-			}
-		case "RunCompleted":
-			var p struct {
-				FinalState string `json:"final_state"`
-				Success    bool   `json:"success"`
-			}
-			if json.Unmarshal(ev.Payload, &p) == nil {
-				run.Status = StatusSucceeded
-				run.FinalState = p.FinalState
-				if !p.Success {
-					run.Status = StatusFailed
-				}
-			}
-		case "RunFailed":
-			var p struct {
-				Reason string `json:"reason"`
-			}
-			if json.Unmarshal(ev.Payload, &p) == nil {
+		applyEventToRun(run, st != nil, &ev)
+	}
+	finalizeRunStatus(dir, run, st)
+	if src := readMetaSource(dir); src != "" {
+		run.RepoURL = src
+	}
+	return run
+}
+
+// applyEventToRun folds a single NDJSON event into the derived run record.
+func applyEventToRun(run *Run, hasState bool, ev *EventEnvelope) {
+	switch ev.Type {
+	case "RunStarted":
+		if hasState {
+			return // run-state.json is the better source
+		}
+		var p struct {
+			WorkflowName string `json:"workflow_name"`
+		}
+		if json.Unmarshal(ev.Payload, &p) == nil && p.WorkflowName != "" {
+			run.WorkflowName = p.WorkflowName
+		}
+	case "RunCompleted":
+		var p struct {
+			FinalState string `json:"final_state"`
+			Success    bool   `json:"success"`
+		}
+		if json.Unmarshal(ev.Payload, &p) == nil {
+			run.Status = StatusSucceeded
+			run.FinalState = p.FinalState
+			if !p.Success {
 				run.Status = StatusFailed
-				run.FailureReason = p.Reason
 			}
+		}
+	case "RunFailed":
+		var p struct {
+			Reason string `json:"reason"`
+		}
+		if json.Unmarshal(ev.Payload, &p) == nil {
+			run.Status = StatusFailed
+			run.FailureReason = p.Reason
 		}
 	}
-	switch {
-	case run.Status != StatusRunning:
+}
+
+// finalizeRunStatus resolves the terminal-ended vs still-running question
+// once the event stream has been folded in.
+func finalizeRunStatus(dir string, run *Run, st *localState) {
+	if run.Status != StatusRunning {
 		run.EndedAt = fileMtimeRFC3339(dir, eventsFileName)
-	case st != nil:
-		if st.PID > 0 && !pidAlive(st.PID) {
-			run.Status = StatusFailed
-			run.FailureReason = "criteria process exited without reaching a terminal state"
-			run.EndedAt = fileMtimeRFC3339(dir, eventsFileName)
-			if run.EndedAt == "" {
-				run.EndedAt = fileMtimeRFC3339(dir, stateFileName)
-			}
-		}
-	default:
+		return
+	}
+	if st == nil {
 		// No run-state.json (removed at completion) and no terminal event:
 		// the record is a truncated tail of an interrupted run.
 		run.Status = StatusFailed
 		run.FailureReason = "no terminal event recorded"
 		run.EndedAt = fileMtimeRFC3339(dir, eventsFileName)
+		return
 	}
-	if src := readMetaSource(dir); src != "" {
-		run.RepoURL = src
+	if st.PID > 0 && !pidAlive(st.PID) {
+		run.Status = StatusFailed
+		run.FailureReason = "criteria process exited without reaching a terminal state"
+		run.EndedAt = fileMtimeRFC3339(dir, eventsFileName)
+		if run.EndedAt == "" {
+			run.EndedAt = fileMtimeRFC3339(dir, stateFileName)
+		}
 	}
-	return run
 }
 
 // pidAlive reports whether a process with pid is alive. A reused pid may
@@ -452,21 +464,21 @@ func (s *Store) Inspect(runID, session string) (*RunInspection, error) {
 		insp.SessionID = session
 	}
 	for _, ev := range events {
-		switch ev.Type {
-		case "StepEntered":
-			var p struct {
-				Step    string `json:"step"`
-				Adapter string `json:"adapter"`
-			}
-			if json.Unmarshal(ev.Payload, &p) == nil {
-				insp.CurrentStep = p.Step
-				if p.Adapter != "" {
-					insp.Adapter = p.Adapter
-					if insp.SessionID == "" {
-						// Local runs have one adapter session per step;
-						// the session id is synthetic (run id + seq).
-						insp.SessionID = fmt.Sprintf("%s/%d", runID, ev.Seq)
-					}
+		if ev.Type != "StepEntered" {
+			continue
+		}
+		var p struct {
+			Step    string `json:"step"`
+			Adapter string `json:"adapter"`
+		}
+		if json.Unmarshal(ev.Payload, &p) == nil {
+			insp.CurrentStep = p.Step
+			if p.Adapter != "" {
+				insp.Adapter = p.Adapter
+				if insp.SessionID == "" {
+					// Local runs have one adapter session per step;
+					// the session id is synthetic (run id + seq).
+					insp.SessionID = fmt.Sprintf("%s/%d", runID, ev.Seq)
 				}
 			}
 		}

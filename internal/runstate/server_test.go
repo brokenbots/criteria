@@ -15,7 +15,7 @@ import (
 
 // newTestServer builds a store fixture (one succeeded run, one running run)
 // and returns its server handler.
-func newTestServer(t *testing.T) (*Server, *Store) {
+func newTestServer(t *testing.T) *Server {
 	t.Helper()
 	s := newTestStore(t)
 	root, _ := s.RunsRoot()
@@ -27,12 +27,12 @@ func newTestServer(t *testing.T) (*Server, *Store) {
 	writeRun(t, root, "r-live", &localState{
 		PID: os.Getpid(), RunID: "r-live", Workflow: "live", CriteriaID: "crit-1", StartedAt: time.Now().UTC(),
 	}, []ndEnvelope{env(1, "RunStarted", `{"workflow_name":"live"}`)}, nil)
-	return NewServer(s), s
+	return NewServer(s)
 }
 
-func doJSON(t *testing.T, h http.Handler, method, target string) (int, string) {
+func doJSON(t *testing.T, h http.Handler, method, target string) (code int, body string) {
 	t.Helper()
-	req := httptest.NewRequest(method, target, nil)
+	req := httptest.NewRequest(method, target, http.NoBody)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec.Code, rec.Body.String()
@@ -41,7 +41,7 @@ func doJSON(t *testing.T, h http.Handler, method, target string) (int, string) {
 // TestServerRoutes verifies every seam route's status code and contract
 // shape (camelCase castle-mapped JSON).
 func TestServerRoutes(t *testing.T) {
-	srv, _ := newTestServer(t)
+	srv := newTestServer(t)
 	h := srv.Handler()
 
 	if code, body := doJSON(t, h, "GET", "/health"); code != http.StatusNoContent || body != "" {
@@ -154,7 +154,7 @@ func TestServerRoutes(t *testing.T) {
 // handler every verb is 501 UNIMPLEMENTED; with one wired, the supported
 // verb (stop) succeeds and unsupported verbs stay 501; unknown runs are 404.
 func TestServerControlVerbs(t *testing.T) {
-	srv, _ := newTestServer(t)
+	srv := newTestServer(t)
 	h := srv.Handler()
 	for _, verb := range []string{"resume", "pause", "stop"} {
 		if code, body := doJSON(t, h, "POST", "/runs/r-done/"+verb); code != http.StatusNotImplemented || !strings.Contains(body, "not implemented") {
@@ -166,7 +166,7 @@ func TestServerControlVerbs(t *testing.T) {
 	}
 
 	stopped := false
-	srv2, _ := newTestServer(t)
+	srv2 := newTestServer(t)
 	srv2.WithControl(func(runID, verb string) error {
 		if verb == "stop" {
 			stopped = true
@@ -185,7 +185,7 @@ func TestServerControlVerbs(t *testing.T) {
 
 // TestServerListen_RefusesNonLoopback verifies the locked loopback-only rule.
 func TestServerListen_RefusesNonLoopback(t *testing.T) {
-	srv, _ := newTestServer(t)
+	srv := newTestServer(t)
 	for _, host := range []string{"0.0.0.0", "192.168.1.5", "example.com", "::"} {
 		if _, err := srv.Listen(host, 0); err == nil {
 			t.Errorf("non-loopback bind %q accepted", host)
@@ -213,7 +213,7 @@ func TestServerListen_RefusesNonLoopback(t *testing.T) {
 // TestServerViewer serves the embedded bundle at the root with SPA fallback
 // for unknown paths.
 func TestServerViewer(t *testing.T) {
-	srv, _ := newTestServer(t)
+	srv := newTestServer(t)
 	viewer, err := NewViewer()
 	if err != nil {
 		t.Fatal(err)
@@ -239,7 +239,7 @@ func TestServerViewer(t *testing.T) {
 // TestServerLiveOverSocket exercises the full loop: bind, serve, request,
 // stop — the same path apply and serve-ui take (real net.Listener).
 func TestServerLiveOverSocket(t *testing.T) {
-	srv, _ := newTestServer(t)
+	srv := newTestServer(t)
 	ln, err := srv.Listen("127.0.0.1", 0)
 	if err != nil {
 		t.Fatal(err)
@@ -269,7 +269,7 @@ func TestServerLiveOverSocket(t *testing.T) {
 // TestServerStopCancelsContext mirrors the apply wiring: the stop verb
 // cancels a context (the engine path turns that into a terminal event).
 func TestServerStopCancelsContext(t *testing.T) {
-	srv, _ := newTestServer(t)
+	srv := newTestServer(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	srv.WithControl(func(runID, verb string) error {
 		if verb == "stop" {

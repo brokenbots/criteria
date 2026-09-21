@@ -115,49 +115,28 @@ func executeFreshLocalRun(ctx context.Context, log *slog.Logger, graph *workflow
 	defer removeLocalRunState(runID)
 	defer RemoveStepCheckpoint(runID)
 
-	auditPath, _ := auditLogPath(runID)
-	auditWriter := adapterhost.NewFileAuditWriter(auditPath)
-	dataDir, err := runDataDir(runID)
+	eng, err = newLocalEngine(runID, graph, loader, runSink, opts, identity)
 	if err != nil {
 		return err
 	}
-	eng = engine.New(graph, loader, runSink,
-		engine.WithVarOverrides(identity.mergedVars),
-		engine.WithWorkflowDir(workflowDirFromPath(opts.workflowPath)),
-		engine.WithAuditWriter(auditWriter),
-		engine.WithDataDir(dataDir),
-	)
 
 	// CRI-279: serve the run-viewer on loopback for this run while apply
 	// executes. The stop verb cancels the engine context (the engine then
 	// emits a real terminal RunFailed event); pause/resume are UNIMPLEMENTED
 	// until CRI-255 adds checkpoint-gated controls.
 	runCtx := ctx
+	var stopServer func()
 	if opts.ui {
-		uiCtx, cancelRun := context.WithCancel(ctx)
-		runCtx = uiCtx
-		defer cancelRun()
-		_, stopRunStateServer, err := startLocalRunStateServer(log, runID, opts.uiPort, cancelRun)
-		if err != nil {
-			log.Warn("run viewer unavailable; continuing without it", "error", err)
-			runCtx = ctx
-		} else {
-			defer stopRunStateServer()
-		}
+		runCtx, stopServer = attachLocalRunStateServer(ctx, log, runID, opts.uiPort)
+		defer stopServer()
 	}
 	if err := eng.Run(runCtx); err != nil {
 		log.Error("local run failed", "run_id", runID, "error", err)
 		return err
 	}
 
-	if resumer != nil {
-		if err := drainLocalResumeCycles(runCtx, log, graph, loader, tracker, runSink, resumer, runID, opts, eng); err != nil {
-			return err
-		}
-	}
-
-	if finalState, success, ok := runSink.TerminalSuccess(); ok && !success {
-		return fmt.Errorf("run completed with terminal state %q (success=false)", finalState)
+	if err := finishFreshLocalRun(runCtx, log, graph, loader, tracker, runSink, resumer, runID, opts, eng); err != nil {
+		return err
 	}
 
 	log.Info("local run completed", "run_id", runID)
@@ -180,6 +159,36 @@ func buildLocalRunSink(log *slog.Logger, runID, workflowPath, fingerprint string
 		},
 	}
 	return tracker, &terminalSuccessSink{Sink: tracker}
+}
+
+// newLocalEngine constructs the engine for a fresh local run.
+func newLocalEngine(runID string, graph *workflow.FSMGraph, loader adapterhost.Loader, runSink engine.Sink, opts applyOptions, identity localRunIdentity) (*engine.Engine, error) {
+	auditPath, _ := auditLogPath(runID)
+	auditWriter := adapterhost.NewFileAuditWriter(auditPath)
+	dataDir, err := runDataDir(runID)
+	if err != nil {
+		return nil, err
+	}
+	return engine.New(graph, loader, runSink,
+		engine.WithVarOverrides(identity.mergedVars),
+		engine.WithWorkflowDir(workflowDirFromPath(opts.workflowPath)),
+		engine.WithAuditWriter(auditWriter),
+		engine.WithDataDir(dataDir),
+	), nil
+}
+
+// finishFreshLocalRun handles post-engine work: resume cycles and the
+// terminal-success failure translation.
+func finishFreshLocalRun(runCtx context.Context, log *slog.Logger, graph *workflow.FSMGraph, loader adapterhost.Loader, tracker *pauseTracker, runSink *terminalSuccessSink, resumer localresume.LocalResumer, runID string, opts applyOptions, eng *engine.Engine) error {
+	if resumer != nil {
+		if err := drainLocalResumeCycles(runCtx, log, graph, loader, tracker, runSink, resumer, runID, opts, eng); err != nil {
+			return err
+		}
+	}
+	if finalState, success, ok := runSink.TerminalSuccess(); ok && !success {
+		return fmt.Errorf("run completed with terminal state %q (success=false)", finalState)
+	}
+	return nil
 }
 
 // localRunIdentity carries the CLI variable inputs and the invocation

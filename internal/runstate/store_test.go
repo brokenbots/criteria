@@ -13,7 +13,7 @@ import (
 
 // writeRun materializes a fixture run dir: run-state.json (optional) plus an
 // ND-JSON events file with the given envelopes.
-func writeRun(t *testing.T, root, runID string, st *localState, lines []ndEnvelope, meta *runMetadata) string {
+func writeRun(t *testing.T, root, runID string, st *localState, lines []ndEnvelope, meta *runMetadata) {
 	t.Helper()
 	dir := filepath.Join(root, runID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -53,7 +53,6 @@ func writeRun(t *testing.T, root, runID string, st *localState, lines []ndEnvelo
 			t.Fatal(err)
 		}
 	}
-	return dir
 }
 
 func newTestStore(t *testing.T) *Store {

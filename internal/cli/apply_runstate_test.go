@@ -126,7 +126,7 @@ func TestStartLocalRunStateServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := io.WriteString(f, `{"schema_version":1,"seq":1,"run_id":"run-srv-1","payload_type":"RunStarted","payload":{"workflow_name":"wf-demo"}}`+"\n"); err != nil {
+	if _, err := f.WriteString(`{"schema_version":1,"seq":1,"run_id":"run-srv-1","payload_type":"RunStarted","payload":{"workflow_name":"wf-demo"}}` + "\n"); err != nil {
 		t.Fatal(err)
 	}
 	f.Close()

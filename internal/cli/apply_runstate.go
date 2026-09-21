@@ -38,7 +38,7 @@ func openRunEventsFile(runID string) (io.Writer, func(), error) {
 // verb of the control handler cancels the given engine context; pause and
 // resume are UNIMPLEMENTED (CRI-255 adds checkpoint-gated controls). The
 // viewer URL is returned for direct use by callers that want it.
-func startLocalRunStateServer(log *slog.Logger, runID string, port int, cancelRun context.CancelFunc) (string, func(), error) {
+func startLocalRunStateServer(log *slog.Logger, runID string, port int, cancelRun context.CancelFunc) (viewerURL string, stop func(), err error) {
 	store := runstate.NewStore().Scoped(runID)
 	srv := runstate.NewServer(store).WithControl(func(id, verb string) error {
 		if id != runID {
@@ -66,11 +66,28 @@ func startLocalRunStateServer(log *slog.Logger, runID string, port int, cancelRu
 
 	log.Info("run viewer available", "url", url, "run_id", runID)
 
-	stop := func() {
+	stop = func() {
 		srv.Stop()
 		<-serveErr // drain (Serve returns nil on Stop)
 	}
 	return url, stop, nil
+}
+
+// attachLocalRunStateServer starts the loopback run-state server for runID
+// and returns the context the engine should run under (cancellable by the
+// server's stop verb). On bind failure it logs a warning and returns the
+// parent context with a no-op stop: the viewer is a lifeline, not a gate.
+func attachLocalRunStateServer(ctx context.Context, log *slog.Logger, runID string, port int) (runCtx context.Context, stop func()) {
+	runCtx, cancelRun := context.WithCancel(ctx)
+	_, stop, err := startLocalRunStateServer(log, runID, port, cancelRun)
+	if err != nil {
+		log.Warn("run viewer unavailable; continuing without it", "error", err)
+		return ctx, cancelRun
+	}
+	return runCtx, func() {
+		stop()
+		cancelRun()
+	}
 }
 
 // workflowSourceHash returns the sha256 hex digest of the compiled workflow
