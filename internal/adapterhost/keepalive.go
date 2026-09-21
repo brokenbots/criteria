@@ -65,15 +65,26 @@ const (
 // MaxConnectionIdle or MaxConnectionAge is set: idleness alone must never
 // close a live session's connection.
 func RemoteKeepaliveServerOptions() []grpc.ServerOption {
-	return []grpc.ServerOption{
-		grpc.KeepaliveParams(keepalive.ServerParameters{
+	return KeepaliveServerOptionsFor(
+		keepalive.ServerParameters{
 			Time:    RemoteServerPingInterval,
 			Timeout: RemoteServerPingTimeout,
-		}),
-		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+		},
+		keepalive.EnforcementPolicy{
 			MinTime:             RemoteServerMinClientPing,
 			PermitWithoutStream: true,
-		}),
+		},
+	)
+}
+
+// KeepaliveServerOptionsFor returns server options applying the given
+// keepalive parameters and enforcement policy. Splitting out the
+// parameterized form lets tests compress the keepalive clock without
+// weakening production's conservative cadence.
+func KeepaliveServerOptionsFor(params keepalive.ServerParameters, policy keepalive.EnforcementPolicy) []grpc.ServerOption {
+	return []grpc.ServerOption{
+		grpc.KeepaliveParams(params),
+		grpc.KeepaliveEnforcementPolicy(policy),
 	}
 }
 
