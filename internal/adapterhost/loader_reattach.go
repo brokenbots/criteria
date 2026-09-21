@@ -40,6 +40,11 @@ func LocalSocketDialer(ctx context.Context, socketPath string) (adapterClient Cl
 			Addr:            &net.UnixAddr{Name: socketPath, Net: "unix"},
 			ReattachFunc:    externalProcessReattach(socketPath),
 		},
+		// CRI-276: disable the gRPC client idle timeout (grpc-go defaults to
+		// 30 minutes, which is exactly the observed death of idle remote
+		// sessions) and add conservative keepalives so long-lived streams
+		// stay warm and dead paths are detected promptly.
+		GRPCDialOptions: RemoteKeepaliveDialOptions(),
 	}
 	client := hplugin.NewClient(cfg)
 	rpcClient, err := client.Client()

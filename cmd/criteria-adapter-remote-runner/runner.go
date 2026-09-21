@@ -29,6 +29,7 @@ import (
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	adapterhost "github.com/brokenbots/criteria-go-adapter-sdk/adapterhost"
 	"github.com/brokenbots/criteria/internal/adapter/manifest"
+	internaladapterhost "github.com/brokenbots/criteria/internal/adapterhost"
 )
 
 const reconnectDelay = 2 * time.Second
@@ -276,6 +277,12 @@ func startAdapter(binary string) (v2.AdapterServiceClient, func(), error) {
 		// the child environment explicitly (filtering the runner's own remote
 		// connection variables), so we must prevent that re-addition.
 		SkipHostEnv: true,
+		// CRI-276: the runner holds this client for the pod's lifetime and
+		// may see long idle stretches while the host works other sessions.
+		// Disable the 30-minute client idle timeout; the pings stay at or
+		// above grpc-go's default server enforcement floor, which the child
+		// adapter's go-plugin server uses.
+		GRPCDialOptions: internaladapterhost.RemoteKeepaliveDialOptions(),
 	})
 
 	rpcClient, err := client.Client()
