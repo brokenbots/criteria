@@ -59,18 +59,19 @@ ARG COPILOT_VERSION
 
 USER root
 
-# Alpine-based images need CA certificates for TLS back to the remote host and
-# a shell for the shell adapter. Node-based images used for copilot need the
-# same certificate bundle.
+# Base packages for every remote adapter: CA certificates for TLS back to the
+# remote host, plus the sandbox tools the develop/review agents invoke through
+# the shell adapter (CRI-272: git, ripgrep, jq, gh CLI, ssh, bash, procps).
 RUN case "$(cat /etc/os-release 2>/dev/null | grep -E '^ID=' | cut -d= -f2 | tr -d '"')" in \
-      alpine) apk add --no-cache ca-certificates ;; \
-      debian) apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/* ;; \
+      alpine) apk add --no-cache ca-certificates git github-cli openssh-client bash procps findutils ripgrep jq curl ;; \
+      debian) apt-get update && apt-get install -y --no-install-recommends ca-certificates git gh openssh-client bash procps findutils ripgrep jq curl && rm -rf /var/lib/apt/lists/* ;; \
     esac
 
 # The copilot adapter requires the GitHub Copilot CLI on PATH.
 RUN if [ "$ADAPTER_NAME" = "copilot" ]; then \
-      npm install -g "@github/copilot@${COPILOT_VERSION}" && \
-      npm cache clean --force; \
+      apk add --no-cache nodejs npm \
+      && npm install --global "@github/copilot@${COPILOT_VERSION}" \
+      && npm cache clean --force; \
     fi
 
 RUN addgroup -g 10001 -S criteria 2>/dev/null || groupadd --system --gid 10001 criteria && \
