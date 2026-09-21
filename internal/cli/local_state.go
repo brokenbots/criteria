@@ -27,6 +27,9 @@ type localRunState struct {
 	Token          string `json:"token,omitempty"`
 	WorkflowSource string `json:"workflow_source,omitempty"`
 	LockfileSource string `json:"lockfile_source,omitempty"`
+	// WorkflowHash is the sha256 of the compiled workflow source (local
+	// mode); surfaced as Run.workflowHash on the local run-state API.
+	WorkflowHash string `json:"workflow_hash,omitempty"`
 }
 
 // StepCheckpoint is written to disk before each step is executed so that a

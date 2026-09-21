@@ -26,6 +26,8 @@ type applyOptions struct {
 	varOverrides         []string     // raw "key=value" pairs from --var flags
 	varFiles             []string     // paths from --var-file flags
 	output               string       // "auto" | "concise" | "json"
+	ui                   bool         // --ui: serve the loopback run-state server + run-viewer during local apply (default true)
+	uiPort               int          // --ui-port: loopback port for the run-state server (0 = auto)
 	serverBootstrapToken string       // --server-bootstrap-token: X-Server-Bootstrap value sent on Register; "file:<path>" reads the token from a file
 	subworkflowRoots     []string     // --subworkflow-root flag (repeatable); populates AllowedRoots on LocalSubWorkflowResolver
 	workflowRef          string       // --workflow-ref: caller-declared expected pin (git SHA or sha256:<digest>); run fails closed on mismatch (CRI-226)
@@ -67,6 +69,8 @@ func NewApplyCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&opts.varOverrides, "var", nil, "Override a workflow variable: key=value (repeatable)")
 	cmd.Flags().StringArrayVar(&opts.varFiles, "var-file", nil, "Load variable overrides from a .chcl, .hcl, or .json file (repeatable; --var takes precedence)")
 	cmd.Flags().StringVar(&opts.output, "output", envOrDefault("CRITERIA_OUTPUT", "auto"), "Standalone output format: auto|concise|json (auto: concise on TTY, json when piped)")
+	cmd.Flags().BoolVar(&opts.ui, "ui", true, "Serve the local run viewer on loopback while a local run executes (local mode)")
+	cmd.Flags().IntVar(&opts.uiPort, "ui-port", 0, "Port for the local run viewer's run-state server (0 = auto-select; loopback only)")
 	cmd.Flags().StringArrayVar(&opts.subworkflowRoots, "subworkflow-root", nil, "Restrict subworkflow source resolution to this root path (repeatable; empty = no restriction)")
 	cmd.Flags().StringVar(&opts.workflowRef, "workflow-ref", "", "Expected ref/digest the workflow source must resolve to — a git commit SHA or sha256:<digest>; the run fails closed on mismatch (CRI-226)")
 	cmd.Flags().BoolVar(&opts.warnsAsErrors, "warnings-as-errors", false, "Refuse to run when a warning is raised (e.g. an adapter whose schema could not be verified)")
