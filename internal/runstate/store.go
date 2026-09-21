@@ -419,3 +419,111 @@ func (s *Store) sortRunIDsNewestFirst(ids []string) {
 		return ids[i] < ids[j]
 	})
 }
+
+// Inspect materializes the castle-mapped RunInspection for a run. Local data
+// derives a minimal but honest inspection: the most recent adapter session
+// (from the last StepEntered event) and the run's last activity time. There
+// is no live session attachment locally; the session parameter (when set) is
+// echoed so the viewer can address it.
+func (s *Store) Inspect(runID, session string) (*RunInspection, error) {
+	if _, err := s.GetRun(runID); err != nil {
+		return nil, err
+	}
+	dir, err := s.RunDir(runID)
+	if err != nil {
+		return nil, err
+	}
+	events := s.readEvents(runID)
+	insp := &RunInspection{PendingPermissions: 0}
+	if session != "" {
+		insp.SessionID = session
+	}
+	for _, ev := range events {
+		switch ev.Type {
+		case "StepEntered":
+			var p struct {
+				Step    string `json:"step"`
+				Adapter string `json:"adapter"`
+			}
+			if json.Unmarshal(ev.Payload, &p) == nil {
+				insp.CurrentStep = p.Step
+				if p.Adapter != "" {
+					insp.Adapter = p.Adapter
+					if insp.SessionID == "" {
+						// Local runs have one adapter session per step;
+						// the session id is synthetic (run id + seq).
+						insp.SessionID = fmt.Sprintf("%s/%d", runID, ev.Seq)
+					}
+				}
+			}
+		}
+	}
+	if at := fileMtimeRFC3339(dir, eventsFileName); at != "" {
+		insp.LastActivityAt = at
+	}
+	return insp, nil
+}
+
+// Agents lists the criteria ids known to this state dir as stub Agent
+// records (contract-acceptable stub; the full agent surface is the
+// orchestrator-backed path).
+func (s *Store) Agents() ([]Agent, error) {
+	ids, err := s.ListRunIDs()
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]Agent)
+	for _, id := range ids {
+		st := s.readState(id)
+		if st == nil || st.CriteriaID == "" {
+			continue // no agent identity recorded locally
+		}
+		if _, ok := seen[st.CriteriaID]; !ok {
+			seen[st.CriteriaID] = Agent{
+				CriteriaID: st.CriteriaID,
+				Name:       st.CriteriaID,
+				Status:     "online",
+				LastSeenAt: startedAtRFC3339(st),
+			}
+		}
+	}
+	out := make([]Agent, 0, len(seen))
+	for _, a := range seen {
+		out = append(out, a)
+	}
+	return out, nil
+}
+
+// Agent returns one stub Agent by criteria id.
+func (s *Store) Agent(criteriaID string) (*Agent, bool) {
+	ids, err := s.ListRunIDs()
+	if err != nil {
+		return nil, false
+	}
+	var last *localState
+	for _, id := range ids {
+		st := s.readState(id)
+		if st == nil || st.CriteriaID != criteriaID {
+			continue
+		}
+		if last == nil || st.StartedAt.After(last.StartedAt) {
+			last = st
+		}
+	}
+	if last == nil {
+		return nil, false
+	}
+	return &Agent{
+		CriteriaID: last.CriteriaID,
+		Name:       last.CriteriaID,
+		Status:     "online",
+		LastSeenAt: startedAtRFC3339(last),
+	}, true
+}
+
+func startedAtRFC3339(st *localState) string {
+	if st == nil || st.StartedAt.IsZero() {
+		return ""
+	}
+	return st.StartedAt.UTC().Format(time.RFC3339)
+}

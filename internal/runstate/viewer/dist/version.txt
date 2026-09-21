@@ -1,0 +1,3 @@
+Criteria run-viewer bundle v0 (placeholder)
+Bundle: parapet packages/run-viewer standalone build
+Rebuild: castle repo, vendored into internal/runstate/viewer/dist
