@@ -217,10 +217,7 @@ func TestAttachLocalRunStateServer(t *testing.T) {
 
 	parent := context.Background()
 	runCtx, stop := attachLocalRunStateServer(parent, newTestLogger(t), "run-attach-1", port)
-	defer func() {
-		// stop must stay idempotent-safe for double teardown paths.
-		stop()
-	}()
+	defer stop() // stop must stay safe for double teardown paths
 	if runCtx == parent {
 		t.Fatal("attach returned the parent context; engine stop wiring would be lost")
 	}
