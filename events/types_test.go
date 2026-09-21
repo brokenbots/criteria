@@ -45,6 +45,43 @@ func TestNewEnvelopeRoundTrip(t *testing.T) {
 	}
 }
 
+// TestNewEnvelope_WorkflowGraphs pins the CRI-278 payload type through the
+// envelope machinery: construction, discriminator, non-terminal classification,
+// and protojson round trip.
+func TestNewEnvelope_WorkflowGraphs(t *testing.T) {
+	env := events.NewEnvelope("run-1", &pb.WorkflowGraphs{
+		Subworkflows: []*pb.SubworkflowGraph{{
+			Name:       "inner_task",
+			SourcePath: "./subworkflows/inner",
+			Body:       `{"name":"inner_task"}`,
+		}},
+	})
+	if events.TypeString(env) != "workflow.graphs" {
+		t.Fatalf("type string: %q", events.TypeString(env))
+	}
+	if events.IsTerminal(env) {
+		t.Fatal("workflow.graphs should not be terminal")
+	}
+
+	raw, err := protojson.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var back pb.Envelope
+	if err := protojson.Unmarshal(raw, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !proto.Equal(env, &back) {
+		t.Fatalf("round trip mismatch:\nwant: %+v\nback: %+v", env, &back)
+	}
+	graphs := back.GetWorkflowGraphs()
+	if graphs == nil || len(graphs.Subworkflows) != 1 ||
+		graphs.Subworkflows[0].Name != "inner_task" ||
+		graphs.Subworkflows[0].SourcePath != "./subworkflows/inner" {
+		t.Fatalf("payload: %+v", graphs)
+	}
+}
+
 func TestIsTerminal(t *testing.T) {
 	if !events.IsTerminal(events.NewEnvelope("r", &pb.RunCompleted{})) {
 		t.Fatal("run.completed should be terminal")
