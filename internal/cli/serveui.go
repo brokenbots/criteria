@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -59,13 +58,10 @@ func NewServeUICmd() *cobra.Command {
 
 			select {
 			case err := <-serveErr:
-				if err == http.ErrServerClosed {
-					return nil
-				}
 				return err
 			case <-ctx.Done():
-				_ = ln.Close()
-				<-serveErr // drain the forced close
+				srv.Stop()
+				<-serveErr // drain the graceful close
 				return nil
 			}
 		},

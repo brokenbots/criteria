@@ -137,7 +137,7 @@ func executeFreshLocalRun(ctx context.Context, log *slog.Logger, graph *workflow
 		uiCtx, cancelRun := context.WithCancel(ctx)
 		runCtx = uiCtx
 		defer cancelRun()
-		stopRunStateServer, err := startLocalRunStateServer(log, runID, opts.uiPort, cancelRun)
+		_, stopRunStateServer, err := startLocalRunStateServer(log, runID, opts.uiPort, cancelRun)
 		if err != nil {
 			log.Warn("run viewer unavailable; continuing without it", "error", err)
 			runCtx = ctx

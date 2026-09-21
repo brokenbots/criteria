@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -25,6 +26,9 @@ type Server struct {
 	control ControlHandler
 	// viewer, when non-nil, serves the embedded run-viewer bundle at /.
 	viewer http.Handler
+	// srv is the http.Server created by Serve; Stop closes it.
+	srvMu sync.Mutex
+	srv   *http.Server
 }
 
 // ControlHandler applies a control verb to a run owned by this process. It
@@ -96,10 +100,27 @@ func (s *Server) Listen(host string, port int) (net.Listener, error) {
 	return ln, nil
 }
 
-// Serve accepts connections on ln until the listener closes.
+// Serve accepts connections on ln until Stop is called (or the listener
+// fails). A Stop-induced return is nil, so callers can drain uniformly.
 func (s *Server) Serve(ln net.Listener) error {
-	srv := &http.Server{Handler: s.Handler(), ReadHeaderTimeout: headerTimeout}
-	return srv.Serve(ln)
+	s.srvMu.Lock()
+	s.srv = &http.Server{Handler: s.Handler(), ReadHeaderTimeout: headerTimeout}
+	srv := s.srv
+	s.srvMu.Unlock()
+	err := srv.Serve(ln)
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+	return err
+}
+
+// Stop closes the server's listener and connections (a no-op before Serve).
+func (s *Server) Stop() {
+	s.srvMu.Lock()
+	defer s.srvMu.Unlock()
+	if s.srv != nil {
+		_ = s.srv.Close()
+	}
 }
 
 func logRequests(next http.Handler) http.Handler {

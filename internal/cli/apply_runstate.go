@@ -36,8 +36,9 @@ func openRunEventsFile(runID string) (io.Writer, func(), error) {
 // runID, serves the embedded run-viewer at the root, prints the viewer URL
 // to stderr, and serves until the returned stop func is called. The stop
 // verb of the control handler cancels the given engine context; pause and
-// resume are UNIMPLEMENTED (CRI-255 adds checkpoint-gated controls).
-func startLocalRunStateServer(log *slog.Logger, runID string, port int, cancelRun context.CancelFunc) (func(), error) {
+// resume are UNIMPLEMENTED (CRI-255 adds checkpoint-gated controls). The
+// viewer URL is returned for direct use by callers that want it.
+func startLocalRunStateServer(log *slog.Logger, runID string, port int, cancelRun context.CancelFunc) (string, func(), error) {
 	store := runstate.NewStore().Scoped(runID)
 	srv := runstate.NewServer(store).WithControl(func(id, verb string) error {
 		if id != runID {
@@ -57,7 +58,7 @@ func startLocalRunStateServer(log *slog.Logger, runID string, port int, cancelRu
 	}
 	ln, err := srv.Listen("", port) // loopback default host; port 0 = auto
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	url := fmt.Sprintf("http://%s/", ln.Addr())
 	serveErr := make(chan error, 1)
@@ -65,10 +66,11 @@ func startLocalRunStateServer(log *slog.Logger, runID string, port int, cancelRu
 
 	log.Info("run viewer available", "url", url, "run_id", runID)
 
-	return func() {
-		_ = ln.Close()
-		<-serveErr // drain (Serve returns http.ErrServerClosed or the close error)
-	}, nil
+	stop := func() {
+		srv.Stop()
+		<-serveErr // drain (Serve returns nil on Stop)
+	}
+	return url, stop, nil
 }
 
 // workflowSourceHash returns the sha256 hex digest of the compiled workflow
