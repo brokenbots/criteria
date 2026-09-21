@@ -545,9 +545,9 @@ func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManag
 		// run whose steps failed is never reported as success. Note: a run
 		// that pauses (wait/approval) and resumes starts a fresh tracker —
 		// failures recorded before the pause are not carried across resume.
-		FailedSteps:               newFailedStepTracker(),
-		firstStep:                 true,
-		firstStepAttempt:          firstStepAttempt,
+		FailedSteps:      newFailedStepTracker(),
+		firstStep:        true,
+		firstStepAttempt: firstStepAttempt,
 	}
 	deps := e.buildDeps(sessions, sink)
 

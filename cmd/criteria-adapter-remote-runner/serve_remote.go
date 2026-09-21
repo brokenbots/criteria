@@ -291,10 +291,14 @@ type adapterHealthServer struct {
 }
 
 func (h *adapterHealthServer) Check(ctx context.Context, _ *grpc_health_v1.HealthCheckRequest) (*grpc_health_v1.HealthCheckResponse, error) {
-	if _, err := h.probe.Info(ctx, &v2.InfoRequest{}); err != nil {
-		return &grpc_health_v1.HealthCheckResponse{Status: grpc_health_v1.HealthCheckResponse_NOT_SERVING}, nil
+	resp, probeErr := h.probe.Info(ctx, &v2.InfoRequest{})
+	// An adapter that fails to answer is reported as NOT_SERVING rather than
+	// as a health RPC error, so a forwarded check reflects the adapter.
+	st := grpc_health_v1.HealthCheckResponse_NOT_SERVING
+	if probeErr == nil && resp.GetName() != "" {
+		st = grpc_health_v1.HealthCheckResponse_SERVING
 	}
-	return &grpc_health_v1.HealthCheckResponse{Status: grpc_health_v1.HealthCheckResponse_SERVING}, nil
+	return &grpc_health_v1.HealthCheckResponse{Status: st}, nil
 }
 
 func (h *adapterHealthServer) Watch(_ *grpc_health_v1.HealthCheckRequest, stream grpc_health_v1.Health_WatchServer) error {

@@ -1497,16 +1497,14 @@ func (m *SessionManager) bindAdapterHandle(ctx context.Context, rec *verifiedRec
 	var lastErr error
 	for attempt := 0; attempt <= remoteBindMaxRetries; attempt++ {
 		if attempt > 0 {
-			select {
-			case <-ctx.Done():
-				return nil, nil, ctx.Err()
-			case <-time.After(remoteBindRetryDelay):
+			if err := bindRetryBackoff(ctx); err != nil {
+				return nil, nil, err
 			}
 		}
 		plug, err := m.resolveBindHandle(ctx, rec, customizer, stale)
 		if err != nil {
 			lastErr = err
-			if !remote || !isTransportClosingError(err) {
+			if terminalBindError(remote, err) {
 				return nil, nil, err
 			}
 			stale = nil
@@ -1519,7 +1517,7 @@ func (m *SessionManager) bindAdapterHandle(ctx context.Context, rec *verifiedRec
 		if openErr := plug.OpenSession(ctx, rec.name, rec.config, rec.secrets); openErr != nil {
 			plug.Kill()
 			lastErr = openErr
-			if !remote || !isTransportClosingError(openErr) {
+			if terminalBindError(remote, openErr) {
 				return nil, nil, openErr
 			}
 			stale = plug
@@ -1528,6 +1526,24 @@ func (m *SessionManager) bindAdapterHandle(ctx context.Context, rec *verifiedRec
 		return plug, caps, nil
 	}
 	return nil, nil, lastErr
+}
+
+// bindRetryBackoff waits out the inter-attempt delay between remote bind
+// retries, bailing out when the caller's context is done.
+func bindRetryBackoff(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(remoteBindRetryDelay):
+		return nil
+	}
+}
+
+// terminalBindError reports whether a bind error ends the bind loop instead
+// of retrying: local adapters bind once, and only a remote adapter's
+// transport-teardown error (shim re-handshake raced the bind) is retryable.
+func terminalBindError(remote bool, err error) bool {
+	return !remote || !isTransportClosingError(err)
 }
 
 // resolveBindHandle resolves the handle for one bind attempt. When a previous
