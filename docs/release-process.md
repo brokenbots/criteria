@@ -75,12 +75,26 @@ git tag -s v0.5.0 -m "Criteria v0.5.0 (adapter protocol v2)"
 git push origin v0.5.0
 ```
 
-The signed tag triggers `release.yml`, which runs the four gates and — only if
+The signed tag triggers `release.yml`, which runs the gates and — only if
 they all pass — builds, signs, and publishes the release binaries. Full releases
 additionally update the `brokenbots/homebrew-criteria` tap (see below). The
 release-source guard additionally requires a full-release tag to point at a
 commit on `main`. Generate the GitHub Release notes from the `CHANGELOG.md`
 v0.5.0 section.
+
+### Version stamping policy (v0.5.30+)
+
+Published release binaries MUST carry the EXACT release tag as their embedded
+version (`criteria version` == tag). Release builds stamp
+`VERSION=${{ github.ref_name }}` explicitly (the Makefile's git-describe
+fallback is for developer builds only), and a dedicated release gate
+(`version-stamp-gate`) fails the release if any shipped tarball's binary
+carries anything else. Rationale: a `-dirty` git-describe stamp is a semver
+prerelease, which the engine's `criteria_version` gate rejects against stable
+lower bounds — and an empty stamp fails as "unknown engine version". The
+runtime image build (`make docker-runtime`) takes the version via
+`CRITERIA_VERSION` and fails closed when it is unset, mirroring
+`criteria-base/Dockerfile`.
 
 ## Homebrew tap update
 

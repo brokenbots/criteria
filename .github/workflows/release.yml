@@ -172,6 +172,11 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
+          # Stamp the EXACT release tag. A git-describe stamp (e.g. vX.Y.Z-dirty)
+          # is a semver prerelease and the engine's criteria_version gate rejects
+          # it against stable lower bounds — published binaries must carry the
+          # exact tag. The version-stamp-gate job enforces this on the artifacts.
+          VERSION: ${{ github.ref_name }}
         run: make build
 
       - name: Build adapter plugins
@@ -199,6 +204,46 @@ jobs:
           path: criteria-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
           if-no-files-found: error
 
+  # ── Version-stamp gate ───────────────────────────────────────────────────────
+  # Every published binary must carry the EXACT release tag as its embedded
+  # version (workflow/version.Version). A "-dirty" describe stamp is a semver
+  # prerelease: the criteria_version gate rejects such engines against stable
+  # lower bounds, and an empty stamp fails as "unknown engine version". Either
+  # defect in a shipped artifact is a hard release failure.
+  version-stamp-gate:
+    name: Gate 5 — version stamp
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts/
+          pattern: criteria-*
+      - name: Verify stamped version equals the release tag
+        run: |
+          set -euo pipefail
+          expected="${{ github.ref_name }}"
+          fail=0
+          shopt -s nullglob
+          tarballs=(artifacts/*/criteria-*.tar.gz)
+          if [ "${#tarballs[@]}" -eq 0 ]; then
+            echo "::error::no criteria-*.tar.gz artifacts found"
+            exit 1
+          fi
+          for tarball in "${tarballs[@]}"; do
+            name="$(basename "$(dirname "$tarball")")"
+            tmp="$(mktemp -d)"
+            tar -xzf "$tarball" -C "$tmp"
+            if strings "$tmp/criteria" | grep -qx "$expected"; then
+              echo "$name: version OK ('$expected')"
+            else
+              echo "::error::$name: binary does not carry the exact version '$expected'"
+              fail=1
+            fi
+            rm -rf "$tmp"
+          done
+          exit $fail
+
   docker-image:
     name: Build Docker image tar
     runs-on: ubuntu-latest
@@ -212,7 +257,7 @@ jobs:
       - name: Build runtime image
         run: |
           TAG="${{ github.ref_name }}"
-          make docker-runtime
+          make docker-runtime CRITERIA_BUILD_VERSION="$TAG"
           docker tag criteria/runtime:dev "criteria/runtime:${TAG}"
           docker tag criteria/runtime:dev "criteria/runtime:latest"
 
@@ -232,7 +277,7 @@ jobs:
   checksum-and-sign:
     name: Checksum and sign
     runs-on: ubuntu-latest
-    needs: [build, docker-image]
+    needs: [build, docker-image, version-stamp-gate]
     steps:
       - uses: actions/checkout@v7
 

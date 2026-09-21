@@ -16,6 +16,12 @@ product version). The release tag and date are finalized by the release gate.
 - Add one-line POSIX shell installer (`install.sh`) served from the default
   branch; downloads signed release tarballs and installs `criteria` plus
   bundled adapters to `~/.criteria`.
+- Release binaries are stamped with the exact release tag; a new
+  `version-stamp-gate` release job fails the release if any shipped binary
+  embeds a `-dirty` describe string or an empty version. Developer builds keep
+  the git-describe stamp; the runtime image build fails closed without an
+  explicit `CRITERIA_VERSION` (v0.5.24–v0.5.29 shipped `-dirty`-stamped
+  binaries, which the `criteria_version` gate rejects).
 
 ### Adapter system rewrite
 

@@ -10,8 +10,16 @@ ENV CGO_ENABLED=0
 
 COPY . .
 
-RUN go work sync \
-    && make build \
+# CRITERIA_VERSION is REQUIRED: the exact version string stamped into the
+# binary (the release tag, e.g. v0.5.30, or a git-describe string for local
+# dev builds). There is deliberately NO in-image fallback: the build context
+# carries no .git (see .dockerignore), so a describe-based default would
+# silently stamp an empty version — an image whose engine version is ambiguous
+# must not build at all. Same fail-closed policy as criteria-base/Dockerfile.
+ARG CRITERIA_VERSION=""
+RUN test -n "${CRITERIA_VERSION}" || { echo "CRITERIA_VERSION is required (e.g. v0.5.30, or a git-describe string for local builds)"; exit 1; } \
+    && go work sync \
+    && make build VERSION="${CRITERIA_VERSION}" \
     && make plugins \
     && mkdir -p /out/bin \
     && cp -a bin/. /out/bin/

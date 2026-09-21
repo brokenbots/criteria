@@ -1,3 +1,22 @@
+.DEFAULT_GOAL := help
+
+# Version stamped into the criteria binary (workflow/version.Version).
+# Precedence:
+#   1. Explicit VERSION=... on the command line or in the environment — used by
+#      release builds, which MUST stamp the exact release tag (never a
+#      git-describe string; a "-dirty" describe is a semver prerelease and the
+#      engine's criteria_version gate rejects it against stable lower bounds).
+#   2. Fallback: git describe. Developer builds only. A dirty tree stamps
+#      "-dirty" on purpose — that is correct for local builds and MUST NOT
+#      reach a published release (release.yml fails the build if it does).
+CRITERIA_BUILD_VERSION ?= $(shell git describe --tags --match 'v*' --always --dirty 2>/dev/null || echo dev)
+
+# Explicit VERSION=... (make command line or exported env var) wins over the
+# describe fallback. Release CI and the Dockerfile.runtime build pass this.
+ifdef VERSION
+CRITERIA_BUILD_VERSION := $(VERSION)
+endif
+
 .PHONY: help bootstrap tidy build plugins install proto proto-lint proto-check-drift \
 	test test-cover coverage-check test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint lint-sh vuln-scan vulncheck deps-outdated deps-majors validate validate-docs example-plugin example-adapter-tools example-adapter-tools-copilot example-adapter-tools-claude bench docker-runtime docker-runtime-smoke ci clean
 
@@ -16,7 +35,7 @@ tidy: ## Run go mod tidy across all modules
 
 build: ## Build the criteria binary (output: bin/criteria)
 	mkdir -p bin
-	go build -ldflags "-X github.com/brokenbots/criteria/workflow/version.Version=$(shell git describe --tags --match 'v*' --always --dirty)" -o bin/criteria ./cmd/criteria
+	go build -ldflags "-X github.com/brokenbots/criteria/workflow/version.Version=$(CRITERIA_BUILD_VERSION)" -o bin/criteria ./cmd/criteria
 
 plugins: ## Build adapter plugin binaries (output: bin/criteria-adapter-*)
 	mkdir -p bin
@@ -56,7 +75,7 @@ install: build plugins ## Install criteria to ~/.local/criteria (binary → ~/.l
 	@echo ""
 
 docker-runtime: ## Build the runtime Docker image (criteria/runtime:dev)
-	docker build -t criteria/runtime:dev -f Dockerfile.runtime .
+	docker build --build-arg CRITERIA_VERSION="$(CRITERIA_BUILD_VERSION)" -t criteria/runtime:dev -f Dockerfile.runtime .
 
 docker-runtime-smoke: docker-runtime ## Run a workflow inside the runtime image
 	docker run --rm -v "$$PWD/examples:/workspace/examples:ro" \
