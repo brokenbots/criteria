@@ -174,8 +174,8 @@ func TestCRI271_FunctionalCrashReopensSessionForBookkeeping(t *testing.T) {
 	if err := NewTestEngine(g, cri271NewLoader(p), sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if sink.terminal != "awaiting_human" || !sink.terminalOK {
-		t.Errorf("terminal state %q success=%v; want awaiting_human/true", sink.terminal, sink.terminalOK)
+	if sink.terminal != "awaiting_human" || sink.terminalOK {
+		t.Errorf("terminal state %q success=%v; want awaiting_human/false (CRI-274: the crashed develop step is a real failure; reopened bookkeeping completes but the run must not report success)", sink.terminal, sink.terminalOK)
 	}
 
 	opens, executes := p.callLog()

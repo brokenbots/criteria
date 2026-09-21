@@ -164,8 +164,8 @@ func TestCRI130_ProductionTailCommentCrashContinues(t *testing.T) {
 	if err := NewTestEngine(g, cri130NewLoader(p), sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if sink.terminal != "handler_complete" || !sink.terminalOK {
-		t.Errorf("terminal state %q success=%v; want handler_complete/true (dead tail session must not flip the run)", sink.terminal, sink.terminalOK)
+	if sink.terminal != "handler_complete" || sink.terminalOK {
+		t.Errorf("terminal state %q success=%v; want handler_complete/false (CRI-274: the crashed comment step is a real failure; the run continues but must not report success)", sink.terminal, sink.terminalOK)
 	}
 	if sink.failure != "" {
 		t.Errorf("unexpected run failure: %s", sink.failure)
@@ -330,8 +330,8 @@ func TestCRI130_CommentStepRetryExhaustionContinues(t *testing.T) {
 	if err := NewTestEngine(g, cri130NewLoader(p), sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v (retry exhaustion of a comment step must stay best-effort)", err)
 	}
-	if sink.terminal != "done" || !sink.terminalOK {
-		t.Errorf("terminal state %q success=%v; want done/true", sink.terminal, sink.terminalOK)
+	if sink.terminal != "done" || sink.terminalOK {
+		t.Errorf("terminal state %q success=%v; want done/false (CRI-274: retry-exhausted comment step taints the run)", sink.terminal, sink.terminalOK)
 	}
 	if sink.failure != "" {
 		t.Errorf("unexpected run failure: %s", sink.failure)
@@ -353,8 +353,8 @@ func TestCRI130_CommentStepCrashAfterMergeSucceeds(t *testing.T) {
 	if err := NewTestEngine(g, cri130NewLoader(p), sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if sink.terminal != "done" || !sink.terminalOK {
-		t.Errorf("terminal state %q success=%v; want done/true (comment crash must not flip the run)", sink.terminal, sink.terminalOK)
+	if sink.terminal != "done" || sink.terminalOK {
+		t.Errorf("terminal state %q success=%v; want done/false (CRI-274: comment crash must taint the run even when the best-effort continuation completes)", sink.terminal, sink.terminalOK)
 	}
 	if sink.failure != "" {
 		t.Errorf("unexpected run failure: %s", sink.failure)
@@ -377,8 +377,8 @@ func TestCRI130_CommentStepCleanFailureOutcomeContinues(t *testing.T) {
 	if err := NewTestEngine(g, cri130NewLoader(p), sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if sink.terminal != "done" || !sink.terminalOK {
-		t.Errorf("terminal state %q success=%v; want done/true", sink.terminal, sink.terminalOK)
+	if sink.terminal != "done" || sink.terminalOK {
+		t.Errorf("terminal state %q success=%v; want done/false (CRI-274: a clean failure outcome on a comment step still taints the run)", sink.terminal, sink.terminalOK)
 	}
 	if sink.failure != "" {
 		t.Errorf("unexpected run failure: %s", sink.failure)

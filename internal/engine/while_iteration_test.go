@@ -858,8 +858,8 @@ state "done" {
 	if err != nil {
 		t.Fatalf("run: %v (want nil: timeout should abort loop, not crash run)", err)
 	}
-	if sink.terminal != "done" || !sink.terminalOK {
-		t.Errorf("terminal: %q ok=%v, want done/true", sink.terminal, sink.terminalOK)
+	if sink.terminal != "done" || sink.terminalOK {
+		t.Errorf("terminal: %q ok=%v, want done/false (CRI-274: the timeout-cancelled iteration is a real failed execution)", sink.terminal, sink.terminalOK)
 	}
 	if len(sink.iterationsCompleted) != 1 {
 		t.Fatalf("iterations completed: got %d want 1", len(sink.iterationsCompleted))
@@ -921,8 +921,8 @@ state "done" {
 	if call != 3 {
 		t.Errorf("adapter calls: got %d want 3 (loop must not abort on first execErr)", call)
 	}
-	if sink.terminal != "done" || !sink.terminalOK {
-		t.Errorf("terminal: %q ok=%v, want done/true", sink.terminal, sink.terminalOK)
+	if sink.terminal != "done" || sink.terminalOK {
+		t.Errorf("terminal: %q ok=%v, want done/false (CRI-274: iteration 1's execErr is a real failed execution even though the loop continued)", sink.terminal, sink.terminalOK)
 	}
 	if len(sink.iterationsCompleted) != 1 {
 		t.Fatalf("iterations completed: got %d want 1", len(sink.iterationsCompleted))
@@ -1033,8 +1033,8 @@ func TestWhile_Subworkflow_FailureAborts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run: %v (want nil: abort should not propagate callee error)", err)
 	}
-	if sink.terminal != "done" || !sink.terminalOK {
-		t.Errorf("terminal: %q ok=%v", sink.terminal, sink.terminalOK)
+	if sink.terminal != "done" || sink.terminalOK {
+		t.Errorf("terminal: %q ok=%v, want done/false (CRI-274: the failed callee iteration is a real failed execution)", sink.terminal, sink.terminalOK)
 	}
 	if call != 1 {
 		t.Errorf("callee adapter calls: got %d want 1 (abort after first failure)", call)

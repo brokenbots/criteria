@@ -541,6 +541,11 @@ func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManag
 		CrashedCommentSessions: newCrashedSessionRefs(),
 		// CRI-271: functional-step crash registry for re-open-before-follow-on.
 		CrashedFunctionalSessions: newCrashedSessionRefs(),
+		// CRI-274: failed-step registry consulted at the terminal state so a
+		// run whose steps failed is never reported as success. Note: a run
+		// that pauses (wait/approval) and resumes starts a fresh tracker —
+		// failures recorded before the pause are not carried across resume.
+		FailedSteps:               newFailedStepTracker(),
 		firstStep:                 true,
 		firstStepAttempt:          firstStepAttempt,
 	}
@@ -955,7 +960,12 @@ func (e *Engine) handleEvalError(ctx context.Context, st *RunState, err error, s
 		if len(outputs) > 0 {
 			sink.OnRunOutputs(outputs)
 		}
-		sink.OnRunCompleted(state.Name, state.Success)
+		// CRI-274: the terminal state's declared success bit is the workflow
+		// author's intent, but a run that reached it through failed steps did
+		// not deliver its contract (bookkeeping, teardown) — report the run
+		// as failed so the orchestrator can refire or alert instead of
+		// masking partial failures as successes.
+		sink.OnRunCompleted(state.Name, state.Success && !st.anyStepFailed())
 		return nil
 	}
 	if errors.Is(err, engineruntime.ErrPaused) {
@@ -986,7 +996,9 @@ func (e *Engine) handleEvalError(ctx context.Context, st *RunState, err error, s
 
 // handleReturnExit handles top-level runs that exit via next = step.return.
 // The projected outputs in st.ReturnOutputs are emitted as OnRunOutputs
-// (if non-empty) and the run is completed successfully with no named final state.
+// (if non-empty) and the run is completed with no named final state. The
+// success bit mirrors the terminal-state path (CRI-274): a run that reached
+// the return exit through failed steps is reported as failed.
 func (e *Engine) handleReturnExit(st *RunState, sink Sink) {
 	e.liveRunState = nil
 	e.lastVisits = st.Visits
@@ -997,7 +1009,7 @@ func (e *Engine) handleReturnExit(st *RunState, sink Sink) {
 			sink.OnRunOutputs(outputs)
 		}
 	}
-	sink.OnRunCompleted("", true)
+	sink.OnRunCompleted("", !st.anyStepFailed())
 }
 
 // formatReturnOutputs converts the ReturnOutputs cty.Value map to the

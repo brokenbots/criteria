@@ -516,6 +516,9 @@ func buildParallelIterState(i, total int, item, key cty.Value, st *RunState, vis
 		// so a crash recorded in one iteration is re-opened by follow-on steps
 		// in any other.
 		CrashedFunctionalSessions: st.CrashedFunctionalSessions,
+		// CRI-274: parallel iterations share the failed-step tracker so a
+		// failure in any iteration taints the run's completion.
+		FailedSteps: st.FailedSteps,
 		Vars: workflow.WithEachBinding(st.Vars, &workflow.EachBinding{
 			Value: item,
 			Key:   key,

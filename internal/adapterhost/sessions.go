@@ -691,6 +691,14 @@ func (s *Session) idleSinceLastEvent() (time.Duration, bool) {
 	return time.Since(time.Unix(0, last)), true
 }
 
+// remoteBind retry policy (CRI-274): a remote bind that raced a phone-home
+// re-handshake sees the old connection close mid-bind; retries wait briefly
+// for the replacement session the shim already registered.
+const (
+	remoteBindMaxRetries = 2
+	remoteBindRetryDelay = 25 * time.Millisecond
+)
+
 // NewSessionManager builds a SessionManager with the operator-configurable
 // heartbeat stall threshold (CRI-271). The env override lets operators raise
 // the stall boundary for adapters with long quiet streaming turns without a
@@ -1457,21 +1465,8 @@ func (m *SessionManager) bindVerifiedRecord(ctx context.Context, rec *verifiedRe
 		return fmt.Errorf("session %q: %w", rec.name, sandboxErr)
 	}
 
-	plug, err := m.resolveAdapterHandle(ctx, rec.name, rec.adapter, rec.scopeInstanceID, customizer)
+	plug, caps, err := m.bindAdapterHandle(ctx, rec, customizer)
 	if err != nil {
-		if cleanup != nil {
-			cleanup()
-		}
-		return err
-	}
-
-	var caps []string
-	if info, infoErr := plug.Info(ctx); infoErr == nil {
-		caps = append([]string(nil), info.Capabilities...)
-	}
-
-	if err := plug.OpenSession(ctx, rec.name, rec.config, rec.secrets); err != nil {
-		plug.Kill()
 		if cleanup != nil {
 			cleanup()
 		}
@@ -1486,6 +1481,76 @@ func (m *SessionManager) bindVerifiedRecord(ctx context.Context, rec *verifiedRe
 		m.LifecycleSink.OnAdapterLifecycle(rec.scopeName, rec.name, "opened", stepName)
 	}
 	return nil
+}
+
+// bindAdapterHandle resolves the adapter handle and opens the session,
+// returning the handle and the capabilities observed from it. Remote binds
+// retry transport-closed failures (CRI-274): the shim tears down the previous
+// bridge the moment a newer phone-home handshake arrives, so a bind that
+// races a re-handshake sees the old connection close mid-bind. Retrying on
+// the replacement connection — which the shim has already registered — keeps
+// a live remote session alive instead of failing the step. Local adapters
+// bind once.
+func (m *SessionManager) bindAdapterHandle(ctx context.Context, rec *verifiedRecord, customizer func(string, *exec.Cmd)) (Handle, []string, error) {
+	remote := m.remoteShim != nil && m.isRemoteAdapter(rec.name)
+	var stale Handle
+	var lastErr error
+	for attempt := 0; attempt <= remoteBindMaxRetries; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, nil, ctx.Err()
+			case <-time.After(remoteBindRetryDelay):
+			}
+		}
+		plug, err := m.resolveBindHandle(ctx, rec, customizer, stale)
+		if err != nil {
+			lastErr = err
+			if !remote || !isTransportClosingError(err) {
+				return nil, nil, err
+			}
+			stale = nil
+			continue
+		}
+		var caps []string
+		if info, infoErr := plug.Info(ctx); infoErr == nil {
+			caps = append([]string(nil), info.Capabilities...)
+		}
+		if openErr := plug.OpenSession(ctx, rec.name, rec.config, rec.secrets); openErr != nil {
+			plug.Kill()
+			lastErr = openErr
+			if !remote || !isTransportClosingError(openErr) {
+				return nil, nil, openErr
+			}
+			stale = plug
+			continue
+		}
+		return plug, caps, nil
+	}
+	return nil, nil, lastErr
+}
+
+// resolveBindHandle resolves the handle for one bind attempt. When a previous
+// attempt's handle died mid-bind, it is passed as stale so the shim waits for
+// the replacement connection instead of handing back the dead session.
+func (m *SessionManager) resolveBindHandle(ctx context.Context, rec *verifiedRecord, customizer func(string, *exec.Cmd), stale Handle) (Handle, error) {
+	if stale != nil && m.remoteShim != nil && m.isRemoteAdapter(rec.name) {
+		return m.remoteShim.WaitForFreshHandle(ctx, rec.adapter, rec.scopeInstanceID, stale)
+	}
+	return m.resolveAdapterHandle(ctx, rec.name, rec.adapter, rec.scopeInstanceID, customizer)
+}
+
+// isTransportClosingError reports whether err is a gRPC transport teardown
+// ("transport is closing" / "the client connection is closing") — the shape
+// produced when the connection underlying a live call is closed underneath
+// the caller (shim re-handshake replacement, adapter restart).
+func isTransportClosingError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "transport is closing") ||
+		strings.Contains(msg, "the client connection is closing")
 }
 
 // startPermissionStream starts the session-scoped Permissions stream if the
@@ -1732,8 +1797,7 @@ func classifySessionCrash(sess *Session, execErr error) string {
 	switch {
 	case strings.Contains(msg, "heartbeat stall"):
 		return "log-stream heartbeat stall (adapter stopped streaming)"
-	case strings.Contains(msg, "transport is closing"),
-		strings.Contains(msg, "the client connection is closing"):
+	case isTransportClosingError(execErr):
 		return "gRPC client transport closed (adapter or shim closed the connection)"
 	case strings.Contains(msg, "unavailable"):
 		return "gRPC endpoint unavailable (adapter process gone)"

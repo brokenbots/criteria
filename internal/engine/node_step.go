@@ -307,6 +307,7 @@ func (n *stepNode) evaluateOnce(ctx context.Context, st *RunState, deps Deps) (s
 		}
 		deps.Sink.OnStepOutputCaptured(n.step.Name, workflow.RenderOutputs(result.Outputs))
 		deps.Sink.OnStepTransition(n.step.Name, result.Outcome, result.Outcome)
+		st.recordFailureOutcome(result.Outcome)
 		if err := n.applyIterationDataWrites(result.Outcome, result.Outputs, st, deps.Sink); err != nil {
 			return "", err
 		}
@@ -356,6 +357,13 @@ func (n *stepNode) applyOutcome(outcomeName string, rawOutputs, swOutputs map[st
 			deps.Sink.OnStepOutcomeUnknown(n.step.Name, outcomeName)
 			return "", fmt.Errorf("step %q produced unmapped outcome %q", n.step.Name, outcomeName)
 		}
+	}
+
+	// CRI-274: a step whose outcome resolves to the failure outcome (directly
+	// or via the default-outcome mapping) failed; the run's completion must
+	// reflect it even when the failure arm routes to a success terminal.
+	if outcomeName == "failure" {
+		st.recordFailedStep()
 	}
 
 	// Apply output projection if the outcome declares one. Projection returns raw
@@ -575,6 +583,13 @@ func (n *stepNode) evaluateSubworkflowStep(ctx context.Context, st *RunState, de
 	outcome := "success"
 	if runErr != nil || (terminalState != workflow.ReturnSentinel && !swNode.Body.States[terminalState].Success) {
 		outcome = "failure"
+	}
+	// CRI-274: a subworkflow step that ends in its failure outcome (execution
+	// error or a failure terminal of the callee) failed; the callee body
+	// shares this run's FailedSteps tracker, so callee-internal failures are
+	// already recorded there.
+	if outcome == "failure" {
+		st.recordFailedStep()
 	}
 
 	// Mirror the adapter iteration path: set LastOutcome so routeIteratingStep
@@ -1023,11 +1038,14 @@ func commentStepContinuation() adapter.Result {
 
 // commentStepResult rewrites a completed comment_* step result as a best-effort
 // success continuation (CRI-130) when the failure is suppressible; otherwise
-// the result is returned unchanged.
-func commentStepResult(step *workflow.StepNode, result adapter.Result) adapter.Result {
+// the result is returned unchanged. The suppressed failure is still recorded
+// as a failed step (CRI-274): the run continues, but its completion must
+// reflect the bookkeeping that did not happen.
+func (n *stepNode) commentStepResult(st *RunState, step *workflow.StepNode, result adapter.Result) adapter.Result {
 	if !commentStepFailureContinues(step, result, nil) {
 		return result
 	}
+	st.recordFailedStep()
 	logCommentStepContinuation(step, result, nil)
 	return commentStepContinuation()
 }
@@ -1040,10 +1058,12 @@ func (n *stepNode) commentStepFailureOutcome(st *RunState, step *workflow.StepNo
 	failure := adapter.Result{Outcome: "failure"}
 	recordCommentSessionCrash(st, step, err)
 	if commentStepFailureContinues(step, failure, err) {
+		st.recordFailedStep()
 		logCommentStepContinuation(step, failure, err)
 		return commentStepContinuation()
 	}
 	if n.commentSessionCrashContinues(st, step, err) {
+		st.recordFailedStep()
 		logCommentSessionCrashContinuation(step, err)
 		return commentStepContinuation()
 	}
@@ -1057,10 +1077,12 @@ func (n *stepNode) commentStepExhausted(st *RunState, step *workflow.StepNode, w
 	failure := adapter.Result{Outcome: "failure"}
 	recordCommentSessionCrash(st, step, wrappedErr)
 	if commentStepFailureContinues(step, failure, wrappedErr) {
+		st.recordFailedStep()
 		logCommentStepContinuation(step, failure, wrappedErr)
 		return commentStepContinuation(), nil
 	}
 	if n.commentSessionCrashContinues(st, step, wrappedErr) {
+		st.recordFailedStep()
 		logCommentSessionCrashContinuation(step, wrappedErr)
 		return commentStepContinuation(), nil
 	}
@@ -1094,12 +1116,13 @@ func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps De
 
 		if err == nil {
 			deps.Sink.OnStepOutcome(step.Name, result.Outcome, dur, nil)
-			return commentStepResult(step, result), nil
+			return n.commentStepResult(st, step, result), nil
 		}
 
 		var fatal *adapterhost.FatalRunError
 		if errors.As(err, &fatal) {
 			deps.Sink.OnStepOutcome(step.Name, "failure", dur, err)
+			st.recordFailedStep()
 			return adapter.Result{}, err
 		}
 
@@ -1107,9 +1130,11 @@ func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps De
 		n.recordFunctionalSessionCrash(st, step, err)
 		if _, hasFailure := step.Outcomes["failure"]; hasFailure {
 			deps.Sink.OnStepOutcome(step.Name, "failure", dur, err)
+			st.recordFailedStep()
 			return n.commentStepFailureOutcome(st, step, err), nil
 		}
 		deps.Sink.OnStepOutcome(step.Name, "", dur, err)
+		st.recordFailedStep()
 	}
 
 	return n.commentStepExhausted(st, step, fmt.Errorf("step %q failed after %d attempts: %w", step.Name, maxAttempts-startAttempt+1, lastErr))

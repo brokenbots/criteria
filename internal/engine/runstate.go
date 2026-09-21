@@ -88,6 +88,18 @@ type RunState struct {
 	// parent iterations.
 	ParallelSemMu *sync.Mutex
 
+	// FailedSteps records step executions that ended in a failure outcome or
+	// an execution error during this run (CRI-274). A run that reaches a
+	// success terminal state after any step failed must not be reported as a
+	// success: the delivery contract (bookkeeping, teardown) silently did not
+	// happen and the failure would otherwise be masked by the terminal
+	// state's declared success bit. Nil-safe: a nil tracker records nothing
+	// and reports no failures. The tracker is shared by reference across
+	// parallel iteration states and subworkflow bodies (like Visits and the
+	// crashed-session sets) so a failure observed anywhere in the run taints
+	// the whole run's completion.
+	FailedSteps *failedStepTracker
+
 	// CrashedCommentSessions records adapter references whose adapter session
 	// crashed during a comment_* step (CRI-130). Under the default
 	// on_crash=fail policy the session stays registered but dead: every
@@ -170,6 +182,55 @@ func (s *crashedSessionRefs) forget(ref string) {
 	defer s.mu.Unlock()
 	delete(s.refs, ref)
 }
+
+// failedStepTracker records step executions that failed during a run
+// (CRI-274). The zero value is ready to use and every method tolerates a nil
+// receiver, so RunStates that never initialize the tracker behave as if no
+// step had failed.
+type failedStepTracker struct {
+	mu    sync.Mutex
+	count int
+}
+
+func newFailedStepTracker() *failedStepTracker {
+	return &failedStepTracker{}
+}
+
+// record notes one failed step execution.
+func (t *failedStepTracker) record() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.count++
+}
+
+// any reports whether at least one failed step execution was recorded.
+func (t *failedStepTracker) any() bool {
+	if t == nil {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.count > 0
+}
+
+// recordFailedStep notes a failed step execution on the run-scoped tracker.
+// Nil-safe.
+func (rs *RunState) recordFailedStep() { rs.FailedSteps.record() }
+
+// recordFailureOutcome notes a failed step execution when the given raw
+// outcome is the failure outcome. Nil-safe.
+func (rs *RunState) recordFailureOutcome(outcome string) {
+	if outcome == "failure" {
+		rs.FailedSteps.record()
+	}
+}
+
+// anyStepFailed reports whether any step execution failed during the run
+// (CRI-274). Nil-safe.
+func (rs *RunState) anyStepFailed() bool { return rs.FailedSteps.any() }
 
 // TopCursor returns a pointer to the innermost IterCursor, or nil when no
 // iteration is in progress.
