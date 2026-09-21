@@ -159,14 +159,25 @@ func NewShim(cfg *Config, verifier DigestVerifier) (*Shim, error) {
 	}, nil
 }
 
+// phoneHomeKeepAlive is the TCP keepalive applied to accepted phone-home
+// connections (CRI-276): accepted conns get no OS-level keepalive by default,
+// so a silently-dead peer would go unnoticed on the host side. Dialed conns
+// (the pod side) already enable the Go default (15s).
+const phoneHomeKeepAlive = 15 * time.Second
+
 // Start binds the listener. Called at workflow startup if any remote env
 // is referenced; skipped if no remote env is referenced (compile-time fold).
 func (s *Shim) Start(ctx context.Context) error {
+	// TCP keepalive on accepted phone-home connections keeps the path warm
+	// from both ends and detects half-open connections (CRI-276). UDS
+	// listeners ignore it.
+	lc := net.ListenConfig{KeepAlive: phoneHomeKeepAlive}
 	var lis net.Listener
 	var err error
 
 	if s.tlsConfig != nil {
-		lis, err = tls.Listen("tcp", s.listenAddr, s.tlsConfig)
+		raw, lerr := lc.Listen(ctx, "tcp", s.listenAddr)
+		lis, err = tls.NewListener(raw, s.tlsConfig), lerr
 	} else {
 		// Support both TCP and Unix socket addresses.
 		if filepath.IsAbs(s.listenAddr) || s.listenAddr != "" && s.listenAddr[0] == '/' {
@@ -174,9 +185,9 @@ func (s *Shim) Start(ctx context.Context) error {
 			if err := checkUnixSocketPath(s.listenAddr); err != nil {
 				return fmt.Errorf("remote shim: %w", err)
 			}
-			lis, err = net.Listen("unix", s.listenAddr)
+			lis, err = lc.Listen(ctx, "unix", s.listenAddr)
 		} else {
-			lis, err = net.Listen("tcp", s.listenAddr)
+			lis, err = lc.Listen(ctx, "tcp", s.listenAddr)
 		}
 	}
 	if err != nil {

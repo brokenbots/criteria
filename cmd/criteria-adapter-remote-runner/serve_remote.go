@@ -15,6 +15,7 @@ import (
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	adapterhost "github.com/brokenbots/criteria-go-adapter-sdk/adapterhost"
+	internaladapterhost "github.com/brokenbots/criteria/internal/adapterhost"
 )
 
 // remoteHandshake is the JSON line sent immediately after the transport
@@ -45,7 +46,11 @@ func serveRemoteOnce(ctx context.Context, cfg *remoteConfig, tlsConf *tls.Config
 		return fmt.Errorf("handshake: %w", err)
 	}
 
-	server := grpc.NewServer()
+	// Keepalive policy (CRI-276): the server pings idle phone-home
+	// connections (even with no active streams) and tolerates client pings,
+	// while no MaxConnectionIdle/Age is set — idleness alone must never close
+	// a live session's connection.
+	server := grpc.NewServer(internaladapterhost.RemoteKeepaliveServerOptions()...)
 	v2.RegisterAdapterServiceServer(server, &grpcAdapterServer{impl: proxy})
 
 	wrapped := &closeSignalConn{Conn: conn, doneCh: make(chan struct{})}
