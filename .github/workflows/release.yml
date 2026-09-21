@@ -219,6 +219,9 @@ jobs:
         with:
           path: artifacts/
           pattern: criteria-*
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
       - name: Verify stamped version equals the release tag
         run: |
           set -euo pipefail
@@ -234,10 +237,16 @@ jobs:
             name="$(basename "$(dirname "$tarball")")"
             tmp="$(mktemp -d)"
             tar -xzf "$tarball" -C "$tmp"
-            if strings "$tmp/criteria" | grep -qx "$expected"; then
-              echo "$name: version OK ('$expected')"
+            # Read the version from the binary's build-info via `go version -m`.
+            # Do NOT raw-scan the binary (strings/grep): Go packs string
+            # constants without separators, so the stamp is not reliably
+            # extractable that way (this false-failed the first v0.5.30 run).
+            stamp="$(go version -m "$tmp/criteria" 2>/dev/null \
+              | sed -nE 's/.*-ldflags="-X github\.com\/brokenbots\/criteria\/workflow\/version\.Version=([^"]*)".*/\1/p')"
+            if [ "$stamp" = "$expected" ]; then
+              echo "$name: version OK ('$stamp')"
             else
-              echo "::error::$name: binary does not carry the exact version '$expected'"
+              echo "::error::$name: binary stamp is '$stamp', expected exactly '$expected'"
               fail=1
             fi
             rm -rf "$tmp"
