@@ -32,6 +32,9 @@ const (
 type Store struct {
 	// home resolves the criteria root. Overridable for tests.
 	home func() (string, error)
+	// scope, when non-empty, restricts the store to a single run id
+	// (apply wires its run id). Set only through Scoped.
+	scope string
 }
 
 // NewStore returns a Store rooted at the process criteria home.
@@ -57,6 +60,9 @@ func (s *Store) RunsRoot() (string, error) {
 // could escape the runs root is refused as not found.
 func (s *Store) RunDir(runID string) (string, error) {
 	if runID == "" || runID == "." || runID == ".." || strings.ContainsAny(runID, `/\`) {
+		return "", ErrNotFound
+	}
+	if s.hasScope() && runID != s.scope {
 		return "", ErrNotFound
 	}
 	root, err := s.RunsRoot()
@@ -110,6 +116,13 @@ func (s *Store) ListRunIDs() ([]string, error) {
 		return nil, err
 	}
 	out := make([]string, 0, len(entries))
+	if s.hasScope() {
+		if fileExists(filepath.Join(root, s.scope, eventsFileName)) ||
+			fileExists(filepath.Join(root, s.scope, stateFileName)) {
+			return []string{s.scope}, nil
+		}
+		return out, nil
+	}
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
@@ -527,3 +540,17 @@ func startedAtRFC3339(st *localState) string {
 	}
 	return st.StartedAt.UTC().Format(time.RFC3339)
 }
+
+// Scoped returns a Store restricted to a single run id: the owning apply
+// process wires its run id, so its server serves only the run it owns
+// (CRI-279 locked rule). ListRunIDs reports just that run; RunDir refuses
+// every other id. The standalone serve-ui command uses the unscoped store.
+func (s *Store) Scoped(runID string) *Store {
+	c := *s
+	c.scope = runID
+	return &c
+}
+
+// scope is the single-run restriction set by Scoped (empty = unrestricted).
+// Not exported; set only through Scoped.
+func (s *Store) hasScope() bool { return s.scope != "" }
