@@ -83,16 +83,18 @@ func openServerEventsWriter(eventsPath string) (io.Writer, func(), error) {
 // buildLocalSink composes the engine sink for standalone mode. LocalSink
 // always runs (drives the ND-JSON record and the checkpoint hook). When mode
 // is concise, a ConsoleSink is added in front of stdout and the two are
-// fanned out via MultiSink.
-func buildLocalSink(runID string, jsonOut io.Writer, mode outputMode, steps []string, checkpointFn func(step string, attempt int), graph *workflow.FSMGraph) engine.Sink {
+// fanned out via MultiSink. The concrete LocalSink is returned alongside the
+// composed engine.Sink so callers at the post-compile seam can emit
+// WorkflowGraphs (CRI-278) without knowing the composition.
+func buildLocalSink(runID string, jsonOut io.Writer, mode outputMode, steps []string, checkpointFn func(step string, attempt int), graph *workflow.FSMGraph) (engine.Sink, *run.LocalSink) {
 	local := &run.LocalSink{
 		RunID:        runID,
 		Out:          jsonOut,
 		CheckpointFn: checkpointFn,
 	}
 	if mode != outputModeConcise {
-		return local
+		return local, local
 	}
 	console := run.NewConsoleSink(os.Stdout, steps, run.ColorEnabled(os.Stdout), graph)
-	return run.NewMultiSink(local, console)
+	return run.NewMultiSink(local, console), local
 }

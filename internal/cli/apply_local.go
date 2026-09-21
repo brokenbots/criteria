@@ -148,7 +148,11 @@ func executeFreshLocalRun(ctx context.Context, log *slog.Logger, graph *workflow
 // engine's visit counts for checkpoint writes (W07).
 func buildLocalRunSink(log *slog.Logger, runID, workflowPath, fingerprint string, jsonOut io.Writer, mode outputMode, graph *workflow.FSMGraph, getVisits func() map[string]int) (*pauseTracker, *terminalSuccessSink) {
 	checkpointFn := buildLocalCheckpointFn(log, runID, graph.Name, workflowPath, fingerprint, getVisits)
-	baseSink := buildLocalSink(runID, jsonOut, mode, graph.StepOrder(), checkpointFn, graph)
+	baseSink, local := buildLocalSink(runID, jsonOut, mode, graph.StepOrder(), checkpointFn, graph)
+	// CRI-278: emit the once-per-run WorkflowGraphs event at the post-compile
+	// seam, before the engine starts, so it takes the next seq on the ND-JSON
+	// stream and lands at or before RunStarted.
+	emitWorkflowGraphsLocal(log, local, graph)
 	tracker := &pauseTracker{
 		Sink: baseSink,
 		PauseCheckpointFn: func(node string) {
@@ -290,7 +294,7 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 	nextAttempt := cp.Attempt + 1
 	maxAttempts := 1 + graph.Policy.MaxStepRetries
 	if nextAttempt > maxAttempts {
-		sink := buildLocalSink(cp.RunID, out, mode, graph.StepOrder(), nil, graph)
+		sink, _ := buildLocalSink(cp.RunID, out, mode, graph.StepOrder(), nil, graph)
 		reason := fmt.Sprintf("exceeded max_step_retries on resume at step %q (attempt %d)", cp.CurrentStep, nextAttempt)
 		sink.OnRunFailed(reason, cp.CurrentStep)
 		RemoveStepCheckpoint(cp.RunID)
@@ -353,7 +357,7 @@ func buildReattachTrackerAndEngine(cp *StepCheckpoint, log *slog.Logger, graph *
 			log.Warn("failed to update local checkpoint", "run_id", cp.RunID, "error", cpErr)
 		}
 	}
-	baseSink := buildLocalSink(cp.RunID, out, mode, graph.StepOrder(), checkpointFn, graph)
+	baseSink, _ := buildLocalSink(cp.RunID, out, mode, graph.StepOrder(), checkpointFn, graph)
 	tracker := &pauseTracker{
 		Sink:              baseSink,
 		PauseCheckpointFn: func(node string) { checkpointFn(node, 0) },
