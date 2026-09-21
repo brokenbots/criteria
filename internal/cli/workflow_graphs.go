@@ -44,7 +44,8 @@ func workflowGraphsLayersJSON(graph *workflow.FSMGraph) (json.RawMessage, error)
 func buildWorkflowGraphsPayload(graph *workflow.FSMGraph) (*pb.WorkflowGraphs, error) {
 	cj := buildCompileJSON(graph)
 	msg := &pb.WorkflowGraphs{Subworkflows: make([]*pb.SubworkflowGraph, 0, len(cj.Subworkflows))}
-	for _, layer := range cj.Subworkflows {
+	for i := range cj.Subworkflows {
+		layer := &cj.Subworkflows[i]
 		body, err := json.Marshal(layer.Body)
 		if err != nil {
 			return nil, fmt.Errorf("marshal subworkflow %q body: %w", layer.Name, err)
