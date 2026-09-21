@@ -206,6 +206,70 @@ func TestStartLocalRunStateServer(t *testing.T) {
 	}
 }
 
+// TestAttachLocalRunStateServer exercises the apply-side wiring helper over a
+// real socket: the server becomes healthy, the returned stop tears it down
+// and cancels the engine context. Without the srvStop/self-capture fix the
+// returned stop recursed into itself and overflowed the stack at run end.
+func TestAttachLocalRunStateServer(t *testing.T) {
+	t.Setenv("CRITERIA_HOME", t.TempDir())
+	port := freePort(t)
+	base := fmt.Sprintf("http://127.0.0.1:%d", port)
+
+	parent := context.Background()
+	runCtx, stop := attachLocalRunStateServer(parent, newTestLogger(t), "run-attach-1", port)
+	defer func() {
+		// stop must stay idempotent-safe for double teardown paths.
+		stop()
+	}()
+	if runCtx == parent {
+		t.Fatal("attach returned the parent context; engine stop wiring would be lost")
+	}
+	if runCtx.Err() != nil {
+		t.Fatalf("fresh run context already canceled: %v", runCtx.Err())
+	}
+
+	waitHealth(t, base)
+
+	stop()
+	select {
+	case <-runCtx.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("stop did not cancel the run context")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		res, err := http.Get(base + "/health")
+		if err != nil {
+			break
+		}
+		res.Body.Close()
+		if time.Now().After(deadline) {
+			t.Fatal("server still answering after stop")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestAttachLocalRunStateServer_BindFailure verifies the lifeline-not-a-gate
+// rule: when the listener cannot bind, apply keeps the parent context and the
+// returned stop is still a safe cancel.
+func TestAttachLocalRunStateServer_BindFailure(t *testing.T) {
+	t.Setenv("CRITERIA_HOME", t.TempDir())
+	port := freePort(t)
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		t.Fatalf("occupy port: %v", err)
+	}
+	defer ln.Close()
+
+	parent := context.Background()
+	runCtx, stop := attachLocalRunStateServer(parent, newTestLogger(t), "run-attach-2", port)
+	if runCtx != parent {
+		t.Fatalf("bind failure must fall back to the parent context")
+	}
+	stop()
+}
+
 // TestServeUICmdFixedPort runs serve-ui on a pinned port and exercises the
 // read surface over the real command path.
 func TestServeUICmdFixedPort(t *testing.T) {

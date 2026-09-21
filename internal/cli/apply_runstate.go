@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/brokenbots/criteria/internal/runstate"
 )
@@ -63,12 +64,17 @@ func startLocalRunStateServer(log *slog.Logger, runID string, port int, cancelRu
 	url := fmt.Sprintf("http://%s/", ln.Addr())
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.Serve(ln) }()
+	var stopOnce sync.Once
 
 	log.Info("run viewer available", "url", url, "run_id", runID)
 
 	stop = func() {
-		srv.Stop()
-		<-serveErr // drain (Serve returns nil on Stop)
+		// Idempotent: double teardown (explicit stop plus deferred stop)
+		// must not double-drain the serve error channel.
+		stopOnce.Do(func() {
+			srv.Stop()
+			<-serveErr // drain (Serve returns nil on Stop)
+		})
 	}
 	return url, stop, nil
 }
@@ -79,13 +85,17 @@ func startLocalRunStateServer(log *slog.Logger, runID string, port int, cancelRu
 // parent context with a no-op stop: the viewer is a lifeline, not a gate.
 func attachLocalRunStateServer(ctx context.Context, log *slog.Logger, runID string, port int) (runCtx context.Context, stop func()) {
 	runCtx, cancelRun := context.WithCancel(ctx)
-	_, stop, err := startLocalRunStateServer(log, runID, port, cancelRun)
+	// srvStop is deliberately a fresh variable: binding it to the named
+	// return "stop" would make the returned closure call itself (the return
+	// statement assigns the closure to "stop"), recursing to a stack
+	// overflow when apply tears the server down.
+	_, srvStop, err := startLocalRunStateServer(log, runID, port, cancelRun)
 	if err != nil {
 		log.Warn("run viewer unavailable; continuing without it", "error", err)
 		return ctx, cancelRun
 	}
 	return runCtx, func() {
-		stop()
+		srvStop()
 		cancelRun()
 	}
 }
