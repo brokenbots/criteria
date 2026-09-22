@@ -1964,3 +1964,110 @@ state "done" {
 		t.Errorf("expected legacy WaitForHandle with empty scope, calls=%v", shim.calls)
 	}
 }
+
+// TestInitScopeAdapters_PerScope_ProvisionWantedAddressPerEnvironment pins the
+// CRI-293 local-mode address publication: when two remote environments each
+// run their own shim (colliding declared addresses are isolated by the engine
+// into distinct binds), each environment's adapters must be provisioned with
+// their own shim's listen address, not a shared one.
+func TestInitScopeAdapters_PerScope_ProvisionWantedAddressPerEnvironment(t *testing.T) {
+	ctx := context.Background()
+	g := compile(t, `
+workflow {
+  name = "per-scope-two-env-test"
+  version = "0.1"
+  initial_state = "start"
+  target_state  = "done"
+}
+
+environment "remote" "prod" {
+  listen_address     = "0.0.0.0:7778"
+  per_scope_sessions = true
+}
+
+environment "remote" "staging" {
+  listen_address     = "0.0.0.0:7778"
+  per_scope_sessions = true
+}
+
+adapter "noop" "prod" {
+  environment = remote.prod
+}
+
+adapter "noop" "staging" {
+  environment = remote.staging
+}
+
+step "start" {
+  target = adapter.noop.prod
+  outcome "success" { next = step.staging }
+}
+
+step "staging" {
+  target = adapter.noop.staging
+  outcome "success" { next = step.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}`)
+	dataDir := t.TempDir()
+
+	sessions := adapterhost.NewSessionManager(&fakeLoader{})
+	sessions.SetGraph(g)
+	prodShim := newFakeRemoteShim(&fakeRemoteHandle{})
+	prodShim.listenAddr = "127.0.0.1:40001"
+	stagingShim := newFakeRemoteShim(&fakeRemoteHandle{})
+	stagingShim.listenAddr = "127.0.0.1:40002"
+	sessions.SetRemoteShimForEnv("remote.prod", prodShim)
+	sessions.SetRemoteShimForEnv("remote.staging", stagingShim)
+
+	lifecycle := newScopeLifecycleState(dataDir)
+	lifecycle.setRunID("run-cri293")
+	sink := &eventTrackingSink{}
+	rlc := &remoteLifecycleContext{scopeLifecycle: lifecycle}
+	deps := Deps{Sessions: sessions, Sink: sink}
+
+	order, err := initScopeAdapters(ctx, g, deps, nil, dataDir, "", nil, rlc)
+	if err != nil {
+		t.Fatalf("initScopeAdapters: %v", err)
+	}
+	if len(order) != 2 {
+		t.Fatalf("expected 2 adapters initialized, got %v", order)
+	}
+
+	wantAddr := map[string]string{
+		"noop.prod":    "127.0.0.1:40001",
+		"noop.staging": "127.0.0.1:40002",
+	}
+	for _, event := range sink.provisionEvents {
+		if event.Status != "provision_wanted" {
+			continue
+		}
+		adapterID := event.AdapterType + "." + event.AdapterName
+		want, ok := wantAddr[adapterID]
+		if !ok {
+			t.Fatalf("unexpected provision_wanted for %s", adapterID)
+		}
+		if event.ShimListenAddress != want {
+			t.Errorf("%s ShimListenAddress = %q, want %q", adapterID, event.ShimListenAddress, want)
+		}
+		// The token must be registered with that environment's shim.
+		scopeKey := event.ScopeName + "/" + event.ScopeInstanceID
+		var shim *fakeRemoteShim
+		if event.EnvironmentName == "prod" {
+			shim = prodShim
+		} else if event.EnvironmentName == "staging" {
+			shim = stagingShim
+		} else {
+			t.Fatalf("unexpected environment %q", event.EnvironmentName)
+		}
+		if got := shim.registeredToken(scopeKey); got == "" {
+			t.Errorf("%s: token for scope %q not registered on %s shim", adapterID, scopeKey, event.EnvironmentName)
+		}
+	}
+	if got := len(sink.provisionEvents); got != 2 {
+		t.Fatalf("expected 2 provision_wanted events, got %d", got)
+	}
+}

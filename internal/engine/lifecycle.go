@@ -251,6 +251,13 @@ func clearCurrentScopeInstance(dataDir, scopeName, adapterInstance string) {
 	_ = os.Remove(path)
 }
 
+// environmentKey is the canonical key for an environment node, matching the
+// compile step's environment map keys (Type + "." + Name) and the keys the
+// engine uses when starting per-environment remote shims.
+func environmentKey(envNode *workflow.EnvironmentNode) string {
+	return envNode.Type + "." + envNode.Name
+}
+
 func remoteEnvConfig(g *workflow.FSMGraph, ad *workflow.AdapterNode) (*remote.Config, *workflow.EnvironmentNode, bool) {
 	envKey := ad.Environment
 	if envKey == "" {
@@ -315,7 +322,7 @@ func lockedDigest(lf *lockfile.Lockfile, adapterType, adapterName string) string
 
 func emitProvisionWanted(deps Deps, lifecycle *remoteLifecycleContext, scopeName, scopeInstanceID, scopeKey, instanceID string, adapter *workflow.AdapterNode, envNode *workflow.EnvironmentNode, tokenPath, token string) {
 	digest := lockedDigest(lifecycle.lockfile, adapter.Type, adapter.Name)
-	listenAddr := deps.Sessions.RemoteListenAddr()
+	listenAddr := deps.Sessions.RemoteListenAddrForEnv(environmentKey(envNode))
 	deps.Sink.OnAdapterLifecycleEvent(&AdapterLifecycleEvent{
 		RunID:             lifecycle.scopeLifecycle.runID,
 		ScopeName:         scopeName,
@@ -393,7 +400,7 @@ func maybeRotateRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, g *wor
 		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
 		return "", fmt.Errorf("initialize adapter %q: persist scope instance: %w", instanceID, err)
 	}
-	if err := deps.Sessions.RegisterRemoteScope(scopeKey, token); err != nil {
+	if err := deps.Sessions.RegisterRemoteScopeForEnv(environmentKey(envNode), scopeKey, token); err != nil {
 		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
 		return "", fmt.Errorf("initialize adapter %q: register scope token: %w", instanceID, err)
 	}
@@ -417,7 +424,7 @@ func tryReuseScopeInstance(deps Deps, lifecycle *remoteLifecycleContext, envNode
 	scopeInstanceID, tokenPath, token, reason, ok := reusableScopeToken(dataDir, scopeName, instanceID, adapter.Type)
 	if ok {
 		scopeKey = scopeName + "/" + scopeInstanceID
-		if rerr := deps.Sessions.RegisterRemoteScope(scopeKey, token); rerr != nil {
+		if rerr := deps.Sessions.RegisterRemoteScopeForEnv(environmentKey(envNode), scopeKey, token); rerr != nil {
 			deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", rerr.Error())
 			return "", false, fmt.Errorf("initialize adapter %q: register scope token: %w", instanceID, rerr)
 		}
@@ -452,7 +459,7 @@ func tryReuseScopeInstance(deps Deps, lifecycle *remoteLifecycleContext, envNode
 		return "", false, nil
 	}
 	scopeKey = scopeName + "/" + chosen.instanceID
-	if rerr := deps.Sessions.RegisterRemoteScope(scopeKey, chosen.token); rerr != nil {
+	if rerr := deps.Sessions.RegisterRemoteScopeForEnv(environmentKey(envNode), scopeKey, chosen.token); rerr != nil {
 		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", rerr.Error())
 		return "", false, fmt.Errorf("initialize adapter %q: register scope token: %w", instanceID, rerr)
 	}
@@ -460,7 +467,7 @@ func tryReuseScopeInstance(deps Deps, lifecycle *remoteLifecycleContext, envNode
 	// runner's pods remain valid across the restart, not just the one this
 	// adapter reuses.
 	for _, cand := range candidates[1:] {
-		if rerr := deps.Sessions.RegisterRemoteScope(scopeName+"/"+cand.instanceID, cand.token); rerr != nil {
+		if rerr := deps.Sessions.RegisterRemoteScopeForEnv(environmentKey(envNode), scopeName+"/"+cand.instanceID, cand.token); rerr != nil {
 			slog.Warn("registering surviving scope token failed; the matching pod may fail its handshake",
 				"scope", scopeName, "scope_instance", cand.instanceID, "error", rerr.Error())
 		}
@@ -837,8 +844,9 @@ func tearDownScopeAdapters(ctx context.Context, order []string, deps Deps, lifec
 					EnvironmentType:   rec.envType,
 					EnvironmentName:   rec.envName,
 				})
-				_ = deps.Sessions.UnregisterRemoteScope(rec.scopeKey)
-				_ = deps.Sessions.CloseRemoteHandle(cleanupCtx, rec.adapterType, rec.scopeKey)
+				envKey := rec.envType + "." + rec.envName
+				_ = deps.Sessions.UnregisterRemoteScopeForEnv(envKey, rec.scopeKey)
+				_ = deps.Sessions.CloseRemoteHandleForEnv(cleanupCtx, envKey, rec.adapterType, rec.scopeKey)
 				// CRI-137: tombstone the persisted scope instance so the
 				// next deliberate scope entry rotates a fresh token instead
 				// of the token-file scan resurrecting the released one. The
