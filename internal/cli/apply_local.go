@@ -165,6 +165,22 @@ func buildLocalRunSink(log *slog.Logger, runID, workflowPath, fingerprint string
 	return tracker, &terminalSuccessSink{Sink: tracker}
 }
 
+// localRunEngineOptions returns the engine options every local `criteria
+// apply` engine construction site must include: the workflow directory and
+// run data directory, plus the CRI-293 shim address isolation. A local run
+// binds every referenced remote environment's shim in one process, so
+// environments sharing a listen_address would collide on the second bind
+// without per-environment port isolation. Server engine construction sites
+// must never include that option: each environment's shim lives in its own
+// adapter pod and must receive the declared address.
+func localRunEngineOptions(workflowPath, dataDir string) []engine.Option {
+	return []engine.Option{
+		engine.WithWorkflowDir(workflowDirFromPath(workflowPath)),
+		engine.WithDataDir(dataDir),
+		engine.WithLocalShimIsolation(),
+	}
+}
+
 // newLocalEngine constructs the engine for a fresh local run.
 func newLocalEngine(runID string, graph *workflow.FSMGraph, loader adapterhost.Loader, runSink engine.Sink, opts applyOptions, identity localRunIdentity) (*engine.Engine, error) {
 	auditPath, _ := auditLogPath(runID)
@@ -173,12 +189,10 @@ func newLocalEngine(runID string, graph *workflow.FSMGraph, loader adapterhost.L
 	if err != nil {
 		return nil, err
 	}
-	return engine.New(graph, loader, runSink,
+	engOpts := append(localRunEngineOptions(opts.workflowPath, dataDir),
 		engine.WithVarOverrides(identity.mergedVars),
-		engine.WithWorkflowDir(workflowDirFromPath(opts.workflowPath)),
-		engine.WithAuditWriter(auditWriter),
-		engine.WithDataDir(dataDir),
-	), nil
+		engine.WithAuditWriter(auditWriter))
+	return engine.New(graph, loader, runSink, engOpts...), nil
 }
 
 // finishFreshLocalRun handles post-engine work: resume cycles and the
@@ -364,11 +378,13 @@ func buildReattachTrackerAndEngine(cp *StepCheckpoint, log *slog.Logger, graph *
 	}
 	runSink := &terminalSuccessSink{Sink: tracker}
 	tracker.OnStepResumed(cp.CurrentStep, nextAttempt, "criteria_restart")
-	eng = engine.New(graph, loader, runSink,
+	reattachOpts := append(localRunEngineOptions(cp.WorkflowPath, dataDir),
 		engine.WithVarOverrides(mergedVars),
-		engine.WithWorkflowDir(workflowDirFromPath(cp.WorkflowPath)),
-		engine.WithResumedVisits(cp.Visits),
-		engine.WithDataDir(dataDir),
-	)
+		engine.WithResumedVisits(cp.Visits))
+	// CRI-293: this is a local crash-reattach engine; it binds the remote
+	// environment shims in-process just like the fresh-run and resume-cycle
+	// engines, so it needs the same shared listen_address isolation (carried
+	// by localRunEngineOptions).
+	eng = engine.New(graph, loader, runSink, reattachOpts...)
 	return opts, tracker, runSink, eng, nil
 }

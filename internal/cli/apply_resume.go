@@ -142,13 +142,11 @@ func drainLocalResumeCycles(ctx context.Context, log *slog.Logger, graph *workfl
 		}
 
 		tracker.ClearPaused()
-		resumedEng := engine.New(graph, loader, runSink,
+		resumeOpts := append(localRunEngineOptions(opts.workflowPath, dataDir),
 			engine.WithResumedVars(eng.VarScope()),
 			engine.WithResumedVisits(eng.VisitCounts()),
-			engine.WithResumePayload(payload),
-			engine.WithWorkflowDir(workflowDirFromPath(opts.workflowPath)),
-			engine.WithDataDir(dataDir),
-		)
+			engine.WithResumePayload(payload))
+		resumedEng := engine.New(graph, loader, runSink, resumeOpts...)
 		if runErr := resumedEng.RunFrom(ctx, pausedNode, 1); runErr != nil {
 			log.Error("local run failed after resume", "run_id", runID, "error", runErr)
 			return runErr
