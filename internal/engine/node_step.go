@@ -843,6 +843,19 @@ func (n *stepNode) executeStepTimed(ctx context.Context, deps Deps, step *workfl
 
 	start := time.Now()
 	result, err := n.executeStep(stepCtx, deps, step)
+	// CRI-287: when the step deadline expired, this Execute was torn down by
+	// the engine (the CRI-275 step timeout). The cancellation may close
+	// sibling phone-home transports in the same second, so mark the session
+	// manager: those transport closes must be classified as timeout teardowns,
+	// not session crashes, and the step's declared failure/default outcome
+	// routing (the checkpoint loop) proceeds. The mark lands before the next
+	// step's Execute, which is where the misclassification used to happen.
+	// Only a step ceiling the engine actually installed may open the teardown
+	// window: when step.Timeout == 0 (stepCtx == ctx) a parent/run-context
+	// deadline or a subworkflow cancellation must not.
+	if deps.Sessions != nil && cancel != nil && stepCtx.Err() == context.DeadlineExceeded {
+		deps.Sessions.MarkEngineStepTimeoutTeardown()
+	}
 	if cancel != nil {
 		cancel()
 	}

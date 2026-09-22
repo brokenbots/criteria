@@ -1097,6 +1097,15 @@ func (p *rpcHandle) Kill() {
 	})
 }
 
+// ProcessExited implements [ProcessExitReporter] for go-plugin handles: the
+// client observes the adapter subprocess exit directly.
+func (p *rpcHandle) ProcessExited() bool {
+	if p == nil || p.client == nil {
+		return false
+	}
+	return p.client.Exited()
+}
+
 func (p *rpcHandle) Pause(ctx context.Context, sessionID string) error {
 	_, err := p.rpc.Pause(ctx, &v2.PauseRequest{SessionId: sessionID})
 	return err
