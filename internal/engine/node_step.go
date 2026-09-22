@@ -850,7 +850,10 @@ func (n *stepNode) executeStepTimed(ctx context.Context, deps Deps, step *workfl
 	// not session crashes, and the step's declared failure/default outcome
 	// routing (the checkpoint loop) proceeds. The mark lands before the next
 	// step's Execute, which is where the misclassification used to happen.
-	if deps.Sessions != nil && stepCtx.Err() == context.DeadlineExceeded {
+	// Only a step ceiling the engine actually installed may open the teardown
+	// window: when step.Timeout == 0 (stepCtx == ctx) a parent/run-context
+	// deadline or a subworkflow cancellation must not.
+	if deps.Sessions != nil && cancel != nil && stepCtx.Err() == context.DeadlineExceeded {
 		deps.Sessions.MarkEngineStepTimeoutTeardown()
 	}
 	if cancel != nil {

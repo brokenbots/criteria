@@ -158,6 +158,14 @@ type SessionManager struct {
 	// bounded time.
 	PauseToolCallDrainTimeout time.Duration
 
+	// StepTimeoutTeardownWindow is how long a CRI-287 step-timeout teardown
+	// mark keeps transport-close reclassification active: the teardown
+	// cascade closes sibling phone-home transports in the same second as the
+	// canceled Execute stream, so follow-on Executes observe the closes
+	// within this window of the mark. If zero, the built-in default is used.
+	// NewSessionManager seeds it from CRITERIA_STEP_TIMEOUT_TEARDOWN_WINDOW.
+	StepTimeoutTeardownWindow time.Duration
+
 	mu       sync.Mutex
 	sessions map[string]*Session
 	// verified holds adapters that have passed eager verification (phase 1)
@@ -175,19 +183,29 @@ type SessionManager struct {
 	// bind the same adapter and seeing ErrSessionAlreadyOpen from the winner.
 	bindMu sync.Mutex
 
-	// CRI-287: engineStepTimeoutTeardown latches an engine-initiated
-	// step-timeout cancellation (the CRI-275 step ceiling). The canceled
-	// Execute stream tears down sibling phone-home transports in the same
-	// second, so a transport close observed on a later Execute (fresh
-	// context) is the consequence of that cancellation, not an adapter
-	// death. While the latch is set, transport-close errors are returned
-	// as-is — the step's declared failure/default outcome routing (the
-	// checkpoint loop) proceeds — instead of being classified as a session
-	// crash. The latch clears on the first successful Execute, which proves
-	// at least one transport is healthy and the teardown cascade is over;
-	// genuine crashes outside the teardown window keep the hard-failure
-	// classification.
-	engineStepTimeoutTeardown atomic.Bool
+	// CRI-287: engineStepTimeoutTeardownAt records when the engine canceled a
+	// step because the CRI-275 step ceiling expired. The canceled Execute
+	// stream tears down sibling phone-home transports in the same second, so
+	// a transport close observed on a later Execute (fresh context) is the
+	// consequence of that cancellation, not an adapter death.
+	//
+	// Invariant: the teardown window is bound to the cascade, not to call
+	// success. The window opens when the mark is recorded and stays open for
+	// StepTimeoutTeardownWindow of wall-clock time:
+	//   - the follow-on steps' Executes — however many of them fail — observe
+	//     the cascade-closed transports inside the window, and crash
+	//     classification re-enables itself when the window expires even if
+	//     every Execute keeps failing;
+	//   - a successful Execute on any session does NOT close the window: a
+	//     healthy sibling proving its own transport alive is not evidence
+	//     that a torn-down sibling has been observed;
+	//   - deaths with positive evidence (ProcessExited) and host-initiated
+	//     closes (the closing flag) are never downgraded to timeouts.
+	//
+	// While the window is open, transport-close errors are returned as-is —
+	// the step's declared failure/default outcome routing (the checkpoint
+	// loop) proceeds — instead of being classified as a session crash.
+	engineStepTimeoutTeardownAt atomic.Int64
 
 	// allowedRoots restricts environment working_directory values. Empty means
 	// no additional root checks; paths containing ".." are always rejected.
@@ -234,6 +252,22 @@ func (m *SessionManager) heartbeatStallThreshold() time.Duration {
 		return m.HeartbeatStallThreshold
 	}
 	return 90 * time.Second
+}
+
+// stepTimeoutTeardownWindowDefault is how long a CRI-287 step-timeout
+// teardown mark keeps reclassifying transport closes as teardown
+// consequences. The cascade closes sibling transports in the same second as
+// the cancellation, so a window of this length comfortably covers the
+// follow-on steps' first Executes while keeping the period in which a
+// genuine crash is masked short.
+const stepTimeoutTeardownWindowDefault = 10 * time.Second
+
+// stepTimeoutTeardownWindow returns the configured CRI-287 teardown window.
+func (m *SessionManager) stepTimeoutTeardownWindow() time.Duration {
+	if m.StepTimeoutTeardownWindow > 0 {
+		return m.StepTimeoutTeardownWindow
+	}
+	return stepTimeoutTeardownWindowDefault
 }
 
 func (m *SessionManager) respawnLogStreamDrainTimeout() time.Duration {
@@ -864,10 +898,11 @@ func (s *Session) idleSinceLastEvent() (time.Duration, bool) {
 // code change; an empty or malformed value keeps the built-in default.
 func NewSessionManager(loader Loader) *SessionManager {
 	return &SessionManager{
-		loader:                  loader,
-		sessions:                map[string]*Session{},
-		verified:                map[string]*verifiedRecord{},
-		HeartbeatStallThreshold: heartbeatStallThresholdFromEnv(),
+		loader:                    loader,
+		sessions:                  map[string]*Session{},
+		verified:                  map[string]*verifiedRecord{},
+		HeartbeatStallThreshold:   heartbeatStallThresholdFromEnv(),
+		StepTimeoutTeardownWindow: stepTimeoutTeardownWindowFromEnv(),
 	}
 }
 
@@ -876,6 +911,21 @@ func NewSessionManager(loader Loader) *SessionManager {
 // yields 0 so the built-in default applies.
 func heartbeatStallThresholdFromEnv() time.Duration {
 	v := strings.TrimSpace(os.Getenv("CRITERIA_SESSION_HEARTBEAT_STALL"))
+	if v == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return 0
+	}
+	return d
+}
+
+// stepTimeoutTeardownWindowFromEnv reads CRITERIA_STEP_TIMEOUT_TEARDOWN_WINDOW
+// (a Go duration such as "10s") and returns it when positive. Any other value
+// yields 0 so the built-in default applies.
+func stepTimeoutTeardownWindowFromEnv() time.Duration {
+	v := strings.TrimSpace(os.Getenv("CRITERIA_STEP_TIMEOUT_TEARDOWN_WINDOW"))
 	if v == "" {
 		return 0
 	}
@@ -2099,12 +2149,12 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 	m.maybeOverrideOutcome(permSink, &result)
 
 	if execErr == nil {
-		// A completed call proves the session transport was alive (CRI-271)
-		// and, with CRI-287, ends the step-timeout teardown window: any
-		// transport close observed after this point is a genuine adapter
-		// death again.
+		// A completed call proves the session transport was alive (CRI-271).
+		// It deliberately does NOT end the CRI-287 step-timeout teardown
+		// window: a healthy sibling's success is not evidence that a
+		// torn-down sibling has been observed, so the window stays open until
+		// it expires (see the engineStepTimeoutTeardownAt comment).
 		sess.noteActivity()
-		m.engineStepTimeoutTeardown.Store(false)
 		// A nested callee Execute that crashed with on_crash=abort_run latches
 		// its fatal error on the sink (CRI-160): the callee's own crash policy
 		// governs its session, so the error propagates to the engine instead
@@ -2132,15 +2182,23 @@ func (m *SessionManager) executeError(ctx context.Context, name string, step *wo
 		return result, execErr
 	}
 
-	// CRI-287: a transport close observed while a step-timeout teardown is in
-	// flight is the consequence of the engine-initiated cancellation (the
-	// canceled Execute stream tears down sibling phone-home transports in the
-	// same second), not an adapter death. Return the error as-is so the
-	// step's declared failure/default outcome routing (the checkpoint loop)
-	// proceeds instead of the crash machinery terminating the run. The latch
-	// clears on the first successful Execute, so crashes outside the teardown
-	// window keep the hard-failure classification (CRI-271).
-	if m.engineStepTimeoutTeardown.Load() && isLikelySessionCrash(sess, execErr) {
+	// CRI-287: a transport close observed while the step-timeout teardown
+	// window is open is the consequence of the engine-initiated cancellation
+	// (the canceled Execute stream tears down sibling phone-home transports
+	// in the same second), not an adapter death. Return the error as-is so
+	// the step's declared failure/default outcome routing (the checkpoint
+	// loop) proceeds instead of the crash machinery terminating the run. The
+	// window is bound to the cascade (see the engineStepTimeoutTeardownAt
+	// comment), so crashes outside it keep the hard-failure classification
+	// (CRI-271). Deaths with positive evidence are never downgraded:
+	// ProcessExited is the verifiable "adapter is dead" signal — the
+	// transport-close classification only applies while the process is still
+	// running — and a host-initiated close (closing flag) is the
+	// expected-close path above; both fall through to crash classification.
+	if m.engineStepTimeoutTeardownWindowOpen() &&
+		isLikelySessionCrash(sess, execErr) &&
+		!sess.closing.Load() &&
+		!ProcessExited(sess.handle) {
 		slog.Warn("adapter transport closed during engine-initiated step-timeout teardown; routing as timeout, not crash",
 			append([]any{"session", sess.Name, "adapter", sess.Adapter}, sess.crashDiagnostics(classifySessionCrash(sess, execErr))...)...)
 		return result, execErr
@@ -2154,13 +2212,33 @@ func (m *SessionManager) executeError(ctx context.Context, name string, step *wo
 }
 
 // MarkEngineStepTimeoutTeardown records that the engine canceled a step
-// because its step timeout expired (CRI-275/CRI-287). Transport closes
-// observed before the next successful Execute are then classified as a
-// timeout teardown, not a session crash, so the step's declared
-// failure/default outcome routing (the checkpoint loop) wins the race
-// against the transport-close classifier.
+// because its CRI-275 step ceiling expired (CRI-287). It opens the teardown
+// window (see engineStepTimeoutTeardownAt): transport closes observed within
+// the window are classified as a timeout teardown, not a session crash, so
+// the step's declared failure/default outcome routing (the checkpoint loop)
+// wins the race against the transport-close classifier. The engine only marks
+// when it actually installed a step ceiling — a parent/run-context deadline
+// or subworkflow cancellation never opens the window.
 func (m *SessionManager) MarkEngineStepTimeoutTeardown() {
-	m.engineStepTimeoutTeardown.Store(true)
+	m.engineStepTimeoutTeardownAt.Store(time.Now().UnixNano())
+}
+
+// engineStepTimeoutTeardownWindowOpen reports whether a step-timeout teardown
+// mark is recorded and still inside the teardown window (CRI-287).
+func (m *SessionManager) engineStepTimeoutTeardownWindowOpen() bool {
+	markedAt := m.engineStepTimeoutTeardownAt.Load()
+	if markedAt == 0 {
+		return false
+	}
+	return time.Since(time.Unix(0, markedAt)) < m.stepTimeoutTeardownWindow()
+}
+
+// StepTimeoutTeardownWindowOpen reports whether the CRI-287 step-timeout
+// teardown window is currently open (a mark recorded within
+// StepTimeoutTeardownWindow). Exported so engine-side probes and run
+// diagnostics can observe the window without reaching into the manager.
+func (m *SessionManager) StepTimeoutTeardownWindowOpen() bool {
+	return m.engineStepTimeoutTeardownWindowOpen()
 }
 
 // setStepPolicy builds the CombinedPolicy for this step and wires it into the
