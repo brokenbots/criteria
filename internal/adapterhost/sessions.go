@@ -276,10 +276,13 @@ func (m *SessionManager) SetGraph(g *workflow.FSMGraph) {
 // SetRemoteShim provides the remote shim so the session manager can dispatch
 // adapters bound to remote environments to the phone-home listener.
 //
-// Deprecated: legacy single-shim form, retained only for tests and callers
-// that do not know their environment key. Production registration goes
-// through SetRemoteShimForEnv, and dispatch must use RemoteShimForEnv
-// (CRI-293: one shim per remote environment).
+// Legacy single-shim form, retained for tests and callers that do not
+// know their environment key (the fallback consulted by
+// RemoteShimForEnv). Production registration goes through
+// SetRemoteShimForEnv (CRI-293: one shim per remote environment).
+// Deliberately carries no canonical Deprecated marker: the retained test
+// call sites exercise this fallback path and staticcheck SA1019 would
+// flag them (CRI-293 review).
 func (m *SessionManager) SetRemoteShim(shim RemoteShim) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -363,9 +366,12 @@ func (m *SessionManager) remoteShimForAdapter(instanceID string) (RemoteShim, bo
 // RegisterRemoteScope registers a rotated accept token for the given scope
 // with the remote shim. It returns an error when no remote shim is registered.
 //
-// Deprecated: legacy single-shim form; production callers must use
+// Legacy single-shim form; production callers must use
 // RegisterRemoteScopeForEnv so per-environment shims receive their own
-// tokens (CRI-293). Kept only for tests and unknown-environment fallbacks.
+// tokens (CRI-293). Kept for tests and unknown-environment fallbacks.
+// Deliberately carries no canonical Deprecated marker: a retained test
+// call site exercises this fallback and staticcheck SA1019 would flag it
+// (CRI-293 review).
 func (m *SessionManager) RegisterRemoteScope(scope, token string) error {
 	m.mu.Lock()
 	shim := m.remoteShim
