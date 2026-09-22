@@ -476,9 +476,3 @@ func (a *cri287CopilotDying) Snapshot(context.Context, string) (*criteriav2.Snap
 	return &criteriav2.SnapshotResponse{}, nil
 }
 func (a *cri287CopilotDying) Restore(context.Context, string, []byte, uint32) error { return nil }
-
-func (a *cri287CopilotDying) openLog() []string {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return append([]string(nil), a.opens...)
-}
