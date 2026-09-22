@@ -16,9 +16,11 @@
 // layer shape is uniform at every entry (CRI-298): the same three keys with
 // body as a JSON string and sourcePath in the wire's camelCase. Both
 // emitters serialize the same pb.WorkflowGraphs message with the same
-// protojson codec, so the local ND-JSON payload is byte-identical to the
-// server stream and the dual-write mirror (the castle consumer's
-// WorkflowGraphsPayload shape: {"subworkflows":[...]}). The compile-JSON
+// protojson codec, so the local ND-JSON payload is semantically identical to
+// the server stream (the dual-write mirror and the castle consumer's
+// WorkflowGraphsPayload shape: {"subworkflows":[...]}; raw bytes can differ
+// only in protojson's build-randomized separator whitespace versus
+// encoding/json compaction). The compile-JSON
 // dialect (snake_case source_path, inline bodies) stays internal to
 // `criteria compile --format json`, which keeps its own published shape —
 // nesting stays internal to it as well.
@@ -115,9 +117,11 @@ func workflowGraphsLeafLayer(sw *compileSubworkflow) (workflowGraphsLayer, error
 // emitWorkflowGraphsLocal writes the WorkflowGraphs envelope into the local
 // ND-JSON stream via the sink's shared seq sequence. The payload is the same
 // pb.WorkflowGraphs message the server stream carries, serialized with the
-// same protojson codec — the local payload is byte-identical to the wire
-// (CRI-299: the local viewer renders the flat layers array from either
-// path). A payload build failure is logged and skipped — the event is
+// same protojson codec — semantically identical to the wire (CRI-299: the
+// local viewer renders the flat layers array from either path; raw bytes can
+// differ only in protojson's build-randomized separator whitespace versus
+// encoding/json compaction of the envelope's raw payload). A payload build
+// failure is logged and skipped — the event is
 // best-effort metadata and must never fail the run.
 func emitWorkflowGraphsLocal(log *slog.Logger, local *run.LocalSink, graph *workflow.FSMGraph) {
 	msg, err := buildWorkflowGraphsPayload(graph)

@@ -560,8 +560,11 @@ func TestWorkflowGraphs_ServerModeDualWriteParity(t *testing.T) {
 // TestWorkflowGraphs_EmittersAgreeOnFlatShape pins CRI-299 across both
 // emitters: the local NDJSON emitter (run.LocalSink) and the server builder
 // (pb.WorkflowGraphs via protojson) serialize the SAME compiled graph into
-// BYTE-identical flat payloads — every layer a sibling entry, bodies leaf
-// data only. A consumer cannot tell which path produced the event.
+// semantically identical flat payloads — every layer a sibling entry, bodies
+// leaf data only. A consumer cannot tell which path produced the event.
+// (The byte layout differs only in protojson's build-randomized separator
+// whitespace versus encoding/json compaction, so the comparison is made on
+// canonical JSON, not raw bytes.)
 func TestWorkflowGraphs_EmittersAgreeOnFlatShape(t *testing.T) {
 	parentPath := writeCRI278TwoLevelWorkflow(t)
 	_, graph, err := parseCompileForCli(context.Background(), parentPath, nil, false, false)
@@ -589,8 +592,11 @@ func TestWorkflowGraphs_EmittersAgreeOnFlatShape(t *testing.T) {
 	}
 	serverJSON := mustProtojsonMarshal(t, msg)
 
-	// The emitters must agree byte-for-byte on the same graph.
-	if !bytes.Equal(env.Payload, serverJSON) {
+	// The emitters must agree semantically on the same graph. Raw bytes can
+	// differ only in whitespace: protojson emits build-randomized separator
+	// spacing while encoding/json compacts the envelope's json.RawMessage
+	// payload, so compare canonical JSON instead of bytes.
+	if !reflect.DeepEqual(canonicalJSON(t, env.Payload), canonicalJSON(t, serverJSON)) {
 		t.Fatalf("local and server payloads differ for the same graph\n local: %s\n server: %s", env.Payload, serverJSON)
 	}
 	entries := assertCRI299FlatLayers(t, serverJSON)
