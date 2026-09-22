@@ -1098,6 +1098,11 @@ const isolatedShimListenAddress = "127.0.0.1:0"
 // ports can collide: each bind on a port-0 address gets a distinct
 // OS-assigned port, and non-addressable listen values (unix socket paths)
 // keep today's bind-failure error path.
+//
+// Known limitation: grouping is by exact declared address string, so the
+// same port declared with different host spellings across environments
+// (e.g. "0.0.0.0:7778" vs "127.0.0.1:7778") is NOT detected as a collision
+// and still fails locally with the bind error naming the address.
 func isolatedShimEnvs(remoteEnvs map[string]*workflow.EnvironmentNode) map[string]bool {
 	byAddress := make(map[string][]string, len(remoteEnvs))
 	for key, env := range remoteEnvs {

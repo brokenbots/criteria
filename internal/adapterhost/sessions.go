@@ -275,6 +275,11 @@ func (m *SessionManager) SetGraph(g *workflow.FSMGraph) {
 
 // SetRemoteShim provides the remote shim so the session manager can dispatch
 // adapters bound to remote environments to the phone-home listener.
+//
+// Deprecated: legacy single-shim form, retained only for tests and callers
+// that do not know their environment key. Production registration goes
+// through SetRemoteShimForEnv, and dispatch must use RemoteShimForEnv
+// (CRI-293: one shim per remote environment).
 func (m *SessionManager) SetRemoteShim(shim RemoteShim) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -357,6 +362,10 @@ func (m *SessionManager) remoteShimForAdapter(instanceID string) (RemoteShim, bo
 
 // RegisterRemoteScope registers a rotated accept token for the given scope
 // with the remote shim. It returns an error when no remote shim is registered.
+//
+// Deprecated: legacy single-shim form; production callers must use
+// RegisterRemoteScopeForEnv so per-environment shims receive their own
+// tokens (CRI-293). Kept only for tests and unknown-environment fallbacks.
 func (m *SessionManager) RegisterRemoteScope(scope, token string) error {
 	m.mu.Lock()
 	shim := m.remoteShim
@@ -370,6 +379,9 @@ func (m *SessionManager) RegisterRemoteScope(scope, token string) error {
 
 // UnregisterRemoteScope removes a scope's accept token so the shim rejects
 // future reconnects with the old token.
+//
+// Deprecated: legacy single-shim form; use UnregisterRemoteScopeForEnv
+// (CRI-293).
 func (m *SessionManager) UnregisterRemoteScope(scope string) error {
 	m.mu.Lock()
 	shim := m.remoteShim
@@ -383,6 +395,9 @@ func (m *SessionManager) UnregisterRemoteScope(scope string) error {
 
 // CloseRemoteHandle closes the active remote session for the given adapter
 // type and scope. It is a no-op when no remote shim is registered.
+//
+// Deprecated: legacy single-shim form; use CloseRemoteHandleForEnv
+// (CRI-293).
 func (m *SessionManager) CloseRemoteHandle(ctx context.Context, adapterType, scope string) error {
 	m.mu.Lock()
 	shim := m.remoteShim
@@ -395,6 +410,11 @@ func (m *SessionManager) CloseRemoteHandle(ctx context.Context, adapterType, sco
 
 // RemoteListenAddr returns the shim's bound listen address, or "" when no
 // remote shim is registered.
+//
+// Deprecated: legacy single-shim form returning only the most recently
+// registered shim's address; production publication must use
+// RemoteListenAddrForEnv so every environment receives its own shim's
+// address (CRI-293).
 func (m *SessionManager) RemoteListenAddr() string {
 	m.mu.Lock()
 	shim := m.remoteShim
@@ -2225,23 +2245,20 @@ func (m *SessionManager) Shutdown(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// takeForShutdown atomically collects every registered remote shim (deduped:
-// the default shim usually aliases one environment's) and snapshots+clears the
-// sessions and verification records under the lock.
+// takeForShutdown atomically collects every registered remote shim and
+// snapshots+clears the sessions and verification records under the lock.
+// The default shim usually aliases one environment's shim; duplicates are
+// kept because RemoteShim implementations cannot be assumed comparable and
+// Shim.Stop is idempotent, so a second Stop is a no-op.
 func (m *SessionManager) takeForShutdown() ([]RemoteShim, []*Session) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	shims := make([]RemoteShim, 0, len(m.remoteShimsByEnv)+1)
-	seen := make(map[RemoteShim]struct{}, len(m.remoteShimsByEnv)+1)
 	if m.remoteShim != nil {
 		shims = append(shims, m.remoteShim)
-		seen[m.remoteShim] = struct{}{}
 	}
 	for _, s := range m.remoteShimsByEnv {
-		if _, dup := seen[s]; !dup {
-			shims = append(shims, s)
-			seen[s] = struct{}{}
-		}
+		shims = append(shims, s)
 	}
 	sessions := make([]*Session, 0, len(m.sessions))
 	for name, sess := range m.sessions {
