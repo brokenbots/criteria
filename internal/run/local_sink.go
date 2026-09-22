@@ -201,6 +201,19 @@ func (s *LocalSink) OnStepOutcomeDefaulted(step, original, mapped string) {}
 // declared set and no outcome "default" block is configured (W15).
 func (s *LocalSink) OnStepOutcomeUnknown(step, outcome string) {}
 
+// OnWorkflowGraphs emits the once-per-run WorkflowGraphs envelope at the
+// post-compile seam (CRI-278). The payload carries the pb message so that
+// dual-write mirrors stay proto-identical to the server stream.
+func (s *LocalSink) OnWorkflowGraphs(msg *pb.WorkflowGraphs) {
+	s.emit("WorkflowGraphs", msg)
+}
+
+// OnWorkflowGraphsLayers emits the WorkflowGraphs envelope from an
+// already-marshaled compact JSON layers array (the compile-JSON shape).
+func (s *LocalSink) OnWorkflowGraphsLayers(layersJSON json.RawMessage) {
+	s.writeEnvelope("WorkflowGraphs", layersJSON)
+}
+
 func (s *LocalSink) StepEventSink(step string) adapter.EventSink {
 	return &localStepSink{parent: s, step: step}
 }
@@ -212,6 +225,16 @@ func (s *LocalSink) emit(payloadType string, payload proto.Message) {
 	payloadJSON, err := protojson.Marshal(payload)
 	if err != nil {
 		payloadJSON = []byte(`{"_encode_error":"` + escapeJSONString(err.Error()) + `"}`)
+	}
+	s.writeEnvelope(payloadType, payloadJSON)
+}
+
+// writeEnvelope appends one ND-JSON envelope to the stream. It owns the
+// sink's schema_version, seq and run_id; payloadJSON must already be compact
+// JSON for the envelope's payload.
+func (s *LocalSink) writeEnvelope(payloadType string, payloadJSON json.RawMessage) {
+	if s == nil || s.Out == nil {
+		return
 	}
 
 	s.mu.Lock()

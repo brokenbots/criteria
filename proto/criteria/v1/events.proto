@@ -71,6 +71,11 @@ message Envelope {
     // RunOutputs — emitted when a run reaches terminal state with declared outputs (W09).
     // Outputs are emitted before run.completed, in declaration order.
     RunOutputs run_outputs = 33;
+    // WorkflowGraphs — compiled subworkflow layers of the run's workflow
+    // (CRI-257). Emitted by the agent after compilation so UIs can render the
+    // subworkflow graphs the top-level module references; the server stores
+    // and fans out the event verbatim and interprets none of the fields.
+    WorkflowGraphs workflow_graphs = 37;
     // WatchReady is a protocol-level sentinel sent once at the start of a
     // WatchRun server-stream, after any persisted-event replay, to flush
     // response headers so the client's WatchRun call can return. It has no
@@ -299,4 +304,34 @@ message RunOutputs {
   // google.protobuf.Value typed_value field if programmatic typed consumption becomes a requirement
   // (e.g. W13 sub-workflow callers needing native type access). Until then, assume consumers will
   // JSON-parse value and understand it may be string/number/bool/null/array/object.
+}
+
+// SubworkflowGraph — one compiled subworkflow layer of a run's workflow
+// (CRI-257). The agent compiler emits one entry per subworkflow the top-level
+// module references, recursively. Permanent field numbers.
+message SubworkflowGraph {
+  // name matches the `subworkflow "<name>"` declaration in the parent
+  // module; permanent.
+  string name = 1;
+  // source_path is the module path the parent module declared for the
+  // subworkflow (e.g. "../qa_triage_v1"); display-only; permanent.
+  string source_path = 2;
+  // body is the compiled subworkflow module source in the same HCL dialect
+  // as the top-level workflow, so consumers parse it with the same parser;
+  // permanent.
+  string body = 3;
+}
+
+// WorkflowGraphs — compiled workflow graphs for a run (CRI-257). Emitted by
+// the agent after it compiles the workflow. Carries the compiled subworkflow
+// layers the top-level module references; the top-level module itself is the
+// run record's workflow source and is not repeated here. A resend replaces
+// the previous payload: consumers use the most recent workflow_graphs event
+// per run. The server stores and fans out the event verbatim and interprets
+// none of the fields.
+message WorkflowGraphs {
+  // subworkflows carries one entry per compiled subworkflow layer,
+  // recursively (a layer may itself declare subworkflows, which appear as
+  // their own entries); permanent.
+  repeated SubworkflowGraph subworkflows = 1;
 }

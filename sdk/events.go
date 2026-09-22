@@ -35,4 +35,5 @@ type (
 	Envelope_StepIterationItem      = pb.Envelope_StepIterationItem
 	Envelope_ScopeIterCursorSet     = pb.Envelope_ScopeIterCursorSet
 	Envelope_WatchReady             = pb.Envelope_WatchReady
+	Envelope_WorkflowGraphs         = pb.Envelope_WorkflowGraphs
 )

@@ -6,6 +6,48 @@ non-breaking; any change to an exported surface requires a major-version bump.
 
 ---
 
+## [v0.4.0] — 2026-09-21
+
+### Added — CRI-278: `WorkflowGraphs` event (oneof field 37)
+
+- **New proto message**: `WorkflowGraphs` on `pb.Envelope` (oneof field
+  number 37) in `proto/criteria/v1/events.proto`, carrying
+  `repeated SubworkflowGraph subworkflows` where each `SubworkflowGraph` has
+  `string name` (1), `string source_path` (2), and `string body` (3). The
+  message definitions are byte-identical to the orchestrator's shipped proto
+  copy (castle), the merge-gate authority for the type, so the event survives
+  server ingest verbatim.
+- **Emission contract**: the agent emits exactly one `WorkflowGraphs` envelope
+  per run, immediately after compiling the run's workflow and before the
+  engine starts, so the event lands at or before `RunStarted`. Emitted
+  unconditionally — a run whose workflow declares no subworkflows carries an
+  empty layers array. Resend-replaces: consumers use the most recent
+  `workflow.graphs` event per run.
+- **Wire shape note**: `SubworkflowGraph.body` is a string on the wire; the
+  agent serializes the layer's complete compiled body graph as JSON into it,
+  built from the already-compiled in-memory graph (no second compilation
+  pass). Local ND-JSON (`--events-file`) renders the same layers as a bare
+  JSON array matching `criteria compile --format json`'s `subworkflows[]`
+  shape (nested `body.subworkflows` inline).
+- **Backward compatibility**: consumers unaware of field 37 ignore the new
+  envelope type; readers require no changes. A server predating the field
+  stores the event verbatim or drops it silently; neither is harmful.
+
+### Bump rationale
+
+Adding oneof field 37 changes the event field numbers, which AGENTS.md's
+breaking-change policy classifies as a breaking SDK change ("Any change to
+the `Subject`/`ServiceHandler` surface or to event field numbers is a
+breaking SDK change and requires an SDK major-version bump"). Per this
+changelog's established pre-1.0 convention (see v0.3.0), pre-1.0 breaking
+changes are recorded as a minor bump: **v0.4.0**. SDK consumers regenerate
+protobuf bindings from the updated `.proto` files to gain the new message;
+no existing reader or writer code is affected.
+
+[v0.4.0]: https://github.com/brokenbots/criteria/releases/tag/v0.4.0
+
+---
+
 ## [v0.3.0] — 2026-05-03
 
 ### Changed — Phase 3 W11: Proto field rename `agent_name` → `adapter`

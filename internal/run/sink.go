@@ -267,6 +267,12 @@ func (s *Sink) OnRunOutputs(outputs []map[string]string) {
 	s.publish(&pb.RunOutputs{Outputs: pbOutputs})
 }
 
+// OnWorkflowGraphs publishes the once-per-run WorkflowGraphs envelope at the
+// post-compile seam, before the engine starts (CRI-278).
+func (s *Sink) OnWorkflowGraphs(ctx context.Context, msg *pb.WorkflowGraphs) {
+	s.publishWithCtx(ctx, msg)
+}
+
 // OnStepOutcomeDefaulted is emitted when a step returns an unknown outcome and
 // the outcome "default" block is applied (W15).
 func (s *Sink) OnStepOutcomeDefaulted(step, original, mapped string) {

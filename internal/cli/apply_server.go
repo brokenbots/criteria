@@ -129,12 +129,18 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 			return nil
 		})
 	runSink := &terminalSuccessSink{Sink: sink}
+	var eventsMirror *run.LocalSink
 	if eventsOut != nil {
 		// Dual-write: mirror every engine event into the ND-JSON events file
 		// in addition to the server stream, so operators consuming the file
 		// keep working while the direct server stream is validated.
-		runSink = &terminalSuccessSink{Sink: run.NewMultiSink(sink, &run.LocalSink{RunID: state.RunID, Out: eventsOut})}
+		eventsMirror = &run.LocalSink{RunID: state.RunID, Out: eventsOut}
+		runSink = &terminalSuccessSink{Sink: run.NewMultiSink(sink, eventsMirror)}
 	}
+	// CRI-278: emit the once-per-run WorkflowGraphs event at the post-compile
+	// seam, before the engine starts, so it lands at or before RunStarted on
+	// both the server stream and the dual-write mirror.
+	emitWorkflowGraphsServer(ctx, log, sink, eventsMirror, graph)
 
 	eng, err := buildServerRunEngine(graph, loader, runSink, state, opts)
 	if err != nil {
