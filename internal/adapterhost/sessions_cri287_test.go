@@ -75,7 +75,7 @@ func (h *cri287Handle) Restore(context.Context, string, []byte, uint32) error { 
 // newCri287Session registers a session whose handle fails every Execute with
 // the transport-closed signature, standing in for a session torn down by the
 // step-timeout cascade.
-func newCri287Session() (*SessionManager, *Session, *cri287Handle) {
+func newCri287Session() (*SessionManager, *Session) {
 	h := &cri287Handle{name: "fake", deadAfter: 0}
 	sm := &SessionManager{loader: nil, sessions: map[string]*Session{}}
 	sess := &Session{Name: "shell.develop", Adapter: "shell", handle: h}
@@ -83,7 +83,7 @@ func newCri287Session() (*SessionManager, *Session, *cri287Handle) {
 	sm.sessions["shell.develop"] = sess
 	sm.mu.Unlock()
 	sess.noteActivity() // the adapter showed life at open time
-	return sm, sess, h
+	return sm, sess
 }
 
 // TestCRI287_TimeoutTeardownTransportCloseNotCrashClassified pins the
@@ -92,7 +92,7 @@ func newCri287Session() (*SessionManager, *Session, *cri287Handle) {
 // as-is — no SessionCrashError, no session.crash sink event, no crashed
 // flag — so the step's declared outcome routing can proceed.
 func TestCRI287_TimeoutTeardownTransportCloseNotCrashClassified(t *testing.T) {
-	sm, sess, _ := newCri287Session()
+	sm, sess := newCri287Session()
 	sm.MarkEngineStepTimeoutTeardown()
 
 	coll := &adapterEventCollector{}
@@ -123,7 +123,7 @@ func TestCRI287_TimeoutTeardownTransportCloseNotCrashClassified(t *testing.T) {
 // engine-initiated teardown mark the same transport error keeps the CRI-271
 // hard-failure classification.
 func TestCRI287_NoMarkStillCrashClassified(t *testing.T) {
-	sm, _, _ := newCri287Session()
+	sm, _ := newCri287Session()
 
 	coll := &adapterEventCollector{}
 	_, err := sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, coll)
@@ -188,7 +188,7 @@ func TestCRI287_SuccessfulSiblingDoesNotCloseTeardownWindow(t *testing.T) {
 // genuine crash again — even when every Execute in between kept failing, so
 // the failure-only cascade never leaves crash classification suppressed.
 func TestCRI287_TeardownWindowExpiresReenablesCrashClassification(t *testing.T) {
-	sm, sess, _ := newCri287Session()
+	sm, sess := newCri287Session()
 	sm.StepTimeoutTeardownWindow = 25 * time.Millisecond
 	sm.MarkEngineStepTimeoutTeardown()
 
@@ -362,7 +362,7 @@ func (h *cri287PlainErrHandle) Restore(context.Context, string, []byte, uint32) 
 // ordering across steps is covered by
 // TestCRI287_StepTimeoutTeardownReentersCheckpointLoop.)
 func TestCRI287_MarkLandedBeforeNextExecute(t *testing.T) {
-	sm, _, _ := newCri287Session()
+	sm, _ := newCri287Session()
 	// The engine marks between the timed-out step and the next step's
 	// Execute; simulate the same ordering from the test side.
 	sm.MarkEngineStepTimeoutTeardown()
