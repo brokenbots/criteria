@@ -17,9 +17,11 @@ var distFS embed.FS
 //
 // The bundle is built by the castle repo (parapet packages/run-viewer
 // standalone build, vite base /runview/) and vendored into dist/ as a
-// release artifact kept versioned with the engine (dist/version.txt). The
-// checked-in placeholder renders a plain notice until a real bundle is
-// vendored.
+// checked-in release artifact kept versioned with the engine;
+// dist/version.txt records the castle commit and build recipe the current
+// vendored artifact came from. Rebuild: check out the recorded castle
+// commit, run `npm ci && npm run build:runview` in parapet, copy
+// dist/runview/* here, and refresh version.txt.
 func NewViewer() (http.Handler, error) {
 	sub, err := fs.Sub(distFS, "viewer/dist")
 	if err != nil {

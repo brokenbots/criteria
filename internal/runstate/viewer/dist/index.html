@@ -1,27 +1,13 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Criteria Run Viewer</title>
-  <style>
-    body { font-family: system-ui, sans-serif; margin: 2rem; color: #1f2328; }
-    code { background: #f6f8fa; padding: 2px 6px; border-radius: 4px; }
-  </style>
-</head>
-<body>
-  <h1>Criteria run viewer</h1>
-  <p>
-    The embedded run-viewer bundle is not present in this build
-    (<code>internal/runstate/viewer/dist</code> holds the placeholder asset).
-    The bundle is built by the castle repo (parapet
-    <code>packages/run-viewer</code> standalone build) and vendored here as a
-    release artifact. The run-state API this viewer consumes is served on the
-    same loopback address:
-  </p>
-  <ul>
-    <li><code>GET /runs</code>, <code>GET /runs/{id}</code>, <code>GET /runs/{id}/events</code>, <code>GET /runs/{id}/inspect</code></li>
-    <li><code>GET /agents</code>, <code>GET /health</code></li>
-  </ul>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Run viewer</title>
+    <script type="module" crossorigin src="/runview/assets/index-D0Pte8iB.js"></script>
+    <link rel="stylesheet" crossorigin href="/runview/assets/index-nj-VMB4Y.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
 </html>
