@@ -185,6 +185,24 @@ func WithSandboxProbeOverride(fn func() sandbox.Capabilities) Option {
 	}
 }
 
+// WithLocalShimIsolation enables CRI-293 shim address isolation for local
+// runs. When two or more remote environments declare the same fixed
+// listen_address, each environment's shim binds its own auto-chosen free
+// loopback port (127.0.0.1:0) and that per-environment address is published
+// to the environment's adapters exactly like a fixed address. Local runs bind
+// every shim in one process, so a shared fixed port collides with
+// EADDRINUSE; server runs put each environment's shim in its own adapter pod
+// and must keep the declared address, so this option is wired only from
+// local-mode entrypoints. Port-0 addresses and unix-socket listen values
+// cannot collide this way and are left untouched, and a fixed port occupied
+// by a foreign process still fails with the usual bind error naming the
+// address.
+func WithLocalShimIsolation() Option {
+	return func(e *Engine) {
+		e.localShimIsolation = true
+	}
+}
+
 // isSuccessOutcome returns true when the outcome name indicates a successful
 // iteration. By convention, outcome names that equal "success" (case-
 // insensitive) are treated as successes; all other names set AnyFailed=true

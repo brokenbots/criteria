@@ -7,6 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
+	"net"
+	"slices"
+	"strconv"
 	"sync"
 	"time"
 
@@ -213,6 +217,14 @@ type Engine struct {
 	// sandboxProbeOverride, when non-nil, is propagated to the SessionManager so
 	// tests can simulate a host with missing sandbox primitives.
 	sandboxProbeOverride func() sandbox.Capabilities
+
+	// localShimIsolation enables CRI-293 shim address isolation: when two or
+	// more remote environments declare the same fixed listen_address, each
+	// environment's shim binds its own auto-chosen loopback port instead of
+	// colliding (local runs bind every shim in one process; server runs use
+	// one adapter pod per environment and never collide). Set only by local
+	// run entrypoints via WithLocalShimIsolation.
+	localShimIsolation bool
 }
 
 func New(graph *workflow.FSMGraph, loader adapterhost.Loader, sink Sink, opts ...Option) *Engine {
@@ -1044,14 +1056,17 @@ func (e *Engine) bootstrapSessionsForResume(ctx context.Context, sessions *adapt
 // maybeStartRemoteShim checks whether the workflow references any remote
 // environments. If so, it parses each remote env config, builds a shim, and
 // starts listening for inbound adapter connections before adapter provisioning.
+// With local shim isolation enabled (CRI-293), environments whose declared
+// listen_address collides with another environment's bind their own
+// auto-chosen loopback port instead.
 func (e *Engine) maybeStartRemoteShim(ctx context.Context, sessions *adapterhost.SessionManager) error {
 	if e.graph == nil || len(e.graph.Environments) == 0 {
 		return nil
 	}
-	var remoteEnvs []*workflow.EnvironmentNode
-	for _, env := range e.graph.Environments {
+	remoteEnvs := make(map[string]*workflow.EnvironmentNode, len(e.graph.Environments))
+	for key, env := range e.graph.Environments {
 		if env.Type == "remote" {
-			remoteEnvs = append(remoteEnvs, env)
+			remoteEnvs[key] = env
 		}
 	}
 	if len(remoteEnvs) == 0 {
@@ -1059,16 +1074,65 @@ func (e *Engine) maybeStartRemoteShim(ctx context.Context, sessions *adapterhost
 	}
 
 	verifier := &lockfileDigestVerifier{lockfile: e.effectivePinSet()}
+	var isolated map[string]bool
+	if e.localShimIsolation {
+		isolated = isolatedShimEnvs(remoteEnvs)
+	}
 
-	for _, env := range remoteEnvs {
-		if err := e.startRemoteShimForEnv(ctx, env, sessions, verifier); err != nil {
+	for _, key := range slices.Sorted(maps.Keys(remoteEnvs)) {
+		if err := e.startRemoteShimForEnv(ctx, key, remoteEnvs[key], sessions, verifier, isolated[key]); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (e *Engine) startRemoteShimForEnv(ctx context.Context, env *workflow.EnvironmentNode, sessions *adapterhost.SessionManager, verifier remote.DigestVerifier) error {
+// isolatedShimListenAddress is the address substituted for colliding
+// environment listen_address declarations under local shim isolation: the OS
+// picks a free loopback port per bind and Shim.ListenAddr reports the bound
+// address for publication.
+const isolatedShimListenAddress = "127.0.0.1:0"
+
+// isolatedShimEnvs identifies remote environments whose declared
+// listen_address collides with another environment's (CRI-293). Only fixed
+// ports can collide: each bind on a port-0 address gets a distinct
+// OS-assigned port, and non-addressable listen values (unix socket paths)
+// keep today's bind-failure error path.
+func isolatedShimEnvs(remoteEnvs map[string]*workflow.EnvironmentNode) map[string]bool {
+	byAddress := make(map[string][]string, len(remoteEnvs))
+	for key, env := range remoteEnvs {
+		cfg, err := remote.ParseConfig(env.RawBody)
+		if err != nil {
+			continue // surfaces at shim start with the real error
+		}
+		if hasFixedPort(cfg.ListenAddress) {
+			byAddress[cfg.ListenAddress] = append(byAddress[cfg.ListenAddress], key)
+		}
+	}
+	isolated := make(map[string]bool)
+	for _, keys := range byAddress {
+		if len(keys) < 2 {
+			continue
+		}
+		for _, key := range keys {
+			isolated[key] = true
+		}
+	}
+	return isolated
+}
+
+// hasFixedPort reports whether a listen address names a concrete TCP port,
+// which is the only shape that can collide across binds on one host.
+func hasFixedPort(listen string) bool {
+	_, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		return false
+	}
+	p, err := strconv.Atoi(port)
+	return err == nil && p != 0
+}
+
+func (e *Engine) startRemoteShimForEnv(ctx context.Context, envKey string, env *workflow.EnvironmentNode, sessions *adapterhost.SessionManager, verifier remote.DigestVerifier, isolateListen bool) error {
 	if env.Process != nil && !env.Process.IsWildcard() {
 		return fmt.Errorf("remote environment %q does not support a process.exec allow-list; use process.exec = [\"*\"] to opt into unrestricted child execution or omit the process block", env.Name)
 	}
@@ -1079,6 +1143,13 @@ func (e *Engine) startRemoteShimForEnv(ctx context.Context, env *workflow.Enviro
 	if cfg.PerScopeSessions && e.dataDir == "" {
 		return fmt.Errorf("remote environment %q: per_scope_sessions requires a run data directory (WithDataDir)", env.Name)
 	}
+	if isolateListen {
+		slog.Info("isolating colliding remote environment shim",
+			"environment", env.Name,
+			"declared_listen_address", cfg.ListenAddress,
+			"listen_address", isolatedShimListenAddress)
+		cfg.ListenAddress = isolatedShimListenAddress
+	}
 	shim, err := remote.NewShim(cfg, verifier)
 	if err != nil {
 		return fmt.Errorf("remote environment %q: %w", env.Name, err)
@@ -1087,7 +1158,7 @@ func (e *Engine) startRemoteShimForEnv(ctx context.Context, env *workflow.Enviro
 	if err := shim.Start(ctx); err != nil {
 		return fmt.Errorf("remote environment %q: %w", env.Name, err)
 	}
-	sessions.SetRemoteShim(shim)
+	sessions.SetRemoteShimForEnv(envKey, shim)
 	return nil
 }
 

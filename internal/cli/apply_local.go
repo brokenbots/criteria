@@ -178,6 +178,12 @@ func newLocalEngine(runID string, graph *workflow.FSMGraph, loader adapterhost.L
 		engine.WithWorkflowDir(workflowDirFromPath(opts.workflowPath)),
 		engine.WithAuditWriter(auditWriter),
 		engine.WithDataDir(dataDir),
+		// Local runs bind every remote shim in one process, so remote
+		// environments sharing a listen_address need per-environment port
+		// isolation (CRI-293). Server runs never set this: each
+		// environment's shim lives in its own adapter pod and must receive
+		// the declared address.
+		engine.WithLocalShimIsolation(),
 	), nil
 }
 

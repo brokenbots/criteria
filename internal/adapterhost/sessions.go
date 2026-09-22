@@ -2259,8 +2259,10 @@ func (m *SessionManager) Shutdown(ctx context.Context) error {
 		}
 		sess.handle.Kill()
 	}
-	if err := m.loader.Shutdown(ctx); err != nil {
-		errs = append(errs, err)
+	if m.loader != nil {
+		if err := m.loader.Shutdown(ctx); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	return errors.Join(errs...)
 }

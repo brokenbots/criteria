@@ -148,6 +148,10 @@ func drainLocalResumeCycles(ctx context.Context, log *slog.Logger, graph *workfl
 			engine.WithResumePayload(payload),
 			engine.WithWorkflowDir(workflowDirFromPath(opts.workflowPath)),
 			engine.WithDataDir(dataDir),
+			// Same local-mode constraint as the fresh run engine: shared
+			// environment listen addresses need per-shim port isolation
+			// (CRI-293).
+			engine.WithLocalShimIsolation(),
 		)
 		if runErr := resumedEng.RunFrom(ctx, pausedNode, 1); runErr != nil {
 			log.Error("local run failed after resume", "run_id", runID, "error", runErr)
