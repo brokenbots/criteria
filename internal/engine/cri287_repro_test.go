@@ -24,6 +24,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -234,19 +235,45 @@ func (a *cri287Shell) openLog() []string {
 // cri287Sink extends fakeSink with OnStepOutcome recording (step, outcome,
 // error text) and a session-level adapter event recorder so tests can assert
 // both the CRI-275 timeout signature on the develop step and the absence of
-// session.crash classification events.
+// session.crash classification events. When `engine` is set, every
+// observation also records whether the CRI-287 step-timeout teardown window
+// was open at that moment (read via the engine's live session manager).
 type cri287Sink struct {
 	*fakeSink
 
-	mu       sync.Mutex
-	outcomes []cri287Outcome
-	events   []cri271Event
+	engine *Engine
+
+	mu              sync.Mutex
+	outcomes        []cri287Outcome
+	events          []cri271Event
+	windowAtRunFail bool
+	sawRunFail      bool
 }
 
 type cri287Outcome struct {
-	step    string
-	outcome string
-	err     string
+	step       string
+	outcome    string
+	err        string
+	windowOpen bool
+}
+
+// teardownWindowOpen reads the CRI-287 teardown-window state from the run's
+// live session manager. All sink callbacks fire from the run goroutine, but
+// the live pointer is swapped under the engine mutex, so read it guarded.
+func (s *cri287Sink) teardownWindowOpen() bool {
+	s.mu.Lock()
+	engine := s.engine
+	s.mu.Unlock()
+	if engine == nil {
+		return false
+	}
+	engine.mu.RLock()
+	sessions := engine.liveSessions
+	engine.mu.RUnlock()
+	if sessions == nil {
+		return false
+	}
+	return sessions.StepTimeoutTeardownWindowOpen()
 }
 
 func (s *cri287Sink) OnStepOutcome(step, outcome string, _ time.Duration, err error) {
@@ -254,9 +281,19 @@ func (s *cri287Sink) OnStepOutcome(step, outcome string, _ time.Duration, err er
 	if err != nil {
 		msg = err.Error()
 	}
+	open := s.teardownWindowOpen()
 	s.mu.Lock()
-	s.outcomes = append(s.outcomes, cri287Outcome{step: step, outcome: outcome, err: msg})
+	s.outcomes = append(s.outcomes, cri287Outcome{step: step, outcome: outcome, err: msg, windowOpen: open})
 	s.mu.Unlock()
+}
+
+func (s *cri287Sink) OnRunFailed(reason, step string) {
+	open := s.teardownWindowOpen()
+	s.mu.Lock()
+	s.windowAtRunFail = open
+	s.sawRunFail = true
+	s.mu.Unlock()
+	s.fakeSink.OnRunFailed(reason, step)
 }
 
 func (s *cri287Sink) StepEventSink(string) adapter.EventSink {
@@ -318,7 +355,9 @@ func TestCRI287_StepTimeoutTeardownReentersCheckpointLoop(t *testing.T) {
 		"shell":           shell,
 		"shell.default":   shell,
 	}}
-	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
+	e := NewTestEngine(g, loader, sink)
+	sink.engine = e
+	if err := e.Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if sink.terminal != "done" || !sink.terminalOK {
@@ -344,6 +383,24 @@ func TestCRI287_StepTimeoutTeardownReentersCheckpointLoop(t *testing.T) {
 	}
 	if !strings.Contains(developFailure.err, "context deadline exceeded") {
 		t.Errorf("develop failure error = %q; want the CRI-275 context deadline signature", developFailure.err)
+	}
+
+	// The engine marked the teardown between the develop step's outcome and
+	// the follow-on Execute: the follow-on bookkeeping outcome observed the
+	// open teardown window (CRI-287 mark-before-next-Execute ordering).
+	var commentOutcome *cri287Outcome
+	for i := range sink.outcomes {
+		o := &sink.outcomes[i]
+		if o.step == "comment_handler_failed" && o.outcome == "failure" {
+			commentOutcome = o
+			break
+		}
+	}
+	if commentOutcome == nil {
+		t.Fatalf("comment_handler_failed outcomes: %+v; want a declared failure outcome", sink.outcomes)
+	}
+	if !commentOutcome.windowOpen {
+		t.Errorf("comment_handler_failed outcome observed windowOpen=false; want the step-timeout teardown window open")
 	}
 
 	// No session.crash classification: the transport closes during the
@@ -476,3 +533,233 @@ func (a *cri287CopilotDying) Snapshot(context.Context, string) (*criteriav2.Snap
 	return &criteriav2.SnapshotResponse{}, nil
 }
 func (a *cri287CopilotDying) Restore(context.Context, string, []byte, uint32) error { return nil }
+
+// TestCRI287_ParentDeadlineExpiryDoesNotOpenTeardownWindow pins the mark
+// precondition (CRI-287 review): the engine only opens the step-timeout
+// teardown window when it installed a CRI-275 step ceiling. When the develop
+// step has no timeout (step.Timeout == 0) and the PARENT context's deadline
+// expires mid-turn, the canceled turn must not mark the session manager — the
+// follow-on bookkeeping step's Execute must observe a closed window, so a
+// transport close there keeps the hard-failure crash classification.
+func TestCRI287_ParentDeadlineExpiryDoesNotOpenTeardownWindow(t *testing.T) {
+	g := compile(t, strings.Replace(cri287Workflow, "  timeout = \"150ms\"\n", "", 1))
+	shared := &cri287Shared{up: true}
+	copilot := &cri287Copilot{shared: shared}
+	shell := &cri287Shell{shared: shared}
+	sink := &cri287Sink{fakeSink: &fakeSink{}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"copilot":         copilot,
+		"copilot.default": copilot,
+		"shell":           shell,
+		"shell.default":   shell,
+	}}
+	e := NewTestEngine(g, loader, sink)
+	sink.engine = e
+
+	// The run context's deadline expires during the silent develop turn 1:
+	// the adapter unblocks on context cancellation and the turn fails with
+	// the parent deadline — no engine-installed step ceiling was involved.
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := e.Run(ctx); err == nil {
+		t.Fatal("run: expected the parent-deadline cancellation to fail the run")
+	}
+
+	// The run failed before the follow-on steps could Execute (their attempt
+	// loop exits on the canceled context), so the discriminating observation
+	// is the teardown-window state at the run failure: the engine must never
+	// have marked.
+	if !sink.sawRunFail {
+		t.Fatal("expected OnRunFailed for the parent-deadline cancellation")
+	}
+	if sink.windowAtRunFail {
+		t.Error("teardown window open at run failure; a parent-context deadline must not open the CRI-287 window")
+	}
+	for _, o := range sink.outcomes {
+		if o.windowOpen {
+			t.Errorf("outcome %s/%s observed windowOpen=true; no step timeout was installed, so the window must never open", o.step, o.outcome)
+		}
+	}
+	if n := sink.eventCount("session.crash"); n != 0 {
+		t.Errorf("session.crash events: %d; want 0 — a run-context deadline expiry is not an adapter crash", n)
+	}
+}
+
+// TestCRI287_ProcessExitDuringTeardownWindowStillCrashClassified pins the
+// process-evidence carve-out end to end (CRI-287 review): with the teardown
+// window open (the develop step's CRI-275 ceiling expired and was marked), a
+// copilot turn whose adapter process verifiably exited still keeps the
+// hard-failure crash classification — the session.crash event carries the
+// ProcessExited reason, not a silent timeout routing.
+func TestCRI287_ProcessExitDuringTeardownWindowStillCrashClassified(t *testing.T) {
+	g := compile(t, cri287ProcessExitWorkflow)
+	shared := &cri287Shared{up: true}
+	copilot := &cri287ProcessExitCopilot{shared: shared}
+	shell := &cri287Shell{shared: shared}
+	sink := &cri287Sink{fakeSink: &fakeSink{}}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"copilot":         copilot,
+		"copilot.default": copilot,
+		"shell":           shell,
+		"shell.default":   shell,
+	}}
+	e := NewTestEngine(g, loader, sink)
+	sink.engine = e
+	if err := e.Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if sink.terminal != "done" || !sink.terminalOK {
+		t.Fatalf("terminal state %q success=%v; want done/true (the checkpoint loop resumes)", sink.terminal, sink.terminalOK)
+	}
+
+	// The follow-on verify_death turn observed the open teardown window AND
+	// still got the crash classification: the process-exit evidence wins
+	// over the window.
+	var verifyOutcome *cri287Outcome
+	for i := range sink.outcomes {
+		o := &sink.outcomes[i]
+		if o.step == "verify_death" {
+			verifyOutcome = o
+			break
+		}
+	}
+	if verifyOutcome == nil {
+		t.Fatalf("verify_death outcomes: %+v; want the death-verification turn recorded", sink.outcomes)
+	}
+	if !verifyOutcome.windowOpen {
+		t.Errorf("verify_death outcome observed windowOpen=false; want the step-timeout teardown window open")
+	}
+	if verifyOutcome.outcome != "failure" {
+		t.Errorf("verify_death outcome = %q; want the declared failure outcome", verifyOutcome.outcome)
+	}
+
+	// The verifiably exited adapter is crash-classified despite the open
+	// window: the process-exit reason from classifySessionCrash is carried on
+	// the event.
+	data, ok := sink.recorded("session.crash")
+	if !ok {
+		t.Fatal("expected a session.crash event for the verifiably exited adapter")
+	}
+	if data["session"] != "copilot.default" {
+		t.Errorf("session.crash session=%v; want copilot.default", data["session"])
+	}
+	if reason, _ := data["crash_reason"].(string); reason != "adapter process exited before the call completed" {
+		t.Errorf("crash_reason=%q; want the ProcessExited classification", reason)
+	}
+	if n := sink.eventCount("session.crash"); n != 1 {
+		t.Errorf("session.crash events: %d; want exactly 1 (the copilot death; shell transport closes stay timeout-routed)", n)
+	}
+}
+
+// cri287ProcessExitWorkflow models a develop turn killed by the CRI-275 step
+// ceiling whose adapter then verifiably dies (process exit) before the next
+// copilot turn: the death must keep the crash classification even though the
+// CRI-287 teardown window is open.
+const cri287ProcessExitWorkflow = `
+workflow {
+  name = "cri287_process_exit"
+  version = "0.1"
+  initial_state = "boot"
+  target_state  = "done"
+}
+adapter "copilot" "default" {}
+adapter "shell" "default" {}
+step "boot" {
+  target = adapter.shell.default
+  outcome "success" { next = step.develop }
+  outcome "failure" { next = step.develop }
+}
+step "develop" {
+  target = adapter.copilot.default
+  timeout = "150ms"
+  outcome "success" { next = step.verify_death }
+  outcome "failure" { next = step.verify_death }
+}
+step "verify_death" {
+  target = adapter.copilot.default
+  outcome "success" { next = step.push_checkpoint }
+  outcome "failure" { next = step.push_checkpoint }
+}
+step "push_checkpoint" {
+  target = adapter.shell.default
+  outcome "success" { next = step.develop }
+  outcome "failure" { next = step.develop }
+  outcome "done"    { next = state.done }
+}
+state "done" {
+  terminal = true
+  success  = true
+}`
+
+// cri287ProcessExitCopilot models the develop adapter across a CRI-275
+// ceiling kill followed by a verifiable process death: turn 1 is silent and
+// is killed by the step timeout (marking the CRI-287 teardown window) and
+// the cancellation closes the shared phone-home connection; turn 2 loses the
+// transport with the process already exited — the "adapter is verifiably
+// dead" case that must stay crash-classified; the resumed turn re-dials and
+// completes.
+type cri287ProcessExitCopilot struct {
+	shared *cri287Shared
+
+	exited atomic.Bool
+
+	mu    sync.Mutex
+	opens []string
+	turns int
+}
+
+// ProcessExited implements the adapterhost.ProcessExitReporter seam: the
+// go-plugin client observed the adapter subprocess exit.
+func (a *cri287ProcessExitCopilot) ProcessExited() bool { return a.exited.Load() }
+
+func (a *cri287ProcessExitCopilot) Info(context.Context) (adapterhost.Info, error) {
+	return adapterhost.Info{Name: "copilot", Version: "test"}, nil
+}
+
+func (a *cri287ProcessExitCopilot) OpenSession(_ context.Context, name string, _, _ map[string]string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.opens = append(a.opens, name)
+	a.shared.setUp(true)
+	return nil
+}
+
+func (a *cri287ProcessExitCopilot) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+	a.mu.Lock()
+	a.turns++
+	turn := a.turns
+	a.mu.Unlock()
+	switch turn {
+	case 1:
+		// The developer turn is silent past the CRI-275 step ceiling: the
+		// engine cancels it and the teardown cascade closes the shared
+		// phone-home connection in the same second. The process dies with the
+		// turn.
+		<-ctx.Done()
+		a.exited.Store(true)
+		a.shared.setUp(false)
+		return adapter.Result{}, ctx.Err()
+	case 2:
+		// The next turn observes the dead transport AND the exited process:
+		// verifiable adapter death inside the open teardown window.
+		return adapter.Result{}, errors.New(cri271CrashErr)
+	}
+	// The resumed turn re-dials (CRI-274) and completes.
+	a.shared.setUp(true)
+	a.shared.completedTurn()
+	return adapter.Result{Outcome: "success"}, nil
+}
+
+func (a *cri287ProcessExitCopilot) CloseSession(context.Context, string) error { return nil }
+func (a *cri287ProcessExitCopilot) Kill()                                      {}
+func (a *cri287ProcessExitCopilot) Pause(context.Context, string) error        { return nil }
+func (a *cri287ProcessExitCopilot) Resume(context.Context, string) error       { return nil }
+func (a *cri287ProcessExitCopilot) Inspect(context.Context, string) (*criteriav2.InspectResponse, error) {
+	return &criteriav2.InspectResponse{}, nil
+}
+func (a *cri287ProcessExitCopilot) Snapshot(context.Context, string) (*criteriav2.SnapshotResponse, error) {
+	return &criteriav2.SnapshotResponse{}, nil
+}
+func (a *cri287ProcessExitCopilot) Restore(context.Context, string, []byte, uint32) error {
+	return nil
+}
