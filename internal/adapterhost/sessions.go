@@ -175,6 +175,20 @@ type SessionManager struct {
 	// bind the same adapter and seeing ErrSessionAlreadyOpen from the winner.
 	bindMu sync.Mutex
 
+	// CRI-287: engineStepTimeoutTeardown latches an engine-initiated
+	// step-timeout cancellation (the CRI-275 step ceiling). The canceled
+	// Execute stream tears down sibling phone-home transports in the same
+	// second, so a transport close observed on a later Execute (fresh
+	// context) is the consequence of that cancellation, not an adapter
+	// death. While the latch is set, transport-close errors are returned
+	// as-is — the step's declared failure/default outcome routing (the
+	// checkpoint loop) proceeds — instead of being classified as a session
+	// crash. The latch clears on the first successful Execute, which proves
+	// at least one transport is healthy and the teardown cascade is over;
+	// genuine crashes outside the teardown window keep the hard-failure
+	// classification.
+	engineStepTimeoutTeardown atomic.Bool
+
 	// allowedRoots restricts environment working_directory values. Empty means
 	// no additional root checks; paths containing ".." are always rejected.
 	allowedRoots []string
@@ -2085,8 +2099,12 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 	m.maybeOverrideOutcome(permSink, &result)
 
 	if execErr == nil {
-		// A completed call proves the session transport was alive (CRI-271).
+		// A completed call proves the session transport was alive (CRI-271)
+		// and, with CRI-287, ends the step-timeout teardown window: any
+		// transport close observed after this point is a genuine adapter
+		// death again.
 		sess.noteActivity()
+		m.engineStepTimeoutTeardown.Store(false)
 		// A nested callee Execute that crashed with on_crash=abort_run latches
 		// its fatal error on the sink (CRI-160): the callee's own crash policy
 		// governs its session, so the error propagates to the engine instead
@@ -2114,11 +2132,35 @@ func (m *SessionManager) executeError(ctx context.Context, name string, step *wo
 		return result, execErr
 	}
 
+	// CRI-287: a transport close observed while a step-timeout teardown is in
+	// flight is the consequence of the engine-initiated cancellation (the
+	// canceled Execute stream tears down sibling phone-home transports in the
+	// same second), not an adapter death. Return the error as-is so the
+	// step's declared failure/default outcome routing (the checkpoint loop)
+	// proceeds instead of the crash machinery terminating the run. The latch
+	// clears on the first successful Execute, so crashes outside the teardown
+	// window keep the hard-failure classification (CRI-271).
+	if m.engineStepTimeoutTeardown.Load() && isLikelySessionCrash(sess, execErr) {
+		slog.Warn("adapter transport closed during engine-initiated step-timeout teardown; routing as timeout, not crash",
+			append([]any{"session", sess.Name, "adapter", sess.Adapter}, sess.crashDiagnostics(classifySessionCrash(sess, execErr))...)...)
+		return result, execErr
+	}
+
 	if !isLikelySessionCrash(sess, execErr) {
 		return result, execErr
 	}
 
 	return m.handleCrash(ctx, name, step, sink, sess, execErr)
+}
+
+// MarkEngineStepTimeoutTeardown records that the engine canceled a step
+// because its step timeout expired (CRI-275/CRI-287). Transport closes
+// observed before the next successful Execute are then classified as a
+// timeout teardown, not a session crash, so the step's declared
+// failure/default outcome routing (the checkpoint loop) wins the race
+// against the transport-close classifier.
+func (m *SessionManager) MarkEngineStepTimeoutTeardown() {
+	m.engineStepTimeoutTeardown.Store(true)
 }
 
 // setStepPolicy builds the CombinedPolicy for this step and wires it into the
