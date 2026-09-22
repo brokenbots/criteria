@@ -2203,7 +2203,34 @@ func (m *SessionManager) AdapterHandle(name string) (Handle, bool) {
 }
 
 func (m *SessionManager) Shutdown(ctx context.Context) error {
+	shims, sessions := m.takeForShutdown()
+	errs := make([]error, 0, len(shims)+len(sessions)+1)
+	// Stop every phone-home shim first so no new adapter connections are
+	// accepted during teardown, pending handle waiters are woken with an
+	// error, and no shim accept goroutine outlives the run (CRI-293: one
+	// shim per remote environment may be registered).
+	for _, shim := range shims {
+		if err := shim.Stop(ctx); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	for _, sess := range sessions {
+		errs = append(errs, m.closeSession(ctx, sess))
+	}
+	if m.loader != nil {
+		if err := m.loader.Shutdown(ctx); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// takeForShutdown atomically collects every registered remote shim (deduped:
+// the default shim usually aliases one environment's) and snapshots+clears the
+// sessions and verification records under the lock.
+func (m *SessionManager) takeForShutdown() ([]RemoteShim, []*Session) {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	shims := make([]RemoteShim, 0, len(m.remoteShimsByEnv)+1)
 	seen := make(map[RemoteShim]struct{}, len(m.remoteShimsByEnv)+1)
 	if m.remoteShim != nil {
@@ -2224,46 +2251,34 @@ func (m *SessionManager) Shutdown(ctx context.Context) error {
 	for name := range m.verified {
 		delete(m.verified, name)
 	}
-	m.mu.Unlock()
+	return shims, sessions
+}
 
+// closeSession marks a session closing, cancels its log stream, tears down
+// sandbox/merge state and the underlying handle, returning any close error.
+func (m *SessionManager) closeSession(ctx context.Context, sess *Session) error {
+	sess.closing.Store(true)
+	sess.logStreamAlive.Store(false)
+	if sess.PermissionState != nil {
+		sess.PermissionState.Stop()
+	}
+	sess.logMu.Lock()
+	cancelLog := sess.cancelLog
+	sess.logMu.Unlock()
+	if cancelLog != nil {
+		cancelLog()
+	}
+	if sess.mergeBuf != nil {
+		sess.mergeBuf.Close()
+	}
+	if sess.SandboxCleanup != nil {
+		sess.SandboxCleanup()
+	}
 	var errs []error
-	// Stop every phone-home shim first so no new adapter connections are
-	// accepted during teardown, pending handle waiters are woken with an
-	// error, and no shim accept goroutine outlives the run (CRI-293: one
-	// shim per remote environment may be registered).
-	for _, shim := range shims {
-		if err := shim.Stop(ctx); err != nil {
-			errs = append(errs, err)
-		}
+	if err := sess.handle.CloseSession(ctx, sess.Name); err != nil {
+		errs = append(errs, err)
 	}
-	for _, sess := range sessions {
-		sess.closing.Store(true)
-		sess.logStreamAlive.Store(false)
-		if sess.PermissionState != nil {
-			sess.PermissionState.Stop()
-		}
-		sess.logMu.Lock()
-		cancelLog := sess.cancelLog
-		sess.logMu.Unlock()
-		if cancelLog != nil {
-			cancelLog()
-		}
-		if sess.mergeBuf != nil {
-			sess.mergeBuf.Close()
-		}
-		if sess.SandboxCleanup != nil {
-			sess.SandboxCleanup()
-		}
-		if err := sess.handle.CloseSession(ctx, sess.Name); err != nil {
-			errs = append(errs, err)
-		}
-		sess.handle.Kill()
-	}
-	if m.loader != nil {
-		if err := m.loader.Shutdown(ctx); err != nil {
-			errs = append(errs, err)
-		}
-	}
+	sess.handle.Kill()
 	return errors.Join(errs...)
 }
 
