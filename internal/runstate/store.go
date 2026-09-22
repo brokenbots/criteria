@@ -13,7 +13,11 @@ import (
 	"syscall"
 	"time"
 
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
+
 	"github.com/brokenbots/criteria/internal/dirs"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 // ErrNotFound is returned when a run id has no local state.
@@ -155,35 +159,36 @@ func (s *Store) GetRun(runID string) (*Run, error) {
 
 // ListRuns returns the page of runs for GET /runs. Filters: agent (exact
 // criteria id — empty matches all), status; limit and cursor paginate
-// newest-first. cursor is the last run id of the previous page (opaque to the
-// client); the returned token is the next cursor, empty on the last page.
+// newest-first (events-file mtime, run id). The cursor is an opaque keyset
+// token carrying the previous page's sort key — the (mtime, runID) of its
+// last run — so pagination is monotonic with respect to the sort key and
+// never drops the tail when run-id order differs from mtime order. A
+// malformed or stale token deterministically ends the listing.
 func (s *Store) ListRuns(agent, status string, limit int, cursor string) (*RunsPage, error) {
-	ids, err := s.ListRunIDs()
+	if limit <= 0 {
+		limit = 50
+	} else if limit > 200 {
+		limit = 200
+	}
+	entries, err := s.runEntriesNewestFirst()
 	if err != nil {
 		return nil, err
 	}
-	s.sortRunIDsNewestFirst(ids)
 	if cursor != "" {
-		// ids is newest-first (descending). Find the cursor, then resume
-		// after it. A cursor this store no longer knows (aged out, removed)
-		// has no stable resume point without duplicating earlier pages, so
-		// the listing deterministically ends.
-		idx := sort.Search(len(ids), func(i int) bool { return ids[i] <= cursor })
-		if idx == len(ids) || ids[idx] != cursor {
+		c, ok := decodeRunCursor(cursor)
+		if !ok {
 			return &RunsPage{Runs: []Run{}}, nil
 		}
-		ids = ids[idx+1:]
-	}
-	if limit <= 0 || limit > 200 {
-		limit = 50
+		entries = entriesAfter(entries, c)
 	}
 	page := &RunsPage{Runs: []Run{}}
-	for _, id := range ids {
+	var last runEntry
+	for _, e := range entries {
 		if len(page.Runs) == limit {
-			page.NextPageToken = page.Runs[len(page.Runs)-1].RunID
+			page.NextPageToken = runCursorToken(last)
 			return page, nil
 		}
-		r, err := s.GetRun(id)
+		r, err := s.GetRun(e.id)
 		if err != nil {
 			continue // vanished or unreadable mid-list: skip
 		}
@@ -194,13 +199,19 @@ func (s *Store) ListRuns(agent, status string, limit int, cursor string) (*RunsP
 			continue
 		}
 		page.Runs = append(page.Runs, *r)
+		last = e
 	}
 	return page, nil
 }
 
 // Events returns the run's events with seq > sinceSeq, in ascending seq
-// order, capped at limit (default 500). The next-page token is the last
-// returned event's seq (empty when the end of the stream was reached).
+// order, capped at limit (default 500, max 1000 — above the cap the limit is
+// clamped). The page shape follows the consumer contract (dataSource.ts
+// RunEventsPage): lastSeq is the highest seq in the run at fetch time;
+// nextSinceSeq is the continuation cursor for the next (newer) page — the
+// last returned seq on a full page — or null when the page was not full.
+// A page that is exactly the run's tail still carries nextSinceSeq, so the
+// consumer's walk terminates with the empty probe it expects.
 func (s *Store) Events(runID string, sinceSeq int64, limit int) (*RunEventsPage, error) {
 	if _, err := s.RunDir(runID); err != nil {
 		return nil, err
@@ -212,26 +223,37 @@ func (s *Store) Events(runID string, sinceSeq int64, limit int) (*RunEventsPage,
 			return nil, err
 		}
 	}
-	if limit <= 0 || limit > 1000 {
+	if limit <= 0 {
 		limit = 500
+	} else if limit > 1000 {
+		limit = 1000
+	}
+	var lastSeq int64
+	if len(all) > 0 {
+		lastSeq = all[len(all)-1].Seq
 	}
 	out := make([]EventEnvelope, 0, min(limit, len(all)))
 	for _, ev := range all {
 		if ev.Seq <= sinceSeq {
 			continue
 		}
-		if len(out) == limit {
-			last := out[len(out)-1].Seq
-			return &RunEventsPage{Events: out, NextPageToken: strconv.FormatInt(last, 10)}, nil
-		}
 		out = append(out, ev)
+		if len(out) == limit {
+			break
+		}
 	}
-	return &RunEventsPage{Events: out}, nil
+	page := &RunEventsPage{Events: out, LastSeq: lastSeq}
+	if len(out) == limit {
+		next := out[len(out)-1].Seq
+		page.NextSinceSeq = &next
+	}
+	return page, nil
 }
 
 // readEvents parses the run's ND-JSON events file. Trailing partial lines
 // (the writer may hold the file open mid-append) and malformed records are
-// skipped, never fatal.
+// skipped, never fatal. The type is mapped onto the seam vocabulary
+// (eventvocab.go) and the payload stays raw JSON verbatim.
 func (s *Store) readEvents(runID string) []EventEnvelope {
 	dir, err := s.RunDir(runID)
 	if err != nil {
@@ -258,7 +280,7 @@ func (s *Store) readEvents(runID string) []EventEnvelope {
 			SchemaVersion: env.SchemaVersion,
 			RunID:         env.RunID,
 			Seq:           env.Seq,
-			Type:          env.PayloadType,
+			Type:          seamEventType(env.PayloadType),
 			Payload:       env.Payload,
 		})
 	}
@@ -329,37 +351,37 @@ func deriveRun(dir string, st *localState, events []EventEnvelope) *Run {
 }
 
 // applyEventToRun folds a single NDJSON event into the derived run record.
+// Payloads decode through the proto messages the producer serializes with
+// protojson (camelCase keys; the parser also accepts the original snake_case
+// field names) rather than ad-hoc JSON structs.
 func applyEventToRun(run *Run, hasState bool, ev *EventEnvelope) {
+	decode := func(msg proto.Message) bool {
+		opts := protojson.UnmarshalOptions{DiscardUnknown: true}
+		return opts.Unmarshal(ev.Payload, msg) == nil
+	}
 	switch ev.Type {
-	case "RunStarted":
+	case "runStarted":
 		if hasState {
 			return // run-state.json is the better source
 		}
-		var p struct {
-			WorkflowName string `json:"workflow_name"`
+		var m pb.RunStarted
+		if decode(&m) && m.WorkflowName != "" {
+			run.WorkflowName = m.WorkflowName
 		}
-		if json.Unmarshal(ev.Payload, &p) == nil && p.WorkflowName != "" {
-			run.WorkflowName = p.WorkflowName
-		}
-	case "RunCompleted":
-		var p struct {
-			FinalState string `json:"final_state"`
-			Success    bool   `json:"success"`
-		}
-		if json.Unmarshal(ev.Payload, &p) == nil {
+	case "runCompleted":
+		var m pb.RunCompleted
+		if decode(&m) {
 			run.Status = StatusSucceeded
-			run.FinalState = p.FinalState
-			if !p.Success {
+			run.FinalState = m.FinalState
+			if !m.Success {
 				run.Status = StatusFailed
 			}
 		}
-	case "RunFailed":
-		var p struct {
-			Reason string `json:"reason"`
-		}
-		if json.Unmarshal(ev.Payload, &p) == nil {
+	case "runFailed":
+		var m pb.RunFailed
+		if decode(&m) {
 			run.Status = StatusFailed
-			run.FailureReason = p.Reason
+			run.FailureReason = m.Reason
 		}
 	}
 }
@@ -416,38 +438,82 @@ func fileMtimeRFC3339(dir, name string) string {
 	return info.ModTime().UTC().Format(time.RFC3339)
 }
 
-// sortRunIDsNewestFirst orders run ids by their events file mtime, newest
-// first, so the default list view mirrors the castle (most recent first).
-func (s *Store) sortRunIDsNewestFirst(ids []string) {
+// runEntry is one run's sort key: the events-file mtime (zero when the run
+// has no events file) and the run id tiebreak.
+type runEntry struct {
+	id    string
+	mtime time.Time
+}
+
+// runEntriesNewestFirst lists every servable run entry ordered newest first:
+// mtime descending, run id ascending as the tiebreak — a stable keyset order.
+func (s *Store) runEntriesNewestFirst() ([]runEntry, error) {
+	ids, err := s.ListRunIDs()
+	if err != nil {
+		return nil, err
+	}
 	root, err := s.RunsRoot()
 	if err != nil {
-		sort.Strings(ids)
-		return
+		return nil, err
 	}
-	mtime := make(map[string]time.Time, len(ids))
+	entries := make([]runEntry, 0, len(ids))
 	for _, id := range ids {
+		var mtime time.Time
 		if info, err := os.Stat(filepath.Join(root, id, eventsFileName)); err == nil {
-			mtime[id] = info.ModTime()
+			mtime = info.ModTime()
 		}
+		entries = append(entries, runEntry{id: id, mtime: mtime})
 	}
-	sort.Slice(ids, func(i, j int) bool {
-		ti, tj := mtime[ids[i]], mtime[ids[j]]
-		if ti.IsZero() || tj.IsZero() {
-			if ti.IsZero() != tj.IsZero() {
-				return tj.IsZero() // known mtimes first
-			}
-			return ids[i] < ids[j]
-		}
+	sort.Slice(entries, func(i, j int) bool {
+		ti, tj := entries[i].mtime, entries[j].mtime
 		if !ti.Equal(tj) {
 			return ti.After(tj)
 		}
-		return ids[i] < ids[j]
+		return entries[i].id < entries[j].id
 	})
+	return entries, nil
+}
+
+// entriesAfter keeps the entries strictly after cursor c in the newest-first
+// order: strictly older mtime, or an equal mtime with a run id greater than
+// the cursor's (the id tiebreak is ascending, so resuming after the cursor
+// id means ids greater than it).
+func entriesAfter(entries []runEntry, c runEntry) []runEntry {
+	out := make([]runEntry, 0, len(entries))
+	for _, e := range entries {
+		if e.mtime.Before(c.mtime) || (e.mtime.Equal(c.mtime) && e.id > c.id) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// runCursorToken encodes a run entry as an opaque pagination token carrying
+// the sort key (mtime unix nanos | run id). It rides a URL query value; the
+// '|' separator is percent-encoded by well-behaved clients and accepted raw
+// by Go's query parser.
+func runCursorToken(e runEntry) string {
+	return strconv.FormatInt(e.mtime.UnixNano(), 10) + "|" + e.id
+}
+
+// decodeRunCursor parses an opaque cursor token. Tokens issued by this
+// process round-trip; anything else (client-tampered, past-version) is
+// reported as unusable.
+func decodeRunCursor(token string) (runEntry, bool) {
+	nanos, id, ok := strings.Cut(token, "|")
+	if !ok {
+		return runEntry{}, false
+	}
+	n, err := strconv.ParseInt(nanos, 10, 64)
+	if err != nil || id == "" {
+		return runEntry{}, false
+	}
+	return runEntry{id: id, mtime: time.Unix(0, n)}, true
 }
 
 // Inspect materializes the castle-mapped RunInspection for a run. Local data
 // derives a minimal but honest inspection: the most recent adapter session
-// (from the last StepEntered event) and the run's last activity time. There
+// (from the last stepEntered event) and the run's last activity time. There
 // is no live session attachment locally; the session parameter (when set) is
 // echoed so the viewer can address it.
 func (s *Store) Inspect(runID, session string) (*RunInspection, error) {
@@ -459,22 +525,20 @@ func (s *Store) Inspect(runID, session string) (*RunInspection, error) {
 		return nil, err
 	}
 	events := s.readEvents(runID)
-	insp := &RunInspection{PendingPermissions: 0}
+	insp := &RunInspection{RunID: runID, PendingPermissions: 0}
 	if session != "" {
 		insp.SessionID = session
 	}
 	for _, ev := range events {
-		if ev.Type != "StepEntered" {
+		if ev.Type != "stepEntered" {
 			continue
 		}
-		var p struct {
-			Step    string `json:"step"`
-			Adapter string `json:"adapter"`
-		}
-		if json.Unmarshal(ev.Payload, &p) == nil {
-			insp.CurrentStep = p.Step
-			if p.Adapter != "" {
-				insp.Adapter = p.Adapter
+		var m pb.StepEntered
+		opts := protojson.UnmarshalOptions{DiscardUnknown: true}
+		if opts.Unmarshal(ev.Payload, &m) == nil {
+			insp.CurrentStep = m.Step
+			if m.Adapter != "" {
+				insp.Adapter = m.Adapter
 				if insp.SessionID == "" {
 					// Local runs have one adapter session per step;
 					// the session id is synthetic (run id + seq).
@@ -507,6 +571,7 @@ func (s *Store) Agents() ([]Agent, error) {
 			seen[st.CriteriaID] = Agent{
 				CriteriaID: st.CriteriaID,
 				Name:       st.CriteriaID,
+				Labels:     map[string]string{},
 				Status:     "online",
 				LastSeenAt: startedAtRFC3339(st),
 			}
@@ -541,6 +606,7 @@ func (s *Store) Agent(criteriaID string) (*Agent, bool) {
 	return &Agent{
 		CriteriaID: last.CriteriaID,
 		Name:       last.CriteriaID,
+		Labels:     map[string]string{},
 		Status:     "online",
 		LastSeenAt: startedAtRFC3339(last),
 	}, true

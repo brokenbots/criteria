@@ -34,8 +34,8 @@ func openRunEventsFile(runID string) (io.Writer, func(), error) {
 }
 
 // startLocalRunStateServer binds the loopback run-state server scoped to
-// runID, serves the embedded run-viewer at the root, prints the viewer URL
-// to stderr, and serves until the returned stop func is called. The stop
+// runID, serves the embedded run-viewer under /runview/, prints the viewer
+// URL to stderr, and serves until the returned stop func is called. The stop
 // verb of the control handler cancels the given engine context; pause and
 // resume are UNIMPLEMENTED (CRI-255 adds checkpoint-gated controls). The
 // viewer URL is returned for direct use by callers that want it.
@@ -61,7 +61,7 @@ func startLocalRunStateServer(log *slog.Logger, runID string, port int, cancelRu
 	if err != nil {
 		return "", nil, err
 	}
-	url := fmt.Sprintf("http://%s/", ln.Addr())
+	url := fmt.Sprintf("http://%s/runview/", ln.Addr())
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.Serve(ln) }()
 	var stopOnce sync.Once

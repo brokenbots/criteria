@@ -32,7 +32,7 @@ func runServeUI(ctx context.Context, store *runstate.Store, host string, port in
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "criteria run viewer: http://%s/ (ctrl-c to stop)\n", ln.Addr())
+	fmt.Fprintf(os.Stderr, "criteria run viewer: http://%s/runview/ (ctrl-c to stop)\n", ln.Addr())
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.Serve(ln) }()
@@ -49,7 +49,7 @@ func runServeUI(ctx context.Context, store *runstate.Store, host string, port in
 
 // NewServeUICmd starts the loopback run-state server standalone against a
 // criteria state dir: it serves the whole run list plus the embedded
-// run-viewer at the root. One command opens the local UI. Control verbs
+// run-viewer under /runview/. One command opens the local UI. Control verbs
 // answer UNIMPLEMENTED locally (CRI-255 adds them).
 func NewServeUICmd() *cobra.Command {
 	var (

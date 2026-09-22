@@ -11,13 +11,15 @@ import (
 var distFS embed.FS
 
 // NewViewer returns the embedded run-viewer static bundle as an SPA handler:
-// the bundle is served at / with unknown paths falling back onto
-// index.html so client-side routes render on deep links.
+// the bundle is served under /runview/ (the mount is applied by Server) with
+// unknown paths falling back onto index.html so client-side routes render on
+// deep links.
 //
 // The bundle is built by the castle repo (parapet packages/run-viewer
-// standalone build) and vendored into dist/ as a release artifact kept
-// versioned with the engine (dist/version.txt). The checked-in placeholder
-// renders a plain notice until a real bundle is vendored.
+// standalone build, vite base /runview/) and vendored into dist/ as a
+// release artifact kept versioned with the engine (dist/version.txt). The
+// checked-in placeholder renders a plain notice until a real bundle is
+// vendored.
 func NewViewer() (http.Handler, error) {
 	sub, err := fs.Sub(distFS, "viewer/dist")
 	if err != nil {

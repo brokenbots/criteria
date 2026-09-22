@@ -34,12 +34,13 @@ func freePort(t *testing.T) int {
 	return ln.Addr().(*net.TCPAddr).Port
 }
 
-// waitHealth polls /health until the server answers 204.
+// waitHealth polls the runstate API's /runview/api/health until the server
+// answers 204.
 func waitHealth(t *testing.T, base string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		res, err := http.Get(base + "/health")
+		res, err := http.Get(base + "/runview/api/health")
 		if err == nil {
 			res.Body.Close()
 			if res.StatusCode == http.StatusNoContent {
@@ -126,7 +127,7 @@ func TestStartLocalRunStateServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.WriteString(`{"schema_version":1,"seq":1,"run_id":"run-srv-1","payload_type":"RunStarted","payload":{"workflow_name":"wf-demo"}}` + "\n"); err != nil {
+	if _, err := f.WriteString(`{"schema_version":1,"seq":1,"run_id":"run-srv-1","payload_type":"RunStarted","payload":{"workflowName":"wf-demo"}}` + "\n"); err != nil {
 		t.Fatal(err)
 	}
 	f.Close()
@@ -138,11 +139,11 @@ func TestStartLocalRunStateServer(t *testing.T) {
 	}
 	defer stop()
 
-	base := strings.TrimSuffix(url, "/")
+	base := strings.TrimSuffix(url, "/runview/") // http://127.0.0.1:PORT
 	waitHealth(t, base)
 
 	// Scoped list: only the wired run id is served.
-	res, err := http.Get(base + "/runs")
+	res, err := http.Get(base + "/runview/api/runs")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +166,7 @@ func TestStartLocalRunStateServer(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(other, "events.ndjson"), []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	res2, err := http.Get(base + "/runs/other-run")
+	res2, err := http.Get(base + "/runview/api/runs/other-run")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +176,7 @@ func TestStartLocalRunStateServer(t *testing.T) {
 	}
 
 	// The events route serves the teed stream.
-	res3, err := http.Get(base + "/runs/" + runID + "/events")
+	res3, err := http.Get(base + "/runview/api/runs/" + runID + "/events")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,12 +187,12 @@ func TestStartLocalRunStateServer(t *testing.T) {
 	if err := json.NewDecoder(res3.Body).Decode(&events); err != nil {
 		t.Fatal(err)
 	}
-	if len(events.Events) != 1 || events.Events[0].Type != "RunStarted" {
+	if len(events.Events) != 1 || events.Events[0].Type != "runStarted" {
 		t.Errorf("events = %+v", events.Events)
 	}
 
 	// The stop verb cancels the run context.
-	res4, err := http.Post(base+"/runs/"+runID+"/stop", "application/json", nil)
+	res4, err := http.Post(base+"/runview/api/runs/"+runID+"/stop", "application/json", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +236,7 @@ func TestAttachLocalRunStateServer(t *testing.T) {
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		res, err := http.Get(base + "/health")
+		res, err := http.Get(base + "/runview/api/health")
 		if err != nil {
 			break
 		}
@@ -276,7 +277,7 @@ func TestServeUICmdFixedPort(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	events := `{"schema_version":1,"seq":1,"run_id":"run-ui-2","payload_type":"RunStarted","payload":{"workflow_name":"wf-ui"}}` + "\n"
+	events := `{"schema_version":1,"seq":1,"run_id":"run-ui-2","payload_type":"RunStarted","payload":{"workflowName":"wf-ui"}}` + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "events.ndjson"), []byte(events), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +294,7 @@ func TestServeUICmdFixedPort(t *testing.T) {
 	base := fmt.Sprintf("http://127.0.0.1:%d", port)
 	waitHealth(t, base)
 
-	res, err := http.Get(base + "/runs/" + runID)
+	res, err := http.Get(base + "/runview/api/runs/" + runID)
 	if err != nil {
 		t.Fatal(err)
 	}
