@@ -202,16 +202,11 @@ func (s *LocalSink) OnStepOutcomeDefaulted(step, original, mapped string) {}
 func (s *LocalSink) OnStepOutcomeUnknown(step, outcome string) {}
 
 // OnWorkflowGraphs emits the once-per-run WorkflowGraphs envelope at the
-// post-compile seam (CRI-278). The payload carries the pb message so that
-// dual-write mirrors stay proto-identical to the server stream.
+// post-compile seam (CRI-278). The payload carries the pb message (protojson
+// camelCase {"subworkflows":[...]}) so that local ND-JSON streams and
+// dual-write mirrors stay proto-identical to the server stream (CRI-299).
 func (s *LocalSink) OnWorkflowGraphs(msg *pb.WorkflowGraphs) {
 	s.emit("WorkflowGraphs", msg)
-}
-
-// OnWorkflowGraphsLayers emits the WorkflowGraphs envelope from an
-// already-marshaled compact JSON layers array (the compile-JSON shape).
-func (s *LocalSink) OnWorkflowGraphsLayers(layersJSON json.RawMessage) {
-	s.writeEnvelope("WorkflowGraphs", layersJSON)
 }
 
 func (s *LocalSink) StepEventSink(step string) adapter.EventSink {

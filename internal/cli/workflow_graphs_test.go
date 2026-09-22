@@ -1,12 +1,12 @@
 // CRI-278/CRI-298/CRI-299 regression tests: the once-per-run WorkflowGraphs event.
 //
 // The event is emitted at the post-compile seam, before the engine starts,
-// in both local (ND-JSON events stream) and server (dual-write) mode. The
-// local payload is the layers array; the server payload is the
-// pb.WorkflowGraphs message (proto oneof field 37) mirrored into the events
-// file. The payload is the flat layer list (CRI-299): every layer entry —
-// at every depth — is a sibling entry in the repeated field and carries the
-// uniform {name, sourcePath, body} shape with body a JSON string containing
+// in both local (ND-JSON events stream) and server (dual-write) mode. Both
+// emitters serialize the same pb.WorkflowGraphs message (proto oneof field
+// 37) with the same protojson codec: the payload is the flat layer list
+// (CRI-299) wrapped in the message's repeated subworkflows field — every
+// layer entry, at every depth, is a sibling entry and carries the uniform
+// {name, sourcePath, body} shape with body a JSON string containing
 // ONLY that layer's own compiled graph; no body string contains a
 // subworkflows key. The compile-JSON dialect (snake_case source_path, inline
 // bodies, nested subworkflows) stays internal to `criteria compile --format
@@ -27,6 +27,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/brokenbots/criteria/internal/cli/applytest"
+	"github.com/brokenbots/criteria/internal/run"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
@@ -257,19 +258,26 @@ func assertCRI299FlatLayer(t *testing.T, layer map[string]any) map[string]any {
 	return layer
 }
 
-// assertCRI299FlatLayers decodes a wire layers array and asserts the flat
-// wire shape of every sibling entry. Returns the layer entries in input
-// order.
+// assertCRI299FlatLayers asserts the pb.WorkflowGraphs message wire shape
+// ({"subworkflows":[...]}: the message's only field) and the flat wire
+// shape of every sibling layer entry. entries is the full event payload as
+// both emitters write it. Returns the layer entries in input order.
 func assertCRI299FlatLayers(t *testing.T, entries json.RawMessage) []map[string]any {
 	t.Helper()
-	var layers []map[string]any
-	if err := json.Unmarshal(entries, &layers); err != nil {
-		t.Fatalf("decode layers array: %v\nraw: %s", err, entries)
+	keys := slices.Sorted(maps.Keys(canonicalJSON(t, entries).(map[string]any)))
+	if want := []string{"subworkflows"}; !reflect.DeepEqual(keys, want) {
+		t.Fatalf("payload keys = %v, want exactly %v (pb.WorkflowGraphs message shape)", keys, want)
 	}
-	for _, layer := range layers {
+	var layers struct {
+		Subworkflows []map[string]any `json:"subworkflows"`
+	}
+	if err := json.Unmarshal(entries, &layers); err != nil {
+		t.Fatalf("decode WorkflowGraphs payload: %v\nraw: %s", err, entries)
+	}
+	for _, layer := range layers.Subworkflows {
 		assertCRI299FlatLayer(t, layer)
 	}
-	return layers
+	return layers.Subworkflows
 }
 
 // cri299ParseBody parses a flat layer entry's body string into the compiled
@@ -424,12 +432,14 @@ func TestWorkflowGraphs_LocalNoSubworkflowControl(t *testing.T) {
 		t.Fatalf("second envelope payload_type = %q, want RunStarted", envs[1].PayloadType)
 	}
 
-	var layers []any
-	if err := json.Unmarshal(envs[0].Payload, &layers); err != nil {
-		t.Fatalf("payload is not a layers array: %v", err)
+	var layers struct {
+		Subworkflows []any `json:"subworkflows"`
 	}
-	if len(layers) != 0 {
-		t.Fatalf("control payload has %d layers, want empty array", len(layers))
+	if err := json.Unmarshal(envs[0].Payload, &layers); err != nil {
+		t.Fatalf("payload is not a WorkflowGraphs message: %v", err)
+	}
+	if len(layers.Subworkflows) != 0 {
+		t.Fatalf("control payload has %d layers, want empty array", len(layers.Subworkflows))
 	}
 
 	kinds := map[string]int{}
@@ -548,10 +558,10 @@ func TestWorkflowGraphs_ServerModeDualWriteParity(t *testing.T) {
 }
 
 // TestWorkflowGraphs_EmittersAgreeOnFlatShape pins CRI-299 across both
-// emitters: the local NDJSON builder (raw layers array) and the server
-// builder (pb.WorkflowGraphs via protojson) serialize the SAME compiled
-// graph into canonically identical flat payloads — every layer a sibling
-// entry, bodies leaf data only.
+// emitters: the local NDJSON emitter (run.LocalSink) and the server builder
+// (pb.WorkflowGraphs via protojson) serialize the SAME compiled graph into
+// BYTE-identical flat payloads — every layer a sibling entry, bodies leaf
+// data only. A consumer cannot tell which path produced the event.
 func TestWorkflowGraphs_EmittersAgreeOnFlatShape(t *testing.T) {
 	parentPath := writeCRI278TwoLevelWorkflow(t)
 	_, graph, err := parseCompileForCli(context.Background(), parentPath, nil, false, false)
@@ -559,42 +569,34 @@ func TestWorkflowGraphs_EmittersAgreeOnFlatShape(t *testing.T) {
 		t.Fatalf("compile fixture: %v", err)
 	}
 
-	localJSON, err := workflowGraphsLayersJSON(graph)
-	if err != nil {
-		t.Fatalf("local layers JSON: %v", err)
+	// Drive the local emitter through a real LocalSink to capture the exact
+	// ND-JSON payload bytes it writes.
+	var out bytes.Buffer
+	local := &run.LocalSink{RunID: "run-emitters", Out: &out}
+	emitWorkflowGraphsLocal(newTestLogger(t), local, graph)
+
+	var env ndjsonEnvelope
+	if err := json.Unmarshal(out.Bytes(), &env); err != nil {
+		t.Fatalf("decode local envelope: %v\nraw: %s", err, out.Bytes())
 	}
-	payload, err := buildWorkflowGraphsPayload(graph)
+	if env.PayloadType != "WorkflowGraphs" {
+		t.Fatalf("local envelope payload_type = %q, want WorkflowGraphs", env.PayloadType)
+	}
+
+	msg, err := buildWorkflowGraphsPayload(graph)
 	if err != nil {
 		t.Fatalf("server payload: %v", err)
 	}
-	serverJSON := mustProtojsonMarshal(t, payload)
+	serverJSON := mustProtojsonMarshal(t, msg)
 
-	var serverLayers struct {
-		Subworkflows []map[string]any `json:"subworkflows"`
+	// The emitters must agree byte-for-byte on the same graph.
+	if !bytes.Equal(env.Payload, serverJSON) {
+		t.Fatalf("local and server payloads differ for the same graph\n local: %s\n server: %s", env.Payload, serverJSON)
 	}
-	if err := json.Unmarshal(serverJSON, &serverLayers); err != nil {
-		t.Fatalf("decode server protojson: %v", err)
-	}
-	// The local payload IS the layers array; the server payload is the
-	// WorkflowGraphs message wrapping the same array in its subworkflows
-	// field. The arrays must be canonically identical.
-	if !reflect.DeepEqual(canonicalJSON(t, localJSON), canonicalJSON(t, mustJSON(t, serverLayers.Subworkflows))) {
-		t.Fatalf("local and server payloads differ for the same graph\n local: %s\n server: %s", localJSON, serverJSON)
-	}
-	entries := assertCRI299FlatLayers(t, localJSON)
+	entries := assertCRI299FlatLayers(t, serverJSON)
 	if len(entries) != 2 {
 		t.Fatalf("flat payload has %d sibling layers, want 2", len(entries))
 	}
-}
-
-// mustJSON re-marshals a value to compact JSON bytes (test helper).
-func mustJSON(t *testing.T, v any) []byte {
-	t.Helper()
-	b, err := json.Marshal(v)
-	if err != nil {
-		t.Fatalf("marshal %T: %v", v, err)
-	}
-	return b
 }
 
 func mustProtojsonMarshal(t *testing.T, msg *pb.WorkflowGraphs) []byte {

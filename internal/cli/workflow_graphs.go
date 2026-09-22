@@ -14,10 +14,14 @@
 // expressed by the parent's subworkflow.<name> step targets plus the flat
 // entry list; consumers rebuild the tree with a plain name->layer map. The
 // layer shape is uniform at every entry (CRI-298): the same three keys with
-// body as a JSON string and sourcePath in the wire's camelCase. The
-// compile-JSON dialect (snake_case source_path, inline bodies) stays
-// internal to `criteria compile --format json`, which keeps its own
-// published shape — nesting stays internal to it as well.
+// body as a JSON string and sourcePath in the wire's camelCase. Both
+// emitters serialize the same pb.WorkflowGraphs message with the same
+// protojson codec, so the local ND-JSON payload is byte-identical to the
+// server stream and the dual-write mirror (the castle consumer's
+// WorkflowGraphsPayload shape: {"subworkflows":[...]}). The compile-JSON
+// dialect (snake_case source_path, inline bodies) stays internal to
+// `criteria compile --format json`, which keeps its own published shape —
+// nesting stays internal to it as well.
 package cli
 
 import (
@@ -49,21 +53,6 @@ type workflowGraphsLayer struct {
 // subworkflows emit an empty (non-null) payload.
 func workflowGraphsLayers(graph *workflow.FSMGraph) ([]workflowGraphsLayer, error) {
 	return workflowGraphsFlatLayers(buildCompileJSON(graph).Subworkflows)
-}
-
-// workflowGraphsLayersJSON marshals the compiled subworkflow layers into the
-// compact JSON layers array: every layer at every depth a sibling entry,
-// bodies leaf data only.
-func workflowGraphsLayersJSON(graph *workflow.FSMGraph) (json.RawMessage, error) {
-	layers, err := workflowGraphsLayers(graph)
-	if err != nil {
-		return nil, err
-	}
-	b, err := json.Marshal(layers)
-	if err != nil {
-		return nil, fmt.Errorf("marshal workflow graphs layers: %w", err)
-	}
-	return b, nil
 }
 
 // buildWorkflowGraphsPayload builds the server-mode WorkflowGraphs message
@@ -124,16 +113,19 @@ func workflowGraphsLeafLayer(sw *compileSubworkflow) (workflowGraphsLayer, error
 }
 
 // emitWorkflowGraphsLocal writes the WorkflowGraphs envelope into the local
-// ND-JSON stream via the sink's shared seq sequence. A payload build failure
-// is logged and skipped — the event is best-effort metadata and must never
-// fail the run.
+// ND-JSON stream via the sink's shared seq sequence. The payload is the same
+// pb.WorkflowGraphs message the server stream carries, serialized with the
+// same protojson codec — the local payload is byte-identical to the wire
+// (CRI-299: the local viewer renders the flat layers array from either
+// path). A payload build failure is logged and skipped — the event is
+// best-effort metadata and must never fail the run.
 func emitWorkflowGraphsLocal(log *slog.Logger, local *run.LocalSink, graph *workflow.FSMGraph) {
-	layersJSON, err := workflowGraphsLayersJSON(graph)
+	msg, err := buildWorkflowGraphsPayload(graph)
 	if err != nil {
 		log.Warn("skipping workflow graphs event", "error", err)
 		return
 	}
-	local.OnWorkflowGraphsLayers(layersJSON)
+	local.OnWorkflowGraphs(msg)
 }
 
 // emitWorkflowGraphsServer publishes the WorkflowGraphs event on the server
