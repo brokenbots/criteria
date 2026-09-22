@@ -1,10 +1,12 @@
 criteria run-viewer bundle (vendored release artifact)
 source:     brokenbots/castle, parapet/packages/run-viewer standalone build
-commit:     3cce6d0f1812270bd51043b5c02586cad4029629 (castle main at vendoring time, 2026-09-22)
+commit:     6785868eaab92a95d6c776242fb3c7ced22379af (castle main at vendoring time, 2026-09-22;
+            includes CRI-296 #38 compiled-JSON parsing and CRI-297 #39 nested walk + live fixture;
+            verified shape-agnostic against the CRI-299 flat producer shape)
 build:      cd parapet && npm ci && npm run build:runview
             (vite 5.4.21 via parapet/vite.runview.config.ts: root
             packages/run-viewer, base /runview/, outDir dist/runview)
-artifacts:  index.html, assets/index-D0Pte8iB.js, assets/index-nj-VMB4Y.css
+artifacts:  index.html, assets/index-DraICyKh.js, assets/index-nj-VMB4Y.css
             (vite content-hashed filenames; rebuild regenerates hashes)
 api base:   /runview/api (localRunDataSource RUNVIEW_API_BASE, served by
             internal/runstate on the same loopback server)
