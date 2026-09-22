@@ -35,6 +35,7 @@ var payloadTypeToSeamType = map[string]string{
 	"RunOutputs":             "runOutputs",
 	"run.outputs":            "runOutputs", // historical LocalSink discriminator for RunOutputs
 	"WatchReady":             "watchReady",
+	"WorkflowGraphs":         "workflowGraphs",
 }
 
 // TerminalSeamEventTypes is the seam's terminal vocabulary — the types the

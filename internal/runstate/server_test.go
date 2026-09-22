@@ -3,6 +3,7 @@ package runstate
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -478,4 +479,119 @@ func TestLoopbackHostPredicate(t *testing.T) {
 			t.Errorf("isLoopbackHost(%q) = true, want false", h)
 		}
 	}
+}
+
+// TestWorkflowGraphsFlatPayloadServedToViewer covers the CRI-299 local
+// drill-down path end to end: a local run's events file carries the flat
+// WorkflowGraphs payload (every layer a sibling entry, bodies leaf data
+// only) and the serving layer delivers it verbatim on the canonical
+// /runview/api mount with the camelCase seam type the castle consumer
+// matches on. The vendored viewer bundle is pinned too: version.txt records
+// the castle commit the artifact was re-vendored from (a post-CRI-297
+// commit that renders flat layers), and index.html references a bundle
+// asset that exists in the vendored dist tree.
+func TestWorkflowGraphsFlatPayloadServedToViewer(t *testing.T) {
+	s := newTestStore(t)
+	root, _ := s.RunsRoot()
+	// The flat producer shape: protojson of pb.WorkflowGraphs with child and
+	// grand as sibling entries; each body is that layer's OWN compiled graph
+	// with no subworkflows key — nesting rides the child step's
+	// subworkflow target plus the flat entry list.
+	msg := &pb.WorkflowGraphs{Subworkflows: []*pb.SubworkflowGraph{
+		{Name: "child", SourcePath: "./child", Body: `{"name":"cri278_child","initial_state":"execute","target_state":"complete","adapters":[{"type":"shell","name":"default","on_crash":"fail","config_keys":null}],"steps":[{"name":"execute","adapter":"shell.default","input_keys":["command"],"allow_tools":null,"outcomes":[{"name":"success","next":"complete"}],"subworkflow":"grand"}],"states":[{"name":"complete","terminal":true,"success":true}],"outputs":[],"inputs":[]}`},
+		{Name: "grand", SourcePath: "./child/grand", Body: `{"name":"cri278_grand","initial_state":"execute","target_state":"complete","adapters":[{"type":"shell","name":"default","on_crash":"fail","config_keys":null}],"steps":[{"name":"execute","adapter":"shell.default","input_keys":["command"],"allow_tools":null,"outcomes":[{"name":"success","next":"complete"}]}],"states":[{"name":"complete","terminal":true,"success":true}],"outputs":[],"inputs":[]}`},
+	}}
+	writeRun(t, root, "r-graphs", nil, []ndEnvelope{
+		envPB(t, 1, "RunStarted", &pb.RunStarted{WorkflowName: "cri278_parent", InitialStep: "setup"}),
+		envPB(t, 2, "WorkflowGraphs", msg),
+	}, nil)
+
+	viewer, err := NewViewer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewServer(s).WithViewer(viewer).Handler()
+	code, body := doJSON(t, h, "GET", "/runview/api/runs/r-graphs/events?since_seq=1")
+	if code != http.StatusOK {
+		t.Fatalf("events: code=%d", code)
+	}
+	var page RunEventsPage
+	if err := json.Unmarshal([]byte(body), &page); err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Events) != 1 || page.Events[0].Type != "workflowGraphs" {
+		t.Fatalf("served events = %s, want one workflowGraphs event", body)
+	}
+
+	// The seam event's payload shape is the castle consumer's
+	// WorkflowGraphsPayload: the repeated subworkflows field with both
+	// layers as siblings, bodies leaf data only.
+	payload := page.Events[0].Payload
+	if contains := `\"subworkflows\"`; strings.Contains(string(payload), contains) {
+		t.Fatalf("served payload contains %q (CRI-299: a body carries nested layers): %s", contains, payload)
+	}
+	var graphs struct {
+		Subworkflows []map[string]any `json:"subworkflows"`
+	}
+	if err := json.Unmarshal(payload, &graphs); err != nil {
+		t.Fatalf("payload is not a WorkflowGraphs message: %v\npayload: %s", err, payload)
+	}
+	if len(graphs.Subworkflows) != 2 {
+		t.Fatalf("payload has %d sibling layers, want 2", len(graphs.Subworkflows))
+	}
+	byName := map[string]map[string]any{}
+	for _, e := range graphs.Subworkflows {
+		if e["name"].(string) == "" {
+			t.Fatalf("layer entry missing name: %v", e)
+		}
+		if _, ok := e["sourcePath"].(string); !ok {
+			t.Fatalf("layer %v sourcePath is %T, want string (protojson camelCase)", e["name"], e["sourcePath"])
+		}
+		byName[e["name"].(string)] = e
+	}
+	// Plain name->layer lookup: the drill-down resolves every depth.
+	if _, ok := byName["grand"]; !ok {
+		t.Errorf("layer map lookup for grand: missing (depth-2 layer not a sibling entry)")
+	}
+
+	// The vendored bundle: version.txt pins the castle commit the artifact
+	// was re-vendored from, and index.html references a bundle asset that
+	// exists in the vendored dist tree.
+	code, versionBody := doJSON(t, h, "GET", "/runview/version.txt")
+	if code != http.StatusOK {
+		t.Fatalf("/runview/version.txt code=%d", code)
+	}
+	const vendoredCastleCommit = "6785868eaab92a95d6c776242fb3c7ced22379af"
+	if !strings.Contains(versionBody, vendoredCastleCommit) {
+		t.Errorf("version.txt does not record the vendored castle commit %s:\n%s", vendoredCastleCommit, versionBody)
+	}
+	code, indexBody := doJSON(t, h, "GET", "/runview/")
+	if code != http.StatusOK {
+		t.Fatalf("/runview/ code=%d", code)
+	}
+	asset := vendoredBundleAsset(t, indexBody)
+	if _, err := fs.Stat(distFS, "viewer/dist/"+asset); err != nil {
+		t.Errorf("index.html references %s but the vendored bundle lacks it: %v", asset, err)
+	}
+}
+
+// vendoredBundleAsset extracts the hashed JS bundle asset path an
+// index.html references (assets/index-<hash>.js).
+func vendoredBundleAsset(t *testing.T, indexHTML string) string {
+	t.Helper()
+	const marker = `<script type="module" crossorigin src="/runview/`
+	start := strings.Index(indexHTML, marker)
+	if start < 0 {
+		t.Fatalf("index.html has no module script tag: %s", indexHTML)
+	}
+	rest := indexHTML[start+len(marker):]
+	end := strings.Index(rest, `"`)
+	if end < 0 {
+		t.Fatalf("index.html module script tag unterminated: %s", indexHTML)
+	}
+	asset := rest[:end]
+	if !strings.HasPrefix(asset, "assets/index-") || !strings.HasSuffix(asset, ".js") {
+		t.Fatalf("index.html script src = %q, want a hashed assets/index-*.js", asset)
+	}
+	return asset
 }

@@ -2116,8 +2116,9 @@ func (x *RunOutputs) GetOutputs() []*RunOutputs_Output {
 }
 
 // SubworkflowGraph — one compiled subworkflow layer of a run's workflow
-// (CRI-257). The agent compiler emits one entry per subworkflow the top-level
-// module references, recursively. Permanent field numbers.
+// (CRI-257). The agent compiler emits one flat entry per subworkflow layer at
+// every nesting depth; bodies carry only their own layer (no layer is
+// embedded in another). Permanent field numbers.
 type SubworkflowGraph struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// name matches the `subworkflow "<name>"` declaration in the parent
@@ -2126,9 +2127,13 @@ type SubworkflowGraph struct {
 	// source_path is the module path the parent module declared for the
 	// subworkflow (e.g. "../qa_triage_v1"); display-only; permanent.
 	SourcePath string `protobuf:"bytes,2,opt,name=source_path,json=sourcePath,proto3" json:"source_path,omitempty"`
-	// body is the compiled subworkflow module source in the same HCL dialect
-	// as the top-level workflow, so consumers parse it with the same parser;
-	// permanent.
+	// body is that layer's OWN compiled graph (steps/states/adapters)
+	// serialized as JSON; its own subworkflows key is stripped, so no body
+	// contains another layer (CRI-299). Nested subworkflow layers appear as
+	// their own entries in the top-level repeated field, and nesting is
+	// expressed by the parent's subworkflow.<name> step targets plus that
+	// flat entry list; consumers rebuild the tree with a plain name->layer
+	// map. Permanent.
 	Body          string `protobuf:"bytes,3,opt,name=body,proto3" json:"body,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2194,9 +2199,10 @@ func (x *SubworkflowGraph) GetBody() string {
 // none of the fields.
 type WorkflowGraphs struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// subworkflows carries one entry per compiled subworkflow layer,
-	// recursively (a layer may itself declare subworkflows, which appear as
-	// their own entries); permanent.
+	// subworkflows carries one flat entry per compiled subworkflow layer at
+	// every nesting depth (a layer may itself declare subworkflows, which
+	// appear as their own entries — bodies never embed other layers);
+	// permanent.
 	Subworkflows  []*SubworkflowGraph `protobuf:"bytes,1,rep,name=subworkflows,proto3" json:"subworkflows,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
