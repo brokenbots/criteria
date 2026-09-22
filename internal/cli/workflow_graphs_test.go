@@ -1,18 +1,24 @@
-// CRI-278 regression tests: the once-per-run WorkflowGraphs event.
+// CRI-278/CRI-298 regression tests: the once-per-run WorkflowGraphs event.
 //
 // The event is emitted at the post-compile seam, before the engine starts,
 // in both local (ND-JSON events stream) and server (dual-write) mode. The
-// local payload is the compile-JSON-shaped layers array; the server payload
-// is the pb.WorkflowGraphs message (proto oneof field 37) mirrored into the
-// events file.
+// local payload is the layers array; the server payload is the
+// pb.WorkflowGraphs message (proto oneof field 37) mirrored into the events
+// file. Every layer entry — top-level and nested, at every depth — carries
+// the uniform CRI-298 wire shape {name, sourcePath, body} with body a JSON
+// string; the compile-JSON dialect (snake_case source_path, inline bodies)
+// stays internal to `criteria compile --format json`.
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"testing"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -214,13 +220,118 @@ func canonicalJSON(t *testing.T, b []byte) any {
 	return v
 }
 
-// TestWorkflowGraphs_LocalTwoLevelRegression is the CRI-278 regression gate:
-// applying a two-level subworkflow workflow locally with ND-JSON events
-// output emits exactly 6 envelopes with WorkflowGraphs at index 0 (before
-// RunStarted) carrying payload_type exactly "WorkflowGraphs", and the
-// payload's layers array is canonically identical to the subworkflows array
-// of compile --format json for the same fixture.
-func TestWorkflowGraphs_LocalTwoLevelRegression(t *testing.T) {
+// assertCRI298UniformLayer asserts one layer entry's uniform CRI-298 shape:
+// exactly the three keys name, sourcePath and body; body a JSON string
+// (never an inline object, never snake_case source_path); parsing the body
+// yields the compiled graph whose own subworkflows entries (if any) are
+// again uniform wire-shaped, recursively. Returns the layer entry so callers
+// can pin entry and body content.
+func assertCRI298UniformLayer(t *testing.T, layer map[string]any) map[string]any {
+	t.Helper()
+	keys := slices.Sorted(maps.Keys(layer))
+	if want := []string{"body", "name", "sourcePath"}; !reflect.DeepEqual(keys, want) {
+		t.Fatalf("layer entry keys = %v, want exactly %v (uniform CRI-298 wire shape)", keys, want)
+	}
+	name, _ := layer["name"].(string)
+	if name == "" {
+		t.Fatalf("layer entry has no string name: %v", layer)
+	}
+	if _, ok := layer["sourcePath"].(string); !ok {
+		t.Fatalf("layer %q sourcePath is %T, want a string (snake_case source_path is the CRI-298 producer bug)", name, layer["sourcePath"])
+	}
+	body, ok := layer["body"].(string)
+	if !ok {
+		t.Fatalf("layer %q body is %T, want a JSON string", name, layer["body"])
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+		t.Fatalf("layer %q body does not parse as JSON: %v\nbody: %s", name, err, body)
+	}
+	subs, ok := parsed["subworkflows"]
+	if !ok {
+		return layer
+	}
+	entries, ok := subs.([]any)
+	if !ok {
+		t.Fatalf("layer %q body subworkflows is %T, want an array", name, subs)
+	}
+	for _, entry := range entries {
+		nested, ok := entry.(map[string]any)
+		if !ok {
+			t.Fatalf("layer %q has non-object subworkflows entry: %T", name, entry)
+		}
+		assertCRI298UniformLayer(t, nested)
+	}
+	return layer
+}
+
+// assertCRI298UniformLayers decodes a wire layers array and asserts the
+// uniform shape of every entry, recursively. Returns the layer entries in
+// input order.
+func assertCRI298UniformLayers(t *testing.T, entries json.RawMessage) []map[string]any {
+	t.Helper()
+	var layers []map[string]any
+	if err := json.Unmarshal(entries, &layers); err != nil {
+		t.Fatalf("decode layers array: %v\nraw: %s", err, entries)
+	}
+	for _, layer := range layers {
+		assertCRI298UniformLayer(t, layer)
+	}
+	return layers
+}
+
+// cri298ParseBody parses a uniform layer entry's body string into the
+// compiled body graph map.
+func cri298ParseBody(t *testing.T, entry map[string]any) map[string]any {
+	t.Helper()
+	var body map[string]any
+	if err := json.Unmarshal([]byte(entry["body"].(string)), &body); err != nil {
+		t.Fatalf("layer %v body does not parse: %v", entry["name"], err)
+	}
+	return body
+}
+
+// cri298CompiledLayers fetches the unchanged compile --format json dialect
+// for the fixture and returns its subworkflows array as generic entries.
+func cri298CompiledLayers(t *testing.T, parentPath string) []map[string]any {
+	t.Helper()
+	compileOut, err := compileWorkflowOutput(context.Background(), parentPath, "", "json", nil, false, false)
+	if err != nil {
+		t.Fatalf("compile --format json: %v", err)
+	}
+	var compiled struct {
+		Subworkflows []map[string]any `json:"subworkflows"`
+	}
+	if err := json.Unmarshal(compileOut, &compiled); err != nil {
+		t.Fatalf("unmarshal compile JSON: %v", err)
+	}
+	if compiled.Subworkflows == nil {
+		t.Fatal("compile JSON has no subworkflows array for a two-level fixture")
+	}
+	return compiled.Subworkflows
+}
+
+// cri298BodyWithoutSubworkflows copies a parsed compiled body map without
+// its subworkflows key, so content comparisons between a wire body string
+// and the compile-JSON tree isolate the CRI-298 layer-entry re-keying.
+func cri298BodyWithoutSubworkflows(t *testing.T, body map[string]any) map[string]any {
+	t.Helper()
+	stripped := maps.Clone(body)
+	delete(stripped, "subworkflows")
+	return stripped
+}
+
+// TestWorkflowGraphs_LocalUniformShapeRegression is the CRI-298 regression
+// gate (superseding the CRI-278 compile-JSON-equality pin): applying a
+// three-level subworkflow workflow locally with ND-JSON events output emits
+// exactly 6 envelopes with WorkflowGraphs at index 0 (before RunStarted)
+// carrying payload_type exactly "WorkflowGraphs", and every layer entry —
+// top-level and nested, at every depth — carries the uniform {name,
+// sourcePath, body} shape with body a JSON string: no snake_case
+// source_path and no object bodies anywhere in the payload. The compiled
+// body content still matches criteria compile --format json for the same
+// fixture; only the layer entries are re-keyed.
+func TestWorkflowGraphs_LocalUniformShapeRegression(t *testing.T) {
 	parentPath := writeCRI278TwoLevelWorkflow(t)
 	envs := unmarshalCRI278Envelopes(t, runCRI278LocalApply(t, parentPath))
 
@@ -235,31 +346,50 @@ func TestWorkflowGraphs_LocalTwoLevelRegression(t *testing.T) {
 		t.Fatalf("second envelope payload_type = %q, want RunStarted", envs[1].PayloadType)
 	}
 
-	compileJSON, err := compileWorkflowOutput(context.Background(), parentPath, "", "json", nil, false, false)
-	if err != nil {
-		t.Fatalf("compile --format json: %v", err)
-	}
-	var compiled struct {
-		Subworkflows json.RawMessage `json:"subworkflows"`
-	}
-	if err := json.Unmarshal(compileJSON, &compiled); err != nil {
-		t.Fatalf("unmarshal compile JSON: %v", err)
-	}
-	if compiled.Subworkflows == nil {
-		t.Fatal("compile JSON has no subworkflows array for a two-level fixture")
-	}
-	want := canonicalJSON(t, compiled.Subworkflows)
-	got := canonicalJSON(t, first.Payload)
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("WorkflowGraphs payload differs from compile JSON subworkflows\n event: %s\n compile: %s", first.Payload, compiled.Subworkflows)
+	if contains := "source_path"; bytes.Contains(first.Payload, []byte(contains)) {
+		t.Fatalf("wire payload contains %q (snake_case producer bug): %s", contains, first.Payload)
 	}
 
-	var layers []any
-	if err := json.Unmarshal(first.Payload, &layers); err != nil {
-		t.Fatalf("payload is not a layers array: %v", err)
+	entries := assertCRI298UniformLayers(t, first.Payload)
+	if len(entries) != 1 {
+		t.Fatalf("payload has %d top-level layers, want 1 (child, with grand nested inside its body string)", len(entries))
 	}
-	if len(layers) != 1 {
-		t.Fatalf("payload has %d top-level layers, want 1 (child, with grand nested inline)", len(layers))
+	childEntry := entries[0]
+
+	// The wire layer entries carry the compile-JSON layer values unchanged:
+	// name and sourcePath match the compile-JSON source_path dialect.
+	compileLayers := cri298CompiledLayers(t, parentPath)
+	if got := childEntry["name"]; got != compileLayers[0]["name"] {
+		t.Fatalf("top-level layer name = %v, want %v", got, compileLayers[0]["name"])
+	}
+	if got := childEntry["sourcePath"]; got != compileLayers[0]["source_path"] {
+		t.Fatalf("top-level layer sourcePath = %v, want compile source_path %v", got, compileLayers[0]["source_path"])
+	}
+
+	// The body string content is the compiled child graph: identical to the
+	// compile-JSON body except the re-keyed subworkflow entries.
+	childBody := cri298ParseBody(t, childEntry)
+	if !reflect.DeepEqual(cri298BodyWithoutSubworkflows(t, childBody), cri298BodyWithoutSubworkflows(t, compileLayers[0]["body"].(map[string]any))) {
+		t.Fatalf("child wire body differs from compile-JSON body\n wire: %v\n compile: %v", childBody, compileLayers[0]["body"])
+	}
+
+	// Depth 2: grand rides inside child's parsed body subworkflows, again in
+	// the uniform shape, with its own compiled body content preserved.
+	grandEntries, ok := childBody["subworkflows"].([]any)
+	if !ok || len(grandEntries) != 1 {
+		t.Fatalf("child body has %v nested layers, want 1 (grand)", childBody["subworkflows"])
+	}
+	grandEntry := grandEntries[0].(map[string]any)
+	grandCompileLayer := compileLayers[0]["body"].(map[string]any)["subworkflows"].([]any)[0].(map[string]any)
+	if got := grandEntry["name"]; got != grandCompileLayer["name"] {
+		t.Fatalf("nested layer name = %v, want %v", got, grandCompileLayer["name"])
+	}
+	if got := grandEntry["sourcePath"]; got != grandCompileLayer["source_path"] {
+		t.Fatalf("nested layer sourcePath = %v, want compile source_path %v", got, grandCompileLayer["source_path"])
+	}
+	grandBody := cri298ParseBody(t, grandEntry)
+	if !reflect.DeepEqual(cri298BodyWithoutSubworkflows(t, grandBody), cri298BodyWithoutSubworkflows(t, grandCompileLayer["body"].(map[string]any))) {
+		t.Fatalf("grand wire body differs from compile-JSON body\n wire: %v\n compile: %v", grandBody, grandCompileLayer["body"])
 	}
 }
 
@@ -349,10 +479,43 @@ func TestWorkflowGraphs_ServerModeDualWriteParity(t *testing.T) {
 	}
 	serverGraphs := serverEvents[graphIndexes[0]].GetWorkflowGraphs()
 	if len(serverGraphs.Subworkflows) != 1 {
-		t.Fatalf("server payload has %d top-level layers, want 1 (child, with grand nested inline)", len(serverGraphs.Subworkflows))
+		t.Fatalf("server payload has %d top-level layers, want 1 (child, with grand nested inside its body string)", len(serverGraphs.Subworkflows))
 	}
 	if got := serverGraphs.Subworkflows[0].GetName(); got != "child" {
 		t.Fatalf("top-level layer name = %q, want %q", got, "child")
+	}
+
+	// CRI-298: the uniform wire shape holds on the server payload at every
+	// depth — the child layer body is a JSON string whose parsed subworkflows
+	// entry (grand) is again {name, sourcePath, body:string}, with no
+	// snake_case source_path and no object bodies anywhere in the wire.
+	protoLayerBytes := mustProtojsonMarshal(t, serverGraphs)
+	if bytes.Contains(protoLayerBytes, []byte("source_path")) {
+		t.Fatalf("protojson payload contains %q (snake_case producer bug): %s", "source_path", protoLayerBytes)
+	}
+	var protoLayers struct {
+		Subworkflows []map[string]any `json:"subworkflows"`
+	}
+	if err := json.Unmarshal(protoLayerBytes, &protoLayers); err != nil {
+		t.Fatalf("decode protojson subworkflows: %v", err)
+	}
+	if len(protoLayers.Subworkflows) != 1 {
+		t.Fatalf("protojson payload has %d top-level layers, want 1", len(protoLayers.Subworkflows))
+	}
+	childEntry := assertCRI298UniformLayer(t, protoLayers.Subworkflows[0])
+	childBody := cri298ParseBody(t, childEntry)
+	grandEntries, ok := childBody["subworkflows"].([]any)
+	if !ok || len(grandEntries) != 1 {
+		t.Fatalf("child body has %v nested layers, want 1 (grand)", childBody["subworkflows"])
+	}
+	grandEntry := grandEntries[0].(map[string]any)
+	assertCRI298UniformLayer(t, grandEntry)
+	grandBody := cri298ParseBody(t, grandEntry)
+	if got := grandBody["name"]; got != "cri278_grand" {
+		t.Fatalf("grand body graph name = %v, want cri278_grand", got)
+	}
+	if _, hasSubs := grandBody["subworkflows"]; hasSubs {
+		t.Fatalf("grand body should not carry subworkflows for a leaf layer: %v", grandBody["subworkflows"])
 	}
 
 	fileEvents := readNDJSONEnvelopes(t, eventsFile)
