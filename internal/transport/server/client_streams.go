@@ -104,6 +104,28 @@ func (c *Client) Drain(ctx context.Context) {
 	p.Drain(ctx)
 }
 
+// controlMessageType returns a stable discriminator for the ControlMessage
+// command oneof, used to log unrecognized or unset arms. Reflection-based so
+// a future schema arm (unknown to this build) is still identified as unset.
+func controlMessageType(msg *pb.ControlMessage) string {
+	if msg == nil {
+		return "nil"
+	}
+	m := msg.ProtoReflect()
+	oneofs := m.Descriptor().Oneofs()
+	for i := 0; i < oneofs.Len(); i++ {
+		oo := oneofs.Get(i)
+		if oo.Name() != "command" {
+			continue
+		}
+		if fd := m.WhichOneof(oo); fd != nil {
+			return string(fd.Name())
+		}
+		return "unset"
+	}
+	return "unknown"
+}
+
 func (c *Client) StartControl(ctx context.Context) error {
 	if !c.controlStarted.CompareAndSwap(false, true) {
 		return nil
@@ -154,26 +176,56 @@ func (c *Client) controlLoop(ctx context.Context, ready chan<- error) { //nolint
 				c.log.Debug("control stream attached")
 				continue
 			}
-			if rc := msg.GetRunCancel(); rc != nil && rc.RunId != "" {
-				select {
-				case c.runCancelCh <- rc.RunId:
-				default:
-					c.log.Warn("dropping run.cancel control message", "run_id", rc.RunId)
+			// Dispatch: every ControlMessage oneof arm is either forwarded
+			// onto its channel or logged — nothing falls through silently
+			// (R1, ADR-0006 D1).
+			if rc := msg.GetRunCancel(); rc != nil {
+				if rc.RunId != "" {
+					select {
+					case c.runCancelCh <- rc.RunId:
+					default:
+						c.log.Warn("dropping run.cancel control message", "run_id", rc.RunId)
+					}
+				} else {
+					c.log.Warn("ignoring run.cancel control message without run_id")
 				}
 			}
-			if rr := msg.GetResumeRun(); rr != nil && rr.RunId != "" {
-				select {
-				case c.resumeCh <- rr:
-				default:
-					c.log.Warn("dropping resume_run control message", "run_id", rr.RunId)
+			if rr := msg.GetResumeRun(); rr != nil {
+				if rr.RunId != "" {
+					select {
+					case c.resumeCh <- rr:
+					default:
+						c.log.Warn("dropping resume_run control message", "run_id", rr.RunId)
+					}
+				} else {
+					c.log.Warn("ignoring resume_run control message without run_id")
 				}
 			}
-			if wa := msg.GetWorkflowAssignment(); wa != nil && wa.RunId != "" {
-				select {
-				case c.assignmentCh <- wa:
-				default:
-					c.log.Warn("dropping workflow assignment", "run_id", wa.RunId)
+			if wa := msg.GetWorkflowAssignment(); wa != nil {
+				if wa.RunId != "" {
+					select {
+					case c.assignmentCh <- wa:
+					default:
+						c.log.Warn("dropping workflow assignment", "run_id", wa.RunId)
+					}
+				} else {
+					c.log.Warn("ignoring workflow assignment without run_id")
 				}
+			}
+			if ap := msg.GetAgentPrompt(); ap != nil {
+				// Dispatch even when run_id is empty: the routing layer
+				// records a prompt for an unknown run as a typed failure
+				// (R2/R6) rather than dropping it here unobserved.
+				select {
+				case c.promptCh <- ap:
+				default:
+					c.log.Warn("dropping agent_prompt control message", "run_id", ap.GetRunId(), "step", ap.GetStep())
+				}
+			}
+			if msg.GetRunCancel() == nil && msg.GetResumeRun() == nil && msg.GetWorkflowAssignment() == nil && msg.GetAgentPrompt() == nil {
+				// Unset or unrecognized command (e.g. a newer server speaking
+				// a future schema). Log instead of dropping silently.
+				c.log.Warn("unhandled control message", "type", controlMessageType(msg))
 			}
 		}
 		if firstAttempt && !readySent {

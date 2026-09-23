@@ -87,6 +87,7 @@ type Client struct {
 	assignmentCh   chan *pb.WorkflowAssignment
 	runCancelCh    chan string
 	resumeCh       chan *pb.ResumeRun
+	promptCh       chan *pb.AgentPrompt
 
 	closeOnce sync.Once
 	closed    chan struct{}
@@ -128,6 +129,7 @@ func NewClient(serverURL string, log *slog.Logger, opts ...Options) (*Client, er
 		assignmentCh: make(chan *pb.WorkflowAssignment, 32),
 		runCancelCh:  make(chan string, 32),
 		resumeCh:     make(chan *pb.ResumeRun, 32),
+		promptCh:     make(chan *pb.AgentPrompt, 32),
 		closed:       make(chan struct{}),
 	}, nil
 }
@@ -249,6 +251,12 @@ func (c *Client) RunCancelCh() <-chan string { return c.runCancelCh }
 // ResumeCh returns the channel carrying ResumeRun messages from the server (W05).
 // The caller should drain this channel while a run is paused.
 func (c *Client) ResumeCh() <-chan *pb.ResumeRun { return c.resumeCh }
+
+// AgentPromptCh returns the channel carrying AgentPrompt messages from the
+// server (ADR-0006). The caller routes each prompt to the run it addresses;
+// prompts for unknown runs must be recorded as routing failures, never
+// silently dropped.
+func (c *Client) AgentPromptCh() <-chan *pb.AgentPrompt { return c.promptCh }
 
 // TLSMode returns the TLS mode in effect for this client.
 func (c *Client) TLSMode() TLSMode { return c.opts.TLSMode }
