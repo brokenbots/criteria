@@ -142,7 +142,7 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 	// both the server stream and the dual-write mirror.
 	emitWorkflowGraphsServer(ctx, log, sink, eventsMirror, graph)
 
-	eng, err := buildServerRunEngine(graph, loader, runSink, state, opts)
+	eng, err := buildServerRunEngine(graph, loader, runSink, state, opts, fingerprint)
 	if err != nil {
 		return err
 	}
@@ -152,7 +152,7 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 	}
 	log.Info("run completed", "run_id", state.RunID)
 
-	if err := drainResumeCycles(ctx, log, loader, sink, runSink, client.ResumeCh(), state, graph, workflowDirFromPath(opts.workflowPath), eng); err != nil {
+	if err := drainResumeCycles(ctx, log, loader, sink, runSink, client.ResumeCh(), state, graph, workflowDirFromPath(opts.workflowPath), eng, fingerprint); err != nil {
 		return err
 	}
 
@@ -169,8 +169,10 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 }
 
 // buildServerRunEngine wires the engine for a fresh server-mode run, including
-// the run data dir so per-scope remote sessions can rotate tokens.
-func buildServerRunEngine(graph *workflow.FSMGraph, loader adapterhost.Loader, sink engine.Sink, state *localRunState, opts applyOptions) (*engine.Engine, error) {
+// the run data dir so per-scope remote sessions can rotate tokens. The
+// invocation fingerprint (CRI-125) is recorded in the run data directory and
+// drives CRI-304 cross-run per-scope adoption.
+func buildServerRunEngine(graph *workflow.FSMGraph, loader adapterhost.Loader, sink engine.Sink, state *localRunState, opts applyOptions, fingerprint string) (*engine.Engine, error) {
 	auditPath, _ := auditLogPath(state.RunID)
 	auditWriter := adapterhost.NewFileAuditWriter(auditPath)
 	dataDir, err := runDataDir(state.RunID)
@@ -181,12 +183,14 @@ func buildServerRunEngine(graph *workflow.FSMGraph, loader adapterhost.Loader, s
 	if err != nil {
 		return nil, err
 	}
-	return engine.New(graph, loader, sink,
+	engOpts := []engine.Option{
 		engine.WithVarOverrides(mergedVars),
 		engine.WithWorkflowDir(workflowDirFromPath(opts.workflowPath)),
 		engine.WithAuditWriter(auditWriter),
 		engine.WithDataDir(dataDir),
-	), nil
+	}
+	engOpts = append(engOpts, engineAdoptionOptions(dataDir, fingerprint, state.RunID)...)
+	return engine.New(graph, loader, sink, engOpts...), nil
 }
 
 // drainResumeCycles handles the pause/resume loop: each time the sink is
@@ -194,11 +198,18 @@ func buildServerRunEngine(graph *workflow.FSMGraph, loader adapterhost.Loader, s
 // the engine from the paused node, updating eng to the most recently
 // completed engine. runSink is the sink passed to every engine instance so
 // that terminal-state capture is consistent across the original run and all
-// resume cycles.
-func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost.Loader, sink *run.Sink, runSink engine.Sink, resumeCh <-chan *pb.ResumeRun, state *localRunState, graph *workflow.FSMGraph, workflowDir string, eng *engine.Engine) error {
+// resume cycles. The invocation fingerprint (CRI-125) is recorded in the run
+// data directory and lets each resumed engine adopt surviving per-scope
+// instances from prior invocations of the same run (CRI-304); callers without
+// a fingerprint (agent runs) pass "" and get neither marker nor adoption.
+func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost.Loader, sink *run.Sink, runSink engine.Sink, resumeCh <-chan *pb.ResumeRun, state *localRunState, graph *workflow.FSMGraph, workflowDir string, eng *engine.Engine, fingerprint string) error {
 	dataDir, err := runDataDir(state.RunID)
 	if err != nil {
 		return fmt.Errorf("resolve run data dir: %w", err)
+	}
+	var adoptionOpts []engine.Option
+	if fingerprint != "" {
+		adoptionOpts = engineAdoptionOptions(dataDir, fingerprint, state.RunID)
 	}
 	for sink.IsPaused() {
 		log.Info("run paused; waiting for resume signal", "run_id", state.RunID, "node", sink.PausedAt())
@@ -218,13 +229,18 @@ func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost
 		log.Info("received resume signal", "run_id", state.RunID, "signal", resumeMsg.Signal)
 		pausedNode := sink.PausedAt()
 		sink.ClearPaused()
-		resumedEng := engine.New(graph, loader, runSink,
+		resumedOpts := []engine.Option{
 			engine.WithResumedVars(eng.VarScope()),
 			engine.WithResumedVisits(eng.VisitCounts()),
 			engine.WithResumePayload(resumeMsg.Payload),
 			engine.WithWorkflowDir(workflowDir),
 			engine.WithDataDir(dataDir),
-		)
+		}
+		// CRI-304: resumed engines adopt surviving per-scope instances from
+		// prior invocations of the same run instead of rotating fresh tokens
+		// that would wedge the replay behind the shim's handshake timeout.
+		resumedOpts = append(resumedOpts, adoptionOpts...)
+		resumedEng := engine.New(graph, loader, runSink, resumedOpts...)
 		if err := resumedEng.RunFrom(ctx, pausedNode, 1); err != nil {
 			log.Error("run failed after resume", "error", err)
 			return err

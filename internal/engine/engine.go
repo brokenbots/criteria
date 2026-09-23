@@ -225,6 +225,13 @@ type Engine struct {
 	// one adapter pod per environment and never collide). Set only by local
 	// run entrypoints via WithLocalShimIsolation.
 	localShimIsolation bool
+
+	// CRI-304: adoptableRunDirs lists prior invocations' run data directories
+	// whose surviving per-scope adapter instances may be adopted instead of
+	// rotating fresh. The CLI populates it from persisted invocation-identity
+	// markers for replays that follow a checkpoint-consuming resume; empty
+	// leaves fresh rotation untouched.
+	adoptableRunDirs []string
 }
 
 func New(graph *workflow.FSMGraph, loader adapterhost.Loader, sink Sink, opts ...Option) *Engine {
@@ -418,6 +425,7 @@ func (e *Engine) initAdapters(ctx context.Context, sessions *adapterhost.Session
 	}
 
 	lifecycle := newScopeLifecycleState(e.dataDir)
+	lifecycle.adoptableRunDirs = e.adoptableRunDirs
 	lifecycle.setRunID(e.runID)
 	rlc := &remoteLifecycleContext{
 		lockfile:       e.effectivePinSet(),
@@ -434,6 +442,12 @@ func (e *Engine) initAdapters(ctx context.Context, sessions *adapterhost.Session
 
 // Run executes the workflow until a terminal state is reached, the global
 // step limit is exceeded, or ctx is cancelled.
+//
+// CRI-304: every init failure before runLoop (workflow version gate, variable
+// seeding, remote shim startup, adapter provisioning) emits OnRunFailed so
+// the control-plane run record reaches a terminal status; previously only
+// runLoop errors and initAdapters did, leaving provisioning failures
+// non-terminal (an observed crash-replay stayed "running" forever).
 func (e *Engine) Run(ctx context.Context) error {
 	sessions := adapterhost.NewSessionManager(e.loader)
 	sessions.SetGraph(e.graph)
@@ -444,10 +458,6 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 	e.setLockfileOnSessions(sessions)
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
-
-	if diags := workflow.CheckGraphCriteriaVersion(e.graph, nil); diags.HasErrors() {
-		return fmt.Errorf("%s", diags.Error())
-	}
 
 	// Create a per-run redaction registry and wire it into the session manager
 	// and the engine sink so all secret values are masked before display or
@@ -460,16 +470,30 @@ func (e *Engine) Run(ctx context.Context) error {
 	sessions.LifecycleSink = sink
 	sessions.SetAllowedWorkingDirRoots(e.workingDirAllowedRoots)
 
+	// CRI-304: failRunInit emits OnRunFailed for a pre-runLoop init failure;
+	// initAdapters emits its own, so it is deliberately excluded.
+	failRunInit := func(err error) {
+		sink.OnRunFailed(err.Error(), "")
+	}
+
+	if diags := workflow.CheckGraphCriteriaVersion(e.graph, nil); diags.HasErrors() {
+		err := fmt.Errorf("%s", diags.Error())
+		failRunInit(err)
+		return err
+	}
+
 	// Seed variables and declared secret data blocks before adapter provisioning
 	// so secret expressions can be evaluated against the run scope (WS13, CRI-88).
 	vars, ds, err := e.seedRunScope(ctx, sink, redactionReg)
 	if err != nil {
+		failRunInit(err)
 		return err
 	}
 
 	// WS20: if any environment is remote, start the phone-home shim before
 	// provisioning adapters.
 	if err := e.maybeStartRemoteShim(ctx, sessions); err != nil {
+		failRunInit(err)
 		return err
 	}
 
@@ -491,6 +515,10 @@ func (e *Engine) Run(ctx context.Context) error {
 // OnRunFailed instead of attempting the step.
 // Adapter sessions are provisioned fresh on each run (resumed or not),
 // allowing the workflow to be resumed in a new process context.
+//
+// CRI-304: like Run, every init failure before runLoop emits OnRunFailed so
+// a resumed run's record reaches a terminal status even when provisioning or
+// shim startup fails.
 func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt int) error {
 	sessions := adapterhost.NewSessionManager(e.loader)
 	sessions.SetGraph(e.graph)
@@ -502,10 +530,6 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	e.setLockfileOnSessions(sessions)
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
-	if diags := workflow.CheckGraphCriteriaVersion(e.graph, nil); diags.HasErrors() {
-		return fmt.Errorf("%s", diags.Error())
-	}
-
 	redactionReg := secrets.NewRegistry()
 	sessions.RedactionRegistry = redactionReg
 
@@ -513,14 +537,28 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	sessions.LifecycleSink = sink
 	sessions.SetAllowedWorkingDirRoots(e.workingDirAllowedRoots)
 
+	// CRI-304: failRunInit emits OnRunFailed for a pre-runLoop init failure;
+	// initAdapters emits its own, so it is deliberately excluded.
+	failRunInit := func(err error) {
+		sink.OnRunFailed(err.Error(), startStep)
+	}
+
+	if diags := workflow.CheckGraphCriteriaVersion(e.graph, nil); diags.HasErrors() {
+		err := fmt.Errorf("%s", diags.Error())
+		failRunInit(err)
+		return err
+	}
+
 	vars, ds, err := e.seedRunScope(ctx, sink, redactionReg)
 	if err != nil {
+		failRunInit(err)
 		return err
 	}
 
 	// WS20: if any environment is remote, start the phone-home shim before
 	// provisioning adapters.
 	if err := e.maybeStartRemoteShim(ctx, sessions); err != nil {
+		failRunInit(err)
 		return err
 	}
 
@@ -531,6 +569,7 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	defer func() { tearDownScopeAdapters(ctx, scopeOrder, deps, rlc) }()
 
 	if err := e.bootstrapSessionsForResume(ctx, sessions, startStep); err != nil {
+		failRunInit(err)
 		return err
 	}
 	return e.runLoop(ctx, sessions, startStep, initialAttempt, vars, sink, ds, rlc)

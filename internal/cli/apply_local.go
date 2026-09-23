@@ -192,6 +192,9 @@ func newLocalEngine(runID string, graph *workflow.FSMGraph, loader adapterhost.L
 	engOpts := append(localRunEngineOptions(opts.workflowPath, dataDir),
 		engine.WithVarOverrides(identity.mergedVars),
 		engine.WithAuditWriter(auditWriter))
+	// CRI-304: record the invocation fingerprint and let the engine adopt
+	// surviving per-scope instances from prior invocations of the same run.
+	engOpts = append(engOpts, engineAdoptionOptions(dataDir, identity.fingerprint, runID)...)
 	return engine.New(graph, loader, runSink, engOpts...), nil
 }
 
@@ -305,15 +308,17 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 	}
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
-	nextAttempt := cp.Attempt + 1
-	maxAttempts := 1 + graph.Policy.MaxStepRetries
-	if nextAttempt > maxAttempts {
-		sink, _ := buildLocalSink(cp.RunID, out, mode, graph.StepOrder(), nil, graph)
-		reason := fmt.Sprintf("exceeded max_step_retries on resume at step %q (attempt %d)", cp.CurrentStep, nextAttempt)
-		sink.OnRunFailed(reason, cp.CurrentStep)
-		RemoveStepCheckpoint(cp.RunID)
-		return true, fmt.Errorf("%s", reason)
-	}
+	// CRI-304: the interrupted step restarts at attempt 1 with a fresh retry
+	// budget. The pre-crash attempt produced no outcome, so counting it
+	// against max_step_retries made mid-step crash recovery useless for any
+	// workflow with max_step_retries <= 1. The persisted max_visits counts
+	// (restored via WithResumedVisits) still bound total attempts across
+	// resumes, so a crash-loop cannot amplify into unbounded work.
+	// cp.Attempt is the pre-crash attempt; it stays out of the budget
+	// decision and is surfaced for diagnostics only.
+	nextAttempt := 1
+	log.Info("resuming interrupted step with fresh attempt budget",
+		"run_id", cp.RunID, "step", cp.CurrentStep, "last_attempt", cp.Attempt, "resumed_attempt", nextAttempt)
 
 	opts, tracker, runSink, eng, engErr := buildReattachTrackerAndEngine(cp, log, graph, loader, out, mode, nextAttempt, mergedVars)
 	if engErr != nil {
@@ -385,6 +390,10 @@ func buildReattachTrackerAndEngine(cp *StepCheckpoint, log *slog.Logger, graph *
 	// environment shims in-process just like the fresh-run and resume-cycle
 	// engines, so it needs the same shared listen_address isolation (carried
 	// by localRunEngineOptions).
+	// CRI-304: record the checkpoint's invocation fingerprint and let the
+	// resumed engine adopt surviving per-scope instances from other prior
+	// invocations of the same run.
+	reattachOpts = append(reattachOpts, engineAdoptionOptions(dataDir, cp.Fingerprint, cp.RunID)...)
 	eng = engine.New(graph, loader, runSink, reattachOpts...)
 	return opts, tracker, runSink, eng, nil
 }

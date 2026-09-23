@@ -816,7 +816,7 @@ func runAndDrain(agentCtx, runCtx context.Context, log *slog.Logger, eng *engine
 	// non-terminal events are still drained below so the server can ack them
 	// and the next process replays by correlation ID.
 	if !shutdown {
-		if err := drainResumeCycles(runCtx, log, loader, sink, runSink, resumeCh, state, graph, workflowDir, eng); err != nil {
+		if err := drainResumeCycles(runCtx, log, loader, sink, runSink, resumeCh, state, graph, workflowDir, eng, ""); err != nil {
 			return err
 		}
 	}
