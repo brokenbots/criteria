@@ -15,6 +15,7 @@ package engine
 // verify budget. Adoption re-handshakes those pods to the new run's shim.
 
 import (
+	"bytes"
 	"context"
 	"net"
 	"os"
@@ -159,7 +160,7 @@ func TestInitScopeAdapters_PerScope_AdoptsPriorRunScopeInstance_CRI304(t *testin
 	if err != nil {
 		t.Fatalf("read self-healed token: %v", err)
 	}
-	if string(healedToken) != string(priorToken) {
+	if !bytes.Equal(healedToken, priorToken) {
 		t.Errorf("self-healed token = %q, want the adopted prior token %q", string(healedToken), string(priorToken))
 	}
 	ownRec, err := readCurrentScopeInstance(ownDir, adopted.ScopeName, "noop.default")

@@ -166,7 +166,7 @@ func adoptablePriorRunDirs(fingerprint, excludeRunID string) ([]string, error) {
 		dir  string
 		when time.Time
 	}
-	var candidates []markerCandidate
+	candidates := make([]markerCandidate, 0, len(entries))
 	for _, entry := range entries {
 		if !entry.IsDir() || entry.Name() == excludeRunID {
 			continue

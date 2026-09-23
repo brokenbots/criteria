@@ -370,7 +370,6 @@ func maybeRotateRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, g *wor
 		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
 		return "", fmt.Errorf("initialize adapter %q: %w", instanceID, err)
 	}
-	dataDir := lifecycle.scopeLifecycle.dataDir
 
 	// CRI-137: after a runner-pod restart mid-run, reuse the persisted scope
 	// instance so surviving adapter pods can re-handshake with the restarted
@@ -400,9 +399,17 @@ func maybeRotateRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, g *wor
 	if adopted {
 		return scopeKey, nil
 	}
+	return rotateFreshRemoteScope(deps, lifecycle, envNode, adapter, instanceID, scopeName)
+}
 
+// rotateFreshRemoteScope provisions a brand-new scope instance: it generates
+// an accept token, persists the token and the current-instance record under
+// the run data dir, registers the token with the shim, and emits
+// provision_wanted so the adapter session gets provisioned against it.
+func rotateFreshRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, envNode *workflow.EnvironmentNode, adapter *workflow.AdapterNode, instanceID, scopeName string) (string, error) {
+	dataDir := lifecycle.scopeLifecycle.dataDir
 	scopeInstanceID := uuid.NewString()
-	scopeKey = scopeName + "/" + scopeInstanceID
+	scopeKey := scopeName + "/" + scopeInstanceID
 	token, err := generateAcceptToken()
 	if err != nil {
 		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
