@@ -30,9 +30,10 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func buildPromptableAdapter(t *testing.T) string {
@@ -101,10 +102,10 @@ func (s *promptInjectSink) OnAgentPromptInjected(step, sessionID, prompt, caller
 }
 
 // armForStep launches a goroutine that waits for the delivery window to be
-// open for step, then sends the provided prompts in order. The wait for the
+// open, then sends the provided prompts in order. The wait for the
 // promptable fixture is the adapter's own call log (Execute in flight);
 // otherwise a settle delay wide of the configured step delay is used.
-func (s *promptInjectSink) armForStep(t *testing.T, step string, prompts ...*pb.AgentPrompt) {
+func (s *promptInjectSink) armForStep(t *testing.T, prompts ...*pb.AgentPrompt) {
 	t.Helper()
 	armed := make(chan struct{})
 	go func() {
@@ -244,7 +245,7 @@ func TestEngineAgentPromptLiveDelivery(t *testing.T) {
 		CallerCriteriaId: ownerID,
 		IssuedAt:         timestamppb.Now(),
 	}
-	sink.armForStep(t, "a", misaddressed, live, strayStep)
+	sink.armForStep(t, misaddressed, live, strayStep)
 
 	e := NewTestEngine(g, loader, sink,
 		WithRunID(runID),
@@ -374,7 +375,7 @@ adapter "noop" "default" {}`)
 	var logBuf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	sink.armForStep(t, "a", &pb.AgentPrompt{
+	sink.armForStep(t, &pb.AgentPrompt{
 		RunId:            runID,
 		Step:             "a",
 		Prompt:           "should be gated",

@@ -40,15 +40,15 @@ func promptTestMessage(runID, step, caller string) *pb.AgentPrompt {
 	}
 }
 
-// promptRouterUnderTest builds a router around an unbound graph (no live
+// promptRouterTest builds a router around an unbound graph (no live
 // sessions), so every routed prompt resolves through the non-delivery
 // branches and lands as a typed failure in the captured log.
-func promptRouterTest(t *testing.T, runID, ownerID string) (*PromptRouter, *bytes.Buffer) {
+func promptRouterTest(t *testing.T, runID string) (*PromptRouter, *bytes.Buffer) {
 	t.Helper()
 	ch := make(chan *pb.AgentPrompt, 4)
 	var logBuf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelError}))
-	r := NewPromptRouter(context.Background(), ch, runID, ownerID, promptTestGraph(), adapterhost.NewSessionManager(nil), &fakeSink{}, logger)
+	r := NewPromptRouter(context.Background(), ch, runID, "owner-1", promptTestGraph(), adapterhost.NewSessionManager(nil), &fakeSink{}, logger)
 	if r == nil {
 		t.Fatal("NewPromptRouter returned nil")
 	}
@@ -59,7 +59,7 @@ func promptRouterTest(t *testing.T, runID, ownerID string) (*PromptRouter, *byte
 // addressed to a non-active run id is recorded as typed NOT_FOUND and is
 // never routed to the active run.
 func TestPromptRouterRunIDMismatchIsTypedNotFound(t *testing.T) {
-	r, logBuf := promptRouterTest(t, "run-active", "owner-1")
+	r, logBuf := promptRouterTest(t, "run-active")
 	defer r.Stop()
 
 	r.route(promptTestMessage("run-other", "a", "owner-1"))
@@ -72,7 +72,7 @@ func TestPromptRouterRunIDMismatchIsTypedNotFound(t *testing.T) {
 // TestPromptRouterCallerRecheckIsTypedAuthorization pins R10: the
 // delivery-side caller re-check fails closed for non-owner callers.
 func TestPromptRouterCallerRecheckIsTypedAuthorization(t *testing.T) {
-	r, logBuf := promptRouterTest(t, "run-1", "owner-1")
+	r, logBuf := promptRouterTest(t, "run-1")
 	defer r.Stop()
 
 	r.route(promptTestMessage("run-1", "a", "impostor"))
@@ -111,7 +111,7 @@ func TestPromptCallerRejectionTable(t *testing.T) {
 // NO_ACTIVE_SESSION branch for a step with no live execution window
 // (prompt arrives before the step is entered or after it completed).
 func TestPromptRouterStepWithoutWindowIsTypedNoActiveSession(t *testing.T) {
-	r, logBuf := promptRouterTest(t, "run-1", "owner-1")
+	r, logBuf := promptRouterTest(t, "run-1")
 	defer r.Stop()
 
 	r.route(promptTestMessage("run-1", "never-entered", "owner-1"))
@@ -125,7 +125,7 @@ func TestPromptRouterStepWithoutWindowIsTypedNoActiveSession(t *testing.T) {
 // prompt held between attempts becomes NO_ACTIVE_SESSION when the run stops
 // — never silence.
 func TestPromptRouterStopFlushesHeldAsNoActiveSession(t *testing.T) {
-	r, logBuf := promptRouterTest(t, "run-1", "owner-1")
+	r, logBuf := promptRouterTest(t, "run-1")
 
 	msg := promptTestMessage("run-1", "a", "owner-1")
 	r.mu.Lock()

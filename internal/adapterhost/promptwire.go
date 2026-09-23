@@ -104,7 +104,7 @@ var (
 	promptDescErr  error
 )
 
-func buildPromptDescriptors() (protoreflect.MessageDescriptor, protoreflect.MessageDescriptor, error) {
+func buildPromptDescriptors() (req, resp protoreflect.MessageDescriptor, err error) {
 	fd := &descriptorpb.FileDescriptorProto{
 		Name:    proto.String("criteria/adapter/v2/prompt_client.proto"),
 		Package: proto.String("criteria.v2"),

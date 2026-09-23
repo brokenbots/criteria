@@ -16,7 +16,7 @@ import (
 
 // startCtlClient registers and attaches the Control stream against the fake
 // server, returning the client. Callers own cleanup via t.Cleanup.
-func startCtlClient(t *testing.T, f *fakeServer) (*Client, context.Context) {
+func startCtlClient(t *testing.T, f *fakeServer) *Client {
 	t.Helper()
 	url := startFakeServer(t, f)
 	c, err := NewClient(url, newTestLogger())
@@ -33,14 +33,14 @@ func startCtlClient(t *testing.T, f *fakeServer) (*Client, context.Context) {
 		t.Fatalf("StartControl: %v", err)
 	}
 	waitForCtlAttach(t, f)
-	return c, ctx
+	return c
 }
 
 // TestCRI259AgentPromptDeliveredToPromptCh asserts that an AgentPrompt sent
 // on the Control stream is observable on AgentPromptCh within 2 s (R1).
 func TestCRI259AgentPromptDeliveredToPromptCh(t *testing.T) {
 	f := newFakeServer()
-	c, _ := startCtlClient(t, f)
+	c := startCtlClient(t, f)
 
 	f.controls <- &pb.ControlMessage{Command: &pb.ControlMessage_AgentPrompt{AgentPrompt: &pb.AgentPrompt{
 		RunId:  "run-cri259",
@@ -72,7 +72,7 @@ func TestCRI259AgentPromptDeliveredToPromptCh(t *testing.T) {
 // added — neither arm starves the other.
 func TestCRI259AgentPromptBoundingResumeStillWorks(t *testing.T) {
 	f := newFakeServer()
-	c, _ := startCtlClient(t, f)
+	c := startCtlClient(t, f)
 
 	f.controls <- &pb.ControlMessage{Command: &pb.ControlMessage_AgentPrompt{AgentPrompt: &pb.AgentPrompt{
 		RunId:  "run-cri259",
@@ -106,7 +106,7 @@ func TestCRI259AgentPromptBoundingResumeStillWorks(t *testing.T) {
 // failure) rather than dropped silently in the transport (R1).
 func TestCRI259AgentPromptEmptyRunIdStillObservable(t *testing.T) {
 	f := newFakeServer()
-	c, _ := startCtlClient(t, f)
+	c := startCtlClient(t, f)
 
 	f.controls <- &pb.ControlMessage{Command: &pb.ControlMessage_AgentPrompt{AgentPrompt: &pb.AgentPrompt{
 		Step:   "deploy",
@@ -125,7 +125,7 @@ func TestCRI259AgentPromptEmptyRunIdStillObservable(t *testing.T) {
 // and leaves the stream healthy for subsequent messages (R1).
 func TestCRI259ControlMessageUnsetCommandDoesNotKillStream(t *testing.T) {
 	f := newFakeServer()
-	c, _ := startCtlClient(t, f)
+	c := startCtlClient(t, f)
 
 	f.controls <- &pb.ControlMessage{}
 
