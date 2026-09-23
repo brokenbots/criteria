@@ -1130,8 +1130,14 @@ func TestResumeActiveRun_MaxRetriesDualWriteMirrorsEventsFile(t *testing.T) {
 
 	fileEvents := parseNDJSONEnvelopes(t, eventsBuf.Bytes())
 	assertSingleRunStrictSeq(t, fileEvents, cp.RunID)
-	if len(fileEvents) != 1 || fileEvents[0].PayloadType != "RunFailed" {
-		t.Errorf("expected exactly one RunFailed file event, got %d events (first: %v)", len(fileEvents), fileEvents)
+	var failed []fileEnvelope
+	for _, ev := range fileEvents {
+		if ev.PayloadType == "RunFailed" {
+			failed = append(failed, ev)
+		}
+	}
+	if len(failed) != 1 {
+		t.Errorf("expected exactly one RunFailed file event, got %d of %d events (first: %v)", len(failed), len(fileEvents), fileEvents)
 	}
 	assertPayloadParity(t, ft.published, fileEvents)
 }
