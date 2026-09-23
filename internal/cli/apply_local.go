@@ -192,6 +192,9 @@ func newLocalEngine(runID string, graph *workflow.FSMGraph, loader adapterhost.L
 	engOpts := append(localRunEngineOptions(opts.workflowPath, dataDir),
 		engine.WithVarOverrides(identity.mergedVars),
 		engine.WithAuditWriter(auditWriter))
+	// CRI-304: record the invocation fingerprint and let the engine adopt
+	// surviving per-scope instances from prior invocations of the same run.
+	engOpts = append(engOpts, engineAdoptionOptions(dataDir, identity.fingerprint, runID)...)
 	return engine.New(graph, loader, runSink, engOpts...), nil
 }
 
@@ -387,6 +390,10 @@ func buildReattachTrackerAndEngine(cp *StepCheckpoint, log *slog.Logger, graph *
 	// environment shims in-process just like the fresh-run and resume-cycle
 	// engines, so it needs the same shared listen_address isolation (carried
 	// by localRunEngineOptions).
+	// CRI-304: record the checkpoint's invocation fingerprint and let the
+	// resumed engine adopt surviving per-scope instances from other prior
+	// invocations of the same run.
+	reattachOpts = append(reattachOpts, engineAdoptionOptions(dataDir, cp.Fingerprint, cp.RunID)...)
 	eng = engine.New(graph, loader, runSink, reattachOpts...)
 	return opts, tracker, runSink, eng, nil
 }

@@ -666,7 +666,7 @@ func TestDrainResumeCycles_PauseThenResume(t *testing.T) {
 	// Call drainResumeCycles directly — it blocks until the fake sends ResumeRun.
 	// Pass sink as the runSink because this test builds the server sink directly
 	// rather than through executeServerRun.
-	if err := drainResumeCycles(ctx, log, loader, sink, sink, client.ResumeCh(), state, graph, filepath.Dir(wfPath), eng); err != nil {
+	if err := drainResumeCycles(ctx, log, loader, sink, sink, client.ResumeCh(), state, graph, filepath.Dir(wfPath), eng, ""); err != nil {
 		t.Fatalf("drainResumeCycles: %v", err)
 	}
 	// Flush queued events to the fake server before asserting receipt.
@@ -756,7 +756,7 @@ func TestDrainResumeCycles_StreamDropAndReconnect(t *testing.T) {
 
 	// Pass sink as the runSink because this test builds the server sink directly
 	// rather than through executeServerRun.
-	if err := drainResumeCycles(ctx, log, loader, sink, sink, client.ResumeCh(), state, graph, filepath.Dir(wfPath), eng); err != nil {
+	if err := drainResumeCycles(ctx, log, loader, sink, sink, client.ResumeCh(), state, graph, filepath.Dir(wfPath), eng, ""); err != nil {
 		t.Fatalf("drainResumeCycles: %v", err)
 	}
 	// Flush queued events to the fake server before asserting receipt.
