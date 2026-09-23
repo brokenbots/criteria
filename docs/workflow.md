@@ -1974,15 +1974,76 @@ step "report" {
 
   The flag is also supported by `criteria validate` and `criteria compile`.
 
-### Source schemes
+### Workflow sources — normative grammar (CRI-249)
 
-Workflow sources are local paths (`./relative/path` or `/absolute/path`) or
-remote sources resolved through the fetcher into
-`cache/workflows/<slug>/<version>`: git ref forms (`git::https://host/repo.git?ref=v1`,
-`git@host:org/repo.git`, ssh/https git URLs) and http(s) archives
-(`https://host/flow.tar.gz`, `.zip`). This applies to the workflow argument of
-`criteria apply`, `criteria validate`, and `criteria compile`, and to
-sub-workflow `source` attributes. See ADR-0005 for the decisions.
+The `source` of a workflow (the `criteria apply|validate|compile` argument,
+and every `subworkflow` block's `source` attribute) is one of:
+
+```
+source      = local_path | remote_source
+remote_form = git_form | archive_form
+```
+
+**Local paths.** `/absolute`, `./relative`, `../relative`, `~`-expanded, or
+bare names resolvable from the process cwd. A local source resolves to
+itself; declaring `--workflow-ref` on a local source is refused (an
+expected pin cannot be verified against a local tree).
+
+**Git forms** (fetched with git; versioned by resolved commit SHA):
+
+| Form | Meaning |
+|---|---|
+| `git::https://host/org/repo.git?ref=<v>` | branch, tag, or full commit SHA `v`; the `git::` prefix is mandatory for https |
+| `git::https://host/org/repo.git` | `ref` omitted: remote HEAD resolved and cached |
+| `git::ssh://git@host/org/repo.git?ref=<v>` | ssh transport |
+| `git@host:org/repo.git` | scp-style form, git transport implied |
+| `git::file:///abs/path/repo.git?ref=<v>` | local bare repo (conformance/testing) |
+| `<any git form>//<subdir>` | subtree convention (CRI-227): the part before `//` is the fetched repository; `<subdir>` is the workflow directory inside it and must exist with `.chcl`/`.hcl` files (fail closed). Not applied to `file://` forms. |
+
+`?ref=v`: a branch (HEAD at resolve time, cached under the resolved SHA), a
+tag, or a full 40-hex SHA (the cache key — a SHA-pinned source whose cache
+entry exists performs **no** git operation). `?ref=force-<branch>` forces a
+re-resolve of a moving branch. Option-like `ref` values (leading `-`) are
+rejected. Versioning contract: the resolved SHA is immutable, so a pinned
+source is reproducible; branch/tag references are resolve-time snapshots.
+
+**Archive forms** (fetched over http(s); versioned by content digest):
+`https://host/path/flow.tar.gz` (`.tgz` and `.zip` also accepted). The
+archive bytes are content-addressed: the cache version directory is
+`sha256:<hex of the archive bytes>`, making an archive source reproducible
+bit-for-bit. Credentials may appear in the URL userinfo; they are redacted
+in every log line, cache path (the `cache/workflows/<slug>` slug derives
+from the credential-free source), error surface, and run metadata.
+
+**Rejection contract.** Schemes outside git/ssh/http(s)/file are refused
+(`unsupported workflow source scheme`). Archive entries whose members
+escape the extract root (`..`, absolute paths) are refused. Option-like
+sources are refused. All failure surfaces are uniform across `apply`,
+`validate`, and `compile` (pinned by the CRI-248 conformance suite).
+
+**Expected pin (`--workflow-ref` / the subworkflow `ref` schema attribute).**
+An operator-declared expected immutable ref: a git commit SHA for git
+sources or `sha256:<digest>` for archives. Resolution proceeds only on an
+exact match; the mismatch error names both the expected and the resolved
+ref (ADR-0005 D7, CRI-226). A remote subworkflow MUST carry a `ref` pin in
+its lockfile entry (cascaded pins, CRI-228); a local subworkflow delegates
+resolution and skips the fetcher.
+
+**Cache semantics.** Fetched trees land under
+`$CRITERIA_HOME/cache/workflows/<slug>/<version>` (`<slug>` derived from
+the credential-redacted source; `<version>` the resolved SHA or digest).
+Resolution is locked per slug: concurrent fetches converge on one version
+directory with complete contents and no leftover temporary directories —
+across processes, not just goroutines (the CRI-248 conformance suite pins
+this). A cache index maps sources to versions; `criteria cache gc` prunes
+unreferenced trees. Cache hits are verified against a declared expected pin
+exactly like fresh fetches.
+
+For the k8s execution topology these sources run under — runner and
+per-scope adapter pods, the network-only data contract, token handoff —
+see [docs/pod-topology.md](https://github.com/brokenbots/workflow-example/blob/main/docs/pod-topology.md)
+in the workflow-example repository.
+
 
 ---
 
