@@ -249,21 +249,26 @@ func (a *activeRun) resumeActive(msg *pb.ResumeRun) (matched bool, activeID stri
 
 // promptActive routes an injected agent prompt to the active run's prompt
 // channel (ADR-0006 D1.3). The channel is buffered like resumeCh and the send
-// is non-blocking; backpressure would stall the agent control loop, so an
-// overloaded run drops the slot instead (the delivery window still records
-// whatever it misses through the engine's typed-failure path).
-func (a *activeRun) promptActive(msg *pb.AgentPrompt) (matched bool, activeID string) {
+// is non-blocking: backpressure must not stall the agent control loop. A
+// prompt that finds the slot full is not silently discarded — the caller
+// records it as a typed DELIVERY_ERROR routing failure (matched=true,
+// routed=false); an unmatched run id is a NOT_FOUND routing failure.
+func (a *activeRun) promptActive(msg *pb.AgentPrompt) (matched, routed bool, activeID string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	activeID = a.runID
 	if msg == nil || msg.RunId != a.runID || a.promptCh == nil {
-		return false, activeID
+		return false, false, activeID
 	}
 	select {
 	case a.promptCh <- msg:
+		return true, true, activeID
 	default:
+		// Slot full: the run's prompt channel is backed up (the router pump
+		// is mid-delivery). Report matched-but-not-routed so handlePrompt
+		// records the typed failure instead of dropping silently (R6).
+		return true, false, activeID
 	}
-	return true, activeID
 }
 
 func (a *activeRun) shutdown() <-chan struct{} {
@@ -356,12 +361,23 @@ func (l *agentLoop) handleResume(msg *pb.ResumeRun) {
 
 // handlePrompt routes an injected agent prompt to the active run (ADR-0006
 // D1.3, mirroring handleResume). A prompt addressed to a non-active run is a
-// routing failure, recorded with the engine's NOT_FOUND class — never a
-// silent drop.
+// routing failure recorded with the engine's NOT_FOUND class; a prompt that
+// finds the run's prompt channel full is recorded with DELIVERY_ERROR.
+// Neither is ever a silent drop (R6: no prompt vanishes without a record).
 func (l *agentLoop) handlePrompt(msg *pb.AgentPrompt) {
-	ok, activeID := l.active.promptActive(msg)
-	if ok {
+	matched, routed, activeID := l.active.promptActive(msg)
+	if routed {
 		l.log.Info("routing agent prompt to active run", "run_id", msg.GetRunId(), "step", msg.GetStep(), "active_run_id", activeID)
+		return
+	}
+	if matched {
+		l.log.Error("agent prompt delivery failed",
+			"class", engine.PromptFailDeliveryError,
+			"run_id", msg.GetRunId(),
+			"step", msg.GetStep(),
+			"caller_criteria_id", msg.GetCallerCriteriaId(),
+			"reason", fmt.Sprintf("active run %q prompt channel is full; the prompt was not enqueued", activeID),
+		)
 		return
 	}
 	l.log.Error("agent prompt delivery failed",
