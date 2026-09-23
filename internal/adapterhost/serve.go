@@ -7,6 +7,7 @@ import (
 
 	hplugin "github.com/hashicorp/go-plugin"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/dynamicpb"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 )
@@ -40,6 +41,11 @@ type Client interface {
 	Restore(ctx context.Context, req *v2.RestoreRequest) (*v2.RestoreResponse, error)
 	Inspect(ctx context.Context, req *v2.InspectRequest) (*v2.InspectResponse, error)
 	CloseSession(ctx context.Context, req *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error)
+	// Prompt delivers a mid-turn agent message into the adapter's active
+	// session (ADR-0006 D3), over the adapter v2 Prompt RPC. Adapters that
+	// do not declare the supports_prompt capability are short-circuited by
+	// the host's SessionManager before this method is reached.
+	Prompt(ctx context.Context, req *PromptRequest) (*PromptResponse, error)
 }
 
 // ExecuteEventSink receives events from the adapter's Execute RPC stream.
@@ -72,11 +78,12 @@ func (p *GRPCAdapter) GRPCServer(_ *hplugin.GRPCBroker, _ *grpc.Server) error {
 }
 
 func (p *GRPCAdapter) GRPCClient(_ context.Context, _ *hplugin.GRPCBroker, cc *grpc.ClientConn) (interface{}, error) {
-	return &grpcClient{c: v2.NewAdapterServiceClient(cc)}, nil
+	return &grpcClient{c: v2.NewAdapterServiceClient(cc), cc: cc}, nil
 }
 
 type grpcClient struct {
-	c v2.AdapterServiceClient
+	c  v2.AdapterServiceClient
+	cc *grpc.ClientConn
 }
 
 func (g *grpcClient) Info(ctx context.Context, req *v2.InfoRequest) (*v2.InfoResponse, error) {
@@ -208,4 +215,29 @@ func (g *grpcClient) Inspect(ctx context.Context, req *v2.InspectRequest) (*v2.I
 
 func (g *grpcClient) CloseSession(ctx context.Context, req *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {
 	return g.c.CloseSession(ctx, req)
+}
+
+// Prompt issues the adapter v2 Prompt RPC directly over the dispensed gRPC
+// connection. The wire messages are encoded dynamically (promptwire.go)
+// because the Prompt RPC definition is owned by criteria-adapter-proto, which
+// has not shipped the method yet; when it does, this encoding is replaced by
+// the generated client call verbatim.
+func (g *grpcClient) Prompt(ctx context.Context, req *PromptRequest) (*PromptResponse, error) {
+	in, err := NewPromptRequestMessage(req.SessionID, req.Prompt)
+	if err != nil {
+		return nil, err
+	}
+	_, respDesc, err := promptDescriptors()
+	if err != nil {
+		return nil, err
+	}
+	out := dynamicpb.NewMessage(respDesc)
+	if err := g.cc.Invoke(ctx, PromptMethodFullName, in, out); err != nil {
+		return nil, err
+	}
+	resp, err := DecodePromptResponse(out)
+	if err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }

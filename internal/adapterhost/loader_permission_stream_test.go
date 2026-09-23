@@ -78,6 +78,10 @@ func (c *permissionEmittingClient) CloseSession(_ context.Context, _ *v2.CloseSe
 	return &v2.CloseSessionResponse{}, nil
 }
 
+func (c *permissionEmittingClient) Prompt(_ context.Context, req *PromptRequest) (*PromptResponse, error) {
+	return &PromptResponse{Accepted: false, Detail: "permission stub does not accept prompts"}, nil
+}
+
 // TestExecuteWithFallbackStream_UnimplementedPermissionsIsOptOut verifies that
 // when the adapter returns Unimplemented from Permissions, Execute still
 // succeeds and evaluates permission requests locally.
