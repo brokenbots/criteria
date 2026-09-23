@@ -40,7 +40,9 @@ func (benchSink) OnAdapterLifecycleEvent(*AdapterLifecycleEvent)               {
 func (benchSink) OnRunOutputs([]map[string]string)                             {}
 func (benchSink) OnStepOutcomeDefaulted(string, string, string)                {}
 func (benchSink) OnStepOutcomeUnknown(string, string)                          {}
-func (benchSink) StepEventSink(string) adapter.EventSink                       { return benchEventSink{} }
+
+func (benchSink) OnAgentPromptInjected(string, string, string, string, time.Time) {}
+func (benchSink) StepEventSink(string) adapter.EventSink                          { return benchEventSink{} }
 
 type benchEventSink struct{}
 

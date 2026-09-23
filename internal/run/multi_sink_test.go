@@ -42,6 +42,8 @@ func (r *recordingSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEv
 func (r *recordingSink) OnRunOutputs([]map[string]string)                            { r.bump() }
 func (r *recordingSink) OnStepOutcomeDefaulted(string, string, string)               { r.bump() }
 func (r *recordingSink) OnStepOutcomeUnknown(string, string)                         { r.bump() }
+
+func (r *recordingSink) OnAgentPromptInjected(string, string, string, string, time.Time) { r.bump() }
 func (r *recordingSink) StepEventSink(step string) adapter.EventSink {
 	return &recordingStepSink{parent: r}
 }

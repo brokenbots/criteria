@@ -475,6 +475,8 @@ func (s *matrixEngineSink) OnStepOutcomeUnknown(step, outcome string) {
 	s.unknowns = append(s.unknowns, "unknown: "+step+"="+outcome)
 }
 
+func (s *matrixEngineSink) OnAgentPromptInjected(string, string, string, string, time.Time) {}
+
 func (s *matrixEngineSink) StepEventSink(step string) adapter.EventSink {
 	return &matrixEventRecorder{sink: s, step: step}
 }

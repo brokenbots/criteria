@@ -8,6 +8,8 @@ import (
 
 	"github.com/zclconf/go-cty/cty"
 
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+
 	"github.com/brokenbots/criteria/internal/adapter/environment/sandbox"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
@@ -142,6 +144,19 @@ func WithSnapshotBase(dir string) Option {
 func WithRunID(id string) Option {
 	return func(e *Engine) {
 		e.runID = id
+	}
+}
+
+// WithAgentPrompts wires the run's injected-prompt channel (fed by the CLI
+// from the orchestrator's Control stream), the run owner identity used by
+// the delivery-side caller re-check (ADR-0006 D4), and the run id prompts
+// are addressed to (defaults to the snapshot run id). A nil channel leaves
+// the prompt path disabled.
+func WithAgentPrompts(ch <-chan *pb.AgentPrompt, ownerID, runID string) Option {
+	return func(e *Engine) {
+		e.agentPromptCh = ch
+		e.promptOwnerID = ownerID
+		e.promptRunID = runID
 	}
 }
 

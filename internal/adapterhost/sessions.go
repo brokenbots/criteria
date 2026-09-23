@@ -2425,6 +2425,46 @@ func (m *SessionManager) closeSession(ctx context.Context, sess *Session) error 
 	return errors.Join(errs...)
 }
 
+// Prompt delivers an agent prompt into the live adapter session for the
+// named adapter (ADR-0006 D2/D3/D9). Ordering of checks is the deterministic
+// failure taxonomy: capability gate first (UNSUPPORTED_ADAPTER short-circuit,
+// no RPC issued), then session resolution (NO_ACTIVE_SESSION), then the
+// caller-supplied session-id match (SESSION_MISMATCH), then the Prompt RPC
+// (adapter rejection carries the adapter's detail). Returns the adapter
+// session id the prompt was delivered to.
+func (m *SessionManager) Prompt(ctx context.Context, name string, step *workflow.StepNode, wantSessionID, prompt string) (string, error) {
+	if !m.HasCapability(name, PromptCapability) {
+		return "", ErrPromptUnsupportedAdapter
+	}
+	sess, err := m.lookup(name)
+	if err != nil {
+		if !errors.Is(err, ErrUnknownSession) {
+			return "", err
+		}
+		// A prompt may arrive while the step's first Execute is still in the
+		// lazy-bind phase; verified-only sessions bind on first use.
+		sess, err = m.bindVerifiedAndLookup(ctx, name, step)
+		if err != nil {
+			return "", ErrPromptNoActiveSession
+		}
+	}
+	if wantSessionID != "" && sess.Name != wantSessionID {
+		return "", ErrPromptSessionMismatch
+	}
+	capable, ok := sess.handle.(promptCapableHandle)
+	if !ok {
+		return "", ErrPromptUnsupportedAdapter
+	}
+	resp, err := capable.Prompt(ctx, &PromptRequest{SessionID: sess.Name, Prompt: prompt})
+	if err != nil {
+		return "", err
+	}
+	if !resp.Accepted {
+		return sess.Name, &PromptRejectedError{Detail: resp.Detail}
+	}
+	return sess.Name, nil
+}
+
 func (m *SessionManager) lookup(name string) (*Session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -96,7 +96,9 @@ func (s *fakeSink) OnAdapterLifecycleEvent(event *AdapterLifecycleEvent) {}
 func (s *fakeSink) OnRunOutputs([]map[string]string)                     {}
 func (s *fakeSink) OnStepOutcomeDefaulted(string, string, string)        {}
 func (s *fakeSink) OnStepOutcomeUnknown(string, string)                  {}
-func (s *fakeSink) StepEventSink(step string) adapter.EventSink          { return noopSink{} }
+
+func (s *fakeSink) OnAgentPromptInjected(string, string, string, string, time.Time) {}
+func (s *fakeSink) StepEventSink(step string) adapter.EventSink                     { return noopSink{} }
 
 type noopSink struct{}
 

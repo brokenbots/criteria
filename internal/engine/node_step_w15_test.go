@@ -12,6 +12,7 @@ package engine
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
@@ -35,6 +36,8 @@ func (s *outcomeSink) OnStepOutcomeDefaulted(step, orig, mapped string) {
 func (s *outcomeSink) OnStepOutcomeUnknown(step, outcome string) {
 	s.unknown = append(s.unknown, struct{ step, outcome string }{step, outcome})
 }
+
+func (s *outcomeSink) OnAgentPromptInjected(string, string, string, string, time.Time) {}
 
 func (s *outcomeSink) OnRunOutputs(outputs []map[string]string) {
 	s.outputs = append(s.outputs, outputs...)

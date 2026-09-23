@@ -40,7 +40,11 @@ type recordingSink struct {
 	onRunOutputs                 []map[string]string
 	onStepOutcomeDefaultedArgs   []string
 	onStepOutcomeUnknownArgs     []string
-	stepEventSinkStep            string
+	onAgentPromptInjected        []struct {
+		step, sessionID, prompt, caller string
+		deliveredAt                     time.Time
+	}
+	stepEventSinkStep string
 }
 
 func (s *recordingSink) OnRunStarted(workflowName, initialStep string) {
@@ -121,6 +125,13 @@ func (s *recordingSink) OnStepOutcomeDefaulted(step, original, mapped string) {
 }
 func (s *recordingSink) OnStepOutcomeUnknown(step, outcome string) {
 	s.onStepOutcomeUnknownArgs = []string{step, outcome}
+}
+
+func (s *recordingSink) OnAgentPromptInjected(step, sessionID, prompt, caller string, deliveredAt time.Time) {
+	s.onAgentPromptInjected = append(s.onAgentPromptInjected, struct {
+		step, sessionID, prompt, caller string
+		deliveredAt                     time.Time
+	}{step, sessionID, prompt, caller, deliveredAt})
 }
 func (s *recordingSink) StepEventSink(step string) adapter.EventSink {
 	s.stepEventSinkStep = step

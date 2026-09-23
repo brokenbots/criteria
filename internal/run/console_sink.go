@@ -250,6 +250,11 @@ func (c *ConsoleSink) OnAdapterLifecycle(stepName, adapterName, status, detail s
 // OnAdapterLifecycleEvent is a no-op on the console progress view.
 func (c *ConsoleSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent) {}
 
+// OnAgentPromptInjected is a no-op on the console progress view; the injected
+// prompt is recorded in the durable event stream by the run sink (ADR-0006 D5).
+func (c *ConsoleSink) OnAgentPromptInjected(step, sessionID, prompt, caller string, deliveredAt time.Time) {
+}
+
 // OnRunOutputs renders workflow outputs to the console (W09).
 // Outputs are rendered after the terminal state line in concise output mode.
 func (c *ConsoleSink) OnRunOutputs(outputs []map[string]string) {

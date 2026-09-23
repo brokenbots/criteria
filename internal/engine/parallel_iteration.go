@@ -193,6 +193,12 @@ func (s *lockedSink) OnStepOutcomeUnknown(step, outcome string) {
 	s.Sink.OnStepOutcomeUnknown(step, outcome)
 }
 
+func (s *lockedSink) OnAgentPromptInjected(step, sessionID, prompt, caller string, deliveredAt time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Sink.OnAgentPromptInjected(step, sessionID, prompt, caller, deliveredAt)
+}
+
 func (s *lockedSink) StepEventSink(step string) adapter.EventSink {
 	s.mu.Lock()
 	inner := s.Sink.StepEventSink(step)

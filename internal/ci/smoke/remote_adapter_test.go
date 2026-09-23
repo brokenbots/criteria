@@ -62,7 +62,9 @@ func (s *testSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent) 
 func (s *testSink) OnRunOutputs([]map[string]string)                             {}
 func (s *testSink) OnStepOutcomeDefaulted(string, string, string)                {}
 func (s *testSink) OnStepOutcomeUnknown(string, string)                          {}
-func (s *testSink) StepEventSink(string) adapter.EventSink                       { return noopEventSink{} }
+
+func (s *testSink) OnAgentPromptInjected(string, string, string, string, time.Time) {}
+func (s *testSink) StepEventSink(string) adapter.EventSink                          { return noopEventSink{} }
 
 type noopEventSink struct{}
 
