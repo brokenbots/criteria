@@ -773,6 +773,22 @@ When `criteria_version` is present, the engine rejects any engine that does not 
 
 > For pattern-by-pattern guidance, see [docs/llm/](./llm/). Concatenate this spec with the prompt pack to assemble a complete LLM authoring system prompt.
 
+## Workflow sources (CRI-249)
+
+A workflow source is a **local path** (never fetched; `--workflow-ref`
+refused) or a **remote source**: git forms (`git::https://…?ref=<branch|tag|SHA>`,
+ssh, scp-style, `file://`; subtree convention `<git-form>//<subdir>`) or
+http(s) archives (`.tar.gz`/`.tgz`/`.zip`, versioned by content digest).
+Pinned SHAs/digests never re-fetch when cached. Declared
+`--workflow-ref`/subworkflow `ref` pins fail closed on mismatch (D7).
+Credentials are redacted everywhere. Rejections and cache semantics are
+uniform across apply/validate/compile. **Full normative grammar:**
+[docs/workflow.md § Workflow sources](./workflow.md#workflow-sources-normative-grammar-cric249);
+k8s execution topology:
+[workflow-example docs/pod-topology.md](https://github.com/brokenbots/workflow-example/blob/main/docs/pod-topology.md).
+
+---
+
 ## Versioning
 
 This specification describes language `version = "1"`. Behavior changes and additions are documented per `v0.<minor>.0` release in [CHANGELOG.md](../CHANGELOG.md). A new language version value (`"2"`) will be introduced only for backwards-incompatible grammar changes.
