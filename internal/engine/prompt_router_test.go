@@ -107,7 +107,7 @@ func TestPromptCallerRejectionTable(t *testing.T) {
 	}
 }
 
-// TestPromptRouterStepWithoutWindowIsNoActiveSession pins the
+// TestPromptRouterStepWithoutWindowIsTypedNoActiveSession pins the
 // NO_ACTIVE_SESSION branch for a step with no live execution window
 // (prompt arrives before the step is entered or after it completed).
 func TestPromptRouterStepWithoutWindowIsTypedNoActiveSession(t *testing.T) {
