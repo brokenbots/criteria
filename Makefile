@@ -18,7 +18,7 @@ CRITERIA_BUILD_VERSION := $(VERSION)
 endif
 
 .PHONY: help bootstrap tidy build plugins install proto proto-lint proto-check-drift \
-	test test-cover coverage-check test-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint lint-sh vuln-scan vulncheck deps-outdated deps-majors validate validate-docs example-plugin example-adapter-tools example-adapter-tools-copilot example-adapter-tools-claude bench docker-runtime docker-runtime-smoke ci clean
+	test test-cover coverage-check test-conformance test-fetcher-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint lint-sh vuln-scan vulncheck deps-outdated deps-majors validate validate-docs example-plugin example-adapter-tools example-adapter-tools-copilot example-adapter-tools-claude bench docker-runtime docker-runtime-smoke ci clean
 
 # Default target: list available targets.
 help:
@@ -120,6 +120,10 @@ test-flake-watch: ## Re-run previously flaky packages under -count=20 -race (not
 	go test -race -count=20 ./internal/engine/... ./internal/plugin/...
 
 test-conformance: ## Run SDK conformance suite (in-memory Subject)
+# CRI-248: canonical workflow-fetcher conformance entry point.
+test-fetcher-conformance: ## Run workflow-fetcher conformance suite (CRI-248)
+	go test -race -run TestWorkflowFetcherConformance -count=1 ./internal/cli/
+
 	cd sdk && go test -race -run TestConformance ./conformance/...
 
 lint-imports: ## Enforce import-graph boundaries (see tools/import-lint/)
