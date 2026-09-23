@@ -32,6 +32,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -148,10 +149,10 @@ func TestWorkflowFetcherConformance_CrossProcessCacheReuseAndPin(t *testing.T) {
 	fx := createWorkflowGitFixture(t)
 	source := "git::file://" + fx.path + "?ref=" + fx.tagSHA
 
-	// Process 1: resolve through the production validate path (fetch +
+	// Process 1: resolve through the production compile path (fetch +
 	// cache write), then read the cached tree location back out of the
 	// cache layout.
-	require.NoError(t, compileRemoteViaBinary(t, cacheHome, source, ""))
+	compileRemoteViaBinary(t, cacheHome, source, "")
 	first := cacheTreeFor(t, cacheHome, source)
 	require.NotEmpty(t, first, "process 1 must materialize a cache version")
 	sentinel := filepath.Join(first, "conformance-sentinel.txt")
@@ -349,23 +350,25 @@ func probeCompile(t *testing.T, cacheHome, source, expected string) probeResult 
 	cmd.Env = probeEnv(cacheHome)
 	out, err := cmd.CombinedOutput()
 	code := 0
-	if ee, ok := err.(*exec.ExitError); ok {
-		code = ee.ExitCode()
-	} else if err != nil {
-		t.Fatalf("probe could not start: %v (output: %s)", err, out)
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			code = ee.ExitCode()
+		} else {
+			t.Fatalf("probe could not start: %v (output: %s)", err, out)
+		}
 	}
 	return probeResult{ExitCode: code, Combined: string(out), CacheHome: cacheHome}
 }
 
 // compileRemoteViaBinary runs compile against a remote source in a fresh
 // process and requires exit 0.
-func compileRemoteViaBinary(t *testing.T, cacheHome, source, expected string) error {
+func compileRemoteViaBinary(t *testing.T, cacheHome, source, expected string) {
 	t.Helper()
 	res := probeCompile(t, cacheHome, source, expected)
 	if res.ExitCode != 0 {
 		t.Fatalf("compile probe failed (exit %d): %s", res.ExitCode, res.Combined)
 	}
-	return nil
 }
 
 // probeEnv builds a clean child-process env with only the cache/state homes
