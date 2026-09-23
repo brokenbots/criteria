@@ -25,6 +25,8 @@ type reattachTransport interface {
 	StartStreams(ctx context.Context, runID string) error
 	Drain(ctx context.Context)
 	ResumeCh() <-chan *pb.ResumeRun
+	AgentPromptCh() <-chan *pb.AgentPrompt
+	CriteriaID() string
 	Publish(ctx context.Context, env *pb.Envelope)
 }
 
@@ -223,6 +225,9 @@ func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		engine.WithLogger(log),
 		engine.WithAuditWriter(auditWriter),
 		engine.WithDataDir(dataDir),
+		// ADR-0006: re-entered runs stay wired to the run's prompt channel
+		// (the recovery client is authenticated as the run's owner incarnation).
+		engine.WithAgentPrompts(rc.AgentPromptCh(), rc.CriteriaID(), cp.RunID),
 	)
 	if runErr := eng.RunFrom(ctx, resp.CurrentStep, int(resp.Attempt)); runErr != nil {
 		log.Error("paused run re-entry failed", "error", runErr)
@@ -278,6 +283,7 @@ func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc reattachTran
 			engine.WithWorkflowDir(workflowDirFromPath(cp.WorkflowPath)),
 			engine.WithAuditWriter(adapterhost.NewFileAuditWriter(auditPath2)),
 			engine.WithDataDir(dataDir),
+			engine.WithAgentPrompts(rc.AgentPromptCh(), rc.CriteriaID(), cp.RunID),
 		)
 		if runErr := resumedEng.RunFrom(ctx, pausedNode, 1); runErr != nil {
 			log.Error("run failed after resume", "error", runErr)
@@ -411,6 +417,7 @@ func buildResumedActiveEngine(ctx context.Context, log *slog.Logger, rc reattach
 		engine.WithLogger(log),
 		engine.WithAuditWriter(auditWriter),
 		engine.WithDataDir(dataDir),
+		engine.WithAgentPrompts(rc.AgentPromptCh(), rc.CriteriaID(), cp.RunID),
 	)
 	return eng, tracked
 }
