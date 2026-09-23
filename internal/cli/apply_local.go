@@ -305,15 +305,17 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 	}
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
-	nextAttempt := cp.Attempt + 1
-	maxAttempts := 1 + graph.Policy.MaxStepRetries
-	if nextAttempt > maxAttempts {
-		sink, _ := buildLocalSink(cp.RunID, out, mode, graph.StepOrder(), nil, graph)
-		reason := fmt.Sprintf("exceeded max_step_retries on resume at step %q (attempt %d)", cp.CurrentStep, nextAttempt)
-		sink.OnRunFailed(reason, cp.CurrentStep)
-		RemoveStepCheckpoint(cp.RunID)
-		return true, fmt.Errorf("%s", reason)
-	}
+	// CRI-304: the interrupted step restarts at attempt 1 with a fresh retry
+	// budget. The pre-crash attempt produced no outcome, so counting it
+	// against max_step_retries made mid-step crash recovery useless for any
+	// workflow with max_step_retries <= 1. The persisted max_visits counts
+	// (restored via WithResumedVisits) still bound total attempts across
+	// resumes, so a crash-loop cannot amplify into unbounded work.
+	// cp.Attempt is the pre-crash attempt; it stays out of the budget
+	// decision and is surfaced for diagnostics only.
+	nextAttempt := 1
+	log.Info("resuming interrupted step with fresh attempt budget",
+		"run_id", cp.RunID, "step", cp.CurrentStep, "last_attempt", cp.Attempt, "resumed_attempt", nextAttempt)
 
 	opts, tracker, runSink, eng, engErr := buildReattachTrackerAndEngine(cp, log, graph, loader, out, mode, nextAttempt, mergedVars)
 	if engErr != nil {

@@ -652,7 +652,7 @@ func TestResumeOneLocalRun_HappyPath(t *testing.T) {
 		Workflow:     "shell_resume",
 		WorkflowPath: wfFile,
 		CurrentStep:  "greet",
-		Attempt:      0, // attempt 0 → nextAttempt=1 ≤ maxAttempts=1, so the engine path runs
+		Attempt:      0, // attempt is informational only (CRI-304 fresh budget); the engine path always runs
 	}
 	if err := WriteStepCheckpoint(cp); err != nil {
 		t.Fatalf("WriteStepCheckpoint: %v", err)
@@ -698,20 +698,23 @@ func TestResumeOneLocalRun_MissingWorkflow(t *testing.T) {
 	}
 }
 
-// TestResumeOneLocalRun_ExceedsMaxRetries verifies that a checkpoint exceeding
-// max_step_retries emits a RunFailed event and removes the checkpoint.
-func TestResumeOneLocalRun_ExceedsMaxRetries(t *testing.T) {
+// TestResumeOneLocalRun_FreshAttemptBudgetOnResume is the CRI-304 regression
+// test: a step interrupted mid-attempt resumes with a FRESH attempt budget.
+// The checkpoint carries Attempt=2 while max_step_retries=0 (maxAttempts=1);
+// under the pre-fix semantics nextAttempt=3 > 1 failed the resume
+// immediately, making mid-step crash recovery useless. The fix restarts the
+// interrupted step at attempt 1, so the resume completes the step.
+func TestResumeOneLocalRun_FreshAttemptBudgetOnResume(t *testing.T) {
 	stateDir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 
 	wfFile := writeWorkflowFile(t, maxRetryWorkflow)
-	// Attempt 2 with max_step_retries=0 means maxAttempts=1; nextAttempt=3 > 1.
 	cp := &StepCheckpoint{
-		RunID:        "max-retry-run",
+		RunID:        "fresh-budget-run",
 		Workflow:     "max_retry",
 		WorkflowPath: wfFile,
 		CurrentStep:  "greet",
-		Attempt:      2,
+		Attempt:      2, // pre-crash attempt 2 of maxAttempts=1: no remaining budget
 	}
 	if err := WriteStepCheckpoint(cp); err != nil {
 		t.Fatalf("WriteStepCheckpoint: %v", err)
@@ -720,16 +723,20 @@ func TestResumeOneLocalRun_ExceedsMaxRetries(t *testing.T) {
 	var out bytes.Buffer
 	resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON, nil)
 
-	// Checkpoint removed regardless.
+	// The interrupted step must have been re-attempted and completed: a
+	// RunFailed event means the resume still enforces the stale budget.
+	if strings.Contains(out.String(), "RunFailed") {
+		t.Errorf("resume with fresh budget must not fail, got: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "RunCompleted") {
+		t.Errorf("expected RunCompleted in output, got: %s", out.String())
+	}
+	// Checkpoint must be cleaned up after successful resume.
 	checkpoints, _ := ListStepCheckpoints()
 	for _, item := range checkpoints {
-		if item.RunID == "max-retry-run" {
-			t.Error("checkpoint not removed after max-retry failure")
+		if item.RunID == "fresh-budget-run" {
+			t.Error("checkpoint not removed after fresh-budget resume")
 		}
-	}
-	// A RunFailed event must have been written to the output buffer.
-	if !strings.Contains(out.String(), "RunFailed") {
-		t.Errorf("expected RunFailed in output, got: %s", out.String())
 	}
 }
 
@@ -740,6 +747,10 @@ func TestResumeOneLocalRun_ExceedsMaxRetries(t *testing.T) {
 // proving the local buildReattachTrackerAndEngine → WithResumedVisits path works
 // end-to-end. This would fail if the visits map were dropped before engine
 // construction or never written into the resumed engine options.
+// CRI-304: this also proves the crash-loop bound — the fresh attempt budget
+// on resume does NOT lift the persisted max_visits cap, so a step that
+// exhausted max_visits before the crash still fails terminally instead of
+// looping forever across restarts.
 func TestResumeOneLocalRun_VisitsRestored(t *testing.T) {
 	stateDir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
@@ -750,7 +761,7 @@ func TestResumeOneLocalRun_VisitsRestored(t *testing.T) {
 		Workflow:     "max_visits_test",
 		WorkflowPath: wfFile,
 		CurrentStep:  "work",
-		Attempt:      0,                         // nextAttempt=1 ≤ maxAttempts=1
+		Attempt:      2,                         // pre-crash attempt is irrelevant to the budget
 		Visits:       map[string]int{"work": 1}, // already at the max_visits=1 limit
 	}
 	if err := WriteStepCheckpoint(cp); err != nil {
@@ -878,22 +889,24 @@ func TestAttemptReattach_Success(t *testing.T) {
 	}
 }
 
-// TestResumeActiveRun_ExceedsMaxRetries verifies that when nextAttempt exceeds
-// max_step_retries the run is failed and the checkpoint is removed.
-func TestResumeActiveRun_ExceedsMaxRetries(t *testing.T) {
+// TestResumeActiveRun_FreshAttemptBudgetOnResume is the CRI-304 regression
+// test at the server-reattach level: the interrupted step restarts at
+// attempt 1 with a fresh retry budget instead of failing the resume. The
+// response carries Attempt=1 with max_step_retries=0 (maxAttempts=1); under
+// the pre-fix semantics nextAttempt=2 > 1 dispatched to a RunFailed resume.
+func TestResumeActiveRun_FreshAttemptBudgetOnResume(t *testing.T) {
 	stateDir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 
 	wfFile := writeWorkflowFile(t, maxRetryWorkflow)
-	cp := &StepCheckpoint{RunID: "rar-exceeded", WorkflowPath: wfFile}
+	cp := &StepCheckpoint{RunID: "rar-fresh-budget", WorkflowPath: wfFile}
 	writeCheckpointDirect(t, stateDir, cp)
 
-	// Attempt=1 with MaxStepRetries=0 means maxAttempts=1; nextAttempt=2 > 1.
 	resp := &pb.ReattachRunResponse{
 		CanResume:   true,
 		Status:      "running",
 		CurrentStep: "greet",
-		Attempt:     1,
+		Attempt:     1, // pre-crash attempt 1 of maxAttempts=1: no remaining budget
 	}
 	graph, err := parseWorkflowFromPath(context.Background(), wfFile)
 	if err != nil {
@@ -907,18 +920,30 @@ func TestResumeActiveRun_ExceedsMaxRetries(t *testing.T) {
 	list, _ := ListStepCheckpoints()
 	for _, item := range list {
 		if item.RunID == cp.RunID {
-			t.Error("checkpoint not removed after retry-exceeded")
+			t.Error("checkpoint not removed after fresh-budget resume")
 		}
 	}
-	// A RunFailed envelope must have been published.
-	hasRunFailed := false
+	// The resume must have opened with StepResumed at attempt 1 and completed
+	// the run; a RunFailed envelope means the stale budget still gated.
+	if len(ft.published) == 0 || ft.published[0].GetStepResumed() == nil {
+		t.Fatalf("expected the first published envelope to be StepResumed, got %d envelopes", len(ft.published))
+	}
+	if got := ft.published[0].GetStepResumed().GetAttempt(); got != 1 {
+		t.Errorf("StepResumed attempt = %d, want 1 (fresh budget)", got)
+	}
 	for _, env := range ft.published {
 		if env.GetRunFailed() != nil {
-			hasRunFailed = true
+			t.Errorf("fresh-budget resume must not publish RunFailed; envelopes: %d", len(ft.published))
 		}
 	}
-	if !hasRunFailed {
-		t.Errorf("expected RunFailed event to be published, got %d envelopes", len(ft.published))
+	hasCompleted := false
+	for _, env := range ft.published {
+		if env.GetRunCompleted() != nil {
+			hasCompleted = true
+		}
+	}
+	if !hasCompleted {
+		t.Errorf("expected RunCompleted event; published envelopes: %d", len(ft.published))
 	}
 }
 
@@ -938,7 +963,7 @@ func TestResumeActiveRun_HappyPath(t *testing.T) {
 		CanResume:   true,
 		Status:      "running",
 		CurrentStep: "done", // terminal state → engine finishes immediately
-		Attempt:     0,      // nextAttempt=1 ≤ maxAttempts=1 (MaxStepRetries=0 default)
+		Attempt:     0,      // pre-crash attempt (informational only under the CRI-304 fresh budget)
 	}
 	graph, err := parseWorkflowFromPath(context.Background(), wfFile)
 	if err != nil {
@@ -1009,7 +1034,7 @@ func TestResumeActiveRun_DualWriteMirrorsEventsFile(t *testing.T) {
 		CanResume:   true,
 		Status:      "running",
 		CurrentStep: "done", // terminal state → engine finishes immediately
-		Attempt:     0,      // nextAttempt=1 ≤ maxAttempts=1 (MaxStepRetries=0 default)
+		Attempt:     0,      // pre-crash attempt (informational only under the CRI-304 fresh budget)
 	}
 	graph, err := parseWorkflowFromPath(context.Background(), wfFile)
 	if err != nil {
@@ -1068,22 +1093,30 @@ func TestResumePausedRun_DualWriteMirrorsEventsFile(t *testing.T) {
 }
 
 // TestResumeActiveRun_MaxRetriesDualWriteMirrorsEventsFile covers the
-// failResumeMaxRetries terminal path under dual-write: the file receives
-// exactly one RunFailed envelope (seq 1) mirroring the transport's RunFailed.
+// CRI-304 resume-failure contract under dual-write: when the resumed engine
+// itself fails (here: the restored max_visits count is already at the limit),
+// exactly one RunFailed envelope reaches the transport stream and the file
+// mirrors it 1:1 — so the control-plane run record reaches a terminal status
+// (the CRI-302 re-run stayed "running" when provisioning failures were
+// silent).
 func TestResumeActiveRun_MaxRetriesDualWriteMirrorsEventsFile(t *testing.T) {
 	stateDir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 
-	wfFile := writeWorkflowFile(t, minimalWorkflow)
-	cp := &StepCheckpoint{RunID: "rar-dualwrite-fail", WorkflowPath: wfFile}
+	wfFile := writeWorkflowFile(t, maxVisitsWorkflow)
+	cp := &StepCheckpoint{
+		RunID:        "rar-dualwrite-fail",
+		WorkflowPath: wfFile,
+		Visits:       map[string]int{"work": 1}, // already at the max_visits=1 limit
+	}
 	writeCheckpointDirect(t, stateDir, cp)
 
-	// Attempt=1 with MaxStepRetries=0 means maxAttempts=1; nextAttempt=2 > 1,
-	// so resumeActiveRun dispatches to failResumeMaxRetries.
+	// A high pre-crash attempt no longer gates the resume (CRI-304 fresh
+	// budget); the failure below comes from the engine's max_visits check.
 	resp := &pb.ReattachRunResponse{
 		CanResume:   true,
 		Status:      "running",
-		CurrentStep: "done",
+		CurrentStep: "work",
 		Attempt:     1,
 	}
 	graph, err := parseWorkflowFromPath(context.Background(), wfFile)
@@ -1152,7 +1185,7 @@ func TestResumeActiveRun_VisitsRestored(t *testing.T) {
 		CanResume:   true,
 		Status:      "running",
 		CurrentStep: "work",
-		Attempt:     0, // nextAttempt=1 ≤ maxAttempts=1
+		Attempt:     2, // pre-crash attempt is irrelevant to the budget (CRI-304)
 	}
 	graph, err := parseWorkflowFromPath(context.Background(), wfFile)
 	if err != nil {

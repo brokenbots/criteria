@@ -55,8 +55,12 @@ type remoteLifecycleContext struct {
 type scopeLifecycleState struct {
 	dataDir string
 	runID   string
-	mu      sync.Mutex
-	records map[string]*adapterLifecycleRecord
+	// adoptableRunDirs lists other runs' data directories whose surviving
+	// per-scope instances may be adopted instead of rotating fresh (CRI-304);
+	// empty for fresh, non-resumed runs.
+	adoptableRunDirs []string
+	mu               sync.Mutex
+	records          map[string]*adapterLifecycleRecord
 }
 
 func newScopeLifecycleState(dataDir string) *scopeLifecycleState {
@@ -381,6 +385,22 @@ func maybeRotateRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, g *wor
 		return scopeKey, nil
 	}
 
+	// CRI-304: after a checkpoint-consuming resume failed terminally, the next
+	// replay starts fresh while the prior run's per-scope adapter pods are
+	// still up (they are only torn down once the run record reaches a terminal
+	// status). A fresh rotation would reject those pods' handshakes until the
+	// shim's verify budget expires, wedging the replay for the full timeout.
+	// Before rotating, adopt a surviving instance from a prior invocation of
+	// the same run fingerprint so its pods re-handshake with this run's shim
+	// immediately; with nothing adoptable this is a no-op.
+	scopeKey, adopted, aerr := tryAdoptPriorRunScopeInstance(deps, lifecycle, envNode, adapter, instanceID, scopeName)
+	if aerr != nil {
+		return "", aerr
+	}
+	if adopted {
+		return scopeKey, nil
+	}
+
 	scopeInstanceID := uuid.NewString()
 	scopeKey = scopeName + "/" + scopeInstanceID
 	token, err := generateAcceptToken()
@@ -491,6 +511,106 @@ func logScopeReuseFallback(scopeName, instanceID, reason string) {
 	}
 	slog.Warn("persisted scope instance record unusable; scanning for surviving rotated tokens",
 		"scope", scopeName, "adapter_instance", instanceID, "reason", reason)
+}
+
+// tryAdoptPriorRunScopeInstance adopts a surviving per-scope instance from a
+// prior invocation's run data directory (CRI-304). After a checkpoint was
+// consumed and a replay starts fresh, the prior run's adapter pods are
+// typically still up — the operator tears them down only once the run record
+// reaches a terminal status — and a fresh rotation would reject their
+// handshakes until the shim's verify budget expires, wedging the replay for
+// the full timeout. Reusing the prior instance through the CRI-137
+// re-handshake mechanism across the run boundary lets those pods re-handshake
+// with the new run's shim immediately.
+//
+// Only directories handed in via the engine's adoptable-run-dirs option are
+// consulted; the CLI computes them from persisted invocation-identity markers
+// (same run fingerprint, no in-flight checkpoint). Within a directory the
+// record-based reuse path is tried first, mirroring tryReuseScopeInstance,
+// and the token-file scan covers directories without records. The adopted
+// token is copied into this run's data directory (the run's own release
+// tombstones must cover it at teardown) and claimed in the prior directory so
+// a later replay can never re-adopt the same instance. Every other surviving
+// token in the prior directory is registered as well, mirroring the
+// same-restart scan fallback, so additional prior pods remain valid. Returns
+// adopted=false when nothing is adoptable and the caller must rotate fresh,
+// and a non-nil error only when adoption was possible but registration with
+// the shim failed.
+func tryAdoptPriorRunScopeInstance(deps Deps, lifecycle *remoteLifecycleContext, envNode *workflow.EnvironmentNode, adapter *workflow.AdapterNode, instanceID, scopeName string) (scopeKey string, adopted bool, err error) {
+	dirs := lifecycle.scopeLifecycle.adoptableRunDirs
+	if len(dirs) == 0 {
+		return "", false, nil
+	}
+	dataDir := lifecycle.scopeLifecycle.dataDir
+	for _, priorDir := range dirs {
+		if filepath.Clean(priorDir) == filepath.Clean(dataDir) {
+			continue
+		}
+		candidates := priorRunScopeCandidates(priorDir, scopeName, instanceID, adapter.Type)
+		if len(candidates) == 0 {
+			continue
+		}
+		chosen := candidates[0]
+		// Self-heal the adopted instance into this run's own data directory
+		// before registering: the run's teardown tombstones only its own
+		// records, so the adopted token must exist here for the release path
+		// to cover it. A persist failure falls through to the next directory
+		// (or a fresh rotation, which fails loudly on its own record write).
+		tokenPath, werr := writeRotatedToken(dataDir, scopeName, chosen.instanceID, adapter.Type, chosen.token)
+		if werr != nil {
+			slog.Warn("copying adopted scope token failed; rotating fresh scope instance",
+				"scope", scopeName, "adapter_instance", instanceID, "prior_run_dir", priorDir, "error", werr.Error())
+			continue
+		}
+		if werr := writeCurrentScopeInstance(dataDir, scopeName, instanceID, currentScopeInstanceRecord{
+			ScopeInstanceID: chosen.instanceID,
+			AdapterType:     adapter.Type,
+		}); werr != nil {
+			slog.Warn("persisting adopted scope instance failed; rotating fresh scope instance",
+				"scope", scopeName, "adapter_instance", instanceID, "prior_run_dir", priorDir, "error", werr.Error())
+			continue
+		}
+		// Claim the instance in the prior directory — release tombstone plus
+		// clearing the prior record — so a later replay of the same invocation
+		// cannot double-adopt an instance that is already bound to this run.
+		releaseScopeInstance(priorDir, scopeName, instanceID, chosen.instanceID, adapter.Type)
+		scopeKey = scopeName + "/" + chosen.instanceID
+		if rerr := deps.Sessions.RegisterRemoteScopeForEnv(environmentKey(envNode), scopeKey, chosen.token); rerr != nil {
+			deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", rerr.Error())
+			return "", false, fmt.Errorf("initialize adapter %q: register adopted scope token: %w", instanceID, rerr)
+		}
+		// Register every other surviving token too so all of the prior run's
+		// pods remain valid for re-handshake, not just the adopted one.
+		for _, cand := range candidates[1:] {
+			if rerr := deps.Sessions.RegisterRemoteScopeForEnv(environmentKey(envNode), scopeName+"/"+cand.instanceID, cand.token); rerr != nil {
+				slog.Warn("registering surviving prior-run scope token failed; the matching pod may fail its handshake",
+					"scope", scopeName, "scope_instance", cand.instanceID, "error", rerr.Error())
+			}
+		}
+		slog.Info("adopting scope instance from prior run invocation",
+			"scope", scopeName, "adapter_instance", instanceID, "scope_instance", chosen.instanceID, "prior_run_dir", priorDir)
+		emitProvisionWanted(deps, lifecycle, scopeName, chosen.instanceID, scopeKey, instanceID, adapter, envNode, tokenPath, chosen.token)
+		return scopeKey, true, nil
+	}
+	return "", false, nil
+}
+
+// priorRunScopeCandidates enumerates adoptable scope tokens in a prior run's
+// data directory: record-based reuse first (the healthy surviving instance's
+// shape), then the token-file scan filtered against the prior directory's
+// claim records so deliberately released instances are never re-adopted.
+func priorRunScopeCandidates(priorDir, scopeName, instanceID, adapterType string) []scannedScopeToken {
+	scopeInstanceID, tokenPath, token, _, ok := reusableScopeToken(priorDir, scopeName, instanceID, adapterType)
+	if ok {
+		return []scannedScopeToken{{instanceID: scopeInstanceID, tokenPath: tokenPath, token: token}}
+	}
+	candidates, scanErr := scanScopeTokenFiles(priorDir, scopeName, adapterType)
+	if scanErr != nil {
+		slog.Warn("prior run scope token scan failed; skipping directory",
+			"scope", scopeName, "adapter_instance", instanceID, "prior_run_dir", priorDir, "error", scanErr.Error())
+		return nil
+	}
+	return filterUnclaimedScopeInstances(priorDir, scopeName, candidates)
 }
 
 // scannedScopeToken is a rotated token file found under a scope directory,

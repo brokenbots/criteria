@@ -203,6 +203,24 @@ func WithLocalShimIsolation() Option {
 	}
 }
 
+// WithAdoptableRunDirs lists prior invocations' run data directories whose
+// surviving per-scope adapter instances may be adopted instead of rotating
+// fresh scope tokens (CRI-304). A fresh replay after a checkpoint-consuming
+// resume would otherwise reject the prior run's still-running pods' handshakes
+// until the shim's verify budget expires, wedging the run for the full
+// timeout; adoption re-handshakes those pods with the new run's shim instead.
+// Directories are consulted in order and must have been produced by an
+// invocation of the same run identity (the CLI derives them from persisted
+// invocation-identity markers, excluding in-flight checkpoints). Adoption
+// copies the chosen token into the run's own data directory and tombstones it
+// in the prior directory, so each instance can be adopted by at most one
+// later run.
+func WithAdoptableRunDirs(dirs []string) Option {
+	return func(e *Engine) {
+		e.adoptableRunDirs = dirs
+	}
+}
+
 // isSuccessOutcome returns true when the outcome name indicates a successful
 // iteration. By convention, outcome names that equal "success" (case-
 // insensitive) are treated as successes; all other names set AnyFailed=true

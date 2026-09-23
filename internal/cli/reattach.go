@@ -322,40 +322,25 @@ func checkIterationCursorValidity(graph *workflow.FSMGraph, variableScope string
 	return nil
 }
 
-// failResumeMaxRetries emits the failed run for a resume that exceeded
-// max_step_retries and cleans up the checkpoint. It returns whether the run
-// outcome was recorded (see resumeOneRun) and the failure as the outcome
-// error.
-func failResumeMaxRetries(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, step string, nextAttempt, maxAttempts int, eventsOut io.Writer) (bool, error) {
-	log.Warn("exceeded max_step_retries on resume; failing run",
-		"next_attempt", nextAttempt, "max_attempts", maxAttempts)
-	if streamErr := rc.StartStreams(ctx, cp.RunID); streamErr != nil {
-		abandonCheckpoint(log, cp, "failed to start streams for failed resume", streamErr)
-		return false, nil
-	}
-	sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log, Ctx: ctx}
-	local := eventsFileSink(cp.RunID, eventsOut)
-	reason := fmt.Sprintf("exceeded max_step_retries on resume at step %q (attempt %d)", step, nextAttempt)
-	sink.RunFailed(ctx, reason, step)
-	if local != nil {
-		local.OnRunFailed(reason, step)
-	}
-	drainAndCleanup(ctx, rc, cp)
-	return true, fmt.Errorf("%s", reason)
-}
-
-// resumeActiveRun handles the normal (non-paused) resume path, including
-// max_step_retries policy enforcement. It returns whether the run was
-// consumed (see resumeOneRun) and the run's outcome error, mirroring the
-// fresh-run error contract: an engine error is returned verbatim and a
-// terminal success=false completion surfaces the same
+// resumeActiveRun handles the normal (non-paused) resume path. It returns
+// whether the run was consumed (see resumeOneRun) and the run's outcome
+// error, mirroring the fresh-run error contract: an engine error is returned
+// verbatim and a terminal success=false completion surfaces the same
 // "run completed with terminal state" error as the fresh path.
+//
+// CRI-304: the interrupted step restarts at attempt 1 with a fresh retry
+// budget. The pre-crash attempt produced no outcome (the runner was killed
+// mid-attempt), so counting it against max_step_retries made mid-step crash
+// recovery useless for any workflow with max_step_retries <= 1: the resumed
+// run failed immediately. The persisted max_visits counts (restored via
+// WithResumedVisits) still bound total attempts across resumes, so a
+// crash-loop cannot amplify into unbounded work.
 func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse, eventsOut io.Writer) (bool, error) {
-	nextAttempt := int(resp.Attempt) + 1
-	maxAttempts := 1 + graph.Policy.MaxStepRetries
-	if nextAttempt > maxAttempts {
-		return failResumeMaxRetries(ctx, log, rc, cp, resp.CurrentStep, nextAttempt, maxAttempts, eventsOut)
-	}
+	// resp.Attempt is the server's view of the pre-crash attempt; it stays
+	// out of the budget decision and is surfaced for diagnostics only.
+	nextAttempt := 1
+	log.Info("resuming interrupted step with fresh attempt budget",
+		"step", resp.CurrentStep, "last_attempt", int(resp.Attempt), "resumed_attempt", nextAttempt)
 
 	if streamErr := rc.StartStreams(ctx, cp.RunID); streamErr != nil {
 		abandonCheckpoint(log, cp, "failed to start server streams for resumed run", streamErr)
