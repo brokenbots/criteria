@@ -773,6 +773,87 @@ When `criteria_version` is present, the engine rejects any engine that does not 
 
 > For pattern-by-pattern guidance, see [docs/llm/](./llm/). Concatenate this spec with the prompt pack to assemble a complete LLM authoring system prompt.
 
+## Workflow sources — normative grammar (CRI-249)
+
+The `source` of a workflow (the `criteria apply|validate|compile` argument,
+and every `subworkflow` block's `source` attribute) is one of:
+
+```
+source      = local_path | remote_source
+local_path  = abs_path | rel_path          ; local sources are never fetched
+remote_form = git_form | archive_form
+```
+
+**Local paths.** `/absolute/path`, `./relative/path`, `../relative/path`,
+`~`-expanded paths, and bare directory names resolvable from the process cwd.
+A local source resolves to itself; declaring `--workflow-ref` on a local
+source is refused (an expected pin cannot be verified against a local tree).
+
+**Git forms** (fetched with git; versioned by resolved commit SHA):
+
+| Form | Meaning |
+|---|---|
+| `git::https://host/org/repo.git?ref=<v>` | branch, tag, or full commit SHA `v`; the `git::` prefix is mandatory for https |
+| `git::https://host/org/repo.git` | `ref` omitted: the remote HEAD is resolved and cached |
+| `git::ssh://git@host/org/repo.git?ref=<v>` | ssh transport |
+| `git@host:org/repo.git` | scp-style form, git transport implied |
+| `git::file:///abs/path/repo.git?ref=<v>` | local bare repo (conformance/testing) |
+| `<any git form>//<subdir>` | subtree convention (CRI-227): the part before `//` is the fetched repository; `<subdir>` is the workflow directory inside it and must exist and contain `.chcl`/`.hcl` files (fail closed otherwise). Not applied to `file://` forms. |
+
+`?ref=v` values: a branch name (HEAD at resolve time, cached under the
+resolved SHA), a tag name, or a full 40-hex commit SHA (the cache key; a
+SHA-pinned source whose cache entry exists performs **no** git operation).
+`?ref=force-<branch>` forces a re-resolve of a moving branch. An
+option-like `ref` (leading `-`) is rejected. Versioning contract: the
+resolved SHA is immutable — the cache key is the SHA, so a pinned source is
+reproducible; branch/tag references are resolve-time snapshots.
+
+**Archive forms** (fetched over http(s); versioned by content digest):
+
+| Form | Meaning |
+|---|---|
+| `https://host/path/flow.tar.gz` | gzip tar archive |
+| `https://host/path/flow.tgz` | gzip tar archive (alternate suffix) |
+| `https://host/path/flow.zip` | zip archive |
+
+The archive bytes are content-addressed: the cache version directory is
+`sha256:<hex of the archive bytes>`, making an archive source reproducible
+bit-for-bit. A `?ref=sha256:<digest>` (or the equivalent `--workflow-ref`)
+declares the expected digest; resolution fails closed on mismatch.
+Credentials may appear in the URL userinfo for either form; they are
+redacted in every log line, cache path, and error surface (the
+`cache/workflows/<slug>` slug derives from the credential-free source), and
+never echo into run metadata.
+
+**Rejection contract.** Schemes outside git/ssh/http(s)/file are refused
+(`unsupported workflow source scheme`). Archive entries with `..` or
+absolute-path members are refused (path escape). Option-like sources are
+refused. All failure surfaces are uniform across `apply`, `validate`, and
+`compile` (pinned by the CRI-248 conformance suite).
+
+**Expected pin (`--workflow-ref` / `ref` in the subworkflow schema).** An
+operator-declared expected immutable ref: a git commit SHA for git sources
+or `sha256:<digest>` for archives. When declared, resolution proceeds only
+on an exact match — the mismatch error names both the expected and the
+resolved ref (ADR-0005 D7, CRI-226). A remote subworkflow MUST carry a `ref`
+pin in its lockfile entry (cascaded pins, CRI-228); a local subworkflow
+delegates resolution and skips the fetcher.
+
+**Cache semantics.** Fetched trees land under
+`$CRITERIA_HOME/cache/workflows/<slug>/<version>` (`<slug>` derived from the
+credential-redacted source; `<version>` the resolved SHA or content digest).
+Resolution is locked per slug: concurrent fetches converge on one version
+directory with complete contents and no leftover temporary directories, and
+the winner's tree is adopted by all racers (across processes — see the
+CRI-248 conformance suite). A cache index maps sources to versions;
+`criteria cache gc` prunes unreferenced trees. Cache hits are verified
+against a declared expected pin the same way fresh fetches are.
+
+For the k8s execution topology these sources run under — runner and
+per-scope adapter pods, the network-only data contract, and the
+token-handoff wire shape — see the workflow-example repo's
+[docs/pod-topology.md](https://github.com/brokenbots/workflow-example/blob/main/docs/pod-topology.md).
+
 ## Versioning
 
 This specification describes language `version = "1"`. Behavior changes and additions are documented per `v0.<minor>.0` release in [CHANGELOG.md](../CHANGELOG.md). A new language version value (`"2"`) will be introduced only for backwards-incompatible grammar changes.
