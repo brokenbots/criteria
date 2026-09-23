@@ -76,6 +76,11 @@ message Envelope {
     // subworkflow graphs the top-level module references; the server stores
     // and fans out the event verbatim and interprets none of the fields.
     WorkflowGraphs workflow_graphs = 37;
+    // AgentPromptInjected — a user prompt was delivered into a running step's
+    // adapter session (ADR-0006, M12.2). Emitted by the agent exactly once, at
+    // the moment the prompt is delivered into the adapter session — never at
+    // receipt and never on delivery failure. Permanent field number.
+    AgentPromptInjected agent_prompt_injected = 38;
     // WatchReady is a protocol-level sentinel sent once at the start of a
     // WatchRun server-stream, after any persisted-event replay, to flush
     // response headers so the client's WatchRun call can return. It has no
@@ -340,4 +345,22 @@ message WorkflowGraphs {
   // appear as their own entries — bodies never embed other layers);
   // permanent.
   repeated SubworkflowGraph subworkflows = 1;
+}
+
+// AgentPromptInjected — a user prompt was delivered into a running step's
+// adapter session (ADR-0006). The agent emits it exactly once, at the moment
+// the prompt is delivered into the adapter session; it is never emitted at
+// receipt or on delivery failure. Permanent field number.
+message AgentPromptInjected {
+  // step is the workflow step whose adapter session received the prompt.
+  string step = 1;
+  // session_id is the live adapter session the prompt was delivered into.
+  string session_id = 2;
+  // prompt is the delivered prompt text.
+  string prompt = 3;
+  // caller identifies the Criteria identity that issued the prompt (ADR-0006
+  // D4); re-checked by the agent at delivery against the run's owner.
+  string caller = 4;
+  // delivered_at is when the agent delivered the prompt into the session.
+  google.protobuf.Timestamp delivered_at = 5;
 }

@@ -1092,10 +1092,16 @@ func (x *InspectRunResponse) GetStateJson() string {
 }
 
 type SendPromptRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
-	Step          string                 `protobuf:"bytes,2,opt,name=step,proto3" json:"step,omitempty"`
-	Prompt        string                 `protobuf:"bytes,3,opt,name=prompt,proto3" json:"prompt,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	RunId  string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	Step   string                 `protobuf:"bytes,2,opt,name=step,proto3" json:"step,omitempty"`
+	Prompt string                 `protobuf:"bytes,3,opt,name=prompt,proto3" json:"prompt,omitempty"`
+	// session_id optionally addresses a specific live adapter session
+	// (ADR-0006 D2). Empty means the agent resolves the step's live session.
+	SessionId string `protobuf:"bytes,4,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	// caller is the Criteria identity issuing the prompt (ADR-0006 D4);
+	// re-checked at delivery against the run's owner.
+	Caller        string `protobuf:"bytes,5,opt,name=caller,proto3" json:"caller,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1151,9 +1157,29 @@ func (x *SendPromptRequest) GetPrompt() string {
 	return ""
 }
 
+func (x *SendPromptRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *SendPromptRequest) GetCaller() string {
+	if x != nil {
+		return x.Caller
+	}
+	return ""
+}
+
 type SendPromptResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	IssuedAt      *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=issued_at,json=issuedAt,proto3" json:"issued_at,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	IssuedAt *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=issued_at,json=issuedAt,proto3" json:"issued_at,omitempty"`
+	// accepted reports whether the agent accepted the prompt for delivery
+	// (ADR-0006 D6). False means the prompt was not delivered; detail carries
+	// the typed rejection reason.
+	Accepted bool `protobuf:"varint,2,opt,name=accepted,proto3" json:"accepted,omitempty"`
+	// detail carries acceptance detail or the typed rejection reason.
+	Detail        string `protobuf:"bytes,3,opt,name=detail,proto3" json:"detail,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1193,6 +1219,20 @@ func (x *SendPromptResponse) GetIssuedAt() *timestamppb.Timestamp {
 		return x.IssuedAt
 	}
 	return nil
+}
+
+func (x *SendPromptResponse) GetAccepted() bool {
+	if x != nil {
+		return x.Accepted
+	}
+	return false
+}
+
+func (x *SendPromptResponse) GetDetail() string {
+	if x != nil {
+		return x.Detail
+	}
+	return ""
 }
 
 type SubmitWorkflowAssignmentRequest struct {
@@ -1581,13 +1621,18 @@ const file_criteria_v1_server_proto_rawDesc = "" +
 	"\x13pending_permissions\x18\x05 \x01(\x03R\x12pendingPermissions\x12D\n" +
 	"\x10last_activity_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\x0elastActivityAt\x12\x1d\n" +
 	"\n" +
-	"state_json\x18\a \x01(\tR\tstateJson\"V\n" +
+	"state_json\x18\a \x01(\tR\tstateJson\"\x8d\x01\n" +
 	"\x11SendPromptRequest\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x12\n" +
 	"\x04step\x18\x02 \x01(\tR\x04step\x12\x16\n" +
-	"\x06prompt\x18\x03 \x01(\tR\x06prompt\"M\n" +
+	"\x06prompt\x18\x03 \x01(\tR\x06prompt\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x04 \x01(\tR\tsessionId\x12\x16\n" +
+	"\x06caller\x18\x05 \x01(\tR\x06caller\"\x81\x01\n" +
 	"\x12SendPromptResponse\x127\n" +
-	"\tissued_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\bissuedAt\"\xce\x02\n" +
+	"\tissued_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\bissuedAt\x12\x1a\n" +
+	"\baccepted\x18\x02 \x01(\bR\baccepted\x12\x16\n" +
+	"\x06detail\x18\x03 \x01(\tR\x06detail\"\xce\x02\n" +
 	"\x1fSubmitWorkflowAssignmentRequest\x12#\n" +
 	"\rworkflow_name\x18\x01 \x01(\tR\fworkflowName\x12'\n" +
 	"\x0fworkflow_source\x18\x02 \x01(\tR\x0eworkflowSource\x12'\n" +

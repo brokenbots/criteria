@@ -790,7 +790,8 @@ type ControlMessage_RunCancel struct {
 }
 
 type ControlMessage_AgentPrompt struct {
-	AgentPrompt *AgentPrompt `protobuf:"bytes,2,opt,name=agent_prompt,json=agentPrompt,proto3,oneof"` // Phase 2.3; stub in 1.1.
+	// AgentPrompt carries a user prompt for the addressed step (ADR-0006).
+	AgentPrompt *AgentPrompt `protobuf:"bytes,2,opt,name=agent_prompt,json=agentPrompt,proto3,oneof"`
 }
 
 type ControlMessage_ControlReady struct {
@@ -964,14 +965,27 @@ func (x *RunCancel) GetReason() string {
 	return ""
 }
 
-// AgentPrompt forwards a user prompt to a running agent step. Phase 2.3.
+// AgentPrompt forwards a user prompt to a running agent step (ADR-0006). The
+// orchestrator enqueues it on the owning agent's Control stream; the agent
+// delivers it into the addressed step's live adapter session.
 type AgentPrompt struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
-	Step          string                 `protobuf:"bytes,2,opt,name=step,proto3" json:"step,omitempty"`
-	Prompt        string                 `protobuf:"bytes,3,opt,name=prompt,proto3" json:"prompt,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	RunId  string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	Step   string                 `protobuf:"bytes,2,opt,name=step,proto3" json:"step,omitempty"`
+	Prompt string                 `protobuf:"bytes,3,opt,name=prompt,proto3" json:"prompt,omitempty"`
+	// session_id optionally addresses a specific live adapter session (ADR-0006
+	// D2). Empty means the agent resolves the addressed step's live session
+	// authoritatively; a non-empty value that does not match the live session
+	// is a delivery failure, never a silent mismatch.
+	SessionId string `protobuf:"bytes,4,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	// issued_at is when the orchestrator accepted the prompt for delivery.
+	IssuedAt *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=issued_at,json=issuedAt,proto3" json:"issued_at,omitempty"`
+	// caller_criteria_id identifies the Criteria identity that issued the
+	// prompt (ADR-0006 D4). The agent re-checks it at delivery against the
+	// run's owner; on mismatch the prompt is not delivered.
+	CallerCriteriaId string `protobuf:"bytes,6,opt,name=caller_criteria_id,json=callerCriteriaId,proto3" json:"caller_criteria_id,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *AgentPrompt) Reset() {
@@ -1021,6 +1035,27 @@ func (x *AgentPrompt) GetStep() string {
 func (x *AgentPrompt) GetPrompt() string {
 	if x != nil {
 		return x.Prompt
+	}
+	return ""
+}
+
+func (x *AgentPrompt) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *AgentPrompt) GetIssuedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.IssuedAt
+	}
+	return nil
+}
+
+func (x *AgentPrompt) GetCallerCriteriaId() string {
+	if x != nil {
+		return x.CallerCriteriaId
 	}
 	return ""
 }
@@ -1337,11 +1372,15 @@ const file_criteria_v1_criteria_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\":\n" +
 	"\tRunCancel\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reason\"P\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"\xd6\x01\n" +
 	"\vAgentPrompt\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x12\n" +
 	"\x04step\x18\x02 \x01(\tR\x04step\x12\x16\n" +
-	"\x06prompt\x18\x03 \x01(\tR\x06prompt\"\x0e\n" +
+	"\x06prompt\x18\x03 \x01(\tR\x06prompt\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x04 \x01(\tR\tsessionId\x127\n" +
+	"\tissued_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\bissuedAt\x12,\n" +
+	"\x12caller_criteria_id\x18\x06 \x01(\tR\x10callerCriteriaId\"\x0e\n" +
 	"\fControlReady\"\xb5\x01\n" +
 	"\tResumeRun\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x16\n" +
@@ -1422,27 +1461,28 @@ var file_criteria_v1_criteria_proto_depIdxs = []int32{
 	15, // 9: criteria.v1.ControlMessage.resume_run:type_name -> criteria.v1.ResumeRun
 	11, // 10: criteria.v1.ControlMessage.workflow_assignment:type_name -> criteria.v1.WorkflowAssignment
 	20, // 11: criteria.v1.WorkflowAssignment.labels:type_name -> criteria.v1.WorkflowAssignment.LabelsEntry
-	21, // 12: criteria.v1.ResumeRun.payload:type_name -> criteria.v1.ResumeRun.PayloadEntry
-	22, // 13: criteria.v1.ResumeRequest.payload:type_name -> criteria.v1.ResumeRequest.PayloadEntry
-	0,  // 14: criteria.v1.CriteriaService.Register:input_type -> criteria.v1.RegisterRequest
-	2,  // 15: criteria.v1.CriteriaService.Heartbeat:input_type -> criteria.v1.HeartbeatRequest
-	4,  // 16: criteria.v1.CriteriaService.CreateRun:input_type -> criteria.v1.CreateRunRequest
-	6,  // 17: criteria.v1.CriteriaService.ReattachRun:input_type -> criteria.v1.ReattachRunRequest
-	16, // 18: criteria.v1.CriteriaService.Resume:input_type -> criteria.v1.ResumeRequest
-	24, // 19: criteria.v1.CriteriaService.SubmitEvents:input_type -> criteria.v1.Envelope
-	9,  // 20: criteria.v1.CriteriaService.Control:input_type -> criteria.v1.ControlSubscribeRequest
-	1,  // 21: criteria.v1.CriteriaService.Register:output_type -> criteria.v1.RegisterResponse
-	3,  // 22: criteria.v1.CriteriaService.Heartbeat:output_type -> criteria.v1.HeartbeatResponse
-	5,  // 23: criteria.v1.CriteriaService.CreateRun:output_type -> criteria.v1.Run
-	7,  // 24: criteria.v1.CriteriaService.ReattachRun:output_type -> criteria.v1.ReattachRunResponse
-	17, // 25: criteria.v1.CriteriaService.Resume:output_type -> criteria.v1.ResumeResponse
-	8,  // 26: criteria.v1.CriteriaService.SubmitEvents:output_type -> criteria.v1.Ack
-	10, // 27: criteria.v1.CriteriaService.Control:output_type -> criteria.v1.ControlMessage
-	21, // [21:28] is the sub-list for method output_type
-	14, // [14:21] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	23, // 12: criteria.v1.AgentPrompt.issued_at:type_name -> google.protobuf.Timestamp
+	21, // 13: criteria.v1.ResumeRun.payload:type_name -> criteria.v1.ResumeRun.PayloadEntry
+	22, // 14: criteria.v1.ResumeRequest.payload:type_name -> criteria.v1.ResumeRequest.PayloadEntry
+	0,  // 15: criteria.v1.CriteriaService.Register:input_type -> criteria.v1.RegisterRequest
+	2,  // 16: criteria.v1.CriteriaService.Heartbeat:input_type -> criteria.v1.HeartbeatRequest
+	4,  // 17: criteria.v1.CriteriaService.CreateRun:input_type -> criteria.v1.CreateRunRequest
+	6,  // 18: criteria.v1.CriteriaService.ReattachRun:input_type -> criteria.v1.ReattachRunRequest
+	16, // 19: criteria.v1.CriteriaService.Resume:input_type -> criteria.v1.ResumeRequest
+	24, // 20: criteria.v1.CriteriaService.SubmitEvents:input_type -> criteria.v1.Envelope
+	9,  // 21: criteria.v1.CriteriaService.Control:input_type -> criteria.v1.ControlSubscribeRequest
+	1,  // 22: criteria.v1.CriteriaService.Register:output_type -> criteria.v1.RegisterResponse
+	3,  // 23: criteria.v1.CriteriaService.Heartbeat:output_type -> criteria.v1.HeartbeatResponse
+	5,  // 24: criteria.v1.CriteriaService.CreateRun:output_type -> criteria.v1.Run
+	7,  // 25: criteria.v1.CriteriaService.ReattachRun:output_type -> criteria.v1.ReattachRunResponse
+	17, // 26: criteria.v1.CriteriaService.Resume:output_type -> criteria.v1.ResumeResponse
+	8,  // 27: criteria.v1.CriteriaService.SubmitEvents:output_type -> criteria.v1.Ack
+	10, // 28: criteria.v1.CriteriaService.Control:output_type -> criteria.v1.ControlMessage
+	22, // [22:29] is the sub-list for method output_type
+	15, // [15:22] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_criteria_v1_criteria_proto_init() }

@@ -127,6 +127,7 @@ type Envelope struct {
 	//	*Envelope_StepIterationItem
 	//	*Envelope_RunOutputs
 	//	*Envelope_WorkflowGraphs
+	//	*Envelope_AgentPromptInjected
 	//	*Envelope_WatchReady
 	Payload       isEnvelope_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
@@ -430,6 +431,15 @@ func (x *Envelope) GetWorkflowGraphs() *WorkflowGraphs {
 	return nil
 }
 
+func (x *Envelope) GetAgentPromptInjected() *AgentPromptInjected {
+	if x != nil {
+		if x, ok := x.Payload.(*Envelope_AgentPromptInjected); ok {
+			return x.AgentPromptInjected
+		}
+	}
+	return nil
+}
+
 func (x *Envelope) GetWatchReady() *WatchReady {
 	if x != nil {
 		if x, ok := x.Payload.(*Envelope_WatchReady); ok {
@@ -560,6 +570,14 @@ type Envelope_WorkflowGraphs struct {
 	WorkflowGraphs *WorkflowGraphs `protobuf:"bytes,37,opt,name=workflow_graphs,json=workflowGraphs,proto3,oneof"`
 }
 
+type Envelope_AgentPromptInjected struct {
+	// AgentPromptInjected — a user prompt was delivered into a running step's
+	// adapter session (ADR-0006, M12.2). Emitted by the agent exactly once, at
+	// the moment the prompt is delivered into the adapter session — never at
+	// receipt and never on delivery failure. Permanent field number.
+	AgentPromptInjected *AgentPromptInjected `protobuf:"bytes,38,opt,name=agent_prompt_injected,json=agentPromptInjected,proto3,oneof"`
+}
+
 type Envelope_WatchReady struct {
 	// WatchReady is a protocol-level sentinel sent once at the start of a
 	// WatchRun server-stream, after any persisted-event replay, to flush
@@ -617,6 +635,8 @@ func (*Envelope_StepIterationItem) isEnvelope_Payload() {}
 func (*Envelope_RunOutputs) isEnvelope_Payload() {}
 
 func (*Envelope_WorkflowGraphs) isEnvelope_Payload() {}
+
+func (*Envelope_AgentPromptInjected) isEnvelope_Payload() {}
 
 func (*Envelope_WatchReady) isEnvelope_Payload() {}
 
@@ -2245,6 +2265,92 @@ func (x *WorkflowGraphs) GetSubworkflows() []*SubworkflowGraph {
 	return nil
 }
 
+// AgentPromptInjected — a user prompt was delivered into a running step's
+// adapter session (ADR-0006). The agent emits it exactly once, at the moment
+// the prompt is delivered into the adapter session; it is never emitted at
+// receipt or on delivery failure. Permanent field number.
+type AgentPromptInjected struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// step is the workflow step whose adapter session received the prompt.
+	Step string `protobuf:"bytes,1,opt,name=step,proto3" json:"step,omitempty"`
+	// session_id is the live adapter session the prompt was delivered into.
+	SessionId string `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	// prompt is the delivered prompt text.
+	Prompt string `protobuf:"bytes,3,opt,name=prompt,proto3" json:"prompt,omitempty"`
+	// caller identifies the Criteria identity that issued the prompt (ADR-0006
+	// D4); re-checked by the agent at delivery against the run's owner.
+	Caller string `protobuf:"bytes,4,opt,name=caller,proto3" json:"caller,omitempty"`
+	// delivered_at is when the agent delivered the prompt into the session.
+	DeliveredAt   *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=delivered_at,json=deliveredAt,proto3" json:"delivered_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AgentPromptInjected) Reset() {
+	*x = AgentPromptInjected{}
+	mi := &file_criteria_v1_events_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AgentPromptInjected) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AgentPromptInjected) ProtoMessage() {}
+
+func (x *AgentPromptInjected) ProtoReflect() protoreflect.Message {
+	mi := &file_criteria_v1_events_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AgentPromptInjected.ProtoReflect.Descriptor instead.
+func (*AgentPromptInjected) Descriptor() ([]byte, []int) {
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *AgentPromptInjected) GetStep() string {
+	if x != nil {
+		return x.Step
+	}
+	return ""
+}
+
+func (x *AgentPromptInjected) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *AgentPromptInjected) GetPrompt() string {
+	if x != nil {
+		return x.Prompt
+	}
+	return ""
+}
+
+func (x *AgentPromptInjected) GetCaller() string {
+	if x != nil {
+		return x.Caller
+	}
+	return ""
+}
+
+func (x *AgentPromptInjected) GetDeliveredAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.DeliveredAt
+	}
+	return nil
+}
+
 type RunOutputs_Output struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                                     // output declaration name; permanent
@@ -2256,7 +2362,7 @@ type RunOutputs_Output struct {
 
 func (x *RunOutputs_Output) Reset() {
 	*x = RunOutputs_Output{}
-	mi := &file_criteria_v1_events_proto_msgTypes[31]
+	mi := &file_criteria_v1_events_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2268,7 +2374,7 @@ func (x *RunOutputs_Output) String() string {
 func (*RunOutputs_Output) ProtoMessage() {}
 
 func (x *RunOutputs_Output) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[31]
+	mi := &file_criteria_v1_events_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2309,7 +2415,7 @@ var File_criteria_v1_events_proto protoreflect.FileDescriptor
 
 const file_criteria_v1_events_proto_rawDesc = "" +
 	"\n" +
-	"\x18criteria/v1/events.proto\x12\vcriteria.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xfd\x0f\n" +
+	"\x18criteria/v1/events.proto\x12\vcriteria.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xd5\x10\n" +
 	"\bEnvelope\x12%\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05R\rschemaVersion\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x10\n" +
@@ -2344,7 +2450,8 @@ const file_criteria_v1_events_proto_rawDesc = "" +
 	"\x13step_iteration_item\x18  \x01(\v2\x1e.criteria.v1.StepIterationItemH\x00R\x11stepIterationItem\x12:\n" +
 	"\vrun_outputs\x18! \x01(\v2\x17.criteria.v1.RunOutputsH\x00R\n" +
 	"runOutputs\x12F\n" +
-	"\x0fworkflow_graphs\x18% \x01(\v2\x1b.criteria.v1.WorkflowGraphsH\x00R\x0eworkflowGraphs\x12:\n" +
+	"\x0fworkflow_graphs\x18% \x01(\v2\x1b.criteria.v1.WorkflowGraphsH\x00R\x0eworkflowGraphs\x12V\n" +
+	"\x15agent_prompt_injected\x18& \x01(\v2 .criteria.v1.AgentPromptInjectedH\x00R\x13agentPromptInjected\x12:\n" +
 	"\vwatch_ready\x18c \x01(\v2\x17.criteria.v1.WatchReadyH\x00R\n" +
 	"watchReadyB\t\n" +
 	"\apayload\"T\n" +
@@ -2470,7 +2577,14 @@ const file_criteria_v1_events_proto_rawDesc = "" +
 	"sourcePath\x12\x12\n" +
 	"\x04body\x18\x03 \x01(\tR\x04body\"S\n" +
 	"\x0eWorkflowGraphs\x12A\n" +
-	"\fsubworkflows\x18\x01 \x03(\v2\x1d.criteria.v1.SubworkflowGraphR\fsubworkflows*k\n" +
+	"\fsubworkflows\x18\x01 \x03(\v2\x1d.criteria.v1.SubworkflowGraphR\fsubworkflows\"\xb7\x01\n" +
+	"\x13AgentPromptInjected\x12\x12\n" +
+	"\x04step\x18\x01 \x01(\tR\x04step\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x16\n" +
+	"\x06prompt\x18\x03 \x01(\tR\x06prompt\x12\x16\n" +
+	"\x06caller\x18\x04 \x01(\tR\x06caller\x12=\n" +
+	"\fdelivered_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\vdeliveredAt*k\n" +
 	"\tLogStream\x12\x1a\n" +
 	"\x16LOG_STREAM_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11LOG_STREAM_STDOUT\x10\x01\x12\x15\n" +
@@ -2490,7 +2604,7 @@ func file_criteria_v1_events_proto_rawDescGZIP() []byte {
 }
 
 var file_criteria_v1_events_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_criteria_v1_events_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
+var file_criteria_v1_events_proto_msgTypes = make([]protoimpl.MessageInfo, 33)
 var file_criteria_v1_events_proto_goTypes = []any{
 	(LogStream)(0),                 // 0: criteria.v1.LogStream
 	(*Envelope)(nil),               // 1: criteria.v1.Envelope
@@ -2521,15 +2635,16 @@ var file_criteria_v1_events_proto_goTypes = []any{
 	(*RunOutputs)(nil),             // 26: criteria.v1.RunOutputs
 	(*SubworkflowGraph)(nil),       // 27: criteria.v1.SubworkflowGraph
 	(*WorkflowGraphs)(nil),         // 28: criteria.v1.WorkflowGraphs
-	nil,                            // 29: criteria.v1.StepOutputCaptured.OutputsEntry
-	nil,                            // 30: criteria.v1.WaitResumed.PayloadEntry
-	nil,                            // 31: criteria.v1.ApprovalDecision.PayloadEntry
-	(*RunOutputs_Output)(nil),      // 32: criteria.v1.RunOutputs.Output
-	(*timestamppb.Timestamp)(nil),  // 33: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),        // 34: google.protobuf.Struct
+	(*AgentPromptInjected)(nil),    // 29: criteria.v1.AgentPromptInjected
+	nil,                            // 30: criteria.v1.StepOutputCaptured.OutputsEntry
+	nil,                            // 31: criteria.v1.WaitResumed.PayloadEntry
+	nil,                            // 32: criteria.v1.ApprovalDecision.PayloadEntry
+	(*RunOutputs_Output)(nil),      // 33: criteria.v1.RunOutputs.Output
+	(*timestamppb.Timestamp)(nil),  // 34: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),        // 35: google.protobuf.Struct
 }
 var file_criteria_v1_events_proto_depIdxs = []int32{
-	33, // 0: criteria.v1.Envelope.ts:type_name -> google.protobuf.Timestamp
+	34, // 0: criteria.v1.Envelope.ts:type_name -> google.protobuf.Timestamp
 	2,  // 1: criteria.v1.Envelope.run_started:type_name -> criteria.v1.RunStarted
 	3,  // 2: criteria.v1.Envelope.run_completed:type_name -> criteria.v1.RunCompleted
 	4,  // 3: criteria.v1.Envelope.run_failed:type_name -> criteria.v1.RunFailed
@@ -2555,19 +2670,21 @@ var file_criteria_v1_events_proto_depIdxs = []int32{
 	25, // 23: criteria.v1.Envelope.step_iteration_item:type_name -> criteria.v1.StepIterationItem
 	26, // 24: criteria.v1.Envelope.run_outputs:type_name -> criteria.v1.RunOutputs
 	28, // 25: criteria.v1.Envelope.workflow_graphs:type_name -> criteria.v1.WorkflowGraphs
-	13, // 26: criteria.v1.Envelope.watch_ready:type_name -> criteria.v1.WatchReady
-	0,  // 27: criteria.v1.StepLog.stream:type_name -> criteria.v1.LogStream
-	34, // 28: criteria.v1.AdapterEvent.data:type_name -> google.protobuf.Struct
-	29, // 29: criteria.v1.StepOutputCaptured.outputs:type_name -> criteria.v1.StepOutputCaptured.OutputsEntry
-	30, // 30: criteria.v1.WaitResumed.payload:type_name -> criteria.v1.WaitResumed.PayloadEntry
-	31, // 31: criteria.v1.ApprovalDecision.payload:type_name -> criteria.v1.ApprovalDecision.PayloadEntry
-	32, // 32: criteria.v1.RunOutputs.outputs:type_name -> criteria.v1.RunOutputs.Output
-	27, // 33: criteria.v1.WorkflowGraphs.subworkflows:type_name -> criteria.v1.SubworkflowGraph
-	34, // [34:34] is the sub-list for method output_type
-	34, // [34:34] is the sub-list for method input_type
-	34, // [34:34] is the sub-list for extension type_name
-	34, // [34:34] is the sub-list for extension extendee
-	0,  // [0:34] is the sub-list for field type_name
+	29, // 26: criteria.v1.Envelope.agent_prompt_injected:type_name -> criteria.v1.AgentPromptInjected
+	13, // 27: criteria.v1.Envelope.watch_ready:type_name -> criteria.v1.WatchReady
+	0,  // 28: criteria.v1.StepLog.stream:type_name -> criteria.v1.LogStream
+	35, // 29: criteria.v1.AdapterEvent.data:type_name -> google.protobuf.Struct
+	30, // 30: criteria.v1.StepOutputCaptured.outputs:type_name -> criteria.v1.StepOutputCaptured.OutputsEntry
+	31, // 31: criteria.v1.WaitResumed.payload:type_name -> criteria.v1.WaitResumed.PayloadEntry
+	32, // 32: criteria.v1.ApprovalDecision.payload:type_name -> criteria.v1.ApprovalDecision.PayloadEntry
+	33, // 33: criteria.v1.RunOutputs.outputs:type_name -> criteria.v1.RunOutputs.Output
+	27, // 34: criteria.v1.WorkflowGraphs.subworkflows:type_name -> criteria.v1.SubworkflowGraph
+	34, // 35: criteria.v1.AgentPromptInjected.delivered_at:type_name -> google.protobuf.Timestamp
+	36, // [36:36] is the sub-list for method output_type
+	36, // [36:36] is the sub-list for method input_type
+	36, // [36:36] is the sub-list for extension type_name
+	36, // [36:36] is the sub-list for extension extendee
+	0,  // [0:36] is the sub-list for field type_name
 }
 
 func init() { file_criteria_v1_events_proto_init() }
@@ -2601,6 +2718,7 @@ func file_criteria_v1_events_proto_init() {
 		(*Envelope_StepIterationItem)(nil),
 		(*Envelope_RunOutputs)(nil),
 		(*Envelope_WorkflowGraphs)(nil),
+		(*Envelope_AgentPromptInjected)(nil),
 		(*Envelope_WatchReady)(nil),
 	}
 	type x struct{}
@@ -2609,7 +2727,7 @@ func file_criteria_v1_events_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_criteria_v1_events_proto_rawDesc), len(file_criteria_v1_events_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   32,
+			NumMessages:   33,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
