@@ -23,11 +23,13 @@ import (
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
-func heldPromptFixture(t *testing.T) (*PromptRouter, chan *pb.AgentPrompt, *promptInjectSink, *bytes.Buffer, string) {
+func heldPromptFixture(t *testing.T) (
+	rt *PromptRouter, promptCh chan *pb.AgentPrompt, sink *promptInjectSink, logOut *bytes.Buffer, callLog string,
+) {
 	t.Helper()
 	adapterBin := buildPromptableAdapter(t)
-	callLog := filepath.Join(t.TempDir(), "promptable-held-calls.log")
-	t.Setenv("PROMPTABLE_CALL_LOG", callLog)
+	callLogPath := filepath.Join(t.TempDir(), "promptable-held-calls.log")
+	t.Setenv("PROMPTABLE_CALL_LOG", callLogPath)
 
 	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
 		return adapterBin, nil
@@ -57,17 +59,17 @@ state "done" { terminal = true }
 adapter "promptable" "default" {}`)
 
 	runID, ownerID := "run-held", "agent-cri-259"
-	promptCh := make(chan *pb.AgentPrompt, 4)
-	sink := &promptInjectSink{promptCh: promptCh, runID: runID, owner: ownerID}
+	promptCh = make(chan *pb.AgentPrompt, 4)
+	sink = &promptInjectSink{promptCh: promptCh, runID: runID, owner: ownerID}
 
 	var logBuf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	r := NewPromptRouter(context.Background(), promptCh, runID, ownerID, g, sm, sink, logger)
-	if r == nil {
+	rt = NewPromptRouter(context.Background(), promptCh, runID, ownerID, g, sm, sink, logger)
+	if rt == nil {
 		t.Fatal("NewPromptRouter returned nil")
 	}
-	return r, promptCh, sink, &logBuf, callLog
+	return rt, promptCh, sink, &logBuf, callLogPath
 }
 
 // waitForHeld waits for the pump to park want prompt(s) for step via the
