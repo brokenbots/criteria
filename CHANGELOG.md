@@ -36,6 +36,14 @@ product version). The release tag and date are finalized by the release gate.
   parallel subworkflow scopes using the same adapter type no longer collide.
   Default `false` preserves byte-identical run-wide behavior and requires no
   workflow changes.
+- **Pinned image reference on provision_wanted (CRI-214 M14).** The
+  `provision_wanted` lifecycle event now carries `image_reference` — the
+  lockfile-pinned `container_image.ref` for the adapter, resolved through the
+  same effective-pin-set rule as the existing `digest`. An adapter whose
+  lockfile entry has no `container_image` block (binary-only adapters) leaves
+  the field empty rather than synthesizing an image, and `released` events
+  never carry one. Existing consumers ignore the unknown key; a pod builder can
+  now pull the pinned image directly instead of guessing from the adapter kind.
 - **SDK coordination point.** `criteria-go-adapter-sdk` is bumped to v0.5.3.
   The in-tree remote runner now forwards `CRITERIA_REMOTE_SCOPE` in its
   handshake, but the SDK's public `ServeRemote` does not yet expose a scope

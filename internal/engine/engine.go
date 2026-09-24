@@ -45,6 +45,7 @@ type AdapterLifecycleEvent struct {
 	AdapterName       string
 	AdapterType       string // adapter implementation kind (e.g. "shell", "copilot")
 	Digest            string // lockfile-pinned digest
+	ImageReference    string // lockfile-pinned container image reference (CRI-214 M14); empty when the adapter has none
 	ShimListenAddress string
 	TokenRef          string // path to the accept-token file; transition-window handoff
 	Token             string // wire-delivered per-scope accept token; empty for released events

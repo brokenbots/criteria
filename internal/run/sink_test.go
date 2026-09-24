@@ -321,6 +321,7 @@ func TestSink_OnAdapterLifecycleEvent_PublishesAdapterType(t *testing.T) {
 		EnvironmentType:   "remote",
 		EnvironmentName:   "prod",
 		Digest:            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ImageReference:    "ghcr.io/criteria-adapters/shell:1.2.3-image",
 		ShimListenAddress: "127.0.0.1:7778",
 		TokenRef:          "/run/data/tokens/intake.token",
 		Token:             "wire-accept-token-value",
@@ -348,6 +349,11 @@ func TestSink_OnAdapterLifecycleEvent_PublishesAdapterType(t *testing.T) {
 	}
 	if got := ae.Data.Fields["environment_name"].GetStringValue(); got != "prod" {
 		t.Errorf("environment_name: got %q want prod", got)
+	}
+	// CRI-214 M14: the lockfile-pinned image reference rides the event so
+	// the pod builder pulls the pinned image instead of guessing by kind.
+	if got := ae.Data.Fields["image_reference"].GetStringValue(); got != "ghcr.io/criteria-adapters/shell:1.2.3-image" {
+		t.Errorf("image_reference: got %q want ghcr.io/criteria-adapters/shell:1.2.3-image", got)
 	}
 	// CRI-236: the per-scope accept token rides the wire alongside token_ref.
 	if got := ae.Data.Fields["accept_token"].GetStringValue(); got != "wire-accept-token-value" {
