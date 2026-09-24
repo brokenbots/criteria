@@ -142,7 +142,7 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 	// both the server stream and the dual-write mirror.
 	emitWorkflowGraphsServer(ctx, log, sink, eventsMirror, graph)
 
-	eng, err := buildServerRunEngine(graph, loader, runSink, state, opts, fingerprint)
+	eng, err := buildServerRunEngine(graph, loader, runSink, state, opts, fingerprint, client.AgentPromptCh(), client.CriteriaID())
 	if err != nil {
 		return err
 	}
@@ -152,7 +152,7 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 	}
 	log.Info("run completed", "run_id", state.RunID)
 
-	if err := drainResumeCycles(ctx, log, loader, sink, runSink, client.ResumeCh(), state, graph, workflowDirFromPath(opts.workflowPath), eng, fingerprint); err != nil {
+	if err := drainResumeCycles(ctx, log, loader, sink, runSink, client.ResumeCh(), client.AgentPromptCh(), client.CriteriaID(), state, graph, workflowDirFromPath(opts.workflowPath), eng, fingerprint); err != nil {
 		return err
 	}
 
@@ -171,8 +171,9 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 // buildServerRunEngine wires the engine for a fresh server-mode run, including
 // the run data dir so per-scope remote sessions can rotate tokens. The
 // invocation fingerprint (CRI-125) is recorded in the run data directory and
-// drives CRI-304 cross-run per-scope adoption.
-func buildServerRunEngine(graph *workflow.FSMGraph, loader adapterhost.Loader, sink engine.Sink, state *localRunState, opts applyOptions, fingerprint string) (*engine.Engine, error) {
+// drives CRI-304 cross-run per-scope adoption. promptCh/ownerID wire the
+// run's agent-prompt path (ADR-0006 D1/D4); a nil promptCh disables it.
+func buildServerRunEngine(graph *workflow.FSMGraph, loader adapterhost.Loader, sink engine.Sink, state *localRunState, opts applyOptions, fingerprint string, promptCh <-chan *pb.AgentPrompt, promptOwnerID string) (*engine.Engine, error) {
 	auditPath, _ := auditLogPath(state.RunID)
 	auditWriter := adapterhost.NewFileAuditWriter(auditPath)
 	dataDir, err := runDataDir(state.RunID)
@@ -188,6 +189,7 @@ func buildServerRunEngine(graph *workflow.FSMGraph, loader adapterhost.Loader, s
 		engine.WithWorkflowDir(workflowDirFromPath(opts.workflowPath)),
 		engine.WithAuditWriter(auditWriter),
 		engine.WithDataDir(dataDir),
+		engine.WithAgentPrompts(promptCh, promptOwnerID, state.RunID),
 	}
 	engOpts = append(engOpts, engineAdoptionOptions(dataDir, fingerprint, state.RunID)...)
 	return engine.New(graph, loader, sink, engOpts...), nil
@@ -202,7 +204,7 @@ func buildServerRunEngine(graph *workflow.FSMGraph, loader adapterhost.Loader, s
 // data directory and lets each resumed engine adopt surviving per-scope
 // instances from prior invocations of the same run (CRI-304); callers without
 // a fingerprint (agent runs) pass "" and get neither marker nor adoption.
-func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost.Loader, sink *run.Sink, runSink engine.Sink, resumeCh <-chan *pb.ResumeRun, state *localRunState, graph *workflow.FSMGraph, workflowDir string, eng *engine.Engine, fingerprint string) error {
+func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost.Loader, sink *run.Sink, runSink engine.Sink, resumeCh <-chan *pb.ResumeRun, promptCh <-chan *pb.AgentPrompt, promptOwnerID string, state *localRunState, graph *workflow.FSMGraph, workflowDir string, eng *engine.Engine, fingerprint string) error {
 	dataDir, err := runDataDir(state.RunID)
 	if err != nil {
 		return fmt.Errorf("resolve run data dir: %w", err)
@@ -236,6 +238,9 @@ func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost
 			engine.WithWorkflowDir(workflowDir),
 			engine.WithDataDir(dataDir),
 		}
+		// ADR-0006: resumed engines stay wired to the run's prompt channel so
+		// injected prompts route to the replayed steps too.
+		resumedOpts = append(resumedOpts, engine.WithAgentPrompts(promptCh, promptOwnerID, state.RunID))
 		// CRI-304: resumed engines adopt surviving per-scope instances from
 		// prior invocations of the same run instead of rotating fresh tokens
 		// that would wedge the replay behind the shim's handshake timeout.

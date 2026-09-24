@@ -21,6 +21,9 @@ type Deps struct {
 	Sink                Sink
 	SubWorkflowResolver SubWorkflowResolver
 	BranchScheduler     BranchScheduler
+	// Prompts routes injected agent prompts (ADR-0006). Nil for engines
+	// built without a prompt channel; all node hooks are nil-safe.
+	Prompts *PromptRouter
 }
 
 // UnknownNodeError indicates the graph does not contain the requested node.

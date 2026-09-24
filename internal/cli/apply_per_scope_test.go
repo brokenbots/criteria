@@ -1306,7 +1306,7 @@ func TestDrainResumeCyclesPerScopeSessionsWiresDataDir(t *testing.T) {
 	errCh := make(chan error, 1)
 	done := make(chan struct{})
 	go func() {
-		errCh <- drainResumeCycles(drainCtx, log, loader, sink, sink, resumeCh, state, graph, filepath.Dir(wfPath), initialEng, "")
+		errCh <- drainResumeCycles(drainCtx, log, loader, sink, sink, resumeCh, nil, "", state, graph, filepath.Dir(wfPath), initialEng, "")
 		close(done)
 	}()
 

@@ -9,6 +9,7 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/brokenbots/criteria/events"
 	"github.com/brokenbots/criteria/internal/adapter"
@@ -200,6 +201,18 @@ func (s *LocalSink) OnStepOutcomeDefaulted(step, original, mapped string) {}
 // OnStepOutcomeUnknown is emitted when a step returns an outcome not in its
 // declared set and no outcome "default" block is configured (W15).
 func (s *LocalSink) OnStepOutcomeUnknown(step, outcome string) {}
+
+// OnAgentPromptInjected emits the agent.prompt_injected envelope exactly once
+// per delivered prompt (ADR-0006 D5).
+func (s *LocalSink) OnAgentPromptInjected(step, sessionID, prompt, caller string, deliveredAt time.Time) {
+	s.emit("AgentPromptInjected", &pb.AgentPromptInjected{
+		Step:        step,
+		SessionId:   sessionID,
+		Prompt:      prompt,
+		Caller:      caller,
+		DeliveredAt: timestamppb.New(deliveredAt),
+	})
+}
 
 // OnWorkflowGraphs emits the once-per-run WorkflowGraphs envelope at the
 // post-compile seam (CRI-278). The payload carries the pb message (protojson

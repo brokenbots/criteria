@@ -363,6 +363,10 @@ func (r *recordingClient) CloseSession(_ context.Context, _ *v2.CloseSessionRequ
 	return &v2.CloseSessionResponse{}, nil
 }
 
+func (r *recordingClient) Prompt(_ context.Context, req *PromptRequest) (*PromptResponse, error) {
+	return &PromptResponse{Accepted: false, Detail: "recording stub does not accept prompts"}, nil
+}
+
 // TestLoader_PopulatesAllowedOutcomes verifies that ExecuteRequest is
 // constructed with AllowedOutcomes derived from the step's declared
 // outcome set, sorted ascending.

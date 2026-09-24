@@ -1129,6 +1129,14 @@ func (p *rpcHandle) Inspect(ctx context.Context, sessionID string) (*v2.InspectR
 	return p.rpc.Inspect(ctx, &v2.InspectRequest{SessionId: sessionID})
 }
 
+// Prompt delivers a prompt into the adapter's live session over the adapter
+// v2 Prompt RPC (ADR-0006 D3). The SessionManager gates on the
+// supports_prompt capability and the prompt-capable narrow interface before
+// this is reached.
+func (p *rpcHandle) Prompt(ctx context.Context, req *PromptRequest) (*PromptResponse, error) {
+	return p.rpc.Prompt(ctx, req)
+}
+
 // structFromJSON unmarshals raw JSON bytes into a *structpb.Struct so that
 // reassembled AdapterEvent.payload_json chunks can be forwarded as the
 // standard payload type.

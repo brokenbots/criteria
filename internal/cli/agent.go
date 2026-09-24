@@ -106,6 +106,7 @@ type activeRun struct {
 	runID     string
 	cancel    context.CancelFunc
 	resumeCh  chan *pb.ResumeRun
+	promptCh  chan *pb.AgentPrompt
 	done      chan struct{}
 	pending   []*queuedAssignment
 	completed map[string]struct{} // terminal run ids observed by this process
@@ -193,7 +194,7 @@ func (a *activeRun) enqueue(assignment *pb.WorkflowAssignment, client *servertra
 // to start the next assignment; claiming and activating together makes a
 // double-start impossible. It returns nil when a run is already active or the
 // queue is empty.
-func (a *activeRun) claimNext(cancel context.CancelFunc, resumeCh chan *pb.ResumeRun, done chan struct{}) *queuedAssignment {
+func (a *activeRun) claimNext(cancel context.CancelFunc, resumeCh chan *pb.ResumeRun, promptCh chan *pb.AgentPrompt, done chan struct{}) *queuedAssignment {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.runID != "" || len(a.pending) == 0 {
@@ -204,6 +205,7 @@ func (a *activeRun) claimNext(cancel context.CancelFunc, resumeCh chan *pb.Resum
 	a.runID = qa.assignment.GetRunId()
 	a.cancel = cancel
 	a.resumeCh = resumeCh
+	a.promptCh = promptCh
 	a.done = done
 	return qa
 }
@@ -217,6 +219,7 @@ func (a *activeRun) finishRun() {
 	a.runID = ""
 	a.cancel = nil
 	a.resumeCh = nil
+	a.promptCh = nil
 	a.done = nil
 }
 
@@ -244,6 +247,30 @@ func (a *activeRun) resumeActive(msg *pb.ResumeRun) (matched bool, activeID stri
 	return true, activeID
 }
 
+// promptActive routes an injected agent prompt to the active run's prompt
+// channel (ADR-0006 D1.3). The channel is buffered like resumeCh and the send
+// is non-blocking: backpressure must not stall the agent control loop. A
+// prompt that finds the slot full is not silently discarded — the caller
+// records it as a typed DELIVERY_ERROR routing failure (matched=true,
+// routed=false); an unmatched run id is a NOT_FOUND routing failure.
+func (a *activeRun) promptActive(msg *pb.AgentPrompt) (matched, routed bool, activeID string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	activeID = a.runID
+	if msg == nil || msg.RunId != a.runID || a.promptCh == nil {
+		return false, false, activeID
+	}
+	select {
+	case a.promptCh <- msg:
+		return true, true, activeID
+	default:
+		// Slot full: the run's prompt channel is backed up (the router pump
+		// is mid-delivery). Report matched-but-not-routed so handlePrompt
+		// records the typed failure instead of dropping silently (R6).
+		return true, false, activeID
+	}
+}
+
 func (a *activeRun) shutdown() <-chan struct{} {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -265,8 +292,9 @@ func (a *activeRun) startNext(ctx context.Context, log *slog.Logger, defaultClie
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	resumeCh := make(chan *pb.ResumeRun, 1)
+	promptCh := make(chan *pb.AgentPrompt, 1)
 	done := make(chan struct{})
-	qa := a.claimNext(cancel, resumeCh, done)
+	qa := a.claimNext(cancel, resumeCh, promptCh, done)
 	if qa == nil {
 		cancel()
 		return
@@ -290,7 +318,7 @@ func (a *activeRun) startNext(ctx context.Context, log *slog.Logger, defaultClie
 		if client != defaultClient {
 			defer client.Close()
 		}
-		if err := executeAgentAssignment(ctx, runCtx, log, client, q.assignment, opts, resumeCh, a.markCompleted); err != nil {
+		if err := executeAgentAssignment(ctx, runCtx, log, client, q.assignment, opts, resumeCh, promptCh, a.markCompleted); err != nil {
 			log.Error("assignment execution failed", "run_id", q.assignment.GetRunId(), "error", err)
 		} else {
 			log.Info("assignment completed", "run_id", q.assignment.GetRunId())
@@ -329,6 +357,36 @@ func (l *agentLoop) handleResume(msg *pb.ResumeRun) {
 		return
 	}
 	l.log.Warn("received resume for inactive run", "run_id", msg.GetRunId(), "active_run_id", activeID)
+}
+
+// handlePrompt routes an injected agent prompt to the active run (ADR-0006
+// D1.3, mirroring handleResume). A prompt addressed to a non-active run is a
+// routing failure recorded with the engine's NOT_FOUND class; a prompt that
+// finds the run's prompt channel full is recorded with DELIVERY_ERROR.
+// Neither is ever a silent drop (R6: no prompt vanishes without a record).
+func (l *agentLoop) handlePrompt(msg *pb.AgentPrompt) {
+	matched, routed, activeID := l.active.promptActive(msg)
+	if routed {
+		l.log.Info("routing agent prompt to active run", "run_id", msg.GetRunId(), "step", msg.GetStep(), "active_run_id", activeID)
+		return
+	}
+	if matched {
+		l.log.Error("agent prompt delivery failed",
+			"class", engine.PromptFailDeliveryError,
+			"run_id", msg.GetRunId(),
+			"step", msg.GetStep(),
+			"caller_criteria_id", msg.GetCallerCriteriaId(),
+			"reason", fmt.Sprintf("active run %q prompt channel is full; the prompt was not enqueued", activeID),
+		)
+		return
+	}
+	l.log.Error("agent prompt delivery failed",
+		"class", engine.PromptFailNotFound,
+		"run_id", msg.GetRunId(),
+		"step", msg.GetStep(),
+		"caller_criteria_id", msg.GetCallerCriteriaId(),
+		"reason", fmt.Sprintf("prompt addressed to run %q which is not the active run %q", msg.GetRunId(), activeID),
+	)
 }
 
 func (l *agentLoop) handleAssignment(assignment *pb.WorkflowAssignment) {
@@ -438,6 +496,9 @@ func runAgent(ctx context.Context, opts *agentOptions) error {
 		case resumeMsg := <-client.ResumeCh():
 			loop.handleResume(resumeMsg)
 
+		case promptMsg := <-client.AgentPromptCh():
+			loop.handlePrompt(promptMsg)
+
 		case assignment := <-client.AssignmentCh():
 			loop.handleAssignment(assignment)
 		}
@@ -544,7 +605,7 @@ func cleanupAgentRunState(runID string) {
 // executeAgentAssignment materialises the assignment source into a temporary
 // workflow directory, compiles and executes it, and reports progress via a
 // per-run publisher.
-func executeAgentAssignment(agentCtx, runCtx context.Context, log *slog.Logger, client *servertrans.Client, assignment *pb.WorkflowAssignment, opts *agentOptions, resumeCh <-chan *pb.ResumeRun, markCompleted func(string)) error {
+func executeAgentAssignment(agentCtx, runCtx context.Context, log *slog.Logger, client *servertrans.Client, assignment *pb.WorkflowAssignment, opts *agentOptions, resumeCh <-chan *pb.ResumeRun, promptCh <-chan *pb.AgentPrompt, markCompleted func(string)) error {
 	runID := assignment.GetRunId()
 	dir, workflowPath, err := prepareAgentAssignmentDir(assignment)
 	if err != nil {
@@ -583,7 +644,11 @@ func executeAgentAssignment(agentCtx, runCtx context.Context, log *slog.Logger, 
 	}
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(runCtx)) }()
 
-	eng, sink, runSink, state, err := buildAgentRun(agentCtx, runCtx, log, client, assignment, opts, publisher, graph, loader, dir, workflowPath, resumeEngineOptions(cp, reattachResp, graph, log, runID)...)
+	engOpts := resumeEngineOptions(cp, reattachResp, graph, log, runID)
+	// ADR-0006: carry this run's prompt channel and the agent's owner identity
+	// into the engine so delivered prompts can be authorized and routed (D1/D4).
+	engOpts = append(engOpts, engine.WithAgentPrompts(promptCh, client.CriteriaID(), runID))
+	eng, sink, runSink, state, err := buildAgentRun(agentCtx, runCtx, log, client, assignment, opts, publisher, graph, loader, dir, workflowPath, engOpts...)
 	if err != nil {
 		reportAgentAssignmentFailed(runCtx, log, publisher, runID, err)
 		return err
@@ -595,7 +660,7 @@ func executeAgentAssignment(agentCtx, runCtx context.Context, log *slog.Logger, 
 		log.Error("failed to persist run state", "run_id", runID, "error", err)
 	}
 
-	if err := runAndDrain(agentCtx, runCtx, log, eng, loader, sink, runSink, resumeCh, state, graph, dir, runID, publisher, cp, reattachResp); err != nil {
+	if err := runAndDrain(agentCtx, runCtx, log, eng, loader, sink, runSink, resumeCh, promptCh, state, graph, dir, runID, publisher, cp, reattachResp); err != nil {
 		return err
 	}
 
@@ -788,7 +853,7 @@ func buildAgentRun(agentCtx, runCtx context.Context, log *slog.Logger, client *s
 // events through the publisher. It returns the original run error (if any).
 // When cp and reattachResp are non-nil, the engine resumes from the server's
 // reported current step and attempt instead of starting from the beginning.
-func runAndDrain(agentCtx, runCtx context.Context, log *slog.Logger, eng *engine.Engine, loader adapterhost.Loader, sink *run.Sink, runSink engine.Sink, resumeCh <-chan *pb.ResumeRun, state *localRunState, graph *workflow.FSMGraph, workflowDir, runID string, publisher *servertrans.RunPublisher, cp *StepCheckpoint, reattachResp *pb.ReattachRunResponse) error {
+func runAndDrain(agentCtx, runCtx context.Context, log *slog.Logger, eng *engine.Engine, loader adapterhost.Loader, sink *run.Sink, runSink engine.Sink, resumeCh <-chan *pb.ResumeRun, promptCh <-chan *pb.AgentPrompt, state *localRunState, graph *workflow.FSMGraph, workflowDir, runID string, publisher *servertrans.RunPublisher, cp *StepCheckpoint, reattachResp *pb.ReattachRunResponse) error {
 	var runErr error
 	resuming := cp != nil && reattachResp != nil && reattachResp.CanResume && reattachResp.CurrentStep != ""
 	if resuming {
@@ -816,7 +881,7 @@ func runAndDrain(agentCtx, runCtx context.Context, log *slog.Logger, eng *engine
 	// non-terminal events are still drained below so the server can ack them
 	// and the next process replays by correlation ID.
 	if !shutdown {
-		if err := drainResumeCycles(runCtx, log, loader, sink, runSink, resumeCh, state, graph, workflowDir, eng, ""); err != nil {
+		if err := drainResumeCycles(runCtx, log, loader, sink, runSink, resumeCh, promptCh, state.CriteriaID, state, graph, workflowDir, eng, ""); err != nil {
 			return err
 		}
 	}

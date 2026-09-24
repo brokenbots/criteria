@@ -174,6 +174,10 @@ func (s *RedactingSink) OnStepOutcomeUnknown(step, outcome string) {
 	s.inner.OnStepOutcomeUnknown(s.reg.Redact(step), s.reg.Redact(outcome))
 }
 
+func (s *RedactingSink) OnAgentPromptInjected(step, sessionID, prompt, caller string, deliveredAt time.Time) {
+	s.inner.OnAgentPromptInjected(s.reg.Redact(step), s.reg.Redact(sessionID), s.reg.Redact(prompt), s.reg.Redact(caller), deliveredAt)
+}
+
 func (s *RedactingSink) StepEventSink(step string) adapter.EventSink {
 	inner := s.inner.StepEventSink(step)
 	if inner == nil {

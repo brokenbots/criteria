@@ -77,7 +77,9 @@ func (s *switchSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent
 func (s *switchSink) OnRunOutputs([]map[string]string)                            {}
 func (s *switchSink) OnStepOutcomeDefaulted(string, string, string)               {}
 func (s *switchSink) OnStepOutcomeUnknown(string, string)                         {}
-func (s *switchSink) StepEventSink(string) adapter.EventSink                      { return noopAdapterSink{} }
+
+func (s *switchSink) OnAgentPromptInjected(string, string, string, string, time.Time) {}
+func (s *switchSink) StepEventSink(string) adapter.EventSink                          { return noopAdapterSink{} }
 
 // --- Unit tests for switchNode.Evaluate ---
 

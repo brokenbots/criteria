@@ -17,6 +17,9 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
+
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapter/environment/remote"
 	"github.com/brokenbots/criteria/internal/adapter/environment/sandbox"
@@ -136,6 +139,11 @@ type Sink interface {
 	// declared set and no outcome "default" block is configured (W15).
 	// This precedes a run failure.
 	OnStepOutcomeUnknown(step, outcome string)
+	// OnAgentPromptInjected is emitted exactly once, at the moment an injected
+	// agent prompt is delivered into the addressed step's live adapter session
+	// (ADR-0006 D5). It is never emitted at receipt and never on delivery
+	// failure; failures are recorded as structured logs instead.
+	OnAgentPromptInjected(step, sessionID, prompt, caller string, deliveredAt time.Time)
 	// StepEventSink returns the per-step adapter sink (logs + adapter events).
 	StepEventSink(step string) adapter.EventSink
 }
@@ -207,7 +215,11 @@ type Engine struct {
 	// WS17: liveSessions holds the active SessionManager while a run is in
 	// progress, enabling Pause/Resume/Inspect from outside runLoop.
 	liveSessions *adapterhost.SessionManager
-	mu           sync.RWMutex
+	// livePrompts holds the active PromptRouter while a run is in progress.
+	// Tests read it to assert router balance directly (CRI-259); production
+	// code only routes through Deps.Prompts.
+	livePrompts *PromptRouter
+	mu          sync.RWMutex
 	// workingDirAllowedRoots restricts environment working_directory values at
 	// run start. A resolved path that is not under one of these roots (when any
 	// are configured) or that contains ".." is rejected eagerly during adapter
@@ -232,6 +244,16 @@ type Engine struct {
 	// markers for replays that follow a checkpoint-consuming resume; empty
 	// leaves fresh rotation untouched.
 	adoptableRunDirs []string
+
+	// ADR-0006 (CRI-259): agentPromptCh is this run's injected-prompt channel,
+	// fed by the CLI from the orchestrator's Control stream. promptOwnerID is
+	// the run owner identity used by the delivery-side caller re-check (D4).
+	// promptRunID is the run id AgentPrompt messages are addressed to; it
+	// defaults to the snapshot run id when unset.
+	// A nil channel disables the prompt path entirely.
+	agentPromptCh <-chan *pb.AgentPrompt
+	promptOwnerID string
+	promptRunID   string
 }
 
 func New(graph *workflow.FSMGraph, loader adapterhost.Loader, sink Sink, opts ...Option) *Engine {
@@ -363,6 +385,31 @@ func (e *Engine) InspectSession(ctx context.Context, name string) (*v2.InspectRe
 		return nil, errors.New("no active run to inspect")
 	}
 	return sessions.InspectSession(ctx, name)
+}
+
+// livePromptRouter returns the PromptRouter of the running run, or nil
+// outside a run. Tests use it to assert router balance directly (CRI-259);
+// production code routes only through Deps.Prompts.
+func (e *Engine) livePromptRouter() *PromptRouter {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.livePrompts
+}
+
+// setLiveRunState records the run's live session manager and prompt router;
+// clearLiveRunState drops both when the run ends.
+func (e *Engine) setLiveRunState(sessions *adapterhost.SessionManager, prompts *PromptRouter) {
+	e.mu.Lock()
+	e.liveSessions = sessions
+	e.livePrompts = prompts
+	e.mu.Unlock()
+}
+
+func (e *Engine) clearLiveRunState() {
+	e.mu.Lock()
+	e.liveSessions = nil
+	e.livePrompts = nil
+	e.mu.Unlock()
 }
 
 // effectivePinSet resolves the run's effective lockfile by one shared rule:
@@ -595,16 +642,12 @@ func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManag
 		firstStep:                 true,
 		firstStepAttempt:          firstStepAttempt,
 	}
-	deps := e.buildDeps(sessions, sink)
+	prompts := NewPromptRouter(ctx, e.agentPromptCh, e.effectivePromptRunID(), e.promptOwnerID, e.graph, sessions, sink, e.logOrDefault())
+	deps := e.buildDeps(sessions, sink, prompts)
+	defer prompts.Stop()
 
-	e.mu.Lock()
-	e.liveSessions = sessions
-	e.mu.Unlock()
-	defer func() {
-		e.mu.Lock()
-		e.liveSessions = nil
-		e.mu.Unlock()
-	}()
+	defer e.clearLiveRunState()
+	e.setLiveRunState(sessions, prompts)
 
 	e.liveRunState = st
 	for {
@@ -963,14 +1006,33 @@ func (e *Engine) varValueFromScope(varObj cty.Value, name string, node *workflow
 }
 
 // buildDeps constructs the Deps bundle injected into each node's Evaluate call.
-func (e *Engine) buildDeps(sessions *adapterhost.SessionManager, sink Sink) Deps {
+func (e *Engine) buildDeps(sessions *adapterhost.SessionManager, sink Sink, prompts *PromptRouter) Deps {
 	return Deps{
 		Sessions:            sessions,
 		Loader:              e.loader,
 		Sink:                sink,
 		SubWorkflowResolver: e.subWorkflowResolver,
 		BranchScheduler:     e.branchScheduler,
+		Prompts:             prompts,
 	}
+}
+
+// promptRunID returns the run id AgentPrompt messages are addressed to,
+// defaulting to the snapshot run id.
+func (e *Engine) effectivePromptRunID() string {
+	if e.promptRunID != "" {
+		return e.promptRunID
+	}
+	return e.runID
+}
+
+// logOrDefault returns the engine's structured logger, falling back to the
+// slog default.
+func (e *Engine) logOrDefault() *slog.Logger {
+	if e.log != nil {
+		return e.log
+	}
+	return slog.Default()
 }
 
 // advanceTo sets st.Current to next, moving the run forward to the next node.

@@ -171,6 +171,14 @@ func (m *MultiSink) OnRunOutputs(outputs []map[string]string) {
 	}
 }
 
+// OnAgentPromptInjected fans the prompt-injected event to all child sinks
+// (ADR-0006 D5).
+func (m *MultiSink) OnAgentPromptInjected(step, sessionID, prompt, caller string, deliveredAt time.Time) {
+	for _, c := range m.children {
+		c.OnAgentPromptInjected(step, sessionID, prompt, caller, deliveredAt)
+	}
+}
+
 // OnStepOutcomeDefaulted fans the event to all child sinks (W15).
 func (m *MultiSink) OnStepOutcomeDefaulted(step, original, mapped string) {
 	for _, c := range m.children {

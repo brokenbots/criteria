@@ -228,9 +228,11 @@ func (s *integrationSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycle
 func (s *integrationSink) OnRunOutputs([]map[string]string)                             {}
 func (s *integrationSink) OnStepOutcomeDefaulted(string, string, string)                {}
 func (s *integrationSink) OnStepOutcomeUnknown(string, string)                          {}
-func (s *integrationSink) StepEventSink(step string) adapter.EventSink                  { return s }
-func (s *integrationSink) Log(stream string, line []byte)                               {}
-func (s *integrationSink) Adapter(kind string, data any)                                {}
+
+func (s *integrationSink) OnAgentPromptInjected(string, string, string, string, time.Time) {}
+func (s *integrationSink) StepEventSink(step string) adapter.EventSink                     { return s }
+func (s *integrationSink) Log(stream string, line []byte)                                  {}
+func (s *integrationSink) Adapter(kind string, data any)                                   {}
 
 // recordingAdapter is a minimal in-process adapter that records the resolved
 // "command" input so tests can assert interpolation produced the expected

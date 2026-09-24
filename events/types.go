@@ -104,6 +104,8 @@ func setPayload(env *pb.Envelope, payload any) { //nolint:funlen,gocyclo // type
 		env.Payload = &pb.Envelope_RunOutputs{RunOutputs: p}
 	case *pb.WorkflowGraphs:
 		env.Payload = &pb.Envelope_WorkflowGraphs{WorkflowGraphs: p}
+	case *pb.AgentPromptInjected:
+		env.Payload = &pb.Envelope_AgentPromptInjected{AgentPromptInjected: p}
 	default:
 		panic(fmt.Sprintf("events.NewEnvelope: unsupported payload type %T", payload))
 	}
@@ -170,6 +172,8 @@ func TypeString(env *pb.Envelope) string { //nolint:funlen,gocyclo // discrimina
 		return "run.outputs"
 	case *pb.Envelope_WorkflowGraphs:
 		return "workflow.graphs"
+	case *pb.Envelope_AgentPromptInjected:
+		return "agent.prompt_injected"
 	default:
 		return ""
 	}

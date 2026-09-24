@@ -629,7 +629,7 @@ func TestActiveRun_ClaimNext_HandsOffQueuedRunAfterFinish(t *testing.T) {
 	a.enqueue(&pb.WorkflowAssignment{RunId: "run-b"}, nil)
 
 	// While run-a is active the queued assignment must not be claimed.
-	if qa := a.claimNext(func() {}, make(chan *pb.ResumeRun, 1), make(chan struct{})); qa != nil {
+	if qa := a.claimNext(func() {}, make(chan *pb.ResumeRun, 1), make(chan *pb.AgentPrompt, 1), make(chan struct{})); qa != nil {
 		t.Fatalf("claimNext claimed %q while run-a is still active", qa.assignment.GetRunId())
 	}
 
@@ -637,14 +637,14 @@ func TestActiveRun_ClaimNext_HandsOffQueuedRunAfterFinish(t *testing.T) {
 	// busy elsewhere, so the done channel is cleared before anyone observes
 	// it. The queued assignment must still be claimable.
 	a.finishRun()
-	qa := a.claimNext(func() {}, make(chan *pb.ResumeRun, 1), make(chan struct{}))
+	qa := a.claimNext(func() {}, make(chan *pb.ResumeRun, 1), make(chan *pb.AgentPrompt, 1), make(chan struct{}))
 	if qa == nil || qa.assignment.GetRunId() != "run-b" {
 		t.Fatalf("claimNext after finishRun returned %v, want run-b", qa)
 	}
 	if got := a.activeRunID(); got != "run-b" {
 		t.Fatalf("activeRunID after claim = %q, want run-b", got)
 	}
-	if a.claimNext(func() {}, make(chan *pb.ResumeRun, 1), make(chan struct{})) != nil {
+	if a.claimNext(func() {}, make(chan *pb.ResumeRun, 1), make(chan *pb.AgentPrompt, 1), make(chan struct{})) != nil {
 		t.Fatal("second claimNext succeeded while run-b is active")
 	}
 }
@@ -667,7 +667,7 @@ func TestActiveRun_ClaimNext_ConcurrentClaimsSingleWinner(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			if a.claimNext(func() {}, make(chan *pb.ResumeRun, 1), make(chan struct{})) != nil {
+			if a.claimNext(func() {}, make(chan *pb.ResumeRun, 1), make(chan *pb.AgentPrompt, 1), make(chan struct{})) != nil {
 				wins.Add(1)
 			}
 		}()

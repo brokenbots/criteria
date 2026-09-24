@@ -192,10 +192,22 @@ message SendPromptRequest {
   string run_id = 1;
   string step = 2;
   string prompt = 3;
+  // session_id optionally addresses a specific live adapter session
+  // (ADR-0006 D2). Empty means the agent resolves the step's live session.
+  string session_id = 4;
+  // caller is the Criteria identity issuing the prompt (ADR-0006 D4);
+  // re-checked at delivery against the run's owner.
+  string caller = 5;
 }
 
 message SendPromptResponse {
   google.protobuf.Timestamp issued_at = 1;
+  // accepted reports whether the agent accepted the prompt for delivery
+  // (ADR-0006 D6). False means the prompt was not delivered; detail carries
+  // the typed rejection reason.
+  bool accepted = 2;
+  // detail carries acceptance detail or the typed rejection reason.
+  string detail = 3;
 }
 
 // WorkflowAssignmentState enumerates the possible states of an operator-

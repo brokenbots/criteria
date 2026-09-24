@@ -31,6 +31,12 @@ type fakeTransport struct {
 	// resumeCh is returned by ResumeCh().
 	resumeCh chan *pb.ResumeRun
 
+	// promptCh is returned by AgentPromptCh().
+	promptCh chan *pb.AgentPrompt
+
+	// criteriaID is returned by CriteriaID().
+	criteriaID string
+
 	// published accumulates envelopes passed to Publish.
 	published []*pb.Envelope
 }
@@ -51,6 +57,15 @@ func (f *fakeTransport) ResumeCh() <-chan *pb.ResumeRun {
 	}
 	return f.resumeCh
 }
+
+func (f *fakeTransport) AgentPromptCh() <-chan *pb.AgentPrompt {
+	if f.promptCh == nil {
+		f.promptCh = make(chan *pb.AgentPrompt)
+	}
+	return f.promptCh
+}
+
+func (f *fakeTransport) CriteriaID() string { return f.criteriaID }
 
 func (f *fakeTransport) Publish(_ context.Context, env *pb.Envelope) {
 	f.published = append(f.published, env)

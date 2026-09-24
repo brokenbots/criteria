@@ -181,7 +181,8 @@ message ControlSubscribeRequest {
 message ControlMessage {
   oneof command {
     RunCancel run_cancel = 1;
-    AgentPrompt agent_prompt = 2; // Phase 2.3; stub in 1.1.
+    // AgentPrompt carries a user prompt for the addressed step (ADR-0006).
+    AgentPrompt agent_prompt = 2;
     // ControlReady is sent once, immediately after the server accepts the
     // Control subscription. It flushes the response headers so the Connect
     // client's call returns to the caller, and signals that subsequent
@@ -222,11 +223,24 @@ message RunCancel {
   string reason = 2;
 }
 
-// AgentPrompt forwards a user prompt to a running agent step. Phase 2.3.
+// AgentPrompt forwards a user prompt to a running agent step (ADR-0006). The
+// orchestrator enqueues it on the owning agent's Control stream; the agent
+// delivers it into the addressed step's live adapter session.
 message AgentPrompt {
   string run_id = 1;
   string step = 2;
   string prompt = 3;
+  // session_id optionally addresses a specific live adapter session (ADR-0006
+  // D2). Empty means the agent resolves the addressed step's live session
+  // authoritatively; a non-empty value that does not match the live session
+  // is a delivery failure, never a silent mismatch.
+  string session_id = 4;
+  // issued_at is when the orchestrator accepted the prompt for delivery.
+  google.protobuf.Timestamp issued_at = 5;
+  // caller_criteria_id identifies the Criteria identity that issued the
+  // prompt (ADR-0006 D4). The agent re-checks it at delivery against the
+  // run's owner; on mismatch the prompt is not delivered.
+  string caller_criteria_id = 6;
 }
 
 // ControlReady is an attach acknowledgement sent once at stream start.

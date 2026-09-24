@@ -111,3 +111,8 @@ issues:
       linters:
         - gocritic
       text: 'hugeParam: policy is heavy \(88 bytes\); consider passing it by pointer' # WS06: public API signature specified in workstream; pointer conversion would break callers
+    # --- kept gocritic hugeParam: engine.Deps is a 10-word by-value parameter by design; ADR-0006 (CRI-259) added the Prompts *PromptRouter field, pushing the struct from 72 to 80 bytes and crossing the 80-byte threshold across all node/lifecycle Run signatures ---
+    - path: internal/engine/
+      linters:
+        - gocritic
+      text: 'hugeParam: deps is heavy \(\d+ bytes\); consider passing it by pointer' # ADR-0006: Deps grew to 80 bytes when the Prompts router field was added (CRI-259); by-pointer conversion of the 40+ node/lifecycle signatures is a dedicated refactor scope

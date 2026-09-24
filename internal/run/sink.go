@@ -12,6 +12,7 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/brokenbots/criteria/events"
 	"github.com/brokenbots/criteria/internal/adapter"
@@ -265,6 +266,19 @@ func (s *Sink) OnRunOutputs(outputs []map[string]string) {
 		})
 	}
 	s.publish(&pb.RunOutputs{Outputs: pbOutputs})
+}
+
+// OnAgentPromptInjected publishes the agent.prompt_injected envelope exactly
+// once per delivered prompt (ADR-0006 D5). Never emitted at receipt or on
+// delivery failure.
+func (s *Sink) OnAgentPromptInjected(step, sessionID, prompt, caller string, deliveredAt time.Time) {
+	s.publish(&pb.AgentPromptInjected{
+		Step:        step,
+		SessionId:   sessionID,
+		Prompt:      prompt,
+		Caller:      caller,
+		DeliveredAt: timestamppb.New(deliveredAt),
+	})
 }
 
 // OnWorkflowGraphs publishes the once-per-run WorkflowGraphs envelope at the
