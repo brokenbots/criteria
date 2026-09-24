@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -123,6 +124,17 @@ type SessionManager struct {
 	// listen_address each get their own shim. Dispatch falls back to
 	// remoteShim when an environment has no dedicated entry.
 	remoteShimsByEnv map[string]RemoteShim
+
+	// remoteShimsBorrowed is set when this SessionManager's remote shims were
+	// borrowed from a parent SM (BorrowRemoteProvisioningFrom) rather than started by
+	// it. A parallel subworkflow iteration receives its own SessionManager for
+	// local session isolation, but the remote shim is a single phone-home
+	// listener per environment that multiplexes every scope, so the iteration
+	// must share the parent's shim instead of starting its own (which would
+	// collide on the fixed listen_address). Borrowed shims are owned by the
+	// parent: Shutdown must not Stop them, or one finished iteration would tear
+	// down the listener the sibling iterations and the root run still use.
+	remoteShimsBorrowed bool
 
 	// LifecycleSink receives adapter provisioning events. When a verified-only
 	// adapter is promoted to a bound session, "opened" is emitted through this
@@ -348,6 +360,59 @@ func (m *SessionManager) SetRemoteShimForEnv(envKey string, shim RemoteShim) {
 	}
 	m.remoteShimsByEnv[envKey] = shim
 	m.remoteShim = shim
+}
+
+// BorrowRemoteProvisioningFrom copies src's remote-provisioning state into m
+// WITHOUT taking ownership of the shims. m then serves and registers scopes on
+// the same shared shims (one phone-home listener per environment, multiplexed
+// across callers), but m.Shutdown will not Stop them — the owning parent SM
+// does that at run end. It also copies the VerifyGraph-populated adapter caches
+// (graphAdapters, adapterDirs, deferredRemoteAdapters) so isRemoteAdapter on m
+// recognises the parent-verified adapters as remote instead of falling through
+// to a local OCI resolution (CRI-269 keeps the DECLARING graph in these caches,
+// so subworkflow-body adapters resolve correctly).
+//
+// This is how a parallel subworkflow iteration, which gets its own
+// SessionManager for local session isolation, still reaches the remote
+// environment: without the shims, provisioning fails with "no remote shim
+// registered"; without the caches, the adapter is dispatched locally and not
+// found. Each iteration still rotates a DISTINCT scope, so scope isolation and
+// per-scope provisioning events are preserved.
+func (m *SessionManager) BorrowRemoteProvisioningFrom(src *SessionManager) {
+	if src == nil || src == m {
+		return
+	}
+	src.mu.Lock()
+	def := src.remoteShim
+	byEnv := maps.Clone(src.remoteShimsByEnv)
+	graphAdapters := maps.Clone(src.graphAdapters)
+	adapterDirs := maps.Clone(src.adapterDirs)
+	deferred := maps.Clone(src.deferredRemoteAdapters)
+	src.mu.Unlock()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if def != nil || len(byEnv) > 0 {
+		m.remoteShim = def
+		m.remoteShimsByEnv = mergeMapInto(m.remoteShimsByEnv, byEnv)
+		m.remoteShimsBorrowed = true
+	}
+	m.graphAdapters = mergeMapInto(m.graphAdapters, graphAdapters)
+	m.adapterDirs = mergeMapInto(m.adapterDirs, adapterDirs)
+	m.deferredRemoteAdapters = mergeMapInto(m.deferredRemoteAdapters, deferred)
+}
+
+// mergeMapInto copies every entry of src into dst and returns dst, allocating
+// dst from src when dst is nil. A nil/empty src leaves dst untouched.
+func mergeMapInto[K comparable, V any](dst, src map[K]V) map[K]V {
+	if len(src) == 0 {
+		return dst
+	}
+	if dst == nil {
+		return src
+	}
+	maps.Copy(dst, src)
+	return dst
 }
 
 // RemoteShim returns the currently registered remote shim (may be nil).
@@ -2380,11 +2445,17 @@ func (m *SessionManager) takeForShutdown() ([]RemoteShim, []*Session) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	shims := make([]RemoteShim, 0, len(m.remoteShimsByEnv)+1)
-	if m.remoteShim != nil {
-		shims = append(shims, m.remoteShim)
-	}
-	for _, s := range m.remoteShimsByEnv {
-		shims = append(shims, s)
+	// Borrowed shims are owned by a parent SM (BorrowRemoteProvisioningFrom); this SM
+	// only serves scopes on them, so it must not Stop them here — doing so would
+	// tear down the shared phone-home listener the parent run and sibling
+	// parallel iterations still depend on.
+	if !m.remoteShimsBorrowed {
+		if m.remoteShim != nil {
+			shims = append(shims, m.remoteShim)
+		}
+		for _, s := range m.remoteShimsByEnv {
+			shims = append(shims, s)
+		}
 	}
 	sessions := make([]*Session, 0, len(m.sessions))
 	for name, sess := range m.sessions {
