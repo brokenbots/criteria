@@ -34,6 +34,10 @@ type promptableService struct {
 
 	mu       sync.Mutex
 	sessions map[string]struct{}
+	// executes counts Execute invocations in this process. fail_first (see
+	// Execute) fails the first one and lets later attempts succeed, so tests
+	// can drive the engine's multi-attempt (retry) loop.
+	executes int
 }
 
 func (s *promptableService) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse, error) {
@@ -63,6 +67,15 @@ func (s *promptableService) Execute(ctx context.Context, req *v2.ExecuteRequest,
 	s.mu.Unlock()
 	if !ok {
 		return fmt.Errorf("unknown session %q", req.GetSessionId())
+	}
+	if req.GetInput()["fail_first"] == "true" {
+		s.mu.Lock()
+		first := s.executes == 0
+		s.executes++
+		s.mu.Unlock()
+		if first {
+			return errors.New("transient failure on the first attempt")
+		}
 	}
 	if rawDelay := req.GetInput()["delay_ms"]; rawDelay != "" {
 		delayMS, err := strconv.Atoi(rawDelay)

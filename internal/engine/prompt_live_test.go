@@ -75,6 +75,18 @@ type promptInjectSink struct {
 	callLog string
 	settle  time.Duration
 
+	// iterationGate, when set, is invoked from OnStepIterationStarted so a
+	// test can act on the run loop in the window between two iterations of
+	// the same step (after the previous attempt loop's deferred endStep and
+	// before the next iteration's beginExecute).
+	iterationGate func(index int)
+	// sendOnTransition, when set, is sent once on the first step
+	// transition: the attempt loop's deferred endStep has run by then, so
+	// the router sees a completed step. Pins the completed-step
+	// NO_ACTIVE_SESSION branch.
+	sendOnTransition   *pb.AgentPrompt
+	transitionSendOnce sync.Once
+
 	mu           sync.Mutex
 	markers      []string
 	injected     []promptInjectedRecord
@@ -92,6 +104,32 @@ func (s *promptInjectSink) OnStepOutcome(step, _ string, _ time.Duration, _ erro
 	s.mu.Lock()
 	s.markers = append(s.markers, "outcome:"+step)
 	s.mu.Unlock()
+}
+
+func (s *promptInjectSink) OnStepTransition(from, to, via string) {
+	s.fakeSink.OnStepTransition(from, to, via)
+	s.mu.Lock()
+	msg := s.sendOnTransition
+	s.mu.Unlock()
+	if msg == nil {
+		return
+	}
+	s.transitionSendOnce.Do(func() {
+		select {
+		case s.promptCh <- msg:
+		case <-time.After(10 * time.Second):
+			s.mu.Lock()
+			s.sendFailures++
+			s.mu.Unlock()
+		}
+	})
+}
+
+func (s *promptInjectSink) OnStepIterationStarted(step string, index int, item string, anyFailed bool) {
+	s.fakeSink.OnStepIterationStarted(step, index, item, anyFailed)
+	if s.iterationGate != nil {
+		s.iterationGate(index)
+	}
 }
 
 func (s *promptInjectSink) OnAgentPromptInjected(step, sessionID, prompt, caller string, deliveredAt time.Time) {
@@ -215,7 +253,18 @@ func TestEngineAgentPromptLiveDelivery(t *testing.T) {
 	runID := "run-prompt-live"
 	ownerID := "agent-cri-259"
 	promptCh := make(chan *pb.AgentPrompt, 8)
-	sink := &promptInjectSink{promptCh: promptCh, runID: runID, owner: ownerID, callLog: callLog}
+	// Prompt 4 is sent on the first step transition — after step "a"'s
+	// attempt loop exited (the deferred endStep ran), during the settle
+	// wait — so it pins the completed-step NO_ACTIVE_SESSION branch (no
+	// hold, no retroactive injection).
+	completed := &pb.AgentPrompt{
+		RunId:            runID,
+		Step:             "a",
+		Prompt:           "after completion",
+		CallerCriteriaId: ownerID,
+		IssuedAt:         timestamppb.Now(),
+	}
+	sink := &promptInjectSink{promptCh: promptCh, runID: runID, owner: ownerID, callLog: callLog, sendOnTransition: completed}
 
 	var logBuf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -333,11 +382,14 @@ func TestEngineAgentPromptLiveDelivery(t *testing.T) {
 
 	// Exit criterion 2: the misaddressed prompt was recorded as a typed
 	// routing failure, never delivered (exactly one injected event above).
-	// Exit criterion 5-adjacent R5: the stray-step prompt is NO_ACTIVE_SESSION.
-	for _, class := range []string{"NOT_FOUND", "NO_ACTIVE_SESSION"} {
-		if !strings.Contains(logBuf.String(), "class="+class) {
-			t.Errorf("delivery failure log missing typed class %s; log:\n%s", class, logBuf.String())
-		}
+	// Exit criterion 5-adjacent R5: the stray-step prompt AND the
+	// completed-step prompt (sent after the attempt loop exited) both resolve
+	// NO_ACTIVE_SESSION at arrival — exactly two occurrences, neither held.
+	if got := strings.Count(logBuf.String(), "class="+PromptFailNoActiveSession); got != 2 {
+		t.Errorf("NO_ACTIVE_SESSION failure logs = %d, want 2 (stray step + completed step); log:\n%s", got, logBuf.String())
+	}
+	if got := strings.Count(logBuf.String(), "class="+PromptFailNotFound); got != 1 {
+		t.Errorf("NOT_FOUND failure logs = %d, want 1; log:\n%s", got, logBuf.String())
 	}
 }
 

@@ -123,15 +123,17 @@ func TestPromptRouterStepWithoutWindowIsTypedNoActiveSession(t *testing.T) {
 
 // TestPromptRouterStopFlushesHeldAsNoActiveSession pins the flush path: a
 // prompt held between attempts becomes NO_ACTIVE_SESSION when the run stops
-// — never silence.
+// — never silence. The hold state is shaped the way runStepFromAttempt
+// leaves it: one consumed attempt window (inFlight=1, executing=0), then a
+// prompt routed while the attempt loop is live but the delivery window is
+// closed.
 func TestPromptRouterStopFlushesHeldAsNoActiveSession(t *testing.T) {
 	r, logBuf := promptRouterTest(t, "run-1")
 
-	msg := promptTestMessage("run-1", "a", "owner-1")
-	r.mu.Lock()
-	r.inFlight["a"] = 1
-	r.held["a"] = append(r.held["a"], msg)
-	r.mu.Unlock()
+	r.beginExecute("a")
+	r.endExecute("a")
+
+	r.route(promptTestMessage("run-1", "a", "owner-1"))
 
 	r.Stop()
 

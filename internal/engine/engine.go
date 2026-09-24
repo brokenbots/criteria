@@ -215,6 +215,10 @@ type Engine struct {
 	// WS17: liveSessions holds the active SessionManager while a run is in
 	// progress, enabling Pause/Resume/Inspect from outside runLoop.
 	liveSessions *adapterhost.SessionManager
+	// livePrompts holds the active PromptRouter while a run is in progress.
+	// Tests read it to assert router balance directly (CRI-259); production
+	// code only routes through Deps.Prompts.
+	livePrompts *PromptRouter
 	mu           sync.RWMutex
 	// workingDirAllowedRoots restricts environment working_directory values at
 	// run start. A resolved path that is not under one of these roots (when any
@@ -381,6 +385,15 @@ func (e *Engine) InspectSession(ctx context.Context, name string) (*v2.InspectRe
 		return nil, errors.New("no active run to inspect")
 	}
 	return sessions.InspectSession(ctx, name)
+}
+
+// livePromptRouter returns the PromptRouter of the running run, or nil
+// outside a run. Tests use it to assert router balance directly (CRI-259);
+// production code routes only through Deps.Prompts.
+func (e *Engine) livePromptRouter() *PromptRouter {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.livePrompts
 }
 
 // effectivePinSet resolves the run's effective lockfile by one shared rule:
@@ -619,10 +632,12 @@ func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManag
 
 	e.mu.Lock()
 	e.liveSessions = sessions
+	e.livePrompts = prompts
 	e.mu.Unlock()
 	defer func() {
 		e.mu.Lock()
 		e.liveSessions = nil
+		e.livePrompts = nil
 		e.mu.Unlock()
 	}()
 
