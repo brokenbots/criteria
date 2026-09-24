@@ -415,6 +415,7 @@ func TestRedactingSink_OnAdapterLifecycleEvent(t *testing.T) {
 		AdapterName:       "adapter_secret123",
 		AdapterType:       "shell",
 		Digest:            "digest_secret123",
+		ImageReference:    "image_secret123",
 		ShimListenAddress: "addr_secret123",
 		TokenRef:          "token_ref_secret123",
 		Token:             "secret123",
@@ -440,8 +441,8 @@ func TestRedactingSink_OnAdapterLifecycleEvent(t *testing.T) {
 	if ev.Token != "secret123" {
 		t.Errorf("Token = %q, want %q (forwarded verbatim, never redacted)", ev.Token, "secret123")
 	}
-	assertRedacted(t, []string{ev.RunID, ev.ScopeName, ev.ScopeInstanceID, ev.AdapterName, ev.Digest, ev.ShimListenAddress, ev.TokenRef, ev.Status, ev.EnvironmentName},
-		[]string{"run_[REDACTED]", "scope_[REDACTED]", "inst_[REDACTED]", "adapter_[REDACTED]", "digest_[REDACTED]", "addr_[REDACTED]", "token_ref_[REDACTED]", "provision_wanted", "env_[REDACTED]"})
+	assertRedacted(t, []string{ev.RunID, ev.ScopeName, ev.ScopeInstanceID, ev.AdapterName, ev.Digest, ev.ImageReference, ev.ShimListenAddress, ev.TokenRef, ev.Status, ev.EnvironmentName},
+		[]string{"run_[REDACTED]", "scope_[REDACTED]", "inst_[REDACTED]", "adapter_[REDACTED]", "digest_[REDACTED]", "image_[REDACTED]", "addr_[REDACTED]", "token_ref_[REDACTED]", "provision_wanted", "env_[REDACTED]"})
 }
 
 func TestRedactingSink_OnRunOutputs(t *testing.T) {

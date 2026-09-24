@@ -1480,6 +1480,229 @@ func TestInitScopeAdapters_PerScope_EmitsProvisionWanted(t *testing.T) {
 	}
 }
 
+// TestInitAdapters_PerScope_ProvisionWantedImageReference (CRI-214 M14): the
+// provision_wanted event carries the lockfile's container_image ref for the
+// adapter, resolved through the same effective-pin-set rule as the digest, so
+// the operator's pod builder can pull the pinned image instead of guessing
+// from the adapter kind. Without a container_image block the field stays
+// empty (a binary-only adapter is a real state, not a synthesis failure).
+func TestInitAdapters_PerScope_ProvisionWantedImageReference(t *testing.T) {
+	ctx := context.Background()
+
+	// A fetched workflow tree whose lockfile pins both a digest and a
+	// container image for the noop adapter — the same compile path as the
+	// CRI-263 digest test.
+	dir := t.TempDir()
+	wfSrc := `
+workflow {
+  name = "per-scope-test"
+  version = "0.1"
+  initial_state = "start"
+  target_state  = "done"
+}
+
+environment "remote" "prod" {
+  listen_address     = "127.0.0.1:0"
+  per_scope_sessions = true
+}
+
+adapter "noop" "default" {
+  environment = remote.prod
+}
+
+step "start" {
+  target = adapter.noop.default
+  outcome "success" { next = step.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}`
+	wfPath := filepath.Join(dir, "linear_wf.hcl")
+	if err := os.WriteFile(wfPath, []byte(wfSrc), 0o600); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+	pinnedImage := "ghcr.io/criteria-adapters/noop:1.2.3-image"
+	lf := &lockfile.Lockfile{
+		Adapters: []lockfile.LockedAdapter{
+			{
+				Type:           "noop",
+				Name:           "default",
+				ResolvedDigest: "sha256:d9f306c2feedbeef42",
+				ContainerImage: &lockfile.LockedContainerImage{Ref: pinnedImage, Digest: "sha256:img123"},
+			},
+		},
+	}
+	if err := lockfile.Write(filepath.Join(dir, lockfile.LockfileName), lf); err != nil {
+		t.Fatalf("write lockfile: %v", err)
+	}
+
+	spec, diags := workflow.Parse(wfPath, []byte(wfSrc))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := workflow.CompileWithOpts(spec, nil, workflow.CompileOpts{WorkflowDir: dir})
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+
+	dataDir := t.TempDir()
+	eng := New(g, &fakeLoader{}, &eventTrackingSink{},
+		WithWorkflowDir(dir), WithDataDir(dataDir), WithRunID("run-214"))
+
+	sessions := adapterhost.NewSessionManager(&fakeLoader{})
+	sessions.SetGraph(g)
+	shim := newFakeRemoteShim(&fakeRemoteHandle{})
+	sessions.SetRemoteShim(shim)
+	sink := &eventTrackingSink{}
+
+	deps, order, rlc, err := eng.initAdapters(ctx, sessions, sink, nil, "")
+	if err != nil {
+		t.Fatalf("initAdapters: %v", err)
+	}
+	defer tearDownScopeAdapters(ctx, order, deps, rlc)
+
+	event, ok := sink.firstStatus("provision_wanted")
+	if !ok {
+		t.Fatalf("expected provision_wanted event, got %v", sink.provisionEvents)
+	}
+	if event.ImageReference != pinnedImage {
+		t.Errorf("provision_wanted image_reference = %q, want the lockfile container_image ref %q", event.ImageReference, pinnedImage)
+	}
+}
+
+// TestTearDownScopeAdapters_PerScope_ReleasedImageReferenceStaysEmpty checks
+// the release half of the CRI-214 M14 field: released events replay the
+// provision record's digest but never its image reference — the field
+// describes what to pull at provision time only, so a release can never
+// re-trigger a pull.
+func TestTearDownScopeAdapters_PerScope_ReleasedImageReferenceStaysEmpty(t *testing.T) {
+	ctx := context.Background()
+
+	// Same fetched-tree shape as the CRI-263 digest test but with a
+	// container_image block pinned alongside the digest.
+	dir := t.TempDir()
+	wfSrc := `
+workflow {
+  name = "per-scope-test"
+  version = "0.1"
+  initial_state = "start"
+  target_state  = "done"
+}
+
+environment "remote" "prod" {
+  listen_address     = "127.0.0.1:0"
+  per_scope_sessions = true
+}
+
+adapter "noop" "default" {
+  environment = remote.prod
+}
+
+step "start" {
+  target = adapter.noop.default
+  outcome "success" { next = step.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}`
+	wfPath := filepath.Join(dir, "linear_wf.hcl")
+	if err := os.WriteFile(wfPath, []byte(wfSrc), 0o600); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+	lf := &lockfile.Lockfile{
+		Adapters: []lockfile.LockedAdapter{
+			{
+				Type:           "noop",
+				Name:           "default",
+				ResolvedDigest: "sha256:d9f306c2feedbeef42",
+				ContainerImage: &lockfile.LockedContainerImage{Ref: "ghcr.io/criteria-adapters/noop:1.2.3-image", Digest: "sha256:img123"},
+			},
+		},
+	}
+	if err := lockfile.Write(filepath.Join(dir, lockfile.LockfileName), lf); err != nil {
+		t.Fatalf("write lockfile: %v", err)
+	}
+
+	spec, diags := workflow.Parse(wfPath, []byte(wfSrc))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := workflow.CompileWithOpts(spec, nil, workflow.CompileOpts{WorkflowDir: dir})
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+
+	sessions := adapterhost.NewSessionManager(&fakeLoader{})
+	sessions.SetGraph(g)
+	shim := newFakeRemoteShim(&fakeRemoteHandle{})
+	sessions.SetRemoteShim(shim)
+
+	lifecycle := newScopeLifecycleState(t.TempDir())
+	lifecycle.setRunID("run-214")
+	sink := &eventTrackingSink{}
+	rlc := &remoteLifecycleContext{lockfile: lf, scopeLifecycle: lifecycle}
+	deps := Deps{Sessions: sessions, Sink: sink}
+
+	order, err := initScopeAdapters(ctx, g, deps, nil, lifecycle.dataDir, "", nil, rlc)
+	if err != nil {
+		t.Fatalf("initScopeAdapters: %v", err)
+	}
+
+	tearDownScopeAdapters(ctx, order, deps, rlc)
+
+	provision, ok := sink.firstStatus("provision_wanted")
+	if !ok {
+		t.Fatalf("expected provision_wanted event, got %v", sink.provisionEvents)
+	}
+	released, ok := sink.firstStatus("released")
+	if !ok {
+		t.Fatalf("expected released event after teardown, got %v", sink.provisionEvents)
+	}
+	// The digest replays from the record; the image reference never does.
+	if released.Digest != provision.Digest {
+		t.Errorf("released.Digest %q != provision.Digest %q", released.Digest, provision.Digest)
+	}
+	if released.ImageReference != "" {
+		t.Errorf("released image_reference = %q, want empty (provision-time only)", released.ImageReference)
+	}
+}
+
+// TestInitAdapters_PerScope_ProvisionWantedImageReferenceStaysEmptyWithoutPin
+// pins the fail-closed half: no container_image block anywhere means the
+// provision_wanted event carries an empty image_reference — never a
+// synthesized or kind-guessed image.
+func TestInitAdapters_PerScope_ProvisionWantedImageReferenceStaysEmptyWithoutPin(t *testing.T) {
+	ctx := context.Background()
+	g := perScopeRemoteGraph(t) // compiled without a workflow dir: no pin set
+	dataDir := t.TempDir()
+
+	eng := New(g, &fakeLoader{}, &eventTrackingSink{}, WithDataDir(dataDir), WithRunID("run-214"))
+
+	sessions := adapterhost.NewSessionManager(&fakeLoader{})
+	sessions.SetGraph(g)
+	shim := newFakeRemoteShim(&fakeRemoteHandle{})
+	sessions.SetRemoteShim(shim)
+	sink := &eventTrackingSink{}
+
+	deps, order, rlc, err := eng.initAdapters(ctx, sessions, sink, nil, "")
+	if err != nil {
+		t.Fatalf("initAdapters: %v", err)
+	}
+	defer tearDownScopeAdapters(ctx, order, deps, rlc)
+
+	event, ok := sink.firstStatus("provision_wanted")
+	if !ok {
+		t.Fatalf("expected provision_wanted event, got %v", sink.provisionEvents)
+	}
+	if event.ImageReference != "" {
+		t.Errorf("provision_wanted image_reference = %q, want empty (fail-closed: never synthesized)", event.ImageReference)
+	}
+}
+
 // TestInitAdapters_PerScope_ProvisionWantedDigestFromCompiledPinSet (CRI-263):
 // a URL-sourced run compiles the fetched tree's .criteria.lock.hcl into the
 // graph pin set, and the CLI never calls WithLockfile on that path. The

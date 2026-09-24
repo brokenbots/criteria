@@ -245,6 +245,7 @@ func (s *Sink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent) {
 			"environment_type":    event.EnvironmentType,
 			"environment_name":    event.EnvironmentName,
 			"digest":              event.Digest,
+			"image_reference":     event.ImageReference,
 			"shim_listen_address": event.ShimListenAddress,
 			"token_ref":           event.TokenRef,
 			"accept_token":        event.Token,

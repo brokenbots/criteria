@@ -311,6 +311,9 @@ func deferredPerScopeRemoteAdapters(g *workflow.FSMGraph) []string {
 	return deferred
 }
 
+// lockedDigest returns the adapter's lockfile-pinned digest, or "" when
+// unresolvable (nil lockfile, no entry). The event stays empty — never
+// synthesized (CRI-263, fail-closed).
 func lockedDigest(lf *lockfile.Lockfile, adapterType, adapterName string) string {
 	if lf == nil {
 		return ""
@@ -324,8 +327,26 @@ func lockedDigest(lf *lockfile.Lockfile, adapterType, adapterName string) string
 	return ""
 }
 
+// lockedImageReference returns the adapter's lockfile-pinned container image
+// reference (CRI-214 M14), or "" when the lockfile entry carries no
+// container_image block. Empty is a real state (binary-only adapters), not an
+// error; the operator keeps its kind-based fallback image.
+func lockedImageReference(lf *lockfile.Lockfile, adapterType, adapterName string) string {
+	if lf == nil {
+		return ""
+	}
+	for i := range lf.Adapters {
+		a := &lf.Adapters[i]
+		if a.Type == adapterType && a.Name == adapterName && a.ContainerImage != nil {
+			return a.ContainerImage.Ref
+		}
+	}
+	return ""
+}
+
 func emitProvisionWanted(deps Deps, lifecycle *remoteLifecycleContext, scopeName, scopeInstanceID, scopeKey, instanceID string, adapter *workflow.AdapterNode, envNode *workflow.EnvironmentNode, tokenPath, token string) {
 	digest := lockedDigest(lifecycle.lockfile, adapter.Type, adapter.Name)
+	imageRef := lockedImageReference(lifecycle.lockfile, adapter.Type, adapter.Name)
 	listenAddr := deps.Sessions.RemoteListenAddrForEnv(environmentKey(envNode))
 	deps.Sink.OnAdapterLifecycleEvent(&AdapterLifecycleEvent{
 		RunID:             lifecycle.scopeLifecycle.runID,
@@ -334,6 +355,7 @@ func emitProvisionWanted(deps Deps, lifecycle *remoteLifecycleContext, scopeName
 		AdapterName:       adapter.Name,
 		AdapterType:       adapter.Type,
 		Digest:            digest,
+		ImageReference:    imageRef,
 		ShimListenAddress: listenAddr,
 		TokenRef:          tokenPath,
 		Token:             token,
