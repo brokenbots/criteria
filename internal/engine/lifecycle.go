@@ -51,6 +51,24 @@ type remoteLifecycleContext struct {
 	scopeLifecycle *scopeLifecycleState
 }
 
+// deriveForParallelIteration returns a per-iteration remoteLifecycleContext for
+// a parallel subworkflow iteration. It shares the lockfile and the persistent
+// run data directory (via scopeLifecycle.deriveSibling) so per-scope token
+// rotation and provisioning still resolve the run dir, but gives the iteration
+// its own scope-record map so concurrent iterations of the same subworkflow do
+// not clobber one another's provisioning records. Returns nil for a nil
+// receiver (no remote environment in play).
+func (rlc *remoteLifecycleContext) deriveForParallelIteration() *remoteLifecycleContext {
+	if rlc == nil {
+		return nil
+	}
+	child := &remoteLifecycleContext{lockfile: rlc.lockfile}
+	if rlc.scopeLifecycle != nil {
+		child.scopeLifecycle = rlc.scopeLifecycle.deriveSibling()
+	}
+	return child
+}
+
 // scopeLifecycleState tracks per-scope remote-adapter provisioning metadata.
 type scopeLifecycleState struct {
 	dataDir string
@@ -67,6 +85,25 @@ func newScopeLifecycleState(dataDir string) *scopeLifecycleState {
 	return &scopeLifecycleState{
 		dataDir: dataDir,
 		records: make(map[string]*adapterLifecycleRecord),
+	}
+}
+
+// deriveSibling returns a new scopeLifecycleState that shares the persistent
+// run data directory, run id, and adoptable dirs with ls but has its own
+// (empty) per-scope record map. Concurrent parallel subworkflow iterations of
+// the same subworkflow provision the same adapter name, so a shared,
+// adapter-name-keyed record map would let one iteration's provisioning record
+// clobber another's and corrupt teardown. Sharing dataDir keeps every
+// iteration's rotated scope tokens under one run directory (each keyed by its
+// own unique scopeInstanceID), so nothing on disk collides.
+func (ls *scopeLifecycleState) deriveSibling() *scopeLifecycleState {
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	return &scopeLifecycleState{
+		dataDir:          ls.dataDir,
+		runID:            ls.runID,
+		adoptableRunDirs: ls.adoptableRunDirs,
+		records:          make(map[string]*adapterLifecycleRecord),
 	}
 }
 

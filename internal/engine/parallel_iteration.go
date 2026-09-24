@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"sync"
 	"time"
@@ -508,15 +509,23 @@ func (n *stepNode) runParallelSubworkflowOnce(
 // visitsMu serializes concurrent check-and-increment in incrementVisit.
 func buildParallelIterState(i, total int, item, key cty.Value, st *RunState, visitsMu *sync.Mutex, sem chan struct{}, ceiling int) *RunState {
 	return &RunState{
-		Current:                st.Current,
-		WorkflowDir:            st.WorkflowDir,
-		DataStore:              st.DataStore,
-		Visits:                 st.Visits,
-		VisitsMu:               visitsMu,
-		ParallelCeiling:        ceiling,
-		ParallelSem:            sem,
-		ParallelSemCache:       st.ParallelSemCache,
-		ParallelSemMu:          st.ParallelSemMu,
+		Current:          st.Current,
+		WorkflowDir:      st.WorkflowDir,
+		DataStore:        st.DataStore,
+		Visits:           st.Visits,
+		VisitsMu:         visitsMu,
+		ParallelCeiling:  ceiling,
+		ParallelSem:      sem,
+		ParallelSemCache: st.ParallelSemCache,
+		ParallelSemMu:    st.ParallelSemMu,
+		// Propagate the remote-adapter lifecycle (run data directory, lockfile,
+		// per-scope provisioning state) so a parallel subworkflow iteration whose
+		// child adapters are bound to a per_scope_sessions remote environment can
+		// rotate and provision per-scope. Without this the iteration state had a
+		// nil RemoteLifecycle and per-scope provisioning failed with "no run data
+		// directory is configured". The subworkflow iteration path derives an
+		// isolated per-iteration lifecycle from this shared one.
+		RemoteLifecycle:        st.RemoteLifecycle,
 		CrashedCommentSessions: st.CrashedCommentSessions,
 		// CRI-271: parallel iterations share the crashed-functional-session set
 		// so a crash recorded in one iteration is re-opened by follow-on steps
@@ -603,6 +612,22 @@ func (n *stepNode) runParallelAdapterIteration(ctx context.Context, st *RunState
 	return result.Outcome, result.Outputs, nil
 }
 
+// eachIndexFromVars reads the current parallel/for_each iteration index from the
+// "each" binding in vars (workflow.WithEachBinding stores it as each._idx). It
+// returns false when no each binding is present or it is malformed.
+func eachIndexFromVars(vars map[string]cty.Value) (int, bool) {
+	each, ok := vars["each"]
+	if !ok || each.IsNull() || !each.Type().IsObjectType() || !each.Type().HasAttribute("_idx") {
+		return 0, false
+	}
+	idx := each.GetAttr("_idx")
+	if idx.IsNull() || idx.Type() != cty.Number {
+		return 0, false
+	}
+	i, _ := idx.AsBigFloat().Int64()
+	return int(i), true
+}
+
 // runParallelSubworkflowIteration evaluates the step's input expressions and
 // spawns a fresh subworkflow execution per iteration. Each subworkflow gets its
 // own child scope and DataStore, matching the sequential subworkflow step
@@ -629,9 +654,43 @@ func (n *stepNode) runParallelSubworkflowIteration(ctx context.Context, st *RunS
 	// sessions it opened, so no explicit Shutdown is needed here.
 	iterDeps := deps
 	iterDeps.Sessions = adapterhost.NewSessionManager(deps.Loader)
+	// The fresh SM isolates LOCAL adapter sessions, but a remote environment's
+	// phone-home shim is a single listener per environment (fixed
+	// listen_address) that multiplexes every scope, and isRemoteAdapter consults
+	// the VerifyGraph-populated adapter caches. Borrow both from the parent so
+	// this iteration's per-scope provisioning registers on the shared listener
+	// (instead of "no remote shim registered") and the child adapter is
+	// recognised as remote (instead of a local "adapter not found"). The shims
+	// stay owned by the parent SM, which stops them at run end.
+	iterDeps.Sessions.BorrowRemoteProvisioningFrom(deps.Sessions)
 
-	swOutputs, terminalState, runErr := runSubworkflow(ctx, n.step.Name, swNode, st, stepInput, iterDeps, st.Ancestors...)
+	// Give this iteration its own per-scope lifecycle (isolated record map,
+	// shared run data dir) so concurrent iterations of the same subworkflow
+	// provision independent scopes without clobbering each other's records. st
+	// is this goroutine's own per-iteration RunState (buildParallelIterState),
+	// so mutating it here is safe.
+	if st.RemoteLifecycle != nil {
+		st.RemoteLifecycle = st.RemoteLifecycle.deriveForParallelIteration()
+	}
+
+	// Each parallel iteration must run under a DISTINCT scope name: the scope
+	// name is a token-directory component, and per-scope provisioning persists a
+	// "current instance" record keyed by (scopeName, adapterName). With every
+	// iteration sharing the step name, concurrent iterations of the same child
+	// adapter collide on that path and race on the rename. Suffix the scope with
+	// the iteration index so each iteration's scope is independent.
+	iterScope := n.step.Name
+	if idx, ok := eachIndexFromVars(st.Vars); ok {
+		iterScope = fmt.Sprintf("%s#%d", n.step.Name, idx)
+	}
+
+	swOutputs, terminalState, runErr := runSubworkflow(ctx, iterScope, swNode, st, stepInput, iterDeps, st.Ancestors...)
 	if runErr != nil {
+		// A parallel subworkflow iteration's error is otherwise classified as a
+		// failed iteration and discarded by aggregateParallelResults, leaving no
+		// diagnostic. Log it so per-iteration failures are debuggable.
+		slog.Warn("parallel subworkflow iteration failed",
+			"step", n.step.Name, "subworkflow", n.step.SubworkflowRef, "error", runErr.Error())
 		return "failure", nil, runErr
 	}
 	if terminalState != workflow.ReturnSentinel && !swNode.Body.States[terminalState].Success {
