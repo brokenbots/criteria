@@ -1083,7 +1083,10 @@ func (n *stepNode) commentStepExhausted(st *RunState, step *workflow.StepNode, w
 func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps Deps, step *workflow.StepNode, startAttempt int) (adapter.Result, error) {
 	// ADR-0006: prompts held while the step is between attempts (or after the
 	// step completes) resolve deterministically when the attempt loop ends.
-	defer deps.Prompts.endStep(step.Name)
+	// attempts tracks how many attempts this loop consumed so endStep drains
+	// exactly the inFlight balance beginExecute added, for any attempt count.
+	var attempts int
+	defer func() { deps.Prompts.endStep(step.Name, attempts) }()
 	maxAttempts := 1 + n.graph.Policy.MaxStepRetries
 	if startAttempt > maxAttempts {
 		return adapter.Result{}, fmt.Errorf("step %q has no remaining attempts (start attempt %d exceeds max %d)", step.Name, startAttempt, maxAttempts)
@@ -1109,6 +1112,7 @@ func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps De
 		// ADR-0006: open the prompt delivery window for this attempt. Prompts
 		// addressed to this step are delivered into the adapter's live
 		// session mid-call; held prompts from between attempts flush here.
+		attempts++
 		deps.Prompts.beginExecute(step.Name)
 		result, dur, err := n.executeStepTimed(ctx, deps, step)
 		deps.Prompts.endExecute(step.Name)

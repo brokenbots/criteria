@@ -227,16 +227,19 @@ func (r *PromptRouter) endExecute(step string) {
 	r.mu.Unlock()
 }
 
-// endStep closes the attempt loop for a step. Any prompt still held for it
-// has missed its delivery window: the step is complete, so it becomes
+// endStep closes the attempt loop for a step, draining the inFlight balance
+// owned by its attempt loop: attempts is the number of attempts the loop
+// actually consumed, so inFlight returns to its pre-loop balance (0 for a
+// plain visit) for any attempt count. Any prompt still held for the step has
+// missed its delivery window: the step is complete, so it becomes
 // NO_ACTIVE_SESSION. Also drops a stale executing window left by an
 // early-returned execute path.
-func (r *PromptRouter) endStep(step string) {
+func (r *PromptRouter) endStep(step string, attempts int) {
 	if r == nil {
 		return
 	}
 	r.mu.Lock()
-	r.inFlight[step]--
+	r.inFlight[step] -= attempts
 	if r.inFlight[step] <= 0 {
 		delete(r.inFlight, step)
 		delete(r.executing, step)

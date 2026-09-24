@@ -158,8 +158,9 @@ func TestPromptRouterHeldPromptFlushedIntoNextAttemptSession(t *testing.T) {
 		t.Errorf("unexpected delivery failure log:\n%s", logBuf.String())
 	}
 
-	// Mirror the engine's deferred close so Stop has nothing held.
-	r.endStep("a")
+	// Mirror the engine's deferred close (2 attempts consumed) so Stop has
+	// nothing held.
+	r.endStep("a", 2)
 }
 
 // TestPromptRouterHeldPromptResolvedNoActiveSessionWhenAttemptLoopExits pins
@@ -183,8 +184,9 @@ func TestPromptRouterHeldPromptResolvedNoActiveSessionWhenAttemptLoopExits(t *te
 	promptCh <- msg
 	waitForHeld(t, r, "a", 1, 5*time.Second)
 
-	// The attempt loop exits (step completed) before another attempt.
-	r.endStep("a")
+	// The attempt loop exits (step completed) before another attempt;
+	// one attempt was consumed.
+	r.endStep("a", 1)
 
 	if n := sink.promptInjectionCount(); n != 0 {
 		t.Fatalf("retroactive injection: %d AgentPromptInjected event(s)", n)
