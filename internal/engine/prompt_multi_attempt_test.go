@@ -61,6 +61,7 @@ type promptFailureSignal struct {
 	classes chan string
 }
 
+//nolint:gocritic // slog.Handler interface requires value receiver for Record.
 func (h *promptFailureSignal) Handle(ctx context.Context, r slog.Record) error {
 	if r.Message == "agent prompt delivery failed" {
 		r.Attrs(func(a slog.Attr) bool {

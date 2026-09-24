@@ -219,7 +219,7 @@ type Engine struct {
 	// Tests read it to assert router balance directly (CRI-259); production
 	// code only routes through Deps.Prompts.
 	livePrompts *PromptRouter
-	mu           sync.RWMutex
+	mu          sync.RWMutex
 	// workingDirAllowedRoots restricts environment working_directory values at
 	// run start. A resolved path that is not under one of these roots (when any
 	// are configured) or that contains ".." is rejected eagerly during adapter
@@ -394,6 +394,22 @@ func (e *Engine) livePromptRouter() *PromptRouter {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return e.livePrompts
+}
+
+// setLiveRunState records the run's live session manager and prompt router;
+// clearLiveRunState drops both when the run ends.
+func (e *Engine) setLiveRunState(sessions *adapterhost.SessionManager, prompts *PromptRouter) {
+	e.mu.Lock()
+	e.liveSessions = sessions
+	e.livePrompts = prompts
+	e.mu.Unlock()
+}
+
+func (e *Engine) clearLiveRunState() {
+	e.mu.Lock()
+	e.liveSessions = nil
+	e.livePrompts = nil
+	e.mu.Unlock()
 }
 
 // effectivePinSet resolves the run's effective lockfile by one shared rule:
@@ -630,16 +646,8 @@ func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManag
 	deps := e.buildDeps(sessions, sink, prompts)
 	defer prompts.Stop()
 
-	e.mu.Lock()
-	e.liveSessions = sessions
-	e.livePrompts = prompts
-	e.mu.Unlock()
-	defer func() {
-		e.mu.Lock()
-		e.liveSessions = nil
-		e.livePrompts = nil
-		e.mu.Unlock()
-	}()
+	defer e.clearLiveRunState()
+	e.setLiveRunState(sessions, prompts)
 
 	e.liveRunState = st
 	for {
