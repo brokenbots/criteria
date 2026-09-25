@@ -142,12 +142,12 @@ func assertConnClosed(t *testing.T, conn net.Conn) {
 }
 
 // recordingPeerAcceptor is a fake PeerAcceptor that records the handed-over
-// conn + identity and blocks until released, mirroring the seam contract that
-// the acceptor owns the connection.
+// conn + verified dial and blocks until released, mirroring the seam contract
+// that the acceptor owns the connection.
 type recordingPeerAcceptor struct {
 	mu      sync.Mutex
 	conns   []net.Conn
-	idents  []*PeerClientIdentity
+	dials   []PeerDial
 	release chan struct{}
 
 	called     chan struct{}
@@ -158,10 +158,10 @@ func newRecordingPeerAcceptor() *recordingPeerAcceptor {
 	return &recordingPeerAcceptor{release: make(chan struct{}), called: make(chan struct{})}
 }
 
-func (a *recordingPeerAcceptor) AcceptPeer(ctx context.Context, conn net.Conn, identity *PeerClientIdentity) error {
+func (a *recordingPeerAcceptor) AcceptPeer(ctx context.Context, conn net.Conn, dial PeerDial) error {
 	a.mu.Lock()
 	a.conns = append(a.conns, conn)
-	a.idents = append(a.idents, identity)
+	a.dials = append(a.dials, dial)
 	a.mu.Unlock()
 	a.calledOnce.Do(func() { close(a.called) })
 	<-a.release
@@ -187,13 +187,13 @@ func (a *recordingPeerAcceptor) assertNotCalled(timeout time.Duration) error {
 	}
 }
 
-func (a *recordingPeerAcceptor) lastIdentity() *PeerClientIdentity {
+func (a *recordingPeerAcceptor) lastDial() PeerDial {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if len(a.idents) == 0 {
-		return nil
+	if len(a.dials) == 0 {
+		return PeerDial{}
 	}
-	return a.idents[len(a.idents)-1]
+	return a.dials[len(a.dials)-1]
 }
 
 func (a *recordingPeerAcceptor) releaseAll() { close(a.release) }
@@ -365,10 +365,17 @@ func TestShim_PeerRole_RoutedToPeerAcceptor(t *testing.T) {
 	if !acceptor.waitCalled(5 * time.Second) {
 		t.Fatal("peer dial was not routed to the PeerAcceptor")
 	}
-	ident := acceptor.lastIdentity()
-	if ident == nil {
+	dial := acceptor.lastDial()
+	if dial.Peer == nil {
 		t.Fatal("expected parsed peer identity handed to acceptor")
 	}
+	if dial.AdapterType != "noop" {
+		t.Errorf("adapter_type = %q, want noop", dial.AdapterType)
+	}
+	if dial.Digest != "sha256:abcd1234" {
+		t.Errorf("digest = %q, want sha256:abcd1234", dial.Digest)
+	}
+	ident := dial.Peer
 	if ident.CriteriaVersion != "0.5.7" {
 		t.Errorf("criteria_version = %q, want 0.5.7", ident.CriteriaVersion)
 	}

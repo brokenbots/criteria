@@ -64,6 +64,23 @@ type PeerClientIdentity struct {
 	Capabilities    []string `json:"capabilities,omitempty"`
 }
 
+// PeerDial is the authenticated peer-role dial handed to a PeerAcceptor
+// (T-06). Every identity field has already been verified by the shim (mTLS,
+// identity pattern, lockfile digest, scope token) before AcceptPeer runs.
+type PeerDial struct {
+	// AdapterType is the verified handshake adapter name. It keys the
+	// acceptor's peer registry the same way the shim keys legacy sessions.
+	AdapterType string
+	// Scope is the verified handshake scope ("scopeName/scopeInstanceID", or
+	// "" in legacy mode).
+	Scope string
+	// Digest is the presented adapter digest (already verified).
+	Digest string
+	// Peer is the parsed `peer` block of the handshake; may be nil when the
+	// dialer omitted it.
+	Peer *PeerClientIdentity
+}
+
 // PeerAcceptor is the pluggable seam that receives authenticated peer-role
 // connections (implemented by the peer runtime, T-06). A dial whose
 // handshake advertises role "peer" is handed to AcceptPeer after the
@@ -72,11 +89,9 @@ type PeerClientIdentity struct {
 //
 // Ownership: from the moment AcceptPeer is invoked the acceptor owns the
 // connection and must close it before returning, whether it succeeds or
-// fails. identity is the parsed `peer` block of the handshake and may be nil
-// when the dialer omitted it; scope, digest and token fields have already
-// been verified by the shim.
+// fails.
 type PeerAcceptor interface {
-	AcceptPeer(ctx context.Context, conn net.Conn, identity *PeerClientIdentity) error
+	AcceptPeer(ctx context.Context, conn net.Conn, dial PeerDial) error
 }
 
 // DigestVerifier checks whether a reported adapter digest is acceptable.
@@ -415,8 +430,9 @@ func (s *Shim) Accept(ctx context.Context, conn net.Conn) error {
 
 // acceptPeerConn hands an authenticated peer-role connection to the
 // configured PeerAcceptor. Auth (mTLS, identity pattern, digest, token) has
-// already run; the acceptor receives only what it needs to supervise the
-// peer. Ownership of conn transfers to the acceptor (see PeerAcceptor).
+// already run; the acceptor receives the verified dial identity it needs to
+// supervise the peer. Ownership of conn transfers to the acceptor (see
+// PeerAcceptor).
 func (s *Shim) acceptPeerConn(ctx context.Context, conn net.Conn, hs *handshakeMessage) error {
 	s.mu.Lock()
 	acceptor := s.peerAcceptor
@@ -425,7 +441,8 @@ func (s *Shim) acceptPeerConn(ctx context.Context, conn net.Conn, hs *handshakeM
 		_ = conn.Close()
 		return fmt.Errorf("peer role dial from %q rejected: no peer acceptor configured", hs.Name)
 	}
-	return acceptor.AcceptPeer(ctx, conn, hs.Peer)
+	dial := PeerDial{AdapterType: hs.Name, Scope: hs.Scope, Digest: hs.Digest, Peer: hs.Peer}
+	return acceptor.AcceptPeer(ctx, conn, dial)
 }
 
 func (s *Shim) performHandshake(ctx context.Context, conn net.Conn) error {
