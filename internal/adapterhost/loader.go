@@ -410,7 +410,7 @@ func (p *rpcHandle) Info(ctx context.Context) (Info, error) {
 		Version:           resp.GetVersion(),
 		Capabilities:      append([]string(nil), resp.GetCapabilities()...),
 		SupportedFeatures: append([]string(nil), resp.GetSupportedFeatures()...),
-		Tools:             toolsFromProto(resp.GetTools()),
+		Tools:             ToolsFromProto(resp.GetTools()),
 		AdapterInfo:       AdapterInfoFromProto(resp),
 	}, nil
 }
@@ -1232,9 +1232,9 @@ func runtimeToolNamesFromProto(tools []*v2.ToolInfo) []string {
 	return out
 }
 
-// toolsFromProto translates InfoResponse.tools (CRI-171) into host-side
+// ToolsFromProto translates InfoResponse.tools (CRI-171) into host-side
 // ToolInfo values.
-func toolsFromProto(tools []*v2.ToolInfo) []ToolInfo {
+func ToolsFromProto(tools []*v2.ToolInfo) []ToolInfo {
 	if len(tools) == 0 {
 		return nil
 	}
