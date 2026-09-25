@@ -212,7 +212,7 @@ func TestCRI271_FunctionalCrashReopensSessionForBookkeeping(t *testing.T) {
 	}
 	if reason, _ := data["crash_reason"].(string); reason == "" {
 		t.Error("expected a named crash_reason on the session.crash event")
-	} else if reason != "gRPC client transport closed (adapter or shim closed the connection)" {
+	} else if reason != adapterhost.CrashReasonTransportClosed {
 		t.Errorf("crash_reason=%q; want the named shim-connection-drop cause", reason)
 	}
 	if idle, ok := data["idle_since_last_event"].(string); !ok || idle == "" {

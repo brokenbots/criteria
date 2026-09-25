@@ -1,0 +1,146 @@
+// PeerService — host->peer supervision journal (ADR-0007 Stage A).
+//
+// Stage A supervision truth: process-lifecycle facts cross the wire as
+// first-class typed events instead of being inferred from gRPC transport
+// errors. The peer (a remote Criteria or adapter host process) is the gRPC
+// server on the phone-home connection; the host opens Supervise and reads
+// the lifecycle journal.
+//
+// Evolution discipline (additive-only):
+//   - Field numbers in this file are permanent once assigned. Never reuse,
+//     renumber, or re-type an existing field; only ever append.
+//   - The next free `kind` oneof arm in SupervisionEvent is field 11. Do NOT
+//     `reserved` forward numbers — reserve only genuinely abandoned ones.
+//   - Stage B run-graph events ride THIS journal: extend SupervisionEvent
+//     with new arms; do not fork a second supervision stream or file.
+//   - Supervision protocol evolution is negotiated via capabilities strings,
+//     not proto package churn: `criteria.v1` stays.
+//
+// Delivery semantics:
+//   - At-least-once delivery. Consumers dedup on (peer conn identity,
+//     event_seq).
+//   - event_seq is global monotonic per peer process and gapless.
+//   - Replay: a host (re-)opening Supervise passes since_event_seq; the peer
+//     streams lifecycle truth strictly after that value (exclusive).
+//   - Terminal events (ProcessExited, CrashClassified) persist to a bounded
+//     in-peer journal (default 4096 events, env-tunable) and are replayed
+//     FIRST on reconnect, so crash evidence survives the RPC stream that
+//     died.
+//
+// Ordering:
+//   - Journal append order == emission order.
+//   - StreamFlushed.up_to_seq is monotonic per channel.
+//
+// Heartbeat:
+//   - Supervise emits SupervisionHeartbeat every 30s while idle. It
+//     complements, and does not replace, the CRI-276 transport keepalive.
+syntax = "proto3";
+
+package criteria.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/brokenbots/criteria/sdk/pb/criteria/v1;criteriav1";
+
+service PeerService {
+  // Host->peer: open/reopen supervision. The peer streams lifecycle truth
+  // strictly after since_event_seq (exclusive). Host-initiated: the
+  // phone-home conn has the peer as gRPC server.
+  rpc Supervise(SupervisionRequest) returns (stream SupervisionEvent);
+  // Host->peer control plane (Stage A: kill child; future: respawn, detach).
+  rpc Control(ControlRequest) returns (ControlResponse);
+}
+
+message SupervisionRequest {
+  // Stream journal entries strictly after this sequence number (exclusive);
+  // 0 replays the journal from the beginning.
+  uint64 since_event_seq = 1;
+}
+
+// SupervisionEvent is one entry of the peer's supervision journal: a typed
+// process-lifecycle fact with a gapless per-peer sequence number.
+message SupervisionEvent {
+  // Global monotonic per peer process, gapless.
+  uint64 event_seq = 1;
+  // When the fact was recorded (UTC).
+  google.protobuf.Timestamp at = 2;
+  // Process-level subject: the adapter type the peer supervises.
+  string adapter_type = 3;
+  // "scopeName/scopeInstanceID" or "" (legacy mode).
+  string scope = 4;
+  // Session-scoped events carry the session id; "" for process-level.
+  string session_id = 5;
+  // Typed lifecycle payload. Field numbers here are permanent; next arm =
+  // field 11 (additive-only; see file header).
+  oneof kind {
+    ProcessSpawned spawned = 6;          // pid, binary, digest, version
+    ProcessExited exited = 7;            // exit_code, signal, idle_ms, graceful
+    CrashClassified crash = 8;           // reason (shared const set), detail
+    StreamFlushed flushed = 9;           // channel ("log"), up_to_seq
+    SupervisionHeartbeat heartbeat = 10; // last_event_seq (journal lag)
+  }
+}
+
+message ProcessSpawned {
+  // Adapter binary path or image reference the peer spawned.
+  string binary = 1;
+  // Digest of the adapter artifact (OCI digest or content hash).
+  string digest = 2;
+  // Adapter-reported version string.
+  string version = 3;
+  // OS process id of the spawned adapter.
+  int32 pid = 4;
+}
+
+message ProcessExited {
+  // OS exit code, or -1 when the process was killed by a signal.
+  int32 exit_code = 1;
+  // Terminating signal number, or 0 for a normal exit.
+  int32 signal = 2;
+  // Idle window (ms) between the peer's last streamed event and the exit.
+  uint64 idle_ms = 3;
+  // True when the exit was graceful (clean shutdown or explicit kill).
+  bool graceful = 4;
+}
+
+// CrashClassified carries the peer's classification of a crash. `reason` is
+// one of the shared crash-reason strings (single source of truth: the
+// exported const set in the host's internal/adapterhost crash taxonomy);
+// both host crash mapping and peer emission consume that same set.
+message CrashClassified {
+  string reason = 1;
+  // Human-readable detail (underlying error text, diagnostics).
+  string detail = 2;
+}
+
+message StreamFlushed {
+  // Stream channel that flushed; "log" for the log stream.
+  string channel = 1;
+  // Sequence up to which the channel was flushed; monotonic per channel.
+  uint64 up_to_seq = 2;
+}
+
+message SupervisionHeartbeat {
+  // Highest event_seq the peer has journaled (journal lag probe).
+  uint64 last_event_seq = 1;
+}
+
+message ControlRequest {
+  oneof kind {
+    KillChild kill_child = 1;
+  }
+  // Process-level subject the control applies to.
+  string adapter_type = 2;
+  // "scopeName/scopeInstanceID" or "" (legacy mode).
+  string scope = 3;
+  // Grace period before the child is force-terminated.
+  uint32 grace_ms = 4;
+}
+
+message ControlResponse {
+  bool accepted = 1;
+  // Acceptance detail or the typed rejection reason.
+  string detail = 2;
+}
+
+message KillChild {}
