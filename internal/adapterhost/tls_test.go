@@ -74,6 +74,13 @@ func TestLoadClientTLS_NoTLSWhenAllPathsEmpty(t *testing.T) {
 func TestLoadClientTLS_AllOrNothing(t *testing.T) {
 	certPath, keyPath, caPath := writeTestTLSFiles(t)
 
+	// A real file holding non-PEM bytes: os.ReadFile succeeds, so this case
+	// exercises the AppendCertsFromPEM rejection ("parse CA bundle") rather
+	// than the read failure path the "missing ca file" case already covers.
+	junkCA := filepath.Join(t.TempDir(), "junk.ca")
+	if err := os.WriteFile(junkCA, []byte("not a pem"), 0o600); err != nil {
+		t.Fatalf("write junk CA: %v", err)
+	}
 	cases := []struct {
 		name             string
 		cert, key, ca    string
@@ -86,7 +93,7 @@ func TestLoadClientTLS_AllOrNothing(t *testing.T) {
 		{"missing cert file", filepath.Join(t.TempDir(), "nope.crt"), keyPath, caPath, "load client key pair"},
 		{"missing key file", certPath, filepath.Join(t.TempDir(), "nope.key"), caPath, "load client key pair"},
 		{"missing ca file", certPath, keyPath, filepath.Join(t.TempDir(), "nope.ca"), "read CA bundle"},
-		{"junk ca pem", certPath, keyPath, filepath.Join(t.TempDir(), "junk"), "read CA bundle"},
+		{"junk ca pem", certPath, keyPath, junkCA, "parse CA bundle"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
