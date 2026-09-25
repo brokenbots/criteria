@@ -119,50 +119,65 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		AdapterBinary:   getenv(EnvAdapterBinary),
 		AdapterManifest: getenv(EnvAdapterManifest),
 	}
+	if err := cfg.parseTunables(getenv); err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
+}
 
+// parseTunables reads and validates the parsed peer tunables: child
+// keepalive, journal limit, and backoff bounds.
+func (c *Config) parseTunables(getenv func(string) string) error {
 	keepAlive := strings.TrimSpace(getenv(EnvChildKeepAlive))
 	if keepAlive == "" {
-		cfg.ChildKeepAlive = true
+		c.ChildKeepAlive = true
 	} else {
 		v, err := strconv.ParseBool(keepAlive)
 		if err != nil {
-			return Config{}, fmt.Errorf("%s must be a boolean, got %q", EnvChildKeepAlive, keepAlive)
+			return fmt.Errorf("%s must be a boolean, got %q", EnvChildKeepAlive, keepAlive)
 		}
-		cfg.ChildKeepAlive = v
+		c.ChildKeepAlive = v
 	}
 
-	cfg.JournalLimit = DefaultJournalLimit
+	c.JournalLimit = DefaultJournalLimit
 	if raw := strings.TrimSpace(getenv(EnvJournalLimit)); raw != "" {
 		v, err := strconv.Atoi(raw)
 		if err != nil {
-			return Config{}, fmt.Errorf("%s must be a positive integer, got %q", EnvJournalLimit, raw)
+			return fmt.Errorf("%s must be a positive integer, got %q", EnvJournalLimit, raw)
 		}
 		if v <= 0 {
-			return Config{}, fmt.Errorf("%s must be a positive integer, got %d", EnvJournalLimit, v)
+			return fmt.Errorf("%s must be a positive integer, got %d", EnvJournalLimit, v)
 		}
-		cfg.JournalLimit = v
+		c.JournalLimit = v
 	}
 
-	cfg.BackoffMin = DefaultBackoffMin
-	if raw := strings.TrimSpace(getenv(EnvBackoffMin)); raw != "" {
-		d, err := time.ParseDuration(raw)
-		if err != nil || d <= 0 {
-			return Config{}, fmt.Errorf("%s must be a positive duration, got %q", EnvBackoffMin, raw)
-		}
-		cfg.BackoffMin = d
+	var err error
+	c.BackoffMin, err = parseBackoff(getenv, EnvBackoffMin, DefaultBackoffMin)
+	if err != nil {
+		return err
 	}
-	cfg.BackoffMax = DefaultBackoffMax
-	if raw := strings.TrimSpace(getenv(EnvBackoffMax)); raw != "" {
-		d, err := time.ParseDuration(raw)
-		if err != nil || d <= 0 {
-			return Config{}, fmt.Errorf("%s must be a positive duration, got %q", EnvBackoffMax, raw)
-		}
-		cfg.BackoffMax = d
+	c.BackoffMax, err = parseBackoff(getenv, EnvBackoffMax, DefaultBackoffMax)
+	if err != nil {
+		return err
 	}
-	if cfg.BackoffMax < cfg.BackoffMin {
-		return Config{}, fmt.Errorf("%s (%s) must be >= %s (%s)", EnvBackoffMax, cfg.BackoffMax, EnvBackoffMin, cfg.BackoffMin)
+	if c.BackoffMax < c.BackoffMin {
+		return fmt.Errorf("%s (%s) must be >= %s (%s)", EnvBackoffMax, c.BackoffMax, EnvBackoffMin, c.BackoffMin)
 	}
-	return cfg, nil
+	return nil
+}
+
+// parseBackoff parses one CRITERIA_PEER_BACKOFF_* duration, falling back to
+// def when unset.
+func parseBackoff(getenv func(string) string, name string, def time.Duration) (time.Duration, error) {
+	raw := strings.TrimSpace(getenv(name))
+	if raw == "" {
+		return def, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("%s must be a positive duration, got %q", name, raw)
+	}
+	return d, nil
 }
 
 // LoadConfigFromEnv reads the peer configuration from the process
@@ -285,7 +300,13 @@ func (c *Config) resolveDigestBinary() error {
 	}
 	pinned, err := adapterhost.DiscoverBinaryAt(c.AdapterName, adapterhost.EncodeDigest(d))
 	if err != nil {
-		return nil
+		var notFound *adapterhost.ErrAdapterNotFound
+		if errors.As(err, &notFound) {
+			// No pinned artifact in the local cache: keep the chain-resolved
+			// binary; the digest is still recorded on spawn events.
+			return nil
+		}
+		return fmt.Errorf("resolve %s: %w", EnvRemoteDigest, err)
 	}
 	c.AdapterBinary = pinned
 	return nil

@@ -23,7 +23,7 @@ const defaultExitPollInterval = 500 * time.Millisecond
 // the go-plugin loader that owns the child process, the child handle, the
 // bounded supervision journal, and the most recent process-exit fact.
 type peerRuntime struct {
-	cfg     Config
+	cfg     *Config
 	log     *slog.Logger
 	loader  *adapterhost.DefaultLoader
 	journal *EventJournal
@@ -44,8 +44,8 @@ type peerRuntime struct {
 }
 
 // NewRuntime builds a peer runtime for the given (already resolved)
-// configuration.
-func NewRuntime(cfg Config, log *slog.Logger) *peerRuntime {
+// configuration. The runtime takes ownership of cfg.
+func NewRuntime(cfg *Config, log *slog.Logger) *peerRuntime {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -61,7 +61,7 @@ func NewRuntime(cfg Config, log *slog.Logger) *peerRuntime {
 }
 
 // Config returns the runtime configuration.
-func (r *peerRuntime) Config() Config { return r.cfg }
+func (r *peerRuntime) Config() *Config { return r.cfg }
 
 // Journal returns the supervision journal for the Supervise stream.
 func (r *peerRuntime) Journal() *EventJournal { return r.journal }
@@ -104,9 +104,63 @@ func (r *peerRuntime) Boot(ctx context.Context) error {
 		return errors.New("adapter name not resolved; set CRITERIA_ADAPTER_NAME or CRITERIA_ADAPTER_BINARY")
 	}
 
-	// Launch through the loader so the child is a real go-plugin child with
-	// stderr captured by hclog and accurate process-exit reporting. The
-	// discovery function pins the loader to the configured binary so the
+	child, info, err := r.spawnChild(ctx, name)
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	r.child = child
+	r.mu.Unlock()
+
+	version := info.Version
+	if version == "" {
+		version = r.cfg.AdapterVersion
+	}
+	if err := r.recordSpawn(child, name, version); err != nil {
+		return err
+	}
+
+	r.mu.Lock()
+	r.watchStarted = true
+	r.mu.Unlock()
+	go r.watchChild()
+	return nil
+}
+
+// recordSpawn journals the ProcessSpawned fact and logs the spawn line.
+func (r *peerRuntime) recordSpawn(child adapterhost.Handle, name, version string) error {
+	pid, _ := adapterhost.ProcessPID(child)
+	spawned, appendErr := r.journal.Append(&criteriav1.SupervisionEvent_Spawned{Spawned: &criteriav1.ProcessSpawned{
+		Binary:  r.cfg.Binary(),
+		Digest:  r.cfg.Digest,
+		Version: version,
+		Pid:     int32(pid),
+	}}, name, r.cfg.Scope, "")
+	if appendErr != nil {
+		return fmt.Errorf("record spawn: %w", appendErr)
+	}
+	r.mu.Lock()
+	r.lastEventAt = time.Now()
+	r.mu.Unlock()
+
+	r.log.Info("peer child spawned",
+		"adapter", name,
+		"binary", r.cfg.Binary(),
+		"digest", r.cfg.Digest,
+		"version", version,
+		"pid", pid,
+		"scope", r.cfg.Scope,
+		"child_keepalive", r.cfg.ChildKeepAlive,
+		"event_seq", spawned.GetEventSeq(),
+	)
+	return nil
+}
+
+// spawnChild launches the adapter child through the adapterhost loader and
+// verifies it with Info. On verification failure it tears the child down
+// immediately so a failed boot never orphans a subprocess.
+func (r *peerRuntime) spawnChild(ctx context.Context, name string) (adapterhost.Handle, adapterhost.Info, error) {
+	// The discovery function pins the loader to the configured binary so the
 	// resolution precedence (manifest → env → PATH → digest preference) stays
 	// in Config.Resolve.
 	discovery := func(string) (string, error) {
@@ -121,58 +175,22 @@ func (r *peerRuntime) Boot(ctx context.Context) error {
 	}
 	child, err := r.loader.ResolveWithDiscovery(ctx, name, discovery, customizer)
 	if err != nil {
-		return fmt.Errorf("start adapter %q: %w", name, err)
+		return nil, adapterhost.Info{}, fmt.Errorf("start adapter %q: %w", name, err)
 	}
-	r.mu.Lock()
-	r.child = child
-	r.lastEventAt = time.Now()
-	r.mu.Unlock()
 
-	// Verify the child is a live, dispensable adapter before declaring the
-	// peer ready. On failure, tear the child down immediately so the failing
-	// boot never orphans a subprocess.
 	info, err := child.Info(ctx)
 	if err != nil {
 		r.log.Error("adapter child failed Info", "adapter", name, "error", err)
-		r.journal.Append(&criteriav1.SupervisionEvent_Crash{Crash: &criteriav1.CrashClassified{
+		if _, jerr := r.journal.Append(&criteriav1.SupervisionEvent_Crash{Crash: &criteriav1.CrashClassified{
 			Reason: adapterhost.CrashReasonProcessExitedEarly,
 			Detail: fmt.Sprintf("Info failed right after spawn: %v", err),
-		}}, name, r.cfg.Scope, "")
+		}}, name, r.cfg.Scope, ""); jerr != nil {
+			r.log.Error("journal crash event", "error", jerr)
+		}
 		child.Kill()
-		return fmt.Errorf("adapter %q Info: %w", name, err)
+		return nil, adapterhost.Info{}, fmt.Errorf("adapter %q Info: %w", name, err)
 	}
-
-	version := info.Version
-	if version == "" {
-		version = r.cfg.AdapterVersion
-	}
-	pid, _ := adapterhost.ProcessPID(child)
-	spawned, appendErr := r.journal.Append(&criteriav1.SupervisionEvent_Spawned{Spawned: &criteriav1.ProcessSpawned{
-		Binary:  r.cfg.Binary(),
-		Digest:  r.cfg.Digest,
-		Version: version,
-		Pid:     int32(pid),
-	}}, name, r.cfg.Scope, "")
-	if appendErr != nil {
-		return fmt.Errorf("record spawn: %w", appendErr)
-	}
-
-	r.log.Info("peer child spawned",
-		"adapter", name,
-		"binary", r.cfg.Binary(),
-		"digest", r.cfg.Digest,
-		"version", version,
-		"pid", pid,
-		"scope", r.cfg.Scope,
-		"child_keepalive", r.cfg.ChildKeepAlive,
-		"event_seq", spawned.GetEventSeq(),
-	)
-
-	r.mu.Lock()
-	r.watchStarted = true
-	r.mu.Unlock()
-	go r.watchChild()
-	return nil
+	return child, info, nil
 }
 
 // watchChild polls the child's process state and journals the exit fact the

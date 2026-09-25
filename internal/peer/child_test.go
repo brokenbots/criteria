@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -22,14 +21,15 @@ import (
 
 // buildNoopAdapter compiles the in-tree noop conformance fixture into a
 // directory and returns the binary path. Building from source keeps the boot
-// test self-contained (no external OCI pull).
+// test self-contained (no external OCI pull). Requires the go toolchain on
+// PATH — `go test` already implies it.
 func buildNoopAdapter(t *testing.T) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), "criteria-adapter-noop")
-	goBin := "go"
-	if _, err := exec.LookPath("go"); err != nil {
-		goBin = filepath.Join(runtime.GOROOT(), "bin", "go")
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("go toolchain not on PATH; cannot build the noop fixture")
 	}
+	bin := filepath.Join(t.TempDir(), "criteria-adapter-noop")
 	cmd := exec.Command(goBin, "build", "-o", bin, "./internal/adapter/conformance/testdata/noop")
 	cmd.Dir = "../.." // package test dir → repo root
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
@@ -62,7 +62,7 @@ func TestPeerRuntime_BootSpawnsRealChild(t *testing.T) {
 	cfg.JournalLimit = 8
 
 	var logs bytes.Buffer
-	rt := NewRuntime(cfg, captureLogger(&logs))
+	rt := NewRuntime(&cfg, captureLogger(&logs))
 	rt.exitPoll = 20 * time.Millisecond
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -193,7 +193,7 @@ func TestPeerRuntime_ExitWatcherClassifiesCrash(t *testing.T) {
 	cfg.AdapterName = "fakex"
 	cfg.AdapterBinary = "/unused" // builtins bypass discovery
 
-	rt := NewRuntime(cfg, captureLogger(&bytes.Buffer{}))
+	rt := NewRuntime(&cfg, captureLogger(&bytes.Buffer{}))
 	rt.exitPoll = 10 * time.Millisecond
 	rt.loader.RegisterBuiltin("fakex", func() adapterhost.Handle { return fake })
 
@@ -240,7 +240,7 @@ func TestPeerRuntime_BootRequiresResolvedIdentity(t *testing.T) {
 	}
 	cfg.AdapterName = ""
 	cfg.AdapterBinary = ""
-	rt := NewRuntime(cfg, captureLogger(&bytes.Buffer{}))
+	rt := NewRuntime(&cfg, captureLogger(&bytes.Buffer{}))
 	err = rt.Boot(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "adapter name not resolved") {
 		t.Fatalf("want unresolved-name error, got %v", err)
@@ -255,7 +255,7 @@ func TestPeerRuntime_BootFailsWhenBinaryMissing(t *testing.T) {
 	cfg.AdapterName = "missingx"
 	cfg.AdapterBinary = "/nonexistent/criteria-adapter-missingx"
 
-	rt := NewRuntime(cfg, captureLogger(&bytes.Buffer{}))
+	rt := NewRuntime(&cfg, captureLogger(&bytes.Buffer{}))
 	err = rt.Boot(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "start adapter") {
 		t.Fatalf("want start failure, got %v", err)
@@ -270,7 +270,7 @@ func TestPeerRuntime_ShutdownWithoutBoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	rt := NewRuntime(cfg, captureLogger(&bytes.Buffer{}))
+	rt := NewRuntime(&cfg, captureLogger(&bytes.Buffer{}))
 	if err := rt.Shutdown(context.Background()); err != nil {
 		t.Fatalf("shutdown without boot: %v", err)
 	}
@@ -293,7 +293,7 @@ func TestPeerRuntime_BootTwiceRejected(t *testing.T) {
 	}
 	cfg.AdapterName = "missingx"
 	cfg.AdapterBinary = "/nonexistent/criteria-adapter-missingx"
-	rt := NewRuntime(cfg, captureLogger(&bytes.Buffer{}))
+	rt := NewRuntime(&cfg, captureLogger(&bytes.Buffer{}))
 	ctx := context.Background()
 	if err := rt.Boot(ctx); err == nil {
 		t.Fatal("first boot should fail (missing binary)")

@@ -120,7 +120,7 @@ func runPeer(parent context.Context) error {
 		"backoff_max", cfg.BackoffMax.String(),
 	)
 
-	rt := peer.NewRuntime(cfg, log)
+	rt := peer.NewRuntime(&cfg, log)
 	if err := rt.Boot(ctx); err != nil {
 		return err
 	}
@@ -129,8 +129,9 @@ func runPeer(parent context.Context) error {
 	<-ctx.Done()
 	// Bounded shutdown: give the child a grace period before the loader tears
 	// it down. Child keepalive semantics only matter for host disconnects, not
-	// for SIGINT/SIGTERM on the peer itself.
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// for SIGINT/SIGTERM on the peer itself. WithoutCancel keeps the shutdown
+	// alive even though the signal context has fired.
+	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
 	defer cancel()
 	if err := rt.Shutdown(shutdownCtx); err != nil {
 		log.Error("peer shutdown failed", "error", err)

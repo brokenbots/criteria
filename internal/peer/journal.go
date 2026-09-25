@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"sync"
 
-	criteriav1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
+
+	criteriav1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 // EventKind is the typed lifecycle payload of a SupervisionEvent: one of the
