@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc"
@@ -347,6 +348,9 @@ type peerSession struct {
 	handle    *peerHandle
 	onDead    func(ps *peerSession)
 	closeOnce sync.Once
+	// dialed guards the one-shot context dialer: the held conn is handed
+	// to grpc exactly once.
+	dialed atomic.Bool
 
 	mu            sync.Mutex
 	exited        bool
@@ -371,13 +375,14 @@ func newPeerSession(conn net.Conn, dial PeerDial, onDead func(ps *peerSession)) 
 		conn:   conn,
 		onDead: onDead,
 	}
-	dialed := false
 	opts := append([]grpc.DialOption{
 		grpc.WithContextDialer(func(ctx context.Context, target string) (net.Conn, error) {
-			if dialed {
+			// CAS makes the one-shot handout race-free even under a
+			// hypothetical concurrent dial; a lost transport always
+			// requires the adapter to re-dial.
+			if !ps.dialed.CompareAndSwap(false, true) {
 				return nil, errors.New("criteria peer transport: connection already handed out; a lost transport requires the adapter to re-dial")
 			}
-			dialed = true
 			return ps.conn, nil
 		}),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -587,8 +592,8 @@ type peerHandle struct {
 	ps   *peerSession
 	name string
 
-	mu     sync.Once // guards Kill
-	permMu sync.Mutex
+	killOnce sync.Once // guards Kill
+	permMu   sync.Mutex
 	// permActive tracks session-scoped permission streams started via
 	// StartPermissionStream; Execute skips its fallback per-Execute
 	// permission stream when one is active (identical to rpcHandle).
@@ -641,7 +646,7 @@ func (h *peerHandle) CloseSession(ctx context.Context, id string) error {
 // The peer reports the actual exit through the supervision journal, which is
 // what flips ProcessExited() — there is no host-side process to signal.
 func (h *peerHandle) Kill() {
-	h.mu.Do(func() {
+	h.killOnce.Do(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), peerKillTimeout)
 		defer cancel()
 		h.killChild(ctx)
@@ -652,7 +657,7 @@ func (h *peerHandle) Kill() {
 // already hold a context (peerSessionProvider.CloseHandle); it shares Kill's
 // once-only guard.
 func (h *peerHandle) KillContext(ctx context.Context) {
-	h.mu.Do(func() { h.killChild(ctx) })
+	h.killOnce.Do(func() { h.killChild(ctx) })
 }
 
 func (h *peerHandle) killChild(ctx context.Context) {
