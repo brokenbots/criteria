@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -24,25 +25,51 @@ import (
 
 // --- helpers ---
 
-// captureLogs swaps the default slog logger for one writing to a returned
-// buffer, restoring the previous logger on cleanup.
-func captureLogs(t *testing.T) *bytes.Buffer {
-	t.Helper()
-	var buf bytes.Buffer
-	old := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(old) })
-	return &buf
+// capturedLogs is a concurrency-safe log buffer. The shim writes slog output
+// from its accept goroutines while test goroutines poll the captured text
+// (waitForLog, failure reporting), so every read and write must be guarded.
+type capturedLogs struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
 }
 
-// waitForLog polls a captured log buffer until it contains the substring or
+func (c *capturedLogs) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.buf.Write(p)
+}
+
+func (c *capturedLogs) String() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.buf.String()
+}
+
+func (c *capturedLogs) contains(substr string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return strings.Contains(c.buf.String(), substr)
+}
+
+// captureLogs swaps the default slog logger for one writing to a returned
+// concurrency-safe buffer, restoring the previous logger on cleanup.
+func captureLogs(t *testing.T) *capturedLogs {
+	t.Helper()
+	var logs capturedLogs
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(old) })
+	return &logs
+}
+
+// waitForLog polls captured log output until it contains the substring or
 // the timeout elapses; log lines written from server-side goroutines land
 // asynchronously relative to client-observed connection state.
-func waitForLog(t *testing.T, buf *bytes.Buffer, substr string, timeout time.Duration) bool {
+func waitForLog(t *testing.T, logs *capturedLogs, substr string, timeout time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for {
-		if strings.Contains(buf.String(), substr) {
+		if logs.contains(substr) {
 			return true
 		}
 		if time.Now().After(deadline) {
@@ -86,15 +113,31 @@ func padFrame(hs *handshakeMessage, n int) []byte {
 	return append(append([]byte{}, pad...), data...)
 }
 
-// expectClosed asserts the conn is closed by the peer within a bounded wait.
+// assertConnClosed asserts the peer closed the conn within a bounded wait.
+// A local read-deadline expiry is NOT accepted as evidence of a close — an
+// implementation that emits the rejection but never closes would otherwise
+// pass. Only EOF, connection reset, or a closed-network-conn error ends the
+// wait; the wait itself must be short so a non-closing implementation fails
+// fast and loudly.
 func assertConnClosed(t *testing.T, conn net.Conn) {
 	t.Helper()
-	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	buf := make([]byte, 1)
 	for {
-		if _, err := conn.Read(buf); err != nil {
-			return // any read error (EOF/reset/timeout after close) is the signal
+		_, err := conn.Read(buf)
+		if err == nil {
+			continue // peer sent data without closing; keep waiting
 		}
+		var ne net.Error
+		if errors.As(err, &ne) && ne.Timeout() {
+			t.Fatalf("peer did not close the conn within the deadline; a read timeout is not evidence of close")
+		}
+		// EOF (graceful FIN), ECONNRESET, and net.ErrClosed are the close
+		// signals on TCP; any other error is unexpected and must fail loudly.
+		if !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) && !errors.Is(err, syscall.ECONNRESET) {
+			t.Fatalf("unexpected read error while waiting for peer close: %v", err)
+		}
+		return
 	}
 }
 
@@ -242,10 +285,14 @@ func TestShim_ReadHandshakeMessage_OversizeFrameRejected(t *testing.T) {
 	}
 
 	// Closing the conn is part of the rejection: the blocked writer must fail.
+	// A close-caused pipe error is required evidence; a timeout here means the
+	// conn was not closed (not evidence of anything).
 	select {
 	case err := <-writeErr:
 		if err == nil {
 			t.Error("expected client write to fail after server closed conn")
+		} else if !errors.Is(err, io.ErrClosedPipe) && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("client write failed with unexpected error (want closed-pipe/close): %v", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Error("client write did not observe conn close")
