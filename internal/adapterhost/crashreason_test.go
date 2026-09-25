@@ -6,44 +6,75 @@ import (
 	"testing"
 )
 
-// crashReasonTaxonomy enumerates every exported crash-reason constant. The
-// test pins the set, not just individual values: classifySessionCrash must
-// never return a string outside this taxonomy, and peer supervision journal
-// emission (peer.proto CrashClassified.reason, ADR-0007 Stage A) consumes the
-// same set.
-func crashReasonTaxonomy() map[string]string {
+// crashReasonConsts enumerates every exported CrashReason* constant. The
+// compile-time references fail the build if a constant is renamed or
+// removed; TestCrashReasonTaxonomy's cardinality check fails if a new
+// constant is added without a pin entry in both tables.
+func crashReasonConsts() map[string]string {
 	return map[string]string{
-		"ProcessExitedEarly":  CrashReasonProcessExitedEarly,
-		"Unknown":             CrashReasonUnknown,
-		"HeartbeatStall":      CrashReasonHeartbeatStall,
-		"TransportClosed":     CrashReasonTransportClosed,
-		"EndpointUnavailable": CrashReasonEndpointUnavailable,
-		"StdioPipeBroken":     CrashReasonStdioPipeBroken,
-		"StdioEOF":            CrashReasonStdioEOF,
-		"ProcessTerminated":   CrashReasonProcessTerminated,
-		"UnknownAdapterError": CrashReasonUnknownAdapterError,
+		"CrashReasonProcessExitedEarly":  CrashReasonProcessExitedEarly,
+		"CrashReasonUnknown":             CrashReasonUnknown,
+		"CrashReasonHeartbeatStall":      CrashReasonHeartbeatStall,
+		"CrashReasonTransportClosed":     CrashReasonTransportClosed,
+		"CrashReasonEndpointUnavailable": CrashReasonEndpointUnavailable,
+		"CrashReasonStdioPipeBroken":     CrashReasonStdioPipeBroken,
+		"CrashReasonStdioEOF":            CrashReasonStdioEOF,
+		"CrashReasonProcessTerminated":   CrashReasonProcessTerminated,
+		"CrashReasonUnknownAdapterError": CrashReasonUnknownAdapterError,
 	}
 }
 
-// TestCrashReasonTaxonomy pins the exported const set: every value is
-// non-empty and distinct, so no two classifications can collide on the wire
-// or in logs.
+// crashReasonLiterals pins each constant to the exact historical value
+// classifySessionCrash returned before the taxonomy extraction (CRI-271).
+// These strings are stable wire/log vocabulary: session.crash sink events,
+// inspect payloads, and peer supervision journal CrashClassified.reason
+// events (peer.proto, ADR-0007 Stage A) all carry them verbatim, so a
+// reword of any constant must fail this test.
+func crashReasonLiterals() map[string]string {
+	return map[string]string{
+		"CrashReasonProcessExitedEarly":  "adapter process exited before the call completed",
+		"CrashReasonUnknown":             "unknown",
+		"CrashReasonHeartbeatStall":      "log-stream heartbeat stall (adapter stopped streaming)",
+		"CrashReasonTransportClosed":     "gRPC client transport closed (adapter or shim closed the connection)",
+		"CrashReasonEndpointUnavailable": "gRPC endpoint unavailable (adapter process gone)",
+		"CrashReasonStdioPipeBroken":     "plugin stdio pipe broken (adapter process died)",
+		"CrashReasonStdioEOF":            "plugin stdio EOF (adapter process exited or closed its stream)",
+		"CrashReasonProcessTerminated":   "adapter process terminated",
+		"CrashReasonUnknownAdapterError": "unknown adapter error",
+	}
+}
+
+// TestCrashReasonTaxonomy pins the exported const set verbatim: every
+// constant matches its historical literal, both tables cover the same set
+// (cardinality parity), no value is empty, and no two constants collide —
+// neither a reword nor a duplicate can slip onto the wire or into logs.
 func TestCrashReasonTaxonomy(t *testing.T) {
-	seen := make(map[string]string, len(crashReasonTaxonomy()))
-	for name, reason := range crashReasonTaxonomy() {
-		if reason == "" {
-			t.Errorf("CrashReason%s is empty", name)
+	consts := crashReasonConsts()
+	literals := crashReasonLiterals()
+	if len(consts) != len(literals) {
+		t.Fatalf("crash-reason taxonomy cardinality drifted: %d constants vs %d pinned literals — add an entry to both tables", len(consts), len(literals))
+	}
+	for name, want := range literals {
+		got := consts[name]
+		if got != want {
+			t.Errorf("%s = %q, want pinned verbatim %q", name, got, want)
 		}
-		if dup, ok := seen[reason]; ok {
-			t.Errorf("CrashReason%s duplicates CrashReason%s (%q)", name, dup, reason)
+	}
+	seen := make(map[string]string, len(consts))
+	for name, value := range consts {
+		if value == "" {
+			t.Errorf("%s is empty", name)
 		}
-		seen[reason] = name
+		if dup, ok := seen[value]; ok {
+			t.Errorf("%s duplicates %s (%q)", name, dup, value)
+		}
+		seen[value] = name
 	}
 }
 
 // exitedHandle is a minimal Handle that reports a process exit, exercising
 // the ProcessExited branch of classifySessionCrash (which the message-
-// heuristic cases above it cannot reach without a real subprocess).
+// heuristic cases cannot reach without a real subprocess).
 type exitedHandle struct {
 	Handle
 	exited atomic.Bool
@@ -55,9 +86,8 @@ func (h *exitedHandle) ProcessExited() bool { return h.exited.Load() }
 // return path yields a member of the exported taxonomy (single source of
 // truth: the classifier cannot drift off the const set).
 func TestClassifySessionCrashUsesTaxonomy(t *testing.T) {
-	taxonomy := crashReasonTaxonomy()
-	members := make(map[string]bool, len(taxonomy))
-	for _, reason := range taxonomy {
+	members := make(map[string]bool, len(crashReasonConsts()))
+	for _, reason := range crashReasonConsts() {
 		members[reason] = true
 	}
 

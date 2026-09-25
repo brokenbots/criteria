@@ -208,7 +208,7 @@ func TestCRI271_ExecuteCrashEmitsDiagnosableEvent(t *testing.T) {
 	if !ok {
 		t.Fatal("expected a session.crash sink event")
 	}
-	if evt["crash_reason"] != "gRPC client transport closed (adapter or shim closed the connection)" {
+	if evt["crash_reason"] != CrashReasonTransportClosed {
 		t.Errorf("event crash_reason = %v", evt["crash_reason"])
 	}
 	if idle, _ := evt["idle_since_last_event"].(string); idle == "" {

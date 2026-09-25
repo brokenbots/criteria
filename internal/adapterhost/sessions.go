@@ -1986,8 +1986,11 @@ func (m *SessionManager) registerSensitiveOutputs(result adapter.Result, step *w
 }
 
 // classifySessionCrash names the likely cause of an adapter session crash so
-// engine logs answer "which session died and why" (CRI-271). The
-// adapter-process checks come first because a dead process is the most
+// engine logs answer "which session died and why" (CRI-271). The returned
+// string is always one of the exported CrashReason* constants in
+// crashreason.go — the single source of truth also consumed by peer
+// supervision journal emission (peer.proto CrashClassified.reason, T-05/T-07).
+// The adapter-process checks come first because a dead process is the most
 // precise diagnosis; the message heuristics then distinguish the transport
 // failure shapes the go-plugin/gRPC stack produces.
 func classifySessionCrash(sess *Session, execErr error) string {
