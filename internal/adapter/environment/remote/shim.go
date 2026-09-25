@@ -35,6 +35,48 @@ type handshakeMessage struct {
 	Digest  string `json:"digest"`
 	Token   string `json:"token"`
 	Scope   string `json:"scope,omitempty"`
+	// Role negotiates what the dialing process is: "peer" routes the
+	// connection to the PeerAcceptor seam instead of the legacy runner
+	// byte-bridge (ADR-0007 D4). Absent or any other value keeps the legacy
+	// path. Unknown handshake fields are tolerated by design, so older
+	// runners that never send role keep dialing unchanged.
+	Role string              `json:"role,omitempty"`
+	Peer *PeerClientIdentity `json:"peer,omitempty"`
+}
+
+// handshakeRolePeer is the identity-frame role value that routes a dial to
+// the PeerAcceptor seam (ADR-0007 D4). Any other value — including absent —
+// keeps today's runner byte-bridge path.
+const handshakeRolePeer = "peer"
+
+// handshakeFrameCap bounds the identity frame read: the handshake is read
+// before authentication, so an unbounded read was an unauthenticated
+// memory-DoS (review §4.1). A valid handshake is ~200 bytes; 16 KiB leaves
+// ample headroom for future optional fields.
+const handshakeFrameCap = 16384
+
+// PeerClientIdentity is the optional `peer` block of the identity frame,
+// carried by dials that advertise role "peer" (ADR-0007). It is metadata for
+// the peer acceptor; identity verification is unchanged and runs before the
+// role branch.
+type PeerClientIdentity struct {
+	CriteriaVersion string   `json:"criteria_version,omitempty"`
+	Capabilities    []string `json:"capabilities,omitempty"`
+}
+
+// PeerAcceptor is the pluggable seam that receives authenticated peer-role
+// connections (implemented by the peer runtime, T-06). A dial whose
+// handshake advertises role "peer" is handed to AcceptPeer after the
+// standard identity verification succeeds; the legacy byte-bridge path is
+// not taken.
+//
+// Ownership: from the moment AcceptPeer is invoked the acceptor owns the
+// connection and must close it before returning, whether it succeeds or
+// fails. identity is the parsed `peer` block of the handshake and may be nil
+// when the dialer omitted it; scope, digest and token fields have already
+// been verified by the shim.
+type PeerAcceptor interface {
+	AcceptPeer(ctx context.Context, conn net.Conn, identity *PeerClientIdentity) error
 }
 
 // DigestVerifier checks whether a reported adapter digest is acceptable.
@@ -93,6 +135,8 @@ type Shim struct {
 
 	verifyFailures      map[string]*verifyFailureState // session key → last identity-verification rejection (diagnostics while a waiter is pending)
 	verifyFailureBudget time.Duration
+
+	peerAcceptor PeerAcceptor // receives authenticated role="peer" dials; nil rejects them
 }
 
 type session struct {
@@ -262,6 +306,16 @@ func (s *Shim) SetPerScopeSessions(enabled bool) {
 	s.perScopeSessions = enabled
 }
 
+// SetPeerAcceptor installs the seam that receives authenticated peer-role
+// connections. When unset, peer-role dials are rejected: a peer conn is a
+// gRPC server (the peer is the server on the phone-home conn), so the legacy
+// byte-bridge path cannot serve it.
+func (s *Shim) SetPeerAcceptor(pa PeerAcceptor) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.peerAcceptor = pa
+}
+
 // RegisterScope registers (or updates) the accept token for a given scope.
 // It is only consulted when perScopeSessions is enabled.
 func (s *Shim) RegisterScope(scope, token string) {
@@ -340,6 +394,10 @@ func (s *Shim) Accept(ctx context.Context, conn net.Conn) error {
 		return err
 	}
 
+	if hs.Role == handshakeRolePeer {
+		return s.acceptPeerConn(ctx, conn, &hs)
+	}
+
 	socketPath, lis, err := s.setupUDS(conn)
 	if err != nil {
 		return err
@@ -353,6 +411,21 @@ func (s *Shim) Accept(ctx context.Context, conn net.Conn) error {
 	}
 
 	return s.buildAndStoreHandle(ctx, hs.Name, hs.Scope, conn, res.udsConn, lis, socketPath, res.client, res.pluginClient, res.bridgeCancel, res.bridgeCtx, res.bridgeWG)
+}
+
+// acceptPeerConn hands an authenticated peer-role connection to the
+// configured PeerAcceptor. Auth (mTLS, identity pattern, digest, token) has
+// already run; the acceptor receives only what it needs to supervise the
+// peer. Ownership of conn transfers to the acceptor (see PeerAcceptor).
+func (s *Shim) acceptPeerConn(ctx context.Context, conn net.Conn, hs *handshakeMessage) error {
+	s.mu.Lock()
+	acceptor := s.peerAcceptor
+	s.mu.Unlock()
+	if acceptor == nil {
+		_ = conn.Close()
+		return fmt.Errorf("peer role dial from %q rejected: no peer acceptor configured", hs.Name)
+	}
+	return acceptor.AcceptPeer(ctx, conn, hs.Peer)
 }
 
 func (s *Shim) performHandshake(ctx context.Context, conn net.Conn) error {
@@ -384,23 +457,22 @@ func (s *Shim) performHandshake(ctx context.Context, conn net.Conn) error {
 
 func (s *Shim) readHandshakeMessage(conn net.Conn) (handshakeMessage, error) {
 	_ = conn.SetReadDeadline(time.Now().Add(s.identityDeadline))
-	reader := bufio.NewReader(conn)
-	var header []byte
-	for {
-		b, err := reader.ReadByte()
-		if err != nil {
-			_ = conn.Close()
-			if isDeadlineTimeout(err) {
-				return handshakeMessage{}, fmt.Errorf("identity message deadline (%s) exceeded; timeout caused rejection", s.identityDeadline)
-			}
-			return handshakeMessage{}, fmt.Errorf("read handshake: %w", err)
-		}
-		if b == '\n' {
-			break
-		}
-		header = append(header, b)
-	}
+	header, err := readHandshakeFrame(bufio.NewReader(conn), handshakeFrameCap)
 	_ = conn.SetReadDeadline(time.Time{})
+	if err != nil {
+		_ = conn.Close()
+		if errors.Is(err, errHandshakeFrameTooLarge) {
+			// Distinct diagnostics for the unauthenticated memory-DoS shape
+			// (review §4.1): the frame is rejected before any parse, and the
+			// oversized connection is closed without buffering the rest.
+			slog.Warn(fmt.Sprintf("identity frame exceeds %d bytes", handshakeFrameCap))
+			return handshakeMessage{}, fmt.Errorf("identity frame exceeds %d bytes", handshakeFrameCap)
+		}
+		if isDeadlineTimeout(err) {
+			return handshakeMessage{}, fmt.Errorf("identity message deadline (%s) exceeded; timeout caused rejection", s.identityDeadline)
+		}
+		return handshakeMessage{}, fmt.Errorf("read handshake: %w", err)
+	}
 
 	var hs handshakeMessage
 	if err := json.Unmarshal(header, &hs); err != nil {
@@ -408,6 +480,33 @@ func (s *Shim) readHandshakeMessage(conn net.Conn) (handshakeMessage, error) {
 		return handshakeMessage{}, fmt.Errorf("unmarshal handshake: %w", err)
 	}
 	return hs, nil
+}
+
+// errHandshakeFrameTooLarge marks a handshake frame that grew past the cap
+// before its terminating newline; readHandshakeMessage maps it to the
+// distinct oversize diagnostic and connection close.
+var errHandshakeFrameTooLarge = errors.New("handshake frame too large")
+
+// readHandshakeFrame reads one '\n'-terminated identity frame from reader,
+// aborting once the frame exceeds limit bytes (review §4.1). The returned
+// header excludes the newline. Exactly limit bytes are still accepted; only
+// longer frames are rejected, so the cap never rejects a frame a compliant
+// dialer sends.
+func readHandshakeFrame(reader *bufio.Reader, limit int) ([]byte, error) {
+	var header []byte
+	for {
+		b, err := reader.ReadByte()
+		if err != nil {
+			return nil, err
+		}
+		if b == '\n' {
+			return header, nil
+		}
+		if len(header) >= limit {
+			return nil, errHandshakeFrameTooLarge
+		}
+		header = append(header, b)
+	}
 }
 
 func (s *Shim) verifyAdapterIdentity(conn net.Conn, hs *handshakeMessage) error {
