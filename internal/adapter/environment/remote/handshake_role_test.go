@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -55,15 +54,9 @@ func waitForLog(t *testing.T, buf *bytes.Buffer, substr string, timeout time.Dur
 
 // dialRawHandshake opens a conn to the shim, writes the marshaled handshake
 // frame, and returns the conn so the test can observe close behavior.
-func dialRawHandshake(t *testing.T, addr string, hs *handshakeMessage, tlsConf *tls.Config) net.Conn {
+func dialRawHandshake(t *testing.T, addr string, hs *handshakeMessage) net.Conn {
 	t.Helper()
-	var conn net.Conn
-	var err error
-	if tlsConf != nil {
-		conn, err = tls.Dial("tcp", addr, tlsConf)
-	} else {
-		conn, err = net.Dial("tcp", addr)
-	}
+	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		t.Fatalf("dial shim: %v", err)
 	}
@@ -94,7 +87,7 @@ func padFrame(hs *handshakeMessage, n int) []byte {
 }
 
 // expectClosed asserts the conn is closed by the peer within a bounded wait.
-func assertConnClosed(t *testing.T, conn net.Conn, what string) {
+func assertConnClosed(t *testing.T, conn net.Conn) {
 	t.Helper()
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	buf := make([]byte, 1)
@@ -164,7 +157,7 @@ func (a *recordingPeerAcceptor) releaseAll() { close(a.release) }
 
 // startTestShim builds and starts a plain-TCP shim with the standard test
 // digest verifier.
-func startTestShim(t *testing.T, cfg *Config) (*Shim, string) {
+func startTestShim(t *testing.T, cfg *Config) (shim *Shim, addr string) {
 	t.Helper()
 	shim, err := NewShim(cfg, &fixedDigestVerifier{allowed: map[string]string{"noop": "sha256:abcd1234"}})
 	if err != nil {
@@ -285,7 +278,7 @@ func TestShim_Accept_OversizeFrameRejectedAndClosed(t *testing.T) {
 		t.Logf("write interrupted by server close (expected shape): %v", err)
 	}
 
-	assertConnClosed(t, conn, "oversize frame conn")
+	assertConnClosed(t, conn)
 
 	// The rejection is logged on the accept goroutine, which may still be
 	// scheduling when the client observes the close; poll for the line.
@@ -319,7 +312,7 @@ func TestShim_PeerRole_RoutedToPeerAcceptor(t *testing.T) {
 			CriteriaVersion: "0.5.7",
 			Capabilities:    []string{"adapter.v2.full", "supervision.v1"},
 		},
-	}, nil)
+	})
 	defer conn.Close()
 
 	if !acceptor.waitCalled(5 * time.Second) {
@@ -339,7 +332,7 @@ func TestShim_PeerRole_RoutedToPeerAcceptor(t *testing.T) {
 	// The peer path must not take the legacy byte-bridge: the shim itself
 	// registers no session (T-06's acceptor owns registration).
 	acceptor.releaseAll()
-	assertConnClosed(t, conn, "peer conn after acceptor return")
+	assertConnClosed(t, conn)
 
 	shim.mu.Lock()
 	sessions := len(shim.sessions)
@@ -364,10 +357,10 @@ func TestShim_PeerRole_RejectedWithoutAcceptor(t *testing.T) {
 		Version: "0.5.7",
 		Digest:  "sha256:abcd1234",
 		Role:    handshakeRolePeer,
-	}, nil)
+	})
 	defer conn.Close()
 
-	assertConnClosed(t, conn, "peer dial without acceptor")
+	assertConnClosed(t, conn)
 
 	shim.mu.Lock()
 	sessions := len(shim.sessions)
@@ -592,10 +585,10 @@ func TestShim_PeerRole_AuthRejectionMatrix(t *testing.T) {
 			defer acceptor.releaseAll()
 			shim.SetPeerAcceptor(acceptor)
 
-			conn := dialRawHandshake(t, addr, tc.hs(), nil)
+			conn := dialRawHandshake(t, addr, tc.hs())
 			defer conn.Close()
 
-			assertConnClosed(t, conn, "rejected peer dial")
+			assertConnClosed(t, conn)
 
 			if err := acceptor.assertNotCalled(300 * time.Millisecond); err != nil {
 				t.Fatalf("acceptor invoked for rejected dial: %v", err)
@@ -629,12 +622,12 @@ func TestShim_PeerRole_AuthenticatedPerScopeDial_ReachesAcceptor(t *testing.T) {
 		Token:   "scope-1-token",
 		Role:    handshakeRolePeer,
 		Peer:    &PeerClientIdentity{CriteriaVersion: "0.5.7"},
-	}, nil)
+	})
 	defer conn.Close()
 
 	if !acceptor.waitCalled(5 * time.Second) {
 		t.Fatal("authenticated per-scope peer dial was not routed to the acceptor")
 	}
 	acceptor.releaseAll()
-	assertConnClosed(t, conn, "peer conn after acceptor return")
+	assertConnClosed(t, conn)
 }
