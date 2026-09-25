@@ -131,6 +131,11 @@ func TestResolve_TLSPartialIsErrorAndCompleteLoads(t *testing.T) {
 	}
 
 	// No TLS paths configured: Resolve leaves TLS nil (plain connection).
+	// Pin PATH to a dir holding a placeholder binary so the resolution
+	// chain never depends on the host's PATH contents.
+	binDir := t.TempDir()
+	writeRunnable(t, filepath.Join(binDir, "criteria-adapter-plain"))
+	t.Setenv("PATH", binDir)
 	plain, err := LoadConfig(getenvFrom(map[string]string{EnvRemoteHost: "127.0.0.1:7999"}))
 	if err != nil {
 		t.Fatalf("load plain: %v", err)
