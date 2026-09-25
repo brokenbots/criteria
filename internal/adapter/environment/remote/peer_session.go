@@ -45,10 +45,13 @@ import (
 // legacy sessions.
 
 const (
-	// peerDialTarget is the gRPC target placeholder handed to grpc.NewClient.
-	// The context dialer ignores it and returns the pre-established phone-home
-	// connection, so any stable string works; it only appears in logs.
-	peerDialTarget = "criteria-peer"
+	// peerDialTarget is the gRPC target handed to grpc.NewClient. It uses
+	// the built-in passthrough scheme so the resolver immediately hands the
+	// placeholder address to the context dialer (which returns the held
+	// conn); with the default dns scheme the placeholder would fail to
+	// resolve before the dialer is ever invoked. The address only appears
+	// in logs.
+	peerDialTarget = "passthrough:///criteria-peer"
 
 	// PeerService full method names. The wire contract lives in
 	// proto/criteria/v1/peer.proto; the generated bindings expose a
@@ -331,13 +334,13 @@ func (p *peerSessionProvider) Stop(ctx context.Context) error {
 // over the held phone-home net.Conn plus the supervision consumer consuming
 // the peer's journal stream.
 type peerSession struct {
-	dial    PeerDial
-	conn    net.Conn // the pre-established phone-home connection (owned)
-	cc      *grpc.ClientConn
-	client  adapterhost.Client
-	handle  *peerHandle
-	onDead     func(ps *peerSession)
-	closeOnce  sync.Once
+	dial      PeerDial
+	conn      net.Conn // the pre-established phone-home connection (owned)
+	cc        *grpc.ClientConn
+	client    adapterhost.Client
+	handle    *peerHandle
+	onDead    func(ps *peerSession)
+	closeOnce sync.Once
 
 	mu            sync.Mutex
 	exited        bool
