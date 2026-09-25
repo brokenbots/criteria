@@ -19,5 +19,6 @@ final.
 | [ADR-0004](ADR-0004-adapter-tools.md) | Adapter-as-tool contract — grammar, naming, return semantics, cycle policy, wire decision | Accepted |
 | [ADR-0005](ADR-0005-workflow-source-model.md) | Workflow source model, fetch/cache, and provenance | Accepted |
 | [ADR-0006](ADR-0006-sendprompt-injection.md) | SendPrompt: mid-turn agent message injection; redirect deferred | Accepted |
+| [ADR-0007](ADR-0007-peer-execution.md) | Peer execution: criteria-to-criteria remote adapters (staged A→B) | Proposed |
 
 [template]: https://github.com/joelparkerhenderson/architecture-decision-record
