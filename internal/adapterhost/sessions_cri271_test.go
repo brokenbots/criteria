@@ -96,14 +96,14 @@ func TestCRI271_ClassifySessionCrash(t *testing.T) {
 		want    string
 	}{
 		{"rpc error: code = Canceled desc = grpc: the client connection is closing",
-			"gRPC client transport closed (adapter or shim closed the connection)"},
-		{"transport is closing", "gRPC client transport closed (adapter or shim closed the connection)"},
-		{"heartbeat stall detected in log stream", "log-stream heartbeat stall (adapter stopped streaming)"},
-		{"rpc error: code = Unavailable desc = connection error", "gRPC endpoint unavailable (adapter process gone)"},
-		{"write |1: broken pipe", "plugin stdio pipe broken (adapter process died)"},
-		{"EOF", "plugin stdio EOF (adapter process exited or closed its stream)"},
-		{"process terminated unexpectedly", "adapter process terminated"},
-		{"some other weird failure", "unknown adapter error"},
+			CrashReasonTransportClosed},
+		{"transport is closing", CrashReasonTransportClosed},
+		{"heartbeat stall detected in log stream", CrashReasonHeartbeatStall},
+		{"rpc error: code = Unavailable desc = connection error", CrashReasonEndpointUnavailable},
+		{"write |1: broken pipe", CrashReasonStdioPipeBroken},
+		{"EOF", CrashReasonStdioEOF},
+		{"process terminated unexpectedly", CrashReasonProcessTerminated},
+		{"some other weird failure", CrashReasonUnknownAdapterError},
 	}
 	for _, tc := range cases {
 		got := classifySessionCrash(nil, errors.New(tc.errText))
@@ -111,8 +111,8 @@ func TestCRI271_ClassifySessionCrash(t *testing.T) {
 			t.Errorf("classifySessionCrash(%q) = %q, want %q", tc.errText, got, tc.want)
 		}
 	}
-	if got := classifySessionCrash(nil, nil); got != "unknown" {
-		t.Errorf("classifySessionCrash(nil, nil) = %q, want \"unknown\"", got)
+	if got := classifySessionCrash(nil, nil); got != CrashReasonUnknown {
+		t.Errorf("classifySessionCrash(nil, nil) = %q, want %q", got, CrashReasonUnknown)
 	}
 }
 

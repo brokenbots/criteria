@@ -262,7 +262,7 @@ func TestCRI287_ProcessExitedDuringTeardownWindowStillCrashClassified(t *testing
 	if !ok {
 		t.Fatal("expected the session.crash event")
 	}
-	if got := event["crash_reason"]; got != "adapter process exited before the call completed" {
+	if got := event["crash_reason"]; got != CrashReasonProcessExitedEarly {
 		t.Errorf("crash_reason = %q, want the ProcessExited classification", got)
 	}
 

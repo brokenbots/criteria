@@ -1992,28 +1992,28 @@ func (m *SessionManager) registerSensitiveOutputs(result adapter.Result, step *w
 // failure shapes the go-plugin/gRPC stack produces.
 func classifySessionCrash(sess *Session, execErr error) string {
 	if sess != nil && ProcessExited(sess.handle) {
-		return "adapter process exited before the call completed"
+		return CrashReasonProcessExitedEarly
 	}
 	if execErr == nil {
-		return "unknown"
+		return CrashReasonUnknown
 	}
 	msg := strings.ToLower(execErr.Error())
 	switch {
 	case strings.Contains(msg, "heartbeat stall"):
-		return "log-stream heartbeat stall (adapter stopped streaming)"
+		return CrashReasonHeartbeatStall
 	case strings.Contains(msg, "transport is closing"),
 		strings.Contains(msg, "the client connection is closing"):
-		return "gRPC client transport closed (adapter or shim closed the connection)"
+		return CrashReasonTransportClosed
 	case strings.Contains(msg, "unavailable"):
-		return "gRPC endpoint unavailable (adapter process gone)"
+		return CrashReasonEndpointUnavailable
 	case strings.Contains(msg, "broken pipe"):
-		return "plugin stdio pipe broken (adapter process died)"
+		return CrashReasonStdioPipeBroken
 	case strings.Contains(msg, "eof"):
-		return "plugin stdio EOF (adapter process exited or closed its stream)"
+		return CrashReasonStdioEOF
 	case strings.Contains(msg, "terminated"):
-		return "adapter process terminated"
+		return CrashReasonProcessTerminated
 	}
-	return "unknown adapter error"
+	return CrashReasonUnknownAdapterError
 }
 
 // crashDiagnostics builds the shared crash-reason fields for logs and sink

@@ -477,7 +477,7 @@ func TestCRI287_GenuineAdapterDeathStillCrashClassified(t *testing.T) {
 	if data["session"] != "copilot.default" {
 		t.Errorf("session.crash session=%v; want copilot.default", data["session"])
 	}
-	if reason, _ := data["crash_reason"].(string); reason != "gRPC client transport closed (adapter or shim closed the connection)" {
+	if reason, _ := data["crash_reason"].(string); reason != adapterhost.CrashReasonTransportClosed {
 		t.Errorf("crash_reason=%q; want the classified transport-close cause", reason)
 	}
 }
@@ -643,7 +643,7 @@ func TestCRI287_ProcessExitDuringTeardownWindowStillCrashClassified(t *testing.T
 	if data["session"] != "copilot.default" {
 		t.Errorf("session.crash session=%v; want copilot.default", data["session"])
 	}
-	if reason, _ := data["crash_reason"].(string); reason != "adapter process exited before the call completed" {
+	if reason, _ := data["crash_reason"].(string); reason != adapterhost.CrashReasonProcessExitedEarly {
 		t.Errorf("crash_reason=%q; want the ProcessExited classification", reason)
 	}
 	if n := sink.eventCount("session.crash"); n != 1 {
