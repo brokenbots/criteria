@@ -61,9 +61,9 @@ type fakePeer struct {
 	serveErr chan error
 }
 
-func newFakePeer(name, scope string) *fakePeer {
+func newFakePeer(scope string) *fakePeer {
 	return &fakePeer{
-		name:     name,
+		name:     "noop",
 		scope:    scope,
 		serveErr: make(chan error, 1),
 		nextSeq:  1,
@@ -163,7 +163,7 @@ func (f *fakePeer) controlHandler(srv interface{}, ctx context.Context, dec func
 		return nil, err
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return f.control(ctx, req.(*criteriav1.ControlRequest))
+		return f.control(ctx, req.(*criteriav1.ControlRequest)), nil
 	}
 	if interceptor == nil {
 		return handler(ctx, in)
@@ -172,16 +172,16 @@ func (f *fakePeer) controlHandler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
-func (f *fakePeer) control(ctx context.Context, req *criteriav1.ControlRequest) (*criteriav1.ControlResponse, error) {
+func (f *fakePeer) control(_ context.Context, req *criteriav1.ControlRequest) *criteriav1.ControlResponse {
 	if req.GetKillChild() != nil {
 		// A kill request on the peer model ends the adapter child: record the
 		// exit in the journal so the host learns it through Supervise.
 		f.appendEvent(&criteriav1.SupervisionEvent{
 			Kind: &criteriav1.SupervisionEvent_Exited{Exited: &criteriav1.ProcessExited{ExitCode: 143}},
 		})
-		return &criteriav1.ControlResponse{Accepted: true}, nil
+		return &criteriav1.ControlResponse{Accepted: true}
 	}
-	return &criteriav1.ControlResponse{Accepted: false, Detail: "unsupported control"}, nil
+	return &criteriav1.ControlResponse{Accepted: false, Detail: "unsupported control"}
 }
 
 func (f *fakePeer) superviseHandler(srv interface{}, stream grpc.ServerStream) error {
@@ -302,12 +302,12 @@ func (l *peerConnListener) Close() error {
 
 func (l *peerConnListener) Addr() net.Addr { return l.addr }
 
-func startPeerFixture(t *testing.T, cfg *Config) (shim *Shim, provider *peerSessionProvider, addr string) {
+func startPeerFixture(t *testing.T, cfg *Config) (provider *peerSessionProvider, addr string) {
 	t.Helper()
-	shim, addr = startTestShim(t, cfg)
+	shim, addr := startTestShim(t, cfg)
 	provider = NewPeerSessionProvider(shim, cfg != nil && cfg.PerScopeSessions)
 	shim.SetPeerAcceptor(provider)
-	return shim, provider, addr
+	return provider, addr
 }
 
 // peerHandleFrom returns the live handle the provider registry holds.
@@ -333,8 +333,9 @@ func mustPeerSession(t *testing.T, p *peerSessionProvider, typ, scope string) *p
 	return ps
 }
 
-func waitFor(t *testing.T, what string, timeout time.Duration, check func() bool) {
+func waitFor(t *testing.T, what string, check func() bool) {
 	t.Helper()
+	const timeout = 5 * time.Second
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if check() {
@@ -362,8 +363,8 @@ func assertInspectPaused(t *testing.T, resp *v2.InspectResponse, want bool) {
 // --- tests ---
 
 func TestPeerWaitForHandleReturnsLiveHandle(t *testing.T) {
-	_, provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
-	fp := newFakePeer("noop", "")
+	provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
+	fp := newFakePeer("")
 	fp.connect(t, addr)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -391,8 +392,8 @@ func TestPeerWaitForHandleReturnsLiveHandle(t *testing.T) {
 }
 
 func TestPeerExecuteStreamsResult(t *testing.T) {
-	_, provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
-	fp := newFakePeer("noop", "")
+	provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
+	fp := newFakePeer("")
 	fp.connect(t, addr)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -423,8 +424,8 @@ func (s *recordingEventSink) Log(stream string, chunk []byte) {}
 func (s *recordingEventSink) Adapter(kind string, data any)   {}
 
 func TestPeerWaitForFreshHandleExcludesStale(t *testing.T) {
-	_, provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
-	stalePeer := newFakePeer("noop", "")
+	provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
+	stalePeer := newFakePeer("")
 	stalePeer.connect(t, addr)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -437,12 +438,12 @@ func TestPeerWaitForFreshHandleExcludesStale(t *testing.T) {
 	// Crash the peer: the phone-home conn dies and the supervision consumer
 	// must evict the stale handle from the registry.
 	stalePeer.drop()
-	waitFor(t, "registry eviction of stale peer", 5*time.Second, func() bool {
+	waitFor(t, "registry eviction of stale peer", func() bool {
 		_, ok := peerHandleFrom(provider, "noop", "")
 		return !ok
 	})
 
-	freshPeer := newFakePeer("noop", "")
+	freshPeer := newFakePeer("")
 	freshPeer.connect(t, addr)
 	fresh, err := provider.WaitForFreshHandle(ctx, "noop", "", stale)
 	if err != nil {
@@ -461,11 +462,11 @@ func TestPeerWaitForFreshHandleExcludesStale(t *testing.T) {
 }
 
 func TestPeerScopeTokenChecks(t *testing.T) {
-	_, provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0", PerScopeSessions: true})
+	provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0", PerScopeSessions: true})
 	logs := captureLogs(t)
 
 	provider.RegisterScope("alpha/s1", "tok-1")
-	registeredPeer := newFakePeer("noop", "alpha/s1")
+	registeredPeer := newFakePeer("alpha/s1")
 	registeredPeer.token = "tok-1"
 	registeredPeer.connect(t, addr)
 
@@ -478,7 +479,7 @@ func TestPeerScopeTokenChecks(t *testing.T) {
 	// Unregistering the scope invalidates the token: a reconnect with the
 	// same token must now be rejected by the handshake.
 	provider.UnregisterScope("alpha/s1")
-	unregisteredPeer := newFakePeer("noop", "alpha/s1")
+	unregisteredPeer := newFakePeer("alpha/s1")
 	unregisteredPeer.token = "tok-1"
 	unregisteredPeer.connect(t, addr)
 	// The rejection is logged as slog.Warn("remote shim accept failed",
@@ -490,7 +491,7 @@ func TestPeerScopeTokenChecks(t *testing.T) {
 
 	// A wrong token for a registered scope is rejected as well.
 	provider.RegisterScope("alpha/s2", "tok-2")
-	badTokenPeer := newFakePeer("noop", "alpha/s2")
+	badTokenPeer := newFakePeer("alpha/s2")
 	badTokenPeer.token = "wrong"
 	badTokenPeer.connect(t, addr)
 	if !waitForLog(t, logs, "accept_token verification failed", 10*time.Second) {
@@ -500,12 +501,12 @@ func TestPeerScopeTokenChecks(t *testing.T) {
 }
 
 func TestPeerProcessExitedAfterJournalEvent(t *testing.T) {
-	_, provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
+	provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
 
 	// Pre-populate the journal with a ProcessExited event plus an exact
 	// duplicate before the host connects: the first replay delivers both,
 	// and the host must apply the exit exactly once.
-	fp := newFakePeer("noop", "")
+	fp := newFakePeer("")
 	fp.appendEvent(&criteriav1.SupervisionEvent{
 		Kind: &criteriav1.SupervisionEvent_Exited{Exited: &criteriav1.ProcessExited{ExitCode: 1, IdleMs: 5}},
 	})
@@ -523,7 +524,7 @@ func TestPeerProcessExitedAfterJournalEvent(t *testing.T) {
 		t.Fatalf("ProcessExited true before journal event observed")
 	}
 
-	waitFor(t, "ProcessExited after journal event", 5*time.Second, reporter.ProcessExited)
+	waitFor(t, "ProcessExited after journal event", reporter.ProcessExited)
 	ps := mustPeerSession(t, provider, "noop", "")
 	ps.mu.Lock()
 	reason, detail, lastSeq := ps.exitReason, ps.exitDetail, ps.lastSeq
@@ -545,8 +546,8 @@ func TestPeerProcessExitedAfterJournalEvent(t *testing.T) {
 }
 
 func TestPeerPauseInspectSnapshotRestore(t *testing.T) {
-	_, provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
-	fp := newFakePeer("noop", "")
+	provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
+	fp := newFakePeer("")
 	fp.snapshot = []byte("checkpoint-1")
 	fp.schemaVersion = 7
 	fp.connect(t, addr)
@@ -607,8 +608,8 @@ func TestPeerPauseInspectSnapshotRestore(t *testing.T) {
 }
 
 func TestPeerSupervisionHeartbeatUpdatesLiveness(t *testing.T) {
-	_, provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
-	fp := newFakePeer("noop", "")
+	provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
+	fp := newFakePeer("")
 	fp.connect(t, addr)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -624,14 +625,43 @@ func TestPeerSupervisionHeartbeatUpdatesLiveness(t *testing.T) {
 	fp.appendEvent(&criteriav1.SupervisionEvent{
 		Kind: &criteriav1.SupervisionEvent_Heartbeat{Heartbeat: &criteriav1.SupervisionHeartbeat{LastEventSeq: 1}},
 	})
-	waitFor(t, "heartbeat liveness timestamp", 5*time.Second, func() bool {
+	waitFor(t, "heartbeat liveness timestamp", func() bool {
 		return !ps.lastHeartbeatAt().IsZero()
 	})
 }
 
+func TestPeerStreamFlushedMarksLogDrain(t *testing.T) {
+	provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
+	fp := newFakePeer("")
+	fp.connect(t, addr)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := provider.WaitForHandle(ctx, "noop", ""); err != nil {
+		t.Fatalf("WaitForHandle: %v", err)
+	}
+	ps := mustPeerSession(t, provider, "noop", "")
+	if ps.logDrained() {
+		t.Fatal("log drain marked before any StreamFlushed event")
+	}
+
+	// StreamFlushed on the log channel means the peer drained the log
+	// backlog into its journal (the host-side drain marker T-07 reads).
+	fp.appendEvent(&criteriav1.SupervisionEvent{
+		Kind: &criteriav1.SupervisionEvent_Flushed{Flushed: &criteriav1.StreamFlushed{Channel: "log", UpToSeq: 3}},
+	})
+	waitFor(t, "log drain marked after StreamFlushed", ps.logDrained)
+	ps.mu.Lock()
+	upTo := ps.logFlushed["log"]
+	ps.mu.Unlock()
+	if upTo != 3 {
+		t.Fatalf("log drain watermark = %d, want 3", upTo)
+	}
+}
+
 func TestPeerKillReportsExitThroughJournal(t *testing.T) {
-	_, provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
-	fp := newFakePeer("noop", "")
+	provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
+	fp := newFakePeer("")
 	fp.connect(t, addr)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -648,13 +678,12 @@ func TestPeerKillReportsExitThroughJournal(t *testing.T) {
 	// Kill issues Control{kill_child} on the peer; the fake peer records the
 	// exit in its journal and the supervision replay flips ProcessExited.
 	handle.Kill()
-	waitFor(t, "ProcessExited after Kill", 5*time.Second, reporter.ProcessExited)
+	waitFor(t, "ProcessExited after Kill", reporter.ProcessExited)
 }
 
 func TestPeerCloseHandleAndStop(t *testing.T) {
-	shim, provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
-	_ = shim
-	fp := newFakePeer("noop", "")
+	provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
+	fp := newFakePeer("")
 	fp.connect(t, addr)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -669,7 +698,7 @@ func TestPeerCloseHandleAndStop(t *testing.T) {
 	if err := provider.CloseHandle(ctx, "noop", ""); err != nil {
 		t.Fatalf("CloseHandle: %v", err)
 	}
-	waitFor(t, "registry eviction after CloseHandle", 5*time.Second, func() bool {
+	waitFor(t, "registry eviction after CloseHandle", func() bool {
 		_, ok := peerHandleFrom(provider, "noop", "")
 		return !ok
 	})

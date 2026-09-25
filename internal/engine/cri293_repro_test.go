@@ -96,13 +96,13 @@ func TestMaybeStartRemoteShim_CRI293_CollidingAddressesIsolatedLocally(t *testin
 		_ = sessions.Shutdown(context.WithoutCancel(ctx))
 	})
 
-	shimWorktree, ok := sessions.RemoteShimForEnv("remote.worktree").(adapterhost.RemoteShim)
-	if !ok {
-		t.Fatalf("worktree shim is %T, want an adapterhost.RemoteShim", sessions.RemoteShimForEnv("remote.worktree"))
+	shimWorktree := sessions.RemoteShimForEnv("remote.worktree")
+	if shimWorktree == nil {
+		t.Fatal("worktree shim is nil, want an adapterhost.RemoteShim")
 	}
-	shimPrimary, ok := sessions.RemoteShimForEnv("remote.primary").(adapterhost.RemoteShim)
-	if !ok {
-		t.Fatalf("primary shim is %T, want an adapterhost.RemoteShim", sessions.RemoteShimForEnv("remote.primary"))
+	shimPrimary := sessions.RemoteShimForEnv("remote.primary")
+	if shimPrimary == nil {
+		t.Fatal("primary shim is nil, want an adapterhost.RemoteShim")
 	}
 
 	addrWorktree := shimWorktree.ListenAddr()

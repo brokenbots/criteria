@@ -191,6 +191,19 @@ func (p *peerSessionProvider) WaitForHandle(ctx context.Context, adapterType, sc
 // handshake wakes the shim's waiters, and the wall-clock verify-failure
 // budget bounds the whole wait with the shim's own diagnosis classes
 // (CRI-137).
+// legacyHandle returns the wrapped shim's live session handle for key when
+// it differs from stale (mixed fleet: a role-absent reattach dial may already
+// serve the key on the legacy path).
+func (p *peerSessionProvider) legacyHandle(key string, stale adapterhost.Handle) adapterhost.Handle {
+	p.shim.mu.Lock()
+	defer p.shim.mu.Unlock()
+	sess, ok := p.shim.sessions[key]
+	if !ok || sess.handle == stale {
+		return nil
+	}
+	return sess.handle
+}
+
 func (p *peerSessionProvider) WaitForFreshHandle(ctx context.Context, adapterType, scope string, stale adapterhost.Handle) (adapterhost.Handle, error) {
 	key := p.key(adapterType, scope)
 
@@ -204,16 +217,9 @@ func (p *peerSessionProvider) WaitForFreshHandle(ctx context.Context, adapterTyp
 	if ok && ps.handle != stale {
 		return ps.handle, nil
 	}
-
-	// Mixed fleet: a legacy (go-plugin reattach) session for this key may
-	// already be live on the wrapped shim.
-	p.shim.mu.Lock()
-	if sess, ok := p.shim.sessions[key]; ok && sess.handle != stale {
-		h := sess.handle
-		p.shim.mu.Unlock()
+	if h := p.legacyHandle(key, stale); h != nil {
 		return h, nil
 	}
-	p.shim.mu.Unlock()
 
 	// Register on both registries: the provider's own waiters (woken by
 	// AcceptPeer) and the shim's (woken by a legacy handshake). Both channels
@@ -293,7 +299,7 @@ func (p *peerSessionProvider) CloseHandle(ctx context.Context, adapterType, scop
 	p.mu.Unlock()
 	if ok {
 		_ = ps.handle.CloseSession(ctx, "")
-		ps.handle.Kill()
+		ps.handle.KillContext(ctx)
 		ps.close("session closed")
 		return nil
 	}
@@ -638,20 +644,31 @@ func (h *peerHandle) Kill() {
 	h.mu.Do(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), peerKillTimeout)
 		defer cancel()
-		resp, err := h.ps.control(ctx, &criteriav1.ControlRequest{
-			AdapterType: h.ps.dial.AdapterType,
-			Scope:       h.ps.dial.Scope,
-			GraceMs:     peerKillGraceMs,
-			Kind:        &criteriav1.ControlRequest_KillChild{KillChild: &criteriav1.KillChild{}},
-		})
-		if err != nil {
-			slog.Warn("peer adapter kill_child control failed", "adapter", h.name, "error", err)
-			return
-		}
-		if !resp.GetAccepted() {
-			slog.Warn("peer adapter rejected kill_child control", "adapter", h.name, "detail", resp.GetDetail())
-		}
+		h.killChild(ctx)
 	})
+}
+
+// KillContext is the context-carrying variant used by teardown paths that
+// already hold a context (peerSessionProvider.CloseHandle); it shares Kill's
+// once-only guard.
+func (h *peerHandle) KillContext(ctx context.Context) {
+	h.mu.Do(func() { h.killChild(ctx) })
+}
+
+func (h *peerHandle) killChild(ctx context.Context) {
+	resp, err := h.ps.control(ctx, &criteriav1.ControlRequest{
+		AdapterType: h.ps.dial.AdapterType,
+		Scope:       h.ps.dial.Scope,
+		GraceMs:     peerKillGraceMs,
+		Kind:        &criteriav1.ControlRequest_KillChild{KillChild: &criteriav1.KillChild{}},
+	})
+	if err != nil {
+		slog.Warn("peer adapter kill_child control failed", "adapter", h.name, "error", err)
+		return
+	}
+	if !resp.GetAccepted() {
+		slog.Warn("peer adapter rejected kill_child control", "adapter", h.name, "detail", resp.GetDetail())
+	}
 }
 
 // ProcessExited implements ProcessExitReporter from the supervision journal:
@@ -774,11 +791,4 @@ func isExpectedStreamClose(err error, extra ...codes.Code) bool {
 		}
 	}
 	return false
-}
-
-// closeOnce serializes a single teardown action (used by peerSession.close).
-type closeOnce struct {
-	once sync.Once
-	done bool
-	mu   sync.Mutex
 }
