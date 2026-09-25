@@ -362,11 +362,12 @@ func startPeerFixture(t *testing.T, cfg *Config) (provider *peerSessionProvider,
 	return provider, addr
 }
 
-// peerHandleFrom returns the live handle the provider registry holds.
-func peerHandleFrom(p *peerSessionProvider, typ, scope string) (*peerHandle, bool) {
+// peerHandleFrom returns the live handle the provider registry holds for
+// the noop fixture adapter at the given scope.
+func peerHandleFrom(p *peerSessionProvider, scope string) (*peerHandle, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	ps, ok := p.peers[p.key(typ, scope)]
+	ps, ok := p.peers[p.key("noop", scope)]
 	if !ok {
 		return nil, false
 	}
@@ -429,7 +430,7 @@ func TestPeerWaitForHandleReturnsLiveHandle(t *testing.T) {
 	if !ok {
 		t.Fatalf("handle type %T, want *peerHandle", handle)
 	}
-	registryHandle, ok := peerHandleFrom(provider, "noop", "")
+	registryHandle, ok := peerHandleFrom(provider, "")
 	if !ok || registryHandle != ph {
 		t.Fatalf("WaitForHandle returned a handle outside the provider registry")
 	}
@@ -491,7 +492,7 @@ func TestPeerWaitForFreshHandleExcludesStale(t *testing.T) {
 	// must evict the stale handle from the registry.
 	stalePeer.drop()
 	waitFor(t, "registry eviction of stale peer", func() bool {
-		_, ok := peerHandleFrom(provider, "noop", "")
+		_, ok := peerHandleFrom(provider, "")
 		return !ok
 	})
 
@@ -751,7 +752,7 @@ func TestPeerCloseHandleAndStop(t *testing.T) {
 		t.Fatalf("CloseHandle: %v", err)
 	}
 	waitFor(t, "registry eviction after CloseHandle", func() bool {
-		_, ok := peerHandleFrom(provider, "noop", "")
+		_, ok := peerHandleFrom(provider, "")
 		return !ok
 	})
 
@@ -775,10 +776,10 @@ func providerWaiterCount(p *peerSessionProvider, typ, scope string) int {
 
 // waitForWaiterRegistered blocks until a test's pre-dial wait has registered
 // on the provider, so the later dial deterministically exercises the wake arm.
-func waitForWaiterRegistered(t *testing.T, p *peerSessionProvider, typ, scope string) {
+func waitForWaiterRegistered(t *testing.T, p *peerSessionProvider, scope string) {
 	t.Helper()
 	waitFor(t, "waiter registration", func() bool {
-		return providerWaiterCount(p, typ, scope) > 0
+		return providerWaiterCount(p, "noop", scope) > 0
 	})
 }
 
@@ -800,7 +801,7 @@ func TestPeerWaitForHandleWakesOnDial(t *testing.T) {
 		handle, err := provider.WaitForHandle(ctx, "noop", "")
 		done <- waitOutcome{handle: handle, err: err}
 	}()
-	waitForWaiterRegistered(t, provider, "noop", "")
+	waitForWaiterRegistered(t, provider, "")
 
 	fp.connect(t, addr)
 
@@ -813,7 +814,7 @@ func TestPeerWaitForHandleWakesOnDial(t *testing.T) {
 		if !ok {
 			t.Fatalf("handle type %T, want *peerHandle", out.handle)
 		}
-		if registryHandle, ok := peerHandleFrom(provider, "noop", ""); !ok || registryHandle != ph {
+		if registryHandle, ok := peerHandleFrom(provider, ""); !ok || registryHandle != ph {
 			t.Fatalf("woken handle is not the registered peer handle")
 		}
 		waitFor(t, "waiter cleanup after wake", func() bool {
@@ -840,7 +841,7 @@ func TestPeerWaitForFreshHandleCancelWhileWaiting(t *testing.T) {
 		handle, err := provider.WaitForFreshHandle(waitCtx, "noop", "", nil)
 		done <- waitOutcome{handle: handle, err: err}
 	}()
-	waitForWaiterRegistered(t, provider, "noop", "")
+	waitForWaiterRegistered(t, provider, "")
 	waitCancel()
 
 	select {
@@ -901,7 +902,7 @@ func TestPeerWaitForFreshHandleBudgetSurfacesRejectionDiagnosis(t *testing.T) {
 		handle, err := provider.WaitForFreshHandle(ctx, "noop", "diag-scope", nil)
 		done <- waitOutcome{handle: handle, err: err}
 	}()
-	waitForWaiterRegistered(t, provider, "noop", "diag-scope")
+	waitForWaiterRegistered(t, provider, "diag-scope")
 
 	// A stale adapter pod presents a pre-rotation accept token: the shim
 	// rejects the dial and attributes the failure to the pending waiters, so
@@ -962,7 +963,7 @@ func TestPeerWaitForFreshHandleWakesOnLegacyHandshake(t *testing.T) {
 		handle, err := provider.WaitForFreshHandle(ctx, "noop", "", nil)
 		done <- waitOutcome{handle: handle, err: err}
 	}()
-	waitForWaiterRegistered(t, provider, "noop", "")
+	waitForWaiterRegistered(t, provider, "")
 
 	if err := dialFakeAdapter(addr, &handshakeMessage{Name: "noop", Version: "1.0.0", Digest: "sha256:abcd1234"}, nil); err != nil {
 		t.Fatalf("legacy dial: %v", err)
@@ -979,7 +980,7 @@ func TestPeerWaitForFreshHandleWakesOnLegacyHandshake(t *testing.T) {
 		}
 		legacy = out.handle
 		// The legacy handle comes from the shim's registry, not the provider's.
-		if _, ok := peerHandleFrom(provider, "noop", ""); ok {
+		if _, ok := peerHandleFrom(provider, ""); ok {
 			t.Fatalf("legacy dial was misregistered as a peer session")
 		}
 	case <-time.After(10 * time.Second):
@@ -1031,7 +1032,7 @@ func TestPeerStopWakesPendingWaiters(t *testing.T) {
 		handle, err := provider.WaitForHandle(ctx, "noop", "")
 		done <- waitOutcome{handle: handle, err: err}
 	}()
-	waitForWaiterRegistered(t, provider, "noop", "")
+	waitForWaiterRegistered(t, provider, "")
 
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer stopCancel()
@@ -1128,7 +1129,9 @@ func (s *testLogSink) len() int {
 
 func TestPeerStartLogStreamDeliversChunks(t *testing.T) {
 	provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
-	fp := newFakePeer("")
+	// A named scope: the session key collapses to the adapter type when
+	// per-scope sessions are off, but the presented scope flows through.
+	fp := newFakePeer("logs")
 	fp.connect(t, addr)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -1136,6 +1139,9 @@ func TestPeerStartLogStreamDeliversChunks(t *testing.T) {
 	handle, err := provider.WaitForHandle(ctx, "noop", "")
 	if err != nil {
 		t.Fatalf("WaitForHandle: %v", err)
+	}
+	if _, ok := peerHandleFrom(provider, "logs"); !ok {
+		t.Fatal("named-scope peer not found through the registry helper")
 	}
 
 	sink := &testLogSink{}
