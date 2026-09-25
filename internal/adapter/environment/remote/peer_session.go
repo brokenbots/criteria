@@ -184,13 +184,6 @@ func (p *peerSessionProvider) WaitForHandle(ctx context.Context, adapterType, sc
 	return p.WaitForFreshHandle(ctx, adapterType, scope, nil)
 }
 
-// WaitForFreshHandle blocks until a handle that is not `stale` is available.
-// Resolution order: a live peer session in the provider's registry, then a
-// legacy session already stored on the shim (mixed fleet), then a wait
-// registered on both registries — a peer dial wakes peer waiters, a legacy
-// handshake wakes the shim's waiters, and the wall-clock verify-failure
-// budget bounds the whole wait with the shim's own diagnosis classes
-// (CRI-137).
 // legacyHandle returns the wrapped shim's live session handle for key when
 // it differs from stale (mixed fleet: a role-absent reattach dial may already
 // serve the key on the legacy path).
@@ -204,6 +197,13 @@ func (p *peerSessionProvider) legacyHandle(key string, stale adapterhost.Handle)
 	return sess.handle
 }
 
+// WaitForFreshHandle blocks until a handle that is not `stale` is available.
+// Resolution order: a live peer session in the provider's registry, then a
+// legacy session already stored on the shim (mixed fleet), then a wait
+// registered on both registries — a peer dial wakes peer waiters, a legacy
+// handshake wakes the shim's waiters, and the wall-clock verify-failure
+// budget bounds the whole wait with the shim's own diagnosis classes
+// (CRI-137).
 func (p *peerSessionProvider) WaitForFreshHandle(ctx context.Context, adapterType, scope string, stale adapterhost.Handle) (adapterhost.Handle, error) {
 	key := p.key(adapterType, scope)
 
