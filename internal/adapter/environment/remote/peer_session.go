@@ -185,19 +185,6 @@ func (p *peerSessionProvider) WaitForHandle(ctx context.Context, adapterType, sc
 	return p.WaitForFreshHandle(ctx, adapterType, scope, nil)
 }
 
-// legacyHandle returns the wrapped shim's live session handle for key when
-// it differs from stale (mixed fleet: a role-absent reattach dial may already
-// serve the key on the legacy path).
-func (p *peerSessionProvider) legacyHandle(key string, stale adapterhost.Handle) adapterhost.Handle {
-	p.shim.mu.Lock()
-	defer p.shim.mu.Unlock()
-	sess, ok := p.shim.sessions[key]
-	if !ok || sess.handle == stale {
-		return nil
-	}
-	return sess.handle
-}
-
 // WaitForFreshHandle blocks until a handle that is not `stale` is available.
 // Resolution order: a live peer session in the provider's registry, then a
 // legacy session already stored on the shim (mixed fleet), then a wait
@@ -205,39 +192,43 @@ func (p *peerSessionProvider) legacyHandle(key string, stale adapterhost.Handle)
 // handshake wakes the shim's waiters, and the wall-clock verify-failure
 // budget bounds the whole wait with the shim's own diagnosis classes
 // (CRI-137).
+//
+// Each registry resolves atomically: the peek and the waiter registration
+// share one critical section — the provider's own under p.mu, the shim's via
+// registerFreshWaiter — mirroring Shim.WaitForFreshHandle. Splitting them
+// would let a handshake store the session and drain an empty waiter list in
+// between, stranding the wait until the budget expired (lost wakeup).
 func (p *peerSessionProvider) WaitForFreshHandle(ctx context.Context, adapterType, scope string, stale adapterhost.Handle) (adapterhost.Handle, error) {
 	key := p.key(adapterType, scope)
 
+	// Peek + waiter registration share one p.mu critical section: if a fresh
+	// peer handle is present, return it (never appending a waiter);
+	// otherwise append the waiter under the same lock. AcceptPeer stores the
+	// session and drains waiters in one section, so either it sees this
+	// waiter, or this peek saw its session.
 	p.mu.Lock()
 	if p.stopped {
 		p.mu.Unlock()
 		return nil, errors.New("remote shim stopped")
 	}
-	ps, ok := p.peers[key]
-	p.mu.Unlock()
-	if ok && ps.handle != stale {
+	if ps, ok := p.peers[key]; ok && ps.handle != stale {
+		p.mu.Unlock()
 		return ps.handle, nil
 	}
-	if h := p.legacyHandle(key, stale); h != nil {
-		return h, nil
-	}
-
-	// Register on both registries: the provider's own waiters (woken by
-	// AcceptPeer) and the shim's (woken by a legacy handshake). Both channels
-	// are buffered, so a simultaneous wake never blocks either notifier.
 	peerCh := make(chan waitResult, 1)
-	p.mu.Lock()
 	p.waiters[key] = append(p.waiters[key], peerCh)
 	p.mu.Unlock()
 
-	legacyCh := make(chan waitResult, 1)
-	p.shim.mu.Lock()
-	budget := p.shim.verifyFailureBudget
-	if budget <= 0 {
-		budget = DefaultVerifyFailureBudget
+	// Legacy mixed-fleet path: the shim resolves its registry atomically the
+	// same way, capturing the verify-failure budget under its own lock.
+	legacyHandle, legacyCh, budget := p.shim.registerFreshWaiter(key, stale)
+	if legacyHandle != nil {
+		// A live legacy session was already available, so the peer waiter
+		// registered above is dropped. Both channels are buffered, so a
+		// concurrent peer dial's wake never blocks the notifier.
+		p.removeWaiter(key, peerCh)
+		return legacyHandle, nil
 	}
-	p.shim.waiters[key] = append(p.shim.waiters[key], legacyCh)
-	p.shim.mu.Unlock()
 
 	budgetTimer := time.NewTimer(budget)
 	defer budgetTimer.Stop()

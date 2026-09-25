@@ -1017,6 +1017,202 @@ func TestPeerWaitForFreshHandleSkipsStaleLegacySession(t *testing.T) {
 	}
 }
 
+// stashedLegacyHandle satisfies adapterhost.Handle for a session a test
+// stashes directly in the shim's registry. Shim teardown only calls
+// CloseSession and Kill on stored handles, so every method is a safe no-op;
+// no test in this file invokes the rest.
+type stashedLegacyHandle struct{}
+
+func (stashedLegacyHandle) Info(context.Context) (adapterhost.Info, error) {
+	return adapterhost.Info{}, nil
+}
+
+func (stashedLegacyHandle) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
+
+func (stashedLegacyHandle) Execute(context.Context, string, *workflow.StepNode, adapter.EventSink) (adapter.Result, error) {
+	return adapter.Result{}, nil
+}
+
+func (stashedLegacyHandle) CloseSession(context.Context, string) error { return nil }
+
+func (stashedLegacyHandle) Kill() {}
+
+func (stashedLegacyHandle) Pause(context.Context, string) error { return nil }
+
+func (stashedLegacyHandle) Resume(context.Context, string) error { return nil }
+
+func (stashedLegacyHandle) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return nil, nil
+}
+
+func (stashedLegacyHandle) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return nil, nil
+}
+
+func (stashedLegacyHandle) Restore(context.Context, string, []byte, uint32) error { return nil }
+
+// TestPeerWaitForFreshHandleNoLostWakeupWhenPeerDialStoresBetweenCheckAndRegister
+// pins the peer-registry half of the lost-wakeup race (T-06): a peer dial
+// that stores the session between WaitForFreshHandle's peek and its waiter
+// registration used to drain an empty waiter list and strand the wait until
+// the verify-failure budget expired (surfaced as init_failed) despite a
+// healthy session.
+//
+// The interleaving is forced deterministically: the test holds shim.mu
+// before starting the waiter, and the pre-fix structure acquires shim.mu
+// (via the legacy peek) between the provider peek and the provider waiter
+// append. AcceptPeer's registry step — store the session, then snapshot and
+// drain the waiters, exactly as AcceptPeer does under one p.mu hold — is
+// replayed while the waiter is parked on shim.mu. Pre-fix the drain
+// snapshot is provably empty and the waiter registers too late, timing out
+// on the budget; post-fix the waiter is registered before the drain and is
+// woken immediately.
+func TestPeerWaitForFreshHandleNoLostWakeupWhenPeerDialStoresBetweenCheckAndRegister(t *testing.T) {
+	provider, _ := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
+	provider.shim.verifyFailureBudget = time.Second
+	defer func() { provider.shim.verifyFailureBudget = DefaultVerifyFailureBudget }()
+
+	key := provider.key("noop", "")
+
+	// A replayed peer session, built the way AcceptPeer builds one; only the
+	// registry step is replayed, so the gRPC client stays idle.
+	client, server := net.Pipe()
+	defer client.Close()
+	ps, err := newPeerSession(server, PeerDial{AdapterType: "noop", Scope: ""}, provider.peerDied)
+	if err != nil {
+		t.Fatalf("newPeerSession: %v", err)
+	}
+	defer ps.close("test done")
+
+	// Hold shim.mu so the waiter blocks at the shim acquisition: the pre-fix
+	// structure sits between the provider peek and the provider append there.
+	provider.shim.mu.Lock()
+
+	type waitOutcome struct {
+		handle adapterhost.Handle
+		err    error
+	}
+	done := make(chan waitOutcome, 1)
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		handle, err := provider.WaitForFreshHandle(context.Background(), "noop", "", nil)
+		done <- waitOutcome{handle: handle, err: err}
+	}()
+	<-started
+	// Let the waiter complete its provider-registry section: with shim.mu
+	// held it can only stop at the shim acquisition, past its provider peek.
+	// An insufficient settle can only mis-exercise the pre-fix structure
+	// (an early return on the stored session); the post-fix structure passes
+	// under every ordering.
+	time.Sleep(250 * time.Millisecond)
+
+	// Replay AcceptPeer's registry step under one p.mu hold: store the
+	// session, snapshot the waiters, then drain them.
+	provider.mu.Lock()
+	provider.peers[key] = ps
+	waiters := provider.waiters[key]
+	delete(provider.waiters, key)
+	provider.mu.Unlock()
+	for _, ch := range waiters {
+		ch <- waitResult{handle: ps.handle}
+	}
+
+	provider.shim.mu.Unlock()
+
+	select {
+	case out := <-done:
+		if out.err != nil {
+			t.Fatalf("waiter should have been woken by the stored peer session, got: %v", out.err)
+		}
+		if out.handle != ps.handle {
+			t.Fatalf("waiter returned a different handle than the stored peer session")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("waiter was stranded until the verify-failure budget expired (lost wakeup): the peer dial stored the session between the check and the waiter registration")
+	}
+}
+
+// TestPeerWaitForFreshHandleNoLostWakeupWhenLegacyHandshakeStoresBetweenCheckAndRegister
+// pins the legacy-shim half of the lost-wakeup race (T-06): a legacy
+// handshake that stores the shim session between WaitForFreshHandle's shim
+// peek and its shim waiter registration used to drain an empty shim waiter
+// list and strand the wait until the verify-failure budget expired.
+//
+// The interleaving is forced deterministically by lock order: the waiter
+// runs its provider section, then blocks at the shim acquisition; with p.mu
+// re-held by the test, the pre-fix waiter parks at the provider append
+// before the test replays buildAndStoreHandle's registry step (store the
+// session, snapshot and drain the shim waiters) under shim.mu — so the
+// pre-fix drain snapshot is provably empty and the wait can only time out;
+// post-fix the shim waiter is registered before the drain and is woken.
+func TestPeerWaitForFreshHandleNoLostWakeupWhenLegacyHandshakeStoresBetweenCheckAndRegister(t *testing.T) {
+	provider, _ := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
+	provider.shim.verifyFailureBudget = time.Second
+	defer func() { provider.shim.verifyFailureBudget = DefaultVerifyFailureBudget }()
+
+	key := provider.key("noop", "")
+
+	type waitOutcome struct {
+		handle adapterhost.Handle
+		err    error
+	}
+	done := make(chan waitOutcome, 1)
+	go func() {
+		handle, err := provider.WaitForFreshHandle(context.Background(), "noop", "", nil)
+		done <- waitOutcome{handle: handle, err: err}
+	}()
+
+	// Stage 1: park the waiter on p.mu (its first acquisition on both
+	// structures), then let it run the provider-registry section with shim.mu
+	// held — the pre-fix structure stops between the provider peek and the
+	// provider append there.
+	provider.mu.Lock()
+	provider.shim.mu.Lock()
+	provider.mu.Unlock()
+	time.Sleep(250 * time.Millisecond)
+
+	// Stage 2: with p.mu held again, release shim.mu. The pre-fix waiter
+	// peeks the (still empty) shim registry and parks at the provider
+	// append; the post-fix waiter registers its shim waiter and parks in the
+	// select. Either way the waiter cannot reach the shim registry from
+	// here: p.mu is held until after the drain below.
+	provider.mu.Lock()
+	provider.shim.mu.Unlock()
+	time.Sleep(250 * time.Millisecond)
+
+	// Replay buildAndStoreHandle's registry step under shim.mu: store the
+	// session, snapshot the waiters, then drain them.
+	legacy := &stashedLegacyHandle{}
+	provider.shim.mu.Lock()
+	provider.shim.sessions[key] = &session{
+		handle:    legacy,
+		cancelCtx: context.Background(),
+	}
+	shimWaiters := provider.shim.waiters[key]
+	delete(provider.shim.waiters, key)
+	provider.shim.mu.Unlock()
+	for _, ch := range shimWaiters {
+		ch <- waitResult{handle: legacy}
+	}
+
+	provider.mu.Unlock()
+
+	select {
+	case out := <-done:
+		if out.err != nil {
+			t.Fatalf("waiter should have been woken by the stashed legacy session, got: %v", out.err)
+		}
+		if out.handle != legacy {
+			t.Fatalf("waiter returned a different handle than the stashed legacy session")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("waiter was stranded until the verify-failure budget expired (lost wakeup): the legacy handshake stored the session between the check and the waiter registration")
+	}
+}
+
 func TestPeerStopWakesPendingWaiters(t *testing.T) {
 	provider, _ := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
 

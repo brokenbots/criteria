@@ -916,6 +916,28 @@ func (s *Shim) WaitForFreshHandle(ctx context.Context, adapterType, scope string
 	}
 }
 
+// registerFreshWaiter atomically resolves a fresh legacy session or
+// registers a waiter: the peek and the append share one s.mu critical
+// section so a handshake that stores a session between the two cannot drain
+// an empty waiter list and strand the wait (lost wakeup). It returns
+// (handle, nil, 0) when a live session for key is already present, and
+// (nil, ch, budget) when a waiter was registered; the verify-failure budget
+// is captured under the same lock, the way WaitForFreshHandle does.
+func (s *Shim) registerFreshWaiter(key string, stale adapterhost.Handle) (adapterhost.Handle, chan waitResult, time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if sess, ok := s.sessions[key]; ok && sess.handle != stale {
+		return sess.handle, nil, 0
+	}
+	ch := make(chan waitResult, 1)
+	s.waiters[key] = append(s.waiters[key], ch)
+	budget := s.verifyFailureBudget
+	if budget <= 0 {
+		budget = DefaultVerifyFailureBudget
+	}
+	return nil, ch, budget
+}
+
 // removeWaiter drops a registered waiter channel from the waiters map.
 func (s *Shim) removeWaiter(key string, ch chan waitResult) {
 	s.mu.Lock()
