@@ -24,7 +24,6 @@ import (
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
-	"github.com/brokenbots/criteria/internal/adapter/environment/remote"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/testutil"
 	"github.com/brokenbots/criteria/workflow"
@@ -1258,18 +1257,21 @@ insecure = true
 		t.Fatalf("maybeStartRemoteShim: %v", err)
 	}
 
-	shim, ok := sessions.RemoteShim().(*remote.Shim)
-	if !ok {
-		t.Fatalf("remote shim is %T, want *remote.Shim", sessions.RemoteShim())
+	// The session manager holds the peer-session provider (ADR-0007 Stage
+	// A), which implements RemoteShim and delegates legacy runner sessions
+	// to the shim it wraps; the assertions exercise the dispatch surface.
+	remoteShim := sessions.RemoteShim()
+	if remoteShim == nil {
+		t.Fatalf("remote shim is nil, want a RemoteShim")
 	}
-	defer func() { _ = shim.Stop(ctx) }()
+	defer func() { _ = remoteShim.Stop(ctx) }()
 
 	// Phone home with a digest that matches the pin set.
 	go func() {
 		_ = dialCRI111FakeAdapter(sockPath, "noop", "1.0.0", "sha256:deadbeef")
 	}()
 
-	handle, err := shim.WaitForHandle(ctx, "noop", "")
+	handle, err := remoteShim.WaitForHandle(ctx, "noop", "")
 	if err != nil {
 		t.Fatalf("WaitForHandle: %v", err)
 	}

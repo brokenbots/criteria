@@ -23,7 +23,6 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclparse"
 
-	"github.com/brokenbots/criteria/internal/adapter/environment/remote"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
@@ -97,13 +96,13 @@ func TestMaybeStartRemoteShim_CRI293_CollidingAddressesIsolatedLocally(t *testin
 		_ = sessions.Shutdown(context.WithoutCancel(ctx))
 	})
 
-	shimWorktree, ok := sessions.RemoteShimForEnv("remote.worktree").(*remote.Shim)
+	shimWorktree, ok := sessions.RemoteShimForEnv("remote.worktree").(adapterhost.RemoteShim)
 	if !ok {
-		t.Fatalf("worktree shim is %T, want *remote.Shim", sessions.RemoteShimForEnv("remote.worktree"))
+		t.Fatalf("worktree shim is %T, want an adapterhost.RemoteShim", sessions.RemoteShimForEnv("remote.worktree"))
 	}
-	shimPrimary, ok := sessions.RemoteShimForEnv("remote.primary").(*remote.Shim)
+	shimPrimary, ok := sessions.RemoteShimForEnv("remote.primary").(adapterhost.RemoteShim)
 	if !ok {
-		t.Fatalf("primary shim is %T, want *remote.Shim", sessions.RemoteShimForEnv("remote.primary"))
+		t.Fatalf("primary shim is %T, want an adapterhost.RemoteShim", sessions.RemoteShimForEnv("remote.primary"))
 	}
 
 	addrWorktree := shimWorktree.ListenAddr()
@@ -125,7 +124,7 @@ func TestMaybeStartRemoteShim_CRI293_CollidingAddressesIsolatedLocally(t *testin
 	hs := &cri137Handshake{Name: "noop", Version: "1.0.0", Digest: "sha256:abcd1234"}
 	go dialCri137AdapterLoop(addrWorktree, hs, stop, &infoCalls)
 	go dialCri137AdapterLoop(addrPrimary, hs, stop, &infoCalls)
-	for name, shim := range map[string]*remote.Shim{"worktree": shimWorktree, "primary": shimPrimary} {
+	for name, shim := range map[string]adapterhost.RemoteShim{"worktree": shimWorktree, "primary": shimPrimary} {
 		if _, err := shim.WaitForHandle(ctx, "noop", ""); err != nil {
 			t.Errorf("%s shim: wait for adapter handle: %v", name, err)
 		}
@@ -145,9 +144,10 @@ func TestMaybeStartRemoteShim_CRI293_CollidingAddressesStillCollideWithoutIsolat
 
 	// When the second bind fails, the first environment's shim has already
 	// started and must be torn down with the run (the engine's deferred
-	// sessions.Shutdown does this in production).
+	// sessions.Shutdown does this in production). The session manager holds
+	// the peer-session provider, which delegates Stop to the wrapped shim.
 	defer func() {
-		if shim, ok := sessions.RemoteShim().(*remote.Shim); ok {
+		if shim := sessions.RemoteShim(); shim != nil {
 			_ = shim.Stop(context.Background())
 		}
 	}()
