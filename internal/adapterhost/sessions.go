@@ -2283,7 +2283,10 @@ func (m *SessionManager) executeError(ctx context.Context, name string, step *wo
 	// window bounds the carve-out: after it expires a follow-on Execute on
 	// the dead peer handle fails and classifies the crash from the
 	// journal-delivered wire fact (SupervisionCrashReason), which then
-	// reaches the crash machinery with the full wire-fact reason.
+	// reaches the crash machinery with the full wire-fact reason. The
+	// classifySessionCrash call in the diagnostics below feeds evidence
+	// fields only: the returned error stays the raw transport error, so the
+	// outcome is still routed as a timeout.
 	if m.engineStepTimeoutTeardownWindowOpen() &&
 		isLikelySessionCrash(sess, execErr) &&
 		!sess.closing.Load() &&

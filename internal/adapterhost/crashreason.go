@@ -69,11 +69,38 @@ type SupervisedHandle interface {
 
 // SupervisionCrashReason returns the crash classification the peer
 // supervision journal delivered for h's adapter child (verbatim wire fact),
-// or ok=false when the handle carries no supervision classification.
+// or ok=false when the handle carries no supervision classification —
+// including when the delivered reason is empty or outside the CrashReason*
+// taxonomy (wire garbage or host/peer version skew): the classification
+// path is documented to yield taxonomy constants only, so anything else
+// falls through to the local evidence path.
 func SupervisionCrashReason(h Handle) (string, bool) {
 	sh, ok := h.(SupervisedHandle)
 	if !ok || sh == nil {
 		return "", false
 	}
-	return sh.SupervisionCrashReason()
+	reason, ok := sh.SupervisionCrashReason()
+	if !ok || !isTaxonomyReason(reason) {
+		return "", false
+	}
+	return reason, true
+}
+
+// isTaxonomyReason reports whether reason is one of the CrashReason*
+// constants — the exact vocabulary classifySessionCrash documents as its
+// return values.
+func isTaxonomyReason(reason string) bool {
+	switch reason {
+	case CrashReasonProcessExitedEarly,
+		CrashReasonUnknown,
+		CrashReasonHeartbeatStall,
+		CrashReasonTransportClosed,
+		CrashReasonEndpointUnavailable,
+		CrashReasonStdioPipeBroken,
+		CrashReasonStdioEOF,
+		CrashReasonProcessTerminated,
+		CrashReasonUnknownAdapterError:
+		return true
+	}
+	return false
 }

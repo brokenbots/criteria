@@ -222,14 +222,35 @@ func TestPeerLogEvidenceSurvivesCrash(t *testing.T) {
 		return coll.count("hello from peer") > 0
 	})
 
+	// Snapshot the evidence accumulated before the crash: it must survive
+	// verbatim, so a regression that drops the sink or overwrites the
+	// journal backlog fails even if some lines still trickle through after.
+	coll.mu.Lock()
+	beforeCrash := append([]string(nil), coll.lines...)
+	coll.mu.Unlock()
+
 	// The crash kills the Execute stream (and with it the shared conn), but
 	// the evidence already at the host sink must survive.
 	fp.drop()
 	if _, execErr := ph.Execute(ctx, "s1", &workflow.StepNode{Name: "develop"}, &peerEventCollector{}); execErr == nil {
 		t.Fatal("expected the Execute stream to die with the crash")
 	}
-	if got := coll.count("hello from peer"); got < 1 {
-		t.Fatalf("host sink lost pre-crash log lines after the crash (count=%d)", got)
+	// The crash is terminal on the peer path: a follow-up Execute on the
+	// dead handle keeps failing, which is what re-arms wire-fact
+	// classification once the CRI-287 teardown window has expired.
+	if _, execErr := ph.Execute(ctx, "s1", &workflow.StepNode{Name: "develop"}, &peerEventCollector{}); execErr == nil {
+		t.Fatal("expected the follow-up Execute on the dead peer handle to fail as well")
+	}
+	coll.mu.Lock()
+	after := append([]string(nil), coll.lines...)
+	coll.mu.Unlock()
+	if len(after) < len(beforeCrash) {
+		t.Fatalf("host sink lost pre-crash log lines after the crash (before=%d, after=%d)", len(beforeCrash), len(after))
+	}
+	for i, line := range beforeCrash {
+		if after[i] != line {
+			t.Fatalf("host sink log line %d changed across the crash: before %q, after %q", i, line, after[i])
+		}
 	}
 	if !ps.logDrained() {
 		t.Fatal("StreamFlushed drain marker must survive the crash")

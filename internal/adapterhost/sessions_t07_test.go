@@ -93,6 +93,41 @@ func TestClassifySessionCrash_SupervisionWireFactPriority(t *testing.T) {
 	})
 }
 
+// malformedSupervisedHandle simulates a peer whose journal delivered a
+// CrashClassified record whose reason is not a trustworthy classification:
+// empty, or outside the CrashReason* taxonomy (wire garbage / version skew).
+type malformedSupervisedHandle struct {
+	*cri287Handle
+
+	reason string
+}
+
+func (h *malformedSupervisedHandle) SupervisionCrashReason() (string, bool) {
+	return h.reason, true
+}
+
+// TestClassifySessionCrash_MalformedSupervisedReason pins the seam's
+// invariant guard (T-07): a delivered classification the host cannot trust
+// — empty or outside the CrashReason* taxonomy — is not consumed verbatim;
+// classification falls through to the local evidence path, so
+// classifySessionCrash only ever returns documented taxonomy constants.
+func TestClassifySessionCrash_MalformedSupervisedReason(t *testing.T) {
+	t.Run("empty delivered reason falls through to ProcessExited", func(t *testing.T) {
+		h := &malformedSupervisedHandle{cri287Handle: &cri287Handle{name: "fake", deadAfter: 0}}
+		h.exited.Store(true)
+		if got := classifySessionCrash(&Session{handle: h}, cri287TransportErr); got != CrashReasonProcessExitedEarly {
+			t.Errorf("crash reason = %q, want %q (an empty wire fact is not a classification)", got, CrashReasonProcessExitedEarly)
+		}
+	})
+	t.Run("non-taxonomy delivered reason falls through to ProcessExited", func(t *testing.T) {
+		h := &malformedSupervisedHandle{cri287Handle: &cri287Handle{name: "fake", deadAfter: 0}, reason: "universe restarted"}
+		h.exited.Store(true)
+		if got := classifySessionCrash(&Session{handle: h}, cri287TransportErr); got != CrashReasonProcessExitedEarly {
+			t.Errorf("crash reason = %q, want %q (a non-taxonomy wire fact must not leak into the classification vocabulary)", got, CrashReasonProcessExitedEarly)
+		}
+	})
+}
+
 // TestCRI287_PeerProcessExitedDuringTeardownWindowRoutedAsTimeout pins the
 // peer-path rule (T-07 requirement 2): with the engine-initiated step-timeout
 // teardown window open, a supervision-delivered ProcessExited on a
