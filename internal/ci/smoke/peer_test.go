@@ -73,7 +73,7 @@ state "done" {
 	graph := compileWorkflow(t, spec)
 	lf := buildLockfile("noop", "demo", digest)
 
-	peerCmd, peerLogs, peerCancel := startPeer(ctx, t, criteriaBin, shimAddr, "smoke-token", noopBin, digest)
+	peerCmd, peerLogs, peerCancel := startPeer(ctx, t, criteriaBin, shimAddr, noopBin, digest)
 	defer peerCancel()
 
 	sink := &testSink{}
@@ -172,14 +172,14 @@ state "done" {
 
 	// Give the engine a moment to start the shim, then connect peer #1.
 	time.Sleep(500 * time.Millisecond)
-	peerCmd1, peerLogs1, peerCancel1 := startPeer(ctx, t, criteriaBin, shimAddr, "smoke-token", noopBin, digest)
+	peerCmd1, peerLogs1, peerCancel1 := startPeer(ctx, t, criteriaBin, shimAddr, noopBin, digest)
 
 	// The step sits in a 5s noop delay; land the kill inside that window.
 	time.Sleep(1200 * time.Millisecond)
 
 	// Start the replacement peer BEFORE killing the old one so the shim has
 	// a fresh session ready when the engine calls respawn.
-	_, peerLogs2, peerCancel2 := startPeer(ctx, t, criteriaBin, shimAddr, "smoke-token", noopBin, digest)
+	_, peerLogs2, peerCancel2 := startPeer(ctx, t, criteriaBin, shimAddr, noopBin, digest)
 	defer peerCancel2()
 	defer dumpPeerLogs(t, peerLogs2)
 
@@ -237,8 +237,9 @@ func buildNoopSmokeBinary(t *testing.T, moduleRoot string) string {
 // startPeer launches the real `criteria peer` binary against the shim
 // address with compressed backoff so reconnects stay fast under test, and
 // captures its output for failure diagnostics.
-func startPeer(ctx context.Context, t *testing.T, criteriaBin, addr, token, adapterBin, digest string) (*exec.Cmd, *bytes.Buffer, context.CancelFunc) {
+func startPeer(ctx context.Context, t *testing.T, criteriaBin, addr, adapterBin, digest string) (*exec.Cmd, *bytes.Buffer, context.CancelFunc) {
 	t.Helper()
+	const token = "smoke-token"
 	cmdCtx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(cmdCtx, criteriaBin, "peer")
 	logs := &bytes.Buffer{}
