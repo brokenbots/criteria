@@ -22,6 +22,7 @@ import (
 	"github.com/brokenbots/criteria/internal/engine"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
+	"gopkg.in/yaml.v3"
 )
 
 // This file mirrors examples/peer-remote/: the compose stack there runs a
@@ -78,6 +79,45 @@ func exampleAdapterKeys(graph *workflow.FSMGraph) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// TestPeerExample_ComposeStackParses parses the shipped compose stack from
+// disk and asserts the peer-operator anchor merge resolves for both peer
+// services. YAML rejects forward alias references (anchor declared after its
+// users), which would make `docker compose up` fail before a single peer is
+// built or dialed, so an unparseable stack must fail this test.
+func TestPeerExample_ComposeStackParses(t *testing.T) {
+	moduleRoot := findModuleRoot(t)
+	contents, err := os.ReadFile(filepath.Join(moduleRoot, "examples", "peer-remote", "docker-compose.yml"))
+	if err != nil {
+		t.Fatalf("read compose file: %v", err)
+	}
+	var doc struct {
+		Services map[string]struct {
+			Entrypoint []string `yaml:"entrypoint"`
+			Command    []string `yaml:"command"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal(contents, &doc); err != nil {
+		t.Fatalf("examples/peer-remote/docker-compose.yml does not parse as YAML (docker compose would fail): %v", err)
+	}
+	for _, name := range []string{"criteria-host", "shell-peer", "noop-peer"} {
+		if _, ok := doc.Services[name]; !ok {
+			t.Errorf("compose stack missing service %q", name)
+		}
+	}
+	for _, name := range []string{"shell-peer", "noop-peer"} {
+		svc, ok := doc.Services[name]
+		if !ok {
+			continue
+		}
+		if len(svc.Entrypoint) != 2 || svc.Entrypoint[0] != "sh" || svc.Entrypoint[1] != "-c" {
+			t.Errorf("service %q entrypoint = %v, want the merged [sh -c] peer-operator entrypoint", name, svc.Entrypoint)
+		}
+		if len(svc.Command) != 1 || !strings.Contains(svc.Command[0], "exec criteria peer") {
+			t.Errorf("service %q command = %v, want the merged peer-operator dial loop", name, svc.Command)
+		}
+	}
 }
 
 // TestPeerSmoke_PerScopeMultiAdapter drives a per_scope_sessions remote
