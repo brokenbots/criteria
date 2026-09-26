@@ -97,6 +97,24 @@ type Handle interface {
 	Restore(ctx context.Context, sessionID string, state []byte, schemaVersion uint32) error
 }
 
+// ClientOf returns the raw adapter v2 Client behind an RPC-backed Handle,
+// for transports that re-expose the adapter contract over a different gRPC
+// server (the phone-home runner and peer). In-memory test handles return
+// false; callers must handle both cases.
+type rawClientHandle interface {
+	Client() Client
+}
+
+func ClientOf(h Handle) (Client, bool) {
+	if rc, ok := h.(rawClientHandle); ok {
+		return rc.Client(), true
+	}
+	return nil, false
+}
+
+// Client exposes the raw adapter v2 client held by the production RPC handle.
+func (p *rpcHandle) Client() Client { return p.rpc }
+
 type Info struct {
 	Name              string
 	Version           string
