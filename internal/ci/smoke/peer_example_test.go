@@ -173,21 +173,22 @@ state "done" {
 	go func() { engDone <- eng.Run(ctx) }()
 
 	// The compose operator derives scope keys and tokens from the host's
-	// provision_wanted events; do the same here. Wait for one event per
-	// adapter type, then dial one peer per scope instance.
-	prov := waitForProvisions(t, sink, []string{"noop", "fail"}, 45*time.Second)
-
+	// provision_wanted events and dials a peer per scope instance. The engine
+	// provisions adapters lazily as steps execute and blocks each step until
+	// its peer dials in, so dial each peer as its own event arrives.
 	var peerCancels []context.CancelFunc
 	defer func() {
 		for _, c := range peerCancels {
 			c()
 		}
 	}()
+	prov := map[string]provisionInfo{}
 	peerLogs := map[string]*bytes.Buffer{}
 	peerBins := map[string]string{"noop": noopBin, "fail": failBin}
 	peerDigests := map[string]string{"noop": noopDigest, "fail": failDigest}
 	for _, adapterType := range []string{"noop", "fail"} {
-		p := prov[adapterType]
+		p := waitForProvisions(t, sink, []string{adapterType}, 45*time.Second)[adapterType]
+		prov[adapterType] = p
 		scopeKey := p.ScopeName + "/" + p.ScopeInstanceID
 		if p.ScopeName == "" {
 			scopeKey = "/" + p.ScopeInstanceID
