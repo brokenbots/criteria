@@ -84,6 +84,13 @@ func TestPeerSupervisionCrashReasonWireFact(t *testing.T) {
 		reporter := adapterhost.ProcessExitReporter(ph)
 		waitFor(t, "ProcessExited from journal", reporter.ProcessExited)
 
+		// The Exited and Crash records are separate journal events, so the
+		// classification can still be in flight when ProcessExited fires:
+		// wait for the classification itself before pinning the wire fact.
+		waitFor(t, "supervision classification from journal", func() bool {
+			_, ok := adapterhost.SupervisionCrashReason(ph)
+			return ok
+		})
 		reason, ok := adapterhost.SupervisionCrashReason(ph)
 		if !ok {
 			t.Fatal("SupervisionCrashReason = ok=false, want the journal classification")

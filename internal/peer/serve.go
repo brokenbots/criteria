@@ -266,11 +266,9 @@ func (s *Server) serveOnce(ctx context.Context) error {
 		defer timer.Stop()
 		select {
 		case <-stopDone:
-			// grpc's Stop does not reliably close the raw conn (e.g. the
-			// transport already exited on a host-side drop), which would
-			// leave the close-signal watcher goroutine blocked on
-			// wrapped.Done() forever; close unconditionally (idempotent) so
-			// it always exits once the served connection's lifecycle ends.
+			// Belt-and-braces: close unconditionally (idempotent) so the
+			// close-signal watcher's lifetime is bounded by this cleanup,
+			// independent of grpc-go's Stop closing behavior.
 			_ = wrapped.Close()
 		case <-timer.C:
 			_ = wrapped.Close()

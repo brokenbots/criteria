@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/goleak"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -846,6 +847,40 @@ func TestServer_ServeShutdown(t *testing.T) {
 	if !fake.killed.Load() {
 		t.Error("child was not killed by shutdown")
 	}
+}
+
+// TestServer_ServeOnceConnWatcherExitsOnCancel pins the served-connection
+// lifecycle: a host that holds the connection open without ever speaking
+// gRPC leaves grpc's Stop blocked on the raw conn stuck in the preface
+// handshake (serveWG.Wait), so serveOnce's bounded stop must force-close
+// the wrapped conn to unblock it. Without the forced close the watcher
+// goroutine inside serveOnce stays blocked on wrapped.Done() and serveOnce
+// never returns — invisible for `criteria peer` (the process exits) but a
+// goleak failure for any in-process runner of the peer server (observed as
+// TestExecuteServerRunPerScopeSessionsAdoptsPriorRunToken_CRI304 and
+// TestWorkflowGraphs_ServerModeDualWriteParity failing under -count=2).
+func TestServer_ServeOnceConnWatcherExitsOnCancel(t *testing.T) {
+	if testing.Short() {
+		t.Skip("serve-once conn lifecycle exercise")
+	}
+	// Registered first so (LIFO) it runs last, after the fixture's cancel
+	// cleanup has released the server's goroutines.
+	t.Cleanup(func() { goleak.VerifyNone(t) })
+
+	f := newPeerServeFixture(t)
+
+	// startConn's host side never sends the gRPC preface; it keeps the
+	// connection open across the cancel so the stop path has to force-close
+	// the preface-stuck conn instead of relying on a transport exit.
+	conn, _, serveErr := f.startConn()
+	defer func() { _ = conn.Close() }()
+	f.cancel()
+	select {
+	case <-serveErr:
+	case <-time.After(5 * time.Second):
+		t.Fatal("serveOnce did not return after cancel with a preface-stuck conn")
+	}
+	// goleak.VerifyNone in t.Cleanup asserts the watcher exited.
 }
 
 // TestServer_ControlRejectsUnsupportedAndDeadChildren covers the
