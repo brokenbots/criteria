@@ -1302,9 +1302,11 @@ func (m *SessionManager) OpenWithOriginRefs(ctx context.Context, name, adapterNa
 // its working directory. It resolves the adapter binary (or container/remote
 // equivalent), validates the protocol handshake via Info, checks the runtime
 // config against the adapter's manifest schema, and ensures required secrets
-// are present. The spawned handle is then killed; no long-lived session exists
-// after this call returns. Verification runs eagerly at scope start so broken
-// adapters fail before any step executes.
+// are present. Throwaway verification handles are killed when the call
+// returns; a peer-supervised handle (SupervisedHandle) wraps the peer's one
+// live adapter child, so it is left running and the peer keeps owning its
+// supervision + crash policy. Verification runs eagerly at scope start so
+// broken adapters fail before any step executes.
 //
 // If a verified or bound record already exists for name (e.g. a parent-scope
 // adapter re-declared in a subworkflow), Verify returns ErrSessionAlreadyOpen.

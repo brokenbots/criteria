@@ -20,3 +20,4 @@ criteria apply examples/<name>/<file>.hcl
 | [`plugins/greeter/`](plugins/greeter/) | A minimal adapter implementation plus a workflow that runs it (`make example-plugin`). |
 | [`adapter_tools/`](adapter_tools/) | A caller adapter tool-calling a callee mid-step: variant 1 through the noop fixture's outputs passthrough, variant 2 through the mcp adapter as a resource, variants 3–4 with a real agent as the caller (copilot and claude-agent; `make example-adapter-tools`, `make example-adapter-tools-copilot`, `make example-adapter-tools-claude`). |
 | [`llm-pack/`](llm-pack/) | Prompt-pack patterns surfaced by `criteria spec --with-patterns`. |
+| [`peer-remote/`](peer-remote/) | Remote adapters dialed in by peer containers: per-scope sessions, routed failure and `on_crash = "respawn"` crash recovery, and the kill -9 crash-fidelity demo (`docker compose up`, see [peer-remote/README.md](peer-remote/README.md)). |
