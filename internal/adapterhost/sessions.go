@@ -1373,7 +1373,17 @@ func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterNam
 	if err != nil {
 		return nil, err
 	}
-	defer plug.Kill()
+	defer func() {
+		// A peer-supervised handle wraps the peer's one real adapter child,
+		// not a throwaway verification handle: killing it would destroy the
+		// live child and poison the peer's crash classification
+		// (killRequested turns the next genuine crash into a graceful exit).
+		// The peer owns its child's lifecycle (supervision + on_crash
+		// policy), so phase-1 handshake verification leaves it running.
+		if _, supervised := plug.(SupervisedHandle); !supervised {
+			plug.Kill()
+		}
+	}()
 
 	info, infoErr := plug.Info(ctx)
 	if infoErr != nil {
