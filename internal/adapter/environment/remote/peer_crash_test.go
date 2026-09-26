@@ -163,7 +163,17 @@ func TestPeerCRI287TeardownWindowPeerPath(t *testing.T) {
 		journalCrash(fp, 143, adapterhost.CrashReasonProcessTerminated, "adapter child exited while supervised")
 		fp.connect(t, addr)
 
-		sm, name, _ := startPeerSessionManager(t, provider)
+		sm, name, ph := startPeerSessionManager(t, provider)
+		// The journal's Exited + CrashClassified replay onto the peerHandle
+		// asynchronously; wait for the wire facts to land before dropping
+		// the conn, so the classification is delivered before the transport
+		// dies (otherwise CI races a bare codes.Canceled past handleCrash).
+		reporter := adapterhost.ProcessExitReporter(ph)
+		waitFor(t, "ProcessExited from journal", reporter.ProcessExited)
+		waitFor(t, "CrashClassified from journal", func() bool {
+			r, ok := adapterhost.SupervisionCrashReason(ph)
+			return ok && r == adapterhost.CrashReasonProcessTerminated
+		})
 		// No teardown mark: the death is a genuine crash.
 		fp.drop()
 		coll := &peerEventCollector{}
