@@ -13,8 +13,6 @@ import (
 
 	"google.golang.org/grpc"
 
-	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
-	adapterhost "github.com/brokenbots/criteria-go-adapter-sdk/adapterhost"
 	internaladapterhost "github.com/brokenbots/criteria/internal/adapterhost"
 )
 
@@ -35,7 +33,9 @@ type remoteHandshake struct {
 // serveRemoteOnce dials the criteria host, sends the extended identity
 // handshake (including scope when configured), and serves the v2 adapter
 // contract on the held connection. It returns when the connection closes.
-func serveRemoteOnce(ctx context.Context, cfg *remoteConfig, tlsConf *tls.Config, proxy *proxyService, log *slog.Logger) error {
+// The contract is served through the shared internal adapterhost bridge
+// (ADR-0007 D6), the same implementation the criteria peer uses.
+func serveRemoteOnce(ctx context.Context, cfg *remoteConfig, tlsConf *tls.Config, impl internaladapterhost.Client, log *slog.Logger) error {
 	conn, err := dialRemote(cfg.Host, tlsConf)
 	if err != nil {
 		return fmt.Errorf("dial %s: %w", cfg.Host, err)
@@ -51,7 +51,7 @@ func serveRemoteOnce(ctx context.Context, cfg *remoteConfig, tlsConf *tls.Config
 	// while no MaxConnectionIdle/Age is set — idleness alone must never close
 	// a live session's connection.
 	server := grpc.NewServer(internaladapterhost.RemoteKeepaliveServerOptions()...)
-	v2.RegisterAdapterServiceServer(server, &grpcAdapterServer{impl: proxy})
+	internaladapterhost.RegisterAdapterService(server, impl)
 
 	wrapped := &closeSignalConn{Conn: conn, doneCh: make(chan struct{})}
 	lis := newSingleConnListener(wrapped)
@@ -164,90 +164,4 @@ func (l *singleConnListener) Addr() net.Addr {
 		return l.conn.LocalAddr()
 	}
 	return nil
-}
-
-// grpcAdapterServer bridges the generated v2.AdapterServiceServer interface to
-// the runner's proxy Service. It mirrors the adapterhost implementation in
-// criteria-go-adapter-sdk v0.5.3 and can be retired once the SDK exports a
-// scope-aware ServeRemote.
-type grpcAdapterServer struct {
-	v2.UnimplementedAdapterServiceServer
-	impl adapterhost.Service
-}
-
-func (s *grpcAdapterServer) Info(ctx context.Context, req *v2.InfoRequest) (*v2.InfoResponse, error) {
-	return s.impl.Info(ctx, req)
-}
-
-func (s *grpcAdapterServer) OpenSession(ctx context.Context, req *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) {
-	return s.impl.OpenSession(ctx, req)
-}
-
-func (s *grpcAdapterServer) Execute(req *v2.ExecuteRequest, stream v2.AdapterService_ExecuteServer) error {
-	return s.impl.Execute(stream.Context(), req, &grpcExecuteEventServer{stream: stream})
-}
-
-func (s *grpcAdapterServer) Log(req *v2.LogRequest, stream v2.AdapterService_LogServer) error {
-	sender := &grpcLogEventServer{stream: stream}
-	go func() {
-		_ = v2.RunHeartbeat(stream.Context(), "log", func(hb *v2.Heartbeat) error {
-			return sender.Send(&v2.LogEvent{Heartbeat: hb})
-		})
-	}()
-
-	errCh := make(chan error, 1)
-	go func() { errCh <- s.impl.Log(stream.Context(), req, sender) }()
-
-	err := <-errCh
-	if err != nil {
-		return err
-	}
-	<-stream.Context().Done()
-	return nil
-}
-
-func (s *grpcAdapterServer) Permissions(stream v2.AdapterService_PermissionsServer) error {
-	return s.impl.Permissions(stream.Context(), &grpcPermissionsServer{stream: stream})
-}
-
-func (s *grpcAdapterServer) CloseSession(ctx context.Context, req *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {
-	return s.impl.CloseSession(ctx, req)
-}
-
-type grpcExecuteEventServer struct {
-	mu     sync.Mutex
-	stream v2.AdapterService_ExecuteServer
-}
-
-func (s *grpcExecuteEventServer) Send(evt *v2.ExecuteEvent) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.stream.Send(evt)
-}
-
-type grpcLogEventServer struct {
-	mu     sync.Mutex
-	stream v2.AdapterService_LogServer
-}
-
-func (s *grpcLogEventServer) Send(evt *v2.LogEvent) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.stream.Send(evt)
-}
-
-type grpcPermissionsServer struct {
-	stream v2.AdapterService_PermissionsServer
-}
-
-func (s *grpcPermissionsServer) Recv() (*v2.PermissionEvent, error) {
-	return s.stream.Recv()
-}
-
-func (s *grpcPermissionsServer) Send(dec *v2.PermissionDecision) error {
-	return s.stream.Send(dec)
-}
-
-func (s *grpcPermissionsServer) Context() context.Context {
-	return s.stream.Context()
 }

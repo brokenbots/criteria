@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	criteriav1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
@@ -183,5 +184,70 @@ func TestChildEnv_ScrubsAllRemoteVars(t *testing.T) {
 		if got := childSet[name]; got != want {
 			t.Errorf("%s = %q, want %q (must be preserved)", name, got, want)
 		}
+	}
+}
+
+// TestEventJournal_LastSeqAndRingEviction checks that LastSeq keeps counting
+// past ring eviction (the replay cursor stays monotonic even when the ring
+// no longer retains the oldest events).
+func TestEventJournal_LastSeqAndRingEviction(t *testing.T) {
+	j := NewEventJournal(2)
+	for i := 0; i < 4; i++ {
+		if _, err := j.Append(spawnedKind("b"), "noopa", "", ""); err != nil {
+			t.Fatalf("append %d: %v", i, err)
+		}
+	}
+	if got := j.LastSeq(); got != 4 {
+		t.Errorf("LastSeq = %d, want 4", got)
+	}
+}
+
+// TestEventJournal_WaitFor is the live-notification contract for the
+// Supervise stream: WaitFor returns an immediately-closed channel when
+// events past the cursor exist, blocks until the next append otherwise, and
+// cannot miss an append that races with the subscribe (lost wakeup).
+func TestEventJournal_WaitFor(t *testing.T) {
+	j := NewEventJournal(0)
+
+	// Nothing retained: WaitFor(0) must block until an append lands.
+	if _, err := j.Append(spawnedKind("a"), "noopa", "", ""); err != nil {
+		t.Fatalf("append 1: %v", err)
+	}
+
+	// Events past the cursor exist: immediate closed channel.
+	select {
+	case <-j.WaitFor(0):
+	default:
+		t.Fatal("WaitFor(0) should be closed immediately when event 1 is retained")
+	}
+
+	// Cursor at the top: blocks until the next append.
+	ch := j.WaitFor(1)
+	done := make(chan struct{})
+	go func() {
+		<-ch
+		close(done)
+	}()
+	select {
+	case <-done:
+		t.Fatal("WaitFor(top) closed before the next append")
+	case <-time.After(20 * time.Millisecond):
+	}
+	if _, err := j.Append(spawnedKind("b"), "noopa", "", ""); err != nil {
+		t.Fatalf("append 2: %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("WaitFor(top) did not wake on append")
+	}
+
+	// A consumed broadcast fires once: after the wake, the fresh WaitFor
+	// call blocks again until another append (no spurious re-fires).
+	ch2 := j.WaitFor(2)
+	select {
+	case <-ch2:
+		t.Fatal("WaitFor(fresh cursor) should block until a new append")
+	case <-time.After(20 * time.Millisecond):
 	}
 }

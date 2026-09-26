@@ -14,6 +14,29 @@ func ProcessPID(p Handle) (pid int, ok bool) {
 	return rc.Pid, true
 }
 
+// ProcessWaitReporter is an optional Handle capability: reporting the
+// observed OS exit status of the adapter subprocess after it has exited
+// (CRI-287). *rpcHandle implements it from the exec.Cmd wait status; test
+// fakes may implement it to feed synthetic facts into classification paths.
+type ProcessWaitReporter interface {
+	ProcessWaitStatus() (exitCode, signal int, ok bool)
+}
+
+// ProcessWaitStatus reports the child's observed OS exit status once the
+// child has exited: the terminating signal number (with exit code -1) when
+// the process was killed by a signal, the exit code (with signal 0) on a
+// normal exit. Handles that cannot observe a wait status — handles without a
+// subprocess, subprocesses not yet reaped, or fake handles without a
+// synthetic status — report ok=false, and callers must fall back to
+// exit code -1 / signal 0 (unknown).
+func ProcessWaitStatus(p Handle) (exitCode, signal int, ok bool) {
+	reporter, isReporter := p.(ProcessWaitReporter)
+	if !isReporter || reporter == nil {
+		return -1, 0, false
+	}
+	return reporter.ProcessWaitStatus()
+}
+
 // ProcessExitReporter is an optional Handle capability: reporting whether the
 // adapter subprocess backing the handle has exited (CRI-271). *rpcHandle
 // implements it through the go-plugin client; test fakes implement it to

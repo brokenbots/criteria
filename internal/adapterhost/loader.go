@@ -97,6 +97,46 @@ type Handle interface {
 	Restore(ctx context.Context, sessionID string, state []byte, schemaVersion uint32) error
 }
 
+// ClientOf returns the raw adapter v2 Client behind an RPC-backed Handle,
+// for transports that re-expose the adapter contract over a different gRPC
+// server (the phone-home runner and peer). In-memory test handles return
+// false; callers must handle both cases.
+type rawClientHandle interface {
+	Client() Client
+}
+
+func ClientOf(h Handle) (Client, bool) {
+	if rc, ok := h.(rawClientHandle); ok {
+		return rc.Client(), true
+	}
+	return nil, false
+}
+
+// rpcHandle is the production Handle: a go-plugin client connected to the
+// adapter subprocess over the adapter v2 gRPC contract.
+type rpcHandle struct {
+	name   string
+	client *hplugin.Client
+	rpc    Client
+	// cmd is the adapter's exec.Cmd, retained so Kill can signal the process
+	// group it leads. nil on paths that don't own the process (WS20 reattach,
+	// container RunnerFunc).
+	cmd *exec.Cmd
+
+	mu     sync.Once
+	onKill func()
+
+	// permMu guards permActive, which tracks session-scoped permission
+	// streams started via StartPermissionStream. Execute uses it to
+	// decide whether to start a fallback per-Execute permission stream
+	// for direct callers (e.g. conformance tests) that bypass SessionManager.
+	permMu     sync.Mutex
+	permActive map[string]bool
+}
+
+// Client exposes the raw adapter v2 client held by the production RPC handle.
+func (p *rpcHandle) Client() Client { return p.rpc }
+
 type Info struct {
 	Name              string
 	Version           string
@@ -378,26 +418,6 @@ func (l *DefaultLoader) Shutdown(context.Context) error {
 		p.Kill()
 	}
 	return nil
-}
-
-type rpcHandle struct {
-	name   string
-	client *hplugin.Client
-	rpc    Client
-	// cmd is the adapter's exec.Cmd, retained so Kill can signal the process
-	// group it leads. nil on paths that don't own the process (WS20 reattach,
-	// container RunnerFunc).
-	cmd *exec.Cmd
-
-	mu     sync.Once
-	onKill func()
-
-	// permMu guards permActive, which tracks session-scoped permission
-	// streams started via StartPermissionStream. Execute uses it to
-	// decide whether to start a fallback per-Execute permission stream
-	// for direct callers (e.g. conformance tests) that bypass SessionManager.
-	permMu     sync.Mutex
-	permActive map[string]bool
 }
 
 func (p *rpcHandle) Info(ctx context.Context) (Info, error) {
@@ -1116,6 +1136,26 @@ func (p *rpcHandle) ProcessExited() bool {
 		return false
 	}
 	return p.client.Exited()
+}
+
+// ProcessWaitStatus implements [ProcessWaitReporter] for go-plugin handles.
+// The client's exit watcher reaps the subprocess (cmd.Wait) before it flips
+// its exited flag, so once [rpcHandle.ProcessExited] reports true the wait
+// status on the retained exec.Cmd is final and safe to read. Handles that
+// don't own the subprocess (WS20 reattach, container RunnerFunc) and
+// subprocesses not yet reaped report ok=false.
+func (p *rpcHandle) ProcessWaitStatus() (exitCode, signal int, ok bool) {
+	if p == nil || p.cmd == nil || p.cmd.ProcessState == nil {
+		return -1, 0, false
+	}
+	ws, isWaitStatus := p.cmd.ProcessState.Sys().(syscall.WaitStatus)
+	if !isWaitStatus {
+		return -1, 0, false
+	}
+	if ws.Signaled() {
+		return -1, int(ws.Signal()), true
+	}
+	return p.cmd.ProcessState.ExitCode(), 0, true
 }
 
 func (p *rpcHandle) Pause(ctx context.Context, sessionID string) error {

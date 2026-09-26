@@ -7,9 +7,11 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"sort"
 	"sync"
 	"time"
 
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	criteriav1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
@@ -18,6 +20,10 @@ import (
 // defaultExitPollInterval is how often the peer polls the child's go-plugin
 // client for process exit.
 const defaultExitPollInterval = 500 * time.Millisecond
+
+// closeSessionTimeout bounds each per-session CloseSession during shutdown so
+// one stuck child cannot stall the whole sequence.
+const closeSessionTimeout = 5 * time.Second
 
 // peerRuntime is the peer's supervision state: the resolved configuration,
 // the go-plugin loader that owns the child process, the child handle, the
@@ -36,6 +42,19 @@ type peerRuntime struct {
 	watchStarted bool
 	lastEventAt  time.Time
 	child        adapterhost.Handle
+	// killRequested is set the moment a host Control(kill_child) is
+	// accepted, so an exit observed by the watcher before the kill lands is
+	// still classified as peer-initiated (graceful, no crash event).
+	killRequested bool
+	// openSessions tracks the sessions the host opened through the served
+	// bridge; they are closed on the child before the shutdown kill.
+	openSessions map[string]struct{}
+	// shutdownGrace bounds the shutdown wait before the child kill.
+	shutdownGrace time.Duration
+	// servedChild is the adapter client the phone-home bridge serves (the
+	// local child in production; a fixture stub in tests). Shutdown closes
+	// tracked sessions through it.
+	servedChild adapterhost.Client
 
 	exitPoll  time.Duration
 	stopWatch chan struct{}
@@ -50,13 +69,15 @@ func NewRuntime(cfg *Config, log *slog.Logger) *peerRuntime {
 		log = slog.Default()
 	}
 	return &peerRuntime{
-		cfg:       cfg,
-		log:       log,
-		loader:    adapterhost.NewLoader(),
-		journal:   NewEventJournal(cfg.JournalLimit),
-		exitPoll:  defaultExitPollInterval,
-		stopWatch: make(chan struct{}),
-		watchDone: make(chan struct{}),
+		cfg:           cfg,
+		log:           log,
+		loader:        adapterhost.NewLoader(),
+		journal:       NewEventJournal(cfg.JournalLimit),
+		openSessions:  map[string]struct{}{},
+		shutdownGrace: defaultControlGrace,
+		exitPoll:      defaultExitPollInterval,
+		stopWatch:     make(chan struct{}),
+		watchDone:     make(chan struct{}),
 	}
 }
 
@@ -217,9 +238,10 @@ func (r *peerRuntime) watchChild() {
 // recordExit journals the terminal ProcessExited fact exactly once. When the
 // peer did not initiate the shutdown the exit is a crash: the reason comes
 // from the shared adapterhost crash taxonomy (peer.proto CrashClassified
-// consumes that vocabulary). go-plugin does not expose the child's exit
-// status, so the exit code is recorded as -1 (unknown), matching the
-// ProcessExited contract.
+// consumes that vocabulary). The exit code and signal are the child's real
+// OS wait status once it has been reaped (adapterhost.ProcessWaitStatus);
+// when no wait status is available the unknown-exit fallback (-1, 0)
+// matches the ProcessExited contract.
 func (r *peerRuntime) recordExit(peerInitiated bool) {
 	r.mu.Lock()
 	child := r.child
@@ -233,7 +255,7 @@ func (r *peerRuntime) recordExit(peerInitiated bool) {
 		return
 	}
 	r.exited = true
-	graceful := peerInitiated || r.shuttingDown
+	graceful := peerInitiated || r.shuttingDown || r.killRequested
 	idleMS := uint64(0)
 	if !r.lastEventAt.IsZero() {
 		idleMS = uint64(time.Since(r.lastEventAt).Milliseconds())
@@ -241,9 +263,13 @@ func (r *peerRuntime) recordExit(peerInitiated bool) {
 	r.lastEventAt = time.Now()
 	r.mu.Unlock()
 
+	exitCode, signal, ok := adapterhost.ProcessWaitStatus(child)
+	if !ok {
+		exitCode, signal = -1, 0
+	}
 	exit := &criteriav1.ProcessExited{
-		ExitCode: -1,
-		Signal:   0,
+		ExitCode: int32(exitCode),
+		Signal:   int32(signal),
 		IdleMs:   idleMS,
 		Graceful: graceful,
 	}
@@ -255,36 +281,204 @@ func (r *peerRuntime) recordExit(peerInitiated bool) {
 		r.log.Error("journal exited event", "error", err)
 	}
 	if !graceful {
-		r.log.Error("adapter child exited unexpectedly",
-			"adapter", r.cfg.AdapterName,
-			"reason", adapterhost.CrashReasonProcessTerminated,
-			"idle_ms", idleMS,
-		)
-		if _, err := r.journal.Append(&criteriav1.SupervisionEvent_Crash{Crash: &criteriav1.CrashClassified{
-			Reason: adapterhost.CrashReasonProcessTerminated,
-			Detail: "adapter child exited while supervised; go-plugin does not expose the exit status",
-		}}, r.cfg.AdapterName, r.cfg.Scope, ""); err != nil {
-			r.log.Error("journal crash event", "error", err)
+		r.classifyUnexpectedExit(exitCode, signal, idleMS)
+	}
+}
+
+// classifyUnexpectedExit journals the CrashClassified event for an
+// ungraceful child exit, classifying against the shared adapterhost crash
+// taxonomy with the real wait-status facts in the detail.
+func (r *peerRuntime) classifyUnexpectedExit(exitCode, signal int, idleMS uint64) {
+	r.log.Error("adapter child exited unexpectedly",
+		"adapter", r.cfg.AdapterName,
+		"reason", adapterhost.CrashReasonProcessTerminated,
+		"idle_ms", idleMS,
+		"exit_code", exitCode,
+		"signal", signal,
+	)
+	if _, err := r.journal.Append(&criteriav1.SupervisionEvent_Crash{Crash: &criteriav1.CrashClassified{
+		Reason: adapterhost.CrashReasonProcessTerminated,
+		Detail: fmt.Sprintf("adapter child exited while supervised (exit code %d, signal %d)", exitCode, signal),
+	}}, r.cfg.AdapterName, r.cfg.Scope, ""); err != nil {
+		r.log.Error("journal crash event", "error", err)
+	}
+}
+
+// defaultControlGrace is the grace period a Control(kill_child) waits before
+// killing the child when the request carries no explicit grace.
+const defaultControlGrace = 5 * time.Second
+
+// Control executes a host-initiated control action (the PeerService.Control
+// RPC). kill_child acknowledges immediately, waits out the requested grace
+// period (default 5s, host sends 3s), then kills the child; the watcher (or
+// peer shutdown) journals the exit fact, classified as peer-initiated via
+// killRequested. Unsupported actions and dead-or-absent children are
+// rejected with Accepted=false.
+func (r *peerRuntime) Control(ctx context.Context, req *criteriav1.ControlRequest) *criteriav1.ControlResponse {
+	if req.GetKillChild() == nil {
+		return &criteriav1.ControlResponse{Accepted: false, Detail: "unsupported control action"}
+	}
+	grace := time.Duration(req.GetGraceMs()) * time.Millisecond
+	if grace <= 0 {
+		grace = defaultControlGrace
+	}
+	r.mu.Lock()
+	child := r.child
+	if child == nil || adapterhost.ProcessExited(child) {
+		r.mu.Unlock()
+		return &criteriav1.ControlResponse{Accepted: false, Detail: "no live adapter child"}
+	}
+	// Accepted from here on: mark before the kill is issued so an exit the
+	// watcher observes before the kill lands still classifies as
+	// peer-initiated. A rejected request must not poison the runtime.
+	r.killRequested = true
+	r.mu.Unlock()
+	go func() {
+		timer := time.NewTimer(grace)
+		defer timer.Stop()
+		// The grace wait is detached from the Control RPC: the kill was
+		// acknowledged and must still land even if the host stream ends
+		// first. Peer shutdown (stopWatch closed) kills promptly.
+		select {
+		case <-timer.C:
+		case <-r.stopWatch:
+		}
+		r.mu.Lock()
+		child := r.child
+		r.mu.Unlock()
+		if child != nil && !adapterhost.ProcessExited(child) {
+			child.Kill()
+		}
+		// The exit fact is journaled by the watcher (killRequested keeps it
+		// graceful); under shutdown, Shutdown's own recordExit covers it.
+	}()
+	return &criteriav1.ControlResponse{Accepted: true, Detail: fmt.Sprintf("kill scheduled after %s grace", grace)}
+}
+
+// killChild terminates a live child between reconnect attempts when child
+// keepalive is disabled (legacy runner parity: no child survives a host
+// disconnect). No-op when nothing is alive; safe to call repeatedly.
+func (r *peerRuntime) killChild() {
+	r.mu.Lock()
+	child := r.child
+	r.mu.Unlock()
+	if child != nil && !adapterhost.ProcessExited(child) {
+		child.Kill()
+	}
+}
+
+// sessionOpened records a session the host opened through the served bridge.
+func (r *peerRuntime) sessionOpened(id string) {
+	if id == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.openSessions[id] = struct{}{}
+}
+
+// sessionClosed forgets a session the host closed.
+func (r *peerRuntime) sessionClosed(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.openSessions, id)
+}
+
+func (r *peerRuntime) openSessionIDsLocked() []string {
+	ids := make([]string, 0, len(r.openSessions))
+	for id := range r.openSessions {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// setServedChild records the adapter client the phone-home bridge serves so
+// shutdown closes the host's sessions on the same surface.
+func (r *peerRuntime) setServedChild(c adapterhost.Client) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.servedChild = c
+}
+
+// journalFlushed records the StreamFlushed fact: the named stream ended and
+// everything the journal has recorded up to upToSeq was delivered.
+func (r *peerRuntime) journalFlushed(channel string, upToSeq uint64) {
+	if _, err := r.journal.Append(&criteriav1.SupervisionEvent_Flushed{Flushed: &criteriav1.StreamFlushed{
+		Channel: channel,
+		UpToSeq: upToSeq,
+	}}, r.cfg.AdapterName, r.cfg.Scope, ""); err != nil {
+		r.log.Error("journal flushed event", "error", err)
+	}
+	r.mu.Lock()
+	r.lastEventAt = time.Now()
+	r.mu.Unlock()
+}
+
+// waitChildGrace waits up to grace for the child to exit on its own, polling
+// at the exit-watcher interval. It returns early when the child dies during
+// the window; otherwise the caller's Kill ends the wait's purpose.
+func (r *peerRuntime) waitChildGrace(child adapterhost.Handle, grace time.Duration) {
+	if grace <= 0 {
+		return
+	}
+	poll := r.exitPoll
+	if poll <= 0 {
+		poll = defaultExitPollInterval
+	}
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	ticker := time.NewTicker(poll)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-timer.C:
+			return
+		case <-ticker.C:
+			if adapterhost.ProcessExited(child) {
+				return
+			}
 		}
 	}
 }
 
-// Shutdown stops the child. The child is killed only here (peer shutdown) or
-// via the Control RPC once Stage A control wiring lands; with child keepalive
-// on it survives host disconnects. Idempotent: later calls return nil.
+// Shutdown runs the peer shutdown sequence (spec item 7): stop accepting
+// (the watch loop), close the sessions the host opened on the child, wait
+// out the grace period for a clean child exit, then kill the child and tear
+// down the loader, journaling the final exit fact. Idempotent.
 func (r *peerRuntime) Shutdown(ctx context.Context) error {
 	r.stopOnce.Do(func() {
 		r.mu.Lock()
 		r.shuttingDown = true
 		watchStarted := r.watchStarted
 		child := r.child
+		sessionIDs := r.openSessionIDsLocked()
+		grace := r.shutdownGrace
+		servedChild := r.servedChild
 		r.mu.Unlock()
 		close(r.stopWatch)
 		if watchStarted {
 			<-r.watchDone
 		}
+		for _, id := range sessionIDs {
+			if servedChild == nil {
+				// Nothing the bridge served: no session surface to close.
+				break
+			}
+			ctxSession, cancel := context.WithTimeout(ctx, closeSessionTimeout)
+			_, err := servedChild.CloseSession(ctxSession, &v2.CloseSessionRequest{SessionId: id})
+			cancel()
+			if err != nil {
+				r.log.Warn("shutdown close session", "session", id, "error", err)
+			} else {
+				r.sessionClosed(id)
+			}
+		}
 		if child != nil && !adapterhost.ProcessExited(child) {
-			child.Kill()
+			r.waitChildGrace(child, grace)
+			if !adapterhost.ProcessExited(child) {
+				child.Kill()
+			}
 		}
 		if err := r.loader.Shutdown(ctx); err != nil {
 			r.log.Warn("loader shutdown", "error", err)

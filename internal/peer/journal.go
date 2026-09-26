@@ -27,6 +27,11 @@ type EventJournal struct {
 	nextSeq uint64
 	ring    []*criteriav1.SupervisionEvent
 	limit   int
+	// appended is the append broadcast: it is closed (and replaced) on every
+	// Append so stream followers can wake without polling. Readers pair it
+	// with WaitFor, which returns the channel valid as of one journal state,
+	// making "replay, then wait" race-free.
+	appended chan struct{}
 }
 
 // NewEventJournal returns a journal bounded to limit events. A non-positive
@@ -35,7 +40,7 @@ func NewEventJournal(limit int) *EventJournal {
 	if limit <= 0 {
 		limit = DefaultJournalLimit
 	}
-	return &EventJournal{limit: limit}
+	return &EventJournal{limit: limit, appended: make(chan struct{})}
 }
 
 // Append records one lifecycle fact, assigning the next gapless sequence
@@ -74,6 +79,8 @@ func (j *EventJournal) Append(kind EventKind, adapterType, scope, sessionID stri
 	if over := len(j.ring) - j.limit; over > 0 {
 		j.ring = j.ring[over:]
 	}
+	close(j.appended)
+	j.appended = make(chan struct{})
 	return ev, nil
 }
 
@@ -97,4 +104,31 @@ func (j *EventJournal) Len() int {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	return len(j.ring)
+}
+
+// LastSeq returns the highest assigned sequence number (0 for an empty
+// journal), including sequences already evicted from the ring.
+func (j *EventJournal) LastSeq() uint64 {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.nextSeq
+}
+
+// WaitFor returns a channel that is closed as soon as journal content
+// strictly after `since` may exist: either the next Append (broadcast) or —
+// when events after `since` are already retained — an immediately-closed
+// channel. The peek-and-subscribe pair runs under the journal lock, so a
+// follower that replays up to `since` and then waits cannot miss the append
+// that happened in between (the lost-wakeup race a plain channel read would
+// have). The returned channel fires once; after consuming new events the
+// follower must call WaitFor again with the new cursor.
+func (j *EventJournal) WaitFor(since uint64) <-chan struct{} {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.nextSeq > since {
+		ready := make(chan struct{})
+		close(ready)
+		return ready
+	}
+	return j.appended
 }
