@@ -530,18 +530,11 @@ func trustedMaterial(_ context.Context) (root.TrustedMaterial, error) {
 	// connections outlive the fetch and leak an idle HTTP/2 reader goroutine
 	// under goroutine-leak checks. Give the fetcher a dedicated transport and
 	// close its pooled connections once the load completes.
-	transport := &http.Transport{
-		Proxy:               http.ProxyFromEnvironment,
-		TLSHandshakeTimeout: 10 * time.Second,
-		IdleConnTimeout:     30 * time.Second,
-		ForceAttemptHTTP2:   true,
+	fetch, transport, err := newTUFFetcher()
+	if err != nil {
+		return nil, err
 	}
 	defer transport.CloseIdleConnections()
-	fetch := fetcher.NewDefaultFetcher()
-	if err := fetch.SetTransport(transport); err != nil {
-		return nil, fmt.Errorf("tuf fetcher: %w", err)
-	}
-	fetch.SetHTTPUserAgent(util.ConstructUserAgent())
 	opts = opts.WithFetcher(fetch)
 
 	client, err := tuf.New(opts)
@@ -561,6 +554,26 @@ func trustedMaterial(_ context.Context) (root.TrustedMaterial, error) {
 
 func sigstoreCacheDir() (string, error) {
 	return dirs.CacheSigstore()
+}
+
+// newTUFFetcher builds the one-shot go-tuf fetcher trustedMaterial uses: a
+// dedicated http.Transport (the shared DefaultClient pools connections that
+// outlive the fetch and leak an idle HTTP/2 reader goroutine under
+// goroutine-leak checks) carrying the criteria user agent. The caller owns
+// closing the transport's idle connections when the fetch completes.
+func newTUFFetcher() (*fetcher.DefaultFetcher, *http.Transport, error) {
+	transport := &http.Transport{
+		Proxy:               http.ProxyFromEnvironment,
+		TLSHandshakeTimeout: 10 * time.Second,
+		IdleConnTimeout:     30 * time.Second,
+		ForceAttemptHTTP2:   true,
+	}
+	fetch := fetcher.NewDefaultFetcher()
+	if err := fetch.SetTransport(transport); err != nil {
+		return nil, nil, fmt.Errorf("tuf fetcher: %w", err)
+	}
+	fetch.SetHTTPUserAgent(util.ConstructUserAgent())
+	return fetch, transport, nil
 }
 
 // DefaultTrustedIssuers are the OIDC issuers trusted by default for keyless
