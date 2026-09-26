@@ -41,9 +41,15 @@ const (
 	peerDialKeepAlive = 15 * time.Second
 
 	// peerShutdownBudget bounds the whole Serve shutdown sequence (session
-	// close, child grace, loader teardown) after the phone-home loop has
+	// closes, child grace, loader teardown) after the phone-home loop has
 	// ended: bounded so a stalled child cannot hang the peer indefinitely.
 	peerShutdownBudget = 30 * time.Second
+
+	// peerServerStopGrace bounds grpc-go's server.Stop() in serveOnce. Stop
+	// waits for raw conns still in the HTTP/2 preface handshake, which never
+	// finishes when the host stalls after reading the identity frame — force
+	// closing the conn unblocks that read so shutdown stays bounded.
+	peerServerStopGrace = 2 * time.Second
 
 	// peerHandshakeRole is the identity-frame role value that routes the
 	// dial to the host shim's PeerAcceptor seam (ADR-0007 D4).
@@ -113,6 +119,11 @@ type Server struct {
 
 	// heartbeat is the idle interval for SupervisionHeartbeat emission.
 	heartbeat time.Duration
+	// keepaliveOpts are the gRPC server options serveOnce builds the
+	// phone-home server with; nil falls back to the production remote
+	// keepalive policy. Test seam: lets peer-path tests compress the
+	// keepalive clock without weakening the production cadence.
+	keepaliveOpts []grpc.ServerOption
 	// dialFunc, childClient, rand, and sleep are test seams; NewServer
 	// installs production defaults.
 	dialFunc    func(ctx context.Context, network, addr string) (net.Conn, error)
@@ -200,6 +211,26 @@ func (s *Server) Serve(ctx context.Context) error {
 	return err
 }
 
+// newServedServer builds the phone-home gRPC server with both services
+// registered: the adapter bridge (when the child is live) and PeerService.
+func (s *Server) newServedServer() *grpc.Server {
+	keepaliveOpts := s.keepaliveOpts
+	if keepaliveOpts == nil {
+		keepaliveOpts = adapterhost.RemoteKeepaliveServerOptions()
+	}
+	server := grpc.NewServer(keepaliveOpts...)
+	if child, ok := s.childClient(); ok {
+		wrapper := &serveChildClient{Client: child, rt: s.rt}
+		s.rt.setServedChild(wrapper)
+		adapterhost.RegisterAdapterService(server, wrapper)
+	} else {
+		s.log.Warn("peer child has no adapter client; serving supervision only",
+			"adapter", s.cfg.AdapterName)
+	}
+	s.registerPeerService(server)
+	return server
+}
+
 // serveOnce dials the host, writes the identity frame, and serves both
 // services on the held connection. It returns when the connection drops or
 // ctx is cancelled (server stopped).
@@ -213,16 +244,7 @@ func (s *Server) serveOnce(ctx context.Context) error {
 		return fmt.Errorf("handshake: %w", err)
 	}
 
-	server := grpc.NewServer(adapterhost.RemoteKeepaliveServerOptions()...)
-	if child, ok := s.childClient(); ok {
-		wrapper := &serveChildClient{Client: child, rt: s.rt}
-		s.rt.setServedChild(wrapper)
-		adapterhost.RegisterAdapterService(server, wrapper)
-	} else {
-		s.log.Warn("peer child has no adapter client; serving supervision only",
-			"adapter", s.cfg.AdapterName)
-	}
-	s.registerPeerService(server)
+	server := s.newServedServer()
 
 	wrapped := NewCloseSignalConn(conn)
 	lis := NewSingleConnListener(wrapped)
@@ -232,7 +254,26 @@ func (s *Server) serveOnce(ctx context.Context) error {
 	}()
 	go func() {
 		<-ctx.Done()
-		server.Stop()
+		// Bounded stop: grpc-go's Stop blocks on raw conns stuck in the
+		// preface handshake (a host that never speaks gRPC after the identity
+		// frame), so bound it and force close the conn to unblock the read.
+		stopDone := make(chan struct{})
+		go func() {
+			server.Stop()
+			close(stopDone)
+		}()
+		timer := time.NewTimer(peerServerStopGrace)
+		defer timer.Stop()
+		select {
+		case <-stopDone:
+			// Belt-and-braces: close unconditionally (idempotent) so the
+			// close-signal watcher's lifetime is bounded by this cleanup,
+			// independent of grpc-go's Stop closing behavior.
+			_ = wrapped.Close()
+		case <-timer.C:
+			_ = wrapped.Close()
+			<-stopDone
+		}
 	}()
 
 	s.log.Info("peer phone-home connected",

@@ -144,8 +144,15 @@ func (f *fakePeer) serve(conn net.Conn) {
 // the host-side peer session the way a crashed peer would.
 func (f *fakePeer) drop() {
 	f.mu.Lock()
-	srv := f.srv
+	srv, conn := f.srv, f.conn
 	f.mu.Unlock()
+	// conn-close first, then Stop: closing the served conn breaks the
+	// host-side supervise stream promptly, while Stop alone can leave the
+	// host's grpc client lagging on Ready under -race and miss the eviction
+	// wait budget.
+	if conn != nil {
+		_ = conn.Close()
+	}
 	if srv != nil {
 		srv.Stop()
 	}

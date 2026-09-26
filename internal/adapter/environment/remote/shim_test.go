@@ -1926,13 +1926,60 @@ func waitForWaiterRegistration(t *testing.T, shim *Shim, scope string) {
 	}
 }
 
+// registerProbeWaiter adds a waiter channel for key directly, without going
+// through WaitForHandle. The shim only records last-failure diagnostics while
+// a waiter is pending, so a probe lets a test pre-arm diagnostics before any
+// budgeted wait starts.
+func registerProbeWaiter(shim *Shim, key string) chan waitResult {
+	probe := make(chan waitResult, 1)
+	shim.mu.Lock()
+	shim.waiters[key] = append(shim.waiters[key], probe)
+	shim.mu.Unlock()
+	return probe
+}
+
+// waitForRecordedVerifyFailure blocks until the shim has recorded at least one
+// identity rejection for key. Tests call it after registering a probe waiter
+// and starting the dial loop, so the first rejection is guaranteed to be
+// observed before a budgeted wait starts; under race/coverage instrumentation
+// the dial loop's first round trip can otherwise outlive the test's short
+// budget and the terminal error would lose its diagnostics suffix.
+func waitForRecordedVerifyFailure(t *testing.T, shim *Shim, key string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		shim.mu.Lock()
+		recorded := shim.verifyFailures[key] != nil
+		shim.mu.Unlock()
+		if recorded {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("stale-token dial never recorded a rejection")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func TestShim_VerifyFailureBudget_WakesWaiterWithTerminalError(t *testing.T) {
 	scope := "root/cri137-budget"
 	shim, addr := newCri137TestShim(t, scope, 300*time.Millisecond)
 
+	// The shim only records last-failure diagnostics while a waiter is
+	// pending, and the budget starts when the real waiter registers. Hold a
+	// probe waiter for the whole test so the stale-token dial loop's first
+	// rejection is recorded before the budget starts and cannot be wiped
+	// between rejections; otherwise race/coverage instrumentation can expire
+	// the 300ms budget before the first dial lands and the terminal error
+	// loses its diagnostics suffix (CRI-137).
+	key := shim.sessionKey("noop", scope)
+	probe := registerProbeWaiter(shim, key)
+	defer shim.removeWaiter(key, probe)
+
 	stop := make(chan struct{})
 	go dialStaleTokenLoop(addr, scope, stop)
 	defer close(stop)
+	waitForRecordedVerifyFailure(t, shim, key)
 
 	waitResult := make(chan error, 1)
 	go func() {
@@ -2000,9 +2047,20 @@ func TestShim_StaleScopeKeyRejection_AttributesDiagnosisToPendingWaiter(t *testi
 	shim, addr := newCri137TestShim(t, currentScope, 300*time.Millisecond)
 	shim.RegisterScope(otherScopeScope, "team-b-token")
 
+	// Probe waiter on the current key: the stale-key dial is attributed to
+	// same-type waiters sharing the dial's scope-name prefix, so the probe
+	// records the rejection before the budgeted waits start (guaranteeing the
+	// same-prefix waiter's terminal error carries the diagnosis) while the
+	// other-prefix and other-type waiters must stay unattributed. It stays
+	// for the whole test so the record cannot be wiped between rejections.
+	probeKey := shim.sessionKey("noop", currentScope)
+	probe := registerProbeWaiter(shim, probeKey)
+	defer shim.removeWaiter(probeKey, probe)
+
 	stop := make(chan struct{})
 	go dialStaleTokenLoop(addr, staleScope, stop)
 	defer close(stop)
+	waitForRecordedVerifyFailure(t, shim, probeKey)
 
 	wait := func(scope string) chan error {
 		result := make(chan error, 1)
@@ -2073,6 +2131,13 @@ func TestShim_DigestRejectionSurfacesDistinctDiagnosis(t *testing.T) {
 	scope := "root/cri137-digest"
 	shim, addr := newCri137TestShim(t, scope, 300*time.Millisecond)
 
+	// Probe waiter as in the budget test: guarantees the digest rejection is
+	// recorded before the budget starts, so the terminal error keeps its
+	// digest diagnosis under race/coverage instrumentation (CRI-137).
+	key := shim.sessionKey("noop", scope)
+	probe := registerProbeWaiter(shim, key)
+	defer shim.removeWaiter(key, probe)
+
 	stop := make(chan struct{})
 	go func() {
 		hs := &handshakeMessage{Name: "noop", Version: "1.0.0", Digest: "sha256:wrong-digest", Scope: scope, Token: "current-token"}
@@ -2091,6 +2156,7 @@ func TestShim_DigestRejectionSurfacesDistinctDiagnosis(t *testing.T) {
 		}
 	}()
 	defer close(stop)
+	waitForRecordedVerifyFailure(t, shim, key)
 
 	waitResult := make(chan error, 1)
 	go func() {

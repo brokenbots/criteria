@@ -12,6 +12,7 @@ import (
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	adapterhost "github.com/brokenbots/criteria-go-adapter-sdk/adapterhost"
 	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/brokenbots/criteria/internal/adapterhost/heartbeatutil"
 )
@@ -19,6 +20,12 @@ import (
 type noopService struct {
 	mu       sync.Mutex
 	sessions map[string]struct{}
+
+	// pendingLogs carries Execute-requested log lines to the session's Log
+	// stream: Execute queues a line for input["emit_log"], Log pumps it out
+	// as a real v2.LogEvent. This lets tests assert log-line delivery over a
+	// fixture that otherwise produces no output of its own.
+	pendingLogs chan []byte
 
 	toolBridgeOnce sync.Once
 	toolBridge     *toolCallBridge
@@ -64,6 +71,16 @@ func (s *noopService) Execute(ctx context.Context, req *v2.ExecuteRequest, sink 
 	s.mu.Unlock()
 	if !ok {
 		return fmt.Errorf("unknown session %q", req.GetSessionId())
+	}
+	// Queue the requested log line before any delay so it is delivered ahead
+	// of later events — the ordering tests (e.g. pre-crash log capture) rely
+	// on.
+	if line := req.GetInput()["emit_log"]; line != "" && s.pendingLogs != nil {
+		select {
+		case s.pendingLogs <- []byte(line):
+		default:
+			return fmt.Errorf("log queue full")
+		}
 	}
 	if rawDelay := req.GetInput()["delay_ms"]; rawDelay != "" {
 		delayMS, err := strconv.Atoi(rawDelay)
@@ -147,7 +164,7 @@ func probeConnect(addr string) string {
 	return "connect_fail"
 }
 
-func (s *noopService) Log(ctx context.Context, _ *v2.LogRequest, sender adapterhost.LogEventSender) error {
+func (s *noopService) Log(ctx context.Context, req *v2.LogRequest, sender adapterhost.LogEventSender) error {
 	// The log stream must remain open for the lifetime of the session. Returning
 	// immediately would stop the SDK heartbeat ticker and break the host's
 	// liveness contract, so block until the host cancels the stream.
@@ -155,6 +172,25 @@ func (s *noopService) Log(ctx context.Context, _ *v2.LogRequest, sender adapterh
 	// heartbeatutil.RunLogHeartbeat is a transitional shim: the Go SDK should
 	// own session-lifetime heartbeats (see PR #283 Follow-ups). Remove this once
 	// the SDK fix lands.
+	logsCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	go func() {
+		for {
+			select {
+			case <-logsCtx.Done():
+				return
+			case line := <-s.pendingLogs:
+				if err := sender.Send(&v2.LogEvent{
+					SessionId:  req.GetSessionId(),
+					StreamName: "stdout",
+					Line:       line,
+					Timestamp:  timestamppb.Now(),
+				}); err != nil {
+					return
+				}
+			}
+		}
+	}()
 	return heartbeatutil.RunLogHeartbeat(ctx, sender)
 }
 
@@ -166,5 +202,8 @@ func (s *noopService) CloseSession(_ context.Context, req *v2.CloseSessionReques
 }
 
 func main() {
-	adapterhost.Serve(&noopService{sessions: map[string]struct{}{}})
+	adapterhost.Serve(&noopService{
+		sessions:    map[string]struct{}{},
+		pendingLogs: make(chan []byte, 16),
+	})
 }

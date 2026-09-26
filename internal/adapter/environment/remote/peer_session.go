@@ -13,7 +13,6 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
@@ -423,10 +422,13 @@ func (ps *peerSession) supervise() {
 			return
 		case ctx.Err() != nil:
 			return
-		case ps.cc.GetState() != connectivity.Ready:
-			// The one-shot dialer makes a lost transport unrecoverable: the
-			// conn-level session is dead (a respawn dial creates a fresh
-			// peerSession with a fresh journal cursor).
+		default:
+			// Any non-EOF supervise error is conn-level death: peer-initiated
+			// teardown surfaces as a stream error while grpc-go's client state
+			// can still read Ready, so gating on cc.GetState() here races the
+			// consumer's eviction wait. The one-shot dialer makes a lost
+			// transport unrecoverable either way (a respawn dial creates a
+			// fresh peerSession with a fresh journal cursor).
 			ps.died(err)
 			return
 		}

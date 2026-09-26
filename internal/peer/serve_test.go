@@ -8,6 +8,7 @@ package peer
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -17,9 +18,11 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/goleak"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
@@ -846,6 +849,40 @@ func TestServer_ServeShutdown(t *testing.T) {
 	}
 }
 
+// TestServer_ServeOnceConnWatcherExitsOnCancel pins the served-connection
+// lifecycle: a host that holds the connection open without ever speaking
+// gRPC leaves grpc's Stop blocked on the raw conn stuck in the preface
+// handshake (serveWG.Wait), so serveOnce's bounded stop must force-close
+// the wrapped conn to unblock it. Without the forced close the watcher
+// goroutine inside serveOnce stays blocked on wrapped.Done() and serveOnce
+// never returns — invisible for `criteria peer` (the process exits) but a
+// goleak failure for any in-process runner of the peer server (observed as
+// TestExecuteServerRunPerScopeSessionsAdoptsPriorRunToken_CRI304 and
+// TestWorkflowGraphs_ServerModeDualWriteParity failing under -count=2).
+func TestServer_ServeOnceConnWatcherExitsOnCancel(t *testing.T) {
+	if testing.Short() {
+		t.Skip("serve-once conn lifecycle exercise")
+	}
+	// Registered first so (LIFO) it runs last, after the fixture's cancel
+	// cleanup has released the server's goroutines.
+	t.Cleanup(func() { goleak.VerifyNone(t) })
+
+	f := newPeerServeFixture(t)
+
+	// startConn's host side never sends the gRPC preface; it keeps the
+	// connection open across the cancel so the stop path has to force-close
+	// the preface-stuck conn instead of relying on a transport exit.
+	conn, _, serveErr := f.startConn()
+	defer func() { _ = conn.Close() }()
+	f.cancel()
+	select {
+	case <-serveErr:
+	case <-time.After(5 * time.Second):
+		t.Fatal("serveOnce did not return after cancel with a preface-stuck conn")
+	}
+	// goleak.VerifyNone in t.Cleanup asserts the watcher exited.
+}
+
 // TestServer_ControlRejectsUnsupportedAndDeadChildren covers the
 // Accepted=false paths of the Control RPC.
 func TestServer_ControlRejectsUnsupportedAndDeadChildren(t *testing.T) {
@@ -1117,4 +1154,378 @@ func TestServer_DialClassifiesUnixHosts(t *testing.T) {
 	if got := server.network(); got != peerNetworkTCP {
 		t.Errorf("network = %q, want tcp for host:port", got)
 	}
+}
+
+// TestServer_RunReconnectsAfterHostBounce covers the Run reconnect loop
+// against a live host listener: each host bounce tears the listener down
+// (refusing in-flight dials), the peer re-handshakes on every round
+// (identity frame re-sent), backs off with jittered, capped delays, and
+// still resumes the supervise stream on a healthy host.
+func TestServer_RunReconnectsAfterHostBounce(t *testing.T) {
+	f := newPeerServeFixture(t)
+	f.server.cfg.BackoffMin = 100 * time.Millisecond
+	f.server.cfg.BackoffMax = time.Second
+
+	// Compressed clock: record the backoff delays instead of sleeping.
+	var delays struct {
+		mu sync.Mutex
+		ds []time.Duration
+	}
+	f.server.sleep = func(ctx context.Context, d time.Duration) error {
+		delays.mu.Lock()
+		delays.ds = append(delays.ds, d)
+		delays.mu.Unlock()
+		return nil
+	}
+
+	// Bind the host listener once and keep the address fixed: each bounce
+	// closes and re-binds the same host:port (Go sets SO_REUSEADDR, so the
+	// immediate rebind after Close succeeds). cfg.Host must never be
+	// mutated after Run starts — the peer goroutine reads it (Run's connect
+	// log and serveOnce's dial) and a test write would be a data race.
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	host := lis.Addr().String()
+	f.server.cfg.Host = host
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runErr := make(chan error, 1)
+	go func() { runErr <- f.server.Run(ctx) }()
+
+	const bounces = 3
+	var finalFrame []byte
+	for round := 0; round < bounces+1; round++ {
+		// Round 0 reuses the pre-bound listener; later rounds re-bind the
+		// same address after the bounce, so the peer's next dial — which
+		// re-resolves the configured host — finds the rebound listener.
+		if round > 0 {
+			var lerr error
+			lis, lerr = net.Listen("tcp", host)
+			if lerr != nil {
+				t.Fatalf("rebind round %d on %s: %v", round, host, lerr)
+			}
+		}
+		acceptCh := make(chan net.Conn, 1)
+		go func() {
+			if conn, err := lis.Accept(); err == nil {
+				acceptCh <- conn
+			}
+		}()
+
+		var conn net.Conn
+		select {
+		case conn = <-acceptCh:
+		case <-time.After(10 * time.Second):
+			lis.Close()
+			t.Fatalf("round %d: peer dial not observed", round)
+		}
+
+		data, err := readFrameLine(conn)
+		if err != nil {
+			conn.Close()
+			lis.Close()
+			t.Fatalf("round %d: identity frame: %v", round, err)
+		}
+		var frame peerIdentityFrame
+		if err := json.Unmarshal(data, &frame); err != nil {
+			t.Fatalf("round %d: decode identity frame: %v", round, err)
+		}
+		if frame.Role != "peer" {
+			t.Errorf("round %d: role = %q, want peer", round, frame.Role)
+		}
+		if frame.Name != f.server.cfg.AdapterName {
+			t.Errorf("round %d: adapter name = %q, want %q", round, frame.Name, f.server.cfg.AdapterName)
+		}
+
+		if round < bounces {
+			// Host bounce: drop the freshly adopted peer and take the
+			// listener with it.
+			conn.Close()
+			lis.Close()
+			continue
+		}
+		finalFrame = data
+		_ = conn
+		_ = lis
+		// Serve the final round like the real host: gRPC over the adopted
+		// connection, supervise stream live.
+		cc := f.hostClient(conn)
+		st := f.openSupervise(cc, 0)
+		ev := f.append(&criteriav1.SupervisionEvent_Exited{
+			Exited: &criteriav1.ProcessExited{ExitCode: -1, Signal: 9},
+		})
+		got := f.mustRecvSupervisionEvent(st, 5*time.Second)
+		if got.GetEventSeq() != ev.GetEventSeq() {
+			t.Errorf("final round: recv event seq = %d, want %d", got.GetEventSeq(), ev.GetEventSeq())
+		}
+	}
+
+	delays.mu.Lock()
+	ds := append([]time.Duration(nil), delays.ds...)
+	delays.mu.Unlock()
+	if len(ds) < bounces {
+		t.Errorf("recorded %d backoff delays, want at least %d", len(ds), bounces)
+	}
+	for i, d := range ds {
+		if d < f.server.cfg.BackoffMin || d >= f.server.cfg.BackoffMax {
+			t.Errorf("delay[%d] = %v, want in [%v, %v)", i, d, f.server.cfg.BackoffMin, f.server.cfg.BackoffMax)
+		}
+	}
+	seen := map[time.Duration]bool{}
+	for _, d := range ds {
+		seen[d] = true
+	}
+	if len(seen) < 2 {
+		t.Errorf("backoff delays all identical (%v): jitter not applied", ds)
+	}
+	if finalFrame == nil {
+		t.Errorf("final round did not re-handshake")
+	}
+
+	cancel()
+	select {
+	case err := <-runErr:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("Run err = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Errorf("Run did not return after cancel")
+	}
+}
+
+// TestServer_SuperviseReplaysBufferedCrashAfterReconnect covers the peer-side
+// replay of crash events that were journaled while the host connection was
+// down, and that a host cursor past the crash receives nothing (dedup on
+// (peer, event_seq)).
+func TestServer_SuperviseReplaysBufferedCrashAfterReconnect(t *testing.T) {
+	f := newPeerServeFixture(t)
+
+	// First connection: adopt the peer and advance the host cursor past a
+	// pre-bounce event.
+	conn1, _, serveErr1 := f.startConn()
+	cc1 := f.hostClient(conn1)
+	st1 := f.openSupervise(cc1, 0)
+	spawned := f.append(&criteriav1.SupervisionEvent_Spawned{
+		Spawned: &criteriav1.ProcessSpawned{Pid: 4242},
+	})
+	gotSpawned := f.mustRecvSupervisionEvent(st1, 5*time.Second)
+	if gotSpawned.GetEventSeq() != spawned.GetEventSeq() {
+		t.Fatalf("live event seq = %d, want %d", gotSpawned.GetEventSeq(), spawned.GetEventSeq())
+	}
+
+	// Host bounce: the connection dies mid-stream.
+	conn1.Close()
+	select {
+	case <-serveErr1:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("serveOnce did not observe the dropped connection")
+	}
+
+	// Crash buffered while disconnected.
+	exited := f.append(&criteriav1.SupervisionEvent_Exited{
+		Exited: &criteriav1.ProcessExited{ExitCode: -1, Signal: 9},
+	})
+	crash := f.append(&criteriav1.SupervisionEvent_Crash{
+		Crash: &criteriav1.CrashClassified{
+			Reason: adapterhost.CrashReasonProcessTerminated,
+			Detail: "process exited on signal 9",
+		},
+	})
+
+	// Reconnect: replay from the pre-bounce cursor delivers exactly the
+	// buffered pair, in order.
+	conn2, _, serveErr2 := f.startConn()
+	cc2 := f.hostClient(conn2)
+	st2 := f.openSupervise(cc2, spawned.GetEventSeq())
+	for _, want := range []uint64{exited.GetEventSeq(), crash.GetEventSeq()} {
+		got := f.mustRecvSupervisionEvent(st2, 5*time.Second)
+		if got.GetEventSeq() != want {
+			t.Errorf("replay event seq = %d, want %d", got.GetEventSeq(), want)
+		}
+	}
+
+	// A host cursor past the crash must not see the buffered events again.
+	st3 := f.openSupervise(cc2, crash.GetEventSeq())
+	if _, _, ok := st3.recvSupervisionEvent(200 * time.Millisecond); ok {
+		t.Errorf("unexpected replay past the host cursor")
+	}
+
+	_ = serveErr2
+}
+
+// idleClosingConn is a NAT/LB-style middlebox: it closes the connection once
+// no inbound (client→server) traffic has arrived for idleLimit. Server-side
+// writes do not reset the timer — only inbound keepalive pings keep a fully
+// idle connection alive (CRI-276).
+type idleClosingConn struct {
+	net.Conn
+	idleLimit time.Duration
+
+	mu        sync.Mutex
+	lastRead  time.Time
+	closeOnce sync.Once
+}
+
+func newIdleClosingConn(conn net.Conn, idleLimit time.Duration) *idleClosingConn {
+	c := &idleClosingConn{Conn: conn, idleLimit: idleLimit, lastRead: time.Now()}
+	go c.watchdog()
+	return c
+}
+
+func (c *idleClosingConn) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	if n > 0 {
+		c.mu.Lock()
+		c.lastRead = time.Now()
+		c.mu.Unlock()
+	}
+	return n, err
+}
+
+func (c *idleClosingConn) watchdog() {
+	tick := time.NewTicker(c.idleLimit / 4)
+	defer tick.Stop()
+	for range tick.C {
+		c.mu.Lock()
+		last := c.lastRead
+		c.mu.Unlock()
+		if time.Since(last) > c.idleLimit {
+			c.closeOnce.Do(func() { _ = c.Conn.Close() })
+			return
+		}
+	}
+}
+
+// startConnIdleClosing is startConn with the server-side connection wrapped
+// in an idle-closing middlebox; the middlebox tracks the idle window for
+// keepalive assertions.
+func (f *peerServeFixture) startConnIdleClosing(idleLimit time.Duration) (conn net.Conn, serveErr <-chan error) {
+	f.t.Helper()
+	serverConn, clientConn := net.Pipe()
+	mid := newIdleClosingConn(serverConn, idleLimit)
+
+	var dialed atomic.Bool
+	f.server.dialFunc = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if !dialed.CompareAndSwap(false, true) {
+			return nil, errors.New("fixture dialer: one-shot")
+		}
+		return mid, nil
+	}
+	frameCh := make(chan []byte, 1)
+	go func() {
+		defer close(frameCh)
+		data, err := readFrameLine(clientConn)
+		if err != nil {
+			return
+		}
+		frameCh <- data
+	}()
+	serveErrCh := make(chan error, 1)
+	go func() { serveErrCh <- f.server.serveOnce(f.ctx) }()
+	select {
+	case data := <-frameCh:
+		if data == nil {
+			f.t.Fatalf("identity frame read failed")
+		}
+		var frame peerIdentityFrame
+		if err := json.Unmarshal(data, &frame); err != nil {
+			f.t.Fatalf("decode identity frame: %v", err)
+		}
+		if frame.Role != "peer" {
+			f.t.Fatalf("identity frame role = %q, want peer", frame.Role)
+		}
+		return clientConn, serveErrCh
+	case err := <-serveErrCh:
+		f.t.Fatalf("serveOnce returned before the frame was served: %v", err)
+	case <-time.After(5 * time.Second):
+		f.t.Fatalf("identity frame not written within 5s")
+	}
+	return nil, nil
+}
+
+// TestServer_SuperviseHeartbeatSurvivesIdleClosingMiddlebox is the CRI-276
+// regression: with compressed gRPC keepalive on both ends, a fully idle
+// supervise stream (no application traffic) survives well past a middlebox's
+// idle window; without keepalive the connection is torn down.
+func TestServer_SuperviseHeartbeatSurvivesIdleClosingMiddlebox(t *testing.T) {
+	const idleLimit = 1200 * time.Millisecond
+
+	t.Run("compressed keepalive pings survive the idle window", func(t *testing.T) {
+		f := newPeerServeFixture(t)
+		f.server.keepaliveOpts = adapterhost.KeepaliveServerOptionsFor(
+			keepalive.ServerParameters{Time: 100 * time.Millisecond, Timeout: time.Second},
+			keepalive.EnforcementPolicy{MinTime: 50 * time.Millisecond, PermitWithoutStream: true},
+		)
+		conn, serveErrCh := f.startConnIdleClosing(idleLimit)
+		cc, err := grpc.NewClient("passthrough:///criteria-peer",
+			append([]grpc.DialOption{
+				grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+					if ctx.Err() != nil {
+						return nil, ctx.Err()
+					}
+					return conn, nil
+				}),
+				grpc.WithTransportCredentials(insecure.NewCredentials()),
+			}, adapterhost.KeepaliveDialOptionsFor(keepalive.ClientParameters{
+				Time:                100 * time.Millisecond,
+				Timeout:             time.Second,
+				PermitWithoutStream: true,
+			})...)...,
+		)
+		if err != nil {
+			t.Fatalf("grpc.NewClient: %v", err)
+		}
+		f.t.Cleanup(func() { _ = cc.Close() })
+
+		st := f.openSupervise(cc, 0)
+		// Idle far past the middlebox's kill window: no application traffic
+		// at all, only keepalive pings.
+		time.Sleep(3*idleLimit + 500*time.Millisecond)
+		ev := f.append(&criteriav1.SupervisionEvent_Spawned{
+			Spawned: &criteriav1.ProcessSpawned{Pid: 77},
+		})
+		got := f.mustRecvSupervisionEvent(st, 5*time.Second)
+		if got.GetEventSeq() != ev.GetEventSeq() {
+			t.Errorf("post-idle event seq = %d, want %d", got.GetEventSeq(), ev.GetEventSeq())
+		}
+		select {
+		case err := <-serveErrCh:
+			t.Errorf("serveOnce returned during idle window: %v", err)
+		default:
+		}
+	})
+
+	t.Run("without keepalive the idle connection is torn down", func(t *testing.T) {
+		f := newPeerServeFixture(t)
+		conn, serveErrCh := f.startConnIdleClosing(idleLimit)
+		cc, err := grpc.NewClient("passthrough:///criteria-peer",
+			grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				return conn, nil
+			}),
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+		)
+		if err != nil {
+			t.Fatalf("grpc.NewClient: %v", err)
+		}
+		f.t.Cleanup(func() { _ = cc.Close() })
+
+		st := f.openSupervise(cc, 0)
+		ev, err, ok := st.recvSupervisionEvent(10 * time.Second)
+		if !ok {
+			t.Fatalf("no recv within 10s of the middlebox teardown")
+		}
+		if err == nil {
+			t.Fatalf("unexpected event %v on a stream the middlebox should have killed", ev)
+		}
+		select {
+		case <-serveErrCh:
+		case <-time.After(5 * time.Second):
+			t.Errorf("serveOnce did not observe the middlebox teardown")
+		}
+	})
 }
