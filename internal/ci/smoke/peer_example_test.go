@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -117,6 +118,90 @@ func TestPeerExample_ComposeStackParses(t *testing.T) {
 		if len(svc.Command) != 1 || !strings.Contains(svc.Command[0], "exec criteria peer") {
 			t.Errorf("service %q command = %v, want the merged peer-operator dial loop", name, svc.Command)
 		}
+	}
+}
+
+// TestPeerExample_CompletesThroughIsolationGate asserts the shipped example
+// can reach its done state through every step, including the multi-adapter
+// isolation step, and that the crash-demo step is runnable without an
+// operator. The shell adapter reports timeout expiry as the "failure"
+// outcome (not a crash), so a crash_demo command that runs past its step
+// timeout routes the run to state.failed and strands isolation_gate — which
+// is exactly the bug this test guards against. Ungated; runs on every
+// `go test` invocation.
+func TestPeerExample_CompletesThroughIsolationGate(t *testing.T) {
+	moduleRoot := findModuleRoot(t)
+	contents, err := os.ReadFile(filepath.Join(moduleRoot, "examples", "peer-remote", "workflow.hcl"))
+	if err != nil {
+		t.Fatalf("read example workflow: %v", err)
+	}
+	spec := parseWorkflow(t, string(contents))
+	graph := compileWorkflow(t, spec)
+
+	if graph.TargetState != "done" {
+		t.Errorf("target_state = %q, want done", graph.TargetState)
+	}
+	done, ok := graph.States["done"]
+	if !ok || !done.Terminal || !done.Success {
+		t.Errorf("state \"done\" = %+v (present=%t), want a terminal success state", done, ok)
+	}
+
+	// The documented happy-path chain: greet succeeds, deliberate_failure is
+	// routed as a failure outcome, recover succeeds, then the crash demo and
+	// the per-scope isolation gate complete the run in done.
+	chain := [][3]string{
+		{"greet", "success", "deliberate_failure"},
+		{"deliberate_failure", "failure", "recover"},
+		{"recover", "success", "crash_demo"},
+		{"crash_demo", "success", "isolation_gate"},
+		{"isolation_gate", "success", "done"},
+	}
+	for _, edge := range chain {
+		step, ok := graph.Steps[edge[0]]
+		if !ok {
+			t.Errorf("example workflow missing step %q", edge[0])
+			continue
+		}
+		outcome := step.Outcomes[edge[1]]
+		if outcome == nil {
+			t.Errorf("step %q is missing outcome %q", edge[0], edge[1])
+			continue
+		}
+		if outcome.Next != edge[2] {
+			t.Errorf("step %q outcome %q routes to %q, want %q (isolation_gate must stay reachable)",
+				edge[0], edge[1], outcome.Next, edge[2])
+		}
+	}
+	if gate := graph.Steps["isolation_gate"]; gate != nil && gate.AdapterRef != "noop.gate" {
+		t.Errorf("isolation_gate targets %q, want the second adapter noop.gate", gate.AdapterRef)
+	}
+
+	// crash_demo must be runnable unattended: its command (sleep <n>) must
+	// finish strictly inside the step timeout the shell adapter enforces.
+	cd := graph.Steps["crash_demo"]
+	if cd == nil {
+		t.Fatal("example workflow missing step crash_demo")
+	}
+	sleepRe := regexp.MustCompile(`^sleep (\d+)$`)
+	match := sleepRe.FindStringSubmatch(strings.TrimSpace(cd.Input["command"]))
+	if match == nil {
+		t.Fatalf("crash_demo command %q must be `sleep <seconds>` so the test can check it fits the timeout", cd.Input["command"])
+	}
+	sleepSeconds, err := strconv.Atoi(match[1])
+	if err != nil {
+		t.Fatalf("parse crash_demo sleep duration: %v", err)
+	}
+	timeoutStr := strings.TrimSpace(cd.Input["timeout"])
+	if timeoutStr == "" {
+		// The shell adapter's default step timeout is 5m.
+		timeoutStr = "5m"
+	}
+	timeoutDur, err := time.ParseDuration(timeoutStr)
+	if err != nil {
+		t.Fatalf("parse crash_demo timeout %q: %v", timeoutStr, err)
+	}
+	if remaining := timeoutDur - time.Duration(sleepSeconds)*time.Second; remaining <= 0 {
+		t.Errorf("crash_demo sleep %ds does not fit inside timeout %s (remaining %s): the shell adapter would report timeout expiry as the \"failure\" outcome and the run would terminate in state.failed before isolation_gate", sleepSeconds, timeoutStr, remaining)
 	}
 }
 

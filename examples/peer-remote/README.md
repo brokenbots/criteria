@@ -65,6 +65,11 @@ path is **routed**, not a crash — the `deliberate_failure` step makes the
 shell adapter exit 3 and the workflow routes that outcome into `recover`,
 which completes successfully.
 
+Left alone the stack completes in about a minute: `crash_demo`'s 30s sleep
+finishes well inside its 2m step timeout, `isolation_gate` runs on the noop
+peer, and the run terminates in `done` with the `peer-remote-demo complete`
+output. The crash demo below interrupts that quiet run on purpose.
+
 ## What to observe in the host's structured logs
 
 `docker compose logs criteria-host` (JSON lines, slog):
@@ -93,9 +98,11 @@ which completes successfully.
 
 ## The demo: kill -9 the peer's adapter child (the acceptance proof)
 
-While the `crash_demo` step is sleeping (`sleep 300`), SIGKILL the shell
+While the `crash_demo` step is sleeping (`sleep 30`), SIGKILL the shell
 peer's **adapter child** — the go-plugin child process, not the `criteria
-peer` supervisor itself:
+peer` supervisor itself. The sleep is your window: you have roughly 30s
+from the step starting (and the same again after a respawn) to land the
+kill; if you miss it, re-run the workflow and try again.
 
 ```sh
 # find the adapter child inside the shell-peer container

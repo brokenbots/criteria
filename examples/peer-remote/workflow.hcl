@@ -77,14 +77,17 @@ step "recover" {
   outcome "failure" { next = state.failed }
 }
 
-# Crash demo: this step sleeps so an operator can SIGKILL the peer's adapter
-# child mid-flight (see README.md). The host classifies the crash from the
-# peer's supervision journal and respawns the session; restarting the peer
-# container lets the retry complete.
+# Crash demo: this step sleeps ~30s so an operator can SIGKILL the peer's
+# adapter child mid-flight (see README.md). The sleep must finish well inside
+# the step timeout so an unattended run completes: the shell adapter reports
+# timeout expiry as the "failure" outcome (not a crash), which would route
+# the run to state.failed and leave isolation_gate unreachable. The host
+# classifies the crash from the peer's supervision journal and respawns the
+# session; restarting the peer container lets the retry complete.
 step "crash_demo" {
   target = adapter.shell.main
   input {
-    command = "sleep 300"
+    command = "sleep 30"
     timeout = "2m"
   }
 
