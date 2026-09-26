@@ -397,14 +397,15 @@ func peerHandleFrom(p *peerSessionProvider, scope string) (*peerHandle, bool) {
 	return ps.handle, true
 }
 
-// mustPeerSession returns the live peerSession for a registry key.
-func mustPeerSession(t *testing.T, p *peerSessionProvider, typ, scope string) *peerSession {
+// mustPeerSession returns the live peerSession the noop fixture registered
+// for the default (unscoped) registry key.
+func mustPeerSession(t *testing.T, p *peerSessionProvider) *peerSession {
 	t.Helper()
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	ps, ok := p.peers[p.key(typ, scope)]
+	ps, ok := p.peers[p.key("noop", "")]
 	if !ok {
-		t.Fatalf("no peer session for %q/%q", typ, scope)
+		t.Fatalf("no peer session for %q/%q", "noop", "")
 	}
 	return ps
 }
@@ -601,7 +602,7 @@ func TestPeerProcessExitedAfterJournalEvent(t *testing.T) {
 	}
 
 	waitFor(t, "ProcessExited after journal event", reporter.ProcessExited)
-	ps := mustPeerSession(t, provider, "noop", "")
+	ps := mustPeerSession(t, provider)
 	ps.mu.Lock()
 	reason, detail, lastSeq := ps.exitReason, ps.exitDetail, ps.lastSeq
 	ps.mu.Unlock()
@@ -693,7 +694,7 @@ func TestPeerSupervisionHeartbeatUpdatesLiveness(t *testing.T) {
 	if _, err := provider.WaitForHandle(ctx, "noop", ""); err != nil {
 		t.Fatalf("WaitForHandle: %v", err)
 	}
-	ps := mustPeerSession(t, provider, "noop", "")
+	ps := mustPeerSession(t, provider)
 	if got := ps.lastHeartbeatAt(); !got.IsZero() {
 		t.Fatalf("heartbeat timestamp set before any heartbeat: %v", got)
 	}
@@ -716,7 +717,7 @@ func TestPeerStreamFlushedMarksLogDrain(t *testing.T) {
 	if _, err := provider.WaitForHandle(ctx, "noop", ""); err != nil {
 		t.Fatalf("WaitForHandle: %v", err)
 	}
-	ps := mustPeerSession(t, provider, "noop", "")
+	ps := mustPeerSession(t, provider)
 	if ps.logDrained() {
 		t.Fatal("log drain marked before any StreamFlushed event")
 	}

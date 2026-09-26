@@ -199,7 +199,7 @@ func TestPeerLogEvidenceSurvivesCrash(t *testing.T) {
 		t.Fatalf("WaitForHandle: %v", err)
 	}
 	ph := handle.(*peerHandle)
-	ps := mustPeerSession(t, provider, "noop", "")
+	ps := mustPeerSession(t, provider)
 
 	// The peer drained its log backlog into the journal (StreamFlushed on
 	// the log channel): the host-side drain marker the evidence path reads.
