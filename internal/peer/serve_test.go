@@ -1143,6 +1143,18 @@ func TestServer_RunReconnectsAfterHostBounce(t *testing.T) {
 		return nil
 	}
 
+	// Bind the host listener once and keep the address fixed: each bounce
+	// closes and re-binds the same host:port (Go sets SO_REUSEADDR, so the
+	// immediate rebind after Close succeeds). cfg.Host must never be
+	// mutated after Run starts — the peer goroutine reads it (Run's connect
+	// log and serveOnce's dial) and a test write would be a data race.
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	host := lis.Addr().String()
+	f.server.cfg.Host = host
+
 	ctx, cancel := context.WithCancel(context.Background())
 	runErr := make(chan error, 1)
 	go func() { runErr <- f.server.Run(ctx) }()
@@ -1150,15 +1162,16 @@ func TestServer_RunReconnectsAfterHostBounce(t *testing.T) {
 	const bounces = 3
 	var finalFrame []byte
 	for round := 0; round < bounces+1; round++ {
-		lis, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatalf("listen round %d: %v", round, err)
+		// Round 0 reuses the pre-bound listener; later rounds re-bind the
+		// same address after the bounce, so the peer's next dial — which
+		// re-resolves the configured host — finds the rebound listener.
+		if round > 0 {
+			var lerr error
+			lis, lerr = net.Listen("tcp", host)
+			if lerr != nil {
+				t.Fatalf("rebind round %d on %s: %v", round, host, lerr)
+			}
 		}
-		// serveOnce re-reads s.cfg.Host on every dial, so the peer finds
-		// the new listener after its backoff even though the old one is
-		// already closed.
-		f.server.cfg.Host = lis.Addr().String()
-
 		acceptCh := make(chan net.Conn, 1)
 		go func() {
 			if conn, err := lis.Accept(); err == nil {
@@ -1350,8 +1363,6 @@ func (c *idleClosingConn) watchdog() {
 	}
 }
 
-// startConnIdleClosing is startConn with the server-side connection wrapped
-// in an idle-closing middlebox; returns the middlebox for idle assertions.
 // startConnIdleClosing is startConn with the server-side connection wrapped
 // in an idle-closing middlebox; the middlebox tracks the idle window for
 // keepalive assertions.

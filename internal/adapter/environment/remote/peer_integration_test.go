@@ -717,10 +717,11 @@ func TestPeerIntegrationIdleSessionSurvives(t *testing.T) {
 // --- scenario 5: reconnect after host listener bounce ---
 
 // TestPeerIntegrationReconnectAfterHostBounce bounces the host listener
-// while the child stays alive, SIGKILLs the child during the disconnect
-// window, and asserts the peer reconnects to the new listener, replays the
-// buffered ProcessExited + CrashClassified, and never respawned the child
-// (single ProcessSpawned for the fixture lifetime). The backoff+jitter
+// (stop + re-bind on the same address) while the child stays alive,
+// SIGKILLs the child during the disconnect window, and asserts the peer
+// reconnects to the rebound listener, replays the buffered ProcessExited +
+// CrashClassified, and never respawned the child (single ProcessSpawned for
+// the fixture lifetime). The backoff+jitter
 // timing assertions live in internal/peer/serve_test.go where the sleep and
 // rand seams are reachable.
 func TestPeerIntegrationReconnectAfterHostBounce(t *testing.T) {
@@ -732,9 +733,12 @@ func TestPeerIntegrationReconnectAfterHostBounce(t *testing.T) {
 		return err == nil
 	})
 
-	// Bounce: stop the current shim and start a fresh listener; the peer's
-	// reconnect loop must find the new address (each dial re-reads the
-	// resolved host).
+	// Bounce: stop the current shim and start a fresh shim bound to the
+	// SAME address. The peer re-dials the configured host on every round,
+	// so the rebound shim takes over the pre-bound host:port without ever
+	// mutating cfg.Host after the peer started (the peer goroutine reads
+	// it — a post-start write would be a data race).
+	bounceAddr := fx.addr
 	stopCtx, cancelStop := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelStop()
 	if err := fx.shim.Stop(stopCtx); err != nil {
@@ -745,7 +749,7 @@ func TestPeerIntegrationReconnectAfterHostBounce(t *testing.T) {
 	// conns and trigger the peer's observe-EOF-and-reconnect path.
 	fx.dropPeerSessions("host listener bounced")
 
-	newShimCfg := &Config{ListenAddress: "127.0.0.1:0", Insecure: true, AcceptToken: fx.token}
+	newShimCfg := &Config{ListenAddress: bounceAddr, Insecure: true, AcceptToken: fx.token}
 	newShim, err := NewShim(newShimCfg, fx.shimVerifier())
 	if err != nil {
 		t.Fatalf("NewShim (restarted): %v", err)
@@ -753,7 +757,7 @@ func TestPeerIntegrationReconnectAfterHostBounce(t *testing.T) {
 	startCtx, cancelStart := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancelStart()
 	if err := newShim.Start(startCtx); err != nil {
-		t.Fatalf("restarted shim Start: %v", err)
+		t.Fatalf("restarted shim Start on %s: %v", bounceAddr, err)
 	}
 	newShim.SetPeerAcceptor(fx.provider)
 	fx.mu.Lock()
@@ -761,7 +765,6 @@ func TestPeerIntegrationReconnectAfterHostBounce(t *testing.T) {
 	fx.shim = newShim
 	fx.addr = newShim.listener.Addr().String()
 	fx.mu.Unlock()
-	fx.pcfg.Host = fx.addr
 
 	// Disconnect window: kill the child while the host is unreachable. The
 	// exit + crash facts buffer in the peer journal and replay on reconnect.
