@@ -57,12 +57,16 @@ type fakePeer struct {
 	schemaVersion uint32
 	restored      []byte
 	permRecv      []*v2.PermissionEvent
+	promptReqs    []string
 
 	// behavior overrides for uncovered-path tests; nil/zero keeps defaults.
-	logErr                 error // Log returns this error instead of streaming a chunk
-	permUnimplemented      bool  // Permissions returns Unimplemented (old peer build)
-	superviseUnimplemented bool  // PeerService.Supervise returns Unimplemented
-	rejectKillChild        bool  // Control(kill_child) responds Accepted=false
+	caps                   []string // Info capabilities; nil keeps the default
+	logErr                 error    // Log returns this error instead of streaming a chunk
+	permUnimplemented      bool     // Permissions returns Unimplemented (old peer build)
+	superviseUnimplemented bool     // PeerService.Supervise returns Unimplemented
+	rejectKillChild        bool     // Control(kill_child) responds Accepted=false
+	promptAccept           bool     // Prompt accepts (false → typed rejection)
+	promptDetail           string   // rejection detail
 
 	v2.UnimplementedAdapterServiceServer
 
@@ -115,7 +119,9 @@ func (f *fakePeer) serve(conn net.Conn) {
 	f.addr = conn.LocalAddr()
 	srv := grpc.NewServer()
 	f.srv = srv
-	v2.RegisterAdapterServiceServer(srv, f)
+	// Register the extended AdapterService desc so the dynamically encoded
+	// Prompt RPC is served too (the registration the runner and peer use).
+	srv.RegisterService(adapterhost.AdapterServiceDescWithPrompt(), f)
 	srv.RegisterService(&grpc.ServiceDesc{
 		ServiceName: "criteria.v1.PeerService",
 		HandlerType: (*fakePeerService)(nil),
@@ -223,7 +229,11 @@ func (f *fakePeer) superviseHandler(srv interface{}, stream grpc.ServerStream) e
 // --- adapter v2 service ---
 
 func (f *fakePeer) Info(ctx context.Context, req *v2.InfoRequest) (*v2.InfoResponse, error) {
-	return &v2.InfoResponse{Name: f.name, Version: "1.0.0", Capabilities: []string{"pause", "snapshot"}}, nil
+	caps := f.caps
+	if caps == nil {
+		caps = []string{"pause", "snapshot"}
+	}
+	return &v2.InfoResponse{Name: f.name, Version: "1.0.0", Capabilities: caps}, nil
 }
 
 func (f *fakePeer) OpenSession(ctx context.Context, req *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) {
@@ -320,6 +330,19 @@ func (f *fakePeer) Execute(req *v2.ExecuteRequest, stream grpc.ServerStreamingSe
 	return stream.Send(&v2.ExecuteEvent{
 		Event: &v2.ExecuteEvent_Result{Result: &v2.ExecuteResult{Outcome: "success"}},
 	})
+}
+
+// Prompt accepts (or rejects) a mid-turn agent prompt, exercising the
+// dynamically encoded Prompt RPC the host issues through the extended
+// AdapterService descriptor.
+func (f *fakePeer) Prompt(ctx context.Context, req *adapterhost.PromptRequest) (*adapterhost.PromptResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.promptReqs = append(f.promptReqs, req.Prompt)
+	if !f.promptAccept {
+		return &adapterhost.PromptResponse{Accepted: false, Detail: f.promptDetail}, nil
+	}
+	return &adapterhost.PromptResponse{Accepted: true}, nil
 }
 
 // --- test helpers ---
