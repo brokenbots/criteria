@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
+	"syscall"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	criteriav1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
@@ -865,6 +866,99 @@ func TestServer_ControlRejectsUnsupportedAndDeadChildren(t *testing.T) {
 	})
 	if resp.GetAccepted() {
 		t.Errorf("kill_child accepted for a dead child: %+v", resp)
+	}
+}
+
+// TestServer_ControlRejectedKillDoesNotPoisonCrashClassification verifies
+// that a rejected Control(kill_child) — dead child — leaves no
+// killRequested poison behind: a genuine crash observed afterwards is still
+// classified ungraceful (ProcessExited{graceful:false} +
+// CrashClassified{process_terminated}), not absorbed as a peer-initiated
+// exit. The child is SIGKILLed directly while the exit watcher's poll is
+// stretched far beyond the test window, so the rejected Control sees the
+// dead child before the watcher journals anything.
+func TestServer_ControlRejectedKillDoesNotPoisonCrashClassification(t *testing.T) {
+	if testing.Short() {
+		t.Skip("poisoning test spawns a real adapter subprocess")
+	}
+	bin := buildNoopAdapter(t)
+
+	cfg, err := LoadConfig(getenvFrom(map[string]string{EnvRemoteHost: "127.0.0.1:7997"}))
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.AdapterName = "noop"
+	cfg.AdapterBinary = bin
+	cfg.JournalLimit = 8
+
+	rt := NewRuntime(&cfg, captureLogger(&bytes.Buffer{}))
+	// The watcher's next poll is far outside the test window: the child exit
+	// is observable to Control but not yet journaled by the watcher.
+	rt.exitPoll = 30 * time.Second
+	rt.shutdownGrace = 50 * time.Millisecond
+	server := NewServer(&cfg, rt, captureLogger(&bytes.Buffer{}))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := rt.Boot(ctx); err != nil {
+		t.Fatalf("boot: %v", err)
+	}
+	child := rt.Child()
+
+	// Trip the real crash: SIGKILL the child so the go-plugin client
+	// observes the exit, while the watcher stays asleep.
+	pid, ok := adapterhost.ProcessPID(child)
+	if !ok {
+		t.Fatalf("child pid unavailable for the live child")
+	}
+	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
+		t.Fatalf("SIGKILL child: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for !adapterhost.ProcessExited(child) && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !adapterhost.ProcessExited(child) {
+		t.Fatal("child still reported alive after SIGKILL")
+	}
+
+	resp := server.Control(ctx, &criteriav1.ControlRequest{
+		Kind: &criteriav1.ControlRequest_KillChild{KillChild: &criteriav1.KillChild{}},
+	})
+	if resp.GetAccepted() {
+		t.Fatalf("kill_child accepted for a dead child: %+v", resp)
+	}
+	if resp.GetDetail() != "no live adapter child" {
+		t.Errorf("detail = %q, want %q", resp.GetDetail(), "no live adapter child")
+	}
+
+	// The genuine crash classifies normally: recordExit(false) (the watcher
+	// poll, simulated) journals ProcessExited{graceful:false} followed by
+	// CrashClassified{process_terminated}. With the old behavior the
+	// rejected kill had already set killRequested, so the exit was recorded
+	// graceful and no crash event appeared.
+	rt.recordExit(false)
+	events := rt.Journal().Replay(0)
+	if len(events) != 3 {
+		t.Fatalf("journal has %d events, want spawned+exited+crash: %+v", len(events), events)
+	}
+	if exited := events[1].GetExited(); exited == nil || exited.GetGraceful() {
+		t.Errorf("event 2 = %T graceful=%v, want ungraceful exited", events[1].GetKind(), exited != nil && exited.GetGraceful())
+	}
+	crash := events[2].GetCrash()
+	if crash == nil {
+		t.Fatalf("event 3 = %T, want crash", events[2].GetKind())
+	}
+	if crash.GetReason() != adapterhost.CrashReasonProcessTerminated {
+		t.Errorf("crash reason = %q, want %q", crash.GetReason(), adapterhost.CrashReasonProcessTerminated)
+	}
+
+	// Shutdown records nothing further (exit already journaled once).
+	if err := rt.Shutdown(ctx); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+	if got := len(rt.Journal().Replay(0)); got != 3 {
+		t.Errorf("journal has %d events after shutdown, want 3 (exit recorded once)", got)
 	}
 }
 

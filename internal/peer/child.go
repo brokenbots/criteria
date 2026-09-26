@@ -324,11 +324,15 @@ func (r *peerRuntime) Control(ctx context.Context, req *criteriav1.ControlReques
 	}
 	r.mu.Lock()
 	child := r.child
-	r.killRequested = true
-	r.mu.Unlock()
 	if child == nil || adapterhost.ProcessExited(child) {
+		r.mu.Unlock()
 		return &criteriav1.ControlResponse{Accepted: false, Detail: "no live adapter child"}
 	}
+	// Accepted from here on: mark before the kill is issued so an exit the
+	// watcher observes before the kill lands still classifies as
+	// peer-initiated. A rejected request must not poison the runtime.
+	r.killRequested = true
+	r.mu.Unlock()
 	go func() {
 		timer := time.NewTimer(grace)
 		defer timer.Stop()
