@@ -1,26 +1,29 @@
-# Demo lockfile for the peer-remote example.
-#
-# The remote shim's digest gate is fail-closed: every peer dial must present
-# the resolved_digest pinned here for its adapter type, and the compose file
-# injects the same placeholder digest as CRITERIA_REMOTE_DIGEST. This demo
-# therefore pins a placeholder digest — it is an identity agreement between
-# the host's lockfile and the operator-injected peer env, not a signature
-# verification. In a real deployment run `criteria adapter lock` in this
-# directory to pin real digests (and signer identities) from the OCI
-# artifacts, then feed the pinned digest to your peers via the
-# provision_wanted lifecycle event.
 schema_version = 1
-
-adapter "shell" "main" {
-  reference            = "ghcr.io/brokenbots/criteria-adapter-shell:0.5.3"
-  resolved_digest      = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-  source_url           = "https://github.com/brokenbots/criteria-adapter-shell"
-  sdk_protocol_version = 2
-}
-
 adapter "noop" "gate" {
   reference            = "ghcr.io/brokenbots/criteria-adapter-noop:0.5.2"
-  resolved_digest      = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  version              = "0.5.2"
+  resolved_digest      = "sha256:00ab4151baacba3b14e89cdd5c99e0c1924e23198d0ff91387f995021d75ce4f"
   source_url           = "https://github.com/brokenbots/criteria-adapter-noop"
   sdk_protocol_version = 2
+  platforms            = ["linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64"]
+  signature {
+    keyless {
+      issuer  = "https://token.actions.githubusercontent.com"
+      subject = "https://github.com/brokenbots/criteria-adapter-noop/.github/workflows/publish.yml@refs/tags/v0.5.2"
+    }
+  }
+}
+adapter "shell" "main" {
+  reference            = "ghcr.io/brokenbots/criteria-adapter-shell:0.5.3"
+  version              = "0.5.3"
+  resolved_digest      = "sha256:d9f306c29f4145da8bcc44187c9e4ae0f69ed30db3b3edac6e9b6350469bc635"
+  source_url           = "https://github.com/brokenbots/criteria-adapter-shell"
+  sdk_protocol_version = 2
+  platforms            = ["linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64"]
+  signature {
+    keyless {
+      issuer  = "https://token.actions.githubusercontent.com"
+      subject = "https://github.com/brokenbots/criteria-adapter-shell/.github/workflows/publish.yml@refs/tags/v0.5.3"
+    }
+  }
 }

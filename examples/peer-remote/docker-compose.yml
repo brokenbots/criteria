@@ -2,10 +2,12 @@
 # host running a workflow with per-scope sessions. See README.md for the
 # bring-up steps and the kill -9 crash-diagnosis demo.
 #
-# The peers use the same placeholder digest as the demo lockfile
-# (.criteria.lock.hcl); in real deployments the operator injects the digest
-# from the provision_wanted lifecycle event instead (see
-# docs/adapter-remote-deployment.md).
+# Digest pinning: the demo lockfile (.criteria.lock.hcl) pins the real OCI
+# digests for the shell and noop adapters, and each peer presents its pinned
+# digest on dial — the host's digest gate is fail-closed. The peer
+# entrypoints read the digest straight from the mounted lockfile; set
+# PEER_DIGEST to override (e.g. when the operator injects a digest from the
+# provision_wanted lifecycle event, see docs/adapter-remote-deployment.md).
 services:
   criteria-host:
     image: ghcr.io/brokenbots/criteria:latest
@@ -38,10 +40,10 @@ services:
       # Read access to the rotated token files: the entrypoint acts as the
       # operator, reconciling the host's provision_wanted provisioning.
       - criteria-home:/data/criteria:ro
+      # The pinned digest the peer must present on dial (see entrypoint).
+      - ./.criteria.lock.hcl:/workspace/.criteria.lock.hcl:ro
     environment:
       - CRITERIA_REMOTE_HOST=criteria-host:7778
-      # Must match the lockfile pin for this adapter type; see README.md.
-      - CRITERIA_REMOTE_DIGEST=${PEER_DIGEST:-sha256:0000000000000000000000000000000000000000000000000000000000000000}
       - CRITERIA_ADAPTER_NAME=shell
       - CRITERIA_LOG_LEVEL=info
 
@@ -58,9 +60,9 @@ services:
       - criteria-host
     volumes:
       - criteria-home:/data/criteria:ro
+      - ./.criteria.lock.hcl:/workspace/.criteria.lock.hcl:ro
     environment:
       - CRITERIA_REMOTE_HOST=criteria-host:7778
-      - CRITERIA_REMOTE_DIGEST=${PEER_DIGEST:-sha256:0000000000000000000000000000000000000000000000000000000000000000}
       - CRITERIA_ADAPTER_NAME=noop
       - CRITERIA_LOG_LEVEL=info
 
@@ -110,7 +112,18 @@ x-peer-operator: &peer-operator
       fi
       export CRITERIA_REMOTE_TOKEN=$$(cat "$$token_file")
       export CRITERIA_REMOTE_SCOPE="$$scope_key"
-      echo "peer operator: dialing with scope $${scope_key}"
+      # Present the digest pinned in the demo lockfile for this adapter
+      # type: the host's digest gate is fail-closed and rejects any dial
+      # whose digest does not match the pin. PEER_DIGEST overrides.
+      if [ -z "$${PEER_DIGEST:-}" ] && [ -f /workspace/.criteria.lock.hcl ]; then
+        pinned=$$(grep -A3 "adapter \"$$adapter\" \"" /workspace/.criteria.lock.hcl \
+          | sed -n 's/.*resolved_digest *= *"\([^"]*\)".*/\1/p' | head -n1)
+        if [ -n "$$pinned" ]; then
+          PEER_DIGEST=$$pinned
+        fi
+      fi
+      export CRITERIA_REMOTE_DIGEST=$${PEER_DIGEST:-}
+      echo "peer operator: dialing with scope $${scope_key} digest $${CRITERIA_REMOTE_DIGEST:-none}"
       exec criteria peer
 
 volumes:

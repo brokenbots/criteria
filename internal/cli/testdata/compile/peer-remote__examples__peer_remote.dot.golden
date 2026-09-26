@@ -1,0 +1,24 @@
+digraph "peer-remote-demo" {
+  rankdir=LR;
+
+  "greet" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "deliberate_failure" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "recover" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "crash_demo" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "isolation_gate" [shape=box, style="filled", fillcolor="#E8DAEF"];
+  "done" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
+  "failed" [shape=doublecircle, style=filled, fillcolor="#FADBD8"];
+
+  "__start__" [shape=point,width=0.12,label=""];
+  "__start__" -> "greet" [label="initial"];
+  "greet" -> "failed" [label="failure"];
+  "greet" -> "deliberate_failure" [label="success"];
+  "deliberate_failure" -> "recover" [label="failure"];
+  "deliberate_failure" -> "failed" [label="success"];
+  "recover" -> "failed" [label="failure"];
+  "recover" -> "crash_demo" [label="success"];
+  "crash_demo" -> "failed" [label="failure"];
+  "crash_demo" -> "isolation_gate" [label="success"];
+  "isolation_gate" -> "failed" [label="failure"];
+  "isolation_gate" -> "done" [label="success"];
+}

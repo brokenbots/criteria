@@ -165,13 +165,13 @@ Observe in the logs:
   (`criteria apply --server ...`); a local-only run rejects those node kinds
   with a clear error. This example demonstrates remote *adapters*, not
   server-mode run control.
-- **Placeholder digest.** The compose peers pass
-  `CRITERIA_REMOTE_DIGEST=${PEER_DIGEST:-sha256:000…0}` and the demo lockfile
-  (`.criteria.lock.hcl`) pins the same placeholder. The peer resolves its
-  adapter binary locally (by name when the digest-addressed cache misses) and
-  the host treats the presented digest as advisory identity. In real
-  deployments the operator injects the digest from the `provision_wanted`
-  lifecycle event; see
+- **Digest pinning.** The committed `.criteria.lock.hcl` pins the real OCI
+  digests (and keyless signatures) for the two adapters, as produced by
+  `criteria adapter lock`. The compose peer entrypoints read their pinned
+  digest from the mounted lockfile and present it on dial; the host's digest
+  gate is fail-closed and rejects any dial whose presented digest does not
+  match the pin. Set `PEER_DIGEST` to override (e.g. when the operator
+  injects the digest from the `provision_wanted` lifecycle event); see
   [docs/adapter-remote-deployment.md](../../docs/adapter-remote-deployment.md).
 - **No Docker? Run the same building blocks as tests.** The smoke tests in
   [internal/ci/smoke/peer_example_test.go](../../internal/ci/smoke/peer_example_test.go)
