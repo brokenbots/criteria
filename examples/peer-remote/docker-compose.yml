@@ -1,0 +1,103 @@
+# Peer-mode remote adapter demo: two adapter peers phone home to a criteria
+# host running a workflow with per-scope sessions. See README.md for the
+# bring-up steps and the kill -9 crash-diagnosis demo.
+#
+# The peers use the same placeholder digest as the demo lockfile
+# (.criteria.lock.hcl); in real deployments the operator injects the digest
+# from the provision_wanted lifecycle event instead (see
+# docs/adapter-remote-deployment.md).
+services:
+  criteria-host:
+    image: ghcr.io/brokenbots/criteria:latest
+    command: ["apply", "/workspace/workflow.hcl"]
+    ports:
+      - "7778:7778"
+    volumes:
+      - ./workflow.hcl:/workspace/workflow.hcl:ro
+      - ./.criteria.lock.hcl:/workspace/.criteria.lock.hcl:ro
+      - criteria-home:/data/criteria
+    environment:
+      # The rotated per-scope accept tokens are written under
+      # $CRITERIA_HOME/runs/<run_id>/remote-tokens/... ; the shared volume
+      # lets the peer entrypoints act as the provisioning operator.
+      - CRITERIA_HOME=/data/criteria
+      - CRITERIA_LOG_LEVEL=info
+
+  shell-peer:
+    <<: *peer-operator
+    build:
+      context: ../..
+      dockerfile: images/remote-adapters/Dockerfile.peer
+      args:
+        ADAPTER_NAME: shell
+        ADAPTER_VERSION: "0.5.3"
+        CRITERIA_VERSION: latest
+    depends_on:
+      - criteria-host
+    volumes:
+      # Read access to the rotated token files: the entrypoint acts as the
+      # operator, reconciling the host's provision_wanted provisioning.
+      - criteria-home:/data/criteria:ro
+    environment:
+      - CRITERIA_REMOTE_HOST=criteria-host:7778
+      # Must match the lockfile pin for this adapter type; see README.md.
+      - CRITERIA_REMOTE_DIGEST=${PEER_DIGEST:-sha256:0000000000000000000000000000000000000000000000000000000000000000}
+      - CRITERIA_ADAPTER_NAME=shell
+      - CRITERIA_LOG_LEVEL=info
+
+  noop-peer:
+    <<: *peer-operator
+    build:
+      context: ../..
+      dockerfile: images/remote-adapters/Dockerfile.peer
+      args:
+        ADAPTER_NAME: noop
+        ADAPTER_VERSION: "0.5.2"
+        CRITERIA_VERSION: latest
+    depends_on:
+      - criteria-host
+    volumes:
+      - criteria-home:/data/criteria:ro
+    environment:
+      - CRITERIA_REMOTE_HOST=criteria-host:7778
+      - CRITERIA_REMOTE_DIGEST=${PEER_DIGEST:-sha256:0000000000000000000000000000000000000000000000000000000000000000}
+      - CRITERIA_ADAPTER_NAME=noop
+      - CRITERIA_LOG_LEVEL=info
+
+# Both peers wait for the host to rotate their per-scope accept tokens and
+# then dial in with the registered scope key. This entrypoint override is the
+# compose stand-in for the operator pattern: reconcile on provision_wanted by
+# injecting CRITERIA_REMOTE_HOST/TOKEN/SCOPE/DIGEST into the peer. The peer
+# retries its connection with full-jitter backoff, so no health gate is
+# needed for startup ordering.
+x-peer-operator: &peer-operator
+  entrypoint: ["sh", "-c"]
+  command:
+    - |
+      set -eu
+      adapter="$${CRITERIA_ADAPTER_NAME:-shell}"
+      echo "peer operator: waiting for rotated token for adapter $${adapter}"
+      token_file=""
+      i=0
+      while [ $$i -lt 120 ]; do
+        token_file=$$(find /data/criteria/runs -type f -name "$$adapter.token" 2>/dev/null | sort | tail -n 1)
+        [ -n "$$token_file" ] && break
+        i=$$((i + 1))
+        sleep 2
+      done
+      [ -n "$$token_file" ] || { echo "no token file for adapter $${adapter}"; exit 1; }
+      instance_dir=$$(dirname "$$token_file")
+      scopes_dir=$$(dirname "$$instance_dir")
+      scope_name=$$(basename "$$scopes_dir")
+      instance_id=$$(basename "$$instance_dir")
+      scope_key="$$instance_id"
+      if [ "$$scope_name" != "remote-tokens" ]; then
+        scope_key="$$scope_name/$$instance_id"
+      fi
+      export CRITERIA_REMOTE_TOKEN=$$(cat "$$token_file")
+      export CRITERIA_REMOTE_SCOPE="$$scope_key"
+      echo "peer operator: dialing with scope $${scope_key}"
+      exec criteria peer
+
+volumes:
+  criteria-home:
