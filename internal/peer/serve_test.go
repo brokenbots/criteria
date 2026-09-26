@@ -192,7 +192,7 @@ func (f *peerServeFixture) append(kind EventKind) *criteriav1.SupervisionEvent {
 // client end is the host side. The first return value is the identity frame
 // bytes read by the host before any gRPC traffic; the second is the error
 // serveOnce returns when the connection ends.
-func (f *peerServeFixture) startConn() (net.Conn, []byte, <-chan error) {
+func (f *peerServeFixture) startConn() (conn net.Conn, frame []byte, serveErr <-chan error) {
 	f.t.Helper()
 	serverConn, clientConn := net.Pipe()
 
@@ -204,29 +204,29 @@ func (f *peerServeFixture) startConn() (net.Conn, []byte, <-chan error) {
 		return serverConn, nil
 	}
 
-	frame := make(chan []byte, 1)
+	frameCh := make(chan []byte, 1)
 	go func() {
-		defer close(frame)
+		defer close(frameCh)
 		data, err := readFrameLine(clientConn)
 		if err != nil {
 			return
 		}
-		frame <- data
+		frameCh <- data
 	}()
 
-	serveErr := make(chan error, 1)
-	go func() { serveErr <- f.server.serveOnce(f.ctx) }()
+	serveErrCh := make(chan error, 1)
+	go func() { serveErrCh <- f.server.serveOnce(f.ctx) }()
 
 	var got []byte
 	select {
-	case data := <-frame:
+	case data := <-frameCh:
 		got = data
-	case err := <-serveErr:
+	case err := <-serveErrCh:
 		f.t.Fatalf("serveOnce returned before the frame was served: %v", err)
 	case <-time.After(5 * time.Second):
 		f.t.Fatalf("identity frame not written within 5s")
 	}
-	return clientConn, got, serveErr
+	return clientConn, got, serveErrCh
 }
 
 // readFrameLine reads one newline-terminated identity frame byte-at-a-time

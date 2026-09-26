@@ -165,4 +165,3 @@ func (l *singleConnListener) Addr() net.Addr {
 	}
 	return nil
 }
-

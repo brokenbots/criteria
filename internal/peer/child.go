@@ -281,19 +281,26 @@ func (r *peerRuntime) recordExit(peerInitiated bool) {
 		r.log.Error("journal exited event", "error", err)
 	}
 	if !graceful {
-		r.log.Error("adapter child exited unexpectedly",
-			"adapter", r.cfg.AdapterName,
-			"reason", adapterhost.CrashReasonProcessTerminated,
-			"idle_ms", idleMS,
-			"exit_code", exitCode,
-			"signal", signal,
-		)
-		if _, err := r.journal.Append(&criteriav1.SupervisionEvent_Crash{Crash: &criteriav1.CrashClassified{
-			Reason: adapterhost.CrashReasonProcessTerminated,
-			Detail: fmt.Sprintf("adapter child exited while supervised (exit code %d, signal %d)", exitCode, signal),
-		}}, r.cfg.AdapterName, r.cfg.Scope, ""); err != nil {
-			r.log.Error("journal crash event", "error", err)
-		}
+		r.classifyUnexpectedExit(exitCode, signal, idleMS)
+	}
+}
+
+// classifyUnexpectedExit journals the CrashClassified event for an
+// ungraceful child exit, classifying against the shared adapterhost crash
+// taxonomy with the real wait-status facts in the detail.
+func (r *peerRuntime) classifyUnexpectedExit(exitCode, signal int, idleMS uint64) {
+	r.log.Error("adapter child exited unexpectedly",
+		"adapter", r.cfg.AdapterName,
+		"reason", adapterhost.CrashReasonProcessTerminated,
+		"idle_ms", idleMS,
+		"exit_code", exitCode,
+		"signal", signal,
+	)
+	if _, err := r.journal.Append(&criteriav1.SupervisionEvent_Crash{Crash: &criteriav1.CrashClassified{
+		Reason: adapterhost.CrashReasonProcessTerminated,
+		Detail: fmt.Sprintf("adapter child exited while supervised (exit code %d, signal %d)", exitCode, signal),
+	}}, r.cfg.AdapterName, r.cfg.Scope, ""); err != nil {
+		r.log.Error("journal crash event", "error", err)
 	}
 }
 

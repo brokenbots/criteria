@@ -40,6 +40,11 @@ const (
 	// peerDialKeepAlive is the TCP keep-alive period for phone-home dials.
 	peerDialKeepAlive = 15 * time.Second
 
+	// peerShutdownBudget bounds the whole Serve shutdown sequence (session
+	// close, child grace, loader teardown) after the phone-home loop has
+	// ended: bounded so a stalled child cannot hang the peer indefinitely.
+	peerShutdownBudget = 30 * time.Second
+
 	// peerHandshakeRole is the identity-frame role value that routes the
 	// dial to the host shim's PeerAcceptor seam (ADR-0007 D4).
 	peerHandshakeRole = "peer"
@@ -178,14 +183,18 @@ func (s *Server) Run(ctx context.Context) error {
 // Serve runs the phone-home loop until ctx is done (SIGTERM/SIGINT map to a
 // cancelled ctx at the call site), then performs the peer shutdown sequence:
 // stop accepting, close the sessions the peer served on the child, kill the
-// child after the grace period, and journal the final exit fact. A
+// child after the grace period, and journal the final exit fact. The
+// shutdown runs on a bounded, non-inherited context (ctx is already done by
+// then) so a stalled child cannot hang the peer past the budget. A
 // context-caused end maps to a nil error so the process exits 0.
 func (s *Server) Serve(ctx context.Context) error {
 	err := s.Run(ctx)
 	if err != nil && ctx.Err() != nil {
 		err = nil
 	}
-	if serr := s.rt.Shutdown(context.Background()); serr != nil {
+	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), peerShutdownBudget)
+	defer cancel()
+	if serr := s.rt.Shutdown(shutdownCtx); serr != nil {
 		s.log.Warn("peer shutdown", "error", serr)
 	}
 	return err

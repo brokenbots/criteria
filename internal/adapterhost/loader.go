@@ -112,6 +112,28 @@ func ClientOf(h Handle) (Client, bool) {
 	return nil, false
 }
 
+// rpcHandle is the production Handle: a go-plugin client connected to the
+// adapter subprocess over the adapter v2 gRPC contract.
+type rpcHandle struct {
+	name   string
+	client *hplugin.Client
+	rpc    Client
+	// cmd is the adapter's exec.Cmd, retained so Kill can signal the process
+	// group it leads. nil on paths that don't own the process (WS20 reattach,
+	// container RunnerFunc).
+	cmd *exec.Cmd
+
+	mu     sync.Once
+	onKill func()
+
+	// permMu guards permActive, which tracks session-scoped permission
+	// streams started via StartPermissionStream. Execute uses it to
+	// decide whether to start a fallback per-Execute permission stream
+	// for direct callers (e.g. conformance tests) that bypass SessionManager.
+	permMu     sync.Mutex
+	permActive map[string]bool
+}
+
 // Client exposes the raw adapter v2 client held by the production RPC handle.
 func (p *rpcHandle) Client() Client { return p.rpc }
 
@@ -396,26 +418,6 @@ func (l *DefaultLoader) Shutdown(context.Context) error {
 		p.Kill()
 	}
 	return nil
-}
-
-type rpcHandle struct {
-	name   string
-	client *hplugin.Client
-	rpc    Client
-	// cmd is the adapter's exec.Cmd, retained so Kill can signal the process
-	// group it leads. nil on paths that don't own the process (WS20 reattach,
-	// container RunnerFunc).
-	cmd *exec.Cmd
-
-	mu     sync.Once
-	onKill func()
-
-	// permMu guards permActive, which tracks session-scoped permission
-	// streams started via StartPermissionStream. Execute uses it to
-	// decide whether to start a fallback per-Execute permission stream
-	// for direct callers (e.g. conformance tests) that bypass SessionManager.
-	permMu     sync.Mutex
-	permActive map[string]bool
 }
 
 func (p *rpcHandle) Info(ctx context.Context) (Info, error) {

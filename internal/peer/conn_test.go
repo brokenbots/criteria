@@ -19,7 +19,7 @@ func TestSingleConnListener(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first Accept: %v", err)
 	}
-	if got != net.Conn(a) {
+	if got != a {
 		t.Errorf("Accept returned %v, want the wrapped conn", got)
 	}
 
