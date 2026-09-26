@@ -119,6 +119,11 @@ type Server struct {
 
 	// heartbeat is the idle interval for SupervisionHeartbeat emission.
 	heartbeat time.Duration
+	// keepaliveOpts are the gRPC server options serveOnce builds the
+	// phone-home server with; nil falls back to the production remote
+	// keepalive policy. Test seam: lets peer-path tests compress the
+	// keepalive clock without weakening the production cadence.
+	keepaliveOpts []grpc.ServerOption
 	// dialFunc, childClient, rand, and sleep are test seams; NewServer
 	// installs production defaults.
 	dialFunc    func(ctx context.Context, network, addr string) (net.Conn, error)
@@ -219,7 +224,11 @@ func (s *Server) serveOnce(ctx context.Context) error {
 		return fmt.Errorf("handshake: %w", err)
 	}
 
-	server := grpc.NewServer(adapterhost.RemoteKeepaliveServerOptions()...)
+	keepaliveOpts := s.keepaliveOpts
+	if keepaliveOpts == nil {
+		keepaliveOpts = adapterhost.RemoteKeepaliveServerOptions()
+	}
+	server := grpc.NewServer(keepaliveOpts...)
 	if child, ok := s.childClient(); ok {
 		wrapper := &serveChildClient{Client: child, rt: s.rt}
 		s.rt.setServedChild(wrapper)
