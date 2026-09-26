@@ -96,8 +96,8 @@ type integrationFixture struct {
 	provider *peerSessionProvider
 	addr     string // current shim listen address (mutated by bounce)
 	token    string
-	binary   string // noop adapter binary shared by every peer in the fixture
-	digest   string // digest pinned by the fixture's shim verifier
+	binary   string       // noop adapter binary shared by every peer in the fixture
+	digest   string       // digest pinned by the fixture's shim verifier
 	pcfg     *peer.Config // primary peer's resolved config (nil with noPeer)
 	journal  *peer.EventJournal
 
@@ -172,7 +172,7 @@ func startIntegrationFixture(t *testing.T, opts integrationOpts) *integrationFix
 	if opts.noPeer {
 		return fx
 	}
-	fx.pcfg, fx.journal = fx.startPeer(t, peerOpts{scope: opts.scope, binary: binary, digest: digest})
+	fx.pcfg, fx.journal = fx.startPeer(t, &peerOpts{scope: opts.scope, binary: binary, digest: digest})
 	return fx
 }
 
@@ -206,7 +206,7 @@ type peerOpts struct {
 
 // startPeer boots a real peer runtime + phone-home server pointed at the
 // current fixture address and registers its cancellation for cleanup.
-func (fx *integrationFixture) startPeer(t *testing.T, opts peerOpts) (*peer.Config, *peer.EventJournal) {
+func (fx *integrationFixture) startPeer(t *testing.T, opts *peerOpts) (*peer.Config, *peer.EventJournal) {
 	t.Helper()
 	host := opts.host
 	if host == "" {
@@ -278,6 +278,18 @@ func (fx *integrationFixture) waitForHandle(t *testing.T, scope string) *peerHan
 // journalEvents returns a snapshot of the primary peer's supervision journal.
 func (fx *integrationFixture) journalEvents() []*criteriav1.SupervisionEvent {
 	return fx.journal.Replay(0)
+}
+
+// firstCrash returns the first collected session.crash event, if any.
+func firstCrash(coll *peerEventCollector) (map[string]any, bool) {
+	coll.mu.Lock()
+	defer coll.mu.Unlock()
+	for _, evt := range coll.events {
+		if evt.kind == "session.crash" {
+			return evt.data, true
+		}
+	}
+	return nil, false
 }
 
 // findSpawned returns the journal's ProcessSpawned record (the child PID the
@@ -597,7 +609,7 @@ func TestPeerIntegrationScopeStaleTokenRejectedAfterRotation(t *testing.T) {
 
 	// A restarted peer still holding tok-v1 dials forever; every dial is
 	// rejected and nothing new is adopted for the scope.
-	fx.startPeer(t, peerOpts{scope: "run_c/inst1", token: "tok-v1", binary: binary, digest: digest})
+	fx.startPeer(t, &peerOpts{scope: "run_c/inst1", token: "tok-v1", binary: binary, digest: digest})
 
 	// Raw wire proof: a dial presenting the stale token gets its connection
 	// closed by the shim (identity verification failure).
@@ -638,13 +650,13 @@ func TestPeerIntegrationScopeStaleTokenRejectedAfterRotation(t *testing.T) {
 func peerIdentityFrame(t *testing.T, name, scope, token, digest string) []byte {
 	t.Helper()
 	hs := &handshakeMessage{
-		Name:               name,
-		Version:            "1.0.0",
-		Digest:             digest,
-		Token:              token,
-		Scope:              scope,
-		Role:               "peer",
-		Peer:               &PeerClientIdentity{CriteriaVersion: "test"},
+		Name:    name,
+		Version: "1.0.0",
+		Digest:  digest,
+		Token:   token,
+		Scope:   scope,
+		Role:    "peer",
+		Peer:    &PeerClientIdentity{CriteriaVersion: "test"},
 	}
 	data, err := json.Marshal(hs)
 	if err != nil {
@@ -833,7 +845,7 @@ func TestPeerIntegrationStalePeerBudget(t *testing.T) {
 		// The restarted peer holds a pre-rotation scope instance: its token
 		// is valid, but its scope key was never re-registered → the stale-pod
 		// shape (CRI-137).
-		fx.startPeer(t, peerOpts{scope: "run_x/old-inst", token: "stale-tok", binary: binary, digest: digest})
+		fx.startPeer(t, &peerOpts{scope: "run_x/old-inst", token: "stale-tok", binary: binary, digest: digest})
 
 		select {
 		case err := <-waitErr:
@@ -873,8 +885,8 @@ func TestPeerIntegrationStalePeerBudget(t *testing.T) {
 		// A stale dial lands first (rejected, recorded for diagnosis), then
 		// the fresh peer with the current scope+token is adopted — well
 		// inside DefaultVerifyFailureBudget.
-		fx.startPeer(t, peerOpts{scope: "run_y/old-inst", token: "fresh-tok", binary: binary, digest: digest})
-		fx.startPeer(t, peerOpts{scope: "run_y/inst1", token: "fresh-tok", binary: binary, digest: digest})
+		fx.startPeer(t, &peerOpts{scope: "run_y/old-inst", token: "fresh-tok", binary: binary, digest: digest})
+		fx.startPeer(t, &peerOpts{scope: "run_y/inst1", token: "fresh-tok", binary: binary, digest: digest})
 
 		select {
 		case err := <-errCh:
@@ -944,7 +956,7 @@ func TestPeerIntegrationTeardownWindowOnPeerPath(t *testing.T) {
 		if errors.As(err, &crashErr) {
 			t.Fatalf("follow-on Execute err = %v, want the raw transport error inside the teardown window", err)
 		}
-		if _, ok := coll.first("session.crash"); ok {
+		if _, ok := firstCrash(coll); ok {
 			t.Error("session.crash event must not be emitted inside the teardown window")
 		}
 	})
@@ -979,7 +991,7 @@ func TestPeerIntegrationTeardownWindowOnPeerPath(t *testing.T) {
 		if !errors.As(err, &crashErr) || crashErr.Session != "noop.develop" {
 			t.Fatalf("Execute err = %v, want SessionCrashError for noop.develop", err)
 		}
-		event, ok := coll.first("session.crash")
+		event, ok := firstCrash(coll)
 		if !ok {
 			t.Fatal("expected the session.crash event")
 		}
@@ -1057,7 +1069,7 @@ func TestPeerIntegrationSecurityPosture(t *testing.T) {
 
 // fxBinaryAndDigest returns the fixture's adapter binary and digest for
 // spawning additional peers against the same shim verifier.
-func fxBinaryAndDigest(fx *integrationFixture) (string, string) {
+func fxBinaryAndDigest(fx *integrationFixture) (binary, digest string) {
 	return fx.binary, fx.digest
 }
 

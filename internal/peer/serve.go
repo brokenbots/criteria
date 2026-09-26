@@ -211,19 +211,9 @@ func (s *Server) Serve(ctx context.Context) error {
 	return err
 }
 
-// serveOnce dials the host, writes the identity frame, and serves both
-// services on the held connection. It returns when the connection drops or
-// ctx is cancelled (server stopped).
-func (s *Server) serveOnce(ctx context.Context) error {
-	conn, err := s.dialFunc(ctx, s.network(), s.cfg.Host)
-	if err != nil {
-		return fmt.Errorf("dial %s: %w", s.cfg.Host, err)
-	}
-	if err := s.writeIdentityFrame(conn); err != nil {
-		_ = conn.Close()
-		return fmt.Errorf("handshake: %w", err)
-	}
-
+// newServedServer builds the phone-home gRPC server with both services
+// registered: the adapter bridge (when the child is live) and PeerService.
+func (s *Server) newServedServer() *grpc.Server {
 	keepaliveOpts := s.keepaliveOpts
 	if keepaliveOpts == nil {
 		keepaliveOpts = adapterhost.RemoteKeepaliveServerOptions()
@@ -238,6 +228,23 @@ func (s *Server) serveOnce(ctx context.Context) error {
 			"adapter", s.cfg.AdapterName)
 	}
 	s.registerPeerService(server)
+	return server
+}
+
+// serveOnce dials the host, writes the identity frame, and serves both
+// services on the held connection. It returns when the connection drops or
+// ctx is cancelled (server stopped).
+func (s *Server) serveOnce(ctx context.Context) error {
+	conn, err := s.dialFunc(ctx, s.network(), s.cfg.Host)
+	if err != nil {
+		return fmt.Errorf("dial %s: %w", s.cfg.Host, err)
+	}
+	if err := s.writeIdentityFrame(conn); err != nil {
+		_ = conn.Close()
+		return fmt.Errorf("handshake: %w", err)
+	}
+
+	server := s.newServedServer()
 
 	wrapped := NewCloseSignalConn(conn)
 	lis := NewSingleConnListener(wrapped)

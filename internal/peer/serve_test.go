@@ -1352,7 +1352,10 @@ func (c *idleClosingConn) watchdog() {
 
 // startConnIdleClosing is startConn with the server-side connection wrapped
 // in an idle-closing middlebox; returns the middlebox for idle assertions.
-func (f *peerServeFixture) startConnIdleClosing(idleLimit time.Duration) (net.Conn, []byte, <-chan error, *idleClosingConn) {
+// startConnIdleClosing is startConn with the server-side connection wrapped
+// in an idle-closing middlebox; the middlebox tracks the idle window for
+// keepalive assertions.
+func (f *peerServeFixture) startConnIdleClosing(idleLimit time.Duration) (conn net.Conn, serveErr <-chan error) {
 	f.t.Helper()
 	serverConn, clientConn := net.Pipe()
 	mid := newIdleClosingConn(serverConn, idleLimit)
@@ -1380,13 +1383,20 @@ func (f *peerServeFixture) startConnIdleClosing(idleLimit time.Duration) (net.Co
 		if data == nil {
 			f.t.Fatalf("identity frame read failed")
 		}
-		return clientConn, data, serveErrCh, mid
+		var frame peerIdentityFrame
+		if err := json.Unmarshal(data, &frame); err != nil {
+			f.t.Fatalf("decode identity frame: %v", err)
+		}
+		if frame.Role != "peer" {
+			f.t.Fatalf("identity frame role = %q, want peer", frame.Role)
+		}
+		return clientConn, serveErrCh
 	case err := <-serveErrCh:
 		f.t.Fatalf("serveOnce returned before the frame was served: %v", err)
 	case <-time.After(5 * time.Second):
 		f.t.Fatalf("identity frame not written within 5s")
 	}
-	return nil, nil, nil, nil
+	return nil, nil
 }
 
 // TestServer_SuperviseHeartbeatSurvivesIdleClosingMiddlebox is the CRI-276
@@ -1402,7 +1412,7 @@ func TestServer_SuperviseHeartbeatSurvivesIdleClosingMiddlebox(t *testing.T) {
 			keepalive.ServerParameters{Time: 100 * time.Millisecond, Timeout: time.Second},
 			keepalive.EnforcementPolicy{MinTime: 50 * time.Millisecond, PermitWithoutStream: true},
 		)
-		conn, _, serveErrCh, _ := f.startConnIdleClosing(idleLimit)
+		conn, serveErrCh := f.startConnIdleClosing(idleLimit)
 		cc, err := grpc.NewClient("passthrough:///criteria-peer",
 			append([]grpc.DialOption{
 				grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
@@ -1443,7 +1453,7 @@ func TestServer_SuperviseHeartbeatSurvivesIdleClosingMiddlebox(t *testing.T) {
 
 	t.Run("without keepalive the idle connection is torn down", func(t *testing.T) {
 		f := newPeerServeFixture(t)
-		conn, _, serveErrCh, _ := f.startConnIdleClosing(idleLimit)
+		conn, serveErrCh := f.startConnIdleClosing(idleLimit)
 		cc, err := grpc.NewClient("passthrough:///criteria-peer",
 			grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 				if ctx.Err() != nil {
