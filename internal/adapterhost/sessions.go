@@ -1990,12 +1990,21 @@ func (m *SessionManager) registerSensitiveOutputs(result adapter.Result, step *w
 // string is always one of the exported CrashReason* constants in
 // crashreason.go — the single source of truth also consumed by peer
 // supervision journal emission (peer.proto CrashClassified.reason, T-05/T-07).
-// The adapter-process checks come first because a dead process is the most
-// precise diagnosis; the message heuristics then distinguish the transport
-// failure shapes the go-plugin/gRPC stack produces.
+// A supervision-delivered classification comes first (T-07): the peer
+// observed the child directly and its CrashClassified.reason is consumed
+// verbatim — no new strings, no reinterpretation. The adapter-process
+// checks and message heuristics then serve connections without supervision:
+// a dead process is the most precise diagnosis, and the message heuristics
+// distinguish the transport failure shapes the go-plugin/gRPC stack produces
+// (legacy runners and peers without a Supervise stream).
 func classifySessionCrash(sess *Session, execErr error) string {
-	if sess != nil && ProcessExited(sess.handle) {
-		return CrashReasonProcessExitedEarly
+	if sess != nil {
+		if reason, ok := SupervisionCrashReason(sess.handle); ok {
+			return reason
+		}
+		if ProcessExited(sess.handle) {
+			return CrashReasonProcessExitedEarly
+		}
 	}
 	if execErr == nil {
 		return CrashReasonUnknown
@@ -2258,15 +2267,27 @@ func (m *SessionManager) executeError(ctx context.Context, name string, step *wo
 	// loop) proceeds instead of the crash machinery terminating the run. The
 	// window is bound to the cascade (see the engineStepTimeoutTeardownAt
 	// comment), so crashes outside it keep the hard-failure classification
-	// (CRI-271). Deaths with positive evidence are never downgraded:
-	// ProcessExited is the verifiable "adapter is dead" signal — the
-	// transport-close classification only applies while the process is still
-	// running — and a host-initiated close (closing flag) is the
-	// expected-close path above; both fall through to crash classification.
+	// (CRI-271). Deaths with positive evidence are never downgraded for
+	// legacy-runner handles: ProcessExited is the verifiable "adapter is
+	// dead" signal — the transport-close classification only applies while
+	// the process is still running — and a host-initiated close (closing
+	// flag) is the expected-close path above; both fall through to crash
+	// classification.
+	//
+	// T-07 peer carve-out: on a peer-supervised handle the ProcessExited
+	// fact is supervision-delivered, and the supervised child can die as a
+	// direct consequence of the same teardown cascade (the engine's canceled
+	// turn takes the child down with it). Inside the open window that
+	// ProcessExited is therefore treated like the transport-close evidence
+	// above — a teardown consequence, routed as timeout, not a crash. The
+	// window bounds the carve-out: after it expires a follow-on Execute on
+	// the dead peer handle fails and classifies the crash from the
+	// journal-delivered wire fact (SupervisionCrashReason), which then
+	// reaches the crash machinery with the full wire-fact reason.
 	if m.engineStepTimeoutTeardownWindowOpen() &&
 		isLikelySessionCrash(sess, execErr) &&
 		!sess.closing.Load() &&
-		!ProcessExited(sess.handle) {
+		(!ProcessExited(sess.handle) || isPeerSupervised(sess.handle)) {
 		slog.Warn("adapter transport closed during engine-initiated step-timeout teardown; routing as timeout, not crash",
 			append([]any{"session", sess.Name, "adapter", sess.Adapter}, sess.crashDiagnostics(classifySessionCrash(sess, execErr))...)...)
 		return result, execErr

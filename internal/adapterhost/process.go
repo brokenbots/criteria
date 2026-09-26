@@ -56,3 +56,13 @@ func ProcessExited(p Handle) bool {
 	}
 	return reporter.ProcessExited()
 }
+
+// isPeerSupervised reports whether the handle's process-exit facts come
+// from peer supervision (ADR-0007): a SupervisedHandle's ProcessExited is a
+// journal fact delivered by the peer that observed the child, so the CRI-287
+// teardown-window carve-out (a child dying with the engine's canceled turn)
+// applies to it. Legacy-runner handles keep the conservative local rule.
+func isPeerSupervised(h Handle) bool {
+	_, ok := h.(SupervisedHandle)
+	return ok
+}
