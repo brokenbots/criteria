@@ -44,3 +44,63 @@ const (
 	// transport or process signature.
 	CrashReasonUnknownAdapterError = "unknown adapter error"
 )
+
+// SupervisedHandle is the optional Handle capability a peer-supervised
+// handle implements (ADR-0007, T-07): the peer's supervision journal
+// delivered a terminal classification for the adapter child, and the host
+// consumes that classification verbatim instead of guessing.
+//
+// The reason value is a CrashClassified.reason wire fact — one of the
+// CrashReason* constants above, the same taxonomy the host's own classifier
+// uses, emitted by the peer's child-side journal (T-05). Because the peer
+// watched the child directly, its classification outranks every host-side
+// heuristic: classifySessionCrash consults this seam before the
+// ProcessExited branch and before the legacy string matching, which remain
+// the fallbacks for legacy-runner connections and for peers whose
+// Supervise stream is unavailable.
+type SupervisedHandle interface {
+	// SupervisionCrashReason returns the journal-delivered crash reason and
+	// ok=true. ok=false means no terminal classification was delivered (the
+	// child is alive, exited cleanly, or only the plain Exited journal
+	// record arrived) — classification then falls through to the local
+	// evidence path.
+	SupervisionCrashReason() (reason string, ok bool)
+}
+
+// SupervisionCrashReason returns the crash classification the peer
+// supervision journal delivered for h's adapter child (verbatim wire fact),
+// or ok=false when the handle carries no supervision classification —
+// including when the delivered reason is empty or outside the CrashReason*
+// taxonomy (wire garbage or host/peer version skew): the classification
+// path is documented to yield taxonomy constants only, so anything else
+// falls through to the local evidence path.
+func SupervisionCrashReason(h Handle) (string, bool) {
+	sh, ok := h.(SupervisedHandle)
+	if !ok || sh == nil {
+		return "", false
+	}
+	reason, ok := sh.SupervisionCrashReason()
+	if !ok || !isTaxonomyReason(reason) {
+		return "", false
+	}
+	return reason, true
+}
+
+// isTaxonomyReason reports whether reason is one of the CrashReason*
+// constants — the exact vocabulary classifySessionCrash documents as its
+// return values.
+func isTaxonomyReason(reason string) bool {
+	switch reason {
+	case CrashReasonProcessExitedEarly,
+		CrashReasonUnknown,
+		CrashReasonHeartbeatStall,
+		CrashReasonTransportClosed,
+		CrashReasonEndpointUnavailable,
+		CrashReasonStdioPipeBroken,
+		CrashReasonStdioEOF,
+		CrashReasonProcessTerminated,
+		CrashReasonUnknownAdapterError:
+		return true
+	}
+	return false
+}

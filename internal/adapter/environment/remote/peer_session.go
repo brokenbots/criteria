@@ -77,6 +77,13 @@ const (
 	// peerLogChannel is the supervision channel whose StreamFlushed events
 	// mean "the log stream backlog was drained to the peer journal".
 	peerLogChannel = "log"
+
+	// exitReasonProcessExited is the placeholder exit reason a plain Exited
+	// journal record carries before any classification. It is deliberately
+	// NOT part of the adapterhost CrashReason taxonomy: a peer whose journal
+	// only delivered Exited reports no classification, and the host falls
+	// through to the ProcessExited evidence path (T-07).
+	exitReasonProcessExited = "process_exited"
 )
 
 // peerSuperviseStreamDesc describes the PeerService.Supervise server-stream
@@ -474,12 +481,19 @@ func (ps *peerSession) applySupervisionEvent(ev *criteriav1.SupervisionEvent) {
 		if !ps.exited {
 			exited = true
 			ps.exited = true
-			ps.exitReason = "process_exited"
+			ps.exitReason = exitReasonProcessExited
 			ps.exitDetail = fmt.Sprintf("exit_code=%d signal=%d idle_ms=%d",
 				kind.Exited.GetExitCode(), kind.Exited.GetSignal(), kind.Exited.GetIdleMs())
 		}
 	case *criteriav1.SupervisionEvent_Crash:
-		if !ps.exited {
+		// The peer journals a plain Exited record first and then a
+		// CrashClassified record for the same ungraceful exit
+		// (internal/peer/child.go recordExit → classifyUnexpectedExit), so a
+		// Crash event may arrive after the placeholder exit. Overwrite it:
+		// the journal's classification is the wire fact T-07 consumes
+		// verbatim. CrashClassified is terminal-only (the peer journals it
+		// exclusively at exit paths), so this cannot resurrect a live child.
+		if !ps.exited || ps.exitReason == exitReasonProcessExited {
 			exited = true
 			ps.exited = true
 			ps.exitReason = kind.Crash.GetReason()
@@ -677,6 +691,35 @@ func (h *peerHandle) ProcessExited() bool {
 		return false
 	}
 	return h.ps.processExited()
+}
+
+// SupervisionCrashReason implements adapterhost.SupervisedHandle (T-07): it
+// returns the crash classification the supervision journal delivered
+// (CrashClassified.reason verbatim — a peer-emitted CrashReason* wire fact,
+// never a new string). ok=false when the journal only delivered the plain
+// Exited placeholder: the host then classifies from the ProcessExited
+// evidence (and, for legacy runners and peers whose Supervise stream is
+// unavailable, from the string heuristics) exactly as before.
+func (h *peerHandle) SupervisionCrashReason() (string, bool) {
+	if h == nil || h.ps == nil {
+		return "", false
+	}
+	ps := h.ps
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	if !ps.exited || ps.exitReason == exitReasonProcessExited {
+		return "", false
+	}
+	return ps.exitReason, true
+}
+
+// Prompt delivers a mid-turn agent message into the live adapter session on
+// the peer (ADR-0006 D3) through the same promptwire encoding rpcHandle
+// uses. Capability gating stays in the SessionManager: adapters without
+// supports_prompt never reach this method, so the peer path keeps the exact
+// ADR-0006 failure taxonomy.
+func (h *peerHandle) Prompt(ctx context.Context, req *adapterhost.PromptRequest) (*adapterhost.PromptResponse, error) {
+	return h.ps.client.Prompt(ctx, req)
 }
 
 // Pause asks the peer adapter to halt work without losing state.
