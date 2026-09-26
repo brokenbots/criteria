@@ -778,17 +778,25 @@ back.
   (`listen_address`, `mtls { … }`, optional `accept_token`, and
   `accept_digest_from = lockfile` so a connecting adapter's reported digest must
   match the pinned one).
-- The adapter calls the SDK's `serveRemote(...)` (one function-name change from
-  `serve(...)`): dial out over mTLS gRPC, complete the auth + identity handshake,
-  then serve `Info`/`OpenSession`/`Execute`/… on the held connection. Available
-  in all three SDKs.
-- A small host-side shim bridges the inbound mTLS connection to a local UDS so
-  the session layer treats it like any local adapter; no other host code is
-  remote-aware.
+- Two ways to package the remote side:
+  - **Peer mode (recommended)** — the container runs the `criteria` engine's
+    `peer` subcommand as the entrypoint. It launches and supervises the adapter
+    child directly, serves the full v2 contract on the phone-home connection,
+    and streams typed supervision facts (spawn/exit/crash/heartbeat) back to
+    the host over PeerService, so lifecycle RPCs and crash classification work
+    remotely exactly as they do for local adapters.
+  - **Runner mode (legacy)** — the adapter calls the SDK's `serveRemote(...)`
+    (one function-name change from `serve(...)`): dial out over mTLS gRPC,
+    complete the auth + identity handshake, then serve
+    `Info`/`OpenSession`/`Execute`/… on the held connection. Available in all
+    three SDKs; functional but deprioritized on the peer timeline.
+- In runner mode a small host-side shim bridges the inbound mTLS connection to
+  a local UDS so the session layer treats it like any local adapter; peer mode
+  needs no bridge. No other host code is remote-aware.
 - Launch and reachability are yours to arrange. Copy-pasteable k8s `Deployment`
   and `docker-compose` examples live under [`docs/examples/`](examples/); see
   [docs/adapter-remote-deployment.md](adapter-remote-deployment.md) for the full
-  deployment guide.
+  deployment guide, including the recommended peer-mode image and manifests.
 
 Host-side sandbox primitives do not apply to `remote` environments (the host did
 not launch the process); `network`/`filesystem`/`resources` are advisory there,

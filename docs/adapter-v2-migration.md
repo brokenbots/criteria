@@ -100,3 +100,15 @@ For the full reference, see [adapters.md](adapters.md).
    `.gitlab-ci.yml.example`, or `make publish`) builds, **keyless-signs**, and
    pushes. To ship a runnable container image too, build + push it and record it
    with `criteria adapter publish … --image <ref>`.
+
+5. **Remote adapters: prefer peer mode; `ServeRemote` stays functional.** The
+   recommended remote deployment packages the engine's `criteria peer`
+   supervisor as the container entrypoint, which supervises the adapter child
+   directly — no in-SDK remote loop required
+   ([docs/adapter-remote-deployment.md → Peer mode](adapter-remote-deployment.md#peer-mode-recommended)).
+   The TypeScript (`serveRemote`) and Python (`serve_remote`) SDK entrypoints
+   are **functional but deprioritized** (runner mode, legacy): they keep
+   working against the runner path and are not deleted, but new remote
+   features land in peer mode only, and the runner path is deprecated one
+   minor release after peer parity. New remote adapters should not build on
+   `ServeRemote`.

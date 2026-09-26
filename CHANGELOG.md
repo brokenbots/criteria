@@ -27,6 +27,31 @@ product version). The release tag and date are finalized by the release gate.
 
 ### Engine / remote adapters
 
+- **Peer mode for remote adapters (ADR-0007 Stage A).** New `criteria peer`
+  subcommand: the engine-side peer supervisor runs as a container entrypoint,
+  resolves and launches the adapter child itself, serves the full v2
+  AdapterService contract plus PeerService supervision (`Supervise` /
+  `Control`) on the phone-home connection, and streams typed
+  process-lifecycle facts (spawned / exited / crash / flushed / heartbeat,
+  gapless per-peer `event_seq`, at-least-once with dedup) to the host. The
+  child survives host disconnects; terminal events are journaled (default
+  4096 entries) and replayed first after reconnects so crash evidence
+  survives the stream that died, and a delivered crash classification
+  outranks host-side heuristics. Reconnect backoff is full-jitter
+  (1s → 30s, `CRITERIA_PEER_BACKOFF_MIN/MAX`); supervision heartbeats fire
+  every 30s while idle. Every `CRITERIA_REMOTE_*` variable is scrubbed from
+  the adapter child's environment. The `remote` shim routes identity frames
+  with `role: "peer"` to a pluggable peer acceptor after the unchanged
+  mTLS → identity-pattern → digest → token gates — no UDS byte-bridge, and
+  no workflow (HCL) change: peer vs runner is a deployment choice negotiated
+  during the handshake. New image `images/remote-adapters/Dockerfile.peer`
+  packages it (entrypoint `/usr/local/bin/criteria peer`, fail-closed
+  `CRITERIA_VERSION`, non-root uid 10001); deployment guide and manifests:
+  [docs/adapter-remote-deployment.md → Peer mode](docs/adapter-remote-deployment.md).
+  The runner + byte-bridge path (`criteria-adapter-remote-runner`, shim
+  `setupUDS`/`bridgeAndDial`) is deprecated: supported through one minor
+  release after peer parity, then removed.
+
 - **Per-scope remote adapter isolation (CRI-115).** Remote environments gain an
   opt-in `per_scope_sessions = true` attribute. When enabled, the engine
   rotates a distinct accept token for each scope, persists it under the run data
