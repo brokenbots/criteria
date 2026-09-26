@@ -173,6 +173,14 @@ See [Expressions](#expressions) for interpolation rules.
 Environments declare typed execution contexts bound to adapter steps. They inject
 environment variables and select an isolation boundary for the adapter process.
 
+> **Note (peer mode):** the environments grammar is **unchanged**. A remote
+> adapter can be executed in peer mode (`criteria peer` as the container
+> entrypoint) without any workflow change — peer vs runner is a deployment
+> choice, and the role is negotiated internally during the remote handshake
+> (the identity frame's `role` field), not in HCL. There is no new
+> environment attribute for it. See
+> [docs/adapter-remote-deployment.md](adapter-remote-deployment.md#peer-mode-recommended).
+
 ### Declaring environments
 
 ```hcl
