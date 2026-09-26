@@ -310,17 +310,24 @@ func TestAdapterServiceBridge_LogStreamHoldsUntilCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	var gotMu sync.Mutex
 	var got []*v2.LogEvent
 	callErr := make(chan error, 1)
 	go func() {
 		callErr <- client.Log(ctx, &v2.LogRequest{SessionId: "s-log"}, logSinkFn(func(ev *v2.LogEvent) error {
+			gotMu.Lock()
 			got = append(got, ev)
+			gotMu.Unlock()
 			return nil
 		}))
 	}()
 
 	// The single backend event must arrive while the RPC stays open.
-	waitFor(t, func() bool { return len(got) == 1 }, "log event")
+	waitFor(t, func() bool {
+		gotMu.Lock()
+		defer gotMu.Unlock()
+		return len(got) == 1
+	}, "log event")
 	cancel()
 	if err := <-callErr; err == nil {
 		t.Error("Log returned nil after host cancellation; want stream-close error")
