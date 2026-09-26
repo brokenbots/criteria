@@ -87,7 +87,23 @@ func TestPeerRunPresentsIdentityFrameToHost(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	runErr := make(chan error, 1)
-	go func() { runErr <- runPeer(ctx) }()
+	done := make(chan struct{})
+	go func() {
+		runErr <- runPeer(ctx)
+		close(done)
+	}()
+	// runPeer installs a process-global slog default (JSON to stderr); the
+	// peer test binary shares that global with sibling tests, so restore it
+	// only after the peer goroutine has fully stopped.
+	prevLogger := slog.Default()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(15 * time.Second):
+		}
+		slog.SetDefault(prevLogger)
+	})
 
 	var frame []byte
 	select {
