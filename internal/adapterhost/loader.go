@@ -1136,6 +1136,26 @@ func (p *rpcHandle) ProcessExited() bool {
 	return p.client.Exited()
 }
 
+// ProcessWaitStatus implements [ProcessWaitReporter] for go-plugin handles.
+// The client's exit watcher reaps the subprocess (cmd.Wait) before it flips
+// its exited flag, so once [rpcHandle.ProcessExited] reports true the wait
+// status on the retained exec.Cmd is final and safe to read. Handles that
+// don't own the subprocess (WS20 reattach, container RunnerFunc) and
+// subprocesses not yet reaped report ok=false.
+func (p *rpcHandle) ProcessWaitStatus() (exitCode, signal int, ok bool) {
+	if p == nil || p.cmd == nil || p.cmd.ProcessState == nil {
+		return -1, 0, false
+	}
+	ws, isWaitStatus := p.cmd.ProcessState.Sys().(syscall.WaitStatus)
+	if !isWaitStatus {
+		return -1, 0, false
+	}
+	if ws.Signaled() {
+		return -1, int(ws.Signal()), true
+	}
+	return p.cmd.ProcessState.ExitCode(), 0, true
+}
+
 func (p *rpcHandle) Pause(ctx context.Context, sessionID string) error {
 	_, err := p.rpc.Pause(ctx, &v2.PauseRequest{SessionId: sessionID})
 	return err

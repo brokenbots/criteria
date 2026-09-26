@@ -139,8 +139,11 @@ func TestPeerRuntime_BootSpawnsRealChild(t *testing.T) {
 	if !last.GetGraceful() {
 		t.Errorf("exit graceful = false, want true (peer-initiated)")
 	}
-	if last.GetExitCode() != -1 {
-		t.Errorf("exit code = %d, want -1 (go-plugin does not expose the status)", last.GetExitCode())
+	// The peer reaps its own child: Shutdown's teardown (SIGINT to the
+	// process group, then go-plugin Kill) lands as a clean exit, and the
+	// wait status read after the reap carries the real code (0, 0).
+	if last.GetExitCode() != 0 || last.GetSignal() != 0 {
+		t.Errorf("exit status = (code %d, signal %d), want (0, 0) for the peer's clean teardown", last.GetExitCode(), last.GetSignal())
 	}
 
 	events = rt.Journal().Replay(0)
@@ -305,8 +308,8 @@ func TestPeerRuntime_KillChildJournalsCrashSequence(t *testing.T) {
 	if exited.GetGraceful() {
 		t.Errorf("exit graceful = true, want false (SIGKILL crash)")
 	}
-	if exited.GetExitCode() != -1 {
-		t.Errorf("exit code = %d, want -1 (go-plugin does not expose the status)", exited.GetExitCode())
+	if exited.GetExitCode() != -1 || exited.GetSignal() != 9 {
+		t.Errorf("exit status = (code %d, signal %d), want (-1, 9) — the real wait status of a SIGKILLed child", exited.GetExitCode(), exited.GetSignal())
 	}
 	crash := events[2].GetCrash()
 	if crash == nil {
@@ -314,6 +317,9 @@ func TestPeerRuntime_KillChildJournalsCrashSequence(t *testing.T) {
 	}
 	if crash.GetReason() != adapterhost.CrashReasonProcessTerminated {
 		t.Errorf("crash reason = %q, want %q", crash.GetReason(), adapterhost.CrashReasonProcessTerminated)
+	}
+	if !strings.Contains(crash.GetDetail(), "signal 9") {
+		t.Errorf("crash detail = %q, want the real wait-status facts (signal 9)", crash.GetDetail())
 	}
 
 	// Shutdown after the crash records nothing further.

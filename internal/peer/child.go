@@ -238,9 +238,10 @@ func (r *peerRuntime) watchChild() {
 // recordExit journals the terminal ProcessExited fact exactly once. When the
 // peer did not initiate the shutdown the exit is a crash: the reason comes
 // from the shared adapterhost crash taxonomy (peer.proto CrashClassified
-// consumes that vocabulary). go-plugin does not expose the child's exit
-// status, so the exit code is recorded as -1 (unknown), matching the
-// ProcessExited contract.
+// consumes that vocabulary). The exit code and signal are the child's real
+// OS wait status once it has been reaped (adapterhost.ProcessWaitStatus);
+// when no wait status is available the unknown-exit fallback (-1, 0)
+// matches the ProcessExited contract.
 func (r *peerRuntime) recordExit(peerInitiated bool) {
 	r.mu.Lock()
 	child := r.child
@@ -262,9 +263,13 @@ func (r *peerRuntime) recordExit(peerInitiated bool) {
 	r.lastEventAt = time.Now()
 	r.mu.Unlock()
 
+	exitCode, signal, ok := adapterhost.ProcessWaitStatus(child)
+	if !ok {
+		exitCode, signal = -1, 0
+	}
 	exit := &criteriav1.ProcessExited{
-		ExitCode: -1,
-		Signal:   0,
+		ExitCode: int32(exitCode),
+		Signal:   int32(signal),
 		IdleMs:   idleMS,
 		Graceful: graceful,
 	}
@@ -280,10 +285,12 @@ func (r *peerRuntime) recordExit(peerInitiated bool) {
 			"adapter", r.cfg.AdapterName,
 			"reason", adapterhost.CrashReasonProcessTerminated,
 			"idle_ms", idleMS,
+			"exit_code", exitCode,
+			"signal", signal,
 		)
 		if _, err := r.journal.Append(&criteriav1.SupervisionEvent_Crash{Crash: &criteriav1.CrashClassified{
 			Reason: adapterhost.CrashReasonProcessTerminated,
-			Detail: "adapter child exited while supervised; go-plugin does not expose the exit status",
+			Detail: fmt.Sprintf("adapter child exited while supervised (exit code %d, signal %d)", exitCode, signal),
 		}}, r.cfg.AdapterName, r.cfg.Scope, ""); err != nil {
 			r.log.Error("journal crash event", "error", err)
 		}
