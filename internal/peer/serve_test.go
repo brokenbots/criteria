@@ -13,6 +13,7 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -20,7 +21,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
-	"syscall"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	criteriav1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
