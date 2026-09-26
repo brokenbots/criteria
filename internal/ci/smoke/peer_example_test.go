@@ -18,12 +18,13 @@ import (
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/engine"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
-	"gopkg.in/yaml.v3"
 )
 
 // This file mirrors examples/peer-remote/: the compose stack there runs a

@@ -1,6 +1,7 @@
 package signing
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -50,7 +51,7 @@ func TestNewTrustedKey_NormalizesToPKIXAndClassifiesAlgorithm(t *testing.T) {
 	if key.Fingerprint != Fingerprint(der) {
 		t.Errorf("Fingerprint = %q, want %q", key.Fingerprint, Fingerprint(der))
 	}
-	if string(key.RawKey) != string(der) {
+	if !bytes.Equal(key.RawKey, der) {
 		t.Error("RawKey is not the PKIX DER encoding")
 	}
 }
