@@ -179,8 +179,8 @@ func (f *fakeHandle) Kill() {
 	// resulting exit state on its next poll.
 	f.exited.Store(true)
 }
-func (f *fakeHandle) Pause(context.Context, string) error        { return nil }
-func (f *fakeHandle) Resume(context.Context, string) error       { return nil }
+func (f *fakeHandle) Pause(context.Context, string) error  { return nil }
+func (f *fakeHandle) Resume(context.Context, string) error { return nil }
 func (f *fakeHandle) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
