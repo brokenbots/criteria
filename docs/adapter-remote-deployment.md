@@ -172,7 +172,7 @@ The peer writes a single newline-terminated JSON line immediately after the tran
 | Field | Meaning |
 |-------|---------|
 | `name` / `version` / `digest` | Adapter identity. Same lockfile + token verification as runner mode. |
-| `token` | Bearer token for the shim's accept gate (or the per-scope token when `per_scope_sessions = true`). |
+| `token` | The bearer token for the shim's accept gate (or the per-scope token when `per_scope_sessions = true`). |
 | `scope` | `"scopeName/scopeInstanceID"` the peer reports on supervision events; empty in run-wide mode. |
 | `sdk_protocol_version` | Wire protocol version; `2` for the v2 adapter protocol. |
 | `role` | `"peer"` routes the dial to the peer acceptor (any other value takes the legacy runner path). |
@@ -255,7 +255,7 @@ Set by the manifest; consumed by the `criteria peer` entrypoint.
 | Variable | Purpose |
 |----------|---------|
 | `CRITERIA_REMOTE_HOST` | **Required.** `host:port` (or unix path) of the orchestrator's peer stream. The peer exits non-zero without it. |
-| `CRITERIA_REMOTE_TOKEN` | Bearer token for the peer stream. |
+| `CRITERIA_REMOTE_TOKEN` | The bearer token for the peer stream. |
 | `CRITERIA_REMOTE_SCOPE` | Scope reported on supervision events (`scopeName/scopeInstanceID`). |
 | `CRITERIA_REMOTE_DIGEST` | Pinned OCI digest; a digest-addressed artifact in the local adapter cache is preferred over `PATH` resolution. |
 | `CRITERIA_REMOTE_TLS_CERT` / `CRITERIA_REMOTE_TLS_KEY` / `CRITERIA_REMOTE_CA` | Client cert, key, and CA bundle paths. All-or-nothing; TLS 1.2+. Partial settings are rejected. |
@@ -350,8 +350,12 @@ spec:
                 secretKeyRef:
                   name: criteria-remote-secret
                   key: token
+            # Set only with per_scope_sessions = true (the operator injects
+            # the scope_name/scope_instance_id from provision_wanted).
             - name: CRITERIA_REMOTE_SCOPE
               value: "engagements/acme"
+            # Optional; the operator fills this from the pinned digest on
+            # provision_wanted. Prefers a digest-addressed cache artifact.
             - name: CRITERIA_REMOTE_DIGEST
               value: "sha256:REPLACE_WITH_LOCKFILE_PINNED_DIGEST"
             # mTLS (all three are all-or-nothing).
@@ -431,7 +435,7 @@ The supervision journal turns "the adapter misbehaved" into concrete facts. Diag
 | The same supervision event appears twice | Duplicate `event_seq` on one journal stream | Expected under at-least-once delivery: dedup on `(peer connection identity, event_seq)`. |
 | Host refuses the dial entirely, no journal opens | No supervision events at all; shim logs an identity-gate rejection | One of the four identity gates failed (mTLS → pattern → digest → token) before the role branch. See the connection-level [troubleshooting](#troubleshooting) below. |
 | `peer role dial rejected: no peer acceptor configured` in host logs | Dial authenticated but no journal ever opens | The host's shim has no peer acceptor installed — the host binary is older than the peer. Upgrade the host. |
-| Child killed unexpectedly during host restart | `exited` with `graceful = false` right after a `Control(KillChild)` | The host issued the kill (control plane). Cross-check `ControlResponse.accepted` in the host logs and the requested `grace_ms`. |
+| Child killed by a host-issued kill | `exited` following a `Control(KillChild)`; `graceful = true` when it exited within `grace_ms`, `graceful = false` when it had to be force-terminated after the grace window | The kill came from the control plane, not a crash — cross-check `ControlResponse.accepted` in the host logs and the requested `grace_ms`. |
 | Peer exits at startup, nothing listens | No events; peer log says `CRITERIA_REMOTE_HOST` missing or config unresolved | Manifest problem: `CRITERIA_REMOTE_HOST` is required, and partial TLS settings (`CRITERIA_REMOTE_TLS_CERT`/`KEY`/`CA`) are rejected — set all three or none. |
 
 ## Runner mode (legacy)
