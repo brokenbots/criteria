@@ -158,6 +158,7 @@ func TestPeerRuntime_BootSpawnsRealChild(t *testing.T) {
 // over discovery).
 type fakeHandle struct {
 	exited atomic.Bool
+	killed atomic.Bool
 }
 
 func (f *fakeHandle) Info(context.Context) (adapterhost.Info, error) {
@@ -170,7 +171,12 @@ func (f *fakeHandle) Execute(context.Context, string, *workflow.StepNode, adapte
 	return adapter.Result{}, nil
 }
 func (f *fakeHandle) CloseSession(context.Context, string) error { return nil }
-func (f *fakeHandle) Kill()                                      {}
+func (f *fakeHandle) Kill() {
+	f.killed.Store(true)
+	// A real Kill terminates the process; the exit watcher observes the
+	// resulting exit state on its next poll.
+	f.exited.Store(true)
+}
 func (f *fakeHandle) Pause(context.Context, string) error        { return nil }
 func (f *fakeHandle) Resume(context.Context, string) error       { return nil }
 func (f *fakeHandle) Inspect(context.Context, string) (*v2.InspectResponse, error) {
