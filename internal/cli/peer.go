@@ -8,7 +8,6 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -126,16 +125,9 @@ func runPeer(parent context.Context) error {
 	}
 	log.Info("peer ready", "adapter", cfg.AdapterName, "pid", os.Getpid())
 
-	<-ctx.Done()
-	// Bounded shutdown: give the child a grace period before the loader tears
-	// it down. Child keepalive semantics only matter for host disconnects, not
-	// for SIGINT/SIGTERM on the peer itself. WithoutCancel keeps the shutdown
-	// alive even though the signal context has fired.
-	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
-	defer cancel()
-	if err := rt.Shutdown(shutdownCtx); err != nil {
-		log.Error("peer shutdown failed", "error", err)
-		return err
-	}
-	return nil
+	// Serve runs the phone-home loop until ctx is done (SIGINT/SIGTERM cancel
+	// it), then performs the bounded shutdown sequence (child grace period,
+	// final exit fact). A context-caused end maps to a nil error so the
+	// process exits 0.
+	return peer.NewServer(&cfg, rt, log).Serve(ctx)
 }

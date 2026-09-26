@@ -41,9 +41,15 @@ const (
 	peerDialKeepAlive = 15 * time.Second
 
 	// peerShutdownBudget bounds the whole Serve shutdown sequence (session
-	// close, child grace, loader teardown) after the phone-home loop has
+	// closes, child grace, loader teardown) after the phone-home loop has
 	// ended: bounded so a stalled child cannot hang the peer indefinitely.
 	peerShutdownBudget = 30 * time.Second
+
+	// peerServerStopGrace bounds grpc-go's server.Stop() in serveOnce. Stop
+	// waits for raw conns still in the HTTP/2 preface handshake, which never
+	// finishes when the host stalls after reading the identity frame — force
+	// closing the conn unblocks that read so shutdown stays bounded.
+	peerServerStopGrace = 2 * time.Second
 
 	// peerHandshakeRole is the identity-frame role value that routes the
 	// dial to the host shim's PeerAcceptor seam (ADR-0007 D4).
@@ -232,7 +238,22 @@ func (s *Server) serveOnce(ctx context.Context) error {
 	}()
 	go func() {
 		<-ctx.Done()
-		server.Stop()
+		// Bounded stop: grpc-go's Stop blocks on raw conns stuck in the
+		// preface handshake (a host that never speaks gRPC after the identity
+		// frame), so bound it and force close the conn to unblock the read.
+		stopDone := make(chan struct{})
+		go func() {
+			server.Stop()
+			close(stopDone)
+		}()
+		timer := time.NewTimer(peerServerStopGrace)
+		defer timer.Stop()
+		select {
+		case <-stopDone:
+		case <-timer.C:
+			_ = wrapped.Close()
+			<-stopDone
+		}
 	}()
 
 	s.log.Info("peer phone-home connected",
