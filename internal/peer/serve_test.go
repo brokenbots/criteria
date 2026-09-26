@@ -17,7 +17,9 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	criteriav1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
@@ -679,6 +681,167 @@ func TestServer_ControlKillChild(t *testing.T) {
 	}
 	if err := f.rt.Shutdown(f.ctx); err != nil {
 		t.Errorf("shutdown: %v", err)
+	}
+}
+
+// TestServer_LogStreamEndJournalsFlushed verifies the ADR-0007 emission
+// point: when the child's log stream ends, the peer journals
+// StreamFlushed{channel: "log", up_to_seq} with up_to_seq equal to the
+// journal's highest sequence recorded before the Flushed fact itself. The
+// bridge holds the host-facing Log RPC open after the backend returns (the
+// host cancels it at session close), so the fact is journaled while the RPC
+// is still open; cancelling the host ctx ends the RPC.
+func TestServer_LogStreamEndJournalsFlushed(t *testing.T) {
+	f := newPeerServeFixture(t)
+	f.append(&criteriav1.SupervisionEvent_Spawned{Spawned: &criteriav1.ProcessSpawned{Binary: "bin", Pid: 1}})
+	upToBefore := f.rt.Journal().LastSeq()
+
+	conn, _, _ := f.startConn()
+	cc := f.hostClient(conn)
+	client := adapterhost.NewClientForConn(cc)
+
+	var lines atomic.Int32
+	logCtx, logCancel := context.WithCancel(context.Background())
+	defer logCancel()
+	logDone := make(chan error, 1)
+	go func() {
+		logDone <- client.Log(logCtx, &v2.LogRequest{SessionId: "s-log"}, logSinkFn(func(ev *v2.LogEvent) error {
+			lines.Add(1)
+			return nil
+		}))
+	}()
+
+	// Wait for the event to flow to the host.
+	deadline := time.Now().Add(5 * time.Second)
+	for lines.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := lines.Load(); got != 1 {
+		t.Fatalf("host saw %d log events, want 1", got)
+	}
+
+	// The backend log stream ended (the fake returns after one event), so
+	// the flushed fact is already journaled.
+	events := f.rt.Journal().Replay(0)
+	if len(events) != 2 {
+		t.Fatalf("journal has %d events, want spawned+flushed", len(events))
+	}
+	flushed := events[1].GetFlushed()
+	if flushed == nil {
+		t.Fatalf("event 2 = %T, want flushed", events[1].GetKind())
+	}
+	if flushed.GetChannel() != "log" {
+		t.Errorf("flushed channel = %q, want log", flushed.GetChannel())
+	}
+	if flushed.GetUpToSeq() != upToBefore {
+		t.Errorf("flushed up_to_seq = %d, want %d (journal seq recorded before the flushed append)", flushed.GetUpToSeq(), upToBefore)
+	}
+
+	// The host-side Log RPC stays open until cancelled; cancelling it
+	// surfaces as a client-side Canceled on the stream (session close).
+	logCancel()
+	select {
+	case err := <-logDone:
+		if err != nil && status.Code(err) != codes.Canceled {
+			t.Errorf("host Log = %v, want clean end or canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("host Log did not return after cancel")
+	}
+}
+
+// TestServer_ServeShutdown verifies the peer shutdown sequence driven by
+// Serve: a context cancel ends the serve loop (nil error, exit 0), the
+// host's served sessions are closed on the child, the child is killed after
+// the grace period, and the journal ends with a graceful ProcessExited.
+func TestServer_ServeShutdown(t *testing.T) {
+	if testing.Short() {
+		t.Skip("serve shutdown boots a runtime child")
+	}
+	f := newPeerServeFixture(t)
+	fake := &fakeHandle{}
+	f.rt.loader.RegisterBuiltin("fakex", func() adapterhost.Handle { return fake })
+	f.rt.exitPoll = 10 * time.Millisecond
+	f.rt.shutdownGrace = 50 * time.Millisecond
+	if err := f.rt.Boot(f.ctx); err != nil {
+		t.Fatalf("boot: %v", err)
+	}
+
+	serverConn, clientConn := net.Pipe()
+	var dialed atomic.Bool
+	f.server.dialFunc = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if !dialed.CompareAndSwap(false, true) {
+			return nil, errors.New("fixture dialer: one-shot")
+		}
+		return serverConn, nil
+	}
+
+	serveRet := make(chan error, 1)
+	go func() { serveRet <- f.server.Serve(f.ctx) }()
+
+	// The peer writes the identity frame before any gRPC traffic; read it
+	// off the host side first (same as startConn) so the transport's first
+	// bytes are the client preface.
+	frame := make(chan []byte, 1)
+	go func() {
+		data, err := readFrameLine(clientConn)
+		if err != nil {
+			return
+		}
+		frame <- data
+	}()
+	select {
+	case <-frame:
+	case <-time.After(5 * time.Second):
+		t.Fatal("identity frame not written within 5s")
+	}
+
+	cc := f.hostClient(clientConn)
+	client := adapterhost.NewClientForConn(cc)
+	if _, err := client.OpenSession(context.Background(), &v2.OpenSessionRequest{SessionId: "s-shut"}); err != nil {
+		t.Fatalf("OpenSession through bridge: %v", err)
+	}
+	f.rt.mu.Lock()
+	tracked := len(f.rt.openSessions)
+	f.rt.mu.Unlock()
+	if tracked != 1 {
+		t.Fatalf("tracked open sessions = %d, want 1", tracked)
+	}
+
+	f.cancel()
+	select {
+	case err := <-serveRet:
+		if err != nil {
+			t.Fatalf("Serve = %v, want nil (context-caused end maps to exit 0)", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Serve did not return after cancel")
+	}
+
+	// The tracked session was closed on the served child surface.
+	found := false
+	f.child.mu.Lock()
+	for _, id := range f.child.closedSessions {
+		if id == "s-shut" {
+			found = true
+		}
+	}
+	f.child.mu.Unlock()
+	if !found {
+		t.Errorf("served child close sessions = %v, want s-shut", f.child.closedSessions)
+	}
+
+	// Journal ends with the graceful exit fact.
+	events := f.rt.Journal().Replay(0)
+	if len(events) != 2 {
+		t.Fatalf("journal has %d events, want spawned+exited", len(events))
+	}
+	exited := events[1].GetExited()
+	if exited == nil || !exited.GetGraceful() {
+		t.Fatalf("event 2 = %+v, want graceful exited", events[1].GetKind())
+	}
+	if !fake.killed.Load() {
+		t.Error("child was not killed by shutdown")
 	}
 }
 

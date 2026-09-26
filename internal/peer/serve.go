@@ -206,7 +206,9 @@ func (s *Server) serveOnce(ctx context.Context) error {
 
 	server := grpc.NewServer(adapterhost.RemoteKeepaliveServerOptions()...)
 	if child, ok := s.childClient(); ok {
-		adapterhost.RegisterAdapterService(server, &serveChildClient{Client: child, rt: s.rt})
+		wrapper := &serveChildClient{Client: child, rt: s.rt}
+		s.rt.setServedChild(wrapper)
+		adapterhost.RegisterAdapterService(server, wrapper)
 	} else {
 		s.log.Warn("peer child has no adapter client; serving supervision only",
 			"adapter", s.cfg.AdapterName)

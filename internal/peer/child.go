@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	criteriav1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
@@ -50,6 +51,10 @@ type peerRuntime struct {
 	openSessions map[string]struct{}
 	// shutdownGrace bounds the shutdown wait before the child kill.
 	shutdownGrace time.Duration
+	// servedChild is the adapter client the phone-home bridge serves (the
+	// local child in production; a fixture stub in tests). Shutdown closes
+	// tracked sessions through it.
+	servedChild adapterhost.Client
 
 	exitPoll  time.Duration
 	stopWatch chan struct{}
@@ -370,6 +375,14 @@ func (r *peerRuntime) openSessionIDsLocked() []string {
 	return ids
 }
 
+// setServedChild records the adapter client the phone-home bridge serves so
+// shutdown closes the host's sessions on the same surface.
+func (r *peerRuntime) setServedChild(c adapterhost.Client) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.servedChild = c
+}
+
 // journalFlushed records the StreamFlushed fact: the named stream ended and
 // everything the journal has recorded up to upToSeq was delivered.
 func (r *peerRuntime) journalFlushed(channel string, upToSeq uint64) {
@@ -423,14 +436,19 @@ func (r *peerRuntime) Shutdown(ctx context.Context) error {
 		child := r.child
 		sessionIDs := r.openSessionIDsLocked()
 		grace := r.shutdownGrace
+		servedChild := r.servedChild
 		r.mu.Unlock()
 		close(r.stopWatch)
 		if watchStarted {
 			<-r.watchDone
 		}
 		for _, id := range sessionIDs {
+			if servedChild == nil {
+				// Nothing the bridge served: no session surface to close.
+				break
+			}
 			ctxSession, cancel := context.WithTimeout(ctx, closeSessionTimeout)
-			err := r.Child().CloseSession(ctxSession, id)
+			_, err := servedChild.CloseSession(ctxSession, &v2.CloseSessionRequest{SessionId: id})
 			cancel()
 			if err != nil {
 				r.log.Warn("shutdown close session", "session", id, "error", err)

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -64,6 +65,7 @@ func TestPeerRuntime_BootSpawnsRealChild(t *testing.T) {
 	var logs bytes.Buffer
 	rt := NewRuntime(&cfg, captureLogger(&logs))
 	rt.exitPoll = 20 * time.Millisecond
+	rt.shutdownGrace = 50 * time.Millisecond
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -231,6 +233,90 @@ func TestPeerRuntime_ExitWatcherClassifiesCrash(t *testing.T) {
 
 	// Shutdown after the crash is a no-op for the journal (exit already
 	// recorded) and must not re-classify the crash as graceful.
+	if err := rt.Shutdown(ctx); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+	if got := len(rt.Journal().Replay(0)); got != 3 {
+		t.Errorf("journal has %d events after shutdown, want 3 (exit recorded once)", got)
+	}
+}
+
+// TestPeerRuntime_KillChildJournalsCrashSequence verifies the crash emission
+// points against a real child: SIGKILL of the adapter process journals
+// ProcessSpawned → ProcessExited (ungraceful; go-plugin does not expose the
+// signal or exit status, so exit_code is recorded as -1) → CrashClassified
+// with the shared taxonomy reason, in journal order with gapless sequence
+// numbers.
+func TestPeerRuntime_KillChildJournalsCrashSequence(t *testing.T) {
+	if testing.Short() {
+		t.Skip("crash test spawns a real adapter subprocess")
+	}
+	bin := buildNoopAdapter(t)
+
+	cfg, err := LoadConfig(getenvFrom(map[string]string{EnvRemoteHost: "127.0.0.1:7998"}))
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.AdapterName = "noop"
+	cfg.AdapterBinary = bin
+	cfg.JournalLimit = 8
+
+	rt := NewRuntime(&cfg, captureLogger(&bytes.Buffer{}))
+	rt.exitPoll = 20 * time.Millisecond
+	rt.shutdownGrace = 50 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := rt.Boot(ctx); err != nil {
+		t.Fatalf("boot: %v", err)
+	}
+	events := rt.Journal().Replay(0)
+	if len(events) != 1 || events[0].GetSpawned() == nil {
+		t.Fatalf("journal after boot = %v, want 1 spawned", events)
+	}
+	pid := events[0].GetSpawned().GetPid()
+	if pid <= 0 {
+		t.Fatalf("spawned pid = %d, want a real OS pid", pid)
+	}
+
+	// kill -9: the go-plugin client reaps the child and reports the exit;
+	// the peer's exit watcher classifies it against the shared taxonomy.
+	if err := syscall.Kill(int(pid), syscall.SIGKILL); err != nil {
+		t.Fatalf("SIGKILL child: %v", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for len(rt.Journal().Replay(0)) < 3 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	events = rt.Journal().Replay(0)
+	if len(events) != 3 {
+		t.Fatalf("journal has %d events after SIGKILL, want spawned+exited+crash: %+v", len(events), events)
+	}
+	for i, ev := range events {
+		if want := events[0].GetEventSeq() + uint64(i); ev.GetEventSeq() != want {
+			t.Errorf("event %d seq = %d, want gapless %d", i, ev.GetEventSeq(), want)
+		}
+	}
+	exited := events[1].GetExited()
+	if exited == nil {
+		t.Fatalf("event 2 = %T, want exited", events[1].GetKind())
+	}
+	if exited.GetGraceful() {
+		t.Errorf("exit graceful = true, want false (SIGKILL crash)")
+	}
+	if exited.GetExitCode() != -1 {
+		t.Errorf("exit code = %d, want -1 (go-plugin does not expose the status)", exited.GetExitCode())
+	}
+	crash := events[2].GetCrash()
+	if crash == nil {
+		t.Fatalf("event 3 = %T, want crash", events[2].GetKind())
+	}
+	if crash.GetReason() != adapterhost.CrashReasonProcessTerminated {
+		t.Errorf("crash reason = %q, want %q", crash.GetReason(), adapterhost.CrashReasonProcessTerminated)
+	}
+
+	// Shutdown after the crash records nothing further.
 	if err := rt.Shutdown(ctx); err != nil {
 		t.Fatalf("shutdown: %v", err)
 	}
