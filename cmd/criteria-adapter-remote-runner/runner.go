@@ -13,7 +13,6 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -24,7 +23,6 @@ import (
 	"time"
 
 	hplugin "github.com/hashicorp/go-plugin"
-	"google.golang.org/grpc"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	adapterhost "github.com/brokenbots/criteria-go-adapter-sdk/adapterhost"
@@ -208,21 +206,6 @@ func buildTLSConfig(certPath, keyPath, caPath string) (*tls.Config, error) {
 	}, nil
 }
 
-// pluginClient adapts the hashicorp/go-plugin client side for the v2 adapter
-// contract. Dispensing the "adapter" plugin yields a v2.AdapterServiceClient.
-type pluginClient struct {
-	hplugin.NetRPCUnsupportedPlugin
-}
-
-func (p *pluginClient) GRPCServer(_ *hplugin.GRPCBroker, _ *grpc.Server) error {
-	return errors.New("GRPCServer should not be called on the adapter runner")
-}
-
-//nolint:unparam // hashicorp/go-plugin Plugin.GRPCClient interface requires an error return value.
-func (p *pluginClient) GRPCClient(_ context.Context, _ *hplugin.GRPCBroker, cc *grpc.ClientConn) (interface{}, error) {
-	return v2.NewAdapterServiceClient(cc), nil
-}
-
 // remoteEnvVars lists the runner's own remote-connection settings. They must
 // never be inherited by the child adapter, because adapters such as
 // criteria-adapter-shell (>= v0.5.3) and criteria-adapter-copilot (>= v0.5.5)
@@ -264,12 +247,12 @@ func slicesContains(haystack []string, needle string) bool {
 	return false
 }
 
-func startAdapter(binary string) (v2.AdapterServiceClient, func(), error) {
+func startAdapter(binary string) (internaladapterhost.Client, func(), error) {
 	cmd := exec.Command(binary)
 	cmd.Env = adapterEnv()
 	client := hplugin.NewClient(&hplugin.ClientConfig{
 		HandshakeConfig:  adapterhost.HandshakeConfig,
-		Plugins:          map[string]hplugin.Plugin{"adapter": &pluginClient{}},
+		Plugins:          internaladapterhost.AdapterMap(),
 		Cmd:              cmd,
 		AllowedProtocols: []hplugin.Protocol{hplugin.ProtocolGRPC},
 		StartTimeout:     30 * time.Second,
@@ -297,7 +280,7 @@ func startAdapter(binary string) (v2.AdapterServiceClient, func(), error) {
 		return nil, nil, fmt.Errorf("dispense adapter: %w", err)
 	}
 
-	svc, ok := raw.(v2.AdapterServiceClient)
+	svc, ok := raw.(internaladapterhost.Client)
 	if !ok {
 		client.Kill()
 		return nil, nil, fmt.Errorf("dispense returned unexpected type %T", raw)
@@ -307,130 +290,6 @@ func startAdapter(binary string) (v2.AdapterServiceClient, func(), error) {
 		client.Kill()
 	}
 	return svc, kill, nil
-}
-
-// proxyService forwards the v2 adapter contract to a local adapter process.
-type proxyService struct {
-	client v2.AdapterServiceClient
-}
-
-func (p *proxyService) Info(ctx context.Context, req *v2.InfoRequest) (*v2.InfoResponse, error) {
-	return p.client.Info(ctx, req)
-}
-
-func (p *proxyService) OpenSession(ctx context.Context, req *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) {
-	return p.client.OpenSession(ctx, req)
-}
-
-func (p *proxyService) CloseSession(ctx context.Context, req *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {
-	return p.client.CloseSession(ctx, req)
-}
-
-func (p *proxyService) Execute(ctx context.Context, req *v2.ExecuteRequest, sink adapterhost.ExecuteEventSender) error {
-	stream, err := p.client.Execute(ctx, req)
-	if err != nil {
-		return err
-	}
-	for {
-		ev, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if err := sink.Send(ev); err != nil {
-			return err
-		}
-	}
-}
-
-func (p *proxyService) Log(ctx context.Context, req *v2.LogRequest, sink adapterhost.LogEventSender) error {
-	stream, err := p.client.Log(ctx, req)
-	if err != nil {
-		return err
-	}
-	for {
-		ev, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if err := sink.Send(ev); err != nil {
-			return err
-		}
-	}
-}
-
-func (p *proxyService) Permissions(ctx context.Context, requests adapterhost.PermissionsStream) error {
-	stream, err := p.client.Permissions(ctx)
-	if err != nil {
-		return err
-	}
-
-	senderCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	sendDone := make(chan error, 1)
-	go func() { sendDone <- runPermissionSender(senderCtx, stream, requests) }()
-
-	recvErr := recvPermissionDecisions(ctx, stream, requests)
-	cancel()
-	if senderErr := <-sendDone; recvErr == nil {
-		return senderErr
-	}
-	return recvErr
-}
-
-func runPermissionSender(ctx context.Context, stream v2.AdapterService_PermissionsClient, requests adapterhost.PermissionsStream) error {
-	for {
-		select {
-		case <-ctx.Done():
-			return stream.CloseSend()
-		default:
-		}
-		req, err := requests.Recv()
-		if errors.Is(err, io.EOF) {
-			if err := stream.CloseSend(); err != nil && ctx.Err() == nil {
-				return err
-			}
-			return nil
-		}
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil //nolint:nilerr // context cancelled; suppressing recv error is intentional
-			}
-			return err
-		}
-		if err := stream.Send(req); err != nil {
-			if ctx.Err() != nil {
-				return nil //nolint:nilerr // context cancelled; suppressing send error is intentional
-			}
-			return err
-		}
-	}
-}
-
-func recvPermissionDecisions(ctx context.Context, stream v2.AdapterService_PermissionsClient, requests adapterhost.PermissionsStream) error {
-	for {
-		dec, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil //nolint:nilerr // context cancelled; suppressing recv error is intentional
-			}
-			return err
-		}
-		if err := requests.Send(dec); err != nil {
-			if ctx.Err() != nil {
-				return nil //nolint:nilerr // context cancelled; suppressing send error is intentional
-			}
-			return err
-		}
-	}
 }
 
 func runRemote(log *slog.Logger) error {
@@ -478,9 +337,8 @@ func serveOnce(ctx context.Context, cfg *remoteConfig, tlsConf *tls.Config, log 
 	}
 	log.Info("adapter ready", "adapter_name", info.GetName(), "adapter_version", info.GetVersion())
 
-	proxy := &proxyService{client: client}
 	serveErr := make(chan error, 1)
-	go func() { serveErr <- serveRemoteOnce(ctx, cfg, tlsConf, proxy, log) }()
+	go func() { serveErr <- serveRemoteOnce(ctx, cfg, tlsConf, client, log) }()
 
 	select {
 	case <-ctx.Done():
