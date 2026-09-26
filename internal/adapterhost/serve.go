@@ -81,6 +81,15 @@ func (p *GRPCAdapter) GRPCClient(_ context.Context, _ *hplugin.GRPCBroker, cc *g
 	return &grpcClient{c: v2.NewAdapterServiceClient(cc), cc: cc}, nil
 }
 
+// NewClientForConn returns the host-side Client over an already-established
+// adapter gRPC connection. The go-plugin loader reaches the identical client
+// through GRPCAdapter.GRPCClient; the ADR-0007 peer transport
+// (remote/peer_session.go) hands the phone-home net.Conn to grpc as a
+// pre-dialed connection and needs the same v2 plumbing over it.
+func NewClientForConn(cc *grpc.ClientConn) Client {
+	return &grpcClient{c: v2.NewAdapterServiceClient(cc), cc: cc}
+}
+
 type grpcClient struct {
 	c  v2.AdapterServiceClient
 	cc *grpc.ClientConn

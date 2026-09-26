@@ -1262,10 +1262,17 @@ func (e *Engine) startRemoteShimForEnv(ctx context.Context, envKey string, env *
 		return fmt.Errorf("remote environment %q: %w", env.Name, err)
 	}
 	shim.SetPerScopeSessions(cfg.PerScopeSessions)
+	// The peer transport (ADR-0007 Stage A) is served on the same phone-home
+	// listener: role=peer dials branch to the provider after the standard
+	// handshake verification; legacy runner dials keep the byte-bridge path.
+	// The session manager is handed the provider, whose RemoteShim methods
+	// resolve peer sessions first and delegate to the shim for legacy ones.
+	provider := remote.NewPeerSessionProvider(shim, cfg.PerScopeSessions)
+	shim.SetPeerAcceptor(provider)
 	if err := shim.Start(ctx); err != nil {
 		return fmt.Errorf("remote environment %q: %w", env.Name, err)
 	}
-	sessions.SetRemoteShimForEnv(envKey, shim)
+	sessions.SetRemoteShimForEnv(envKey, provider)
 	return nil
 }
 

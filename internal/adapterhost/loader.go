@@ -410,7 +410,7 @@ func (p *rpcHandle) Info(ctx context.Context) (Info, error) {
 		Version:           resp.GetVersion(),
 		Capabilities:      append([]string(nil), resp.GetCapabilities()...),
 		SupportedFeatures: append([]string(nil), resp.GetSupportedFeatures()...),
-		Tools:             toolsFromProto(resp.GetTools()),
+		Tools:             ToolsFromProto(resp.GetTools()),
 		AdapterInfo:       AdapterInfoFromProto(resp),
 	}, nil
 }
@@ -485,6 +485,22 @@ func isExpectedStreamClose(err error, extra ...codes.Code) bool {
 // Execute streams step execution via the RPC adapter, handling concurrent log streaming,
 // event routing, and partial failure recovery.
 func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+	p.permMu.Lock()
+	hasPermStream := p.permActive[sessionID]
+	p.permMu.Unlock()
+
+	return ExecuteViaClient(ctx, p.rpc, p.name, sessionID, hasPermStream, step, sink)
+}
+
+// ExecuteViaClient runs one adapter v2 Execute RPC through the standard
+// host-side plumbing shared by the go-plugin handle (rpcHandle) and the
+// ADR-0007 peer handle (remote/peer_session.go): serialized sink, session-
+// scoped vs fallback permission streams, chunk reassembly, and the
+// needs_review outcome override. hasPermStream is true when a session-scoped
+// permission stream is already active (SessionManager path); callers without
+// one (e.g. conformance tests bypassing SessionManager) pass false to get the
+// fallback per-Execute permission stream.
+func ExecuteViaClient(ctx context.Context, client Client, adapterName, sessionID string, hasPermStream bool, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
 	req := &v2.ExecuteRequest{
 		SessionId:       sessionID,
 		StepName:        step.Name,
@@ -497,37 +513,33 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 	// and logForwardSink are safe regardless of the sink implementation.
 	serialized := &serializedEventSink{inner: sink}
 
-	p.permMu.Lock()
-	hasPermStream := p.permActive[sessionID]
-	p.permMu.Unlock()
-
 	if !hasPermStream {
-		return p.executeWithFallbackStream(ctx, sessionID, step, serialized, req)
+		return executeWithFallbackStream(ctx, client, adapterName, step, serialized, req)
 	}
-	return p.executeWithActiveStream(ctx, step, serialized, req)
+	return executeWithActiveStream(ctx, client, step, serialized, req)
 }
 
 // executeWithFallbackStream runs Execute with a per-Execute permission stream
 // for callers (e.g. conformance tests) that bypass SessionManager.
-func (p *rpcHandle) executeWithFallbackStream(ctx context.Context, _ string, step *workflow.StepNode, serialized *serializedEventSink, req *v2.ExecuteRequest) (adapter.Result, error) {
+func executeWithFallbackStream(ctx context.Context, client Client, adapterName string, step *workflow.StepNode, serialized *serializedEventSink, req *v2.ExecuteRequest) (adapter.Result, error) {
 	execCtx, cancelExec := context.WithCancel(ctx)
 	defer cancelExec()
 
 	requests := make(chan *v2.PermissionEvent, 16)
-	_, cancelPerm, permDone := p.startFallbackPermStream(ctx, requests, cancelExec)
+	_, cancelPerm, permDone := startFallbackPermStream(ctx, client, requests, cancelExec)
 	defer cancelPerm()
 
 	captureSink := &executeCaptureSink{
 		sink:         serialized,
 		policy:       NewPolicy(step.AllowTools),
 		allowTools:   step.AllowTools,
-		adapterName:  p.name,
+		adapterName:  adapterName,
 		outputSchema: step.OutputSchema,
 		requests:     requests,
 		ctx:          execCtx,
 	}
 
-	execErr := p.rpc.Execute(execCtx, req, captureSink)
+	execErr := client.Execute(execCtx, req, captureSink)
 
 	close(requests)
 	cancelPerm()
@@ -553,11 +565,11 @@ func (p *rpcHandle) executeWithFallbackStream(ctx context.Context, _ string, ste
 	return captureSink.result, nil
 }
 
-func (p *rpcHandle) startFallbackPermStream(ctx context.Context, requests chan *v2.PermissionEvent, cancelExec func()) (context.Context, context.CancelFunc, chan error) {
+func startFallbackPermStream(ctx context.Context, client Client, requests chan *v2.PermissionEvent, cancelExec func()) (context.Context, context.CancelFunc, chan error) {
 	permCtx, cancelPerm := context.WithCancel(ctx)
 	permDone := make(chan error, 1)
 	go func() {
-		err := p.rpc.Permissions(permCtx, requests)
+		err := client.Permissions(permCtx, requests)
 		permDone <- err
 		if status.Code(err) == codes.Unimplemented {
 			for range requests {
@@ -573,7 +585,7 @@ func (p *rpcHandle) startFallbackPermStream(ctx context.Context, requests chan *
 
 // executeWithActiveStream runs Execute when a session-scoped permission stream
 // is already active.
-func (p *rpcHandle) executeWithActiveStream(ctx context.Context, step *workflow.StepNode, serialized *serializedEventSink, req *v2.ExecuteRequest) (adapter.Result, error) {
+func executeWithActiveStream(ctx context.Context, client Client, step *workflow.StepNode, serialized *serializedEventSink, req *v2.ExecuteRequest) (adapter.Result, error) {
 	captureSink := &executeCaptureSink{
 		sink:         serialized,
 		policy:       NewPolicy(step.AllowTools),
@@ -581,7 +593,7 @@ func (p *rpcHandle) executeWithActiveStream(ctx context.Context, step *workflow.
 		outputSchema: step.OutputSchema,
 	}
 
-	execErr := p.rpc.Execute(ctx, req, captureSink)
+	execErr := client.Execute(ctx, req, captureSink)
 
 	if execErr != nil {
 		// When the caller's context is cancelled (run teardown) or times out,
@@ -1220,9 +1232,9 @@ func runtimeToolNamesFromProto(tools []*v2.ToolInfo) []string {
 	return out
 }
 
-// toolsFromProto translates InfoResponse.tools (CRI-171) into host-side
+// ToolsFromProto translates InfoResponse.tools (CRI-171) into host-side
 // ToolInfo values.
-func toolsFromProto(tools []*v2.ToolInfo) []ToolInfo {
+func ToolsFromProto(tools []*v2.ToolInfo) []ToolInfo {
 	if len(tools) == 0 {
 		return nil
 	}
