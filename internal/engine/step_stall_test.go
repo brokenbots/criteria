@@ -68,6 +68,9 @@ type heartbeatLogStream struct {
 
 func (h *heartbeatLogStream) StartLogStream(ctx context.Context, sessionID string, sink adapterhost.LogEventSink) (func(), <-chan error, error) {
 	done := make(chan error, 1)
+	stop := make(chan struct{})
+	var once sync.Once
+	cancel := func() { once.Do(func() { close(stop) }) }
 	go func() {
 		defer close(done)
 		t := time.NewTicker(h.every)
@@ -76,6 +79,8 @@ func (h *heartbeatLogStream) StartLogStream(ctx context.Context, sessionID strin
 			select {
 			case <-ctx.Done():
 				return
+			case <-stop:
+				return
 			case <-t.C:
 				if err := sink.Emit(&criteriav2.LogEvent{Heartbeat: &criteriav2.Heartbeat{}}); err != nil {
 					return
@@ -83,7 +88,7 @@ func (h *heartbeatLogStream) StartLogStream(ctx context.Context, sessionID strin
 			}
 		}
 	}()
-	return func() {}, done, nil
+	return cancel, done, nil
 }
 
 // heartbeatHandle pairs a blocking adapter Execute with a heartbeat-emitting
