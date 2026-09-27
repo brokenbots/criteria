@@ -842,7 +842,12 @@ func (n *stepNode) executeStepTimed(ctx context.Context, deps Deps, step *workfl
 	}
 
 	start := time.Now()
-	result, err := n.executeStep(stepCtx, deps, step)
+	// KB-25: watch the attempt for adapter progress while Execute runs. The
+	// watchdog only arms for unbounded adapter steps (Timeout == 0): a
+	// step-declared timeout keeps its CRI-275 ceiling semantics unchanged.
+	watchdog, execCtx := startStepStallWatchdog(stepCtx, deps, step, start)
+	result, err := n.executeStep(execCtx, deps, step)
+	stalled, stallIdle := watchdog.stop()
 	// CRI-287: when the step deadline expired, this Execute was torn down by
 	// the engine (the CRI-275 step timeout). The cancellation may close
 	// sibling phone-home transports in the same second, so mark the session
@@ -852,12 +857,22 @@ func (n *stepNode) executeStepTimed(ctx context.Context, deps Deps, step *workfl
 	// step's Execute, which is where the misclassification used to happen.
 	// Only a step ceiling the engine actually installed may open the teardown
 	// window: when step.Timeout == 0 (stepCtx == ctx) a parent/run-context
-	// deadline or a subworkflow cancellation must not.
+	// deadline or a subworkflow cancellation must not. The KB-25 stall
+	// watchdog marks the teardown itself when it fires, before cancelling its
+	// own execution-context layer, so this gate stays keyed on the
+	// step-declared timeout ceiling.
 	if deps.Sessions != nil && cancel != nil && stepCtx.Err() == context.DeadlineExceeded {
 		deps.Sessions.MarkEngineStepTimeoutTeardown()
 	}
 	if cancel != nil {
 		cancel()
+	}
+	// KB-25: a watchdog-fired teardown is reported as the typed stall error
+	// (wrapped in FatalRunError so the run fails fast) instead of a raw
+	// context cancellation. A successful result keeps its semantics, and a
+	// parent-initiated cancellation (run teardown) always wins.
+	if stalled && err != nil && ctx.Err() == nil && execCtx.Err() != nil {
+		err = stallFailure(step, watchdog.window, stallIdle)
 	}
 	return result, time.Since(start), err
 }

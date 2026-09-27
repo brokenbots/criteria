@@ -99,6 +99,51 @@ type DigestVerifier interface {
 	Verify(adapterType string, digest string) error
 }
 
+// ErrScopeNotRegistered marks an adapter dial whose presented scope has no
+// accept token registered on this shim (KB-25). It is deliberately distinct
+// from a stale-token rejection: a scope that is not registered at all is the
+// recoverable shape (the host's ScopeRegistrar may re-register the scope
+// from its persisted state so the dialing pod's re-handshake is accepted),
+// while a registered scope whose presented token no longer matches is a
+// deliberate rotation and is only rejected.
+var ErrScopeNotRegistered = errors.New("scope is not registered")
+
+// ScopeNotRegisteredError is the typed form of an unregistered-scope dial
+// rejection (KB-25). Its message is byte-identical to the pre-KB-25
+// rejection string so existing operator log signatures stay stable.
+type ScopeNotRegisteredError struct {
+	AdapterType string
+	Scope       string
+}
+
+func (e *ScopeNotRegisteredError) Error() string {
+	return fmt.Sprintf("scope %q is not registered", e.Scope)
+}
+
+// Is reports the sentinel so callers can branch on the rejection class
+// without unwrapping the concrete type.
+func (e *ScopeNotRegisteredError) Is(target error) bool {
+	return target == ErrScopeNotRegistered
+}
+
+// ScopeRegistrar is the dial-time re-registration seam (KB-25): when the
+// shim receives a dial whose digest verifies but whose presented scope has
+// no registered accept token, it consults the registrar once with the
+// presented identity. A successful registration re-keys the shim's token
+// map so the same dial can complete its handshake instead of looping on
+// accept rejections; the shim re-checks its own token map afterwards, so a
+// registrar that does not actually register the scope cannot turn a
+// rejected dial into a session. Returning a non-nil error (or leaving the
+// shim without a registrar) keeps the previous reject-only behavior.
+//
+// Implementations must verify the presented token against their own
+// persisted state before re-registering: the shim only hands over dials
+// whose digest already verified, but the scope token is the secret that
+// distinguishes a rotated survivor from an unauthenticated guess.
+type ScopeRegistrar interface {
+	RegisterScopeOnDial(adapterType, scope, presentedToken string) error
+}
+
 // identityRejectClass classifies why an adapter dial failed identity
 // verification, so the surfaced terminal error can name the right diagnosis
 // instead of blaming the accept token for every rejection kind.
@@ -151,7 +196,8 @@ type Shim struct {
 	verifyFailures      map[string]*verifyFailureState // session key → last identity-verification rejection (diagnostics while a waiter is pending)
 	verifyFailureBudget time.Duration
 
-	peerAcceptor PeerAcceptor // receives authenticated role="peer" dials; nil rejects them
+	peerAcceptor   PeerAcceptor   // receives authenticated role="peer" dials; nil rejects them
+	scopeRegistrar ScopeRegistrar // consulted for unregistered-scope dials (KB-25); nil keeps reject-only
 }
 
 type session struct {
@@ -329,6 +375,16 @@ func (s *Shim) SetPeerAcceptor(pa PeerAcceptor) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.peerAcceptor = pa
+}
+
+// SetScopeRegistrar installs the dial-time re-registration seam (KB-25).
+// When unset, a dial presenting a valid digest for an unregistered scope is
+// rejected with ErrScopeNotRegistered and its connection is closed, exactly
+// as before the seam existed.
+func (s *Shim) SetScopeRegistrar(r ScopeRegistrar) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.scopeRegistrar = r
 }
 
 // RegisterScope registers (or updates) the accept token for a given scope.
@@ -527,13 +583,54 @@ func readHandshakeFrame(reader *bufio.Reader, limit int) ([]byte, error) {
 }
 
 func (s *Shim) verifyAdapterIdentity(conn net.Conn, hs *handshakeMessage) error {
-	class, err := s.checkAdapterIdentity(conn, hs)
-	if err != nil {
-		s.noteVerifyFailure(hs.Name, hs.Scope, class, err)
-		return err
+	class, err := s.checkAdapterIdentity(hs)
+	if err == nil {
+		s.clearVerifyFailure(hs.Name, hs.Scope)
+		return nil
 	}
-	s.clearVerifyFailure(hs.Name, hs.Scope)
-	return nil
+	// KB-25: an unregistered-scope dial (digest verified, but no accept
+	// token registered for the scope) is the recoverable shape — after a
+	// token rotation or runner restart a pod can keep dialing a scope key
+	// this shim has no token for. Give the installed registrar one chance to
+	// re-register the scope from its persisted state, then re-run the token
+	// check on the same connection instead of closing it and leaving the
+	// dialer in a silent rejection loop. A stale-token dial (registered
+	// scope, mismatching token) never reaches the registrar: rotation is
+	// deliberate and must not resurrect a pre-rotation pod.
+	if class == rejectScopeNotRegistered && s.tryScopeRecovery(hs) {
+		class, err = s.checkAdapterIdentity(hs)
+		if err == nil {
+			slog.Info("remote shim accepted dial after scope re-registration",
+				"adapter", hs.Name, "scope", hs.Scope)
+			s.clearVerifyFailure(hs.Name, hs.Scope)
+			return nil
+		}
+	}
+	// Final rejection: close the connection exactly once. checkAdapterIdentity
+	// is a pure check (it no longer closes the dial itself) so the recovery
+	// re-check could run with the connection still open.
+	_ = conn.Close()
+	s.noteVerifyFailure(hs.Name, hs.Scope, class, err)
+	return err
+}
+
+// tryScopeRecovery consults the installed registrar for a rejected
+// unregistered-scope dial. It returns true only when the registrar itself
+// reported success; the caller then re-checks the shim's own token map
+// before the dial is accepted.
+func (s *Shim) tryScopeRecovery(hs *handshakeMessage) bool {
+	s.mu.Lock()
+	registrar := s.scopeRegistrar
+	s.mu.Unlock()
+	if registrar == nil {
+		return false
+	}
+	if err := registrar.RegisterScopeOnDial(hs.Name, hs.Scope, hs.Token); err != nil {
+		slog.Debug("remote shim scope re-registration declined the dial",
+			"adapter", hs.Name, "scope", hs.Scope, "error", err.Error())
+		return false
+	}
+	return true
 }
 
 // noteVerifyFailure records an identity-verification rejection as diagnostics
@@ -615,10 +712,13 @@ func (s *Shim) clearVerifyFailure(adapterType, scope string) {
 	}
 }
 
-func (s *Shim) checkAdapterIdentity(conn net.Conn, hs *handshakeMessage) (identityRejectClass, error) {
+// checkAdapterIdentity is a pure identity check: it classifies the dial and
+// returns the rejection error without touching the connection, so the
+// caller can retry after registrar recovery (KB-25) with the connection
+// still open and close it only on the final rejection.
+func (s *Shim) checkAdapterIdentity(hs *handshakeMessage) (identityRejectClass, error) {
 	if s.digestVerifier != nil {
 		if err := s.digestVerifier.Verify(hs.Name, hs.Digest); err != nil {
-			_ = conn.Close()
 			return rejectDigest, fmt.Errorf("digest verification: %w", err)
 		}
 	}
@@ -635,11 +735,9 @@ func (s *Shim) checkAdapterIdentity(conn net.Conn, hs *handshakeMessage) (identi
 		expectedToken, ok := s.scopeTokens[hs.Scope]
 		s.mu.Unlock()
 		if !ok {
-			_ = conn.Close()
-			return rejectScopeNotRegistered, fmt.Errorf("scope %q is not registered", hs.Scope)
+			return rejectScopeNotRegistered, &ScopeNotRegisteredError{AdapterType: hs.Name, Scope: hs.Scope}
 		}
 		if subtle.ConstantTimeCompare([]byte(hs.Token), []byte(expectedToken)) != 1 {
-			_ = conn.Close()
 			return rejectBadToken, fmt.Errorf("accept_token verification failed for scope %q", hs.Scope)
 		}
 		return rejectNone, nil
@@ -651,7 +749,6 @@ func (s *Shim) checkAdapterIdentity(conn net.Conn, hs *handshakeMessage) (identi
 	s.mu.Unlock()
 	if expectedToken != "" {
 		if subtle.ConstantTimeCompare([]byte(hs.Token), []byte(expectedToken)) != 1 {
-			_ = conn.Close()
 			return rejectBadToken, fmt.Errorf("accept_token verification failed")
 		}
 	}

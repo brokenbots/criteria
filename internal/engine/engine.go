@@ -1262,6 +1262,13 @@ func (e *Engine) startRemoteShimForEnv(ctx context.Context, envKey string, env *
 		return fmt.Errorf("remote environment %q: %w", env.Name, err)
 	}
 	shim.SetPerScopeSessions(cfg.PerScopeSessions)
+	// KB-25: a digest-verified dial for a scope whose accept token is not
+	// registered (the post-rotation survivor shape) is validated against the
+	// run's persisted rotated tokens and re-registered, instead of looping
+	// on accept-fail rejections. Stale-token dials never reach the registrar.
+	if cfg.PerScopeSessions {
+		shim.SetScopeRegistrar(&dialScopeRegistrar{dataDir: e.dataDir, envKey: envKey, sessions: sessions})
+	}
 	// The peer transport (ADR-0007 Stage A) is served on the same phone-home
 	// listener: role=peer dials branch to the provider after the standard
 	// handshake verification; legacy runner dials keep the byte-bridge path.

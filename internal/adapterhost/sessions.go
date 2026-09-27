@@ -957,6 +957,25 @@ func (s *Session) idleSinceLastEvent() (time.Duration, bool) {
 	return time.Since(time.Unix(0, last)), true
 }
 
+// LastSessionActivity returns the time of the named session's last observable
+// adapter activity (session open, log chunks, log-stream heartbeats,
+// respawn, completed Execute — the CRI-271 activity sources). The second
+// return is false when the session is unknown or has recorded no activity
+// yet. Used by the engine's step stall watchdog (KB-25).
+func (m *SessionManager) LastSessionActivity(name string) (time.Time, bool) {
+	m.mu.Lock()
+	sess, ok := m.sessions[name]
+	m.mu.Unlock()
+	if !ok {
+		return time.Time{}, false
+	}
+	ns := sess.lastEventNs.Load()
+	if ns == 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(0, ns), true
+}
+
 // NewSessionManager builds a SessionManager with the operator-configurable
 // heartbeat stall threshold (CRI-271). The env override lets operators raise
 // the stall boundary for adapters with long quiet streaming turns without a
