@@ -28,8 +28,8 @@ type blockingAdapter struct {
 	enteredOnce sync.Once
 }
 
-func newBlockingAdapter(name string) *blockingAdapter {
-	return &blockingAdapter{name: name, entered: make(chan struct{})}
+func newBlockingAdapter() *blockingAdapter {
+	return &blockingAdapter{name: "wedge", entered: make(chan struct{})}
 }
 
 func (b *blockingAdapter) Info(context.Context) (adapterhost.Info, error) {
@@ -66,13 +66,13 @@ type heartbeatLogStream struct {
 	every time.Duration
 }
 
-func (h *heartbeatLogStream) StartLogStream(ctx context.Context, sessionID string, sink adapterhost.LogEventSink) (func(), <-chan error, error) {
-	done := make(chan error, 1)
+func (h *heartbeatLogStream) StartLogStream(ctx context.Context, sessionID string, sink adapterhost.LogEventSink) (cancel func(), done <-chan error, err error) {
+	doneCh := make(chan error, 1)
 	stop := make(chan struct{})
 	var once sync.Once
-	cancel := func() { once.Do(func() { close(stop) }) }
+	cancelFn := func() { once.Do(func() { close(stop) }) }
 	go func() {
-		defer close(done)
+		defer close(doneCh)
 		t := time.NewTicker(h.every)
 		defer t.Stop()
 		for {
@@ -82,13 +82,13 @@ func (h *heartbeatLogStream) StartLogStream(ctx context.Context, sessionID strin
 			case <-stop:
 				return
 			case <-t.C:
-				if err := sink.Emit(&criteriav2.LogEvent{Heartbeat: &criteriav2.Heartbeat{}}); err != nil {
+				if emitErr := sink.Emit(&criteriav2.LogEvent{Heartbeat: &criteriav2.Heartbeat{}}); emitErr != nil {
 					return
 				}
 			}
 		}
 	}()
-	return cancel, done, nil
+	return cancelFn, doneCh, nil
 }
 
 // heartbeatHandle pairs a blocking adapter Execute with a heartbeat-emitting
@@ -98,7 +98,7 @@ type heartbeatHandle struct {
 	logs *heartbeatLogStream
 }
 
-func (h *heartbeatHandle) StartLogStream(ctx context.Context, sessionID string, sink adapterhost.LogEventSink) (func(), <-chan error, error) {
+func (h *heartbeatHandle) StartLogStream(ctx context.Context, sessionID string, sink adapterhost.LogEventSink) (cancel func(), done <-chan error, err error) {
 	return h.logs.StartLogStream(ctx, sessionID, sink)
 }
 
@@ -141,7 +141,7 @@ state "done" {
 
 func TestStepStall_FailsRunWithTypedError(t *testing.T) {
 	t.Setenv("CRITERIA_STEP_STALL_WINDOW", "40ms")
-	deps, g, step := newStallTestDeps(t, newBlockingAdapter("wedge"))
+	deps, g, step := newStallTestDeps(t, newBlockingAdapter())
 	n := &stepNode{graph: g, step: step}
 
 	// The watchdog cancels the wedged Execute on its own; the wall-clock
@@ -185,7 +185,7 @@ func TestStepStall_FailsRunWithTypedError(t *testing.T) {
 func TestStepStall_ProgressPreventsStall(t *testing.T) {
 	t.Setenv("CRITERIA_STEP_STALL_WINDOW", "2s")
 	handle := &heartbeatHandle{
-		blockingAdapter: newBlockingAdapter("wedge"),
+		blockingAdapter: newBlockingAdapter(),
 		logs:            &heartbeatLogStream{every: 100 * time.Millisecond},
 	}
 	deps, g, step := newStallTestDeps(t, handle)
@@ -208,7 +208,7 @@ func TestStepStall_ProgressPreventsStall(t *testing.T) {
 // the run teardown keeps its existing routing.
 func TestStepStall_ParentCancelWins(t *testing.T) {
 	t.Setenv("CRITERIA_STEP_STALL_WINDOW", "200ms")
-	deps, g, step := newStallTestDeps(t, newBlockingAdapter("wedge"))
+	deps, g, step := newStallTestDeps(t, newBlockingAdapter())
 	n := &stepNode{graph: g, step: step}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -229,7 +229,7 @@ func TestStepStall_ParentCancelWins(t *testing.T) {
 // still opens from the step-declared timeout.
 func TestStepStall_StepTimeoutCeilingUnchanged(t *testing.T) {
 	t.Setenv("CRITERIA_STEP_STALL_WINDOW", "40ms")
-	deps, g, step := newStallTestDeps(t, newBlockingAdapter("wedge"))
+	deps, g, step := newStallTestDeps(t, newBlockingAdapter())
 	timedStep := *step
 	timedStep.Timeout = 50 * time.Millisecond
 	n := &stepNode{graph: g, step: &timedStep}
@@ -276,7 +276,7 @@ func TestStepStallWindowFromEnv(t *testing.T) {
 // disarms stall detection: a wedged step is torn down only by its parent.
 func TestStepStall_DisabledWindow(t *testing.T) {
 	t.Setenv("CRITERIA_STEP_STALL_WINDOW", "0")
-	deps, g, step := newStallTestDeps(t, newBlockingAdapter("wedge"))
+	deps, g, step := newStallTestDeps(t, newBlockingAdapter())
 	n := &stepNode{graph: g, step: step}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)

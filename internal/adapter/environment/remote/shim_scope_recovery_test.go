@@ -47,7 +47,7 @@ func (r *recordingRegistrar) callCount() int {
 }
 
 // newRecoveryTestShim starts a per-scope shim whose listener is live.
-func newRecoveryTestShim(t *testing.T) (*Shim, string) {
+func newRecoveryTestShim(t *testing.T) (shim *Shim, addr string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	t.Cleanup(cancel)
