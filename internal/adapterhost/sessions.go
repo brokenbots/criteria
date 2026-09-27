@@ -1302,9 +1302,11 @@ func (m *SessionManager) OpenWithOriginRefs(ctx context.Context, name, adapterNa
 // its working directory. It resolves the adapter binary (or container/remote
 // equivalent), validates the protocol handshake via Info, checks the runtime
 // config against the adapter's manifest schema, and ensures required secrets
-// are present. The spawned handle is then killed; no long-lived session exists
-// after this call returns. Verification runs eagerly at scope start so broken
-// adapters fail before any step executes.
+// are present. Throwaway verification handles are killed when the call
+// returns; a peer-supervised handle (SupervisedHandle) wraps the peer's one
+// live adapter child, so it is left running and the peer keeps owning its
+// supervision + crash policy. Verification runs eagerly at scope start so
+// broken adapters fail before any step executes.
 //
 // If a verified or bound record already exists for name (e.g. a parent-scope
 // adapter re-declared in a subworkflow), Verify returns ErrSessionAlreadyOpen.
@@ -1373,7 +1375,17 @@ func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterNam
 	if err != nil {
 		return nil, err
 	}
-	defer plug.Kill()
+	defer func() {
+		// A peer-supervised handle wraps the peer's one real adapter child,
+		// not a throwaway verification handle: killing it would destroy the
+		// live child and poison the peer's crash classification
+		// (killRequested turns the next genuine crash into a graceful exit).
+		// The peer owns its child's lifecycle (supervision + on_crash
+		// policy), so phase-1 handshake verification leaves it running.
+		if _, supervised := plug.(SupervisedHandle); !supervised {
+			plug.Kill()
+		}
+	}()
 
 	info, infoErr := plug.Info(ctx)
 	if infoErr != nil {

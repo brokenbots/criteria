@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	neturl "net/url"
 	"os"
 	"path/filepath"
@@ -23,6 +25,7 @@ import (
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	ctypes "github.com/sigstore/cosign/v3/pkg/types"
+	"github.com/sigstore/sigstore-go/pkg/util"
 )
 
 func TestVerify_ModeOff(t *testing.T) {
@@ -491,4 +494,45 @@ func makeTestCert(t *testing.T, issuer, subject string) *x509.Certificate {
 		t.Fatal(err)
 	}
 	return cert
+}
+
+// TestNewTUFFetcher_DedicatedTransportAndUserAgent pins the one-shot TUF
+// fetcher contract trustedMaterial relies on: a dedicated transport (not the
+// shared http.DefaultClient pools that leak idle HTTP/2 readers) carrying the
+// criteria user agent on every request it makes.
+func TestNewTUFFetcher_DedicatedTransportAndUserAgent(t *testing.T) {
+	var gotUA string
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.Header.Get("User-Agent")
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	fetch, transport, err := newTUFFetcher()
+	if err != nil {
+		t.Fatalf("newTUFFetcher: %v", err)
+	}
+	defer transport.CloseIdleConnections()
+
+	if !transport.ForceAttemptHTTP2 || transport.TLSHandshakeTimeout == 0 || transport.IdleConnTimeout == 0 {
+		t.Errorf("fetcher transport = %+v, want the dedicated hardened transport", transport)
+	}
+	if transport.Proxy == nil {
+		t.Error("fetcher transport has no proxy function, want http.ProxyFromEnvironment")
+	}
+
+	// go-tuf's default retry policy is a single attempt, so the 404 stub
+	// surfaces as an immediate error rather than a retry loop.
+	_, err = fetch.DownloadFile(srv.URL+"/trusted_root.json", 1<<20, time.Second)
+	if err == nil {
+		t.Fatal("DownloadFile against a 404 stub returned nil error, want failure")
+	}
+	if gotPath != "/trusted_root.json" {
+		t.Errorf("fetcher requested %q, want /trusted_root.json", gotPath)
+	}
+	if gotUA != util.ConstructUserAgent() {
+		t.Errorf("fetcher sent User-Agent %q, want the criteria user agent %q", gotUA, util.ConstructUserAgent())
+	}
 }

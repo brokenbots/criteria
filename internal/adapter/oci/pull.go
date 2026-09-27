@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -80,10 +81,11 @@ func (p *Puller) PullWithAnnotations(ctx context.Context, ref Reference, annotat
 		return "", fmt.Errorf("oci: pull requires a fully-qualified reference (got %q)", ref)
 	}
 
-	repo, err := p.newRepository(ref)
+	repo, closeIdle, err := p.newRepository(ref)
 	if err != nil {
 		return "", err
 	}
+	defer closeIdle()
 
 	store, err := oci.New(p.Layout.Root)
 	if err != nil {
@@ -154,10 +156,11 @@ func (p *Puller) Resolve(ctx context.Context, ref Reference) (digest.Digest, err
 		return "", fmt.Errorf("oci: resolve requires a registry in reference (got %q)", ref)
 	}
 
-	repo, err := p.newRepository(ref)
+	repo, closeIdle, err := p.newRepository(ref)
 	if err != nil {
 		return "", err
 	}
+	defer closeIdle()
 
 	tag := ref.Tag
 	if ref.Digest != "" {
@@ -182,10 +185,11 @@ func (p *Puller) ListTags(ctx context.Context, ref Reference) ([]string, error) 
 	if ref.Registry == "" || ref.Repo == "" {
 		return nil, fmt.Errorf("oci: list tags requires a registry and repo (got %q)", ref)
 	}
-	repo, err := p.newRepository(ref)
+	repo, closeIdle, err := p.newRepository(ref)
 	if err != nil {
 		return nil, err
 	}
+	defer closeIdle()
 	var tags []string
 	if err := repo.Tags(ctx, "", func(page []string) error {
 		tags = append(tags, page...)
@@ -196,15 +200,18 @@ func (p *Puller) ListTags(ctx context.Context, ref Reference) ([]string, error) 
 	return tags, nil
 }
 
-// newRepository builds the oras-go remote.Repository for ref.
-func (p *Puller) newRepository(ref Reference) (*remote.Repository, error) {
+// newRepository builds the oras-go remote.Repository for ref. The returned
+// cleanup closes the repository transport's pooled connections; callers must
+// defer it so completed operations do not leak idle TLS connections (and their
+// reader goroutines) into the process.
+func (p *Puller) newRepository(ref Reference) (*remote.Repository, func(), error) {
 	repoRef := ref.Registry
 	if ref.Repo != "" {
 		repoRef += "/" + ref.Repo
 	}
 	repo, err := remote.NewRepository(repoRef)
 	if err != nil {
-		return nil, fmt.Errorf("oci: build remote repository for %q: %w", repoRef, err)
+		return nil, nil, fmt.Errorf("oci: build remote repository for %q: %w", repoRef, err)
 	}
 	repo.PlainHTTP = p.PlainHTTP || IsLocalhost(ref.Registry)
 
@@ -212,13 +219,22 @@ func (p *Puller) newRepository(ref Reference) (*remote.Repository, error) {
 	if ap == nil {
 		ap = DefaultAuthProvider()
 	}
+	// A dedicated transport keeps pooled connections local to this pull so they
+	// can be closed once the operation completes, instead of parking idle HTTP/2
+	// connections in the process-global DefaultTransport pool.
+	client := &http.Client{Transport: &http.Transport{
+		Proxy:               http.ProxyFromEnvironment,
+		TLSHandshakeTimeout: 10 * time.Second,
+		IdleConnTimeout:     30 * time.Second,
+		ForceAttemptHTTP2:   true,
+	}}
 	repo.Client = &auth.Client{
-		Client: http.DefaultClient,
+		Client: client,
 		Credential: func(ctx context.Context, hostport string) (auth.Credential, error) {
 			return ap.Credential(ctx, hostport)
 		},
 	}
-	return repo, nil
+	return repo, func() { client.CloseIdleConnections() }, nil
 }
 
 // annotateIndex updates the index.json entry for the given descriptor,

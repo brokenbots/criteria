@@ -14,8 +14,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/brokenbots/criteria/internal/adapter/oci"
 	"github.com/brokenbots/criteria/internal/dirs"
@@ -27,9 +29,11 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/fulcio/certificate"
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/tuf"
+	"github.com/sigstore/sigstore-go/pkg/util"
 	"github.com/sigstore/sigstore-go/pkg/verify"
 	sigcrypto "github.com/sigstore/sigstore/pkg/cryptoutils"
 	sigsignature "github.com/sigstore/sigstore/pkg/signature"
+	"github.com/theupdateframework/go-tuf/v2/metadata/fetcher"
 )
 
 // VerificationMode controls how signature verification failures are handled.
@@ -499,6 +503,13 @@ var trustedMaterialOverride root.TrustedMaterial
 // command is future work). Air-gapped consumers cannot keyless-verify (the TUF
 // root and a was-online-at-sign Rekor entry are required); they use WS47 key
 // mode or --allow-unsigned.
+//
+// The root is fetched one-shot rather than via root.NewLiveTrustedRoot: the
+// live variant spawns a background refresh goroutine that only stops when
+// opts.Context is cancelled, and criteria never owns such a context — every
+// keyless verification would leak a goroutine for the process lifetime. The
+// documented refresh path is the explicit cache-clearing command above, not an
+// automatic 24h refresher.
 func trustedMaterial(_ context.Context) (root.TrustedMaterial, error) {
 	if trustedMaterialOverride != nil {
 		return trustedMaterialOverride, nil
@@ -515,15 +526,54 @@ func trustedMaterial(_ context.Context) (root.TrustedMaterial, error) {
 	opts := tuf.DefaultOptions()
 	opts.CachePath = cacheDir
 
-	tr, err := root.NewLiveTrustedRoot(opts)
+	// The go-tuf DefaultFetcher shares http.DefaultClient, whose pooled
+	// connections outlive the fetch and leak an idle HTTP/2 reader goroutine
+	// under goroutine-leak checks. Give the fetcher a dedicated transport and
+	// close its pooled connections once the load completes.
+	fetch, transport, err := newTUFFetcher()
 	if err != nil {
-		return nil, fmt.Errorf("live trusted root: %w", err)
+		return nil, err
+	}
+	defer transport.CloseIdleConnections()
+	opts = opts.WithFetcher(fetch)
+
+	client, err := tuf.New(opts)
+	if err != nil {
+		return nil, fmt.Errorf("tuf client: %w", err)
+	}
+	rootJSON, err := client.GetTarget("trusted_root.json")
+	if err != nil {
+		return nil, fmt.Errorf("fetch trusted root target: %w", err)
+	}
+	tr, err := root.NewTrustedRootFromJSON(rootJSON)
+	if err != nil {
+		return nil, fmt.Errorf("parse trusted root: %w", err)
 	}
 	return tr, nil
 }
 
 func sigstoreCacheDir() (string, error) {
 	return dirs.CacheSigstore()
+}
+
+// newTUFFetcher builds the one-shot go-tuf fetcher trustedMaterial uses: a
+// dedicated http.Transport (the shared DefaultClient pools connections that
+// outlive the fetch and leak an idle HTTP/2 reader goroutine under
+// goroutine-leak checks) carrying the criteria user agent. The caller owns
+// closing the transport's idle connections when the fetch completes.
+func newTUFFetcher() (*fetcher.DefaultFetcher, *http.Transport, error) {
+	transport := &http.Transport{
+		Proxy:               http.ProxyFromEnvironment,
+		TLSHandshakeTimeout: 10 * time.Second,
+		IdleConnTimeout:     30 * time.Second,
+		ForceAttemptHTTP2:   true,
+	}
+	fetch := fetcher.NewDefaultFetcher()
+	if err := fetch.SetTransport(transport); err != nil {
+		return nil, nil, fmt.Errorf("tuf fetcher: %w", err)
+	}
+	fetch.SetHTTPUserAgent(util.ConstructUserAgent())
+	return fetch, transport, nil
 }
 
 // DefaultTrustedIssuers are the OIDC issuers trusted by default for keyless

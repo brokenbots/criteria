@@ -1,0 +1,42 @@
+workflow: peer-remote-demo  (version 0.1)
+initial_state: greet   target_state: done
+policy: max_total_steps=20  max_step_retries=0
+
+variables:
+  (none)
+
+adapters:
+  noop.gate   type=noop   on_crash=fail
+    config: (none)
+  shell.main   type=shell   on_crash=respawn
+    config: (none)
+
+steps (declaration order):
+  greet   adapter=shell.main
+    input keys: command
+    allow_tools: (none)
+    outcomes: success -> deliberate_failure, failure -> failed
+  deliberate_failure   adapter=shell.main
+    input keys: command
+    allow_tools: (none)
+    outcomes: failure -> recover, success -> failed
+  recover   adapter=shell.main
+    input keys: command
+    allow_tools: (none)
+    outcomes: success -> crash_demo, failure -> failed
+  crash_demo   adapter=shell.main
+    input keys: command, timeout
+    allow_tools: (none)
+    outcomes: success -> isolation_gate, failure -> failed
+  isolation_gate   adapter=noop.gate
+    input keys: delay_ms
+    allow_tools: (none)
+    outcomes: success -> done, failure -> failed
+
+states:
+  done    terminal=true   success=true
+  failed    terminal=true   success=false
+
+adapters required:
+  noop   (search: $CRITERIA_ADAPTERS, then $CRITERIA_HOME/adapters, default ~/.local/criteria/adapters)
+  shell   (search: $CRITERIA_ADAPTERS, then $CRITERIA_HOME/adapters, default ~/.local/criteria/adapters)

@@ -239,7 +239,8 @@ validate: build ## Validate all example workflow directories
 		examples/llm-pack/06-approval-and-wait \
 		examples/llm-pack/07-shared-variable \
 		examples/llm-pack/08-fileset-template \
-		examples/llm-pack/09-adapter-tools; do \
+		examples/llm-pack/09-adapter-tools \
+		examples/peer-remote; do \
 		echo "Validating $$d..."; \
 		CRITERIA_WORKFLOW_ALLOWED_PATHS="$(CURDIR)" ./bin/criteria validate "$$d" || exit 1; \
 	done

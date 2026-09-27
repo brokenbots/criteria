@@ -1,0 +1,152 @@
+{
+  "name": "peer-remote-demo",
+  "initial_state": "greet",
+  "target_state": "done",
+  "policy": {
+    "MaxTotalSteps": 20,
+    "MaxStepRetries": 0,
+    "MaxToolDepth": 8,
+    "MaxVisitsWarnThreshold": 200
+  },
+  "adapters": [
+    {
+      "type": "noop",
+      "name": "gate",
+      "on_crash": "fail",
+      "config_keys": null
+    },
+    {
+      "type": "shell",
+      "name": "main",
+      "on_crash": "respawn",
+      "config_keys": null
+    }
+  ],
+  "steps": [
+    {
+      "name": "greet",
+      "adapter": "shell.main",
+      "input_keys": [
+        "command"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "next": "failed"
+        },
+        {
+          "name": "success",
+          "next": "deliberate_failure"
+        }
+      ]
+    },
+    {
+      "name": "deliberate_failure",
+      "adapter": "shell.main",
+      "input_keys": [
+        "command"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "next": "recover"
+        },
+        {
+          "name": "success",
+          "next": "failed"
+        }
+      ]
+    },
+    {
+      "name": "recover",
+      "adapter": "shell.main",
+      "input_keys": [
+        "command"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "next": "failed"
+        },
+        {
+          "name": "success",
+          "next": "crash_demo"
+        }
+      ]
+    },
+    {
+      "name": "crash_demo",
+      "adapter": "shell.main",
+      "input_keys": [
+        "command",
+        "timeout"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "next": "failed"
+        },
+        {
+          "name": "success",
+          "next": "isolation_gate"
+        }
+      ]
+    },
+    {
+      "name": "isolation_gate",
+      "adapter": "noop.gate",
+      "input_keys": [
+        "delay_ms"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "next": "failed"
+        },
+        {
+          "name": "success",
+          "next": "done"
+        }
+      ]
+    }
+  ],
+  "states": [
+    {
+      "name": "done",
+      "terminal": true,
+      "success": true
+    },
+    {
+      "name": "failed",
+      "terminal": true,
+      "success": false
+    }
+  ],
+  "outputs": [
+    {
+      "name": "summary",
+      "type": "string",
+      "description": "Demo completion marker"
+    }
+  ],
+  "switches": [],
+  "step_order": [
+    "greet",
+    "deliberate_failure",
+    "recover",
+    "crash_demo",
+    "isolation_gate"
+  ],
+  "plugins_required": [
+    "noop",
+    "shell"
+  ],
+  "metadata": {
+    "schema_version": 1
+  }
+}
