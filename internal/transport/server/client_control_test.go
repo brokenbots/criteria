@@ -22,8 +22,9 @@ func waitForCtlAttach(t *testing.T, f *fakeServer) {
 }
 
 // TestClientControlStreamDeliversWorkflowAssignment verifies that a
-// WorkflowAssignment control message is delivered to AssignmentCh and that the
-// drop branch is exercised when the buffered channel is full.
+// WorkflowAssignment control message is delivered to AssignmentCh and that a
+// saturated assignment is held by backpressure and delivered once the
+// consumer drains, instead of being silently discarded (CRI-62).
 func TestClientControlStreamDeliversWorkflowAssignment(t *testing.T) {
 	f := newFakeServer()
 	url := startFakeServer(t, f)
@@ -69,23 +70,24 @@ func TestClientControlStreamDeliversWorkflowAssignment(t *testing.T) {
 	}
 
 	// Pre-fill the assignment channel to capacity so the next control message
-	// must take the non-blocking select default branch and be dropped.
+	// cannot be delivered immediately: with CRI-62 backpressure the control
+	// loop blocks holding it until the consumer drains, instead of dropping.
 	for i := 0; i < 32; i++ {
 		c.assignmentCh <- &pb.WorkflowAssignment{WorkflowName: "filler"}
 	}
 	f.controls <- &pb.ControlMessage{Command: &pb.ControlMessage_WorkflowAssignment{WorkflowAssignment: &pb.WorkflowAssignment{
-		RunId:          "run-dropped",
+		RunId:          "run-saturated",
 		WorkflowName:   "real",
 		WorkflowSource: "workflow {}",
 	}}}
 
-	// Give controlLoop a moment to process the message before draining; without
-	// this the non-blocking send may see a slot opened by the concurrent drain.
+	// Give controlLoop a moment to receive the message and block on the full
+	// buffer, proving the message is held rather than discarded.
 	time.Sleep(200 * time.Millisecond)
 
 	delivered := 0
 	sawReal := false
-	drain := time.NewTimer(500 * time.Millisecond)
+	drain := time.NewTimer(2 * time.Second)
 	defer drain.Stop()
 drainLoop:
 	for {
@@ -99,17 +101,18 @@ drainLoop:
 			break drainLoop
 		}
 	}
-	if delivered != 32 {
-		t.Fatalf("expected 32 delivered assignments, got %d", delivered)
+	if delivered != 33 {
+		t.Fatalf("expected 33 delivered assignments (32 fillers + saturated), got %d", delivered)
 	}
-	if sawReal {
-		t.Fatal("expected the dropped assignment to be discarded")
+	if !sawReal {
+		t.Fatal("expected the saturated assignment to be delivered after the consumer drained")
 	}
 }
 
 // TestClientControlStreamDeliversResumeRun verifies that a ResumeRun control
-// message is delivered to ResumeCh and that the drop branch is exercised when
-// the channel is full.
+// message is delivered to ResumeCh and that a resume arriving while the
+// consumer is busy is held by backpressure and delivered once the consumer
+// drains, instead of being silently dropped (CRI-62).
 func TestClientControlStreamDeliversResumeRun(t *testing.T) {
 	f := newFakeServer()
 	url := startFakeServer(t, f)
@@ -153,41 +156,43 @@ func TestClientControlStreamDeliversResumeRun(t *testing.T) {
 		c.resumeCh <- &pb.ResumeRun{RunId: "filler"}
 	}
 	f.controls <- &pb.ControlMessage{Command: &pb.ControlMessage_ResumeRun{ResumeRun: &pb.ResumeRun{
-		RunId:  "real",
+		RunId:  "run-saturated",
 		Signal: "resume",
 	}}}
 
-	// Allow controlLoop to process the message before draining so the drop
-	// branch is hit deterministically.
+	// Allow controlLoop to receive the message and block on the full buffer so
+	// the hold (rather than drop) is exercised deterministically.
 	time.Sleep(200 * time.Millisecond)
 
 	delivered := 0
 	sawReal := false
-	drain := time.NewTimer(500 * time.Millisecond)
+	drain := time.NewTimer(2 * time.Second)
 	defer drain.Stop()
 drainLoop:
 	for {
 		select {
 		case got := <-c.ResumeCh():
 			delivered++
-			if got.RunId == "real" {
+			if got.RunId == "run-saturated" {
 				sawReal = true
 			}
 		case <-drain.C:
 			break drainLoop
 		}
 	}
-	if delivered != 32 {
-		t.Fatalf("expected 32 delivered resume messages, got %d", delivered)
+	if delivered != 33 {
+		t.Fatalf("expected 33 delivered resume messages (32 fillers + saturated), got %d", delivered)
 	}
-	if sawReal {
-		t.Fatal("expected the dropped resume message to be discarded")
+	if !sawReal {
+		t.Fatal("expected the saturated resume message to be delivered after the consumer drained")
 	}
 }
 
-// TestClientControlStreamDropsRunCancelWhenFull verifies the default branch of
-// the non-blocking RunCancel dispatch.
-func TestClientControlStreamDropsRunCancelWhenFull(t *testing.T) {
+// TestClientControlStreamDeliversRunCancelAfterBackpressure verifies the
+// RunCancel dispatch under a saturated buffer: the cancel is held by
+// backpressure and delivered once the consumer drains, instead of being
+// silently discarded (CRI-62).
+func TestClientControlStreamDeliversRunCancelAfterBackpressure(t *testing.T) {
 	f := newFakeServer()
 	url := startFakeServer(t, f)
 
@@ -210,31 +215,33 @@ func TestClientControlStreamDropsRunCancelWhenFull(t *testing.T) {
 	for i := 0; i < 32; i++ {
 		c.runCancelCh <- "filler"
 	}
-	f.controls <- &pb.ControlMessage{Command: &pb.ControlMessage_RunCancel{RunCancel: &pb.RunCancel{RunId: "real", Reason: "x"}}}
+	f.controls <- &pb.ControlMessage{Command: &pb.ControlMessage_RunCancel{RunCancel: &pb.RunCancel{RunId: "run-saturated", Reason: "x"}}}
 
+	// Allow controlLoop to receive the message and block on the full buffer so
+	// the hold (rather than drop) is exercised deterministically.
 	time.Sleep(200 * time.Millisecond)
 
 	delivered := 0
 	sawReal := false
-	drain := time.NewTimer(500 * time.Millisecond)
+	drain := time.NewTimer(2 * time.Second)
 	defer drain.Stop()
 drainLoop:
 	for {
 		select {
 		case got := <-c.RunCancelCh():
 			delivered++
-			if got == "real" {
+			if got == "run-saturated" {
 				sawReal = true
 			}
 		case <-drain.C:
 			break drainLoop
 		}
 	}
-	if delivered != 32 {
-		t.Fatalf("expected 32 delivered run.cancel messages, got %d", delivered)
+	if delivered != 33 {
+		t.Fatalf("expected 33 delivered run.cancel messages (32 fillers + saturated), got %d", delivered)
 	}
-	if sawReal {
-		t.Fatal("expected the dropped run.cancel message to be discarded")
+	if !sawReal {
+		t.Fatal("expected the saturated run.cancel message to be delivered after the consumer drained")
 	}
 }
 
