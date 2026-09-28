@@ -59,7 +59,7 @@ func addStubBlob(f *referrerStubFixture, data []byte, mediaType string) ocispec.
 
 // addStubManifest marshals m as OCI content, registers it as a blob too (so
 // either endpoint can serve it), and returns its descriptor.
-func addStubManifest(t *testing.T, f *referrerStubFixture, m *ocispec.Manifest) (ocispec.Descriptor, []byte) {
+func addStubManifest(t *testing.T, f *referrerStubFixture, m *ocispec.Manifest) (desc ocispec.Descriptor, raw []byte) {
 	t.Helper()
 	m.MediaType = ocispec.MediaTypeImageManifest
 	m.SchemaVersion = 2
@@ -116,12 +116,16 @@ func serveReferrerStub(t *testing.T, f *referrerStubFixture, failure referrerFai
 		sub := strings.TrimPrefix(r.URL.Path, prefix)
 		switch {
 		case strings.HasPrefix(sub, "referrers/"):
-			if failure == referrerDiscoveryFails {
+			switch failure {
+			case referrerDiscoveryFails:
 				http.Error(w, "referrers unavailable", http.StatusInternalServerError)
 				return
+			case referrerCopySucceeds, referrerBlobCopyFails:
+				w.Header().Set("Content-Type", ocispec.MediaTypeImageIndex)
+				_, _ = w.Write(f.indexRaw)
+			default:
+				t.Fatalf("unhandled referrer failure mode: %d", failure)
 			}
-			w.Header().Set("Content-Type", ocispec.MediaTypeImageIndex)
-			_, _ = w.Write(f.indexRaw)
 		case strings.HasPrefix(sub, "manifests/"):
 			serveStubManifest(w, r, f, strings.TrimPrefix(sub, "manifests/"))
 		case strings.HasPrefix(sub, "blobs/"):
