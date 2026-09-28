@@ -3,6 +3,7 @@ package oci
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -109,8 +110,17 @@ func (p *Puller) PullWithAnnotations(ctx context.Context, ref Reference, annotat
 	// them. Referrers are optional metadata: a discovery failure must not fail an
 	// otherwise-successful pull (strict verification still fails closed if a
 	// required signature is absent, and --allow-unsigned pulls don't need them),
-	// so this is best-effort.
-	_ = copyReferrers(ctx, repo, store, &desc)
+	// so this is best-effort. The failure is still logged with subject/repo
+	// context: a transient copy failure leaves the local referrer cache
+	// incomplete, and the later strict-verification failure it causes ("no
+	// cosign signatures found") is only diagnosable from this warning.
+	if err := copyReferrers(ctx, repo, store, &desc); err != nil {
+		slog.Warn("oci referrer copy failed; local referrer cache may be incomplete and a later signature verification may report missing signatures",
+			"repo", ref.Registry+"/"+ref.Repo,
+			"subject", desc.Digest.String(),
+			"error", err,
+		)
+	}
 
 	// Annotate the index descriptor with the protocol/schema version and any
 	// caller-supplied provenance so the host loader can discriminate cached
