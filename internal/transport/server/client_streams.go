@@ -126,6 +126,27 @@ func controlMessageType(msg *pb.ControlMessage) string {
 	return "unknown"
 }
 
+// forwardControl delivers cmd onto ch, applying backpressure when the
+// consumer has not drained the buffer (CRI-62): the send blocks until a slot
+// frees or the client shuts down, so a saturated control command can no
+// longer vanish. The only remaining drop path is a genuine shutdown race
+// (context cancelled or Close called while the send is blocked), which is
+// returned as an error so the caller logs the drop with structured evidence.
+func forwardControl[T any](ctx context.Context, closed <-chan struct{}, ch chan<- T, cmd T) error {
+	select {
+	case ch <- cmd:
+		return nil
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	case <-closed:
+		return errControlConsumerGone
+	}
+}
+
+// errControlConsumerGone reports that the control consumer side of the client
+// is gone (Close called) while a control command was blocked on delivery.
+var errControlConsumerGone = errors.New("control consumer gone: client closed")
+
 func (c *Client) StartControl(ctx context.Context) error {
 	if !c.controlStarted.CompareAndSwap(false, true) {
 		return nil
@@ -178,13 +199,14 @@ func (c *Client) controlLoop(ctx context.Context, ready chan<- error) { //nolint
 			}
 			// Dispatch: every ControlMessage oneof arm is either forwarded
 			// onto its channel or logged — nothing falls through silently
-			// (R1, ADR-0006 D1).
+			// (R1, ADR-0006 D1). Forwarding applies backpressure when the
+			// consumer is busy (CRI-62): a command is never discarded while
+			// the stream is healthy; only a shutdown race drops it, with a
+			// structured drop_reason field for observability.
 			if rc := msg.GetRunCancel(); rc != nil {
 				if rc.RunId != "" {
-					select {
-					case c.runCancelCh <- rc.RunId:
-					default:
-						c.log.Warn("dropping run.cancel control message", "run_id", rc.RunId)
+					if err := forwardControl(ctx, c.closed, c.runCancelCh, rc.RunId); err != nil {
+						c.log.Warn("dropping run.cancel control message", "run_id", rc.RunId, "drop_reason", "shutdown", "error", err)
 					}
 				} else {
 					c.log.Warn("ignoring run.cancel control message without run_id")
@@ -192,10 +214,8 @@ func (c *Client) controlLoop(ctx context.Context, ready chan<- error) { //nolint
 			}
 			if rr := msg.GetResumeRun(); rr != nil {
 				if rr.RunId != "" {
-					select {
-					case c.resumeCh <- rr:
-					default:
-						c.log.Warn("dropping resume_run control message", "run_id", rr.RunId)
+					if err := forwardControl(ctx, c.closed, c.resumeCh, rr); err != nil {
+						c.log.Warn("dropping resume_run control message", "run_id", rr.RunId, "drop_reason", "shutdown", "error", err)
 					}
 				} else {
 					c.log.Warn("ignoring resume_run control message without run_id")
@@ -203,10 +223,8 @@ func (c *Client) controlLoop(ctx context.Context, ready chan<- error) { //nolint
 			}
 			if wa := msg.GetWorkflowAssignment(); wa != nil {
 				if wa.RunId != "" {
-					select {
-					case c.assignmentCh <- wa:
-					default:
-						c.log.Warn("dropping workflow assignment", "run_id", wa.RunId)
+					if err := forwardControl(ctx, c.closed, c.assignmentCh, wa); err != nil {
+						c.log.Warn("dropping workflow assignment", "run_id", wa.RunId, "drop_reason", "shutdown", "error", err)
 					}
 				} else {
 					c.log.Warn("ignoring workflow assignment without run_id")
@@ -216,10 +234,8 @@ func (c *Client) controlLoop(ctx context.Context, ready chan<- error) { //nolint
 				// Dispatch even when run_id is empty: the routing layer
 				// records a prompt for an unknown run as a typed failure
 				// (R2/R6) rather than dropping it here unobserved.
-				select {
-				case c.promptCh <- ap:
-				default:
-					c.log.Warn("dropping agent_prompt control message", "run_id", ap.GetRunId(), "step", ap.GetStep())
+				if err := forwardControl(ctx, c.closed, c.promptCh, ap); err != nil {
+					c.log.Warn("dropping agent_prompt control message", "run_id", ap.GetRunId(), "step", ap.GetStep(), "drop_reason", "shutdown", "error", err)
 				}
 			}
 			if msg.GetRunCancel() == nil && msg.GetResumeRun() == nil && msg.GetWorkflowAssignment() == nil && msg.GetAgentPrompt() == nil {
