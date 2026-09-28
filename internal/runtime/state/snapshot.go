@@ -4,6 +4,7 @@ package state
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,11 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
 )
+
+// ErrNoSnapshots reports that a snapshot directory holds no checkpoint
+// files. Restore paths treat it as "never checkpointed" (a logged fresh
+// start, not an error); nextSeq treats it as sequence 1.
+var ErrNoSnapshots = errors.New("no snapshots found")
 
 // SnapshotDir returns the directory for a given run/session snapshot sequence.
 func SnapshotDir(base, runID, sessionID string) string {
@@ -47,30 +53,8 @@ func WriteSnapshot(dir string, snap *adapterhost.SessionSnapshot) (seq int, err 
 	return seq, nil
 }
 
-// ReadLatestSnapshot finds the highest sequence number in dir and reconstructs
-// a SessionSnapshot from the corresponding .json + .bin files.
-func ReadLatestSnapshot(dir string) (*adapterhost.SessionSnapshot, error) {
-	seq, err := latestSeq(dir)
-	if err != nil {
-		return nil, err
-	}
-	jsonPath := filepath.Join(dir, seqName(seq, ".json"))
-	data, err := os.ReadFile(jsonPath)
-	if err != nil {
-		return nil, fmt.Errorf("read snapshot metadata: %w", err)
-	}
-	var snap adapterhost.SessionSnapshot
-	if err := json.Unmarshal(data, &snap); err != nil {
-		return nil, fmt.Errorf("unmarshal snapshot metadata: %w", err)
-	}
-	binPath := filepath.Join(dir, seqName(seq, ".bin"))
-	blob, err := os.ReadFile(binPath)
-	if err != nil {
-		return nil, fmt.Errorf("read snapshot blob: %w", err)
-	}
-	snap.AdapterState = blob
-	return &snap, nil
-}
+// ReadLatestSnapshot (the loud, digest-verifying variant) lives in
+// checkpoint.go (CRI-202).
 
 // ListSnapshotSessions returns all session IDs under the run's snapshots root.
 func ListSnapshotSessions(base, runID string) ([]string, error) {
@@ -93,10 +77,7 @@ func ListSnapshotSessions(base, runID string) ([]string, error) {
 
 func nextSeq(dir string) (int, error) {
 	seq, err := latestSeq(dir)
-	if os.IsNotExist(err) {
-		return 1, nil
-	}
-	if err != nil && (strings.Contains(err.Error(), "no snapshots found")) {
+	if os.IsNotExist(err) || errors.Is(err, ErrNoSnapshots) {
 		return 1, nil
 	}
 	if err != nil {
@@ -128,7 +109,7 @@ func latestSeq(dir string) (int, error) {
 		}
 	}
 	if maxSeq < 0 {
-		return 0, fmt.Errorf("no snapshots found in %s", dir)
+		return 0, fmt.Errorf("no snapshots found in %s: %w", dir, ErrNoSnapshots)
 	}
 	return maxSeq, nil
 }

@@ -148,6 +148,14 @@ type SessionManager struct {
 	// verification.
 	deferredRemoteAdapters map[string]struct{}
 
+	// CheckpointSave persists a session's checkpoint at step boundaries (and
+	// per-turn boundaries for adapters declaring per-turn granularity,
+	// CRI-202). The engine wires the state-home store; nil disables
+	// checkpointing entirely. Failures are surfaced to execute(), which
+	// aborts the run loudly: a step-outcome event is never emitted without
+	// its checkpoint.
+	CheckpointSave func(sessionID string, snap *SessionSnapshot) error
+
 	// HeartbeatStallThreshold is the duration after which a log-stream heartbeat
 	// is considered stalled. If zero, the default 90s is used. This is primarily
 	// a test hook so conformance and regression tests can use a short threshold.
@@ -862,6 +870,20 @@ type Session struct {
 	// WS17: session-level pause state for idempotency.
 	paused  bool
 	pauseMu sync.Mutex
+
+	// CRI-202: the adapter's declared checkpoint-state surface, stamped at
+	// session registration from the phase-1 handshake (InfoResponse.state).
+	// Zero values mean the adapter declared no checkpointable state.
+	stateMode        string
+	stateSchema      string
+	stateGranularity string
+
+	// ckptMu serializes checkpoint captures for this session so a per-turn
+	// save and a step-boundary save never issue concurrent Snapshot RPCs on
+	// one adapter handle.
+	ckptMu sync.Mutex
+	// ckptInFlight marks an in-flight per-turn checkpoint save.
+	ckptInFlight atomic.Bool
 }
 
 // pauseToolCallDrainTimeout returns the effective drain-first pause window
@@ -943,6 +965,13 @@ func (s *Session) Resume(ctx context.Context) error {
 	}
 	s.paused = false
 	return nil
+}
+
+// isPaused reports whether the session is currently paused.
+func (s *Session) isPaused() bool {
+	s.pauseMu.Lock()
+	defer s.pauseMu.Unlock()
+	return s.paused
 }
 
 // Inspect returns a structured read-only view of the session's state.
@@ -1788,11 +1817,14 @@ func (m *SessionManager) registerSession(ctx context.Context, name, adapterName,
 	if a := m.lockedAdapterFor(name); a != nil {
 		sess.AdapterDigest = digest.Digest(a.ResolvedDigest)
 	}
+	declared := m.declaredStateLocked(name)
+	m.stampStateFields(sess, declared)
 	m.sessions[name] = sess
 	sess.noteActivity()
 
 	m.startPermissionStream(ctx, sess, plug)
 	m.startLogStream(ctx, sess, plug)
+	m.wireTurnCheckpoint(sess, declared)
 	return nil
 }
 
@@ -2320,6 +2352,9 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 			return result, fatalErr
 		}
 		m.registerSensitiveOutputs(result, step)
+		if err := m.checkpointAfterExecute(ctx, sess); err != nil {
+			return result, &FatalRunError{Err: err}
+		}
 		return result, nil
 	}
 
@@ -2972,7 +3007,22 @@ type SessionSnapshot struct {
 	HostArch         string                       `json:"host_arch"`          // GOOS/GOARCH at snapshot
 	WorkingDir       string                       `json:"working_dir"`        // resolved environment working_directory at snapshot
 	ScopeInstanceID  string                       `json:"scope_instance_id"`  // shim scope key for remote per-scope sessions
-	CreatedAt        time.Time                    `json:"created_at"`
+	// CRI-202: the adapter-declared state surface stamped at save time so a
+	// restore can reject a mismatched state shape instead of misinterpreting
+	// the bytes. Empty on pre-CRI-202 checkpoints; restore treats an empty
+	// tag as unverifiable and proceeds with a warning.
+	StateSchema string `json:"state_schema,omitempty"`
+	// StateMode records the declared mode (blob|ref) the state was saved
+	// under; informational for restore diagnostics.
+	StateMode string `json:"state_mode,omitempty"`
+	// StateDigest is the "sha256:<hex>" digest of AdapterState at save time;
+	// the checkpoint store verifies it on restore so a truncated or
+	// corrupted blob fails loudly with the session and schema named.
+	StateDigest string `json:"state_digest,omitempty"`
+	// Granularity records the adapter's declared checkpoint granularity
+	// (per-step|per-turn|on-demand) at save time.
+	Granularity string `json:"granularity,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 const currentSnapshotSchemaVersion uint32 = 1
@@ -2984,7 +3034,16 @@ func (s *Session) Snapshot(ctx context.Context) (*SessionSnapshot, error) {
 	if err := s.Pause(ctx); err != nil {
 		return nil, fmt.Errorf("pause before snapshot: %w", err)
 	}
+	return s.captureState(ctx)
+}
 
+// captureState captures the adapter's state, permission state, and host
+// metadata without pausing the session. Used by Snapshot (after its Pause)
+// and by the step/turn-boundary checkpoint saves (CRI-202), which run while
+// the session is active: torn-read consistency mid-turn is the adapter's
+// declared responsibility — a per-turn declaration promises consistent
+// snapshots at turn boundaries.
+func (s *Session) captureState(ctx context.Context) (*SessionSnapshot, error) {
 	resp, err := s.handle.Snapshot(ctx, s.Name)
 	if err != nil {
 		return nil, fmt.Errorf("adapter snapshot: %w", err)
@@ -3007,6 +3066,10 @@ func (s *Session) Snapshot(ctx context.Context) (*SessionSnapshot, error) {
 		HostArch:         runtime.GOOS + "/" + runtime.GOARCH,
 		WorkingDir:       s.WorkingDir,
 		ScopeInstanceID:  s.ScopeInstanceID,
+		StateSchema:      s.stateSchema,
+		StateMode:        s.stateMode,
+		Granularity:      s.stateGranularity,
+		StateDigest:      ComputeStateDigest(resp.State),
 		CreatedAt:        time.Now(),
 	}, nil
 }
@@ -3121,6 +3184,7 @@ func (m *SessionManager) Restore(ctx context.Context, name, adapterName, onCrash
 	}
 
 	var caps []string
+	var declared *workflow.StateDeclaration
 	if info, infoErr := plug.Info(ctx); infoErr == nil {
 		// A relaunch may surface a changed or malformed declaration (e.g. the
 		// adapter binary was swapped mid-run); fail the restore loudly rather
@@ -3132,11 +3196,22 @@ func (m *SessionManager) Restore(ctx context.Context, name, adapterName, onCrash
 			}
 			return nil, stateErr
 		}
+		// CRI-202: re-check the checkpoint's stamped state schema against the
+		// relaunched adapter's declaration. Mismatched or dropped state must
+		// refuse loudly — never a silent fresh start.
+		if schemaErr := validateRestoredStateSchema(adapterName, info.AdapterInfo.State, snap); schemaErr != nil {
+			plug.Kill()
+			if cleanup != nil {
+				cleanup()
+			}
+			return nil, schemaErr
+		}
 		caps = append([]string(nil), info.Capabilities...)
 		// Re-capture the declared surface after a snapshot relaunch so a
 		// restored session keeps gating on its declared input contract
 		// (CRI-270) without a re-verify round-trip.
 		m.cacheAdapterInfo(name, &info.AdapterInfo)
+		declared = info.AdapterInfo.State
 	}
 
 	permState, err := m.restorePermissionState(name, snap.PermissionState)
@@ -3149,6 +3224,7 @@ func (m *SessionManager) Restore(ctx context.Context, name, adapterName, onCrash
 	}
 
 	sess := buildRestoredSession(name, adapterName, onCrash, config, resolvedSecrets, snap.SecretOriginRefs, caps, plug, cleanup, permState, snap.WorkingDir, snap.ScopeInstanceID)
+	m.stampStateFields(sess, declared)
 	if err := m.registerRestoredSession(ctx, name, plug, cleanup, sess); err != nil {
 		return nil, err
 	}
@@ -3157,6 +3233,7 @@ func (m *SessionManager) Restore(ctx context.Context, name, adapterName, onCrash
 		m.startPermissionStream(ctx, sess, plug)
 	}
 	m.startLogStream(ctx, sess, plug)
+	m.wireTurnCheckpoint(sess, declared)
 	return sess, nil
 }
 
@@ -3170,6 +3247,43 @@ func (m *SessionManager) restorePermissionState(name string, blob []byte) (*perm
 		return nil, fmt.Errorf("restore permission state: %w", err)
 	}
 	return permState, nil
+}
+
+// RestoreIntoLiveSession replays prior adapter state into an already-open
+// session (CRI-202). A remote adapter that phone-homed during initialization
+// binds its session before the engine's checkpoint-restore pass runs, so the
+// pass must be able to restore into a live session instead of reopening one.
+// The declared state surface is re-checked against the checkpoint's schema
+// tag; permission state and streams are already live and are left untouched.
+func (m *SessionManager) RestoreIntoLiveSession(ctx context.Context, name string, snap *SessionSnapshot) error {
+	m.mu.Lock()
+	sess, ok := m.sessions[name]
+	m.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("cannot restore checkpoint: session %q is not open", name)
+	}
+	if err := m.validateSnapshotCompatibility(name, snap); err != nil {
+		return err
+	}
+	info := m.cachedAdapterInfo(name)
+	if info != nil {
+		if err := validateStateHandshake(name, info.State); err != nil {
+			return err
+		}
+	}
+	// nil (no cached handshake info) is legal here: validateRestoredStateSchema
+	// then only enforces the schema-vs-no-declaration refusal.
+	var declared *workflow.StateDeclaration
+	if info != nil {
+		declared = info.State
+	}
+	if err := validateRestoredStateSchema(name, declared, snap); err != nil {
+		return err
+	}
+	if err := sess.handle.Restore(ctx, name, snap.AdapterState, snap.SchemaVersion); err != nil {
+		return fmt.Errorf("restore into live session %q: %w", name, err)
+	}
+	return nil
 }
 
 func (m *SessionManager) validateSnapshotCompatibility(adapterKey string, snap *SessionSnapshot) error {
