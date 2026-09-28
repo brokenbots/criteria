@@ -157,7 +157,10 @@ func (m *SessionManager) persistCheckpoint(ctx context.Context, sess *Session) e
 // engine emits the step-outcome event: a step is only done once its state is
 // durable, so a save failure aborts the run (FatalRunError) instead of
 // completing the step without a checkpoint. A canceled context means the run
-// is stopping; no step-outcome will be emitted, so the save is skipped.
+// is stopping; no step-outcome will be emitted, so the save is skipped. A
+// failed Execute returns before this hook: the failed step's mutations are
+// not persisted, so a resume replays that step from pre-step state and the
+// next successful boundary captures full state.
 func (m *SessionManager) checkpointAfterExecute(ctx context.Context, sess *Session) error {
 	select {
 	case <-ctx.Done():

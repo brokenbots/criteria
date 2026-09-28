@@ -562,8 +562,10 @@ func (e *Engine) Run(ctx context.Context) error {
 // from there). It does NOT emit OnRunStarted (the run already started).
 // If initialAttempt would already exceed max_step_retries, it emits
 // OnRunFailed instead of attempting the step.
-// Adapter sessions are provisioned fresh on each run (resumed or not),
-// allowing the workflow to be resumed in a new process context.
+// Adapter sessions are launched through the same initialization sequence as a
+// fresh run; sessions whose adapters checkpointed (CRI-202) replay their
+// prior state from the last checkpoint during that sequence, so the workflow
+// can resume in a new process context without losing adapter state.
 //
 // CRI-304: like Run, every init failure before runLoop emits OnRunFailed so
 // a resumed run's record reaches a terminal status even when provisioning or

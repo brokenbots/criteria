@@ -68,15 +68,6 @@ func (c *CheckpointStore) DeleteRun() error {
 	return nil
 }
 
-// DeleteSession removes the checkpoints of one session of this run.
-func (c *CheckpointStore) DeleteSession(sessionID string) error {
-	dir := SnapshotDir(c.base, c.runID, sessionID)
-	if err := os.RemoveAll(dir); err != nil {
-		return fmt.Errorf("delete checkpoints for session %q of run %q: %w", sessionID, c.runID, err)
-	}
-	return nil
-}
-
 // seqFiles records which checkpoint files exist for a sequence number.
 type seqFiles struct {
 	jsonExists bool

@@ -12,6 +12,7 @@ package adapterhost
 import (
 	"context"
 	"errors"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -28,9 +29,16 @@ import (
 type ckptHandle struct {
 	decl *workflow.StateDeclaration
 
-	mu    sync.Mutex
-	state []byte
-	open  int
+	mu      sync.Mutex
+	state   []byte
+	open    int
+	restore []ckptRestoreRecord
+}
+
+// ckptRestoreRecord captures one Restore RPC the adapter received.
+type ckptRestoreRecord struct {
+	blob          []byte
+	schemaVersion uint32
 }
 
 func (h *ckptHandle) Info(context.Context) (Info, error) {
@@ -57,11 +65,20 @@ func (h *ckptHandle) Snapshot(_ context.Context, _ string) (*v2.SnapshotResponse
 	defer h.mu.Unlock()
 	return &v2.SnapshotResponse{State: append([]byte(nil), h.state...)}, nil
 }
-func (h *ckptHandle) Restore(_ context.Context, _ string, state []byte, _ uint32) error {
+func (h *ckptHandle) Restore(_ context.Context, _ string, state []byte, schemaVersion uint32) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.restore = append(h.restore, ckptRestoreRecord{
+		blob:          append([]byte(nil), state...),
+		schemaVersion: schemaVersion,
+	})
 	h.state = append([]byte(nil), state...)
 	return nil
+}
+func (h *ckptHandle) restoredCalls() []ckptRestoreRecord {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]ckptRestoreRecord(nil), h.restore...)
 }
 func (h *ckptHandle) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
@@ -389,4 +406,115 @@ func TestSessionBound_DistinguishesVerifiedRecords(t *testing.T) {
 	if m2.SessionBound("s1") {
 		t.Fatal("SessionBound after verify = true; want false — the record is verified, not bound")
 	}
+}
+
+// liveSnap builds a restore-ready SessionSnapshot for live-session tests:
+// schema-stamped, digest-verified, and compatible with the current host.
+// The checkpoint payload is always "prior-state" — refusal tests below rely
+// on it being replaced, not varied.
+func liveSnap(schema string) *SessionSnapshot {
+	state := []byte("prior-state")
+	return &SessionSnapshot{
+		AdapterState:  state,
+		SchemaVersion: currentSnapshotSchemaVersion,
+		HostArch:      runtime.GOOS + "/" + runtime.GOARCH,
+		StateSchema:   schema,
+		StateMode:     workflow.StateModeBlob,
+		StateDigest:   ComputeStateDigest(state),
+	}
+}
+
+// TestRestoreIntoLiveSession_ReplaysCheckpointIntoBoundSession: a remote
+// adapter that phone-homed during initialization binds its session before
+// the resume pass runs, so the pass must replay the checkpoint into the LIVE
+// session — the adapter receives Restore with the checkpoint's exact bytes
+// and schema version, and the session stays bound (never relaunched).
+func TestRestoreIntoLiveSession_ReplaysCheckpointIntoBoundSession(t *testing.T) {
+	h := &ckptHandle{decl: &workflow.StateDeclaration{Mode: workflow.StateModeBlob, Schema: "harness.v1"}}
+	m, _ := openStatefulSession(t, h, &ckptRecorder{})
+
+	snap := liveSnap("harness.v1")
+	if err := m.RestoreIntoLiveSession(context.Background(), "s1", snap); err != nil {
+		t.Fatalf("RestoreIntoLiveSession: %v", err)
+	}
+
+	calls := h.restoredCalls()
+	if len(calls) != 1 {
+		t.Fatalf("adapter received %d restore calls; want 1", len(calls))
+	}
+	if string(calls[0].blob) != "prior-state" {
+		t.Errorf("restored blob = %q; want prior-state", calls[0].blob)
+	}
+	if calls[0].schemaVersion != snap.SchemaVersion {
+		t.Errorf("restored schemaVersion = %d; want %d", calls[0].schemaVersion, snap.SchemaVersion)
+	}
+	if !m.SessionBound("s1") {
+		t.Error("session no longer bound after live restore; want the same live session retained")
+	}
+}
+
+// TestRestoreIntoLiveSession_RefusesWhenSessionNotOpen: a restore routed to
+// a live session that does not exist fails loudly with the session named —
+// never a silent fresh start on the mis-routed checkpoint.
+func TestRestoreIntoLiveSession_RefusesWhenSessionNotOpen(t *testing.T) {
+	m := NewSessionManager(&ckptLoader{handle: &ckptHandle{}})
+	err := m.RestoreIntoLiveSession(context.Background(), "s1", liveSnap("harness.v1"))
+	if err == nil {
+		t.Fatal("expected a loud refusal for a restore into a non-open session")
+	}
+	if !strings.Contains(err.Error(), `session "s1" is not open`) {
+		t.Errorf("refusal does not name the session: %v", err)
+	}
+}
+
+// TestRestoreIntoLiveSession_RefusesSchemaContradiction: the relaunched
+// (phone-homed) adapter's declared state surface must agree with the
+// checkpoint stamp. Every contradiction refuses loudly without calling
+// Restore — no path returns nil and continues fresh.
+func TestRestoreIntoLiveSession_RefusesSchemaContradiction(t *testing.T) {
+	t.Run("schema-mismatch", func(t *testing.T) {
+		h := &ckptHandle{decl: &workflow.StateDeclaration{Mode: workflow.StateModeBlob, Schema: "harness.v1"}}
+		m, _ := openStatefulSession(t, h, &ckptRecorder{})
+		err := m.RestoreIntoLiveSession(context.Background(), "s1", liveSnap("other.v1"))
+		if err == nil {
+			t.Fatal("expected a loud refusal on schema mismatch")
+		}
+		if !strings.Contains(err.Error(), "state schema mismatch") || !strings.Contains(err.Error(), "harness.v1") || !strings.Contains(err.Error(), "other.v1") {
+			t.Errorf("refusal lacks the schema-mismatch diagnostic: %v", err)
+		}
+		if len(h.restoredCalls()) != 0 {
+			t.Errorf("adapter received %d restore calls on a refused restore; want 0", len(h.restoredCalls()))
+		}
+	})
+	t.Run("adapter-declares-no-state", func(t *testing.T) {
+		h := &ckptHandle{decl: &workflow.StateDeclaration{Mode: workflow.StateModeNone}}
+		m, _ := openStatefulSession(t, h, &ckptRecorder{})
+		err := m.RestoreIntoLiveSession(context.Background(), "s1", liveSnap("harness.v1"))
+		if err == nil {
+			t.Fatal("expected a loud refusal when the adapter dropped its state declaration")
+		}
+		if !strings.Contains(err.Error(), "declares no checkpointable state") {
+			t.Errorf("refusal lacks the dropped-state diagnostic: %v", err)
+		}
+		if len(h.restoredCalls()) != 0 {
+			t.Errorf("adapter received %d restore calls on a refused restore; want 0", len(h.restoredCalls()))
+		}
+	})
+	t.Run("no-cached-declaration", func(t *testing.T) {
+		h := &ckptHandle{decl: &workflow.StateDeclaration{Mode: workflow.StateModeBlob, Schema: "harness.v1"}}
+		m, _ := openStatefulSession(t, h, &ckptRecorder{})
+		m.mu.Lock()
+		delete(m.adapterInfos, "s1")
+		m.mu.Unlock()
+		err := m.RestoreIntoLiveSession(context.Background(), "s1", liveSnap("harness.v1"))
+		if err == nil {
+			t.Fatal("expected a loud refusal when no declared surface is cached and the checkpoint is schema-stamped")
+		}
+		if !strings.Contains(err.Error(), "declares no checkpointable state") {
+			t.Errorf("refusal lacks the no-declaration diagnostic: %v", err)
+		}
+		if len(h.restoredCalls()) != 0 {
+			t.Errorf("adapter received %d restore calls on a refused restore; want 0", len(h.restoredCalls()))
+		}
+	})
 }

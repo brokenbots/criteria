@@ -76,6 +76,7 @@ type checkpointHandle struct {
 	state        []byte
 	restoreCalls []restoreRecord
 	executeCalls int
+	openCalls    int
 	blockSecond  bool // second Execute blocks until its ctx is canceled
 }
 
@@ -92,6 +93,9 @@ func (h *checkpointHandle) Info(context.Context) (adapterhost.Info, error) {
 	}, nil
 }
 func (h *checkpointHandle) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	h.mu.Lock()
+	h.openCalls++
+	h.mu.Unlock()
 	return nil
 }
 func (h *checkpointHandle) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
@@ -133,6 +137,12 @@ func (h *checkpointHandle) restores() []restoreRecord {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.restoreCalls
+}
+
+func (h *checkpointHandle) openCallsLocked() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.openCalls
 }
 
 type checkpointLoader struct{ handle adapterhost.Handle }
@@ -245,6 +255,55 @@ func TestEngine_ResumeFromCheckpoint_KillRestart(t *testing.T) {
 	}
 	if calls[0].schemaVersion != 1 {
 		t.Errorf("restored schemaVersion = %d; want 1", calls[0].schemaVersion)
+	}
+}
+
+// TestEngine_ResumeFromCheckpoint_BoundLiveSessionRestoresInPlace covers the
+// restore router's live-session branch (bootstrapSessionsForResume's
+// SessionBound check): a remote adapter that phone-homed during
+// initialization is already bound when the resume pass runs, so its
+// checkpoint must be replayed into the live session — the adapter receives
+// Restore with the exact prior bytes and schema version, and no relaunch
+// happens. Deleting or mis-wiring the SessionBound branch fails this test:
+// the fallback reopen path errors on the already-bound session and would
+// re-open the adapter.
+func TestEngine_ResumeFromCheckpoint_BoundLiveSessionRestoresInPlace(t *testing.T) {
+	tmp := t.TempDir()
+	writePriorCheckpoint(t, tmp, "ck.default")
+
+	h := &checkpointHandle{}
+	e := New(checkpointGraph(t), &checkpointLoader{handle: h}, &fakeSink{},
+		WithSnapshotBase(tmp), WithRunID(testRunID))
+
+	// Simulate the phone-home: the adapter binds its session during
+	// initialization, before the engine's checkpoint-restore pass runs.
+	sessions := adapterhost.NewSessionManager(&checkpointLoader{handle: h})
+	if err := sessions.Open(context.Background(), "ck.default", "ck", adapterhost.OnCrashFail, nil, nil); err != nil {
+		t.Fatalf("open live session: %v", err)
+	}
+	if !sessions.SessionBound("ck.default") {
+		t.Fatal("session not bound after open; test setup broken")
+	}
+
+	if err := e.bootstrapSessionsForResume(context.Background(), sessions); err != nil {
+		t.Fatalf("resume into live session: %v", err)
+	}
+
+	calls := h.restores()
+	if len(calls) != 1 {
+		t.Fatalf("adapter received %d restore calls; want 1", len(calls))
+	}
+	if string(calls[0].blob) != "prior-state" {
+		t.Errorf("restored blob = %q; want prior-state", calls[0].blob)
+	}
+	if calls[0].schemaVersion != 1 {
+		t.Errorf("restored schemaVersion = %d; want 1", calls[0].schemaVersion)
+	}
+	if !sessions.SessionBound("ck.default") {
+		t.Error("live session no longer bound after resume; want the same session retained")
+	}
+	if opens := h.openCallsLocked(); opens != 1 {
+		t.Errorf("adapter OpenSession calls = %d; want 1 (restore must not relaunch a bound session)", opens)
 	}
 }
 
@@ -430,6 +489,34 @@ func TestEngine_ResumeFromCheckpoint_SchemaMismatchFailsLoud(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "state schema mismatch") || !strings.Contains(err.Error(), "v1") || !strings.Contains(err.Error(), "v2") {
 		t.Errorf("restore error lacks schema-mismatch diagnostic: %v", err)
+	}
+}
+
+// TestEngine_ResumeFromCheckpoint_UnsupportedDigestRefusedLoud: a checkpoint
+// digest the current binary cannot verify (a newer binary switched digest
+// algorithms) refuses loudly instead of replaying unverifiable bytes.
+func TestEngine_ResumeFromCheckpoint_UnsupportedDigestRefusedLoud(t *testing.T) {
+	tmp := t.TempDir()
+	snap := &adapterhost.SessionSnapshot{
+		AdapterState:  []byte("prior-state"),
+		SchemaVersion: 1,
+		HostArch:      runtime.GOOS + "/" + runtime.GOARCH,
+		StateSchema:   "v1",
+		StateMode:     workflow.StateModeBlob,
+		StateDigest:   "md5:" + strings.Repeat("0", 32),
+	}
+	if _, err := state.WriteSnapshot(state.SnapshotDir(tmp, testRunID, "ck.default"), snap); err != nil {
+		t.Fatalf("write unsupported-digest checkpoint: %v", err)
+	}
+
+	e := New(checkpointGraph(t), &checkpointLoader{handle: &checkpointHandle{}}, &fakeSink{},
+		WithSnapshotBase(tmp), WithRunID(testRunID))
+	err := e.RunFrom(context.Background(), "a", 1)
+	if err == nil {
+		t.Fatal("expected an unsupported digest to fail the run loudly")
+	}
+	if !strings.Contains(err.Error(), "unsupported state digest") {
+		t.Errorf("restore error lacks the unsupported-digest diagnostic: %v", err)
 	}
 }
 
