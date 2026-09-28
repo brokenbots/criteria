@@ -746,6 +746,10 @@ func loadResumeState(ctx context.Context, log *slog.Logger, client *servertrans.
 		log.Info("run is terminal on server; clearing local recovery state", "run_id", runID, "status", resp.Status)
 		removeLocalRunState(runID)
 		RemoveStepCheckpoint(runID)
+		// Symmetry with clearRecoveredRun/cleanupAgentRunState: a terminal
+		// run's adapter checkpoints can never be restored, so they must not
+		// leak until the next startup sweep.
+		deleteRunCheckpoints(runID)
 		return nil, nil, errRunAlreadyTerminal
 	}
 	return cp, resp, nil

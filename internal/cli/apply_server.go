@@ -176,7 +176,9 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 func buildServerRunEngine(graph *workflow.FSMGraph, loader adapterhost.Loader, sink engine.Sink, state *localRunState, opts applyOptions, fingerprint string, promptCh <-chan *pb.AgentPrompt, promptOwnerID string) (*engine.Engine, error) {
 	auditPath, _ := auditLogPath(state.RunID)
 	auditWriter := adapterhost.NewFileAuditWriter(auditPath)
-	dataDir, err := runDataDir(state.RunID)
+	// CRI-202: shared base includes the checkpoint surface (snapshot base +
+	// run id) so adapter state persists for later restore.
+	dataDir, baseOpts, err := serverRunEngineOptions(state.RunID, opts.workflowPath)
 	if err != nil {
 		return nil, err
 	}
@@ -184,13 +186,11 @@ func buildServerRunEngine(graph *workflow.FSMGraph, loader adapterhost.Loader, s
 	if err != nil {
 		return nil, err
 	}
-	engOpts := []engine.Option{
+	engOpts := append([]engine.Option{
 		engine.WithVarOverrides(mergedVars),
-		engine.WithWorkflowDir(workflowDirFromPath(opts.workflowPath)),
 		engine.WithAuditWriter(auditWriter),
-		engine.WithDataDir(dataDir),
 		engine.WithAgentPrompts(promptCh, promptOwnerID, state.RunID),
-	}
+	}, baseOpts...)
 	engOpts = append(engOpts, engineAdoptionOptions(dataDir, fingerprint, state.RunID)...)
 	return engine.New(graph, loader, sink, engOpts...), nil
 }
@@ -205,12 +205,21 @@ func buildServerRunEngine(graph *workflow.FSMGraph, loader adapterhost.Loader, s
 // instances from prior invocations of the same run (CRI-304); callers without
 // a fingerprint (agent runs) pass "" and get neither marker nor adoption.
 func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost.Loader, sink *run.Sink, runSink engine.Sink, resumeCh <-chan *pb.ResumeRun, promptCh <-chan *pb.AgentPrompt, promptOwnerID string, state *localRunState, graph *workflow.FSMGraph, workflowDir string, eng *engine.Engine, fingerprint string) error {
-	dataDir, err := runDataDir(state.RunID)
+	// CRI-202: shared base includes the checkpoint surface (snapshot base +
+	// run id) so the resumed engine saves restored-session state and restores
+	// adapter checkpoints from the original engine, exactly like a local
+	// resume. Without it, wireCheckpointStore and bootstrapSessionsForResume
+	// would silently skip checkpointing and the resume would be a fresh start.
+	_, baseOpts, err := serverRunEngineOptions(state.RunID, workflowDir)
 	if err != nil {
-		return fmt.Errorf("resolve run data dir: %w", err)
+		return fmt.Errorf("resolve engine options for resume: %w", err)
 	}
 	var adoptionOpts []engine.Option
 	if fingerprint != "" {
+		dataDir, err := runDataDir(state.RunID)
+		if err != nil {
+			return fmt.Errorf("resolve run data dir: %w", err)
+		}
 		adoptionOpts = engineAdoptionOptions(dataDir, fingerprint, state.RunID)
 	}
 	for sink.IsPaused() {
@@ -235,9 +244,8 @@ func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost
 			engine.WithResumedVars(eng.VarScope()),
 			engine.WithResumedVisits(eng.VisitCounts()),
 			engine.WithResumePayload(resumeMsg.Payload),
-			engine.WithWorkflowDir(workflowDir),
-			engine.WithDataDir(dataDir),
 		}
+		resumedOpts = append(resumedOpts, baseOpts...)
 		// ADR-0006: resumed engines stay wired to the run's prompt channel so
 		// injected prompts route to the replayed steps too.
 		resumedOpts = append(resumedOpts, engine.WithAgentPrompts(promptCh, promptOwnerID, state.RunID))
