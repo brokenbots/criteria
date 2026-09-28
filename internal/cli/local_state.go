@@ -241,6 +241,19 @@ func ListLocalRunStates() ([]*localRunState, error) {
 // On error it returns the error; callers should log and continue without
 // crashing (soft-degrade if state dir is not writable).
 func WriteStepCheckpoint(cp *StepCheckpoint) error {
+	return writeStepCheckpoint(cp, nil)
+}
+
+// writeStepCheckpoint persists cp, replacing the checkpoint file atomically so
+// a crash inside the write window can never leave a torn or empty file behind,
+// which would make the sole reattach record undecodable at startup. The
+// soft-degrade error contract is unchanged: on error the previous checkpoint
+// file is untouched and callers log and continue.
+//
+// publish, when non-nil, is a test-only seam invoked after the temp file has
+// been flushed but before the rename; returning an error aborts the publish,
+// simulating a crash inside the atomic window. Production always passes nil.
+func writeStepCheckpoint(cp *StepCheckpoint, publish func(tmpName, target string) error) error {
 	if cp == nil {
 		return errors.New("checkpoint is nil")
 	}
@@ -265,7 +278,51 @@ func WriteStepCheckpoint(cp *StepCheckpoint) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(p, b, 0o600)
+	return atomicReplaceFile(p, b, publish)
+}
+
+// atomicReplaceFile replaces the file at path with data atomically: the
+// payload is written to a unique temp file in the same directory, fsynced,
+// chmod'ed to owner-only 0o600, and renamed over the target. A crash inside
+// the write window therefore leaves either the previous complete file or the
+// new one — never a torn or empty file. The temp name (leading dot + .tmp-
+// suffix) is chosen so directory scanners that look for real ".json" records
+// ignore leftovers from a crash before the rename.
+//
+// publish, when non-nil, is a test-only seam invoked after the temp file has
+// been flushed but before the rename; returning an error aborts the publish,
+// simulating a crash inside the atomic window. Production always passes nil.
+func atomicReplaceFile(path string, data []byte, publish func(tmpName, target string) error) error {
+	// The temp file lives next to the target so the rename is atomic.
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write temp file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("sync temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp file: %w", err)
+	}
+	if err := os.Chmod(tmpName, 0o600); err != nil {
+		return fmt.Errorf("chmod temp file: %w", err)
+	}
+	if publish != nil {
+		if err := publish(tmpName, path); err != nil {
+			return fmt.Errorf("publish: %w", err)
+		}
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("publish: %w", err)
+	}
+	return nil
 }
 
 // RemoveStepCheckpoint deletes the checkpoint file for a run.
