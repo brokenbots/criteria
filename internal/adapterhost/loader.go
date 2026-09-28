@@ -1255,6 +1255,24 @@ func AdapterInfoFromProto(resp *v2.InfoResponse) workflow.AdapterInfo {
 		Permissions:            append([]string(nil), resp.GetPermissions()...),
 		PermissionAliases:      copyStringMap(adapterPermissionAliases[resp.GetName()]),
 		RuntimeTools:           runtimeToolNamesFromProto(resp.GetTools()),
+		State:                  StateDeclarationFromProto(resp.GetState()),
+	}
+}
+
+// StateDeclarationFromProto translates InfoResponse.state (CRI-201) into the
+// host-side declaration. Returns nil when the adapter declared no state:
+// an absent descriptor is mode none by spec (adapters without a declaration
+// behave exactly as before), and an empty mode string is indistinguishable
+// from an absent descriptor on the wire.
+func StateDeclarationFromProto(desc *v2.StateDescriptor) *workflow.StateDeclaration {
+	if desc == nil || desc.GetMode() == "" {
+		return nil
+	}
+	return &workflow.StateDeclaration{
+		Mode:        desc.GetMode(),
+		Schema:      desc.GetSchema(),
+		MaxBytes:    desc.GetMaxBytes(),
+		Granularity: desc.GetGranularity(),
 	}
 }
 

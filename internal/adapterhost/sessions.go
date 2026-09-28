@@ -1422,6 +1422,10 @@ func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterNam
 		return nil, fmt.Errorf("adapter %q handshake: %w", adapterName, infoErr)
 	}
 
+	if stateErr := validateStateHandshake(adapterName, info.AdapterInfo.State); stateErr != nil {
+		return nil, stateErr
+	}
+
 	if schemaErr := validateConfigAgainstSchema(config, info.AdapterInfo.ConfigSchema); schemaErr != nil {
 		return nil, fmt.Errorf("adapter %q config: %w", adapterName, schemaErr)
 	}
@@ -1440,6 +1444,21 @@ func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterNam
 	m.cacheAdapterInfo(name, &info.AdapterInfo)
 
 	return info.Capabilities, nil
+}
+
+// validateStateHandshake checks an adapter's checkpoint-state declaration
+// (InfoResponse.state, CRI-201) against the host-side contract. An unknown
+// mode fails LOUDLY at the handshake — quietly treating it as mode none
+// would silently drop checkpointing for a stateful adapter — and blob/ref
+// require a schema version tag so a restore can reject mismatched shapes.
+func validateStateHandshake(adapterName string, d *workflow.StateDeclaration) error {
+	if d == nil {
+		return nil
+	}
+	if err := d.Validate(); err != nil {
+		return fmt.Errorf("adapter %q handshake: state declaration: %w", adapterName, err)
+	}
+	return nil
 }
 
 // cacheAdapterInfo stores the adapter's captured declared surface. It backs
@@ -1470,6 +1489,19 @@ func (m *SessionManager) cachedAdapterInfo(name string) *workflow.AdapterInfo {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.adapterInfos[name]
+}
+
+// DeclaredState returns the checkpoint-state declaration captured for the
+// named session's adapter during its phase-1 handshake or snapshot-restore
+// relaunch (InfoResponse.state, CRI-201). nil means the adapter declared no
+// state (mode none): it checkpoints nothing and starts fresh on every
+// (re)spawn. Unknown modes never reach here — they fail the handshake
+// loudly (validateStateHandshake). Thread-safe.
+func (m *SessionManager) DeclaredState(name string) *workflow.StateDeclaration {
+	if info := m.cachedAdapterInfo(name); info != nil {
+		return info.State
+	}
+	return nil
 }
 
 // storeVerifiedRecord stores a verified adapter record, guarding against races.
@@ -3090,6 +3122,16 @@ func (m *SessionManager) Restore(ctx context.Context, name, adapterName, onCrash
 
 	var caps []string
 	if info, infoErr := plug.Info(ctx); infoErr == nil {
+		// A relaunch may surface a changed or malformed declaration (e.g. the
+		// adapter binary was swapped mid-run); fail the restore loudly rather
+		// than silently downgrading checkpointing.
+		if stateErr := validateStateHandshake(adapterName, info.AdapterInfo.State); stateErr != nil {
+			plug.Kill()
+			if cleanup != nil {
+				cleanup()
+			}
+			return nil, stateErr
+		}
 		caps = append([]string(nil), info.Capabilities...)
 		// Re-capture the declared surface after a snapshot relaunch so a
 		// restored session keeps gating on its declared input contract

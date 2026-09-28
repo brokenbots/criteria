@@ -480,6 +480,12 @@ type AdapterInfo struct {
 	// dynamic_tools = true (CRI-173); empty when the handshake was
 	// unavailable or exposed no tools.
 	RuntimeTools []string
+	// State is the adapter's declared checkpointable session-state surface
+	// (InfoResponse.state, CRI-201). nil = mode none: the adapter declares
+	// no checkpointable state and starts fresh on every (re)spawn — today's
+	// behavior. Unknown modes fail the handshake loudly; see
+	// StateDeclaration.Validate.
+	State *StateDeclaration
 }
 
 // OutcomeSpec maps an adapter outcome name to the next node.
