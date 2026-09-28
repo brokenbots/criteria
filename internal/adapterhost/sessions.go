@@ -233,8 +233,8 @@ type SessionManager struct {
 	// Locking contract (CRI-50): both maps are guarded by mu. VerifyGraph
 	// writes them via cacheGraphAdapterRef and adapter resolution reads them
 	// via adapterDeclaration/adapterDir, and nothing serializes those callers
-	// at a higher level — the borrow path (BorrowRemoteProvisioningFrom)
-	// already read them under mu — so every access takes mu.
+	// at a higher level (the borrow path already took mu for its reads, so
+	// mu-guarding the rest adds no deadlock risk). Every access takes mu.
 	graphAdapters map[string]graphAdapterRef
 	// adapterDirs records the workflow directory each adapter was declared in,
 	// keyed by instance ID. Populated by VerifyGraph.
