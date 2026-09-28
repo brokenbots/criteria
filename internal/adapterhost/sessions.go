@@ -230,6 +230,11 @@ type SessionManager struct {
 	// per-scope environments resolve against the declaring subworkflow body
 	// (CRI-269: the root graph's adapter map never contains subworkflow
 	// adapters).
+	// Locking contract (CRI-50): both maps are guarded by mu. VerifyGraph
+	// writes them via cacheGraphAdapterRef and adapter resolution reads them
+	// via adapterDeclaration/adapterDir, and nothing serializes those callers
+	// at a higher level — the borrow path (BorrowRemoteProvisioningFrom)
+	// already read them under mu — so every access takes mu.
 	graphAdapters map[string]graphAdapterRef
 	// adapterDirs records the workflow directory each adapter was declared in,
 	// keyed by instance ID. Populated by VerifyGraph.
@@ -707,6 +712,12 @@ func (m *SessionManager) verifyGraphAdapter(ctx context.Context, root *workflow.
 }
 
 func (m *SessionManager) cacheGraphAdapterRef(ref graphAdapterRef) {
+	// CRI-50: mu-guarded. VerifyGraph runs before the run loop today, but
+	// nothing serializes a future caller against concurrent adapter
+	// resolution on the same SessionManager (sessions_graph_cache_race_test.go
+	// pins exactly that overlap under -race).
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.graphAdapters == nil {
 		m.graphAdapters = make(map[string]graphAdapterRef)
 	}
@@ -1566,8 +1577,11 @@ func (m *SessionManager) lockedAdapterFor(instanceID string) *lockfile.LockedAda
 // graph that declares it. Root-graph declarations win so a re-declared instance
 // keeps its parent binding (CRI-145); subworkflow declarations come from the
 // per-instance cache populated by VerifyGraph (CRI-269: the root graph's
-// adapter map never contains subworkflow adapters).
+// adapter map never contains subworkflow adapters). CRI-50: the cache lookup
+// takes mu so it cannot race VerifyGraph's cache writes.
 func (m *SessionManager) adapterDeclaration(instanceID string) (*workflow.AdapterNode, *workflow.FSMGraph) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.graph != nil {
 		if node, ok := m.graph.Adapters[instanceID]; ok {
 			return node, m.graph
@@ -1662,7 +1676,10 @@ func (m *SessionManager) isOCIAdapter(instanceID string) bool {
 
 // adapterDir returns the workflow directory associated with instanceID,
 // defaulting to the graph's root directory when no cached directory exists.
+// CRI-50: the cache lookup takes mu so it cannot race VerifyGraph's writes.
 func (m *SessionManager) adapterDir(instanceID string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.adapterDirs != nil {
 		if dir, ok := m.adapterDirs[instanceID]; ok {
 			return dir
