@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -680,5 +681,66 @@ func TestActiveRun_ClaimNext_ConcurrentClaimsSingleWinner(t *testing.T) {
 	}
 	if got := a.activeRunID(); got != "run-1" {
 		t.Fatalf("activeRunID = %q, want run-1", got)
+	}
+}
+
+// TestLoadResumeState_TerminalRunDeletesAdapterCheckpoints verifies the
+// server-terminal branch of loadResumeState clears the full recovery surface:
+// the step checkpoint, the run state, and the run's adapter checkpoints.
+// clearRecoveredRun/cleanupAgentRunState delete the adapter checkpoint
+// subtree; this branch must stay symmetric so a terminal run's snapshots do
+// not leak until the next startup sweep (CRI-202).
+func TestLoadResumeState_TerminalRunDeletesAdapterCheckpoints(t *testing.T) {
+	requireNoGoroutineLeak(t)
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	fake := applytest.New(t)
+	runID := "lrs-terminal"
+	fake.SetReattachState(runID, "succeeded", "", 0, "", "")
+
+	c, err := servertrans.NewClient(fake.URL(), discardLogger(), servertrans.Options{TLSMode: servertrans.TLSDisable})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	defer c.Close()
+
+	// Pre-create the recovery surface the branch must clear: the step
+	// checkpoint, the run state, and adapter snapshots under the run's
+	// checkpoint subtree.
+	wfFile := writeWorkflowFile(t, minimalWorkflow)
+	writeCheckpointDirect(t, stateDir, &StepCheckpoint{RunID: runID, WorkflowPath: wfFile})
+	if err := writeLocalRunState(newLocalRunState(runID, "minimal", fake.URL())); err != nil {
+		t.Fatalf("writeLocalRunState: %v", err)
+	}
+	snapDir := filepath.Join(stateDir, "runs", runID, "snapshots", "noop.default")
+	if err := os.MkdirAll(snapDir, 0o755); err != nil {
+		t.Fatalf("mkdir snapshot dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(snapDir, "0000000001.bin"), []byte("state"), 0o600); err != nil {
+		t.Fatalf("write snapshot blob: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(snapDir, "0000000001.json"), []byte(`{"schema_version":1}`), 0o600); err != nil {
+		t.Fatalf("write snapshot sidecar: %v", err)
+	}
+
+	_, _, err = loadResumeState(context.Background(), discardLogger(), c, runID)
+	if !errors.Is(err, errRunAlreadyTerminal) {
+		t.Fatalf("loadResumeState err = %v, want errRunAlreadyTerminal", err)
+	}
+
+	cp, err := readStepCheckpoint(runID)
+	if err != nil || cp != nil {
+		t.Errorf("step checkpoint survived the terminal clear (cp=%v err=%v)", cp, err)
+	}
+	if _, err := readLocalRunState(runID); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("run state survived the terminal clear: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(stateDir, "runs", runID, "snapshots"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("read snapshots dir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("adapter checkpoints survived the terminal clear: %d entries under %s", len(entries), snapDir)
 	}
 }
