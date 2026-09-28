@@ -52,6 +52,36 @@ product version). The release tag and date are finalized by the release gate.
   `setupUDS`/`bridgeAndDial`) is deprecated: supported through one minor
   release after peer parity, then removed.
 
+- **Adapter state declaration in InfoResponse (CRI-201).** Adapters can now
+  declare their checkpointable session-state surface in the handshake:
+  `InfoResponse.state` (`StateDescriptor` in
+  `criteria-adapter-proto` v0.5.4+) carries `mode` (`none` — today's behavior,
+  fresh start on every (re)spawn, and identical to an absent descriptor |
+  `blob` — the engine stores the serialized state object on the adapter's
+  behalf | `ref` — an opaque token to adapter-owned state, e.g. a harness
+  session id), a required-for-blob/ref adapter-defined `schema` version tag
+  (so a restore can reject a mismatched state shape instead of misinterpreting
+  the bytes), an adapter-declared `max_bytes` cap on a single saved state
+  object (0 = engine default, ~400 KiB; exceeding the cap fails the save
+  loudly and fails the step — it is never truncated), and the expected save
+  `granularity` (`per-step` | `per-turn` | `on-demand`; unknown values fall
+  back to the engine's default save policy). The engine translates the
+  descriptor into `AdapterInfo.State` at every handshake and re-captures it
+  after a snapshot-restore relaunch; an unknown mode fails the handshake
+  loudly rather than silently downgrading checkpointing. Adapters without a
+  declaration behave exactly as before. The declaration is engine surface
+  only: no checkpoint semantics land in any backing store (storage primitives
+  stay with CRI-199; consumption is CRI-202).
+- **SDK coordination point (CRI-201).** The wire surface lives in
+  `criteria-adapter-proto` (engine bumped to v0.5.4-0.20260928); the
+  four-layer bump order is engine (this change) → adapter SDK → adapter
+  images → workflow image. `criteria-go-adapter-sdk` passes `InfoResponse`
+  through unchanged, so an adapter can already declare state by setting the
+  descriptor on its `Info` reply; a standalone SDK release re-exporting the
+  descriptor rides the next adapter-image wave, and the lockfile needs no
+  change (`sdk_protocol_version` stays 2 — the descriptor is an additive v2
+  wire field).
+
 - **Per-scope remote adapter isolation (CRI-115).** Remote environments gain an
   opt-in `per_scope_sessions = true` attribute. When enabled, the engine
   rotates a distinct accept token for each scope, persists it under the run data
