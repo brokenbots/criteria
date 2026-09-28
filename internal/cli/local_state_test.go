@@ -790,7 +790,7 @@ func TestLocalState_StepCheckpoint_ReplaceLeavesNoTempFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var names []string
+	names := make([]string, 0, len(entries))
 	for _, e := range entries {
 		names = append(names, e.Name())
 	}
