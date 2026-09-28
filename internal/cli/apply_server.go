@@ -210,16 +210,12 @@ func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost
 	// adapter checkpoints from the original engine, exactly like a local
 	// resume. Without it, wireCheckpointStore and bootstrapSessionsForResume
 	// would silently skip checkpointing and the resume would be a fresh start.
-	_, baseOpts, err := serverRunEngineOptions(state.RunID, workflowDir)
+	dataDir, baseOpts, err := serverRunEngineOptions(state.RunID, workflowDir)
 	if err != nil {
 		return fmt.Errorf("resolve engine options for resume: %w", err)
 	}
 	var adoptionOpts []engine.Option
 	if fingerprint != "" {
-		dataDir, err := runDataDir(state.RunID)
-		if err != nil {
-			return fmt.Errorf("resolve run data dir: %w", err)
-		}
 		adoptionOpts = engineAdoptionOptions(dataDir, fingerprint, state.RunID)
 	}
 	for sink.IsPaused() {

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,10 +15,10 @@ import (
 	"testing"
 	"time"
 
-	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/google/uuid"
 	"go.uber.org/goleak"
 
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/cli/applytest"
@@ -757,7 +758,7 @@ func TestDrainResumeCycles_PauseThenResume(t *testing.T) {
 	if len(restores) != 1 {
 		t.Fatalf("expected 1 Restore replay in the resumed engine, got %d", len(restores))
 	}
-	if string(restores[0].blob) != string(preBlob) {
+	if !bytes.Equal(restores[0].blob, preBlob) {
 		t.Errorf("restored blob = %q, want the pre-pause state %q", restores[0].blob, preBlob)
 	}
 	if restores[0].schemaVersion != 1 {
