@@ -24,7 +24,7 @@ type stateHandleStub struct {
 	info Info
 }
 
-func (h stateHandleStub) Info(context.Context) (Info, error) { return h.info, nil }
+func (h *stateHandleStub) Info(context.Context) (Info, error) { return h.info, nil }
 
 // stateLoaderStub hands every Resolve the same stub handle.
 type stateLoaderStub struct {
@@ -41,7 +41,7 @@ func (l *stateLoaderStub) Shutdown(context.Context) error { return nil }
 // cache afterwards).
 func verifyStateHandshake(t *testing.T, decl *workflow.StateDeclaration) (error, *workflow.StateDeclaration) {
 	t.Helper()
-	m := NewSessionManager(&stateLoaderStub{handle: stateHandleStub{
+	m := NewSessionManager(&stateLoaderStub{handle: &stateHandleStub{
 		info: Info{AdapterInfo: workflow.AdapterInfo{State: decl}},
 	}})
 	_, err := m.verifyAdapterInfo(context.Background(), "state-test", "stateful", "", nil, nil)
