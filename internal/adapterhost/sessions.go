@@ -1344,6 +1344,9 @@ func (m *SessionManager) OpenWithOriginRefs(ctx context.Context, name, adapterNa
 	var caps []string
 	if info, infoErr := plug.Info(ctx); infoErr == nil {
 		caps = append([]string(nil), info.Capabilities...)
+		// CRI-202: capture the declared state surface too — the per-step
+		// checkpoint save and the restore schema gate both read it.
+		m.cacheAdapterInfo(name, &info.AdapterInfo)
 	}
 
 	if err := plug.OpenSession(ctx, name, config, secrets); err != nil {
@@ -1862,6 +1865,9 @@ func (m *SessionManager) bindVerifiedRecord(ctx context.Context, rec *verifiedRe
 	var caps []string
 	if info, infoErr := plug.Info(ctx); infoErr == nil {
 		caps = append([]string(nil), info.Capabilities...)
+		// CRI-202: capture the declared state surface so per-scope sessions
+		// phone-homed at bind time still checkpoint at step boundaries.
+		m.cacheAdapterInfo(rec.name, &info.AdapterInfo)
 	}
 
 	if err := plug.OpenSession(ctx, rec.name, rec.config, rec.secrets); err != nil {
