@@ -3241,7 +3241,7 @@ func (m *SessionManager) Restore(ctx context.Context, name, adapterName, onCrash
 // restore loudly rather than silently downgrading checkpointing. An Info
 // failure is tolerated (the session proceeds without a cached declaration),
 // as in the fresh-open path.
-func (m *SessionManager) validateRelaunchedAdapter(ctx context.Context, plug Handle, name, adapterName string, snap *SessionSnapshot) (caps []string, declared *workflow.StateDeclaration, err error) {
+func (m *SessionManager) validateRelaunchedAdapter(ctx context.Context, plug Handle, name, adapterName string, snap *SessionSnapshot) ([]string, *workflow.StateDeclaration, error) {
 	info, infoErr := plug.Info(ctx)
 	if infoErr == nil {
 		if err := validateStateHandshake(adapterName, info.AdapterInfo.State); err != nil {
