@@ -96,7 +96,10 @@ func minimalWaitSignalGraphWithOutcomes(outcomes map[string]string, targets map[
 	return g
 }
 
-func minimalApprovalGraph(nodeName string) *workflow.FSMGraph {
+// nodeName is always "check" across all callers, so it is hardcoded here
+// rather than threaded through a parameter (golangci-lint unparam).
+func minimalApprovalGraph() *workflow.FSMGraph {
+	nodeName := "check"
 	g := &workflow.FSMGraph{
 		Name:      "approval_test",
 		Steps:     map[string]*workflow.StepNode{},
@@ -252,7 +255,7 @@ func TestNodeWait_Signal_ResumeDeliversOutcome(t *testing.T) {
 }
 
 func TestNodeApproval_PausesRun(t *testing.T) {
-	g := minimalApprovalGraph("check")
+	g := minimalApprovalGraph()
 	sink := &pauseSink{}
 	eng := engine.New(g, emptyLoader(), sink)
 	if err := eng.Run(context.Background()); err != nil {
@@ -264,7 +267,7 @@ func TestNodeApproval_PausesRun(t *testing.T) {
 }
 
 func TestNodeApproval_ResumeApproved(t *testing.T) {
-	g := minimalApprovalGraph("check")
+	g := minimalApprovalGraph()
 	sink := &pauseSink{}
 	eng := engine.New(g, emptyLoader(), sink)
 	if err := eng.Run(context.Background()); err != nil {
@@ -284,7 +287,7 @@ func TestNodeApproval_ResumeApproved(t *testing.T) {
 }
 
 func TestNodeApproval_ResumeRejected(t *testing.T) {
-	g := minimalApprovalGraph("check")
+	g := minimalApprovalGraph()
 	sink := &pauseSink{}
 	eng := engine.New(g, emptyLoader(), sink)
 	if err := eng.Run(context.Background()); err != nil {
@@ -435,7 +438,7 @@ func (s *decisionTrackingSink) OnWaitResumed(node, mode, signal string, payload 
 }
 
 func TestNodeApproval_ResumeInvalidDecision_LeavesContextForRetry(t *testing.T) {
-	g := minimalApprovalGraph("check")
+	g := minimalApprovalGraph()
 	sink := &pauseSink{}
 	eng := engine.New(g, emptyLoader(), sink)
 	if err := eng.Run(context.Background()); err != nil {
