@@ -505,6 +505,7 @@ func (e *Engine) Run(ctx context.Context) error {
 		sessions.SetSandboxProbeOverride(e.sandboxProbeOverride)
 	}
 	e.setLockfileOnSessions(sessions)
+	e.wireCheckpointStore(sessions)
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
 	// Create a per-run redaction registry and wire it into the session manager
@@ -561,8 +562,10 @@ func (e *Engine) Run(ctx context.Context) error {
 // from there). It does NOT emit OnRunStarted (the run already started).
 // If initialAttempt would already exceed max_step_retries, it emits
 // OnRunFailed instead of attempting the step.
-// Adapter sessions are provisioned fresh on each run (resumed or not),
-// allowing the workflow to be resumed in a new process context.
+// Adapter sessions are launched through the same initialization sequence as a
+// fresh run; sessions whose adapters checkpointed (CRI-202) replay their
+// prior state from the last checkpoint during that sequence, so the workflow
+// can resume in a new process context without losing adapter state.
 //
 // CRI-304: like Run, every init failure before runLoop emits OnRunFailed so
 // a resumed run's record reaches a terminal status even when provisioning or
@@ -576,6 +579,7 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 		sessions.SetSandboxProbeOverride(e.sandboxProbeOverride)
 	}
 	e.setLockfileOnSessions(sessions)
+	e.wireCheckpointStore(sessions)
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
 	redactionReg := secrets.NewRegistry()
@@ -616,7 +620,7 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	}
 	defer func() { tearDownScopeAdapters(ctx, scopeOrder, deps, rlc) }()
 
-	if err := e.bootstrapSessionsForResume(ctx, sessions, startStep); err != nil {
+	if err := e.bootstrapSessionsForResume(ctx, sessions); err != nil {
 		failRunInit(err)
 		return err
 	}
@@ -655,6 +659,8 @@ func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManag
 		node, err := nodeFor(e.graph, st.Current)
 		if err != nil {
 			sink.OnRunFailed(err.Error(), st.Current)
+			// CRI-202: the run failed terminally; release its checkpoints.
+			e.discardRunCheckpoints("failed")
 			return err
 		}
 		next, err := node.Evaluate(ctx, st, deps)
@@ -1070,6 +1076,8 @@ func (e *Engine) handleEvalError(ctx context.Context, st *RunState, err error, s
 			sink.OnRunOutputs(outputs)
 		}
 		sink.OnRunCompleted(state.Name, state.Success)
+		// CRI-202 retention: the run is terminal; release its checkpoints.
+		e.discardRunCheckpoints("terminal")
 		return nil
 	}
 	if errors.Is(err, engineruntime.ErrPaused) {
@@ -1095,6 +1103,13 @@ func (e *Engine) handleEvalError(ctx context.Context, st *RunState, err error, s
 		slog.Warn("run canceled", "step", st.Current, "reason", ctxErr.Error())
 	}
 	sink.OnRunFailed(err.Error(), st.Current)
+	// CRI-202 retention: a genuine failure is terminal, so the run's
+	// checkpoints are released. A canceled context is a stop (an interrupted,
+	// still-resumable run) — its checkpoints must survive so a later resume
+	// restores adapter state instead of starting fresh.
+	if ctx.Err() == nil {
+		e.discardRunCheckpoints("failed")
+	}
 	return err
 }
 
@@ -1112,6 +1127,8 @@ func (e *Engine) handleReturnExit(st *RunState, sink Sink) {
 		}
 	}
 	sink.OnRunCompleted("", true)
+	// CRI-202 retention: the run is terminal; release its checkpoints.
+	e.discardRunCheckpoints("terminal")
 }
 
 // formatReturnOutputs converts the ReturnOutputs cty.Value map to the
@@ -1146,12 +1163,65 @@ func cloneVisits(v map[string]int) map[string]int {
 	return out
 }
 
-func (e *Engine) bootstrapSessionsForResume(ctx context.Context, sessions *adapterhost.SessionManager, startStep string) error {
-	// Sessions are process-local and do not survive adapter restarts.
-	// With automatic lifecycle management (W12), adapters are provisioned at scope start.
-	// Crash recovery no longer needs to replay lifecycle steps since there are no longer
-	// any explicit lifecycle="open"/"close" steps. This function is kept for compatibility
-	// but does nothing.
+// bootstrapSessionsForResume restores adapter session state from the last
+// checkpoint before the run loop starts (CRI-202). Only the resume path
+// (RunFrom) calls it: a fresh run has no prior state. Sessions that are
+// already open — remote per-scope adapters that phone-homed during
+// initialization — restore into the live session; every other session
+// reopens from its latest checkpoint via SessionManager.Restore, riding the
+// same launch sequence as a fresh start (state replay is part of adapter
+// initialization, not a separate pass).
+//
+// Sessions whose adapters never checkpointed (no snapshot directory, or the
+// ErrNoSnapshots sentinel from an empty directory) start fresh — a logged
+// normal start, not a silent fallback: every other read failure aborts the
+// run loudly with the diagnostic naming the session.
+func (e *Engine) bootstrapSessionsForResume(ctx context.Context, sessions *adapterhost.SessionManager) error {
+	if e.snapshotBase == "" || e.runID == "" {
+		return nil
+	}
+	if e.graph == nil {
+		return errors.New("cannot restore checkpoints: engine has no workflow graph")
+	}
+	store := state.NewCheckpointStore(e.snapshotBase, e.runID)
+	ids, err := store.Sessions()
+	if err != nil {
+		return fmt.Errorf("list checkpointed sessions: %w", err)
+	}
+	if len(ids) == 0 {
+		e.logOrDefault().Debug("no prior adapter state; starting fresh", "run_id", e.runID)
+		return nil
+	}
+	for _, id := range ids {
+		adapterNode := e.graph.Adapters[id]
+		if adapterNode == nil {
+			return fmt.Errorf("checkpoint for session %q references an adapter not present in the workflow graph", id)
+		}
+		snap, err := store.Latest(id)
+		if errors.Is(err, state.ErrNoSnapshots) {
+			// The session directory holds no checkpoint files: this adapter
+			// never persisted state during the prior run. A logged fresh
+			// start is the only sane behavior — there is nothing to refuse.
+			e.logOrDefault().Debug("no prior checkpoint for session; starting fresh",
+				"session", id, "run_id", e.runID)
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("read checkpoint for session %q: %w", id, err)
+		}
+		if sessions.SessionBound(id) {
+			// A remote adapter that phone-homed during initialization already
+			// bound its session; replay the checkpoint into the live session.
+			if err := sessions.RestoreIntoLiveSession(ctx, id, snap); err != nil {
+				return fmt.Errorf("restore checkpoint for live session %q: %w", id, err)
+			}
+			continue
+		}
+		envNode := getEnvironmentNode(e.graph, adapterNode.Environment)
+		if _, err := sessions.Restore(ctx, id, adapterNode.Type, adapterNode.OnCrash, adapterNode.Config, envNode, snap); err != nil {
+			return fmt.Errorf("restore checkpoint for session %q: %w", id, err)
+		}
+	}
 	return nil
 }
 

@@ -76,6 +76,13 @@ type permissionState struct {
 	// in-flight nested tool calls before canceling stragglers. Zero means
 	// defaultToolCallPauseWindow.
 	pauseDrainWindow time.Duration
+
+	// turnCheckpoint, when non-nil, runs after every tool-call reply is
+	// delivered (i.e. after a completed turn) so an adapter declaring
+	// per-turn checkpoint granularity (CRI-202) saves its state at turn
+	// boundaries. Wired by the session manager at stream setup; the hook
+	// itself never blocks the reply path.
+	turnCheckpoint func()
 }
 
 // defaultToolCallPauseWindow is the drain-first pause window (CRI-169):

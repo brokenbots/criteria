@@ -206,9 +206,11 @@ func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 	if restoreErr != nil {
 		log.Warn("could not restore variable scope after pause reattach; starting with defaults", "error", restoreErr)
 	}
-	dataDir, dataDirErr := runDataDir(cp.RunID)
-	if dataDirErr != nil {
-		log.Error("paused run re-entry failed to resolve run data dir", "run_id", cp.RunID, "error", dataDirErr)
+	// CRI-202: the shared base carries the checkpoint surface (snapshot base
+	// + run id) so the re-entered engine saves and restores adapter state.
+	_, baseOpts, baseOptsErr := serverRunEngineOptions(cp.RunID, cp.WorkflowPath)
+	if baseOptsErr != nil {
+		log.Error("paused run re-entry failed to resolve engine options", "run_id", cp.RunID, "error", baseOptsErr)
 		drainAndCleanup(ctx, rc, cp)
 		return false, nil
 	}
@@ -216,19 +218,18 @@ func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 	auditWriter := adapterhost.NewFileAuditWriter(auditPath)
 	tracked := &terminalSuccessSink{Sink: sink}
 	engineSink := dualWriteSink(tracked, cp.RunID, eventsOut)
-	eng := engine.New(graph, loader, engineSink,
+	engOpts := append([]engine.Option{
 		engine.WithResumedVars(restoredVars),
 		engine.WithResumedIter(restoredIter),
 		engine.WithResumedVisits(cp.Visits),
 		engine.WithPendingSignal(resp.PendingSignal),
-		engine.WithWorkflowDir(workflowDirFromPath(cp.WorkflowPath)),
 		engine.WithLogger(log),
 		engine.WithAuditWriter(auditWriter),
-		engine.WithDataDir(dataDir),
 		// ADR-0006: re-entered runs stay wired to the run's prompt channel
 		// (the recovery client is authenticated as the run's owner incarnation).
 		engine.WithAgentPrompts(rc.AgentPromptCh(), rc.CriteriaID(), cp.RunID),
-	)
+	}, baseOpts...)
+	eng := engine.New(graph, loader, engineSink, engOpts...)
 	if runErr := eng.RunFrom(ctx, resp.CurrentStep, int(resp.Attempt)); runErr != nil {
 		log.Error("paused run re-entry failed", "error", runErr)
 		drainAndCleanup(ctx, rc, cp)
@@ -269,22 +270,23 @@ func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc reattachTran
 		}
 		pausedNode := sink.PausedAt()
 		sink.ClearPaused()
-		dataDir, dataDirErr := runDataDir(cp.RunID)
-		if dataDirErr != nil {
-			log.Error("run failed after resume: cannot resolve run data dir", "run_id", cp.RunID, "error", dataDirErr)
-			outcome = fmt.Errorf("run failed after resume: %w", dataDirErr)
+		// CRI-202: the shared base carries the checkpoint surface (snapshot
+		// base + run id) so each resumed engine keeps persisting adapter state.
+		_, baseOpts, baseOptsErr := serverRunEngineOptions(cp.RunID, cp.WorkflowPath)
+		if baseOptsErr != nil {
+			log.Error("run failed after resume: cannot resolve engine options", "run_id", cp.RunID, "error", baseOptsErr)
+			outcome = fmt.Errorf("run failed after resume: %w", baseOptsErr)
 			break
 		}
 		auditPath2, _ := auditLogPath(cp.RunID)
-		resumedEng := engine.New(graph, loader, engineSink,
+		resumedOpts := append([]engine.Option{
 			engine.WithResumedVars(eng.VarScope()),
 			engine.WithResumedVisits(eng.VisitCounts()),
 			engine.WithResumePayload(resumeMsg.Payload),
-			engine.WithWorkflowDir(workflowDirFromPath(cp.WorkflowPath)),
 			engine.WithAuditWriter(adapterhost.NewFileAuditWriter(auditPath2)),
-			engine.WithDataDir(dataDir),
 			engine.WithAgentPrompts(rc.AgentPromptCh(), rc.CriteriaID(), cp.RunID),
-		)
+		}, baseOpts...)
+		resumedEng := engine.New(graph, loader, engineSink, resumedOpts...)
 		if runErr := resumedEng.RunFrom(ctx, pausedNode, 1); runErr != nil {
 			log.Error("run failed after resume", "error", runErr)
 			outcome = runErr
@@ -404,21 +406,22 @@ func buildResumedActiveEngine(ctx context.Context, log *slog.Logger, rc reattach
 
 	auditPath, _ := auditLogPath(cp.RunID)
 	auditWriter := adapterhost.NewFileAuditWriter(auditPath)
-	dataDir, dataDirErr := runDataDir(cp.RunID)
-	if dataDirErr != nil {
-		log.Error("resumed run failed to resolve run data dir", "run_id", cp.RunID, "error", dataDirErr)
+	// CRI-202: the shared base carries the checkpoint surface (snapshot base
+	// + run id) so the re-entered engine saves and restores adapter state.
+	_, baseOpts, baseOptsErr := serverRunEngineOptions(cp.RunID, cp.WorkflowPath)
+	if baseOptsErr != nil {
+		log.Error("resumed run failed to resolve engine options", "run_id", cp.RunID, "error", baseOptsErr)
 		return nil, nil
 	}
-	eng := engine.New(graph, loader, engineSink,
+	engOpts := append([]engine.Option{
 		engine.WithResumedVars(restoredVars),
 		engine.WithResumedIter(restoredIter),
 		engine.WithResumedVisits(cp.Visits),
-		engine.WithWorkflowDir(workflowDirFromPath(cp.WorkflowPath)),
 		engine.WithLogger(log),
 		engine.WithAuditWriter(auditWriter),
-		engine.WithDataDir(dataDir),
 		engine.WithAgentPrompts(rc.AgentPromptCh(), rc.CriteriaID(), cp.RunID),
-	)
+	}, baseOpts...)
+	eng := engine.New(graph, loader, engineSink, engOpts...)
 	return eng, tracked
 }
 

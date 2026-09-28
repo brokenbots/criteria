@@ -512,6 +512,11 @@ func runAgent(ctx context.Context, opts *agentOptions) error {
 // and starts the first one before the main loop begins accepting new
 // assignments.
 func recoverAgentRuns(ctx context.Context, log *slog.Logger, client *servertrans.Client, active *activeRun, opts *agentOptions) {
+	// CRI-202: enforce the retention janitor before recovery enqueues
+	// resumable runs. Terminal runs' checkpoints are deleted and orphans
+	// swept; running or paused runs are exempt, so their state survives the
+	// sweep and their recovery resume can restore from it.
+	sweepOrphanCheckpointState(log)
 	states, err := ListLocalRunStates()
 	if err != nil {
 		log.Warn("failed to list local run states", "error", err)
@@ -537,6 +542,7 @@ func clearRecoveredRun(active *activeRun, runID string, rc *servertrans.Client) 
 	}
 	removeLocalRunState(runID)
 	RemoveStepCheckpoint(runID)
+	deleteRunCheckpoints(runID)
 	if rc != nil {
 		rc.Close()
 	}
@@ -600,6 +606,7 @@ var errRunAlreadyTerminal = errors.New("run already terminal on server")
 func cleanupAgentRunState(runID string) {
 	removeLocalRunState(runID)
 	RemoveStepCheckpoint(runID)
+	deleteRunCheckpoints(runID)
 }
 
 // executeAgentAssignment materialises the assignment source into a temporary
@@ -739,6 +746,10 @@ func loadResumeState(ctx context.Context, log *slog.Logger, client *servertrans.
 		log.Info("run is terminal on server; clearing local recovery state", "run_id", runID, "status", resp.Status)
 		removeLocalRunState(runID)
 		RemoveStepCheckpoint(runID)
+		// Symmetry with clearRecoveredRun/cleanupAgentRunState: a terminal
+		// run's adapter checkpoints can never be restored, so they must not
+		// leak until the next startup sweep.
+		deleteRunCheckpoints(runID)
 		return nil, nil, errRunAlreadyTerminal
 	}
 	return cp, resp, nil
@@ -840,6 +851,14 @@ func buildAgentRun(agentCtx, runCtx context.Context, log *slog.Logger, client *s
 		engine.WithWorkflowDir(workflowDir),
 		engine.WithAuditWriter(auditWriter),
 	}
+	// CRI-202: agent runs checkpoint adapter state under
+	// <home>/runs/<runID>/snapshots so a resumed run restores adapter state
+	// from the last step boundary.
+	home, err := stateDir()
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	baseOpts = append(baseOpts, engine.WithSnapshotBase(home), engine.WithRunID(assignment.GetRunId()))
 	dataDir, err := runDataDir(assignment.GetRunId())
 	if err != nil {
 		return nil, nil, nil, nil, err

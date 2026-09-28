@@ -360,6 +360,12 @@ func (ps *permissionState) sendToolCallResultEvent(res *v2.ToolCallResult) {
 	default:
 		// Stream consumer is backlogged; don't block the Execute goroutine.
 	}
+	// CRI-202: the turn is complete either way (a backlog-dropped reply still
+	// completed the turn), so a per-turn adapter saves its checkpoint here.
+	// The hook is asynchronous and never blocks the reply path.
+	if ps.turnCheckpoint != nil {
+		ps.turnCheckpoint()
+	}
 }
 
 // toolCallPayload holds the §8 request fields extracted from a tool-call
