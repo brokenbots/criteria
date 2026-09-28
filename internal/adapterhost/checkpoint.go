@@ -24,11 +24,11 @@ import (
 // stateDigestPrefix marks the algorithm of a saved-state digest (CRI-202).
 const stateDigestPrefix = "sha256:"
 
-// turnCheckpointTimeout bounds a per-turn checkpoint save. The save runs
-// detached from the run context so a reply-path goroutine cannot be wedged by
-// a hung adapter Snapshot RPC, but it must not leak forever: after the
-// timeout the save is abandoned (logged loudly) and the mandatory
-// step-boundary save remains the durability point.
+// turnCheckpointTimeout bounds a per-turn checkpoint save. The save runs on
+// its own goroutine so the reply path can never be wedged by a hung adapter
+// Snapshot RPC, but it must not leak forever: after the timeout the save is
+// abandoned (logged loudly) and the mandatory step-boundary save remains the
+// durability point.
 const turnCheckpointTimeout = 30 * time.Second
 
 // ComputeStateDigest returns the digest stamped on every saved state blob
@@ -46,11 +46,11 @@ func ComputeStateDigest(blob []byte) string {
 // mode none) checkpoints nothing. on-demand adapters opt out of automatic
 // saves entirely — the engine saves their state only at explicit pauses.
 // Unknown granularities fall back to the engine-default per-step policy.
-func (m *SessionManager) autoCheckpoints(sess *Session) (perStep bool, perTurn bool) {
+func (m *SessionManager) autoCheckpoints(sess *Session) (perStep, perTurn bool) {
 	return autoCheckpointsWithDecl(m.DeclaredState(sess.Name))
 }
 
-func autoCheckpointsWithDecl(d *workflow.StateDeclaration) (perStep bool, perTurn bool) {
+func autoCheckpointsWithDecl(d *workflow.StateDeclaration) (perStep, perTurn bool) {
 	if d == nil {
 		return false, false
 	}
@@ -91,20 +91,22 @@ func (m *SessionManager) stampStateFields(sess *Session, d *workflow.StateDeclar
 
 // wireTurnCheckpoint attaches the per-turn checkpoint hook to an open
 // session's permission state when the adapter declared per-turn granularity
-// (CRI-202). Callers invoke it after the permission state exists; d may be
-// nil (no declaration).
-func (m *SessionManager) wireTurnCheckpoint(sess *Session, d *workflow.StateDeclaration) {
+// (CRI-202). Callers invoke it with the session's bootstrap context after the
+// permission state exists; d may be nil (no declaration).
+func (m *SessionManager) wireTurnCheckpoint(sess *Session, ctx context.Context, d *workflow.StateDeclaration) {
 	if _, perTurn := autoCheckpointsWithDecl(d); perTurn && sess.PermissionState != nil {
-		sess.PermissionState.turnCheckpoint = m.turnCheckpointFor(sess)
+		sess.PermissionState.turnCheckpoint = m.turnCheckpointFor(ctx, sess)
 	}
 }
 
 // turnCheckpointFor builds the per-turn checkpoint hook for a session: an
 // asynchronous, serialized save that never blocks the reply path (a hung
-// adapter Snapshot RPC must not wedge the turn delivery). Failures are logged
-// loudly, never silently swallowed; the step-boundary save remains the
-// mandatory durability point.
-func (m *SessionManager) turnCheckpointFor(sess *Session) func() {
+// adapter Snapshot RPC must not wedge the turn delivery). The save derives
+// its deadline from the session's bootstrap context: once the run stops, a
+// racing turn-boundary save is abandoned just like the step-boundary one.
+// Failures are logged loudly, never silently swallowed; the step-boundary
+// save remains the mandatory durability point.
+func (m *SessionManager) turnCheckpointFor(ctx context.Context, sess *Session) func() {
 	return func() {
 		if !sess.ckptInFlight.CompareAndSwap(false, true) {
 			return // a save is already in flight for this session
@@ -114,9 +116,9 @@ func (m *SessionManager) turnCheckpointFor(sess *Session) func() {
 			if sess.closing.Load() || sess.isPaused() {
 				return
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), turnCheckpointTimeout)
+			saveCtx, cancel := context.WithTimeout(ctx, turnCheckpointTimeout)
 			defer cancel()
-			if err := m.persistCheckpoint(ctx, sess); err != nil {
+			if err := m.persistCheckpoint(saveCtx, sess); err != nil {
 				slog.Warn("per-turn checkpoint save failed; step-boundary save remains mandatory",
 					"session", sess.Name, "adapter", sess.Adapter, "error", err)
 			}
@@ -157,8 +159,10 @@ func (m *SessionManager) persistCheckpoint(ctx context.Context, sess *Session) e
 // completing the step without a checkpoint. A canceled context means the run
 // is stopping; no step-outcome will be emitted, so the save is skipped.
 func (m *SessionManager) checkpointAfterExecute(ctx context.Context, sess *Session) error {
-	if ctx.Err() != nil {
+	select {
+	case <-ctx.Done():
 		return nil
+	default:
 	}
 	perStep, _ := m.autoCheckpoints(sess)
 	if !perStep {

@@ -109,10 +109,10 @@ func (h *checkpointHandle) Execute(ctx context.Context, _ string, _ *workflow.St
 	return adapter.Result{Outcome: "success"}, nil
 }
 func (h *checkpointHandle) Permit(context.Context, string, string, bool, string) error { return nil }
-func (h *checkpointHandle) CloseSession(context.Context, string) error                  { return nil }
-func (h *checkpointHandle) Kill()                                                       {}
-func (h *checkpointHandle) Pause(context.Context, string) error                         { return nil }
-func (h *checkpointHandle) Resume(context.Context, string) error                        { return nil }
+func (h *checkpointHandle) CloseSession(context.Context, string) error                 { return nil }
+func (h *checkpointHandle) Kill()                                                      {}
+func (h *checkpointHandle) Pause(context.Context, string) error                        { return nil }
+func (h *checkpointHandle) Resume(context.Context, string) error                       { return nil }
 func (h *checkpointHandle) Inspect(context.Context, string) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }
@@ -156,19 +156,22 @@ func (s *hookSink) OnStepOutcome(step, outcome string, d time.Duration, err erro
 	}
 }
 
-// writePriorCheckpoint persists a schema-stamped checkpoint directly,
-// simulating the state a previous (killed) run left behind.
-func writePriorCheckpoint(t *testing.T, base, runID, sessionID, stateStr string) {
+// writePriorCheckpoint persists a schema-stamped checkpoint holding
+// "prior-state", simulating the state a previous (killed) run left behind.
+// All tests reuse the testRunID run.
+const testRunID = "run-ck"
+
+func writePriorCheckpoint(t *testing.T, base, sessionID string) {
 	t.Helper()
 	snap := &adapterhost.SessionSnapshot{
-		AdapterState:  []byte(stateStr),
+		AdapterState:  []byte("prior-state"),
 		SchemaVersion: 1,
 		HostArch:      runtime.GOOS + "/" + runtime.GOARCH,
 		StateSchema:   "v1",
 		StateMode:     workflow.StateModeBlob,
-		StateDigest:   adapterhost.ComputeStateDigest([]byte(stateStr)),
+		StateDigest:   adapterhost.ComputeStateDigest([]byte("prior-state")),
 	}
-	if _, err := state.WriteSnapshot(state.SnapshotDir(base, runID, sessionID), snap); err != nil {
+	if _, err := state.WriteSnapshot(state.SnapshotDir(base, testRunID, sessionID), snap); err != nil {
 		t.Fatalf("write prior checkpoint: %v", err)
 	}
 }
@@ -192,14 +195,14 @@ func TestEngine_CheckpointSavedAtStepBoundary(t *testing.T) {
 					cancel()
 				}
 			},
-		}, WithSnapshotBase(tmp), WithRunID("run-ck"))
+		}, WithSnapshotBase(tmp), WithRunID(testRunID))
 		runDone <- e.Run(ctx)
 	}()
 	if err := <-runDone; err == nil {
 		t.Fatal("expected canceled run to return an error")
 	}
 
-	dir := state.SnapshotDir(tmp, "run-ck", "ck.default")
+	dir := state.SnapshotDir(tmp, testRunID, "ck.default")
 	snap, err := state.ReadLatestSnapshot(dir)
 	if err != nil {
 		t.Fatalf("read saved checkpoint: %v", err)
@@ -221,12 +224,12 @@ func TestEngine_CheckpointSavedAtStepBoundary(t *testing.T) {
 // fresh.
 func TestEngine_ResumeFromCheckpoint_KillRestart(t *testing.T) {
 	tmp := t.TempDir()
-	writePriorCheckpoint(t, tmp, "run-ck", "ck.default", "prior-state")
+	writePriorCheckpoint(t, tmp, "ck.default")
 
 	h := &checkpointHandle{}
 	sink := &fakeSink{}
 	e := New(checkpointGraph(t), &checkpointLoader{handle: h}, sink,
-		WithSnapshotBase(tmp), WithRunID("run-ck"))
+		WithSnapshotBase(tmp), WithRunID(testRunID))
 	if err := e.RunFrom(context.Background(), "a", 1); err != nil {
 		t.Fatalf("resumed run: %v", err)
 	}
@@ -249,8 +252,8 @@ func TestEngine_ResumeFromCheckpoint_KillRestart(t *testing.T) {
 // fails the run with a diagnostic naming the adapter and schema version.
 func TestEngine_ResumeFromCheckpoint_TruncatedBlobFailsLoud(t *testing.T) {
 	tmp := t.TempDir()
-	writePriorCheckpoint(t, tmp, "run-ck", "ck.default", "prior-state")
-	binPath := filepath.Join(state.SnapshotDir(tmp, "run-ck", "ck.default"), "0000000001.bin")
+	writePriorCheckpoint(t, tmp, "ck.default")
+	binPath := filepath.Join(state.SnapshotDir(tmp, testRunID, "ck.default"), "0000000001.bin")
 	if err := os.Truncate(binPath, 2); err != nil {
 		t.Fatalf("truncate blob: %v", err)
 	}
@@ -258,7 +261,7 @@ func TestEngine_ResumeFromCheckpoint_TruncatedBlobFailsLoud(t *testing.T) {
 	h := &checkpointHandle{}
 	sink := &fakeSink{}
 	e := New(checkpointGraph(t), &checkpointLoader{handle: h}, sink,
-		WithSnapshotBase(tmp), WithRunID("run-ck"))
+		WithSnapshotBase(tmp), WithRunID(testRunID))
 	err := e.RunFrom(context.Background(), "a", 1)
 	if err == nil {
 		t.Fatal("expected truncated blob to fail the run loudly")
@@ -278,14 +281,14 @@ func TestEngine_ResumeFromCheckpoint_TruncatedBlobFailsLoud(t *testing.T) {
 // blob (interrupted or partially deleted save) fails the run loudly.
 func TestEngine_ResumeFromCheckpoint_MissingBlobFailsLoud(t *testing.T) {
 	tmp := t.TempDir()
-	writePriorCheckpoint(t, tmp, "run-ck", "ck.default", "prior-state")
-	if err := os.Remove(filepath.Join(state.SnapshotDir(tmp, "run-ck", "ck.default"), "0000000001.bin")); err != nil {
+	writePriorCheckpoint(t, tmp, "ck.default")
+	if err := os.Remove(filepath.Join(state.SnapshotDir(tmp, testRunID, "ck.default"), "0000000001.bin")); err != nil {
 		t.Fatalf("remove blob: %v", err)
 	}
 
 	h := &checkpointHandle{}
 	e := New(checkpointGraph(t), &checkpointLoader{handle: h}, &fakeSink{},
-		WithSnapshotBase(tmp), WithRunID("run-ck"))
+		WithSnapshotBase(tmp), WithRunID(testRunID))
 	err := e.RunFrom(context.Background(), "a", 1)
 	if err == nil {
 		t.Fatal("expected missing blob to fail the run loudly")
@@ -302,14 +305,14 @@ func TestEngine_ResumeFromCheckpoint_MissingBlobFailsLoud(t *testing.T) {
 // was interrupted between the blob and its metadata must fail loudly.
 func TestEngine_ResumeFromCheckpoint_BlobWithoutMetadataFailsLoud(t *testing.T) {
 	tmp := t.TempDir()
-	writePriorCheckpoint(t, tmp, "run-ck", "ck.default", "prior-state")
-	if err := os.Remove(filepath.Join(state.SnapshotDir(tmp, "run-ck", "ck.default"), "0000000001.json")); err != nil {
+	writePriorCheckpoint(t, tmp, "ck.default")
+	if err := os.Remove(filepath.Join(state.SnapshotDir(tmp, testRunID, "ck.default"), "0000000001.json")); err != nil {
 		t.Fatalf("remove metadata: %v", err)
 	}
 
 	h := &checkpointHandle{}
 	e := New(checkpointGraph(t), &checkpointLoader{handle: h}, &fakeSink{},
-		WithSnapshotBase(tmp), WithRunID("run-ck"))
+		WithSnapshotBase(tmp), WithRunID(testRunID))
 	err := e.RunFrom(context.Background(), "a", 1)
 	if err == nil {
 		t.Fatal("expected blob without metadata to fail the run loudly")
@@ -324,10 +327,10 @@ func TestEngine_ResumeFromCheckpoint_BlobWithoutMetadataFailsLoud(t *testing.T) 
 // fail loudly rather than be ignored.
 func TestEngine_ResumeFromCheckpoint_UnknownSessionFailsLoud(t *testing.T) {
 	tmp := t.TempDir()
-	writePriorCheckpoint(t, tmp, "run-ck", "ghost", "prior-state")
+	writePriorCheckpoint(t, tmp, "ghost")
 
 	e := New(checkpointGraph(t), &checkpointLoader{handle: &checkpointHandle{}}, &fakeSink{},
-		WithSnapshotBase(tmp), WithRunID("run-ck"))
+		WithSnapshotBase(tmp), WithRunID(testRunID))
 	err := e.RunFrom(context.Background(), "a", 1)
 	if err == nil {
 		t.Fatal("expected unknown checkpointed session to fail the run loudly")
@@ -344,11 +347,11 @@ func TestEngine_TerminalRunDeletesCheckpoints(t *testing.T) {
 	tmp := t.TempDir()
 	h := &checkpointHandle{}
 	e := New(checkpointGraph(t), &checkpointLoader{handle: h}, &fakeSink{},
-		WithSnapshotBase(tmp), WithRunID("run-ck"))
+		WithSnapshotBase(tmp), WithRunID(testRunID))
 	if err := e.Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if _, err := os.Stat(state.CheckpointRunDir(tmp, "run-ck")); !os.IsNotExist(err) {
+	if _, err := os.Stat(state.CheckpointRunDir(tmp, testRunID)); !os.IsNotExist(err) {
 		t.Fatalf("terminal run's checkpoints not deleted (stat err: %v)", err)
 	}
 }
@@ -371,7 +374,7 @@ func TestEngine_CanceledRunKeepsCheckpoints(t *testing.T) {
 					cancel()
 				}
 			},
-		}, WithSnapshotBase(tmp), WithRunID("run-ck"))
+		}, WithSnapshotBase(tmp), WithRunID(testRunID))
 		runDone <- e.Run(ctx)
 	}()
 	select {
@@ -382,7 +385,7 @@ func TestEngine_CanceledRunKeepsCheckpoints(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("canceled run did not return")
 	}
-	snap, err := state.ReadLatestSnapshot(state.SnapshotDir(tmp, "run-ck", "ck.default"))
+	snap, err := state.ReadLatestSnapshot(state.SnapshotDir(tmp, testRunID, "ck.default"))
 	if err != nil {
 		t.Fatalf("canceled run's checkpoints must survive: %v", err)
 	}
@@ -415,12 +418,12 @@ func TestEngine_ResumeNoCheckpointsStartsFresh(t *testing.T) {
 // mismatched declaration reading a newer schema must refuse loudly.
 func TestEngine_ResumeFromCheckpoint_SchemaMismatchFailsLoud(t *testing.T) {
 	tmp := t.TempDir()
-	writePriorCheckpoint(t, tmp, "run-ck", "ck.default", "prior-state")
+	writePriorCheckpoint(t, tmp, "ck.default")
 
 	// The relaunched adapter declares schema v2; the checkpoint carries v1.
 	mutating := &schemaOverrideHandle{inner: &checkpointHandle{}, schema: "v2"}
 	e := New(checkpointGraph(t), &checkpointLoader{handle: mutating}, &fakeSink{},
-		WithSnapshotBase(tmp), WithRunID("run-ck"))
+		WithSnapshotBase(tmp), WithRunID(testRunID))
 	err := e.RunFrom(context.Background(), "a", 1)
 	if err == nil {
 		t.Fatal("expected schema mismatch to fail the run loudly")
@@ -457,7 +460,7 @@ func (o *schemaOverrideHandle) Execute(ctx context.Context, step string, n *work
 func (o *schemaOverrideHandle) CloseSession(ctx context.Context, name string) error {
 	return o.inner.CloseSession(ctx, name)
 }
-func (o *schemaOverrideHandle) Kill()                       { o.inner.Kill() }
+func (o *schemaOverrideHandle) Kill() { o.inner.Kill() }
 func (o *schemaOverrideHandle) Pause(ctx context.Context, name string) error {
 	return o.inner.Pause(ctx, name)
 }

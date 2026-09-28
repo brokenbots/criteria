@@ -49,9 +49,9 @@ func (h *ckptHandle) Execute(context.Context, string, *workflow.StepNode, adapte
 	return adapter.Result{}, nil
 }
 func (h *ckptHandle) CloseSession(context.Context, string) error { return nil }
-func (h *ckptHandle) Kill()                                       {}
-func (h *ckptHandle) Pause(context.Context, string) error         { return nil }
-func (h *ckptHandle) Resume(context.Context, string) error        { return nil }
+func (h *ckptHandle) Kill()                                      {}
+func (h *ckptHandle) Pause(context.Context, string) error        { return nil }
+func (h *ckptHandle) Resume(context.Context, string) error       { return nil }
 func (h *ckptHandle) Snapshot(_ context.Context, _ string) (*v2.SnapshotResponse, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -71,7 +71,7 @@ func (h *ckptHandle) Inspect(context.Context, string) (*v2.InspectResponse, erro
 type ckptLoader struct{ handle Handle }
 
 func (l *ckptLoader) Resolve(context.Context, string) (Handle, error) { return l.handle, nil }
-func (l *ckptLoader) Shutdown(context.Context) error                 { return nil }
+func (l *ckptLoader) Shutdown(context.Context) error                  { return nil }
 
 // ckptRecorder records CheckpointSave calls.
 type ckptRecorder struct {
@@ -116,10 +116,10 @@ func openStatefulSession(t *testing.T, h *ckptHandle, rec *ckptRecorder) (*Sessi
 
 func TestAutoCheckpoints_GranularityMatrix(t *testing.T) {
 	cases := []struct {
-		name     string
-		decl     *workflow.StateDeclaration
-		perStep  bool
-		perTurn  bool
+		name    string
+		decl    *workflow.StateDeclaration
+		perStep bool
+		perTurn bool
 	}{
 		{name: "nil-declaration", decl: nil},
 		{name: "explicit-none", decl: &workflow.StateDeclaration{Mode: workflow.StateModeNone}},
@@ -321,11 +321,11 @@ func TestValidateRestoredStateSchema(t *testing.T) {
 	none := &workflow.StateDeclaration{Mode: workflow.StateModeNone}
 
 	cases := []struct {
-		name      string
-		decl      *workflow.StateDeclaration
-		schema    string
-		stateLen  int
-		wantErr   string
+		name     string
+		decl     *workflow.StateDeclaration
+		schema   string
+		stateLen int
+		wantErr  string
 	}{
 		{name: "matching-schema-accepts", decl: decl, schema: "harness.v1", stateLen: 4},
 		{name: "checkpoint-newer-schema-refuses", decl: decl, schema: "harness.v2", stateLen: 4,

@@ -53,10 +53,11 @@ func seedRunState(t *testing.T, home, runID, status string) {
 }
 
 // seedRunSnapshot writes one adapter checkpoint under the run's snapshot dir.
-func seedRunSnapshot(t *testing.T, home, runID, session string) {
+// The sweep tests all use the "s1" session id.
+func seedRunSnapshot(t *testing.T, home, runID string) {
 	t.Helper()
 	store := state.NewCheckpointStore(home, runID)
-	if _, err := store.Save(session, &adapterhost.SessionSnapshot{SchemaVersion: 1}); err != nil {
+	if _, err := store.Save("s1", &adapterhost.SessionSnapshot{SchemaVersion: 1}); err != nil {
 		t.Fatalf("save snapshot: %v", err)
 	}
 }
@@ -73,7 +74,7 @@ func sweepLog() *slog.Logger {
 func TestSweepCheckpointRun_TerminalRunDeletesCheckpoints(t *testing.T) {
 	for _, status := range []string{agentRunStatusTerminal, "succeeded", "failed", "cancelled"} {
 		home := sweepHome(t)
-		seedRunSnapshot(t, home, "run-1", "s1")
+		seedRunSnapshot(t, home, "run-1")
 		seedRunState(t, home, "run-1", status)
 
 		sweepCheckpointRun(sweepLog(), home, "run-1")
@@ -86,7 +87,7 @@ func TestSweepCheckpointRun_TerminalRunDeletesCheckpoints(t *testing.T) {
 
 func TestSweepCheckpointRun_StoppedRunKeepsCheckpoints(t *testing.T) {
 	home := sweepHome(t)
-	seedRunSnapshot(t, home, "run-1", "s1")
+	seedRunSnapshot(t, home, "run-1")
 	seedRunState(t, home, "run-1", "stopped")
 
 	sweepCheckpointRun(sweepLog(), home, "run-1")
@@ -98,7 +99,7 @@ func TestSweepCheckpointRun_StoppedRunKeepsCheckpoints(t *testing.T) {
 
 func TestSweepCheckpointRun_RunningRunKeepsCheckpoints(t *testing.T) {
 	home := sweepHome(t)
-	seedRunSnapshot(t, home, "run-1", "s1")
+	seedRunSnapshot(t, home, "run-1")
 	seedRunState(t, home, "run-1", "")
 
 	sweepCheckpointRun(sweepLog(), home, "run-1")
@@ -110,7 +111,7 @@ func TestSweepCheckpointRun_RunningRunKeepsCheckpoints(t *testing.T) {
 
 func TestSweepCheckpointRun_OrphanWithoutMetadataDeleted(t *testing.T) {
 	home := sweepHome(t)
-	seedRunSnapshot(t, home, "run-1", "s1")
+	seedRunSnapshot(t, home, "run-1")
 
 	sweepCheckpointRun(sweepLog(), home, "run-1")
 
@@ -121,7 +122,7 @@ func TestSweepCheckpointRun_OrphanWithoutMetadataDeleted(t *testing.T) {
 
 func TestSweepCheckpointRun_OrphanWithStepCheckpointKept(t *testing.T) {
 	home := sweepHome(t)
-	seedRunSnapshot(t, home, "run-1", "s1")
+	seedRunSnapshot(t, home, "run-1")
 	// A step checkpoint without run-state: the run is resumable, so its
 	// checkpoints must survive (a crash between state writes).
 	cp := &StepCheckpoint{RunID: "run-1", Workflow: "wf.hcl", CurrentStep: "a", StartedAt: time.Now()}
@@ -144,11 +145,11 @@ func TestSweepOrphanCheckpointState_NoRunsDirIsNoOp(t *testing.T) {
 
 func TestSweepOrphanCheckpointState_SweepsAllRuns(t *testing.T) {
 	home := sweepHome(t)
-	seedRunSnapshot(t, home, "done-run", "s1")
+	seedRunSnapshot(t, home, "done-run")
 	seedRunState(t, home, "done-run", "terminal")
-	seedRunSnapshot(t, home, "stop-run", "s1")
+	seedRunSnapshot(t, home, "stop-run")
 	seedRunState(t, home, "stop-run", "stopped")
-	seedRunSnapshot(t, home, "orphan-run", "s1")
+	seedRunSnapshot(t, home, "orphan-run")
 
 	sweepOrphanCheckpointState(sweepLog())
 

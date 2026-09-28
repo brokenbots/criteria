@@ -1840,7 +1840,7 @@ func (m *SessionManager) registerSession(ctx context.Context, name, adapterName,
 
 	m.startPermissionStream(ctx, sess, plug)
 	m.startLogStream(ctx, sess, plug)
-	m.wireTurnCheckpoint(sess, declared)
+	m.wireTurnCheckpoint(sess, ctx, declared)
 	return nil
 }
 
@@ -3040,7 +3040,7 @@ type SessionSnapshot struct {
 	StateDigest string `json:"state_digest,omitempty"`
 	// Granularity records the adapter's declared checkpoint granularity
 	// (per-step|per-turn|on-demand) at save time.
-	Granularity string `json:"granularity,omitempty"`
+	Granularity string    `json:"granularity,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 
@@ -3202,35 +3202,13 @@ func (m *SessionManager) Restore(ctx context.Context, name, adapterName, onCrash
 		return nil, err
 	}
 
-	var caps []string
-	var declared *workflow.StateDeclaration
-	if info, infoErr := plug.Info(ctx); infoErr == nil {
-		// A relaunch may surface a changed or malformed declaration (e.g. the
-		// adapter binary was swapped mid-run); fail the restore loudly rather
-		// than silently downgrading checkpointing.
-		if stateErr := validateStateHandshake(adapterName, info.AdapterInfo.State); stateErr != nil {
-			plug.Kill()
-			if cleanup != nil {
-				cleanup()
-			}
-			return nil, stateErr
+	caps, declared, err := m.validateRelaunchedAdapter(ctx, plug, name, adapterName, snap)
+	if err != nil {
+		plug.Kill()
+		if cleanup != nil {
+			cleanup()
 		}
-		// CRI-202: re-check the checkpoint's stamped state schema against the
-		// relaunched adapter's declaration. Mismatched or dropped state must
-		// refuse loudly — never a silent fresh start.
-		if schemaErr := validateRestoredStateSchema(adapterName, info.AdapterInfo.State, snap); schemaErr != nil {
-			plug.Kill()
-			if cleanup != nil {
-				cleanup()
-			}
-			return nil, schemaErr
-		}
-		caps = append([]string(nil), info.Capabilities...)
-		// Re-capture the declared surface after a snapshot relaunch so a
-		// restored session keeps gating on its declared input contract
-		// (CRI-270) without a re-verify round-trip.
-		m.cacheAdapterInfo(name, &info.AdapterInfo)
-		declared = info.AdapterInfo.State
+		return nil, err
 	}
 
 	permState, err := m.restorePermissionState(name, snap.PermissionState)
@@ -3252,8 +3230,38 @@ func (m *SessionManager) Restore(ctx context.Context, name, adapterName, onCrash
 		m.startPermissionStream(ctx, sess, plug)
 	}
 	m.startLogStream(ctx, sess, plug)
-	m.wireTurnCheckpoint(sess, declared)
+	m.wireTurnCheckpoint(sess, ctx, declared)
 	return sess, nil
+}
+
+// validateRelaunchedAdapter re-checks the relaunched adapter's declaration
+// against the checkpoint stamp and returns the session's capabilities and
+// declared state surface. A relaunch may surface a changed or malformed
+// declaration (e.g. the adapter binary was swapped mid-run); that fails the
+// restore loudly rather than silently downgrading checkpointing. An Info
+// failure is tolerated (the session proceeds without a cached declaration),
+// as in the fresh-open path.
+func (m *SessionManager) validateRelaunchedAdapter(ctx context.Context, plug Handle, name, adapterName string, snap *SessionSnapshot) (caps []string, declared *workflow.StateDeclaration, err error) {
+	info, infoErr := plug.Info(ctx)
+	if infoErr == nil {
+		if err := validateStateHandshake(adapterName, info.AdapterInfo.State); err != nil {
+			return nil, nil, err
+		}
+		// CRI-202: re-check the checkpoint's stamped state schema against the
+		// relaunched adapter's declaration. Mismatched or dropped state must
+		// refuse loudly — never a silent fresh start.
+		if err := validateRestoredStateSchema(adapterName, info.AdapterInfo.State, snap); err != nil {
+			return nil, nil, err
+		}
+		// Re-capture the declared surface after a snapshot relaunch so a
+		// restored session keeps gating on its declared input contract
+		// (CRI-270) without a re-verify round-trip.
+		m.cacheAdapterInfo(name, &info.AdapterInfo)
+		return append([]string(nil), info.Capabilities...), info.AdapterInfo.State, nil
+	}
+	// An Info failure is tolerated (the session proceeds without a cached
+	// declaration), as in the fresh-open path.
+	return nil, nil, nil
 }
 
 func (m *SessionManager) restorePermissionState(name string, blob []byte) (*permissionState, error) {

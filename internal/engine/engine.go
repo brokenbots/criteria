@@ -618,7 +618,7 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	}
 	defer func() { tearDownScopeAdapters(ctx, scopeOrder, deps, rlc) }()
 
-	if err := e.bootstrapSessionsForResume(ctx, sessions, startStep); err != nil {
+	if err := e.bootstrapSessionsForResume(ctx, sessions); err != nil {
 		failRunInit(err)
 		return err
 	}
@@ -1174,7 +1174,7 @@ func cloneVisits(v map[string]int) map[string]int {
 // ErrNoSnapshots sentinel from an empty directory) start fresh — a logged
 // normal start, not a silent fallback: every other read failure aborts the
 // run loudly with the diagnostic naming the session.
-func (e *Engine) bootstrapSessionsForResume(ctx context.Context, sessions *adapterhost.SessionManager, startStep string) error {
+func (e *Engine) bootstrapSessionsForResume(ctx context.Context, sessions *adapterhost.SessionManager) error {
 	if e.snapshotBase == "" || e.runID == "" {
 		return nil
 	}
