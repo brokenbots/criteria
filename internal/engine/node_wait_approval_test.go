@@ -96,7 +96,10 @@ func minimalWaitSignalGraphWithOutcomes(outcomes map[string]string, targets map[
 	return g
 }
 
-func minimalApprovalGraph(nodeName string) *workflow.FSMGraph {
+// nodeName is always "check" across all callers, so it is hardcoded here
+// rather than threaded through a parameter (golangci-lint unparam).
+func minimalApprovalGraph() *workflow.FSMGraph {
+	nodeName := "check"
 	g := &workflow.FSMGraph{
 		Name:      "approval_test",
 		Steps:     map[string]*workflow.StepNode{},
@@ -252,7 +255,7 @@ func TestNodeWait_Signal_ResumeDeliversOutcome(t *testing.T) {
 }
 
 func TestNodeApproval_PausesRun(t *testing.T) {
-	g := minimalApprovalGraph("check")
+	g := minimalApprovalGraph()
 	sink := &pauseSink{}
 	eng := engine.New(g, emptyLoader(), sink)
 	if err := eng.Run(context.Background()); err != nil {
@@ -264,7 +267,7 @@ func TestNodeApproval_PausesRun(t *testing.T) {
 }
 
 func TestNodeApproval_ResumeApproved(t *testing.T) {
-	g := minimalApprovalGraph("check")
+	g := minimalApprovalGraph()
 	sink := &pauseSink{}
 	eng := engine.New(g, emptyLoader(), sink)
 	if err := eng.Run(context.Background()); err != nil {
@@ -284,7 +287,7 @@ func TestNodeApproval_ResumeApproved(t *testing.T) {
 }
 
 func TestNodeApproval_ResumeRejected(t *testing.T) {
-	g := minimalApprovalGraph("check")
+	g := minimalApprovalGraph()
 	sink := &pauseSink{}
 	eng := engine.New(g, emptyLoader(), sink)
 	if err := eng.Run(context.Background()); err != nil {
@@ -412,5 +415,112 @@ func TestNodeWait_Signal_SingleOutcome_PayloadFreeResume(t *testing.T) {
 	}
 	if !sink.completed {
 		t.Fatal("expected run completed")
+	}
+}
+
+// --- CRI-56 regression: an invalid approval decision or unknown wait outcome
+// must leave the resume context intact for retry instead of consuming it. ---
+
+// decisionTrackingSink wraps pauseSink to record approval-decision and
+// wait-resumed events.
+type decisionTrackingSink struct {
+	*pauseSink
+	decisions   []string
+	waitResumed []string
+}
+
+func (s *decisionTrackingSink) OnApprovalDecision(node, decision, actor string, payload map[string]string) {
+	s.decisions = append(s.decisions, node+":"+decision)
+}
+
+func (s *decisionTrackingSink) OnWaitResumed(node, mode, signal string, payload map[string]string) {
+	s.waitResumed = append(s.waitResumed, node+":"+mode)
+}
+
+func TestNodeApproval_ResumeInvalidDecision_LeavesContextForRetry(t *testing.T) {
+	g := minimalApprovalGraph()
+	sink := &pauseSink{}
+	eng := engine.New(g, emptyLoader(), sink)
+	if err := eng.Run(context.Background()); err != nil {
+		t.Fatalf("first run error: %v", err)
+	}
+
+	// Resume with an invalid decision: the run fails with the unchanged error
+	// text and the node emits no ApprovalDecision event (it never committed).
+	invalidSink := &decisionTrackingSink{pauseSink: &pauseSink{}}
+	invalid := engine.New(g, emptyLoader(), invalidSink,
+		engine.WithResumedVars(eng.VarScope()),
+		engine.WithResumePayload(map[string]string{"decision": "bogus", "actor": "mallory"}),
+	)
+	err := invalid.RunFrom(context.Background(), "check", 1)
+	if err == nil {
+		t.Fatal("expected error for unknown decision, got nil")
+	}
+	if !strings.Contains(err.Error(), `unknown decision "bogus"`) {
+		t.Errorf("error should name the invalid decision, got: %v", err)
+	}
+	if len(invalidSink.decisions) != 0 {
+		t.Errorf("OnApprovalDecision must not be emitted for an uncommitted resume, got %v", invalidSink.decisions)
+	}
+	if !invalidSink.pauseSink.failed {
+		t.Error("expected the run to be failed via OnRunFailed")
+	}
+
+	// Retry: the resume context is re-delivered unchanged and now resolves.
+	retrySink := &pauseSink{}
+	retry := engine.New(g, emptyLoader(), retrySink,
+		engine.WithResumedVars(eng.VarScope()),
+		engine.WithResumePayload(map[string]string{"decision": "approved", "actor": "mallory"}),
+	)
+	if err := retry.RunFrom(context.Background(), "check", 1); err != nil {
+		t.Fatalf("retry after invalid decision failed: %v", err)
+	}
+	if !retrySink.completed {
+		t.Error("expected run completed after corrected retry")
+	}
+}
+
+func TestNodeWait_Signal_MultiOutcome_UnknownOutcome_LeavesContextForRetry(t *testing.T) {
+	g := minimalWaitSignalGraphWithOutcomes(map[string]string{"ok": "done_ok", "err": "done_err"}, map[string]bool{"done_ok": true, "done_err": true})
+	eng := engine.New(g, emptyLoader(), &pauseSink{})
+	if err := eng.Run(context.Background()); err != nil {
+		t.Fatalf("first run error: %v", err)
+	}
+
+	// Resume with an unknown outcome: the run fails with the unchanged error
+	// text and the node emits no WaitResumed event (it never committed).
+	invalidSink := &decisionTrackingSink{pauseSink: &pauseSink{}}
+	invalid := engine.New(g, emptyLoader(), invalidSink,
+		engine.WithResumedVars(eng.VarScope()),
+		engine.WithResumePayload(map[string]string{"outcome": "unknown"}),
+	)
+	err := invalid.RunFrom(context.Background(), "gate", 1)
+	if err == nil {
+		t.Fatal("expected error for unknown outcome selector, got nil")
+	}
+	if !strings.Contains(err.Error(), `missing or invalid outcome "unknown"`) {
+		t.Errorf("error should name the invalid outcome, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "ok") || !strings.Contains(err.Error(), "err") {
+		t.Errorf("error should list valid outcomes, got: %v", err)
+	}
+	if len(invalidSink.waitResumed) != 0 {
+		t.Errorf("OnWaitResumed must not be emitted for an uncommitted resume, got %v", invalidSink.waitResumed)
+	}
+	if !invalidSink.pauseSink.failed {
+		t.Error("expected the run to be failed via OnRunFailed")
+	}
+
+	// Retry: the resume context is re-delivered unchanged and now resolves.
+	retrySink := &pauseSink{}
+	retry := engine.New(g, emptyLoader(), retrySink,
+		engine.WithResumedVars(eng.VarScope()),
+		engine.WithResumePayload(map[string]string{"outcome": "ok"}),
+	)
+	if err := retry.RunFrom(context.Background(), "gate", 1); err != nil {
+		t.Fatalf("retry after unknown outcome failed: %v", err)
+	}
+	if !retrySink.completed {
+		t.Error("expected run completed after corrected retry")
 	}
 }

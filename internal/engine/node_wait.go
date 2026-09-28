@@ -65,35 +65,40 @@ func (n *waitNode) evaluateDuration(ctx context.Context, deps Deps) (string, err
 //   - Crash-reattach (PendingSignal == signal, ResumePayload == nil):
 //     re-emits WaitEntered, returns ErrPaused so the run stays blocked.
 //   - Resume (ResumePayload != nil, PendingSignal cleared by orchestrator):
-//     emits WaitResumed, returns the single outcome target.
+//     validates payload["outcome"] against the node's outcomes before
+//     consuming the resume context, then clears ResumePayload/PendingSignal,
+//     emits WaitResumed, and returns the matched target. An unknown outcome
+//     returns an error and leaves the payload intact for retry or reattach
+//     (CRI-56).
 func (n *waitNode) evaluateSignal(st *RunState, deps Deps) (string, error) {
 	if st.ResumePayload != nil {
 		// Resumed: the orchestrator delivered the signal.
 		payload := st.ResumePayload
-		st.ResumePayload = nil
-		st.PendingSignal = ""
-		deps.Sink.OnWaitResumed(n.node.Name, "signal", n.node.Signal, payload)
 
 		// payload["outcome"] selects the branch; this is the documented contract
 		// between the Resume RPC caller and the engine. Multi-outcome signal waits
 		// require a valid selector to avoid Go map-iteration non-determinism.
 		// Single-outcome waits retain the payload-free resume path.
-		if len(n.node.Outcomes) == 1 {
-			if outcomeName := payload["outcome"]; outcomeName != "" {
-				if target, ok := n.node.Outcomes[outcomeName]; ok {
-					return target, nil
+		outcomeName := payload["outcome"]
+		target, ok := n.node.Outcomes[outcomeName]
+		if !ok || outcomeName == "" {
+			if len(n.node.Outcomes) == 1 {
+				// Documented fallback: a single-outcome wait resumes even when the
+				// payload carries no usable selector.
+				for _, t := range n.node.Outcomes {
+					target, ok = t, true
+					break
 				}
 			}
-			for _, target := range n.node.Outcomes {
-				return target, nil
-			}
+		}
+		if !ok {
+			return "", fmt.Errorf("wait %q: missing or invalid outcome %q; valid outcomes: %v", n.node.Name, outcomeName, sortedOutcomeKeys(n.node.Outcomes))
 		}
 
-		outcomeName := payload["outcome"]
-		if target, ok := n.node.Outcomes[outcomeName]; ok && outcomeName != "" {
-			return target, nil
-		}
-		return "", fmt.Errorf("wait %q: missing or invalid outcome %q; valid outcomes: %v", n.node.Name, outcomeName, sortedOutcomeKeys(n.node.Outcomes))
+		st.ResumePayload = nil
+		st.PendingSignal = ""
+		deps.Sink.OnWaitResumed(n.node.Name, "signal", n.node.Signal, payload)
+		return target, nil
 	}
 
 	// First entry or crash-reattach: pause and wait for the signal.

@@ -61,8 +61,10 @@ func WithPendingSignal(signal string) Option {
 
 // WithResumePayload seeds RunState.ResumePayload at the start of RunFrom.
 // Use this when re-entering a paused run after the orchestrator delivers a
-// resume signal. The wait/approval node reads the payload to resolve its
-// outcome and then clears the field (W05).
+// resume signal. The wait/approval node validates the payload against its
+// outcomes before resolving and clears the field only once the resume input
+// is accepted; an invalid decision/outcome leaves the payload intact so the
+// resume can be retried (W05, CRI-56).
 func WithResumePayload(payload map[string]string) Option {
 	return func(e *Engine) {
 		e.resumePayload = payload
