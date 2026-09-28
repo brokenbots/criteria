@@ -142,7 +142,11 @@ func drainLocalResumeCycles(ctx context.Context, log *slog.Logger, graph *workfl
 		}
 
 		tracker.ClearPaused()
-		resumeOpts := append(localRunEngineOptions(opts.workflowPath, dataDir),
+		resumeOpts, err := localRunEngineOptions(opts.workflowPath, dataDir, runID)
+		if err != nil {
+			return err
+		}
+		resumeOpts = append(resumeOpts,
 			engine.WithResumedVars(eng.VarScope()),
 			engine.WithResumedVisits(eng.VisitCounts()),
 			engine.WithResumePayload(payload))

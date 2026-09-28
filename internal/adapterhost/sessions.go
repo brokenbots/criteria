@@ -1405,6 +1405,19 @@ func (m *SessionManager) SessionOpen(name string) bool {
 	return exists
 }
 
+// SessionBound reports whether a session with the given name is bound to a
+// live adapter handle. Unlike SessionOpen it excludes verified-but-unbound
+// records: CRI-202 resume uses it to decide between replaying a checkpoint
+// into an already-open session and re-launching the adapter with prior
+// state. A verified record has no handle to restore into, so its checkpoint
+// must ride the full Restore launch sequence.
+func (m *SessionManager) SessionBound(name string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, exists := m.sessions[name]
+	return exists
+}
+
 // checkDuplicateLocked returns ErrSessionAlreadyOpen if the named session is
 // already bound or verified. It is the caller's responsibility to hold no lock.
 func (m *SessionManager) checkDuplicateLocked(name string) error {

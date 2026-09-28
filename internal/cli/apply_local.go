@@ -38,6 +38,12 @@ func runApplyLocal(
 	}
 	defer cleanup()
 
+	// CRI-202: enforce the retention janitor before this invocation starts.
+	// Terminal runs' checkpoints are deleted and orphans swept; live or
+	// stopped runs are exempt, so a resume identity match still finds its
+	// checkpoint state intact.
+	sweepOrphanCheckpointState(log)
+
 	// CRI-125: identify this invocation before any fresh-run work so a
 	// restarted runner resumes (or keeps failed) the original run instead of
 	// forking a second run with a fresh run_id. A broken CLI variable input
@@ -166,19 +172,25 @@ func buildLocalRunSink(log *slog.Logger, runID, workflowPath, fingerprint string
 }
 
 // localRunEngineOptions returns the engine options every local `criteria
-// apply` engine construction site must include: the workflow directory and
-// run data directory, plus the CRI-293 shim address isolation. A local run
-// binds every referenced remote environment's shim in one process, so
-// environments sharing a listen_address would collide on the second bind
-// without per-environment port isolation. Server engine construction sites
-// must never include that option: each environment's shim lives in its own
-// adapter pod and must receive the declared address.
-func localRunEngineOptions(workflowPath, dataDir string) []engine.Option {
+// apply` engine construction site must include: the workflow directory, run
+// data directory, CRI-293 shim address isolation, and the CRI-202 checkpoint
+// surface (snapshot base + run id, so adapter checkpoints persist under
+// <home>/runs/<runID>/snapshots for later restore). Server engine
+// construction sites must never include the shim isolation option: each
+// environment's shim lives in its own adapter pod and must receive the
+// declared address.
+func localRunEngineOptions(workflowPath, dataDir, runID string) ([]engine.Option, error) {
+	home, err := stateDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve criteria home for checkpoints: %w", err)
+	}
 	return []engine.Option{
 		engine.WithWorkflowDir(workflowDirFromPath(workflowPath)),
 		engine.WithDataDir(dataDir),
 		engine.WithLocalShimIsolation(),
-	}
+		engine.WithSnapshotBase(home),
+		engine.WithRunID(runID),
+	}, nil
 }
 
 // newLocalEngine constructs the engine for a fresh local run.
@@ -189,7 +201,11 @@ func newLocalEngine(runID string, graph *workflow.FSMGraph, loader adapterhost.L
 	if err != nil {
 		return nil, err
 	}
-	engOpts := append(localRunEngineOptions(opts.workflowPath, dataDir),
+	engOpts, err := localRunEngineOptions(opts.workflowPath, dataDir, runID)
+	if err != nil {
+		return nil, err
+	}
+	engOpts = append(engOpts,
 		engine.WithVarOverrides(identity.mergedVars),
 		engine.WithAuditWriter(auditWriter))
 	// CRI-304: record the invocation fingerprint and let the engine adopt
@@ -383,7 +399,11 @@ func buildReattachTrackerAndEngine(cp *StepCheckpoint, log *slog.Logger, graph *
 	}
 	runSink := &terminalSuccessSink{Sink: tracker}
 	tracker.OnStepResumed(cp.CurrentStep, nextAttempt, "criteria_restart")
-	reattachOpts := append(localRunEngineOptions(cp.WorkflowPath, dataDir),
+	reattachOpts, err := localRunEngineOptions(cp.WorkflowPath, dataDir, cp.RunID)
+	if err != nil {
+		return opts, nil, nil, nil, err
+	}
+	reattachOpts = append(reattachOpts,
 		engine.WithVarOverrides(mergedVars),
 		engine.WithResumedVisits(cp.Visits))
 	// CRI-293: this is a local crash-reattach engine; it binds the remote
