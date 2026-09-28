@@ -17,6 +17,12 @@ import (
 // -race -count=3 on loaded hosts.
 var testNoopAdapterBin string
 
+// testStatefulAdapterBin is the path to the stateful adapter binary compiled
+// once for the entire test-binary lifetime (same build-once rationale as
+// testNoopAdapterBin). It declares a blob state descriptor in its
+// InfoResponse (CRI-201).
+var testStatefulAdapterBin string
+
 // testSandboxShimBin is the path to a dedicated Linux sandbox shim helper
 // binary. It is only built on Linux; on other platforms it remains empty and
 // the Linux-only sandbox tests that need it are skipped.
@@ -33,6 +39,7 @@ func TestMain(m *testing.M) {
 	}
 
 	testNoopAdapterBin = buildTestNoopAdapter(dir)
+	testStatefulAdapterBin = buildTestStatefulAdapter(dir)
 	if runtime.GOOS == "linux" {
 		testSandboxShimBin = buildTestSandboxShim(dir)
 		testCriteriaBin = buildTestCriteriaBin(dir)
@@ -54,6 +61,18 @@ func buildTestNoopAdapter(dir string) string {
 	cmd.Dir = moduleRootFromCaller()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		panic("adapterhost/main_test.go: build noop adapter: " + err.Error() + "\n" + string(out))
+	}
+	return bin
+}
+
+// buildTestStatefulAdapter compiles the stateful adapter into dir, built once
+// like the noop adapter.
+func buildTestStatefulAdapter(dir string) string {
+	bin := filepath.Join(dir, "criteria-adapter-stateful")
+	cmd := exec.Command("go", "build", "-o", bin, "./internal/adapter/conformance/testdata/stateful")
+	cmd.Dir = moduleRootFromCaller()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		panic("adapterhost/main_test.go: build stateful adapter: " + err.Error() + "\n" + string(out))
 	}
 	return bin
 }

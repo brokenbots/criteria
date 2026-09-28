@@ -337,3 +337,60 @@ func TestUnknownFieldTypeDefaultsToString(t *testing.T) {
 		t.Errorf("unknown type should default to ConfigFieldString, got %v", ft.Type)
 	}
 }
+
+// TestAdapterInfoFromProto_StateDeclaration exercises the
+// StateDeclarationFromProto translation (InfoResponse.state, CRI-201): a
+// populated descriptor is carried through field-for-field, an absent
+// descriptor and an empty mode string both translate to nil (absent = mode
+// none by spec).
+func TestAdapterInfoFromProto_StateDeclaration(t *testing.T) {
+	t.Run("populated descriptor is translated", func(t *testing.T) {
+		resp := &v2.InfoResponse{
+			Name: "stateful",
+			State: &v2.StateDescriptor{
+				Mode:        "blob",
+				Schema:      "harness.v1",
+				MaxBytes:    64 * 1024,
+				Granularity: "per-turn",
+			},
+		}
+		info := adapterhostpkg.AdapterInfoFromProto(resp)
+		if info.State == nil {
+			t.Fatal("AdapterInfo.State = nil; want translated declaration")
+		}
+		if info.State.Mode != "blob" {
+			t.Errorf("State.Mode = %q; want %q", info.State.Mode, "blob")
+		}
+		if info.State.Schema != "harness.v1" {
+			t.Errorf("State.Schema = %q; want %q", info.State.Schema, "harness.v1")
+		}
+		if info.State.MaxBytes != 64*1024 {
+			t.Errorf("State.MaxBytes = %d; want %d", info.State.MaxBytes, 64*1024)
+		}
+		if info.State.Granularity != "per-turn" {
+			t.Errorf("State.Granularity = %q; want %q", info.State.Granularity, "per-turn")
+		}
+	})
+
+	t.Run("absent descriptor translates to nil", func(t *testing.T) {
+		resp := &v2.InfoResponse{Name: "noop"}
+		if state := adapterhostpkg.AdapterInfoFromProto(resp).State; state != nil {
+			t.Fatalf("AdapterInfo.State = %+v; want nil (absent = mode none)", state)
+		}
+	})
+
+	t.Run("empty mode translates to nil", func(t *testing.T) {
+		resp := &v2.InfoResponse{Name: "noop", State: &v2.StateDescriptor{Schema: "harness.v1"}}
+		if state := adapterhostpkg.AdapterInfoFromProto(resp).State; state != nil {
+			t.Fatalf("AdapterInfo.State = %+v; want nil (empty mode indistinguishable from absent)", state)
+		}
+	})
+
+	t.Run("explicit none is preserved as a declaration", func(t *testing.T) {
+		resp := &v2.InfoResponse{Name: "noop", State: &v2.StateDescriptor{Mode: "none"}}
+		state := adapterhostpkg.AdapterInfoFromProto(resp).State
+		if state == nil || state.Mode != "none" {
+			t.Fatalf("AdapterInfo.State = %+v; want explicit mode-none declaration", state)
+		}
+	})
+}
