@@ -3125,7 +3125,7 @@ func (m *SessionManager) Restore(ctx context.Context, name, adapterName, onCrash
 		// A relaunch may surface a changed or malformed declaration (e.g. the
 		// adapter binary was swapped mid-run); fail the restore loudly rather
 		// than silently downgrading checkpointing.
-		if stateErr := validateStateHandshake(name, info.AdapterInfo.State); stateErr != nil {
+		if stateErr := validateStateHandshake(adapterName, info.AdapterInfo.State); stateErr != nil {
 			plug.Kill()
 			if cleanup != nil {
 				cleanup()
