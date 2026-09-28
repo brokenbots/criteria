@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -613,5 +614,195 @@ func TestApprovalRequestPath_RejectsTraversal(t *testing.T) {
 	_, err := ApprovalRequestPath("run-1", "../../evil")
 	if err == nil {
 		t.Error("ApprovalRequestPath with traversal node name should return error")
+	}
+}
+
+// TestLocalState_StepCheckpoint_TornWriteSurvives injects a crash inside the
+// checkpoint write window and proves the previous valid checkpoint survives:
+// startup still decodes it, and a torn or empty file is never served.
+//
+// The publish seam fires after the temp file has been flushed but before the
+// rename — exactly where a crash used to destroy the record under the old
+// plain os.WriteFile implementation, whose truncate-then-write window on the
+// live file left an empty or partial JSON body on disk.
+func TestLocalState_StepCheckpoint_TornWriteSurvives(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("failure injection opens the temp file after close; POSIX semantics assumed")
+	}
+
+	for name, inject := range map[string]func(tmpName string) error{
+		// Crash mid-way through writing the temp file: partial payload, no
+		// sync, no rename.
+		"mid-temp-write": func(tmpName string) error {
+			f, err := os.OpenFile(tmpName, os.O_WRONLY|os.O_TRUNC, 0o600)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			if _, err := f.WriteString(`{"run_id":"run-torn","current`); err != nil {
+				return err
+			}
+			// Abandon without completing or closing cleanly: the "crash".
+			return errors.New("simulated crash mid-write")
+		},
+		// Crash right at the publish step, temp file already complete.
+		"before-rename": func(tmpName string) error {
+			return errors.New("simulated crash before rename")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("CRITERIA_STATE_DIR", dir)
+			workflowPath := filepath.Join(dir, "workflow.hcl")
+			if err := os.WriteFile(workflowPath, []byte("workflow \"w\" {}"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			previous := &StepCheckpoint{
+				RunID:        "run-torn",
+				Workflow:     "wf",
+				WorkflowPath: workflowPath,
+				CurrentStep:  "good-step",
+				Attempt:      2,
+				StartedAt:    time.Now().UTC().Truncate(time.Second),
+			}
+			if err := WriteStepCheckpoint(previous); err != nil {
+				t.Fatalf("seed WriteStepCheckpoint: %v", err)
+			}
+
+			// Newer checkpoint whose write is destroyed mid-flight.
+			next := *previous
+			next.CurrentStep = "in-flight-step"
+			next.Attempt = 3
+			err := writeStepCheckpoint(&next, func(tmpName, target string) error {
+				return inject(tmpName)
+			})
+			if err == nil {
+				t.Fatal("expected injected crash to surface as an error (soft-degrade contract)")
+			}
+
+			// The previous valid checkpoint must still be the only record and
+			// must decode fully — never the torn payload.
+			target := filepath.Join(dir, "runs", "run-torn.json")
+			raw, err := os.ReadFile(target)
+			if err != nil {
+				t.Fatalf("previous checkpoint file vanished after failed write: %v", err)
+			}
+			var decoded StepCheckpoint
+			if derr := json.Unmarshal(raw, &decoded); derr != nil {
+				t.Fatalf("startup cannot decode checkpoint after injected crash (torn write): %v; raw=%q", derr, raw)
+			}
+			if decoded.CurrentStep != "good-step" || decoded.Attempt != 2 {
+				t.Fatalf("checkpoint content corrupted: got step=%q attempt=%d want step=%q attempt=2", decoded.CurrentStep, decoded.Attempt, "good-step")
+			}
+
+			// A crash mid-temp-write leaves a leftover temp file behind; it
+			// must not confuse the startup scan.
+			checkpoints, err := ListStepCheckpoints()
+			if err != nil {
+				t.Fatalf("ListStepCheckpoints: %v", err)
+			}
+			if len(checkpoints) != 1 || checkpoints[0].CurrentStep != "good-step" {
+				t.Fatalf("startup scan disrupted by failed write: got %v", checkpoints)
+			}
+			if cp, err := readStepCheckpoint("run-torn"); err != nil || cp == nil || cp.CurrentStep != "good-step" {
+				t.Fatalf("readStepCheckpoint after injected crash: cp=%+v err=%v", cp, err)
+			}
+
+			// The failed attempt must not leave torn content in the target
+			// path itself.
+			if raw, err := os.ReadFile(target); err == nil && !json.Valid(raw) {
+				t.Fatalf("target path holds invalid JSON after failed write: %q", raw)
+			}
+		})
+	}
+}
+
+// TestLocalState_StepCheckpoint_TornWriteOldWriterLosesRecord documents the
+// mechanism the atomic writer protects against: a crash between the truncate
+// and the write of a plain in-place save leaves the sole reattach record
+// undecodable, losing crash recovery for the run.
+func TestLocalState_StepCheckpoint_TornWriteOldWriterLosesRecord(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", dir)
+	workflowPath := filepath.Join(dir, "workflow.hcl")
+	if err := os.WriteFile(workflowPath, []byte("workflow \"w\" {}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cp := &StepCheckpoint{
+		RunID:        "run-old-writer",
+		Workflow:     "wf",
+		WorkflowPath: workflowPath,
+		CurrentStep:  "good-step",
+		Attempt:      1,
+	}
+	if err := WriteStepCheckpoint(cp); err != nil {
+		t.Fatalf("seed WriteStepCheckpoint: %v", err)
+	}
+
+	// Reproduce exactly what the old os.WriteFile left on disk when the
+	// process died inside its truncate-then-write window.
+	target := filepath.Join(dir, "runs", "run-old-writer.json")
+	f, err := os.OpenFile(target, os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(`{"run_id":"run-old-writer","curre`); err != nil {
+		t.Fatal(err)
+	}
+	f.Close() // <- the "crash": nothing further is ever written
+
+	if _, err := readStepCheckpoint("run-old-writer"); err == nil {
+		t.Fatal("expected undecodable checkpoint after simulated crash in the old truncate/write window")
+	}
+}
+
+// TestLocalState_StepCheckpoint_ReplaceLeavesNoTempFiles verifies a successful
+// atomic write publishes exactly the target file and cleans up its temp file,
+// including when the target already exists.
+func TestLocalState_StepCheckpoint_ReplaceLeavesNoTempFiles(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", dir)
+	workflowPath := filepath.Join(dir, "workflow.hcl")
+	if err := os.WriteFile(workflowPath, []byte("workflow \"w\" {}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	runsDir := filepath.Join(dir, "runs")
+	cp := &StepCheckpoint{
+		RunID:        "run-replace",
+		Workflow:     "wf",
+		WorkflowPath: workflowPath,
+		CurrentStep:  "step-1",
+		Attempt:      1,
+	}
+	if err := WriteStepCheckpoint(cp); err != nil {
+		t.Fatalf("first WriteStepCheckpoint: %v", err)
+	}
+	cp.Attempt = 2
+	cp.CurrentStep = "step-2"
+	if err := WriteStepCheckpoint(cp); err != nil {
+		t.Fatalf("replacement WriteStepCheckpoint: %v", err)
+	}
+
+	entries, err := os.ReadDir(runsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	if len(names) != 1 || names[0] != "run-replace.json" {
+		t.Fatalf("expected exactly run-replace.json after atomic replace, got %v", names)
+	}
+
+	got, err := readStepCheckpoint("run-replace")
+	if err != nil {
+		t.Fatalf("decode replaced checkpoint: %v", err)
+	}
+	if got.CurrentStep != "step-2" || got.Attempt != 2 {
+		t.Fatalf("replaced checkpoint content wrong: step=%q attempt=%d", got.CurrentStep, got.Attempt)
 	}
 }
