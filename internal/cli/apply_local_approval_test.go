@@ -152,37 +152,72 @@ func TestApplyLocal_FileMode_ApprovalApproved(t *testing.T) {
 	}
 }
 
-func TestApplyLocal_LocalApprovalDisabled_ApprovalNodeRejected(t *testing.T) {
-	// Without CRITERIA_LOCAL_APPROVAL, approval nodes must be rejected.
-	// Explicitly clear in case the process environment has it set.
+func TestApplyLocal_ApprovalPausesUntilRPCDecision(t *testing.T) {
+	// Since CRI-255 the run's control listener is always attached: an
+	// approval node without CRITERIA_LOCAL_APPROVAL parks the run awaiting
+	// a ResolveResume decision over the loopback listener rather than
+	// failing fast (resolution arrives via the listener or a configured
+	// resumer). The resolved-pause lifecycle itself is covered by
+	// TestApplyLocal_ApprovalResolvedOverLocalControlRPC; this test pins the
+	// blocking behavior, so it must release the run before returning.
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
-	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
-	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
+	t.Setenv("CRITERIA_ADAPTERS", filepath.Dir(buildNoopAdapterBinary(t)))
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 
-	wf := filepath.Join("testdata", "local_approval_simple")
-	err := runApply(context.Background(), applyOptions{workflowPath: wf})
-	if err == nil {
-		t.Fatal("expected error for approval node without CRITERIA_LOCAL_APPROVAL")
+	errCh := runApplyAsync(&applyOptions{workflowPath: filepath.Join("testdata", "local_approval_simple")})
+
+	addr := waitForControlEndpoint(t, stateDir)
+	runID := singleRunID(t, stateDir)
+	select {
+	case err := <-errCh:
+		t.Fatalf("run must not finish while the approval pause is unresolved (err=%v)", err)
+	case <-time.After(300 * time.Millisecond):
 	}
-	if !strings.Contains(err.Error(), "approval nodes require an orchestrator") {
-		t.Fatalf("unexpected error: %v", err)
+
+	if accepted, reason := resolveApproval(t, addr, runID, "review", map[string]string{"decision": "approved"}); !accepted || reason != "ok" {
+		t.Fatalf("ResolveResume = (accepted=%t, reason=%q), want accepted ok", accepted, reason)
+	}
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("expected successful run after approval, got: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("runApply did not return after approval")
 	}
 }
 
-func TestApplyLocal_LocalApprovalDisabled_SignalWaitRejected(t *testing.T) {
-	// Without CRITERIA_LOCAL_APPROVAL, wait {signal} nodes must be rejected.
-	// Explicitly clear in case the process environment has it set.
+func TestApplyLocal_SignalWaitPausesUntilRPCDecision(t *testing.T) {
+	// Since CRI-255 a wait {signal} node parks the run awaiting a
+	// ResolveResume decision over the loopback listener instead of failing
+	// fast without CRITERIA_LOCAL_APPROVAL. This test pins the blocking
+	// behavior, so it must release the run before returning.
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
-	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
-	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
+	t.Setenv("CRITERIA_ADAPTERS", filepath.Dir(buildNoopAdapterBinary(t)))
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 
-	wf := filepath.Join("testdata", "local_signal_wait")
-	err := runApply(context.Background(), applyOptions{workflowPath: wf})
-	if err == nil {
-		t.Fatal("expected error for signal wait without CRITERIA_LOCAL_APPROVAL")
+	errCh := runApplyAsync(&applyOptions{workflowPath: filepath.Join("testdata", "local_signal_wait")})
+
+	addr := waitForControlEndpoint(t, stateDir)
+	runID := singleRunID(t, stateDir)
+	select {
+	case err := <-errCh:
+		t.Fatalf("run must not finish while the signal pause is unresolved (err=%v)", err)
+	case <-time.After(300 * time.Millisecond):
 	}
-	if !strings.Contains(err.Error(), "signal waits require an orchestrator") {
-		t.Fatalf("unexpected error: %v", err)
+
+	if accepted, reason := resolveApproval(t, addr, runID, "proceed", map[string]string{"outcome": "success"}); !accepted || reason != "ok" {
+		t.Fatalf("ResolveResume = (accepted=%t, reason=%q), want accepted ok", accepted, reason)
+	}
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("expected successful run after signal, got: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("runApply did not return after signal")
 	}
 }
 

@@ -47,6 +47,7 @@ func (s *testSink) OnStepResumed(string, int, string)                           
 func (s *testSink) OnVariableSet(string, string, string)                         {}
 func (s *testSink) OnStepOutputCaptured(string, map[string]string)               {}
 func (s *testSink) OnRunPaused(string, string, string)                           {}
+func (s *testSink) OnRunResumed(string)                                          {}
 func (s *testSink) OnWaitEntered(string, string, string, string)                 {}
 func (s *testSink) OnWaitResumed(string, string, string, map[string]string)      {}
 func (s *testSink) OnApprovalRequested(string, []string, string)                 {}

@@ -74,6 +74,11 @@ func (s *RedactingSink) OnRunPaused(node, mode, signal string) {
 	s.inner.OnRunPaused(s.reg.Redact(node), s.reg.Redact(mode), s.reg.Redact(signal))
 }
 
+// OnRunResumed forwards run.resumed through the redactor (CRI-255).
+func (s *RedactingSink) OnRunResumed(node string) {
+	s.inner.OnRunResumed(s.reg.Redact(node))
+}
+
 func (s *RedactingSink) OnWaitEntered(node, mode, duration, signal string) {
 	s.inner.OnWaitEntered(s.reg.Redact(node), s.reg.Redact(mode), s.reg.Redact(duration), s.reg.Redact(signal))
 }

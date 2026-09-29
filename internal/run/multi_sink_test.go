@@ -1,6 +1,9 @@
 package run
 
 import (
+	"bytes"
+	"encoding/json"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -25,6 +28,7 @@ func (r *recordingSink) OnStepResumed(string, int, string)                      
 func (r *recordingSink) OnVariableSet(string, string, string)                    { r.bump() }
 func (r *recordingSink) OnStepOutputCaptured(string, map[string]string)          { r.bump() }
 func (r *recordingSink) OnRunPaused(string, string, string)                      { r.bump() }
+func (r *recordingSink) OnRunResumed(string)                                     { r.bump() }
 func (r *recordingSink) OnWaitEntered(string, string, string, string)            { r.bump() }
 func (r *recordingSink) OnWaitResumed(string, string, string, map[string]string) { r.bump() }
 func (r *recordingSink) OnApprovalRequested(string, []string, string)            { r.bump() }
@@ -123,5 +127,34 @@ func TestMultiSink_OnCheckpointPointerFansOut(t *testing.T) {
 	}
 	if got := b.calls.Load(); got != 1 {
 		t.Errorf("child b calls: got %d want 1", got)
+	}
+}
+
+// TestMultiSink_RunPausedResumedFanOut asserts run-level pause/resume
+// events (CRI-255) fan out to every child sink, so NDJSON consumers of a
+// local run see RunPaused/RunResumed with the same shapes as server runs.
+func TestMultiSink_RunPausedResumedFanOut(t *testing.T) {
+	var buf bytes.Buffer
+	var sink engine.Sink = NewMultiSink(&LocalSink{RunID: "run-fanout", Out: &buf})
+
+	sink.OnRunPaused("build", "external", "")
+	sink.OnRunResumed("build")
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 NDJSON lines, got %d: %q", len(lines), buf.String())
+	}
+	var l sinkLine
+	if err := json.Unmarshal([]byte(lines[0]), &l); err != nil {
+		t.Fatalf("invalid NDJSON line %q: %v", lines[0], err)
+	}
+	if l.PayloadType != "RunPaused" || l.RunID != "run-fanout" {
+		t.Errorf("line 0 = type %q run %q, want RunPaused run-fanout", l.PayloadType, l.RunID)
+	}
+	if err := json.Unmarshal([]byte(lines[1]), &l); err != nil {
+		t.Fatalf("invalid NDJSON line %q: %v", lines[1], err)
+	}
+	if l.PayloadType != "RunResumed" {
+		t.Errorf("line 1 type = %q, want RunResumed", l.PayloadType)
 	}
 }

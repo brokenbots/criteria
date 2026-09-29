@@ -22,6 +22,23 @@ func NewResumeCmd() *cobra.Command {
 			if runID == "" {
 				return fmt.Errorf("--run-id is required")
 			}
+			// CRI-255: a run executed by a local apply is controlled through
+			// its loopback control listener (discovered from the run's state
+			// dir); without the record (or with an explicit server target)
+			// the verb rides the castle server surface as before.
+			if !controlSurfaceOverridden(cmd) {
+				addr, err := LocalControlEndpoint(runID)
+				if err != nil {
+					return err
+				}
+				if addr != "" {
+					if _, err := localControlServiceClientFor(addr).ResumeRun(cmd.Context(), connect.NewRequest(&pb.ResumeRunRequest{RunId: runID})); err != nil {
+						return fmt.Errorf("resume: %w", err)
+					}
+					fmt.Printf("resume requested for run %s\n", runID)
+					return nil
+				}
+			}
 			client, err := flags.client()
 			if err != nil {
 				return err

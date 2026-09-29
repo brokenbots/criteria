@@ -28,6 +28,7 @@ type applyOptions struct {
 	output               string       // "auto" | "concise" | "json"
 	ui                   bool         // --ui: serve the loopback run-state server + run-viewer during local apply (default true)
 	uiPort               int          // --ui-port: loopback port for the run-state server (0 = auto)
+	controlAddr          string       // --control-addr: loopback listen address for the run's control listener ("host:port"; default random loopback port)
 	serverBootstrapToken string       // --server-bootstrap-token: X-Server-Bootstrap value sent on Register; "file:<path>" reads the token from a file
 	subworkflowRoots     []string     // --subworkflow-root flag (repeatable); populates AllowedRoots on LocalSubWorkflowResolver
 	workflowRef          string       // --workflow-ref: caller-declared expected pin (git SHA or sha256:<digest>); run fails closed on mismatch (CRI-226)
@@ -71,6 +72,7 @@ func NewApplyCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.output, "output", envOrDefault("CRITERIA_OUTPUT", "auto"), "Standalone output format: auto|concise|json (auto: concise on TTY, json when piped)")
 	cmd.Flags().BoolVar(&opts.ui, "ui", true, "Serve the local run viewer on loopback while a local run executes (local mode)")
 	cmd.Flags().IntVar(&opts.uiPort, "ui-port", 0, "Port for the local run viewer's run-state server (0 = auto-select; loopback only)")
+	cmd.Flags().StringVar(&opts.controlAddr, "control-addr", envOrDefault("CRITERIA_CONTROL_ADDR", ""), "Listen address (host:port) for the run's control/run-state listener (empty = random loopback port; loopback only; local mode)")
 	cmd.Flags().StringArrayVar(&opts.subworkflowRoots, "subworkflow-root", nil, "Restrict subworkflow source resolution to this root path (repeatable; empty = no restriction)")
 	cmd.Flags().StringVar(&opts.workflowRef, "workflow-ref", "", "Expected ref/digest the workflow source must resolve to — a git commit SHA or sha256:<digest>; the run fails closed on mismatch (CRI-226)")
 	cmd.Flags().BoolVar(&opts.warnsAsErrors, "warnings-as-errors", false, "Refuse to run when a warning is raised (e.g. an adapter whose schema could not be verified)")

@@ -22,6 +22,7 @@ type recordingSink struct {
 	onVariableSetArgs            []string
 	onStepOutputCapturedArgs     map[string]string
 	onRunPausedArgs              []string
+	onRunResumedArgs             []string
 	onWaitEnteredArgs            []string
 	onWaitResumedArgs            []string
 	onWaitResumedPayload         map[string]string
@@ -78,6 +79,12 @@ func (s *recordingSink) OnStepOutputCaptured(step string, outputs map[string]str
 }
 func (s *recordingSink) OnRunPaused(node, mode, signal string) {
 	s.onRunPausedArgs = []string{node, mode, signal}
+}
+
+// OnRunResumed records the resumed node so redaction of run.resumed can be
+// asserted (CRI-255).
+func (s *recordingSink) OnRunResumed(node string) {
+	s.onRunResumedArgs = []string{node}
 }
 func (s *recordingSink) OnWaitEntered(node, mode, duration, signal string) {
 	s.onWaitEnteredArgs = []string{node, mode, duration, signal}
@@ -283,6 +290,16 @@ func TestRedactingSink_OnRunPaused(t *testing.T) {
 
 	sink.OnRunPaused("node_secret123", "mode_secret123", "signal_secret123")
 	assertRedacted(t, inner.onRunPausedArgs, []string{"node_[REDACTED]", "mode_[REDACTED]", "signal_[REDACTED]"})
+}
+
+func TestRedactingSink_OnRunResumed(t *testing.T) {
+	inner := &recordingSink{}
+	reg := secrets.NewRegistry()
+	reg.Register("secret123")
+	sink := NewRedactingSink(inner, reg)
+
+	sink.OnRunResumed("node_secret123")
+	assertRedacted(t, inner.onRunResumedArgs, []string{"node_[REDACTED]"})
 }
 
 func TestRedactingSink_OnWaitEntered(t *testing.T) {

@@ -290,3 +290,28 @@ message GetAssignmentDispositionResponse {
   // leased the assignment, if known.
   string leased_criteria_id = 6;
 }
+
+// LocalControlService — the control surface served by a local `criteria
+// apply` process on loopback (CRI-255). It shares ServerService's request /
+// response messages and Engine.Pause / Engine.Resume semantics with the
+// orchestrator control path, but binds loopback only: there is no auth
+// surface beyond the loopback bind because the caller (CLI, local UI) is in
+// the same trust domain as the apply process itself. This service is never
+// served by the orchestrator.
+service LocalControlService {
+  // PauseRun pauses the owned run at the next checkpoint point (step
+  // boundary): the in-flight step completes, the step and adapter session
+  // checkpoints are written, and only then does the call return.
+  rpc PauseRun(PauseRunRequest) returns (PauseRunResponse);
+
+  // ResumeRun continues a boundary-paused run. The response is
+  // synchronous: once it returns, apply drives the engine to the next
+  // pause point or to a terminal state.
+  rpc ResumeRun(ResumeRunRequest) returns (ResumeRunResponse);
+
+  // ResolveResume delivers an approval decision or a signal outcome to the
+  // paused run, satisfying node pausing (mode "duration" | "signal"). The
+  // same call replaces the local CRITERIA_LOCAL_APPROVAL file protocol as
+  // the primary integration surface.
+  rpc ResolveResume(ResumeRequest) returns (ResumeResponse);
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestApplyLocal_ServerRequiredSignalWait(t *testing.T) {
@@ -46,18 +47,20 @@ state "failed" {
 	if err == nil {
 		t.Fatal("expected error for signal wait in local mode")
 	}
-	if !strings.Contains(err.Error(), "signal waits require an orchestrator") {
+	if !strings.Contains(err.Error(), "signal waits are resolved via the run's local control listener") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 func TestApplyLocal_WaitSignalNode(t *testing.T) {
-	// W05: first-class wait { signal } node must be rejected in local mode.
-	// Clear CRITERIA_LOCAL_APPROVAL so the global env value does not
-	// auto-approve the signal wait and cause the test to pass spuriously.
+	// Since CRI-255 a first-class wait { signal } node pauses the local run
+	// and is resolved over the run's control listener (ResolveResume), not
+	// rejected. Clear CRITERIA_LOCAL_APPROVAL so the global env value does
+	// not auto-approve the signal wait and cause the test to pass
+	// spuriously.
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
-	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
-	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	workflowPath := writeWorkflowFile(t, `
 workflow {
   name = "wait_signal"
@@ -77,22 +80,31 @@ state "done" {
 }
 `)
 
-	err := runApply(context.Background(), applyOptions{workflowPath: workflowPath})
-	if err == nil {
-		t.Fatal("expected error for wait { signal } in local mode")
+	errCh := runApplyAsync(&applyOptions{workflowPath: workflowPath})
+	addr := waitForControlEndpoint(t, stateDir)
+	runID := singleRunID(t, stateDir)
+	accepted, reason := resolveApproval(t, addr, runID, "ready", map[string]string{"outcome": "received"})
+	if !accepted || reason != "ok" {
+		t.Fatalf("ResolveResume = (accepted=%t, reason=%q), want accepted ok", accepted, reason)
 	}
-	if !strings.Contains(err.Error(), "signal waits require an orchestrator") {
-		t.Fatalf("unexpected error: %v", err)
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("expected successful run after RPC signal, got: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("runApply did not return after RPC signal")
 	}
 }
 
 func TestApplyLocal_ApprovalNode(t *testing.T) {
-	// W05: approval nodes must be rejected in local mode.
-	// Clear CRITERIA_LOCAL_APPROVAL so the global env value does not
-	// auto-approve the approval node and cause the test to pass spuriously.
+	// Since CRI-255 an approval node pauses the local run and is resolved
+	// over the run's control listener (ResolveResume), not rejected. Clear
+	// CRITERIA_LOCAL_APPROVAL so the global env value does not auto-approve
+	// the approval node and cause the test to pass spuriously.
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
-	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
-	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	workflowPath := writeWorkflowFile(t, `
 workflow {
   name = "needs_approval"
@@ -114,11 +126,19 @@ state "done" {
 }
 `)
 
-	err := runApply(context.Background(), applyOptions{workflowPath: workflowPath})
-	if err == nil {
-		t.Fatal("expected error for approval node in local mode")
+	errCh := runApplyAsync(&applyOptions{workflowPath: workflowPath})
+	addr := waitForControlEndpoint(t, stateDir)
+	runID := singleRunID(t, stateDir)
+	accepted, reason := resolveApproval(t, addr, runID, "review", map[string]string{"decision": "approved"})
+	if !accepted || reason != "ok" {
+		t.Fatalf("ResolveResume = (accepted=%t, reason=%q), want accepted ok", accepted, reason)
 	}
-	if !strings.Contains(err.Error(), "approval nodes require an orchestrator") {
-		t.Fatalf("unexpected error: %v", err)
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("expected successful run after RPC approval, got: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("runApply did not return after RPC approval")
 	}
 }

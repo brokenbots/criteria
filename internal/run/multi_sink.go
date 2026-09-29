@@ -90,6 +90,12 @@ func (m *MultiSink) OnRunPaused(node, mode, signal string) {
 	}
 }
 
+func (m *MultiSink) OnRunResumed(node string) {
+	for _, c := range m.children {
+		c.OnRunResumed(node)
+	}
+}
+
 func (m *MultiSink) OnWaitEntered(node, mode, duration, signal string) {
 	for _, c := range m.children {
 		c.OnWaitEntered(node, mode, duration, signal)

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	servertrans "github.com/brokenbots/criteria/internal/transport/server"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
@@ -1313,9 +1314,12 @@ func TestResumePausedRun_StartStreamsError(t *testing.T) {
 	}
 }
 
-// TestResumeOneLocalRun_ServerNodeRejected verifies that a checkpoint for a
-// workflow containing a server-only node (approval) is abandoned cleanly.
-func TestResumeOneLocalRun_ServerNodeRejected(t *testing.T) {
+// TestResumeOneLocalRun_ServerNodeResolved verifies that a checkpoint for a
+// workflow containing an approval node reattaches into the CRI-255 pause and
+// resolves over the fresh control listener (the crashed process's listener is
+// gone): the decision arrives via ResolveResume, the run completes, and the
+// checkpoint is removed.
+func TestResumeOneLocalRun_ServerNodeResolved(t *testing.T) {
 	stateDir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 
@@ -1351,7 +1355,37 @@ state "done" {
 	}
 
 	var out bytes.Buffer
-	resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON, nil)
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON, nil)
+		errCh <- err
+	}()
+
+	// Since CRI-255 the reattached run pauses at the approval node and is
+	// resolved over the fresh control listener, not abandoned: deliver the
+	// decision and expect the run to complete.
+	addr := waitForControlEndpoint(t, stateDir)
+	if accepted, reason := resolveApproval(t, addr, cp.RunID, "review", map[string]string{"decision": "approved"}); !accepted || reason != "ok" {
+		// Diagnostics: dump whether the run goroutine already exited and
+		// its captured output, so transport-level failures are debuggable.
+		select {
+		case runErr := <-errCh:
+			t.Fatalf("ResolveResume = (accepted=%t, reason=%q) but run already exited with %v; out=%s", accepted, reason, runErr, out.String())
+		default:
+			t.Fatalf("ResolveResume = (accepted=%t, reason=%q), want accepted ok", accepted, reason)
+		}
+	}
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("resumeOneLocalRun after RPC approval = %v, want nil", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("resumeOneLocalRun did not return after RPC approval")
+	}
+	if !strings.Contains(out.String(), "ApprovalRequested") {
+		t.Errorf("reattach run output missing ApprovalRequested: %s", out.String())
+	}
 
 	// Checkpoint must be cleared (unsupported in local mode).
 	checkpoints, _ := ListStepCheckpoints()

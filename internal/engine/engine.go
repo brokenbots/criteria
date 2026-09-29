@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/zclconf/go-cty/cty"
@@ -96,8 +97,14 @@ type Sink interface {
 	OnStepOutputCaptured(step string, outputs map[string]string)
 	// OnRunPaused is called when the engine pauses at a wait or approval node
 	// (W05). node is the node name, mode is "duration"|"signal", signal is the
-	// pending signal name (empty for duration mode).
+	// pending signal name (empty for duration mode). Mode "external" marks a
+	// control-surface boundary pause (CRI-255): the node is the next node to
+	// evaluate and the pause acks only after durable checkpoints were written.
 	OnRunPaused(node, mode, signal string)
+	// OnRunResumed is emitted when a previously paused (or interrupted) run
+	// begins executing again at the named node (CRI-255). Emitted by RunFrom;
+	// local and server resume paths share the same event shape.
+	OnRunResumed(node string)
 	// OnWaitEntered is emitted when the engine enters a wait node (W05).
 	OnWaitEntered(node, mode, duration, signal string)
 	// OnWaitResumed is emitted when a wait node resolves (W05). payload is nil
@@ -280,6 +287,17 @@ type Engine struct {
 	agentPromptCh <-chan *pb.AgentPrompt
 	promptOwnerID string
 	promptRunID   string
+
+	// CRI-255: boundaryPause is the control-surface pause latch; runLoop
+	// checks it at every checkpoint point (top of each loop iteration — pause
+	// points are checkpoint points) and honors it via pauseAtBoundary.
+	boundaryPause atomic.Bool
+	// pauseMu guards pauseLanded.
+	pauseMu sync.Mutex
+	// pauseLanded is closed exactly once when a RequestPause lands at a
+	// step boundary (checkpoints durable, RunPaused emitted). Replaced on
+	// each RequestPause; nil when nothing is pending.
+	pauseLanded chan struct{}
 }
 
 func New(graph *workflow.FSMGraph, loader adapterhost.Loader, sink Sink, opts ...Option) *Engine {
@@ -314,6 +332,94 @@ func (e *Engine) VisitCounts() map[string]int {
 // session, and persists the snapshots to disk (WS18). It is reentrant and
 // idempotent.
 func (e *Engine) Pause(ctx context.Context) error {
+	return e.pauseSessions(ctx)
+}
+
+// Resume continues all paused adapter sessions. If the engine was restarted
+// and liveSessions is nil, it reconstructs sessions from the latest persisted
+// snapshots before resuming (WS18).
+func (e *Engine) Resume(ctx context.Context) error {
+	e.mu.RLock()
+	sessions := e.liveSessions
+	e.mu.RUnlock()
+	if sessions == nil {
+		if e.snapshotBase == "" || e.runID == "" {
+			return errors.New("no active run to resume")
+		}
+		restored, err := e.restoreSessionsFromSnapshots(ctx)
+		if err != nil {
+			return err
+		}
+		sessions = restored
+		e.mu.Lock()
+		e.liveSessions = sessions
+		e.mu.Unlock()
+	}
+	return sessions.ResumeAll(ctx)
+}
+
+// RequestPause asks the active run to pause at the next checkpoint point
+// (top of the next run-loop iteration — pause points are checkpoint points,
+// CRI-255). The node currently being evaluated finishes first; the engine
+// then runs its full pause machinery (adapter session pause + snapshots +
+// persist) and writes the step checkpoint through the sink's OnRunPaused
+// before the returned channel closes, so a crash mid-pause reattaches from
+// the checkpoint written before the pause was acknowledged.
+//
+// It returns (nil, false) when no run loop is active: the run has already
+// yielded at a node pause or reached a terminal state.
+func (e *Engine) RequestPause() (<-chan struct{}, bool) {
+	e.pauseMu.Lock()
+	defer e.pauseMu.Unlock()
+	if e.liveRunState == nil {
+		return nil, false
+	}
+	if e.pauseLanded != nil {
+		return e.pauseLanded, true
+	}
+	e.boundaryPause.Store(true)
+	ch := make(chan struct{})
+	e.pauseLanded = ch
+	return ch, true
+}
+
+// clearPauseRequest drops a pending boundary-pause request (called when the
+// run exits runLoop without honoring it: a failure, a return exit, or a node
+// pause that left the loop directly — all race candidates for a pause verb
+// that latched between iterations). Closing the channel is the drop signal:
+// the waiter wakes immediately and re-reads the pause tracker — a parked run
+// has a node recorded (node pause landed legitimately), an empty one means
+// the run wound down without pausing.
+func (e *Engine) clearPauseRequest() {
+	e.pauseMu.Lock()
+	ch := e.pauseLanded
+	e.pauseLanded = nil
+	e.boundaryPause.Store(false)
+	e.pauseMu.Unlock()
+	if ch != nil {
+		close(ch)
+	}
+}
+
+// ackPauseRequested closes the pending pause-landed channel: the pause has
+// landed and its durable state was written before this fires.
+func (e *Engine) ackPauseRequested() {
+	e.pauseMu.Lock()
+	ch := e.pauseLanded
+	e.pauseLanded = nil
+	e.boundaryPause.Store(false)
+	e.pauseMu.Unlock()
+	if ch != nil {
+		close(ch)
+	}
+}
+
+// pauseSessions halts the live adapter sessions and persists their snapshots.
+// Shared by Engine.Pause (caller surfaces the error) and the boundary pause
+// (fail-open: warnings logged, pause still lands — the resume path rebuilds
+// sessions from the step checkpoint written after, even when a session
+// snapshot failed).
+func (e *Engine) pauseSessions(ctx context.Context) error {
 	e.mu.RLock()
 	sessions := e.liveSessions
 	e.mu.RUnlock()
@@ -340,27 +446,21 @@ func (e *Engine) Pause(ctx context.Context) error {
 	return nil
 }
 
-// Resume continues all paused adapter sessions. If the engine was restarted
-// and liveSessions is nil, it reconstructs sessions from the latest persisted
-// snapshots before resuming (WS18).
-func (e *Engine) Resume(ctx context.Context) error {
-	e.mu.RLock()
-	sessions := e.liveSessions
-	e.mu.RUnlock()
-	if sessions == nil {
-		if e.snapshotBase == "" || e.runID == "" {
-			return errors.New("no active run to resume")
-		}
-		restored, err := e.restoreSessionsFromSnapshots(ctx)
-		if err != nil {
-			return err
-		}
-		sessions = restored
-		e.mu.Lock()
-		e.liveSessions = sessions
-		e.mu.Unlock()
+// pauseAtBoundary lands a control-surface pause request at a run-loop
+// boundary (CRI-255). Ordering rule: durable state first — adapter session
+// checkpoints here, the step checkpoint via the sink's OnRunPaused
+// (pauseTracker → PauseCheckpointFn) — then the ack. A crash at any point
+// before the ack reattaches from the checkpoint written before it.
+func (e *Engine) pauseAtBoundary(ctx context.Context, st *RunState, sink Sink) {
+	if err := e.pauseSessions(ctx); err != nil {
+		slog.Warn("boundary pause: adapter session checkpoint best-effort",
+			"step", st.Current, "error", err)
 	}
-	return sessions.ResumeAll(ctx)
+	e.lastVars = st.Vars
+	e.lastVisits = st.Visits
+	e.clearLiveRunStatePtr()
+	sink.OnRunPaused(st.Current, "external", "")
+	e.ackPauseRequested()
 }
 
 func (e *Engine) restoreSessionsFromSnapshots(ctx context.Context) (*adapterhost.SessionManager, error) {
@@ -437,6 +537,22 @@ func (e *Engine) clearLiveRunState() {
 	e.liveSessions = nil
 	e.livePrompts = nil
 	e.mu.Unlock()
+}
+
+// setLiveRunStatePtr updates e.liveRunState under pauseMu: the local control
+// surface (RequestPause / VisitCounts) reads the live pointer while the run
+// loop mutates it; without this guard the pointer is racy (KB-54/KB-56 CI
+// data race in TestApplyLocal_BoundaryPauseResumeOverLocalControlRPC).
+func (e *Engine) setLiveRunStatePtr(st *RunState) {
+	e.pauseMu.Lock()
+	e.liveRunState = st
+	e.pauseMu.Unlock()
+}
+
+func (e *Engine) clearLiveRunStatePtr() {
+	e.pauseMu.Lock()
+	e.liveRunState = nil
+	e.pauseMu.Unlock()
 }
 
 // effectivePinSet resolves the run's effective lockfile by one shared rule:
@@ -657,6 +773,10 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 		failRunInit(err)
 		return err
 	}
+	// CRI-255: every RunFrom entry follows a pause (boundary, approval, wait)
+	// or an interrupted (crash/stop) execution; publish run.resumed so local
+	// and server streams share one event vocabulary for the resume boundary.
+	sink.OnRunResumed(startStep)
 	return e.runLoop(ctx, sessions, startStep, initialAttempt, vars, sink, ds, rlc)
 }
 
@@ -685,10 +805,19 @@ func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManag
 	defer prompts.Stop()
 
 	defer e.clearLiveRunState()
+	defer e.clearPauseRequest()
 	e.setLiveRunState(sessions, prompts)
 
-	e.liveRunState = st
+	e.setLiveRunStatePtr(st)
 	for {
+		// CRI-255: pause points are checkpoint points. A control-surface
+		// pause request lands here, at the top of each loop iteration —
+		// after the previous node committed to its transition, before the
+		// next node evaluates; the in-flight iteration completes first.
+		if e.boundaryPause.Load() {
+			e.pauseAtBoundary(ctx, st, sink)
+			return nil
+		}
 		node, err := nodeFor(e.graph, st.Current)
 		if err != nil {
 			sink.OnRunFailed(err.Error(), st.Current)
@@ -1088,7 +1217,7 @@ func (e *Engine) advanceTo(st *RunState, next string) {
 func (e *Engine) handleEvalError(ctx context.Context, st *RunState, err error, sink Sink) error {
 	// Capture the visit state and clear the live pointer so VisitCounts()
 	// returns a stable snapshot after the run ends (W07).
-	e.liveRunState = nil
+	e.clearLiveRunStatePtr()
 	e.lastVisits = st.Visits
 	if errors.Is(err, engineruntime.ErrTerminal) {
 		state, ok := e.graph.States[st.Current]
@@ -1150,7 +1279,7 @@ func (e *Engine) handleEvalError(ctx context.Context, st *RunState, err error, s
 // The projected outputs in st.ReturnOutputs are emitted as OnRunOutputs
 // (if non-empty) and the run is completed successfully with no named final state.
 func (e *Engine) handleReturnExit(st *RunState, sink Sink) {
-	e.liveRunState = nil
+	e.clearLiveRunStatePtr()
 	e.lastVisits = st.Visits
 
 	if len(st.ReturnOutputs) > 0 {

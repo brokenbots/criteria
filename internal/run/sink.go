@@ -135,14 +135,26 @@ func (s *Sink) OnStepOutputCaptured(step string, outputs map[string]string) {
 }
 
 // OnRunPaused is called by the engine loop when execution pauses at a wait
-// or approval node (W05). The server sink does not publish a separate event
-// here because WaitEntered / ApprovalRequested were already emitted; this
-// hook exists so the CLI pause/resume loop can detect the paused node.
+// or approval node (W05) or at a control-surface step boundary (CRI-255,
+// mode "external"). Node pauses are already represented to consumers by the
+// richer WaitEntered / ApprovalRequested events; RunPaused is published only
+// for boundary pauses, the class with no other event. The paused node is
+// always tracked so the CLI pause/resume loop can detect it.
 func (s *Sink) OnRunPaused(node, mode, signal string) {
 	s.Log.Info("run paused", "run_id", s.RunID, "node", node, "mode", mode, "signal", signal)
+	if mode == "external" {
+		s.publish(&pb.RunPaused{Node: node, Mode: mode, Signal: signal})
+	}
 	s.pauseMu.Lock()
 	s.pausedNode = node
 	s.pauseMu.Unlock()
+}
+
+// OnRunResumed publishes a RunResumed event (CRI-255): fired when a
+// previously paused or interrupted run re-enters execution via RunFrom.
+func (s *Sink) OnRunResumed(node string) {
+	s.Log.Info("run resumed", "run_id", s.RunID, "node", node)
+	s.publish(&pb.RunResumed{Node: node})
 }
 
 // IsPaused returns true if the engine paused at a node waiting for a signal (W05).

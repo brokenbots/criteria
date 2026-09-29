@@ -21,6 +21,56 @@ type sinkLine struct {
 	Payload     json.RawMessage `json:"payload"`
 }
 
+// TestLocalSink_RunPausedResumedEvents asserts the NDJSON sink emits
+// RunPaused only for boundary pauses (mode "external", CRI-255) and emits
+// RunResumed on re-entry, sharing one event vocabulary with the server path.
+func TestLocalSink_RunPausedResumedEvents(t *testing.T) {
+	var buf bytes.Buffer
+	sink := &LocalSink{RunID: "run-ctrl-local", Out: &buf}
+	decode := func(t *testing.T) sinkLine {
+		t.Helper()
+		line := strings.TrimSpace(buf.String())
+		var l sinkLine
+		if err := json.Unmarshal([]byte(line), &l); err != nil {
+			t.Fatalf("invalid NDJSON line %q: %v", line, err)
+		}
+		return l
+	}
+
+	sink.OnRunPaused("build", "signal", "ready")
+	if buf.Len() != 0 {
+		t.Fatalf("non-external pause emitted %q, want no RunPaused event", buf.String())
+	}
+
+	buf.Reset()
+	sink.OnRunPaused("wait-for-merge", "external", "")
+	l := decode(t)
+	if l.PayloadType != "RunPaused" {
+		t.Fatalf("payload type = %q, want RunPaused", l.PayloadType)
+	}
+	var paused pb.RunPaused
+	if err := protojson.Unmarshal(l.Payload, &paused); err != nil {
+		t.Fatalf("invalid RunPaused payload: %v", err)
+	}
+	if paused.Node != "wait-for-merge" || paused.Mode != "external" {
+		t.Errorf("unexpected RunPaused payload: %+v", &paused)
+	}
+
+	buf.Reset()
+	sink.OnRunResumed("wait-for-merge")
+	l = decode(t)
+	if l.PayloadType != "RunResumed" {
+		t.Fatalf("payload type = %q, want RunResumed", l.PayloadType)
+	}
+	var resumed pb.RunResumed
+	if err := protojson.Unmarshal(l.Payload, &resumed); err != nil {
+		t.Fatalf("invalid RunResumed payload: %v", err)
+	}
+	if resumed.Node != "wait-for-merge" {
+		t.Errorf("RunResumed node = %q, want wait-for-merge", resumed.Node)
+	}
+}
+
 func TestLocalSink_EncodesNDJSONAndMonotonicSeq(t *testing.T) {
 	var buf bytes.Buffer
 	checkpointCalls := 0

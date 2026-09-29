@@ -62,6 +62,45 @@ func newTestSink(t *testing.T) *Sink {
 
 // TestSink_PauseLifecycle verifies OnRunPaused sets the paused node,
 // IsPaused/PausedAt report it, and ClearPaused resets the state.
+// TestSink_RunPausedExternalAndRunResumedPublishe asserts the server-side
+// run sink publishes RunPaused only for boundary pauses (mode "external",
+// CRI-255 — wait/approval pauses ride the richer WaitEntered/ApprovalRequested
+// events) and publishes RunResumed with the node it re-enters.
+func TestSink_RunPausedExternalAndRunResumedPublishe(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	fp := &fakePublisher{}
+	s := &Sink{RunID: "run-ctrl-1", Client: fp, Log: log}
+
+	s.OnRunPaused("build", "signal", "ready")
+	if got := len(fp.published); got != 0 {
+		t.Fatalf("non-external pause should not publish RunPaused, got %d envelopes", got)
+	}
+
+	s.OnRunPaused("wait-for-merge", "external", "")
+	if got := len(fp.published); got != 1 {
+		t.Fatalf("expected 1 envelope for boundary pause, got %d", got)
+	}
+	paused := fp.published[0].GetRunPaused()
+	if paused == nil {
+		t.Fatalf("boundary pause published non-RunPaused envelope: %v", fp.published[0])
+	}
+	if paused.Node != "wait-for-merge" || paused.Mode != "external" || paused.Signal != "" {
+		t.Errorf("unexpected RunPaused payload: %+v", paused)
+	}
+
+	s.OnRunResumed("wait-for-merge")
+	if got := len(fp.published); got != 2 {
+		t.Fatalf("expected 2 envelopes after resume, got %d", got)
+	}
+	resumed := fp.published[1].GetRunResumed()
+	if resumed == nil {
+		t.Fatalf("resume published %T, want *pb.RunResumed", fp.published[1].Payload)
+	}
+	if resumed.Node != "wait-for-merge" {
+		t.Errorf("RunResumed node = %q, want wait-for-merge", resumed.Node)
+	}
+}
+
 func TestSink_PauseLifecycle(t *testing.T) {
 	s := newTestSink(t)
 

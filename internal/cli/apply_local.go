@@ -77,7 +77,7 @@ func runApplyLocal(
 	if err != nil {
 		return err
 	}
-	if err := ensureLocalModeSupported(graph, resumer != nil); err != nil {
+	if err := ensureLocalModeSupported(graph); err != nil {
 		return err
 	}
 
@@ -86,10 +86,10 @@ func runApplyLocal(
 
 // executeFreshLocalRun runs a freshly-started local workflow to its terminal
 // state, persisting the local run state and step checkpoints for crash
-// recovery (CRI-125). When the UI is enabled, the run's events are also
-// teed into <home>/runs/<runID>/events.ndjson and a loopback run-state
-// server (scoped to this run) serves the run-viewer at a printed URL
-// (CRI-279).
+// recovery (CRI-125). Every local run is served by a loopback control
+// listener (CRI-255) while apply executes — the runview API plus the Connect
+// LocalControlService (PauseRun/ResumeRun/ResolveResume) — and, when the UI
+// is enabled, the embedded run-viewer is served on the same server.
 func executeFreshLocalRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, loader adapterhost.Loader, resumer localresume.LocalResumer, jsonOut io.Writer, mode outputMode, opts applyOptions, identity localRunIdentity, workflowHash string) error {
 	runID := uuid.NewString()
 	runEvents, closeRunEvents, err := openRunEventsFile(runID)
@@ -125,23 +125,21 @@ func executeFreshLocalRun(ctx context.Context, log *slog.Logger, graph *workflow
 	if err != nil {
 		return err
 	}
+	ctrl := newLocalRunControl(runID, graph, tracker, eng)
 
-	// CRI-279: serve the run-viewer on loopback for this run while apply
-	// executes. The stop verb cancels the engine context (the engine then
-	// emits a real terminal RunFailed event); pause/resume are UNIMPLEMENTED
-	// until CRI-255 adds checkpoint-gated controls.
-	runCtx := ctx
-	var stopServer func()
-	if opts.ui {
-		runCtx, stopServer = attachLocalRunStateServer(ctx, log, runID, opts.uiPort)
-		defer stopServer()
-	}
+	// CRI-255: the loopback control listener is served for every local run —
+	// it mounts the Connect LocalControlService (control surface) and, when
+	// the UI is enabled, the run viewer. Its stop verb cancels the engine
+	// context (the engine then emits a real terminal RunFailed event).
+	runCtx, stopServer := attachLocalRunStateServer(ctx, log, runID, resolveRunListenAddr(&opts), ctrl, opts.ui)
+	defer stopServer()
+	defer ctrl.markFinished()
 	if err := eng.Run(runCtx); err != nil {
 		log.Error("local run failed", "run_id", runID, "error", err)
 		return err
 	}
 
-	if err := finishFreshLocalRun(runCtx, log, graph, loader, tracker, runSink, resumer, runID, opts, eng); err != nil {
+	if err := finishFreshLocalRun(runCtx, log, loader, runSink, resumer, runID, opts, ctrl, eng); err != nil {
 		return err
 	}
 
@@ -214,13 +212,13 @@ func newLocalEngine(runID string, graph *workflow.FSMGraph, loader adapterhost.L
 	return engine.New(graph, loader, runSink, engOpts...), nil
 }
 
-// finishFreshLocalRun handles post-engine work: resume cycles and the
-// terminal-success failure translation.
-func finishFreshLocalRun(runCtx context.Context, log *slog.Logger, graph *workflow.FSMGraph, loader adapterhost.Loader, tracker *pauseTracker, runSink *terminalSuccessSink, resumer localresume.LocalResumer, runID string, opts applyOptions, eng *engine.Engine) error {
-	if resumer != nil {
-		if err := drainLocalResumeCycles(runCtx, log, graph, loader, tracker, runSink, resumer, runID, opts, eng); err != nil {
-			return err
-		}
+// finishFreshLocalRun handles post-engine work: resume cycles (boundary
+// pauses and approval/signal node pauses) and the terminal-success failure
+// translation. It runs for every local run: without a resumer the control
+// listener's bus still resolves pauses (CRI-255).
+func finishFreshLocalRun(runCtx context.Context, log *slog.Logger, loader adapterhost.Loader, runSink *terminalSuccessSink, resumer localresume.LocalResumer, runID string, opts applyOptions, ctrl *localRunControl, eng *engine.Engine) error {
+	if err := drainLocalResumeCycles(runCtx, log, loader, runSink, resumer, runID, opts, ctrl, eng); err != nil {
+		return err
 	}
 	if finalState, success, ok := runSink.TerminalSuccess(); ok && !success {
 		return fmt.Errorf("run completed with terminal state %q (success=false)", finalState)
@@ -303,7 +301,7 @@ func prepareReattach(ctx context.Context, log *slog.Logger, cp *StepCheckpoint) 
 		RemoveStepCheckpoint(cp.RunID)
 		return nil, nil, nil, false
 	}
-	if err := ensureLocalModeSupported(graph, resumer != nil); err != nil {
+	if err := ensureLocalModeSupported(graph); err != nil {
 		log.Warn("local checkpoint requires server; clearing", "run_id", cp.RunID, "error", err)
 		RemoveStepCheckpoint(cp.RunID)
 		return nil, nil, nil, false
@@ -342,18 +340,23 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 		RemoveStepCheckpoint(cp.RunID)
 		return false, nil
 	}
+	// CRI-255: the reattach run is served by its own control listener (the
+	// crashed process's listener is gone): the fresh attachment publishes a
+	// renewed control.json for the same run id.
+	ctrl := newLocalRunControl(cp.RunID, graph, tracker, eng)
+	runCtx, stopServer := attachLocalRunStateServer(ctx, log, cp.RunID, resolveRunListenAddr(&opts), ctrl, opts.ui)
+	defer stopServer()
+	defer ctrl.markFinished()
 	var outcome error
-	if runErr := eng.RunFrom(ctx, cp.CurrentStep, nextAttempt); runErr != nil {
+	if runErr := eng.RunFrom(runCtx, cp.CurrentStep, nextAttempt); runErr != nil {
 		log.Error("resumed local run failed", "run_id", cp.RunID, "error", runErr)
 		RemoveStepCheckpoint(cp.RunID)
 		return true, runErr
 	}
-	if resumer != nil {
-		if cycleErr := drainLocalResumeCycles(ctx, log, graph, loader, tracker, runSink, resumer, cp.RunID, opts, eng); cycleErr != nil {
-			log.Error("resumed local run failed during approval", "run_id", cp.RunID, "error", cycleErr)
-			RemoveStepCheckpoint(cp.RunID)
-			return true, cycleErr
-		}
+	if cycleErr := drainLocalResumeCycles(runCtx, log, loader, runSink, resumer, cp.RunID, opts, ctrl, eng); cycleErr != nil {
+		log.Error("resumed local run failed during approval", "run_id", cp.RunID, "error", cycleErr)
+		RemoveStepCheckpoint(cp.RunID)
+		return true, cycleErr
 	}
 	log.Info("resumed local run completed", "run_id", cp.RunID)
 	RemoveStepCheckpoint(cp.RunID)

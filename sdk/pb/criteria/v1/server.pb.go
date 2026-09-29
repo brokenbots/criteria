@@ -1682,7 +1682,11 @@ const file_criteria_v1_server_proto_rawDesc = "" +
 	"\x18SubmitWorkflowAssignment\x12,.criteria.v1.SubmitWorkflowAssignmentRequest\x1a-.criteria.v1.SubmitWorkflowAssignmentResponse\x12w\n" +
 	"\x18GetAssignmentDisposition\x12,.criteria.v1.GetAssignmentDispositionRequest\x1a-.criteria.v1.GetAssignmentDispositionResponse\x12M\n" +
 	"\n" +
-	"SendPrompt\x12\x1e.criteria.v1.SendPromptRequest\x1a\x1f.criteria.v1.SendPromptResponseB>Z<github.com/brokenbots/criteria/sdk/pb/criteria/v1;criteriav1b\x06proto3"
+	"SendPrompt\x12\x1e.criteria.v1.SendPromptRequest\x1a\x1f.criteria.v1.SendPromptResponse2\xf4\x01\n" +
+	"\x13LocalControlService\x12G\n" +
+	"\bPauseRun\x12\x1c.criteria.v1.PauseRunRequest\x1a\x1d.criteria.v1.PauseRunResponse\x12J\n" +
+	"\tResumeRun\x12\x1d.criteria.v1.ResumeRunRequest\x1a\x1e.criteria.v1.ResumeRunResponse\x12H\n" +
+	"\rResolveResume\x12\x1a.criteria.v1.ResumeRequest\x1a\x1b.criteria.v1.ResumeResponseB>Z<github.com/brokenbots/criteria/sdk/pb/criteria/v1;criteriav1b\x06proto3"
 
 var (
 	file_criteria_v1_server_proto_rawDescOnce sync.Once
@@ -1729,6 +1733,8 @@ var file_criteria_v1_server_proto_goTypes = []any{
 	(*timestamppb.Timestamp)(nil),            // 27: google.protobuf.Timestamp
 	(*Run)(nil),                              // 28: criteria.v1.Run
 	(*Envelope)(nil),                         // 29: criteria.v1.Envelope
+	(*ResumeRequest)(nil),                    // 30: criteria.v1.ResumeRequest
+	(*ResumeResponse)(nil),                   // 31: criteria.v1.ResumeResponse
 }
 var file_criteria_v1_server_proto_depIdxs = []int32{
 	25, // 0: criteria.v1.Agent.labels:type_name -> criteria.v1.Agent.LabelsEntry
@@ -1761,21 +1767,27 @@ var file_criteria_v1_server_proto_depIdxs = []int32{
 	21, // 27: criteria.v1.ServerService.SubmitWorkflowAssignment:input_type -> criteria.v1.SubmitWorkflowAssignmentRequest
 	23, // 28: criteria.v1.ServerService.GetAssignmentDisposition:input_type -> criteria.v1.GetAssignmentDispositionRequest
 	19, // 29: criteria.v1.ServerService.SendPrompt:input_type -> criteria.v1.SendPromptRequest
-	3,  // 30: criteria.v1.ServerService.ListAgents:output_type -> criteria.v1.ListAgentsResponse
-	1,  // 31: criteria.v1.ServerService.GetAgent:output_type -> criteria.v1.Agent
-	6,  // 32: criteria.v1.ServerService.ListRuns:output_type -> criteria.v1.ListRunsResponse
-	28, // 33: criteria.v1.ServerService.GetRun:output_type -> criteria.v1.Run
-	9,  // 34: criteria.v1.ServerService.ListRunEvents:output_type -> criteria.v1.ListRunEventsResponse
-	29, // 35: criteria.v1.ServerService.WatchRun:output_type -> criteria.v1.Envelope
-	12, // 36: criteria.v1.ServerService.StopRun:output_type -> criteria.v1.StopRunResponse
-	14, // 37: criteria.v1.ServerService.PauseRun:output_type -> criteria.v1.PauseRunResponse
-	16, // 38: criteria.v1.ServerService.ResumeRun:output_type -> criteria.v1.ResumeRunResponse
-	18, // 39: criteria.v1.ServerService.InspectRun:output_type -> criteria.v1.InspectRunResponse
-	22, // 40: criteria.v1.ServerService.SubmitWorkflowAssignment:output_type -> criteria.v1.SubmitWorkflowAssignmentResponse
-	24, // 41: criteria.v1.ServerService.GetAssignmentDisposition:output_type -> criteria.v1.GetAssignmentDispositionResponse
-	20, // 42: criteria.v1.ServerService.SendPrompt:output_type -> criteria.v1.SendPromptResponse
-	30, // [30:43] is the sub-list for method output_type
-	17, // [17:30] is the sub-list for method input_type
+	13, // 30: criteria.v1.LocalControlService.PauseRun:input_type -> criteria.v1.PauseRunRequest
+	15, // 31: criteria.v1.LocalControlService.ResumeRun:input_type -> criteria.v1.ResumeRunRequest
+	30, // 32: criteria.v1.LocalControlService.ResolveResume:input_type -> criteria.v1.ResumeRequest
+	3,  // 33: criteria.v1.ServerService.ListAgents:output_type -> criteria.v1.ListAgentsResponse
+	1,  // 34: criteria.v1.ServerService.GetAgent:output_type -> criteria.v1.Agent
+	6,  // 35: criteria.v1.ServerService.ListRuns:output_type -> criteria.v1.ListRunsResponse
+	28, // 36: criteria.v1.ServerService.GetRun:output_type -> criteria.v1.Run
+	9,  // 37: criteria.v1.ServerService.ListRunEvents:output_type -> criteria.v1.ListRunEventsResponse
+	29, // 38: criteria.v1.ServerService.WatchRun:output_type -> criteria.v1.Envelope
+	12, // 39: criteria.v1.ServerService.StopRun:output_type -> criteria.v1.StopRunResponse
+	14, // 40: criteria.v1.ServerService.PauseRun:output_type -> criteria.v1.PauseRunResponse
+	16, // 41: criteria.v1.ServerService.ResumeRun:output_type -> criteria.v1.ResumeRunResponse
+	18, // 42: criteria.v1.ServerService.InspectRun:output_type -> criteria.v1.InspectRunResponse
+	22, // 43: criteria.v1.ServerService.SubmitWorkflowAssignment:output_type -> criteria.v1.SubmitWorkflowAssignmentResponse
+	24, // 44: criteria.v1.ServerService.GetAssignmentDisposition:output_type -> criteria.v1.GetAssignmentDispositionResponse
+	20, // 45: criteria.v1.ServerService.SendPrompt:output_type -> criteria.v1.SendPromptResponse
+	14, // 46: criteria.v1.LocalControlService.PauseRun:output_type -> criteria.v1.PauseRunResponse
+	16, // 47: criteria.v1.LocalControlService.ResumeRun:output_type -> criteria.v1.ResumeRunResponse
+	31, // 48: criteria.v1.LocalControlService.ResolveResume:output_type -> criteria.v1.ResumeResponse
+	33, // [33:49] is the sub-list for method output_type
+	17, // [17:33] is the sub-list for method input_type
 	17, // [17:17] is the sub-list for extension type_name
 	17, // [17:17] is the sub-list for extension extendee
 	0,  // [0:17] is the sub-list for field type_name
@@ -1796,7 +1808,7 @@ func file_criteria_v1_server_proto_init() {
 			NumEnums:      1,
 			NumMessages:   26,
 			NumExtensions: 0,
-			NumServices:   1,
+			NumServices:   2,
 		},
 		GoTypes:           file_criteria_v1_server_proto_goTypes,
 		DependencyIndexes: file_criteria_v1_server_proto_depIdxs,

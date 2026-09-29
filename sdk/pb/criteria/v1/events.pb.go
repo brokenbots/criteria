@@ -129,6 +129,8 @@ type Envelope struct {
 	//	*Envelope_WorkflowGraphs
 	//	*Envelope_AgentPromptInjected
 	//	*Envelope_CheckpointPointer
+	//	*Envelope_RunPaused
+	//	*Envelope_RunResumed
 	//	*Envelope_WatchReady
 	Payload       isEnvelope_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
@@ -450,6 +452,24 @@ func (x *Envelope) GetCheckpointPointer() *CheckpointPointer {
 	return nil
 }
 
+func (x *Envelope) GetRunPaused() *RunPaused {
+	if x != nil {
+		if x, ok := x.Payload.(*Envelope_RunPaused); ok {
+			return x.RunPaused
+		}
+	}
+	return nil
+}
+
+func (x *Envelope) GetRunResumed() *RunResumed {
+	if x != nil {
+		if x, ok := x.Payload.(*Envelope_RunResumed); ok {
+			return x.RunResumed
+		}
+	}
+	return nil
+}
+
 func (x *Envelope) GetWatchReady() *WatchReady {
 	if x != nil {
 		if x, ok := x.Payload.(*Envelope_WatchReady); ok {
@@ -599,6 +619,24 @@ type Envelope_CheckpointPointer struct {
 	CheckpointPointer *CheckpointPointer `protobuf:"bytes,39,opt,name=checkpoint_pointer,json=checkpointPointer,proto3,oneof"`
 }
 
+type Envelope_RunPaused struct {
+	// RunPaused — the run is paused: at a wait or approval node (mode
+	// "duration" | "signal") or by a control-surface pause request at a
+	// step boundary (mode "external", CRI-255). Emitted by both the local
+	// control path (loopback RPC) and the orchestrator control path so
+	// consumers see identical shapes for local and server runs. Permanent
+	// field number.
+	RunPaused *RunPaused `protobuf:"bytes,40,opt,name=run_paused,json=runPaused,proto3,oneof"`
+}
+
+type Envelope_RunResumed struct {
+	// RunResumed — a paused run is resuming execution from the named node
+	// (CRI-255). Emitted when a resume payload (approval decision or signal)
+	// or a boundary ResumeRun control request is applied. Permanent field
+	// number.
+	RunResumed *RunResumed `protobuf:"bytes,41,opt,name=run_resumed,json=runResumed,proto3,oneof"`
+}
+
 type Envelope_WatchReady struct {
 	// WatchReady is a protocol-level sentinel sent once at the start of a
 	// WatchRun server-stream, after any persisted-event replay, to flush
@@ -660,6 +698,10 @@ func (*Envelope_WorkflowGraphs) isEnvelope_Payload() {}
 func (*Envelope_AgentPromptInjected) isEnvelope_Payload() {}
 
 func (*Envelope_CheckpointPointer) isEnvelope_Payload() {}
+
+func (*Envelope_RunPaused) isEnvelope_Payload() {}
+
+func (*Envelope_RunResumed) isEnvelope_Payload() {}
 
 func (*Envelope_WatchReady) isEnvelope_Payload() {}
 
@@ -2488,6 +2530,138 @@ func (x *CheckpointPointer) GetSessionId() string {
 	return ""
 }
 
+// RunPaused — the run is paused: at a wait or approval node (mode
+// "duration" | "signal") or by a control-surface pause request at a step
+// boundary ("external", CRI-255). At a boundary pause the run's durable
+// state (step checkpoint + adapter session checkpoints) is written before
+// the pause is acknowledged.
+type RunPaused struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// node the run paused on; for a boundary pause this is the node that is
+	// about to evaluate when the run resumes.
+	Node string `protobuf:"bytes,1,opt,name=node,proto3" json:"node,omitempty"`
+	// mode is "duration", "signal", or "external" (control-surface boundary
+	// pause).
+	Mode string `protobuf:"bytes,2,opt,name=mode,proto3" json:"mode,omitempty"`
+	// signal is the pending signal name for signal-mode pauses; empty
+	// otherwise. For approval nodes the pending signal is the node name and
+	// ApprovalRequested already carries the approval details.
+	Signal string `protobuf:"bytes,3,opt,name=signal,proto3" json:"signal,omitempty"`
+	// actor identifies who requested the pause; empty for duration/signal
+	// mode. Populated only by control-surface pauses; the local loopback
+	// surface leaves it empty because the caller is in the same trust domain
+	// as the CLI.
+	Actor         string `protobuf:"bytes,4,opt,name=actor,proto3" json:"actor,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RunPaused) Reset() {
+	*x = RunPaused{}
+	mi := &file_criteria_v1_events_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RunPaused) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RunPaused) ProtoMessage() {}
+
+func (x *RunPaused) ProtoReflect() protoreflect.Message {
+	mi := &file_criteria_v1_events_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RunPaused.ProtoReflect.Descriptor instead.
+func (*RunPaused) Descriptor() ([]byte, []int) {
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *RunPaused) GetNode() string {
+	if x != nil {
+		return x.Node
+	}
+	return ""
+}
+
+func (x *RunPaused) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+func (x *RunPaused) GetSignal() string {
+	if x != nil {
+		return x.Signal
+	}
+	return ""
+}
+
+func (x *RunPaused) GetActor() string {
+	if x != nil {
+		return x.Actor
+	}
+	return ""
+}
+
+// RunResumed — a paused run is resuming execution from the named node
+// (CRI-255). Emitted when a resume payload (approval decision or signal) or
+// a boundary ResumeRun control request is applied.
+type RunResumed struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// node the run resumes from.
+	Node          string `protobuf:"bytes,1,opt,name=node,proto3" json:"node,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RunResumed) Reset() {
+	*x = RunResumed{}
+	mi := &file_criteria_v1_events_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RunResumed) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RunResumed) ProtoMessage() {}
+
+func (x *RunResumed) ProtoReflect() protoreflect.Message {
+	mi := &file_criteria_v1_events_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RunResumed.ProtoReflect.Descriptor instead.
+func (*RunResumed) Descriptor() ([]byte, []int) {
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *RunResumed) GetNode() string {
+	if x != nil {
+		return x.Node
+	}
+	return ""
+}
+
 type RunOutputs_Output struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                                     // output declaration name; permanent
@@ -2499,7 +2673,7 @@ type RunOutputs_Output struct {
 
 func (x *RunOutputs_Output) Reset() {
 	*x = RunOutputs_Output{}
-	mi := &file_criteria_v1_events_proto_msgTypes[33]
+	mi := &file_criteria_v1_events_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2511,7 +2685,7 @@ func (x *RunOutputs_Output) String() string {
 func (*RunOutputs_Output) ProtoMessage() {}
 
 func (x *RunOutputs_Output) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[33]
+	mi := &file_criteria_v1_events_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2552,7 +2726,7 @@ var File_criteria_v1_events_proto protoreflect.FileDescriptor
 
 const file_criteria_v1_events_proto_rawDesc = "" +
 	"\n" +
-	"\x18criteria/v1/events.proto\x12\vcriteria.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xa6\x11\n" +
+	"\x18criteria/v1/events.proto\x12\vcriteria.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x9b\x12\n" +
 	"\bEnvelope\x12%\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05R\rschemaVersion\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x10\n" +
@@ -2589,7 +2763,11 @@ const file_criteria_v1_events_proto_rawDesc = "" +
 	"runOutputs\x12F\n" +
 	"\x0fworkflow_graphs\x18% \x01(\v2\x1b.criteria.v1.WorkflowGraphsH\x00R\x0eworkflowGraphs\x12V\n" +
 	"\x15agent_prompt_injected\x18& \x01(\v2 .criteria.v1.AgentPromptInjectedH\x00R\x13agentPromptInjected\x12O\n" +
-	"\x12checkpoint_pointer\x18' \x01(\v2\x1e.criteria.v1.CheckpointPointerH\x00R\x11checkpointPointer\x12:\n" +
+	"\x12checkpoint_pointer\x18' \x01(\v2\x1e.criteria.v1.CheckpointPointerH\x00R\x11checkpointPointer\x127\n" +
+	"\n" +
+	"run_paused\x18( \x01(\v2\x16.criteria.v1.RunPausedH\x00R\trunPaused\x12:\n" +
+	"\vrun_resumed\x18) \x01(\v2\x17.criteria.v1.RunResumedH\x00R\n" +
+	"runResumed\x12:\n" +
 	"\vwatch_ready\x18c \x01(\v2\x17.criteria.v1.WatchReadyH\x00R\n" +
 	"watchReadyB\t\n" +
 	"\apayload\"T\n" +
@@ -2732,7 +2910,15 @@ const file_criteria_v1_events_proto_rawDesc = "" +
 	"state_size\x18\x05 \x01(\x03R\tstateSize\x12 \n" +
 	"\vgranularity\x18\x06 \x01(\tR\vgranularity\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\a \x01(\tR\tsessionId*k\n" +
+	"session_id\x18\a \x01(\tR\tsessionId\"a\n" +
+	"\tRunPaused\x12\x12\n" +
+	"\x04node\x18\x01 \x01(\tR\x04node\x12\x12\n" +
+	"\x04mode\x18\x02 \x01(\tR\x04mode\x12\x16\n" +
+	"\x06signal\x18\x03 \x01(\tR\x06signal\x12\x14\n" +
+	"\x05actor\x18\x04 \x01(\tR\x05actor\" \n" +
+	"\n" +
+	"RunResumed\x12\x12\n" +
+	"\x04node\x18\x01 \x01(\tR\x04node*k\n" +
 	"\tLogStream\x12\x1a\n" +
 	"\x16LOG_STREAM_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11LOG_STREAM_STDOUT\x10\x01\x12\x15\n" +
@@ -2752,7 +2938,7 @@ func file_criteria_v1_events_proto_rawDescGZIP() []byte {
 }
 
 var file_criteria_v1_events_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_criteria_v1_events_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
+var file_criteria_v1_events_proto_msgTypes = make([]protoimpl.MessageInfo, 36)
 var file_criteria_v1_events_proto_goTypes = []any{
 	(LogStream)(0),                 // 0: criteria.v1.LogStream
 	(*Envelope)(nil),               // 1: criteria.v1.Envelope
@@ -2785,15 +2971,17 @@ var file_criteria_v1_events_proto_goTypes = []any{
 	(*WorkflowGraphs)(nil),         // 28: criteria.v1.WorkflowGraphs
 	(*AgentPromptInjected)(nil),    // 29: criteria.v1.AgentPromptInjected
 	(*CheckpointPointer)(nil),      // 30: criteria.v1.CheckpointPointer
-	nil,                            // 31: criteria.v1.StepOutputCaptured.OutputsEntry
-	nil,                            // 32: criteria.v1.WaitResumed.PayloadEntry
-	nil,                            // 33: criteria.v1.ApprovalDecision.PayloadEntry
-	(*RunOutputs_Output)(nil),      // 34: criteria.v1.RunOutputs.Output
-	(*timestamppb.Timestamp)(nil),  // 35: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),        // 36: google.protobuf.Struct
+	(*RunPaused)(nil),              // 31: criteria.v1.RunPaused
+	(*RunResumed)(nil),             // 32: criteria.v1.RunResumed
+	nil,                            // 33: criteria.v1.StepOutputCaptured.OutputsEntry
+	nil,                            // 34: criteria.v1.WaitResumed.PayloadEntry
+	nil,                            // 35: criteria.v1.ApprovalDecision.PayloadEntry
+	(*RunOutputs_Output)(nil),      // 36: criteria.v1.RunOutputs.Output
+	(*timestamppb.Timestamp)(nil),  // 37: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),        // 38: google.protobuf.Struct
 }
 var file_criteria_v1_events_proto_depIdxs = []int32{
-	35, // 0: criteria.v1.Envelope.ts:type_name -> google.protobuf.Timestamp
+	37, // 0: criteria.v1.Envelope.ts:type_name -> google.protobuf.Timestamp
 	2,  // 1: criteria.v1.Envelope.run_started:type_name -> criteria.v1.RunStarted
 	3,  // 2: criteria.v1.Envelope.run_completed:type_name -> criteria.v1.RunCompleted
 	4,  // 3: criteria.v1.Envelope.run_failed:type_name -> criteria.v1.RunFailed
@@ -2821,20 +3009,22 @@ var file_criteria_v1_events_proto_depIdxs = []int32{
 	28, // 25: criteria.v1.Envelope.workflow_graphs:type_name -> criteria.v1.WorkflowGraphs
 	29, // 26: criteria.v1.Envelope.agent_prompt_injected:type_name -> criteria.v1.AgentPromptInjected
 	30, // 27: criteria.v1.Envelope.checkpoint_pointer:type_name -> criteria.v1.CheckpointPointer
-	13, // 28: criteria.v1.Envelope.watch_ready:type_name -> criteria.v1.WatchReady
-	0,  // 29: criteria.v1.StepLog.stream:type_name -> criteria.v1.LogStream
-	36, // 30: criteria.v1.AdapterEvent.data:type_name -> google.protobuf.Struct
-	31, // 31: criteria.v1.StepOutputCaptured.outputs:type_name -> criteria.v1.StepOutputCaptured.OutputsEntry
-	32, // 32: criteria.v1.WaitResumed.payload:type_name -> criteria.v1.WaitResumed.PayloadEntry
-	33, // 33: criteria.v1.ApprovalDecision.payload:type_name -> criteria.v1.ApprovalDecision.PayloadEntry
-	34, // 34: criteria.v1.RunOutputs.outputs:type_name -> criteria.v1.RunOutputs.Output
-	27, // 35: criteria.v1.WorkflowGraphs.subworkflows:type_name -> criteria.v1.SubworkflowGraph
-	35, // 36: criteria.v1.AgentPromptInjected.delivered_at:type_name -> google.protobuf.Timestamp
-	37, // [37:37] is the sub-list for method output_type
-	37, // [37:37] is the sub-list for method input_type
-	37, // [37:37] is the sub-list for extension type_name
-	37, // [37:37] is the sub-list for extension extendee
-	0,  // [0:37] is the sub-list for field type_name
+	31, // 28: criteria.v1.Envelope.run_paused:type_name -> criteria.v1.RunPaused
+	32, // 29: criteria.v1.Envelope.run_resumed:type_name -> criteria.v1.RunResumed
+	13, // 30: criteria.v1.Envelope.watch_ready:type_name -> criteria.v1.WatchReady
+	0,  // 31: criteria.v1.StepLog.stream:type_name -> criteria.v1.LogStream
+	38, // 32: criteria.v1.AdapterEvent.data:type_name -> google.protobuf.Struct
+	33, // 33: criteria.v1.StepOutputCaptured.outputs:type_name -> criteria.v1.StepOutputCaptured.OutputsEntry
+	34, // 34: criteria.v1.WaitResumed.payload:type_name -> criteria.v1.WaitResumed.PayloadEntry
+	35, // 35: criteria.v1.ApprovalDecision.payload:type_name -> criteria.v1.ApprovalDecision.PayloadEntry
+	36, // 36: criteria.v1.RunOutputs.outputs:type_name -> criteria.v1.RunOutputs.Output
+	27, // 37: criteria.v1.WorkflowGraphs.subworkflows:type_name -> criteria.v1.SubworkflowGraph
+	37, // 38: criteria.v1.AgentPromptInjected.delivered_at:type_name -> google.protobuf.Timestamp
+	39, // [39:39] is the sub-list for method output_type
+	39, // [39:39] is the sub-list for method input_type
+	39, // [39:39] is the sub-list for extension type_name
+	39, // [39:39] is the sub-list for extension extendee
+	0,  // [0:39] is the sub-list for field type_name
 }
 
 func init() { file_criteria_v1_events_proto_init() }
@@ -2870,6 +3060,8 @@ func file_criteria_v1_events_proto_init() {
 		(*Envelope_WorkflowGraphs)(nil),
 		(*Envelope_AgentPromptInjected)(nil),
 		(*Envelope_CheckpointPointer)(nil),
+		(*Envelope_RunPaused)(nil),
+		(*Envelope_RunResumed)(nil),
 		(*Envelope_WatchReady)(nil),
 	}
 	type x struct{}
@@ -2878,7 +3070,7 @@ func file_criteria_v1_events_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_criteria_v1_events_proto_rawDesc), len(file_criteria_v1_events_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   34,
+			NumMessages:   36,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

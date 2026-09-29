@@ -26,6 +26,8 @@ const _ = connect.IsAtLeastVersion1_13_0
 const (
 	// ServerServiceName is the fully-qualified name of the ServerService service.
 	ServerServiceName = "criteria.v1.ServerService"
+	// LocalControlServiceName is the fully-qualified name of the LocalControlService service.
+	LocalControlServiceName = "criteria.v1.LocalControlService"
 )
 
 // These constants are the fully-qualified names of the RPCs defined in this package. They're
@@ -68,6 +70,15 @@ const (
 	// ServerServiceSendPromptProcedure is the fully-qualified name of the ServerService's SendPrompt
 	// RPC.
 	ServerServiceSendPromptProcedure = "/criteria.v1.ServerService/SendPrompt"
+	// LocalControlServicePauseRunProcedure is the fully-qualified name of the LocalControlService's
+	// PauseRun RPC.
+	LocalControlServicePauseRunProcedure = "/criteria.v1.LocalControlService/PauseRun"
+	// LocalControlServiceResumeRunProcedure is the fully-qualified name of the LocalControlService's
+	// ResumeRun RPC.
+	LocalControlServiceResumeRunProcedure = "/criteria.v1.LocalControlService/ResumeRun"
+	// LocalControlServiceResolveResumeProcedure is the fully-qualified name of the
+	// LocalControlService's ResolveResume RPC.
+	LocalControlServiceResolveResumeProcedure = "/criteria.v1.LocalControlService/ResolveResume"
 )
 
 // ServerServiceClient is a client for the criteria.v1.ServerService service.
@@ -532,4 +543,146 @@ func (UnimplementedServerServiceHandler) GetAssignmentDisposition(context.Contex
 
 func (UnimplementedServerServiceHandler) SendPrompt(context.Context, *connect.Request[v1.SendPromptRequest]) (*connect.Response[v1.SendPromptResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.ServerService.SendPrompt is not implemented"))
+}
+
+// LocalControlServiceClient is a client for the criteria.v1.LocalControlService service.
+type LocalControlServiceClient interface {
+	// PauseRun pauses the owned run at the next checkpoint point (step
+	// boundary): the in-flight step completes, the step and adapter session
+	// checkpoints are written, and only then does the call return.
+	PauseRun(context.Context, *connect.Request[v1.PauseRunRequest]) (*connect.Response[v1.PauseRunResponse], error)
+	// ResumeRun continues a boundary-paused run. The response is
+	// synchronous: once it returns, apply drives the engine to the next
+	// pause point or to a terminal state.
+	ResumeRun(context.Context, *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error)
+	// ResolveResume delivers an approval decision or a signal outcome to the
+	// paused run, satisfying node pausing (mode "duration" | "signal"). The
+	// same call replaces the local CRITERIA_LOCAL_APPROVAL file protocol as
+	// the primary integration surface.
+	ResolveResume(context.Context, *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error)
+}
+
+// NewLocalControlServiceClient constructs a client for the criteria.v1.LocalControlService service.
+// By default, it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped
+// responses, and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the
+// connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewLocalControlServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) LocalControlServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	localControlServiceMethods := v1.File_criteria_v1_server_proto.Services().ByName("LocalControlService").Methods()
+	return &localControlServiceClient{
+		pauseRun: connect.NewClient[v1.PauseRunRequest, v1.PauseRunResponse](
+			httpClient,
+			baseURL+LocalControlServicePauseRunProcedure,
+			connect.WithSchema(localControlServiceMethods.ByName("PauseRun")),
+			connect.WithClientOptions(opts...),
+		),
+		resumeRun: connect.NewClient[v1.ResumeRunRequest, v1.ResumeRunResponse](
+			httpClient,
+			baseURL+LocalControlServiceResumeRunProcedure,
+			connect.WithSchema(localControlServiceMethods.ByName("ResumeRun")),
+			connect.WithClientOptions(opts...),
+		),
+		resolveResume: connect.NewClient[v1.ResumeRequest, v1.ResumeResponse](
+			httpClient,
+			baseURL+LocalControlServiceResolveResumeProcedure,
+			connect.WithSchema(localControlServiceMethods.ByName("ResolveResume")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// localControlServiceClient implements LocalControlServiceClient.
+type localControlServiceClient struct {
+	pauseRun      *connect.Client[v1.PauseRunRequest, v1.PauseRunResponse]
+	resumeRun     *connect.Client[v1.ResumeRunRequest, v1.ResumeRunResponse]
+	resolveResume *connect.Client[v1.ResumeRequest, v1.ResumeResponse]
+}
+
+// PauseRun calls criteria.v1.LocalControlService.PauseRun.
+func (c *localControlServiceClient) PauseRun(ctx context.Context, req *connect.Request[v1.PauseRunRequest]) (*connect.Response[v1.PauseRunResponse], error) {
+	return c.pauseRun.CallUnary(ctx, req)
+}
+
+// ResumeRun calls criteria.v1.LocalControlService.ResumeRun.
+func (c *localControlServiceClient) ResumeRun(ctx context.Context, req *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error) {
+	return c.resumeRun.CallUnary(ctx, req)
+}
+
+// ResolveResume calls criteria.v1.LocalControlService.ResolveResume.
+func (c *localControlServiceClient) ResolveResume(ctx context.Context, req *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error) {
+	return c.resolveResume.CallUnary(ctx, req)
+}
+
+// LocalControlServiceHandler is an implementation of the criteria.v1.LocalControlService service.
+type LocalControlServiceHandler interface {
+	// PauseRun pauses the owned run at the next checkpoint point (step
+	// boundary): the in-flight step completes, the step and adapter session
+	// checkpoints are written, and only then does the call return.
+	PauseRun(context.Context, *connect.Request[v1.PauseRunRequest]) (*connect.Response[v1.PauseRunResponse], error)
+	// ResumeRun continues a boundary-paused run. The response is
+	// synchronous: once it returns, apply drives the engine to the next
+	// pause point or to a terminal state.
+	ResumeRun(context.Context, *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error)
+	// ResolveResume delivers an approval decision or a signal outcome to the
+	// paused run, satisfying node pausing (mode "duration" | "signal"). The
+	// same call replaces the local CRITERIA_LOCAL_APPROVAL file protocol as
+	// the primary integration surface.
+	ResolveResume(context.Context, *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error)
+}
+
+// NewLocalControlServiceHandler builds an HTTP handler from the service implementation. It returns
+// the path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewLocalControlServiceHandler(svc LocalControlServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	localControlServiceMethods := v1.File_criteria_v1_server_proto.Services().ByName("LocalControlService").Methods()
+	localControlServicePauseRunHandler := connect.NewUnaryHandler(
+		LocalControlServicePauseRunProcedure,
+		svc.PauseRun,
+		connect.WithSchema(localControlServiceMethods.ByName("PauseRun")),
+		connect.WithHandlerOptions(opts...),
+	)
+	localControlServiceResumeRunHandler := connect.NewUnaryHandler(
+		LocalControlServiceResumeRunProcedure,
+		svc.ResumeRun,
+		connect.WithSchema(localControlServiceMethods.ByName("ResumeRun")),
+		connect.WithHandlerOptions(opts...),
+	)
+	localControlServiceResolveResumeHandler := connect.NewUnaryHandler(
+		LocalControlServiceResolveResumeProcedure,
+		svc.ResolveResume,
+		connect.WithSchema(localControlServiceMethods.ByName("ResolveResume")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/criteria.v1.LocalControlService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case LocalControlServicePauseRunProcedure:
+			localControlServicePauseRunHandler.ServeHTTP(w, r)
+		case LocalControlServiceResumeRunProcedure:
+			localControlServiceResumeRunHandler.ServeHTTP(w, r)
+		case LocalControlServiceResolveResumeProcedure:
+			localControlServiceResolveResumeHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedLocalControlServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedLocalControlServiceHandler struct{}
+
+func (UnimplementedLocalControlServiceHandler) PauseRun(context.Context, *connect.Request[v1.PauseRunRequest]) (*connect.Response[v1.PauseRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.LocalControlService.PauseRun is not implemented"))
+}
+
+func (UnimplementedLocalControlServiceHandler) ResumeRun(context.Context, *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.LocalControlService.ResumeRun is not implemented"))
+}
+
+func (UnimplementedLocalControlServiceHandler) ResolveResume(context.Context, *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.LocalControlService.ResolveResume is not implemented"))
 }

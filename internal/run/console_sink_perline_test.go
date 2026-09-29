@@ -371,3 +371,20 @@ func TestConsoleSink_PerLineFormat_StepResumed_ColdCache(t *testing.T) {
 		t.Errorf("OnStepResumed line missing correct prefix on cold cache, output:\n%s", out)
 	}
 }
+
+// TestConsoleSink_RunPausedResumed_NoOp asserts the console display sink
+// neither renders nor panics on run-level pause/resume events (CRI-255):
+// progress is per-step, so RunPaused/RunResumed mute the console and the
+// NDJSON/state sinks carry the run state.
+func TestConsoleSink_RunPausedResumed_NoOp(t *testing.T) {
+	var buf bytes.Buffer
+	g := minimalGraph("build", "shell", "compile")
+	sink := NewConsoleSink(&buf, []string{"build"}, false, g)
+
+	sink.OnRunPaused("build", "external", "")
+	sink.OnRunResumed("build")
+
+	if out := buf.String(); out != "" {
+		t.Errorf("pause/resume events emitted console output, want none, got:\n%s", out)
+	}
+}

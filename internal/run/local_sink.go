@@ -84,15 +84,22 @@ func (s *LocalSink) OnStepOutputCaptured(step string, outputs map[string]string)
 	s.emit("StepOutputCaptured", &pb.StepOutputCaptured{Step: step, Outputs: outputs})
 }
 
-// OnRunPaused is called by the engine loop when execution pauses at a wait or
-// approval node (W05). In local mode, signal-based pauses are not resumable
-// (local mode blocks at compile time for signal/approval nodes), so this is
-// only reached for duration-based waits where it is a no-op. OnWaitEntered
-// has already emitted the structured event; emitting again here would produce
-// a duplicate with a non-standard key that confuses ND-JSON consumers. (F-07)
+// OnRunPaused emits a RunPaused event. For wait/approval node pauses, the
+// richer WaitEntered / ApprovalRequested events are already emitted, so a
+// second event would duplicate the pause in ND-JSON (F-07). A boundary pause
+// (mode "external", CRI-255) has no other event — that pause class is what
+// RunPaused carries.
 func (s *LocalSink) OnRunPaused(node, mode, signal string) {
-	// No-op: OnWaitEntered / OnApprovalRequested have already emitted the
-	// structured event. A log line is sufficient here.
+	if mode != "external" {
+		return
+	}
+	s.emit("RunPaused", &pb.RunPaused{Node: node, Mode: mode, Signal: signal})
+}
+
+// OnRunResumed emits a RunResumed event (CRI-255): fired when a previously
+// paused or interrupted run re-enters execution at a node via RunFrom.
+func (s *LocalSink) OnRunResumed(node string) {
+	s.emit("RunResumed", &pb.RunResumed{Node: node})
 }
 
 // OnWaitEntered emits a WaitEntered event (W05).

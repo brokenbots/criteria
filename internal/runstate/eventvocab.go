@@ -37,6 +37,8 @@ var payloadTypeToSeamType = map[string]string{
 	"WatchReady":             "watchReady",
 	"WorkflowGraphs":         "workflowGraphs",
 	"CheckpointPointer":      "checkpointPointer",
+	"RunPaused":              "runPaused",
+	"RunResumed":             "runResumed",
 }
 
 // TerminalSeamEventTypes is the seam's terminal vocabulary — the types the

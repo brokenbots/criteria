@@ -364,6 +364,110 @@ func TestGetRun_Failed(t *testing.T) {
 	}
 }
 
+// TestGetRun_PausedFromEvents covers the CRI-255 status folds: runPaused
+// marks a live run paused (no endedAt), runResumed returns it to running, a
+// terminal event after a pause still ends the run, and runPaused arriving
+// after a terminal event must not resurrect it.
+func TestGetRun_PausedFromEvents(t *testing.T) {
+	s := newTestStore(t)
+	root, _ := s.RunsRoot()
+	pid := &localState{PID: os.Getpid(), RunID: "p", Workflow: "wf", StartedAt: time.Now().UTC()}
+
+	writeRun(t, root, "p-live", pid, []ndEnvelope{
+		envPB(t, 1, "RunStarted", &pb.RunStarted{WorkflowName: "wf"}),
+		envPB(t, 2, "RunPaused", &pb.RunPaused{Node: "gate", Mode: "external"}),
+	}, nil)
+	paused, err := s.GetRun("p-live")
+	if err != nil {
+		t.Fatalf("GetRun(p-live): %v", err)
+	}
+	if paused.Status != StatusPaused {
+		t.Errorf("status = %q, want paused", paused.Status)
+	}
+	if paused.EndedAt != "" {
+		t.Errorf("endedAt = %q, want empty for a live paused run", paused.EndedAt)
+	}
+
+	writeRun(t, root, "p-resumed", pid, []ndEnvelope{
+		envPB(t, 1, "RunStarted", &pb.RunStarted{WorkflowName: "wf"}),
+		envPB(t, 2, "RunPaused", &pb.RunPaused{Node: "gate", Mode: "external"}),
+		envPB(t, 3, "RunResumed", &pb.RunResumed{Node: "gate"}),
+	}, nil)
+	resumed, err := s.GetRun("p-resumed")
+	if err != nil {
+		t.Fatalf("GetRun(p-resumed): %v", err)
+	}
+	if resumed.Status != StatusRunning {
+		t.Errorf("status = %q, want running after runResumed", resumed.Status)
+	}
+
+	writeRun(t, root, "p-terminal", pid, []ndEnvelope{
+		envPB(t, 1, "RunStarted", &pb.RunStarted{WorkflowName: "wf"}),
+		envPB(t, 2, "RunPaused", &pb.RunPaused{Node: "gate", Mode: "external"}),
+		envPB(t, 3, "RunCompleted", &pb.RunCompleted{FinalState: "done", Success: true}),
+	}, nil)
+	done, err := s.GetRun("p-terminal")
+	if err != nil {
+		t.Fatalf("GetRun(p-terminal): %v", err)
+	}
+	if done.Status != StatusSucceeded || done.EndedAt == "" {
+		t.Errorf("status/endedAt = %q/%q, want succeeded with endedAt", done.Status, done.EndedAt)
+	}
+
+	writeRun(t, root, "p-late", pid, []ndEnvelope{
+		envPB(t, 1, "RunStarted", &pb.RunStarted{WorkflowName: "wf"}),
+		envPB(t, 2, "RunFailed", &pb.RunFailed{Reason: "boom"}),
+		envPB(t, 3, "RunPaused", &pb.RunPaused{Node: "gate", Mode: "external"}),
+	}, nil)
+	late, err := s.GetRun("p-late")
+	if err != nil {
+		t.Fatalf("GetRun(p-late): %v", err)
+	}
+	if late.Status != StatusFailed {
+		t.Errorf("status = %q, want failed (runPaused must not resurrect)", late.Status)
+	}
+
+	// A dead pid below a pause fold still derives failed (crash mid-pause
+	// reattaches from the crash-recovery path).
+	cmd := exec.Command("sh", "-c", "exit 0")
+	if err := cmd.Start(); err != nil {
+		t.Skipf("cannot spawn a child to fake a crashed pid: %v", err)
+	}
+	_ = cmd.Wait()
+	writeRun(t, root, "p-crashed", &localState{
+		PID: cmd.Process.Pid, RunID: "p-crashed", Workflow: "wf", StartedAt: time.Now().UTC(),
+	}, []ndEnvelope{
+		envPB(t, 1, "RunStarted", &pb.RunStarted{WorkflowName: "wf"}),
+		envPB(t, 2, "RunPaused", &pb.RunPaused{Node: "gate", Mode: "external"}),
+	}, nil)
+	crashed, err := s.GetRun("p-crashed")
+	if err != nil {
+		t.Fatalf("GetRun(p-crashed): %v", err)
+	}
+	if crashed.Status != StatusFailed || crashed.FailureReason == "" {
+		t.Errorf("status/reason = %q/%q, want failed with reason for dead-pid pause", crashed.Status, crashed.FailureReason)
+	}
+
+	// The seam serves the fold with the runPaused vocabulary and it is not a
+	// terminal event type.
+	events, err := s.Events("p-live", 0, 10)
+	if err != nil {
+		t.Fatalf("Events: %v", err)
+	}
+	var sawPaused bool
+	for _, ev := range events.Events {
+		if ev.Type == "runPaused" {
+			sawPaused = true
+		}
+		if TerminalSeamEventTypes[ev.Type] {
+			t.Errorf("terminal type in a paused-only stream: %q", ev.Type)
+		}
+	}
+	if !sawPaused {
+		t.Error("runPaused vocabulary missing from served events")
+	}
+}
+
 // TestListRuns_FiltersAndPagination verifies agent/status filters,
 // newest-first ordering, limit/keyset-cursor pagination and the opaque token
 // contract.

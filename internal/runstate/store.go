@@ -326,9 +326,13 @@ func readMetaSource(dir string) string {
 //   - a terminal event (run.completed / run.failed) decides succeeded/failed,
 //     with endedAt from the events file mtime and finalState/failureReason
 //     from the event payload;
-//   - otherwise run-state.json present and its pid alive → running;
+//   - runPaused folds to paused and runResumed back to running (CRI-255);
+//     neither is terminal, so the live checks below still apply;
+//   - otherwise run-state.json present and its pid alive → running (or
+//     paused when the stream folded a pause);
 //   - otherwise → failed ("criteria process exited without reaching a
-//     terminal state"), i.e. a crash mid-run lands in the existing
+//     terminal state"), i.e. a crash mid-run — including a crash between the
+//     checkpoint writes and the pause ack — lands in the existing
 //     crash-recovery reattach path and the viewer shows the run as failed.
 func deriveRun(dir string, st *localState, events []EventEnvelope) *Run {
 	run := &Run{Status: StatusRunning, RunID: filepath.Base(dir)}
@@ -383,16 +387,43 @@ func applyEventToRun(run *Run, hasState bool, ev *EventEnvelope) {
 			run.Status = StatusFailed
 			run.FailureReason = m.Reason
 		}
+	case "runPaused":
+		applyRunPausedEvent(run, decode)
+	case "runResumed":
+		applyRunResumedEvent(run, decode)
+	}
+}
+
+// applyRunPausedEvent folds a CRI-255 runPaused event: a pause only
+// downgrades a still-live run and never resurrects a terminal one.
+func applyRunPausedEvent(run *Run, decode func(proto.Message) bool) {
+	var m pb.RunPaused
+	if decode(&m) && run.Status == StatusRunning {
+		run.Status = StatusPaused
+	}
+}
+
+// applyRunResumedEvent folds runResumed: only a paused run goes back to
+// running.
+func applyRunResumedEvent(run *Run, decode func(proto.Message) bool) {
+	var m pb.RunResumed
+	if decode(&m) && run.Status == StatusPaused {
+		run.Status = StatusRunning
 	}
 }
 
 // finalizeRunStatus resolves the terminal-ended vs still-running question
 // once the event stream has been folded in.
 func finalizeRunStatus(dir string, run *Run, st *localState) {
-	if run.Status != StatusRunning {
+	if run.Status == StatusSucceeded || run.Status == StatusFailed {
 		run.EndedAt = fileMtimeRFC3339(dir, eventsFileName)
 		return
 	}
+	// Running or paused: the run is (or was) live — a paused run stays live
+	// with no endedAt, and the pid-alive crash check below applies to both
+	// (a crash while paused reattaches from the checkpoint written before
+	// the pause acked, so failing the derived status matches the process
+	// reality).
 	if st == nil {
 		// No run-state.json (removed at completion) and no terminal event:
 		// the record is a truncated tail of an interrupted run.

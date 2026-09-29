@@ -89,6 +89,18 @@ message Envelope {
     // pointer is for UI visibility, inspection, and accounting only.
     // Permanent field number.
     CheckpointPointer checkpoint_pointer = 39;
+    // RunPaused — the run is paused: at a wait or approval node (mode
+    // "duration" | "signal") or by a control-surface pause request at a
+    // step boundary (mode "external", CRI-255). Emitted by both the local
+    // control path (loopback RPC) and the orchestrator control path so
+    // consumers see identical shapes for local and server runs. Permanent
+    // field number.
+    RunPaused run_paused = 40;
+    // RunResumed — a paused run is resuming execution from the named node
+    // (CRI-255). Emitted when a resume payload (approval decision or signal)
+    // or a boundary ResumeRun control request is applied. Permanent field
+    // number.
+    RunResumed run_resumed = 41;
     // WatchReady is a protocol-level sentinel sent once at the start of a
     // WatchRun server-stream, after any persisted-event replay, to flush
     // response headers so the client's WatchRun call can return. It has no
@@ -403,4 +415,35 @@ message CheckpointPointer {
   // workflow's "<adapter-type>.<instance-name>" session key); per-scope
   // sessions carry their scope-qualified key.
   string session_id = 7;
+}
+
+// RunPaused — the run is paused: at a wait or approval node (mode
+// "duration" | "signal") or by a control-surface pause request at a step
+// boundary ("external", CRI-255). At a boundary pause the run's durable
+// state (step checkpoint + adapter session checkpoints) is written before
+// the pause is acknowledged.
+message RunPaused {
+  // node the run paused on; for a boundary pause this is the node that is
+  // about to evaluate when the run resumes.
+  string node = 1;
+  // mode is "duration", "signal", or "external" (control-surface boundary
+  // pause).
+  string mode = 2;
+  // signal is the pending signal name for signal-mode pauses; empty
+  // otherwise. For approval nodes the pending signal is the node name and
+  // ApprovalRequested already carries the approval details.
+  string signal = 3;
+  // actor identifies who requested the pause; empty for duration/signal
+  // mode. Populated only by control-surface pauses; the local loopback
+  // surface leaves it empty because the caller is in the same trust domain
+  // as the CLI.
+  string actor = 4;
+}
+
+// RunResumed — a paused run is resuming execution from the named node
+// (CRI-255). Emitted when a resume payload (approval decision or signal) or
+// a boundary ResumeRun control request is applied.
+message RunResumed {
+  // node the run resumes from.
+  string node = 1;
 }
