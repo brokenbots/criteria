@@ -44,6 +44,7 @@ func (r *recordingSink) OnStepOutcomeDefaulted(string, string, string)          
 func (r *recordingSink) OnStepOutcomeUnknown(string, string)                         { r.bump() }
 
 func (r *recordingSink) OnAgentPromptInjected(string, string, string, string, time.Time) { r.bump() }
+func (r *recordingSink) OnCheckpointPointer(*engine.CheckpointPointerEvent)              { r.bump() }
 func (r *recordingSink) StepEventSink(step string) adapter.EventSink {
 	return &recordingStepSink{parent: r}
 }

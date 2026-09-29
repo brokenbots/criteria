@@ -58,6 +58,22 @@ type AdapterLifecycleEvent struct {
 	EnvironmentName string // declaration name, e.g. "prod"
 }
 
+// CheckpointPointerEvent carries the advisory checkpoint pointer the engine
+// emits after a durable checkpoint save (CRI-203). Castle keeps only the
+// pointer; the bytes stay in the engine's state home and restore is
+// engine-local from there — never dependent on castle reachability.
+type CheckpointPointerEvent struct {
+	RunID       string
+	SessionID   string // adapter session key ("copilot.exec" style)
+	AdapterKind string // adapter implementation type (e.g. "shell", "copilot")
+	AdapterName string // adapter instance name (e.g. "exec"); empty when unresolvable
+	StateID     string // engine-local checkpoint id "<session>/<seq>"
+	StateSchema string // adapter-declared checkpoint-state schema tag
+	StateDigest string // "sha256:<hex>" digest of the checkpointed blob
+	StateSize   int64  // checkpointed blob size in bytes
+	Granularity string // declared save granularity (per-step|per-turn|on-demand)
+}
+
 // Sink receives engine-level events. Implementations (typically the server
 // transport) are responsible for assigning sequence numbers, persisting, and
 // streaming. The engine never blocks waiting for the sink. The interpreter
@@ -145,6 +161,11 @@ type Sink interface {
 	// (ADR-0006 D5). It is never emitted at receipt and never on delivery
 	// failure; failures are recorded as structured logs instead.
 	OnAgentPromptInjected(step, sessionID, prompt, caller string, deliveredAt time.Time)
+	// OnCheckpointPointer is emitted after a durable adapter checkpoint save
+	// (CRI-203). The pointer is advisory metadata (UI visibility, inspection,
+	// accounting); the bytes stay engine-local and restore never depends on
+	// the consumer of this event.
+	OnCheckpointPointer(ptr *CheckpointPointerEvent)
 	// StepEventSink returns the per-step adapter sink (logs + adapter events).
 	StepEventSink(step string) adapter.EventSink
 }
@@ -154,6 +175,10 @@ type Engine struct {
 	graph               *workflow.FSMGraph
 	loader              adapterhost.Loader
 	sink                Sink
+	// runSink is the redaction-wrapped sink of the active run, set by Run and
+	// RunFrom. Engine.Pause emits its snapshot checkpoints' pointer events
+	// through it (CRI-203); nil until a run starts.
+	runSink             Sink
 	subWorkflowResolver SubWorkflowResolver
 	branchScheduler     BranchScheduler
 	// resumedVars, when non-nil, overrides SeedVarsFromGraph at run start (W04).
@@ -306,8 +331,9 @@ func (e *Engine) Pause(ctx context.Context) error {
 		return fmt.Errorf("snapshot: %w", err)
 	}
 	for name, snap := range snaps {
-		dir := state.SnapshotDir(e.snapshotBase, e.runID, name)
-		if _, err := state.WriteSnapshot(dir, snap); err != nil {
+		// CRI-203: save through the shared helper so explicit-pause saves
+		// also emit their checkpoint pointer event.
+		if err := e.saveSessionCheckpoint(name, snap); err != nil {
 			return fmt.Errorf("persist snapshot for %q: %w", name, err)
 		}
 	}
@@ -505,7 +531,6 @@ func (e *Engine) Run(ctx context.Context) error {
 		sessions.SetSandboxProbeOverride(e.sandboxProbeOverride)
 	}
 	e.setLockfileOnSessions(sessions)
-	e.wireCheckpointStore(sessions)
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
 	// Create a per-run redaction registry and wire it into the session manager
@@ -518,6 +543,10 @@ func (e *Engine) Run(ctx context.Context) error {
 	sink := NewRedactingSink(e.sink, redactionReg)
 	sessions.LifecycleSink = sink
 	sessions.SetAllowedWorkingDirRoots(e.workingDirAllowedRoots)
+	// CRI-203: the wrapped sink is the pointer-emission sink for this run's
+	// checkpoint saves; save it for Engine.Pause's own snapshot writes.
+	e.runSink = sink
+	e.wireCheckpointStore(sessions, sink)
 
 	// CRI-304: failRunInit emits OnRunFailed for a pre-runLoop init failure;
 	// initAdapters emits its own, so it is deliberately excluded.
@@ -579,7 +608,6 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 		sessions.SetSandboxProbeOverride(e.sandboxProbeOverride)
 	}
 	e.setLockfileOnSessions(sessions)
-	e.wireCheckpointStore(sessions)
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
 	redactionReg := secrets.NewRegistry()
@@ -588,6 +616,10 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	sink := NewRedactingSink(e.sink, redactionReg)
 	sessions.LifecycleSink = sink
 	sessions.SetAllowedWorkingDirRoots(e.workingDirAllowedRoots)
+	// CRI-203: checkpoint saves resume from checkpoints on this path too, so
+	// wire the pointer emission through the wrapped sink.
+	e.runSink = sink
+	e.wireCheckpointStore(sessions, sink)
 
 	// CRI-304: failRunInit emits OnRunFailed for a pre-runLoop init failure;
 	// initAdapters emits its own, so it is deliberately excluded.

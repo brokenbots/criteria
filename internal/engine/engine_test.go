@@ -97,6 +97,7 @@ func (s *fakeSink) OnStepOutcomeDefaulted(string, string, string)        {}
 func (s *fakeSink) OnStepOutcomeUnknown(string, string)                  {}
 
 func (s *fakeSink) OnAgentPromptInjected(string, string, string, string, time.Time) {}
+func (s *fakeSink) OnCheckpointPointer(*CheckpointPointerEvent)                      {}
 func (s *fakeSink) StepEventSink(step string) adapter.EventSink                     { return noopSink{} }
 
 type noopSink struct{}

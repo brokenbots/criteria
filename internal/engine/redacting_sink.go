@@ -179,6 +179,24 @@ func (s *RedactingSink) OnAgentPromptInjected(step, sessionID, prompt, caller st
 	s.inner.OnAgentPromptInjected(s.reg.Redact(step), s.reg.Redact(sessionID), s.reg.Redact(prompt), s.reg.Redact(caller), deliveredAt)
 }
 
+func (s *RedactingSink) OnCheckpointPointer(ptr *CheckpointPointerEvent) {
+	if ptr == nil {
+		s.inner.OnCheckpointPointer(nil)
+		return
+	}
+	s.inner.OnCheckpointPointer(&CheckpointPointerEvent{
+		RunID:       s.reg.Redact(ptr.RunID),
+		SessionID:   s.reg.Redact(ptr.SessionID),
+		AdapterKind: s.reg.Redact(ptr.AdapterKind),
+		AdapterName: s.reg.Redact(ptr.AdapterName),
+		StateID:     s.reg.Redact(ptr.StateID),
+		StateSchema: s.reg.Redact(ptr.StateSchema),
+		StateDigest: s.reg.Redact(ptr.StateDigest),
+		StateSize:   ptr.StateSize,
+		Granularity: s.reg.Redact(ptr.Granularity),
+	})
+}
+
 func (s *RedactingSink) StepEventSink(step string) adapter.EventSink {
 	inner := s.inner.StepEventSink(step)
 	if inner == nil {

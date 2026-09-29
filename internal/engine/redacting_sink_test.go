@@ -44,6 +44,7 @@ type recordingSink struct {
 		step, sessionID, prompt, caller string
 		deliveredAt                     time.Time
 	}
+	onCheckpointPointers []*CheckpointPointerEvent
 	stepEventSinkStep string
 }
 
@@ -132,6 +133,9 @@ func (s *recordingSink) OnAgentPromptInjected(step, sessionID, prompt, caller st
 		step, sessionID, prompt, caller string
 		deliveredAt                     time.Time
 	}{step, sessionID, prompt, caller, deliveredAt})
+}
+func (s *recordingSink) OnCheckpointPointer(ptr *CheckpointPointerEvent) {
+	s.onCheckpointPointers = append(s.onCheckpointPointers, ptr)
 }
 func (s *recordingSink) StepEventSink(step string) adapter.EventSink {
 	s.stepEventSinkStep = step

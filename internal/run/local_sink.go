@@ -223,6 +223,24 @@ func (s *LocalSink) OnWorkflowGraphs(msg *pb.WorkflowGraphs) {
 	s.emit("WorkflowGraphs", msg)
 }
 
+// OnCheckpointPointer emits the checkpoint.pointer envelope for a durable
+// engine-local checkpoint save (CRI-203). The payload is the pb message so
+// local ND-JSON streams and the server stream stay proto-identical.
+func (s *LocalSink) OnCheckpointPointer(ptr *engine.CheckpointPointerEvent) {
+	if ptr == nil {
+		return
+	}
+	s.emit("CheckpointPointer", &pb.CheckpointPointer{
+		StateId:     ptr.StateID,
+		AdapterKind: ptr.AdapterKind,
+		StateSchema: ptr.StateSchema,
+		StateDigest: ptr.StateDigest,
+		StateSize:   ptr.StateSize,
+		Granularity: ptr.Granularity,
+		SessionId:   ptr.SessionID,
+	})
+}
+
 func (s *LocalSink) StepEventSink(step string) adapter.EventSink {
 	return &localStepSink{parent: s, step: step}
 }

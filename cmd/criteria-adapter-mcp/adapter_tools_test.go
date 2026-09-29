@@ -296,6 +296,8 @@ func (s *mcpToolsSink) OnStepOutcomeUnknown(string, string)                     
 
 func (s *mcpToolsSink) OnAgentPromptInjected(string, string, string, string, time.Time) {}
 
+func (s *mcpToolsSink) OnCheckpointPointer(*engine.CheckpointPointerEvent) {}
+
 func (s *mcpToolsSink) StepEventSink(string) adapter.EventSink {
 	return &mcpToolsEventRecorder{sink: s}
 }
