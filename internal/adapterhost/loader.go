@@ -565,6 +565,17 @@ func executeWithFallbackStream(ctx context.Context, client Client, adapterName s
 	cancelPerm()
 	permErr := <-permDone
 
+	// KB-53: same verdict rescue as the active-stream path — an adapter-level
+	// outcome.finalized (or a result that arrived before the stream broke) is
+	// the adapter's own verdict and wins over the synthetic failure paths
+	// below, while the host context is alive.
+	if result, ok := captureSink.rescueResult(); ok && (execErr != nil || !captureSink.done) && ctx.Err() == nil {
+		slog.Warn("adapter execute stream ended without a clean result; using the adapter's own verdict",
+			"step", step.Name, "outcome", result.Outcome, "error", execErr)
+		captureSink.applyNeedsReviewOverride(&result)
+		return result, nil
+	}
+
 	if execErr != nil {
 		if errors.Is(execErr, context.Canceled) && ctx.Err() == nil {
 			if !isExpectedStreamClose(permErr) {
@@ -577,11 +588,12 @@ func executeWithFallbackStream(ctx context.Context, client Client, adapterName s
 		return adapter.Result{Outcome: "failure"}, fmt.Errorf("adapter permissions stream: %w", permErr)
 	}
 	if !captureSink.done {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return adapter.Result{Outcome: "failure"}, ctxErr
+		}
 		return adapter.Result{Outcome: "failure"}, errors.New("adapter execute stream ended without result")
 	}
-	if captureSink.anyDenied && captureSink.result.Outcome == "success" {
-		captureSink.result.Outcome = "needs_review"
-	}
+	captureSink.applyNeedsReviewOverride(&captureSink.result)
 	return captureSink.result, nil
 }
 
@@ -615,6 +627,20 @@ func executeWithActiveStream(ctx context.Context, client Client, step *workflow.
 
 	execErr := client.Execute(ctx, req, captureSink)
 
+	// KB-53: an adapter-level outcome.finalized (or a result that arrived
+	// before the stream broke) is the adapter's own verdict for the turn and
+	// must win over the synthetic failure the broken stream used to produce.
+	// The rescue applies only while the host context is alive: an engine- or
+	// run-initiated cancellation (step timeout / teardown) keeps the existing
+	// failure semantics. This is where the incident's outcome.finalized
+	// ready_for_review was dropped and the develop step resolved failure.
+	if result, ok := captureSink.rescueResult(); ok && (execErr != nil || !captureSink.done) && ctx.Err() == nil {
+		slog.Warn("adapter execute stream ended without a clean result; using the adapter's own verdict",
+			"step", step.Name, "outcome", result.Outcome, "error", execErr)
+		captureSink.applyNeedsReviewOverride(&result)
+		return result, nil
+	}
+
 	if execErr != nil {
 		// When the caller's context is cancelled (run teardown) or times out,
 		// the adapter's Execute crosses the gRPC boundary as a codes.Canceled /
@@ -628,13 +654,20 @@ func executeWithActiveStream(ctx context.Context, client Client, step *workflow.
 		return adapter.Result{Outcome: "failure"}, execErr
 	}
 	if !captureSink.done {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return adapter.Result{Outcome: "failure"}, ctxErr
+		}
 		return adapter.Result{Outcome: "failure"}, errors.New("adapter execute stream ended without result")
 	}
-	if captureSink.anyDenied && captureSink.result.Outcome == "success" {
-		captureSink.result.Outcome = "needs_review"
-	}
+	captureSink.applyNeedsReviewOverride(&captureSink.result)
 	return captureSink.result, nil
 }
+
+// adapterEventFinalizedOutcome is the adapter event kind used by adapters
+// that resolve their turn at the adapter level mid-stream (the copilot
+// submit_outcome tool, guard KB-42). The payload shape is
+// {"outcome": string, "reason": string(possibly redacted upstream)}.
+const adapterEventFinalizedOutcome = "outcome.finalized"
 
 // maxChunkBufBytes is the upper bound for chunk-reassembly buffers in
 // executeCaptureSink. Payloads that would exceed this limit are rejected with
@@ -675,6 +708,15 @@ type executeCaptureSink struct {
 	// When nil, permission responses are handled by the session-scoped stream.
 	requests chan<- *v2.PermissionEvent
 	ctx      context.Context
+
+	// KB-53: adapter-level turn finalization. When the adapter resolves its
+	// outcome mid-stream via an outcome.finalized adapter event (e.g. the
+	// copilot submit_outcome tool) but the Execute stream then breaks before
+	// a result event is delivered, this captures the finalized verdict so the
+	// step still resolves to the outcome the adapter chose instead of the
+	// synthetic "failure" the dead stream used to produce.
+	finalizedOutcome string
+	finalizedPayload map[string]any
 
 	// Chunk reassembly buffers for the Execute stream.
 	// adapterChunkBuf accumulates AdapterEvent.payload_json fragments.
@@ -841,6 +883,9 @@ func (s *executeCaptureSink) decodeOutputsJSON(b []byte) (map[string]cty.Value, 
 // to the upstream sink. All events are forwarded directly; permission evaluation
 // is handled session-scoped by permissionInterceptSink in SessionManager.Execute.
 func (s *executeCaptureSink) emitAdapterEvent(adapterEvt *v2.AdapterEvent) error {
+	if adapterEvt.GetEventKind() == adapterEventFinalizedOutcome {
+		s.recordFinalizedOutcome(adapterEvt.GetPayload().AsMap())
+	}
 	if adapterEvt.GetEventKind() == "permission.request" {
 		if s.requests != nil {
 			// Fallback per-Execute path: evaluate locally and forward
@@ -952,6 +997,50 @@ func (s *executeCaptureSink) emitDenied(requestID, tool, reason string) {
 		},
 	}:
 	case <-s.ctx.Done():
+	}
+}
+
+// recordFinalizedOutcome captures an adapter-level outcome.finalized event
+// (last one wins). The payload is redacted upstream; here only the outcome
+// name and reason pass through.
+func (s *executeCaptureSink) recordFinalizedOutcome(payload map[string]any) {
+	if payload == nil {
+		return
+	}
+	if outcome, ok := payload["outcome"].(string); ok && outcome != "" {
+		s.finalizedOutcome = outcome
+		s.finalizedPayload = payload
+	}
+}
+
+// rescueResult returns the adapter's own verdict when the Execute stream ended
+// abnormally (KB-53): a captured ExecuteResult wins; otherwise a captured
+// outcome.finalized event is synthesized into the equivalent result so the
+// workflow-level step resolves to the outcome the adapter chose (e.g.
+// ready_for_review flows on to create_pr) instead of a synthetic "failure".
+func (s *executeCaptureSink) rescueResult() (adapter.Result, bool) {
+	if s.done && s.result.Outcome != "" {
+		return s.result, true
+	}
+	if s.finalizedOutcome != "" {
+		b, err := json.Marshal(s.finalizedPayload)
+		if err == nil && len(b) > 0 {
+			typed, derr := s.decodeOutputsJSON(b)
+			if derr == nil {
+				return adapter.Result{Outcome: s.finalizedOutcome, Outputs: typed}, true
+			}
+		}
+		return adapter.Result{Outcome: s.finalizedOutcome}, true
+	}
+	return adapter.Result{}, false
+}
+
+// applyNeedsReviewOverride applies the denied-permission override (any denied
+// permission demotes a "success" outcome to "needs_review") consistently to
+// captured and rescued results.
+func (s *executeCaptureSink) applyNeedsReviewOverride(result *adapter.Result) {
+	if s.anyDenied && result.Outcome == "success" {
+		result.Outcome = "needs_review"
 	}
 }
 
