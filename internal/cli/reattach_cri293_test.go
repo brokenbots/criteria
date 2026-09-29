@@ -161,7 +161,7 @@ func TestBuildReattachTrackerAndEngine_CRI293_IsolationEnabled(t *testing.T) {
 
 	cp := cri293ReattachCheckpoint(t, "cri293-iso-flag")
 
-	graph, loader, _, ok := prepareReattach(context.Background(), discardLogger(), cp)
+	graph, loader, _, ok := prepareReattach(context.Background(), discardLogger(), cp, localApprovalConfig{})
 	if !ok {
 		t.Fatal("prepareReattach failed")
 	}
@@ -202,7 +202,7 @@ func TestResumeOneLocalRun_CRI293_SharedListenAddressIsolated(t *testing.T) {
 
 	runDone := make(chan error, 1)
 	go func() {
-		_, runErr := resumeOneLocalRun(ctx, discardLogger(), cp, io.Discard, outputModeJSON, nil)
+		_, runErr := resumeOneLocalRun(ctx, discardLogger(), cp, io.Discard, outputModeJSON, nil, localApprovalConfig{})
 		runDone <- runErr
 	}()
 
