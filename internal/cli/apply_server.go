@@ -158,7 +158,7 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 
 	// Flush queued events before inspecting the terminal result so the server
 	// receives the RunCompleted envelope regardless of success.
-	drainCtx, drainCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	drainCtx, drainCancel := context.WithTimeout(context.WithoutCancel(ctx), terminalDrainTimeout)
 	client.Drain(drainCtx)
 	drainCancel()
 

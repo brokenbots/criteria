@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"time"
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/diagutil"
@@ -181,10 +180,10 @@ func loadCheckpointWorkflow(ctx context.Context, log *slog.Logger, cp *StepCheck
 }
 
 // drainAndCleanup flushes pending server events then removes the checkpoint.
-// context.WithoutCancel ensures the 5-second drain window is honoured even
+// context.WithoutCancel ensures the terminal drain window is honoured even
 // when ctx is already cancelled (e.g. after SIGTERM or a ctx.Done() select arm).
 func drainAndCleanup(ctx context.Context, rc reattachTransport, cp *StepCheckpoint) {
-	drainCtx, drainCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	drainCtx, drainCancel := context.WithTimeout(context.WithoutCancel(ctx), terminalDrainTimeout)
 	rc.Drain(drainCtx)
 	drainCancel()
 	RemoveStepCheckpoint(cp.RunID)

@@ -701,6 +701,14 @@ func newRunPublisher(ctx context.Context, client *servertrans.Client, runID stri
 	return publisher, func() { publisher.Close() }, nil
 }
 
+// terminalDrainTimeout bounds the final drain of pending SubmitEvents events
+// after a run reaches its terminal state. The tail carries the terminal
+// step.outcome and RunCompleted events that drive the orchestrator run-row
+// transition, so it must survive a temporarily unavailable SubmitEvents
+// stream: the reconnect backoff (up to 5s between attempts) gets several
+// attempts within this window (KB-53).
+const terminalDrainTimeout = 30 * time.Second
+
 // reportAgentAssignmentFailed emits a terminal RunFailed event for a run that
 // failed before reaching execution, then drains the publisher so the event is
 // persisted centrally. Use this for compile-time and initialization-time
@@ -715,7 +723,7 @@ func reportAgentAssignmentFailed(ctx context.Context, log *slog.Logger, publishe
 	}
 	sink.RunFailed(ctx, err.Error(), "")
 
-	drainCtx, drainCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	drainCtx, drainCancel := context.WithTimeout(context.WithoutCancel(ctx), terminalDrainTimeout)
 	defer drainCancel()
 	publisher.Drain(drainCtx)
 }
@@ -905,7 +913,7 @@ func runAndDrain(agentCtx, runCtx context.Context, log *slog.Logger, eng *engine
 		}
 	}
 
-	drainCtx, drainCancel := context.WithTimeout(context.WithoutCancel(runCtx), 5*time.Second)
+	drainCtx, drainCancel := context.WithTimeout(context.WithoutCancel(runCtx), terminalDrainTimeout)
 	publisher.Drain(drainCtx)
 	drainCancel()
 
