@@ -133,6 +133,7 @@ func executeFreshLocalRun(ctx context.Context, log *slog.Logger, graph *workflow
 	// context (the engine then emits a real terminal RunFailed event).
 	runCtx, stopServer := attachLocalRunStateServer(ctx, log, runID, resolveRunListenAddr(&opts), ctrl, opts.ui)
 	defer stopServer()
+	defer ctrl.markFinished()
 	if err := eng.Run(runCtx); err != nil {
 		log.Error("local run failed", "run_id", runID, "error", err)
 		return err
@@ -345,6 +346,7 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 	ctrl := newLocalRunControl(cp.RunID, graph, tracker, eng)
 	runCtx, stopServer := attachLocalRunStateServer(ctx, log, cp.RunID, resolveRunListenAddr(&opts), ctrl, opts.ui)
 	defer stopServer()
+	defer ctrl.markFinished()
 	var outcome error
 	if runErr := eng.RunFrom(runCtx, cp.CurrentStep, nextAttempt); runErr != nil {
 		log.Error("resumed local run failed", "run_id", cp.RunID, "error", runErr)

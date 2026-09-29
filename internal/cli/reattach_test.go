@@ -1366,7 +1366,14 @@ state "done" {
 	// decision and expect the run to complete.
 	addr := waitForControlEndpoint(t, stateDir)
 	if accepted, reason := resolveApproval(t, addr, cp.RunID, "review", map[string]string{"decision": "approved"}); !accepted || reason != "ok" {
-		t.Fatalf("ResolveResume = (accepted=%t, reason=%q), want accepted ok", accepted, reason)
+		// Diagnostics: dump whether the run goroutine already exited and
+		// its captured output, so transport-level failures are debuggable.
+		select {
+		case runErr := <-errCh:
+			t.Fatalf("ResolveResume = (accepted=%t, reason=%q) but run already exited with %v; out=%s", accepted, reason, runErr, out.String())
+		default:
+			t.Fatalf("ResolveResume = (accepted=%t, reason=%q), want accepted ok", accepted, reason)
+		}
 	}
 	select {
 	case err := <-errCh:

@@ -28,6 +28,13 @@ import (
 // steps than this make the RPC caller wait instead of blocking apply forever.
 const pauseAckTimeout = 2 * time.Minute
 
+// pauseLandingRetryWindow bounds the service-layer retry for verbs that
+// race the run's start-up: control.json is published before the engine is
+// registered and before the first pause lands, so a fast local control
+// client can see transient errRunNotRunning / run_not_paused answers that
+// the next step boundary refutes.
+const pauseLandingRetryWindow = 2 * time.Second
+
 // errRunNotRunning reports that no run loop is active in the owned engine:
 // the run has already reached a terminal state or paused at a node.
 var errRunNotRunning = errors.New("run is not running (already terminal or paused at a node)")
@@ -61,6 +68,10 @@ type localRunControl struct {
 	// hook.
 	resumeReq  chan struct{}
 	payloadReq chan map[string]string
+	// finished flips when the owning apply function exits; the service
+	// layer's landing retry treats a not-yet-paused answer as final from
+	// then on (a run that exited can never pause).
+	finished bool
 }
 
 func newLocalRunControl(runID string, graph *workflow.FSMGraph, tracker *pauseTracker, eng *engine.Engine) *localRunControl {
@@ -294,28 +305,101 @@ func (s *localControlService) PauseRun(ctx context.Context, req *connect.Request
 	if err := s.checkRun(req.Msg.RunId); err != nil {
 		return nil, err
 	}
-	if err := s.ctrl.pause(ctx); err != nil {
+	if err := s.ctrlPause(ctx); err != nil {
 		return nil, pauseErrorToConnect(err)
 	}
 	return connect.NewResponse(&pb.PauseRunResponse{}), nil
+}
+
+// ctrlPause retries across the pause-landing window: the listener publishes
+// control.json before the run's engine is registered and before the first
+// pause lands, so a fast control client can observe a transient
+// errRunNotRunning that the very next step boundary refutes. Wait briefly
+// instead of failing the verb on that window (not on a genuinely terminal
+// run, which keeps failing fast).
+func (s *localControlService) ctrlPause(ctx context.Context) error {
+	deadline := time.Now().Add(pauseLandingRetryWindow)
+	for {
+		err := s.ctrl.pause(ctx)
+		if err == nil || (err != errRunNotRunning && !errors.Is(err, errRunNotRunning)) || ctx.Err() != nil {
+			return err
+		}
+		if s.ctrl.isFinished() || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 func (s *localControlService) ResumeRun(_ context.Context, req *connect.Request[pb.ResumeRunRequest]) (*connect.Response[pb.ResumeRunResponse], error) {
 	if err := s.checkRun(req.Msg.RunId); err != nil {
 		return nil, err
 	}
-	if err := s.ctrl.resume(); err != nil {
+	if err := s.ctrlResume(); err != nil {
 		return nil, pauseErrorToConnect(err)
 	}
 	return connect.NewResponse(&pb.ResumeRunResponse{}), nil
+}
+
+// ctrlResume retries across the pause-landing window (see ctrlPause): the
+// engine pointer registers moments after the listener comes up, and an
+// early resume request must not fail the verb.
+func (s *localControlService) ctrlResume() error {
+	deadline := time.Now().Add(pauseLandingRetryWindow)
+	for {
+		err := s.ctrl.resume()
+		if err == nil || (err != errRunNotRunning && !errors.Is(err, errRunNotRunning)) {
+			return err
+		}
+		if s.ctrl.isFinished() || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 func (s *localControlService) ResolveResume(_ context.Context, req *connect.Request[pb.ResumeRequest]) (*connect.Response[pb.ResumeResponse], error) {
 	if err := s.checkRun(req.Msg.RunId); err != nil {
 		return nil, err
 	}
-	accepted, reason := s.ctrl.resolveResume(req.Msg.Signal, req.Msg.Payload)
+	accepted, reason := s.ctrlResolve(req.Msg.Signal, req.Msg.Payload)
 	return connect.NewResponse(&pb.ResumeResponse{Accepted: accepted, Reason: reason}), nil
+}
+
+// ctrlResolve retries run_not_paused across the pause-landing window
+// (see ctrlPause): approval/signal decisions may arrive while the run is
+// still traveling toward its pause. Other reasons (signal mismatch, invalid
+// payload) are answered immediately.
+func (s *localControlService) ctrlResolve(signal string, payload map[string]string) (bool, string) {
+	deadline := time.Now().Add(pauseLandingRetryWindow)
+	for {
+		accepted, reason := s.ctrl.resolveResume(signal, payload)
+		if accepted || reason != "run_not_paused" {
+			return accepted, reason
+		}
+		if s.ctrl.isFinished() || time.Now().After(deadline) {
+			return accepted, reason
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// isFinished reports whether the owning run reached a terminal state (or
+// otherwise exited its owning function): a finished run never pauses, so a
+// not-yet-paused answer is final rather than transient.
+func (c *localRunControl) isFinished() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.finished
+}
+
+// markFinished flips the terminal latch used by the service-layer landing
+// retry; called when the owning apply function exits (the run can no longer
+// pause after that point).
+func (c *localRunControl) markFinished() {
+	c.mu.Lock()
+	c.finished = true
+	c.mu.Unlock()
 }
 
 // checkRun rejects requests for a foreign run id: the local control listener

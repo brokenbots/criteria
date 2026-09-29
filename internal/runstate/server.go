@@ -1,6 +1,7 @@
 package runstate
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -229,13 +230,28 @@ func (s *Server) Serve(ln net.Listener) error {
 }
 
 // Stop closes the server's listener and connections (a no-op before Serve).
+// It drains in-flight requests first: an apply completing its final control
+// RPC (a decision on the last node) shuts the listener down while the client
+//'s response is still being flushed, and an abrupt Close would cut the
+// response mid-flight ("unexpected EOF" on the caller that just resolved
+// the run). The drain is bounded so a long-lived viewer stream cannot stall
+// the owning run's exit; the fallback Close reclaims stragglers.
 func (s *Server) Stop() {
 	s.srvMu.Lock()
 	defer s.srvMu.Unlock()
 	if s.srv != nil {
-		_ = s.srv.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownDrainWindow)
+		defer cancel()
+		if err := s.srv.Shutdown(ctx); err != nil {
+			_ = s.srv.Close()
+		}
 	}
 }
+
+// shutdownDrainWindow bounds the graceful drain in Stop: short Connect RPC
+// responses flush within it; an events/viewer stream outlasts it and is cut
+// by the fallback close, which is the pre-drain behavior.
+const shutdownDrainWindow = 350 * time.Millisecond
 
 func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

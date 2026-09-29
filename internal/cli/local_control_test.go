@@ -15,6 +15,9 @@ import (
 	"connectrpc.com/connect"
 
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+
+	"github.com/brokenbots/criteria/internal/engine"
+	"github.com/brokenbots/criteria/internal/run"
 )
 
 // waitForControlEndpoint polls stateDir for the first run's control.json and
@@ -488,5 +491,76 @@ func TestResolveControlAddr(t *testing.T) {
 		if _, _, err := resolveControlAddr(addr); err == nil {
 			t.Errorf("%q accepted, want refusal", addr)
 		}
+	}
+}
+
+// TestLocalControlServiceRetryAcrossPauseLanding pins the service-layer
+// landing window: control verbs that race the run's start-up (engine not yet
+// registered, first pause not yet landed) must succeed once the run reaches
+// its registered state within the bounded window instead of answering a hard
+// precondition error.
+func TestLocalControlServiceRetryAcrossPauseLanding(t *testing.T) {
+	requireNoGoroutineLeak(t)
+	home := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", home)
+
+	wfPath := writeWorkflowFile(t, pauseResumeWorkflow)
+	ctx := context.Background()
+	_, graph, loader, err := compileForExecution(ctx, wfPath, discardLogger(), false, false)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
+
+	sink := func() *run.LocalSink {
+		return &run.LocalSink{RunID: "landing-test", Out: os.Stdout}
+	}
+
+	// ResolveResume racing the first pause landing: answered run_not_paused
+	// until the pause lands, then accepted by the bounded retry.
+	waitTracker := &pauseTracker{Sink: sink()}
+	pauseCtrl := newLocalRunControl("landing-test", graph, waitTracker, nil)
+	pauseSvc := &localControlService{ctrl: pauseCtrl, runID: "landing-test"}
+	pauseReady := make(chan struct{})
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		pauseCtrl.setEngine(engine.New(graph, loader, sink()))
+		waitTracker.OnRunPaused("gate", "signal", "resume")
+		close(pauseReady)
+	}()
+	accepted, reason := pauseSvc.ctrlResolve("resume", nil)
+	if !accepted || reason != "ok" {
+		t.Fatalf("ctrlResolve racing landing = (%v, %q), want (true, ok)", accepted, reason)
+	}
+	<-pauseReady
+
+	// ResumeRun racing engine registration: the engine pointer registers
+	// 100ms into the retry window; the verb must succeed, not answer
+	// errRunNotRunning.
+	regTracker := &pauseTracker{Sink: sink()}
+	regCtrl := newLocalRunControl("landing-test", graph, regTracker, nil)
+	regSvc := &localControlService{ctrl: regCtrl, runID: "landing-test"}
+	engineReady := make(chan struct{})
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		regCtrl.setEngine(engine.New(graph, loader, sink()))
+		close(engineReady)
+	}()
+	if err := regSvc.ctrlResume(); err != nil {
+		t.Fatalf("ctrlResume racing registration: %v", err)
+	}
+	<-engineReady
+
+	// A terminal (finished) run answers immediately, without waiting out
+	// the full retry window.
+	waitTracker.ClearPaused()
+	pauseCtrl.markFinished()
+	start := time.Now()
+	accepted, reason = pauseSvc.ctrlResolve("resume", nil)
+	if accepted || reason != "run_not_paused" {
+		t.Fatalf("finished run resolve = (%v, %q), want (false, run_not_paused)", accepted, reason)
+	}
+	if elapsed := time.Since(start); elapsed >= pauseLandingRetryWindow {
+		t.Fatalf("finished run resolve took %v, want fast final answer", elapsed)
 	}
 }
