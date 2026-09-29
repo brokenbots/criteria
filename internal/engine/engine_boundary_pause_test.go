@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -13,10 +14,13 @@ import (
 )
 
 // gateHandle is an adapter handle whose Execute blocks on a per-step gate so a
-// test can hold a step mid-flight while a pause request is registered.
+// test can hold a step mid-flight while a pause request is registered. Steps
+// registered through failOn return the recorded error after the gate opens,
+// so the run exits through the failure path.
 type gateHandle struct {
 	mu      sync.Mutex
 	blocked map[string]chan struct{}
+	errs    map[string]error
 }
 
 func (g *gateHandle) block(step string) {
@@ -37,6 +41,15 @@ func (g *gateHandle) release(step string) {
 	}
 }
 
+func (g *gateHandle) failOn(step string, err error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.errs == nil {
+		g.errs = map[string]error{}
+	}
+	g.errs[step] = err
+}
+
 func (g *gateHandle) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{Name: "gate"}, nil
 }
@@ -46,9 +59,13 @@ func (g *gateHandle) OpenSession(context.Context, string, map[string]string, map
 func (g *gateHandle) Execute(ctx context.Context, sessionID string, node *workflow.StepNode, es adapter.EventSink) (adapter.Result, error) {
 	g.mu.Lock()
 	ch, ok := g.blocked[node.Name]
+	err, hasErr := g.errs[node.Name]
 	g.mu.Unlock()
 	if ok {
 		<-ch
+	}
+	if hasErr {
+		return adapter.Result{}, err
 	}
 	return adapter.Result{Outcome: "success"}, nil
 }
@@ -257,5 +274,65 @@ func TestEngine_RequestPause_TerminalBeforeLatch(t *testing.T) {
 	}
 	if _, ok := eng.RequestPause(); ok {
 		t.Fatal("RequestPause must report not-ok once the run loop has exited")
+	}
+}
+
+// TestEngine_RequestPause_DroppedOnStepFailure pins the pause-ack drop path
+// (CRI-255): a pause request latched while a step is in flight can lose the
+// race with the run exiting without honoring it — here the step fails
+// terminally, so runLoop returns through the failure path. On such an exit
+// the dropped pause-landed channel CLOSES (it never closes on a durable
+// ack without the pause tracker also recording a node), so the control
+// surface's waiter wakes immediately and re-reads the pause tracker instead
+// of waiting out a long timeout on a run that is already gone.
+func TestEngine_RequestPause_DroppedOnStepFailure(t *testing.T) {
+	g := compile(t, boundaryPauseHCL)
+	gate := &gateHandle{}
+	gate.failOn("b", errors.New("adapter exploded"))
+
+	sink := newBoundarySink()
+	eng := New(g, &fakeLoader{adapters: map[string]adapterhost.Handle{"gate": gate}}, sink)
+	gate.block("b")
+
+	doneRun := make(chan error, 1)
+	go func() { doneRun <- eng.Run(context.Background()) }()
+
+	enteredB := false
+	for !enteredB {
+		select {
+		case step := <-sink.entered:
+			if step == "b" {
+				enteredB = true
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("timeout waiting for step b to start; entered at most %v", sink.fakeSink.stepsRun)
+		}
+	}
+
+	pauseCh, ok := eng.RequestPause()
+	if !ok {
+		t.Fatal("RequestPause returned not-ok while step b was in flight")
+	}
+	gate.release("b")
+
+	select {
+	case err := <-doneRun:
+		if err == nil {
+			t.Fatal("expected the run to fail after the failing step completed")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for the failing run to exit")
+	}
+
+	// The dropped request must close its channel on runLoop exit: a waiter
+	// blocked on it wakes immediately instead of waiting out its timeout.
+	select {
+	case <-pauseCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("dropped pause-landed channel did not close on run exit")
+	}
+	// No external pause event must have fired: the run never paused.
+	if node, mode, _ := sink.pause(); node != "" || mode != "" {
+		t.Fatalf("dropped pause must not emit OnRunPaused, got node=%q mode=%q", node, mode)
 	}
 }

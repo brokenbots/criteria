@@ -132,6 +132,14 @@ func (c *localRunControl) pause(ctx context.Context) error {
 	}
 	select {
 	case <-ack:
+		// The ack channel closes on a real landing (after the pause tracker
+		// recorded the node and the checkpoint was written) and on a runLoop
+		// exit that dropped the request (the run finished or failed before
+		// the latch could be honored). Re-read the tracker to tell them
+		// apart: no parked node means the run ended without pausing.
+		if node := tracker.PausedAt(); node == "" {
+			return fmt.Errorf("run ended without pausing; it is no longer running")
+		}
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()

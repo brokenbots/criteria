@@ -383,15 +383,22 @@ func (e *Engine) RequestPause() (<-chan struct{}, bool) {
 	return ch, true
 }
 
-// clearPauseRequest drops a pending boundary-pause request without closing
-// its channel (called when the run exits runLoop without honoring it). The
-// waiter's bounded wait then expires and re-reads the run status, which is
-// terminal or paused by other means.
+// clearPauseRequest drops a pending boundary-pause request (called when the
+// run exits runLoop without honoring it: a failure, a return exit, or a node
+// pause that left the loop directly — all race candidates for a pause verb
+// that latched between iterations). Closing the channel is the drop signal:
+// the waiter wakes immediately and re-reads the pause tracker — a parked run
+// has a node recorded (node pause landed legitimately), an empty one means
+// the run wound down without pausing.
 func (e *Engine) clearPauseRequest() {
 	e.pauseMu.Lock()
+	ch := e.pauseLanded
 	e.pauseLanded = nil
 	e.boundaryPause.Store(false)
 	e.pauseMu.Unlock()
+	if ch != nil {
+		close(ch)
+	}
 }
 
 // ackPauseRequested closes the pending pause-landed channel: the pause has
