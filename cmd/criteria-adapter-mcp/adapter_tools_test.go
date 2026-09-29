@@ -278,7 +278,7 @@ func (s *mcpToolsSink) OnStepResumed(string, int, string)                       
 func (s *mcpToolsSink) OnVariableSet(string, string, string)                         {}
 func (s *mcpToolsSink) OnStepOutputCaptured(string, map[string]string)               {}
 func (s *mcpToolsSink) OnRunPaused(string, string, string)                           {}
-func (s *mcpToolsSink) OnRunResumed(string)                                           {}
+func (s *mcpToolsSink) OnRunResumed(string)                                          {}
 func (s *mcpToolsSink) OnWaitEntered(string, string, string, string)                 {}
 func (s *mcpToolsSink) OnWaitResumed(string, string, string, map[string]string)      {}
 func (s *mcpToolsSink) OnApprovalRequested(string, []string, string)                 {}

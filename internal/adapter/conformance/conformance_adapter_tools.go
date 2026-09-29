@@ -451,7 +451,7 @@ func (s *matrixEngineSink) OnStepResumed(string, int, string)                   
 func (s *matrixEngineSink) OnVariableSet(string, string, string)                         {}
 func (s *matrixEngineSink) OnStepOutputCaptured(string, map[string]string)               {}
 func (s *matrixEngineSink) OnRunPaused(string, string, string)                           {}
-func (s *matrixEngineSink) OnRunResumed(string)                                           {}
+func (s *matrixEngineSink) OnRunResumed(string)                                          {}
 func (s *matrixEngineSink) OnWaitEntered(string, string, string, string)                 {}
 func (s *matrixEngineSink) OnWaitResumed(string, string, string, map[string]string)      {}
 func (s *matrixEngineSink) OnApprovalRequested(string, []string, string)                 {}
