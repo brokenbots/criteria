@@ -458,7 +458,7 @@ func (e *Engine) pauseAtBoundary(ctx context.Context, st *RunState, sink Sink) {
 	}
 	e.lastVars = st.Vars
 	e.lastVisits = st.Visits
-	e.liveRunState = nil
+	e.clearLiveRunStatePtr()
 	sink.OnRunPaused(st.Current, "external", "")
 	e.ackPauseRequested()
 }
@@ -537,6 +537,22 @@ func (e *Engine) clearLiveRunState() {
 	e.liveSessions = nil
 	e.livePrompts = nil
 	e.mu.Unlock()
+}
+
+// setLiveRunStatePtr updates e.liveRunState under pauseMu: the local control
+// surface (RequestPause / VisitCounts) reads the live pointer while the run
+// loop mutates it; without this guard the pointer is racy (KB-54/KB-56 CI
+// data race in TestApplyLocal_BoundaryPauseResumeOverLocalControlRPC).
+func (e *Engine) setLiveRunStatePtr(st *RunState) {
+	e.pauseMu.Lock()
+	e.liveRunState = st
+	e.pauseMu.Unlock()
+}
+
+func (e *Engine) clearLiveRunStatePtr() {
+	e.pauseMu.Lock()
+	e.liveRunState = nil
+	e.pauseMu.Unlock()
 }
 
 // effectivePinSet resolves the run's effective lockfile by one shared rule:
@@ -792,7 +808,7 @@ func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManag
 	defer e.clearPauseRequest()
 	e.setLiveRunState(sessions, prompts)
 
-	e.liveRunState = st
+	e.setLiveRunStatePtr(st)
 	for {
 		// CRI-255: pause points are checkpoint points. A control-surface
 		// pause request lands here, at the top of each loop iteration —
@@ -1201,7 +1217,7 @@ func (e *Engine) advanceTo(st *RunState, next string) {
 func (e *Engine) handleEvalError(ctx context.Context, st *RunState, err error, sink Sink) error {
 	// Capture the visit state and clear the live pointer so VisitCounts()
 	// returns a stable snapshot after the run ends (W07).
-	e.liveRunState = nil
+	e.clearLiveRunStatePtr()
 	e.lastVisits = st.Visits
 	if errors.Is(err, engineruntime.ErrTerminal) {
 		state, ok := e.graph.States[st.Current]
@@ -1263,7 +1279,7 @@ func (e *Engine) handleEvalError(ctx context.Context, st *RunState, err error, s
 // The projected outputs in st.ReturnOutputs are emitted as OnRunOutputs
 // (if non-empty) and the run is completed successfully with no named final state.
 func (e *Engine) handleReturnExit(st *RunState, sink Sink) {
-	e.liveRunState = nil
+	e.clearLiveRunStatePtr()
 	e.lastVisits = st.Visits
 
 	if len(st.ReturnOutputs) > 0 {
