@@ -230,6 +230,7 @@ func (s *integrationSink) OnStepOutcomeDefaulted(string, string, string)        
 func (s *integrationSink) OnStepOutcomeUnknown(string, string)                          {}
 
 func (s *integrationSink) OnAgentPromptInjected(string, string, string, string, time.Time) {}
+func (s *integrationSink) OnCheckpointPointer(*engine.CheckpointPointerEvent)              {}
 func (s *integrationSink) StepEventSink(step string) adapter.EventSink                     { return s }
 func (s *integrationSink) Log(stream string, line []byte)                                  {}
 func (s *integrationSink) Adapter(kind string, data any)                                   {}

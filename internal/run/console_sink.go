@@ -255,6 +255,12 @@ func (c *ConsoleSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEven
 func (c *ConsoleSink) OnAgentPromptInjected(step, sessionID, prompt, caller string, deliveredAt time.Time) {
 }
 
+// OnCheckpointPointer is a no-op on the console progress view; the durable
+// checkpoint pointer is recorded in the event stream by the record sinks
+// (LocalSink / server Sink), and per-step saves would otherwise flood the
+// progress view (CRI-203).
+func (c *ConsoleSink) OnCheckpointPointer(ptr *engine.CheckpointPointerEvent) {}
+
 // OnRunOutputs renders workflow outputs to the console (W09).
 // Outputs are rendered after the terminal state line in concise output mode.
 func (c *ConsoleSink) OnRunOutputs(outputs []map[string]string) {

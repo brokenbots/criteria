@@ -81,6 +81,14 @@ message Envelope {
     // the moment the prompt is delivered into the adapter session — never at
     // receipt and never on delivery failure. Permanent field number.
     AgentPromptInjected agent_prompt_injected = 38;
+    // CheckpointPointer — advisory pointer to an engine-local adapter
+    // checkpoint (CRI-203). Emitted by the agent after a durable checkpoint
+    // save. Castle keeps only the pointer; the checkpoint bytes stay in the
+    // engine's state home and restore is engine-local from it — consumers
+    // MUST NOT treat castle reachability as part of the restore path. The
+    // pointer is for UI visibility, inspection, and accounting only.
+    // Permanent field number.
+    CheckpointPointer checkpoint_pointer = 39;
     // WatchReady is a protocol-level sentinel sent once at the start of a
     // WatchRun server-stream, after any persisted-event replay, to flush
     // response headers so the client's WatchRun call can return. It has no
@@ -363,4 +371,36 @@ message AgentPromptInjected {
   string caller = 4;
   // delivered_at is when the agent delivered the prompt into the session.
   google.protobuf.Timestamp delivered_at = 5;
+}
+
+// CheckpointPointer — advisory pointer to an engine-local adapter checkpoint
+// (CRI-203). It references a durable checkpoint without carrying its bytes:
+// the blob lives in the engine's state home (criteriadb state tables going
+// forward, CRI-199) and restore is engine-local from there, never mediated
+// by castle. Consumers use the pointer for UI visibility, inspection, and
+// accounting only. Every field is engine-local metadata; none carries state.
+message CheckpointPointer {
+  // state_id is the engine-local checkpoint identifier,
+  // "<session-id>/<seq>"; opaque to consumers. The checkpoint's bytes are
+  // keyed by it in the engine's state home, which is the authoritative
+  // source for restore.
+  string state_id = 1;
+  // adapter_kind is the adapter implementation type that owns the
+  // checkpointed session (e.g. "shell", "copilot").
+  string adapter_kind = 2;
+  // state_schema is the adapter-declared checkpoint-state schema tag the
+  // checkpoint was saved under.
+  string state_schema = 3;
+  // state_digest is the "sha256:<hex>" digest of the checkpointed state
+  // blob the pointer references.
+  string state_digest = 4;
+  // state_size is the checkpointed state blob's size in bytes.
+  int64 state_size = 5;
+  // granularity is the adapter's declared save granularity
+  // (per-step|per-turn|on-demand).
+  string granularity = 6;
+  // session_id is the adapter session the checkpoint belongs to (the
+  // workflow's "<adapter-type>.<instance-name>" session key); per-scope
+  // sessions carry their scope-qualified key.
+  string session_id = 7;
 }

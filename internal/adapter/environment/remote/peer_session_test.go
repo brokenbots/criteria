@@ -354,31 +354,30 @@ func (f *fakePeer) Prompt(ctx context.Context, req *adapterhost.PromptRequest) (
 
 // --- test helpers ---
 
-// peerConnListener serves exactly one already-accepted connection.
+// peerConnListener serves exactly one already-accepted connection. Accept
+// runs on grpc's Serve goroutine while Close arrives via Stop, so access to
+// the listener state is mutex-guarded.
 type peerConnListener struct {
+	mu   sync.Mutex
 	conn net.Conn
 	addr net.Addr
-	done chan struct{}
 }
 
 func (l *peerConnListener) Accept() (net.Conn, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if l.conn == nil {
 		return nil, net.ErrClosed
 	}
 	conn := l.conn
 	l.conn = nil
-	if l.done == nil {
-		l.done = make(chan struct{})
-		close(l.done)
-	}
 	return conn, nil
 }
 
 func (l *peerConnListener) Close() error {
-	if l.done == nil {
-		l.done = make(chan struct{})
-		close(l.done)
-	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.conn = nil
 	return nil
 }
 
@@ -1550,6 +1549,10 @@ func TestPeerSupervisionUnimplementedKeepsHandleUsable(t *testing.T) {
 	fp.mu.Lock()
 	fp.superviseUnimplemented = true
 	fp.mu.Unlock()
+	// Installed before the dial, not after WaitForHandle: AcceptPeer starts
+	// the supervise goroutine during connect, and its unimplemented warning
+	// can land (and be lost) before WaitForHandle even returns.
+	logs := captureLogs(t)
 	fp.connect(t, addr)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -1562,7 +1565,6 @@ func TestPeerSupervisionUnimplementedKeepsHandleUsable(t *testing.T) {
 	// A pre-PeerService peer build: the supervisor records unavailability in
 	// the log, ProcessExited stays false (the caller falls back to error
 	// heuristics, like a legacy handle), and the v2 service remains usable.
-	logs := captureLogs(t)
 	if _, ok := handle.(adapterhost.ProcessExitReporter); !ok {
 		t.Fatalf("handle %T does not implement ProcessExitReporter", handle)
 	}

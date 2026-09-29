@@ -193,6 +193,14 @@ func (m *MultiSink) OnStepOutcomeUnknown(step, outcome string) {
 	}
 }
 
+// OnCheckpointPointer fans the checkpoint-pointer event to all child sinks
+// (CRI-203).
+func (m *MultiSink) OnCheckpointPointer(ptr *engine.CheckpointPointerEvent) {
+	for _, c := range m.children {
+		c.OnCheckpointPointer(ptr)
+	}
+}
+
 func (m *MultiSink) StepEventSink(step string) adapter.EventSink {
 	subs := make([]adapter.EventSink, 0, len(m.children))
 	for _, c := range m.children {

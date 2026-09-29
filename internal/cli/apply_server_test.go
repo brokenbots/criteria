@@ -1119,4 +1119,43 @@ func TestServerModeResume_CheckpointSurfaceWired(t *testing.T) {
 	if !completed {
 		t.Error("expected RunCompleted event from the engine run")
 	}
+
+	// CRI-203: every durable save also published its advisory checkpoint
+	// pointer into the stream the server persists for ListRunEvents
+	// consumers. Each pointer must mirror the persisted state row it refers
+	// to (castle keeps only pointers; the blob stays engine-local), keyed by
+	// the graph adapter identity and the save's sequence number.
+	var ptrs []*pb.CheckpointPointer
+	for _, env := range ft.published {
+		if p := env.GetCheckpointPointer(); p != nil {
+			ptrs = append(ptrs, p)
+		}
+	}
+	if len(ptrs) != len(captures) {
+		t.Fatalf("published %d checkpoint pointers, want one per durable save (%d)", len(ptrs), len(captures))
+	}
+	for i, p := range ptrs {
+		wantStateID := fmt.Sprintf("noop.default/%010d", i+1)
+		if p.GetStateId() != wantStateID {
+			t.Errorf("pointer %d state_id = %q, want %q", i, p.GetStateId(), wantStateID)
+		}
+		if p.GetSessionId() != "noop.default" {
+			t.Errorf("pointer %d session_id = %q, want %q", i, p.GetSessionId(), "noop.default")
+		}
+		if p.GetAdapterKind() != "noop" {
+			t.Errorf("pointer %d adapter_kind = %q, want %q", i, p.GetAdapterKind(), "noop")
+		}
+		if p.GetStateSchema() != "stateful.v1" {
+			t.Errorf("pointer %d state_schema = %q, want %q", i, p.GetStateSchema(), "stateful.v1")
+		}
+		if wantDigest := adapterhost.ComputeStateDigest(captures[i].latestBlob); p.GetStateDigest() != wantDigest {
+			t.Errorf("pointer %d state_digest = %q, want %q (the persisted blob's digest)", i, p.GetStateDigest(), wantDigest)
+		}
+		if wantSize := int64(len(captures[i].latestBlob)); p.GetStateSize() != wantSize {
+			t.Errorf("pointer %d state_size = %d, want %d", i, p.GetStateSize(), wantSize)
+		}
+		if p.GetGranularity() != string(workflow.StateGranularityPerStep) {
+			t.Errorf("pointer %d granularity = %q, want %q", i, p.GetGranularity(), string(workflow.StateGranularityPerStep))
+		}
+	}
 }

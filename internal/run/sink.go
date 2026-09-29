@@ -288,6 +288,24 @@ func (s *Sink) OnWorkflowGraphs(ctx context.Context, msg *pb.WorkflowGraphs) {
 	s.publishWithCtx(ctx, msg)
 }
 
+// OnCheckpointPointer publishes the checkpoint.pointer envelope for a durable
+// engine-local checkpoint save (CRI-203). The pointer is advisory metadata;
+// the bytes stay in the engine's state home.
+func (s *Sink) OnCheckpointPointer(ptr *engine.CheckpointPointerEvent) {
+	if ptr == nil {
+		return
+	}
+	s.publish(&pb.CheckpointPointer{
+		StateId:     ptr.StateID,
+		AdapterKind: ptr.AdapterKind,
+		StateSchema: ptr.StateSchema,
+		StateDigest: ptr.StateDigest,
+		StateSize:   ptr.StateSize,
+		Granularity: ptr.Granularity,
+		SessionId:   ptr.SessionID,
+	})
+}
+
 // OnStepOutcomeDefaulted is emitted when a step returns an unknown outcome and
 // the outcome "default" block is applied (W15).
 func (s *Sink) OnStepOutcomeDefaulted(step, original, mapped string) {

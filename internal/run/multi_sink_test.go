@@ -44,6 +44,7 @@ func (r *recordingSink) OnStepOutcomeDefaulted(string, string, string)          
 func (r *recordingSink) OnStepOutcomeUnknown(string, string)                         { r.bump() }
 
 func (r *recordingSink) OnAgentPromptInjected(string, string, string, string, time.Time) { r.bump() }
+func (r *recordingSink) OnCheckpointPointer(*engine.CheckpointPointerEvent)              { r.bump() }
 func (r *recordingSink) StepEventSink(step string) adapter.EventSink {
 	return &recordingStepSink{parent: r}
 }
@@ -97,6 +98,24 @@ func TestMultiSink_OnAdapterLifecycleEventFansOut(t *testing.T) {
 		RunID:       "run-1",
 		AdapterName: "noop",
 		Status:      "provision_wanted",
+	})
+
+	if got := a.calls.Load(); got != 1 {
+		t.Errorf("child a calls: got %d want 1", got)
+	}
+	if got := b.calls.Load(); got != 1 {
+		t.Errorf("child b calls: got %d want 1", got)
+	}
+}
+
+func TestMultiSink_OnCheckpointPointerFansOut(t *testing.T) {
+	var a, b recordingSink
+	var sink engine.Sink = NewMultiSink(&a, &b)
+
+	sink.OnCheckpointPointer(&engine.CheckpointPointerEvent{
+		RunID:     "run-1",
+		StateID:   "copilot.exec/0000000001",
+		StateSize: 4096,
 	})
 
 	if got := a.calls.Load(); got != 1 {

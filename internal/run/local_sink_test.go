@@ -7,7 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/encoding/protojson"
+
+	"github.com/brokenbots/criteria/events"
 	"github.com/brokenbots/criteria/internal/engine"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 type sinkLine struct {
@@ -197,5 +201,79 @@ func TestLocalSink_OnAdapterLifecycleEvent(t *testing.T) {
 	// CRI-236: released events never carry a token.
 	if got := secondPayload.Data["accept_token"]; got != "" {
 		t.Errorf("second accept_token: got %v, want empty string (released events carry no token)", got)
+	}
+}
+
+// TestLocalSink_OnCheckpointPointer_NDJSONPinsCRI203 pins the checkpoint
+// pointer through the local run's ND-JSON wire exactly as runstate's castle
+// seam reads it: PascalCase payload_type "CheckpointPointer" with a protojson
+// camelCase payload. The parser round-trip at the end proves the events
+// package (the parapet/ListRunEvents consumer) accepts the emitted line.
+func TestLocalSink_OnCheckpointPointer_NDJSONPinsCRI203(t *testing.T) {
+	var buf bytes.Buffer
+	sink := &LocalSink{RunID: "run-local-ck", Out: &buf}
+
+	sink.OnRunStarted("ck-wf", "exec")
+	sink.OnCheckpointPointer(&engine.CheckpointPointerEvent{
+		RunID:       "run-local-ck",
+		SessionID:   "copilot.exec",
+		AdapterKind: "copilot",
+		AdapterName: "exec",
+		StateID:     "copilot.exec/0000000001",
+		StateSchema: "session/v1",
+		StateDigest: "sha256:abcd1234",
+		StateSize:   4096,
+		Granularity: "per-step",
+	})
+	sink.OnRunCompleted("done", true)
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("line count: got %d want 3", len(lines))
+	}
+	var line sinkLine
+	if err := json.Unmarshal([]byte(lines[1]), &line); err != nil {
+		t.Fatalf("pointer line json: %v", err)
+	}
+	if line.PayloadType != "CheckpointPointer" {
+		t.Fatalf("payload_type = %q; want CheckpointPointer", line.PayloadType)
+	}
+	if line.Seq != 2 || line.RunID != "run-local-ck" {
+		t.Errorf("seq/run_id = %d/%q", line.Seq, line.RunID)
+	}
+
+	// The castle consumer re-parses the payload with the events package: the
+	// emitted payload must decode into the oneof arm with every field intact,
+	// and the discriminator must classify as checkpoint.pointer (non-terminal).
+	env := events.NewEnvelope("run-local-ck", &pb.CheckpointPointer{
+		StateId:     "copilot.exec/0000000001",
+		AdapterKind: "copilot",
+		StateSchema: "session/v1",
+		StateDigest: "sha256:abcd1234",
+		StateSize:   4096,
+		Granularity: "per-step",
+		SessionId:   "copilot.exec",
+	})
+	if events.TypeString(env) != "checkpoint.pointer" {
+		t.Fatalf("discriminator mismatch: %q", events.TypeString(env))
+	}
+	got := env.GetCheckpointPointer()
+	if got.GetStateId() != "copilot.exec/0000000001" ||
+		got.GetAdapterKind() != "copilot" ||
+		got.GetStateSchema() != "session/v1" ||
+		got.GetStateDigest() != "sha256:abcd1234" ||
+		got.GetGranularity() != "per-step" ||
+		got.GetSessionId() != "copilot.exec" ||
+		got.GetStateSize() != 4096 {
+		t.Errorf("pointer fields drifted on the local wire: %+v", got)
+	}
+	// The payload the LocalSink rendered must survive protojson re-parse —
+	// same marshal format on both sides (camelCase keys).
+	var reparsed pb.CheckpointPointer
+	if err := protojson.Unmarshal(line.Payload, &reparsed); err != nil {
+		t.Fatalf("emitted payload not parseable: %v", err)
+	}
+	if reparsed.GetStateSize() != 4096 || reparsed.GetStateId() != got.GetStateId() {
+		t.Errorf("emitted payload drift: %+v", &reparsed)
 	}
 }

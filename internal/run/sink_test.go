@@ -155,6 +155,61 @@ func TestSink_OnRunFailed_PublishesRunFailedEnvelope(t *testing.T) {
 	}
 }
 
+// TestSink_OnCheckpointPointer_PublishesEnvelope asserts the CRI-203 advisory
+// pointer arm: nil pointer is skipped, a real pointer publishes one envelope
+// carrying every pointer field through the wire message.
+func TestSink_OnCheckpointPointer_PublishesEnvelope(t *testing.T) {
+	fp := &fakePublisher{}
+	s := &Sink{RunID: "test-run", Client: fp, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	s.OnCheckpointPointer(nil)
+	if len(fp.published) != 0 {
+		t.Fatalf("nil pointer must not publish; got %d envelopes", len(fp.published))
+	}
+
+	s.OnCheckpointPointer(&engine.CheckpointPointerEvent{
+		RunID:       "test-run",
+		SessionID:   "copilot.exec",
+		AdapterKind: "copilot",
+		AdapterName: "exec",
+		StateID:     "copilot.exec/0000000001",
+		StateSchema: "session/v1",
+		StateDigest: "sha256:abcd1234",
+		StateSize:   4096,
+		Granularity: "per-step",
+	})
+	if len(fp.published) != 1 {
+		t.Fatalf("expected 1 published envelope, got %d", len(fp.published))
+	}
+	ptr := fp.published[0].GetCheckpointPointer()
+	if ptr == nil {
+		t.Fatal("expected CheckpointPointer payload in envelope")
+	}
+	for name, want := range map[string]string{
+		"StateId":     "copilot.exec/0000000001",
+		"AdapterKind": "copilot",
+		"StateSchema": "session/v1",
+		"StateDigest": "sha256:abcd1234",
+		"Granularity": "per-step",
+		"SessionId":   "copilot.exec",
+	} {
+		got := map[string]string{
+			"StateId":     ptr.GetStateId(),
+			"AdapterKind": ptr.GetAdapterKind(),
+			"StateSchema": ptr.GetStateSchema(),
+			"StateDigest": ptr.GetStateDigest(),
+			"Granularity": ptr.GetGranularity(),
+			"SessionId":   ptr.GetSessionId(),
+		}[name]
+		if got != want {
+			t.Errorf("%s: got %q want %q", name, got, want)
+		}
+	}
+	if ptr.GetStateSize() != 4096 {
+		t.Errorf("StateSize: got %d want 4096", ptr.GetStateSize())
+	}
+}
+
 // TestSink_CheckpointFnCalledOnStepEntered asserts that CheckpointFn is
 // invoked with the step name and attempt number before the event is published.
 func TestSink_CheckpointFnCalledOnStepEntered(t *testing.T) {

@@ -477,6 +477,8 @@ func (s *matrixEngineSink) OnStepOutcomeUnknown(step, outcome string) {
 
 func (s *matrixEngineSink) OnAgentPromptInjected(string, string, string, string, time.Time) {}
 
+func (s *matrixEngineSink) OnCheckpointPointer(*engine.CheckpointPointerEvent) {}
+
 func (s *matrixEngineSink) StepEventSink(step string) adapter.EventSink {
 	return &matrixEventRecorder{sink: s, step: step}
 }

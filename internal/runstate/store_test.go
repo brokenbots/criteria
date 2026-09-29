@@ -222,6 +222,88 @@ func TestEvents_StreamTerminationWalk(t *testing.T) {
 	}
 }
 
+// TestEvents_CheckpointPointerSeam pins the CRI-203 checkpoint pointer
+// through the castle-mapped seam: the producer's PascalCase payload_type is
+// mapped to the consumer's camelCase vocabulary, and the advisory pointer
+// payload JSON (protojson camelCase keys) passes verbatim with every field
+// ListRunEvents consumers see.
+func TestEvents_CheckpointPointerSeam(t *testing.T) {
+	s := newTestStore(t)
+	root, _ := s.RunsRoot()
+	raw := envPB(t, 2, "CheckpointPointer", &pb.CheckpointPointer{
+		StateId:     "copilot.exec/0000000001",
+		AdapterKind: "copilot",
+		StateSchema: "session/v1",
+		StateDigest: "sha256:abcd1234",
+		StateSize:   4096,
+		Granularity: "step",
+		SessionId:   "copilot.exec",
+	})
+	writeRun(t, root, "ck-seam", nil, []ndEnvelope{
+		envPB(t, 1, "RunStarted", &pb.RunStarted{WorkflowName: "ck-wf", InitialStep: "exec"}),
+		raw,
+	}, nil)
+
+	page, err := s.Events("ck-seam", 0, 0)
+	if err != nil {
+		t.Fatalf("Events: %v", err)
+	}
+	var ptr *EventEnvelope
+	for i := range page.Events {
+		if page.Events[i].Type == "checkpointPointer" {
+			ptr = &page.Events[i]
+			break
+		}
+	}
+	if ptr == nil {
+		t.Fatalf("run never served a checkpointPointer event; served types: %v",
+			func() []string {
+				var out []string
+				for _, ev := range page.Events {
+					out = append(out, ev.Type)
+				}
+				return out
+			}())
+	}
+	if ptr.Seq != 2 || ptr.RunID != "r1" {
+		t.Errorf("envelope id/seq = %q/%d", ptr.RunID, ptr.Seq)
+	}
+	// Payload passes verbatim — the consumer re-parses it with the events
+	var fields struct {
+		StateId     string          `json:"stateId"`
+		AdapterKind string          `json:"adapterKind"`
+		StateSchema string          `json:"stateSchema"`
+		StateDigest string          `json:"stateDigest"`
+		StateSize   json.RawMessage `json:"stateSize"`
+		Granularity string          `json:"granularity"`
+		SessionId   string          `json:"sessionId"`
+	}
+	if err := json.Unmarshal(ptr.Payload, &fields); err != nil {
+		t.Fatalf("payload not parseable: %v", err)
+	}
+	if fields.StateId != "copilot.exec/0000000001" {
+		t.Errorf("stateId = %q", fields.StateId)
+	}
+	if fields.AdapterKind != "copilot" {
+		t.Errorf("adapterKind = %q", fields.AdapterKind)
+	}
+	if fields.StateSchema != "session/v1" {
+		t.Errorf("stateSchema = %q", fields.StateSchema)
+	}
+	if fields.StateDigest != "sha256:abcd1234" {
+		t.Errorf("stateDigest = %q", fields.StateDigest)
+	}
+	if string(fields.StateSize) != `"4096"` {
+		t.Errorf("stateSize = %s (protojson renders int64 as a JSON string)", fields.StateSize)
+	}
+	if fields.Granularity != "step" {
+		t.Errorf("granularity = %q", fields.Granularity)
+	}
+	if fields.SessionId != "copilot.exec" {
+		t.Errorf("sessionId = %q", fields.SessionId)
+	}
+}
+
 // TestGetRun_RunningAndCrashed verifies the pid-alive status derivation:
 // live pid → running; dead pid without a terminal event → failed.
 func TestGetRun_RunningAndCrashed(t *testing.T) {

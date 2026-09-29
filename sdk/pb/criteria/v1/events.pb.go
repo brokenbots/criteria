@@ -128,6 +128,7 @@ type Envelope struct {
 	//	*Envelope_RunOutputs
 	//	*Envelope_WorkflowGraphs
 	//	*Envelope_AgentPromptInjected
+	//	*Envelope_CheckpointPointer
 	//	*Envelope_WatchReady
 	Payload       isEnvelope_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
@@ -440,6 +441,15 @@ func (x *Envelope) GetAgentPromptInjected() *AgentPromptInjected {
 	return nil
 }
 
+func (x *Envelope) GetCheckpointPointer() *CheckpointPointer {
+	if x != nil {
+		if x, ok := x.Payload.(*Envelope_CheckpointPointer); ok {
+			return x.CheckpointPointer
+		}
+	}
+	return nil
+}
+
 func (x *Envelope) GetWatchReady() *WatchReady {
 	if x != nil {
 		if x, ok := x.Payload.(*Envelope_WatchReady); ok {
@@ -578,6 +588,17 @@ type Envelope_AgentPromptInjected struct {
 	AgentPromptInjected *AgentPromptInjected `protobuf:"bytes,38,opt,name=agent_prompt_injected,json=agentPromptInjected,proto3,oneof"`
 }
 
+type Envelope_CheckpointPointer struct {
+	// CheckpointPointer — advisory pointer to an engine-local adapter
+	// checkpoint (CRI-203). Emitted by the agent after a durable checkpoint
+	// save. Castle keeps only the pointer; the checkpoint bytes stay in the
+	// engine's state home and restore is engine-local from it — consumers
+	// MUST NOT treat castle reachability as part of the restore path. The
+	// pointer is for UI visibility, inspection, and accounting only.
+	// Permanent field number.
+	CheckpointPointer *CheckpointPointer `protobuf:"bytes,39,opt,name=checkpoint_pointer,json=checkpointPointer,proto3,oneof"`
+}
+
 type Envelope_WatchReady struct {
 	// WatchReady is a protocol-level sentinel sent once at the start of a
 	// WatchRun server-stream, after any persisted-event replay, to flush
@@ -637,6 +658,8 @@ func (*Envelope_RunOutputs) isEnvelope_Payload() {}
 func (*Envelope_WorkflowGraphs) isEnvelope_Payload() {}
 
 func (*Envelope_AgentPromptInjected) isEnvelope_Payload() {}
+
+func (*Envelope_CheckpointPointer) isEnvelope_Payload() {}
 
 func (*Envelope_WatchReady) isEnvelope_Payload() {}
 
@@ -2351,6 +2374,120 @@ func (x *AgentPromptInjected) GetDeliveredAt() *timestamppb.Timestamp {
 	return nil
 }
 
+// CheckpointPointer — advisory pointer to an engine-local adapter checkpoint
+// (CRI-203). It references a durable checkpoint without carrying its bytes:
+// the blob lives in the engine's state home (criteriadb state tables going
+// forward, CRI-199) and restore is engine-local from there, never mediated
+// by castle. Consumers use the pointer for UI visibility, inspection, and
+// accounting only. Every field is engine-local metadata; none carries state.
+type CheckpointPointer struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// state_id is the engine-local checkpoint identifier,
+	// "<session-id>/<seq>"; opaque to consumers. The checkpoint's bytes are
+	// keyed by it in the engine's state home, which is the authoritative
+	// source for restore.
+	StateId string `protobuf:"bytes,1,opt,name=state_id,json=stateId,proto3" json:"state_id,omitempty"`
+	// adapter_kind is the adapter implementation type that owns the
+	// checkpointed session (e.g. "shell", "copilot").
+	AdapterKind string `protobuf:"bytes,2,opt,name=adapter_kind,json=adapterKind,proto3" json:"adapter_kind,omitempty"`
+	// state_schema is the adapter-declared checkpoint-state schema tag the
+	// checkpoint was saved under.
+	StateSchema string `protobuf:"bytes,3,opt,name=state_schema,json=stateSchema,proto3" json:"state_schema,omitempty"`
+	// state_digest is the "sha256:<hex>" digest of the checkpointed state
+	// blob the pointer references.
+	StateDigest string `protobuf:"bytes,4,opt,name=state_digest,json=stateDigest,proto3" json:"state_digest,omitempty"`
+	// state_size is the checkpointed state blob's size in bytes.
+	StateSize int64 `protobuf:"varint,5,opt,name=state_size,json=stateSize,proto3" json:"state_size,omitempty"`
+	// granularity is the adapter's declared save granularity
+	// (per-step|per-turn|on-demand).
+	Granularity string `protobuf:"bytes,6,opt,name=granularity,proto3" json:"granularity,omitempty"`
+	// session_id is the adapter session the checkpoint belongs to (the
+	// workflow's "<adapter-type>.<instance-name>" session key); per-scope
+	// sessions carry their scope-qualified key.
+	SessionId     string `protobuf:"bytes,7,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckpointPointer) Reset() {
+	*x = CheckpointPointer{}
+	mi := &file_criteria_v1_events_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckpointPointer) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckpointPointer) ProtoMessage() {}
+
+func (x *CheckpointPointer) ProtoReflect() protoreflect.Message {
+	mi := &file_criteria_v1_events_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckpointPointer.ProtoReflect.Descriptor instead.
+func (*CheckpointPointer) Descriptor() ([]byte, []int) {
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *CheckpointPointer) GetStateId() string {
+	if x != nil {
+		return x.StateId
+	}
+	return ""
+}
+
+func (x *CheckpointPointer) GetAdapterKind() string {
+	if x != nil {
+		return x.AdapterKind
+	}
+	return ""
+}
+
+func (x *CheckpointPointer) GetStateSchema() string {
+	if x != nil {
+		return x.StateSchema
+	}
+	return ""
+}
+
+func (x *CheckpointPointer) GetStateDigest() string {
+	if x != nil {
+		return x.StateDigest
+	}
+	return ""
+}
+
+func (x *CheckpointPointer) GetStateSize() int64 {
+	if x != nil {
+		return x.StateSize
+	}
+	return 0
+}
+
+func (x *CheckpointPointer) GetGranularity() string {
+	if x != nil {
+		return x.Granularity
+	}
+	return ""
+}
+
+func (x *CheckpointPointer) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
 type RunOutputs_Output struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                                     // output declaration name; permanent
@@ -2362,7 +2499,7 @@ type RunOutputs_Output struct {
 
 func (x *RunOutputs_Output) Reset() {
 	*x = RunOutputs_Output{}
-	mi := &file_criteria_v1_events_proto_msgTypes[32]
+	mi := &file_criteria_v1_events_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2374,7 +2511,7 @@ func (x *RunOutputs_Output) String() string {
 func (*RunOutputs_Output) ProtoMessage() {}
 
 func (x *RunOutputs_Output) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[32]
+	mi := &file_criteria_v1_events_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2415,7 +2552,7 @@ var File_criteria_v1_events_proto protoreflect.FileDescriptor
 
 const file_criteria_v1_events_proto_rawDesc = "" +
 	"\n" +
-	"\x18criteria/v1/events.proto\x12\vcriteria.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xd5\x10\n" +
+	"\x18criteria/v1/events.proto\x12\vcriteria.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xa6\x11\n" +
 	"\bEnvelope\x12%\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05R\rschemaVersion\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x10\n" +
@@ -2451,7 +2588,8 @@ const file_criteria_v1_events_proto_rawDesc = "" +
 	"\vrun_outputs\x18! \x01(\v2\x17.criteria.v1.RunOutputsH\x00R\n" +
 	"runOutputs\x12F\n" +
 	"\x0fworkflow_graphs\x18% \x01(\v2\x1b.criteria.v1.WorkflowGraphsH\x00R\x0eworkflowGraphs\x12V\n" +
-	"\x15agent_prompt_injected\x18& \x01(\v2 .criteria.v1.AgentPromptInjectedH\x00R\x13agentPromptInjected\x12:\n" +
+	"\x15agent_prompt_injected\x18& \x01(\v2 .criteria.v1.AgentPromptInjectedH\x00R\x13agentPromptInjected\x12O\n" +
+	"\x12checkpoint_pointer\x18' \x01(\v2\x1e.criteria.v1.CheckpointPointerH\x00R\x11checkpointPointer\x12:\n" +
 	"\vwatch_ready\x18c \x01(\v2\x17.criteria.v1.WatchReadyH\x00R\n" +
 	"watchReadyB\t\n" +
 	"\apayload\"T\n" +
@@ -2584,7 +2722,17 @@ const file_criteria_v1_events_proto_rawDesc = "" +
 	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x16\n" +
 	"\x06prompt\x18\x03 \x01(\tR\x06prompt\x12\x16\n" +
 	"\x06caller\x18\x04 \x01(\tR\x06caller\x12=\n" +
-	"\fdelivered_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\vdeliveredAt*k\n" +
+	"\fdelivered_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\vdeliveredAt\"\xf7\x01\n" +
+	"\x11CheckpointPointer\x12\x19\n" +
+	"\bstate_id\x18\x01 \x01(\tR\astateId\x12!\n" +
+	"\fadapter_kind\x18\x02 \x01(\tR\vadapterKind\x12!\n" +
+	"\fstate_schema\x18\x03 \x01(\tR\vstateSchema\x12!\n" +
+	"\fstate_digest\x18\x04 \x01(\tR\vstateDigest\x12\x1d\n" +
+	"\n" +
+	"state_size\x18\x05 \x01(\x03R\tstateSize\x12 \n" +
+	"\vgranularity\x18\x06 \x01(\tR\vgranularity\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\a \x01(\tR\tsessionId*k\n" +
 	"\tLogStream\x12\x1a\n" +
 	"\x16LOG_STREAM_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11LOG_STREAM_STDOUT\x10\x01\x12\x15\n" +
@@ -2604,7 +2752,7 @@ func file_criteria_v1_events_proto_rawDescGZIP() []byte {
 }
 
 var file_criteria_v1_events_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_criteria_v1_events_proto_msgTypes = make([]protoimpl.MessageInfo, 33)
+var file_criteria_v1_events_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
 var file_criteria_v1_events_proto_goTypes = []any{
 	(LogStream)(0),                 // 0: criteria.v1.LogStream
 	(*Envelope)(nil),               // 1: criteria.v1.Envelope
@@ -2636,15 +2784,16 @@ var file_criteria_v1_events_proto_goTypes = []any{
 	(*SubworkflowGraph)(nil),       // 27: criteria.v1.SubworkflowGraph
 	(*WorkflowGraphs)(nil),         // 28: criteria.v1.WorkflowGraphs
 	(*AgentPromptInjected)(nil),    // 29: criteria.v1.AgentPromptInjected
-	nil,                            // 30: criteria.v1.StepOutputCaptured.OutputsEntry
-	nil,                            // 31: criteria.v1.WaitResumed.PayloadEntry
-	nil,                            // 32: criteria.v1.ApprovalDecision.PayloadEntry
-	(*RunOutputs_Output)(nil),      // 33: criteria.v1.RunOutputs.Output
-	(*timestamppb.Timestamp)(nil),  // 34: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),        // 35: google.protobuf.Struct
+	(*CheckpointPointer)(nil),      // 30: criteria.v1.CheckpointPointer
+	nil,                            // 31: criteria.v1.StepOutputCaptured.OutputsEntry
+	nil,                            // 32: criteria.v1.WaitResumed.PayloadEntry
+	nil,                            // 33: criteria.v1.ApprovalDecision.PayloadEntry
+	(*RunOutputs_Output)(nil),      // 34: criteria.v1.RunOutputs.Output
+	(*timestamppb.Timestamp)(nil),  // 35: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),        // 36: google.protobuf.Struct
 }
 var file_criteria_v1_events_proto_depIdxs = []int32{
-	34, // 0: criteria.v1.Envelope.ts:type_name -> google.protobuf.Timestamp
+	35, // 0: criteria.v1.Envelope.ts:type_name -> google.protobuf.Timestamp
 	2,  // 1: criteria.v1.Envelope.run_started:type_name -> criteria.v1.RunStarted
 	3,  // 2: criteria.v1.Envelope.run_completed:type_name -> criteria.v1.RunCompleted
 	4,  // 3: criteria.v1.Envelope.run_failed:type_name -> criteria.v1.RunFailed
@@ -2671,20 +2820,21 @@ var file_criteria_v1_events_proto_depIdxs = []int32{
 	26, // 24: criteria.v1.Envelope.run_outputs:type_name -> criteria.v1.RunOutputs
 	28, // 25: criteria.v1.Envelope.workflow_graphs:type_name -> criteria.v1.WorkflowGraphs
 	29, // 26: criteria.v1.Envelope.agent_prompt_injected:type_name -> criteria.v1.AgentPromptInjected
-	13, // 27: criteria.v1.Envelope.watch_ready:type_name -> criteria.v1.WatchReady
-	0,  // 28: criteria.v1.StepLog.stream:type_name -> criteria.v1.LogStream
-	35, // 29: criteria.v1.AdapterEvent.data:type_name -> google.protobuf.Struct
-	30, // 30: criteria.v1.StepOutputCaptured.outputs:type_name -> criteria.v1.StepOutputCaptured.OutputsEntry
-	31, // 31: criteria.v1.WaitResumed.payload:type_name -> criteria.v1.WaitResumed.PayloadEntry
-	32, // 32: criteria.v1.ApprovalDecision.payload:type_name -> criteria.v1.ApprovalDecision.PayloadEntry
-	33, // 33: criteria.v1.RunOutputs.outputs:type_name -> criteria.v1.RunOutputs.Output
-	27, // 34: criteria.v1.WorkflowGraphs.subworkflows:type_name -> criteria.v1.SubworkflowGraph
-	34, // 35: criteria.v1.AgentPromptInjected.delivered_at:type_name -> google.protobuf.Timestamp
-	36, // [36:36] is the sub-list for method output_type
-	36, // [36:36] is the sub-list for method input_type
-	36, // [36:36] is the sub-list for extension type_name
-	36, // [36:36] is the sub-list for extension extendee
-	0,  // [0:36] is the sub-list for field type_name
+	30, // 27: criteria.v1.Envelope.checkpoint_pointer:type_name -> criteria.v1.CheckpointPointer
+	13, // 28: criteria.v1.Envelope.watch_ready:type_name -> criteria.v1.WatchReady
+	0,  // 29: criteria.v1.StepLog.stream:type_name -> criteria.v1.LogStream
+	36, // 30: criteria.v1.AdapterEvent.data:type_name -> google.protobuf.Struct
+	31, // 31: criteria.v1.StepOutputCaptured.outputs:type_name -> criteria.v1.StepOutputCaptured.OutputsEntry
+	32, // 32: criteria.v1.WaitResumed.payload:type_name -> criteria.v1.WaitResumed.PayloadEntry
+	33, // 33: criteria.v1.ApprovalDecision.payload:type_name -> criteria.v1.ApprovalDecision.PayloadEntry
+	34, // 34: criteria.v1.RunOutputs.outputs:type_name -> criteria.v1.RunOutputs.Output
+	27, // 35: criteria.v1.WorkflowGraphs.subworkflows:type_name -> criteria.v1.SubworkflowGraph
+	35, // 36: criteria.v1.AgentPromptInjected.delivered_at:type_name -> google.protobuf.Timestamp
+	37, // [37:37] is the sub-list for method output_type
+	37, // [37:37] is the sub-list for method input_type
+	37, // [37:37] is the sub-list for extension type_name
+	37, // [37:37] is the sub-list for extension extendee
+	0,  // [0:37] is the sub-list for field type_name
 }
 
 func init() { file_criteria_v1_events_proto_init() }
@@ -2719,6 +2869,7 @@ func file_criteria_v1_events_proto_init() {
 		(*Envelope_RunOutputs)(nil),
 		(*Envelope_WorkflowGraphs)(nil),
 		(*Envelope_AgentPromptInjected)(nil),
+		(*Envelope_CheckpointPointer)(nil),
 		(*Envelope_WatchReady)(nil),
 	}
 	type x struct{}
@@ -2727,7 +2878,7 @@ func file_criteria_v1_events_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_criteria_v1_events_proto_rawDesc), len(file_criteria_v1_events_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   33,
+			NumMessages:   34,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

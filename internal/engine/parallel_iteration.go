@@ -200,6 +200,12 @@ func (s *lockedSink) OnAgentPromptInjected(step, sessionID, prompt, caller strin
 	s.Sink.OnAgentPromptInjected(step, sessionID, prompt, caller, deliveredAt)
 }
 
+func (s *lockedSink) OnCheckpointPointer(ptr *CheckpointPointerEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Sink.OnCheckpointPointer(ptr)
+}
+
 func (s *lockedSink) StepEventSink(step string) adapter.EventSink {
 	s.mu.Lock()
 	inner := s.Sink.StepEventSink(step)

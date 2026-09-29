@@ -15,6 +15,7 @@ import (
 // benchSink discards all engine events so it does not perturb benchmark timing.
 type benchSink struct{}
 
+func (benchSink) OnCheckpointPointer(*CheckpointPointerEvent)                  {}
 func (benchSink) OnRunStarted(string, string)                                  {}
 func (benchSink) OnRunCompleted(string, bool)                                  {}
 func (benchSink) OnRunFailed(string, string)                                   {}
