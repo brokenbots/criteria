@@ -96,3 +96,71 @@ func TestIsTerminal(t *testing.T) {
 		t.Fatal("nil envelope should not be terminal")
 	}
 }
+
+// TestNewEnvelope_CheckpointPointer pins the CRI-203 advisory checkpoint
+// pointer through the envelope machinery: construction, discriminator,
+// non-terminal classification, and protojson round trip with every pointer
+// field intact. The pointer carries metadata only — never checkpoint bytes.
+func TestNewEnvelope_CheckpointPointer(t *testing.T) {
+	env := events.NewEnvelope("run-1", &pb.CheckpointPointer{
+		StateId:      "copilot.exec/0000000001",
+		AdapterKind:  "copilot",
+		StateSchema:  "session/v1",
+		StateDigest:  "sha256:abcd1234",
+		StateSize:    4096,
+		Granularity:  "step",
+		SessionId:    "copilot.exec",
+	})
+	if got := env.GetCheckpointPointer(); got == nil {
+		t.Fatalf("payload not set as checkpoint_pointer arm: %+v", env)
+	}
+	if events.TypeString(env) != "checkpoint.pointer" {
+		t.Fatalf("type string: %q", events.TypeString(env))
+	}
+	if events.IsTerminal(env) {
+		t.Fatal("checkpoint.pointer should not be terminal")
+	}
+
+	raw, err := protojson.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var back pb.Envelope
+	if err := protojson.Unmarshal(raw, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !proto.Equal(env, &back) {
+		t.Fatalf("round trip mismatch:\nwant: %+v\nback: %+v", env, &back)
+	}
+
+	// Parapet/ListRunEvents consumers see the pointer through this payload;
+	// assert every mapped field (HARD requirement) survives the parser.
+	ptr := back.GetCheckpointPointer()
+	if ptr == nil {
+		t.Fatalf("checkpoint_pointer arm lost on round trip: payload %q", raw)
+	}
+	for name, want := range map[string]string{
+		"StateId":     "copilot.exec/0000000001",
+		"AdapterKind": "copilot",
+		"StateSchema": "session/v1",
+		"StateDigest": "sha256:abcd1234",
+		"SessionId":   "copilot.exec",
+	} {
+		got := map[string]string{
+			"StateId":     ptr.GetStateId(),
+			"AdapterKind": ptr.GetAdapterKind(),
+			"StateSchema": ptr.GetStateSchema(),
+			"StateDigest": ptr.GetStateDigest(),
+			"SessionId":   ptr.GetSessionId(),
+		}[name]
+		if got != want {
+			t.Errorf("pointer %s = %q, want %q", name, got, want)
+		}
+	}
+	if size := ptr.GetStateSize(); size != 4096 {
+		t.Errorf("stateSize = %d, want 4096", size)
+	}
+	if gran := ptr.GetGranularity(); gran != "step" {
+		t.Errorf("granularity = %q, want %q", gran, "step")
+	}
+}

@@ -107,3 +107,21 @@ func TestMultiSink_OnAdapterLifecycleEventFansOut(t *testing.T) {
 		t.Errorf("child b calls: got %d want 1", got)
 	}
 }
+
+func TestMultiSink_OnCheckpointPointerFansOut(t *testing.T) {
+	var a, b recordingSink
+	var sink engine.Sink = NewMultiSink(&a, &b)
+
+	sink.OnCheckpointPointer(&engine.CheckpointPointerEvent{
+		RunID:     "run-1",
+		StateID:   "copilot.exec/0000000001",
+		StateSize: 4096,
+	})
+
+	if got := a.calls.Load(); got != 1 {
+		t.Errorf("child a calls: got %d want 1", got)
+	}
+	if got := b.calls.Load(); got != 1 {
+		t.Errorf("child b calls: got %d want 1", got)
+	}
+}

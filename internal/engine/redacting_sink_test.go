@@ -498,6 +498,60 @@ func TestRedactingSink_StepEventSink(t *testing.T) {
 	}
 }
 
+func TestRedactingSink_OnCheckpointPointer(t *testing.T) {
+	inner := &recordingSink{}
+	reg := secrets.NewRegistry()
+	reg.Register("copilot-secret-session")
+	sink := NewRedactingSink(inner, reg)
+
+	sink.OnCheckpointPointer(&CheckpointPointerEvent{
+		RunID:       "run_copilot-secret-session",
+		SessionID:   "copilot-secret-session.exec",
+		AdapterKind: "copilot",
+		AdapterName: "default",
+		StateID:     "copilot-secret-session.exec/0000000001",
+		StateSchema: "v1",
+		StateDigest: "sha256:c0ffee01",
+		StateSize:   4096,
+		Granularity: "per-step",
+	})
+	// Occurrence-based redaction: the secret is masked wherever it appears
+	// in pointer strings; non-secret-bearing fields pass through unchanged,
+	// and the numeric size is never redacted.
+	want := map[string]string{
+		"RunID":       "run_[REDACTED]",
+		"SessionID":   "[REDACTED].exec",
+		"StateID":     "[REDACTED].exec/0000000001",
+		"AdapterKind": "copilot",
+		"AdapterName": "default",
+		"StateSchema": "v1",
+		"StateDigest": "sha256:c0ffee01",
+		"Granularity": "per-step",
+	}
+	ptrs := inner.onCheckpointPointers
+	if len(ptrs) != 1 {
+		t.Fatalf("served %d pointers, want 1", len(ptrs))
+	}
+	for name, wantVal := range want {
+		got := map[string]string{
+			"RunID":       ptrs[0].RunID,
+			"SessionID":   ptrs[0].SessionID,
+			"AdapterKind": ptrs[0].AdapterKind,
+			"AdapterName": ptrs[0].AdapterName,
+			"StateID":     ptrs[0].StateID,
+			"StateSchema": ptrs[0].StateSchema,
+			"StateDigest": ptrs[0].StateDigest,
+			"Granularity": ptrs[0].Granularity,
+		}[name]
+		if got != wantVal {
+			t.Errorf("pointer %s = %q; want %q", name, got, wantVal)
+		}
+	}
+	if ptrs[0].StateSize != 4096 {
+		t.Errorf("stateSize = %d; want 4096 (size is not redacted)", ptrs[0].StateSize)
+	}
+}
+
 func assertRedacted(t *testing.T, got, want []string) {
 	t.Helper()
 	if len(got) != len(want) {
