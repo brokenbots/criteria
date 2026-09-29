@@ -14,6 +14,8 @@ import (
 	"time"
 
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
 
 // newTestServer builds a store fixture (one succeeded run, one running run)
@@ -572,6 +574,57 @@ func TestWorkflowGraphsFlatPayloadServedToViewer(t *testing.T) {
 	asset := vendoredBundleAsset(t, indexBody)
 	if _, err := fs.Stat(distFS, "viewer/dist/"+asset); err != nil {
 		t.Errorf("index.html references %s but the vendored bundle lacks it: %v", asset, err)
+	}
+}
+
+// TestCheckpointPointerServedToViewer pins CRI-203 through the parapet
+// serving layer: an engine-local run's events file carries the advisory
+// checkpoint pointer (castle keeps only pointers; the blob stays in the
+// engine's state home) and ListRunEvents delivers it verbatim on the
+// canonical /runview/api mount with the camelCase seam type the castle
+// consumer matches on and every pointer field readable.
+func TestCheckpointPointerServedToViewer(t *testing.T) {
+	s := newTestStore(t)
+	root, _ := s.RunsRoot()
+	ptr := &pb.CheckpointPointer{
+		StateId:     "copilot.exec/0000000001",
+		AdapterKind: "copilot",
+		StateSchema: "session/v1",
+		StateDigest: "sha256:abcd1234",
+		StateSize:   4096,
+		Granularity: "per-step",
+		SessionId:   "copilot.exec",
+	}
+	writeRun(t, root, "r-ck", nil, []ndEnvelope{
+		envPB(t, 1, "RunStarted", &pb.RunStarted{WorkflowName: "ck-wf", InitialStep: "exec"}),
+		envPB(t, 2, "CheckpointPointer", ptr),
+	}, nil)
+
+	viewer, err := NewViewer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewServer(s).WithViewer(viewer).Handler()
+	code, body := doJSON(t, h, "GET", "/runview/api/runs/r-ck/events?since_seq=1")
+	if code != http.StatusOK {
+		t.Fatalf("events: code=%d", code)
+	}
+	var page RunEventsPage
+	if err := json.Unmarshal([]byte(body), &page); err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Events) != 1 || page.Events[0].Type != "checkpointPointer" {
+		t.Fatalf("served events = %s, want one checkpointPointer event", body)
+	}
+
+	// Every pointer field survives the seam verbatim (protojson camelCase) —
+	// a dropped field here is the silent-drop the CRI-203 mapping rule bans.
+	var served pb.CheckpointPointer
+	if err := (protojson.UnmarshalOptions{}).Unmarshal(page.Events[0].Payload, &served); err != nil {
+		t.Fatalf("payload is not a CheckpointPointer message: %v\npayload: %s", err, page.Events[0].Payload)
+	}
+	if !proto.Equal(&served, ptr) {
+		t.Fatalf("served pointer = %+v, want %+v", &served, ptr)
 	}
 }
 
