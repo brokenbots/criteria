@@ -13,9 +13,10 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 // newTestServer builds a store fixture (one succeeded run, one running run)
