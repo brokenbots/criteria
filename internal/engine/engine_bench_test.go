@@ -20,6 +20,7 @@ func (benchSink) OnRunStarted(string, string)                                  {
 func (benchSink) OnRunCompleted(string, bool)                                  {}
 func (benchSink) OnRunFailed(string, string)                                   {}
 func (benchSink) OnRunPaused(string, string, string)                           {}
+func (benchSink) OnRunResumed(string)                                          {}
 func (benchSink) OnStepEntered(string, string, int)                            {}
 func (benchSink) OnStepOutcome(string, string, time.Duration, error)           {}
 func (benchSink) OnStepTransition(string, string, string)                      {}

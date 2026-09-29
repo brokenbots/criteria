@@ -58,6 +58,7 @@ func (s *switchSink) OnStepOutputCaptured(name string, outputs map[string]string
 	s.mu.Unlock()
 }
 func (s *switchSink) OnRunPaused(string, string, string)                           {}
+func (s *switchSink) OnRunResumed(string)                                          {}
 func (s *switchSink) OnWaitEntered(string, string, string, string)                 {}
 func (s *switchSink) OnWaitResumed(string, string, string, map[string]string)      {}
 func (s *switchSink) OnApprovalRequested(string, []string, string)                 {}

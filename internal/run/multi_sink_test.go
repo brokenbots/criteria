@@ -25,6 +25,7 @@ func (r *recordingSink) OnStepResumed(string, int, string)                      
 func (r *recordingSink) OnVariableSet(string, string, string)                    { r.bump() }
 func (r *recordingSink) OnStepOutputCaptured(string, map[string]string)          { r.bump() }
 func (r *recordingSink) OnRunPaused(string, string, string)                      { r.bump() }
+func (r *recordingSink) OnRunResumed(string)                                     { r.bump() }
 func (r *recordingSink) OnWaitEntered(string, string, string, string)            { r.bump() }
 func (r *recordingSink) OnWaitResumed(string, string, string, map[string]string) { r.bump() }
 func (r *recordingSink) OnApprovalRequested(string, []string, string)            { r.bump() }

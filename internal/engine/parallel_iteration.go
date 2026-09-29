@@ -104,6 +104,12 @@ func (s *lockedSink) OnRunPaused(node, mode, signal string) {
 	s.Sink.OnRunPaused(node, mode, signal)
 }
 
+func (s *lockedSink) OnRunResumed(node string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Sink.OnRunResumed(node)
+}
+
 func (s *lockedSink) OnWaitEntered(node, mode, duration, signal string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

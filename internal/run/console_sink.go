@@ -187,6 +187,10 @@ func (c *ConsoleSink) OnStepOutputCaptured(step string, outputs map[string]strin
 
 func (c *ConsoleSink) OnRunPaused(node, mode, signal string) {}
 
+// OnRunResumed is a display no-op (CRI-255): the NDJSON and state sinks carry
+// run.resumed; console progress is emitted per-step.
+func (c *ConsoleSink) OnRunResumed(node string) {}
+
 func (c *ConsoleSink) OnWaitEntered(node, mode, duration, signal string) {
 	detail := mode
 	if mode == "duration" && duration != "" {

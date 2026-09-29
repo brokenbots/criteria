@@ -132,6 +132,7 @@ type pauseSink struct {
 	pausedNode   string
 	pausedMode   string
 	pausedSignal string
+	resumedNode  string
 	completed    bool
 	failed       bool
 }
@@ -150,6 +151,7 @@ func (s *pauseSink) OnRunPaused(node, mode, signal string) {
 	s.pausedMode = mode
 	s.pausedSignal = signal
 }
+func (s *pauseSink) OnRunResumed(node string)                                     { s.resumedNode = node }
 func (s *pauseSink) OnWaitEntered(string, string, string, string)                 {}
 func (s *pauseSink) OnWaitResumed(string, string, string, map[string]string)      {}
 func (s *pauseSink) OnApprovalRequested(string, []string, string)                 {}

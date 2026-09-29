@@ -211,6 +211,7 @@ func (s *integrationSink) OnStepResumed(step string, attempt int, reason string)
 func (s *integrationSink) OnVariableSet(name, value, source string)                         {}
 func (s *integrationSink) OnStepOutputCaptured(step string, outputs map[string]string)      {}
 func (s *integrationSink) OnRunPaused(node, mode, signal string)                            {}
+func (s *integrationSink) OnRunResumed(node string)                                         {}
 func (s *integrationSink) OnWaitEntered(node, mode, duration, signal string)                {}
 func (s *integrationSink) OnWaitResumed(node, mode, signal string, payload map[string]string) {
 }
