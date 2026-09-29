@@ -354,31 +354,30 @@ func (f *fakePeer) Prompt(ctx context.Context, req *adapterhost.PromptRequest) (
 
 // --- test helpers ---
 
-// peerConnListener serves exactly one already-accepted connection.
+// peerConnListener serves exactly one already-accepted connection. Accept
+// runs on grpc's Serve goroutine while Close arrives via Stop, so access to
+// the listener state is mutex-guarded.
 type peerConnListener struct {
+	mu   sync.Mutex
 	conn net.Conn
 	addr net.Addr
-	done chan struct{}
 }
 
 func (l *peerConnListener) Accept() (net.Conn, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if l.conn == nil {
 		return nil, net.ErrClosed
 	}
 	conn := l.conn
 	l.conn = nil
-	if l.done == nil {
-		l.done = make(chan struct{})
-		close(l.done)
-	}
 	return conn, nil
 }
 
 func (l *peerConnListener) Close() error {
-	if l.done == nil {
-		l.done = make(chan struct{})
-		close(l.done)
-	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.conn = nil
 	return nil
 }
 
