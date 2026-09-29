@@ -26,7 +26,7 @@ type localApprovalConfig struct {
 	tty         func() bool
 }
 
-func localApprovalConfigFrom(opts applyOptions) localApprovalConfig {
+func localApprovalConfigFrom(opts *applyOptions) localApprovalConfig {
 	return localApprovalConfig{
 		answersPath: opts.answersPath,
 		stdin:       opts.stdin,
@@ -81,8 +81,8 @@ type approvalResolution struct {
 // selectApprovalResolution resolves the posture from the invocation config and
 // the compiled graph. The graph is required: answers entries are validated
 // against the workflow's approval and signal-wait nodes before the run starts.
-func selectApprovalResolution(log *slog.Logger, cfg localApprovalConfig, graph *workflow.FSMGraph) (approvalResolution, error) {
-	res := approvalResolution{cfg: cfg, ttyOK: cfg.interactive()}
+func selectApprovalResolution(log *slog.Logger, cfg localApprovalConfig, graph *workflow.FSMGraph) (*approvalResolution, error) {
+	res := &approvalResolution{cfg: cfg, ttyOK: cfg.interactive()}
 	if path := strings.TrimSpace(cfg.answersPath); path != "" {
 		entries, err := parseAnswersFile(path, graph)
 		if err != nil {
@@ -162,7 +162,7 @@ func localResumerOptions(log *slog.Logger, cfg localApprovalConfig) (localresume
 // promptFallbackResumer builds the interactive resumer for an answers-mode
 // pause whose node is missing from the file, falling back to the prompt path
 // when the session is interactive.
-func (res approvalResolution) promptFallbackResumer() localresume.LocalResumer {
+func (res *approvalResolution) promptFallbackResumer() localresume.LocalResumer {
 	return localresume.New(localresume.ModeStdin, res.opts)
 }
 

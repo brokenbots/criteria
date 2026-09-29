@@ -115,7 +115,7 @@ func (t *pauseTracker) ClearPaused() {
 // capture is consistent across the original run and all resume cycles. eng
 // must be the engine that produced the first pause; later cycles update
 // ctrl's engine pointer so control RPCs address the active engine.
-func drainLocalResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost.Loader, runSink engine.Sink, resolution approvalResolution, runID string, opts applyOptions, ctrl *localRunControl, eng *engine.Engine) error {
+func drainLocalResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost.Loader, runSink engine.Sink, resolution *approvalResolution, runID string, opts applyOptions, ctrl *localRunControl, eng *engine.Engine) error {
 	dataDir, err := runDataDir(runID)
 	if err != nil {
 		return fmt.Errorf("resolve run data dir: %w", err)
@@ -178,31 +178,42 @@ func awaitBoundaryRelease(ctx context.Context, ctrl *localRunControl) error {
 // two designed paths plus the out-of-band control surface), keeping the CRI-255
 // race contract: prompt and control-RPC must not race — the first resolution
 // wins and the loser is cancelled (or noted) cleanly.
-func resolveApprovalPause(ctx context.Context, log *slog.Logger, ctrl *localRunControl, resolution approvalResolution, runID, pausedNode string) (map[string]string, error) {
+func resolveApprovalPause(ctx context.Context, log *slog.Logger, ctrl *localRunControl, resolution *approvalResolution, runID, pausedNode string) (map[string]string, error) {
 	if resolution.resumer == nil {
-		// No configured resumer: control-RPC-only resolution (CRI-255
-		// headless flow, preserved as the default for non-TTY sessions). A
-		// resolvable pause awaits the listener; an unresolvable one (listener
-		// never attached) fails loudly rather than hanging forever.
-		if !ctrl.isListenerUp() {
-			return nil, errors.New("approval pause is unresolvable: stdin is not interactive, --answers was not given, and the run's control listener is not attached; rerun with --answers <file>, CRITERIA_LOCAL_APPROVAL={stdin|file|env|auto-approve}, or a reachable --control-addr")
-		}
-		log.Warn("approval pause has no resolution mode configured and stdin is not a TTY; the run stays paused until a decision arrives via the run's control listener",
-			"node", pausedNode,
-			"choices", "ResolveResume on the control listener, --answers <file>, or CRITERIA_LOCAL_APPROVAL={stdin|file|env|auto-approve}")
-		payload, ok := ctrl.awaitResolveResume(ctx)
-		if !ok {
-			return nil, ctx.Err()
-		}
-		return payload, nil
+		return awaitRPCOnlyPause(ctx, log, ctrl, pausedNode)
 	}
+	return resolveWithResumer(ctx, log, ctrl, resolution, runID, pausedNode)
+}
 
-	type resolved struct {
-		payload map[string]string
-		err     error
+// awaitRPCOnlyPause resolves a pause against the run's control listener alone
+// (no configured resumer): a resolvable pause awaits the listener; an
+// unresolvable one (listener never attached) fails loudly rather than
+// hanging forever.
+func awaitRPCOnlyPause(ctx context.Context, log *slog.Logger, ctrl *localRunControl, pausedNode string) (map[string]string, error) {
+	if !ctrl.isListenerUp() {
+		return nil, errors.New("approval pause is unresolvable: stdin is not interactive, --answers was not given, and the run's control listener is not attached; rerun with --answers <file>, CRITERIA_LOCAL_APPROVAL={stdin|file|env|auto-approve}, or a reachable --control-addr")
 	}
-	stderr := resolution.cfg.promptStderr()
-	promptFallback := resolution.promptFallbackResumer()
+	log.Warn("approval pause has no resolution mode configured and stdin is not a TTY; the run stays paused until a decision arrives via the run's control listener",
+		"node", pausedNode,
+		"choices", "ResolveResume on the control listener, --answers <file>, or CRITERIA_LOCAL_APPROVAL={stdin|file|env|auto-approve}")
+	payload, ok := ctrl.awaitResolveResume(ctx)
+	if !ok {
+		return nil, ctx.Err()
+	}
+	return payload, nil
+}
+
+// resumerResult is the outcome of one configured-resumer resolution attempt.
+type resumerResult struct {
+	payload map[string]string
+	err     error
+}
+
+// resolveWithResumer races the configured resumer against the run's control
+// listener (first resolution wins) at most twice: one try with the selected
+// resumer, and — only when a node is missing from the answers file on an
+// interactive session — one retry with the interactive prompt resumer.
+func resolveWithResumer(ctx context.Context, log *slog.Logger, ctrl *localRunControl, resolution *approvalResolution, runID, pausedNode string) (map[string]string, error) {
 	for attempt := 0; attempt < 2; attempt++ {
 		// A decision delivered while the pause landed wins the race before any
 		// configured resumer starts (first resolution wins).
@@ -211,49 +222,29 @@ func resolveApprovalPause(ctx context.Context, log *slog.Logger, ctrl *localRunC
 				"run_id", runID, "node", pausedNode)
 			return payload, nil
 		}
-		activeResumer := resolution.resumer
-		prompting := localresume.Interactive(activeResumer)
+		prompting := localresume.Interactive(resolution.resumer)
 		rctx, cancel := context.WithCancel(ctx)
-		ch := make(chan resolved, 1)
+		ch := make(chan resumerResult, 1)
 		go func() {
-			payload, err := resolveLocalPause(rctx, activeResumer, runID, pausedNode, ctrl.graph, ctrl.tracker)
-			ch <- resolved{payload: payload, err: err}
+			payload, err := resolveLocalPause(rctx, resolution.resumer, runID, pausedNode, ctrl.graph, ctrl.tracker)
+			ch <- resumerResult{payload: payload, err: err}
 		}()
 		select {
 		case r := <-ch:
 			cancel()
-			if localresume.IsUnanswered(r.err) && attempt == 0 && resolution.answersActive {
-				// The node is missing from the answers file: fall back to the
-				// prompt path when interactive, else fail loudly naming the
-				// node (never silence, never implicit approval).
-				if !resolution.ttyOK {
-					return nil, fmt.Errorf("%w; rerun interactively to answer %q at its pause, add the node to %s, or deliver the decision via the run's control listener",
-						r.err, pausedNode, resolution.answersPath)
-				}
-				log.Info("approval pause has no entry in the answers file; falling back to the interactive prompt",
-					"node", pausedNode, "file", resolution.answersPath)
-				resolution.resumer = promptFallback
+			if fallback, payload, err := resolution.applyResumerResult(log, ctrl, r, attempt, runID, pausedNode); fallback {
+				resolution.resumer = resolution.promptFallbackResumer()
 				resolution.interactive = true
 				continue
+			} else {
+				return payload, err
 			}
-			if r.err == nil {
-				// The configured resumer won the race; surface a decision
-				// parked mid-race instead of letting it linger (first
-				// resolution wins, discard observable). The parked payload is
-				// deliberately not logged: it carries the operator's free-text
-				// reason.
-				if _, ok := ctrl.pollResolveResume(); ok {
-					log.Warn("a control-RPC decision arrived while the pause resolved via the configured resumer; the parked decision was discarded (first resolution wins)",
-						"run_id", runID, "node", pausedNode)
-				}
-			}
-			return r.payload, r.err
 		case payload := <-ctrl.resolveResumeChan():
 			// An RPC decision delivered mid-prompt: it wins the race and the
 			// prompt is cancelled cleanly (first resolution wins).
 			cancel()
 			if prompting {
-				fmt.Fprintf(stderr, "\n[criteria] approval %q was already resolved via the run's control listener; the interactive prompt was dismissed.\n", pausedNode)
+				fmt.Fprintf(resolution.cfg.promptStderr(), "\n[criteria] approval %q was already resolved via the run's control listener; the interactive prompt was dismissed.\n", pausedNode)
 			}
 			return payload, nil
 		case <-ctx.Done():
@@ -262,6 +253,38 @@ func resolveApprovalPause(ctx context.Context, log *slog.Logger, ctrl *localRunC
 		}
 	}
 	return nil, errors.New("approval pause could not be resolved")
+}
+
+// applyResumerResult handles one resumer resolution outcome: the
+// missing-answers-entry fallback (prompt on an interactive session, loud
+// failure naming the node otherwise) and the post-success discard of a
+// decision parked mid-race by the control listener. It reports fallback=true
+// when the caller must retry the pause with the prompt resumer; otherwise it
+// returns the terminal payload/error.
+func (res *approvalResolution) applyResumerResult(log *slog.Logger, ctrl *localRunControl, r resumerResult, attempt int, runID, pausedNode string) (fallback bool, payload map[string]string, err error) {
+	if localresume.IsUnanswered(r.err) && attempt == 0 && res.answersActive {
+		// The node is missing from the answers file: fall back to the
+		// prompt path when interactive, else fail loudly naming the node
+		// (never silence, never implicit approval).
+		if !res.ttyOK {
+			return false, nil, fmt.Errorf("%w; rerun interactively to answer %q at its pause, add the node to %s, or deliver the decision via the run's control listener",
+				r.err, pausedNode, res.answersPath)
+		}
+		log.Info("approval pause has no entry in the answers file; falling back to the interactive prompt",
+			"node", pausedNode, "file", res.answersPath)
+		return true, nil, nil
+	}
+	if r.err == nil {
+		// The configured resumer won the race; surface a decision parked
+		// mid-race instead of letting it linger (first resolution wins,
+		// discard observable). The parked payload is deliberately not
+		// logged: it carries the operator's free-text reason.
+		if _, ok := ctrl.pollResolveResume(); ok {
+			log.Warn("a control-RPC decision arrived while the pause resolved via the configured resumer; the parked decision was discarded (first resolution wins)",
+				"run_id", runID, "node", pausedNode)
+		}
+	}
+	return false, r.payload, r.err
 }
 
 // resolveLocalPause determines whether the paused node is an approval or

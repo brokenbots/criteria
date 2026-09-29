@@ -29,7 +29,7 @@ func writeAnswersFile(t *testing.T, body string) string {
 	return path
 }
 
-func answersApplyOpts(t *testing.T, workflowPath, answersPath string, tty bool, stdin io.Reader, stderr io.Writer, log *slog.Logger) applyOptions {
+func answersApplyOpts(workflowPath, answersPath string, tty bool, stdin io.Reader, stderr io.Writer, log *slog.Logger) applyOptions {
 	return applyOptions{
 		workflowPath: workflowPath,
 		answersPath:  answersPath,
@@ -50,7 +50,7 @@ func TestApplyLocal_AnswersApproved(t *testing.T) {
 	var stderrBuf bytes.Buffer
 
 	wf := filepath.Join("testdata", "local_approval_simple")
-	opts := answersApplyOpts(t, wf, writeAnswersFile(t, `{"review": {"decision": "approved"}}`), false, nil, &stderrBuf, captLog)
+	opts := answersApplyOpts(wf, writeAnswersFile(t, `{"review": {"decision": "approved"}}`), false, nil, &stderrBuf, captLog)
 	if err := runApply(context.Background(), opts); err != nil {
 		t.Fatalf("expected non-interactive approved run, got: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestApplyLocal_AnswersRejectedCarriesReason(t *testing.T) {
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
 
 	wf := filepath.Join("testdata", "local_approval_simple")
-	opts := answersApplyOpts(t, wf, writeAnswersFile(t, `{"review": {"decision": "rejected", "reason": "not shipping this"}}`), false, nil, nil, nil)
+	opts := answersApplyOpts(wf, writeAnswersFile(t, `{"review": {"decision": "rejected", "reason": "not shipping this"}}`), false, nil, nil, nil)
 	if err := runApply(context.Background(), opts); err == nil {
 		t.Fatal("rejected approval: expected non-nil error for terminal failed run")
 	} else if !strings.Contains(err.Error(), `approval "review" was rejected with reason: not shipping this`) {
@@ -83,7 +83,7 @@ func TestApplyLocal_AnswersUnknownNodeFailsBeforeExecution(t *testing.T) {
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
 
 	wf := filepath.Join("testdata", "local_approval_simple")
-	opts := answersApplyOpts(t, wf, writeAnswersFile(t, `{"nonsense": {"decision": "approved"}}`), false, nil, nil, nil)
+	opts := answersApplyOpts(wf, writeAnswersFile(t, `{"nonsense": {"decision": "approved"}}`), false, nil, nil, nil)
 	if err := runApply(context.Background(), opts); err == nil {
 		t.Fatal("expected unknown-node error before the run starts")
 	} else if !strings.Contains(err.Error(), "unknown node(s) nonsense") || !strings.Contains(err.Error(), "review (approval)") {
@@ -101,7 +101,7 @@ func TestApplyLocal_AnswersAmbiguousEntry(t *testing.T) {
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
 
 	wf := filepath.Join("testdata", "local_approval_simple")
-	opts := answersApplyOpts(t, wf, writeAnswersFile(t, `{"review": {"decision": "approved", "outcome": "success"}}`), false, nil, nil, nil)
+	opts := answersApplyOpts(wf, writeAnswersFile(t, `{"review": {"decision": "approved", "outcome": "success"}}`), false, nil, nil, nil)
 	if err := runApply(context.Background(), opts); err == nil {
 		t.Fatal("expected ambiguous-entry error")
 	} else if !strings.Contains(err.Error(), "ambiguous: set decision or outcome, not both") {
@@ -115,7 +115,7 @@ func TestApplyLocal_AnswersUndeclaredApprovalDecision(t *testing.T) {
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
 
 	wf := filepath.Join("testdata", "local_approval_simple")
-	opts := answersApplyOpts(t, wf, writeAnswersFile(t, `{"review": {"decision": "bogus"}}`), false, nil, nil, nil)
+	opts := answersApplyOpts(wf, writeAnswersFile(t, `{"review": {"decision": "bogus"}}`), false, nil, nil, nil)
 	if err := runApply(context.Background(), opts); err == nil {
 		t.Fatal("expected undeclared-decision error")
 	} else if !strings.Contains(err.Error(), `decision "bogus" is not declared`) {
@@ -129,7 +129,7 @@ func TestApplyLocal_AnswersUndeclaredWaitOutcome(t *testing.T) {
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
 
 	wf := filepath.Join("testdata", "local_signal_wait")
-	opts := answersApplyOpts(t, wf, writeAnswersFile(t, `{"gate": {"outcome": "bogus"}}`), false, nil, nil, nil)
+	opts := answersApplyOpts(wf, writeAnswersFile(t, `{"gate": {"outcome": "bogus"}}`), false, nil, nil, nil)
 	if err := runApply(context.Background(), opts); err == nil {
 		t.Fatal("expected undeclared-outcome error")
 	} else if !strings.Contains(err.Error(), `outcome "bogus" is not declared`) {
@@ -144,7 +144,7 @@ func TestApplyLocal_AnswersWaitOutcome(t *testing.T) {
 
 	var stderrBuf bytes.Buffer
 	wf := filepath.Join("testdata", "local_signal_wait")
-	opts := answersApplyOpts(t, wf, writeAnswersFile(t, `{"gate": {"outcome": "success"}}`), false, nil, &stderrBuf, nil)
+	opts := answersApplyOpts(wf, writeAnswersFile(t, `{"gate": {"outcome": "success"}}`), false, nil, &stderrBuf, nil)
 	if err := runApply(context.Background(), opts); err != nil {
 		t.Fatalf("expected non-interactive signal run, got: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestApplyLocal_AnswersPrecedenceOverEnv(t *testing.T) {
 	captLog := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	wf := filepath.Join("testdata", "local_approval_simple")
-	opts := answersApplyOpts(t, wf, writeAnswersFile(t, `{"review": {"decision": "rejected", "reason": "answers veto"}}`), false, nil, nil, captLog)
+	opts := answersApplyOpts(wf, writeAnswersFile(t, `{"review": {"decision": "rejected", "reason": "answers veto"}}`), false, nil, nil, captLog)
 	if err := runApply(context.Background(), opts); err == nil {
 		t.Fatal("answers rejection must beat the auto-approve env default")
 	}
@@ -185,7 +185,7 @@ func TestApplyLocal_AnswersMissingNodeNoTTYFailsLoudly(t *testing.T) {
 	// Only second_review is answered; first_review is missing and the run is
 	// non-interactive, so it must fail loudly naming the node.
 	wf := filepath.Join("testdata", "local_approval_multi")
-	opts := answersApplyOpts(t, wf, writeAnswersFile(t, `{"second_review": {"decision": "approved"}}`), false, nil, nil, nil)
+	opts := answersApplyOpts(wf, writeAnswersFile(t, `{"second_review": {"decision": "approved"}}`), false, nil, nil, nil)
 	if err := runApply(context.Background(), opts); err == nil {
 		t.Fatal("expected the missing-entry pause to fail loudly")
 	} else if !strings.Contains(err.Error(), `no entry in answers file: approval node "first_review"`) {
@@ -204,7 +204,7 @@ func TestApplyLocal_AnswersMissingNodeTTYFallsBackToPrompt(t *testing.T) {
 	// Only first_review is answered; second_review falls back to the prompt
 	// path because the session is interactive.
 	wf := filepath.Join("testdata", "local_approval_multi")
-	opts := answersApplyOpts(t, wf, writeAnswersFile(t, `{"first_review": {"decision": "approved"}}`), true, bytes.NewBufferString("y\n"), nil, captLog)
+	opts := answersApplyOpts(wf, writeAnswersFile(t, `{"first_review": {"decision": "approved"}}`), true, bytes.NewBufferString("y\n"), nil, captLog)
 	if err := runApply(context.Background(), opts); err != nil {
 		t.Fatalf("expected prompt fallback to complete the run, got: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestApplyLocal_AnswersMissingNodeTTYFallsBackToPrompt(t *testing.T) {
 }
 
 func TestApplyLocal_TTYDefaultPromptApproved(t *testing.T) {
-	// Path 1 is the default: no CRITERIA_LOCAL_approval set, a TTY attached,
+	// Path 1 is the default: no CRITERIA_LOCAL_APPROVAL set, a TTY attached,
 	// no --answers → the run prompts at the pause instead of auto-approving.
 	t.Setenv("CRITERIA_ADAPTERS", filepath.Dir(buildNoopAdapterBinary(t)))
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
@@ -222,7 +222,7 @@ func TestApplyLocal_TTYDefaultPromptApproved(t *testing.T) {
 
 	var stderrBuf bytes.Buffer
 	wf := filepath.Join("testdata", "local_approval_simple")
-	opts := answersApplyOpts(t, wf, "", true, bytes.NewBufferString("y\n"), &stderrBuf, nil)
+	opts := answersApplyOpts(wf, "", true, bytes.NewBufferString("y\n"), &stderrBuf, nil)
 	if err := runApply(context.Background(), opts); err != nil {
 		t.Fatalf("expected approved run via the default prompt, got: %v", err)
 	}
@@ -241,7 +241,7 @@ func TestApplyLocal_TTYDefaultPromptRejectedCarriesReason(t *testing.T) {
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
 
 	wf := filepath.Join("testdata", "local_approval_simple")
-	opts := answersApplyOpts(t, wf, "", true, bytes.NewBufferString("n\nhold for security review\n"), nil, nil)
+	opts := answersApplyOpts(wf, "", true, bytes.NewBufferString("n\nhold for security review\n"), nil, nil)
 	if err := runApply(context.Background(), opts); err == nil {
 		t.Fatal("explicit prompt rejection must fail the run")
 	} else if !strings.Contains(err.Error(), "approval \"review\" was rejected with reason: hold for security review") {
@@ -266,7 +266,7 @@ func TestApplyLocal_PromptLosesToControlRPC(t *testing.T) {
 
 	var stderrBuf bytes.Buffer
 	wf := filepath.Join("testdata", "local_approval_simple")
-	opts := answersApplyOpts(t, wf, "", true, stdinR, &stderrBuf, nil)
+	opts := answersApplyOpts(wf, "", true, stdinR, &stderrBuf, nil)
 	errCh := runApplyAsync(&opts)
 	stateDir := os.Getenv("CRITERIA_STATE_DIR")
 	addr := waitForControlEndpoint(t, stateDir)
@@ -354,7 +354,7 @@ func TestResolveApprovalPause_ParkedRPCWinsOverAnswersResumer(t *testing.T) {
 	}
 	resolution := approvalResolution{resumer: localresume.NewAnswers(entries, localresume.Options{}), answersActive: true, answersPath: "answers.json", ttyOK: false}
 
-	payload, err := resolveApprovalPause(context.Background(), discardLogger(), ctrl, resolution, "answers-parked-rpc", "review")
+	payload, err := resolveApprovalPause(context.Background(), discardLogger(), ctrl, &resolution, "answers-parked-rpc", "review")
 	if err != nil {
 		t.Fatalf("resolveApprovalPause: %v", err)
 	}

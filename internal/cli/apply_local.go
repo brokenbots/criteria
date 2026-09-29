@@ -49,7 +49,7 @@ func runApplyLocal(
 	// fails fast: the invocation cannot faithfully re-enter the original run
 	// with its (unreadable) variable inputs, so suppressing a fresh run and
 	// resuming without the overrides would silently drop them.
-	identity, suppressed, prepErr := prepareLocalRunIdentity(ctx, log, jsonOut, mode, opts.workflowPath, opts.varFiles, opts.varOverrides, localApprovalConfigFrom(opts))
+	identity, suppressed, prepErr := prepareLocalRunIdentity(ctx, log, jsonOut, mode, opts.workflowPath, opts.varFiles, opts.varOverrides, localApprovalConfigFrom(&opts))
 	if prepErr != nil {
 		return prepErr
 	}
@@ -72,7 +72,7 @@ func runApplyLocal(
 	workflowHash := workflowSourceHash(src)
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
-	resolution, err := selectApprovalResolution(log, localApprovalConfigFrom(opts), graph)
+	resolution, err := selectApprovalResolution(log, localApprovalConfigFrom(&opts), graph)
 	if err != nil {
 		return err
 	}
@@ -89,7 +89,7 @@ func runApplyLocal(
 // listener (CRI-255) while apply executes — the runview API plus the Connect
 // LocalControlService (PauseRun/ResumeRun/ResolveResume) — and, when the UI
 // is enabled, the embedded run-viewer is served on the same server.
-func executeFreshLocalRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, loader adapterhost.Loader, resolution approvalResolution, jsonOut io.Writer, mode outputMode, opts applyOptions, identity localRunIdentity, workflowHash string) error {
+func executeFreshLocalRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, loader adapterhost.Loader, resolution *approvalResolution, jsonOut io.Writer, mode outputMode, opts applyOptions, identity localRunIdentity, workflowHash string) error {
 	runID := uuid.NewString()
 	runEvents, closeRunEvents, err := openRunEventsFile(runID)
 	if err != nil {
@@ -216,7 +216,7 @@ func newLocalEngine(runID string, graph *workflow.FSMGraph, loader adapterhost.L
 // translation. It runs for every local run: without a configured resumer the
 // control listener's bus still resolves pauses (CRI-255), and a pause with
 // no reachable surface fails the run loudly (CRI-256).
-func finishFreshLocalRun(runCtx context.Context, log *slog.Logger, loader adapterhost.Loader, runSink *terminalSuccessSink, resolution approvalResolution, runID string, opts applyOptions, ctrl *localRunControl, eng *engine.Engine) error {
+func finishFreshLocalRun(runCtx context.Context, log *slog.Logger, loader adapterhost.Loader, runSink *terminalSuccessSink, resolution *approvalResolution, runID string, opts applyOptions, ctrl *localRunControl, eng *engine.Engine) error {
 	if err := drainLocalResumeCycles(runCtx, log, loader, runSink, resolution, runID, opts, ctrl, eng); err != nil {
 		return err
 	}
@@ -303,24 +303,23 @@ func resumeLocalInFlightRuns(ctx context.Context, log *slog.Logger, out io.Write
 // selects the pause-resolution posture from the CRI-256 inputs. On failure it
 // logs, clears the checkpoint, and returns false so the caller can skip the
 // run.
-func prepareReattach(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, approvalCfg localApprovalConfig) (*workflow.FSMGraph, adapterhost.Loader, approvalResolution, bool) {
-	var zeroRes approvalResolution
+func prepareReattach(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, approvalCfg localApprovalConfig) (*workflow.FSMGraph, adapterhost.Loader, *approvalResolution, bool) {
 	graph, err := parseWorkflowFromPath(ctx, cp.WorkflowPath)
 	if err != nil {
 		log.Warn("cannot parse workflow for crashed local run; abandoning", "run_id", cp.RunID, "error", err)
 		RemoveStepCheckpoint(cp.RunID)
-		return nil, nil, zeroRes, false
+		return nil, nil, nil, false
 	}
 	resolution, resErr := selectApprovalResolution(log, approvalCfg, graph)
 	if resErr != nil {
 		log.Warn("local checkpoint: approval resolution is unavailable; clearing", "run_id", cp.RunID, "error", resErr)
 		RemoveStepCheckpoint(cp.RunID)
-		return nil, nil, zeroRes, false
+		return nil, nil, nil, false
 	}
 	if err := ensureLocalModeSupported(graph); err != nil {
 		log.Warn("local checkpoint requires server; clearing", "run_id", cp.RunID, "error", err)
 		RemoveStepCheckpoint(cp.RunID)
-		return nil, nil, zeroRes, false
+		return nil, nil, nil, false
 	}
 	loader := adapterhost.NewLoader()
 	return graph, loader, resolution, true
