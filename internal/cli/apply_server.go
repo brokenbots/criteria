@@ -267,6 +267,9 @@ func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost
 }
 
 func runApplyServer(ctx context.Context, opts applyOptions) error {
+	if strings.TrimSpace(opts.answersPath) != "" {
+		return errors.New("--answers applies to local runs only; server runs resolve approvals through the orchestrator")
+	}
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
 

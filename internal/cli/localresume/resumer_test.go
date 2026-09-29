@@ -265,11 +265,15 @@ type errReader struct{ err error }
 
 func (e *errReader) Read(_ []byte) (int, error) { return 0, e.err }
 
-func TestStdinMode_Approval_UnrecognizedInput_InvalidInputReason(t *testing.T) {
+// Unrecognized input must not silently decide anything: the prompt re-asks
+// (CRI-256 upgrade). The operator's next line decides the outcome; until then
+// the run is held at the prompt.
+func TestStdinMode_Approval_UnrecognizedInput_Reprompts(t *testing.T) {
 	stateDir := t.TempDir()
+	stderr := &bytes.Buffer{}
 	r := localresume.New(localresume.ModeStdin, localresume.Options{
-		Stdin:    bytes.NewBufferString("maybe\n"),
-		Stderr:   &bytes.Buffer{},
+		Stdin:    bytes.NewBufferString("maybe\nn\nreason: not ready\n"),
+		Stderr:   stderr,
 		StateDir: stateDir,
 	})
 	payload, err := r.ResumeApproval(context.Background(), "run-ui", "review", nil, "")
@@ -279,9 +283,35 @@ func TestStdinMode_Approval_UnrecognizedInput_InvalidInputReason(t *testing.T) {
 	if payload["decision"] != "rejected" {
 		t.Errorf("expected rejected, got %v", payload)
 	}
-	if payload["reason"] != "invalid input" {
-		t.Errorf("expected reason 'invalid input', got %q", payload["reason"])
+	if payload["reason"] != "reason: not ready" {
+		t.Errorf("expected the explicit rejection reason, got %q", payload["reason"])
 	}
+	if !strings.Contains(stderr.String(), "Unrecognized input") {
+		t.Errorf("expected the re-prompt hint on stderr, got %q", stderr.String())
+	}
+	assertDecisionPersisted(t, stateDir, "run-ui", "review", "rejected", "")
+}
+
+// EOF after an explicit reject is a complete decision: the rejection is
+// resolved without a reason (the y/n answer already happened).
+func TestStdinMode_Approval_No_ThenEOF_ReasonSkipped(t *testing.T) {
+	stateDir := t.TempDir()
+	r := localresume.New(localresume.ModeStdin, localresume.Options{
+		Stdin:    bytes.NewBufferString("n\n"),
+		Stderr:   &bytes.Buffer{},
+		StateDir: stateDir,
+	})
+	payload, err := r.ResumeApproval(context.Background(), "run-ui-eof", "review", nil, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if payload["decision"] != "rejected" {
+		t.Errorf("expected rejected, got %v", payload)
+	}
+	if payload["reason"] != "" {
+		t.Errorf("expected no reason after EOF on the reason prompt, got %q", payload["reason"])
+	}
+	assertDecisionPersisted(t, stateDir, "run-ui-eof", "review", "rejected", "")
 }
 
 func TestStdinMode_Signal_JSON(t *testing.T) {
