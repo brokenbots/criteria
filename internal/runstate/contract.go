@@ -103,4 +103,8 @@ const (
 	StatusRunning   = "running"
 	StatusSucceeded = "succeeded"
 	StatusFailed    = "failed"
+	// StatusPaused marks a run paused at a node or control-surface boundary
+	// (CRI-255). A paused run is live, its process alive; it is not terminal
+	// so no endedAt is stamped and it is exempt from checkpoint sweep.
+	StatusPaused = "paused"
 )
