@@ -133,7 +133,7 @@ func TestStartLocalRunStateServer(t *testing.T) {
 	f.Close()
 
 	ctx, cancelRun := context.WithCancel(context.Background())
-	url, stop, err := startLocalRunStateServer(newTestLogger(t), runID, "", nil, true, cancelRun)
+	url, stop, err := startLocalRunStateServer(ctx, newTestLogger(t), runID, "", nil, true, cancelRun)
 	if err != nil {
 		t.Fatalf("startLocalRunStateServer: %v", err)
 	}

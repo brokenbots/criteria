@@ -231,18 +231,19 @@ func (s *Server) Serve(ln net.Listener) error {
 
 // Stop closes the server's listener and connections (a no-op before Serve).
 // It drains in-flight requests first: an apply completing its final control
-// RPC (a decision on the last node) shuts the listener down while the client
-//'s response is still being flushed, and an abrupt Close would cut the
+// RPC (a decision on the last node) shuts the listener down while the
+// client's response is still being flushed, and an abrupt Close would cut the
 // response mid-flight ("unexpected EOF" on the caller that just resolved
 // the run). The drain is bounded so a long-lived viewer stream cannot stall
-// the owning run's exit; the fallback Close reclaims stragglers.
-func (s *Server) Stop() {
+// the owning run's exit; the fallback Close reclaims stragglers. A canceled
+// ctx skips the drain (the caller is going away; nothing to flush to).
+func (s *Server) Stop(ctx context.Context) {
 	s.srvMu.Lock()
 	defer s.srvMu.Unlock()
 	if s.srv != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), shutdownDrainWindow)
+		drainCtx, cancel := context.WithTimeout(ctx, shutdownDrainWindow)
 		defer cancel()
-		if err := s.srv.Shutdown(ctx); err != nil {
+		if err := s.srv.Shutdown(drainCtx); err != nil {
 			_ = s.srv.Close()
 		}
 	}

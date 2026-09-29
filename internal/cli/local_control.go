@@ -321,7 +321,7 @@ func (s *localControlService) ctrlPause(ctx context.Context) error {
 	deadline := time.Now().Add(pauseLandingRetryWindow)
 	for {
 		err := s.ctrl.pause(ctx)
-		if err == nil || (err != errRunNotRunning && !errors.Is(err, errRunNotRunning)) || ctx.Err() != nil {
+		if err == nil || !errors.Is(err, errRunNotRunning) || ctx.Err() != nil {
 			return err
 		}
 		if s.ctrl.isFinished() || time.Now().After(deadline) {
@@ -348,7 +348,7 @@ func (s *localControlService) ctrlResume() error {
 	deadline := time.Now().Add(pauseLandingRetryWindow)
 	for {
 		err := s.ctrl.resume()
-		if err == nil || (err != errRunNotRunning && !errors.Is(err, errRunNotRunning)) {
+		if err == nil || !errors.Is(err, errRunNotRunning) {
 			return err
 		}
 		if s.ctrl.isFinished() || time.Now().After(deadline) {
@@ -370,7 +370,7 @@ func (s *localControlService) ResolveResume(_ context.Context, req *connect.Requ
 // (see ctrlPause): approval/signal decisions may arrive while the run is
 // still traveling toward its pause. Other reasons (signal mismatch, invalid
 // payload) are answered immediately.
-func (s *localControlService) ctrlResolve(signal string, payload map[string]string) (bool, string) {
+func (s *localControlService) ctrlResolve(signal string, payload map[string]string) (accepted bool, reason string) {
 	deadline := time.Now().Add(pauseLandingRetryWindow)
 	for {
 		accepted, reason := s.ctrl.resolveResume(signal, payload)

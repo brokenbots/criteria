@@ -35,7 +35,7 @@ func openRunEventsFile(runID string) (io.Writer, func(), error) {
 	return f, func() { _ = f.Close() }, nil
 }
 
-func newRunStateControlHandler(runID string, ctrl *localRunControl, cancelRun context.CancelFunc) func(id, verb string) error {
+func newRunStateControlHandler(ctx context.Context, runID string, ctrl *localRunControl, cancelRun context.CancelFunc) func(id, verb string) error {
 	return func(id, verb string) error {
 		if id != runID {
 			return runstate.ErrNotFound
@@ -49,7 +49,7 @@ func newRunStateControlHandler(runID string, ctrl *localRunControl, cancelRun co
 				return runstate.ErrUnsupportedVerb
 			}
 			if verb == "pause" {
-				ctx, cancel := context.WithTimeout(context.WithoutCancel(context.Background()), pauseAckTimeout)
+				ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), pauseAckTimeout)
 				defer cancel()
 				return ctrl.pause(ctx)
 			}
@@ -60,9 +60,9 @@ func newRunStateControlHandler(runID string, ctrl *localRunControl, cancelRun co
 	}
 }
 
-func startLocalRunStateServer(log *slog.Logger, runID, controlListenAddr string, ctrl *localRunControl, withViewer bool, cancelRun context.CancelFunc) (viewerURL string, stop func(), err error) {
+func startLocalRunStateServer(ctx context.Context, log *slog.Logger, runID, controlListenAddr string, ctrl *localRunControl, withViewer bool, cancelRun context.CancelFunc) (viewerURL string, stop func(), err error) {
 	store := runstate.NewStore().Scoped(runID)
-	srv := runstate.NewServer(store).WithControl(newRunStateControlHandler(runID, ctrl, cancelRun))
+	srv := runstate.NewServer(store).WithControl(newRunStateControlHandler(ctx, runID, ctrl, cancelRun))
 	if ctrl != nil {
 		svc := &localControlService{ctrl: ctrl, runID: runID}
 		pattern, h := criteriav1connect.NewLocalControlServiceHandler(svc)
@@ -98,7 +98,7 @@ func startLocalRunStateServer(log *slog.Logger, runID, controlListenAddr string,
 		// must not double-drain the serve error channel.
 		stopOnce.Do(func() {
 			removeControlEndpoint(runID)
-			srv.Stop()
+			srv.Stop(ctx)
 			<-serveErr // drain (Serve returns nil on Stop)
 		})
 	}
@@ -118,7 +118,7 @@ func attachLocalRunStateServer(ctx context.Context, log *slog.Logger, runID, con
 	// return "stop" would make the returned closure call itself (the return
 	// statement assigns the closure to "stop"), recursing to a stack
 	// overflow when apply tears the server down.
-	url, srvStop, err := startLocalRunStateServer(log, runID, controlListenAddr, ctrl, withViewer, cancelRun)
+	url, srvStop, err := startLocalRunStateServer(ctx, log, runID, controlListenAddr, ctrl, withViewer, cancelRun)
 	if err != nil {
 		log.Warn("local control listener unavailable; continuing without it", "run_id", runID, "error", err)
 		return ctx, cancelRun

@@ -423,7 +423,7 @@ func TestServerLiveOverSocket(t *testing.T) {
 		t.Errorf("live run decode: %v", err)
 	}
 
-	srv.Stop()
+	srv.Stop(context.Background())
 	if err := <-serveErr; err != nil {
 		t.Errorf("serve error: %v", err)
 	}
