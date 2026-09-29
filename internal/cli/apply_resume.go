@@ -19,8 +19,8 @@ import (
 )
 
 const (
-	errSignalWait   = "signal waits require an orchestrator (e.g. --server <url>) or the local-mode env CRITERIA_LOCAL_APPROVAL={stdin|file|env|auto-approve}"
-	errApprovalNode = "approval nodes require an orchestrator (e.g. --server <url>) or the local-mode env CRITERIA_LOCAL_APPROVAL={stdin|file|env|auto-approve}"
+	errSignalWait    = "signal waits are resolved via the run's local control listener (started by apply), --server <url>, or the local-mode env CRITERIA_LOCAL_APPROVAL={stdin|file|env|auto-approve}"
+	errApprovalNode = "approval nodes are resolved via the run's local control listener (started by apply), --server <url>, or the local-mode env CRITERIA_LOCAL_APPROVAL={stdin|file|env|auto-approve}"
 )
 
 // pauseTracker wraps an engine.Sink and tracks pause state for the local approval
@@ -121,24 +121,46 @@ func buildLocalResumer(log *slog.Logger, stdin io.Reader) (localresume.LocalResu
 	return localresume.New(m, opts), nil
 }
 
-// drainLocalResumeCycles drives the pause/resume loop for local-mode runs with
-// CRITERIA_LOCAL_APPROVAL set. Each time the engine pauses, it calls the
-// resumer, populates a new engine with the resulting payload, and re-invokes
-// RunFrom until the run is no longer paused. runSink is the sink passed to
-// every engine instance so that terminal-state capture is consistent across
-// the original run and all resume cycles.
-func drainLocalResumeCycles(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, loader adapterhost.Loader, tracker *pauseTracker, runSink engine.Sink, resumer localresume.LocalResumer, runID string, opts applyOptions, eng *engine.Engine) error {
+// drainLocalResumeCycles drives the pause/resume loop for local-mode runs.
+// Each time the engine pauses, the loop resolves the pause and drives a fresh
+// engine from the paused node until the run is no longer paused.
+//
+// Resolution depends on the pause mode (CRI-255):
+//
+//   - approval and signal-wait nodes: the decision rides the run's local
+//     control listener (ResolveResume RPC — the primary surface), racing a
+//     configured CRITERIA_LOCAL_APPROVAL resumer (file/stdin/env — the
+//     out-of-band surface kept for scripted use).
+//   - checkpoint-boundary pauses (Engine.RequestPause from the control
+//     listener): resolution is a boundary ResumeRun token; the fresh engine
+//     re-enters the graph without a resume payload.
+//
+// runSink is the sink passed to every engine instance so that terminal-state
+// capture is consistent across the original run and all resume cycles. eng
+// must be the engine that produced the first pause; later cycles update
+// ctrl's engine pointer so control RPCs address the active engine.
+func drainLocalResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost.Loader, runSink engine.Sink, resumer localresume.LocalResumer, runID string, opts applyOptions, ctrl *localRunControl, eng *engine.Engine) error {
 	dataDir, err := runDataDir(runID)
 	if err != nil {
 		return fmt.Errorf("resolve run data dir: %w", err)
 	}
+	tracker := ctrl.tracker
 	for tracker.IsPaused() {
 		pausedNode := tracker.PausedAt()
-		log.Info("local run paused; resolving via local resumer", "run_id", runID, "node", pausedNode)
 
-		payload, err := resolveLocalPause(ctx, resumer, runID, pausedNode, graph, tracker)
+		var payload map[string]string
+		var err error
+		if isApprovalOrSignalNode(ctrl.graph, pausedNode) {
+			log.Info("local run paused; awaiting an approval or signal decision",
+				"run_id", runID, "node", pausedNode)
+			payload, err = resolveApprovalPause(ctx, ctrl, resumer, runID, pausedNode)
+		} else {
+			log.Info("run paused at checkpoint boundary; resume via the run's control listener",
+				"run_id", runID, "node", pausedNode)
+			payload, err = awaitBoundaryResumePayload(ctx, ctrl)
+		}
 		if err != nil {
-			return fmt.Errorf("local approval at node %q: %w", pausedNode, err)
+			return fmt.Errorf("local pause at node %q: %w", pausedNode, err)
 		}
 
 		tracker.ClearPaused()
@@ -148,17 +170,60 @@ func drainLocalResumeCycles(ctx context.Context, log *slog.Logger, graph *workfl
 		}
 		resumeOpts = append(resumeOpts,
 			engine.WithResumedVars(eng.VarScope()),
-			engine.WithResumedVisits(eng.VisitCounts()),
-			engine.WithResumePayload(payload))
-		resumedEng := engine.New(graph, loader, runSink, resumeOpts...)
+			engine.WithResumedVisits(eng.VisitCounts()))
+		if payload != nil {
+			resumeOpts = append(resumeOpts, engine.WithResumePayload(payload))
+		}
+		resumedEng := engine.New(ctrl.graph, loader, runSink, resumeOpts...)
+		ctrl.setEngine(resumedEng)
+		eng = resumedEng
 		if runErr := resumedEng.RunFrom(ctx, pausedNode, 1); runErr != nil {
 			log.Error("local run failed after resume", "run_id", runID, "error", runErr)
 			return runErr
 		}
-		eng = resumedEng
 		log.Info("local run resumed", "run_id", runID)
 	}
 	return nil
+}
+
+// awaitBoundaryResumePayload blocks until the run's control listener delivers
+// a boundary ResumeRun token (nil payload) or ctx is canceled (stop verb).
+func awaitBoundaryResumePayload(ctx context.Context, ctrl *localRunControl) (map[string]string, error) {
+	if !ctrl.awaitBoundaryResume(ctx) {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("run canceled while boundary-paused: %w", ctx.Err())
+		}
+		return nil, fmt.Errorf("boundary pause released without resume")
+	}
+	return nil, nil
+}
+
+// resolveApprovalPause resolves an approval or signal-wait pause: the
+// primary surface is the run's control listener (ResolveResume); when a
+// CRITERIA_LOCAL_APPROVAL resumer is configured it races the listener.
+func resolveApprovalPause(ctx context.Context, ctrl *localRunControl, resumer localresume.LocalResumer, runID, pausedNode string) (map[string]string, error) {
+	if resumer == nil {
+		payload, ok := ctrl.awaitResolveResume(ctx)
+		if !ok {
+			return nil, ctx.Err()
+		}
+		return payload, nil
+	}
+	type resolved struct {
+		payload map[string]string
+		err     error
+	}
+	file := make(chan resolved, 1)
+	go func() {
+		payload, err := resolveLocalPause(ctx, resumer, runID, pausedNode, ctrl.graph, ctrl.tracker)
+		file <- resolved{payload: payload, err: err}
+	}()
+	select {
+	case r := <-file:
+		return r.payload, r.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // resolveLocalPause determines whether the paused node is an approval or
@@ -194,18 +259,11 @@ func resolveLocalPause(ctx context.Context, resumer localresume.LocalResumer, ru
 	return nil, fmt.Errorf("paused at node %q which is neither an approval nor a signal wait", pausedNode)
 }
 
-func ensureLocalModeSupported(graph *workflow.FSMGraph, localApprovalEnabled bool) error {
-	if !localApprovalEnabled {
-		// First-class approval and signal-wait nodes require local approval mode or a server.
-		for _, wn := range graph.Waits {
-			if wn.Signal != "" {
-				return errors.New(errSignalWait)
-			}
-		}
-		if len(graph.Approvals) > 0 {
-			return errors.New(errApprovalNode)
-		}
-	}
+func ensureLocalModeSupported(graph *workflow.FSMGraph) error {
+	// Since CRI-255 the run's control listener is always attached to local
+	// apply, so approval and signal-wait pauses are supported without
+	// CRITERIA_LOCAL_APPROVAL: resolution arrives via the ResolveResume RPC
+	// (or a configured file/env resumer). No first-class gating remains.
 	// Legacy state.Requires shapes are unsupported in local mode
 	// regardless of CRITERIA_LOCAL_APPROVAL.
 	for _, state := range graph.States {

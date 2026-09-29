@@ -133,7 +133,7 @@ func TestStartLocalRunStateServer(t *testing.T) {
 	f.Close()
 
 	ctx, cancelRun := context.WithCancel(context.Background())
-	url, stop, err := startLocalRunStateServer(newTestLogger(t), runID, 0, cancelRun)
+	url, stop, err := startLocalRunStateServer(newTestLogger(t), runID, "", nil, true, cancelRun)
 	if err != nil {
 		t.Fatalf("startLocalRunStateServer: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestAttachLocalRunStateServer(t *testing.T) {
 	base := fmt.Sprintf("http://127.0.0.1:%d", port)
 
 	parent := context.Background()
-	runCtx, stop := attachLocalRunStateServer(parent, newTestLogger(t), "run-attach-1", port)
+	runCtx, stop := attachLocalRunStateServer(parent, newTestLogger(t), "run-attach-1", fmt.Sprintf("127.0.0.1:%d", port), nil, true)
 	defer stop() // stop must stay safe for double teardown paths
 	if runCtx == parent {
 		t.Fatal("attach returned the parent context; engine stop wiring would be lost")
@@ -261,7 +261,7 @@ func TestAttachLocalRunStateServer_BindFailure(t *testing.T) {
 	defer ln.Close()
 
 	parent := context.Background()
-	runCtx, stop := attachLocalRunStateServer(parent, newTestLogger(t), "run-attach-2", port)
+	runCtx, stop := attachLocalRunStateServer(parent, newTestLogger(t), "run-attach-2", fmt.Sprintf("127.0.0.1:%d", port), nil, true)
 	if runCtx != parent {
 		t.Fatalf("bind failure must fall back to the parent context")
 	}

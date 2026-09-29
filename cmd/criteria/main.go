@@ -44,6 +44,7 @@ func main() {
 	root.AddCommand(cli.NewStopCmd())
 	root.AddCommand(cli.NewPauseCmd())
 	root.AddCommand(cli.NewResumeCmd())
+	root.AddCommand(cli.NewApproveCmd())
 	root.AddCommand(cli.NewWatchCmd())
 	root.AddCommand(cli.NewServeUICmd())
 	root.AddCommand(cli.NewSubmitCmd())

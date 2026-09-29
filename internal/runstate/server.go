@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,10 +22,18 @@ import (
 type Server struct {
 	store *Store
 	// control, when non-nil, handles the POST control verbs for runs this
-	// process owns (stop cancels the engine context). Verbs it does not
-	// answer come back UNIMPLEMENTED. nil (serve-ui standalone) means every
-	// verb is UNIMPLEMENTED.
+	// process owns via the JSON seam (stop cancels the engine context; since
+	// CRI-255 pause and resume drive the same bus the Connect
+	// LocalControlService exercises). Verbs it does not answer come back
+	// UNIMPLEMENTED. nil (serve-ui standalone) means every verb is
+	// UNIMPLEMENTED.
 	control ControlHandler
+	// localService, when non-nil, is mounted at the fixed Connect service
+	// prefix localServicePattern (CRI-255: the loopback control RPCs). The
+	// owner (apply) passes the pattern reported by the generated
+	// NewLocalControlServiceHandler.
+	localService        http.Handler
+	localServicePattern string
 	// viewer, when non-nil, serves the embedded run-viewer bundle under
 	// /runview/.
 	viewer http.Handler
@@ -38,7 +47,9 @@ type Server struct {
 type ControlHandler func(runID, verb string) error
 
 // ErrUnsupportedVerb is returned by a ControlHandler for verbs that are not
-// locally implementable (no engine-side checkpoint control yet; CRI-255).
+// locally implementable (the only verb a non-owning process implements is
+// none; the JSON seam supports pause/resume/stop through the owning apply's
+// control bus — CRI-255).
 var ErrUnsupportedVerb = errors.New("unsupported control verb")
 
 // ErrRunNotControlable is returned when the verb is known but the run is not
@@ -63,6 +74,16 @@ func (s *Server) WithViewer(h http.Handler) *Server {
 	return s
 }
 
+// WithLocalService mounts an extra Connect service handler at pattern. The
+// local control listener (CRI-255) mounts criteria.v1.LocalControlService at
+// the generated prefix pattern so Connect/gRPC clients can reach the control
+// verbs on the same loopback port as the seam API.
+func (s *Server) WithLocalService(pattern string, h http.Handler) *Server {
+	s.localServicePattern = pattern
+	s.localService = h
+	return s
+}
+
 // Handler returns the server's HTTP handler (exported for httptest).
 //
 // The seam API is mounted under /runview/api — the viewer bundle's default
@@ -74,6 +95,9 @@ func (s *Server) WithViewer(h http.Handler) *Server {
 // which would silently mask API drift.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	if s.localService != nil {
+		mux.Handle(s.localServicePattern, s.localService)
+	}
 	mux.HandleFunc("GET /runview/api/health", s.handleHealth)
 	mux.HandleFunc("GET /runview/api/runs", s.handleListRuns)
 	mux.HandleFunc("GET /runview/api/runs/{id}", s.handleGetRun)
@@ -128,13 +152,11 @@ func (s *Server) Handler() http.Handler {
 // and adapter payloads included. Loopback IP literals and "localhost" (with
 // any port) pass; everything else gets 403.
 //
-// Residual risk, documented and accepted for this ticket: a browser page
-// served from another origin can still fire a cross-site POST at the control
-// verbs without a preflight (a "simple request"). Exploiting it needs the
-// run id — a UUID this server generated — and stop only cancels a run the
-// local user owns; a per-process token or Origin check would change the seam
-// request shape and needs consumer cooperation, which is tracked for CRI-255
-// (the control-verb authority).
+// originLoopbackOnly then rejects CORS-bearing requests whose Origin is not
+// a loopback host (CRI-255): the control verbs are a write surface, and a
+// browser fires cross-site POSTs without a preflight (a "simple request").
+// Browsers always attach Origin on those requests, so a non-loopback Origin
+// 403s them; non-browser clients (the CLI, curl) do not send Origin and pass.
 func loopbackHostOnly(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host := r.Host
@@ -144,6 +166,13 @@ func loopbackHostOnly(next http.Handler) http.Handler {
 		if !isLoopbackHost(host) {
 			writeError(w, http.StatusForbidden, "loopback-only server: refusing request with non-loopback Host")
 			return
+		}
+		if origin := r.Header.Get("Origin"); origin != "" {
+			o, err := url.Parse(origin)
+			if err != nil || !isLoopbackHost(o.Hostname()) {
+				writeError(w, http.StatusForbidden, "loopback-only server: refusing cross-origin request with non-loopback Origin")
+				return
+			}
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -236,7 +265,7 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 const headerTimeout = 10 * time.Second
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	w.WriteHeader(http.StatusNoContent) // 204: alive; capability probe renders controls grayed (no control capabilities yet)
+	w.WriteHeader(http.StatusNoContent) // 204: alive; capability probe renders controls (pause/resume/stop run through the owner's control bus, CRI-255)
 }
 
 func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
@@ -306,9 +335,10 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 // verbHandler implements POST /runs/{id}/resume|pause|stop. Verbs are wired
-// to the engine only where locally supported (stop cancels the engine
-// context); everything else answers UNIMPLEMENTED until CRI-255 adds the
-// checkpoint-gated controls.
+// to the owner apply process's control bus where supported (stop cancels the
+// engine context; pause parks it at the next checkpoint boundary; resume
+// releases a boundary pause — CRI-255); everything else answers
+// UNIMPLEMENTED.
 func (s *Server) verbHandler(verb string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		runID := r.PathValue("id")
@@ -317,13 +347,13 @@ func (s *Server) verbHandler(verb string) http.HandlerFunc {
 			return
 		}
 		if s.control == nil {
-			writeError(w, http.StatusNotImplemented, "control verb "+verb+" is not implemented for local runs yet (CRI-255)")
+			writeError(w, http.StatusNotImplemented, "control verb "+verb+" is not implemented; this server does not own a running apply")
 			return
 		}
 		if err := s.control(runID, verb); err != nil {
 			switch {
 			case errors.Is(err, ErrUnsupportedVerb):
-				writeError(w, http.StatusNotImplemented, "control verb "+verb+" is not implemented for local runs yet (CRI-255)")
+				writeError(w, http.StatusNotImplemented, "control verb "+verb+" is not implemented; supported verbs: pause, resume, stop")
 			case errors.Is(err, ErrNotFound):
 				writeNotFound(w, err)
 			default:

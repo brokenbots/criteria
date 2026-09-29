@@ -9,9 +9,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/brokenbots/criteria/internal/runstate"
+	"github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
 )
 
 // openRunEventsFile opens (append-only, CRI-125) the run's ND-JSON events
@@ -33,13 +35,7 @@ func openRunEventsFile(runID string) (io.Writer, func(), error) {
 	return f, func() { _ = f.Close() }, nil
 }
 
-// startLocalRunStateServer binds the loopback run-state server scoped to
-// runID, serves the embedded run-viewer under /runview/, prints the viewer
-// URL to stderr, and serves until the returned stop func is called. The stop
-// verb of the control handler cancels the given engine context; pause and
-// resume are UNIMPLEMENTED (CRI-255 adds checkpoint-gated controls). The
-// viewer URL is returned for direct use by callers that want it.
-func startLocalRunStateServer(log *slog.Logger, runID string, port int, cancelRun context.CancelFunc) (viewerURL string, stop func(), err error) {
+func startLocalRunStateServer(log *slog.Logger, runID, controlListenAddr string, ctrl *localRunControl, withViewer bool, cancelRun context.CancelFunc) (viewerURL string, stop func(), err error) {
 	store := runstate.NewStore().Scoped(runID)
 	srv := runstate.NewServer(store).WithControl(func(id, verb string) error {
 		if id != runID {
@@ -49,29 +45,55 @@ func startLocalRunStateServer(log *slog.Logger, runID string, port int, cancelRu
 		case "stop":
 			cancelRun()
 			return nil
+		case "pause", "resume":
+			if ctrl == nil {
+				return runstate.ErrUnsupportedVerb
+			}
+			if verb == "pause" {
+				ctx, cancel := context.WithTimeout(context.WithoutCancel(context.Background()), pauseAckTimeout)
+				defer cancel()
+				return ctrl.pause(ctx)
+			}
+			return ctrl.resume()
 		default:
 			return runstate.ErrUnsupportedVerb
 		}
 	})
-	viewer, err := runstate.NewViewer()
-	if err == nil {
-		srv = srv.WithViewer(viewer)
+	if ctrl != nil {
+		svc := &localControlService{ctrl: ctrl, runID: runID}
+		pattern, h := criteriav1connect.NewLocalControlServiceHandler(svc)
+		srv.WithLocalService(pattern, h)
 	}
-	ln, err := srv.Listen("", port) // loopback default host; port 0 = auto
+	if withViewer {
+		viewer, viewerErr := runstate.NewViewer()
+		if viewerErr == nil {
+			srv = srv.WithViewer(viewer)
+		}
+	}
+	host, port, err := resolveControlAddr(controlListenAddr)
 	if err != nil {
 		return "", nil, err
 	}
+	ln, err := srv.Listen(host, port)
+	if err != nil {
+		return "", nil, err
+	}
+	addr := ln.Addr().String()
 	url := fmt.Sprintf("http://%s/runview/", ln.Addr())
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.Serve(ln) }()
 	var stopOnce sync.Once
 
-	log.Info("run viewer available", "url", url, "run_id", runID)
+	if err := writeControlEndpoint(runID, addr); err != nil {
+		log.Warn("could not publish control endpoint record; control verbs must address the listener directly", "run_id", runID, "error", err)
+	}
+	log.Info("local control listener available", "addr", addr, "run_id", runID)
 
 	stop = func() {
 		// Idempotent: double teardown (explicit stop plus deferred stop)
 		// must not double-drain the serve error channel.
 		stopOnce.Do(func() {
+			removeControlEndpoint(runID)
 			srv.Stop()
 			<-serveErr // drain (Serve returns nil on Stop)
 		})
@@ -81,23 +103,43 @@ func startLocalRunStateServer(log *slog.Logger, runID string, port int, cancelRu
 
 // attachLocalRunStateServer starts the loopback run-state server for runID
 // and returns the context the engine should run under (cancellable by the
-// server's stop verb). On bind failure it logs a warning and returns the
-// parent context with a no-op stop: the viewer is a lifeline, not a gate.
-func attachLocalRunStateServer(ctx context.Context, log *slog.Logger, runID string, port int) (runCtx context.Context, stop func()) {
+// server's stop verb) plus the listener address. On bind failure it logs a
+// warning and returns the parent context with a nil address and a no-op
+// stop: the viewer is a lifeline, not a gate. A run that pauses while no
+// listener is attached waits for its state to be resolved out-of-band
+// (CRITERIA_LOCAL_APPROVAL) or for an invocation restart.
+func attachLocalRunStateServer(ctx context.Context, log *slog.Logger, runID, controlListenAddr string, ctrl *localRunControl, withViewer bool) (runCtx context.Context, stop func()) {
 	runCtx, cancelRun := context.WithCancel(ctx)
 	// srvStop is deliberately a fresh variable: binding it to the named
 	// return "stop" would make the returned closure call itself (the return
 	// statement assigns the closure to "stop"), recursing to a stack
 	// overflow when apply tears the server down.
-	_, srvStop, err := startLocalRunStateServer(log, runID, port, cancelRun)
+	url, srvStop, err := startLocalRunStateServer(log, runID, controlListenAddr, ctrl, withViewer, cancelRun)
 	if err != nil {
-		log.Warn("run viewer unavailable; continuing without it", "error", err)
+		log.Warn("local control listener unavailable; continuing without it", "run_id", runID, "error", err)
 		return ctx, cancelRun
+	}
+	if url != "" {
+		log.Info("run viewer available", "url", url, "run_id", runID)
 	}
 	return runCtx, func() {
 		srvStop()
 		cancelRun()
 	}
+}
+
+// resolveRunListenAddr merges --control-addr and the legacy --ui-port into
+// the single loopback listen address of the run-state/control listener: since
+// CRI-255 both surfaces ride the same socket, so an explicit --ui-port still
+// pins the port when --control-addr is unset.
+func resolveRunListenAddr(opts applyOptions) string {
+	if strings.TrimSpace(opts.controlAddr) != "" {
+		return opts.controlAddr
+	}
+	if opts.uiPort != 0 {
+		return fmt.Sprintf("127.0.0.1:%d", opts.uiPort)
+	}
+	return ""
 }
 
 // workflowSourceHash returns the sha256 hex digest of the compiled workflow
