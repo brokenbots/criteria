@@ -19,15 +19,13 @@ type gateHandle struct {
 	blocked map[string]chan struct{}
 }
 
-func (g *gateHandle) block(step string) <-chan struct{} {
+func (g *gateHandle) block(step string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.blocked == nil {
 		g.blocked = map[string]chan struct{}{}
 	}
-	ch := make(chan struct{})
-	g.blocked[step] = ch
-	return ch
+	g.blocked[step] = make(chan struct{})
 }
 
 func (g *gateHandle) release(step string) {
@@ -146,7 +144,7 @@ func TestEngine_RequestPause_MidRunBoundary(t *testing.T) {
 
 	sink := newBoundarySink()
 	eng := New(g, &fakeLoader{adapters: map[string]adapterhost.Handle{"gate": gate}}, sink)
-	_ = gate.block("b")
+	gate.block("b")
 
 	doneRun := make(chan error, 1)
 	go func() { doneRun <- eng.Run(context.Background()) }()
@@ -221,7 +219,7 @@ func TestEngine_RequestPause_ResumeEventEmitted(t *testing.T) {
 
 	sink := newBoundarySink()
 	eng := New(g, &fakeLoader{adapters: map[string]adapterhost.Handle{"gate": gate}}, sink)
-	_ = gate.block("b")
+	gate.block("b")
 
 	doneRun := make(chan error, 1)
 	go func() { doneRun <- eng.Run(context.Background()) }()

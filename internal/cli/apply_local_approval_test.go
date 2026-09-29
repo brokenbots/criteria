@@ -165,9 +165,9 @@ func TestApplyLocal_ApprovalPausesUntilRPCDecision(t *testing.T) {
 	stateDir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 
-	errCh := runApplyAsync(applyOptions{workflowPath: filepath.Join("testdata", "local_approval_simple")})
+	errCh := runApplyAsync(&applyOptions{workflowPath: filepath.Join("testdata", "local_approval_simple")})
 
-	addr := waitForControlEndpoint(t, stateDir, 15*time.Second)
+	addr := waitForControlEndpoint(t, stateDir)
 	runID := singleRunID(t, stateDir)
 	select {
 	case err := <-errCh:
@@ -198,9 +198,9 @@ func TestApplyLocal_SignalWaitPausesUntilRPCDecision(t *testing.T) {
 	stateDir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 
-	errCh := runApplyAsync(applyOptions{workflowPath: filepath.Join("testdata", "local_signal_wait")})
+	errCh := runApplyAsync(&applyOptions{workflowPath: filepath.Join("testdata", "local_signal_wait")})
 
-	addr := waitForControlEndpoint(t, stateDir, 15*time.Second)
+	addr := waitForControlEndpoint(t, stateDir)
 	runID := singleRunID(t, stateDir)
 	select {
 	case err := <-errCh:

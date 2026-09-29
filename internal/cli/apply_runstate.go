@@ -35,9 +35,8 @@ func openRunEventsFile(runID string) (io.Writer, func(), error) {
 	return f, func() { _ = f.Close() }, nil
 }
 
-func startLocalRunStateServer(log *slog.Logger, runID, controlListenAddr string, ctrl *localRunControl, withViewer bool, cancelRun context.CancelFunc) (viewerURL string, stop func(), err error) {
-	store := runstate.NewStore().Scoped(runID)
-	srv := runstate.NewServer(store).WithControl(func(id, verb string) error {
+func newRunStateControlHandler(runID string, ctrl *localRunControl, cancelRun context.CancelFunc) func(id, verb string) error {
+	return func(id, verb string) error {
 		if id != runID {
 			return runstate.ErrNotFound
 		}
@@ -58,7 +57,12 @@ func startLocalRunStateServer(log *slog.Logger, runID, controlListenAddr string,
 		default:
 			return runstate.ErrUnsupportedVerb
 		}
-	})
+	}
+}
+
+func startLocalRunStateServer(log *slog.Logger, runID, controlListenAddr string, ctrl *localRunControl, withViewer bool, cancelRun context.CancelFunc) (viewerURL string, stop func(), err error) {
+	store := runstate.NewStore().Scoped(runID)
+	srv := runstate.NewServer(store).WithControl(newRunStateControlHandler(runID, ctrl, cancelRun))
 	if ctrl != nil {
 		svc := &localControlService{ctrl: ctrl, runID: runID}
 		pattern, h := criteriav1connect.NewLocalControlServiceHandler(svc)
@@ -132,7 +136,7 @@ func attachLocalRunStateServer(ctx context.Context, log *slog.Logger, runID, con
 // the single loopback listen address of the run-state/control listener: since
 // CRI-255 both surfaces ride the same socket, so an explicit --ui-port still
 // pins the port when --control-addr is unset.
-func resolveRunListenAddr(opts applyOptions) string {
+func resolveRunListenAddr(opts *applyOptions) string {
 	if strings.TrimSpace(opts.controlAddr) != "" {
 		return opts.controlAddr
 	}

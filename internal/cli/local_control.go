@@ -29,23 +29,22 @@ import (
 const pauseAckTimeout = 2 * time.Minute
 
 // errRunNotRunning reports that no run loop is active in the owned engine:
-// the run has already reached a terminal state or yielded at a node pause.
+// the run has already reached a terminal state or paused at a node.
 var errRunNotRunning = errors.New("run is not running (already terminal or paused at a node)")
-
-// errRunNotPaused reports that no pause is pending for the requested verb.
-var errRunNotPaused = errors.New("run is not paused")
 
 // localRunControl is the in-process bus between the loopback control listener
 // (CRI-255: JSON seam verbs + the Connect LocalControlService) and the apply
 // process's drain loop driving Engine.Pause/Resume semantics. apply owns the
 // listener, so the bus is the only authority for the owner run.
 //
-// Channel semantics: on every pause the drain loop registers a fresh request
-// channel (awaitBoundaryResume / awaitResolveResume); RPC handlers grab the
-// channel non-blocking and either take its single slot or answer a
-// precondition error. A consumed or replaced channel can never deliver a
-// stale token into the next pause cycle, because handlers reference only the
-// channel the drain loop published.
+// Channel semantics: resumeReq / payloadReq are persistent buffered(1)
+// mailbox channels (created once, reused across pause cycles) so a decision
+// delivered in the window between the pause landing (tracker updated) and
+// the drain loop starting to wait is accepted and parked, not refused; at
+// the top of every fresh pause cycle the tracker's OnNewPause hook clears
+// stale parked entries. ResolveResume / resume park under c.mu
+// (drain-then-replace), so repeat deliveries are idempotent and nothing
+// consumed by an earlier pause cycle can leak into a later one.
 type localRunControl struct {
 	runID   string
 	graph   *workflow.FSMGraph
@@ -433,7 +432,7 @@ func controlSurfaceOverridden(cmd *cobra.Command) bool {
 // resolveControlAddr parses --control-addr ("host:port"). The empty flag
 // binds a random loopback port. localhost maps to 127.0.0.1 (the runstate
 // listener binds IP literals only); a non-loopback host is refused.
-func resolveControlAddr(flag string) (string, int, error) {
+func resolveControlAddr(flag string) (host string, port int, err error) {
 	raw := strings.TrimSpace(flag)
 	if raw == "" {
 		return "127.0.0.1", 0, nil
@@ -448,12 +447,12 @@ func resolveControlAddr(flag string) (string, int, error) {
 	if strings.EqualFold(host, "localhost") {
 		host = "127.0.0.1"
 	}
-	port, err := strconv.Atoi(portRaw)
-	if err != nil {
-		return "", 0, fmt.Errorf("invalid --control-addr %q: %w", flag, err)
+	port, aErr := strconv.Atoi(portRaw)
+	if aErr != nil {
+		return "", 0, fmt.Errorf("invalid --control-addr %q: %w", flag, aErr)
 	}
-	if err := validateControlHostPort(net.JoinHostPort(host, portRaw)); err != nil {
-		return "", 0, fmt.Errorf("invalid --control-addr %q: %w", flag, err)
+	if jErr := validateControlHostPort(net.JoinHostPort(host, portRaw)); jErr != nil {
+		return "", 0, fmt.Errorf("invalid --control-addr %q: %w", flag, jErr)
 	}
 	return host, port, nil
 }

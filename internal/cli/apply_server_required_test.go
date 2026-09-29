@@ -80,8 +80,8 @@ state "done" {
 }
 `)
 
-	errCh := runApplyAsync(applyOptions{workflowPath: workflowPath})
-	addr := waitForControlEndpoint(t, stateDir, 15*time.Second)
+	errCh := runApplyAsync(&applyOptions{workflowPath: workflowPath})
+	addr := waitForControlEndpoint(t, stateDir)
 	runID := singleRunID(t, stateDir)
 	accepted, reason := resolveApproval(t, addr, runID, "ready", map[string]string{"outcome": "received"})
 	if !accepted || reason != "ok" {
@@ -126,8 +126,8 @@ state "done" {
 }
 `)
 
-	errCh := runApplyAsync(applyOptions{workflowPath: workflowPath})
-	addr := waitForControlEndpoint(t, stateDir, 15*time.Second)
+	errCh := runApplyAsync(&applyOptions{workflowPath: workflowPath})
+	addr := waitForControlEndpoint(t, stateDir)
 	runID := singleRunID(t, stateDir)
 	accepted, reason := resolveApproval(t, addr, runID, "review", map[string]string{"decision": "approved"})
 	if !accepted || reason != "ok" {

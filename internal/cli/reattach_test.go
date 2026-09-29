@@ -1364,7 +1364,7 @@ state "done" {
 	// Since CRI-255 the reattached run pauses at the approval node and is
 	// resolved over the fresh control listener, not abandoned: deliver the
 	// decision and expect the run to complete.
-	addr := waitForControlEndpoint(t, stateDir, 15*time.Second)
+	addr := waitForControlEndpoint(t, stateDir)
 	if accepted, reason := resolveApproval(t, addr, cp.RunID, "review", map[string]string{"decision": "approved"}); !accepted || reason != "ok" {
 		t.Fatalf("ResolveResume = (accepted=%t, reason=%q), want accepted ok", accepted, reason)
 	}

@@ -131,14 +131,14 @@ func executeFreshLocalRun(ctx context.Context, log *slog.Logger, graph *workflow
 	// it mounts the Connect LocalControlService (control surface) and, when
 	// the UI is enabled, the run viewer. Its stop verb cancels the engine
 	// context (the engine then emits a real terminal RunFailed event).
-	runCtx, stopServer := attachLocalRunStateServer(ctx, log, runID, resolveRunListenAddr(opts), ctrl, opts.ui)
+	runCtx, stopServer := attachLocalRunStateServer(ctx, log, runID, resolveRunListenAddr(&opts), ctrl, opts.ui)
 	defer stopServer()
 	if err := eng.Run(runCtx); err != nil {
 		log.Error("local run failed", "run_id", runID, "error", err)
 		return err
 	}
 
-	if err := finishFreshLocalRun(runCtx, log, graph, loader, runSink, resumer, runID, opts, ctrl, eng); err != nil {
+	if err := finishFreshLocalRun(runCtx, log, loader, runSink, resumer, runID, opts, ctrl, eng); err != nil {
 		return err
 	}
 
@@ -215,7 +215,7 @@ func newLocalEngine(runID string, graph *workflow.FSMGraph, loader adapterhost.L
 // pauses and approval/signal node pauses) and the terminal-success failure
 // translation. It runs for every local run: without a resumer the control
 // listener's bus still resolves pauses (CRI-255).
-func finishFreshLocalRun(runCtx context.Context, log *slog.Logger, graph *workflow.FSMGraph, loader adapterhost.Loader, runSink *terminalSuccessSink, resumer localresume.LocalResumer, runID string, opts applyOptions, ctrl *localRunControl, eng *engine.Engine) error {
+func finishFreshLocalRun(runCtx context.Context, log *slog.Logger, loader adapterhost.Loader, runSink *terminalSuccessSink, resumer localresume.LocalResumer, runID string, opts applyOptions, ctrl *localRunControl, eng *engine.Engine) error {
 	if err := drainLocalResumeCycles(runCtx, log, loader, runSink, resumer, runID, opts, ctrl, eng); err != nil {
 		return err
 	}
@@ -343,7 +343,7 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 	// crashed process's listener is gone): the fresh attachment publishes a
 	// renewed control.json for the same run id.
 	ctrl := newLocalRunControl(cp.RunID, graph, tracker, eng)
-	runCtx, stopServer := attachLocalRunStateServer(ctx, log, cp.RunID, resolveRunListenAddr(opts), ctrl, opts.ui)
+	runCtx, stopServer := attachLocalRunStateServer(ctx, log, cp.RunID, resolveRunListenAddr(&opts), ctrl, opts.ui)
 	defer stopServer()
 	var outcome error
 	if runErr := eng.RunFrom(runCtx, cp.CurrentStep, nextAttempt); runErr != nil {

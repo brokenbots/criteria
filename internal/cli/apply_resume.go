@@ -163,7 +163,7 @@ func drainLocalResumeCycles(ctx context.Context, log *slog.Logger, loader adapte
 		} else {
 			log.Info("run paused at checkpoint boundary; resume via the run's control listener",
 				"run_id", runID, "node", pausedNode)
-			payload, err = awaitBoundaryResumePayload(ctx, ctrl)
+			err = awaitBoundaryRelease(ctx, ctrl)
 		}
 		if err != nil {
 			return fmt.Errorf("local pause at node %q: %w", pausedNode, err)
@@ -192,16 +192,16 @@ func drainLocalResumeCycles(ctx context.Context, log *slog.Logger, loader adapte
 	return nil
 }
 
-// awaitBoundaryResumePayload blocks until the run's control listener delivers
-// a boundary ResumeRun token (nil payload) or ctx is canceled (stop verb).
-func awaitBoundaryResumePayload(ctx context.Context, ctrl *localRunControl) (map[string]string, error) {
-	if !ctrl.awaitBoundaryResume(ctx) {
-		if ctx.Err() != nil {
-			return nil, fmt.Errorf("run canceled while boundary-paused: %w", ctx.Err())
-		}
-		return nil, fmt.Errorf("boundary pause released without resume")
+// awaitBoundaryRelease blocks until the run's control listener delivers a
+// boundary ResumeRun token (no payload) or ctx is canceled (stop verb).
+func awaitBoundaryRelease(ctx context.Context, ctrl *localRunControl) error {
+	if ctrl.awaitBoundaryResume(ctx) {
+		return nil
 	}
-	return nil, nil
+	if ctx.Err() != nil {
+		return fmt.Errorf("run canceled while boundary-paused: %w", ctx.Err())
+	}
+	return fmt.Errorf("boundary pause released without resume")
 }
 
 // resolveApprovalPause resolves an approval or signal-wait pause: the

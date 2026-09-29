@@ -388,17 +388,27 @@ func applyEventToRun(run *Run, hasState bool, ev *EventEnvelope) {
 			run.FailureReason = m.Reason
 		}
 	case "runPaused":
-		var m pb.RunPaused
-		if decode(&m) && run.Status == StatusRunning {
-			// CRI-255: never resurrect a terminal run; runPaused only
-			// downgrades a still-live run.
-			run.Status = StatusPaused
-		}
+		applyRunPausedEvent(run, decode)
 	case "runResumed":
-		var m pb.RunResumed
-		if decode(&m) && run.Status == StatusPaused {
-			run.Status = StatusRunning
-		}
+		applyRunResumedEvent(run, decode)
+	}
+}
+
+// applyRunPausedEvent folds a CRI-255 runPaused event: a pause only
+// downgrades a still-live run and never resurrects a terminal one.
+func applyRunPausedEvent(run *Run, decode func(proto.Message) bool) {
+	var m pb.RunPaused
+	if decode(&m) && run.Status == StatusRunning {
+		run.Status = StatusPaused
+	}
+}
+
+// applyRunResumedEvent folds runResumed: only a paused run goes back to
+// running.
+func applyRunResumedEvent(run *Run, decode func(proto.Message) bool) {
+	var m pb.RunResumed
+	if decode(&m) && run.Status == StatusPaused {
+		run.Status = StatusRunning
 	}
 }
 

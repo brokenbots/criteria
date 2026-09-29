@@ -444,7 +444,7 @@ func (e *Engine) pauseSessions(ctx context.Context) error {
 // checkpoints here, the step checkpoint via the sink's OnRunPaused
 // (pauseTracker → PauseCheckpointFn) — then the ack. A crash at any point
 // before the ack reattaches from the checkpoint written before it.
-func (e *Engine) pauseAtBoundary(ctx context.Context, st *RunState, sink Sink) error {
+func (e *Engine) pauseAtBoundary(ctx context.Context, st *RunState, sink Sink) {
 	if err := e.pauseSessions(ctx); err != nil {
 		slog.Warn("boundary pause: adapter session checkpoint best-effort",
 			"step", st.Current, "error", err)
@@ -454,7 +454,6 @@ func (e *Engine) pauseAtBoundary(ctx context.Context, st *RunState, sink Sink) e
 	e.liveRunState = nil
 	sink.OnRunPaused(st.Current, "external", "")
 	e.ackPauseRequested()
-	return nil
 }
 
 func (e *Engine) restoreSessionsFromSnapshots(ctx context.Context) (*adapterhost.SessionManager, error) {
@@ -793,7 +792,8 @@ func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManag
 		// after the previous node committed to its transition, before the
 		// next node evaluates; the in-flight iteration completes first.
 		if e.boundaryPause.Load() {
-			return e.pauseAtBoundary(ctx, st, sink)
+			e.pauseAtBoundary(ctx, st, sink)
+			return nil
 		}
 		node, err := nodeFor(e.graph, st.Current)
 		if err != nil {
