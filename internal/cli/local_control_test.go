@@ -339,6 +339,114 @@ func TestApplyLocal_BoundaryPauseResumeOverLocalControlRPC(t *testing.T) {
 	}
 }
 
+// TestPauseResumeCLIVerbsTargetLocalRun pins the CLI verb wiring (CRI-255
+// acceptance: pause/resume verbs work against a local run with no castle
+// running): both verbs execute as plain cobra commands with no --server flag
+// and no CRITERIA_SERVER_URL, discover the run's control listener from
+// control.json, and land their effect — the run pauses, then resumes to
+// completion with the shared RunPaused/RunResumed event vocabulary.
+func TestPauseResumeCLIVerbsTargetLocalRun(t *testing.T) {
+	adapterDir := filepath.Dir(buildNoopAdapterBinary(t))
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_ADAPTERS", adapterDir)
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
+	t.Setenv("CRITERIA_SERVER_URL", "")
+	t.Setenv("CRITERIA_CONTROL_ADDR", "")
+
+	errCh := runApplyAsync(&applyOptions{workflowPath: filepath.Join("testdata", "local_control_pause")})
+
+	waitForControlEndpoint(t, stateDir)
+	runID := singleRunID(t, stateDir)
+
+	pauseCmd := NewPauseCmd()
+	pauseCmd.SetArgs([]string{"--run-id", runID})
+	if err := pauseCmd.Execute(); err != nil {
+		t.Fatalf("pause verb against local run: %v", err)
+	}
+
+	// The pause verb blocks until the pause lands with durable state; the
+	// parked run must carry the same vocabulary the castle path emits.
+	if !waitForPayloadType(t, stateDir, runID, "RunPaused") {
+		t.Error("events missing RunPaused after the pause verb")
+	}
+
+	resumeCmd := NewResumeCmd()
+	resumeCmd.SetArgs([]string{"--run-id", runID})
+	if err := resumeCmd.Execute(); err != nil {
+		t.Fatalf("resume verb against local run: %v", err)
+	}
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("expected successful run after the resume verb, got: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("runApply did not return after the resume verb")
+	}
+	if !containsString(runEventsFile(t, stateDir, runID), "RunResumed") {
+		t.Error("events missing RunResumed after the resume verb")
+	}
+}
+
+// waitForPayloadType polls the run's event stream for a payload type,
+// tolerating the async drain between the control RPC and the run-state
+// view.
+func waitForPayloadType(t *testing.T, stateDir, runID, payloadType string) bool {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if containsString(runEventsFile(t, stateDir, runID), payloadType) {
+			return true
+		}
+		time.Sleep(40 * time.Millisecond)
+	}
+	return false
+}
+
+// TestApproveCLIVerbResolvesLocalApproval pins the CLI approval-delivery
+// wiring (CRI-255 acceptance: approve delivered over the local RPC resolves
+// an approval node): the approve verb executes with only the run id, the
+// pending signal, and the decision, resolves the parked approval node, and
+// the run completes successfully on the approved route.
+func TestApproveCLIVerbResolvesLocalApproval(t *testing.T) {
+	adapterDir := filepath.Dir(buildNoopAdapterBinary(t))
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_ADAPTERS", adapterDir)
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
+	t.Setenv("CRITERIA_SERVER_URL", "")
+
+	errCh := runApplyAsync(&applyOptions{workflowPath: filepath.Join("testdata", "local_approval_simple")})
+
+	waitForControlEndpoint(t, stateDir)
+	runID := singleRunID(t, stateDir)
+
+	approveCmd := NewApproveCmd()
+	approveCmd.SetArgs([]string{"--run-id", runID, "--signal", "review", "--decision", "approved", "--actor", "tess"})
+	if err := approveCmd.Execute(); err != nil {
+		t.Fatalf("approve verb against local run: %v", err)
+	}
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("expected successful run after the approve verb, got: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("runApply did not return after the approve verb")
+	}
+
+	types := runEventsFile(t, stateDir, runID)
+	if !containsString(types, "ApprovalDecision") {
+		t.Error("events missing ApprovalDecision after the approve verb")
+	}
+	if !containsString(types, "RunResumed") {
+		t.Error("events missing RunResumed after the approve verb")
+	}
+}
+
 // singleRunID returns the run id of the run whose control endpoint is
 // published under stateDir (skipping the flat <runID>.json records).
 func singleRunID(t *testing.T, stateDir string) string {
