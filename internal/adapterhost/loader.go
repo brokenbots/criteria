@@ -539,6 +539,31 @@ func ExecuteViaClient(ctx context.Context, client Client, adapterName, sessionID
 	return executeWithActiveStream(ctx, client, step, serialized, req)
 }
 
+// rescueAdapterVerdict applies the adapter's own verdict (captured
+// ExecuteResult or adapter-level outcome.finalized) when the stream did not
+// end cleanly, while the host context is still alive. KB-53: the adapter's
+// verdict for the turn wins over the synthetic failure a broken stream would
+// otherwise produce; an engine- or run-initiated cancellation (step timeout /
+// teardown) keeps the existing failure semantics. KB-56: when the stream
+// continued past the outcome, the finalize cut cancelled it; the rescued
+// verdict still wins and the logged cause reflects the cut rather than an
+// apparent stream failure.
+func rescueAdapterVerdict(sink *executeCaptureSink, execErr error, ctx context.Context, stepName string) (adapter.Result, bool) {
+	result, ok := sink.rescueResult()
+	if !ok || (execErr == nil && sink.done) || ctx.Err() != nil {
+		return adapter.Result{}, false
+	}
+	if sink.finalizeKilled {
+		slog.Info("adapter outcome finalized mid-stream; ended the turn at the submitted outcome",
+			"step", stepName, "outcome", result.Outcome)
+	} else {
+		slog.Warn("adapter execute stream ended without a clean result; using the adapter's own verdict",
+			"step", stepName, "outcome", result.Outcome, "error", execErr)
+	}
+	sink.applyNeedsReviewOverride(&result)
+	return result, true
+}
+
 // executeWithFallbackStream runs Execute with a per-Execute permission stream
 // for callers (e.g. conformance tests) that bypass SessionManager.
 func executeWithFallbackStream(ctx context.Context, client Client, adapterName string, step *workflow.StepNode, serialized *serializedEventSink, req *v2.ExecuteRequest) (adapter.Result, error) {
@@ -566,22 +591,9 @@ func executeWithFallbackStream(ctx context.Context, client Client, adapterName s
 	cancelPerm()
 	permErr := <-permDone
 
-	// KB-53: same verdict rescue as the active-stream path — an adapter-level
-	// outcome.finalized (or a result that arrived before the stream broke) is
-	// the adapter's own verdict and wins over the synthetic failure paths
-	// below, while the host context is alive.
-	// KB-56: when the stream continued past the outcome, the finalize cut
-	// above cancelled it; the rescued verdict still wins and the logged
-	// cause reflects the cut rather than an apparent stream failure.
-	if result, ok := captureSink.rescueResult(); ok && (execErr != nil || !captureSink.done) && ctx.Err() == nil {
-		if captureSink.finalizeKilled {
-			slog.Info("adapter outcome finalized mid-stream; ended the turn at the submitted outcome",
-				"step", step.Name, "outcome", result.Outcome)
-		} else {
-			slog.Warn("adapter execute stream ended without a clean result; using the adapter's own verdict",
-				"step", step.Name, "outcome", result.Outcome, "error", execErr)
-		}
-		captureSink.applyNeedsReviewOverride(&result)
+	// KB-53/KB-56: see rescueAdapterVerdict — the rescued verdict still wins
+	// after the finalize cut while the host context is alive.
+	if result, ok := rescueAdapterVerdict(captureSink, execErr, ctx, step.Name); ok {
 		return result, nil
 	}
 
@@ -645,25 +657,11 @@ func executeWithActiveStream(ctx context.Context, client Client, step *workflow.
 
 	execErr := client.Execute(execCtx, req, captureSink)
 
-	// KB-53: an adapter-level outcome.finalized (or a result that arrived
-	// before the stream broke) is the adapter's own verdict for the turn and
-	// must win over the synthetic failure the broken stream used to produce.
-	// The rescue applies only while the host context is alive: an engine- or
-	// run-initiated cancellation (step timeout / teardown) keeps the existing
-	// failure semantics. This is where the incident's outcome.finalized
-	// ready_for_review was dropped and the develop step resolved failure.
-	// KB-56: when the stream continued past the outcome, the finalize cut
-	// cancelled it; the rescued verdict still wins and the logged cause
-	// reflects the cut rather than an apparent stream failure.
-	if result, ok := captureSink.rescueResult(); ok && (execErr != nil || !captureSink.done) && ctx.Err() == nil {
-		if captureSink.finalizeKilled {
-			slog.Info("adapter outcome finalized mid-stream; ended the turn at the submitted outcome",
-				"step", step.Name, "outcome", result.Outcome)
-		} else {
-			slog.Warn("adapter execute stream ended without a clean result; using the adapter's own verdict",
-				"step", step.Name, "outcome", result.Outcome, "error", execErr)
-		}
-		captureSink.applyNeedsReviewOverride(&result)
+	// KB-53/KB-56: see rescueAdapterVerdict — this is where the incident's
+	// outcome.finalized ready_for_review was dropped and the develop step
+	// resolved failure. The rescue applies only while the host context is
+	// alive so engine- or run-initiated teardown semantics stay intact.
+	if result, ok := rescueAdapterVerdict(captureSink, execErr, ctx, step.Name); ok {
 		return result, nil
 	}
 
