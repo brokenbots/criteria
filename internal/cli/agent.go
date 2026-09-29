@@ -907,10 +907,13 @@ func runAndDrain(agentCtx, runCtx context.Context, log *slog.Logger, eng *engine
 	// Only wait for resume cycles when the agent is not shutting down. Pending
 	// non-terminal events are still drained below so the server can ack them
 	// and the next process replays by correlation ID.
+	// KB-56: a resume-loop error must not skip the terminal drain below. The
+	// pending step.outcome / RunCompleted tail is what transitions the
+	// server-side run row out of 'running'; an early error return drops that
+	// tail (the observed stuck-'running' shape).
+	var resumeErr error
 	if !shutdown {
-		if err := drainResumeCycles(runCtx, log, loader, sink, runSink, resumeCh, promptCh, state.CriteriaID, state, graph, workflowDir, eng, ""); err != nil {
-			return err
-		}
+		resumeErr = drainResumeCycles(runCtx, log, loader, sink, runSink, resumeCh, promptCh, state.CriteriaID, state, graph, workflowDir, eng, "")
 	}
 
 	drainCtx, drainCancel := context.WithTimeout(context.WithoutCancel(runCtx), terminalDrainTimeout)
@@ -919,6 +922,9 @@ func runAndDrain(agentCtx, runCtx context.Context, log *slog.Logger, eng *engine
 
 	if shutdown {
 		return runCtx.Err()
+	}
+	if resumeErr != nil {
+		return resumeErr
 	}
 	return runErr
 }

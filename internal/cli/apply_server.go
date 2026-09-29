@@ -152,15 +152,21 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 	}
 	log.Info("run completed", "run_id", state.RunID)
 
-	if err := drainResumeCycles(ctx, log, loader, sink, runSink, client.ResumeCh(), client.AgentPromptCh(), client.CriteriaID(), state, graph, workflowDirFromPath(opts.workflowPath), eng, fingerprint); err != nil {
-		return err
-	}
+	// KB-56: capture, don't return on, a resume-loop failure so the terminal
+	// drain below still runs. The pending step.outcome / RunCompleted tail is
+	// what transitions the server-side run row out of 'running'; an early
+	// error return drops that tail (the observed stuck-'running' castle row).
+	resumeErr := drainResumeCycles(ctx, log, loader, sink, runSink, client.ResumeCh(), client.AgentPromptCh(), client.CriteriaID(), state, graph, workflowDirFromPath(opts.workflowPath), eng, fingerprint)
 
 	// Flush queued events before inspecting the terminal result so the server
 	// receives the RunCompleted envelope regardless of success.
 	drainCtx, drainCancel := context.WithTimeout(context.WithoutCancel(ctx), terminalDrainTimeout)
 	client.Drain(drainCtx)
 	drainCancel()
+
+	if resumeErr != nil {
+		return resumeErr
+	}
 
 	if finalState, success, ok := runSink.TerminalSuccess(); ok && !success {
 		return fmt.Errorf("run completed with terminal state %q (success=false)", finalState)
