@@ -172,9 +172,9 @@ type Sink interface {
 
 // Engine executes a single workflow run to a terminal state.
 type Engine struct {
-	graph               *workflow.FSMGraph
-	loader              adapterhost.Loader
-	sink                Sink
+	graph  *workflow.FSMGraph
+	loader adapterhost.Loader
+	sink   Sink
 	// runSink is the redaction-wrapped sink of the active run, set by Run and
 	// RunFrom. Engine.Pause emits its snapshot checkpoints' pointer events
 	// through it (CRI-203); nil until a run starts.
@@ -514,6 +514,21 @@ func (e *Engine) initAdapters(ctx context.Context, sessions *adapterhost.Session
 	return deps, scopeOrder, rlc, nil
 }
 
+// newSessionManager builds the run's adapter session manager with the
+// engine-level wiring (graph, audit, pause drain, sandbox probe override,
+// lockfile) shared by every entrypoint into the run loop.
+func (e *Engine) newSessionManager() *adapterhost.SessionManager {
+	sessions := adapterhost.NewSessionManager(e.loader)
+	sessions.SetGraph(e.graph)
+	sessions.Audit = e.auditWriter
+	sessions.PauseToolCallDrainTimeout = e.pauseToolCallDrainTimeout
+	if e.sandboxProbeOverride != nil {
+		sessions.SetSandboxProbeOverride(e.sandboxProbeOverride)
+	}
+	e.setLockfileOnSessions(sessions)
+	return sessions
+}
+
 // Run executes the workflow until a terminal state is reached, the global
 // step limit is exceeded, or ctx is cancelled.
 //
@@ -523,14 +538,7 @@ func (e *Engine) initAdapters(ctx context.Context, sessions *adapterhost.Session
 // runLoop errors and initAdapters did, leaving provisioning failures
 // non-terminal (an observed crash-replay stayed "running" forever).
 func (e *Engine) Run(ctx context.Context) error {
-	sessions := adapterhost.NewSessionManager(e.loader)
-	sessions.SetGraph(e.graph)
-	sessions.Audit = e.auditWriter
-	sessions.PauseToolCallDrainTimeout = e.pauseToolCallDrainTimeout
-	if e.sandboxProbeOverride != nil {
-		sessions.SetSandboxProbeOverride(e.sandboxProbeOverride)
-	}
-	e.setLockfileOnSessions(sessions)
+	sessions := e.newSessionManager()
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
 	// Create a per-run redaction registry and wire it into the session manager
@@ -600,14 +608,7 @@ func (e *Engine) Run(ctx context.Context) error {
 // a resumed run's record reaches a terminal status even when provisioning or
 // shim startup fails.
 func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt int) error {
-	sessions := adapterhost.NewSessionManager(e.loader)
-	sessions.SetGraph(e.graph)
-	sessions.Audit = e.auditWriter
-	sessions.PauseToolCallDrainTimeout = e.pauseToolCallDrainTimeout
-	if e.sandboxProbeOverride != nil {
-		sessions.SetSandboxProbeOverride(e.sandboxProbeOverride)
-	}
-	e.setLockfileOnSessions(sessions)
+	sessions := e.newSessionManager()
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
 	redactionReg := secrets.NewRegistry()

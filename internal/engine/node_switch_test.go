@@ -79,7 +79,7 @@ func (s *switchSink) OnStepOutcomeDefaulted(string, string, string)             
 func (s *switchSink) OnStepOutcomeUnknown(string, string)                         {}
 
 func (s *switchSink) OnAgentPromptInjected(string, string, string, string, time.Time) {}
-func (s *switchSink) OnCheckpointPointer(*engine.CheckpointPointerEvent) {}
+func (s *switchSink) OnCheckpointPointer(*engine.CheckpointPointerEvent)              {}
 func (s *switchSink) StepEventSink(string) adapter.EventSink                          { return noopAdapterSink{} }
 
 // --- Unit tests for switchNode.Evaluate ---

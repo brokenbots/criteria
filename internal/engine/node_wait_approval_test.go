@@ -167,7 +167,7 @@ func (s *pauseSink) OnStepOutcomeDefaulted(string, string, string)              
 func (s *pauseSink) OnStepOutcomeUnknown(string, string)                          {}
 
 func (s *pauseSink) OnAgentPromptInjected(string, string, string, string, time.Time) {}
-func (s *pauseSink) OnCheckpointPointer(*engine.CheckpointPointerEvent) {}
+func (s *pauseSink) OnCheckpointPointer(*engine.CheckpointPointerEvent)              {}
 func (s *pauseSink) StepEventSink(string) adapter.EventSink                          { return noopAdapterSink{} }
 
 type noopAdapterSink struct{}

@@ -7,10 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/encoding/protojson"
+
 	"github.com/brokenbots/criteria/events"
 	"github.com/brokenbots/criteria/internal/engine"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
-	"google.golang.org/protobuf/encoding/protojson"
 )
 
 type sinkLine struct {

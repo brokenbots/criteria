@@ -45,6 +45,9 @@ func (s *ckPointerSink) pointers() []CheckpointPointerEvent {
 // emitted and the state table's representation).
 func TestEngine_CheckpointPointerEmittedAtStepBoundary(t *testing.T) {
 	tmp := t.TempDir()
+	// Compile before ctx exists: compilation is not cancelable work, and
+	// keeping it out of the run goroutine avoids racing t.* helpers.
+	graph := twoStepGraph(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -59,7 +62,7 @@ func TestEngine_CheckpointPointerEmittedAtStepBoundary(t *testing.T) {
 		}
 	}}
 	go func() {
-		e := New(twoStepGraph(t), &checkpointLoader{handle: h}, sink, WithRunID(testRunID),
+		e := New(graph, &checkpointLoader{handle: h}, sink, WithRunID(testRunID),
 			WithSnapshotBase(tmp))
 		runDone <- e.Run(ctx)
 	}()

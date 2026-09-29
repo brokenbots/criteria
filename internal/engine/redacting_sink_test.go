@@ -45,7 +45,7 @@ type recordingSink struct {
 		deliveredAt                     time.Time
 	}
 	onCheckpointPointers []*CheckpointPointerEvent
-	stepEventSinkStep string
+	stepEventSinkStep    string
 }
 
 func (s *recordingSink) OnRunStarted(workflowName, initialStep string) {

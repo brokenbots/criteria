@@ -103,13 +103,13 @@ func TestIsTerminal(t *testing.T) {
 // field intact. The pointer carries metadata only — never checkpoint bytes.
 func TestNewEnvelope_CheckpointPointer(t *testing.T) {
 	env := events.NewEnvelope("run-1", &pb.CheckpointPointer{
-		StateId:      "copilot.exec/0000000001",
-		AdapterKind:  "copilot",
-		StateSchema:  "session/v1",
-		StateDigest:  "sha256:abcd1234",
-		StateSize:    4096,
-		Granularity:  "step",
-		SessionId:    "copilot.exec",
+		StateId:     "copilot.exec/0000000001",
+		AdapterKind: "copilot",
+		StateSchema: "session/v1",
+		StateDigest: "sha256:abcd1234",
+		StateSize:   4096,
+		Granularity: "step",
+		SessionId:   "copilot.exec",
 	})
 	if got := env.GetCheckpointPointer(); got == nil {
 		t.Fatalf("payload not set as checkpoint_pointer arm: %+v", env)
