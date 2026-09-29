@@ -539,6 +539,31 @@ func ExecuteViaClient(ctx context.Context, client Client, adapterName, sessionID
 	return executeWithActiveStream(ctx, client, step, serialized, req)
 }
 
+// rescueAdapterVerdict applies the adapter's own verdict (captured
+// ExecuteResult or adapter-level outcome.finalized) when the stream did not
+// end cleanly, while the host context is still alive. KB-53: the adapter's
+// verdict for the turn wins over the synthetic failure a broken stream would
+// otherwise produce; an engine- or run-initiated cancellation (step timeout /
+// teardown) keeps the existing failure semantics. KB-56: when the stream
+// continued past the outcome, the finalize cut cancelled it; the rescued
+// verdict still wins and the logged cause reflects the cut rather than an
+// apparent stream failure.
+func rescueAdapterVerdict(sink *executeCaptureSink, execErr error, ctx context.Context, stepName string) (adapter.Result, bool) {
+	result, ok := sink.rescueResult()
+	if !ok || (execErr == nil && sink.done) || ctx.Err() != nil {
+		return adapter.Result{}, false
+	}
+	if sink.finalizeKilled {
+		slog.Info("adapter outcome finalized mid-stream; ended the turn at the submitted outcome",
+			"step", stepName, "outcome", result.Outcome)
+	} else {
+		slog.Warn("adapter execute stream ended without a clean result; using the adapter's own verdict",
+			"step", stepName, "outcome", result.Outcome, "error", execErr)
+	}
+	sink.applyNeedsReviewOverride(&result)
+	return result, true
+}
+
 // executeWithFallbackStream runs Execute with a per-Execute permission stream
 // for callers (e.g. conformance tests) that bypass SessionManager.
 func executeWithFallbackStream(ctx context.Context, client Client, adapterName string, step *workflow.StepNode, serialized *serializedEventSink, req *v2.ExecuteRequest) (adapter.Result, error) {
@@ -550,13 +575,14 @@ func executeWithFallbackStream(ctx context.Context, client Client, adapterName s
 	defer cancelPerm()
 
 	captureSink := &executeCaptureSink{
-		sink:         serialized,
-		policy:       NewPolicy(step.AllowTools),
-		allowTools:   step.AllowTools,
-		adapterName:  adapterName,
-		outputSchema: step.OutputSchema,
-		requests:     requests,
-		ctx:          execCtx,
+		sink:            serialized,
+		policy:          NewPolicy(step.AllowTools),
+		allowTools:      step.AllowTools,
+		adapterName:     adapterName,
+		outputSchema:    step.OutputSchema,
+		requests:        requests,
+		ctx:             execCtx,
+		onTurnFinalized: cancelExec,
 	}
 
 	execErr := client.Execute(execCtx, req, captureSink)
@@ -565,14 +591,9 @@ func executeWithFallbackStream(ctx context.Context, client Client, adapterName s
 	cancelPerm()
 	permErr := <-permDone
 
-	// KB-53: same verdict rescue as the active-stream path — an adapter-level
-	// outcome.finalized (or a result that arrived before the stream broke) is
-	// the adapter's own verdict and wins over the synthetic failure paths
-	// below, while the host context is alive.
-	if result, ok := captureSink.rescueResult(); ok && (execErr != nil || !captureSink.done) && ctx.Err() == nil {
-		slog.Warn("adapter execute stream ended without a clean result; using the adapter's own verdict",
-			"step", step.Name, "outcome", result.Outcome, "error", execErr)
-		captureSink.applyNeedsReviewOverride(&result)
+	// KB-53/KB-56: see rescueAdapterVerdict — the rescued verdict still wins
+	// after the finalize cut while the host context is alive.
+	if result, ok := rescueAdapterVerdict(captureSink, execErr, ctx, step.Name); ok {
 		return result, nil
 	}
 
@@ -625,19 +646,22 @@ func executeWithActiveStream(ctx context.Context, client Client, step *workflow.
 		outputSchema: step.OutputSchema,
 	}
 
-	execErr := client.Execute(ctx, req, captureSink)
+	// KB-56: give the Execute stream its own cancellable layer so an adapter
+	// outcome.finalized mid-stream can end the turn at the submitted outcome
+	// instead of letting the stream's continuation keep the turn open until a
+	// watchdog tears the session down. Cancelling this layer (not the caller's
+	// context) keeps engine- or run-initiated teardown semantics intact.
+	execCtx, cancelExec := context.WithCancel(ctx)
+	defer cancelExec()
+	captureSink.onTurnFinalized = cancelExec
 
-	// KB-53: an adapter-level outcome.finalized (or a result that arrived
-	// before the stream broke) is the adapter's own verdict for the turn and
-	// must win over the synthetic failure the broken stream used to produce.
-	// The rescue applies only while the host context is alive: an engine- or
-	// run-initiated cancellation (step timeout / teardown) keeps the existing
-	// failure semantics. This is where the incident's outcome.finalized
-	// ready_for_review was dropped and the develop step resolved failure.
-	if result, ok := captureSink.rescueResult(); ok && (execErr != nil || !captureSink.done) && ctx.Err() == nil {
-		slog.Warn("adapter execute stream ended without a clean result; using the adapter's own verdict",
-			"step", step.Name, "outcome", result.Outcome, "error", execErr)
-		captureSink.applyNeedsReviewOverride(&result)
+	execErr := client.Execute(execCtx, req, captureSink)
+
+	// KB-53/KB-56: see rescueAdapterVerdict — this is where the incident's
+	// outcome.finalized ready_for_review was dropped and the develop step
+	// resolved failure. The rescue applies only while the host context is
+	// alive so engine- or run-initiated teardown semantics stay intact.
+	if result, ok := rescueAdapterVerdict(captureSink, execErr, ctx, step.Name); ok {
 		return result, nil
 	}
 
@@ -717,6 +741,16 @@ type executeCaptureSink struct {
 	// synthetic "failure" the dead stream used to produce.
 	finalizedOutcome string
 	finalizedPayload map[string]any
+
+	// KB-56: a finalized outcome is turn-terminal. onTurnFinalized (when
+	// non-nil) cancels the Execute stream the moment a verdict is recorded,
+	// so the host stops consuming the turn at the outcome instead of leaving
+	// it open while the adapter keeps streaming past its submit. The
+	// cancellation surfaces as a Canceled execErr, which the KB-53 rescue
+	// resolves to the captured verdict. finalizeKilled records that this cut
+	// (not an external failure) ended the stream, for log differentiation.
+	onTurnFinalized func()
+	finalizeKilled  bool
 
 	// Chunk reassembly buffers for the Execute stream.
 	// adapterChunkBuf accumulates AdapterEvent.payload_json fragments.
@@ -884,7 +918,13 @@ func (s *executeCaptureSink) decodeOutputsJSON(b []byte) (map[string]cty.Value, 
 // is handled session-scoped by permissionInterceptSink in SessionManager.Execute.
 func (s *executeCaptureSink) emitAdapterEvent(adapterEvt *v2.AdapterEvent) error {
 	if adapterEvt.GetEventKind() == adapterEventFinalizedOutcome {
-		s.recordFinalizedOutcome(adapterEvt.GetPayload().AsMap())
+		// KB-56: a recorded verdict ends the turn even when the stream
+		// continues past the submit. Both the continue-streaming and the
+		// continue-then-abort shapes resolve to the adapter's verdict; the
+		// remaining stream is cancelled at the cut below.
+		if s.recordFinalizedOutcome(adapterEvt.GetPayload().AsMap()) {
+			s.cutStreamAtFinalized()
+		}
 	}
 	if adapterEvt.GetEventKind() == "permission.request" {
 		if s.requests != nil {
@@ -1002,15 +1042,34 @@ func (s *executeCaptureSink) emitDenied(requestID, tool, reason string) {
 
 // recordFinalizedOutcome captures an adapter-level outcome.finalized event
 // (last one wins). The payload is redacted upstream; here only the outcome
-// name and reason pass through.
-func (s *executeCaptureSink) recordFinalizedOutcome(payload map[string]any) {
+// name and reason pass through. It reports whether a usable verdict was
+// recorded: nil payloads and outcome-less payloads never finalize the turn.
+func (s *executeCaptureSink) recordFinalizedOutcome(payload map[string]any) bool {
 	if payload == nil {
-		return
+		return false
 	}
 	if outcome, ok := payload["outcome"].(string); ok && outcome != "" {
 		s.finalizedOutcome = outcome
 		s.finalizedPayload = payload
+		return true
 	}
+	return false
+}
+
+// cutStreamAtFinalized treats the adapter-level outcome as turn-terminal
+// (KB-56): the turn is over when the outcome lands, so the remaining stream
+// (e.g. the model's wrap-up summary after the submit_outcome tool returns)
+// is cancelled instead of keeping the turn open until a watchdog tears the
+// session down and the submitted verdict is dropped. Cancelling the Execute
+// stream's own context layer ends the adapter call promptly while the host
+// context stays alive, so the KB-53 rescue resolves the step to the verdict
+// captured above.
+func (s *executeCaptureSink) cutStreamAtFinalized() {
+	if s.onTurnFinalized == nil || s.finalizeKilled {
+		return
+	}
+	s.finalizeKilled = true
+	s.onTurnFinalized()
 }
 
 // rescueResult returns the adapter's own verdict when the Execute stream ended
