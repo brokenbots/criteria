@@ -332,6 +332,53 @@ func TestServerHostHeaderValidation(t *testing.T) {
 	}
 }
 
+// TestServerOriginLoopbackOnly pins the CRI-255 Origin gate: the control
+// verbs are a write surface, and a browser fires cross-site simple-request
+// POSTs without a preflight, so any non-loopback Origin is refused 403;
+// loopback Origins (the local UI) and Origin-less clients (CLI, curl) pass.
+func TestServerOriginLoopbackOnly(t *testing.T) {
+	srv := newTestServer(t)
+	h := srv.Handler()
+
+	for _, origin := range []string{
+		"https://evil.example",
+		"http://10.0.0.5:3000",
+		"http://192.168.1.20:8080",
+		"http://app.attacker.dev",
+	} {
+		req := httptest.NewRequest("PATCH", "/runview/api/runs/r-done/status", http.NoBody)
+		req.Host = "127.0.0.1:0"
+		req.Header.Set("Origin", origin)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("Origin %q = %d, want 403", origin, rec.Code)
+		}
+	}
+
+	// Loopback origins keep working, and Origin-less requests pass untouched.
+	for _, tc := range []struct {
+		origin string
+		want   int
+	}{
+		{origin: "", want: http.StatusNoContent},
+		{origin: "http://127.0.0.1:8080", want: http.StatusNoContent},
+		{origin: "http://localhost:5173", want: http.StatusNoContent},
+		{origin: "http://[::1]:9000", want: http.StatusNoContent},
+	} {
+		get := httptest.NewRequest("GET", "/runview/api/health", http.NoBody)
+		get.Host = "127.0.0.1:0"
+		if tc.origin != "" {
+			get.Header.Set("Origin", tc.origin)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, get)
+		if rec.Code != tc.want {
+			t.Errorf("Origin %q → %d, want %d", tc.origin, rec.Code, tc.want)
+		}
+	}
+}
+
 // TestServerViewer serves the embedded bundle under /runview/ with SPA
 // fallback for unknown app paths.
 func TestServerViewer(t *testing.T) {

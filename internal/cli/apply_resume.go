@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	errSignalWait    = "signal waits are resolved via the run's local control listener (started by apply), --server <url>, or the local-mode env CRITERIA_LOCAL_APPROVAL={stdin|file|env|auto-approve}"
+	errSignalWait   = "signal waits are resolved via the run's local control listener (started by apply), --server <url>, or the local-mode env CRITERIA_LOCAL_APPROVAL={stdin|file|env|auto-approve}"
 	errApprovalNode = "approval nodes are resolved via the run's local control listener (started by apply), --server <url>, or the local-mode env CRITERIA_LOCAL_APPROVAL={stdin|file|env|auto-approve}"
 )
 
@@ -35,6 +35,9 @@ type pauseTracker struct {
 	approvalDetail    *approvalDetail
 	signalDetail      *signalDetail
 	PauseCheckpointFn func(node string)
+	// OnNewPause, when set, is invoked at the start of every new pause
+	// cycle (the control bus clears stale parked resume tokens/decisions).
+	OnNewPause func()
 }
 
 type approvalDetail struct {
@@ -47,6 +50,9 @@ type signalDetail struct {
 }
 
 func (t *pauseTracker) OnRunPaused(node, mode, signal string) {
+	if t.OnNewPause != nil {
+		t.OnNewPause()
+	}
 	t.Sink.OnRunPaused(node, mode, signal)
 	t.mu.Lock()
 	t.pausedNode = node

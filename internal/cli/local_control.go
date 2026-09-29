@@ -51,14 +51,47 @@ type localRunControl struct {
 	graph   *workflow.FSMGraph
 	tracker *pauseTracker
 
-	mu         sync.Mutex
-	eng        *engine.Engine
+	mu  sync.Mutex
+	eng *engine.Engine
+	// resumeReq / payloadReq are the mailbox channels for boundary-resume
+	// tokens and approval/signal decisions (capacity 1 each). They are
+	// created once and persist across pause cycles so a decision delivered
+	// in the window between the pause landing (tracker updated) and the
+	// drain loop taking over is accepted and parked, not refused; each new
+	// pause cycle drains stale parked entries via the tracker's OnNewPause
+	// hook.
 	resumeReq  chan struct{}
 	payloadReq chan map[string]string
 }
 
 func newLocalRunControl(runID string, graph *workflow.FSMGraph, tracker *pauseTracker, eng *engine.Engine) *localRunControl {
-	return &localRunControl{runID: runID, graph: graph, tracker: tracker, eng: eng}
+	c := &localRunControl{
+		runID:      runID,
+		graph:      graph,
+		tracker:    tracker,
+		eng:        eng,
+		resumeReq:  make(chan struct{}, 1),
+		payloadReq: make(chan map[string]string, 1),
+	}
+	tracker.OnNewPause = c.drainPendingResumes
+	return c
+}
+
+// drainPendingResumes drops stale parked resume tokens and decisions at the
+// start of a new pause cycle: anything parked while the previous pause was
+// being resolved (e.g. a racing decision that lost to a file-mode resumer)
+// must not leak into this cycle.
+func (c *localRunControl) drainPendingResumes() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	select {
+	case <-c.resumeReq:
+	default:
+	}
+	select {
+	case <-c.payloadReq:
+	default:
+	}
 }
 
 // setEngine swaps the engine the control RPCs address after a resume cycle
@@ -97,61 +130,62 @@ func (c *localRunControl) pause(ctx context.Context) error {
 	}
 }
 
-// resume lands the boundary-pause ResumeRun verb. The token is consumed by
-// the drain loop's awaitBoundaryResume, which then drives the engine to the
-// next pause point or terminal state — the response returns as soon as the
-// resume was accepted, not when the run completes.
+// resume lands the boundary-pause ResumeRun verb. The token is parked in the
+// mailbox and consumed by the drain loop's awaitBoundaryResume, which then
+// drives the engine to the next pause point or terminal state — the response
+// returns as soon as the resume was accepted, not when the run completes.
 func (c *localRunControl) resume() error {
 	c.mu.Lock()
-	tracker, ch := c.tracker, c.resumeReq
-	c.mu.Unlock()
-	if ch == nil {
-		if node := tracker.PausedAt(); node != "" {
-			return fmt.Errorf("run is paused at node %q awaiting an approval or signal decision: deliver it via ResolveResume", node)
-		}
-		return errRunNotPaused
+	defer c.mu.Unlock()
+	if c.eng == nil {
+		return errRunNotRunning
 	}
+	if node := c.tracker.PausedAt(); isApprovalOrSignalNode(c.graph, node) {
+		return fmt.Errorf("run is paused at node %q awaiting an approval or signal decision: deliver it via ResolveResume", node)
+	}
+	// Replace any parked token: a repeated ResumeRun is idempotent.
 	select {
-	case ch <- struct{}{}:
-		return nil
+	case <-c.resumeReq:
 	default:
-		return errRunNotPaused
 	}
+	c.resumeReq <- struct{}{}
+	return nil
 }
 
 // resolveResume delivers an approval decision or signal outcome. The decision
-// is validated against the paused node's contract before it is handed to the
-// drain loop: an invalid payload would otherwise fail the run inside the
-// engine when the resume re-evaluates the node.
+// is validated against the paused node's contract before it is parked in the
+// mailbox for the drain loop: an invalid payload would otherwise fail the run
+// inside the engine when the resume re-evaluates the node. A decision
+// delivered in the window between the pause landing and the drain loop taking
+// over is parked and accepted too (the mailbox persists across that gap).
 func (c *localRunControl) resolveResume(signal string, payload map[string]string) (accepted bool, reason string) {
 	c.mu.Lock()
-	tracker, graph, ch := c.tracker, c.graph, c.payloadReq
-	c.mu.Unlock()
+	defer c.mu.Unlock()
 
-	pausedNode := tracker.PausedAt()
+	pausedNode := c.tracker.PausedAt()
 	if pausedNode == "" {
 		return false, "run_not_paused"
 	}
 	if signal == "" {
 		return false, "no_pending_signal"
 	}
-	if target, ok := resolveSignalTarget(graph, signal); !ok {
+	target, ok := resolveSignalTarget(c.graph, signal)
+	if !ok {
 		return false, "no_pending_signal"
-	} else if target != pausedNode {
+	}
+	if target != pausedNode {
 		return false, "signal_mismatch"
 	}
-	if reason := validatePausePayload(graph, pausedNode, payload); reason != "" {
+	if reason := validatePausePayload(c.graph, pausedNode, payload); reason != "" {
 		return false, reason
 	}
-	if ch == nil {
-		return false, "run_not_paused"
-	}
+	// Replace any parked decision: a repeated ResolveResume is idempotent.
 	select {
-	case ch <- payload:
-		return true, "ok"
+	case <-c.payloadReq:
 	default:
-		return false, "run_not_paused"
 	}
+	c.payloadReq <- payload
+	return true, "ok"
 }
 
 // resolveSignalTarget maps a signal name to the paused node that satisfies
@@ -209,51 +243,31 @@ func validatePausePayload(graph *workflow.FSMGraph, node string, payload map[str
 	return ""
 }
 
-// awaitBoundaryResume registers the resume token channel for the current
-// boundary pause. ok reports whether a resume (rather than a context
-// cancellation) arrived.
+// awaitBoundaryResume blocks until a boundary-resume token arrives (parked by
+// ResumeRun) or the context is canceled. ok reports whether a resume (rather
+// than a context cancellation) arrived.
 func (c *localRunControl) awaitBoundaryResume(ctx context.Context) bool {
-	ch := make(chan struct{}, 1)
 	c.mu.Lock()
-	c.resumeReq = ch
+	ch := c.resumeReq
 	c.mu.Unlock()
-	registered := func() {
-		c.mu.Lock()
-		if c.resumeReq == ch {
-			c.resumeReq = nil
-		}
-		c.mu.Unlock()
-	}
 	select {
 	case <-ch:
-		registered()
 		return true
 	case <-ctx.Done():
-		registered()
 		return false
 	}
 }
 
-// awaitResolveResume registers the payload channel for the current
-// approval/signal node pause. ok reports whether a payload arrived.
+// awaitResolveResume blocks until an approval/signal decision arrives (parked
+// by ResolveResume, possibly before this call) or the context is canceled.
 func (c *localRunControl) awaitResolveResume(ctx context.Context) (map[string]string, bool) {
-	ch := make(chan map[string]string, 1)
 	c.mu.Lock()
-	c.payloadReq = ch
+	ch := c.payloadReq
 	c.mu.Unlock()
-	registered := func() {
-		c.mu.Lock()
-		if c.payloadReq == ch {
-			c.payloadReq = nil
-		}
-		c.mu.Unlock()
-	}
 	select {
 	case payload := <-ch:
-		registered()
 		return payload, true
 	case <-ctx.Done():
-		registered()
 		return nil, false
 	}
 }
