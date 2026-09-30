@@ -273,14 +273,61 @@ type allowlistPolicy struct {
 func (p *allowlistPolicy) Decide(req PermissionRequest) (allow bool, reason string) {
 	targets := permissionMatchTargets(req)
 	bad := &badPatternTracker{}
-	for _, pat := range p.patterns {
-		for _, target := range targets {
-			if matched, reason := p.matchPattern(pat, target, bad); matched {
-				return true, reason
+	// KB-57c: a compound request (2+ per-segment targets) is granted only when
+	// EVERY segment matches some allow entry — a single matching segment must
+	// never carry a compound whose other segments would be denied standalone
+	// ("git status && make ci" stays denied even though "shell:git status *"
+	// matches its first segment). Single-target requests keep legacy
+	// first-match-wins semantics byte-for-byte.
+	compound := len(targets) > 1 && reqIsCompound(req.Details)
+	if !compound {
+		for _, pat := range p.patterns {
+			for _, target := range targets {
+				if matched, reason := p.matchPattern(pat, target, bad); matched {
+					return true, reason
+				}
+			}
+		}
+		return false, bad.denialReason()
+	}
+	for _, target := range targets {
+		if target == strings.TrimSpace(req.Tool) {
+			continue // the bare tool-kind target is not a command segment
+		}
+		ok := false
+		for _, pat := range p.patterns {
+			if matched, _ := p.matchPattern(pat, target, bad); matched {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return false, "no matching allow_tools entry for every segment of the compound command"
+		}
+	}
+	// Every segment matched some entry; report with the first segment's reason
+	// for the event stream.
+	for _, target := range targets {
+		for _, pat := range p.patterns {
+			if matched, r := p.matchPattern(pat, target, bad); matched {
+				return true, r
 			}
 		}
 	}
 	return false, bad.denialReason()
+}
+
+// reqIsCompound reports whether the request's own fingerprints contained a
+// compound command (the same segmentation rule requestFingerprints used).
+func reqIsCompound(details map[string]string) bool {
+	for _, key := range []string{"command", "commands", "full_command_text"} {
+		if v := strings.TrimSpace(details[key]); v != "" {
+			if _, ok := segmentCompoundCommand(v); ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // matchPattern evaluates a single pattern against a target. It returns (true, reason)
@@ -358,6 +405,17 @@ func permissionMatchTargets(req PermissionRequest) []string {
 // requestFingerprints extracts optional arg/command fingerprints from adapter
 // request details so callers can allow specific subcommands like
 // "shell:git status" while denying broad "shell:*".
+//
+// KB-57c (compound permission support): compound commands (&& ; | || newlines)
+// are ADDITIONALLY segmented, and every segment is emitted as its own
+// fingerprint target. The allowlist policy requires only ONE target to match
+// (first-match-wins), so whole-text matching alone would let
+// "git status && make ci" through on the strength of its first segment alone.
+// With per-segment targets, an allowlist entry matched by any segment grants
+// the request ONLY if every other segment also matches some entry — enforced
+// by allowlistPolicy.Decide: a segmented request is granted when EVERY target
+// matches, never when only one does. Single (non-compound) commands keep the
+// legacy whole-text semantics byte-for-byte.
 func requestFingerprints(details map[string]string) []string {
 	if len(details) == 0 {
 		return nil
@@ -377,7 +435,130 @@ func requestFingerprints(details map[string]string) []string {
 	if v := strings.TrimSpace(details["full_command_text"]); v != "" {
 		out = append(out, v)
 	}
-	return dedupeStrings(out)
+	out = dedupeStrings(out)
+
+	// KB-57c: emit per-segment targets for compound commands. A segmented
+	// result replaces the whole-text target so a compound can never ride in
+	// on one matching segment.
+	if len(out) == 0 {
+		return out
+	}
+	segmented := make([]string, 0, len(out))
+	compound := false
+	for _, v := range out {
+		segs, isCompound := segmentCompoundCommand(v)
+		if isCompound {
+			compound = true
+			segmented = append(segmented, segs...)
+			continue
+		}
+		segmented = append(segmented, v)
+	}
+	if compound {
+		out = dedupeStrings(segmented)
+	}
+	return out
+}
+
+// compoundSeparators are the shell control operators that separate independent
+// commands in one line. Quotes are respected by the scanner: a separator
+// inside single or double quotes (or escaped with a backslash) is literal
+// text, not a split point. Redirection operators alone (>, >>, <, 2>&1) do
+// NOT split — they are part of the command's own text and the whole-text
+// fingerprint still matches patterns written for them.
+var compoundSeparators = []string{"&&", "||", ";", "\n", "|"}
+
+// segmentCompoundCommand splits a compound command line into its segments.
+// Returns (nil, false) when the text contains no unquoted compound separator —
+// callers keep the legacy whole-text target. Empty segments (e.g. from ";;")
+// are dropped. Quote-aware: separators inside '...' or "..." never split.
+func segmentCompoundCommand(text string) ([]string, bool) {
+	segs := make([]string, 0, 4)
+	for _, line := range splitRespectingQuotes(text) {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" {
+			segs = append(segs, trimmed)
+		}
+	}
+	if len(segs) <= 1 {
+		return nil, false
+	}
+	return segs, true
+}
+
+// splitRespectingQuotes splits text on unquoted compound separators.
+// Handles single quotes, double quotes, and backslash escapes. A separator
+// inside quotes is literal; a partial separator at a quote boundary does not
+// split. Trailing separators yield no empty segment (trimmed above).
+func splitRespectingQuotes(text string) []string {
+	var segs []string
+	var cur strings.Builder
+	var quote rune
+	escaped := false
+	match := func(pos int, sep string) bool {
+		if pos+len(sep) > len(text) {
+			return false
+		}
+		if text[pos:pos+len(sep)] != sep {
+			return false
+		}
+		// A multi-char separator whose chars straddle a quote boundary is
+		// handled naturally: the scan consumes one char at a time, so a
+		// separator is only tested when the scanner sits at an unquoted
+		// position with no pending escape.
+		return quote == 0 && !escaped
+	}
+	for i := 0; i < len(text); {
+		c := rune(text[i])
+		if escaped {
+			cur.WriteRune(c)
+			escaped = false
+			i++
+			continue
+		}
+		if c == '\\' && text[i:] != "\\" {
+			// escape outside quotes: next char is literal. (Inside quotes,
+			// backslash is also passed through literally except for the
+			// closing quote check below.)
+			cur.WriteRune(c)
+			escaped = true
+			i++
+			continue
+		}
+		if quote == 0 && (c == '\'' || c == '"') {
+			quote = c
+			cur.WriteRune(c)
+			i++
+			continue
+		}
+		if quote != 0 && c == quote {
+			quote = 0
+			cur.WriteRune(c)
+			i++
+			continue
+		}
+		if quote == 0 {
+			hit := false
+			for _, sep := range compoundSeparators {
+				if match(i, sep) {
+					segs = append(segs, strings.TrimSpace(cur.String()))
+					cur.Reset()
+					i += len(sep)
+					hit = true
+					break
+				}
+			}
+			if hit {
+				continue
+			}
+		}
+		cur.WriteRune(c)
+		i++
+	}
+	if tail := strings.TrimSpace(cur.String()); tail != "" {
+		segs = append(segs, tail)
+	}
+	return segs
 }
 
 func dedupeStrings(values []string) []string {
