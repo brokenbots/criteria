@@ -215,3 +215,95 @@ func TestKB57_FailureWithoutDeclaredOutcomeIsVisible(t *testing.T) {
 		t.Errorf("step outcomes = %v; want push_wip_checkpoint=failure (an empty outcome is invisible to event consumers)", outcomes)
 	}
 }
+
+// kb57CommentTeardownWorkflow pins the comment-step variant of the same
+// drop: the run's evidence-comment bookkeeping, shaped like the intake
+// wrapper's comment_handler_started (a comment_* step that declares only a
+// success outcome). Its shell work posts the evidence comment and delivers
+// the ExecuteResult while the engine is winding the session down; pre-KB-57
+// the rescue rejected the delivered verdict under the cancelled host
+// context, the attempt was recorded with an empty outcome and then reported
+// as failed — evidence comments landed but every run recorded the comment
+// step as failed, which is how the comment/evidence steps "always failed"
+// across the wave. The delivered verdict must win so the step resolves with
+// the adapter's real outcome, end to end.
+const kb57CommentTeardownWorkflow = `
+workflow {
+  name = "kb57-comment"
+  version = "0.1"
+  initial_state = "develop"
+  target_state  = "done"
+}
+step "develop" {
+  target = adapter.copilot
+  outcome "ready_for_review" { next = step.comment_handler_started }
+  outcome "failure"          { next = step.comment_handler_failed }
+}
+step "comment_handler_started" {
+  target = adapter.shell
+  timeout = "40ms"
+  outcome "success" { next = state.done }
+}
+step "comment_handler_failed" {
+  target = adapter.pipeline
+  outcome "success" { next = state.done }
+}
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+
+// TestKB57_CommentStepOutcomeSurvivesTeardownRace: the evidence-comment
+// step completes its work and delivers its ExecuteResult inside the
+// engine's wind-down window; the step must resolve to the delivered verdict
+// (visible step.outcome, chain continuing), never an empty or inverted
+// outcome, and never lost to the teardown race.
+func TestKB57_CommentStepOutcomeSurvivesTeardownRace(t *testing.T) {
+	g := compile(t, kb57CommentTeardownWorkflow)
+	sink := &kb53CopilotSink{fakeSink: &fakeSink{}}
+
+	if err := NewTestEngine(g, kb57LoaderWithShell(&kb57TeardownShellClient{}), sink).Run(context.Background()); err != nil {
+		t.Fatalf("run: %v (the comment step's delivered ExecuteResult must survive the teardown race)", err)
+	}
+	if sink.terminal != "done" || !sink.terminalOK {
+		t.Errorf("terminal state %q success=%v; want done/true", sink.terminal, sink.terminalOK)
+	}
+
+	outcomes, transitions, _ := sink.snapshot()
+
+	// The comment step resolved to the adapter's verdict — visible and
+	// truthful, not the empty outcome the rescued-then-dropped verdict
+	// used to produce.
+	found := false
+	for _, o := range outcomes {
+		if o == "comment_handler_started=success" {
+			found = true
+		}
+		if o == "comment_handler_started=" || o == "comment_handler_started=failure" {
+			t.Errorf("step outcomes = %v; the teardown race must not erase or invert the delivered comment-step outcome", outcomes)
+		}
+	}
+	if !found {
+		t.Fatalf("step outcomes = %v; want comment_handler_started=success (evidence comment posted, result delivered)", outcomes)
+	}
+
+	// The chain must have continued: develop crossed into the evidence
+	// comment and the run reached the terminal state.
+	joined := ""
+	for _, tr := range transitions {
+		joined += tr + " "
+	}
+	for _, wantEdge := range []string{
+		"develop->comment_handler_started",
+		"comment_handler_started->done",
+	} {
+		if !contains(joined, wantEdge) {
+			t.Errorf("transitions %v; want edge %q", transitions, wantEdge)
+		}
+	}
+
+	if sink.failure != "" {
+		t.Errorf("OnRunFailed(%q); the run must complete successfully once the comment step's outcome lands", sink.failure)
+	}
+}
