@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -38,6 +39,28 @@ func answersApplyOpts(workflowPath, answersPath string, tty bool, stdin io.Reade
 		stderr:       stderr,
 		log:          log,
 	}
+}
+
+// lockedBuf is a goroutine-safe wrapper around bytes.Buffer for use as the
+// Stderr capture writer when runApply is driven from a separate goroutine
+// (runApplyAsync). bytes.Buffer.String/Write are not safe for concurrent use,
+// and the race detector flags the test-side poll loop against the run
+// goroutine's fmt.Fprintf into the prompt writer.
+type lockedBuf struct {
+	sync.Mutex
+	bytes.Buffer
+}
+
+func (l *lockedBuf) Write(p []byte) (int, error) {
+	l.Lock()
+	defer l.Unlock()
+	return l.Buffer.Write(p)
+}
+
+func (l *lockedBuf) String() string {
+	l.Lock()
+	defer l.Unlock()
+	return l.Buffer.String()
 }
 
 func TestApplyLocal_AnswersApproved(t *testing.T) {
@@ -264,7 +287,7 @@ func TestApplyLocal_PromptLosesToControlRPC(t *testing.T) {
 	defer stdinW.Close()
 	defer stdinR.Close()
 
-	var stderrBuf bytes.Buffer
+	var stderrBuf lockedBuf
 	wf := filepath.Join("testdata", "local_approval_simple")
 	opts := answersApplyOpts(wf, "", true, stdinR, &stderrBuf, nil)
 	errCh := runApplyAsync(&opts)
