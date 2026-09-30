@@ -429,6 +429,33 @@ func TestServerLiveOverSocket(t *testing.T) {
 	}
 }
 
+// TestServerStopBeforeServeClosesListener covers the stop-versus-serve
+// race apply hits on a fast-terminal run: startLocalRunStateServer spawns
+// the Serve goroutine immediately before returning, so a very quick run can
+// call Stop before Serve has begun. http.Server.Shutdown only closes
+// listeners Serve has registered, so Stop must close the stored listener
+// directly — otherwise a later Serve accepts forever and the caller's
+// serveErr drain never returns.
+func TestServerStopBeforeServeClosesListener(t *testing.T) {
+	srv := newTestServer(t)
+	ln, err := srv.Listen("127.0.0.1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Stop(context.Background())
+
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.Serve(ln) }()
+	select {
+	case err := <-serveErr:
+		if err == nil {
+			t.Logf("serve returned nil on already-closed listener")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Serve did not return after a Stop that raced ahead of it")
+	}
+}
+
 // TestServerStopCancelsContext mirrors the apply wiring: the stop verb
 // cancels a context (the engine path turns that into a terminal event).
 func TestServerStopCancelsContext(t *testing.T) {

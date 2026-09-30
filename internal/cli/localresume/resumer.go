@@ -11,6 +11,10 @@
 // or the deprecated $CRITERIA_STATE_DIR alias) at runs/<runID>/approvals/<node>.json
 // for reattach safety. On reattach, the persisted decision is reused without
 // re-prompting the operator.
+//
+// The fifth resolution source is programmatically constructed (ModeAnswers,
+// answers.go): the apply command's --answers <file> flag supplies
+// pre-populated decisions, consumed without prompting.
 package localresume
 
 import (
@@ -130,8 +134,9 @@ type persistedDecision struct {
 }
 
 type resumer struct {
-	mode Mode
-	opts Options
+	mode    Mode
+	opts    Options
+	answers map[string]AnswerEntry
 }
 
 // ResumeApproval resolves an approval node using the configured mode.
@@ -155,6 +160,8 @@ func (r *resumer) ResumeApproval(ctx context.Context, runID, name string, approv
 		payload, err = r.resolveApprovalEnv(name)
 	case ModeAutoApprove:
 		payload = r.resolveApprovalAutoApprove(name)
+	case ModeAnswers:
+		payload, err = r.resolveApprovalAnswers(name)
 	default:
 		return nil, fmt.Errorf("unknown local approval mode %q", r.mode)
 	}
@@ -200,6 +207,8 @@ func (r *resumer) ResumeSignal(ctx context.Context, runID, nodeName, signalName 
 		payload, err = r.resolveSignalEnv(nodeName)
 	case ModeAutoApprove:
 		payload = r.resolveSignalAutoApprove(nodeName, signalName)
+	case ModeAnswers:
+		payload, err = r.resolveSignalAnswers(nodeName)
 	default:
 		return nil, fmt.Errorf("unknown local approval mode %q", r.mode)
 	}
@@ -239,6 +248,10 @@ func validateOutcome(nodeName, outcome string, validOutcomes []string) error {
 
 // --- stdin mode ---
 
+// resolveApprovalStdin prompts interactively for an approval decision
+// (CRI-256 path 1): it shows the node name, approvers, and reason, then loops
+// until the operator enters a confirm or an explicit reject. Rejection offers
+// an optional reason that rides the resume payload into the failure surface.
 func (r *resumer) resolveApprovalStdin(ctx context.Context, name string, approvers []string, reason string) (map[string]string, error) {
 	fmt.Fprintf(r.opts.Stderr, "\n[criteria] Approval required for node %q\n", name)
 	if len(approvers) > 0 {
@@ -247,31 +260,65 @@ func (r *resumer) resolveApprovalStdin(ctx context.Context, name string, approve
 	if reason != "" {
 		fmt.Fprintf(r.opts.Stderr, "  Reason: %s\n", reason)
 	}
-	fmt.Fprintf(r.opts.Stderr, "Approve? (y/n) ")
+	// One persistent reader for the whole interactive session: the re-prompt
+	// loop and the rejection-reason read must keep buffered input across calls
+	// (a fresh bufio per read would discard piped-ahead lines).
+	stdin := bufio.NewReader(r.opts.Stdin)
+	for {
+		fmt.Fprintf(r.opts.Stderr, "Approve? (y/n) ")
 
-	decision, err := readLineWithContext(ctx, r.opts.Stdin)
+		decision, err := readLineWithContext(ctx, stdin)
+		if err != nil {
+			// Context cancellation/deadline: propagate as an error so the run
+			// aborts cleanly and no rejection is persisted.
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return nil, err
+			}
+			// EOF means non-interactive input (e.g., piped empty stdin) → rejected.
+			if errors.Is(err, io.EOF) {
+				return map[string]string{"decision": "rejected", "reason": "non-interactive input"}, nil
+			}
+			// Any other read error (bad FD, I/O error, scanner overflow) should abort
+			// cleanly without persisting a decision.
+			return nil, fmt.Errorf("approval %q: read stdin: %w", name, err)
+		}
+		switch strings.ToLower(strings.TrimSpace(decision)) {
+		case "y", "yes":
+			return map[string]string{"decision": "approved"}, nil
+		case "n", "no":
+			return r.rejectApprovalWithReason(ctx, stdin, name)
+		default:
+			fmt.Fprintf(r.opts.Stderr, "  Unrecognized input %q; enter \"y\" (or \"yes\") to approve or \"n\" (or \"no\") to reject.\n", decision)
+		}
+	}
+}
+
+// rejectApprovalWithReason completes an explicit reject by reading an optional
+// rejection reason. EOF (closed stdin) yields the rejection without a reason:
+// the operator's "no" is already a complete decision.
+func (r *resumer) rejectApprovalWithReason(ctx context.Context, stdin *bufio.Reader, name string) (map[string]string, error) {
+	fmt.Fprintf(r.opts.Stderr, "Rejection reason (press Enter to skip): ")
+	line, err := readLineWithContext(ctx, stdin)
 	if err != nil {
-		// Context cancellation/deadline: propagate as an error so the run
-		// aborts cleanly and no rejection is persisted.
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, err
 		}
-		// EOF means non-interactive input (e.g., piped empty stdin) → rejected.
-		if errors.Is(err, io.EOF) {
-			return map[string]string{"decision": "rejected", "reason": "non-interactive input"}, nil
+		if !errors.Is(err, io.EOF) {
+			return nil, fmt.Errorf("approval %q: read rejection reason: %w", name, err)
 		}
-		// Any other read error (bad FD, I/O error, scanner overflow) should abort
-		// cleanly without persisting a decision.
-		return nil, fmt.Errorf("approval %q: read stdin: %w", name, err)
+		line = ""
 	}
-	return parseApprovalInput(decision), nil
+	if reason := strings.TrimSpace(line); reason != "" {
+		return map[string]string{"decision": "rejected", "reason": reason}, nil
+	}
+	return map[string]string{"decision": "rejected"}, nil
 }
 
 func (r *resumer) resolveSignalStdin(ctx context.Context, nodeName, signalName string) (map[string]string, error) {
 	fmt.Fprintf(r.opts.Stderr, "\n[criteria] Signal wait for node %q (signal=%q)\n", nodeName, signalName)
 	fmt.Fprintf(r.opts.Stderr, "Enter JSON payload (e.g. {\"outcome\":\"received\"}): ")
 
-	line, err := readLineWithContext(ctx, r.opts.Stdin)
+	line, err := readLineWithContext(ctx, bufio.NewReader(r.opts.Stdin))
 	if err != nil {
 		return nil, fmt.Errorf("signal %q: %w", signalName, err)
 	}
@@ -279,25 +326,34 @@ func (r *resumer) resolveSignalStdin(ctx context.Context, nodeName, signalName s
 }
 
 // readLineWithContext reads one line from r, returning an error on EOF or context cancellation.
-// scanner.Err() is propagated when Scan() returns false due to a real read error;
-// a clean EOF returns io.EOF. If ctx is cancelled before the goroutine unblocks,
-// the context error is returned immediately. Note: the goroutine may outlive the
-// ctx-cancel return on blocking readers (e.g., os.Stdin) because Go has no way
-// to interrupt a blocking Read without closing the file descriptor.
-func readLineWithContext(ctx context.Context, r io.Reader) (string, error) {
+// ReadString errors are propagated; a clean EOF returns io.EOF. The reader is
+// persistent so a multi-line prompt session (re-prompts, rejection reason)
+// keeps buffered input across calls. If ctx is cancelled before the goroutine
+// unblocks, the context error is returned immediately. Note: the goroutine may
+// outlive the ctx-cancel return on blocking readers (e.g., os.Stdin) because
+// Go has no way to interrupt a blocking Read without closing the file
+// descriptor, so the reader must never be re-read after its resolution is
+// abandoned.
+func readLineWithContext(ctx context.Context, r *bufio.Reader) (string, error) {
 	type result struct {
 		line string
 		err  error
 	}
 	ch := make(chan result, 1)
 	go func() {
-		scanner := bufio.NewScanner(r)
-		if scanner.Scan() {
-			ch <- result{line: scanner.Text()}
-		} else if err := scanner.Err(); err != nil {
-			ch <- result{err: err}
-		} else {
+		line, err := r.ReadString('\n')
+		switch {
+		case err == nil:
+			line = strings.TrimSuffix(line, "\n")
+			line = strings.TrimSuffix(line, "\r")
+			ch <- result{line: line}
+		case errors.Is(err, io.EOF) && line != "":
+			// Final line without a trailing newline is still a line.
+			ch <- result{line: strings.TrimSuffix(line, "\r")}
+		case errors.Is(err, io.EOF):
 			ch <- result{err: io.EOF}
+		default:
+			ch <- result{err: err}
 		}
 	}()
 	select {
@@ -305,17 +361,6 @@ func readLineWithContext(ctx context.Context, r io.Reader) (string, error) {
 		return "", ctx.Err()
 	case res := <-ch:
 		return res.line, res.err
-	}
-}
-
-func parseApprovalInput(input string) map[string]string {
-	switch strings.ToLower(strings.TrimSpace(input)) {
-	case "y", "yes":
-		return map[string]string{"decision": "approved"}
-	case "n", "no":
-		return map[string]string{"decision": "rejected"}
-	default:
-		return map[string]string{"decision": "rejected", "reason": "invalid input"}
 	}
 }
 

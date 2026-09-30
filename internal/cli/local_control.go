@@ -72,6 +72,11 @@ type localRunControl struct {
 	// layer's landing retry treats a not-yet-paused answer as final from
 	// then on (a run that exited can never pause).
 	finished bool
+	// listenerUp reports whether the run-state/control listener attached
+	// (bind succeeded). When false, an approval pause without a configured
+	// resumer can never resolve: the drain loop fails the run loudly
+	// (CRI-256) instead of waiting forever on a dead surface.
+	listenerUp bool
 }
 
 func newLocalRunControl(runID string, graph *workflow.FSMGraph, tracker *pauseTracker, eng *engine.Engine) *localRunControl {
@@ -288,6 +293,46 @@ func (c *localRunControl) awaitResolveResume(ctx context.Context) (map[string]st
 	case <-ctx.Done():
 		return nil, false
 	}
+}
+
+// pollResolveResume non-blockingly consumes a parked approval/signal decision,
+// if one is waiting. resolveApprovalPause uses it so a decision delivered
+// while the pause was landing wins the resolution race before any configured
+// resumer (CRI-256) gets the chance to answer first.
+func (c *localRunControl) pollResolveResume() (map[string]string, bool) {
+	c.mu.Lock()
+	ch := c.payloadReq
+	c.mu.Unlock()
+	select {
+	case payload := <-ch:
+		return payload, true
+	default:
+		return nil, false
+	}
+}
+
+// resolveResumeChan exposes the decision mailbox so a racing consumer can
+// select over it; the channel is created once and stable for the run's
+// lifetime.
+func (c *localRunControl) resolveResumeChan() <-chan map[string]string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.payloadReq
+}
+
+// setListenerUp records whether the run's control listener actually attached
+// (bind succeeded). The drain loop needs this to distinguish a pause that
+// awaits a live control surface from one that can never be resolved.
+func (c *localRunControl) setListenerUp(up bool) {
+	c.mu.Lock()
+	c.listenerUp = up
+	c.mu.Unlock()
+}
+
+func (c *localRunControl) isListenerUp() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.listenerUp
 }
 
 // isApprovalOrSignalNode reports whether node pauses inside its evaluation

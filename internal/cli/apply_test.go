@@ -142,7 +142,7 @@ func TestResumeLocalInFlightRuns_EmptyCheckpoints(t *testing.T) {
 	var buf bytes.Buffer
 	log := newApplyLogger()
 	// Must not panic or fail with no checkpoints.
-	resumeLocalInFlightRuns(context.Background(), log, &buf, outputModeJSON, "", nil)
+	resumeLocalInFlightRuns(context.Background(), log, &buf, outputModeJSON, "", nil, localApprovalConfig{})
 	if buf.Len() != 0 {
 		t.Fatalf("expected no output with empty checkpoints, got %q", buf.String())
 	}
@@ -162,7 +162,7 @@ func TestResumeLocalInFlightRuns_SkipsServerCheckpoints(t *testing.T) {
 
 	var buf bytes.Buffer
 	log := newApplyLogger()
-	resumeLocalInFlightRuns(context.Background(), log, &buf, outputModeJSON, "", nil)
+	resumeLocalInFlightRuns(context.Background(), log, &buf, outputModeJSON, "", nil, localApprovalConfig{})
 	// Server checkpoint must not produce any ND-JSON output.
 	if buf.Len() != 0 {
 		t.Fatalf("expected no output for server checkpoint, got %q", buf.String())

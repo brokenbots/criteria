@@ -47,7 +47,7 @@ state "failed" {
 	if err == nil {
 		t.Fatal("expected error for signal wait in local mode")
 	}
-	if !strings.Contains(err.Error(), "signal waits are resolved via the run's local control listener") {
+	if !strings.Contains(err.Error(), "signal waits pause the run") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -80,7 +80,7 @@ state "done" {
 }
 `)
 
-	errCh := runApplyAsync(&applyOptions{workflowPath: workflowPath})
+	errCh := runApplyAsync(&applyOptions{workflowPath: workflowPath, tty: func() bool { return false }})
 	addr := waitForControlEndpoint(t, stateDir)
 	runID := singleRunID(t, stateDir)
 	accepted, reason := resolveApproval(t, addr, runID, "ready", map[string]string{"outcome": "received"})
@@ -126,7 +126,7 @@ state "done" {
 }
 `)
 
-	errCh := runApplyAsync(&applyOptions{workflowPath: workflowPath})
+	errCh := runApplyAsync(&applyOptions{workflowPath: workflowPath, tty: func() bool { return false }})
 	addr := waitForControlEndpoint(t, stateDir)
 	runID := singleRunID(t, stateDir)
 	accepted, reason := resolveApproval(t, addr, runID, "review", map[string]string{"decision": "approved"})

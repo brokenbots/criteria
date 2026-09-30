@@ -38,9 +38,15 @@ type Server struct {
 	// viewer, when non-nil, serves the embedded run-viewer bundle under
 	// /runview/.
 	viewer http.Handler
-	// srv is the http.Server created by Serve; Stop closes it.
+	// srv is the http.Server created by Serve; Stop closes it. ln is the
+	// listener stored by Listen: Stop closes it directly, because
+	// http.Server.Shutdown only closes listeners that Serve has already
+	// registered — a Stop racing ahead of the Serve goroutine (coverage
+	// instrumentation slows startup enough to hit this in practice) would
+	// otherwise leave Serve accepting forever.
 	srvMu sync.Mutex
 	srv   *http.Server
+	ln    net.Listener
 }
 
 // ControlHandler applies a control verb to a run owned by this process. It
@@ -212,6 +218,9 @@ func (s *Server) Listen(host string, port int) (net.Listener, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listen %s: %w", addr, err)
 	}
+	s.srvMu.Lock()
+	s.ln = ln
+	s.srvMu.Unlock()
 	return ln, nil
 }
 
@@ -223,16 +232,19 @@ func (s *Server) Serve(ln net.Listener) error {
 	srv := s.srv
 	s.srvMu.Unlock()
 	err := srv.Serve(ln)
-	if errors.Is(err, http.ErrServerClosed) {
+	if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
 		return nil
 	}
 	return err
 }
 
 // Stop closes the server's listener and connections (a no-op before Serve).
-// It drains in-flight requests first: an apply completing its final control
-// RPC (a decision on the last node) shuts the listener down while the
-// client's response is still being flushed, and an abrupt Close would cut the
+// The listener is closed directly: Shutdown only closes listeners Serve has
+// registered, so when Stop runs before the Serve goroutine starts, closing
+// via Shutdown alone would let the later Serve accept forever. It drains
+// in-flight requests first: an apply completing its final control RPC (a
+// decision on the last node) shuts the listener down while the client's
+// response is still being flushed, and an abrupt Close would cut the
 // response mid-flight ("unexpected EOF" on the caller that just resolved
 // the run). The drain is bounded so a long-lived viewer stream cannot stall
 // the owning run's exit; the fallback Close reclaims stragglers. A canceled
@@ -240,6 +252,9 @@ func (s *Server) Serve(ln net.Listener) error {
 func (s *Server) Stop(ctx context.Context) {
 	s.srvMu.Lock()
 	defer s.srvMu.Unlock()
+	if s.ln != nil {
+		_ = s.ln.Close()
+	}
 	if s.srv != nil {
 		drainCtx, cancel := context.WithTimeout(ctx, shutdownDrainWindow)
 		defer cancel()

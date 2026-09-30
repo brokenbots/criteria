@@ -618,7 +618,7 @@ func TestBuildReattachTrackerAndEngine_VisitsPersisted(t *testing.T) {
 		t.Fatalf("WriteStepCheckpoint: %v", err)
 	}
 
-	graph, loader, _, ok := prepareReattach(context.Background(), discardLogger(), cp)
+	graph, loader, _, ok := prepareReattach(context.Background(), discardLogger(), cp, localApprovalConfig{})
 	if !ok {
 		t.Fatal("prepareReattach failed")
 	}
@@ -675,7 +675,7 @@ func TestResumeOneLocalRun_HappyPath(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON, nil)
+	resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON, nil, localApprovalConfig{})
 
 	// Checkpoint must be cleaned up after successful resume.
 	checkpoints, _ := ListStepCheckpoints()
@@ -703,7 +703,7 @@ func TestResumeOneLocalRun_MissingWorkflow(t *testing.T) {
 	writeCheckpointDirect(t, stateDir, cp)
 
 	var out bytes.Buffer
-	resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON, nil)
+	resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON, nil, localApprovalConfig{})
 
 	// Checkpoint must be removed (abandoned).
 	checkpoints, _ := ListStepCheckpoints()
@@ -737,7 +737,7 @@ func TestResumeOneLocalRun_FreshAttemptBudgetOnResume(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON, nil)
+	resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON, nil, localApprovalConfig{})
 
 	// The interrupted step must have been re-attempted and completed: a
 	// RunFailed event means the resume still enforces the stale budget.
@@ -785,7 +785,7 @@ func TestResumeOneLocalRun_VisitsRestored(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON, nil)
+	resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON, nil, localApprovalConfig{})
 
 	// Checkpoint must be cleaned up regardless of failure.
 	checkpoints, _ := ListStepCheckpoints()
@@ -1357,13 +1357,16 @@ state "done" {
 	var out bytes.Buffer
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON, nil)
+		_, err := resumeOneLocalRun(context.Background(), discardLogger(), cp, &out, outputModeJSON, nil,
+			localApprovalConfig{tty: func() bool { return false }})
 		errCh <- err
 	}()
 
 	// Since CRI-255 the reattached run pauses at the approval node and is
 	// resolved over the fresh control listener, not abandoned: deliver the
-	// decision and expect the run to complete.
+	// decision and expect the run to complete. The tty=false pin keeps the
+	// pause control-RPC-only (an interactive prompt would resolve itself
+	// from an EOF-ish test stdin instead of waiting for the listener).
 	addr := waitForControlEndpoint(t, stateDir)
 	if accepted, reason := resolveApproval(t, addr, cp.RunID, "review", map[string]string{"decision": "approved"}); !accepted || reason != "ok" {
 		// Diagnostics: dump whether the run goroutine already exited and

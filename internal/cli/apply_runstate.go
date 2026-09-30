@@ -121,7 +121,13 @@ func attachLocalRunStateServer(ctx context.Context, log *slog.Logger, runID, con
 	url, srvStop, err := startLocalRunStateServer(ctx, log, runID, controlListenAddr, ctrl, withViewer, cancelRun)
 	if err != nil {
 		log.Warn("local control listener unavailable; continuing without it", "run_id", runID, "error", err)
+		if ctrl != nil {
+			ctrl.setListenerUp(false)
+		}
 		return ctx, cancelRun
+	}
+	if ctrl != nil {
+		ctrl.setListenerUp(true)
 	}
 	if url != "" {
 		log.Info("run viewer available", "url", url, "run_id", runID)

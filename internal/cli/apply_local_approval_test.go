@@ -165,7 +165,7 @@ func TestApplyLocal_ApprovalPausesUntilRPCDecision(t *testing.T) {
 	stateDir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 
-	errCh := runApplyAsync(&applyOptions{workflowPath: filepath.Join("testdata", "local_approval_simple")})
+	errCh := runApplyAsync(&applyOptions{workflowPath: filepath.Join("testdata", "local_approval_simple"), tty: func() bool { return false }})
 
 	addr := waitForControlEndpoint(t, stateDir)
 	runID := singleRunID(t, stateDir)
@@ -198,7 +198,7 @@ func TestApplyLocal_SignalWaitPausesUntilRPCDecision(t *testing.T) {
 	stateDir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 
-	errCh := runApplyAsync(&applyOptions{workflowPath: filepath.Join("testdata", "local_signal_wait")})
+	errCh := runApplyAsync(&applyOptions{workflowPath: filepath.Join("testdata", "local_signal_wait"), tty: func() bool { return false }})
 
 	addr := waitForControlEndpoint(t, stateDir)
 	runID := singleRunID(t, stateDir)
@@ -469,7 +469,7 @@ func TestApplyLocal_Reattach_ReusePersistedDecision(t *testing.T) {
 	var logBuf bytes.Buffer
 	captLog := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	resumeOneLocalRun(ctx, captLog, cp, io.Discard, outputModeJSON, nil)
+	resumeOneLocalRun(ctx, captLog, cp, io.Discard, outputModeJSON, nil, localApprovalConfig{})
 
 	logOutput := logBuf.String()
 	if strings.Contains(logOutput, "resumed local run failed") {
@@ -523,7 +523,7 @@ func TestApplyLocal_Reattach_InvalidPersistedSignalOutcome_Error(t *testing.T) {
 	var logBuf bytes.Buffer
 	captLog := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	resumeOneLocalRun(ctx, captLog, cp, io.Discard, outputModeJSON, nil)
+	resumeOneLocalRun(ctx, captLog, cp, io.Discard, outputModeJSON, nil, localApprovalConfig{})
 
 	logOutput := logBuf.String()
 	if !strings.Contains(logOutput, "resumed local run failed") {

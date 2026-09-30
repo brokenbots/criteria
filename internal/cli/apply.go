@@ -36,6 +36,15 @@ type applyOptions struct {
 	allowUnsigned        bool         // --allow-unsigned: skip adapter signature verification (WS46)
 	stdin                io.Reader    // stdin for local-mode approval prompts; nil → os.Stdin
 	log                  *slog.Logger // nil → newApplyLogger(); injectable for tests
+	// answersPath is the --answers <file> path (CRI-256 path 2):
+	// pre-populated, non-interactive approval/signal decisions keyed by paused
+	// node name. Local mode only; --server rejects it.
+	answersPath string
+	// stderr is the writer for prompt-related operator notes; nil → os.Stderr.
+	stderr io.Writer
+	// tty overrides the stdin TTY probe (default-mode selection, CRI-256);
+	// test-only seam. nil → probe os.Stdin.
+	tty func() bool
 	// origin is the resolved remote workflow source provenance (CRI-225);
 	// nil for local sources. Populated by runApply from resolveWorkflowSource.
 	origin *WorkflowOrigin
@@ -77,6 +86,7 @@ func NewApplyCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.workflowRef, "workflow-ref", "", "Expected ref/digest the workflow source must resolve to — a git commit SHA or sha256:<digest>; the run fails closed on mismatch (CRI-226)")
 	cmd.Flags().BoolVar(&opts.warnsAsErrors, "warnings-as-errors", false, "Refuse to run when a warning is raised (e.g. an adapter whose schema could not be verified)")
 	cmd.Flags().BoolVar(&opts.allowUnsigned, "allow-unsigned", false, "Skip adapter signature verification (also via CRITERIA_ALLOW_UNSIGNED)")
+	cmd.Flags().StringVar(&opts.answersPath, "answers", "", "Resolve approval and signal-wait pauses from this JSON file instead of prompting: {\"<node>\": {\"decision\": \"approved|rejected\", \"reason\": \"...\"}} or {\"<node>\": {\"outcome\": \"<declared-outcome>\"}}; runs non-interactively (local mode, CRI-256)")
 	return cmd
 }
 

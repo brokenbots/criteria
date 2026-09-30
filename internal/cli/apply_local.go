@@ -14,7 +14,6 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
-	"github.com/brokenbots/criteria/internal/cli/localresume"
 	"github.com/brokenbots/criteria/internal/engine"
 	"github.com/brokenbots/criteria/workflow"
 )
@@ -50,7 +49,7 @@ func runApplyLocal(
 	// fails fast: the invocation cannot faithfully re-enter the original run
 	// with its (unreadable) variable inputs, so suppressing a fresh run and
 	// resuming without the overrides would silently drop them.
-	identity, suppressed, prepErr := prepareLocalRunIdentity(ctx, log, jsonOut, mode, opts.workflowPath, opts.varFiles, opts.varOverrides)
+	identity, suppressed, prepErr := prepareLocalRunIdentity(ctx, log, jsonOut, mode, opts.workflowPath, opts.varFiles, opts.varOverrides, localApprovalConfigFrom(&opts))
 	if prepErr != nil {
 		return prepErr
 	}
@@ -73,7 +72,7 @@ func runApplyLocal(
 	workflowHash := workflowSourceHash(src)
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
-	resumer, err := buildLocalResumer(log, opts.stdin)
+	resolution, err := selectApprovalResolution(log, localApprovalConfigFrom(&opts), graph)
 	if err != nil {
 		return err
 	}
@@ -81,7 +80,7 @@ func runApplyLocal(
 		return err
 	}
 
-	return executeFreshLocalRun(ctx, log, graph, loader, resumer, jsonOut, mode, opts, identity, workflowHash)
+	return executeFreshLocalRun(ctx, log, graph, loader, resolution, jsonOut, mode, opts, identity, workflowHash)
 }
 
 // executeFreshLocalRun runs a freshly-started local workflow to its terminal
@@ -90,7 +89,7 @@ func runApplyLocal(
 // listener (CRI-255) while apply executes — the runview API plus the Connect
 // LocalControlService (PauseRun/ResumeRun/ResolveResume) — and, when the UI
 // is enabled, the embedded run-viewer is served on the same server.
-func executeFreshLocalRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, loader adapterhost.Loader, resumer localresume.LocalResumer, jsonOut io.Writer, mode outputMode, opts applyOptions, identity localRunIdentity, workflowHash string) error {
+func executeFreshLocalRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, loader adapterhost.Loader, resolution *approvalResolution, jsonOut io.Writer, mode outputMode, opts applyOptions, identity localRunIdentity, workflowHash string) error {
 	runID := uuid.NewString()
 	runEvents, closeRunEvents, err := openRunEventsFile(runID)
 	if err != nil {
@@ -139,7 +138,7 @@ func executeFreshLocalRun(ctx context.Context, log *slog.Logger, graph *workflow
 		return err
 	}
 
-	if err := finishFreshLocalRun(runCtx, log, loader, runSink, resumer, runID, opts, ctrl, eng); err != nil {
+	if err := finishFreshLocalRun(runCtx, log, loader, runSink, resolution, runID, opts, ctrl, eng); err != nil {
 		return err
 	}
 
@@ -214,16 +213,31 @@ func newLocalEngine(runID string, graph *workflow.FSMGraph, loader adapterhost.L
 
 // finishFreshLocalRun handles post-engine work: resume cycles (boundary
 // pauses and approval/signal node pauses) and the terminal-success failure
-// translation. It runs for every local run: without a resumer the control
-// listener's bus still resolves pauses (CRI-255).
-func finishFreshLocalRun(runCtx context.Context, log *slog.Logger, loader adapterhost.Loader, runSink *terminalSuccessSink, resumer localresume.LocalResumer, runID string, opts applyOptions, ctrl *localRunControl, eng *engine.Engine) error {
-	if err := drainLocalResumeCycles(runCtx, log, loader, runSink, resumer, runID, opts, ctrl, eng); err != nil {
+// translation. It runs for every local run: without a configured resumer the
+// control listener's bus still resolves pauses (CRI-255), and a pause with
+// no reachable surface fails the run loudly (CRI-256).
+func finishFreshLocalRun(runCtx context.Context, log *slog.Logger, loader adapterhost.Loader, runSink *terminalSuccessSink, resolution *approvalResolution, runID string, opts applyOptions, ctrl *localRunControl, eng *engine.Engine) error {
+	if err := drainLocalResumeCycles(runCtx, log, loader, runSink, resolution, runID, opts, ctrl, eng); err != nil {
 		return err
 	}
-	if finalState, success, ok := runSink.TerminalSuccess(); ok && !success {
-		return fmt.Errorf("run completed with terminal state %q (success=false)", finalState)
+	return terminalFailureError(runSink)
+}
+
+// terminalFailureError composes the invocation error for a terminal run that
+// completed with success=false. A rejected approval decision (CRI-256) carries
+// its operator-supplied reason into the error so rejections are never silent.
+func terminalFailureError(runSink *terminalSuccessSink) error {
+	finalState, success, ok := runSink.TerminalSuccess()
+	if !ok || success {
+		return nil
 	}
-	return nil
+	if node, reason, rejected := runSink.Rejection(); rejected {
+		if strings.TrimSpace(reason) != "" {
+			return fmt.Errorf("run completed with terminal state %q (success=false); approval %q was rejected with reason: %s", finalState, node, reason)
+		}
+		return fmt.Errorf("run completed with terminal state %q (success=false); approval %q was rejected (no reason given)", finalState, node)
+	}
+	return fmt.Errorf("run completed with terminal state %q (success=false)", finalState)
 }
 
 // localRunIdentity carries the CLI variable inputs and the invocation
@@ -242,7 +256,7 @@ type localRunIdentity struct {
 // resumed run's outcome (nil on success). A variable-source error aborts the
 // sweep: the invocation cannot faithfully re-enter the original run without
 // its variable inputs.
-func prepareLocalRunIdentity(ctx context.Context, log *slog.Logger, jsonOut io.Writer, mode outputMode, workflowPath string, varFiles, varOverrides []string) (localRunIdentity, bool, error) {
+func prepareLocalRunIdentity(ctx context.Context, log *slog.Logger, jsonOut io.Writer, mode outputMode, workflowPath string, varFiles, varOverrides []string, approvalCfg localApprovalConfig) (localRunIdentity, bool, error) {
 	identity := localRunIdentity{}
 	merged, err := mergeVarSources(varFiles, varOverrides)
 	if err != nil {
@@ -250,11 +264,11 @@ func prepareLocalRunIdentity(ctx context.Context, log *slog.Logger, jsonOut io.W
 	}
 	identity.mergedVars = merged
 	identity.fingerprint = runIdentityFingerprint(workflowPath, "", varFiles, varOverrides)
-	suppressed, outcomeErr := resumeLocalInFlightRuns(ctx, log, jsonOut, mode, identity.fingerprint, identity.mergedVars)
+	suppressed, outcomeErr := resumeLocalInFlightRuns(ctx, log, jsonOut, mode, identity.fingerprint, identity.mergedVars, approvalCfg)
 	return identity, suppressed, outcomeErr
 }
 
-func resumeLocalInFlightRuns(ctx context.Context, log *slog.Logger, out io.Writer, mode outputMode, fingerprint string, mergedVars map[string]cty.Value) (matched bool, outcome error) {
+func resumeLocalInFlightRuns(ctx context.Context, log *slog.Logger, out io.Writer, mode outputMode, fingerprint string, mergedVars map[string]cty.Value, approvalCfg localApprovalConfig) (matched bool, outcome error) {
 	checkpoints, err := ListStepCheckpoints()
 	if err != nil {
 		log.Warn("could not list step checkpoints; skipping local crash recovery", "error", err)
@@ -274,7 +288,7 @@ func resumeLocalInFlightRuns(ctx context.Context, log *slog.Logger, out io.Write
 		if fingerprint != "" && cp.Fingerprint == fingerprint {
 			vars = mergedVars
 		}
-		consumed, cpOutcome := resumeOneLocalRun(ctx, log, cp, out, mode, vars)
+		consumed, cpOutcome := resumeOneLocalRun(ctx, log, cp, out, mode, vars, approvalCfg)
 		if consumed && fingerprint != "" && cp.Fingerprint == fingerprint {
 			matched = true
 			if outcome == nil {
@@ -286,18 +300,19 @@ func resumeLocalInFlightRuns(ctx context.Context, log *slog.Logger, out io.Write
 }
 
 // prepareReattach validates the checkpoint, builds an adapter loader, and
-// constructs a local resumer. On failure it logs, clears the checkpoint,
-// and returns zero values with false so the caller can skip the run.
-func prepareReattach(ctx context.Context, log *slog.Logger, cp *StepCheckpoint) (*workflow.FSMGraph, adapterhost.Loader, localresume.LocalResumer, bool) {
+// selects the pause-resolution posture from the CRI-256 inputs. On failure it
+// logs, clears the checkpoint, and returns false so the caller can skip the
+// run.
+func prepareReattach(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, approvalCfg localApprovalConfig) (*workflow.FSMGraph, adapterhost.Loader, *approvalResolution, bool) {
 	graph, err := parseWorkflowFromPath(ctx, cp.WorkflowPath)
 	if err != nil {
 		log.Warn("cannot parse workflow for crashed local run; abandoning", "run_id", cp.RunID, "error", err)
 		RemoveStepCheckpoint(cp.RunID)
 		return nil, nil, nil, false
 	}
-	resumer, resumerErr := buildLocalResumer(log, nil)
-	if resumerErr != nil {
-		log.Warn("local checkpoint: invalid CRITERIA_LOCAL_APPROVAL; clearing", "run_id", cp.RunID, "error", resumerErr)
+	resolution, resErr := selectApprovalResolution(log, approvalCfg, graph)
+	if resErr != nil {
+		log.Warn("local checkpoint: approval resolution is unavailable; clearing", "run_id", cp.RunID, "error", resErr)
 		RemoveStepCheckpoint(cp.RunID)
 		return nil, nil, nil, false
 	}
@@ -307,7 +322,7 @@ func prepareReattach(ctx context.Context, log *slog.Logger, cp *StepCheckpoint) 
 		return nil, nil, nil, false
 	}
 	loader := adapterhost.NewLoader()
-	return graph, loader, resumer, true
+	return graph, loader, resolution, true
 }
 
 // resumeOneLocalRun resumes a crashed local run from cp and returns whether
@@ -315,8 +330,8 @@ func prepareReattach(ctx context.Context, log *slog.Logger, cp *StepCheckpoint) 
 // a marked failure) by this process. It returns false only when the
 // checkpoint was abandoned as unusable and no run outcome was recorded, so
 // the caller may proceed with a fresh run.
-func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, out io.Writer, mode outputMode, mergedVars map[string]cty.Value) (bool, error) {
-	graph, loader, resumer, ok := prepareReattach(ctx, log, cp)
+func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, out io.Writer, mode outputMode, mergedVars map[string]cty.Value, approvalCfg localApprovalConfig) (bool, error) {
+	graph, loader, resolution, ok := prepareReattach(ctx, log, cp, approvalCfg)
 	if !ok {
 		return false, nil
 	}
@@ -347,13 +362,12 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 	runCtx, stopServer := attachLocalRunStateServer(ctx, log, cp.RunID, resolveRunListenAddr(&opts), ctrl, opts.ui)
 	defer stopServer()
 	defer ctrl.markFinished()
-	var outcome error
 	if runErr := eng.RunFrom(runCtx, cp.CurrentStep, nextAttempt); runErr != nil {
 		log.Error("resumed local run failed", "run_id", cp.RunID, "error", runErr)
 		RemoveStepCheckpoint(cp.RunID)
 		return true, runErr
 	}
-	if cycleErr := drainLocalResumeCycles(runCtx, log, loader, runSink, resumer, cp.RunID, opts, ctrl, eng); cycleErr != nil {
+	if cycleErr := drainLocalResumeCycles(runCtx, log, loader, runSink, resolution, cp.RunID, opts, ctrl, eng); cycleErr != nil {
 		log.Error("resumed local run failed during approval", "run_id", cp.RunID, "error", cycleErr)
 		RemoveStepCheckpoint(cp.RunID)
 		return true, cycleErr
@@ -363,10 +377,7 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 	// CRI-125: a resumed run that reaches a terminal success=false state must
 	// fail the invocation exactly like the fresh path does; otherwise the
 	// suppression branch would mask the original run's failure with exit 0.
-	if finalState, success, ok := runSink.TerminalSuccess(); ok && !success {
-		outcome = fmt.Errorf("run completed with terminal state %q (success=false)", finalState)
-	}
-	return true, outcome
+	return true, terminalFailureError(runSink)
 }
 
 // buildReattachTrackerAndEngine wires the checkpoint sink, pause tracker, and

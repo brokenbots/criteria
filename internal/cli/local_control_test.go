@@ -129,7 +129,7 @@ func TestApplyLocal_ApprovalResolvedOverLocalControlRPC(t *testing.T) {
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
 
-	errCh := runApplyAsync(&applyOptions{workflowPath: filepath.Join("testdata", "local_approval_simple")})
+	errCh := runApplyAsync(&applyOptions{workflowPath: filepath.Join("testdata", "local_approval_simple"), tty: func() bool { return false }})
 
 	addr := waitForControlEndpoint(t, stateDir)
 	runID := singleRunID(t, stateDir)
@@ -174,7 +174,7 @@ func TestApplyLocal_ApprovalRejectedOverLocalControlRPC(t *testing.T) {
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
 
-	errCh := runApplyAsync(&applyOptions{workflowPath: filepath.Join("testdata", "local_approval_simple")})
+	errCh := runApplyAsync(&applyOptions{workflowPath: filepath.Join("testdata", "local_approval_simple"), tty: func() bool { return false }})
 
 	addr := waitForControlEndpoint(t, stateDir)
 	runID := singleRunID(t, stateDir)
@@ -206,7 +206,7 @@ func TestApplyLocal_SignalWaitResolvedOverLocalControlRPC(t *testing.T) {
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
 
-	errCh := runApplyAsync(&applyOptions{workflowPath: filepath.Join("testdata", "local_signal_wait")})
+	errCh := runApplyAsync(&applyOptions{workflowPath: filepath.Join("testdata", "local_signal_wait"), tty: func() bool { return false }})
 
 	addr := waitForControlEndpoint(t, stateDir)
 	runID := singleRunID(t, stateDir)
@@ -244,7 +244,7 @@ func TestApplyLocal_UnknownSignalRejectedByRPC(t *testing.T) {
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
 
-	errCh := runApplyAsync(&applyOptions{workflowPath: filepath.Join("testdata", "local_approval_simple")})
+	errCh := runApplyAsync(&applyOptions{workflowPath: filepath.Join("testdata", "local_approval_simple"), tty: func() bool { return false }})
 
 	addr := waitForControlEndpoint(t, stateDir)
 	runID := singleRunID(t, stateDir)
@@ -418,7 +418,7 @@ func TestApproveCLIVerbResolvesLocalApproval(t *testing.T) {
 	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
 	t.Setenv("CRITERIA_SERVER_URL", "")
 
-	errCh := runApplyAsync(&applyOptions{workflowPath: filepath.Join("testdata", "local_approval_simple")})
+	errCh := runApplyAsync(&applyOptions{workflowPath: filepath.Join("testdata", "local_approval_simple"), tty: func() bool { return false }})
 
 	waitForControlEndpoint(t, stateDir)
 	runID := singleRunID(t, stateDir)

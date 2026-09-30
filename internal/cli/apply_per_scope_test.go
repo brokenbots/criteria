@@ -1141,7 +1141,7 @@ func TestDrainLocalResumeCyclesPerScopeSessionsWiresDataDir(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		ctrl := newLocalRunControl(runID, graph, tracker, initialEng)
-		errCh <- drainLocalResumeCycles(runCtx, discardLogger(), loader, runSink, fakeSignalResumer{}, runID, applyOptions{workflowPath: wfPath}, ctrl, initialEng)
+		errCh <- drainLocalResumeCycles(runCtx, discardLogger(), loader, runSink, &approvalResolution{resumer: fakeSignalResumer{}}, runID, applyOptions{workflowPath: wfPath}, ctrl, initialEng)
 		close(done)
 	}()
 
