@@ -1149,7 +1149,14 @@ func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps De
 			deps.Sink.OnStepOutcome(step.Name, "failure", dur, err)
 			return n.commentStepFailureOutcome(st, step, err), nil
 		}
-		deps.Sink.OnStepOutcome(step.Name, "", dur, err)
+		// KB-57: a failed attempt is a real step outcome even when the step
+		// declares no "failure" outcome block. Emitting the empty string left
+		// the consumer-side step outcome unset for steps in exactly the
+		// post-develop bookkeeping shape (push_wip_checkpoint-style steps whose
+		// adapters report success only), so the chain appeared truncated. The
+		// engine's canonical failure outcome name keeps the event stream
+		// truthful without touching routing (the routing below is unchanged).
+		deps.Sink.OnStepOutcome(step.Name, "failure", dur, err)
 	}
 
 	return n.commentStepExhausted(st, step, fmt.Errorf("step %q failed after %d attempts: %w", step.Name, maxAttempts-startAttempt+1, lastErr))

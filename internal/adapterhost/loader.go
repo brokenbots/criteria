@@ -548,9 +548,25 @@ func ExecuteViaClient(ctx context.Context, client Client, adapterName, sessionID
 // continued past the outcome, the finalize cut cancelled it; the rescued
 // verdict still wins and the logged cause reflects the cut rather than an
 // apparent stream failure.
+//
+// KB-57: a fully delivered ExecuteResult (the adapter sent a complete result
+// event with a non-empty outcome before the stream was observed to fail)
+// survives the teardown race even when the host context is already cancelled.
+// This is the third variant of the step-outcome drop: a shell step completes
+// within a session the engine is simultaneously winding down, the Execute
+// call observes both the captured result and the cancellation, and the
+// previously-synthetic failure silently discarded the adapter's verdict, so
+// the step's real outcome never reached the event stream. A result the
+// adapter submitted IS completed work; reporting it keeps every executed step
+// resolvable. A finalization-only verdict (outcome.finalized event, no
+// delivered result) still requires a live host context so the KB-56 cut and
+// the CRI-275 step-ceiling teardown semantics stay intact.
 func rescueAdapterVerdict(sink *executeCaptureSink, execErr error, ctx context.Context, stepName string) (adapter.Result, bool) {
 	result, ok := sink.rescueResult()
-	if !ok || (execErr == nil && sink.done) || ctx.Err() != nil {
+	if !ok || (execErr == nil && sink.done) {
+		return adapter.Result{}, false
+	}
+	if ctx.Err() != nil && !sink.done {
 		return adapter.Result{}, false
 	}
 	if sink.finalizeKilled {
