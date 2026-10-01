@@ -719,7 +719,7 @@ func TestDrainResumeCycles_PauseThenResume(t *testing.T) {
 	// checkpoint surface is observable mid-run; the control-plane sink stays
 	// unwrapped for IsPaused/PausedAt. The engine loader is the in-process
 	// stateful loader so the resumed engine replays state through the handle.
-	if err := drainResumeCycles(ctx, log, ckLoader, sink, resumedSink, client.ResumeCh(), nil, "", state, graph, filepath.Dir(wfPath), eng, ""); err != nil {
+	if err := drainResumeCycles(ctx, log, ckLoader, sink, resumedSink, client.ResumeCh(), nil, "", state, graph, filepath.Dir(wfPath), eng, "", nil); err != nil {
 		t.Fatalf("drainResumeCycles: %v", err)
 	}
 	// Flush queued events to the fake server before asserting receipt.
@@ -850,7 +850,7 @@ func TestDrainResumeCycles_StreamDropAndReconnect(t *testing.T) {
 
 	// Pass sink as the runSink because this test builds the server sink directly
 	// rather than through executeServerRun.
-	if err := drainResumeCycles(ctx, log, loader, sink, sink, client.ResumeCh(), nil, "", state, graph, filepath.Dir(wfPath), eng, ""); err != nil {
+	if err := drainResumeCycles(ctx, log, loader, sink, sink, client.ResumeCh(), nil, "", state, graph, filepath.Dir(wfPath), eng, "", nil); err != nil {
 		t.Fatalf("drainResumeCycles: %v", err)
 	}
 	// Flush queued events to the fake server before asserting receipt.

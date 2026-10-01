@@ -146,6 +146,14 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 	if err != nil {
 		return err
 	}
+	// CRI-254: consume orchestrator-issued pause_run commands for this run
+	// and drive them through the boundary-pause machinery (same semantics as
+	// the local-control PauseRun path: drain-first, durable checkpoint, no
+	// adapter kill). The router reads PauseRunCh on its own goroutine so the
+	// control stream never blocks on a step in flight.
+	pauseRouter := newControlPauseRouter(state.RunID, sink, log)
+	pauseRouter.setEngine(eng)
+	go pauseRouter.consume(ctx, client.PauseRunCh())
 	if err := eng.Run(ctx); err != nil {
 		log.Error("run failed", "error", err)
 		return err
@@ -156,7 +164,7 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 	// drain below still runs. The pending step.outcome / RunCompleted tail is
 	// what transitions the server-side run row out of 'running'; an early
 	// error return drops that tail (the observed stuck-'running' castle row).
-	resumeErr := drainResumeCycles(ctx, log, loader, sink, runSink, client.ResumeCh(), client.AgentPromptCh(), client.CriteriaID(), state, graph, workflowDirFromPath(opts.workflowPath), eng, fingerprint)
+	resumeErr := drainResumeCycles(ctx, log, loader, sink, runSink, client.ResumeCh(), client.AgentPromptCh(), client.CriteriaID(), state, graph, workflowDirFromPath(opts.workflowPath), eng, fingerprint, pauseRouter)
 
 	// Flush queued events before inspecting the terminal result so the server
 	// receives the RunCompleted envelope regardless of success.
@@ -210,7 +218,9 @@ func buildServerRunEngine(graph *workflow.FSMGraph, loader adapterhost.Loader, s
 // data directory and lets each resumed engine adopt surviving per-scope
 // instances from prior invocations of the same run (CRI-304); callers without
 // a fingerprint (agent runs) pass "" and get neither marker nor adoption.
-func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost.Loader, sink *run.Sink, runSink engine.Sink, resumeCh <-chan *pb.ResumeRun, promptCh <-chan *pb.AgentPrompt, promptOwnerID string, state *localRunState, graph *workflow.FSMGraph, workflowDir string, eng *engine.Engine, fingerprint string) error {
+// pauseRouter (CRI-254, nil in tests) receives the swapped engine pointer
+// after each resume cycle so pause latches address the live engine.
+func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost.Loader, sink *run.Sink, runSink engine.Sink, resumeCh <-chan *pb.ResumeRun, promptCh <-chan *pb.AgentPrompt, promptOwnerID string, state *localRunState, graph *workflow.FSMGraph, workflowDir string, eng *engine.Engine, fingerprint string, pauseRouter *controlPauseRouter) error {
 	// CRI-202: shared base includes the checkpoint surface (snapshot base +
 	// run id) so the resumed engine saves restored-session state and restores
 	// adapter checkpoints from the original engine, exactly like a local
@@ -261,6 +271,9 @@ func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost
 			return err
 		}
 		eng = resumedEng
+		if pauseRouter != nil {
+			pauseRouter.setEngine(eng)
+		}
 		log.Info("run resumed and completed", "run_id", state.RunID)
 	}
 	return nil
