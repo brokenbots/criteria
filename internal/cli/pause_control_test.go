@@ -394,3 +394,124 @@ func TestControlPauseRouter_ConsumeDrainsUntilClose(t *testing.T) {
 		t.Fatalf("no RunPaused may be published for dropped pauses, got %+v", rp)
 	}
 }
+
+// TestControlPauseRouter_RunEndedWithoutPausingIsAcked pins the
+// run_ended_without_pausing arm (CRI-62 no-silent-drop, CRI-254): the latch
+// is armed while a step is in flight, the run loop exits without pausing
+// (run-cancel teardown mid-step returns through clearPauseRequest, which
+// closes the ack with no paused node), and the ack outcome must be
+// run_ended — a detectable drop with no RunPaused published — never a fake
+// "paused" ack.
+func TestControlPauseRouter_RunEndedWithoutPausingIsAcked(t *testing.T) {
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	defer cancelRun()
+
+	g := compileRouterGraph(t, routerPauseHCL)
+	gate := &pauseGateHandle{}
+	publisher := &eventPublisher{}
+	sink := &run.Sink{RunID: "run-pause-7", Client: publisher, Log: discardLog()}
+	eng := engine.New(g, &staticGateLoader{handle: gate}, sink)
+
+	router := newControlPauseRouter("run-pause-7", sink, discardLog())
+	router.setEngine(eng)
+
+	gate.block("b")
+	doneRun := make(chan error, 1)
+	go func() { doneRun <- eng.Run(runCtx) }()
+	waitStepEntered(t, publisher, "b", 5*time.Second)
+
+	// Arm the latch mid-step; the pause cannot land while the gate holds
+	// step "b" (the boundary check only runs between loop iterations). The
+	// router consumes the command on a context that outlives the run's
+	// teardown so the ack-close — not ctx.Done — decides the outcome, which
+	// is the raced-pause case this arm exists for.
+	resCh := make(chan pauseAckResult, 1)
+	go func() {
+		resCh <- router.handle(context.Background(), &pb.PauseRun{RunId: "run-pause-7", Reason: "castle hold"})
+	}()
+
+	// The run is torn down mid-step: releasing the gate under a cancelled
+	// run context makes the in-flight Execute return the context error and
+	// the run loop exits without a pause; clearPauseRequest then closes the
+	// ack with no paused node.
+	cancelRun()
+	gate.release("b")
+
+	select {
+	case res := <-resCh:
+		if res != pauseAckEnded {
+			t.Fatalf("ack for a run that ended without pausing: got %q, want %q", res, pauseAckEnded)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for the run-ended ack outcome")
+	}
+	if node := sink.PausedAt(); node != "" {
+		t.Fatalf("PausedAt: got %q, want empty (the run ended without pausing)", node)
+	}
+	if rp := publisher.runPaused(); rp != nil {
+		t.Fatalf("no RunPaused may be published when the run ends without pausing, got %+v", rp)
+	}
+	if err := <-doneRun; err == nil {
+		t.Fatal("expected the cancelled mid-step run to end with an error")
+	}
+}
+
+// TestControlPauseRouter_ConsumeCtxCancelledStaysRetryable exercises the
+// context_cancelled arm: with the latch armed mid-step and the consumer's
+// context torn down before any boundary, the wait reports the retryable
+// ack-timeout outcome — the latch stays armed and the pause still lands late;
+// nothing is silently dropped.
+func TestControlPauseRouter_ConsumeCtxCancelledStaysRetryable(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	g := compileRouterGraph(t, routerPauseHCL)
+	gate := &pauseGateHandle{}
+	publisher := &eventPublisher{}
+	sink := &run.Sink{RunID: "run-pause-8", Client: publisher, Log: discardLog()}
+	eng := engine.New(g, &staticGateLoader{handle: gate}, sink)
+
+	router := newControlPauseRouter("run-pause-8", sink, discardLog())
+	router.setEngine(eng)
+
+	gate.block("b")
+	doneRun := make(chan error, 1)
+	go func() { doneRun <- eng.Run(ctx) }()
+	waitStepEntered(t, publisher, "b", 5*time.Second)
+
+	ack, ok := eng.RequestPause()
+	if !ok {
+		t.Fatal("RequestPause did not arm the latch while step b was in flight")
+	}
+
+	// Teardown arrives before any boundary: the consumer context is
+	// cancelled while the latch is still pending.
+	waitCtx, cancelWait := context.WithCancel(context.Background())
+	waitDone := make(chan pauseAckResult, 1)
+	go func() { waitDone <- router.waitForPauseAck(waitCtx, ack, "") }()
+	cancelWait()
+
+	select {
+	case res := <-waitDone:
+		if res != pauseAckTimed {
+			t.Fatalf("cancelled pause wait: got %q, want %q", res, pauseAckTimed)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for the cancelled pause wait")
+	}
+
+	// The latch stays armed: releasing the gate lands the pause at "c" and
+	// the run loop yields (the late RunPaused is the retryable-landing case,
+	// covered by TestControlPauseRouter_AckTimeoutStaysRetryable).
+	gate.release("b")
+	select {
+	case err := <-doneRun:
+		if err != nil {
+			t.Fatalf("engine run: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for the paused run loop to yield")
+	}
+}

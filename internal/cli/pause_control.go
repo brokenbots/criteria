@@ -106,9 +106,13 @@ func (r *controlPauseRouter) handle(ctx context.Context, msg *pb.PauseRun) pause
 		return pauseAckEnded
 	}
 	if node := r.sink.PausedAt(); node != "" {
+		// Idempotent re-answer: the original landing already published
+		// RunPaused, so a retried pause is acked without a fresh event here —
+		// castle's RunPaused-first-retry flow re-reads the paused status that
+		// is already recorded upstream.
 		r.log.Info("run already paused at node; pause_run is idempotent",
 			slog.String("run_id", r.runID), slog.String("node", node),
-			slog.String("requested_at", msg.GetReason()))
+			slog.String("reason", msg.GetReason()))
 		return pauseAckLanded
 	}
 	eng := r.eng

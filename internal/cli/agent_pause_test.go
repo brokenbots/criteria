@@ -10,12 +10,17 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+
+	"github.com/brokenbots/criteria/internal/cli/applytest"
+	servertrans "github.com/brokenbots/criteria/internal/transport/server"
 )
 
 func pauseRoutingLoop(t *testing.T, runID string, pauseBuf int) (*agentLoop, chan *pb.PauseRun, *bytes.Buffer) {
@@ -97,4 +102,154 @@ func TestAgentLoop_PauseFullBufferRecordedDrop(t *testing.T) {
 	if strings.Count(logBuf.String(), "active_run_pause_ch_full") != 1 {
 		t.Fatalf("exactly one slot-full record expected:\n%s", logBuf.String())
 	}
+}
+
+// TestAgentRunAndDrain_PauseLandsDuringInitialRun is the run-level CRI-254
+// regression for the agent path: the pause consumer must be live BEFORE the
+// initial engine run, so a castle PauseRun delivered (through the real
+// control stream and the agentLoop router) while the run is in flight lands
+// at the next boundary instead of racing past a terminal run. Against the
+// pre-fix ordering — consumer started after eng.Run — the pause sits
+// unconsumed, the run completes, and the late consumer drops it as
+// run_not_running: the run would never reach paused status and this test
+// would time out waiting for it.
+func TestAgentRunAndDrain_PauseLandsDuringInitialRun(t *testing.T) {
+	requireNoGoroutineLeak(t)
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+	fake := applytest.New(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	log := newApplyLogger()
+	wfPath := writeWorkflowFile(t, boundaryPauseWorkflow)
+	src, graph, loader, err := compileForExecution(ctx, wfPath, log, false, false)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
+
+	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
+	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri254-agent", &copts, nil, nil, "")
+	if err != nil {
+		t.Fatalf("setupServerRun: %v", err)
+	}
+	if resumed {
+		t.Fatal("setupServerRun unexpectedly resumed a matching checkpoint")
+	}
+	defer client.Close()
+
+	publisher, closePublisher, err := newRunPublisher(ctx, client, runID)
+	if err != nil {
+		t.Fatalf("newRunPublisher: %v", err)
+	}
+	defer closePublisher()
+
+	agentOpts := &agentOptions{serverURL: fake.URL()}
+	assignment := &pb.WorkflowAssignment{RunId: runID, WorkflowSource: string(src)}
+	eng, sink, runSink, state, err := buildAgentRun(ctx, ctx, log, client, assignment, agentOpts, publisher, graph, loader, filepath.Dir(wfPath), wfPath)
+	if err != nil {
+		t.Fatalf("buildAgentRun: %v", err)
+	}
+
+	resumeCh := make(chan *pb.ResumeRun, 1)
+	promptCh := make(chan *pb.AgentPrompt, 1)
+	pauseCh := make(chan *pb.PauseRun, 1)
+	active := &activeRun{}
+	active.mu.Lock()
+	active.runID = runID
+	active.resumeCh = resumeCh
+	active.promptCh = promptCh
+	active.pauseCh = pauseCh
+	active.mu.Unlock()
+
+	// Route control messages through the same primitives agent_pause_test.go
+	// covers, wired to the real client so pause/resume cross the network leg.
+	loop := &agentLoop{ctx: ctx, log: log, client: client, opts: agentOpts, active: active}
+	routingDone := make(chan struct{})
+	go func() {
+		defer close(routingDone)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msg := <-client.PauseRunCh():
+				loop.handlePause(msg)
+			case msg := <-client.ResumeCh():
+				loop.handleResume(msg)
+			}
+		}
+	}()
+
+	runCtx, runCancel := context.WithCancel(ctx)
+	defer runCancel()
+	runErrCh := make(chan error, 1)
+	go func() {
+		runErrCh <- runAndDrain(ctx, runCtx, log, eng, loader, sink, runSink, resumeCh, promptCh, pauseCh, state, graph, filepath.Dir(wfPath), runID, publisher, nil, nil)
+	}()
+
+	fake.WaitForCond(t, 10*time.Second, func() bool {
+		return fake.HasStepEntered("step_two")
+	})
+	fake.PauseRun(runID, "castle hold")
+
+	// The pause lands at the step_three boundary while the initial run is
+	// still in flight; the RunPaused ack flips the fake run row to paused.
+	fake.WaitForCond(t, 10*time.Second, func() bool {
+		return fake.RunStatus(runID) == "paused"
+	})
+	var rp *pb.RunPaused
+	for _, env := range fake.Events() {
+		if rpEnv := env.GetRunPaused(); rpEnv != nil {
+			rp = rpEnv
+			break
+		}
+	}
+	if rp == nil {
+		t.Fatal("RunPaused event not received castle-side")
+	}
+	if rp.Node != "step_three" || rp.Mode != "external" || rp.Signal != "" {
+		t.Fatalf("RunPaused: node=%q mode=%q signal=%q, want step_three/external/\"\"", rp.Node, rp.Mode, rp.Signal)
+	}
+	if fake.HasEventOfType("RunCompleted") {
+		t.Fatal("run must stay in flight while paused")
+	}
+	if fake.HasStepEntered("step_three") {
+		t.Fatal("the post-pause step must never evaluate before resume")
+	}
+
+	// Signal-less resume through the same control stream: continue from the
+	// checkpoint at step_three without replaying step_two and complete.
+	fake.ResumeRun(runID, "")
+	fake.WaitForCond(t, 15*time.Second, func() bool {
+		return fake.RunStatus(runID) == "succeeded"
+	})
+	select {
+	case err := <-runErrCh:
+		if err != nil {
+			t.Fatalf("runAndDrain: %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("timeout waiting for runAndDrain to return")
+	}
+
+	var stepTwo, stepThree int
+	for _, env := range fake.Events() {
+		if se := env.GetStepEntered(); se != nil {
+			switch se.Step {
+			case "step_two":
+				stepTwo++
+			case "step_three":
+				stepThree++
+			}
+		}
+	}
+	if stepTwo != 1 || stepThree != 1 {
+		t.Fatalf("step entries: step_two=%d step_three=%d, want 1/1 (resume continues from the checkpoint, no replay)", stepTwo, stepThree)
+	}
+	if fake.HasEventOfType("WaitResumed") {
+		t.Fatal("a boundary pause must not surface wait/signal resume traffic")
+	}
+	cancel()
+	<-routingDone
 }

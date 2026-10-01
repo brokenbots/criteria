@@ -937,6 +937,20 @@ func buildAgentRun(agentCtx, runCtx context.Context, log *slog.Logger, client *s
 // When cp and reattachResp are non-nil, the engine resumes from the server's
 // reported current step and attempt instead of starting from the beginning.
 func runAndDrain(agentCtx, runCtx context.Context, log *slog.Logger, eng *engine.Engine, loader adapterhost.Loader, sink *run.Sink, runSink engine.Sink, resumeCh <-chan *pb.ResumeRun, promptCh <-chan *pb.AgentPrompt, pauseCh <-chan *pb.PauseRun, state *localRunState, graph *workflow.FSMGraph, workflowDir, runID string, publisher *servertrans.RunPublisher, cp *StepCheckpoint, reattachResp *pb.ReattachRunResponse) error {
+	// CRI-254: consume pause commands delivered to this run's pause channel
+	// starting BEFORE the initial engine run so a pause issued while the run
+	// is in flight lands at the next boundary (drain-first, durable
+	// checkpoint, no adapter kill). The consumer lives across every resume
+	// cycle (drainResumeCycles re-pins the router to each resumed engine),
+	// stops once the run is terminal, and the run function joins the
+	// goroutine so it is always gone at return.
+	pauseRouter := newControlPauseRouter(runID, sink, log)
+	pauseDone, pauseCancel := pauseRouter.startPauseConsume(runCtx, eng, pauseCh)
+	defer func() {
+		pauseCancel()
+		<-pauseDone
+	}()
+
 	var runErr error
 	resuming := cp != nil && reattachResp != nil && reattachResp.CanResume && reattachResp.CurrentStep != ""
 	if resuming {
@@ -967,17 +981,9 @@ func runAndDrain(agentCtx, runCtx context.Context, log *slog.Logger, eng *engine
 	// pending step.outcome / RunCompleted tail is what transitions the
 	// server-side run row out of 'running'; an early error return drops that
 	// tail (the observed stuck-'running' shape).
+	// The pause consumer started above stays live across every cycle below.
 	var resumeErr error
 	if !shutdown {
-		// CRI-254: consume pause commands routed to this run's pause channel
-		// and drive the boundary-pause machinery (drain-first, durable
-		// checkpoint, no adapter kill); stops at terminal, joined at return.
-		pauseRouter := newControlPauseRouter(runID, sink, log)
-		pauseDone, pauseCancel := pauseRouter.startPauseConsume(runCtx, eng, pauseCh)
-		defer func() {
-			pauseCancel()
-			<-pauseDone
-		}()
 		resumeErr = drainResumeCycles(runCtx, log, loader, sink, runSink, resumeCh, promptCh, state.CriteriaID, state, graph, workflowDir, eng, "", pauseRouter)
 	}
 
