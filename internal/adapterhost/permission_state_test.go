@@ -326,8 +326,8 @@ func TestPermissionInterceptSink_AllowDeny(t *testing.T) {
 	if !inner.saw("permission.denied") {
 		t.Error("expected permission.denied event")
 	}
-	if !sink.anyDenied {
-		t.Error("expected anyDenied=true after denial")
+	if !sink.lastDecisionDenied {
+		t.Error("expected lastDecisionDenied=true after denial")
 	}
 }
 
@@ -457,8 +457,8 @@ func TestPermissionInterceptSink_RequestIDCorrelation(t *testing.T) {
 				if gotKind != "permission.denied" {
 					t.Fatalf("expected permission.denied, got %q", gotKind)
 				}
-				if !sink.anyDenied {
-					t.Error("expected anyDenied=true after denial")
+				if !sink.lastDecisionDenied {
+					t.Error("expected lastDecisionDenied=true after denial")
 				}
 			}
 

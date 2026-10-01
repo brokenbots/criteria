@@ -699,10 +699,18 @@ type permissionInterceptSink struct {
 	// after the adapter call returns and propagates the error so the run
 	// aborts.
 	nestedFatalErr error
-	// anyDenied is set and read on the Execute goroutine only (the sink is
-	// not shared); nested completers touch only setNestedFatalErr and the
-	// permission state.
-	anyDenied bool
+	// lastDecisionDenied records whether the step's LAST permission decision
+	// was a denial. It triggers maybeOverrideOutcome (success →
+	// needs_review) after Execute. KB-57c refinement: a deny the model
+	// subsequently recovered from (any later granted permission) no longer
+	// poisons the verdict — the kb-61-1790827708 run finalized success after
+	// policy-correct compound denials were retried as split commands, and
+	// flagging recovered steps resurrects the deny-loop as a silent-stall
+	// class. A step whose final state is still denied keeps the override:
+	// the agent finished while something remained blocked. Set and read on
+	// the Execute goroutine only (the sink is not shared); nested
+	// completers touch only setNestedFatalErr and the permission state.
+	lastDecisionDenied bool
 }
 
 // setNestedFatalErr records a fatal run error raised by a nested callee
@@ -759,7 +767,7 @@ func (s *permissionInterceptSink) handlePermissionRequest(data any) {
 	payload, ok := data.(map[string]any)
 	if !ok {
 		// Malformed payload — treat as deny.
-		s.anyDenied = true
+		s.lastDecisionDenied = true
 		s.inner.Adapter("permission.denied", map[string]any{
 			"reason": "malformed permission.request payload",
 		})
@@ -767,7 +775,7 @@ func (s *permissionInterceptSink) handlePermissionRequest(data any) {
 	}
 	requestID, ok := resolvePermissionRequestID(payload)
 	if !ok {
-		s.anyDenied = true
+		s.lastDecisionDenied = true
 		s.inner.Adapter("permission.denied", map[string]any{
 			"reason": "malformed permission.request payload: missing request_id",
 		})
@@ -786,13 +794,14 @@ func (s *permissionInterceptSink) handlePermissionRequest(data any) {
 		if idx := strings.Index(pattern, " (alias for "); idx >= 0 {
 			pattern = pattern[:idx]
 		}
+		s.lastDecisionDenied = false // a later grant clears an earlier deny (KB-57c)
 		s.inner.Adapter("permission.granted", map[string]any{
 			"request_id": requestID,
 			"tool":       s.redactEventValue(tool),
 			"pattern":    pattern,
 		})
 	} else {
-		s.anyDenied = true
+		s.lastDecisionDenied = true
 		suggestion := PermissionDenialSuggestion(s.session.Adapter, tool)
 		deniedPayload := map[string]any{
 			"request_id": requestID,

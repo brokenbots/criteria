@@ -417,7 +417,7 @@ func (s *permissionInterceptSink) applyToolCallPolicy(req *toolCallPayload, pars
 	}
 	allow, reason := s.permState.evaluateToolCall(req.requestID, req.target, parsed, req.argsDigest, req.fullCmd, grants, s.nesting.depth)
 	if !allow {
-		s.anyDenied = true
+		s.lastDecisionDenied = true
 		deniedTool := req.tool
 		if deniedTool == "" {
 			deniedTool = req.target
@@ -453,7 +453,7 @@ func (s *permissionInterceptSink) handleToolCallRequest(payload map[string]any) 
 	if !ok {
 		// Without a request id there is nothing to key a typed reply to;
 		// reuse the unchanged malformed-request deny path.
-		s.anyDenied = true
+		s.lastDecisionDenied = true
 		s.inner.Adapter("permission.denied", map[string]any{
 			"reason": "malformed permission.request payload: missing request_id",
 		})

@@ -971,8 +971,8 @@ func TestExecuteCaptureSink_PermissionRequestIDCorrelation(t *testing.T) {
 				if data["request_id"] != "" && data["request_id"] != nil {
 					t.Errorf("expected empty request_id, got %q", data["request_id"])
 				}
-				if !cs.anyDenied {
-					t.Error("expected anyDenied=true after malformed denial")
+				if !cs.lastDecisionDenied {
+					t.Error("expected lastDecisionDenied=true after malformed denial")
 				}
 				select {
 				case <-requests:

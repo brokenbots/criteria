@@ -228,8 +228,8 @@ func TestToolCall_CapabilityMissing(t *testing.T) {
 	if policy.calls != 0 {
 		t.Errorf("policy called %d times, want 0", policy.calls)
 	}
-	if fx.sink.anyDenied {
-		t.Error("expected anyDenied=false for typed capability failure")
+	if fx.sink.lastDecisionDenied {
+		t.Error("expected lastDecisionDenied=false for typed capability failure")
 	}
 	entries := audit.all()
 	if len(entries) != 1 || entries[0].Reason != "adapter tool call rejected: "+callErrorCapabilityMissing {
@@ -271,8 +271,8 @@ func TestToolCall_PolicyDeny(t *testing.T) {
 	if denied["request_id"] != "req-1" || denied["tool"] != "run" || denied["reason"] != "no matching allow_tools entry" {
 		t.Errorf("permission.denied = %+v", denied)
 	}
-	if !fx.sink.anyDenied {
-		t.Error("expected anyDenied=true after policy denial")
+	if !fx.sink.lastDecisionDenied {
+		t.Error("expected lastDecisionDenied=true after policy denial")
 	}
 }
 
@@ -321,8 +321,8 @@ func TestToolCall_UnknownAdapter(t *testing.T) {
 	if fx.inner.saw("permission.denied") {
 		t.Error("expected no permission.denied for graph failure after allow")
 	}
-	if fx.sink.anyDenied {
-		t.Error("expected anyDenied=false for typed graph failure")
+	if fx.sink.lastDecisionDenied {
+		t.Error("expected lastDecisionDenied=false for typed graph failure")
 	}
 }
 
@@ -342,8 +342,8 @@ func TestToolCall_UnknownStaticTool(t *testing.T) {
 	if tcr.CallError != callErrorUnknownTool {
 		t.Errorf("call_error = %q, want %q", tcr.CallError, callErrorUnknownTool)
 	}
-	if fx.sink.anyDenied {
-		t.Error("expected anyDenied=false for typed graph failure")
+	if fx.sink.lastDecisionDenied {
+		t.Error("expected lastDecisionDenied=false for typed graph failure")
 	}
 }
 
@@ -453,8 +453,8 @@ func TestToolCall_NilManagerFallback(t *testing.T) {
 	if granted["request_id"] != "req-1" || granted["tool"] != "adapter.shell.runner.tools.run" || granted["pattern"] != "adapter.shell.runner.*" {
 		t.Errorf("permission.granted = %+v", granted)
 	}
-	if fx.sink.anyDenied {
-		t.Error("expected anyDenied=false for stub success path")
+	if fx.sink.lastDecisionDenied {
+		t.Error("expected lastDecisionDenied=false for stub success path")
 	}
 	entries := audit.all()
 	if len(entries) != 2 {
@@ -487,8 +487,8 @@ func TestToolCall_MissingRequestID(t *testing.T) {
 	if denied["reason"] != "malformed permission.request payload: missing request_id" {
 		t.Errorf("permission.denied = %+v", denied)
 	}
-	if !fx.sink.anyDenied {
-		t.Error("expected anyDenied=true for malformed request")
+	if !fx.sink.lastDecisionDenied {
+		t.Error("expected lastDecisionDenied=true for malformed request")
 	}
 }
 
@@ -546,8 +546,8 @@ func TestToolCall_NamedGrantOnlyCoversNamedCall(t *testing.T) {
 	if policy.calls != 1 {
 		t.Fatalf("policy called %d times, want 1", policy.calls)
 	}
-	if !fx.sink.anyDenied {
-		t.Error("expected anyDenied=true when only policy denies")
+	if !fx.sink.lastDecisionDenied {
+		t.Error("expected lastDecisionDenied=true when only policy denies")
 	}
 }
 

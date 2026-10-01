@@ -277,7 +277,7 @@ func TestRescueResultDoneWithoutOutcomeFallsBackToFinalized(t *testing.T) {
 }
 
 func TestApplyNeedsReviewOverrideOnlyDemotesSuccess(t *testing.T) {
-	s := &executeCaptureSink{sink: &adapterEventCollector{}, anyDenied: true}
+	s := &executeCaptureSink{sink: &adapterEventCollector{}, lastDecisionDenied: true}
 	result := adapter.Result{Outcome: "ready_for_review"}
 	s.applyNeedsReviewOverride(&result)
 	if result.Outcome != "ready_for_review" {

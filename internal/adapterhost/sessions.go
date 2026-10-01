@@ -2528,7 +2528,7 @@ func newPermissionInterceptSink(ctx context.Context, inner adapter.EventSink, se
 }
 
 func (m *SessionManager) maybeOverrideOutcome(permSink *permissionInterceptSink, result *adapter.Result) {
-	if permSink != nil && permSink.anyDenied && result.Outcome == "success" {
+	if permSink != nil && permSink.lastDecisionDenied && result.Outcome == "success" {
 		result.Outcome = "needs_review"
 	}
 }

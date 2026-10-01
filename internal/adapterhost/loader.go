@@ -726,9 +726,16 @@ type executeCaptureSink struct {
 	result adapter.Result
 	done   bool
 
-	// anyDenied is set true when any permission request was denied this Execute.
-	// It triggers the outcome override (success → needs_review) after Execute.
-	anyDenied bool
+	// lastDecisionDenied records whether the step's LAST permission decision
+	// was a denial. It triggers the outcome override (success → needs_review)
+	// after Execute. KB-57c refinement: a deny that the model subsequently
+	// recovered from (any later granted permission) no longer poisons the
+	// verdict — the kb-61-1790827708 run finalized success after policy-
+	// correct compound denials were retried as split commands, and flagging
+	// recovered steps for human review resurrects the deny-loop as a
+	// silent-stall class. A step whose final state is still denied keeps the
+	// override: the agent finished while something remained blocked.
+	lastDecisionDenied bool
 
 	// Host-side permission policy for this step (fallback when called directly,
 	// bypassing SessionManager).
@@ -999,13 +1006,14 @@ func (s *executeCaptureSink) handlePermissionRequest(adapterEvt *v2.AdapterEvent
 // that is missing a correlation ID. No stream message is sent because there is
 // no request ID to correlate.
 func (s *executeCaptureSink) emitMalformedPermissionDenied() {
-	s.anyDenied = true
+	s.lastDecisionDenied = true
 	s.sink.Adapter("permission.denied", map[string]any{
 		"reason": "malformed permission.request payload: missing request_id",
 	})
 }
 
 func (s *executeCaptureSink) emitGranted(requestID, tool, reason string) {
+	s.lastDecisionDenied = false
 	pattern := strings.TrimPrefix(reason, "matched: ")
 	if idx := strings.Index(pattern, " (alias for "); idx >= 0 {
 		pattern = pattern[:idx]
@@ -1029,7 +1037,7 @@ func (s *executeCaptureSink) emitGranted(requestID, tool, reason string) {
 }
 
 func (s *executeCaptureSink) emitDenied(requestID, tool, reason string) {
-	s.anyDenied = true
+	s.lastDecisionDenied = true
 	suggestion := PermissionDenialSuggestion(s.adapterName, tool)
 	deniedPayload := map[string]any{
 		"request_id": requestID,
@@ -1114,7 +1122,7 @@ func (s *executeCaptureSink) rescueResult() (adapter.Result, bool) {
 // permission demotes a "success" outcome to "needs_review") consistently to
 // captured and rescued results.
 func (s *executeCaptureSink) applyNeedsReviewOverride(result *adapter.Result) {
-	if s.anyDenied && result.Outcome == "success" {
+	if s.lastDecisionDenied && result.Outcome == "success" {
 		result.Outcome = "needs_review"
 	}
 }
