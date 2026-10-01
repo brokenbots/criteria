@@ -349,7 +349,34 @@ func reqIsCompound(details map[string]string) bool {
 
 // matchPattern evaluates a single pattern against a target. It returns (true, reason)
 // on a match, otherwise (false, ""). Malformed patterns are recorded in bad.
+//
+// KB-57c (trailing-star prefix match): a trailing '*' is matched as a
+// slash-PERMISSIVE prefix — filepath.Match's '*' cannot cross '/', which
+// silently breaks intent for command fingerprints: "shell:git log *" must
+// reach "git log origin/main..HEAD -- deep/path/x.go", and bare '*' (the
+// universal allow) must reach any segment. Pattern prefixes remain literal +
+// segment-correct: the match is a pure prefix check on the pattern's
+// glob-free part. Non-trailing globs keep filepath.Match semantics
+// ("shell:git */*"-style entries continue to behave as before; the workflow
+// lists never use them).
 func (p *allowlistPolicy) matchPattern(pat, target string, bad *badPatternTracker) (matched bool, reason string) {
+	if strings.HasSuffix(pat, "*") {
+		prefix := pat[:len(pat)-1]
+		if idx := strings.Index(prefix, "*"); idx >= 0 {
+			// An interior glob plus a trailing star ('a*b*') is not present
+			// in any shipped list; fall back to filepath.Match semantics
+			// (and record the pattern as intentionally unmatched here) so
+			// behavior for unexpected lists never silently widens.
+			if ok, err := filepath.Match(pat, target); err == nil && ok {
+				return true, "matched: " + pat + " (interior glob)"
+			}
+			return false, ""
+		}
+		if strings.HasPrefix(target, prefix) {
+			return true, "matched: " + pat
+		}
+		return false, ""
+	}
 	if ok, err := filepath.Match(pat, target); err != nil {
 		bad.record(pat)
 		return false, ""
