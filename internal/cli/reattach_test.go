@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,10 +36,20 @@ type fakeTransport struct {
 	// promptCh is returned by AgentPromptCh().
 	promptCh chan *pb.AgentPrompt
 
+	// pauseCh is returned by PauseRunCh(). Tests wanting to deliver control
+	// messages must pre-set it (buffered) before starting a driver goroutine
+	// and send on the field directly: PauseRunCh returns a receive-only view.
+	pauseCh chan *pb.PauseRun
+
+	// cancelCh is returned by RunCancelCh(), same convention as pauseCh.
+	cancelCh chan string
+
 	// criteriaID is returned by CriteriaID().
 	criteriaID string
 
-	// published accumulates envelopes passed to Publish.
+	// published accumulates envelopes passed to Publish. Guarded by mu:
+	// drivers publish while tests poll Published().
+	mu        sync.Mutex
 	published []*pb.Envelope
 }
 
@@ -66,10 +77,33 @@ func (f *fakeTransport) AgentPromptCh() <-chan *pb.AgentPrompt {
 	return f.promptCh
 }
 
+func (f *fakeTransport) PauseRunCh() <-chan *pb.PauseRun {
+	if f.pauseCh == nil {
+		f.pauseCh = make(chan *pb.PauseRun)
+	}
+	return f.pauseCh
+}
+
+func (f *fakeTransport) RunCancelCh() <-chan string {
+	if f.cancelCh == nil {
+		f.cancelCh = make(chan string)
+	}
+	return f.cancelCh
+}
+
 func (f *fakeTransport) CriteriaID() string { return f.criteriaID }
 
 func (f *fakeTransport) Publish(_ context.Context, env *pb.Envelope) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.published = append(f.published, env)
+}
+
+// Published returns a snapshot of the envelopes published so far.
+func (f *fakeTransport) Published() []*pb.Envelope {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]*pb.Envelope(nil), f.published...)
 }
 
 // discardLogger returns a logger that silently discards all output.
@@ -930,7 +964,7 @@ func TestResumeActiveRun_FreshAttemptBudgetOnResume(t *testing.T) {
 	}
 
 	ft := &fakeTransport{}
-	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp, nil)
+	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp, nil, nil)
 
 	// Checkpoint must be removed.
 	list, _ := ListStepCheckpoints()
@@ -987,7 +1021,7 @@ func TestResumeActiveRun_HappyPath(t *testing.T) {
 	}
 
 	ft := &fakeTransport{}
-	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp, nil)
+	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp, nil, nil)
 
 	// Checkpoint must be removed after the run completes.
 	list, _ := ListStepCheckpoints()
@@ -1059,7 +1093,7 @@ func TestResumeActiveRun_DualWriteMirrorsEventsFile(t *testing.T) {
 
 	ft := &fakeTransport{}
 	var eventsBuf bytes.Buffer
-	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp, &eventsBuf)
+	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp, &eventsBuf, nil)
 
 	fileEvents := parseNDJSONEnvelopes(t, eventsBuf.Bytes())
 	assertSingleRunStrictSeq(t, fileEvents, cp.RunID)
@@ -1101,7 +1135,7 @@ func TestResumePausedRun_DualWriteMirrorsEventsFile(t *testing.T) {
 
 	ft := &fakeTransport{}
 	var eventsBuf bytes.Buffer
-	resumePausedRun(context.Background(), discardLogger(), ft, cp, graph, resp, &eventsBuf)
+	resumePausedRun(context.Background(), discardLogger(), ft, cp, graph, resp, &eventsBuf, nil)
 
 	fileEvents := parseNDJSONEnvelopes(t, eventsBuf.Bytes())
 	assertSingleRunStrictSeq(t, fileEvents, cp.RunID)
@@ -1142,7 +1176,7 @@ func TestResumeActiveRun_MaxRetriesDualWriteMirrorsEventsFile(t *testing.T) {
 
 	ft := &fakeTransport{}
 	var eventsBuf bytes.Buffer
-	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp, &eventsBuf)
+	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp, &eventsBuf, nil)
 
 	fileEvents := parseNDJSONEnvelopes(t, eventsBuf.Bytes())
 	assertSingleRunStrictSeq(t, fileEvents, cp.RunID)
@@ -1215,7 +1249,7 @@ func TestResumeActiveRun_VisitsRestored(t *testing.T) {
 	}
 
 	ft := &fakeTransport{}
-	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp, nil)
+	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp, nil, nil)
 
 	// The engine must emit RunFailed because visits["work"]=1 >= max_visits=1.
 	var gotFailed bool
@@ -1256,7 +1290,7 @@ func TestResumePausedRun_StartsStreamsAndRunsEngine(t *testing.T) {
 	}
 
 	ft := &fakeTransport{}
-	resumePausedRun(context.Background(), discardLogger(), ft, cp, graph, resp, nil)
+	resumePausedRun(context.Background(), discardLogger(), ft, cp, graph, resp, nil, nil)
 
 	// Checkpoint must be removed.
 	list, _ := ListStepCheckpoints()
@@ -1299,7 +1333,7 @@ func TestResumePausedRun_StartStreamsError(t *testing.T) {
 	}
 
 	ft := &fakeTransport{startStreamsErr: fmt.Errorf("connection refused")}
-	resumePausedRun(context.Background(), discardLogger(), ft, cp, graph, resp, nil)
+	resumePausedRun(context.Background(), discardLogger(), ft, cp, graph, resp, nil, nil)
 
 	// Checkpoint must be removed (abandoned on stream error).
 	list, _ := ListStepCheckpoints()
@@ -1314,7 +1348,361 @@ func TestResumePausedRun_StartStreamsError(t *testing.T) {
 	}
 }
 
-// TestResumeOneLocalRun_ServerNodeResolved verifies that a checkpoint for a
+// recoveryPauseWorkflow is a three-step workflow whose middle step runs long
+// enough (the noop adapter honors delay_ms and aborts it on context cancel)
+// for a test to deliver a castle control message mid-flight. It drives the
+// pause/cancel regression tests for control consumption on crash-recovered
+// runs (CRI-254 review R1).
+const recoveryPauseWorkflow = `
+workflow {
+  name = "recovery_pause"
+  version       = "0.1"
+  initial_state = "step_one"
+  target_state  = "done"
+}
+
+adapter "noop" "default" {}
+
+step "step_one" {
+  target = adapter.noop.default
+  outcome "success" { next = step.step_two }
+  outcome "failure" { next = step.done }
+}
+
+step "step_two" {
+  target = adapter.noop.default
+  input { delay_ms = "500" }
+  outcome "success" { next = step.step_three }
+}
+
+step "step_three" {
+  target = adapter.noop.default
+  outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+
+// waitForEnvelope polls a fake transport's published envelopes until one
+// matches, failing the test after the timeout. Drivers run on test goroutines
+// so envelopes arrive asynchronously.
+func waitForEnvelope(t *testing.T, ft *fakeTransport, timeout time.Duration, match func(*pb.Envelope) bool) *pb.Envelope {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		for _, env := range ft.Published() {
+			if match(env) {
+				return env
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected envelope not published within %s (have %d)", timeout, len(ft.Published()))
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+// hasEnvelope reports whether any envelope in the list matches.
+func hasEnvelope(envs []*pb.Envelope, match func(*pb.Envelope) bool) bool {
+	for _, env := range envs {
+		if match(env) {
+			return true
+		}
+	}
+	return false
+}
+
+// newRecoveredRunFixture writes the workflow and checkpoint for the
+// recovered-run control-consumption regression tests and returns the pieces
+// the tests share (plus a text-handler log buffer), without starting a driver.
+func newRecoveredRunFixture(t *testing.T, hcl string, resp *pb.ReattachRunResponse, runID string) (*StepCheckpoint, *workflow.FSMGraph, *fakeTransport, *slog.Logger, *bytes.Buffer) {
+	t.Helper()
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+	wfFile := writeWorkflowFile(t, hcl)
+	cp := &StepCheckpoint{RunID: runID, WorkflowPath: wfFile, CurrentStep: resp.CurrentStep}
+	writeCheckpointDirect(t, stateDir, cp)
+	graph, err := parseWorkflowFromPath(context.Background(), wfFile)
+	if err != nil {
+		t.Fatalf("parseWorkflowFromPath: %v", err)
+	}
+	var logBuf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logBuf, nil))
+	ft := &fakeTransport{}
+	// Buffered so the test can deliver control messages while drivers are
+	// already consuming.
+	ft.pauseCh = make(chan *pb.PauseRun, 1)
+	ft.cancelCh = make(chan string, 1)
+	return cp, graph, ft, log, &logBuf
+}
+
+// assertStepCheckpointGone fails the test when the step checkpoint for runID
+// still exists.
+func assertStepCheckpointGone(t *testing.T, runID string) {
+	t.Helper()
+	list, _ := ListStepCheckpoints()
+	for _, item := range list {
+		if item.RunID == runID {
+			t.Errorf("step checkpoint for %s not removed", runID)
+		}
+	}
+}
+
+// TestResumeActiveRun_PauseRunLandsDuringRecoveredRun is the CRI-254 review-R1
+// regression test: a castle pause_run delivered on the recovery client while a
+// crash-resumed run is active must land at a step boundary through the shared
+// controlPauseRouter (RunPaused published, structured landing log) instead of
+// being silently swallowed. The RunCancelCh treatment for the same driver is
+// TestResumeActiveRun_RunCancelCancelsRecoveredRun and
+// TestResumeActiveRun_RunCancelForeignRunIDLoggedNotRun.
+func TestResumeActiveRun_PauseRunLandsDuringRecoveredRun(t *testing.T) {
+	requireNoGoroutineLeak(t)
+	resp := &pb.ReattachRunResponse{CanResume: true, Status: "running", CurrentStep: "step_one"}
+	cp, graph, ft, log, logBuf := newRecoveredRunFixture(t, recoveryPauseWorkflow, resp, "rr-pause-active")
+
+	runCtx, runCancel := context.WithCancel(context.Background())
+	defer runCancel()
+	done := make(chan bool, 1)
+	go func() {
+		consumed, outcome := resumeActiveRun(runCtx, log, ft, cp, graph, resp, nil, runCancel)
+		if outcome != nil {
+			t.Errorf("pause-landed resume returned error %v", outcome)
+		}
+		done <- consumed
+	}()
+
+	// Deliver mid-flight: wait for the slow middle step to start, then have
+	// the castle pause the run through the recovery client.
+	waitForEnvelope(t, ft, 10*time.Second, func(env *pb.Envelope) bool {
+		se := env.GetStepEntered()
+		return se != nil && se.Step == "step_two"
+	})
+	ft.pauseCh <- &pb.PauseRun{RunId: cp.RunID, Reason: "castle hold"}
+
+	pausedEnv := waitForEnvelope(t, ft, 10*time.Second, func(env *pb.Envelope) bool {
+		return env.GetRunPaused() != nil
+	})
+	if got, mode := pausedEnv.GetRunPaused().GetNode(), pausedEnv.GetRunPaused().GetMode(); got != "step_three" || mode != "external" {
+		t.Errorf("RunPaused = (node=%q mode=%q), want (step_three, external)", got, mode)
+	}
+
+	select {
+	case consumed := <-done:
+		if !consumed {
+			t.Error("consumed = false, want true")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("resumeActiveRun did not return after the pause landed")
+	}
+
+	// The pause intercepted the boundary before the next node evaluated.
+	if hasEnvelope(ft.Published(), func(env *pb.Envelope) bool {
+		se := env.GetStepEntered()
+		return se != nil && se.Step == "step_three"
+	}) {
+		t.Error("step_three started although the boundary pause landed first")
+	}
+	if !strings.Contains(logBuf.String(), "run paused at boundary") || !strings.Contains(logBuf.String(), "node=step_three") {
+		t.Errorf("expected structured landing log with node=step_three; got: %s", logBuf.String())
+	}
+	assertStepCheckpointGone(t, cp.RunID)
+}
+
+// TestResumePausedRun_PauseRunLandsDuringRecoveredRun mirrors the active-run
+// pause test for the paused re-entry driver: a pause_run on the recovery
+// client lands at the next boundary of the re-entered engine (RunPaused
+// published, structured landing log, no StepEntered of the following step).
+// The RunCancelCh treatment for this driver is
+// TestResumePausedRun_RunCancelCancelsRecoveredRun.
+func TestResumePausedRun_PauseRunLandsDuringRecoveredRun(t *testing.T) {
+	requireNoGoroutineLeak(t)
+	resp := &pb.ReattachRunResponse{CanResume: true, Status: "paused", CurrentStep: "step_one", PendingSignal: "start"}
+	cp, graph, ft, log, logBuf := newRecoveredRunFixture(t, recoveryPauseWorkflow, resp, "rr-pause-paused")
+
+	runCtx, runCancel := context.WithCancel(context.Background())
+	defer runCancel()
+	done := make(chan bool, 1)
+	go func() {
+		// After the pause lands the driver parks in serviceResumeSignals;
+		// cancelling the run context below ends it.
+		consumed, outcome := resumePausedRun(runCtx, log, ft, cp, graph, resp, nil, runCancel)
+		if outcome != nil {
+			t.Errorf("pause-landed re-entry returned error %v", outcome)
+		}
+		done <- consumed
+	}()
+
+	waitForEnvelope(t, ft, 10*time.Second, func(env *pb.Envelope) bool {
+		se := env.GetStepEntered()
+		return se != nil && se.Step == "step_two"
+	})
+	ft.pauseCh <- &pb.PauseRun{RunId: cp.RunID, Reason: "castle hold"}
+
+	pausedEnv := waitForEnvelope(t, ft, 10*time.Second, func(env *pb.Envelope) bool {
+		return env.GetRunPaused() != nil
+	})
+	if got, mode := pausedEnv.GetRunPaused().GetNode(), pausedEnv.GetRunPaused().GetMode(); got != "step_three" || mode != "external" {
+		t.Errorf("RunPaused = (node=%q mode=%q), want (step_three, external)", got, mode)
+	}
+
+	runCancel()
+	select {
+	case consumed := <-done:
+		if !consumed {
+			t.Error("consumed = false, want true")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("resumePausedRun did not return after the pause landed and run context was cancelled")
+	}
+
+	if hasEnvelope(ft.Published(), func(env *pb.Envelope) bool {
+		se := env.GetStepEntered()
+		return se != nil && se.Step == "step_three"
+	}) {
+		t.Error("step_three started although the boundary pause landed first")
+	}
+	if !strings.Contains(logBuf.String(), "run paused at boundary") || !strings.Contains(logBuf.String(), "node=step_three") {
+		t.Errorf("expected structured landing log with node=step_three; got: %s", logBuf.String())
+	}
+	assertStepCheckpointGone(t, cp.RunID)
+}
+
+// TestResumeActiveRun_RunCancelCancelsRecoveredRun is the run.cancel parity
+// half of the review-R1 fix: a run.cancel for the run's own ID delivered on
+// the recovery client cancels the resumed run's context, the cancellation
+// surfaces as a published RunFailed (mirroring the fresh-path run.cancel
+// semantics), and the cancel is logged.
+func TestResumeActiveRun_RunCancelCancelsRecoveredRun(t *testing.T) {
+	requireNoGoroutineLeak(t)
+	resp := &pb.ReattachRunResponse{CanResume: true, Status: "running", CurrentStep: "step_one"}
+	cp, graph, ft, log, logBuf := newRecoveredRunFixture(t, recoveryPauseWorkflow, resp, "rr-cancel-active")
+
+	runCtx, runCancel := context.WithCancel(context.Background())
+	defer runCancel()
+	done := make(chan bool, 1)
+	outcomeCh := make(chan error, 1)
+	go func() {
+		consumed, outcome := resumeActiveRun(runCtx, log, ft, cp, graph, resp, nil, runCancel)
+		done <- consumed
+		outcomeCh <- outcome
+	}()
+
+	waitForEnvelope(t, ft, 10*time.Second, func(env *pb.Envelope) bool {
+		se := env.GetStepEntered()
+		return se != nil && se.Step == "step_two"
+	})
+	ft.cancelCh <- cp.RunID
+
+	var consumed bool
+	select {
+	case consumed = <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("resumeActiveRun did not return after run.cancel")
+	}
+	if !consumed {
+		t.Error("consumed = false, want true")
+	}
+	if outcome := <-outcomeCh; outcome == nil {
+		t.Error("cancelled resume returned nil outcome, want the cancellation-failure error")
+	}
+	if !strings.Contains(logBuf.String(), "received run.cancel control") {
+		t.Errorf("expected run.cancel log; got: %s", logBuf.String())
+	}
+	if !hasEnvelope(ft.Published(), func(env *pb.Envelope) bool {
+		return env.GetRunFailed() != nil
+	}) {
+		t.Errorf("expected RunFailed published after run.cancel; envelopes: %d", len(ft.Published()))
+	}
+}
+
+// TestResumePausedRun_RunCancelCancelsRecoveredRun mirrors the active-run
+// run.cancel test for the paused re-entry driver.
+func TestResumePausedRun_RunCancelCancelsRecoveredRun(t *testing.T) {
+	requireNoGoroutineLeak(t)
+	resp := &pb.ReattachRunResponse{CanResume: true, Status: "paused", CurrentStep: "step_one", PendingSignal: "start"}
+	cp, graph, ft, log, logBuf := newRecoveredRunFixture(t, recoveryPauseWorkflow, resp, "rr-cancel-paused")
+
+	runCtx, runCancel := context.WithCancel(context.Background())
+	defer runCancel()
+	done := make(chan bool, 1)
+	outcomeCh := make(chan error, 1)
+	go func() {
+		consumed, outcome := resumePausedRun(runCtx, log, ft, cp, graph, resp, nil, runCancel)
+		done <- consumed
+		outcomeCh <- outcome
+	}()
+
+	waitForEnvelope(t, ft, 10*time.Second, func(env *pb.Envelope) bool {
+		se := env.GetStepEntered()
+		return se != nil && se.Step == "step_two"
+	})
+	ft.cancelCh <- cp.RunID
+
+	var consumed bool
+	select {
+	case consumed = <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("resumePausedRun did not return after run.cancel")
+	}
+	if !consumed {
+		t.Error("consumed = false, want true")
+	}
+	if outcome := <-outcomeCh; outcome == nil {
+		t.Error("cancelled resume returned nil outcome, want the cancellation-failure error")
+	}
+	if !strings.Contains(logBuf.String(), "received run.cancel control") {
+		t.Errorf("expected run.cancel log; got: %s", logBuf.String())
+	}
+	assertStepCheckpointGone(t, cp.RunID)
+}
+
+// TestResumeActiveRun_RunCancelForeignRunIDLoggedNotRun covers the
+// non-matching branch of the recovery run.cancel watcher: a control message
+// for a foreign run is dropped with a structured drop_reason=run_id_mismatch
+// log and the recovered run proceeds to completion unaffected.
+func TestResumeActiveRun_RunCancelForeignRunIDLoggedNotRun(t *testing.T) {
+	requireNoGoroutineLeak(t)
+	resp := &pb.ReattachRunResponse{CanResume: true, Status: "running", CurrentStep: "step_one"}
+	cp, graph, ft, log, logBuf := newRecoveredRunFixture(t, recoveryPauseWorkflow, resp, "rr-cancel-foreign")
+
+	runCtx, runCancel := context.WithCancel(context.Background())
+	defer runCancel()
+	done := make(chan bool, 1)
+	outcomeCh := make(chan error, 1)
+	go func() {
+		consumed, outcome := resumeActiveRun(runCtx, log, ft, cp, graph, resp, nil, runCancel)
+		done <- consumed
+		outcomeCh <- outcome
+	}()
+
+	ft.cancelCh <- "rr-some-other-run"
+
+	select {
+	case consumed := <-done:
+		if !consumed {
+			t.Error("consumed = false, want true")
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("resumeActiveRun did not return alongside a foreign run.cancel")
+	}
+	if outcome := <-outcomeCh; outcome != nil {
+		t.Errorf("foreign run.cancel must not fail the recovered run, got %v", outcome)
+	}
+	if !strings.Contains(logBuf.String(), "run_id_mismatch") || !strings.Contains(logBuf.String(), "rr-some-other-run") {
+		t.Errorf("expected drop_reason=run_id_mismatch log carrying the foreign id; got: %s", logBuf.String())
+	}
+	if !hasEnvelope(ft.Published(), func(env *pb.Envelope) bool {
+		return env.GetRunCompleted() != nil
+	}) {
+		t.Errorf("expected the recovered run to complete normally; envelopes: %d", len(ft.Published()))
+	}
+}
+
+// TestResumeOneLocalRun_ServerNodeResolved verifies  that a checkpoint for a
 // workflow containing an approval node reattaches into the CRI-255 pause and
 // resolves over the fresh control listener (the crashed process's listener is
 // gone): the decision arrives via ResolveResume, the run completes, and the
