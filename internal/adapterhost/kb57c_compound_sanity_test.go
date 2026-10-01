@@ -8,7 +8,7 @@ import "testing"
 // when EVERY segment matches the step's allowlist; single commands keep
 // first-match-wins whole-text semantics.
 func TestKB57cCompoundSegmentation(t *testing.T) {
-	var pats []string
+	pats := make([]string, 0, 64)
 	for _, sub := range []string{"status", "diff", "log", "show", "rev-parse", "branch", "ls-remote", "remote"} {
 		pats = append(pats, "shell:git "+sub, "shell:git "+sub+" *")
 		for n := 2; n <= 7; n++ {

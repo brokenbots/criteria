@@ -279,42 +279,59 @@ func (p *allowlistPolicy) Decide(req PermissionRequest) (allow bool, reason stri
 	// ("git status && make ci" stays denied even though "shell:git status *"
 	// matches its first segment). Single-target requests keep legacy
 	// first-match-wins semantics byte-for-byte.
-	compound := len(targets) > 1 && reqIsCompound(req.Details)
-	if !compound {
-		for _, pat := range p.patterns {
-			for _, target := range targets {
-				if matched, reason := p.matchPattern(pat, target, bad); matched {
-					return true, reason
-				}
-			}
-		}
-		return false, bad.denialReason()
+	if !reqIsCompound(req.Details) {
+		return p.decideSingle(targets, bad)
 	}
-	for _, target := range targets {
-		if target == strings.TrimSpace(req.Tool) {
-			continue // the bare tool-kind target is not a command segment
-		}
-		ok := false
-		for _, pat := range p.patterns {
-			if matched, _ := p.matchPattern(pat, target, bad); matched {
-				ok = true
-				break
-			}
-		}
-		if !ok {
-			return false, "no matching allow_tools entry for every segment of the compound command"
-		}
-	}
-	// Every segment matched some entry; report with the first segment's reason
-	// for the event stream.
-	for _, target := range targets {
-		for _, pat := range p.patterns {
-			if matched, r := p.matchPattern(pat, target, bad); matched {
-				return true, r
+	return p.decideCompound(req, targets, bad)
+}
+
+// decideSingle is the legacy first-match-wins evaluation over all targets
+// (bare tool kind first, then fingerprints).
+func (p *allowlistPolicy) decideSingle(targets []string, bad *badPatternTracker) (bool, string) {
+	for _, pat := range p.patterns {
+		for _, target := range targets {
+			if matched, reason := p.matchPattern(pat, target, bad); matched {
+				return true, reason
 			}
 		}
 	}
 	return false, bad.denialReason()
+}
+
+// decideCompound grants only when every command-segment target matches some
+// allow entry (the bare tool-kind target is not a command segment and is
+// skipped); the reported reason is the first matched segment's for the event
+// stream.
+func (p *allowlistPolicy) decideCompound(req PermissionRequest, targets []string, bad *badPatternTracker) (bool, string) {
+	tool := strings.TrimSpace(req.Tool)
+	var firstReason string
+	for _, target := range targets {
+		if target == tool {
+			continue
+		}
+		matched, reason := p.firstMatch(target, bad)
+		if !matched {
+			return false, "no matching allow_tools entry for every segment of the compound command"
+		}
+		if firstReason == "" {
+			firstReason = reason
+		}
+	}
+	if firstReason == "" {
+		return false, bad.denialReason()
+	}
+	return true, firstReason
+}
+
+// firstMatch returns the first pattern that matches target (including via a
+// canonical alias).
+func (p *allowlistPolicy) firstMatch(target string, bad *badPatternTracker) (matched bool, reason string) {
+	for _, pat := range p.patterns {
+		if matched, reason := p.matchPattern(pat, target, bad); matched {
+			return true, reason
+		}
+	}
+	return false, ""
 }
 
 // reqIsCompound reports whether the request's own fingerprints contained a
@@ -489,71 +506,53 @@ func segmentCompoundCommand(text string) ([]string, bool) {
 // splitRespectingQuotes splits text on unquoted compound separators.
 // Handles single quotes, double quotes, and backslash escapes. A separator
 // inside quotes is literal; a partial separator at a quote boundary does not
-// split. Trailing separators yield no empty segment (trimmed above).
+// split. Trailing separators yield no empty segment (trimmed by the caller).
 func splitRespectingQuotes(text string) []string {
 	var segs []string
 	var cur strings.Builder
 	var quote rune
 	escaped := false
-	match := func(pos int, sep string) bool {
-		if pos+len(sep) > len(text) {
-			return false
+	findSep := func(text string, pos int, quote rune, escaped bool) int {
+		if quote != 0 || escaped {
+			return 0
 		}
-		if text[pos:pos+len(sep)] != sep {
-			return false
+		for _, sep := range compoundSeparators {
+			if pos+len(sep) <= len(text) && text[pos:pos+len(sep)] == sep {
+				return len(sep)
+			}
 		}
-		// A multi-char separator whose chars straddle a quote boundary is
-		// handled naturally: the scan consumes one char at a time, so a
-		// separator is only tested when the scanner sits at an unquoted
-		// position with no pending escape.
-		return quote == 0 && !escaped
+		return 0
 	}
 	for i := 0; i < len(text); {
+		n := findSep(text, i, quote, escaped)
+		if n > 0 {
+			segs = append(segs, strings.TrimSpace(cur.String()))
+			cur.Reset()
+			i += n
+			continue
+		}
 		c := rune(text[i])
-		if escaped {
+		switch {
+		case escaped:
 			cur.WriteRune(c)
 			escaped = false
 			i++
-			continue
-		}
-		if c == '\\' && text[i:] != "\\" {
-			// escape outside quotes: next char is literal. (Inside quotes,
-			// backslash is also passed through literally except for the
-			// closing quote check below.)
+		case quote == 0 && c == '\\':
 			cur.WriteRune(c)
 			escaped = true
 			i++
-			continue
-		}
-		if quote == 0 && (c == '\'' || c == '"') {
+		case quote == 0 && (c == '\'' || c == '"'):
 			quote = c
 			cur.WriteRune(c)
 			i++
-			continue
-		}
-		if quote != 0 && c == quote {
+		case quote != 0 && c == quote:
 			quote = 0
 			cur.WriteRune(c)
 			i++
-			continue
+		default:
+			cur.WriteRune(c)
+			i++
 		}
-		if quote == 0 {
-			hit := false
-			for _, sep := range compoundSeparators {
-				if match(i, sep) {
-					segs = append(segs, strings.TrimSpace(cur.String()))
-					cur.Reset()
-					i += len(sep)
-					hit = true
-					break
-				}
-			}
-			if hit {
-				continue
-			}
-		}
-		cur.WriteRune(c)
-		i++
 	}
 	if tail := strings.TrimSpace(cur.String()); tail != "" {
 		segs = append(segs, tail)
