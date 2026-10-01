@@ -287,7 +287,7 @@ func (p *allowlistPolicy) Decide(req PermissionRequest) (allow bool, reason stri
 
 // decideSingle is the legacy first-match-wins evaluation over all targets
 // (bare tool kind first, then fingerprints).
-func (p *allowlistPolicy) decideSingle(targets []string, bad *badPatternTracker) (bool, string) {
+func (p *allowlistPolicy) decideSingle(targets []string, bad *badPatternTracker) (allowed bool, reason string) {
 	for _, pat := range p.patterns {
 		for _, target := range targets {
 			if matched, reason := p.matchPattern(pat, target, bad); matched {
@@ -302,7 +302,7 @@ func (p *allowlistPolicy) decideSingle(targets []string, bad *badPatternTracker)
 // allow entry (the bare tool-kind target is not a command segment and is
 // skipped); the reported reason is the first matched segment's for the event
 // stream.
-func (p *allowlistPolicy) decideCompound(req PermissionRequest, targets []string, bad *badPatternTracker) (bool, string) {
+func (p *allowlistPolicy) decideCompound(req PermissionRequest, targets []string, bad *badPatternTracker) (allowed bool, reason string) {
 	tool := strings.TrimSpace(req.Tool)
 	var firstReason string
 	for _, target := range targets {
@@ -512,52 +512,57 @@ func splitRespectingQuotes(text string) []string {
 	var cur strings.Builder
 	var quote rune
 	escaped := false
-	findSep := func(text string, pos int, quote rune, escaped bool) int {
-		if quote != 0 || escaped {
-			return 0
-		}
-		for _, sep := range compoundSeparators {
-			if pos+len(sep) <= len(text) && text[pos:pos+len(sep)] == sep {
-				return len(sep)
-			}
-		}
-		return 0
-	}
 	for i := 0; i < len(text); {
-		n := findSep(text, i, quote, escaped)
-		if n > 0 {
+		if n := findSeparator(text, i, quote, escaped); n > 0 {
 			segs = append(segs, strings.TrimSpace(cur.String()))
 			cur.Reset()
 			i += n
 			continue
 		}
-		c := rune(text[i])
-		switch {
-		case escaped:
-			cur.WriteRune(c)
-			escaped = false
-			i++
-		case quote == 0 && c == '\\':
-			cur.WriteRune(c)
-			escaped = true
-			i++
-		case quote == 0 && (c == '\'' || c == '"'):
-			quote = c
-			cur.WriteRune(c)
-			i++
-		case quote != 0 && c == quote:
-			quote = 0
-			cur.WriteRune(c)
-			i++
-		default:
-			cur.WriteRune(c)
-			i++
-		}
+		quote, escaped = advance(text, i, quote, escaped, &cur)
+		i++
 	}
 	if tail := strings.TrimSpace(cur.String()); tail != "" {
 		segs = append(segs, tail)
 	}
 	return segs
+}
+
+// findSeparator returns the length of the compound separator starting at pos,
+// or 0 when pos sits inside a quote, an escape, or no separator matches.
+func findSeparator(text string, pos int, quote rune, escaped bool) int {
+	if quote != 0 || escaped {
+		return 0
+	}
+	for _, sep := range compoundSeparators {
+		if pos+len(sep) <= len(text) && text[pos:pos+len(sep)] == sep {
+			return len(sep)
+		}
+	}
+	return 0
+}
+
+// advance consumes one non-separator character at i, updating quote/escape
+// state and writing the consumed character to cur.
+func advance(text string, i int, quote rune, escaped bool, cur *strings.Builder) (newQuote rune, newEscaped bool) {
+	c := rune(text[i])
+	switch {
+	case escaped:
+		cur.WriteRune(c)
+		return quote, false
+	case quote == 0 && c == '\\':
+		cur.WriteRune(c)
+		return quote, true
+	case quote == 0 && (c == '\'' || c == '"'):
+		cur.WriteRune(c)
+		return c, false
+	case quote != 0 && c == quote:
+		cur.WriteRune(c)
+		return 0, false
+	default:
+		cur.WriteRune(c)
+		return quote, escaped
+	}
 }
 
 func dedupeStrings(values []string) []string {
