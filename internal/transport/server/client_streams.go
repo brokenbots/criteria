@@ -238,7 +238,16 @@ func (c *Client) controlLoop(ctx context.Context, ready chan<- error) { //nolint
 					c.log.Warn("dropping agent_prompt control message", "run_id", ap.GetRunId(), "step", ap.GetStep(), "drop_reason", "shutdown", "error", err)
 				}
 			}
-			if msg.GetRunCancel() == nil && msg.GetResumeRun() == nil && msg.GetWorkflowAssignment() == nil && msg.GetAgentPrompt() == nil {
+			if pr := msg.GetPauseRun(); pr != nil {
+				if pr.RunId != "" {
+					if err := forwardControl(ctx, c.closed, c.pauseRunCh, pr); err != nil {
+						c.log.Warn("dropping pause_run control message", "run_id", pr.RunId, "drop_reason", "shutdown", "error", err)
+					}
+				} else {
+					c.log.Warn("ignoring pause_run control message without run_id")
+				}
+			}
+			if msg.GetRunCancel() == nil && msg.GetResumeRun() == nil && msg.GetWorkflowAssignment() == nil && msg.GetAgentPrompt() == nil && msg.GetPauseRun() == nil {
 				// Unset or unrecognized command (e.g. a newer server speaking
 				// a future schema). Log instead of dropping silently.
 				c.log.Warn("unhandled control message", "type", controlMessageType(msg))

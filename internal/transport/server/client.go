@@ -88,6 +88,7 @@ type Client struct {
 	runCancelCh    chan string
 	resumeCh       chan *pb.ResumeRun
 	promptCh       chan *pb.AgentPrompt
+	pauseRunCh     chan *pb.PauseRun
 
 	closeOnce sync.Once
 	closed    chan struct{}
@@ -130,6 +131,7 @@ func NewClient(serverURL string, log *slog.Logger, opts ...Options) (*Client, er
 		runCancelCh:  make(chan string, 32),
 		resumeCh:     make(chan *pb.ResumeRun, 32),
 		promptCh:     make(chan *pb.AgentPrompt, 32),
+		pauseRunCh:   make(chan *pb.PauseRun, 32),
 		closed:       make(chan struct{}),
 	}, nil
 }
@@ -257,6 +259,12 @@ func (c *Client) ResumeCh() <-chan *pb.ResumeRun { return c.resumeCh }
 // prompts for unknown runs must be recorded as routing failures, never
 // silently dropped.
 func (c *Client) AgentPromptCh() <-chan *pb.AgentPrompt { return c.promptCh }
+
+// PauseRunCh returns the channel carrying PauseRun control messages from the
+// server (CRI-254). The caller routes each pause to the run it addresses and
+// drives the engine's boundary pause; pauses for unknown runs must be
+// recorded as routing failures, never silently dropped.
+func (c *Client) PauseRunCh() <-chan *pb.PauseRun { return c.pauseRunCh }
 
 // TLSMode returns the TLS mode in effect for this client.
 func (c *Client) TLSMode() TLSMode { return c.opts.TLSMode }
