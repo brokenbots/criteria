@@ -390,6 +390,143 @@ func TestExecuteServerRun_TimeoutPropagation(t *testing.T) {
 	}
 }
 
+// boundaryPauseWorkflow has one delayed step so a castle PauseRun latches
+// mid-step and lands at the next step boundary (CRI-254).
+const boundaryPauseWorkflow = `
+workflow {
+  name = "boundary_pause"
+  version       = "0.1"
+  initial_state = "step_one"
+  target_state  = "done"
+}
+
+adapter "noop" "default" {}
+
+step "step_one" {
+  target = adapter.noop.default
+  outcome "success" { next = step.step_two }
+  outcome "failure" { next = step.done }
+}
+
+step "step_two" {
+  target = adapter.noop.default
+  input { delay_ms = "500" }
+  outcome "success" { next = step.step_three }
+  outcome "failure" { next = step.done }
+}
+
+step "step_three" {
+  target = adapter.noop.default
+  outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+
+// TestExecuteServerRun_CastleBoundaryPauseAndSignalLessResume pins CRI-254
+// end-to-end through the real fake server: a PauseRun issued while step_two is
+// in flight drains the step and lands at the step_three boundary, the RunPaused
+// ack (external mode, empty signal) flips the fake's run row to paused, and a
+// signal-less ResumeRun continues from the checkpoint at the same position so
+// the run completes. A boundary pause is not a wait/signal pause, so no
+// WaitResumed traffic may appear anywhere on the run.
+func TestExecuteServerRun_CastleBoundaryPauseAndSignalLessResume(t *testing.T) {
+	requireNoGoroutineLeak(t)
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+	fake := applytest.New(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	log := newApplyLogger()
+	wfPath := writeWorkflowFile(t, boundaryPauseWorkflow)
+	src, graph, loader, err := compileForExecution(ctx, wfPath, log, false, false)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
+
+	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
+	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel, nil, "")
+	if err != nil {
+		t.Fatalf("setupServerRun: %v", err)
+	}
+	if resumed {
+		t.Fatal("setupServerRun unexpectedly resumed a matching checkpoint")
+	}
+	defer client.Close()
+
+	state := newLocalRunState(runID, graph.Name, fake.URL())
+	opts := applyOptions{workflowPath: wfPath, serverURL: fake.URL()}
+
+	runErr := make(chan error, 1)
+	go func() { runErr <- executeServerRun(ctx, log, loader, client, state, graph, opts, nil) }()
+
+	fake.WaitForCond(t, 10*time.Second, func() bool {
+		return fake.HasStepEntered("step_two")
+	})
+	fake.PauseRun(runID, "castle hold")
+
+	// The pause lands at the step_three boundary; the RunPaused ack flips the
+	// server-side run row to paused.
+	fake.WaitForCond(t, 10*time.Second, func() bool {
+		return fake.RunStatus(runID) == "paused"
+	})
+	var rp *pb.RunPaused
+	for _, env := range fake.Events() {
+		if rpEnv := env.GetRunPaused(); rpEnv != nil {
+			rp = rpEnv
+			break
+		}
+	}
+	if rp == nil {
+		t.Fatal("RunPaused event not received castle-side")
+	}
+	if rp.Node != "step_three" || rp.Mode != "external" || rp.Signal != "" {
+		t.Fatalf("RunPaused: node=%q mode=%q signal=%q, want step_three/external/\"\"", rp.Node, rp.Mode, rp.Signal)
+	}
+	if fake.HasEventOfType("RunCompleted") {
+		t.Fatal("run must stay in flight while paused")
+	}
+
+	// Signal-less resume: an empty signal on a boundary (mid-step) pause means
+	// continue-from-checkpoint — the run resumes at step_three and completes.
+	fake.ResumeRun(runID, "")
+	fake.WaitForCond(t, 15*time.Second, func() bool {
+		return fake.RunStatus(runID) == "succeeded"
+	})
+	select {
+	case err = <-runErr:
+		if err != nil {
+			t.Fatalf("executeServerRun: %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("timeout waiting for executeServerRun to return")
+	}
+
+	var stepTwo, stepThree int
+	for _, env := range fake.Events() {
+		if se := env.GetStepEntered(); se != nil {
+			switch se.Step {
+			case "step_two":
+				stepTwo++
+			case "step_three":
+				stepThree++
+			}
+		}
+	}
+	if stepTwo != 1 || stepThree != 1 {
+		t.Fatalf("step entries: step_two=%d step_three=%d, want 1/1 (pause lands before step_three and resume continues there)", stepTwo, stepThree)
+	}
+	if fake.HasEventOfType("WaitResumed") {
+		t.Fatal("a boundary pause must not surface wait/signal resume traffic")
+	}
+}
+
 // TestSetupServerRun_TLSDisable verifies that setupServerRun returns a client
 // with TLSMode=disable and a UUID v4 run ID.
 func TestSetupServerRun_TLSDisable(t *testing.T) {
@@ -719,7 +856,7 @@ func TestDrainResumeCycles_PauseThenResume(t *testing.T) {
 	// checkpoint surface is observable mid-run; the control-plane sink stays
 	// unwrapped for IsPaused/PausedAt. The engine loader is the in-process
 	// stateful loader so the resumed engine replays state through the handle.
-	if err := drainResumeCycles(ctx, log, ckLoader, sink, resumedSink, client.ResumeCh(), nil, "", state, graph, filepath.Dir(wfPath), eng, ""); err != nil {
+	if err := drainResumeCycles(ctx, log, ckLoader, sink, resumedSink, client.ResumeCh(), nil, "", state, graph, filepath.Dir(wfPath), eng, "", nil); err != nil {
 		t.Fatalf("drainResumeCycles: %v", err)
 	}
 	// Flush queued events to the fake server before asserting receipt.
@@ -850,7 +987,7 @@ func TestDrainResumeCycles_StreamDropAndReconnect(t *testing.T) {
 
 	// Pass sink as the runSink because this test builds the server sink directly
 	// rather than through executeServerRun.
-	if err := drainResumeCycles(ctx, log, loader, sink, sink, client.ResumeCh(), nil, "", state, graph, filepath.Dir(wfPath), eng, ""); err != nil {
+	if err := drainResumeCycles(ctx, log, loader, sink, sink, client.ResumeCh(), nil, "", state, graph, filepath.Dir(wfPath), eng, "", nil); err != nil {
 		t.Fatalf("drainResumeCycles: %v", err)
 	}
 	// Flush queued events to the fake server before asserting receipt.

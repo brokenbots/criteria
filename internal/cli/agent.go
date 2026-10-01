@@ -107,6 +107,7 @@ type activeRun struct {
 	cancel    context.CancelFunc
 	resumeCh  chan *pb.ResumeRun
 	promptCh  chan *pb.AgentPrompt
+	pauseCh   chan *pb.PauseRun
 	done      chan struct{}
 	pending   []*queuedAssignment
 	completed map[string]struct{} // terminal run ids observed by this process
@@ -194,7 +195,7 @@ func (a *activeRun) enqueue(assignment *pb.WorkflowAssignment, client *servertra
 // to start the next assignment; claiming and activating together makes a
 // double-start impossible. It returns nil when a run is already active or the
 // queue is empty.
-func (a *activeRun) claimNext(cancel context.CancelFunc, resumeCh chan *pb.ResumeRun, promptCh chan *pb.AgentPrompt, done chan struct{}) *queuedAssignment {
+func (a *activeRun) claimNext(cancel context.CancelFunc, resumeCh chan *pb.ResumeRun, promptCh chan *pb.AgentPrompt, pauseCh chan *pb.PauseRun, done chan struct{}) *queuedAssignment {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.runID != "" || len(a.pending) == 0 {
@@ -206,6 +207,7 @@ func (a *activeRun) claimNext(cancel context.CancelFunc, resumeCh chan *pb.Resum
 	a.cancel = cancel
 	a.resumeCh = resumeCh
 	a.promptCh = promptCh
+	a.pauseCh = pauseCh
 	a.done = done
 	return qa
 }
@@ -220,6 +222,7 @@ func (a *activeRun) finishRun() {
 	a.cancel = nil
 	a.resumeCh = nil
 	a.promptCh = nil
+	a.pauseCh = nil
 	a.done = nil
 }
 
@@ -271,6 +274,30 @@ func (a *activeRun) promptActive(msg *pb.AgentPrompt) (matched, routed bool, act
 	}
 }
 
+// pauseActive routes an orchestrator-issued pause command to the active run's
+// pause channel (CRI-254, mirroring resumeActive/promptActive). The channel
+// is buffered (1) and the send is non-blocking: backpressure must not stall
+// the agent control loop. A pause that finds the slot full is not silently
+// discarded — the caller logs the typed routing failure so a raced pause is
+// detectable via the agent-side drop log plus the orchestrator's ack timeout.
+func (a *activeRun) pauseActive(msg *pb.PauseRun) (matched, routed bool, activeID string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	activeID = a.runID
+	if msg == nil || msg.RunId != a.runID || a.pauseCh == nil {
+		return false, false, activeID
+	}
+	select {
+	case a.pauseCh <- msg:
+		return true, true, activeID
+	default:
+		// Slot full: the run's pause router is still processing the previous
+		// pause command. The engine's pause latch is idempotent while armed,
+		// so the pause is not lost if it is already mid-execution.
+		return true, false, activeID
+	}
+}
+
 func (a *activeRun) shutdown() <-chan struct{} {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -293,8 +320,9 @@ func (a *activeRun) startNext(ctx context.Context, log *slog.Logger, defaultClie
 	runCtx, cancel := context.WithCancel(ctx)
 	resumeCh := make(chan *pb.ResumeRun, 1)
 	promptCh := make(chan *pb.AgentPrompt, 1)
+	pauseCh := make(chan *pb.PauseRun, 1)
 	done := make(chan struct{})
-	qa := a.claimNext(cancel, resumeCh, promptCh, done)
+	qa := a.claimNext(cancel, resumeCh, promptCh, pauseCh, done)
 	if qa == nil {
 		cancel()
 		return
@@ -318,7 +346,7 @@ func (a *activeRun) startNext(ctx context.Context, log *slog.Logger, defaultClie
 		if client != defaultClient {
 			defer client.Close()
 		}
-		if err := executeAgentAssignment(ctx, runCtx, log, client, q.assignment, opts, resumeCh, promptCh, a.markCompleted); err != nil {
+		if err := executeAgentAssignment(ctx, runCtx, log, client, q.assignment, opts, resumeCh, promptCh, pauseCh, a.markCompleted); err != nil {
 			log.Error("assignment execution failed", "run_id", q.assignment.GetRunId(), "error", err)
 		} else {
 			log.Info("assignment completed", "run_id", q.assignment.GetRunId())
@@ -387,6 +415,31 @@ func (l *agentLoop) handlePrompt(msg *pb.AgentPrompt) {
 		"caller_criteria_id", msg.GetCallerCriteriaId(),
 		"reason", fmt.Sprintf("prompt addressed to run %q which is not the active run %q", msg.GetRunId(), activeID),
 	)
+}
+
+// handlePause routes an orchestrator-issued pause_run command to the active
+// run (CRI-254). A pause addressed to a non-active run never lands and is
+// never acked — the castle-side RunPaused ack timeout detects it — so the
+// agent-side log must carry the structured drop reason (CRI-62: no silent
+// control drops).
+func (l *agentLoop) handlePause(msg *pb.PauseRun) {
+	matched, routed, activeID := l.active.pauseActive(msg)
+	if routed {
+		l.log.Info("routing pause to active run", "run_id", msg.GetRunId(), "reason", msg.GetReason(), "active_run_id", activeID)
+		return
+	}
+	if matched {
+		l.log.Warn("pause_run delivery dropped",
+			"run_id", msg.GetRunId(),
+			"drop_reason", "active_run_pause_ch_full",
+			"active_run_id", activeID,
+			"note", "the pause stays buffered; the run's consumer still takes it and either lands it at the next boundary or resolves a visible outcome (drop log or ack timeout)")
+		return
+	}
+	l.log.Warn("received pause for inactive run",
+		"run_id", msg.GetRunId(),
+		"drop_reason", "run_not_running",
+		"active_run_id", activeID)
 }
 
 func (l *agentLoop) handleAssignment(assignment *pb.WorkflowAssignment) {
@@ -495,6 +548,9 @@ func runAgent(ctx context.Context, opts *agentOptions) error {
 
 		case resumeMsg := <-client.ResumeCh():
 			loop.handleResume(resumeMsg)
+
+		case pauseMsg := <-client.PauseRunCh():
+			loop.handlePause(pauseMsg)
 
 		case promptMsg := <-client.AgentPromptCh():
 			loop.handlePrompt(promptMsg)
@@ -612,7 +668,7 @@ func cleanupAgentRunState(runID string) {
 // executeAgentAssignment materialises the assignment source into a temporary
 // workflow directory, compiles and executes it, and reports progress via a
 // per-run publisher.
-func executeAgentAssignment(agentCtx, runCtx context.Context, log *slog.Logger, client *servertrans.Client, assignment *pb.WorkflowAssignment, opts *agentOptions, resumeCh <-chan *pb.ResumeRun, promptCh <-chan *pb.AgentPrompt, markCompleted func(string)) error {
+func executeAgentAssignment(agentCtx, runCtx context.Context, log *slog.Logger, client *servertrans.Client, assignment *pb.WorkflowAssignment, opts *agentOptions, resumeCh <-chan *pb.ResumeRun, promptCh <-chan *pb.AgentPrompt, pauseCh <-chan *pb.PauseRun, markCompleted func(string)) error {
 	runID := assignment.GetRunId()
 	dir, workflowPath, err := prepareAgentAssignmentDir(assignment)
 	if err != nil {
@@ -667,7 +723,7 @@ func executeAgentAssignment(agentCtx, runCtx context.Context, log *slog.Logger, 
 		log.Error("failed to persist run state", "run_id", runID, "error", err)
 	}
 
-	if err := runAndDrain(agentCtx, runCtx, log, eng, loader, sink, runSink, resumeCh, promptCh, state, graph, dir, runID, publisher, cp, reattachResp); err != nil {
+	if err := runAndDrain(agentCtx, runCtx, log, eng, loader, sink, runSink, resumeCh, promptCh, pauseCh, state, graph, dir, runID, publisher, cp, reattachResp); err != nil {
 		return err
 	}
 
@@ -880,7 +936,21 @@ func buildAgentRun(agentCtx, runCtx context.Context, log *slog.Logger, client *s
 // events through the publisher. It returns the original run error (if any).
 // When cp and reattachResp are non-nil, the engine resumes from the server's
 // reported current step and attempt instead of starting from the beginning.
-func runAndDrain(agentCtx, runCtx context.Context, log *slog.Logger, eng *engine.Engine, loader adapterhost.Loader, sink *run.Sink, runSink engine.Sink, resumeCh <-chan *pb.ResumeRun, promptCh <-chan *pb.AgentPrompt, state *localRunState, graph *workflow.FSMGraph, workflowDir, runID string, publisher *servertrans.RunPublisher, cp *StepCheckpoint, reattachResp *pb.ReattachRunResponse) error {
+func runAndDrain(agentCtx, runCtx context.Context, log *slog.Logger, eng *engine.Engine, loader adapterhost.Loader, sink *run.Sink, runSink engine.Sink, resumeCh <-chan *pb.ResumeRun, promptCh <-chan *pb.AgentPrompt, pauseCh <-chan *pb.PauseRun, state *localRunState, graph *workflow.FSMGraph, workflowDir, runID string, publisher *servertrans.RunPublisher, cp *StepCheckpoint, reattachResp *pb.ReattachRunResponse) error {
+	// CRI-254: consume pause commands delivered to this run's pause channel
+	// starting BEFORE the initial engine run so a pause issued while the run
+	// is in flight lands at the next boundary (drain-first, durable
+	// checkpoint, no adapter kill). The consumer lives across every resume
+	// cycle (drainResumeCycles re-pins the router to each resumed engine),
+	// stops once the run is terminal, and the run function joins the
+	// goroutine so it is always gone at return.
+	pauseRouter := newControlPauseRouter(runID, sink, log)
+	pauseDone, pauseCancel := pauseRouter.startPauseConsume(runCtx, eng, pauseCh)
+	defer func() {
+		pauseCancel()
+		<-pauseDone
+	}()
+
 	var runErr error
 	resuming := cp != nil && reattachResp != nil && reattachResp.CanResume && reattachResp.CurrentStep != ""
 	if resuming {
@@ -911,9 +981,10 @@ func runAndDrain(agentCtx, runCtx context.Context, log *slog.Logger, eng *engine
 	// pending step.outcome / RunCompleted tail is what transitions the
 	// server-side run row out of 'running'; an early error return drops that
 	// tail (the observed stuck-'running' shape).
+	// The pause consumer started above stays live across every cycle below.
 	var resumeErr error
 	if !shutdown {
-		resumeErr = drainResumeCycles(runCtx, log, loader, sink, runSink, resumeCh, promptCh, state.CriteriaID, state, graph, workflowDir, eng, "")
+		resumeErr = drainResumeCycles(runCtx, log, loader, sink, runSink, resumeCh, promptCh, state.CriteriaID, state, graph, workflowDir, eng, "", pauseRouter)
 	}
 
 	drainCtx, drainCancel := context.WithTimeout(context.WithoutCancel(runCtx), terminalDrainTimeout)

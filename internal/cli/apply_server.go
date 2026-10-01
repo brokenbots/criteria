@@ -83,11 +83,28 @@ func buildServerSink(ctx context.Context, publisher run.Publisher, authClient *s
 	}
 }
 
+// buildServerRunSinks assembles the sink chain for a server-side run: the
+// primary server sink (with the live visit-count checkpoint closure), the
+// terminal-success wrapper the terminal drain inspects, and the ND-JSON
+// dual-write mirror when eventsOut is set. emitWorkflowGraphsServer runs
+// here so the once-per-run WorkflowGraphs event (CRI-278) still lands before
+// the engine starts, on both the server stream and the dual-write mirror.
+func buildServerRunSinks(ctx context.Context, log *slog.Logger, client *servertrans.Client, state *localRunState, graph *workflow.FSMGraph, opts applyOptions, eventsOut io.Writer, fingerprint string, getVisits func() map[string]int) (*terminalSuccessSink, *run.Sink, *run.LocalSink) {
+	sink := buildServerSink(ctx, client, client, state.RunID, graph, opts.workflowPath, opts.serverURL, fingerprint, log, getVisits)
+	runSink := &terminalSuccessSink{Sink: sink}
+	eventsMirror := eventsFileSink(state.RunID, eventsOut)
+	if eventsMirror != nil {
+		runSink = &terminalSuccessSink{Sink: run.NewMultiSink(sink, eventsMirror)}
+	}
+	emitWorkflowGraphsServer(ctx, log, sink, eventsMirror, graph)
+	return runSink, sink, eventsMirror
+}
+
 // dualWriteSink wraps an engine sink with a LocalSink mirroring events into
 // the ND-JSON events file so server-mode runs keep dual-writing after a
-// crash resume. Returns the sink unchanged when eventsOut is nil.
-// Pause/resume tracking must keep using the raw *run.Sink; only the engine
-// sink is wrapped.
+// crash resume. Returns the sink unchanged when eventsOut is nil. Only the
+// engine sink is wrapped: pause/resume tracking must keep using the raw
+// *run.Sink.
 func dualWriteSink(sink engine.Sink, runID string, eventsOut io.Writer) engine.Sink {
 	local := eventsFileSink(runID, eventsOut)
 	if local == nil {
@@ -121,31 +138,26 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 	// fingerprint so a restarted runner can match and resume this run
 	// instead of forking a second one.
 	fingerprint := runIdentityFingerprint(opts.workflowPath, opts.serverURL, opts.varFiles, opts.varOverrides)
-	sink := buildServerSink(ctx, client, client, state.RunID, graph, opts.workflowPath, opts.serverURL, fingerprint, log,
-		func() map[string]int {
-			if eng != nil {
-				return eng.VisitCounts()
-			}
-			return nil
-		})
-	runSink := &terminalSuccessSink{Sink: sink}
-	var eventsMirror *run.LocalSink
-	if eventsOut != nil {
-		// Dual-write: mirror every engine event into the ND-JSON events file
-		// in addition to the server stream, so operators consuming the file
-		// keep working while the direct server stream is validated.
-		eventsMirror = &run.LocalSink{RunID: state.RunID, Out: eventsOut}
-		runSink = &terminalSuccessSink{Sink: run.NewMultiSink(sink, eventsMirror)}
-	}
-	// CRI-278: emit the once-per-run WorkflowGraphs event at the post-compile
-	// seam, before the engine starts, so it lands at or before RunStarted on
-	// both the server stream and the dual-write mirror.
-	emitWorkflowGraphsServer(ctx, log, sink, eventsMirror, graph)
+	runSink, sink, _ := buildServerRunSinks(ctx, log, client, state, graph, opts, eventsOut, fingerprint, func() map[string]int {
+		if eng != nil {
+			return eng.VisitCounts()
+		}
+		return nil
+	})
 
 	eng, err := buildServerRunEngine(graph, loader, runSink, state, opts, fingerprint, client.AgentPromptCh(), client.CriteriaID())
 	if err != nil {
 		return err
 	}
+	// CRI-254: consume orchestrator-issued pause_run commands and drive the
+	// boundary-pause machinery (drain-first, durable checkpoint); the
+	// consumer stops once the run is terminal and is joined at run return.
+	pauseRouter := newControlPauseRouter(state.RunID, sink, log)
+	pauseDone, pauseCancel := pauseRouter.startPauseConsume(ctx, eng, client.PauseRunCh())
+	defer func() {
+		pauseCancel()
+		<-pauseDone
+	}()
 	if err := eng.Run(ctx); err != nil {
 		log.Error("run failed", "error", err)
 		return err
@@ -156,7 +168,7 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 	// drain below still runs. The pending step.outcome / RunCompleted tail is
 	// what transitions the server-side run row out of 'running'; an early
 	// error return drops that tail (the observed stuck-'running' castle row).
-	resumeErr := drainResumeCycles(ctx, log, loader, sink, runSink, client.ResumeCh(), client.AgentPromptCh(), client.CriteriaID(), state, graph, workflowDirFromPath(opts.workflowPath), eng, fingerprint)
+	resumeErr := drainResumeCycles(ctx, log, loader, sink, runSink, client.ResumeCh(), client.AgentPromptCh(), client.CriteriaID(), state, graph, workflowDirFromPath(opts.workflowPath), eng, fingerprint, pauseRouter)
 
 	// Flush queued events before inspecting the terminal result so the server
 	// receives the RunCompleted envelope regardless of success.
@@ -210,7 +222,10 @@ func buildServerRunEngine(graph *workflow.FSMGraph, loader adapterhost.Loader, s
 // data directory and lets each resumed engine adopt surviving per-scope
 // instances from prior invocations of the same run (CRI-304); callers without
 // a fingerprint (agent runs) pass "" and get neither marker nor adoption.
-func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost.Loader, sink *run.Sink, runSink engine.Sink, resumeCh <-chan *pb.ResumeRun, promptCh <-chan *pb.AgentPrompt, promptOwnerID string, state *localRunState, graph *workflow.FSMGraph, workflowDir string, eng *engine.Engine, fingerprint string) error {
+// pauseRouter (CRI-254, nil in tests) is re-pinned to each resumed engine
+// before RunFrom starts it, so pause latches address the engine that is
+// actually running mid-flight.
+func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost.Loader, sink *run.Sink, runSink engine.Sink, resumeCh <-chan *pb.ResumeRun, promptCh <-chan *pb.AgentPrompt, promptOwnerID string, state *localRunState, graph *workflow.FSMGraph, workflowDir string, eng *engine.Engine, fingerprint string, pauseRouter *controlPauseRouter) error {
 	// CRI-202: shared base includes the checkpoint surface (snapshot base +
 	// run id) so the resumed engine saves restored-session state and restores
 	// adapter checkpoints from the original engine, exactly like a local
@@ -256,11 +271,20 @@ func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost
 		// that would wedge the replay behind the shim's handshake timeout.
 		resumedOpts = append(resumedOpts, adoptionOpts...)
 		resumedEng := engine.New(graph, loader, runSink, resumedOpts...)
+		// CRI-254 R3: pin the router to the resumed engine BEFORE it starts
+		// running (mirrors localRunControl.setEngine in apply_resume.go): a
+		// pause delivered while the resumed run executes must address the
+		// engine that is actually in flight, not the one whose loop exited at
+		// the pause — the old pin made RequestPause return not-running and
+		// silently dropped the command.
+		if pauseRouter != nil {
+			pauseRouter.setEngine(resumedEng)
+		}
+		eng = resumedEng
 		if err := resumedEng.RunFrom(ctx, pausedNode, 1); err != nil {
 			log.Error("run failed after resume", "error", err)
 			return err
 		}
-		eng = resumedEng
 		log.Info("run resumed and completed", "run_id", state.RunID)
 	}
 	return nil

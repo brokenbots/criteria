@@ -511,6 +511,29 @@ func (f *Fake) ResumeRun(runID, signal string) {
 	})
 }
 
+// PauseRun sends a PauseRun control message to the agent (CRI-254: the
+// castle control-plane pause verb).
+func (f *Fake) PauseRun(runID, reason string) {
+	f.handler.sendControl(&pb.ControlMessage{
+		Command: &pb.ControlMessage_PauseRun{
+			PauseRun: &pb.PauseRun{RunId: runID, Reason: reason},
+		},
+	})
+}
+
+// RunStatus returns the fake's derived server-side status for a run
+// (running/paused/succeeded/failed) so tests can verify the status flip
+// end-to-end instead of assuming it.
+func (f *Fake) RunStatus(runID string) string {
+	f.handler.mu.Lock()
+	defer f.handler.mu.Unlock()
+	st, ok := f.handler.runStates[runID]
+	if !ok {
+		return ""
+	}
+	return st.status
+}
+
 // DropControl forcibly closes every active HTTP/2 connection to the fake
 // server, causing the agent to exercise its transport-loss reconnect path.
 func (f *Fake) DropControl() {
@@ -568,6 +591,8 @@ func envelopeTypeName(env *pb.Envelope) string {
 		return "WaitEntered"
 	case env.GetWaitResumed() != nil:
 		return "WaitResumed"
+	case env.GetRunPaused() != nil:
+		return "RunPaused"
 	default:
 		return "Unknown"
 	}
@@ -887,6 +912,13 @@ func (h *fakeHandler) updateRunState(env *pb.Envelope) {
 		st.status = "paused"
 		st.currentStep = we.Node
 		st.pendingSignal = we.Signal
+	case env.GetRunPaused() != nil:
+		// CRI-254: mirrors castle overseer semantics — a boundary pause flips
+		// the run to paused at the node the pause landed on. A wait-node pause
+		// stays distinguished by its pendingSignal.
+		rp := env.GetRunPaused()
+		st.status = "paused"
+		st.currentStep = rp.Node
 	case env.GetRunCompleted() != nil:
 		st.status = "succeeded"
 		st.terminal = true

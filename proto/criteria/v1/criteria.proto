@@ -198,6 +198,12 @@ message ControlMessage {
     // CreateRun for assignments. Accepted implicitly when the agent starts the
     // run and submits a RunStarted event.
     WorkflowAssignment workflow_assignment = 5; // CRI-60
+    // PauseRun asks the Criteria agent to pause an in-flight run. The agent
+    // should preserve adapter/run state and enter a paused state. Mirror of
+    // the orchestrator's control contract (CRI-74): the pause lands only at
+    // a checkpoint boundary (CRI-254), the in-flight step drains first, and
+    // the acknowledged run emits a RunPaused event.
+    PauseRun pause_run = 6; // CRI-74
   }
 }
 
@@ -219,6 +225,15 @@ message WorkflowAssignment {
 
 // RunCancel asks the Criteria agent to cancel an in-flight run.
 message RunCancel {
+  string run_id = 1;
+  string reason = 2;
+}
+
+// PauseRun asks the Criteria agent to pause an in-flight run. Mirror of the
+// orchestrator's control contract (CRI-74, CRI-254): the agent pauses at the
+// next checkpoint boundary and acknowledges the landed pause with a RunPaused
+// event.
+message PauseRun {
   string run_id = 1;
   string reason = 2;
 }

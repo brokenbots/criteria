@@ -25,6 +25,12 @@ type reattachTransport interface {
 	Drain(ctx context.Context)
 	ResumeCh() <-chan *pb.ResumeRun
 	AgentPromptCh() <-chan *pb.AgentPrompt
+	// PauseRunCh and RunCancelCh expose the control streams a recovered run
+	// must keep consuming while it runs: pause_run commands (CRI-254, which
+	// must reach step boundaries exactly like on the fresh path) and
+	// run.cancel commands.
+	PauseRunCh() <-chan *pb.PauseRun
+	RunCancelCh() <-chan string
 	CriteriaID() string
 	Publish(ctx context.Context, env *pb.Envelope)
 }
@@ -110,9 +116,9 @@ func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, cli
 	}
 
 	if resp.Status == "paused" {
-		return resumePausedRun(ctx, log, rc, cp, graph, resp, eventsOut)
+		return resumePausedRun(ctx, log, rc, cp, graph, resp, eventsOut, cancel)
 	}
-	return resumeActiveRun(ctx, log, rc, cp, graph, resp, eventsOut)
+	return resumeActiveRun(ctx, log, rc, cp, graph, resp, eventsOut, cancel)
 }
 
 // abandonCheckpoint logs a warning (with optional error) and removes the checkpoint.
@@ -189,11 +195,66 @@ func drainAndCleanup(ctx context.Context, rc reattachTransport, cp *StepCheckpoi
 	RemoveStepCheckpoint(cp.RunID)
 }
 
+// startRunCancelWatch consumes run.cancel control messages from a recovery
+// client's cancel channel, mirroring the fresh-run watcher in setupServerRun:
+// a matching run ID cancels the run context; a non-matching one is logged
+// with drop_reason=run_id_mismatch instead of being silently ignored.
+// It returns a done channel signalled when the watcher has exited and a
+// cancel func that stops it: the caller must cancel then join via done
+// before its terminal drain so the watcher cannot race the drain.
+func startRunCancelWatch(ctx context.Context, log *slog.Logger, cancelCh <-chan string, runID string, runCancel func()) (<-chan struct{}, context.CancelFunc) {
+	watchCtx, watchCancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-watchCtx.Done():
+				return
+			case cancelRunID := <-cancelCh:
+				if cancelRunID == runID {
+					log.Info("received run.cancel control", "run_id", runID)
+					if runCancel != nil {
+						runCancel()
+					}
+				} else {
+					log.Warn("dropping run.cancel control message",
+						"run_id", runID, "msg_run_id", cancelRunID, "drop_reason", "run_id_mismatch")
+				}
+			}
+		}
+	}()
+	return done, watchCancel
+}
+
+// startRecoveryControlConsumers wires the recovery client's castle control
+// channels for a crash-recovered run, matching the fresh-run wiring in
+// executeServerRun: inbound PauseRun messages land at a node boundary via
+// the shared controlPauseRouter (pinned to the running engine via
+// startPauseConsume), run.cancel messages cancel the run context, and
+// foreign run ids are logged rather than silently dropped. The returned
+// stop func must be deferred so it runs when the driver returns: it cancels
+// and joins both consumers LIFO (pause consumer first, then the cancel
+// watcher) BEFORE drainAndCleanup, so neither consumer can publish to or
+// cancel against the transport while the terminal drain is running.
+func startRecoveryControlConsumers(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, sink *run.Sink, eng *engine.Engine, cancelRun func()) (pauseRouter *controlPauseRouter, stop func()) {
+	pauseRouter = newControlPauseRouter(cp.RunID, sink, log)
+	pauseDone, pauseCancel := pauseRouter.startPauseConsume(ctx, eng, rc.PauseRunCh())
+	watchDone, watchCancel := startRunCancelWatch(ctx, log, rc.RunCancelCh(), cp.RunID, cancelRun)
+	return pauseRouter, func() {
+		pauseCancel()
+		<-pauseDone
+		watchCancel()
+		<-watchDone
+		drainAndCleanup(ctx, rc, cp)
+	}
+}
+
 // resumePausedRun re-enters a paused run using WithPendingSignal, then
 // services further resume signals until the run reaches a terminal state.
 // It returns whether the run was consumed (see resumeOneRun) and the run's
 // outcome error (nil on success).
-func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse, eventsOut io.Writer) (bool, error) {
+func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse, eventsOut io.Writer, cancelRun func()) (bool, error) {
 	if streamErr := rc.StartStreams(ctx, cp.RunID); streamErr != nil {
 		abandonCheckpoint(log, cp, "failed to start server streams for paused run", streamErr)
 		return false, nil
@@ -229,12 +290,16 @@ func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		engine.WithAgentPrompts(rc.AgentPromptCh(), rc.CriteriaID(), cp.RunID),
 	}, baseOpts...)
 	eng := engine.New(graph, loader, engineSink, engOpts...)
+	// CRI-254: startRecoveryControlConsumers pins the router to the
+	// re-entered engine via startPauseConsume, i.e. before the RunFrom below
+	// (mirrors the fresh-run wiring in executeServerRun).
+	pauseRouter, stop := startRecoveryControlConsumers(ctx, log, rc, cp, sink, eng, cancelRun)
+	defer stop()
 	if runErr := eng.RunFrom(ctx, resp.CurrentStep, int(resp.Attempt)); runErr != nil {
 		log.Error("paused run re-entry failed", "error", runErr)
-		drainAndCleanup(ctx, rc, cp)
 		return true, runErr
 	}
-	sigErr := serviceResumeSignals(ctx, log, rc, cp, graph, loader, sink, engineSink, eng)
+	sigErr := serviceResumeSignals(ctx, log, rc, cp, graph, loader, sink, engineSink, eng, pauseRouter)
 	if sigErr != nil {
 		return true, sigErr
 	}
@@ -245,12 +310,16 @@ func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 }
 
 // serviceResumeSignals waits for and dispatches resume signals while the run
-// remains paused, then drains and removes the checkpoint. sink tracks the
-// paused state; engineSink (possibly the dual-write wrapper around sink) is
-// handed to every resumed engine instance. It returns the last resumed
-// engine's outcome error: nil when the run completed successfully or was
-// simply interrupted while still paused.
-func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, loader adapterhost.Loader, sink *run.Sink, engineSink engine.Sink, initialEng *engine.Engine) error {
+// remains paused. The checkpoint drain and removal stay with the caller
+// (resumePausedRun's cleanup defer), which also owns the control consumers
+// started for the run. sink tracks the paused state; engineSink (possibly
+// the dual-write wrapper around sink) is handed to every resumed engine
+// instance; pauseRouter is re-pinned to each resumed engine before its
+// RunFrom so delivered pauses address the engine that is actually running
+// (mirrors drainResumeCycles). It returns the last resumed engine's outcome
+// error: nil when the run completed successfully or was simply interrupted
+// while still paused.
+func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, loader adapterhost.Loader, sink *run.Sink, engineSink engine.Sink, initialEng *engine.Engine, pauseRouter *controlPauseRouter) error {
 	eng := initialEng
 	var outcome error
 	for sink.IsPaused() {
@@ -259,7 +328,6 @@ func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc reattachTran
 		var resumeMsg *pb.ResumeRun
 		select {
 		case <-ctx.Done():
-			drainAndCleanup(ctx, rc, cp)
 			return nil
 		case resumeMsg = <-rc.ResumeCh():
 		}
@@ -286,6 +354,9 @@ func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc reattachTran
 			engine.WithAgentPrompts(rc.AgentPromptCh(), rc.CriteriaID(), cp.RunID),
 		}, baseOpts...)
 		resumedEng := engine.New(graph, loader, engineSink, resumedOpts...)
+		if pauseRouter != nil {
+			pauseRouter.setEngine(resumedEng)
+		}
 		if runErr := resumedEng.RunFrom(ctx, pausedNode, 1); runErr != nil {
 			log.Error("run failed after resume", "error", runErr)
 			outcome = runErr
@@ -293,7 +364,6 @@ func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc reattachTran
 		}
 		eng = resumedEng
 	}
-	drainAndCleanup(ctx, rc, cp)
 	return outcome
 }
 
@@ -342,7 +412,7 @@ func checkIterationCursorValidity(graph *workflow.FSMGraph, variableScope string
 // run failed immediately. The persisted max_visits counts (restored via
 // WithResumedVisits) still bound total attempts across resumes, so a
 // crash-loop cannot amplify into unbounded work.
-func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse, eventsOut io.Writer) (bool, error) {
+func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse, eventsOut io.Writer, cancelRun func()) (bool, error) {
 	// resp.Attempt is the server's view of the pre-crash attempt; it stays
 	// out of the budget decision and is surfaced for diagnostics only.
 	nextAttempt := 1
@@ -354,7 +424,7 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		return false, nil
 	}
 
-	eng, tracked := buildResumedActiveEngine(ctx, log, rc, cp, graph, resp, nextAttempt, eventsOut)
+	eng, tracked, sink := buildResumedActiveEngine(ctx, log, rc, cp, graph, resp, nextAttempt, eventsOut)
 	if eng == nil {
 		// The run data dir could not be resolved (logged by the builder);
 		// the run cannot be driven from this process and the checkpoint is
@@ -362,6 +432,13 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		drainAndCleanup(ctx, rc, cp)
 		return false, nil
 	}
+	// CRI-254: the router is pinned to the re-entered engine before the run
+	// starts, mirroring the fresh-run wiring in executeServerRun. No resume
+	// cycles are serviced on this path (a crashed active run re-runs the
+	// interrupted step to completion or pause), so a single pin suffices and
+	// the router handle itself is not needed here.
+	_, stop := startRecoveryControlConsumers(ctx, log, rc, cp, sink, eng, cancelRun)
+	defer stop()
 	var outcome error
 	if runErr := eng.RunFrom(ctx, resp.CurrentStep, nextAttempt); runErr != nil {
 		log.Error("resumed run failed", "error", runErr)
@@ -369,7 +446,6 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 	} else {
 		log.Info("resumed run completed")
 	}
-	drainAndCleanup(ctx, rc, cp)
 	if outcome == nil {
 		if finalState, success, ok := tracked.TerminalSuccess(); ok && !success {
 			outcome = fmt.Errorf("run completed with terminal state %q (success=false)", finalState)
@@ -382,8 +458,9 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 // crash-resumed active run: the server sink wrapped in a terminal-success
 // tracker, the ND-JSON mirror, and the engine with restored state. A nil
 // engine means the run data dir could not be resolved (already logged); the
-// run cannot be driven from this process.
-func buildResumedActiveEngine(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse, nextAttempt int, eventsOut io.Writer) (*engine.Engine, *terminalSuccessSink) {
+// run cannot be driven from this process. The base sink is returned alongside
+// the engine so the caller can pin castle control consumers (CRI-254) to it.
+func buildResumedActiveEngine(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse, nextAttempt int, eventsOut io.Writer) (*engine.Engine, *terminalSuccessSink, *run.Sink) {
 	sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log, Ctx: ctx}
 	tracked := &terminalSuccessSink{Sink: sink}
 	sink.StepResumed(ctx, resp.CurrentStep, nextAttempt, "criteria_restart")
@@ -410,7 +487,7 @@ func buildResumedActiveEngine(ctx context.Context, log *slog.Logger, rc reattach
 	_, baseOpts, baseOptsErr := serverRunEngineOptions(cp.RunID, cp.WorkflowPath)
 	if baseOptsErr != nil {
 		log.Error("resumed run failed to resolve engine options", "run_id", cp.RunID, "error", baseOptsErr)
-		return nil, nil
+		return nil, nil, nil
 	}
 	engOpts := append([]engine.Option{
 		engine.WithResumedVars(restoredVars),
@@ -421,7 +498,7 @@ func buildResumedActiveEngine(ctx context.Context, log *slog.Logger, rc reattach
 		engine.WithAgentPrompts(rc.AgentPromptCh(), rc.CriteriaID(), cp.RunID),
 	}, baseOpts...)
 	eng := engine.New(graph, loader, engineSink, engOpts...)
-	return eng, tracked
+	return eng, tracked, sink
 }
 
 func parseWorkflowFromPath(ctx context.Context, path string) (*workflow.FSMGraph, error) {

@@ -1307,7 +1307,7 @@ func TestDrainResumeCyclesPerScopeSessionsWiresDataDir(t *testing.T) {
 	errCh := make(chan error, 1)
 	done := make(chan struct{})
 	go func() {
-		errCh <- drainResumeCycles(drainCtx, log, loader, sink, sink, resumeCh, nil, "", state, graph, filepath.Dir(wfPath), initialEng, "")
+		errCh <- drainResumeCycles(drainCtx, log, loader, sink, sink, resumeCh, nil, "", state, graph, filepath.Dir(wfPath), initialEng, "", nil)
 		close(done)
 	}()
 
@@ -1428,7 +1428,7 @@ func TestReattachPerScopeSessionsWiresDataDir(t *testing.T) {
 		resp := &pb.ReattachRunResponse{Status: "paused", CurrentStep: "start", Attempt: 0, CanResume: true}
 		done := make(chan struct{})
 		go func() {
-			resumePausedRun(ctx, discardLogger(), ft, cp, graph, resp, nil)
+			resumePausedRun(ctx, discardLogger(), ft, cp, graph, resp, nil, nil)
 			close(done)
 		}()
 
@@ -1456,7 +1456,7 @@ func TestReattachPerScopeSessionsWiresDataDir(t *testing.T) {
 
 		done := make(chan struct{})
 		go func() {
-			serviceResumeSignals(ctx, discardLogger(), ft, cp, graph, loader, sink, sink, initialEng)
+			serviceResumeSignals(ctx, discardLogger(), ft, cp, graph, loader, sink, sink, initialEng, nil)
 			close(done)
 		}()
 
@@ -1478,7 +1478,7 @@ func TestReattachPerScopeSessionsWiresDataDir(t *testing.T) {
 		resp := &pb.ReattachRunResponse{Status: "running", CurrentStep: "start", Attempt: 0, CanResume: true}
 		done := make(chan struct{})
 		go func() {
-			resumeActiveRun(ctx, discardLogger(), ft, cp, graph, resp, nil)
+			resumeActiveRun(ctx, discardLogger(), ft, cp, graph, resp, nil, nil)
 			close(done)
 		}()
 
