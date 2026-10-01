@@ -113,8 +113,8 @@ github.com/bgentry/go-netrc v0.0.0-20140422174119-9fd32a8b3d3d h1:xDfNPAt8lFiC1U
 github.com/bgentry/go-netrc v0.0.0-20140422174119-9fd32a8b3d3d/go.mod h1:6QX/PXZ00z/TKoufEY6K/a0k6AhaJrQKdFe6OfVXsa4=
 github.com/blang/semver v3.5.1+incompatible h1:cQNTCjp13qL8KC3Nbxr/y2Bqb63oX6wdnnjpJbkM4JQ=
 github.com/blang/semver v3.5.1+incompatible/go.mod h1:kRBLl5iJ+tD4TcOOxsy/0fnwebNt5EWlYSAyrTnjyyk=
-github.com/brokenbots/criteria-adapter-proto v0.5.4-0.20260928172959-d7abb741857e h1:HeUOoiLwG4r2p24raTDPgSXZojA0BxskTzJWsfSDQUY=
-github.com/brokenbots/criteria-adapter-proto v0.5.4-0.20260928172959-d7abb741857e/go.mod h1:JeoJ2SvxmswXrsd3N2ohhhG8XuNDKL63yxRnJWT6PnU=
+github.com/brokenbots/criteria-adapter-proto v0.6.0 h1:GDyMPYcl/2OhINXZJZ96b3F0D/h+hM3remM7fYIo82M=
+github.com/brokenbots/criteria-adapter-proto v0.6.0/go.mod h1:JeoJ2SvxmswXrsd3N2ohhhG8XuNDKL63yxRnJWT6PnU=
 github.com/brokenbots/criteria-go-adapter-sdk v0.5.3 h1:2g1jeuqp5SS9eCS2IRdyUrAfQNeI2jUJD1jflP5CTWo=
 github.com/brokenbots/criteria-go-adapter-sdk v0.5.3/go.mod h1:AKUZmxRFnwZ/Fprz30PTkoliCQplQIQ8rfHwF2HRUlw=
 github.com/bufbuild/protocompile v0.14.1 h1:iA73zAf/fyljNjQKwYzUHD6AD4R8KMasmwa/FBatYVw=
