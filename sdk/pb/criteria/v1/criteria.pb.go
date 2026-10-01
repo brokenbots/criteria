@@ -694,6 +694,7 @@ type ControlMessage struct {
 	//	*ControlMessage_ControlReady
 	//	*ControlMessage_ResumeRun
 	//	*ControlMessage_WorkflowAssignment
+	//	*ControlMessage_PauseRun
 	Command       isControlMessage_Command `protobuf_oneof:"command"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -781,6 +782,15 @@ func (x *ControlMessage) GetWorkflowAssignment() *WorkflowAssignment {
 	return nil
 }
 
+func (x *ControlMessage) GetPauseRun() *PauseRun {
+	if x != nil {
+		if x, ok := x.Command.(*ControlMessage_PauseRun); ok {
+			return x.PauseRun
+		}
+	}
+	return nil
+}
+
 type isControlMessage_Command interface {
 	isControlMessage_Command()
 }
@@ -818,6 +828,15 @@ type ControlMessage_WorkflowAssignment struct {
 	WorkflowAssignment *WorkflowAssignment `protobuf:"bytes,5,opt,name=workflow_assignment,json=workflowAssignment,proto3,oneof"` // CRI-60
 }
 
+type ControlMessage_PauseRun struct {
+	// PauseRun asks the Criteria agent to pause an in-flight run. The agent
+	// should preserve adapter/run state and enter a paused state. Mirror of
+	// the orchestrator's control contract (CRI-74): the pause lands only at
+	// a checkpoint boundary (CRI-254), the in-flight step drains first, and
+	// the acknowledged run emits a RunPaused event.
+	PauseRun *PauseRun `protobuf:"bytes,6,opt,name=pause_run,json=pauseRun,proto3,oneof"` // CRI-74
+}
+
 func (*ControlMessage_RunCancel) isControlMessage_Command() {}
 
 func (*ControlMessage_AgentPrompt) isControlMessage_Command() {}
@@ -827,6 +846,8 @@ func (*ControlMessage_ControlReady) isControlMessage_Command() {}
 func (*ControlMessage_ResumeRun) isControlMessage_Command() {}
 
 func (*ControlMessage_WorkflowAssignment) isControlMessage_Command() {}
+
+func (*ControlMessage_PauseRun) isControlMessage_Command() {}
 
 // WorkflowAssignment delivers a queued workflow from the orchestrator to a
 // long-lived Criteria agent (CRI-60). The agent executes the workflow with
@@ -965,6 +986,62 @@ func (x *RunCancel) GetReason() string {
 	return ""
 }
 
+// PauseRun asks the Criteria agent to pause an in-flight run. Mirror of the
+// orchestrator's control contract (CRI-74, CRI-254): the agent pauses at the
+// next checkpoint boundary and acknowledges the landed pause with a RunPaused
+// event.
+type PauseRun struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PauseRun) Reset() {
+	*x = PauseRun{}
+	mi := &file_criteria_v1_criteria_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PauseRun) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PauseRun) ProtoMessage() {}
+
+func (x *PauseRun) ProtoReflect() protoreflect.Message {
+	mi := &file_criteria_v1_criteria_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PauseRun.ProtoReflect.Descriptor instead.
+func (*PauseRun) Descriptor() ([]byte, []int) {
+	return file_criteria_v1_criteria_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *PauseRun) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *PauseRun) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
 // AgentPrompt forwards a user prompt to a running agent step (ADR-0006). The
 // orchestrator enqueues it on the owning agent's Control stream; the agent
 // delivers it into the addressed step's live adapter session.
@@ -990,7 +1067,7 @@ type AgentPrompt struct {
 
 func (x *AgentPrompt) Reset() {
 	*x = AgentPrompt{}
-	mi := &file_criteria_v1_criteria_proto_msgTypes[13]
+	mi := &file_criteria_v1_criteria_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1002,7 +1079,7 @@ func (x *AgentPrompt) String() string {
 func (*AgentPrompt) ProtoMessage() {}
 
 func (x *AgentPrompt) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_criteria_proto_msgTypes[13]
+	mi := &file_criteria_v1_criteria_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1015,7 +1092,7 @@ func (x *AgentPrompt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentPrompt.ProtoReflect.Descriptor instead.
 func (*AgentPrompt) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_criteria_proto_rawDescGZIP(), []int{13}
+	return file_criteria_v1_criteria_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *AgentPrompt) GetRunId() string {
@@ -1070,7 +1147,7 @@ type ControlReady struct {
 
 func (x *ControlReady) Reset() {
 	*x = ControlReady{}
-	mi := &file_criteria_v1_criteria_proto_msgTypes[14]
+	mi := &file_criteria_v1_criteria_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1082,7 +1159,7 @@ func (x *ControlReady) String() string {
 func (*ControlReady) ProtoMessage() {}
 
 func (x *ControlReady) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_criteria_proto_msgTypes[14]
+	mi := &file_criteria_v1_criteria_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1095,7 +1172,7 @@ func (x *ControlReady) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ControlReady.ProtoReflect.Descriptor instead.
 func (*ControlReady) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_criteria_proto_rawDescGZIP(), []int{14}
+	return file_criteria_v1_criteria_proto_rawDescGZIP(), []int{15}
 }
 
 // ResumeRun delivers a resume signal from the orchestrator to the Criteria agent (W05).
@@ -1114,7 +1191,7 @@ type ResumeRun struct {
 
 func (x *ResumeRun) Reset() {
 	*x = ResumeRun{}
-	mi := &file_criteria_v1_criteria_proto_msgTypes[15]
+	mi := &file_criteria_v1_criteria_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1126,7 +1203,7 @@ func (x *ResumeRun) String() string {
 func (*ResumeRun) ProtoMessage() {}
 
 func (x *ResumeRun) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_criteria_proto_msgTypes[15]
+	mi := &file_criteria_v1_criteria_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1139,7 +1216,7 @@ func (x *ResumeRun) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeRun.ProtoReflect.Descriptor instead.
 func (*ResumeRun) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_criteria_proto_rawDescGZIP(), []int{15}
+	return file_criteria_v1_criteria_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ResumeRun) GetRunId() string {
@@ -1183,7 +1260,7 @@ type ResumeRequest struct {
 
 func (x *ResumeRequest) Reset() {
 	*x = ResumeRequest{}
-	mi := &file_criteria_v1_criteria_proto_msgTypes[16]
+	mi := &file_criteria_v1_criteria_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1195,7 +1272,7 @@ func (x *ResumeRequest) String() string {
 func (*ResumeRequest) ProtoMessage() {}
 
 func (x *ResumeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_criteria_proto_msgTypes[16]
+	mi := &file_criteria_v1_criteria_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1208,7 +1285,7 @@ func (x *ResumeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeRequest.ProtoReflect.Descriptor instead.
 func (*ResumeRequest) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_criteria_proto_rawDescGZIP(), []int{16}
+	return file_criteria_v1_criteria_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *ResumeRequest) GetRunId() string {
@@ -1244,7 +1321,7 @@ type ResumeResponse struct {
 
 func (x *ResumeResponse) Reset() {
 	*x = ResumeResponse{}
-	mi := &file_criteria_v1_criteria_proto_msgTypes[17]
+	mi := &file_criteria_v1_criteria_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1256,7 +1333,7 @@ func (x *ResumeResponse) String() string {
 func (*ResumeResponse) ProtoMessage() {}
 
 func (x *ResumeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_criteria_proto_msgTypes[17]
+	mi := &file_criteria_v1_criteria_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1269,7 +1346,7 @@ func (x *ResumeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeResponse.ProtoReflect.Descriptor instead.
 func (*ResumeResponse) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_criteria_proto_rawDescGZIP(), []int{17}
+	return file_criteria_v1_criteria_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ResumeResponse) GetAccepted() bool {
@@ -1351,7 +1428,7 @@ const file_criteria_v1_criteria_proto_rawDesc = "" +
 	"\x0ecorrelation_id\x18\x03 \x01(\tR\rcorrelationId\":\n" +
 	"\x17ControlSubscribeRequest\x12\x1f\n" +
 	"\vcriteria_id\x18\x01 \x01(\tR\n" +
-	"criteriaId\"\xe2\x02\n" +
+	"criteriaId\"\x98\x03\n" +
 	"\x0eControlMessage\x127\n" +
 	"\n" +
 	"run_cancel\x18\x01 \x01(\v2\x16.criteria.v1.RunCancelH\x00R\trunCancel\x12=\n" +
@@ -1359,7 +1436,8 @@ const file_criteria_v1_criteria_proto_rawDesc = "" +
 	"\rcontrol_ready\x18\x03 \x01(\v2\x19.criteria.v1.ControlReadyH\x00R\fcontrolReady\x127\n" +
 	"\n" +
 	"resume_run\x18\x04 \x01(\v2\x16.criteria.v1.ResumeRunH\x00R\tresumeRun\x12R\n" +
-	"\x13workflow_assignment\x18\x05 \x01(\v2\x1f.criteria.v1.WorkflowAssignmentH\x00R\x12workflowAssignmentB\t\n" +
+	"\x13workflow_assignment\x18\x05 \x01(\v2\x1f.criteria.v1.WorkflowAssignmentH\x00R\x12workflowAssignment\x124\n" +
+	"\tpause_run\x18\x06 \x01(\v2\x15.criteria.v1.PauseRunH\x00R\bpauseRunB\t\n" +
 	"\acommand\"\xa2\x02\n" +
 	"\x12WorkflowAssignment\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12#\n" +
@@ -1371,6 +1449,9 @@ const file_criteria_v1_criteria_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\":\n" +
 	"\tRunCancel\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x16\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"9\n" +
+	"\bPauseRun\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\"\xd6\x01\n" +
 	"\vAgentPrompt\x12\x15\n" +
@@ -1420,7 +1501,7 @@ func file_criteria_v1_criteria_proto_rawDescGZIP() []byte {
 	return file_criteria_v1_criteria_proto_rawDescData
 }
 
-var file_criteria_v1_criteria_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
+var file_criteria_v1_criteria_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
 var file_criteria_v1_criteria_proto_goTypes = []any{
 	(*RegisterRequest)(nil),         // 0: criteria.v1.RegisterRequest
 	(*RegisterResponse)(nil),        // 1: criteria.v1.RegisterResponse
@@ -1435,54 +1516,56 @@ var file_criteria_v1_criteria_proto_goTypes = []any{
 	(*ControlMessage)(nil),          // 10: criteria.v1.ControlMessage
 	(*WorkflowAssignment)(nil),      // 11: criteria.v1.WorkflowAssignment
 	(*RunCancel)(nil),               // 12: criteria.v1.RunCancel
-	(*AgentPrompt)(nil),             // 13: criteria.v1.AgentPrompt
-	(*ControlReady)(nil),            // 14: criteria.v1.ControlReady
-	(*ResumeRun)(nil),               // 15: criteria.v1.ResumeRun
-	(*ResumeRequest)(nil),           // 16: criteria.v1.ResumeRequest
-	(*ResumeResponse)(nil),          // 17: criteria.v1.ResumeResponse
-	nil,                             // 18: criteria.v1.RegisterRequest.LabelsEntry
-	nil,                             // 19: criteria.v1.RegisterResponse.BootstrapCredentialsEntry
-	nil,                             // 20: criteria.v1.WorkflowAssignment.LabelsEntry
-	nil,                             // 21: criteria.v1.ResumeRun.PayloadEntry
-	nil,                             // 22: criteria.v1.ResumeRequest.PayloadEntry
-	(*timestamppb.Timestamp)(nil),   // 23: google.protobuf.Timestamp
-	(*Envelope)(nil),                // 24: criteria.v1.Envelope
+	(*PauseRun)(nil),                // 13: criteria.v1.PauseRun
+	(*AgentPrompt)(nil),             // 14: criteria.v1.AgentPrompt
+	(*ControlReady)(nil),            // 15: criteria.v1.ControlReady
+	(*ResumeRun)(nil),               // 16: criteria.v1.ResumeRun
+	(*ResumeRequest)(nil),           // 17: criteria.v1.ResumeRequest
+	(*ResumeResponse)(nil),          // 18: criteria.v1.ResumeResponse
+	nil,                             // 19: criteria.v1.RegisterRequest.LabelsEntry
+	nil,                             // 20: criteria.v1.RegisterResponse.BootstrapCredentialsEntry
+	nil,                             // 21: criteria.v1.WorkflowAssignment.LabelsEntry
+	nil,                             // 22: criteria.v1.ResumeRun.PayloadEntry
+	nil,                             // 23: criteria.v1.ResumeRequest.PayloadEntry
+	(*timestamppb.Timestamp)(nil),   // 24: google.protobuf.Timestamp
+	(*Envelope)(nil),                // 25: criteria.v1.Envelope
 }
 var file_criteria_v1_criteria_proto_depIdxs = []int32{
-	18, // 0: criteria.v1.RegisterRequest.labels:type_name -> criteria.v1.RegisterRequest.LabelsEntry
-	19, // 1: criteria.v1.RegisterResponse.bootstrap_credentials:type_name -> criteria.v1.RegisterResponse.BootstrapCredentialsEntry
-	23, // 2: criteria.v1.HeartbeatResponse.server_time:type_name -> google.protobuf.Timestamp
-	23, // 3: criteria.v1.Run.created_at:type_name -> google.protobuf.Timestamp
-	23, // 4: criteria.v1.Run.started_at:type_name -> google.protobuf.Timestamp
-	23, // 5: criteria.v1.Run.ended_at:type_name -> google.protobuf.Timestamp
+	19, // 0: criteria.v1.RegisterRequest.labels:type_name -> criteria.v1.RegisterRequest.LabelsEntry
+	20, // 1: criteria.v1.RegisterResponse.bootstrap_credentials:type_name -> criteria.v1.RegisterResponse.BootstrapCredentialsEntry
+	24, // 2: criteria.v1.HeartbeatResponse.server_time:type_name -> google.protobuf.Timestamp
+	24, // 3: criteria.v1.Run.created_at:type_name -> google.protobuf.Timestamp
+	24, // 4: criteria.v1.Run.started_at:type_name -> google.protobuf.Timestamp
+	24, // 5: criteria.v1.Run.ended_at:type_name -> google.protobuf.Timestamp
 	12, // 6: criteria.v1.ControlMessage.run_cancel:type_name -> criteria.v1.RunCancel
-	13, // 7: criteria.v1.ControlMessage.agent_prompt:type_name -> criteria.v1.AgentPrompt
-	14, // 8: criteria.v1.ControlMessage.control_ready:type_name -> criteria.v1.ControlReady
-	15, // 9: criteria.v1.ControlMessage.resume_run:type_name -> criteria.v1.ResumeRun
+	14, // 7: criteria.v1.ControlMessage.agent_prompt:type_name -> criteria.v1.AgentPrompt
+	15, // 8: criteria.v1.ControlMessage.control_ready:type_name -> criteria.v1.ControlReady
+	16, // 9: criteria.v1.ControlMessage.resume_run:type_name -> criteria.v1.ResumeRun
 	11, // 10: criteria.v1.ControlMessage.workflow_assignment:type_name -> criteria.v1.WorkflowAssignment
-	20, // 11: criteria.v1.WorkflowAssignment.labels:type_name -> criteria.v1.WorkflowAssignment.LabelsEntry
-	23, // 12: criteria.v1.AgentPrompt.issued_at:type_name -> google.protobuf.Timestamp
-	21, // 13: criteria.v1.ResumeRun.payload:type_name -> criteria.v1.ResumeRun.PayloadEntry
-	22, // 14: criteria.v1.ResumeRequest.payload:type_name -> criteria.v1.ResumeRequest.PayloadEntry
-	0,  // 15: criteria.v1.CriteriaService.Register:input_type -> criteria.v1.RegisterRequest
-	2,  // 16: criteria.v1.CriteriaService.Heartbeat:input_type -> criteria.v1.HeartbeatRequest
-	4,  // 17: criteria.v1.CriteriaService.CreateRun:input_type -> criteria.v1.CreateRunRequest
-	6,  // 18: criteria.v1.CriteriaService.ReattachRun:input_type -> criteria.v1.ReattachRunRequest
-	16, // 19: criteria.v1.CriteriaService.Resume:input_type -> criteria.v1.ResumeRequest
-	24, // 20: criteria.v1.CriteriaService.SubmitEvents:input_type -> criteria.v1.Envelope
-	9,  // 21: criteria.v1.CriteriaService.Control:input_type -> criteria.v1.ControlSubscribeRequest
-	1,  // 22: criteria.v1.CriteriaService.Register:output_type -> criteria.v1.RegisterResponse
-	3,  // 23: criteria.v1.CriteriaService.Heartbeat:output_type -> criteria.v1.HeartbeatResponse
-	5,  // 24: criteria.v1.CriteriaService.CreateRun:output_type -> criteria.v1.Run
-	7,  // 25: criteria.v1.CriteriaService.ReattachRun:output_type -> criteria.v1.ReattachRunResponse
-	17, // 26: criteria.v1.CriteriaService.Resume:output_type -> criteria.v1.ResumeResponse
-	8,  // 27: criteria.v1.CriteriaService.SubmitEvents:output_type -> criteria.v1.Ack
-	10, // 28: criteria.v1.CriteriaService.Control:output_type -> criteria.v1.ControlMessage
-	22, // [22:29] is the sub-list for method output_type
-	15, // [15:22] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	13, // 11: criteria.v1.ControlMessage.pause_run:type_name -> criteria.v1.PauseRun
+	21, // 12: criteria.v1.WorkflowAssignment.labels:type_name -> criteria.v1.WorkflowAssignment.LabelsEntry
+	24, // 13: criteria.v1.AgentPrompt.issued_at:type_name -> google.protobuf.Timestamp
+	22, // 14: criteria.v1.ResumeRun.payload:type_name -> criteria.v1.ResumeRun.PayloadEntry
+	23, // 15: criteria.v1.ResumeRequest.payload:type_name -> criteria.v1.ResumeRequest.PayloadEntry
+	0,  // 16: criteria.v1.CriteriaService.Register:input_type -> criteria.v1.RegisterRequest
+	2,  // 17: criteria.v1.CriteriaService.Heartbeat:input_type -> criteria.v1.HeartbeatRequest
+	4,  // 18: criteria.v1.CriteriaService.CreateRun:input_type -> criteria.v1.CreateRunRequest
+	6,  // 19: criteria.v1.CriteriaService.ReattachRun:input_type -> criteria.v1.ReattachRunRequest
+	17, // 20: criteria.v1.CriteriaService.Resume:input_type -> criteria.v1.ResumeRequest
+	25, // 21: criteria.v1.CriteriaService.SubmitEvents:input_type -> criteria.v1.Envelope
+	9,  // 22: criteria.v1.CriteriaService.Control:input_type -> criteria.v1.ControlSubscribeRequest
+	1,  // 23: criteria.v1.CriteriaService.Register:output_type -> criteria.v1.RegisterResponse
+	3,  // 24: criteria.v1.CriteriaService.Heartbeat:output_type -> criteria.v1.HeartbeatResponse
+	5,  // 25: criteria.v1.CriteriaService.CreateRun:output_type -> criteria.v1.Run
+	7,  // 26: criteria.v1.CriteriaService.ReattachRun:output_type -> criteria.v1.ReattachRunResponse
+	18, // 27: criteria.v1.CriteriaService.Resume:output_type -> criteria.v1.ResumeResponse
+	8,  // 28: criteria.v1.CriteriaService.SubmitEvents:output_type -> criteria.v1.Ack
+	10, // 29: criteria.v1.CriteriaService.Control:output_type -> criteria.v1.ControlMessage
+	23, // [23:30] is the sub-list for method output_type
+	16, // [16:23] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_criteria_v1_criteria_proto_init() }
@@ -1497,6 +1580,7 @@ func file_criteria_v1_criteria_proto_init() {
 		(*ControlMessage_ControlReady)(nil),
 		(*ControlMessage_ResumeRun)(nil),
 		(*ControlMessage_WorkflowAssignment)(nil),
+		(*ControlMessage_PauseRun)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -1504,7 +1588,7 @@ func file_criteria_v1_criteria_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_criteria_v1_criteria_proto_rawDesc), len(file_criteria_v1_criteria_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   23,
+			NumMessages:   24,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
