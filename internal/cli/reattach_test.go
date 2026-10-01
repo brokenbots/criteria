@@ -1353,6 +1353,10 @@ func TestResumePausedRun_StartStreamsError(t *testing.T) {
 // for a test to deliver a castle control message mid-flight. It drives the
 // pause/cancel regression tests for control consumption on crash-recovered
 // runs (CRI-254 review R1).
+// recoveryEnvelopeTimeout bounds envelope polling in the recovered-run
+// regression tests.
+const recoveryEnvelopeTimeout = 10 * time.Second
+
 const recoveryPauseWorkflow = `
 workflow {
   name = "recovery_pause"
@@ -1388,11 +1392,11 @@ state "done" {
 `
 
 // waitForEnvelope polls a fake transport's published envelopes until one
-// matches, failing the test after the timeout. Drivers run on test goroutines
-// so envelopes arrive asynchronously.
-func waitForEnvelope(t *testing.T, ft *fakeTransport, timeout time.Duration, match func(*pb.Envelope) bool) *pb.Envelope {
+// matches, failing the test after recoveryEnvelopeTimeout. Drivers run on
+// test goroutines so envelopes arrive asynchronously.
+func waitForEnvelope(t *testing.T, ft *fakeTransport, match func(*pb.Envelope) bool) *pb.Envelope {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
+	deadline := time.Now().Add(recoveryEnvelopeTimeout)
 	for {
 		for _, env := range ft.Published() {
 			if match(env) {
@@ -1400,7 +1404,7 @@ func waitForEnvelope(t *testing.T, ft *fakeTransport, timeout time.Duration, mat
 			}
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("expected envelope not published within %s (have %d)", timeout, len(ft.Published()))
+			t.Fatalf("expected envelope not published within %s (have %d)", recoveryEnvelopeTimeout, len(ft.Published()))
 		}
 		time.Sleep(2 * time.Millisecond)
 	}
@@ -1416,14 +1420,15 @@ func hasEnvelope(envs []*pb.Envelope, match func(*pb.Envelope) bool) bool {
 	return false
 }
 
-// newRecoveredRunFixture writes the workflow and checkpoint for the
-// recovered-run control-consumption regression tests and returns the pieces
-// the tests share (plus a text-handler log buffer), without starting a driver.
-func newRecoveredRunFixture(t *testing.T, hcl string, resp *pb.ReattachRunResponse, runID string) (*StepCheckpoint, *workflow.FSMGraph, *fakeTransport, *slog.Logger, *bytes.Buffer) {
+// newRecoveredRunFixture writes the recoveryPauseWorkflow and checkpoint for
+// the recovered-run control-consumption regression tests and returns the
+// pieces the tests share (plus a text-handler log buffer), without starting a
+// driver.
+func newRecoveredRunFixture(t *testing.T, resp *pb.ReattachRunResponse, runID string) (*StepCheckpoint, *workflow.FSMGraph, *fakeTransport, *slog.Logger, *bytes.Buffer) {
 	t.Helper()
 	stateDir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
-	wfFile := writeWorkflowFile(t, hcl)
+	wfFile := writeWorkflowFile(t, recoveryPauseWorkflow)
 	cp := &StepCheckpoint{RunID: runID, WorkflowPath: wfFile, CurrentStep: resp.CurrentStep}
 	writeCheckpointDirect(t, stateDir, cp)
 	graph, err := parseWorkflowFromPath(context.Background(), wfFile)
@@ -1462,7 +1467,7 @@ func assertStepCheckpointGone(t *testing.T, runID string) {
 func TestResumeActiveRun_PauseRunLandsDuringRecoveredRun(t *testing.T) {
 	requireNoGoroutineLeak(t)
 	resp := &pb.ReattachRunResponse{CanResume: true, Status: "running", CurrentStep: "step_one"}
-	cp, graph, ft, log, logBuf := newRecoveredRunFixture(t, recoveryPauseWorkflow, resp, "rr-pause-active")
+	cp, graph, ft, log, logBuf := newRecoveredRunFixture(t, resp, "rr-pause-active")
 
 	runCtx, runCancel := context.WithCancel(context.Background())
 	defer runCancel()
@@ -1477,13 +1482,13 @@ func TestResumeActiveRun_PauseRunLandsDuringRecoveredRun(t *testing.T) {
 
 	// Deliver mid-flight: wait for the slow middle step to start, then have
 	// the castle pause the run through the recovery client.
-	waitForEnvelope(t, ft, 10*time.Second, func(env *pb.Envelope) bool {
+	waitForEnvelope(t, ft, func(env *pb.Envelope) bool {
 		se := env.GetStepEntered()
 		return se != nil && se.Step == "step_two"
 	})
 	ft.pauseCh <- &pb.PauseRun{RunId: cp.RunID, Reason: "castle hold"}
 
-	pausedEnv := waitForEnvelope(t, ft, 10*time.Second, func(env *pb.Envelope) bool {
+	pausedEnv := waitForEnvelope(t, ft, func(env *pb.Envelope) bool {
 		return env.GetRunPaused() != nil
 	})
 	if got, mode := pausedEnv.GetRunPaused().GetNode(), pausedEnv.GetRunPaused().GetMode(); got != "step_three" || mode != "external" {
@@ -1521,7 +1526,7 @@ func TestResumeActiveRun_PauseRunLandsDuringRecoveredRun(t *testing.T) {
 func TestResumePausedRun_PauseRunLandsDuringRecoveredRun(t *testing.T) {
 	requireNoGoroutineLeak(t)
 	resp := &pb.ReattachRunResponse{CanResume: true, Status: "paused", CurrentStep: "step_one", PendingSignal: "start"}
-	cp, graph, ft, log, logBuf := newRecoveredRunFixture(t, recoveryPauseWorkflow, resp, "rr-pause-paused")
+	cp, graph, ft, log, logBuf := newRecoveredRunFixture(t, resp, "rr-pause-paused")
 
 	runCtx, runCancel := context.WithCancel(context.Background())
 	defer runCancel()
@@ -1536,13 +1541,13 @@ func TestResumePausedRun_PauseRunLandsDuringRecoveredRun(t *testing.T) {
 		done <- consumed
 	}()
 
-	waitForEnvelope(t, ft, 10*time.Second, func(env *pb.Envelope) bool {
+	waitForEnvelope(t, ft, func(env *pb.Envelope) bool {
 		se := env.GetStepEntered()
 		return se != nil && se.Step == "step_two"
 	})
 	ft.pauseCh <- &pb.PauseRun{RunId: cp.RunID, Reason: "castle hold"}
 
-	pausedEnv := waitForEnvelope(t, ft, 10*time.Second, func(env *pb.Envelope) bool {
+	pausedEnv := waitForEnvelope(t, ft, func(env *pb.Envelope) bool {
 		return env.GetRunPaused() != nil
 	})
 	if got, mode := pausedEnv.GetRunPaused().GetNode(), pausedEnv.GetRunPaused().GetMode(); got != "step_three" || mode != "external" {
@@ -1579,7 +1584,7 @@ func TestResumePausedRun_PauseRunLandsDuringRecoveredRun(t *testing.T) {
 func TestResumeActiveRun_RunCancelCancelsRecoveredRun(t *testing.T) {
 	requireNoGoroutineLeak(t)
 	resp := &pb.ReattachRunResponse{CanResume: true, Status: "running", CurrentStep: "step_one"}
-	cp, graph, ft, log, logBuf := newRecoveredRunFixture(t, recoveryPauseWorkflow, resp, "rr-cancel-active")
+	cp, graph, ft, log, logBuf := newRecoveredRunFixture(t, resp, "rr-cancel-active")
 
 	runCtx, runCancel := context.WithCancel(context.Background())
 	defer runCancel()
@@ -1591,7 +1596,7 @@ func TestResumeActiveRun_RunCancelCancelsRecoveredRun(t *testing.T) {
 		outcomeCh <- outcome
 	}()
 
-	waitForEnvelope(t, ft, 10*time.Second, func(env *pb.Envelope) bool {
+	waitForEnvelope(t, ft, func(env *pb.Envelope) bool {
 		se := env.GetStepEntered()
 		return se != nil && se.Step == "step_two"
 	})
@@ -1624,7 +1629,7 @@ func TestResumeActiveRun_RunCancelCancelsRecoveredRun(t *testing.T) {
 func TestResumePausedRun_RunCancelCancelsRecoveredRun(t *testing.T) {
 	requireNoGoroutineLeak(t)
 	resp := &pb.ReattachRunResponse{CanResume: true, Status: "paused", CurrentStep: "step_one", PendingSignal: "start"}
-	cp, graph, ft, log, logBuf := newRecoveredRunFixture(t, recoveryPauseWorkflow, resp, "rr-cancel-paused")
+	cp, graph, ft, log, logBuf := newRecoveredRunFixture(t, resp, "rr-cancel-paused")
 
 	runCtx, runCancel := context.WithCancel(context.Background())
 	defer runCancel()
@@ -1636,7 +1641,7 @@ func TestResumePausedRun_RunCancelCancelsRecoveredRun(t *testing.T) {
 		outcomeCh <- outcome
 	}()
 
-	waitForEnvelope(t, ft, 10*time.Second, func(env *pb.Envelope) bool {
+	waitForEnvelope(t, ft, func(env *pb.Envelope) bool {
 		se := env.GetStepEntered()
 		return se != nil && se.Step == "step_two"
 	})
@@ -1667,7 +1672,7 @@ func TestResumePausedRun_RunCancelCancelsRecoveredRun(t *testing.T) {
 func TestResumeActiveRun_RunCancelForeignRunIDLoggedNotRun(t *testing.T) {
 	requireNoGoroutineLeak(t)
 	resp := &pb.ReattachRunResponse{CanResume: true, Status: "running", CurrentStep: "step_one"}
-	cp, graph, ft, log, logBuf := newRecoveredRunFixture(t, recoveryPauseWorkflow, resp, "rr-cancel-foreign")
+	cp, graph, ft, log, logBuf := newRecoveredRunFixture(t, resp, "rr-cancel-foreign")
 
 	runCtx, runCancel := context.WithCancel(context.Background())
 	defer runCancel()

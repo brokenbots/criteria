@@ -227,6 +227,29 @@ func startRunCancelWatch(ctx context.Context, log *slog.Logger, cancelCh <-chan 
 	return done, watchCancel
 }
 
+// startRecoveryControlConsumers wires the recovery client's castle control
+// channels for a crash-recovered run, matching the fresh-run wiring in
+// executeServerRun: inbound PauseRun messages land at a node boundary via
+// the shared controlPauseRouter (pinned to the running engine via
+// startPauseConsume), run.cancel messages cancel the run context, and
+// foreign run ids are logged rather than silently dropped. The returned
+// stop func must be deferred so it runs when the driver returns: it cancels
+// and joins both consumers LIFO (pause consumer first, then the cancel
+// watcher) BEFORE drainAndCleanup, so neither consumer can publish to or
+// cancel against the transport while the terminal drain is running.
+func startRecoveryControlConsumers(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, sink *run.Sink, eng *engine.Engine, cancelRun func()) (pauseRouter *controlPauseRouter, stop func()) {
+	pauseRouter = newControlPauseRouter(cp.RunID, sink, log)
+	pauseDone, pauseCancel := pauseRouter.startPauseConsume(ctx, eng, rc.PauseRunCh())
+	watchDone, watchCancel := startRunCancelWatch(ctx, log, rc.RunCancelCh(), cp.RunID, cancelRun)
+	return pauseRouter, func() {
+		pauseCancel()
+		<-pauseDone
+		watchCancel()
+		<-watchDone
+		drainAndCleanup(ctx, rc, cp)
+	}
+}
+
 // resumePausedRun re-enters a paused run using WithPendingSignal, then
 // services further resume signals until the run reaches a terminal state.
 // It returns whether the run was consumed (see resumeOneRun) and the run's
@@ -267,16 +290,11 @@ func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		engine.WithAgentPrompts(rc.AgentPromptCh(), rc.CriteriaID(), cp.RunID),
 	}, baseOpts...)
 	eng := engine.New(graph, loader, engineSink, engOpts...)
-	pauseRouter := newControlPauseRouter(cp.RunID, sink, log)
-	pauseDone, pauseCancel := pauseRouter.startPauseConsume(ctx, eng, rc.PauseRunCh())
-	watchDone, watchCancel := startRunCancelWatch(ctx, log, rc.RunCancelCh(), cp.RunID, cancelRun)
-	defer func() {
-		pauseCancel()
-		<-pauseDone
-		watchCancel()
-		<-watchDone
-		drainAndCleanup(ctx, rc, cp)
-	}()
+	// CRI-254: startRecoveryControlConsumers pins the router to the
+	// re-entered engine via startPauseConsume, i.e. before the RunFrom below
+	// (mirrors the fresh-run wiring in executeServerRun).
+	pauseRouter, stop := startRecoveryControlConsumers(ctx, log, rc, cp, sink, eng, cancelRun)
+	defer stop()
 	if runErr := eng.RunFrom(ctx, resp.CurrentStep, int(resp.Attempt)); runErr != nil {
 		log.Error("paused run re-entry failed", "error", runErr)
 		return true, runErr
@@ -414,20 +432,13 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		drainAndCleanup(ctx, rc, cp)
 		return false, nil
 	}
-	// The router is pinned to the re-entered engine before the run starts,
-	// mirroring the fresh-run wiring in executeServerRun. No resume cycles are
-	// serviced on this path (a crashed active run re-runs the interrupted step
-	// to completion or pause), so a single pin is sufficient.
-	pauseRouter := newControlPauseRouter(cp.RunID, sink, log)
-	pauseDone, pauseCancel := pauseRouter.startPauseConsume(ctx, eng, rc.PauseRunCh())
-	watchDone, watchCancel := startRunCancelWatch(ctx, log, rc.RunCancelCh(), cp.RunID, cancelRun)
-	defer func() {
-		pauseCancel()
-		<-pauseDone
-		watchCancel()
-		<-watchDone
-		drainAndCleanup(ctx, rc, cp)
-	}()
+	// CRI-254: the router is pinned to the re-entered engine before the run
+	// starts, mirroring the fresh-run wiring in executeServerRun. No resume
+	// cycles are serviced on this path (a crashed active run re-runs the
+	// interrupted step to completion or pause), so a single pin suffices and
+	// the router handle itself is not needed here.
+	_, stop := startRecoveryControlConsumers(ctx, log, rc, cp, sink, eng, cancelRun)
+	defer stop()
 	var outcome error
 	if runErr := eng.RunFrom(ctx, resp.CurrentStep, nextAttempt); runErr != nil {
 		log.Error("resumed run failed", "error", runErr)
