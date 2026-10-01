@@ -222,8 +222,9 @@ func buildServerRunEngine(graph *workflow.FSMGraph, loader adapterhost.Loader, s
 // data directory and lets each resumed engine adopt surviving per-scope
 // instances from prior invocations of the same run (CRI-304); callers without
 // a fingerprint (agent runs) pass "" and get neither marker nor adoption.
-// pauseRouter (CRI-254, nil in tests) receives the swapped engine pointer
-// after each resume cycle so pause latches address the live engine.
+// pauseRouter (CRI-254, nil in tests) is re-pinned to each resumed engine
+// before RunFrom starts it, so pause latches address the engine that is
+// actually running mid-flight.
 func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost.Loader, sink *run.Sink, runSink engine.Sink, resumeCh <-chan *pb.ResumeRun, promptCh <-chan *pb.AgentPrompt, promptOwnerID string, state *localRunState, graph *workflow.FSMGraph, workflowDir string, eng *engine.Engine, fingerprint string, pauseRouter *controlPauseRouter) error {
 	// CRI-202: shared base includes the checkpoint surface (snapshot base +
 	// run id) so the resumed engine saves restored-session state and restores
@@ -270,13 +271,19 @@ func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost
 		// that would wedge the replay behind the shim's handshake timeout.
 		resumedOpts = append(resumedOpts, adoptionOpts...)
 		resumedEng := engine.New(graph, loader, runSink, resumedOpts...)
+		// CRI-254 R3: pin the router to the resumed engine BEFORE it starts
+		// running (mirrors localRunControl.setEngine in apply_resume.go): a
+		// pause delivered while the resumed run executes must address the
+		// engine that is actually in flight, not the one whose loop exited at
+		// the pause — the old pin made RequestPause return not-running and
+		// silently dropped the command.
+		if pauseRouter != nil {
+			pauseRouter.setEngine(resumedEng)
+		}
+		eng = resumedEng
 		if err := resumedEng.RunFrom(ctx, pausedNode, 1); err != nil {
 			log.Error("run failed after resume", "error", err)
 			return err
-		}
-		eng = resumedEng
-		if pauseRouter != nil {
-			pauseRouter.setEngine(eng)
 		}
 		log.Info("run resumed and completed", "run_id", state.RunID)
 	}

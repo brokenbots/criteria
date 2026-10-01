@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/brokenbots/criteria/internal/engine"
@@ -26,9 +27,6 @@ const (
 // package var so tests can exercise the timeout path quickly.
 var pauseAckWait = pauseAckTimeout
 
-// getEngine returns the active engine for the router, nil when detached.
-type getEngine func() *engine.Engine
-
 // controlPauseRouter consumes orchestrator-issued pause_run commands for one
 // owned run (CRI-254) and drives Engine.Pause semantics at step boundaries,
 // mirroring the local-control (mode "external") PauseRun path: drain-first,
@@ -39,21 +37,29 @@ type getEngine func() *engine.Engine
 // with a drop_reason (run_ended_not_running, run_id_mismatch, ack_timeout)
 // and, while landed or racing, the RunPaused event acks it upstream. Castle
 // detects the missing ack via its control-plane timeout.
+//
+// eng is the engine the router pins pauses to. It is swapped from the resume
+// loop while the consumer goroutine may be racing through handle, so access
+// goes through atomic.Pointer — the same cross-goroutine-swap concern
+// localRunControl guards with its mutex (local_control.go).
 type controlPauseRouter struct {
 	runID string
 	sink  *run.Sink
 	log   *slog.Logger
-	eng   getEngine
+	eng   atomic.Pointer[engine.Engine]
 }
 
 func newControlPauseRouter(runID string, sink *run.Sink, log *slog.Logger) *controlPauseRouter {
 	return &controlPauseRouter{runID: runID, sink: sink, log: log}
 }
 
-// setEngine pins the current engine instance or, for resume loops, the
-// engine spun up by the next resume cycle.
+// setEngine pins the current engine instance or detaches (nil). For resume
+// loops the pin must land BEFORE the resumed engine's RunFrom starts, so a
+// pause delivered mid-flight addresses the engine that is actually running —
+// not the one whose loop exited at the pause (mirrors localRunControl in
+// apply_resume.go).
 func (r *controlPauseRouter) setEngine(eng *engine.Engine) {
-	r.eng = func() *engine.Engine { return eng }
+	r.eng.Store(eng)
 }
 
 // consume reads pause commands off the transport channel until the run
@@ -115,17 +121,12 @@ func (r *controlPauseRouter) handle(ctx context.Context, msg *pb.PauseRun) pause
 			slog.String("reason", msg.GetReason()))
 		return pauseAckLanded
 	}
-	eng := r.eng
+	eng := r.eng.Load()
 	if eng == nil {
 		r.warnDrop("pause_run for run with no active engine", "run_not_running")
 		return pauseAckEnded
 	}
-	active := eng()
-	if active == nil {
-		r.warnDrop("pause_run for run with no active engine", "run_not_running")
-		return pauseAckEnded
-	}
-	ack, ok := active.RequestPause()
+	ack, ok := eng.RequestPause()
 	if !ok {
 		if node := r.sink.PausedAt(); node != "" {
 			// The run paused at a node while the latch was being taken.

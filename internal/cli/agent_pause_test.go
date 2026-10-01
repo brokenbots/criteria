@@ -253,3 +253,222 @@ func TestAgentRunAndDrain_PauseLandsDuringInitialRun(t *testing.T) {
 	cancel()
 	<-routingDone
 }
+
+// agentDoublePauseWorkflow delays both step_two and step_three so each has a
+// wide in-flight window; the two pauses of the resume-cycle regression below
+// pause mid-step_two (landing at the step_three boundary) and mid-step_three
+// of the resumed run (landing at the step_four boundary).
+const agentDoublePauseWorkflow = `
+workflow {
+  name = "agent_double_pause"
+  version       = "0.1"
+  initial_state = "step_one"
+  target_state  = "done"
+}
+
+adapter "noop" "default" {}
+
+step "step_one" {
+  target = adapter.noop.default
+  outcome "success" { next = step.step_two }
+  outcome "failure" { next = step.done }
+}
+
+step "step_two" {
+  target = adapter.noop.default
+  input { delay_ms = "500" }
+  outcome "success" { next = step.step_three }
+  outcome "failure" { next = step.done }
+}
+
+step "step_three" {
+  target = adapter.noop.default
+  input { delay_ms = "500" }
+  outcome "success" { next = step.step_four }
+  outcome "failure" { next = step.done }
+}
+
+step "step_four" {
+  target = adapter.noop.default
+  outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+
+// TestAgentRunAndDrain_PauseLandsDuringResumeCycle is the run-level CRI-254
+// regression for the resume-cycle window: after a first pause and a
+// signal-less resume, the router must be pinned to the RESUMED engine before
+// its RunFrom starts, so a second castle PauseRun delivered while the resumed
+// run is executing lands at the next boundary (RunPaused Ack) rather than
+// being dropped against the previous engine whose loop exited at the first
+// pause. Against the pre-fix ordering — setEngine after RunFrom — the second
+// pause resolves the stale engine, RequestPause reports not-running and the
+// command is dropped as run_not_running: the resumed run completes and no
+// RunPaused(step_four) ever arrives, failing the wait below.
+func TestAgentRunAndDrain_PauseLandsDuringResumeCycle(t *testing.T) {
+	requireNoGoroutineLeak(t)
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+	fake := applytest.New(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	log := newApplyLogger()
+	wfPath := writeWorkflowFile(t, agentDoublePauseWorkflow)
+	src, graph, loader, err := compileForExecution(ctx, wfPath, log, false, false)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
+
+	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
+	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri254-agent", &copts, nil, nil, "")
+	if err != nil {
+		t.Fatalf("setupServerRun: %v", err)
+	}
+	if resumed {
+		t.Fatal("setupServerRun unexpectedly resumed a matching checkpoint")
+	}
+	defer client.Close()
+
+	publisher, closePublisher, err := newRunPublisher(ctx, client, runID)
+	if err != nil {
+		t.Fatalf("newRunPublisher: %v", err)
+	}
+	defer closePublisher()
+
+	agentOpts := &agentOptions{serverURL: fake.URL()}
+	assignment := &pb.WorkflowAssignment{RunId: runID, WorkflowSource: string(src)}
+	eng, sink, runSink, state, err := buildAgentRun(ctx, ctx, log, client, assignment, agentOpts, publisher, graph, loader, filepath.Dir(wfPath), wfPath)
+	if err != nil {
+		t.Fatalf("buildAgentRun: %v", err)
+	}
+
+	resumeCh := make(chan *pb.ResumeRun, 1)
+	promptCh := make(chan *pb.AgentPrompt, 1)
+	pauseCh := make(chan *pb.PauseRun, 1)
+	active := &activeRun{}
+	active.mu.Lock()
+	active.runID = runID
+	active.resumeCh = resumeCh
+	active.promptCh = promptCh
+	active.pauseCh = pauseCh
+	active.mu.Unlock()
+
+	loop := &agentLoop{ctx: ctx, log: log, client: client, opts: agentOpts, active: active}
+	routingDone := make(chan struct{})
+	go func() {
+		defer close(routingDone)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msg := <-client.PauseRunCh():
+				loop.handlePause(msg)
+			case msg := <-client.ResumeCh():
+				loop.handleResume(msg)
+			}
+		}
+	}()
+
+	runCtx, runCancel := context.WithCancel(ctx)
+	defer runCancel()
+	runErrCh := make(chan error, 1)
+	go func() {
+		runErrCh <- runAndDrain(ctx, runCtx, log, eng, loader, sink, runSink, resumeCh, promptCh, pauseCh, state, graph, filepath.Dir(wfPath), runID, publisher, nil, nil)
+	}()
+
+	// First pause mid-step_two of the initial run; it lands at the step_three
+	// boundary exactly as the initial-run regression pins.
+	fake.WaitForCond(t, 10*time.Second, func() bool {
+		return fake.HasStepEntered("step_two")
+	})
+	fake.PauseRun(runID, "castle hold 1")
+	fake.WaitForCond(t, 10*time.Second, func() bool {
+		return fake.RunStatus(runID) == "paused"
+	})
+	var first *pb.RunPaused
+	for _, env := range fake.Events() {
+		if rpEnv := env.GetRunPaused(); rpEnv != nil {
+			first = rpEnv
+			break
+		}
+	}
+	if first == nil {
+		t.Fatal("RunPaused event not received castle-side after the first pause")
+	}
+	if first.Node != "step_three" || first.Mode != "external" || first.Signal != "" {
+		t.Fatalf("first RunPaused: node=%q mode=%q signal=%q, want step_three/external/\"\"", first.Node, first.Mode, first.Signal)
+	}
+
+	// Signal-less resume: the resumed run enters step_three and holds there
+	// (500 ms delay), keeping it in flight for the second pause.
+	fake.ResumeRun(runID, "")
+	fake.WaitForCond(t, 15*time.Second, func() bool {
+		return fake.HasStepEntered("step_three")
+	})
+	fake.PauseRun(runID, "castle hold 2")
+
+	var second *pb.RunPaused
+	deadline := time.Now().Add(15 * time.Second)
+	for second == nil && time.Now().Before(deadline) {
+		if fake.HasEventOfType("RunCompleted") {
+			t.Fatal("the resumed run completed with a pause pending — the pause was dropped against the stale engine, not landed")
+		}
+		for _, env := range fake.Events() {
+			if rpEnv := env.GetRunPaused(); rpEnv != nil && rpEnv.Node == "step_four" {
+				second = rpEnv
+			}
+		}
+		if second == nil {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	if second == nil {
+		t.Fatal("no RunPaused(step_four) within the ack budget; the pause delivered during the resumed run did not land at the boundary")
+	}
+	if second.Mode != "external" || second.Signal != "" {
+		t.Fatalf("second RunPaused: mode=%q signal=%q, want external/\"\"", second.Mode, second.Signal)
+	}
+	if fake.HasStepEntered("step_four") {
+		t.Fatal("the post-pause step must never evaluate before the second resume")
+	}
+
+	// Second signal-less resume: continue from the step_four checkpoint and
+	// complete; every step is entered exactly once (no replay through either
+	// pause).
+	fake.ResumeRun(runID, "")
+	fake.WaitForCond(t, 15*time.Second, func() bool {
+		return fake.RunStatus(runID) == "succeeded"
+	})
+	select {
+	case err := <-runErrCh:
+		if err != nil {
+			t.Fatalf("runAndDrain: %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("timeout waiting for runAndDrain to return")
+	}
+
+	entries := map[string]int{}
+	for _, env := range fake.Events() {
+		if se := env.GetStepEntered(); se != nil {
+			entries[se.Step]++
+		}
+	}
+	for _, step := range []string{"step_two", "step_three", "step_four"} {
+		if entries[step] != 1 {
+			t.Fatalf("step entries: %s=%d, want 1 (resume continues from the checkpoint, no replay)", step, entries[step])
+		}
+	}
+	if fake.HasEventOfType("WaitResumed") {
+		t.Fatal("a boundary pause must not surface wait/signal resume traffic")
+	}
+	cancel()
+	<-routingDone
+}

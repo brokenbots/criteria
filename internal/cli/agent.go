@@ -433,7 +433,7 @@ func (l *agentLoop) handlePause(msg *pb.PauseRun) {
 			"run_id", msg.GetRunId(),
 			"drop_reason", "active_run_pause_ch_full",
 			"active_run_id", activeID,
-			"note", "pause latch may already be armed; the in-flight pause request still lands at the next boundary")
+			"note", "the pause stays buffered; the run's consumer still takes it and either lands it at the next boundary or resolves a visible outcome (drop log or ack timeout)")
 		return
 	}
 	l.log.Warn("received pause for inactive run",

@@ -448,14 +448,19 @@ func TestControlPauseRouter_RunEndedWithoutPausingIsAcked(t *testing.T) {
 	go func() { doneRun <- eng.Run(runCtx) }()
 	waitStepEntered(t, publisher, "a")
 
-	// Arm the latch mid-step; the pause cannot land while the gate holds
-	// step "b" (the boundary check only runs between loop iterations). The
-	// router consumes the command on a context that outlives the run's
-	// teardown so the ack-close — not ctx.Done — decides the outcome, which
-	// is the raced-pause case this arm exists for.
+	// Arm the latch mid-step, synchronously: with the gate holding the only
+	// step, RequestPause cannot land and returns the ack channel. Waiting on
+	// it directly is the deterministic way into the run_ended_without_pausing
+	// arm — routing the command through handle would race the arm-taking
+	// against the teardown below, and on an unlucky schedule the run_not_running
+	// drop would satisfy the assertion without exercising this arm.
+	ack, ok := eng.RequestPause()
+	if !ok {
+		t.Fatal("the gate holds the only step, so the pause latch must arm mid-step")
+	}
 	resCh := make(chan pauseAckResult, 1)
 	go func() {
-		resCh <- router.handle(context.Background(), &pb.PauseRun{RunId: "run-pause-7", Reason: "castle hold"})
+		resCh <- router.waitForPauseAck(context.Background(), ack, "castle hold")
 	}()
 
 	// The run is torn down mid-step: releasing the gate under a cancelled
