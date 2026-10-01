@@ -1622,6 +1622,7 @@ func TestResumeActiveRun_RunCancelCancelsRecoveredRun(t *testing.T) {
 	}) {
 		t.Errorf("expected RunFailed published after run.cancel; envelopes: %d", len(ft.Published()))
 	}
+	assertStepCheckpointGone(t, cp.RunID)
 }
 
 // TestResumePausedRun_RunCancelCancelsRecoveredRun mirrors the active-run
