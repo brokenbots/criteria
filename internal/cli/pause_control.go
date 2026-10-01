@@ -50,12 +50,8 @@ func newControlPauseRouter(runID string, sink *run.Sink, log *slog.Logger) *cont
 	return &controlPauseRouter{runID: runID, sink: sink, log: log}
 }
 
-// setEngineProvider wires the latest engine instance (initial or resumed).
-func (r *controlPauseRouter) setEngineProvider(provider getEngine) {
-	r.eng = provider
-}
-
-// setEngine pins the current engine instance (the common one-engine case).
+// setEngine pins the current engine instance or, for resume loops, the
+// engine spun up by the next resume cycle.
 func (r *controlPauseRouter) setEngine(eng *engine.Engine) {
 	r.eng = func() *engine.Engine { return eng }
 }
@@ -79,6 +75,22 @@ func (r *controlPauseRouter) consume(ctx context.Context, pauseCh <-chan *pb.Pau
 			r.handle(ctx, msg)
 		}
 	}
+}
+
+// startPauseConsume launches the router's consume loop on its own goroutine,
+// pinned to eng as the pause target. Returns the join channel and cancel
+// func; the caller registers ONE combined defer (cancel, then join) so the
+// consumer is provably gone when the run function returns — LIFO defer
+// ordering means separate join/cancel defers would deadlock.
+func (r *controlPauseRouter) startPauseConsume(ctx context.Context, eng *engine.Engine, pauseCh <-chan *pb.PauseRun) (<-chan struct{}, context.CancelFunc) {
+	r.setEngine(eng)
+	pauseCtx, cancel := context.WithCancel(ctx)
+	pauseDone := make(chan struct{})
+	go func() {
+		defer close(pauseDone)
+		r.consume(pauseCtx, pauseCh)
+	}()
+	return pauseDone, cancel
 }
 
 // handle lands one pause_run command and returns its ack outcome.

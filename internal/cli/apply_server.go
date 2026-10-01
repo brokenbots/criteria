@@ -146,21 +146,11 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 	if err != nil {
 		return err
 	}
-	// CRI-254: consume orchestrator-issued pause_run commands for this run
-	// and drive them through the boundary-pause machinery (same semantics as
-	// the local-control PauseRun path: drain-first, durable checkpoint, no
-	// adapter kill). The router reads PauseRunCh on its own goroutine so the
-	// control stream never blocks on a step in flight; the consumer stops
-	// once the run is terminal (a later pause cannot be honored) and the run
-	// function joins the goroutine so it is always gone at return.
-	pauseCtx, pauseCancel := context.WithCancel(ctx)
+	// CRI-254: consume orchestrator-issued pause_run commands and drive the
+	// boundary-pause machinery (drain-first, durable checkpoint); the
+	// consumer stops once the run is terminal and is joined at run return.
 	pauseRouter := newControlPauseRouter(state.RunID, sink, log)
-	pauseRouter.setEngine(eng)
-	pauseDone := make(chan struct{})
-	go func() {
-		defer close(pauseDone)
-		pauseRouter.consume(pauseCtx, client.PauseRunCh())
-	}()
+	pauseDone, pauseCancel := pauseRouter.startPauseConsume(ctx, eng, client.PauseRunCh())
 	defer func() {
 		pauseCancel()
 		<-pauseDone

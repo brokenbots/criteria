@@ -969,21 +969,11 @@ func runAndDrain(agentCtx, runCtx context.Context, log *slog.Logger, eng *engine
 	// tail (the observed stuck-'running' shape).
 	var resumeErr error
 	if !shutdown {
-		// CRI-254: consume orchestrator-issued pause commands routed to this
-		// run's pause channel (agentLoop routes client.PauseRunCh to the
-		// active run via activeRun.pauseCh) and drive the boundary-pause
-		// machinery with local-control PauseRun semantics: drain-first,
-		// durable checkpoint, no adapter kill. The consumer stops once the
-		// run is terminal and the run function joins it so the goroutine is
-		// always gone at return.
-		pauseCtx, pauseCancel := context.WithCancel(runCtx)
+		// CRI-254: consume pause commands routed to this run's pause channel
+		// and drive the boundary-pause machinery (drain-first, durable
+		// checkpoint, no adapter kill); stops at terminal, joined at return.
 		pauseRouter := newControlPauseRouter(runID, sink, log)
-		pauseRouter.setEngine(eng)
-		pauseDone := make(chan struct{})
-		go func() {
-			defer close(pauseDone)
-			pauseRouter.consume(pauseCtx, pauseCh)
-		}()
+		pauseDone, pauseCancel := pauseRouter.startPauseConsume(runCtx, eng, pauseCh)
 		defer func() {
 			pauseCancel()
 			<-pauseDone
