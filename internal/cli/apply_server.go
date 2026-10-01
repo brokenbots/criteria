@@ -83,11 +83,28 @@ func buildServerSink(ctx context.Context, publisher run.Publisher, authClient *s
 	}
 }
 
+// buildServerRunSinks assembles the sink chain for a server-side run: the
+// primary server sink (with the live visit-count checkpoint closure), the
+// terminal-success wrapper the terminal drain inspects, and the ND-JSON
+// dual-write mirror when eventsOut is set. emitWorkflowGraphsServer runs
+// here so the once-per-run WorkflowGraphs event (CRI-278) still lands before
+// the engine starts, on both the server stream and the dual-write mirror.
+func buildServerRunSinks(ctx context.Context, log *slog.Logger, client *servertrans.Client, state *localRunState, graph *workflow.FSMGraph, opts applyOptions, eventsOut io.Writer, fingerprint string, getVisits func() map[string]int) (*terminalSuccessSink, *run.Sink, *run.LocalSink) {
+	sink := buildServerSink(ctx, client, client, state.RunID, graph, opts.workflowPath, opts.serverURL, fingerprint, log, getVisits)
+	runSink := &terminalSuccessSink{Sink: sink}
+	eventsMirror := eventsFileSink(state.RunID, eventsOut)
+	if eventsMirror != nil {
+		runSink = &terminalSuccessSink{Sink: run.NewMultiSink(sink, eventsMirror)}
+	}
+	emitWorkflowGraphsServer(ctx, log, sink, eventsMirror, graph)
+	return runSink, sink, eventsMirror
+}
+
 // dualWriteSink wraps an engine sink with a LocalSink mirroring events into
 // the ND-JSON events file so server-mode runs keep dual-writing after a
-// crash resume. Returns the sink unchanged when eventsOut is nil.
-// Pause/resume tracking must keep using the raw *run.Sink; only the engine
-// sink is wrapped.
+// crash resume. Returns the sink unchanged when eventsOut is nil. Only the
+// engine sink is wrapped: pause/resume tracking must keep using the raw
+// *run.Sink.
 func dualWriteSink(sink engine.Sink, runID string, eventsOut io.Writer) engine.Sink {
 	local := eventsFileSink(runID, eventsOut)
 	if local == nil {
@@ -121,26 +138,12 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 	// fingerprint so a restarted runner can match and resume this run
 	// instead of forking a second one.
 	fingerprint := runIdentityFingerprint(opts.workflowPath, opts.serverURL, opts.varFiles, opts.varOverrides)
-	sink := buildServerSink(ctx, client, client, state.RunID, graph, opts.workflowPath, opts.serverURL, fingerprint, log,
-		func() map[string]int {
-			if eng != nil {
-				return eng.VisitCounts()
-			}
-			return nil
-		})
-	runSink := &terminalSuccessSink{Sink: sink}
-	var eventsMirror *run.LocalSink
-	if eventsOut != nil {
-		// Dual-write: mirror every engine event into the ND-JSON events file
-		// in addition to the server stream, so operators consuming the file
-		// keep working while the direct server stream is validated.
-		eventsMirror = &run.LocalSink{RunID: state.RunID, Out: eventsOut}
-		runSink = &terminalSuccessSink{Sink: run.NewMultiSink(sink, eventsMirror)}
-	}
-	// CRI-278: emit the once-per-run WorkflowGraphs event at the post-compile
-	// seam, before the engine starts, so it lands at or before RunStarted on
-	// both the server stream and the dual-write mirror.
-	emitWorkflowGraphsServer(ctx, log, sink, eventsMirror, graph)
+	runSink, sink, _ := buildServerRunSinks(ctx, log, client, state, graph, opts, eventsOut, fingerprint, func() map[string]int {
+		if eng != nil {
+			return eng.VisitCounts()
+		}
+		return nil
+	})
 
 	eng, err := buildServerRunEngine(graph, loader, runSink, state, opts, fingerprint, client.AgentPromptCh(), client.CriteriaID())
 	if err != nil {
