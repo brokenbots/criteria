@@ -1,4 +1,7 @@
 bin/
+# kube client caches + agent worktrees (never repo content; may contain env caches)
+.kube/
+.worktrees/
 /criteria
 /fake-copilot
 /criteria-adapter-copilot
