@@ -973,10 +973,21 @@ func runAndDrain(agentCtx, runCtx context.Context, log *slog.Logger, eng *engine
 		// run's pause channel (agentLoop routes client.PauseRunCh to the
 		// active run via activeRun.pauseCh) and drive the boundary-pause
 		// machinery with local-control PauseRun semantics: drain-first,
-		// durable checkpoint, no adapter kill.
+		// durable checkpoint, no adapter kill. The consumer stops once the
+		// run is terminal and the run function joins it so the goroutine is
+		// always gone at return.
+		pauseCtx, pauseCancel := context.WithCancel(runCtx)
 		pauseRouter := newControlPauseRouter(runID, sink, log)
 		pauseRouter.setEngine(eng)
-		go pauseRouter.consume(runCtx, pauseCh)
+		pauseDone := make(chan struct{})
+		go func() {
+			defer close(pauseDone)
+			pauseRouter.consume(pauseCtx, pauseCh)
+		}()
+		defer func() {
+			pauseCancel()
+			<-pauseDone
+		}()
 		resumeErr = drainResumeCycles(runCtx, log, loader, sink, runSink, resumeCh, promptCh, state.CriteriaID, state, graph, workflowDir, eng, "", pauseRouter)
 	}
 

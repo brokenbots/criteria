@@ -22,6 +22,10 @@ const (
 	pauseAckTimed  pauseAckResult = "ack_timeout" // step never reached a boundary within the budget (latch stays armed; retryable)
 )
 
+// pauseAckWait is the ack budget for a boundary-pause request to land; a
+// package var so tests can exercise the timeout path quickly.
+var pauseAckWait = pauseAckTimeout
+
 // getEngine returns the active engine for the router, nil when detached.
 type getEngine func() *engine.Engine
 
@@ -56,15 +60,24 @@ func (r *controlPauseRouter) setEngine(eng *engine.Engine) {
 	r.eng = func() *engine.Engine { return eng }
 }
 
-// consume reads pause commands off the transport channel until it closes
-// (stream teardown). Per-command failures are logged with their drop reason;
-// the channel contract keeps the router alive for the next command.
+// consume reads pause commands off the transport channel until the run
+// context is cancelled (run teardown) or the channel closes (stream
+// teardown). Per-command failures are logged with their drop reason; the
+// channel contract keeps the router alive for the next command.
 func (r *controlPauseRouter) consume(ctx context.Context, pauseCh <-chan *pb.PauseRun) {
-	for msg := range pauseCh {
-		if msg == nil {
-			continue
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg, ok := <-pauseCh:
+			if !ok {
+				return
+			}
+			if msg == nil {
+				continue
+			}
+			r.handle(ctx, msg)
 		}
-		r.handle(ctx, msg)
 	}
 }
 
@@ -119,7 +132,7 @@ func (r *controlPauseRouter) waitForPauseAck(ctx context.Context, ack <-chan str
 		r.log.Info("pause requested by orchestrator",
 			slog.String("run_id", r.runID), slog.String("reason", reason))
 	}
-	timeout := time.NewTimer(pauseAckTimeout)
+	timeout := time.NewTimer(pauseAckWait)
 	defer timeout.Stop()
 	select {
 	case <-ack:
