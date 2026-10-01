@@ -155,9 +155,9 @@ func (p *eventPublisher) entered(step string) bool {
 	return false
 }
 
-func waitStepEntered(t *testing.T, p *eventPublisher, step string, d time.Duration) {
+func waitStepEntered(t *testing.T, p *eventPublisher, step string) {
 	t.Helper()
-	deadline := time.Now().Add(d)
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if p.entered(step) {
 			return
@@ -217,7 +217,7 @@ func TestControlPauseRouter_LandsAtBoundaryAndAcks(t *testing.T) {
 	doneRun := make(chan error, 1)
 	go func() { doneRun <- eng.Run(ctx) }()
 
-	waitStepEntered(t, publisher, "b", 5*time.Second)
+	waitStepEntered(t, publisher, "b")
 	if _, ok := eng.RequestPause(); !ok {
 		t.Fatal("priming RequestPause returned not-ok while step b was in flight")
 	}
@@ -347,7 +347,7 @@ func TestControlPauseRouter_AckTimeoutStaysRetryable(t *testing.T) {
 	gate.block("b")
 	doneRun := make(chan error, 1)
 	go func() { doneRun <- eng.Run(ctx) }()
-	waitStepEntered(t, publisher, "b", 5*time.Second)
+	waitStepEntered(t, publisher, "b")
 
 	if res := router.handle(ctx, &pb.PauseRun{RunId: "run-pause-5", Reason: "hold"}); res != pauseAckTimed {
 		t.Fatalf("pause ack: got %q, want %q", res, pauseAckTimed)
@@ -395,6 +395,32 @@ func TestControlPauseRouter_ConsumeDrainsUntilClose(t *testing.T) {
 	}
 }
 
+// pauseCancelHCL is a minimal linear workflow for the run-ended-without-pause
+// regression: the first step is the only blocking point the test needs.
+const pauseCancelHCL = `
+workflow {
+  name = "router_cancel"
+  version       = "0.1"
+  initial_state = "a"
+  target_state  = "done"
+}
+
+adapter "gate" "default" {}
+
+step "a" {
+  target = adapter.gate.default
+  outcome "success" { next = step.b }
+}
+step "b" {
+  target = adapter.gate.default
+  outcome "success" { next = step.c }
+}
+step "c" {
+  target = adapter.gate.default
+  outcome "success" { next = step.done }
+}
+state "done" { terminal = true }`
+
 // TestControlPauseRouter_RunEndedWithoutPausingIsAcked pins the
 // run_ended_without_pausing arm (CRI-62 no-silent-drop, CRI-254): the latch
 // is armed while a step is in flight, the run loop exits without pausing
@@ -408,7 +434,7 @@ func TestControlPauseRouter_RunEndedWithoutPausingIsAcked(t *testing.T) {
 	runCtx, cancelRun := context.WithCancel(context.Background())
 	defer cancelRun()
 
-	g := compileRouterGraph(t, routerPauseHCL)
+	g := compileRouterGraph(t, pauseCancelHCL)
 	gate := &pauseGateHandle{}
 	publisher := &eventPublisher{}
 	sink := &run.Sink{RunID: "run-pause-7", Client: publisher, Log: discardLog()}
@@ -417,10 +443,10 @@ func TestControlPauseRouter_RunEndedWithoutPausingIsAcked(t *testing.T) {
 	router := newControlPauseRouter("run-pause-7", sink, discardLog())
 	router.setEngine(eng)
 
-	gate.block("b")
+	gate.block("a")
 	doneRun := make(chan error, 1)
 	go func() { doneRun <- eng.Run(runCtx) }()
-	waitStepEntered(t, publisher, "b", 5*time.Second)
+	waitStepEntered(t, publisher, "a")
 
 	// Arm the latch mid-step; the pause cannot land while the gate holds
 	// step "b" (the boundary check only runs between loop iterations). The
@@ -437,7 +463,7 @@ func TestControlPauseRouter_RunEndedWithoutPausingIsAcked(t *testing.T) {
 	// the run loop exits without a pause; clearPauseRequest then closes the
 	// ack with no paused node.
 	cancelRun()
-	gate.release("b")
+	gate.release("a")
 
 	select {
 	case res := <-resCh:
@@ -479,7 +505,7 @@ func TestControlPauseRouter_ConsumeCtxCancelledStaysRetryable(t *testing.T) {
 	gate.block("b")
 	doneRun := make(chan error, 1)
 	go func() { doneRun <- eng.Run(ctx) }()
-	waitStepEntered(t, publisher, "b", 5*time.Second)
+	waitStepEntered(t, publisher, "b")
 
 	ack, ok := eng.RequestPause()
 	if !ok {
