@@ -1,0 +1,177 @@
+{
+  "name": "named_types",
+  "initial_state": "prepare",
+  "target_state": "done",
+  "policy": {
+    "MaxTotalSteps": 100,
+    "MaxStepRetries": 0,
+    "MaxToolDepth": 8,
+    "MaxVisitsWarnThreshold": 200
+  },
+  "adapters": [
+    {
+      "type": "noop",
+      "name": "default",
+      "on_crash": "fail",
+      "config_keys": null
+    }
+  ],
+  "steps": [
+    {
+      "name": "prepare",
+      "adapter": "noop.default",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "next": "failed"
+        },
+        {
+          "name": "success",
+          "next": "invoke"
+        }
+      ]
+    },
+    {
+      "name": "invoke",
+      "subworkflow": "scale",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "next": "failed"
+        },
+        {
+          "name": "success",
+          "next": "finish"
+        }
+      ]
+    },
+    {
+      "name": "finish",
+      "adapter": "noop.default",
+      "input_keys": [
+        "left",
+        "scaled"
+      ],
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "failure",
+          "next": "failed"
+        },
+        {
+          "name": "success",
+          "next": "done"
+        }
+      ]
+    }
+  ],
+  "states": [
+    {
+      "name": "done",
+      "terminal": true,
+      "success": true
+    },
+    {
+      "name": "failed",
+      "terminal": true,
+      "success": false
+    }
+  ],
+  "outputs": [
+    {
+      "name": "spent",
+      "type": "number"
+    },
+    {
+      "name": "limit_snapshot",
+      "type": "number"
+    }
+  ],
+  "switches": [],
+  "subworkflows": [
+    {
+      "name": "scale",
+      "source_path": "<repo>/examples/named_types/child",
+      "body": {
+        "name": "named_types_child",
+        "initial_state": "execute",
+        "target_state": "done",
+        "policy": {
+          "MaxTotalSteps": 100,
+          "MaxStepRetries": 0,
+          "MaxToolDepth": 8,
+          "MaxVisitsWarnThreshold": 200
+        },
+        "adapters": [
+          {
+            "type": "noop",
+            "name": "default",
+            "on_crash": "fail",
+            "config_keys": null
+          }
+        ],
+        "steps": [
+          {
+            "name": "execute",
+            "adapter": "noop.default",
+            "input_keys": null,
+            "allow_tools": null,
+            "outcomes": [
+              {
+                "name": "failure",
+                "next": "failed"
+              },
+              {
+                "name": "success",
+                "next": "done"
+              }
+            ]
+          }
+        ],
+        "states": [
+          {
+            "name": "done",
+            "terminal": true,
+            "success": true
+          },
+          {
+            "name": "failed",
+            "terminal": true,
+            "success": false
+          }
+        ],
+        "outputs": [
+          {
+            "name": "doubled",
+            "type": "number"
+          }
+        ],
+        "switches": [],
+        "step_order": [
+          "execute"
+        ],
+        "plugins_required": [
+          "noop"
+        ],
+        "metadata": {
+          "schema_version": 1
+        }
+      }
+    }
+  ],
+  "step_order": [
+    "prepare",
+    "invoke",
+    "finish"
+  ],
+  "plugins_required": [
+    "noop"
+  ],
+  "metadata": {
+    "schema_version": 1
+  }
+}

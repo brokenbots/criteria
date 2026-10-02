@@ -1,0 +1,31 @@
+workflow: named_types  (version 0.1)
+initial_state: prepare   target_state: done
+policy: max_total_steps=100  max_step_retries=0
+
+variables:
+  limit: number = 5
+
+adapters:
+  noop.default   type=noop   on_crash=fail
+    config: (none)
+
+steps (declaration order):
+  prepare   adapter=noop.default
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> invoke, failure -> failed
+  invoke
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> finish, failure -> failed
+  finish   adapter=noop.default
+    input keys: left, scaled
+    allow_tools: (none)
+    outcomes: success -> done, failure -> failed
+
+states:
+  done    terminal=true   success=true
+  failed    terminal=true   success=false
+
+adapters required:
+  noop   (search: $CRITERIA_ADAPTERS, then $CRITERIA_HOME/adapters, default ~/.local/criteria/adapters)
