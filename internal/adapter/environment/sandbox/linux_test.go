@@ -1035,10 +1035,10 @@ func TestShimIntegration_CurlDenyNetwork(t *testing.T) {
 // filesystem namespace even with no usable interface. Isolation is proven by
 // the AF_INET connect result instead: curl targets a literal loopback
 // address (no DNS involved), and in a fresh netns it must fail at the
-// connect step ("Network is unreachable" while loopback is down, or
-// "Connection refused" when loopback is up with no listener). Requiring the
-// connect-level message also prevents a hollow pass when curl fails to run
-// at all.
+// connect step ("Network is unreachable" while loopback is down, "Connection
+// refused" when loopback is up with no listener, or curl's generic
+// "Couldn't connect to server"). Requiring the connect-level message also
+// prevents a hollow pass when curl fails to run at all.
 func curlDenyNetnsIsolationError(output string) error {
 	if strings.Contains(output, "CURL_OK") {
 		return fmt.Errorf("curl reached a host-side server despite AllowNetwork=false: %s", output)
@@ -1047,7 +1047,9 @@ func curlDenyNetnsIsolationError(output string) error {
 		return fmt.Errorf("missing CURL_FAIL marker; cannot prove egress isolation: %s", output)
 	}
 	lower := strings.ToLower(output)
-	if !strings.Contains(lower, "connection refused") && !strings.Contains(lower, "network is unreachable") {
+	if !strings.Contains(lower, "connection refused") &&
+		!strings.Contains(lower, "network is unreachable") &&
+		!strings.Contains(lower, "couldn't connect to server") {
 		return fmt.Errorf("expected connect-level failure in the isolated netns, got: %s", output)
 	}
 	return nil
@@ -1082,6 +1084,22 @@ func TestCurlDenyNetnsIsolationError(t *testing.T) {
 			output: "GETENT_FAIL exit status 2\n" +
 				"CURL_FAIL exit status 7 output=\"curl: (7) Failed to connect to 127.0.0.1 port 38477 " +
 				"after 0 ms: Network is unreachable\"",
+		},
+		{
+			// GitHub Actions runners (ubuntu-latest) emit curl's current
+			// generic connect-failure wording instead of the errno text.
+			name: "github runner ubuntu: couldn't connect to server is proof",
+			output: "GETENT_FAIL exit status 2\n" +
+				"CURL_FAIL exit status 7 output=\"curl: (7) Failed to connect to 127.0.0.1 port 45389 " +
+				"after 0 ms: Couldn't connect to server\"",
+		},
+		{
+			// DNS-failure wording is not connect-level evidence; it does not
+			// prove the AF_INET connect ran against the isolated netns.
+			name: "dns failure wording is not proof",
+			output: "GETENT_FAIL exit status 2\n" +
+				"CURL_FAIL exit status 7 output=\"curl: (6) Could not resolve host: example.com\"",
+			wantErr: true,
 		},
 		{
 			name: "resolved host: getent ok, network unreachable is proof",
