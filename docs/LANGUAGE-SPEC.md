@@ -20,7 +20,8 @@ Encoding: UTF-8. `file()` reads default to a 1 MiB cap (overridable via `CRITERI
 ```ebnf
 workflow_module  := content_decl*
 content_decl     := workflow_block | variable_block | local_block | data_block
-                  | environment_block | output_block | adapter_block | subworkflow_block
+                  | type_block | environment_block | output_block | adapter_block
+                  | subworkflow_block
                   | step_block | state_block | wait_block | approval_block
                   | switch_block | permissions_block
 
@@ -36,6 +37,7 @@ workflow_attr    := "name" "=" STRING
 variable_block   := "variable" STRING "{" variable_attr* "}"
 local_block      := "local" STRING "{" local_attr* "}"
 data_block       := "data" STRING STRING "{" data_attr* "}"
+type_block       := "type" STRING "{" "schema" "=" expr "}"
 environment_block:= "environment" STRING STRING "{" "}"
 output_block     := "output" STRING "{" output_attr* "}"
 adapter_block    := "adapter" STRING STRING "{" adapter_attr* tool_block* config_block? "}"
@@ -73,7 +75,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 <!-- BEGIN GENERATED:blocks -->
 ### `workflow { ... }`
 
-- **Source:** [`workflow/schema.go:188`](../workflow/schema.go#L188)
+- **Source:** [`workflow/schema.go:192`](../workflow/schema.go#L192)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -90,13 +92,13 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `variable "name" { ... }`
 
-- **Source:** [`workflow/schema.go:248`](../workflow/schema.go#L248)
+- **Source:** [`workflow/schema.go:252`](../workflow/schema.go#L252)
 - **Labels:** `name`
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
 |---|---|---|---|
-| `type` | hcl.Expression | no | _(no description)_ |
+| `type` | hcl.Expression | no | Type is the variable's type constraint: an inline typeexpr expression or a named type.<block> reference into this workflow's type blocks. |
 | `description` | string | no | _(no description)_ |
 
 - **Additional attributes:** captures the "default" expression
@@ -122,44 +124,44 @@ The following block types are defined. Tables are auto-generated from [`workflow
 | Attribute | Type | Required | Description |
 |---|---|---|---|
 | `description` | string | no | _(no description)_ |
-| `type` | hcl.Expression | yes | _(no description)_ |
+| `type` | hcl.Expression | yes | Type is the data's type constraint: an inline typeexpr expression (e.g. number, object({...})) or a named type.<block> reference resolving against this workflow's type blocks. Forms are indistinguishable internally: one cty.Type (+Defaults) per data node. |
 
 - **Additional attributes:** captures the optional "value" expression
 
 ### `type "name" { ... }`
 
-- **Source:** [`workflow/schema.go:265`](../workflow/schema.go#L265)
+- **Source:** [`workflow/schema.go:273`](../workflow/schema.go#L273)
 - **Labels:** `name`
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
 |---|---|---|---|
-| `schema` | hcl.Expression | yes | Schema is the type constraint this name aliases (object({...}), list(T), optional(T, default), ...), referenced from outcomes as type.<name>. |
+| `schema` | hcl.Expression | yes | Schema is the type constraint this name aliases (object({...}), list(T), optional(T, default), ...), referenced as type.<name> from outcome payload schemas and from data/variable/output type constraints (KB-48); the callee forms inside subworkflow bodies use the callee's own type namespace. |
 
 - **Additional attributes:** rejected: a type block declares schema only
 
 ### `environment "type" "name" { ... }`
 
-- **Source:** [`workflow/schema.go:67`](../workflow/schema.go#L67)
+- **Source:** [`workflow/schema.go:71`](../workflow/schema.go#L71)
 - **Labels:** `type` `name`
 - **Additional attributes:** Captures: variables (optional, map of string env-vars), config (optional, type-specific config map).
 
 ### `output "name" { ... }`
 
-- **Source:** [`workflow/schema.go:428`](../workflow/schema.go#L428)
+- **Source:** [`workflow/schema.go:437`](../workflow/schema.go#L437)
 - **Labels:** `name`
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
 |---|---|---|---|
+| `type` | hcl.Expression | no | Type is the output's declared type constraint: an inline typeexpr expression or a named type.<block> reference; the rendered run output is converted to it when set. |
 | `description` | string | no | _(no description)_ |
-| `type` | hcl.Expression | no | _(no description)_ |
 
 - **Additional attributes:** captures the "value" expression
 
 ### `adapter "type" "name" { ... }`
 
-- **Source:** [`workflow/schema.go:296`](../workflow/schema.go#L296)
+- **Source:** [`workflow/schema.go:305`](../workflow/schema.go#L305)
 - **Labels:** `type` `name`
 - **Attributes:**
 
@@ -175,7 +177,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `subworkflow "name" { ... }`
 
-- **Source:** [`workflow/schema.go:438`](../workflow/schema.go#L438)
+- **Source:** [`workflow/schema.go:450`](../workflow/schema.go#L450)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -189,7 +191,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `step "name" { ... }`
 
-- **Source:** [`workflow/schema.go:332`](../workflow/schema.go#L332)
+- **Source:** [`workflow/schema.go:341`](../workflow/schema.go#L341)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -206,7 +208,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `state "name" { ... }`
 
-- **Source:** [`workflow/schema.go:591`](../workflow/schema.go#L591)
+- **Source:** [`workflow/schema.go:603`](../workflow/schema.go#L603)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -219,7 +221,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `wait "name" { ... }`
 
-- **Source:** [`workflow/schema.go:574`](../workflow/schema.go#L574)
+- **Source:** [`workflow/schema.go:586`](../workflow/schema.go#L586)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -232,7 +234,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `approval "name" { ... }`
 
-- **Source:** [`workflow/schema.go:583`](../workflow/schema.go#L583)
+- **Source:** [`workflow/schema.go:595`](../workflow/schema.go#L595)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -245,13 +247,13 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `switch "name" { ... }`
 
-- **Source:** [`workflow/schema.go:602`](../workflow/schema.go#L602)
+- **Source:** [`workflow/schema.go:614`](../workflow/schema.go#L614)
 - **Labels:** `name`
 - **Nested blocks:** [`match`](#match---), [`default`](#default---)
 
 ### `permissions { ... }`
 
-- **Source:** [`workflow/schema.go:648`](../workflow/schema.go#L648)
+- **Source:** [`workflow/schema.go:660`](../workflow/schema.go#L660)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -261,7 +263,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `policy { ... }`
 
-- **Source:** [`workflow/schema.go:622`](../workflow/schema.go#L622)
+- **Source:** [`workflow/schema.go:634`](../workflow/schema.go#L634)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -274,29 +276,29 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `config { ... }`
 
-- **Source:** [`workflow/schema.go:279`](../workflow/schema.go#L279)
+- **Source:** [`workflow/schema.go:288`](../workflow/schema.go#L288)
 
 ### `secrets { ... }`
 
-- **Source:** [`workflow/schema.go:279`](../workflow/schema.go#L279)
+- **Source:** [`workflow/schema.go:288`](../workflow/schema.go#L288)
 
 ### `tool "name" { ... }`
 
-- **Source:** [`workflow/schema.go:326`](../workflow/schema.go#L326)
+- **Source:** [`workflow/schema.go:335`](../workflow/schema.go#L335)
 - **Labels:** `name`
 - **Additional attributes:** reserved body; decoded and ignored (CRI-155)
 
 ### `input { ... }`
 
-- **Source:** [`workflow/schema.go:289`](../workflow/schema.go#L289)
+- **Source:** [`workflow/schema.go:298`](../workflow/schema.go#L298)
 
 ### `secret_input { ... }`
 
-- **Source:** [`workflow/schema.go:289`](../workflow/schema.go#L289)
+- **Source:** [`workflow/schema.go:298`](../workflow/schema.go#L298)
 
 ### `outcome "name" { ... }`
 
-- **Source:** [`workflow/schema.go:544`](../workflow/schema.go#L544)
+- **Source:** [`workflow/schema.go:556`](../workflow/schema.go#L556)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -312,17 +314,17 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `match { ... }`
 
-- **Source:** [`workflow/schema.go:611`](../workflow/schema.go#L611)
+- **Source:** [`workflow/schema.go:623`](../workflow/schema.go#L623)
 - **Additional attributes:** captures: condition (required), next (required), output (optional)
 
 ### `default { ... }`
 
-- **Source:** [`workflow/schema.go:617`](../workflow/schema.go#L617)
+- **Source:** [`workflow/schema.go:629`](../workflow/schema.go#L629)
 - **Additional attributes:** captures: next (required), output (optional)
 
 ### `write { ... }`
 
-- **Source:** [`workflow/schema.go:560`](../workflow/schema.go#L560)
+- **Source:** [`workflow/schema.go:572`](../workflow/schema.go#L572)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -362,6 +364,29 @@ The following block types are defined. Tables are auto-generated from [`workflow
 **`policy`** — Global execution guards, declared inside the `workflow` header block. Attributes set hard limits on step execution counts and the tool-call depth; see [Adapter tools](#adapter-tools).
 
 **`permissions`** — Workflow-level tool allowlist. `allow_tools` is a list of glob patterns unioned with any step-level `allow_tools`.
+
+## Named type blocks
+
+`type "<name>" { schema = <constraint> }` declares a first-class named type. The `schema` attribute is any inline type constraint (`number`, `object({...})`, `list(T)`, `optional(T, default)`, ...). References use traversal syntax `type.<name>`.
+
+**Resolvers (KB-48).** `type.<name>` may replace an inline type constraint at every position a type constraint is accepted:
+
+- step-outcome payload schemas: `outcome "x" { schema = type.audit }`
+- data block types: `data "internal" "b" { type = type.num }`
+- variable declarations: `variable "n" { type = type.num }`
+- output projections: `output "o" { type = type.num }`
+- subworkflow callee bodies: the callee's own `variable` (and `output`) declarations, and the parent's binding is type-checked against the callee's resolved variable type. Each workflow body compiles its own type namespace: a callee never sees the parent's type blocks, so a parent type referenced inside a callee is a compile error in the callee.
+
+**Resolution rules.**
+
+- Type references are resolved at compile time, before any consumer pass. An unknown `type.<name>` is a compile error ("unknown workflow type"), reported on the referencing attribute with a hint naming the valid positions — never a runtime failure.
+- Neutral forms: an inline constraint and its named twin resolve to the identical `cty.Type` (with optional() defaults collected identically). Refactoring inline schemas to named types changes nothing at compile or run time.
+- Own namespace: type names live in a dedicated workflow-wide namespace and may share names with steps, states, variables, locals, or data blocks without collision. Conversely, `type` is not a value-namespace binding — `type.<name>` in a value expression is an unknown-variable error, not a type resolution.
+- Mis-scoped composition: a type reference composed *inside* another type constraint (e.g. `schema = list(type.other)`) does not resolve; constraints must be fully inline.
+
+**Slice-1 restriction (future-widening boundary).** A type block's `schema` expression may not itself reference other type blocks (`type.*` traversal inside `schema = ...` is a compile error). Type-to-type composition is deliberately deferred; widening it is a future, separately-scoped change, and workflows must not rely on it.
+
+**Consumer compatibility.** Named outcome schemas run through the same adapter-handshake compatibility check as inline schemas, including the requirement that an outcome schema resolve to an object(...) type; a non-object named type is rejected at compile time exactly like the inline spelling.
 
 ## Expressions
 
