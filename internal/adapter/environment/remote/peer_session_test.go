@@ -893,7 +893,15 @@ func TestPeerWaitForFreshHandleCancelWhileWaiting(t *testing.T) {
 func TestPeerWaitForFreshHandleBudgetExpiresWithoutHandshake(t *testing.T) {
 	provider, _ := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
 	provider.shim.verifyFailureBudget = 120 * time.Millisecond
-	defer func() { provider.shim.verifyFailureBudget = DefaultVerifyFailureBudget }()
+	// KB-70: zero-dial waits are bounded by the scheduling budget instead of
+	// the handshake budget, so pin it too — otherwise this wait runs for 15m.
+	provider.shim.schedulingBudget = 120 * time.Millisecond
+	provider.shim.podStatePollInterval = 5 * time.Millisecond
+	defer func() {
+		provider.shim.verifyFailureBudget = DefaultVerifyFailureBudget
+		provider.shim.schedulingBudget = DefaultSchedulingBudget
+		provider.shim.podStatePollInterval = defaultPodStatePollInterval
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -907,8 +915,15 @@ func TestPeerWaitForFreshHandleBudgetExpiresWithoutHandshake(t *testing.T) {
 	if !strings.Contains(msg, "noop") || !strings.Contains(msg, "wait-scope") {
 		t.Fatalf("budget error not keyed by adapter+scope: %q", msg)
 	}
-	if !strings.Contains(msg, "CRI-137") || !strings.Contains(msg, "no identity handshake observed") {
+	// KB-70: with no dials and no pod-state probe, nothing proves the
+	// adapter pod ever started, so a budget expiry carries the scheduling
+	// diagnosis instead of the dead-Job verdict — the latter is reserved
+	// for pods observed Running.
+	if !strings.Contains(msg, "no identity handshake observed") || !strings.Contains(msg, "waiting for the adapter pod to start") {
 		t.Fatalf("budget error missing the no-handshake diagnosis: %q", msg)
+	}
+	if strings.Contains(msg, "adapter Job may be complete or dead") {
+		t.Fatalf("dead-Job verdict must not fire for an unobserved pod: %q", msg)
 	}
 }
 

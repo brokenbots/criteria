@@ -461,6 +461,24 @@ func (s *Shim) dialObserved(key string) bool {
 	return ok
 }
 
+// activityObserved reports whether the shim has seen in-band identity
+// activity bound to this session key: an identity frame was presented
+// (dialObserved) or an identity-verification rejection was attributed to
+// waiters of the key. Attributed rejections come from dials of the same
+// adapter type and scope-name prefix — including the stale pre-rotation pod
+// after a runner restart (CRI-137) — so any of them proves the adapter
+// process is up and dialing. The session wait treats them as pod-started
+// evidence and runs the handshake budget rather than the scheduling grace
+// (KB-70).
+func (s *Shim) activityObserved(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.dialActivity[key]; ok {
+		return true
+	}
+	return s.verifyFailures[key] != nil
+}
+
 // observePod consults the optional pod-state probe outside s.mu (the probe
 // may re-enter the shim). A nil probe or a panic inside it yields no
 // observation so a defective seam degrades to the dial-activity signal.
@@ -1088,10 +1106,12 @@ func (s *Shim) WaitForHandle(ctx context.Context, adapterType, scope string) (ad
 //
 // The wait is bounded by two wall-clock budgets (KB-70). The handshake budget
 // (DefaultVerifyFailureBudget) runs only while the adapter has started — the
-// shim observed an identity frame for the key, or the pod-state probe reports
-// Running — and fails terminally with the CRI-137 diagnosis classes when it
-// expires. The scheduling budget (DefaultSchedulingBudget) runs while the
-// adapter pod has not started: a burst of per-scope pod creations can keep a
+// shim observed an identity frame for the key or attributed an identity
+// rejection to it (a dialing pod, even a stale pre-rotation one — CRI-137),
+// or the pod-state probe reports Running — and fails terminally with the
+// CRI-137 diagnosis classes when it expires. The scheduling budget
+// (DefaultSchedulingBudget) runs while the adapter pod has not started: a
+// burst of per-scope pod creations can keep a
 // pod Pending well past the handshake budget, and a pod that never started
 // cannot handshake, so the handshake budget stays frozen until it does. If the
 // scheduling budget expires first, the wait fails naming the pod's observed
@@ -1142,7 +1162,7 @@ func (s *Shim) awaitWaiter(ctx context.Context, adapterType, scope, key string, 
 		deregister()
 		return nil, s.podTerminalError(adapterType, scope, phase)
 	}
-	started := s.dialObserved(key) || (phaseKnown && podPhaseStarted(phase))
+	started := s.activityObserved(key) || (phaseKnown && podPhaseStarted(phase))
 	handshakeDeadline := time.Time{}
 	if started {
 		handshakeDeadline = time.Now().Add(handshakeBudget)
@@ -1170,7 +1190,7 @@ func (s *Shim) awaitWaiter(ctx context.Context, adapterType, scope, key string, 
 					deregister()
 					return nil, s.podTerminalError(adapterType, scope, phase)
 				}
-				if s.dialObserved(key) || (phaseKnown && podPhaseStarted(phase)) {
+				if s.activityObserved(key) || (phaseKnown && podPhaseStarted(phase)) {
 					started = true
 					handshakeDeadline = now.Add(handshakeBudget)
 				} else if !now.Before(schedDeadline) {
