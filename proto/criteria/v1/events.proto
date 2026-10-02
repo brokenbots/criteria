@@ -89,6 +89,12 @@ message Envelope {
     // pointer is for UI visibility, inspection, and accounting only.
     // Permanent field number.
     CheckpointPointer checkpoint_pointer = 39;
+    // StepOutcomeInvalid — an adapter outcome was rejected by host-side
+    // contract validation before any projection or state write (KB-45).
+    // issues are the per-contract validation errors; attempt is the rejected
+    // attempt number. The run then continues the standard retry loop.
+    // Permanent field number.
+    StepOutcomeInvalid step_outcome_invalid = 42;
     // RunPaused — the run is paused: at a wait or approval node (mode
     // "duration" | "signal") or by a control-surface pause request at a
     // step boundary (mode "external", CRI-255). Emitted by both the local
@@ -140,6 +146,21 @@ message StepOutcome {
   string outcome = 2;
   int64 duration_ms = 3;
   string error = 4;
+  // Comment returned by the adapter's ExecuteResult (KB-45). Opaque metadata
+  // produced by the adapter; the engine neither interprets nor validates it.
+  // Empty when the adapter returned none.
+  string comment = 5;
+}
+
+// StepOutcomeInvalid — host-side contract validation rejected an adapter
+// outcome before any projection or state write (KB-45). Emitted once per
+// rejected attempt; issues carry the per-contract validation errors in
+// evaluation order. attempt is the rejected attempt's number (1-based).
+message StepOutcomeInvalid {
+  string step = 1;
+  string outcome = 2;
+  repeated string issues = 3;
+  int32 attempt = 4;
 }
 
 // StepTransition — the FSM moved from one node to another via an outcome.
