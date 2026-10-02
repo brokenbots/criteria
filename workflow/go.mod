@@ -24,7 +24,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.44.0 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.32.40 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.39 // indirect
-	github.com/brokenbots/criteria-adapter-proto v0.6.0 // indirect
+	github.com/brokenbots/criteria-adapter-proto v0.7.0 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467 // indirect
