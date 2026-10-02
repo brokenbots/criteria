@@ -26,6 +26,12 @@ import (
 //     and map to output keys that exist in the output projection (when
 //     declared) or in the adapter's output schema (when adapterOutputSchema
 //     is non-nil).
+//   - the optional "schema" attribute resolves to a workflow type (`type.<name>`)
+//     or an inline typeexpr constraint, and is validated as a subset of the
+//     payload the outcome can produce (its output projection, else the adapter
+//     handshake output schema); it must be object-typed.
+//   - `require_comment` and `fallback` compile onto the outcome; at most one
+//     outcome per step may set fallback.
 //
 // The optional "output" expression is extracted from the outcome's Remain body
 // and stored in CompiledOutcome.OutputExpr. The optional "write" blocks are
@@ -33,6 +39,19 @@ import (
 func compileOutcomeBlock(sp *StepSpec, node *StepNode, g *FSMGraph, opts CompileOpts, adapterOutputSchema map[string]ConfigField) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	seen := map[string]bool{}
+	// fallback = true may appear on at most one outcome per step, "default"
+	// included: it names the contract that fires when the adapter returns
+	// no result at all, and two of them would be ambiguous.
+	for _, o := range sp.Outcomes {
+		if o.Fallback {
+			if seen["__fallback__"] {
+				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q outcome %q: only one outcome per step may set fallback = true", sp.Name, o.Name)})
+				continue
+			}
+			seen["__fallback__"] = true
+		}
+	}
+	seen = map[string]bool{}
 	isIter := node.ForEach != nil || node.Count != nil || node.Parallel != nil || node.While != nil
 	for _, o := range sp.Outcomes {
 		if seen[o.Name] {
@@ -49,7 +68,9 @@ func compileOutcomeBlock(sp *StepSpec, node *StepNode, g *FSMGraph, opts Compile
 		if nextStr == "" {
 			continue
 		}
-		compiled := &CompiledOutcome{Name: o.Name, Next: nextStr}
+		compiled := &CompiledOutcome{Name: o.Name, Next: nextStr, RequireComment: o.RequireComment, Fallback: o.Fallback}
+		schemaType, schemaDefaults, d := compileOutcomeSchemaAttr(sp.Name, o.Name, o.Schema, g)
+		diags = append(diags, d...)
 		// Aggregate iterating outcomes (next != "_continue") fire after all
 		// iterations complete; the engine has no raw adapter outputs at that
 		// point. write blocks on these outcomes must use an explicit
@@ -57,6 +78,16 @@ func compileOutcomeBlock(sp *StepSpec, node *StepNode, g *FSMGraph, opts Compile
 		isAggregateIter := isIter && nextStr != "_continue"
 		d = compileOutcomeRemain(sp.Name, o.Name, o.Remain, o.Writes, g, opts, adapterOutputSchema, compiled, isAggregateIter)
 		diags = append(diags, d...)
+		if schemaType != cty.NilType {
+			diags = append(diags, validateOutcomeSchemaPayloadContract(sp.Name, o.Name, o.Schema, schemaType, compiled, isAggregateIter, g, opts, adapterOutputSchema)...)
+			compiled.Schema = &schemaType
+			schemaJSON, err := CTypeToJSONSchema(schemaType, schemaDefaults)
+			if err != nil {
+				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q outcome %q: schema cannot be converted to a payload contract: %v", sp.Name, o.Name, err)})
+			} else {
+				compiled.SchemaJSON = schemaJSON
+			}
+		}
 		if o.Name == "default" {
 			node.DefaultOutcome = compiled
 		} else {

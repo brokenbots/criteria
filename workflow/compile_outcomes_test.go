@@ -408,7 +408,7 @@ state "done" {
 		t.Fatalf("parse: %s", diags.Error())
 	}
 	schemas := map[string]AdapterInfo{
-		"noop.default": {OutputSchema: map[string]ConfigField{"result": {Type: ConfigFieldString}}},
+		"noop": {OutputSchema: map[string]ConfigField{"result": {Type: ConfigFieldString}}},
 	}
 	_, diags = Compile(spec, schemas)
 	if diags.HasErrors() {
@@ -445,7 +445,7 @@ state "done" {
 		t.Fatalf("parse: %s", diags.Error())
 	}
 	schemas := map[string]AdapterInfo{
-		"noop.default": {OutputSchema: map[string]ConfigField{"result": {Type: ConfigFieldString}}},
+		"noop": {OutputSchema: map[string]ConfigField{"result": {Type: ConfigFieldString}}},
 	}
 	_, diags = Compile(spec, schemas)
 	if !diags.HasErrors() {
@@ -528,7 +528,7 @@ state "done" {
 	}
 	// Schema declares only "result" — "ghost" is absent.
 	schemas := map[string]AdapterInfo{
-		"noop.default": {OutputSchema: map[string]ConfigField{"result": {Type: ConfigFieldString}}},
+		"noop": {OutputSchema: map[string]ConfigField{"result": {Type: ConfigFieldString}}},
 	}
 	_, diags = Compile(spec, schemas)
 	if diags.HasErrors() {

@@ -123,7 +123,7 @@ func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[str
 	node.ParallelMax = ie.ParallelMax
 	node.While = ie.While
 
-	diags = append(diags, compileOutcomeBlock(sp, node, g, opts, schemas[adapterRef].OutputSchema)...)
+	diags = append(diags, compileOutcomeBlock(sp, node, g, opts, schemas[adapterType].OutputSchema)...)
 	diags = append(diags, validateIteratingOutcomes(sp, node)...)
 	diags = append(diags, warnParallelPerIterDataWrites(sp.Name, ie.Parallel, node)...)
 

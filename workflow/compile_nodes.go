@@ -48,6 +48,7 @@ func compileWaits(g *FSMGraph, spec *Spec) hcl.Diagnostics {
 		}
 		outcomeMap, od := compileSimpleOutcomes("wait", name, ws.Outcomes)
 		diags = append(diags, od...)
+		diags = append(diags, validateOutcomeContractAttrs("wait", name, ws.Outcomes)...)
 		node.Outcomes = outcomeMap
 		g.Waits[name] = node
 	}
@@ -79,6 +80,7 @@ func compileApprovals(g *FSMGraph, spec *Spec) hcl.Diagnostics {
 		node := &ApprovalNode{Name: name, Approvers: as.Approvers, Reason: as.Reason}
 		outcomeMap, od := compileSimpleOutcomes("approval", name, as.Outcomes)
 		diags = append(diags, od...)
+		diags = append(diags, validateOutcomeContractAttrs("approval", name, as.Outcomes)...)
 		node.Outcomes = outcomeMap
 		// Enforce required outcomes: approved and rejected must both be present.
 		if _, ok := node.Outcomes["approved"]; !ok {
