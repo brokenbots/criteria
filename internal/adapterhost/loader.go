@@ -85,7 +85,8 @@ type Handle interface {
 	// Execute runs one step attempt. rejection, when non-nil, carries the
 	// host-rejection repair context (KB-45) for the previous attempt; the
 	// adapter is expected to retry the step under it. The host re-validates
-	// every attempt's verdict against the step's outcome contracts.
+	// every attempt's verdict against the step's outcome contracts, except a
+	// host-synthesized fallback (validated at synthesis).
 	Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error)
 	CloseSession(ctx context.Context, id string) error
 	Kill()
@@ -721,8 +722,12 @@ func (s *executeCaptureSink) resolvedOutcome(step *workflow.StepNode, v rescueVe
 	}
 	if synth != nil && v.result.Outcome == "" {
 		// Never-finalized attempt with a fallback contract: the evaluator
-		// synthesized the fallback outcome.
+		// synthesized the fallback outcome. Mark the synthesis so repeated
+		// local validation (session-level re-check, respawn retry) skips it
+		// instead of validating the empty verdict against the fallback's own
+		// contract (KB-45).
 		v.result = *synth
+		v.result.SynthesizedFallback = true
 	}
 	s.applyNeedsReviewOverride(&v.result)
 	return v.result, nil
@@ -965,9 +970,15 @@ func (s *executeCaptureSink) emitResult(resultEvt *v2.ExecuteResult) error {
 		typed, err := s.decodeOutputsJSON(oj)
 		if err != nil {
 			if s.outcomeContracted() {
-				// Same as the chunked path: keep raw bytes, let the
-				// evaluator issue the pinned payload_schema error.
+				// KB-45: as on the chunked path, an undecodable payload on a
+				// contract-bearing step is captured verbatim AND settles the
+				// verdict (done=true): the contract evaluator then issues the
+				// pinned payload_schema error. Leaving done=false instead
+				// routes through the never-finalized lane, where zero
+				// results makes the evaluator silently synthesize the
+				// fallback outcome, accepting the invalid payload.
 				s.result.Outputs = nil
+				s.done = true
 				return nil
 			}
 			return fmt.Errorf("execute result outputs: %w", err)

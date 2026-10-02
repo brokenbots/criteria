@@ -2227,7 +2227,10 @@ func (m *SessionManager) handleCrash(ctx context.Context, name string, step *wor
 // retryAfterRespawn re-executes the step on the freshly respawned session.
 // The retried attempt's verdict is contract-validated before it becomes the
 // step's result; a contract-invalid retry returns to the engine's attempt
-// loop (via OutcomeInvalidError) instead of latching a hard run failure.
+// loop (via OutcomeInvalidError) instead of latching a hard run failure. The
+// host-synthesized fallback is exempt: it was validated at synthesis, and
+// re-applying the fallback's own schema/require_comment to the empty
+// synthesis is unsatisfiable by construction (KB-45).
 func (m *SessionManager) retryAfterRespawn(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink, sess *Session, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	retrySink := sink
 	if sess.mergeBuf != nil {
@@ -2235,9 +2238,13 @@ func (m *SessionManager) retryAfterRespawn(ctx context.Context, name string, ste
 	}
 	result, retryErr := sess.handle.Execute(ctx, name, step, retrySink, rejection)
 	if retryErr == nil {
-		valid, issues := evaluateLocalOutcomeContracts(step, result)
-		if len(issues) > 0 {
-			return adapter.Result{}, &OutcomeInvalidError{Outcome: result.Outcome, Issues: issues}
+		valid := result
+		if !result.SynthesizedFallback {
+			var issues []string
+			valid, issues = evaluateLocalOutcomeContracts(step, result)
+			if len(issues) > 0 {
+				return adapter.Result{}, &OutcomeInvalidError{Outcome: result.Outcome, Issues: issues}
+			}
 		}
 		m.registerSensitiveOutputs(valid, step)
 		return valid, nil
@@ -2385,8 +2392,11 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 	// a candidate: when the Execute call itself failed (adapter error or
 	// transport death) there is no verdict to validate — the error keeps its
 	// crash classification, and the engine's attempt loop resets the repair
-	// context on it.
-	if execErr == nil {
+	// context on it. A host-synthesized fallback skips this re-validation
+	// too: it was validated at synthesis, and re-applying the fallback's
+	// own schema/require_comment to the empty synthesis is unsatisfiable by
+	// construction.
+	if execErr == nil && !result.SynthesizedFallback {
 		validated, issues := evaluateLocalOutcomeContracts(step, result)
 		if len(issues) > 0 {
 			return adapter.Result{}, &OutcomeInvalidError{Outcome: result.Outcome, Issues: issues}

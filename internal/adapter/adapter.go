@@ -43,6 +43,14 @@ type Result struct {
 	// it is routed to the event stream verbatim and never interpreted,
 	// validated, or projected by the engine.
 	Comment string
+	// SynthesizedFallback marks a result the host synthesized from a fallback
+	// outcome contract (KB-45): the attempt ended without an adapter verdict,
+	// so the evaluator synthesized the contract's fallback outcome with no
+	// payload. The synthesis is validated at synthesis time; a repeated
+	// contract validation must skip it, because re-validating the empty
+	// synthesis against the fallback's own schema/require_comment is
+	// unsatisfiable by construction. Adapters must never set this flag.
+	SynthesizedFallback bool
 }
 
 // Adapter executes a single step. The engine calls Execute once per step

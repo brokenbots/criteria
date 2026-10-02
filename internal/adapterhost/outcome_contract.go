@@ -158,7 +158,14 @@ func evaluateLocalOutcomeContracts(step *workflow.StepNode, result adapter.Resul
 		return adapter.Result{}, issues
 	}
 	if synth != nil {
-		return *synth, nil
+		// The fallback lane synthesized the verdict with no payload. Return it
+		// flagged so a repeated local validation (session-level re-check,
+		// respawn retry) recognizes the host synthesis and skips it instead of
+		// applying the fallback's own schema/require_comment to the empty
+		// payload it can never satisfy (KB-45).
+		synthesized := *synth
+		synthesized.SynthesizedFallback = true
+		return synthesized, nil
 	}
 	return result, nil
 }
