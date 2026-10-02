@@ -89,7 +89,10 @@ const adapterToolsCapability = "adapter_tools"
 // invalid_args extends it for call arguments that fail the callee's input
 // schema (required keys missing, unknown keys on a declared surface);
 // paused extends it for calls refused by the CRI-169 pause gate while the
-// session's nested tool calls are being drained (ADR-0004 §11).
+// session's nested tool calls are being drained (ADR-0004 §11);
+// budget_exhausted extends it for calls refused by the KB-58 call-count
+// budget (policy.max_tool_calls, engine-enforced at the seam alongside the
+// depth gate).
 const (
 	callErrorCapabilityMissing = "capability_missing"
 	callErrorMalformedTarget   = "malformed_target"
@@ -104,6 +107,7 @@ const (
 	callErrorCalleeTimeout     = "callee_timeout"
 	callErrorCanceled          = "canceled"
 	callErrorPaused            = "paused"
+	callErrorBudgetExhausted   = "budget_exhausted"
 )
 
 // calleeReportedCallErrorCode is the reserved output key on a failure result
@@ -516,12 +520,48 @@ func (s *permissionInterceptSink) handleToolCallRequest(payload map[string]any) 
 // nestedToolCallMaxDepth returns the effective policy.max_tool_depth for the
 // caller's graph. A compiled graph normalizes the unset default to 8
 // (workflow.DefaultPolicy); hand-built graphs may carry 0, so the engine
-// default applies there too.
+// default applies there too. Graph-less sessions (parallel iteration
+// managers) consult the borrowed parent policy (KB-58) before the default.
 func (s *permissionInterceptSink) nestedToolCallMaxDepth() int {
-	if s.graph != nil && s.graph.Policy.MaxToolDepth > 0 {
-		return s.graph.Policy.MaxToolDepth
+	if depth := s.effectiveToolCallPolicy().MaxToolDepth; depth > 0 {
+		return depth
 	}
 	return workflow.DefaultPolicy.MaxToolDepth
+}
+
+// effectiveToolCallPolicy computes the nested tool-call policy for this
+// session (KB-58): the executing graph's policy when present, else the policy
+// borrowed from the declaring parent graph (parallel-iteration managers have
+// no graph of their own), else the compiled workflow default.
+func (s *permissionInterceptSink) effectiveToolCallPolicy() workflow.Policy {
+	if s.graph != nil {
+		return s.graph.Policy
+	}
+	if s.mgr != nil {
+		if p := s.mgr.BorrowedGraphPolicy(); p != nil {
+			return *p
+		}
+	}
+	return workflow.DefaultPolicy
+}
+
+// resolveCalleeDeclaration resolves the parsed callee against the session's
+// own graph when present, falling back to the session manager's adapter
+// declaration caches (KB-58): a parallel iteration manager has no graph of
+// its own, but its VerifyGraph-populated caches still know every declared
+// adapter node and its declaring graph (borrowed from the parent). Returns
+// nils when the callee is declared nowhere reachable — the caller translates
+// that to unknown_adapter where a declared callee is required.
+func (s *permissionInterceptSink) resolveCalleeDeclaration(ref string) (*workflow.AdapterNode, *workflow.FSMGraph) {
+	if s.graph != nil {
+		if node, ok := s.graph.Adapters[ref]; ok {
+			return node, s.graph
+		}
+	}
+	if s.mgr == nil {
+		return nil, nil
+	}
+	return s.mgr.adapterDeclaration(ref)
 }
 
 // toolCallNesting is the per-call nesting state threaded through nested
@@ -674,21 +714,32 @@ func (s *permissionInterceptSink) dispatchNestedToolCall(req *toolCallPayload, p
 		return
 	}
 
-	// The callee adapter node: gate 4 already validated the declaration
-	// against this graph, so a nil node here means graph validation was
-	// skipped (nil graph) and the session lookup will decide resolvability.
-	calleeNode := (*workflow.AdapterNode)(nil)
-	if s.graph != nil {
-		calleeNode = s.graph.Adapters[parsed.AdapterRef]
+	// Call-count budget (KB-58): policy.max_tool_calls bounds the NUMBER of
+	// nested tool calls an iterative caller session may make, engine-enforced
+	// here alongside the depth gate so a probe loop cannot run unbounded.
+	// Per step-level caller session; an exhausted budget is a typed failure
+	// and the run continues.
+	if !s.mgr.reserveToolCallBudget(s.permState.sessionID, s.effectiveToolCallPolicy().MaxToolCalls) {
+		s.rejectToolCall(req.requestID, req.target, req.argsDigest, callErrorBudgetExhausted)
+		return
 	}
+
+	// The callee adapter node and its declaring graph: resolved from the
+	// session's own graph first, falling back to the manager's declaration
+	// caches (KB-58 — a root-declared host-local callee survives on an
+	// iteration manager that has no graph of its own). A nil node means the
+	// callee is declared nowhere reachable and the session lookup will
+	// decide resolvability.
+	calleeNode, calleeOwningGraph := s.resolveCalleeDeclaration(parsed.AdapterRef)
 
 	// The callee's declared schema surface, captured at its verify-time
 	// handshake. Drives input validation and output typing for the synthetic
 	// step; nil means permissive (no declared schema).
 	calleeInfo := s.mgr.cachedAdapterInfo(parsed.AdapterRef)
 
-	calleeStep, inputErr := syntheticCalleeStep(parsed, calleeNode, s.graph, calleeInfo, req.args)
+	calleeStep, inputErr := syntheticCalleeStep(parsed, calleeNode, calleeOwningGraph, calleeInfo, req.args)
 	if inputErr != nil {
+		s.mgr.releaseToolCallBudget(s.permState.sessionID)
 		s.rejectToolCall(req.requestID, req.target, req.argsDigest, callErrorInvalidArgs)
 		return
 	}
@@ -728,6 +779,11 @@ func (s *permissionInterceptSink) startNestedToolCall(call *nestedToolCall) {
 	nestedCtx, nestedCancel := context.WithCancel(s.nestedExecCtx())
 	if !s.permState.registerPendingToolCall(call.requestID, call.target, nestedCancel) {
 		nestedCancel()
+		// The call was dispatched after reserving its budget; give the
+		// reservation back (refused synchronously, KB-58).
+		if s.mgr != nil {
+			s.mgr.releaseToolCallBudget(s.permState.sessionID)
+		}
 		s.rejectToolCall(call.requestID, call.target, call.argsDigest, callErrorPaused)
 		return
 	}
@@ -1004,13 +1060,17 @@ func encodeToolCallOutputs(outputs map[string]cty.Value) ([]byte, error) {
 // validateToolCallGraph validates the parsed callee against the compiled
 // graph (ADR-0004 §7): the callee adapter must be declared and, when it
 // presents a static surface, the referenced tool must exist. It returns a
-// call_error code or "" when validation passes; a nil graph skips validation.
+// call_error code or "" when validation passes; a nil graph skips validation
+// against the caller's own graph — the declaring-graph fallback (KB-58) still
+// applies when the manager knows the callee.
 func (s *permissionInterceptSink) validateToolCallGraph(parsed toolCallTarget, req *toolCallPayload) string {
-	if s.graph == nil {
-		return ""
-	}
-	node := s.graph.Adapters[parsed.AdapterRef]
+	node, _ := s.resolveCalleeDeclaration(parsed.AdapterRef)
 	if node == nil {
+		if s.graph == nil && s.mgr == nil {
+			// Nothing declared anywhere reachable (fixture sink): declared-
+			// graph validation is skipped, session lookup decides.
+			return ""
+		}
 		return callErrorUnknownAdapter
 	}
 	named := parsed.Tool

@@ -65,7 +65,54 @@ func Parse(filename string, src []byte) (*Spec, hcl.Diagnostics) {
 	if depthDiags := checkMaxToolDepthRange(&spec, f.Body); depthDiags.HasErrors() {
 		return nil, append(diags, depthDiags...)
 	}
+	if callsDiags := checkMaxToolCallsRange(&spec, f.Body); callsDiags.HasErrors() {
+		return nil, append(diags, callsDiags...)
+	}
 	return &spec, diags
+}
+
+// checkMaxToolCallsRange reports a decode diagnostic when a declared
+// policy.max_tool_calls is < 1. An absent attribute is valid (0 = engine
+// default of 100). Placement mirrors CRI-155 (checkMaxToolDepthRange).
+func checkMaxToolCallsRange(spec *Spec, body hcl.Body) hcl.Diagnostics {
+	if spec == nil || spec.Header == nil || spec.Header.Policy == nil || body == nil {
+		return nil
+	}
+	if spec.Header.Policy.MaxToolCalls >= 1 {
+		return nil
+	}
+	rng := maxToolCallsAttrRange(body)
+	if rng == nil {
+		return nil
+	}
+	return hcl.Diagnostics{{
+		Severity: hcl.DiagError,
+		Summary:  "invalid policy.max_tool_calls",
+		Detail: fmt.Sprintf("max_tool_calls must be an integer >= 1 (got %d); unset uses the engine default of 100",
+			spec.Header.Policy.MaxToolCalls),
+		Subject: rng,
+	}}
+}
+
+// maxToolCallsAttrRange locates the max_tool_calls attribute inside the
+// workflow header's policy block to source a decode diagnostic. Returns nil
+// when the attribute is not declared.
+func maxToolCallsAttrRange(body hcl.Body) *hcl.Range {
+	wfSchema := &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "workflow"}}}
+	content, _, _ := body.PartialContent(wfSchema)
+	for _, wf := range content.Blocks {
+		policySchema := &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "policy"}}}
+		policyContent, _, _ := wf.Body.PartialContent(policySchema)
+		for _, pol := range policyContent.Blocks {
+			attrSchema := &hcl.BodySchema{Attributes: []hcl.AttributeSchema{{Name: "max_tool_calls"}}}
+			attrs, _, _ := pol.Body.PartialContent(attrSchema)
+			if attr, ok := attrs.Attributes["max_tool_calls"]; ok {
+				rng := attr.Expr.Range()
+				return &rng
+			}
+		}
+	}
+	return nil
 }
 
 // captureCriteriaVersionRange records the source range of the
