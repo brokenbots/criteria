@@ -37,21 +37,8 @@ import (
 // and stored in CompiledOutcome.OutputExpr. The optional "write" blocks are
 // stored in CompiledOutcome.Writes.
 func compileOutcomeBlock(sp *StepSpec, node *StepNode, g *FSMGraph, opts CompileOpts, adapterOutputSchema map[string]ConfigField) hcl.Diagnostics {
-	var diags hcl.Diagnostics
+	diags := uniqueFallbackOutcome(sp)
 	seen := map[string]bool{}
-	// fallback = true may appear on at most one outcome per step, "default"
-	// included: it names the contract that fires when the adapter returns
-	// no result at all, and two of them would be ambiguous.
-	for _, o := range sp.Outcomes {
-		if o.Fallback {
-			if seen["__fallback__"] {
-				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q outcome %q: only one outcome per step may set fallback = true", sp.Name, o.Name)})
-				continue
-			}
-			seen["__fallback__"] = true
-		}
-	}
-	seen = map[string]bool{}
 	isIter := node.ForEach != nil || node.Count != nil || node.Parallel != nil || node.While != nil
 	for _, o := range sp.Outcomes {
 		if seen[o.Name] {
@@ -59,45 +46,73 @@ func compileOutcomeBlock(sp *StepSpec, node *StepNode, g *FSMGraph, opts Compile
 			continue
 		}
 		seen[o.Name] = true
-		if o.Next == nil {
-			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q outcome %q: next is required", sp.Name, o.Name)})
-			continue
-		}
-		nextStr, d := resolveNextAttr(o.Next, fmt.Sprintf("step %q", sp.Name), fmt.Sprintf("outcome %q", o.Name))
-		diags = append(diags, d...)
-		if nextStr == "" {
-			continue
-		}
-		compiled := &CompiledOutcome{Name: o.Name, Next: nextStr, RequireComment: o.RequireComment, Fallback: o.Fallback}
-		schemaType, schemaDefaults, d := compileOutcomeSchemaAttr(sp.Name, o.Name, o.Schema, g)
-		diags = append(diags, d...)
-		// Aggregate iterating outcomes (next != "_continue") fire after all
-		// iterations complete; the engine has no raw adapter outputs at that
-		// point. write blocks on these outcomes must use an explicit
-		// output = { ... } projection block — never the adapter output schema.
-		isAggregateIter := isIter && nextStr != "_continue"
-		d = compileOutcomeRemain(sp.Name, o.Name, o.Remain, o.Writes, g, opts, adapterOutputSchema, compiled, isAggregateIter)
-		diags = append(diags, d...)
-		if schemaType != cty.NilType {
-			diags = append(diags, validateOutcomeSchemaPayloadContract(sp.Name, o.Name, o.Schema, schemaType, compiled, isAggregateIter, g, opts, adapterOutputSchema)...)
-			compiled.Schema = &schemaType
-			schemaJSON, err := CTypeToJSONSchema(schemaType, schemaDefaults)
-			if err != nil {
-				diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q outcome %q: schema cannot be converted to a payload contract: %v", sp.Name, o.Name, err)})
-			} else {
-				compiled.SchemaJSON = schemaJSON
-			}
-			compiled.SchemaDefaults = schemaDefaults
-		}
-		if o.Name == "default" {
-			node.DefaultOutcome = compiled
-		} else {
-			node.Outcomes[o.Name] = compiled
-		}
+		co := o
+		diags = append(diags, compileOneOutcome(sp, node, g, opts, adapterOutputSchema, &co, isIter)...)
 	}
 
 	diags = append(diags, warnWritesReadingWrittenData(sp.Name, node)...)
 
+	return diags
+}
+
+// uniqueFallbackOutcome enforces that fallback = true appears on at most one
+// outcome per step, "default" included: it names the contract that fires when
+// the adapter returns no result at all, and two of them would be ambiguous.
+func uniqueFallbackOutcome(sp *StepSpec) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	seenFallback := false
+	for _, o := range sp.Outcomes {
+		if !o.Fallback {
+			continue
+		}
+		if seenFallback {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q outcome %q: only one outcome per step may set fallback = true", sp.Name, o.Name)})
+			continue
+		}
+		seenFallback = true
+	}
+	return diags
+}
+
+// compileOneOutcome compiles a single outcome spec onto the step node,
+// returning the diagnostics raised for it.
+func compileOneOutcome(sp *StepSpec, node *StepNode, g *FSMGraph, opts CompileOpts, adapterOutputSchema map[string]ConfigField, o *OutcomeSpec, isIter bool) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	if o.Next == nil {
+		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q outcome %q: next is required", sp.Name, o.Name)})
+		return diags
+	}
+	nextStr, d := resolveNextAttr(o.Next, fmt.Sprintf("step %q", sp.Name), fmt.Sprintf("outcome %q", o.Name))
+	diags = append(diags, d...)
+	if nextStr == "" {
+		return diags
+	}
+	compiled := &CompiledOutcome{Name: o.Name, Next: nextStr, RequireComment: o.RequireComment, Fallback: o.Fallback}
+	schemaType, schemaDefaults, d := compileOutcomeSchemaAttr(sp.Name, o.Name, o.Schema, g)
+	diags = append(diags, d...)
+	// Aggregate iterating outcomes (next != "_continue") fire after all
+	// iterations complete; the engine has no raw adapter outputs at that
+	// point. write blocks on these outcomes must use an explicit
+	// output = { ... } projection block — never the adapter output schema.
+	isAggregateIter := isIter && nextStr != "_continue"
+	d = compileOutcomeRemain(sp.Name, o.Name, o.Remain, o.Writes, g, opts, adapterOutputSchema, compiled, isAggregateIter)
+	diags = append(diags, d...)
+	if schemaType != cty.NilType {
+		diags = append(diags, validateOutcomeSchemaPayloadContract(sp.Name, o.Name, o.Schema, schemaType, compiled, isAggregateIter, g, opts, adapterOutputSchema)...)
+		compiled.Schema = &schemaType
+		schemaJSON, err := CTypeToJSONSchema(schemaType, schemaDefaults)
+		if err != nil {
+			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q outcome %q: schema cannot be converted to a payload contract: %v", sp.Name, o.Name, err)})
+		} else {
+			compiled.SchemaJSON = schemaJSON
+		}
+		compiled.SchemaDefaults = schemaDefaults
+	}
+	if o.Name == "default" {
+		node.DefaultOutcome = compiled
+	} else {
+		node.Outcomes[o.Name] = compiled
+	}
 	return diags
 }
 
@@ -392,46 +407,60 @@ func warnBackEdges(g *FSMGraph) hcl.Diagnostics {
 // never real nodes.
 func nodeTargets(name string, g *FSMGraph) []string {
 	if step, ok := g.Steps[name]; ok {
-		var targets []string
-		for _, co := range step.Outcomes {
-			if co.Next != "_continue" && co.Next != ReturnSentinel {
-				targets = append(targets, co.Next)
-			}
-		}
-		if step.DefaultOutcome != nil &&
-			step.DefaultOutcome.Next != "_continue" &&
-			step.DefaultOutcome.Next != ReturnSentinel {
-			targets = append(targets, step.DefaultOutcome.Next)
-		}
-		return targets
+		return stepOutcomeTargets(step)
 	}
 	if sw, ok := g.Switches[name]; ok {
-		targets := make([]string, 0, len(sw.Conditions)+1)
-		for _, cond := range sw.Conditions {
-			if cond.Next != ReturnSentinel {
-				targets = append(targets, cond.Next)
-			}
-		}
-		if sw.DefaultNext != "" && sw.DefaultNext != ReturnSentinel {
-			targets = append(targets, sw.DefaultNext)
-		}
-		return targets
+		return switchTargets(sw)
 	}
 	if wait, ok := g.Waits[name]; ok {
-		targets := make([]string, 0, len(wait.Outcomes))
-		for _, t := range wait.Outcomes {
-			targets = append(targets, t)
-		}
-		return targets
+		return mapValues(wait.Outcomes)
 	}
 	if approval, ok := g.Approvals[name]; ok {
-		targets := make([]string, 0, len(approval.Outcomes))
-		for _, t := range approval.Outcomes {
-			targets = append(targets, t)
-		}
-		return targets
+		return mapValues(approval.Outcomes)
 	}
 	return nil
+}
+
+// mapValues returns the values of a string-keyed map (unsorted; callers sort
+// before use).
+func mapValues(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for _, v := range m {
+		out = append(out, v)
+	}
+	return out
+}
+
+// stepOutcomeTargets collects the real transition targets declared by a
+// step's outcomes and default outcome.
+func stepOutcomeTargets(step *StepNode) []string {
+	var targets []string
+	for _, co := range step.Outcomes {
+		if co.Next != "_continue" && co.Next != ReturnSentinel {
+			targets = append(targets, co.Next)
+		}
+	}
+	if step.DefaultOutcome != nil &&
+		step.DefaultOutcome.Next != "_continue" &&
+		step.DefaultOutcome.Next != ReturnSentinel {
+		targets = append(targets, step.DefaultOutcome.Next)
+	}
+	return targets
+}
+
+// switchTargets collects the real transition targets declared by a switch's
+// conditions and default branch.
+func switchTargets(sw *SwitchNode) []string {
+	targets := make([]string, 0, len(sw.Conditions)+1)
+	for _, cond := range sw.Conditions {
+		if cond.Next != ReturnSentinel {
+			targets = append(targets, cond.Next)
+		}
+	}
+	if sw.DefaultNext != "" && sw.DefaultNext != ReturnSentinel {
+		targets = append(targets, sw.DefaultNext)
+	}
+	return targets
 }
 
 // checkCrossStepFieldRefs walks every compiled expression that may contain

@@ -5,15 +5,15 @@ package workflow
 
 import (
 	"fmt"
+	"reflect"
 	"testing"
 
-	criteriav2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/ext/typeexpr"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
-	"reflect"
-
 	"github.com/zclconf/go-cty/cty"
+
+	criteriav2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 )
 
 func parseTestExpr(t *testing.T, src string) hcl.Expression {

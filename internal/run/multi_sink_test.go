@@ -22,7 +22,7 @@ func (r *recordingSink) OnRunStarted(string, string)       { r.bump() }
 func (r *recordingSink) OnRunCompleted(string, bool)       { r.bump() }
 func (r *recordingSink) OnRunFailed(string, string)        { r.bump() }
 func (r *recordingSink) OnStepEntered(string, string, int) { r.bump() }
-func (r *recordingSink) OnStepOutcome(_ string, _ string, _ time.Duration, _ error, _ string) {
+func (r *recordingSink) OnStepOutcome(_, _ string, _ time.Duration, _ error, _ string) {
 	r.bump()
 }
 func (r *recordingSink) OnStepTransition(string, string, string)                 { r.bump() }

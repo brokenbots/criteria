@@ -2208,29 +2208,7 @@ func (m *SessionManager) handleCrash(ctx context.Context, name string, step *wor
 		if respawnErr := m.respawn(ctx, sess); respawnErr != nil {
 			return m.failResult(sink, sess, fmt.Errorf("respawn after crash failed: %w (original crash: %w)", respawnErr, execErr))
 		}
-		retrySink := sink
-		if sess.mergeBuf != nil {
-			retrySink = sess.mergeBuf
-		}
-		result, retryErr := sess.handle.Execute(ctx, name, step, retrySink, rejection)
-		if retryErr == nil {
-			// KB-45: the retried attempt's verdict is contract-validated
-			// before it becomes the step's result.
-			valid, issues := evaluateLocalOutcomeContracts(step, result)
-			if len(issues) > 0 {
-				return adapter.Result{}, &OutcomeInvalidError{Outcome: result.Outcome, Issues: issues}
-			}
-			m.registerSensitiveOutputs(valid, step)
-			return valid, nil
-		}
-		var invErr *OutcomeInvalidError
-		if errors.As(retryErr, &invErr) {
-			// KB-45: the retried attempt may itself be rejected by the
-			// step's outcome contracts; return it to the engine's attempt
-			// loop instead of latching a hard run failure.
-			return adapter.Result{}, invErr
-		}
-		return m.failResult(sink, sess, retryErr)
+		return m.retryAfterRespawn(ctx, name, step, sink, sess, rejection)
 	case OnCrashAbortRun:
 		sink.Adapter("session.crash", map[string]any{
 			"session":               sess.Name,
@@ -2244,6 +2222,45 @@ func (m *SessionManager) handleCrash(ctx context.Context, name string, step *wor
 	default:
 		return m.failResult(sink, sess, execErr)
 	}
+}
+
+// retryAfterRespawn re-executes the step on the freshly respawned session.
+// The retried attempt's verdict is contract-validated before it becomes the
+// step's result; a contract-invalid retry returns to the engine's attempt
+// loop (via OutcomeInvalidError) instead of latching a hard run failure.
+func (m *SessionManager) retryAfterRespawn(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink, sess *Session, rejection *v2.ExecutionRejection) (adapter.Result, error) {
+	retrySink := sink
+	if sess.mergeBuf != nil {
+		retrySink = sess.mergeBuf
+	}
+	result, retryErr := sess.handle.Execute(ctx, name, step, retrySink, rejection)
+	if retryErr == nil {
+		valid, issues := evaluateLocalOutcomeContracts(step, result)
+		if len(issues) > 0 {
+			return adapter.Result{}, &OutcomeInvalidError{Outcome: result.Outcome, Issues: issues}
+		}
+		m.registerSensitiveOutputs(valid, step)
+		return valid, nil
+	}
+	var invErr *OutcomeInvalidError
+	if errors.As(retryErr, &invErr) {
+		return adapter.Result{}, invErr
+	}
+	return m.failResult(sink, sess, retryErr)
+}
+
+// lookupOrBind returns the session for name, binding a verified-only adapter
+// on first use (ErrUnknownSession from lookup). Any hard lookup error is
+// returned as-is.
+func (m *SessionManager) lookupOrBind(ctx context.Context, name string, step *workflow.StepNode) (*Session, error) {
+	sess, err := m.lookup(name)
+	if err == nil {
+		return sess, nil
+	}
+	if !errors.Is(err, ErrUnknownSession) {
+		return nil, err
+	}
+	return m.bindVerifiedAndLookup(ctx, name, step)
 }
 
 // bindVerifiedAndLookup promotes a verified-only adapter to a bound session.
@@ -2322,23 +2339,10 @@ func (m *SessionManager) Execute(ctx context.Context, name string, step *workflo
 	return m.execute(ctx, name, step, sink, toolCallNesting{chain: []string{seed}}, rejection)
 }
 
-// nestingSeed builds the nesting state for a step-level Execute (see the
-// Execute doc).
-func nestingSeed(seed string) toolCallNesting {
-	return toolCallNesting{chain: []string{seed}}
-}
-
 func (m *SessionManager) execute(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink, nesting toolCallNesting, rejection *v2.ExecutionRejection) (adapter.Result, error) {
-	sess, err := m.lookup(name)
+	sess, err := m.lookupOrBind(ctx, name, step)
 	if err != nil {
-		if !errors.Is(err, ErrUnknownSession) {
-			return adapter.Result{Outcome: "failure"}, err
-		}
-
-		sess, err = m.bindVerifiedAndLookup(ctx, name, step)
-		if err != nil {
-			return adapter.Result{Outcome: "failure"}, err
-		}
+		return adapter.Result{Outcome: "failure"}, err
 	}
 
 	// CRI-270: remotely dispatched adapters never see the launch-cwd

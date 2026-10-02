@@ -15,13 +15,13 @@ import (
 	"testing"
 	"time"
 
-	criteriav2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/stretchr/testify/require"
+	"github.com/zclconf/go-cty/cty"
 
+	criteriav2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
-	"github.com/zclconf/go-cty/cty"
 )
 
 // contractSink shadows the event callbacks the repair-loop tests assert on,

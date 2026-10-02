@@ -130,7 +130,7 @@ func validateOutcomeSchemaPayloadContract(stepName, outcomeName string, schemaEx
 		declared, known := adapterOutputSchema[fieldName]
 		if !known {
 			diags = append(diags, schemaFieldError(stepName, outcomeName, fieldName,
-				fmt.Sprintf("is not declared in the adapter's output schema (schema fields must be a subset of the adapter handshake)"),
+				"is not declared in the adapter's output schema (schema fields must be a subset of the adapter handshake)",
 				rangeOrNil(schemaExpr)))
 			continue
 		}
@@ -214,34 +214,34 @@ func typeCompatSubset(sub, sup cty.Type) bool {
 		return true
 	}
 	if sub.IsObjectType() && sup.IsObjectType() {
-		supAttrs := sup.AttributeTypes()
-		subAttrs := sub.AttributeTypes()
-		for name, subFieldT := range subAttrs {
-			supFieldT, ok := supAttrs[name]
-			if !ok {
-				return false
-			}
-			// The producer may omit an optional attribute; a schema that
-			// requires it could then never be satisfied.
-			if sup.AttributeOptional(name) && !sub.AttributeOptional(name) {
-				return false
-			}
-			if !typeCompatSubset(subFieldT, supFieldT) {
-				return false
-			}
-		}
-		return true
+		return objectAttrsSubset(sub, sup)
 	}
-	if sub.IsListType() && sup.IsListType() {
-		return typeCompatSubset(sub.ElementType(), sup.ElementType())
-	}
-	if sub.IsSetType() && sup.IsSetType() {
-		return typeCompatSubset(sub.ElementType(), sup.ElementType())
-	}
-	if sub.IsMapType() && sup.IsMapType() {
+	if sub.IsListType() && sup.IsListType() || sub.IsSetType() && sup.IsSetType() || sub.IsMapType() && sup.IsMapType() {
 		return typeCompatSubset(sub.ElementType(), sup.ElementType())
 	}
 	return sub.Equals(sup)
+}
+
+// objectAttrsSubset compares two object types attribute-wise: every schema
+// attribute must exist on the producer with a compatible type, and the
+// producer must not be allowed to omit a required field.
+func objectAttrsSubset(sub, sup cty.Type) bool {
+	supAttrs := sup.AttributeTypes()
+	for name, subFieldT := range sub.AttributeTypes() {
+		supFieldT, ok := supAttrs[name]
+		if !ok {
+			return false
+		}
+		// The producer may omit an optional attribute; a schema that
+		// requires it could then never be satisfied.
+		if sup.AttributeOptional(name) && !sub.AttributeOptional(name) {
+			return false
+		}
+		if !typeCompatSubset(subFieldT, supFieldT) {
+			return false
+		}
+	}
+	return true
 }
 
 // sortedObjectAttrs returns the attribute names of an object type in

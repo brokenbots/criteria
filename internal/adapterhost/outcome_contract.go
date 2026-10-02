@@ -110,7 +110,7 @@ func allowedOutcomesForContracts(step *workflow.StepNode) []string {
 // Result with no outputs. Legacy steps pass through untouched
 // (synthesized=nil, issues=nil). Issues follow the pinned conformance
 // vocabulary exactly.
-func evaluateOutcomeContracts(step *workflow.StepNode, results []*v2.ExecuteResult) (*adapter.Result, []string) {
+func evaluateOutcomeContracts(step *workflow.StepNode, results []*v2.ExecuteResult) (synthetic *adapter.Result, issues []string) {
 	contracts := outcomeContractsForStep(step)
 	if len(contracts) == 0 {
 		return nil, nil
@@ -141,7 +141,7 @@ func evaluateOutcomeContracts(step *workflow.StepNode, results []*v2.ExecuteResu
 // On success the original Result is forwarded verbatim (outputs, outcome, and
 // comment) unless the fallback lane synthesized it. On rejection a zero-value
 // Result is returned with the pinned issue list for the engine's attempt loop.
-func evaluateLocalOutcomeContracts(step *workflow.StepNode, result adapter.Result) (adapter.Result, []string) {
+func evaluateLocalOutcomeContracts(step *workflow.StepNode, result adapter.Result) (accepted adapter.Result, issues []string) {
 	if outcomeContractsForStep(step) == nil {
 		return result, nil
 	}

@@ -155,6 +155,21 @@ func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]Adap
 	diags = append(diags, compileWaits(g, spec)...)
 	diags = append(diags, compileApprovals(g, spec)...)
 	diags = append(diags, compileSwitches(g, spec, schemas, opts)...)
+	diags = runPostCompilePasses(diags, g, spec, schemas, opts)
+
+	if diags.HasErrors() {
+		return nil, diags
+	}
+	return g, diags
+}
+
+// runPostCompilePasses runs every pass that needs all nodes registered:
+// reachability, cross-step reference checks, self-reference rejection, taint
+// propagation, secret/environment binding validation, reserved names,
+// transitions, and back-edge warnings. The accumulated diagnostics flow
+// through so the reachability gate sees errors raised anywhere in the
+// pipeline.
+func runPostCompilePasses(diags hcl.Diagnostics, g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) hcl.Diagnostics {
 	// Warn after all nodes are compiled so branch/wait/approval targets are
 	// available for the back-edge walk (W07).
 	diags = append(diags, warnBackEdges(g)...)
@@ -194,10 +209,7 @@ func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]Adap
 		diags = append(diags, checkReachability(g)...)
 	}
 
-	if diags.HasErrors() {
-		return nil, diags
-	}
-	return g, diags
+	return diags
 }
 
 // initGraphPinSet loads the merged pin set from opts, or falls back to reading
