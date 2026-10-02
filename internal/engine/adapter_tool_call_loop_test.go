@@ -84,7 +84,7 @@ func (a *loopCalleeAdapter) Info(context.Context) (adapterhost.Info, error) {
 func (a *loopCalleeAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (a *loopCalleeAdapter) Execute(_ context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (a *loopCalleeAdapter) Execute(_ context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	a.rec.record(sessionID, step)
 	// A plain permission request from inside the callee's own session: the
 	// callee's own allow_tools policy ("callee.helpers.*") must answer it —
@@ -129,7 +129,7 @@ func (a *loopCallerAdapter) StartPermissionStream(_ context.Context, _ string, r
 	a.requests = requests
 	return func() {}, nil
 }
-func (a *loopCallerAdapter) Execute(ctx context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (a *loopCallerAdapter) Execute(ctx context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	sink.Adapter("permission.request", map[string]any{
 		"request_id": "call-1",
 		"target":     toolCallLoopTarget,

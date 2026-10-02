@@ -92,7 +92,7 @@ func (h *recordingHandle) Info(context.Context) (adapterhost.Info, error) {
 func (h *recordingHandle) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (h *recordingHandle) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (h *recordingHandle) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	h.record(step)
 	return adapter.Result{Outcome: "success"}, nil
 }
@@ -205,7 +205,7 @@ func TestEngine_CRI270_RemoteAdapterReceivesEnvironmentWorkingDir(t *testing.T) 
 	if got, ok := work.Input["working_directory"]; ok {
 		t.Fatalf("compiled step must not pre-carry working_directory, got %q", got)
 	}
-	if _, err := sessions.Execute(ctx, "noop.default", work, noopEventSink{}); err != nil {
+	if _, err := sessions.Execute(ctx, "noop.default", work, noopEventSink{}, nil); err != nil {
 		t.Fatalf("execute work: %v", err)
 	}
 	if n := handle.inputCount(); n != 1 {
@@ -229,7 +229,7 @@ func TestEngine_CRI270_RemoteAdapterReceivesEnvironmentWorkingDir(t *testing.T) 
 	if override == nil {
 		t.Fatal("fixture must declare step override")
 	}
-	if _, err := sessions.Execute(ctx, "noop.default", override, noopEventSink{}); err != nil {
+	if _, err := sessions.Execute(ctx, "noop.default", override, noopEventSink{}, nil); err != nil {
 		t.Fatalf("execute override: %v", err)
 	}
 	if n := handle.inputCount(); n != 2 {
@@ -257,7 +257,7 @@ func TestEngine_CRI270_RemoteWithoutWorkingDirInjectsNothing(t *testing.T) {
 	if work == nil {
 		t.Fatal("fixture must declare step start")
 	}
-	if _, err := sessions.Execute(ctx, "noop.default", work, noopEventSink{}); err != nil {
+	if _, err := sessions.Execute(ctx, "noop.default", work, noopEventSink{}, nil); err != nil {
 		t.Fatalf("execute start: %v", err)
 	}
 	if n := handle.inputCount(); n != 1 {
@@ -314,7 +314,7 @@ state "done" {
 	if work == nil {
 		t.Fatal("fixture must declare step work")
 	}
-	if _, err := sessions.Execute(ctx, "noop.default", work, noopEventSink{}); err != nil {
+	if _, err := sessions.Execute(ctx, "noop.default", work, noopEventSink{}, nil); err != nil {
 		t.Fatalf("execute work: %v", err)
 	}
 	if n := handle.inputCount(); n != 1 {
@@ -392,7 +392,7 @@ func TestEngine_CRI270_InjectionGatedOnDeclaredInputSchema(t *testing.T) {
 	if work == nil {
 		t.Fatal("fixture must declare step work")
 	}
-	if _, err := sessions.Execute(ctx, "noop.default", work, noopEventSink{}); err != nil {
+	if _, err := sessions.Execute(ctx, "noop.default", work, noopEventSink{}, nil); err != nil {
 		t.Fatalf("execute work: %v", err)
 	}
 	if n := handle.inputCount(); n != 1 {
@@ -435,7 +435,7 @@ func TestEngine_CRI270_InjectionOnDeclaredWorkingDirKey(t *testing.T) {
 	if work == nil {
 		t.Fatal("fixture must declare step work")
 	}
-	if _, err := sessions.Execute(ctx, "noop.default", work, noopEventSink{}); err != nil {
+	if _, err := sessions.Execute(ctx, "noop.default", work, noopEventSink{}, nil); err != nil {
 		t.Fatalf("execute work: %v", err)
 	}
 	if n := handle.inputCount(); n != 1 {
@@ -514,7 +514,7 @@ func TestEngine_CRI270_UndeclaredSurfaceGetsNoInjection(t *testing.T) {
 	if work == nil {
 		t.Fatal("fixture must declare step work")
 	}
-	if _, err := sessions.Execute(ctx, "mcp.default", work, noopEventSink{}); err != nil {
+	if _, err := sessions.Execute(ctx, "mcp.default", work, noopEventSink{}, nil); err != nil {
 		t.Fatalf("execute work: %v", err)
 	}
 	if n := handle.inputCount(); n != 1 {
@@ -555,7 +555,7 @@ func TestEngine_CRI270_ShellTypeWithoutDeclaredSurfaceStillInjects(t *testing.T)
 	if work == nil {
 		t.Fatal("fixture must declare step work")
 	}
-	if _, err := sessions.Execute(ctx, "shell.default", work, noopEventSink{}); err != nil {
+	if _, err := sessions.Execute(ctx, "shell.default", work, noopEventSink{}, nil); err != nil {
 		t.Fatalf("execute work: %v", err)
 	}
 	if n := handle.inputCount(); n != 1 {
@@ -610,7 +610,7 @@ func TestEngine_CRI270_RestoredRemoteSessionStillInjectsDeclaredKey(t *testing.T
 	if work == nil {
 		t.Fatal("fixture must declare step work")
 	}
-	if _, err := sessions.Execute(ctx, "noop.default", work, noopEventSink{}); err != nil {
+	if _, err := sessions.Execute(ctx, "noop.default", work, noopEventSink{}, nil); err != nil {
 		t.Fatalf("execute work: %v", err)
 	}
 	if n := handle.inputCount(); n != 1 {

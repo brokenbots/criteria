@@ -1,0 +1,25 @@
+workflow: outcome_contracts  (version 0.1)
+initial_state: audit_step   target_state: done
+policy: max_total_steps=100  max_step_retries=0
+
+variables:
+  (none)
+
+adapters:
+  noop.default   type=noop   on_crash=fail
+    config: (none)
+
+steps (declaration order):
+  audit_step   adapter=noop.default
+    input keys: (none)
+    allow_tools: (none)
+    outcomes: success -> done, audited -> audited, failure -> failed
+
+states:
+  audited    terminal=true   success=true
+  defaulted    terminal=true   success=false
+  done    terminal=true   success=true
+  failed    terminal=true   success=false
+
+adapters required:
+  noop   (search: $CRITERIA_ADAPTERS, then $CRITERIA_HOME/adapters, default ~/.local/criteria/adapters)

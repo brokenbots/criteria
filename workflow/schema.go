@@ -220,6 +220,7 @@ type Spec struct {
 	Variables    []VariableSpec      `hcl:"variable,block"`
 	Locals       []LocalSpec         `hcl:"local,block"`
 	Data         []DataSpec          `hcl:"data,block"`
+	Types        []TypeSpec          `hcl:"type,block"`
 	Environments []EnvironmentSpec   `hcl:"environment,block"`
 	Outputs      []OutputSpec        `hcl:"output,block"`
 	Adapters     []AdapterDeclSpec   `hcl:"adapter,block"`
@@ -249,6 +250,27 @@ type VariableSpec struct {
 	Type        hcl.Expression `hcl:"type,optional"`
 	Description string         `hcl:"description,optional"`
 	Remain      hcl.Body       `hcl:",remain"` // captures the "default" expression
+}
+
+// TypeSpec declares a workflow-level named type block (KB-45): `type "<name>"
+// { schema = <constraint> }`, referenced as `type.<name>` from outcome schema
+// attributes.
+//
+// The label is the type name; the required "schema" attribute carries any WS01
+// type constraint accepted by typeexpr (object({...}), list(T),
+// optional(T, default), ...) and is parsed once with TypeConstraintWithDefaults
+// so optional() defaults participate in payload defaulting. Type blocks form
+// their own workflow-scoped namespace; referencing other type names from
+// inside a type block is a compile error (slice-1).
+type TypeSpec struct {
+	Name string `hcl:"name,label"`
+	// Schema is the type constraint this name aliases (object({...}),
+	// list(T), optional(T, default), ...), referenced from outcomes as
+	// type.<name>.
+	//
+	// spec:required
+	Schema hcl.Expression `hcl:"schema,optional"`
+	Remain hcl.Body       `hcl:",remain"` // rejected: a type block declares schema only
 }
 
 // ConfigSpec holds the raw HCL body of an `adapter.config { ... }` block.
@@ -368,6 +390,7 @@ type SpecContent struct {
 	Variables    []VariableSpec    `hcl:"variable,block"`
 	Locals       []LocalSpec       `hcl:"local,block"`
 	Data         []DataSpec        `hcl:"data,block"`
+	Types        []TypeSpec        `hcl:"type,block"`
 	Environments []EnvironmentSpec `hcl:"environment,block"`
 	Adapters     []AdapterDeclSpec `hcl:"adapter,block"`
 	Steps        []StepSpec        `hcl:"step,block"`
@@ -489,17 +512,48 @@ type AdapterInfo struct {
 }
 
 // OutcomeSpec maps an adapter outcome name to the next node.
+//
 // The Next attribute replaces the removed transition_to attribute (v0.3.0).
 // It is an hcl.Expression decoded by the compiler (traversal form: step.foo,
 // state.done, return, continue).
 // An optional "output" expression may appear in the Remain body to project
 // a custom output map instead of passing the step's full output downstream.
 // Zero or more write { target = ..., value = ... } blocks declare data writes.
+//
+// KB-45 adds the optional per-outcome payload contract attributes:
+//   - "schema": either a `type.<name>` traversal into a named type block or an
+//     inline typeexpr constraint; both resolve to the same cty.Type. The
+//     schema's fields must be a subset of the adapter's declared output schema
+//     (compile error otherwise). Terminality and static comment authoring are
+//     engine/runtime concerns and are deliberately not outcome attributes.
+//   - "require_comment": the outcome requires a non-empty adapter finalize
+//     comment; an empty comment is a host-rejected result.
+//   - "fallback": at most one per step; fires when the adapter produced no
+//     finalized result at all (distinct from the reserved "default" outcome,
+//     which maps an adapter-returned unmapped name).
+//   - "schema": either a `type.<name>` traversal into a named type block or an
+//     inline typeexpr constraint; both resolve to the same cty.Type. The
+//     schema's fields must be a subset of the adapter's declared output schema
+//     (compile error otherwise). Terminality and static comment authoring are
+//     engine/runtime concerns and are deliberately not outcome attributes.
+//   - "require_comment": the outcome requires a non-empty adapter finalize
+//     comment; an empty comment is a host-rejected result.
+//   - "fallback": at most one per step; fires when the adapter produced no
+//     finalized result at all (distinct from the reserved "default" outcome,
+//     which maps an adapter-returned unmapped name).
 type OutcomeSpec struct {
-	Name   string         `hcl:"name,label"`
-	Next   hcl.Expression `hcl:"next"`
-	Writes []WriteSpec    `hcl:"write,block"`
-	Remain hcl.Body       `hcl:",remain"` // captures the optional "output" expression
+	Name string         `hcl:"name,label"`
+	Next hcl.Expression `hcl:"next"`
+	// Schema is the payload contract: type.<name> traversal or an inline
+	// typeexpr constraint; must subset the adapter's output schema.
+	Schema hcl.Expression `hcl:"schema,optional"`
+	// RequireComment rejects a result with an empty adapter comment.
+	RequireComment bool `hcl:"require_comment,optional"`
+	// Fallback marks the per-step outcome that fires when the adapter
+	// produced no finalized result (max one).
+	Fallback bool        `hcl:"fallback,optional"`
+	Writes   []WriteSpec `hcl:"write,block"`
+	Remain   hcl.Body    `hcl:",remain"` // captures the optional "output" expression
 }
 
 // WriteSpec is a single data write declaration inside an outcome block.
@@ -621,6 +675,8 @@ type FSMGraph struct {
 	Locals             map[string]*LocalNode           // compiled local declarations (W07)
 	Data               map[string]map[string]*DataNode // compiled data declarations; keyed by kind then name (W02)
 	DataOrder          []DataRef                       // declaration order for stable iteration (W02)
+	Types              map[string]*TypeDecl            // compiled type "name" blocks (KB-45); keyed by type name
+	TypeOrder          []string                        // declaration order for stable iteration (KB-45)
 	Environments       map[string]*EnvironmentNode     // compiled environment declarations; keyed by "<type>.<name>"
 	DefaultEnvironment string                          // optional; set if exactly one env is declared or explicitly set on workflow header
 	Outputs            map[string]*OutputNode          // compiled output declarations (W09)
@@ -691,6 +747,16 @@ type VariableNode struct {
 // Used by the body input validation logic to detect unbound required vars.
 func (v *VariableNode) IsRequired() bool { return v.Default == cty.NilVal }
 
+// TypeDecl is a compiled type "name" block (KB-45): a workflow-level named
+// payload type referenced as `type.<name>` from outcome schema attributes.
+// Defaults carries the block's optional() defaults so payload defaulting
+// matches what the type constraint itself declares.
+type TypeDecl struct {
+	Name     string
+	Type     cty.Type
+	Defaults *typeexpr.Defaults // nil when the constraint has no optional defaults
+}
+
 // AdapterNode is a compiled adapter declaration with resolved type and configuration.
 // The key in FSMGraph.Adapters is "<type>.<name>" (both labels).
 type AdapterNode struct {
@@ -747,6 +813,35 @@ type CompiledOutcome struct {
 	//
 	// HCL form: write { target = data.<kind>.<name>.value, value = output.<key> }
 	Writes []CompiledWrite
+
+	// Schema, when non-nil, is the payload type contract for this outcome
+	// (KB-45): the adapter's finalized payload must match it. Resolved once via
+	// typeexpr so named `type.<name>` and inline constraint forms are
+	// indistinguishable after compilation. SchemaJSON is its deterministic
+	// JSON Schema projection carried on the wire (ExecuteRequest
+	// outcome_contracts) and consumed by the host-side validation. The pointer
+	// form keeps StepNode JSON round-trippable (PR #291 contract): cty.NilType
+	// panics on MarshalJSON, so the sentinel is nil rather than a zero type.
+	Schema *cty.Type
+	// SchemaJSON is the deterministic JSON Schema bytes for Schema, produced
+	// by CTypeToJSONSchema at compile time. Empty when Schema is nil.
+	SchemaJSON []byte
+	// SchemaDefaults carries the typeexpr defaults of an optional(...) field
+	// with a declared default, from the same schema resolution as Schema
+	// (KB-45). The engine binds them into the adapter payload after a final
+	// verdict passes the host contract validation, so output projections and
+	// steps.<step> reads see the declared defaults for omitted fields. Nil
+	// when the schema declares no defaults.
+	SchemaDefaults *typeexpr.Defaults
+	// RequireComment copies the outcome's require_comment attribute (KB-45):
+	// the host rejects a finalize with this outcome when the comment is empty.
+	// The engine treats comments as opaque metadata; adapters enforce authoring.
+	RequireComment bool
+	// Fallback copies the outcome's fallback attribute (KB-45). At most one
+	// outcome per step may set it; it fires when the step produced no result
+	// at all (the adapter never finalized), distinct from DefaultOutcome which
+	// maps an adapter-returned unmapped outcome name.
+	Fallback bool
 }
 
 // ReturnSentinel is the reserved next value that signals scope-exit.

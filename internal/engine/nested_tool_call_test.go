@@ -147,7 +147,7 @@ func (a *nestedEngineCallee) Info(context.Context) (adapterhost.Info, error) {
 func (a *nestedEngineCallee) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (a *nestedEngineCallee) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (a *nestedEngineCallee) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	a.rec.record(sessionID, step)
 	task := step.Input["task"]
 	switch task {
@@ -210,7 +210,7 @@ func (a *nestedEngineCaller) StartPermissionStream(_ context.Context, _ string, 
 	a.requests = requests
 	return func() {}, nil
 }
-func (a *nestedEngineCaller) Execute(ctx context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (a *nestedEngineCaller) Execute(ctx context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	sink.Adapter("permission.request", map[string]any{
 		"request_id": "call-1",
 		"target":     nestedEngineTarget,
@@ -509,7 +509,7 @@ func (a *nestedEngineInterleavedCaller) recordLocked(tcr *v2.ToolCallResult) {
 	a.results[tcr.RequestId] = tcr
 	a.order = append(a.order, tcr.RequestId)
 }
-func (a *nestedEngineInterleavedCaller) Execute(ctx context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (a *nestedEngineInterleavedCaller) Execute(ctx context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	sink.Adapter("permission.request", map[string]any{
 		"request_id": "call-1",
 		"target":     nestedEngineTarget,
@@ -599,7 +599,7 @@ func (a *nestedEngineTimeoutCaller) StartPermissionStream(_ context.Context, _ s
 	a.requests = requests
 	return func() {}, nil
 }
-func (a *nestedEngineTimeoutCaller) Execute(ctx context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (a *nestedEngineTimeoutCaller) Execute(ctx context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	sink.Adapter("permission.request", map[string]any{
 		"request_id": "call-1",
 		"target":     nestedEngineTarget,

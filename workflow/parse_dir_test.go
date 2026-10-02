@@ -143,6 +143,107 @@ step "step_b" {
 	}
 }
 
+// TestParseDir_TypeBlocksMergeAcrossFiles verifies that top-level type
+// blocks participate in the directory-module merge: a type block declared in
+// one file is resolvable from an outcome schema in another file (KB-45), and
+// it compiles end to end.
+func TestParseDir_TypeBlocksMergeAcrossFiles(t *testing.T) {
+	dir := t.TempDir()
+
+	writeHCLFile(t, dir, "workflow", `workflow {
+  name = "typed"
+  version       = "0.1"
+  initial_state = "step_a"
+  target_state  = "done"
+}
+output "audit_summary" {
+  value = steps.step_a.audited["summary"]
+}
+`)
+
+	writeHCLFile(t, dir, "adapters", `adapter "noop" "default" {}
+`)
+	writeHCLFile(t, dir, "types", `type "audit" {
+  schema = object({
+    summary = optional(string, "")
+  })
+}
+`)
+	writeHCLFile(t, dir, "steps", `step "step_a" {
+  target = adapter.noop.default
+  outcome "success" {
+    schema = type.audit
+    next = step.done
+  }
+}
+`)
+	writeHCLFile(t, dir, "states", `state "done" { terminal = true }
+`)
+
+	spec, diags := ParseDir(dir)
+	if diags.HasErrors() {
+		t.Fatalf("ParseDir: %s", diags.Error())
+	}
+	if len(spec.Types) != 1 {
+		t.Fatalf("expected 1 merged type block, got %d", len(spec.Types))
+	}
+	if spec.Types[0].Name != "audit" {
+		t.Errorf("Types[0].Name = %q, want %q", spec.Types[0].Name, "audit")
+	}
+
+	_, compileDiags := Compile(spec, nil)
+	if compileDiags.HasErrors() {
+		t.Fatalf("Compile: %s", compileDiags.Error())
+	}
+}
+
+// TestParseDir_TypeBlocksDuplicateAcrossFiles_Error verifies that the same
+// type name declared in two different files produces a duplicate-name
+// diagnostic at compile time.
+func TestParseDir_TypeBlocksDuplicateAcrossFiles_Error(t *testing.T) {
+	dir := t.TempDir()
+
+	writeHCLFile(t, dir, "workflow", `workflow {
+  name = "dup"
+  version       = "0.1"
+  initial_state = "step_a"
+  target_state  = "done"
+}
+`)
+	writeHCLFile(t, dir, "adapters", `adapter "noop" "default" {}
+`)
+	writeHCLFile(t, dir, "steps", `step "step_a" {
+  target = adapter.noop.default
+  outcome "success" { next = step.done }
+}
+`)
+	writeHCLFile(t, dir, "types_a", `type "audit" {
+  schema = object({ a = string })
+}
+`)
+	writeHCLFile(t, dir, "types_b", `type "audit" {
+  schema = object({ b = string })
+}
+`)
+	writeHCLFile(t, dir, "states", `state "done" { terminal = true }
+`)
+
+	spec, parseDiags := ParseDir(dir)
+	if parseDiags.HasErrors() {
+		t.Fatalf("ParseDir: %s", parseDiags.Error())
+	}
+	if len(spec.Types) != 2 {
+		t.Fatalf("expected 2 merged type blocks, got %d", len(spec.Types))
+	}
+	_, compileDiags := Compile(spec, nil)
+	if !compileDiags.HasErrors() {
+		t.Fatal("expected duplicate type declaration error, got none")
+	}
+	if !strings.Contains(compileDiags.Error(), `duplicate type declaration`) || !strings.Contains(compileDiags.Error(), `"audit"`) {
+		t.Errorf("expected duplicate declaration diagnostic, got: %s", compileDiags.Error())
+	}
+}
+
 // TestParseDir_NoHCLFiles_Error verifies that a directory with no .hcl files
 // produces a clear diagnostic error.
 func TestParseDir_NoHCLFiles_Error(t *testing.T) {

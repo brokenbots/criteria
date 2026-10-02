@@ -109,7 +109,7 @@ func TestSession_Pause_DrainsInFlightToolCall(t *testing.T) {
 	// The caller's Execute issues the tool call and awaits the reply.
 	execDone := make(chan error, 1)
 	go func() {
-		_, execErr := sm.Execute(ctx, nestedCallerSession, nestedCallerStep(), &adapterEventCollector{})
+		_, execErr := sm.Execute(ctx, nestedCallerSession, nestedCallerStep(), &adapterEventCollector{}, nil)
 		execDone <- execErr
 	}()
 	waitForCalleeStart(t, calleeRec)
@@ -188,7 +188,7 @@ func TestSession_Pause_CancelsNonDrainingToolCall(t *testing.T) {
 
 	execDone := make(chan error, 1)
 	go func() {
-		_, execErr := sm.Execute(ctx, nestedCallerSession, nestedCallerStep(), &adapterEventCollector{})
+		_, execErr := sm.Execute(ctx, nestedCallerSession, nestedCallerStep(), &adapterEventCollector{}, nil)
 		execDone <- execErr
 	}()
 	waitForCalleeStart(t, calleeRec)

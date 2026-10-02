@@ -58,12 +58,18 @@ func (s *LocalSink) OnStepEntered(step, adapterName string, attempt int) {
 	s.emit("StepEntered", &pb.StepEntered{Step: step, Adapter: adapterName, Attempt: int32(attempt)})
 }
 
-func (s *LocalSink) OnStepOutcome(step, outcome string, duration time.Duration, err error) {
-	p := &pb.StepOutcome{Step: step, Outcome: outcome, DurationMs: duration.Milliseconds()}
+func (s *LocalSink) OnStepOutcome(step, outcome string, duration time.Duration, err error, comment string) {
+	p := &pb.StepOutcome{Step: step, Outcome: outcome, DurationMs: duration.Milliseconds(), Comment: comment}
 	if err != nil {
 		p.Error = err.Error()
 	}
 	s.emit("StepOutcome", p)
+}
+
+// OnStepOutcomeInvalid emits the StepOutcomeInvalid event locally (KB-45):
+// a completed attempt was rejected by outcome-contract validation.
+func (s *LocalSink) OnStepOutcomeInvalid(step, outcome string, issues []string, attempt int) {
+	s.emit("StepOutcomeInvalid", &pb.StepOutcomeInvalid{Step: step, Outcome: outcome, Issues: issues, Attempt: int32(attempt)})
 }
 
 func (s *LocalSink) OnStepTransition(from, to, viaOutcome string) {

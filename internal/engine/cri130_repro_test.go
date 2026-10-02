@@ -23,6 +23,7 @@ import (
 	"sync"
 	"testing"
 
+	criteriav2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
@@ -53,7 +54,7 @@ type cri130Adapter struct {
 	crashed   bool
 }
 
-func (p *cri130Adapter) Execute(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (p *cri130Adapter) Execute(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink, rejection *criteriav2.ExecutionRejection) (adapter.Result, error) {
 	p.mu.Lock()
 	crashed := p.crashed
 	stepName := ""
@@ -71,7 +72,7 @@ func (p *cri130Adapter) Execute(ctx context.Context, name string, step *workflow
 	if stepName == p.failStep {
 		return adapter.Result{Outcome: "failure"}, nil
 	}
-	return p.fakeAdapter.Execute(ctx, name, step, sink)
+	return p.fakeAdapter.Execute(ctx, name, step, sink, nil)
 }
 
 // cri130NewLoader registers the adapter under both the bare type name and the

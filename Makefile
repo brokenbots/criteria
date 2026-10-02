@@ -231,6 +231,7 @@ validate: build ## Validate all example workflow directories
 		examples/adapter_tools/noop_passthrough examples/adapter_tools/mcp_resource \
 		examples/adapter_tools/copilot_mcp_resource \
 		examples/adapter_tools/claude_mcp_resource \
+		examples/outcome_contracts \
 		examples/llm-pack/01-linear \
 		examples/llm-pack/02-branching-switch \
 		examples/llm-pack/03-iteration-for-each \

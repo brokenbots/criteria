@@ -62,7 +62,7 @@ func (p *builtinAdapter) OpenSession(_ context.Context, id string, config, secre
 	return nil
 }
 
-func (p *builtinAdapter) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (p *builtinAdapter) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	if p.adapter == nil {
 		return adapter.Result{Outcome: "failure"}, fmt.Errorf("builtin adapter implementation is nil")
 	}
@@ -72,6 +72,9 @@ func (p *builtinAdapter) Execute(ctx context.Context, sessionID string, step *wo
 	if !exists {
 		return adapter.Result{Outcome: "failure"}, fmt.Errorf("unknown session %q", sessionID)
 	}
+	// KB-45: rejection is accepted for Handle-surface symmetry; builtin
+	// adapter implementations re-run the step without host-visible repair
+	// context, and the manager re-validates their verdict regardless.
 	return p.adapter.Execute(ctx, step, sink)
 }
 

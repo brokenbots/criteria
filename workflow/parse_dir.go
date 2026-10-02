@@ -226,6 +226,7 @@ func mergeSpecs(dir string, entries []fileEntry) (*Spec, hcl.Diagnostics) { //no
 		merged.Environments = append(merged.Environments, s.Environments...)
 		merged.Subworkflows = append(merged.Subworkflows, s.Subworkflows...)
 		merged.Data = append(merged.Data, s.Data...)
+		merged.Types = append(merged.Types, s.Types...)
 
 		// Merge singleton: Header.
 		if s.Header != nil {

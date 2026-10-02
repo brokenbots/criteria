@@ -101,7 +101,7 @@ func TestKB57_DeliveredResultSurvivesTeardown_ActiveStream(t *testing.T) {
 	defer cancel()
 
 	client := &kb57TeardownClient{teardown: cancel}
-	result, err := ExecuteViaClient(parent, client, "shell", "s1", true, kb57Step(), &adapterEventCollector{})
+	result, err := ExecuteViaClient(parent, client, "shell", "s1", true, kb57Step(), &adapterEventCollector{}, nil)
 
 	if err != nil {
 		t.Fatalf("ExecuteViaClient: %v (a delivered ExecuteResult must survive the teardown race)", err)
@@ -118,7 +118,7 @@ func TestKB57_DeliveredResultSurvivesTeardown_FallbackStream(t *testing.T) {
 	defer cancel()
 
 	client := &kb57TeardownClient{teardown: cancel}
-	result, err := ExecuteViaClient(parent, client, "shell", "s1", false, kb57Step(), &adapterEventCollector{})
+	result, err := ExecuteViaClient(parent, client, "shell", "s1", false, kb57Step(), &adapterEventCollector{}, nil)
 
 	if err != nil {
 		t.Fatalf("ExecuteViaClient: %v (a delivered ExecuteResult must survive the teardown race)", err)
@@ -133,7 +133,7 @@ func TestKB57_DeliveredResultSurvivesTeardown_FallbackStream(t *testing.T) {
 // returned, no rescue involved).
 func TestKB57_DeliveredResultWinsBeforeTeardown(t *testing.T) {
 	client := &kb57TeardownClient{teardown: func() {}}
-	result, err := ExecuteViaClient(context.Background(), client, "shell", "s1", true, kb57Step(), &adapterEventCollector{})
+	result, err := ExecuteViaClient(context.Background(), client, "shell", "s1", true, kb57Step(), &adapterEventCollector{}, nil)
 
 	if err != nil {
 		t.Fatalf("ExecuteViaClient: %v", err)
@@ -153,7 +153,7 @@ func TestKB57_FinalizeOnlyVerdictUnderTeardownStaysSynthetic(t *testing.T) {
 	defer cancel()
 
 	client := &kb57TeardownFinalizeClient{teardown: cancel}
-	result, err := ExecuteViaClient(parent, client, "shell", "s1", true, kb57Step(), &adapterEventCollector{})
+	result, err := ExecuteViaClient(parent, client, "shell", "s1", true, kb57Step(), &adapterEventCollector{}, nil)
 
 	if err == nil {
 		t.Fatalf("ExecuteViaClient: err = nil, want the teardown cancellation")
@@ -171,7 +171,7 @@ func TestKB57_DeliveredEmptyResultUnderTeardownStaysSynthetic(t *testing.T) {
 	defer cancel()
 
 	client := &kb57DeliveredEmptyResultClient{teardown: cancel}
-	result, err := ExecuteViaClient(parent, client, "shell", "s1", true, kb57Step(), &adapterEventCollector{})
+	result, err := ExecuteViaClient(parent, client, "shell", "s1", true, kb57Step(), &adapterEventCollector{}, nil)
 
 	if err == nil {
 		t.Fatalf("ExecuteViaClient: err = nil, want the teardown cancellation")

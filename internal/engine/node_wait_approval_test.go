@@ -137,15 +137,15 @@ type pauseSink struct {
 	failed       bool
 }
 
-func (s *pauseSink) OnRunStarted(string, string)                        {}
-func (s *pauseSink) OnRunCompleted(string, bool)                        { s.completed = true }
-func (s *pauseSink) OnRunFailed(string, string)                         { s.failed = true }
-func (s *pauseSink) OnStepEntered(string, string, int)                  {}
-func (s *pauseSink) OnStepOutcome(string, string, time.Duration, error) {}
-func (s *pauseSink) OnStepTransition(string, string, string)            {}
-func (s *pauseSink) OnStepResumed(string, int, string)                  {}
-func (s *pauseSink) OnVariableSet(string, string, string)               {}
-func (s *pauseSink) OnStepOutputCaptured(string, map[string]string)     {}
+func (s *pauseSink) OnRunStarted(string, string)                                {}
+func (s *pauseSink) OnRunCompleted(string, bool)                                { s.completed = true }
+func (s *pauseSink) OnRunFailed(string, string)                                 { s.failed = true }
+func (s *pauseSink) OnStepEntered(string, string, int)                          {}
+func (s *pauseSink) OnStepOutcome(string, string, time.Duration, error, string) {}
+func (s *pauseSink) OnStepTransition(string, string, string)                    {}
+func (s *pauseSink) OnStepResumed(string, int, string)                          {}
+func (s *pauseSink) OnVariableSet(string, string, string)                       {}
+func (s *pauseSink) OnStepOutputCaptured(string, map[string]string)             {}
 func (s *pauseSink) OnRunPaused(node, mode, signal string) {
 	s.pausedNode = node
 	s.pausedMode = mode
@@ -167,6 +167,7 @@ func (s *pauseSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent)
 func (s *pauseSink) OnRunOutputs([]map[string]string)                             {}
 func (s *pauseSink) OnStepOutcomeDefaulted(string, string, string)                {}
 func (s *pauseSink) OnStepOutcomeUnknown(string, string)                          {}
+func (s *pauseSink) OnStepOutcomeInvalid(string, string, []string, int)           {}
 
 func (s *pauseSink) OnAgentPromptInjected(string, string, string, string, time.Time) {}
 func (s *pauseSink) OnCheckpointPointer(*engine.CheckpointPointerEvent)              {}

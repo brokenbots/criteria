@@ -78,7 +78,7 @@ func TestExecuteViaClient_KB53FinalizedOutcomeStreamEndsWithoutResult(t *testing
 	client := &kb53Client{events: []*v2.ExecuteEvent{kb53FinalizedEvent("ready_for_review", "pr ready")}}
 	collector := &adapterEventCollector{}
 
-	result, err := ExecuteViaClient(context.Background(), client, "copilot", "s1", true, kb53Step(), collector)
+	result, err := ExecuteViaClient(context.Background(), client, "copilot", "s1", true, kb53Step(), collector, nil)
 	if err != nil {
 		t.Fatalf("ExecuteViaClient: %v (a finalized verdict must survive a stream that ends without a result)", err)
 	}
@@ -98,7 +98,7 @@ func TestExecuteViaClient_KB53FinalizedOutcomeStreamError(t *testing.T) {
 	}
 	collector := &adapterEventCollector{}
 
-	result, err := ExecuteViaClient(context.Background(), client, "copilot", "s1", true, kb53Step(), collector)
+	result, err := ExecuteViaClient(context.Background(), client, "copilot", "s1", true, kb53Step(), collector, nil)
 	if err != nil {
 		t.Fatalf("ExecuteViaClient: %v (the finalized verdict must survive the lost stream)", err)
 	}
@@ -123,7 +123,7 @@ func TestExecuteViaClient_KB53CapturedResultWins(t *testing.T) {
 	}
 	collector := &adapterEventCollector{}
 
-	result, err := ExecuteViaClient(context.Background(), client, "copilot", "s1", true, kb53Step(), collector)
+	result, err := ExecuteViaClient(context.Background(), client, "copilot", "s1", true, kb53Step(), collector, nil)
 	if err != nil {
 		t.Fatalf("ExecuteViaClient: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestExecuteViaClient_KB53NoEvidenceStaysFailure(t *testing.T) {
 	client := &kb53Client{}
 	collector := &adapterEventCollector{}
 
-	result, err := ExecuteViaClient(context.Background(), client, "copilot", "s1", true, kb53Step(), collector)
+	result, err := ExecuteViaClient(context.Background(), client, "copilot", "s1", true, kb53Step(), collector, nil)
 	if err == nil {
 		t.Fatal("expected an error when the stream ends without any verdict evidence")
 	}
@@ -154,7 +154,7 @@ func TestExecuteViaClient_KB53CanceledContextNotRescued(t *testing.T) {
 	collector := &adapterEventCollector{}
 
 	cancel() // host-initiated teardown: the rescue must not fire
-	result, err := ExecuteViaClient(ctx, client, "copilot", "s1", true, kb53Step(), collector)
+	result, err := ExecuteViaClient(ctx, client, "copilot", "s1", true, kb53Step(), collector, nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
@@ -177,7 +177,7 @@ func TestExecuteViaClient_KB53ChunkedFinalizedOutcome(t *testing.T) {
 	client := &kb53Client{events: events}
 	collector := &adapterEventCollector{}
 
-	result, err := ExecuteViaClient(context.Background(), client, "copilot", "s1", true, kb53Step(), collector)
+	result, err := ExecuteViaClient(context.Background(), client, "copilot", "s1", true, kb53Step(), collector, nil)
 	if err != nil {
 		t.Fatalf("ExecuteViaClient: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestExecuteViaClient_KB53FinalizedSuccessWithDeniedPermissionBecomesNeedsRe
 
 	// hasPermStream=false: the per-Execute fallback stream evaluates the host
 	// policy locally; the request is denied (browser is not in allow_tools).
-	result, err := ExecuteViaClient(context.Background(), client, "copilot", "s1", false, kb53Step(), collector)
+	result, err := ExecuteViaClient(context.Background(), client, "copilot", "s1", false, kb53Step(), collector, nil)
 	if err != nil {
 		t.Fatalf("ExecuteViaClient: %v", err)
 	}

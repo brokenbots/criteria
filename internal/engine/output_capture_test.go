@@ -43,7 +43,7 @@ func (p *fakeOutputAdapter) Info(context.Context) (adapterhost.Info, error) {
 func (p *fakeOutputAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (p *fakeOutputAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *fakeOutputAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	return adapter.Result{Outcome: p.outcome, Outputs: ctyOut(p.outputs)}, nil
 }
 func (p *fakeOutputAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
@@ -155,7 +155,7 @@ func (p *fakeConsumerAdapter) Info(context.Context) (adapterhost.Info, error) {
 func (p *fakeConsumerAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (p *fakeConsumerAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *fakeConsumerAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	p.receivedInput = step.Input
 	return adapter.Result{Outcome: "success"}, nil
 }

@@ -21,7 +21,7 @@ import (
 
 // loggingMockHandle is a mock Handle that also implements LogStreamStarter.
 type loggingMockHandle struct {
-	executeFunc            func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error)
+	executeFunc            func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error)
 	logEvents              []*v2.LogEvent
 	logReturnEarly         bool // if true, the Log goroutine returns immediately instead of blocking
 	mu                     sync.Mutex
@@ -35,9 +35,9 @@ func (m *loggingMockHandle) Info(ctx context.Context) (Info, error) { return Inf
 func (m *loggingMockHandle) OpenSession(ctx context.Context, id string, config, secrets map[string]string) error {
 	return nil
 }
-func (m *loggingMockHandle) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (m *loggingMockHandle) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	if m.executeFunc != nil {
-		return m.executeFunc(ctx, sessionID, step, sink)
+		return m.executeFunc(ctx, sessionID, step, sink, nil)
 	}
 	return adapter.Result{Outcome: "success"}, nil
 }
@@ -151,7 +151,7 @@ func TestSessionManager_Integration_100Logs10Events_Redaction(t *testing.T) {
 			}
 			return evs
 		}(),
-		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 			// Trigger log emission now that currentSink is set.
 			close(trigger)
 			// Keep Execute alive long enough for log delivery.
@@ -170,7 +170,7 @@ func TestSessionManager_Integration_100Logs10Events_Redaction(t *testing.T) {
 
 	collector := &logEventCollector{}
 	step := &workflow.StepNode{Name: "run"}
-	_, err := sm.Execute(context.Background(), "agent", step, collector)
+	_, err := sm.Execute(context.Background(), "agent", step, collector, nil)
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -198,7 +198,7 @@ func TestSessionManager_Integration_100Logs10Events_Redaction(t *testing.T) {
 func TestSessionManager_LogLinesRoutedToStepSink(t *testing.T) {
 	logReady := make(chan struct{})
 	h := &loggingMockHandle{
-		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 			// Signal that Execute is running so the log goroutine can emit.
 			close(logReady)
 			// Keep Execute alive long enough for log delivery.
@@ -228,7 +228,7 @@ func TestSessionManager_LogLinesRoutedToStepSink(t *testing.T) {
 
 	collector := &logEventCollector{}
 	step := &workflow.StepNode{Name: "run"}
-	_, err := sm.Execute(context.Background(), "agent", step, collector)
+	_, err := sm.Execute(context.Background(), "agent", step, collector, nil)
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestSessionManager_HeartbeatStall_DetectsCrash(t *testing.T) {
 
 	collector := &adapterEventCollector{}
 	step := &workflow.StepNode{Name: "run"}
-	_, err := sm.Execute(context.Background(), "agent", step, collector)
+	_, err := sm.Execute(context.Background(), "agent", step, collector, nil)
 	if err == nil {
 		t.Fatal("expected heartbeat stall to produce an error")
 	}
@@ -298,7 +298,7 @@ func TestSessionManager_LogStreamEarlyEnd_DoesNotStall(t *testing.T) {
 
 	collector := &adapterEventCollector{}
 	step := &workflow.StepNode{Name: "run"}
-	_, err := sm.Execute(context.Background(), "agent", step, collector)
+	_, err := sm.Execute(context.Background(), "agent", step, collector, nil)
 	if err != nil {
 		t.Fatalf("expected Execute to succeed after early log stream end, got %v", err)
 	}
@@ -374,7 +374,7 @@ func TestSessionManager_HeartbeatRecent_PreventsStall(t *testing.T) {
 
 	// hbMonitor is seeded to now by startLogStream inside registerSession.
 	step := &workflow.StepNode{Name: "run"}
-	_, err := sm.Execute(context.Background(), "agent", step, &logEventCollector{})
+	_, err := sm.Execute(context.Background(), "agent", step, &logEventCollector{}, nil)
 	if err != nil {
 		t.Fatalf("expected Execute to succeed with recent heartbeat, got %v", err)
 	}
@@ -488,7 +488,7 @@ func TestSessionManager_RespawnRestartsLogStream(t *testing.T) {
 		logEvents: []*v2.LogEvent{
 			{StreamName: "stdout", Line: []byte("pre-respawn secret\n"), Timestamp: timestamppb.Now()},
 		},
-		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 			return adapter.Result{}, errors.New("connection reset")
 		},
 	}
@@ -499,7 +499,7 @@ func TestSessionManager_RespawnRestartsLogStream(t *testing.T) {
 		logEvents: []*v2.LogEvent{
 			{StreamName: "stdout", Line: []byte("post-respawn secret\n"), Timestamp: timestamppb.Now()},
 		},
-		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 			return adapter.Result{Outcome: "success"}, nil
 		},
 	}
@@ -511,7 +511,7 @@ func TestSessionManager_RespawnRestartsLogStream(t *testing.T) {
 	defer sm.Close(context.Background(), "agent")
 
 	step := &workflow.StepNode{Name: "run"}
-	_, err := sm.Execute(context.Background(), "agent", step, &logEventCollector{})
+	_, err := sm.Execute(context.Background(), "agent", step, &logEventCollector{}, nil)
 	if err != nil {
 		t.Fatalf("expected respawn+retry to succeed, got %v", err)
 	}
@@ -559,7 +559,7 @@ func TestSessionManager_OldWatcherAfterReset_NoFalseDiagnostic(t *testing.T) {
 		return cancelFn, d, nil
 	}
 	h1.startLogStreamOverride = h1CustomStart
-	h1.executeFunc = func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+	h1.executeFunc = func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 		// Unblock the old Log goroutine before returning the crash error.
 		// This makes oldDone close, allowing respawn to start the new stream
 		// while the old watcher goroutine may still be scheduled later.
@@ -568,7 +568,7 @@ func TestSessionManager_OldWatcherAfterReset_NoFalseDiagnostic(t *testing.T) {
 	}
 
 	h2 := &loggingMockHandle{
-		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 			return adapter.Result{Outcome: "success"}, nil
 		},
 	}
@@ -581,7 +581,7 @@ func TestSessionManager_OldWatcherAfterReset_NoFalseDiagnostic(t *testing.T) {
 	defer sm.Close(context.Background(), "agent")
 
 	step := &workflow.StepNode{Name: "run"}
-	_, err := sm.Execute(context.Background(), "agent", step, &logEventCollector{})
+	_, err := sm.Execute(context.Background(), "agent", step, &logEventCollector{}, nil)
 	if err != nil {
 		t.Fatalf("expected respawn+retry to succeed, got %v", err)
 	}
@@ -607,14 +607,14 @@ func TestSessionManager_RespawnedEarlyLogEnd_DetectsBrokenContract(t *testing.T)
 	defer slog.SetDefault(oldLogger)
 
 	h1 := &loggingMockHandle{
-		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 			return adapter.Result{}, errors.New("connection reset")
 		},
 	}
 	// The respawned handle is broken: its Log returns immediately.
 	h2 := &loggingMockHandle{
 		logReturnEarly: true,
-		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 			return adapter.Result{Outcome: "success"}, nil
 		},
 	}
@@ -630,7 +630,7 @@ func TestSessionManager_RespawnedEarlyLogEnd_DetectsBrokenContract(t *testing.T)
 	time.Sleep(50 * time.Millisecond)
 
 	step := &workflow.StepNode{Name: "run"}
-	_, err := sm.Execute(context.Background(), "agent", step, &logEventCollector{})
+	_, err := sm.Execute(context.Background(), "agent", step, &logEventCollector{}, nil)
 	if err != nil {
 		t.Fatalf("expected Execute to succeed despite broken respawned stream, got %v", err)
 	}
@@ -675,12 +675,12 @@ func TestSessionManager_RestartLogStream_BoundedWait(t *testing.T) {
 		}()
 		return cancelFn, d, nil
 	}
-	h1.executeFunc = func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+	h1.executeFunc = func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 		return adapter.Result{}, errors.New("connection reset")
 	}
 
 	h2 := &loggingMockHandle{
-		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 			return adapter.Result{Outcome: "success"}, nil
 		},
 	}
@@ -696,7 +696,7 @@ func TestSessionManager_RestartLogStream_BoundedWait(t *testing.T) {
 
 	step := &workflow.StepNode{Name: "run"}
 	start := time.Now()
-	_, err := sm.Execute(context.Background(), "agent", step, &logEventCollector{})
+	_, err := sm.Execute(context.Background(), "agent", step, &logEventCollector{}, nil)
 	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("expected respawn+retry to succeed despite wedged old watcher, got %v", err)
@@ -709,7 +709,7 @@ func TestSessionManager_RestartLogStream_BoundedWait(t *testing.T) {
 	}
 
 	// A subsequent Execute on the respawned handle should succeed.
-	_, err = sm.Execute(context.Background(), "agent", step, &logEventCollector{})
+	_, err = sm.Execute(context.Background(), "agent", step, &logEventCollector{}, nil)
 	if err != nil {
 		t.Fatalf("expected second Execute on respawned handle to succeed, got %v", err)
 	}
@@ -742,12 +742,12 @@ func TestSessionManager_RespawnThenClose_NoFalseDiagnostic(t *testing.T) {
 	defer slog.SetDefault(oldLogger)
 
 	h1 := &loggingMockHandle{
-		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 			return adapter.Result{}, errors.New("connection reset")
 		},
 	}
 	h2 := &loggingMockHandle{
-		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 			return adapter.Result{Outcome: "success"}, nil
 		},
 	}

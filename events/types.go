@@ -62,6 +62,8 @@ func setPayload(env *pb.Envelope, payload any) { //nolint:funlen,gocyclo // type
 		env.Payload = &pb.Envelope_StepEntered{StepEntered: p}
 	case *pb.StepOutcome:
 		env.Payload = &pb.Envelope_StepOutcome{StepOutcome: p}
+	case *pb.StepOutcomeInvalid:
+		env.Payload = &pb.Envelope_StepOutcomeInvalid{StepOutcomeInvalid: p}
 	case *pb.StepTransition:
 		env.Payload = &pb.Envelope_StepTransition{StepTransition: p}
 	case *pb.StepLog:
@@ -136,6 +138,8 @@ func TypeString(env *pb.Envelope) string { //nolint:funlen,gocyclo // discrimina
 		return "step.entered"
 	case *pb.Envelope_StepOutcome:
 		return "step.outcome"
+	case *pb.Envelope_StepOutcomeInvalid:
+		return "step.outcome_invalid"
 	case *pb.Envelope_StepTransition:
 		return "step.transition"
 	case *pb.Envelope_StepLog:

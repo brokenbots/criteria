@@ -643,9 +643,15 @@ func (r recordingEventSink) Adapter(kind string, data any) {
 
 func (s *capturingSink) StepEventSink(string) adapter.EventSink { return recordingEventSink{sink: s} }
 
-func (s *capturingSink) OnStepOutcome(step, outcome string, _ time.Duration, _ error) {
+func (s *capturingSink) OnStepOutcome(step, outcome string, _ time.Duration, _ error, comment string) {
 	s.mu.Lock()
 	s.outcomes[step] = outcome
+	s.mu.Unlock()
+}
+
+func (s *capturingSink) OnStepOutcomeInvalid(step, outcome string, issues []string, _ int) {
+	s.mu.Lock()
+	s.outcomes[step] = outcome + " (invalid: " + strings.Join(issues, "; ") + ")"
 	s.mu.Unlock()
 }
 

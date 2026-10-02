@@ -78,7 +78,7 @@ func runSecretConsumer(t *testing.T, bin, mode string, secrets map[string]string
 
 	step := baseStep("secret-channel", "secretconsumer", nil)
 	sink := &recordingSink{}
-	if _, err := plug.Execute(ctx, sessionID, step, sink); err != nil {
+	if _, err := plug.Execute(ctx, sessionID, step, sink, nil); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 	if err := plug.CloseSession(ctx, sessionID); err != nil {

@@ -51,7 +51,7 @@ func (h *cri287Handle) Info(context.Context) (Info, error) { return Info{Name: h
 func (h *cri287Handle) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (h *cri287Handle) Execute(context.Context, string, *workflow.StepNode, adapter.EventSink) (adapter.Result, error) {
+func (h *cri287Handle) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, _ *criteriav2.ExecutionRejection) (adapter.Result, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.executes++
@@ -96,7 +96,7 @@ func TestCRI287_TimeoutTeardownTransportCloseNotCrashClassified(t *testing.T) {
 	sm.MarkEngineStepTimeoutTeardown()
 
 	coll := &adapterEventCollector{}
-	result, err := sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, coll)
+	result, err := sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, coll, nil)
 
 	if err == nil {
 		t.Fatal("expected the raw transport error, got nil")
@@ -126,7 +126,7 @@ func TestCRI287_NoMarkStillCrashClassified(t *testing.T) {
 	sm, _ := newCri287Session()
 
 	coll := &adapterEventCollector{}
-	_, err := sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, coll)
+	_, err := sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, coll, nil)
 
 	var crashErr *SessionCrashError
 	if !errors.As(err, &crashErr) || crashErr.Session != "shell.develop" {
@@ -156,14 +156,14 @@ func TestCRI287_SuccessfulSiblingDoesNotCloseTeardownWindow(t *testing.T) {
 	sm.MarkEngineStepTimeoutTeardown()
 
 	// The healthy sibling's Execute succeeds.
-	if _, err := sm.Execute(context.Background(), "shell.comment_handler", &workflow.StepNode{Name: "comment_handler_failed"}, &adapterEventCollector{}); err != nil {
+	if _, err := sm.Execute(context.Background(), "shell.comment_handler", &workflow.StepNode{Name: "comment_handler_failed"}, &adapterEventCollector{}, nil); err != nil {
 		t.Fatalf("healthy sibling Execute: %v", err)
 	}
 
 	// The torn-down sibling's Execute still observes the open window: the
 	// transport close is routed as a timeout teardown, not a crash.
 	coll := &adapterEventCollector{}
-	result, err := sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, coll)
+	result, err := sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, coll, nil)
 	var crashErr *SessionCrashError
 	if errors.As(err, &crashErr) {
 		t.Fatalf("torn-down sibling Execute err = %v, want the raw transport error (window must not close on a sibling success)", err)
@@ -193,7 +193,7 @@ func TestCRI287_TeardownWindowExpiresReenablesCrashClassification(t *testing.T) 
 	sm.MarkEngineStepTimeoutTeardown()
 
 	// Inside the window: routed as a timeout teardown.
-	_, err := sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, &adapterEventCollector{})
+	_, err := sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, &adapterEventCollector{}, nil)
 	if err == nil || !errors.Is(err, cri287TransportErr) {
 		t.Fatalf("in-window Execute err = %v, want the raw transport error", err)
 	}
@@ -214,7 +214,7 @@ func TestCRI287_TeardownWindowExpiresReenablesCrashClassification(t *testing.T) 
 	}
 
 	coll := &adapterEventCollector{}
-	_, err = sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, coll)
+	_, err = sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, coll, nil)
 	var crashErr *SessionCrashError
 	if !errors.As(err, &crashErr) || crashErr.Session != "shell.develop" {
 		t.Fatalf("post-window Execute err = %v, want SessionCrashError (window expired)", err)
@@ -250,7 +250,7 @@ func TestCRI287_ProcessExitedDuringTeardownWindowStillCrashClassified(t *testing
 	sm.MarkEngineStepTimeoutTeardown()
 
 	coll := &adapterEventCollector{}
-	_, err := sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, coll)
+	_, err := sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, coll, nil)
 	var crashErr *SessionCrashError
 	if !errors.As(err, &crashErr) || crashErr.Session != "shell.develop" {
 		t.Fatalf("Execute err = %v, want SessionCrashError despite the open teardown window (ProcessExited evidence)", err)
@@ -278,7 +278,7 @@ func TestCRI287_ProcessExitedDuringTeardownWindowStillCrashClassified(t *testing
 	if sess.crashed.Load() {
 		t.Error("session must not stay crashed after a successful re-open")
 	}
-	if _, err := sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, &adapterEventCollector{}); err != nil {
+	if _, err := sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, &adapterEventCollector{}, nil); err != nil {
 		t.Errorf("follow-on Execute on the re-opened session: %v", err)
 	}
 }
@@ -326,7 +326,7 @@ func TestCRI287_TimeoutTeardownDoesNotSwallowPlainErrors(t *testing.T) {
 	sm.MarkEngineStepTimeoutTeardown()
 
 	coll := &adapterEventCollector{}
-	_, err := sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "develop"}, coll)
+	_, err := sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "develop"}, coll, nil)
 	if !errors.Is(err, plainErr) {
 		t.Fatalf("err = %v, want the verbatim plain error", err)
 	}
@@ -342,7 +342,7 @@ func (h *cri287PlainErrHandle) Info(context.Context) (Info, error) { return Info
 func (h *cri287PlainErrHandle) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (h *cri287PlainErrHandle) Execute(context.Context, string, *workflow.StepNode, adapter.EventSink) (adapter.Result, error) {
+func (h *cri287PlainErrHandle) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, _ *criteriav2.ExecutionRejection) (adapter.Result, error) {
 	return adapter.Result{Outcome: "failure"}, h.err
 }
 func (h *cri287PlainErrHandle) CloseSession(context.Context, string) error { return nil }
@@ -369,7 +369,7 @@ func TestCRI287_MarkLandedBeforeNextExecute(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, &adapterEventCollector{})
+		_, err := sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, &adapterEventCollector{}, nil)
 		done <- err
 	}()
 	select {

@@ -1,0 +1,15 @@
+digraph "outcome_contracts" {
+  rankdir=LR;
+
+  "audit_step" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "audited" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
+  "defaulted" [shape=doublecircle, style=filled, fillcolor="#FADBD8"];
+  "done" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
+  "failed" [shape=doublecircle, style=filled, fillcolor="#FADBD8"];
+
+  "__start__" [shape=point,width=0.12,label=""];
+  "__start__" -> "audit_step" [label="initial"];
+  "audit_step" -> "audited" [label="audited"];
+  "audit_step" -> "failed" [label="failure"];
+  "audit_step" -> "done" [label="success"];
+}

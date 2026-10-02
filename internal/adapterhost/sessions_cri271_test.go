@@ -38,7 +38,7 @@ func (h *cri271Handle) OpenSession(_ context.Context, name string, _, _ map[stri
 	h.opens = append(h.opens, name)
 	return nil
 }
-func (h *cri271Handle) Execute(context.Context, string, *workflow.StepNode, adapter.EventSink) (adapter.Result, error) {
+func (h *cri271Handle) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, _ *criteriav2.ExecutionRejection) (adapter.Result, error) {
 	if h.fails {
 		return adapter.Result{Outcome: "failure"}, cri271CrashErr
 	}
@@ -194,7 +194,7 @@ func TestCRI271_ExecuteCrashEmitsDiagnosableEvent(t *testing.T) {
 	sess.noteActivity() // adapter showed life at open time
 
 	coll := &adapterEventCollector{}
-	_, err := sm.Execute(context.Background(), "fake.default", &workflow.StepNode{Name: "develop"}, coll)
+	_, err := sm.Execute(context.Background(), "fake.default", &workflow.StepNode{Name: "develop"}, coll, nil)
 
 	var crashErr *SessionCrashError
 	if !errors.As(err, &crashErr) || crashErr.Session != "fake.default" {
@@ -240,7 +240,8 @@ func TestCRI271_ReopenCrashedSession(t *testing.T) {
 	sm.mu.Unlock()
 
 	coll := &adapterEventCollector{}
-	_, err := sm.Execute(context.Background(), "fake.default", &workflow.StepNode{Name: "develop"}, coll)
+	_, err := sm.Execute(context.Background(), "fake.default", &workflow.StepNode{Name: "develop"}, coll, nil)
+
 	if err == nil {
 		t.Fatal("expected the first Execute to fail with the crash signature")
 	}
@@ -263,7 +264,8 @@ func TestCRI271_ReopenCrashedSession(t *testing.T) {
 	}
 
 	// The re-opened session serves follow-on work.
-	res, err := sm.Execute(ctx, "fake.default", &workflow.StepNode{Name: "comment_handler_failed"}, coll)
+	res, err := sm.Execute(ctx, "fake.default", &workflow.StepNode{Name: "comment_handler_failed"}, coll, nil)
+
 	if err != nil || res.Outcome != "success" {
 		t.Fatalf("Execute after re-open: res=%v err=%v", res, err)
 	}

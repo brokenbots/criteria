@@ -53,6 +53,8 @@ import (
 
 	"github.com/zclconf/go-cty/cty"
 
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
+
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/engine"
@@ -176,7 +178,7 @@ func (a *callEdgesEchoCaller) Info(context.Context) (adapterhost.Info, error) {
 	}, nil
 }
 
-func (a *callEdgesEchoCaller) Execute(_ context.Context, _ string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (a *callEdgesEchoCaller) Execute(_ context.Context, _ string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	secret := step.SecretInputs["token"]
 	if secret == "" {
 		return adapter.Result{Outcome: "failure"}, errors.New("call-edges caller: secret input token did not resolve")
@@ -256,8 +258,8 @@ func (a *callEdgesEchoCallee) Info(ctx context.Context) (adapterhost.Info, error
 	return info, nil
 }
 
-func (a *callEdgesEchoCallee) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
-	res, err := a.matrixCalleeAdapter.Execute(ctx, sessionID, step, sink)
+func (a *callEdgesEchoCallee) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
+	res, err := a.matrixCalleeAdapter.Execute(ctx, sessionID, step, sink, rejection)
 	if err != nil {
 		return res, err
 	}

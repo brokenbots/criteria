@@ -96,7 +96,7 @@ func TestExecuteWithFallbackStream_UnimplementedPermissionsIsOptOut(t *testing.T
 	}
 
 	sink := &adapterEventCollector{}
-	result, err := handle.Execute(context.Background(), "sess-1", step, sink)
+	result, err := handle.Execute(context.Background(), "sess-1", step, sink, nil)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestExecuteWithFallbackStream_BrokenPermissionsStreamSurfacesError(t *testi
 	}
 
 	sink := &adapterEventCollector{}
-	_, err := handle.Execute(context.Background(), "sess-1", step, sink)
+	_, err := handle.Execute(context.Background(), "sess-1", step, sink, nil)
 	if err == nil {
 		t.Fatal("expected error from broken permissions stream")
 	}
@@ -148,7 +148,7 @@ func TestExecuteWithActiveStream_PermActiveForwardsToInterceptSink(t *testing.T)
 	}
 
 	sink := &adapterEventCollector{}
-	result, err := handle.Execute(context.Background(), "sess-active", step, sink)
+	result, err := handle.Execute(context.Background(), "sess-active", step, sink, nil)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}

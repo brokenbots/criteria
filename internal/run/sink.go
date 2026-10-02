@@ -106,12 +106,20 @@ func (s *Sink) OnStepEntered(step, adapterName string, attempt int) {
 	s.publish(&pb.StepEntered{Step: step, Adapter: adapterName, Attempt: int32(attempt)})
 }
 
-func (s *Sink) OnStepOutcome(step, outcome string, duration time.Duration, err error) {
-	p := &pb.StepOutcome{Step: step, Outcome: outcome, DurationMs: duration.Milliseconds()}
+func (s *Sink) OnStepOutcome(step, outcome string, duration time.Duration, err error, comment string) {
+	p := &pb.StepOutcome{Step: step, Outcome: outcome, DurationMs: duration.Milliseconds(), Comment: comment}
 	if err != nil {
 		p.Error = err.Error()
 	}
 	s.publish(p)
+}
+
+// OnStepOutcomeInvalid publishes the StepOutcomeInvalid event (KB-45): a
+// completed attempt was rejected by the step's outcome-contract validation
+// and re-enters the attempt loop. Issues carry the pinned evaluator's issue
+// list verbatim so downstream consumers can render them without re-deriving.
+func (s *Sink) OnStepOutcomeInvalid(step, outcome string, issues []string, attempt int) {
+	s.publish(&pb.StepOutcomeInvalid{Step: step, Outcome: outcome, Issues: issues, Attempt: int32(attempt)})
 }
 
 func (s *Sink) OnStepTransition(from, to, viaOutcome string) {

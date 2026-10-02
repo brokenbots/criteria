@@ -41,7 +41,7 @@ func (m *mockHandle) Info(context.Context) (adapterhost.Info, error) { return m.
 func (m *mockHandle) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (m *mockHandle) Execute(context.Context, string, *workflow.StepNode, adapter.EventSink) (adapter.Result, error) {
+func (m *mockHandle) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, _ *v2.ExecutionRejection) (adapter.Result, error) {
 	return adapter.Result{}, nil
 }
 func (m *mockHandle) CloseSession(context.Context, string) error { return nil }

@@ -107,7 +107,7 @@ func (p *highLogAdapter) Info(context.Context) (adapterhost.Info, error) {
 func (p *highLogAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (p *highLogAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (p *highLogAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	for i := 0; i < benchEventsPerIter; i++ {
 		sink.Log("stdout", p.chunk)
 	}

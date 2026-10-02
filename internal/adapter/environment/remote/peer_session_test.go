@@ -488,7 +488,7 @@ func TestPeerExecuteStreamsResult(t *testing.T) {
 
 	// Execute consumes the server-streamed events via the shared
 	// ExecuteViaClient plumbing (the exact path rpcHandle.Execute uses).
-	res, err := handle.Execute(ctx, "s1", &workflow.StepNode{Name: "probe"}, &recordingEventSink{})
+	res, err := handle.Execute(ctx, "s1", &workflow.StepNode{Name: "probe"}, &recordingEventSink{}, nil)
 	if err != nil {
 		t.Fatalf("Execute over peer handle: %v", err)
 	}
@@ -1076,7 +1076,7 @@ func (stashedLegacyHandle) OpenSession(context.Context, string, map[string]strin
 	return nil
 }
 
-func (stashedLegacyHandle) Execute(context.Context, string, *workflow.StepNode, adapter.EventSink) (adapter.Result, error) {
+func (stashedLegacyHandle) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, _ *v2.ExecutionRejection) (adapter.Result, error) {
 	return adapter.Result{}, nil
 }
 

@@ -24,7 +24,7 @@ func (m *snapshotMockHandle) Info(context.Context) (adapterhost.Info, error) {
 func (m *snapshotMockHandle) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (m *snapshotMockHandle) Execute(context.Context, string, *workflow.StepNode, adapter.EventSink) (adapter.Result, error) {
+func (m *snapshotMockHandle) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, _ *v2.ExecutionRejection) (adapter.Result, error) {
 	return adapter.Result{Outcome: "success"}, nil
 }
 func (m *snapshotMockHandle) CloseSession(context.Context, string) error { return nil }

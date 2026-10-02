@@ -137,7 +137,7 @@ func (a *cri287Copilot) OpenSession(_ context.Context, name string, _, _ map[str
 	return nil
 }
 
-func (a *cri287Copilot) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (a *cri287Copilot) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *criteriav2.ExecutionRejection) (adapter.Result, error) {
 	a.mu.Lock()
 	a.turns++
 	turn := a.turns
@@ -201,7 +201,7 @@ func (a *cri287Shell) OpenSession(_ context.Context, name string, _, _ map[strin
 	return nil
 }
 
-func (a *cri287Shell) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (a *cri287Shell) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink, rejection *criteriav2.ExecutionRejection) (adapter.Result, error) {
 	if !a.shared.isUp() {
 		// The shared phone-home transport is down: the transport close is
 		// replayed verbatim, exactly as the production shim did during the
@@ -276,7 +276,7 @@ func (s *cri287Sink) teardownWindowOpen() bool {
 	return sessions.StepTimeoutTeardownWindowOpen()
 }
 
-func (s *cri287Sink) OnStepOutcome(step, outcome string, _ time.Duration, err error) {
+func (s *cri287Sink) OnStepOutcome(step, outcome string, _ time.Duration, err error, comment string) {
 	msg := ""
 	if err != nil {
 		msg = err.Error()
@@ -506,7 +506,7 @@ func (a *cri287CopilotDying) OpenSession(_ context.Context, name string, _, _ ma
 	return nil
 }
 
-func (a *cri287CopilotDying) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (a *cri287CopilotDying) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *criteriav2.ExecutionRejection) (adapter.Result, error) {
 	a.mu.Lock()
 	a.turns++
 	turn := a.turns
@@ -724,7 +724,7 @@ func (a *cri287ProcessExitCopilot) OpenSession(_ context.Context, name string, _
 	return nil
 }
 
-func (a *cri287ProcessExitCopilot) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (a *cri287ProcessExitCopilot) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *criteriav2.ExecutionRejection) (adapter.Result, error) {
 	a.mu.Lock()
 	a.turns++
 	turn := a.turns

@@ -5,6 +5,7 @@ go 1.26.6
 require (
 	github.com/blang/semver v3.5.1+incompatible
 	github.com/brokenbots/criteria v0.5.7
+	github.com/brokenbots/criteria-adapter-proto v0.7.0
 	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/hcl/v2 v2.24.0
@@ -24,7 +25,6 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.44.0 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.32.40 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.39 // indirect
-	github.com/brokenbots/criteria-adapter-proto v0.6.0 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467 // indirect

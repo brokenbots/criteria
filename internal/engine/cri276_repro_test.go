@@ -395,14 +395,14 @@ func runIdleExecCycle(t *testing.T, podServerOpts []grpc.ServerOption) idleExecC
 	events := cri276AdapterEvents{}
 	step := &workflow.StepNode{Name: "idle-step"}
 
-	res1, err1 := chain.sessions.Execute(ctx, "noop.default", step, events)
+	res1, err1 := chain.sessions.Execute(ctx, "noop.default", step, events, nil)
 	before := chain.acceptCount()
 
 	// Fully idle: no RPCs on any hop. Only pod-side keepalive pings (if any)
 	// generate traffic across the middlebox.
 	time.Sleep(3500 * time.Millisecond)
 
-	res2, err2 := chain.sessions.Execute(ctx, "noop.default", step, events)
+	res2, err2 := chain.sessions.Execute(ctx, "noop.default", step, events, nil)
 	return idleExecCycle{
 		chain:          chain,
 		firstResult:    res1,

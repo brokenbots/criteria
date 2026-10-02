@@ -172,7 +172,7 @@ func (f *fakeHandle) Info(context.Context) (adapterhost.Info, error) {
 func (f *fakeHandle) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (f *fakeHandle) Execute(context.Context, string, *workflow.StepNode, adapter.EventSink) (adapter.Result, error) {
+func (f *fakeHandle) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, _ *v2.ExecutionRejection) (adapter.Result, error) {
 	return adapter.Result{}, nil
 }
 func (f *fakeHandle) CloseSession(context.Context, string) error { return nil }

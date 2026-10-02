@@ -21,6 +21,7 @@ import (
 	"sync"
 	"testing"
 
+	criteriav2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
@@ -85,7 +86,7 @@ func (a *cri271Adapter) OpenSession(_ context.Context, name string, _, _ map[str
 	return nil
 }
 
-func (a *cri271Adapter) Execute(_ context.Context, name string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (a *cri271Adapter) Execute(_ context.Context, name string, step *workflow.StepNode, _ adapter.EventSink, rejection *criteriav2.ExecutionRejection) (adapter.Result, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	stepName := ""

@@ -55,7 +55,7 @@ func testHeartbeats(t *testing.T, name string, loader adapterhost.Loader, opts *
 	// Idle past the threshold. A correct host+adapter pair keeps the session
 	// alive with log-stream heartbeats.
 	time.Sleep(threshold * 3)
-	res, execErr := sm.Execute(ctx, sessionID, baseStep(name, info.Name, cloneConfig(opts.StepConfig)), &recordingSink{})
+	res, execErr := sm.Execute(ctx, sessionID, baseStep(name, info.Name, cloneConfig(opts.StepConfig)), &recordingSink{}, nil)
 	if execErr != nil {
 		t.Fatalf("%s: idle session failed after %s: %v", name, threshold, execErr)
 	}

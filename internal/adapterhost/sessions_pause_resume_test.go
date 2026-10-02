@@ -29,7 +29,7 @@ func (m *pauseResumeMockHandle) Info(context.Context) (Info, error) {
 func (m *pauseResumeMockHandle) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (m *pauseResumeMockHandle) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (m *pauseResumeMockHandle) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	return adapter.Result{}, nil
 }
 func (m *pauseResumeMockHandle) CloseSession(context.Context, string) error { return nil }
@@ -325,7 +325,7 @@ func (c *counterHandle) OpenSession(context.Context, string, map[string]string, 
 	}()
 	return nil
 }
-func (c *counterHandle) Execute(context.Context, string, *workflow.StepNode, adapter.EventSink) (adapter.Result, error) {
+func (c *counterHandle) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, _ *v2.ExecutionRejection) (adapter.Result, error) {
 	return adapter.Result{}, nil
 }
 func (c *counterHandle) CloseSession(context.Context, string) error {

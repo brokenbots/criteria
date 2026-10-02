@@ -29,7 +29,7 @@ func (p *sharedWritesAdapter) Info(context.Context) (adapterhost.Info, error) {
 func (p *sharedWritesAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (p *sharedWritesAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *sharedWritesAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	return adapter.Result{Outcome: p.outcome, Outputs: ctyOut(p.outputs)}, nil
 }
 func (p *sharedWritesAdapter) CloseSession(context.Context, string) error { return nil }
@@ -47,7 +47,7 @@ func (p *sharedWritesAdapter) Restore(context.Context, string, []byte, uint32) e
 // adapterFunc is a adapterhost.Handle backed by a function, for flexible test control.
 type adapterFunc struct {
 	name string
-	fn   func(context.Context, string, *workflow.StepNode, adapter.EventSink) (adapter.Result, error)
+	fn   func(context.Context, string, *workflow.StepNode, adapter.EventSink, *v2.ExecutionRejection) (adapter.Result, error)
 }
 
 func (p *adapterFunc) Info(context.Context) (adapterhost.Info, error) {
@@ -56,8 +56,8 @@ func (p *adapterFunc) Info(context.Context) (adapterhost.Info, error) {
 func (p *adapterFunc) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (p *adapterFunc) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
-	return p.fn(ctx, sessionID, step, sink)
+func (p *adapterFunc) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
+	return p.fn(ctx, sessionID, step, sink, rejection)
 }
 func (p *adapterFunc) CloseSession(context.Context, string) error { return nil }
 func (p *adapterFunc) Kill()                                      {}
@@ -175,7 +175,7 @@ state "done" {
 
 	plug := &adapterFunc{
 		name: "sw",
-		fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+		fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 			callNum++
 			if callNum == 1 {
 				// set_val: return the_msg output
@@ -362,7 +362,7 @@ state "done" {
 
 	plug := &adapterFunc{
 		name: "sw",
-		fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+		fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 			callNum++
 			if callNum == 1 {
 				// collect: return tag1 and tag2 raw outputs
@@ -492,7 +492,7 @@ state "done" {
 
 	plug := &adapterFunc{
 		name: "sw",
-		fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+		fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 			if callNum < len(items) {
 				tag := items[callNum]
 				callNum++
@@ -639,7 +639,7 @@ state "done" {
 	capturedSink := &outputCaptureSink{}
 	plug := &adapterFunc{
 		name: "sw",
-		fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+		fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 			callNum++
 			if callNum == 1 {
 				return adapter.Result{Outcome: "success", Outputs: ctyOut(map[string]string{"delta": "3"})}, nil

@@ -78,7 +78,11 @@ func compileAdapterStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[strin
 
 	node := newAdapterStepNode(sp, spec, adapterRef, effectiveOnCrash, envKey, timeout, inputMap, inputExprs, secretInputMap, secretInputExprs, outputSchema, maxVisits)
 	diags = append(diags, validateAllowTools(sp.Name, adapterType, node.AllowTools, schemas)...)
-	diags = append(diags, compileOutcomeBlock(sp, node, g, opts, schemas[adapterRef].OutputSchema)...)
+	// adapterRef is the composite "<type>.<name>" key into g.Adapters; the
+	// schemas lookup is keyed by adapter type, so use the node's resolved
+	// output schema (W18-era bug: schemas[adapterRef] missed and silently
+	// disabled output-ref validation).
+	diags = append(diags, compileOutcomeBlock(sp, node, g, opts, schemas[adapterTypeFromRef(adapterRef)].OutputSchema)...)
 
 	if len(node.Outcomes) == 0 {
 		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("step %q: at least one outcome is required", sp.Name)})

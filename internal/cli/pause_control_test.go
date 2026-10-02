@@ -84,7 +84,7 @@ func (g *pauseGateHandle) Info(context.Context) (adapterhost.Info, error) {
 func (g *pauseGateHandle) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (g *pauseGateHandle) Execute(ctx context.Context, _ string, node *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (g *pauseGateHandle) Execute(ctx context.Context, _ string, node *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	g.mu.Lock()
 	ch, ok := g.blocked[node.Name]
 	g.mu.Unlock()

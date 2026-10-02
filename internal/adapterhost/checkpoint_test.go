@@ -50,7 +50,7 @@ func (h *ckptHandle) OpenSession(context.Context, string, map[string]string, map
 	h.mu.Unlock()
 	return nil
 }
-func (h *ckptHandle) Execute(context.Context, string, *workflow.StepNode, adapter.EventSink) (adapter.Result, error) {
+func (h *ckptHandle) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, _ *v2.ExecutionRejection) (adapter.Result, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.state = append(h.state, '.')
@@ -176,7 +176,7 @@ func TestCheckpointAfterExecute_SavesDeclaredStateAtStepBoundary(t *testing.T) {
 	rec := &ckptRecorder{}
 	m, sess := openStatefulSession(t, h, rec)
 
-	if _, err := sess.handle.Execute(context.Background(), sess.Name, &workflow.StepNode{}, nil); err != nil {
+	if _, err := sess.handle.Execute(context.Background(), sess.Name, &workflow.StepNode{}, nil, nil); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if err := ckptAfter(m, sess); err != nil {
@@ -280,7 +280,7 @@ func TestCheckpointAfterExecute_OverCapBlobRefusedLoudly(t *testing.T) {
 	m, sess := openStatefulSession(t, h, rec)
 
 	for i := 0; i < 10; i++ {
-		if _, err := sess.handle.Execute(context.Background(), sess.Name, &workflow.StepNode{}, nil); err != nil {
+		if _, err := sess.handle.Execute(context.Background(), sess.Name, &workflow.StepNode{}, nil, nil); err != nil {
 			t.Fatalf("Execute: %v", err)
 		}
 	}

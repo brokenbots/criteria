@@ -19,8 +19,8 @@ type ckPointerSink struct {
 	onStepOutcome func(step string)
 }
 
-func (s *ckPointerSink) OnStepOutcome(step, outcome string, d time.Duration, err error) {
-	s.fakeSink.OnStepOutcome(step, outcome, d, err)
+func (s *ckPointerSink) OnStepOutcome(step, outcome string, d time.Duration, err error, comment string) {
+	s.fakeSink.OnStepOutcome(step, outcome, d, err, "")
 	if s.onStepOutcome != nil {
 		s.onStepOutcome(step)
 	}

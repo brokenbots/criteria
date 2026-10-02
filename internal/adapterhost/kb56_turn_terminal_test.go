@@ -103,7 +103,7 @@ func runKB56FinalizedMidStream(t *testing.T, hasPermStream bool, client *kb56Con
 	collector := &adapterEventCollector{}
 
 	start := time.Now()
-	result, err := ExecuteViaClient(ctx, client, "copilot", "s1", hasPermStream, kb53Step(), collector)
+	result, err := ExecuteViaClient(ctx, client, "copilot", "s1", hasPermStream, kb53Step(), collector, nil)
 	returned := time.Since(start)
 
 	if err != nil {
@@ -176,7 +176,7 @@ func TestExecuteViaClient_KB56NilPayloadFinalizeDoesNotEndTurn(t *testing.T) {
 	defer cancel()
 	collector := &adapterEventCollector{}
 
-	result, err := ExecuteViaClient(ctx, client, "copilot", "s1", true, kb53Step(), collector)
+	result, err := ExecuteViaClient(ctx, client, "copilot", "s1", true, kb53Step(), collector, nil)
 	if err == nil {
 		t.Fatal("expected the stream to end without a result: a nil-payload finalize carries no verdict")
 	}

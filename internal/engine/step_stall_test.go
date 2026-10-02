@@ -40,7 +40,7 @@ func (b *blockingAdapter) OpenSession(context.Context, string, map[string]string
 	return nil
 }
 
-func (b *blockingAdapter) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (b *blockingAdapter) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *criteriav2.ExecutionRejection) (adapter.Result, error) {
 	b.enteredOnce.Do(func() { close(b.entered) })
 	<-ctx.Done()
 	return adapter.Result{}, ctx.Err()
@@ -146,7 +146,7 @@ func TestStepStall_FailsRunWithTypedError(t *testing.T) {
 
 	// The watchdog cancels the wedged Execute on its own; the wall-clock
 	// guard only catches a full regression to the wedged behavior.
-	result, _, err := n.executeStepTimed(context.Background(), deps, step)
+	result, _, err := n.executeStepTimed(context.Background(), deps, step, nil)
 
 	if err == nil {
 		t.Fatal("a wedged step must fail the run")
@@ -193,7 +193,7 @@ func TestStepStall_ProgressPreventsStall(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
 	defer cancel()
-	_, _, err := n.executeStepTimed(ctx, deps, step)
+	_, _, err := n.executeStepTimed(ctx, deps, step, nil)
 
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("parent cancellation must surface as its own error, got: %v", err)
@@ -213,7 +213,7 @@ func TestStepStall_ParentCancelWins(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	_, _, err := n.executeStepTimed(ctx, deps, step)
+	_, _, err := n.executeStepTimed(ctx, deps, step, nil)
 
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("parent cancellation must surface as its own error, got: %v", err)
@@ -234,7 +234,7 @@ func TestStepStall_StepTimeoutCeilingUnchanged(t *testing.T) {
 	timedStep.Timeout = 50 * time.Millisecond
 	n := &stepNode{graph: g, step: &timedStep}
 
-	_, _, err := n.executeStepTimed(context.Background(), deps, &timedStep)
+	_, _, err := n.executeStepTimed(context.Background(), deps, &timedStep, nil)
 
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("a step-declared timeout must surface as the CRI-275 ceiling error, got: %v", err)
@@ -281,7 +281,7 @@ func TestStepStall_DisabledWindow(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
 	defer cancel()
-	_, _, err := n.executeStepTimed(ctx, deps, step)
+	_, _, err := n.executeStepTimed(ctx, deps, step, nil)
 
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("disabled stall window must keep plain parent-cancellation semantics, got: %v", err)
@@ -313,7 +313,7 @@ func TestStepStallIdle(t *testing.T) {
 	before := time.Now().Add(-time.Hour)
 	if _, err := sessions.Execute(ctx, "noop.default", &workflow.StepNode{
 		Name: "s", TargetKind: workflow.StepTargetAdapter, AdapterRef: "noop.default",
-	}, noopSink{}); err != nil {
+	}, noopSink{}, nil); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 

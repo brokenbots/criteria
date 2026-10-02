@@ -449,7 +449,7 @@ func TestSessionManager_Open_LockedOCIAdapter_Sandbox_ProductionShim(t *testing.
 		Name:  "probe",
 		Input: map[string]string{"connect": "8.8.8.8:53"},
 	}
-	denyRes, err := sm.Execute(ctx, "noop.deny", denyStep, &adapterEventCollector{})
+	denyRes, err := sm.Execute(ctx, "noop.deny", denyStep, &adapterEventCollector{}, nil)
 	if err != nil {
 		t.Fatalf("execute deny probe: %v", err)
 	}
@@ -467,7 +467,7 @@ func TestSessionManager_Open_LockedOCIAdapter_Sandbox_ProductionShim(t *testing.
 		Name:  "probe",
 		Input: map[string]string{"connect": strings.TrimPrefix(server.URL, "http://")},
 	}
-	allowRes, err := sm.Execute(ctx, "noop.allow", allowStep, &adapterEventCollector{})
+	allowRes, err := sm.Execute(ctx, "noop.allow", allowStep, &adapterEventCollector{}, nil)
 	if err != nil {
 		t.Fatalf("execute allow probe: %v", err)
 	}

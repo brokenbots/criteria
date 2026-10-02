@@ -54,7 +54,7 @@ func TestSessionManager_RealEarlyLogAdapter_SurvivesIdleStall(t *testing.T) {
 	time.Sleep(35 * time.Second)
 
 	step := &workflow.StepNode{Name: "run"}
-	_, err := sm.Execute(ctx, "agent", step, &logEventCollector{})
+	_, err := sm.Execute(ctx, "agent", step, &logEventCollector{}, nil)
 	if err != nil {
 		t.Fatalf("expected Execute to succeed after idle past stall threshold, got %v", err)
 	}

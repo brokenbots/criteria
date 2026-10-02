@@ -188,7 +188,7 @@ func TestToolCallChain_ThreeAdapters(t *testing.T) {
 	chain := startToolCallChain(t, chainGammaTarget, 0)
 
 	inner := &adapterEventCollector{}
-	res, err := chain.sm.Execute(context.Background(), chainAlphaSession, toolCallChainStep(), inner)
+	res, err := chain.sm.Execute(context.Background(), chainAlphaSession, toolCallChainStep(), inner, nil)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -242,7 +242,7 @@ func TestToolCallChain_DepthExceeded(t *testing.T) {
 	chain := startToolCallChain(t, chainGammaTarget, 1)
 
 	inner := &adapterEventCollector{}
-	res, err := chain.sm.Execute(context.Background(), chainAlphaSession, toolCallChainStep(), inner)
+	res, err := chain.sm.Execute(context.Background(), chainAlphaSession, toolCallChainStep(), inner, nil)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -284,7 +284,7 @@ func TestToolCallChain_CycleDetected(t *testing.T) {
 	chain := startToolCallChain(t, chainAlphaTarget, 0)
 
 	inner := &adapterEventCollector{}
-	res, err := chain.sm.Execute(context.Background(), chainAlphaSession, toolCallChainStep(), inner)
+	res, err := chain.sm.Execute(context.Background(), chainAlphaSession, toolCallChainStep(), inner, nil)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}

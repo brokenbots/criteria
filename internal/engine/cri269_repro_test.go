@@ -186,7 +186,7 @@ func TestEngine_CRI269_SubworkflowPerScopeRemoteAdapterIsDeferredAndRemote(t *te
 
 	// Phase 3: bind attempt. Execute must promote the verified record over the
 	// shim handshake — never by resolving the OCI-cache binary locally.
-	result, err := sessions.Execute(ctx, adapterID, body.Steps["work"], noopEventSink{})
+	result, err := sessions.Execute(ctx, adapterID, body.Steps["work"], noopEventSink{}, nil)
 	if err != nil {
 		t.Fatalf("bind/execute %q: %v", adapterID, err)
 	}

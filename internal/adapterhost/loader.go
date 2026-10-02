@@ -82,7 +82,12 @@ type LogStreamStarter interface {
 type Handle interface {
 	Info(ctx context.Context) (Info, error)
 	OpenSession(ctx context.Context, id string, config, secrets map[string]string) error
-	Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error)
+	// Execute runs one step attempt. rejection, when non-nil, carries the
+	// host-rejection repair context (KB-45) for the previous attempt; the
+	// adapter is expected to retry the step under it. The host re-validates
+	// every attempt's verdict against the step's outcome contracts, except a
+	// host-synthesized fallback (validated at synthesis).
+	Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error)
 	CloseSession(ctx context.Context, id string) error
 	Kill()
 	// Pause asks the adapter to halt work without losing state.
@@ -504,12 +509,12 @@ func isExpectedStreamClose(err error, extra ...codes.Code) bool {
 
 // Execute streams step execution via the RPC adapter, handling concurrent log streaming,
 // event routing, and partial failure recovery.
-func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	p.permMu.Lock()
 	hasPermStream := p.permActive[sessionID]
 	p.permMu.Unlock()
 
-	return ExecuteViaClient(ctx, p.rpc, p.name, sessionID, hasPermStream, step, sink)
+	return ExecuteViaClient(ctx, p.rpc, p.name, sessionID, hasPermStream, step, sink, rejection)
 }
 
 // ExecuteViaClient runs one adapter v2 Execute RPC through the standard
@@ -520,7 +525,7 @@ func (p *rpcHandle) Execute(ctx context.Context, sessionID string, step *workflo
 // permission stream is already active (SessionManager path); callers without
 // one (e.g. conformance tests bypassing SessionManager) pass false to get the
 // fallback per-Execute permission stream.
-func ExecuteViaClient(ctx context.Context, client Client, adapterName, sessionID string, hasPermStream bool, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func ExecuteViaClient(ctx context.Context, client Client, adapterName, sessionID string, hasPermStream bool, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	req := &v2.ExecuteRequest{
 		SessionId:       sessionID,
 		StepName:        step.Name,
@@ -528,6 +533,14 @@ func ExecuteViaClient(ctx context.Context, client Client, adapterName, sessionID
 		SecretInputs:    cloneConfig(step.SecretInputs),
 		AllowedOutcomes: collectAllowedOutcomes(step),
 	}
+	if contracts := outcomeContractsForStep(step); contracts != nil {
+		// KB-45: contract-bearing steps publish their outcome contracts (and
+		// the repair context for a rejected prior attempt) on the wire;
+		// legacy steps keep the v0.5-era request shape byte-identically.
+		req.AllowedOutcomes = allowedOutcomesForContracts(step)
+		req.OutcomeContracts = contracts
+	}
+	req.Rejection = rejection
 
 	// serialized wraps sink so concurrent Adapter/Log calls from executeCaptureSink
 	// and logForwardSink are safe regardless of the sink implementation.
@@ -561,13 +574,24 @@ func ExecuteViaClient(ctx context.Context, client Client, adapterName, sessionID
 // resolvable. A finalization-only verdict (outcome.finalized event, no
 // delivered result) still requires a live host context so the KB-56 cut and
 // the CRI-275 step-ceiling teardown semantics stay intact.
-func rescueAdapterVerdict(sink *executeCaptureSink, execErr error, ctx context.Context, stepName string) (adapter.Result, bool) {
+// rescueVerdict frames a rescued attempt verdict for contract validation: a
+// delivered wire result keeps its verbatim outputs_json bytes (including an
+// undecodable payload, which a contract step must still issue under the
+// pinned payload_schema vocabulary); a finalize-synthesized verdict
+// serializes from its typed shape.
+type rescueVerdict struct {
+	result    adapter.Result
+	rawJSON   []byte
+	delivered bool
+}
+
+func rescueAdapterVerdict(sink *executeCaptureSink, execErr error, ctx context.Context, stepName string) (rescueVerdict, bool) {
 	result, ok := sink.rescueResult()
 	if !ok || (execErr == nil && sink.done) {
-		return adapter.Result{}, false
+		return rescueVerdict{}, false
 	}
 	if ctx.Err() != nil && !sink.done {
-		return adapter.Result{}, false
+		return rescueVerdict{}, false
 	}
 	if sink.finalizeKilled {
 		slog.Info("adapter outcome finalized mid-stream; ended the turn at the submitted outcome",
@@ -576,143 +600,13 @@ func rescueAdapterVerdict(sink *executeCaptureSink, execErr error, ctx context.C
 		slog.Warn("adapter execute stream ended without a clean result; using the adapter's own verdict",
 			"step", stepName, "outcome", result.Outcome, "error", execErr)
 	}
-	sink.applyNeedsReviewOverride(&result)
-	return result, true
+	v := rescueVerdict{result: result, delivered: sink.done}
+	if v.delivered {
+		// sink.done implies the captured-win path of sink.rescueResult.
+		v.rawJSON = sink.rawOutputsJSON
+	}
+	return v, true
 }
-
-// executeWithFallbackStream runs Execute with a per-Execute permission stream
-// for callers (e.g. conformance tests) that bypass SessionManager.
-func executeWithFallbackStream(ctx context.Context, client Client, adapterName string, step *workflow.StepNode, serialized *serializedEventSink, req *v2.ExecuteRequest) (adapter.Result, error) {
-	execCtx, cancelExec := context.WithCancel(ctx)
-	defer cancelExec()
-
-	requests := make(chan *v2.PermissionEvent, 16)
-	_, cancelPerm, permDone := startFallbackPermStream(ctx, client, requests, cancelExec)
-	defer cancelPerm()
-
-	captureSink := &executeCaptureSink{
-		sink:            serialized,
-		policy:          NewPolicy(step.AllowTools),
-		allowTools:      step.AllowTools,
-		adapterName:     adapterName,
-		outputSchema:    step.OutputSchema,
-		requests:        requests,
-		ctx:             execCtx,
-		onTurnFinalized: cancelExec,
-	}
-
-	execErr := client.Execute(execCtx, req, captureSink)
-
-	close(requests)
-	cancelPerm()
-	permErr := <-permDone
-
-	// KB-53/KB-56: see rescueAdapterVerdict — the rescued verdict still wins
-	// after the finalize cut while the host context is alive.
-	if result, ok := rescueAdapterVerdict(captureSink, execErr, ctx, step.Name); ok {
-		return result, nil
-	}
-
-	if execErr != nil {
-		if errors.Is(execErr, context.Canceled) && ctx.Err() == nil {
-			if !isExpectedStreamClose(permErr) {
-				return adapter.Result{Outcome: "failure"}, fmt.Errorf("permissions stream failure aborted execute: %w", permErr)
-			}
-		}
-		return adapter.Result{Outcome: "failure"}, execErr
-	}
-	if !isExpectedStreamClose(permErr, codes.Unimplemented) {
-		return adapter.Result{Outcome: "failure"}, fmt.Errorf("adapter permissions stream: %w", permErr)
-	}
-	if !captureSink.done {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return adapter.Result{Outcome: "failure"}, ctxErr
-		}
-		return adapter.Result{Outcome: "failure"}, errors.New("adapter execute stream ended without result")
-	}
-	captureSink.applyNeedsReviewOverride(&captureSink.result)
-	return captureSink.result, nil
-}
-
-func startFallbackPermStream(ctx context.Context, client Client, requests chan *v2.PermissionEvent, cancelExec func()) (context.Context, context.CancelFunc, chan error) {
-	permCtx, cancelPerm := context.WithCancel(ctx)
-	permDone := make(chan error, 1)
-	go func() {
-		err := client.Permissions(permCtx, requests)
-		permDone <- err
-		if status.Code(err) == codes.Unimplemented {
-			for range requests {
-			}
-			return
-		}
-		if !isExpectedStreamClose(err) {
-			cancelExec()
-		}
-	}()
-	return permCtx, cancelPerm, permDone
-}
-
-// executeWithActiveStream runs Execute when a session-scoped permission stream
-// is already active.
-func executeWithActiveStream(ctx context.Context, client Client, step *workflow.StepNode, serialized *serializedEventSink, req *v2.ExecuteRequest) (adapter.Result, error) {
-	captureSink := &executeCaptureSink{
-		sink:         serialized,
-		policy:       NewPolicy(step.AllowTools),
-		allowTools:   step.AllowTools,
-		outputSchema: step.OutputSchema,
-	}
-
-	// KB-56: give the Execute stream its own cancellable layer so an adapter
-	// outcome.finalized mid-stream can end the turn at the submitted outcome
-	// instead of letting the stream's continuation keep the turn open until a
-	// watchdog tears the session down. Cancelling this layer (not the caller's
-	// context) keeps engine- or run-initiated teardown semantics intact.
-	execCtx, cancelExec := context.WithCancel(ctx)
-	defer cancelExec()
-	captureSink.onTurnFinalized = cancelExec
-
-	execErr := client.Execute(execCtx, req, captureSink)
-
-	// KB-53/KB-56: see rescueAdapterVerdict — this is where the incident's
-	// outcome.finalized ready_for_review was dropped and the develop step
-	// resolved failure. The rescue applies only while the host context is
-	// alive so engine- or run-initiated teardown semantics stay intact.
-	if result, ok := rescueAdapterVerdict(captureSink, execErr, ctx, step.Name); ok {
-		return result, nil
-	}
-
-	if execErr != nil {
-		// When the caller's context is cancelled (run teardown) or times out,
-		// the adapter's Execute crosses the gRPC boundary as a codes.Canceled /
-		// codes.DeadlineExceeded status, which does not satisfy
-		// errors.Is(err, context.Canceled). Surface the canonical context error
-		// so callers can detect cancellation/timeout uniformly across in- and
-		// out-of-process adapters.
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return adapter.Result{Outcome: "failure"}, ctxErr
-		}
-		return adapter.Result{Outcome: "failure"}, execErr
-	}
-	if !captureSink.done {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return adapter.Result{Outcome: "failure"}, ctxErr
-		}
-		return adapter.Result{Outcome: "failure"}, errors.New("adapter execute stream ended without result")
-	}
-	captureSink.applyNeedsReviewOverride(&captureSink.result)
-	return captureSink.result, nil
-}
-
-// adapterEventFinalizedOutcome is the adapter event kind used by adapters
-// that resolve their turn at the adapter level mid-stream (the copilot
-// submit_outcome tool, guard KB-42). The payload shape is
-// {"outcome": string, "reason": string(possibly redacted upstream)}.
-const adapterEventFinalizedOutcome = "outcome.finalized"
-
-// maxChunkBufBytes is the upper bound for chunk-reassembly buffers in
-// executeCaptureSink. Payloads that would exceed this limit are rejected with
-// an error to prevent unbounded memory growth from a misbehaving adapter.
-const maxChunkBufBytes = 64 * 1024 * 1024 // 64 MiB
 
 // executeCaptureSink implements ExecuteEventSink for use in rpcHandle.Execute.
 // It routes AdapterEvent to the upstream EventSink, evaluates the host-side
@@ -723,8 +617,18 @@ const maxChunkBufBytes = 64 * 1024 * 1024 // 64 MiB
 // ExecuteResult.
 type executeCaptureSink struct {
 	sink   adapter.EventSink
+	step   *workflow.StepNode
 	result adapter.Result
 	done   bool
+
+	// comment carries the ExecuteResult comment across chunk fragments.
+	comment string
+	// rawOutputsJSON holds the verbatim outputs_json bytes of the captured
+	// result (chunk-reassembled or direct) for outcome-contract validation.
+	// It may hold bytes decodeOutputsJSON rejected when the step bears
+	// outcome contracts: the raw bytes let the evaluator issue the pinned
+	// payload_schema error instead of failing the stream.
+	rawOutputsJSON []byte
 
 	// lastDecisionDenied records whether the step's LAST permission decision
 	// was a denial. It triggers the outcome override (success → needs_review)
@@ -788,6 +692,204 @@ type executeCaptureSink struct {
 	resultOutcome       string // outcome carried across result chunk fragments
 	resultChunkNextSeq  uint32 // expected next result chunk seq (0 = idle)
 }
+
+// resolvedOutcome applies the pinned outcome-contract validation (KB-45) to a
+// resolved attempt verdict BEFORE any downstream mapping or permission
+// override, so success→needs_review cannot launder a payload the step's
+// contracts reject. Delivered verdicts are validated from their verbatim
+// outputs_json bytes; finalize-synthesized and typed verdicts serialize
+// through wireOutcomeResult. The needs_review override applies only after
+// validation. Legacy (contract-less) steps pass through untouched.
+func (s *executeCaptureSink) resolvedOutcome(step *workflow.StepNode, v *rescueVerdict) (adapter.Result, error) {
+	var results []*v2.ExecuteResult
+	switch {
+	case v.delivered:
+		results = []*v2.ExecuteResult{{
+			Outcome:     v.result.Outcome,
+			Comment:     v.result.Comment,
+			OutputsJson: v.rawJSON,
+		}}
+	case v.result.Outcome != "" || len(v.result.Outputs) > 0:
+		wire, err := wireOutcomeResult(v.result)
+		if err != nil {
+			return adapter.Result{}, &OutcomeInvalidError{Outcome: v.result.Outcome, Issues: []string{fmt.Sprintf("payload error: %v", err)}}
+		}
+		results = []*v2.ExecuteResult{wire}
+	}
+	synth, issues := evaluateOutcomeContracts(step, results)
+	if len(issues) > 0 {
+		return adapter.Result{}, &OutcomeInvalidError{Outcome: v.result.Outcome, Issues: issues}
+	}
+	if synth != nil && v.result.Outcome == "" {
+		// Never-finalized attempt with a fallback contract: the evaluator
+		// synthesized the fallback outcome. Mark the synthesis so repeated
+		// local validation (session-level re-check, respawn retry) skips it
+		// instead of validating the empty verdict against the fallback's own
+		// contract (KB-45).
+		v.result = *synth
+		v.result.SynthesizedFallback = true
+	}
+	s.applyNeedsReviewOverride(&v.result)
+	return v.result, nil
+}
+
+// executeWithFallbackStream runs Execute with a per-Execute permission stream
+// for callers (e.g. conformance tests) that bypass SessionManager.
+func executeWithFallbackStream(ctx context.Context, client Client, adapterName string, step *workflow.StepNode, serialized *serializedEventSink, req *v2.ExecuteRequest) (adapter.Result, error) {
+	execCtx, cancelExec := context.WithCancel(ctx)
+	defer cancelExec()
+
+	requests := make(chan *v2.PermissionEvent, 16)
+	_, cancelPerm, permDone := startFallbackPermStream(ctx, client, requests, cancelExec)
+	defer cancelPerm()
+
+	captureSink := &executeCaptureSink{
+		sink:            serialized,
+		step:            step,
+		policy:          NewPolicy(step.AllowTools),
+		allowTools:      step.AllowTools,
+		adapterName:     adapterName,
+		outputSchema:    step.OutputSchema,
+		requests:        requests,
+		ctx:             execCtx,
+		onTurnFinalized: cancelExec,
+	}
+
+	execErr := client.Execute(execCtx, req, captureSink)
+
+	close(requests)
+	cancelPerm()
+	permErr := <-permDone
+
+	// KB-53/KB-56: see rescueAdapterVerdict — the rescued verdict still wins
+	// after the finalize cut while the host context is alive.
+	if v, ok := rescueAdapterVerdict(captureSink, execErr, ctx, step.Name); ok {
+		return captureSink.resolvedOutcome(step, &v)
+	}
+
+	if execErr != nil {
+		if errors.Is(execErr, context.Canceled) && ctx.Err() == nil {
+			if !isExpectedStreamClose(permErr) {
+				return adapter.Result{Outcome: "failure"}, fmt.Errorf("permissions stream failure aborted execute: %w", permErr)
+			}
+		}
+		return adapter.Result{Outcome: "failure"}, execErr
+	}
+	if !isExpectedStreamClose(permErr, codes.Unimplemented) {
+		return adapter.Result{Outcome: "failure"}, fmt.Errorf("adapter permissions stream: %w", permErr)
+	}
+	return executeCapturedVerdict(ctx, captureSink, step)
+}
+
+// executeCapturedVerdict resolves the post-Execute verdict from the capture
+// sink: the delivered result verbatim, the KB-45 fallback/no_result lanes for
+// a contract step that never finalized, or the stream-end error for a legacy
+// step.
+func executeCapturedVerdict(ctx context.Context, s *executeCaptureSink, step *workflow.StepNode) (adapter.Result, error) {
+	if !s.done {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return adapter.Result{Outcome: "failure"}, ctxErr
+		}
+		if outcomeContractsForStep(step) != nil {
+			// KB-45: a contract-bearing step ended without a finalized
+			// result — the evaluator engages the fallback lane (or issues
+			// the pinned no_result error) instead of the legacy stream
+			// error, feeding the engine's repair loop.
+			return s.resolvedOutcome(step, &rescueVerdict{})
+		}
+		return adapter.Result{Outcome: "failure"}, errors.New("adapter execute stream ended without result")
+	}
+	v := rescueVerdict{result: s.result, rawJSON: s.rawOutputsJSON, delivered: true}
+	return s.resolvedOutcome(step, &v)
+}
+
+func startFallbackPermStream(ctx context.Context, client Client, requests chan *v2.PermissionEvent, cancelExec func()) (context.Context, context.CancelFunc, chan error) {
+	permCtx, cancelPerm := context.WithCancel(ctx)
+	permDone := make(chan error, 1)
+	go func() {
+		err := client.Permissions(permCtx, requests)
+		permDone <- err
+		if status.Code(err) == codes.Unimplemented {
+			for range requests {
+			}
+			return
+		}
+		if !isExpectedStreamClose(err) {
+			cancelExec()
+		}
+	}()
+	return permCtx, cancelPerm, permDone
+}
+
+// executeWithActiveStream runs Execute when a session-scoped permission stream
+// is already active.
+func executeWithActiveStream(ctx context.Context, client Client, step *workflow.StepNode, serialized *serializedEventSink, req *v2.ExecuteRequest) (adapter.Result, error) {
+	captureSink := &executeCaptureSink{
+		sink:         serialized,
+		step:         step,
+		policy:       NewPolicy(step.AllowTools),
+		allowTools:   step.AllowTools,
+		outputSchema: step.OutputSchema,
+	}
+
+	// KB-56: give the Execute stream its own cancellable layer so an adapter
+	// outcome.finalized mid-stream can end the turn at the submitted outcome
+	// instead of letting the stream's continuation keep the turn open until a
+	// watchdog tears the session down. Cancelling this layer (not the caller's
+	// context) keeps engine- or run-initiated teardown semantics intact.
+	execCtx, cancelExec := context.WithCancel(ctx)
+	defer cancelExec()
+	captureSink.onTurnFinalized = cancelExec
+
+	execErr := client.Execute(execCtx, req, captureSink)
+
+	// KB-53/KB-56: see rescueAdapterVerdict — this is where the incident's
+	// outcome.finalized ready_for_review was dropped and the develop step
+	// resolved failure. The rescue applies only while the host context is
+	// alive so engine- or run-initiated teardown semantics stay intact.
+	if v, ok := rescueAdapterVerdict(captureSink, execErr, ctx, step.Name); ok {
+		return captureSink.resolvedOutcome(step, &v)
+	}
+
+	if execErr != nil {
+		// When the caller's context is cancelled (run teardown) or times out,
+		// the adapter's Execute crosses the gRPC boundary as a codes.Canceled /
+		// codes.DeadlineExceeded status, which does not satisfy
+		// errors.Is(err, context.Canceled). Surface the canonical context error
+		// so callers can detect cancellation/timeout uniformly across in- and
+		// out-of-process adapters.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return adapter.Result{Outcome: "failure"}, ctxErr
+		}
+		return adapter.Result{Outcome: "failure"}, execErr
+	}
+	if !captureSink.done {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return adapter.Result{Outcome: "failure"}, ctxErr
+		}
+		if outcomeContractsForStep(step) != nil {
+			// KB-45: a contract-bearing step ended without a finalized
+			// result — the evaluator engages the fallback lane (or issues
+			// the pinned no_result error) instead of the legacy stream
+			// error, feeding the engine's repair loop.
+			return captureSink.resolvedOutcome(step, &rescueVerdict{})
+		}
+		return adapter.Result{Outcome: "failure"}, errors.New("adapter execute stream ended without result")
+	}
+	v := rescueVerdict{result: captureSink.result, rawJSON: captureSink.rawOutputsJSON, delivered: true}
+	return captureSink.resolvedOutcome(step, &v)
+}
+
+// adapterEventFinalizedOutcome is the adapter event kind used by adapters
+// that resolve their turn at the adapter level mid-stream (the copilot
+// submit_outcome tool, guard KB-42). The payload shape is
+// {"outcome": string, "reason": string(possibly redacted upstream)}.
+const adapterEventFinalizedOutcome = "outcome.finalized"
+
+// maxChunkBufBytes is the upper bound for chunk-reassembly buffers in
+// executeCaptureSink. Payloads that would exceed this limit are rejected with
+// an error to prevent unbounded memory growth from a misbehaving adapter.
+const maxChunkBufBytes = 64 * 1024 * 1024 // 64 MiB
 
 func (s *executeCaptureSink) Emit(ev *v2.ExecuteEvent) error {
 	if adapterEvt := ev.GetAdapter(); adapterEvt != nil {
@@ -859,49 +961,87 @@ func (s *executeCaptureSink) emitTool(toolEvt *v2.ToolInvocation) error {
 func (s *executeCaptureSink) emitResult(resultEvt *v2.ExecuteResult) error {
 	if chunk := resultEvt.GetChunk(); chunk != nil {
 		// Validate and accumulate outputs_json fragment; capture result when final arrives.
-		seq := chunk.GetSeq()
-		if seq == 0 {
-			s.resultChunkBuf = nil
-			s.resultOutcome = resultEvt.GetOutcome()
-			s.resultChunkNextSeq = 1
-		} else if seq != s.resultChunkNextSeq {
-			expected := s.resultChunkNextSeq
-			s.resultChunkBuf = nil
-			s.resultChunkNextSeq = 0
-			return fmt.Errorf("execute result chunk out-of-order: seq %d expected %d", seq, expected)
-		} else {
-			s.resultChunkNextSeq = seq + 1
-		}
-		if len(s.resultChunkBuf)+len(resultEvt.GetOutputsJson()) > maxChunkBufBytes {
-			s.resultChunkBuf = nil
-			s.resultChunkNextSeq = 0
-			return fmt.Errorf("execute result chunk reassembly: outputs exceed %d bytes", maxChunkBufBytes)
-		}
-		s.resultChunkBuf = append(s.resultChunkBuf, resultEvt.GetOutputsJson()...)
-		if !chunk.GetFinal() {
-			return nil
-		}
-		buf := s.resultChunkBuf
-		s.resultChunkBuf = nil
-		s.resultChunkNextSeq = 0
-		typed, err := s.decodeOutputsJSON(buf)
-		if err != nil {
-			return fmt.Errorf("execute result chunk reassembly: %w", err)
-		}
-		s.result = adapter.Result{Outcome: s.resultOutcome, Outputs: typed}
-		s.done = true
-		return nil
+		return s.emitChunkedResult(resultEvt, chunk)
 	}
-	s.result = adapter.Result{Outcome: resultEvt.GetOutcome()}
+	s.result = adapter.Result{Outcome: resultEvt.GetOutcome(), Comment: resultEvt.GetComment()}
+	s.rawOutputsJSON = nil
 	if oj := resultEvt.GetOutputsJson(); len(oj) > 0 {
+		s.rawOutputsJSON = oj
 		typed, err := s.decodeOutputsJSON(oj)
 		if err != nil {
+			if s.outcomeContracted() {
+				// KB-45: as on the chunked path, an undecodable payload on a
+				// contract-bearing step is captured verbatim AND settles the
+				// verdict (done=true): the contract evaluator then issues the
+				// pinned payload_schema error. Leaving done=false instead
+				// routes through the never-finalized lane, where zero
+				// results makes the evaluator silently synthesize the
+				// fallback outcome, accepting the invalid payload.
+				s.result.Outputs = nil
+				s.done = true
+				return nil
+			}
 			return fmt.Errorf("execute result outputs: %w", err)
 		}
 		s.result.Outputs = typed
 	}
 	s.done = true
 	return nil
+}
+
+// emitChunkedResult reassembles the outputs_json chunk sequence of a chunked
+// ExecuteResult and captures the result when the final fragment arrives. A
+// final payload decodeOutputsJSON rejects is still captured on a
+// contract-bearing step (raw bytes kept for the evaluator's pinned
+// payload_schema issue).
+func (s *executeCaptureSink) emitChunkedResult(resultEvt *v2.ExecuteResult, chunk *v2.Chunk) error {
+	seq := chunk.GetSeq()
+	if seq == 0 {
+		s.resultChunkBuf = nil
+		s.resultOutcome = resultEvt.GetOutcome()
+		s.comment = resultEvt.GetComment()
+		s.resultChunkNextSeq = 1
+	} else if seq != s.resultChunkNextSeq {
+		expected := s.resultChunkNextSeq
+		s.resultChunkBuf = nil
+		s.resultChunkNextSeq = 0
+		return fmt.Errorf("execute result chunk out-of-order: seq %d expected %d", seq, expected)
+	} else {
+		s.resultChunkNextSeq = seq + 1
+	}
+	if len(s.resultChunkBuf)+len(resultEvt.GetOutputsJson()) > maxChunkBufBytes {
+		s.resultChunkBuf = nil
+		s.resultChunkNextSeq = 0
+		return fmt.Errorf("execute result chunk reassembly: outputs exceed %d bytes", maxChunkBufBytes)
+	}
+	s.resultChunkBuf = append(s.resultChunkBuf, resultEvt.GetOutputsJson()...)
+	if !chunk.GetFinal() {
+		return nil
+	}
+	buf := s.resultChunkBuf
+	s.resultChunkBuf = nil
+	s.resultChunkNextSeq = 0
+	s.rawOutputsJSON = buf
+	typed, err := s.decodeOutputsJSON(buf)
+	if err != nil {
+		if s.outcomeContracted() {
+			// KB-45: capture the raw payload verbatim so the contract
+			// evaluator issues the pinned payload_schema error.
+			s.result = adapter.Result{Outcome: s.resultOutcome, Comment: s.comment}
+			s.done = true
+			return nil
+		}
+		return fmt.Errorf("execute result chunk reassembly: %w", err)
+	}
+	s.result = adapter.Result{Outcome: s.resultOutcome, Comment: s.comment, Outputs: typed}
+	s.done = true
+	return nil
+}
+
+// outcomeContracted reports whether the step executes under outcome
+// contracts (KB-45).
+func (s *executeCaptureSink) outcomeContracted() bool {
+	return s.step != nil && outcomeContractsForStep(s.step) != nil
 }
 
 // decodeOutputsJSON decodes a complete outputs_json object into typed cty values.

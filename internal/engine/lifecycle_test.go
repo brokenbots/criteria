@@ -601,7 +601,7 @@ type mkdirAdapter struct {
 	fakeAdapter
 }
 
-func (m *mkdirAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (m *mkdirAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	if err := os.MkdirAll(step.Input["path"], 0o750); err != nil {
 		return adapter.Result{Outcome: "failure"}, fmt.Errorf("mkdir: %w", err)
 	}
@@ -1220,7 +1220,7 @@ func (h *fakeRemoteHandle) Info(context.Context) (adapterhost.Info, error) {
 func (h *fakeRemoteHandle) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (h *fakeRemoteHandle) Execute(context.Context, string, *workflow.StepNode, adapter.EventSink) (adapter.Result, error) {
+func (h *fakeRemoteHandle) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, _ *v2.ExecutionRejection) (adapter.Result, error) {
 	return adapter.Result{Outcome: "success"}, nil
 }
 func (h *fakeRemoteHandle) CloseSession(context.Context, string) error { return nil }

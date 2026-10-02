@@ -162,7 +162,7 @@ func (c *canceledCtxHandle) Info(context.Context) (Info, error) {
 func (c *canceledCtxHandle) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (c *canceledCtxHandle) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (c *canceledCtxHandle) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	return adapter.Result{Outcome: "failure"}, context.Canceled
 }
 func (c *canceledCtxHandle) CloseSession(context.Context, string) error { return nil }
@@ -202,7 +202,7 @@ func TestLoader_HostCanceledContextLogsAtDebug(t *testing.T) {
 	cancel() // pre-cancel to simulate host-initiated cancellation
 
 	sink := &adapterEventCollector{}
-	_, _ = sm.Execute(ctx, "agent", &workflow.StepNode{Name: "run"}, sink)
+	_, _ = sm.Execute(ctx, "agent", &workflow.StepNode{Name: "run"}, sink, nil)
 
 	out := buf.String()
 	if !strings.Contains(out, "DEBUG") {
@@ -220,7 +220,7 @@ func (e *eofHandle) Info(context.Context) (Info, error) { return Info{Name: "eof
 func (e *eofHandle) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (e *eofHandle) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (e *eofHandle) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	return adapter.Result{Outcome: "failure"}, errors.New("eof: connection terminated")
 }
 func (e *eofHandle) CloseSession(context.Context, string) error { return nil }
@@ -255,7 +255,7 @@ func TestLoader_ExpectedCloseLogsAtDebug(t *testing.T) {
 	sm.mu.Unlock()
 
 	sink := &adapterEventCollector{}
-	_, _ = sm.Execute(context.Background(), "agent", &workflow.StepNode{Name: "run"}, sink)
+	_, _ = sm.Execute(context.Background(), "agent", &workflow.StepNode{Name: "run"}, sink, nil)
 
 	out := buf.String()
 	if !strings.Contains(out, "DEBUG") {
@@ -292,7 +292,7 @@ func TestLoader_HostCanceledContextWithEOFLogsAtDebug(t *testing.T) {
 	cancel() // simulate host aborting the run
 
 	sink := &adapterEventCollector{}
-	_, _ = sm.Execute(ctx, "agent", &workflow.StepNode{Name: "run"}, sink)
+	_, _ = sm.Execute(ctx, "agent", &workflow.StepNode{Name: "run"}, sink, nil)
 
 	out := buf.String()
 	if !strings.Contains(out, "DEBUG") {
@@ -385,7 +385,7 @@ func TestLoader_PopulatesAllowedOutcomes(t *testing.T) {
 	}
 
 	sink := &adapterEventCollector{}
-	result, err := p.Execute(context.Background(), "sess-1", step, sink)
+	result, err := p.Execute(context.Background(), "sess-1", step, sink, nil)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -423,7 +423,7 @@ func TestLoader_PopulatesAllowedOutcomes_Empty(t *testing.T) {
 	step := &workflow.StepNode{Name: "open", Outcomes: nil}
 
 	sink := &adapterEventCollector{}
-	if _, err := p.Execute(context.Background(), "sess-2", step, sink); err != nil {
+	if _, err := p.Execute(context.Background(), "sess-2", step, sink, nil); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 
@@ -454,7 +454,7 @@ func TestLoader_ExecuteUsesInputNotConfig(t *testing.T) {
 	}
 
 	sink := &adapterEventCollector{}
-	if _, err := p.Execute(context.Background(), "sess-3", step, sink); err != nil {
+	if _, err := p.Execute(context.Background(), "sess-3", step, sink, nil); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 

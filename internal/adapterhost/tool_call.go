@@ -751,7 +751,9 @@ func (s *permissionInterceptSink) runNestedToolCall(nestedCtx context.Context, n
 	defer nestedCancel()
 	defer s.nested.Done()
 
-	result, execErr := s.mgr.execute(nestedCtx, call.calleeRef, call.calleeStep, s.inner, call.nesting)
+	// KB-45: nested tool calls carry no repair context — the host re-validates
+	// the callee verdict against the callee step's own outcome contracts.
+	result, execErr := s.mgr.execute(nestedCtx, call.calleeRef, call.calleeStep, s.inner, call.nesting, nil)
 
 	// Clear the pending registration before delivering, so a concurrent
 	// session teardown never audits a call whose result was already sent.

@@ -37,6 +37,10 @@ func (s *outcomeSink) OnStepOutcomeUnknown(step, outcome string) {
 	s.unknown = append(s.unknown, struct{ step, outcome string }{step, outcome})
 }
 
+func (s *outcomeSink) OnStepOutcomeInvalid(step, outcome string, issues []string, attempt int) {
+	s.unknown = append(s.unknown, struct{ step, outcome string }{step, outcome})
+}
+
 func (s *outcomeSink) OnAgentPromptInjected(string, string, string, string, time.Time) {}
 
 func (s *outcomeSink) OnRunOutputs(outputs []map[string]string) {

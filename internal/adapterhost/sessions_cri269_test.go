@@ -62,7 +62,7 @@ func (cri269Handle) Info(context.Context) (Info, error) { return Info{}, nil }
 func (cri269Handle) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (cri269Handle) Execute(context.Context, string, *workflow.StepNode, adapter.EventSink) (adapter.Result, error) {
+func (cri269Handle) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, _ *v2.ExecutionRejection) (adapter.Result, error) {
 	panic("cri269Handle.Execute must not be called in these tests")
 }
 func (cri269Handle) CloseSession(context.Context, string) error { return nil }

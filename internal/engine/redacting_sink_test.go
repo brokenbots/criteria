@@ -61,7 +61,7 @@ func (s *recordingSink) OnRunFailed(reason, step string) {
 func (s *recordingSink) OnStepEntered(step, adapterName string, attempt int) {
 	s.onStepEnteredArgs = []string{step, adapterName, intStr(attempt)}
 }
-func (s *recordingSink) OnStepOutcome(step, outcome string, duration time.Duration, err error) {
+func (s *recordingSink) OnStepOutcome(step, outcome string, duration time.Duration, err error, comment string) {
 	s.onStepOutcomeArgs = []string{step, outcome, duration.String()}
 	s.onStepOutcomeErr = err
 }
@@ -132,6 +132,10 @@ func (s *recordingSink) OnStepOutcomeDefaulted(step, original, mapped string) {
 	s.onStepOutcomeDefaultedArgs = []string{step, original, mapped}
 }
 func (s *recordingSink) OnStepOutcomeUnknown(step, outcome string) {
+	s.onStepOutcomeUnknownArgs = []string{step, outcome}
+}
+
+func (s *recordingSink) OnStepOutcomeInvalid(step, outcome string, issues []string, attempt int) {
 	s.onStepOutcomeUnknownArgs = []string{step, outcome}
 }
 
@@ -219,7 +223,7 @@ func TestRedactingSink_OnStepOutcome(t *testing.T) {
 	sink := NewRedactingSink(inner, reg)
 
 	err := errors.New("boom_secret123")
-	sink.OnStepOutcome("step_secret123", "outcome_secret123", time.Second, err)
+	sink.OnStepOutcome("step_secret123", "outcome_secret123", time.Second, err, "")
 	assertRedacted(t, inner.onStepOutcomeArgs, []string{"step_[REDACTED]", "outcome_[REDACTED]", "1s"})
 	if inner.onStepOutcomeErr == nil || inner.onStepOutcomeErr.Error() != "boom_[REDACTED]" {
 		t.Fatalf("expected error redacted, got %v", inner.onStepOutcomeErr)
@@ -232,7 +236,7 @@ func TestRedactingSink_OnStepOutcome_NilError(t *testing.T) {
 	reg.Register("secret123")
 	sink := NewRedactingSink(inner, reg)
 
-	sink.OnStepOutcome("step", "outcome", time.Second, nil)
+	sink.OnStepOutcome("step", "outcome", time.Second, nil, "")
 	if inner.onStepOutcomeErr != nil {
 		t.Fatalf("expected nil error forwarded, got %v", inner.onStepOutcomeErr)
 	}

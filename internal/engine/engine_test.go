@@ -68,7 +68,7 @@ func (s *fakeSink) OnStepEntered(step, _ string, _ int) {
 	s.stepsRun = append(s.stepsRun, step)
 	s.mu.Unlock()
 }
-func (s *fakeSink) OnStepOutcome(string, string, time.Duration, error) {}
+func (s *fakeSink) OnStepOutcome(_, _ string, _ time.Duration, _ error, _ string) {}
 func (s *fakeSink) OnStepTransition(from, to, via string) {
 	s.mu.Lock()
 	s.transitions = append(s.transitions, from+"->"+to)
@@ -96,6 +96,7 @@ func (s *fakeSink) OnAdapterLifecycleEvent(event *AdapterLifecycleEvent) {}
 func (s *fakeSink) OnRunOutputs([]map[string]string)                     {}
 func (s *fakeSink) OnStepOutcomeDefaulted(string, string, string)        {}
 func (s *fakeSink) OnStepOutcomeUnknown(string, string)                  {}
+func (s *fakeSink) OnStepOutcomeInvalid(string, string, []string, int)   {}
 
 func (s *fakeSink) OnAgentPromptInjected(string, string, string, string, time.Time) {}
 func (s *fakeSink) OnCheckpointPointer(*CheckpointPointerEvent)                     {}
@@ -122,7 +123,7 @@ func (p *fakeAdapter) OpenSession(context.Context, string, map[string]string, ma
 	return nil
 }
 
-func (p *fakeAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *fakeAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	return adapter.Result{Outcome: p.outcome}, p.err
 }
 
@@ -929,7 +930,7 @@ func (p *callCountAdapter) Info(context.Context) (adapterhost.Info, error) {
 func (p *callCountAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (p *callCountAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *callCountAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	p.mu.Lock()
 	*p.count++
 	n := *p.count
@@ -963,7 +964,7 @@ func (p *errAdapter) Info(context.Context) (adapterhost.Info, error) {
 func (p *errAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (p *errAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *errAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	return adapter.Result{}, p.err
 }
 func (p *errAdapter) Permit(context.Context, string, string, bool, string) error { return nil }

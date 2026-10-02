@@ -70,7 +70,7 @@ func (a *cri163Callee) Snapshot(context.Context, string) (*v2.SnapshotResponse, 
 }
 func (a *cri163Callee) Restore(context.Context, string, []byte, uint32) error { return nil }
 
-func (a *cri163Callee) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (a *cri163Callee) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	a.rec.record(sessionID, step)
 	sink.Adapter("callee.started", map[string]any{"task": step.Input["task"]})
 	if a.delay > 0 {
@@ -139,7 +139,7 @@ func (a *cri163Caller) StartPermissionStream(_ context.Context, _ string, reques
 	return func() {}, nil
 }
 
-func (a *cri163Caller) Execute(ctx context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (a *cri163Caller) Execute(ctx context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	payload := map[string]any{"request_id": a.requestID, "target": a.target}
 	if a.tool != "" {
 		payload["tool"] = a.tool
@@ -255,7 +255,7 @@ func runCri163Call(t *testing.T, caller *cri163Caller, callee *cri163Callee, ste
 	defer func() { _ = sm.Close(ctx, nestedCalleeSession) }()
 
 	inner := &adapterEventCollector{}
-	res, err := sm.Execute(ctx, nestedCallerSession, step, inner)
+	res, err := sm.Execute(ctx, nestedCallerSession, step, inner, nil)
 	return inner, audit, res, err
 }
 

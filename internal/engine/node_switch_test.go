@@ -44,11 +44,11 @@ func (s *switchSink) OnRunFailed(reason, _ string) {
 	s.failure = reason
 	s.mu.Unlock()
 }
-func (s *switchSink) OnStepEntered(string, string, int)                  {}
-func (s *switchSink) OnStepOutcome(string, string, time.Duration, error) {}
-func (s *switchSink) OnStepTransition(string, string, string)            {}
-func (s *switchSink) OnStepResumed(string, int, string)                  {}
-func (s *switchSink) OnVariableSet(string, string, string)               {}
+func (s *switchSink) OnStepEntered(string, string, int)                             {}
+func (s *switchSink) OnStepOutcome(_, _ string, _ time.Duration, _ error, _ string) {}
+func (s *switchSink) OnStepTransition(string, string, string)                       {}
+func (s *switchSink) OnStepResumed(string, int, string)                             {}
+func (s *switchSink) OnVariableSet(string, string, string)                          {}
 func (s *switchSink) OnStepOutputCaptured(name string, outputs map[string]string) {
 	s.mu.Lock()
 	if s.outputCaptured == nil {
@@ -78,6 +78,7 @@ func (s *switchSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent
 func (s *switchSink) OnRunOutputs([]map[string]string)                            {}
 func (s *switchSink) OnStepOutcomeDefaulted(string, string, string)               {}
 func (s *switchSink) OnStepOutcomeUnknown(string, string)                         {}
+func (s *switchSink) OnStepOutcomeInvalid(string, string, []string, int)          {}
 
 func (s *switchSink) OnAgentPromptInjected(string, string, string, string, time.Time) {}
 func (s *switchSink) OnCheckpointPointer(*engine.CheckpointPointerEvent)              {}

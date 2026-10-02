@@ -16,7 +16,7 @@ type criteriaVersionSink struct {
 	stepErrs     []error
 }
 
-func (s *criteriaVersionSink) OnStepOutcome(step, outcome string, _ time.Duration, err error) {
+func (s *criteriaVersionSink) OnStepOutcome(step, outcome string, _ time.Duration, err error, comment string) {
 	s.stepOutcomes = append(s.stepOutcomes, step+":"+outcome)
 	s.stepErrs = append(s.stepErrs, err)
 }

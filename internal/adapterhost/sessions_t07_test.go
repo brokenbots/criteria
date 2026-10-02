@@ -143,7 +143,7 @@ func TestCRI287_PeerProcessExitedDuringTeardownWindowRoutedAsTimeout(t *testing.
 		sm.MarkEngineStepTimeoutTeardown()
 
 		coll := &adapterEventCollector{}
-		_, err := sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, coll)
+		_, err := sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, coll, nil)
 		if err == nil || !errors.Is(err, cri287TransportErr) {
 			t.Fatalf("Execute err = %v, want the raw transport error (timeout routing)", err)
 		}
@@ -175,7 +175,7 @@ func TestCRI287_PeerProcessExitedDuringTeardownWindowRoutedAsTimeout(t *testing.
 		}
 
 		coll := &adapterEventCollector{}
-		_, err := sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, coll)
+		_, err := sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, coll, nil)
 		var crashErr *SessionCrashError
 		if !errors.As(err, &crashErr) || crashErr.Session != "shell.develop" {
 			t.Fatalf("Execute err = %v, want SessionCrashError after the window expired", err)
@@ -203,7 +203,7 @@ func TestCRI287_PeerTransportCloseDuringTeardownWindowRoutedAsTimeout(t *testing
 	sm.MarkEngineStepTimeoutTeardown()
 
 	coll := &adapterEventCollector{}
-	_, err := sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, coll)
+	_, err := sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, coll, nil)
 	if err == nil || !errors.Is(err, cri287TransportErr) {
 		t.Fatalf("Execute err = %v, want the raw transport error", err)
 	}
@@ -227,7 +227,7 @@ func TestCRI287_PeerWindowExpiredReenablesWireFactClassification(t *testing.T) {
 	sm.StepTimeoutTeardownWindow = 25 * time.Millisecond
 	sm.MarkEngineStepTimeoutTeardown()
 
-	_, err := sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, &adapterEventCollector{})
+	_, err := sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, &adapterEventCollector{}, nil)
 	if err == nil || !errors.Is(err, cri287TransportErr) {
 		t.Fatalf("in-window Execute err = %v, want the raw transport error", err)
 	}
@@ -241,7 +241,7 @@ func TestCRI287_PeerWindowExpiredReenablesWireFactClassification(t *testing.T) {
 	}
 
 	coll := &adapterEventCollector{}
-	_, err = sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, coll)
+	_, err = sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, coll, nil)
 	var crashErr *SessionCrashError
 	if !errors.As(err, &crashErr) || crashErr.Session != "shell.develop" {
 		t.Fatalf("post-window Execute err = %v, want SessionCrashError (window expired)", err)

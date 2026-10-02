@@ -33,7 +33,7 @@ func (h *noLogStreamHandle) OpenSession(_ context.Context, id string, _, _ map[s
 	return nil
 }
 
-func (h *noLogStreamHandle) Execute(_ context.Context, sessionID string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (h *noLogStreamHandle) Execute(_ context.Context, sessionID string, _ *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	if _, ok := h.sessions[sessionID]; !ok {
 		return adapter.Result{}, errors.New("session is not open")
 	}

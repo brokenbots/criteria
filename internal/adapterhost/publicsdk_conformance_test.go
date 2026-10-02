@@ -70,7 +70,7 @@ func TestPublicSDKFixture_NativeTypedOutputs(t *testing.T) {
 		Outcomes: map[string]*workflow.CompiledOutcome{"success": {Next: "done"}},
 	}
 
-	result, err := handle.Execute(ctx, "sess", step, noopExecSink{})
+	result, err := handle.Execute(ctx, "sess", step, noopExecSink{}, nil)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}

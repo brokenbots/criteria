@@ -747,7 +747,7 @@ func TestShim_ExecuteThroughBridge(t *testing.T) {
 	}
 
 	step := &workflow.StepNode{Name: "step-1", Input: map[string]string{}}
-	result, err := handle.Execute(ctx, "sess-1", step, &nopSink{})
+	result, err := handle.Execute(ctx, "sess-1", step, &nopSink{}, nil)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
