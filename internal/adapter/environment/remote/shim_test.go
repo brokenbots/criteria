@@ -1902,6 +1902,11 @@ func newCri137TestShim(t *testing.T, scope string, budget time.Duration) (shim *
 	shim.SetPerScopeSessions(true)
 	shim.RegisterScope(scope, "current-token")
 	shim.verifyFailureBudget = budget
+	// KB-70: the handshake budget no longer bounds a wait whose adapter never
+	// started — pin the scheduling budget to the same envelope so zero-dial
+	// waits still terminate inside the tests' wall-clock deadlines.
+	shim.schedulingBudget = budget
+	shim.podStatePollInterval = 5 * time.Millisecond
 	return shim, shim.listener.Addr().String()
 }
 
@@ -2007,9 +2012,12 @@ func TestShim_VerifyFailureBudget_WakesWaiterWithTerminalError(t *testing.T) {
 	}
 }
 
-func TestShim_WaitTimeoutWithoutDials_FailsWithDeadJobDiagnosis(t *testing.T) {
-	// Item 2: a pending wait with zero dials (adapter Job Complete or dead)
-	// must fail terminally within the same wall-clock budget.
+func TestShim_WaitTimeoutWithoutDials_WaitsSchedulingGraceThenNamesPodPhase(t *testing.T) {
+	// KB-70: a pending wait with zero dials and no pod-state probe means
+	// nothing observed the adapter at all — the pod may simply still be
+	// Pending. Such a wait is bounded by the scheduling budget, not the
+	// handshake budget, and its terminal error must cite the pod situation
+	// instead of the dead-Job verdict.
 	scope := "root/cri137-no-dials"
 	shim, _ := newCri137TestShim(t, scope, 300*time.Millisecond)
 
@@ -2026,13 +2034,52 @@ func TestShim_WaitTimeoutWithoutDials_FailsWithDeadJobDiagnosis(t *testing.T) {
 			t.Fatal("expected WaitForHandle to fail without any inbound dial")
 		}
 		if !strings.Contains(err.Error(), "no identity handshake observed at all") {
-			t.Errorf("terminal error must distinguish the no-dials shape, got: %v", err)
+			t.Errorf("terminal error must keep the no-dials diagnosis anchor, got: %v", err)
 		}
-		if !strings.Contains(err.Error(), "adapter Job may be complete or dead") {
-			t.Errorf("terminal error must name the dead-Job diagnosis, got: %v", err)
+		if !strings.Contains(err.Error(), "waiting for the adapter pod to start") {
+			t.Errorf("zero-dial wait must be failed by the scheduling budget, got: %v", err)
+		}
+		if strings.Contains(err.Error(), "adapter Job may be complete or dead") {
+			t.Errorf("dead-Job verdict is wrong for a pod that never started (KB-70), got: %v", err)
 		}
 	case <-time.After(8 * time.Second):
-		t.Fatal("WaitForHandle did not fail within the budget although no adapter ever dialed")
+		t.Fatal("WaitForHandle did not fail although no adapter ever dialed")
+	}
+}
+
+func TestShim_WaitTimeoutRunningPodWithoutDials_KeepsDeadJobDiagnosis(t *testing.T) {
+	// KB-70 keeps the CRI-137 diagnosis for a pod that HAS started: a probe
+	// observing a Running pod that presents no identity frame means the
+	// processes are up but the Job is not phone-homing — dead or completed.
+	// That wait fails at the handshake budget, not the scheduling budget.
+	scope := "root/kb70-running-no-dials"
+	shim, _ := newCri137TestShim(t, scope, 300*time.Millisecond)
+	shim.schedulingBudget = 30 * time.Second // must stay far away from this failure
+	shim.SetPodStateProbe(newTimedPodProbe(t, podPhaseStep{phase: "Running"}))
+
+	waitResult := make(chan error, 1)
+	go func() {
+		_, err := shim.WaitForHandle(context.Background(), "noop", scope)
+		waitResult <- err
+	}()
+	waitForWaiterRegistration(t, shim, scope)
+
+	select {
+	case err := <-waitResult:
+		if err == nil {
+			t.Fatal("expected WaitForHandle to fail with the pod Running but silent")
+		}
+		if !strings.Contains(err.Error(), "without a successful identity handshake") {
+			t.Errorf("terminal error must explain the bounded wait, got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "adapter Job may be complete or dead") {
+			t.Errorf("dead-Job diagnosis must be kept for a started pod, got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "observed Running but never dialed") {
+			t.Errorf("error must cite the Running pod state, got: %v", err)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatal("WaitForHandle did not fail although the Running pod never dialed")
 	}
 }
 

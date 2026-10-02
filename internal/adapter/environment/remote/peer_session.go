@@ -195,9 +195,9 @@ func (p *peerSessionProvider) WaitForHandle(ctx context.Context, adapterType, sc
 // Resolution order: a live peer session in the provider's registry, then a
 // legacy session already stored on the shim (mixed fleet), then a wait
 // registered on both registries — a peer dial wakes peer waiters, a legacy
-// handshake wakes the shim's waiters, and the wall-clock verify-failure
-// budget bounds the whole wait with the shim's own diagnosis classes
-// (CRI-137).
+// handshake wakes the shim's waiters. The wait is bounded by the shim's two
+// session-wait budgets (handshake + scheduling; KB-70) and shares the shim's
+// diagnosis classes (CRI-137) through its awaitWaiter loop.
 //
 // Each registry resolves atomically: the peek and the waiter registration
 // share one critical section — the provider's own under p.mu, the shim's via
@@ -236,25 +236,10 @@ func (p *peerSessionProvider) WaitForFreshHandle(ctx context.Context, adapterTyp
 		return legacyHandle, nil
 	}
 
-	budgetTimer := time.NewTimer(budget)
-	defer budgetTimer.Stop()
-
-	select {
-	case res := <-peerCh:
-		p.shim.removeWaiter(key, legacyCh)
-		return res.handle, res.err
-	case res := <-legacyCh:
-		p.removeWaiter(key, peerCh)
-		return res.handle, res.err
-	case <-budgetTimer.C:
+	return p.shim.awaitWaiter(ctx, adapterType, scope, key, peerCh, legacyCh, func() {
 		p.removeWaiter(key, peerCh)
 		p.shim.removeWaiter(key, legacyCh)
-		return nil, p.shim.waitTimeoutError(adapterType, scope, key, budget)
-	case <-ctx.Done():
-		p.removeWaiter(key, peerCh)
-		p.shim.removeWaiter(key, legacyCh)
-		return nil, ctx.Err()
-	}
+	}, budget)
 }
 
 // removeWaiter drops a waiter channel from the provider's waiters map.

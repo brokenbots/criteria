@@ -38,6 +38,13 @@ type Config struct {
 	PerScopeSessions          bool
 	TLSHandshakeDeadline      time.Duration
 	IdentityHandshakeDeadline time.Duration
+	// SessionHandshakeBudget bounds a pending remote-adapter session wait
+	// once the adapter pod has started (0 → DefaultVerifyFailureBudget).
+	SessionHandshakeBudget time.Duration
+	// SessionSchedulingBudget bounds a pending remote-adapter session wait
+	// while the adapter pod has not started yet (KB-70; 0 →
+	// DefaultSchedulingBudget).
+	SessionSchedulingBudget time.Duration
 }
 
 // RemoteHandler implements the environment handler interface for the
