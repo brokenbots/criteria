@@ -153,23 +153,23 @@ func rejectExtraTypeBlockAttrs(typeName string, ts *TypeSpec) *hcl.Diagnostic {
 	return nil
 }
 
-// namedTypeRef reports whether expr is exactly the two-segment traversal
-// `type.<name>` and returns the name. Any other expression is not a type
-// reference.
+// namedTypeRef reports whether expr IS exactly the two-segment traversal
+// `type.<name>` and returns the name. The type assertion (not a Variables()
+// scan) matters: a compound constraint whose only variable is a type ref —
+// list(type.x), map(type.x), object({ a = type.x }), optional(type.x) — must
+// NOT resolve to the bare named type. Such expressions fall through to
+// resolveTypeConstraint and fail as type constraints, matching the documented
+// resolution rule (type refs are leaf positions only; slice-1).
 func namedTypeRef(expr hcl.Expression) (string, bool) {
-	trs := expr.Variables()
-	if len(trs) != 1 {
+	tr, ok := expr.(*hclsyntax.ScopeTraversalExpr)
+	if !ok || len(tr.Traversal) != 2 {
 		return "", false
 	}
-	tr := trs[0]
-	if len(tr) != 2 {
-		return "", false
-	}
-	root, ok := tr[0].(hcl.TraverseRoot)
+	root, ok := tr.Traversal[0].(hcl.TraverseRoot)
 	if !ok || root.Name != "type" {
 		return "", false
 	}
-	second, ok := tr[1].(hcl.TraverseAttr)
+	second, ok := tr.Traversal[1].(hcl.TraverseAttr)
 	if !ok {
 		return "", false
 	}
@@ -181,8 +181,9 @@ func namedTypeRef(expr hcl.Expression) (string, bool) {
 // workflow's type namespace (g.Types); the declaration-order namespace carries
 // the exact cty.Type and optional() defaults the type block compiled to, so a
 // consumer authored inline and its type-block twin produce identical graphs.
-// Any other expression is parsed as an inline typeexpr constraint via
-// resolveTypeConstraint.
+// Any other expression is validated against the leaf-only composition rule
+// (checkTypeRefNotComposable) and then parsed as an inline typeexpr
+// constraint via resolveTypeConstraint.
 //
 // loc identifies the consumer in diagnostics (e.g. `data "http" "msg"`),
 // noun names the constraint position (e.g. "Data type constraints") for the
@@ -209,9 +210,40 @@ func resolveNamedTypeConstraint(loc, noun string, expr hcl.Expression, g *FSMGra
 		return td.Type, td.Defaults, nil
 	}
 
+	if d := checkTypeRefNotComposable(loc, expr); d != nil {
+		return cty.NilType, nil, hcl.Diagnostics{d}
+	}
+
 	typ, defs, diags := resolveTypeConstraint(expr)
 	if diags.HasErrors() {
 		return cty.NilType, nil, diags
 	}
 	return typ, defs, nil
+}
+
+// checkTypeRefNotComposable rejects a constraint that embeds a type.<name>
+// reference inside a wider inline constraint (list(type.x), map(type.x),
+// object({ a = type.x }), optional(type.x), ...). Type refs are leaf
+// positions only: resolving the composite would silently drop the wrapper
+// (or mis-resolve the whole constraint), so the composition is a compile
+// error about the constraint itself — the same boundary the docs state for
+// the slice-1 type namespace.
+func checkTypeRefNotComposable(loc string, expr hcl.Expression) *hcl.Diagnostic {
+	for _, tr := range expr.Variables() {
+		if len(tr) == 0 {
+			continue
+		}
+		root, ok := tr[0].(hcl.TraverseRoot)
+		if !ok || root.Name != "type" {
+			continue
+		}
+		r := tr.SourceRange()
+		return &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("%s: type references cannot be composed into other type constraints", loc),
+			Detail:   "A type.<name> reference is valid only as the whole type constraint. Compose built-in types inline instead (list(...), map(...), object({...}), optional(...)), or write this constraint as the bare traversal type.<name>; a type block may not appear nested inside another constraint.",
+			Subject:  &r,
+		}
+	}
+	return nil
 }

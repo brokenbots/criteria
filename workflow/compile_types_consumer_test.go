@@ -392,23 +392,128 @@ state "done" {
 	}
 }
 
+// compositionDiagCheck asserts the mis-scoped-composition diagnostic itself:
+// a summary naming the consumer loc AND a detail explaining the leaf-only
+// composition rule. This cannot be satisfied by a downstream value-coercion
+// error (different summary/detail), so a regression that silently drops a
+// composed wrapper — resolving list(type.payload) to type.payload — fails
+// here.
+func compositionDiagCheck(t *testing.T, diags hcl.Diagnostics, wantSummary, wantDetail string) {
+	t.Helper()
+	if !diags.HasErrors() {
+		t.Fatalf("expected error with summary %q, compile succeeded", wantSummary)
+	}
+	for _, d := range diags {
+		if strings.Contains(d.Summary, wantSummary) && strings.Contains(d.Detail, wantDetail) {
+			return
+		}
+	}
+	t.Fatalf("expected diagnostic with summary containing %q and detail containing %q, got: %s", wantSummary, wantDetail, diags)
+}
+
 // TestNamedType_MisScoped_RefInsideTypeConstraint pins the mis-scoped usage:
 // composing type.<name> into an inline constraint (list(type.payload)) is not
 // a valid constraint — type refs are leaf positions only (slice-1 spirit).
+// Cases include a variable with no default and no value-bearing attribute, so
+// the assertion must be satisfied by the constraint diagnostic itself (any
+// value coercion is impossible).
 func TestNamedType_MisScoped_RefInsideTypeConstraint(t *testing.T) {
 	dir := calleeFixture(t, calleeWorkflow)
-	src := consumerHeader + consumerPayloadTypeBlock + `
-data "internal" "cfg" {
+	const composedDetail = "valid only as the whole type constraint"
+	cases := []struct {
+		name, block, wantSummary string
+	}{
+		{
+			"data list composition",
+			`data "internal" "cfg" {
   type  = list(type.payload)
   value = []
+}`,
+			`data "internal" "cfg"`,
+		},
+		{
+			"data object composition",
+			`data "internal" "cfg" {
+  type  = object({ zone = type.payload })
+  value = {}
+}`,
+			`data "internal" "cfg"`,
+		},
+		{
+			"data optional composition",
+			`data "internal" "cfg" {
+  type  = optional(type.payload)
+  value = null
+}`,
+			`data "internal" "cfg"`,
+		},
+		{
+			// No default and no initial value: nothing downstream can produce
+			// a value-coercion error, so the composition diagnostic must carry
+			// this failure on its own.
+			"variable composition without default",
+			`variable "amount" {
+  type = list(type.payload)
+}`,
+			`variable "amount"`,
+		},
+		{
+			"output composition",
+			`output "spent" {
+  value = 1
+  type  = map(type.payload)
+}`,
+			`output "spent"`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := consumerHeader + consumerPayloadTypeBlock + tc.block + `
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+			_, diags := compileAllConsumers(t, src, dir)
+			compositionDiagCheck(t, diags, tc.wantSummary, composedDetail)
+		})
+	}
+
+	t.Run("positive control: bare ref compiles clean", func(t *testing.T) {
+		src := consumerHeader + consumerPayloadTypeBlock + `
+data "internal" "cfg" {
+  type = type.payload
 }
 state "done" {
   terminal = true
   success  = true
 }
 `
-	_, diags := compileAllConsumers(t, src, dir)
-	goldenCheck(t, diags, `data "internal" "cfg"`)
+		g, diags := compileAllConsumers(t, src, dir)
+		if diags.HasErrors() {
+			t.Fatalf("bare type.<name> ref must compile clean, got: %s", diags)
+		}
+		if got := g.Data["internal"]["cfg"].Type.FriendlyName(); !strings.HasPrefix(got, "object") {
+			t.Fatalf("bare ref must resolve to the declared type, got: %s", got)
+		}
+	})
+
+	t.Run("positive control: composed built-ins still fine", func(t *testing.T) {
+		src := consumerHeader + consumerPayloadTypeBlock + `
+data "internal" "cfg" {
+  type  = list(number)
+  value = [1]
+}
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+		_, diags := compileAllConsumers(t, src, dir)
+		if diags.HasErrors() {
+			t.Fatalf("inline composed constraint without type refs must compile clean, got: %s", diags)
+		}
+	})
 }
 
 // TestNamedType_MisScoped_RefInValueExpression pins that type.<name> is not a
