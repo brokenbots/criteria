@@ -37,7 +37,7 @@ func (p *secretRecordingAdapter) OpenSession(_ context.Context, _ string, _, sec
 	return nil
 }
 
-func (p *secretRecordingAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *secretRecordingAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	if p.injectSecretInErr != "" {
 		return adapter.Result{}, fmt.Errorf("adapter crashed: %s", p.injectSecretInErr)
 	}
@@ -66,7 +66,7 @@ type redactingSink struct {
 	stepOutcomeErrors []error
 }
 
-func (s *redactingSink) OnStepOutcome(step, outcome string, dur time.Duration, err error) {
+func (s *redactingSink) OnStepOutcome(step, outcome string, dur time.Duration, err error, comment string) {
 	if err != nil {
 		s.stepOutcomeErrors = append(s.stepOutcomeErrors, err)
 	}

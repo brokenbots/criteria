@@ -516,7 +516,7 @@ func TestSessionManager_ExecutePermissionOutcomeOverride(t *testing.T) {
 		},
 	}
 	inner := &adapterEventCollector{}
-	res, err := sm.Execute(ctx, "agent", step, inner)
+	res, err := sm.Execute(ctx, "agent", step, inner, nil)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -562,7 +562,7 @@ func TestSessionManager_ExecutePermissionFlowWithAliases(t *testing.T) {
 		Outcomes:   map[string]*workflow.CompiledOutcome{"success": {Name: "success"}},
 	}
 	inner := &adapterEventCollector{}
-	res, err := sm.Execute(ctx, "agent", step, inner)
+	res, err := sm.Execute(ctx, "agent", step, inner, nil)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -667,7 +667,7 @@ func TestSessionManager_ExecutePermissionOutcomeOverride_CamelCase(t *testing.T)
 	}
 	inner := &adapterEventCollector{}
 	start := time.Now()
-	res, err := sm.Execute(ctx, "agent", step, inner)
+	res, err := sm.Execute(ctx, "agent", step, inner, nil)
 	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -718,7 +718,7 @@ func (a *permissionEmittingAdapter) Snapshot(context.Context, string) (*v2.Snaps
 func (a *permissionEmittingAdapter) Restore(context.Context, string, []byte, uint32) error {
 	return nil
 }
-func (a *permissionEmittingAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (a *permissionEmittingAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	reqID := a.requestID
 	if reqID == "" {
 		reqID = "req-1"

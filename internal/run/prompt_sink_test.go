@@ -28,7 +28,7 @@ func TestLocalSink_OnAgentPromptInjected_NDJSONPayloadAndOrder(t *testing.T) {
 	sink.OnRunStarted("wf", "a")
 	sink.OnStepEntered("a", "promptable", 1)
 	sink.OnAgentPromptInjected("a", "promptable.default", "mid-turn nudge", "agent-owner", time.Now().UTC())
-	sink.OnStepOutcome("a", "success", 5*time.Millisecond, nil)
+	sink.OnStepOutcome("a", "success", 5*time.Millisecond, nil, "")
 
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 	if len(lines) != 4 {
@@ -132,7 +132,7 @@ func TestConsoleSink_OnAgentPromptInjectedIsNoOp(t *testing.T) {
 
 	sink.OnStepEntered("open", "demo", 1)
 	sink.OnAgentPromptInjected("open", "promptable.default", "nudge", "agent-owner", time.Now().UTC())
-	sink.OnStepOutcome("open", "success", time.Millisecond, nil)
+	sink.OnStepOutcome("open", "success", time.Millisecond, nil, "")
 
 	out := stripANSI(buf.String())
 	if strings.Contains(strings.ToLower(out), "prompt") {

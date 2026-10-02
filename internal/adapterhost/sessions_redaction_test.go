@@ -23,7 +23,7 @@ func (m *mockRedactionHandle) Info(ctx context.Context) (Info, error) {
 func (m *mockRedactionHandle) OpenSession(ctx context.Context, id string, config, secrets map[string]string) error {
 	return nil
 }
-func (m *mockRedactionHandle) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (m *mockRedactionHandle) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	return m.result, nil
 }
 func (m *mockRedactionHandle) CloseSession(ctx context.Context, id string) error {
@@ -73,7 +73,7 @@ func TestSessionManagerExecute_RegistersSensitiveOutputs(t *testing.T) {
 		},
 	}
 
-	_, err := sm.Execute(context.Background(), "agent", step, &adapterEventCollector{})
+	_, err := sm.Execute(context.Background(), "agent", step, &adapterEventCollector{}, nil)
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestSessionManagerExecute_NoRegistryNilPanic(t *testing.T) {
 		},
 	}
 
-	_, err := sm.Execute(context.Background(), "agent", step, &adapterEventCollector{})
+	_, err := sm.Execute(context.Background(), "agent", step, &adapterEventCollector{}, nil)
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}

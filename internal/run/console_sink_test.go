@@ -34,7 +34,7 @@ func TestConsoleSink_HappyPath(t *testing.T) {
 
 	sink.OnRunStarted("wf", "open")
 	sink.OnStepEntered("open", "demo", 1)
-	sink.OnStepOutcome("open", "success", 12*time.Millisecond, nil)
+	sink.OnStepOutcome("open", "success", 12*time.Millisecond, nil, "")
 	sink.OnStepTransition("open", "run", "success")
 	sink.OnStepEntered("run", "demo", 1)
 	stepSink := sink.StepEventSink("run")
@@ -42,9 +42,9 @@ func TestConsoleSink_HappyPath(t *testing.T) {
 	stepSink.Adapter("agent.message", map[string]any{"event_type": "assistant.message", "content": "hello there"})
 	stepSink.Adapter("tool.invocation", map[string]any{"name": "edit", "arguments": `{"path":"/x/y/foo.go"}`})
 	stepSink.Log("agent", []byte("noisy stdout chunk\n"))
-	sink.OnStepOutcome("run", "success", 1500*time.Millisecond, nil)
+	sink.OnStepOutcome("run", "success", 1500*time.Millisecond, nil, "")
 	sink.OnStepEntered("close", "demo", 1)
-	sink.OnStepOutcome("close", "success", 5*time.Millisecond, nil)
+	sink.OnStepOutcome("close", "success", 5*time.Millisecond, nil, "")
 	sink.OnStepTransition("close", "done", "success")
 	sink.OnRunCompleted("done", true)
 
@@ -80,7 +80,7 @@ func TestConsoleSink_FailureRendersErrorAndDuration(t *testing.T) {
 	sink := NewConsoleSink(&buf, []string{"only"}, false, nil)
 	sink.OnRunStarted("wf", "only")
 	sink.OnStepEntered("only", "demo", 1)
-	sink.OnStepOutcome("only", "failure", 250*time.Millisecond, &stringErr{msg: "boom"})
+	sink.OnStepOutcome("only", "failure", 250*time.Millisecond, &stringErr{msg: "boom"}, "")
 	sink.OnRunFailed("boom", "only")
 
 	out := stripANSI(buf.String())
@@ -169,7 +169,7 @@ func TestConsoleSink_LifecycleTag(t *testing.T) {
 
 	sink.OnAdapterLifecycle("build", "shell", "started", "")
 	sink.OnAdapterLifecycle("build", "shell", "exited", "")
-	sink.OnStepOutcome("build", "success", 2300*time.Millisecond, nil)
+	sink.OnStepOutcome("build", "success", 2300*time.Millisecond, nil, "")
 
 	out := buf.String()
 	if !strings.Contains(out, "[adapter: started → exited]") {
@@ -185,7 +185,7 @@ func TestConsoleSink_LifecycleTagCrash(t *testing.T) {
 
 	sink.OnAdapterLifecycle("review", "copilot", "started", "")
 	sink.OnAdapterLifecycle("review", "copilot", "crashed", "connection refused")
-	sink.OnStepOutcome("review", "failure", 8100*time.Millisecond, &stringErr{"adapter crashed"})
+	sink.OnStepOutcome("review", "failure", 8100*time.Millisecond, &stringErr{"adapter crashed"}, "")
 
 	out := buf.String()
 	if !strings.Contains(out, "[adapter: started → crashed: connection refused]") {
@@ -199,7 +199,7 @@ func TestConsoleSink_LifecycleTagAbsent(t *testing.T) {
 	var buf bytes.Buffer
 	sink := NewConsoleSink(&buf, []string{"build"}, false, nil)
 
-	sink.OnStepOutcome("build", "success", 500*time.Millisecond, nil)
+	sink.OnStepOutcome("build", "success", 500*time.Millisecond, nil, "")
 
 	out := buf.String()
 	if strings.Contains(out, "[adapter:") {

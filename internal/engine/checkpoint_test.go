@@ -98,7 +98,7 @@ func (h *checkpointHandle) OpenSession(context.Context, string, map[string]strin
 	h.mu.Unlock()
 	return nil
 }
-func (h *checkpointHandle) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (h *checkpointHandle) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	h.mu.Lock()
 	h.executeCalls++
 	n := h.executeCalls
@@ -159,8 +159,8 @@ type hookSink struct {
 	onStepOutcome func(step string)
 }
 
-func (s *hookSink) OnStepOutcome(step, outcome string, d time.Duration, err error) {
-	s.fakeSink.OnStepOutcome(step, outcome, d, err)
+func (s *hookSink) OnStepOutcome(step, outcome string, d time.Duration, err error, comment string) {
+	s.fakeSink.OnStepOutcome(step, outcome, d, err, "")
 	if s.onStepOutcome != nil {
 		s.onStepOutcome(step)
 	}
@@ -541,8 +541,8 @@ func (o *schemaOverrideHandle) Info(ctx context.Context) (adapterhost.Info, erro
 func (o *schemaOverrideHandle) OpenSession(ctx context.Context, name string, config, secrets map[string]string) error {
 	return o.inner.OpenSession(ctx, name, config, secrets)
 }
-func (o *schemaOverrideHandle) Execute(ctx context.Context, step string, n *workflow.StepNode, s adapter.EventSink) (adapter.Result, error) {
-	return o.inner.Execute(ctx, step, n, s)
+func (o *schemaOverrideHandle) Execute(ctx context.Context, step string, n *workflow.StepNode, s adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
+	return o.inner.Execute(ctx, step, n, s, nil)
 }
 func (o *schemaOverrideHandle) CloseSession(ctx context.Context, name string) error {
 	return o.inner.CloseSession(ctx, name)

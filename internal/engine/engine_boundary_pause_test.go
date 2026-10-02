@@ -56,7 +56,7 @@ func (g *gateHandle) Info(context.Context) (adapterhost.Info, error) {
 func (g *gateHandle) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (g *gateHandle) Execute(ctx context.Context, sessionID string, node *workflow.StepNode, es adapter.EventSink) (adapter.Result, error) {
+func (g *gateHandle) Execute(ctx context.Context, sessionID string, node *workflow.StepNode, es adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	g.mu.Lock()
 	ch, ok := g.blocked[node.Name]
 	err, hasErr := g.errs[node.Name]

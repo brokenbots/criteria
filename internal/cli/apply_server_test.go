@@ -1053,7 +1053,7 @@ func (h *statefulHandle) OpenSession(context.Context, string, map[string]string,
 	return nil
 }
 
-func (h *statefulHandle) Execute(context.Context, string, *workflow.StepNode, adapter.EventSink) (adapter.Result, error) {
+func (h *statefulHandle) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, _ *v2.ExecutionRejection) (adapter.Result, error) {
 	h.mu.Lock()
 	h.executeCalls++
 	n := h.executeCalls
@@ -1165,11 +1165,11 @@ type stepHookSink struct {
 	onStepOutcome func(step string)
 }
 
-func (s *stepHookSink) OnStepOutcome(step, outcome string, duration time.Duration, err error) {
+func (s *stepHookSink) OnStepOutcome(step, outcome string, duration time.Duration, err error, comment string) {
 	if s.onStepOutcome != nil {
 		s.onStepOutcome(step)
 	}
-	s.Sink.OnStepOutcome(step, outcome, duration, err)
+	s.Sink.OnStepOutcome(step, outcome, duration, err, "")
 }
 
 // TestServerModeResume_CheckpointSurfaceWired is the CRI-202 regression guard

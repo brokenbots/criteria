@@ -117,7 +117,7 @@ func (a *nestedCalleeAdapter) Snapshot(context.Context, string) (*v2.SnapshotRes
 }
 func (a *nestedCalleeAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
 
-func (a *nestedCalleeAdapter) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (a *nestedCalleeAdapter) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	a.rec.record(sessionID, step)
 	task := step.Input["task"]
 	switch task {
@@ -213,7 +213,7 @@ func (a *nestedCallerAdapter) StartPermissionStream(_ context.Context, _ string,
 	return func() {}, nil
 }
 
-func (a *nestedCallerAdapter) Execute(ctx context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (a *nestedCallerAdapter) Execute(ctx context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	payload := map[string]any{"request_id": "call-1", "target": a.target}
 	if a.args != nil {
 		payload["args"] = a.args
@@ -407,7 +407,7 @@ func TestNestedToolCall_Success(t *testing.T) {
 	defer func() { _ = sm.Close(ctx, nestedCalleeSession) }()
 
 	inner := &adapterEventCollector{}
-	res, err := sm.Execute(ctx, nestedCallerSession, nestedCallerStep(), inner)
+	res, err := sm.Execute(ctx, nestedCallerSession, nestedCallerStep(), inner, nil)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -528,7 +528,7 @@ func TestNestedToolCall_CalleeOwnAllowTools(t *testing.T) {
 	defer func() { _ = sm.Close(ctx, nestedCalleeSession) }()
 
 	inner := &adapterEventCollector{}
-	res, err := sm.Execute(ctx, nestedCallerSession, nestedCallerStep(), inner)
+	res, err := sm.Execute(ctx, nestedCallerSession, nestedCallerStep(), inner, nil)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -610,7 +610,7 @@ func TestNestedToolCall_LazyBind_VerifiedOnlyCallee(t *testing.T) {
 
 	callerStep := nestedCallerStep()
 	inner := &adapterEventCollector{}
-	res, err := sm.Execute(ctx, nestedCallerSession, callerStep, inner)
+	res, err := sm.Execute(ctx, nestedCallerSession, callerStep, inner, nil)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -817,7 +817,7 @@ func TestNestedToolCall_CalleeAbortRunPropagates(t *testing.T) {
 	defer func() { _ = sm.Close(ctx, nestedCalleeSession) }()
 
 	inner := &adapterEventCollector{}
-	_, err := sm.Execute(ctx, nestedCallerSession, nestedCallerStep(), inner)
+	_, err := sm.Execute(ctx, nestedCallerSession, nestedCallerStep(), inner, nil)
 	var fatal *FatalRunError
 	if !errors.As(err, &fatal) {
 		t.Fatalf("Execute error = %v, want *FatalRunError (abort_run)", err)

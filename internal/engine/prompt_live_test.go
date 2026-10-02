@@ -100,7 +100,7 @@ func (s *promptInjectSink) OnStepEntered(step, _ string, _ int) {
 	s.mu.Unlock()
 }
 
-func (s *promptInjectSink) OnStepOutcome(step, _ string, _ time.Duration, _ error) {
+func (s *promptInjectSink) OnStepOutcome(step, _ string, _ time.Duration, _ error, comment string) {
 	s.mu.Lock()
 	s.markers = append(s.markers, "outcome:"+step)
 	s.mu.Unlock()

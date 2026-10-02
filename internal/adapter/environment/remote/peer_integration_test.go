@@ -380,7 +380,7 @@ func TestPeerIntegrationCrashFidelity(t *testing.T) {
 				"delay_ms": "15000",
 				"emit_log": "pre-crash log evidence",
 			},
-		}, &peerEventCollector{})
+		}, &peerEventCollector{}, nil)
 		execDone <- err
 	}()
 	waitFor(t, "pre-crash log line at host sink", func() bool {
@@ -470,7 +470,7 @@ func TestPeerIntegrationLifecycleParity(t *testing.T) {
 		{
 			name: "Execute",
 			run: func(t *testing.T, h adapterhost.Handle) string {
-				res, err := h.Execute(context.Background(), "s1", &workflow.StepNode{Name: "develop"}, &peerEventCollector{})
+				res, err := h.Execute(context.Background(), "s1", &workflow.StepNode{Name: "develop"}, &peerEventCollector{}, nil)
 				if err != nil {
 					return "err=" + err.Error()
 				}
@@ -498,7 +498,7 @@ func TestPeerIntegrationLifecycleParity(t *testing.T) {
 				_, execErr := h.Execute(context.Background(), "s2", &workflow.StepNode{
 					Name:  "develop",
 					Input: map[string]string{"emit_log": "integration parity log line"},
-				}, &peerEventCollector{})
+				}, &peerEventCollector{}, nil)
 				if execErr != nil {
 					return "exec err=" + execErr.Error()
 				}
@@ -578,7 +578,7 @@ func TestPeerIntegrationScopeParityIsolatedSessions(t *testing.T) {
 	if err := unawareH.OpenSession(awareCtx, "unaware-s1", nil, nil); err != nil {
 		t.Fatalf("unaware OpenSession: %v", err)
 	}
-	res, err := aware.Execute(awareCtx, "aware-s1", &workflow.StepNode{Name: "develop"}, &peerEventCollector{})
+	res, err := aware.Execute(awareCtx, "aware-s1", &workflow.StepNode{Name: "develop"}, &peerEventCollector{}, nil)
 	if err != nil || res.Outcome != "success" {
 		t.Fatalf("aware Execute = (%v, %v), want success", res, err)
 	}
@@ -682,7 +682,7 @@ func TestPeerIntegrationIdleSessionSurvives(t *testing.T) {
 	if err := ph.OpenSession(ctx, "s1", nil, nil); err != nil {
 		t.Fatalf("OpenSession: %v", err)
 	}
-	res, err := ph.Execute(ctx, "s1", &workflow.StepNode{Name: "develop"}, &peerEventCollector{})
+	res, err := ph.Execute(ctx, "s1", &workflow.StepNode{Name: "develop"}, &peerEventCollector{}, nil)
 	if err != nil || res.Outcome != "success" {
 		t.Fatalf("pre-idle Execute = (%v, %v), want success", res, err)
 	}
@@ -708,7 +708,7 @@ func TestPeerIntegrationIdleSessionSurvives(t *testing.T) {
 		t.Fatalf("journal changed during idle: %d → %d events", eventsBefore, got)
 	}
 
-	res, err = ph.Execute(ctx, "s1", &workflow.StepNode{Name: "develop"}, &peerEventCollector{})
+	res, err = ph.Execute(ctx, "s1", &workflow.StepNode{Name: "develop"}, &peerEventCollector{}, nil)
 	if err != nil || res.Outcome != "success" {
 		t.Fatalf("post-idle Execute = (%v, %v), want success on the same session", res, err)
 	}
@@ -933,7 +933,7 @@ func TestPeerIntegrationTeardownWindowOnPeerPath(t *testing.T) {
 			_, err := sm.Execute(stepCtx, "noop.develop", &workflow.StepNode{
 				Name:  "develop",
 				Input: map[string]string{"delay_ms": "15000"},
-			}, &peerEventCollector{})
+			}, &peerEventCollector{}, nil)
 			stepDone <- err
 		}()
 		sm.MarkEngineStepTimeoutTeardown()
@@ -951,7 +951,7 @@ func TestPeerIntegrationTeardownWindowOnPeerPath(t *testing.T) {
 		})
 
 		coll := &peerEventCollector{}
-		_, err := sm.Execute(context.Background(), "noop.develop", &workflow.StepNode{Name: "develop"}, coll)
+		_, err := sm.Execute(context.Background(), "noop.develop", &workflow.StepNode{Name: "develop"}, coll, nil)
 		if err == nil {
 			t.Fatal("expected the follow-on Execute to fail on the dead child")
 		}
@@ -989,7 +989,7 @@ func TestPeerIntegrationTeardownWindowOnPeerPath(t *testing.T) {
 		})
 
 		coll := &peerEventCollector{}
-		_, err := sm.Execute(context.Background(), "noop.develop", &workflow.StepNode{Name: "develop"}, coll)
+		_, err := sm.Execute(context.Background(), "noop.develop", &workflow.StepNode{Name: "develop"}, coll, nil)
 		var crashErr *adapterhost.SessionCrashError
 		if !errors.As(err, &crashErr) || crashErr.Session != "noop.develop" {
 			t.Fatalf("Execute err = %v, want SessionCrashError for noop.develop", err)

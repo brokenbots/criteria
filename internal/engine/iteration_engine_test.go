@@ -64,7 +64,7 @@ func (p *multiOutcomeAdapter) Info(context.Context) (adapterhost.Info, error) {
 func (p *multiOutcomeAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (p *multiOutcomeAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *multiOutcomeAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	i := p.call
 	if i >= len(p.outcomes) {
 		i = len(p.outcomes) - 1
@@ -534,7 +534,7 @@ func (p *captureInputAdapter) Info(context.Context) (adapterhost.Info, error) {
 func (p *captureInputAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (p *captureInputAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *captureInputAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	if p.capture != nil && step != nil {
 		cp := make(map[string]string, len(step.Input))
 		for k, v := range step.Input {
@@ -711,7 +711,7 @@ func (p *captureOutputAdapter) Info(context.Context) (adapterhost.Info, error) {
 func (p *captureOutputAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (p *captureOutputAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *captureOutputAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	i := p.call
 	if i >= len(p.outcomes) {
 		i = len(p.outcomes) - 1
@@ -1157,7 +1157,7 @@ type combinedAdapter struct {
 	outcomeAdapter *multiOutcomeAdapter
 }
 
-func (c *combinedAdapter) Execute(ctx context.Context, runID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (c *combinedAdapter) Execute(ctx context.Context, runID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	// Record input via captureInputAdapter.
 	if c.captureInputAdapter.capture != nil && step != nil {
 		cp := make(map[string]string, len(step.Input))
@@ -1167,7 +1167,7 @@ func (c *combinedAdapter) Execute(ctx context.Context, runID string, step *workf
 		*c.captureInputAdapter.capture = append(*c.captureInputAdapter.capture, cp)
 	}
 	// Outcome from multiOutcomeAdapter.
-	return c.outcomeAdapter.Execute(ctx, runID, step, sink)
+	return c.outcomeAdapter.Execute(ctx, runID, step, sink, nil)
 }
 
 // TestIter_OutputBlocks_OnlyDeclaredVisible verifies that a type="workflow"
@@ -1636,7 +1636,7 @@ func (p *callbackAdapter) Info(context.Context) (adapterhost.Info, error) {
 func (p *callbackAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (p *callbackAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *callbackAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	outcome, outputs := p.fn(step.Input)
 	return adapter.Result{Outcome: outcome, Outputs: ctyOut(outputs)}, nil
 }
@@ -1666,7 +1666,7 @@ func (p *outputAdapter) Info(context.Context) (adapterhost.Info, error) {
 func (p *outputAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (p *outputAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *outputAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	return adapter.Result{Outcome: p.outcome, Outputs: ctyOut(p.outputs)}, nil
 }
 func (p *outputAdapter) Permit(context.Context, string, string, bool, string) error { return nil }

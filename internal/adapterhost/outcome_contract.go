@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	ctyjson "github.com/zclconf/go-cty/cty/json"
 	"github.com/zclconf/go-cty/cty"
+	ctyjson "github.com/zclconf/go-cty/cty/json"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 

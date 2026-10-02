@@ -90,7 +90,7 @@ func TestLocalSink_EncodesNDJSONAndMonotonicSeq(t *testing.T) {
 	stepSink := sink.StepEventSink("step1")
 	stepSink.Log("stdout", []byte("hello\n"))
 	stepSink.Adapter("custom.event", map[string]any{"k": "v"})
-	sink.OnStepOutcome("step1", "success", 17*time.Millisecond, nil)
+	sink.OnStepOutcome("step1", "success", 17*time.Millisecond, nil, "")
 	sink.OnStepTransition("step1", "done", "success")
 	sink.OnRunCompleted("done", true)
 

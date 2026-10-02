@@ -74,7 +74,7 @@ func (p *barrierAdapter) Info(context.Context) (adapterhost.Info, error) {
 func (p *barrierAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (p *barrierAdapter) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *barrierAdapter) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	count := atomic.AddInt32(&p.ready, 1)
 	if count == p.n {
 		close(p.barrier) // release all waiting goroutines
@@ -116,7 +116,7 @@ func (p *concurrencyTrackingAdapter) Info(context.Context) (adapterhost.Info, er
 func (p *concurrencyTrackingAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (p *concurrencyTrackingAdapter) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *concurrencyTrackingAdapter) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	p.mu.Lock()
 	*p.active++
 	if *p.active > *p.peakActive {
@@ -167,7 +167,7 @@ func (p *contextAwareAdapter) Info(context.Context) (adapterhost.Info, error) {
 func (p *contextAwareAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (p *contextAwareAdapter) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *contextAwareAdapter) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	idx := int(atomic.AddInt32(p.callCount, 1)) - 1
 	return p.fn(ctx, idx)
 }
@@ -202,7 +202,7 @@ func (p *parallelSafeAdapter) Info(context.Context) (adapterhost.Info, error) {
 func (p *parallelSafeAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (p *parallelSafeAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *parallelSafeAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	if p.err != nil {
 		return adapter.Result{}, p.err
 	}
@@ -491,7 +491,7 @@ func (p *declIdxAdapter) Info(context.Context) (adapterhost.Info, error) {
 func (p *declIdxAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (p *declIdxAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *declIdxAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	idx := step.Input["decl_idx"]
 	// Sleep inversely proportional to declaration index so that later items finish first.
 	switch idx {
@@ -666,7 +666,7 @@ func (p *loggingBarrierAdapter) Info(context.Context) (adapterhost.Info, error) 
 func (p *loggingBarrierAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (p *loggingBarrierAdapter) Execute(ctx context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (p *loggingBarrierAdapter) Execute(ctx context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	count := atomic.AddInt32(&p.ready, 1)
 	if count == p.n {
 		close(p.barrier)
@@ -886,7 +886,7 @@ func (p *statefulAdapter) OpenSession(context.Context, string, map[string]string
 	p.loader.opens.Add(1)
 	return nil
 }
-func (p *statefulAdapter) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *statefulAdapter) Execute(ctx context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	// Shared rendezvous: all n goroutines must reach Execute before any proceeds.
 	// This ensures the per-instance mutex contention (or absence thereof) is the
 	// sole source of timing difference between the broken and fixed implementations.
@@ -1026,7 +1026,7 @@ func (p *countingNotSafeAdapter) Info(context.Context) (adapterhost.Info, error)
 func (p *countingNotSafeAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (p *countingNotSafeAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *countingNotSafeAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	atomic.AddInt32(&p.executeCount, 1)
 	return adapter.Result{Outcome: p.outcome}, nil
 }
@@ -1291,7 +1291,7 @@ func (p *slowLogAdapter) Info(context.Context) (adapterhost.Info, error) {
 func (p *slowLogAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (p *slowLogAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (p *slowLogAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	chunk := []byte("x")
 	for i := 0; i < p.logsPerCall; i++ {
 		sink.Log("stdout", chunk)

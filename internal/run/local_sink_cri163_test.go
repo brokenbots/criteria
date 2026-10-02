@@ -69,7 +69,7 @@ func (a *cri163CalleeFake) Info(context.Context) (adapterhost.Info, error) {
 func (a *cri163CalleeFake) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (a *cri163CalleeFake) Execute(ctx context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (a *cri163CalleeFake) Execute(ctx context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	a.mu.Lock()
 	a.started = true
 	a.mu.Unlock()
@@ -127,7 +127,7 @@ func (a *cri163CallerFake) StartPermissionStream(_ context.Context, _ string, re
 	a.requests = requests
 	return func() {}, nil
 }
-func (a *cri163CallerFake) Execute(ctx context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (a *cri163CallerFake) Execute(ctx context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	sink.Adapter("permission.request", map[string]any{
 		"request_id": "call-1",
 		"target":     cri163Target,

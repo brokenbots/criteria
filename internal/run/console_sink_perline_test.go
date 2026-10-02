@@ -31,7 +31,7 @@ func TestConsoleSink_PerLineFormat_AgentMessage(t *testing.T) {
 	sink.OnStepEntered("build", "shell", 1)
 	stepSink := sink.StepEventSink("build")
 	stepSink.Adapter("agent.message", map[string]any{"event_type": "assistant.message", "content": "hello"})
-	sink.OnStepOutcome("build", "success", 1*time.Second, nil)
+	sink.OnStepOutcome("build", "success", 1*time.Second, nil, "")
 
 	out := stripANSI(buf.String())
 	if !strings.Contains(out, "[1/1 build · compile(shell)]") {
@@ -238,7 +238,7 @@ func TestConsoleSink_PerLineFormat_StepOutcome_Success(t *testing.T) {
 	g := minimalGraph("build", "shell", "compile")
 	sink := NewConsoleSink(&buf, []string{"build"}, false, g)
 	sink.OnStepEntered("build", "shell", 1)
-	sink.OnStepOutcome("build", "success", 1*time.Second, nil)
+	sink.OnStepOutcome("build", "success", 1*time.Second, nil, "")
 
 	out := stripANSI(buf.String())
 	if !strings.Contains(out, "[1/1 build · compile(shell)] ✓ success in 1.0s") {
@@ -251,7 +251,7 @@ func TestConsoleSink_PerLineFormat_StepOutcome_Error(t *testing.T) {
 	g := minimalGraph("build", "shell", "compile")
 	sink := NewConsoleSink(&buf, []string{"build"}, false, g)
 	sink.OnStepEntered("build", "shell", 1)
-	sink.OnStepOutcome("build", "failure", 500*time.Millisecond, &stringErr{"something broke"})
+	sink.OnStepOutcome("build", "failure", 500*time.Millisecond, &stringErr{"something broke"}, "")
 
 	out := stripANSI(buf.String())
 	if !strings.Contains(out, "[1/1 build · compile(shell)] ✗ failure: something broke (500ms)") {
@@ -292,7 +292,7 @@ func TestConsoleSink_PerLineFormat_JsonModeUnchanged(t *testing.T) {
 	local := &LocalSink{RunID: "run-json-1", Out: &buf}
 	local.OnRunStarted("wf", "step1")
 	local.OnStepEntered("step1", "shell", 1)
-	local.OnStepOutcome("step1", "success", 100*time.Millisecond, nil)
+	local.OnStepOutcome("step1", "success", 100*time.Millisecond, nil, "")
 	local.OnRunCompleted("done", true)
 
 	if got := buf.String(); got != want {
@@ -305,7 +305,7 @@ func TestConsoleSink_PerLineFormat_StepOutcome_OkIsSuccess(t *testing.T) {
 	g := minimalGraph("build", "shell", "compile")
 	sink := NewConsoleSink(&buf, []string{"build"}, false, g)
 	sink.OnStepEntered("build", "shell", 1)
-	sink.OnStepOutcome("build", "ok", 500*time.Millisecond, nil)
+	sink.OnStepOutcome("build", "ok", 500*time.Millisecond, nil, "")
 
 	out := stripANSI(buf.String())
 	if !strings.Contains(out, "[1/1 build · compile(shell)] ✓ ok in 500ms") {

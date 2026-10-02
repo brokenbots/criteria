@@ -156,6 +156,6 @@ func (s *attemptTrackSink) OnStepEntered(step, adapter string, attempt int) {
 func (s *attemptTrackSink) OnStepResumed(string, int, string) {}
 
 // Ensure attemptTrackSink also satisfies OnStepOutcome from the base.
-func (s *attemptTrackSink) OnStepOutcome(step, outcome string, dur time.Duration, err error) {
-	s.fakeSink.OnStepOutcome(step, outcome, dur, err)
+func (s *attemptTrackSink) OnStepOutcome(step, outcome string, dur time.Duration, err error, comment string) {
+	s.fakeSink.OnStepOutcome(step, outcome, dur, err, "")
 }

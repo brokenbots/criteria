@@ -201,18 +201,19 @@ func (l *integrationLoader) Shutdown(_ context.Context) error { return nil }
 // integrationSink is a no-op engine.Sink used in the integration test.
 type integrationSink struct{}
 
-func (s *integrationSink) OnRunStarted(workflowName, initialStep string)                    {}
-func (s *integrationSink) OnRunCompleted(finalState string, success bool)                   {}
-func (s *integrationSink) OnRunFailed(reason, step string)                                  {}
-func (s *integrationSink) OnStepEntered(step, adapterName string, attempt int)              {}
-func (s *integrationSink) OnStepOutcome(step, outcome string, dur time.Duration, err error) {}
-func (s *integrationSink) OnStepTransition(from, to, viaOutcome string)                     {}
-func (s *integrationSink) OnStepResumed(step string, attempt int, reason string)            {}
-func (s *integrationSink) OnVariableSet(name, value, source string)                         {}
-func (s *integrationSink) OnStepOutputCaptured(step string, outputs map[string]string)      {}
-func (s *integrationSink) OnRunPaused(node, mode, signal string)                            {}
-func (s *integrationSink) OnRunResumed(node string)                                         {}
-func (s *integrationSink) OnWaitEntered(node, mode, duration, signal string)                {}
+func (s *integrationSink) OnRunStarted(workflowName, initialStep string)       {}
+func (s *integrationSink) OnRunCompleted(finalState string, success bool)      {}
+func (s *integrationSink) OnRunFailed(reason, step string)                     {}
+func (s *integrationSink) OnStepEntered(step, adapterName string, attempt int) {}
+func (s *integrationSink) OnStepOutcome(step, outcome string, dur time.Duration, err error, comment string) {
+}
+func (s *integrationSink) OnStepTransition(from, to, viaOutcome string)                {}
+func (s *integrationSink) OnStepResumed(step string, attempt int, reason string)       {}
+func (s *integrationSink) OnVariableSet(name, value, source string)                    {}
+func (s *integrationSink) OnStepOutputCaptured(step string, outputs map[string]string) {}
+func (s *integrationSink) OnRunPaused(node, mode, signal string)                       {}
+func (s *integrationSink) OnRunResumed(node string)                                    {}
+func (s *integrationSink) OnWaitEntered(node, mode, duration, signal string)           {}
 func (s *integrationSink) OnWaitResumed(node, mode, signal string, payload map[string]string) {
 }
 func (s *integrationSink) OnApprovalRequested(node string, approvers []string, reason string) {}
@@ -229,6 +230,7 @@ func (s *integrationSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycle
 func (s *integrationSink) OnRunOutputs([]map[string]string)                             {}
 func (s *integrationSink) OnStepOutcomeDefaulted(string, string, string)                {}
 func (s *integrationSink) OnStepOutcomeUnknown(string, string)                          {}
+func (s *integrationSink) OnStepOutcomeInvalid(string, string, []string, int)           {}
 
 func (s *integrationSink) OnAgentPromptInjected(string, string, string, string, time.Time) {}
 func (s *integrationSink) OnCheckpointPointer(*engine.CheckpointPointerEvent)              {}

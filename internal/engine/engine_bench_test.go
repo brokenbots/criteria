@@ -15,33 +15,34 @@ import (
 // benchSink discards all engine events so it does not perturb benchmark timing.
 type benchSink struct{}
 
-func (benchSink) OnCheckpointPointer(*CheckpointPointerEvent)                  {}
-func (benchSink) OnRunStarted(string, string)                                  {}
-func (benchSink) OnRunCompleted(string, bool)                                  {}
-func (benchSink) OnRunFailed(string, string)                                   {}
-func (benchSink) OnRunPaused(string, string, string)                           {}
-func (benchSink) OnRunResumed(string)                                          {}
-func (benchSink) OnStepEntered(string, string, int)                            {}
-func (benchSink) OnStepOutcome(string, string, time.Duration, error)           {}
-func (benchSink) OnStepTransition(string, string, string)                      {}
-func (benchSink) OnStepResumed(string, int, string)                            {}
-func (benchSink) OnVariableSet(string, string, string)                         {}
-func (benchSink) OnStepOutputCaptured(string, map[string]string)               {}
-func (benchSink) OnWaitEntered(string, string, string, string)                 {}
-func (benchSink) OnWaitResumed(string, string, string, map[string]string)      {}
-func (benchSink) OnApprovalRequested(string, []string, string)                 {}
-func (benchSink) OnApprovalDecision(string, string, string, map[string]string) {}
-func (benchSink) OnBranchEvaluated(string, string, string, string)             {}
-func (benchSink) OnForEachEntered(string, int)                                 {}
-func (benchSink) OnStepIterationStarted(string, int, string, bool)             {}
-func (benchSink) OnStepIterationCompleted(string, string, string)              {}
-func (benchSink) OnStepIterationItem(string, int, string)                      {}
-func (benchSink) OnScopeIterCursorSet(string)                                  {}
-func (benchSink) OnAdapterLifecycle(string, string, string, string)            {}
-func (benchSink) OnAdapterLifecycleEvent(*AdapterLifecycleEvent)               {}
-func (benchSink) OnRunOutputs([]map[string]string)                             {}
-func (benchSink) OnStepOutcomeDefaulted(string, string, string)                {}
-func (benchSink) OnStepOutcomeUnknown(string, string)                          {}
+func (benchSink) OnCheckpointPointer(*CheckpointPointerEvent)                          {}
+func (benchSink) OnRunStarted(string, string)                                          {}
+func (benchSink) OnRunCompleted(string, bool)                                          {}
+func (benchSink) OnRunFailed(string, string)                                           {}
+func (benchSink) OnRunPaused(string, string, string)                                   {}
+func (benchSink) OnRunResumed(string)                                                  {}
+func (benchSink) OnStepEntered(string, string, int)                                    {}
+func (benchSink) OnStepOutcome(_ string, _ string, _ time.Duration, _ error, _ string) {}
+func (benchSink) OnStepTransition(string, string, string)                              {}
+func (benchSink) OnStepResumed(string, int, string)                                    {}
+func (benchSink) OnVariableSet(string, string, string)                                 {}
+func (benchSink) OnStepOutputCaptured(string, map[string]string)                       {}
+func (benchSink) OnWaitEntered(string, string, string, string)                         {}
+func (benchSink) OnWaitResumed(string, string, string, map[string]string)              {}
+func (benchSink) OnApprovalRequested(string, []string, string)                         {}
+func (benchSink) OnApprovalDecision(string, string, string, map[string]string)         {}
+func (benchSink) OnBranchEvaluated(string, string, string, string)                     {}
+func (benchSink) OnForEachEntered(string, int)                                         {}
+func (benchSink) OnStepIterationStarted(string, int, string, bool)                     {}
+func (benchSink) OnStepIterationCompleted(string, string, string)                      {}
+func (benchSink) OnStepIterationItem(string, int, string)                              {}
+func (benchSink) OnScopeIterCursorSet(string)                                          {}
+func (benchSink) OnAdapterLifecycle(string, string, string, string)                    {}
+func (benchSink) OnAdapterLifecycleEvent(*AdapterLifecycleEvent)                       {}
+func (benchSink) OnRunOutputs([]map[string]string)                                     {}
+func (benchSink) OnStepOutcomeDefaulted(string, string, string)                        {}
+func (benchSink) OnStepOutcomeUnknown(string, string)                                  {}
+func (benchSink) OnStepOutcomeInvalid(string, string, []string, int)                   {}
 
 func (benchSink) OnAgentPromptInjected(string, string, string, string, time.Time) {}
 func (benchSink) StepEventSink(string) adapter.EventSink                          { return benchEventSink{} }

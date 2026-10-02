@@ -109,7 +109,7 @@ func (a *mcpToolsCaller) StartPermissionStream(_ context.Context, _ string, requ
 	return func() {}, nil
 }
 
-func (a *mcpToolsCaller) Execute(_ context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (a *mcpToolsCaller) Execute(_ context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	for _, call := range a.script {
 		sink.Adapter("permission.request", map[string]any{
 			"request_id": call.requestID,
@@ -268,7 +268,7 @@ func (s *mcpToolsSink) OnStepEntered(step, _ string, _ int) {
 	defer s.mu.Unlock()
 	s.entered = append(s.entered, step)
 }
-func (s *mcpToolsSink) OnStepOutcome(step, outcome string, _ time.Duration, _ error) {
+func (s *mcpToolsSink) OnStepOutcome(step, outcome string, _ time.Duration, _ error, comment string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.outcomes = append(s.outcomes, step+"="+outcome)
@@ -294,6 +294,7 @@ func (s *mcpToolsSink) OnAdapterLifecycleEvent(*engine.AdapterLifecycleEvent)   
 func (s *mcpToolsSink) OnRunOutputs([]map[string]string)                             {}
 func (s *mcpToolsSink) OnStepOutcomeDefaulted(string, string, string)                {}
 func (s *mcpToolsSink) OnStepOutcomeUnknown(string, string)                          {}
+func (s *mcpToolsSink) OnStepOutcomeInvalid(string, string, []string, int)           {}
 
 func (s *mcpToolsSink) OnAgentPromptInjected(string, string, string, string, time.Time) {}
 

@@ -63,7 +63,7 @@ func (s *captureSink) OnStepEntered(step, adapter string, attempt int) {
 	s.stepEntered = append(s.stepEntered, stepEnteredEvent{step: step, adapter: adapter, attempt: attempt})
 }
 
-func (s *captureSink) OnStepOutcome(step, outcome string, duration time.Duration, err error) {
+func (s *captureSink) OnStepOutcome(step, outcome string, duration time.Duration, err error, comment string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.stepOutcomes = append(s.stepOutcomes, stepOutcomeEvent{step: step, outcome: outcome, err: err})

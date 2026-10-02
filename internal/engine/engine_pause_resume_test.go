@@ -28,7 +28,7 @@ func (m *mockPauseResumeHandle) Info(context.Context) (adapterhost.Info, error) 
 func (m *mockPauseResumeHandle) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (m *mockPauseResumeHandle) Execute(context.Context, string, *workflow.StepNode, adapter.EventSink) (adapter.Result, error) {
+func (m *mockPauseResumeHandle) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, _ *v2.ExecutionRejection) (adapter.Result, error) {
 	return adapter.Result{Outcome: "success"}, nil
 }
 func (m *mockPauseResumeHandle) CloseSession(context.Context, string) error { return nil }

@@ -25,7 +25,7 @@ func (p *fakeTypedOutputAdapter) Info(context.Context) (adapterhost.Info, error)
 func (p *fakeTypedOutputAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
 }
-func (p *fakeTypedOutputAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (p *fakeTypedOutputAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	return adapter.Result{Outcome: "success", Outputs: p.outputs}, nil
 }
 func (p *fakeTypedOutputAdapter) Permit(context.Context, string, string, bool, string) error {

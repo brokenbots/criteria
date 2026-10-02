@@ -84,7 +84,7 @@ type kb53CopilotSink struct {
 	events      []string
 }
 
-func (s *kb53CopilotSink) OnStepOutcome(step, outcome string, _ time.Duration, _ error) {
+func (s *kb53CopilotSink) OnStepOutcome(step, outcome string, _ time.Duration, _ error, comment string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.outcomes = append(s.outcomes, step+"="+outcome)

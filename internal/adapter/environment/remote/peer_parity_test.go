@@ -189,7 +189,7 @@ func TestPeerLifecycleParity(t *testing.T) {
 		{
 			name: "Execute",
 			run: func(t *testing.T, h parityHandle, fp *fakePeer) string {
-				res, err := h.Execute(context.Background(), "s1", &workflow.StepNode{Name: "develop"}, &peerEventCollector{})
+				res, err := h.Execute(context.Background(), "s1", &workflow.StepNode{Name: "develop"}, &peerEventCollector{}, nil)
 				if err != nil {
 					return "err=" + err.Error()
 				}

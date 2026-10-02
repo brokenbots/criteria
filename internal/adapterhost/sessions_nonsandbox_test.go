@@ -147,7 +147,7 @@ func TestSessionManagerOpenExecuteClose(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 
-	res, err := sm.Execute(context.Background(), "agent", &workflow.StepNode{Name: "run"}, &adapterEventCollector{})
+	res, err := sm.Execute(context.Background(), "agent", &workflow.StepNode{Name: "run"}, &adapterEventCollector{}, nil)
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestSessionManagerUnknownExecuteAndDoubleOpen(t *testing.T) {
 	})
 
 	sm := NewSessionManager(loader)
-	_, err := sm.Execute(context.Background(), "missing", &workflow.StepNode{Name: "run"}, &adapterEventCollector{})
+	_, err := sm.Execute(context.Background(), "missing", &workflow.StepNode{Name: "run"}, &adapterEventCollector{}, nil)
 	if !errors.Is(err, ErrUnknownSession) {
 		t.Fatalf("execute unknown err=%v", err)
 	}
@@ -195,13 +195,13 @@ func TestSessionManagerCrashPolicyFail(t *testing.T) {
 	if err := sm.Open(context.Background(), "agent", "noop", OnCrashFail, nil, nil); err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if _, err := sm.Execute(context.Background(), "agent", &workflow.StepNode{Name: "first"}, &adapterEventCollector{}); err != nil {
+	if _, err := sm.Execute(context.Background(), "agent", &workflow.StepNode{Name: "first"}, &adapterEventCollector{}, nil); err != nil {
 		t.Fatalf("first execute: %v", err)
 	}
 	loader.lastHandle().Kill()
 
 	sink := &adapterEventCollector{}
-	result, err := sm.Execute(context.Background(), "agent", &workflow.StepNode{Name: "second"}, sink)
+	result, err := sm.Execute(context.Background(), "agent", &workflow.StepNode{Name: "second"}, sink, nil)
 	if err == nil {
 		t.Fatal("expected crash error")
 	}
@@ -225,13 +225,13 @@ func TestSessionManagerCrashPolicyRespawn(t *testing.T) {
 	if err := sm.Open(context.Background(), "agent", "noop", OnCrashRespawn, nil, nil); err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if _, err := sm.Execute(context.Background(), "agent", &workflow.StepNode{Name: "first"}, &adapterEventCollector{}); err != nil {
+	if _, err := sm.Execute(context.Background(), "agent", &workflow.StepNode{Name: "first"}, &adapterEventCollector{}, nil); err != nil {
 		t.Fatalf("first execute: %v", err)
 	}
 	loader.lastHandle().Kill()
 
 	sink := &adapterEventCollector{}
-	result, err := sm.Execute(context.Background(), "agent", &workflow.StepNode{Name: "second"}, sink)
+	result, err := sm.Execute(context.Background(), "agent", &workflow.StepNode{Name: "second"}, sink, nil)
 	if err != nil {
 		t.Fatalf("execute with respawn: %v", err)
 	}
@@ -255,12 +255,12 @@ func TestSessionManagerCrashPolicyAbortRun(t *testing.T) {
 	if err := sm.Open(context.Background(), "agent", "noop", OnCrashAbortRun, nil, nil); err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if _, err := sm.Execute(context.Background(), "agent", &workflow.StepNode{Name: "first"}, &adapterEventCollector{}); err != nil {
+	if _, err := sm.Execute(context.Background(), "agent", &workflow.StepNode{Name: "first"}, &adapterEventCollector{}, nil); err != nil {
 		t.Fatalf("first execute: %v", err)
 	}
 	loader.lastHandle().Kill()
 
-	_, err := sm.Execute(context.Background(), "agent", &workflow.StepNode{Name: "second"}, &adapterEventCollector{})
+	_, err := sm.Execute(context.Background(), "agent", &workflow.StepNode{Name: "second"}, &adapterEventCollector{}, nil)
 	var fatal *FatalRunError
 	if !errors.As(err, &fatal) {
 		t.Fatalf("error=%v want FatalRunError", err)

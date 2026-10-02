@@ -52,7 +52,7 @@ func BenchmarkBuiltinAdapter_Execute(b *testing.B) {
 		if err := p.OpenSession(ctx, "sess", nil, nil); err != nil {
 			b.Fatalf("OpenSession: %v", err)
 		}
-		if _, err := p.Execute(ctx, "sess", step, benchEventSink{}); err != nil {
+		if _, err := p.Execute(ctx, "sess", step, benchEventSink{}, nil); err != nil {
 			b.Fatalf("Execute: %v", err)
 		}
 		if err := p.CloseSession(ctx, "sess"); err != nil {
@@ -76,7 +76,7 @@ func BenchmarkAdapterExecuteNoop(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		if _, err := p.Execute(ctx, "sess", step, benchEventSink{}); err != nil {
+		if _, err := p.Execute(ctx, "sess", step, benchEventSink{}, nil); err != nil {
 			b.Fatalf("Execute: %v", err)
 		}
 	}

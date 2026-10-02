@@ -151,7 +151,7 @@ func TestPeerCRI287TeardownWindowPeerPath(t *testing.T) {
 		// Execute stream dies with the turn.
 		fp.drop()
 		coll := &peerEventCollector{}
-		_, err := sm.Execute(context.Background(), name, &workflow.StepNode{Name: "develop"}, coll)
+		_, err := sm.Execute(context.Background(), name, &workflow.StepNode{Name: "develop"}, coll, nil)
 		if err == nil {
 			t.Fatal("expected the Execute to fail on the dead conn")
 		}
@@ -184,7 +184,7 @@ func TestPeerCRI287TeardownWindowPeerPath(t *testing.T) {
 		// No teardown mark: the death is a genuine crash.
 		fp.drop()
 		coll := &peerEventCollector{}
-		_, err := sm.Execute(context.Background(), name, &workflow.StepNode{Name: "develop"}, coll)
+		_, err := sm.Execute(context.Background(), name, &workflow.StepNode{Name: "develop"}, coll, nil)
 		var crashErr *adapterhost.SessionCrashError
 		if !errors.As(err, &crashErr) || crashErr.Session != name {
 			t.Fatalf("Execute err = %v, want SessionCrashError for %s", err, name)
@@ -249,13 +249,13 @@ func TestPeerLogEvidenceSurvivesCrash(t *testing.T) {
 	// The crash kills the Execute stream (and with it the shared conn), but
 	// the evidence already at the host sink must survive.
 	fp.drop()
-	if _, execErr := ph.Execute(ctx, "s1", &workflow.StepNode{Name: "develop"}, &peerEventCollector{}); execErr == nil {
+	if _, execErr := ph.Execute(ctx, "s1", &workflow.StepNode{Name: "develop"}, &peerEventCollector{}, nil); execErr == nil {
 		t.Fatal("expected the Execute stream to die with the crash")
 	}
 	// The crash is terminal on the peer path: a follow-up Execute on the
 	// dead handle keeps failing, which is what re-arms wire-fact
 	// classification once the CRI-287 teardown window has expired.
-	if _, execErr := ph.Execute(ctx, "s1", &workflow.StepNode{Name: "develop"}, &peerEventCollector{}); execErr == nil {
+	if _, execErr := ph.Execute(ctx, "s1", &workflow.StepNode{Name: "develop"}, &peerEventCollector{}, nil); execErr == nil {
 		t.Fatal("expected the follow-up Execute on the dead peer handle to fail as well")
 	}
 	coll.mu.Lock()

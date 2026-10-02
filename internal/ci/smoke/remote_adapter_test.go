@@ -39,30 +39,31 @@ func (s *testSink) OnRunCompleted(state string, ok bool) {
 	s.success = ok
 	s.mu.Unlock()
 }
-func (s *testSink) OnRunFailed(string, string)                                   {}
-func (s *testSink) OnStepEntered(string, string, int)                            {}
-func (s *testSink) OnStepOutcome(string, string, time.Duration, error)           {}
-func (s *testSink) OnStepTransition(string, string, string)                      {}
-func (s *testSink) OnStepResumed(string, int, string)                            {}
-func (s *testSink) OnVariableSet(string, string, string)                         {}
-func (s *testSink) OnStepOutputCaptured(string, map[string]string)               {}
-func (s *testSink) OnRunPaused(string, string, string)                           {}
-func (s *testSink) OnRunResumed(string)                                          {}
-func (s *testSink) OnWaitEntered(string, string, string, string)                 {}
-func (s *testSink) OnWaitResumed(string, string, string, map[string]string)      {}
-func (s *testSink) OnApprovalRequested(string, []string, string)                 {}
-func (s *testSink) OnApprovalDecision(string, string, string, map[string]string) {}
-func (s *testSink) OnBranchEvaluated(string, string, string, string)             {}
-func (s *testSink) OnForEachEntered(string, int)                                 {}
-func (s *testSink) OnStepIterationStarted(string, int, string, bool)             {}
-func (s *testSink) OnStepIterationCompleted(string, string, string)              {}
-func (s *testSink) OnStepIterationItem(string, int, string)                      {}
-func (s *testSink) OnScopeIterCursorSet(string)                                  {}
-func (s *testSink) OnAdapterLifecycle(string, string, string, string)            {}
-func (s *testSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent)  {}
-func (s *testSink) OnRunOutputs([]map[string]string)                             {}
-func (s *testSink) OnStepOutcomeDefaulted(string, string, string)                {}
-func (s *testSink) OnStepOutcomeUnknown(string, string)                          {}
+func (s *testSink) OnRunFailed(string, string)                                           {}
+func (s *testSink) OnStepEntered(string, string, int)                                    {}
+func (s *testSink) OnStepOutcome(_ string, _ string, _ time.Duration, _ error, _ string) {}
+func (s *testSink) OnStepTransition(string, string, string)                              {}
+func (s *testSink) OnStepResumed(string, int, string)                                    {}
+func (s *testSink) OnVariableSet(string, string, string)                                 {}
+func (s *testSink) OnStepOutputCaptured(string, map[string]string)                       {}
+func (s *testSink) OnRunPaused(string, string, string)                                   {}
+func (s *testSink) OnRunResumed(string)                                                  {}
+func (s *testSink) OnWaitEntered(string, string, string, string)                         {}
+func (s *testSink) OnWaitResumed(string, string, string, map[string]string)              {}
+func (s *testSink) OnApprovalRequested(string, []string, string)                         {}
+func (s *testSink) OnApprovalDecision(string, string, string, map[string]string)         {}
+func (s *testSink) OnBranchEvaluated(string, string, string, string)                     {}
+func (s *testSink) OnForEachEntered(string, int)                                         {}
+func (s *testSink) OnStepIterationStarted(string, int, string, bool)                     {}
+func (s *testSink) OnStepIterationCompleted(string, string, string)                      {}
+func (s *testSink) OnStepIterationItem(string, int, string)                              {}
+func (s *testSink) OnScopeIterCursorSet(string)                                          {}
+func (s *testSink) OnAdapterLifecycle(string, string, string, string)                    {}
+func (s *testSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent)          {}
+func (s *testSink) OnRunOutputs([]map[string]string)                                     {}
+func (s *testSink) OnStepOutcomeDefaulted(string, string, string)                        {}
+func (s *testSink) OnStepOutcomeUnknown(string, string)                                  {}
+func (s *testSink) OnStepOutcomeInvalid(string, string, []string, int)                   {}
 
 func (s *testSink) OnAgentPromptInjected(string, string, string, string, time.Time) {}
 func (s *testSink) OnCheckpointPointer(*engine.CheckpointPointerEvent)              {}

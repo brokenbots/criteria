@@ -17,12 +17,14 @@ type recordingSink struct {
 	stepFan atomic.Int32 // increments on Log+Adapter via fanout step sink
 }
 
-func (r *recordingSink) bump()                                                   { r.calls.Add(1) }
-func (r *recordingSink) OnRunStarted(string, string)                             { r.bump() }
-func (r *recordingSink) OnRunCompleted(string, bool)                             { r.bump() }
-func (r *recordingSink) OnRunFailed(string, string)                              { r.bump() }
-func (r *recordingSink) OnStepEntered(string, string, int)                       { r.bump() }
-func (r *recordingSink) OnStepOutcome(string, string, time.Duration, error)      { r.bump() }
+func (r *recordingSink) bump()                             { r.calls.Add(1) }
+func (r *recordingSink) OnRunStarted(string, string)       { r.bump() }
+func (r *recordingSink) OnRunCompleted(string, bool)       { r.bump() }
+func (r *recordingSink) OnRunFailed(string, string)        { r.bump() }
+func (r *recordingSink) OnStepEntered(string, string, int) { r.bump() }
+func (r *recordingSink) OnStepOutcome(_ string, _ string, _ time.Duration, _ error, _ string) {
+	r.bump()
+}
 func (r *recordingSink) OnStepTransition(string, string, string)                 { r.bump() }
 func (r *recordingSink) OnStepResumed(string, int, string)                       { r.bump() }
 func (r *recordingSink) OnVariableSet(string, string, string)                    { r.bump() }
@@ -46,6 +48,7 @@ func (r *recordingSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEv
 func (r *recordingSink) OnRunOutputs([]map[string]string)                            { r.bump() }
 func (r *recordingSink) OnStepOutcomeDefaulted(string, string, string)               { r.bump() }
 func (r *recordingSink) OnStepOutcomeUnknown(string, string)                         { r.bump() }
+func (r *recordingSink) OnStepOutcomeInvalid(string, string, []string, int)          { r.bump() }
 
 func (r *recordingSink) OnAgentPromptInjected(string, string, string, string, time.Time) { r.bump() }
 func (r *recordingSink) OnCheckpointPointer(*engine.CheckpointPointerEvent)              { r.bump() }
@@ -64,7 +67,7 @@ func TestMultiSink_FansEveryEventToAllChildren(t *testing.T) {
 
 	sink.OnRunStarted("wf", "init")
 	sink.OnStepEntered("s", "demo", 1)
-	sink.OnStepOutcome("s", "success", time.Millisecond, nil)
+	sink.OnStepOutcome("s", "success", time.Millisecond, nil, "")
 	sink.OnStepTransition("s", "done", "success")
 	sink.OnRunCompleted("done", true)
 	ss := sink.StepEventSink("s")
