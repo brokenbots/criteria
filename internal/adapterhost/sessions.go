@@ -2377,12 +2377,18 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 	// KB-45: validate the verdict against the step's outcome contracts
 	// BEFORE the permission override and any downstream mapping, so a
 	// permission-denied success cannot launder an invalid payload. Legacy
-	// (contract-less) steps pass through untouched.
-	validated, issues := evaluateLocalOutcomeContracts(step, result)
-	if len(issues) > 0 {
-		return adapter.Result{}, &OutcomeInvalidError{Outcome: result.Outcome, Issues: issues}
+	// (contract-less) steps pass through untouched. Only a final verdict is
+	// a candidate: when the Execute call itself failed (adapter error or
+	// transport death) there is no verdict to validate — the error keeps its
+	// crash classification, and the engine's attempt loop resets the repair
+	// context on it.
+	if execErr == nil {
+		validated, issues := evaluateLocalOutcomeContracts(step, result)
+		if len(issues) > 0 {
+			return adapter.Result{}, &OutcomeInvalidError{Outcome: result.Outcome, Issues: issues}
+		}
+		result = validated
 	}
-	result = validated
 
 	m.maybeOverrideOutcome(permSink, &result)
 
