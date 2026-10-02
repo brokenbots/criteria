@@ -640,10 +640,16 @@ func (m *SessionManager) remoteShimForEnvLocked(envKey string) RemoteShim {
 
 // remoteEnvForAdapter returns the environment key ("remote.<name>") the
 // adapter declaration is bound to, resolving against the DECLARING graph so
-// subworkflow adapters match the provisioning path (CRI-269).
+// subworkflow adapters match the provisioning path (CRI-269). The second
+// result is true only when that environment is REMOTE — callers use this to
+// route dispatch, and a local environment binding must not be taken as
+// remote (pre-refactor semantics).
 func (m *SessionManager) remoteEnvForAdapter(instanceID string) (string, bool) {
 	adapterNode, graph := m.adapterDeclaration(instanceID)
 	if adapterNode == nil || graph == nil {
+		return "", false
+	}
+	if !declaredAdapterEnvironmentIsRemote(adapterNode, graph) {
 		return "", false
 	}
 	return declaredAdapterEnvironmentKey(adapterNode, graph)
@@ -673,7 +679,7 @@ func declaredAdapterEnvironmentIsRemote(adapterNode *workflow.AdapterNode, graph
 		return false
 	}
 	envNode, ok := graph.Environments[envKey]
-	return ok && envNode.Type != "" && envNode.Type == "remote"
+	return ok && envNode.Type == "remote"
 }
 
 // remoteShimForAdapter returns the shim serving the remote environment the

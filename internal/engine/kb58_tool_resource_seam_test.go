@@ -51,10 +51,10 @@ const (
 type kb58TestCallee struct {
 	rec *nestedEngineRecorder
 
-	mu        sync.Mutex
-	opens     []map[string]string
-	openConfs []map[string]string
-	closes    []string
+	mu       sync.Mutex
+	openSess []string
+	opens    []map[string]string
+	closes   []string
 }
 
 func (a *kb58TestCallee) Info(context.Context) (adapterhost.Info, error) {
@@ -70,10 +70,10 @@ func (a *kb58TestCallee) Info(context.Context) (adapterhost.Info, error) {
 	}, nil
 }
 
-func (a *kb58TestCallee) OpenSession(_ context.Context, _ string, config, secrets map[string]string) error {
+func (a *kb58TestCallee) OpenSession(_ context.Context, sessionID string, _ map[string]string, secrets map[string]string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.openConfs = append(a.openConfs, copySS(config))
+	a.openSess = append(a.openSess, sessionID)
 	a.opens = append(a.opens, copySS(secrets))
 	return nil
 }
@@ -110,13 +110,14 @@ func (a *kb58TestCallee) Restore(context.Context, string, []byte, uint32) error 
 	return nil
 }
 
-// secretsSeen maps sessionID → reported secrets for opened sessions.
+// secretsSeen returns the secrets the session identified by sessionID was
+// opened with (the host passes the adapter instance id to OpenSession).
 func (a *kb58TestCallee) secretsSeen(sessionID string) (map[string]string, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	for _, secs := range a.opens {
-		if _, ok := secs[sessionID]; ok {
-			return secs, true
+	for i, sess := range a.openSess {
+		if sess == sessionID {
+			return a.opens[i], true
 		}
 	}
 	return nil, false
@@ -277,6 +278,10 @@ func kb58Graph(t *testing.T, callerAllow []string, policy workflow.Policy) (*wor
 				TargetKind: workflow.StepTargetAdapter,
 				AdapterRef: "claude.agent",
 				AllowTools: callerAllow,
+				// CRI-157 grant shape: the caller is granted a tool
+				// resource (the mcp probe), never a caller-is-self grant
+				// and never a step target anywhere in the body tree.
+				Tools: []workflow.AdapterToolRef{{CalleeRef: kb58CalleeRef}},
 				Outcomes: map[string]*workflow.CompiledOutcome{
 					"success": {Next: "done"},
 					"failure": {Next: "failed"},
@@ -423,10 +428,10 @@ func TestKB58_ParallelIterationResolvesHostLocalToolResource(t *testing.T) {
 		}
 	}
 
-	// The callee must be executed exactly twice (one call per parallel
-	// iteration).
-	if got, want := len(callee.rec.allSessions()), 2; got != want {
-		t.Errorf("callee Execute count = %d; want %d (one per parallel iteration)", got, want)
+	// The callee must be executed once per tool call: two parallel iterations
+	// × two calls made by each caller step = 4 host-local executions.
+	if got, want := len(callee.rec.allSessions()), 4; got != want {
+		t.Errorf("callee Execute count = %d; want %d (2 iterations × 2 calls)", got, want)
 	}
 
 	if sink.terminal != "done" || !sink.terminalOK {
