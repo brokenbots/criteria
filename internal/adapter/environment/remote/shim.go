@@ -1133,11 +1133,11 @@ func (s *Shim) WaitForHandle(ctx context.Context, adapterType, scope string) (ad
 // or the pod-state probe reports Running — and fails terminally with the
 // CRI-137 diagnosis classes when it expires. The scheduling budget
 // (DefaultSchedulingBudget) runs while the adapter pod has not started: a
-// burst of per-scope pod creations can keep a
-// pod Pending well past the handshake budget, and a pod that never started
-// cannot handshake, so the handshake budget stays frozen until it does. If the
-// scheduling budget expires first, the wait fails naming the pod's observed
-// phase instead of the dead-Job verdict.
+// burst of per-scope pod creations can keep a pod Pending well past the
+// handshake budget, and a pod that never started cannot handshake, so the
+// handshake budget stays frozen until it does. If the scheduling budget
+// expires first, the wait fails naming the pod's observed phase instead of
+// the dead-Job verdict.
 func (s *Shim) WaitForFreshHandle(ctx context.Context, adapterType, scope string, stale adapterhost.Handle) (adapterhost.Handle, error) {
 	key := s.sessionKey(adapterType, scope)
 	s.mu.Lock()
@@ -1191,7 +1191,7 @@ func (s *Shim) podTerminalFailure(adapterType, scope, key, phase string, phaseKn
 // started it re-observes the pod, arms the handshake budget on the first
 // start evidence, and fails on scheduling-budget expiry naming the observed
 // pod phase; once started it fails at the handshake deadline. done=true
-// carries the terminal wait result; otherwise the caller re-arms the wake
+// carries the terminal wait error; otherwise the caller re-arms the wake
 // timer from the returned state.
 func (s *Shim) handleWaiterWake(adapterType, scope, key string, handshakeBudget, schedulingBudget time.Duration, st *waiterState) (done bool, err error) {
 	now := time.Now()
