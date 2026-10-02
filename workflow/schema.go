@@ -796,8 +796,10 @@ type CompiledOutcome struct {
 	// typeexpr so named `type.<name>` and inline constraint forms are
 	// indistinguishable after compilation. SchemaJSON is its deterministic
 	// JSON Schema projection carried on the wire (ExecuteRequest
-	// outcome_contracts) and consumed by the host-side validation.
-	Schema cty.Type
+	// outcome_contracts) and consumed by the host-side validation. The pointer
+	// form keeps StepNode JSON round-trippable (PR #291 contract): cty.NilType
+	// panics on MarshalJSON, so the sentinel is nil rather than a zero type.
+	Schema *cty.Type
 	// SchemaJSON is the deterministic JSON Schema bytes for Schema, produced
 	// by CTypeToJSONSchema at compile time. Empty when Schema is nil.
 	SchemaJSON []byte
