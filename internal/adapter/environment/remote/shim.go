@@ -166,11 +166,55 @@ type verifyFailureState struct {
 }
 
 // DefaultVerifyFailureBudget is the authoritative wall-clock bound for a
-// pending session wait: if no adapter re-handshakes within the budget, the
-// wait fails terminally. It covers both the stale-pod case (dials keep being
-// rejected) and the dead-Job case (no dials at all); there is deliberately no
-// separate rejection-count bound (CRI-137 review: one authoritative bound).
+// pending session wait once the adapter pod has started: if no adapter
+// re-handshakes within the budget, the wait fails terminally. It covers the
+// stale-pod case (dials keep being rejected) and the dead-Job case (a started
+// pod that never dials again); there is deliberately no separate
+// rejection-count bound (CRI-137 review: one authoritative bound).
 const DefaultVerifyFailureBudget = 5 * time.Minute
+
+// DefaultSchedulingBudget bounds the wait while the adapter pod has NOT yet
+// started (KB-70): a burst of per-scope pod creations can keep pods Pending
+// well past the handshake budget, and a pod that never started cannot
+// handshake, so consuming the handshake budget for it false-positively fails
+// the scope. While the pod is still Pending (or unobserved), the handshake
+// budget stays frozen and only this, longer, scheduling budget elapses.
+const DefaultSchedulingBudget = 15 * time.Minute
+
+// defaultPodStatePollInterval is how often a pending wait re-observes pod
+// state and dial activity while the adapter has not started (no dial seen for
+// its key). Once a dial is observed the wait switches to an exact
+// handshake-budget timer, so this cadence only adds latency to scheduling.
+const defaultPodStatePollInterval = 5 * time.Second
+
+// PodState reports the lifecycle phase of the adapter pod backing a session
+// key, as observed by the infrastructure hosting the shim (e.g. an operator
+// projecting Kubernetes pod status). The zero-value phase is empty; probes
+// that have no observation return ok=false.
+type PodState struct {
+	Phase string
+}
+
+// PodStateProbe is an optional seam letting the host surface adapter pod
+// lifecycle phases into the session wait. It is nil in a bare shim; wiring it
+// is entirely optional — without it, the wait still distinguishes "pod
+// started" from "pod not started" by adapter dial activity (an adapter
+// process that is up must have dialed the shim to present an identity frame).
+type PodStateProbe interface {
+	PodState(adapterType, scope string) (PodState, bool)
+}
+
+// podPhaseStarted reports whether the phase names a pod whose processes run.
+func podPhaseStarted(phase string) bool {
+	return strings.EqualFold(phase, "Running")
+}
+
+// podPhaseTerminal reports whether the phase names a pod whose Job finished
+// (or died) and can never dial again. Such a wait cannot be rescued by
+// waiting longer.
+func podPhaseTerminal(phase string) bool {
+	return strings.EqualFold(phase, "Succeeded") || strings.EqualFold(phase, "Failed")
+}
 
 // Shim listens for inbound adapter connections, terminates mTLS, verifies
 // identity, and presents each connection as a local-looking Handle.
@@ -195,6 +239,11 @@ type Shim struct {
 
 	verifyFailures      map[string]*verifyFailureState // session key → last identity-verification rejection (diagnostics while a waiter is pending)
 	verifyFailureBudget time.Duration
+
+	schedulingBudget     time.Duration // bounds the wait while the adapter pod has not started (KB-70)
+	podStatePollInterval time.Duration // re-observation cadence while not started
+	podProbe             PodStateProbe // optional pod-state seam; nil in a bare shim
+	dialActivity         map[string]time.Time // session key → last time an adapter presented an identity frame (pod-started evidence)
 
 	peerAcceptor   PeerAcceptor   // receives authenticated role="peer" dials; nil rejects them
 	scopeRegistrar ScopeRegistrar // consulted for unregistered-scope dials (KB-25); nil keeps reject-only
@@ -261,6 +310,9 @@ func NewShim(cfg *Config, verifier DigestVerifier) (*Shim, error) {
 		scopeTokens:           make(map[string]string),
 		verifyFailures:        make(map[string]*verifyFailureState),
 		verifyFailureBudget:   DefaultVerifyFailureBudget,
+		schedulingBudget:      DefaultSchedulingBudget,
+		podStatePollInterval:  defaultPodStatePollInterval,
+		dialActivity:          make(map[string]time.Time),
 	}, nil
 }
 
@@ -377,6 +429,58 @@ func (s *Shim) SetPeerAcceptor(pa PeerAcceptor) {
 	s.peerAcceptor = pa
 }
 
+// SetPodStateProbe installs an optional seam through which the host surfaces
+// adapter pod lifecycle phases into pending session waits (KB-70). When nil,
+// the wait falls back to dial activity as the only pod-started signal.
+func (s *Shim) SetPodStateProbe(probe PodStateProbe) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.podProbe = probe
+}
+
+// noteDialActivity records the most recent time an adapter presented a parsed
+// identity frame for a session key. Presenting a frame proves the adapter
+// process started, independent of whether the identity later verifies; the
+// session wait uses this as its default pod-started signal (KB-70) when no
+// pod-state probe is wired.
+func (s *Shim) noteDialActivity(adapterType, scope string) {
+	key := s.sessionKey(adapterType, scope)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.dialActivity == nil {
+		s.dialActivity = make(map[string]time.Time)
+	}
+	s.dialActivity[key] = time.Now()
+}
+
+// dialObserved reports whether any identity frame was ever presented for key.
+func (s *Shim) dialObserved(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.dialActivity[key]
+	return ok
+}
+
+// observePod consults the optional pod-state probe outside s.mu (the probe
+// may re-enter the shim). A nil probe or a panic inside it yields no
+// observation so a defective seam degrades to the dial-activity signal.
+func (s *Shim) observePod(adapterType, scope string) (phase string, ok bool) {
+	s.mu.Lock()
+	probe := s.podProbe
+	s.mu.Unlock()
+	if probe == nil {
+		return "", false
+	}
+	defer func() {
+		if recover() != nil {
+			ok = false
+			phase = ""
+		}
+	}()
+	st, observed := probe.PodState(adapterType, scope)
+	return st.Phase, observed
+}
+
 // SetScopeRegistrar installs the dial-time re-registration seam (KB-25).
 // When unset, a dial presenting a valid digest for an unregistered scope is
 // rejected with ErrScopeNotRegistered and its connection is closed, exactly
@@ -460,6 +564,12 @@ func (s *Shim) Accept(ctx context.Context, conn net.Conn) error {
 	if err != nil {
 		return err
 	}
+
+	// The adapter presented a parsed identity frame, so its process is up:
+	// remember this even if identity verification fails below, so pending
+	// session waits can tell "pod started but rejected" from "pod never
+	// started" (KB-70).
+	s.noteDialActivity(hs.Name, hs.Scope)
 
 	if err := s.verifyAdapterIdentity(conn, &hs); err != nil {
 		return err
@@ -976,12 +1086,16 @@ func (s *Shim) WaitForHandle(ctx context.Context, adapterType, scope string) (ad
 // asynchronously), so callers pass the dead handle as `stale` to ensure they
 // wait for a genuinely new connection rather than receiving the dead one back.
 //
-// The wait is bounded by the verify-failure wall-clock budget: if no adapter
-// successfully re-handshakes within the budget, the wait fails with a
-// terminal error naming the scope and its accept-token state (CRI-137). This
-// covers both a stale adapter pod whose dials keep being rejected on a
-// pre-rotation scope key and an adapter Job that is complete or dead and
-// never dials again.
+// The wait is bounded by two wall-clock budgets (KB-70). The handshake budget
+// (DefaultVerifyFailureBudget) runs only while the adapter has started — the
+// shim observed an identity frame for the key, or the pod-state probe reports
+// Running — and fails terminally with the CRI-137 diagnosis classes when it
+// expires. The scheduling budget (DefaultSchedulingBudget) runs while the
+// adapter pod has not started: a burst of per-scope pod creations can keep a
+// pod Pending well past the handshake budget, and a pod that never started
+// cannot handshake, so the handshake budget stays frozen until it does. If the
+// scheduling budget expires first, the wait fails naming the pod's observed
+// phase instead of the dead-Job verdict.
 func (s *Shim) WaitForFreshHandle(ctx context.Context, adapterType, scope string, stale adapterhost.Handle) (adapterhost.Handle, error) {
 	key := s.sessionKey(adapterType, scope)
 	s.mu.Lock()
@@ -997,20 +1111,96 @@ func (s *Shim) WaitForFreshHandle(ctx context.Context, adapterType, scope string
 	}
 	s.mu.Unlock()
 
-	budgetTimer := time.NewTimer(budget)
-	defer budgetTimer.Stop()
+	return s.awaitWaiter(ctx, adapterType, scope, key, ch, nil, func() { s.removeWaiter(key, ch) }, budget)
+}
 
-	select {
-	case res := <-ch:
-		return res.handle, res.err
-	case <-budgetTimer.C:
-		s.removeWaiter(key, ch)
-		return nil, s.waitTimeoutError(adapterType, scope, key, budget)
-	case <-ctx.Done():
-		// Remove ourselves from waiters on cancellation.
-		s.removeWaiter(key, ch)
-		return nil, ctx.Err()
+// awaitWaiter blocks on one or two waiter result channels until the session
+// resolves, the context is cancelled, or one of the two session-wait budgets
+// expires (KB-70). A nil channel never resolves: the legacy wait passes nil
+// for its single registry and the peer wait passes both of its registries.
+//
+// See WaitForFreshHandle for the budget semantics. deregister removes the
+// caller's waiter registrations on every exit path — including success, where
+// removing an already-drained channel is a no-op — so a woken wait never
+// leaves a stale channel in a registry.
+func (s *Shim) awaitWaiter(ctx context.Context, adapterType, scope, key string, primary, secondary <-chan waitResult, deregister func(), handshakeBudget time.Duration) (adapterhost.Handle, error) {
+	s.mu.Lock()
+	schedulingBudget := s.schedulingBudget
+	poll := s.podStatePollInterval
+	s.mu.Unlock()
+	if schedulingBudget <= 0 {
+		schedulingBudget = DefaultSchedulingBudget
 	}
+	if poll <= 0 {
+		poll = defaultPodStatePollInterval
+	}
+
+	// Initial observation, so a pod that is already Running (or already
+	// dialing) starts its handshake budget now rather than at the first tick.
+	phase, phaseKnown := s.observePod(adapterType, scope)
+	if phaseKnown && podPhaseTerminal(phase) && !s.dialObserved(key) {
+		deregister()
+		return nil, s.podTerminalError(adapterType, scope, phase)
+	}
+	started := s.dialObserved(key) || (phaseKnown && podPhaseStarted(phase))
+	handshakeDeadline := time.Time{}
+	if started {
+		handshakeDeadline = time.Now().Add(handshakeBudget)
+	}
+	schedDeadline := time.Now().Add(schedulingBudget)
+
+	timer := time.NewTimer(waitPollDuration(poll, started, handshakeDeadline, schedDeadline))
+	defer timer.Stop()
+	for {
+		select {
+		case res := <-primary:
+			deregister()
+			return res.handle, res.err
+		case res := <-secondary:
+			deregister()
+			return res.handle, res.err
+		case <-ctx.Done():
+			deregister()
+			return nil, ctx.Err()
+		case <-timer.C:
+			now := time.Now()
+			if !started {
+				phase, phaseKnown = s.observePod(adapterType, scope)
+				if phaseKnown && podPhaseTerminal(phase) && !s.dialObserved(key) {
+					deregister()
+					return nil, s.podTerminalError(adapterType, scope, phase)
+				}
+				if s.dialObserved(key) || (phaseKnown && podPhaseStarted(phase)) {
+					started = true
+					handshakeDeadline = now.Add(handshakeBudget)
+				} else if !now.Before(schedDeadline) {
+					deregister()
+					return nil, s.schedulingTimeoutError(adapterType, scope, key, schedulingBudget, phase, phaseKnown)
+				}
+			}
+			if started {
+				if !now.Before(handshakeDeadline) {
+					deregister()
+					return nil, s.waitTimeoutError(adapterType, scope, key, handshakeBudget)
+				}
+				timer.Reset(time.Until(handshakeDeadline))
+				continue
+			}
+			// Still not started: wake again at the closer of the next poll
+			// or the scheduling deadline.
+			timer.Reset(waitPollDuration(poll, false, handshakeDeadline, schedDeadline))
+		}
+	}
+}
+
+// waitPollDuration picks the next wake-up: immediately at the handshake
+// deadline once the adapter started, otherwise the closer of the next poll
+// and the scheduling deadline. A non-positive wake-up fires on Reset.
+func waitPollDuration(poll time.Duration, started bool, handshakeDeadline, schedDeadline time.Time) time.Duration {
+	if started {
+		return time.Until(handshakeDeadline)
+	}
+	return min(poll, time.Until(schedDeadline))
 }
 
 // registerFreshWaiter atomically resolves a fresh legacy session or
@@ -1051,11 +1241,13 @@ func (s *Shim) removeWaiter(key string, ch chan waitResult) {
 	s.mu.Unlock()
 }
 
-// waitTimeoutError builds the terminal error for a pending session wait that
-// exceeded the wall-clock budget. It names the scope, distinguishes the last
-// observed rejection by class (digest mismatch vs accept-token/scope state),
-// and calls out the dead-Job shape when no identity handshake was observed at
-// all (CRI-137).
+// waitTimeoutError builds the terminal error for a pending session wait whose
+// handshake budget expired with the adapter started (KB-70). It names the
+// scope, distinguishes the last observed rejection by class (digest mismatch
+// vs accept-token/scope state), and calls out the dead-Job shape when no
+// identity handshake was observed at all (CRI-137). A pod that never started
+// does not reach this error: it is failed by the scheduling budget instead
+// (schedulingTimeoutError), whose verdict never claims the Job is dead.
 func (s *Shim) waitTimeoutError(adapterType, scope, key string, budget time.Duration) error {
 	s.mu.Lock()
 	st := s.verifyFailures[key]
@@ -1073,9 +1265,42 @@ func (s *Shim) waitTimeoutError(adapterType, scope, key string, budget time.Dura
 		case rejectScopeNotRegistered, rejectBadToken:
 			detail += "; stale adapter pod holding a pre-rotation accept token? (CRI-137)"
 		}
+	} else if phase, ok := s.observePod(adapterType, scope); ok && podPhaseStarted(phase) {
+		// The probe watched the pod Run while it presented no identity frame:
+		// the processes are up but the Job is not phone-homing.
+		detail = fmt.Sprintf("no identity handshake observed at all for scope %q; adapter pod observed Running but never dialed this shim — adapter Job may be complete or dead (CRI-137)", scope)
 	}
 	return fmt.Errorf("remote adapter %q session wait for scope %q exceeded %s without a successful identity handshake: %s",
 		adapterType, scope, budget, detail)
+}
+
+// schedulingTimeoutError builds the terminal error for a wait whose adapter
+// pod never started within the scheduling budget (KB-70). Unlike
+// waitTimeoutError it must not claim the adapter Job "may be complete or
+// dead": a pod that never became Running had no live Job to die mid-run —
+// the burst scheduling latency beat the handshake budget and the verdict
+// must say so.
+func (s *Shim) schedulingTimeoutError(adapterType, scope, key string, schedulingBudget time.Duration, phase string, phaseKnown bool) error {
+	s.mu.Lock()
+	delete(s.verifyFailures, key)
+	s.mu.Unlock()
+
+	detail := "no identity handshake observed at all for that scope; the adapter pod was never observed Running during the wait (KB-70)"
+	if phaseKnown {
+		detail += fmt.Sprintf("; last observed pod phase: %q", phase)
+	} else {
+		detail += "; no pod-state probe is wired, so the pod phase is unknown — the adapter likely never scheduled or started dialing"
+	}
+	return fmt.Errorf("remote adapter %q session wait for scope %q exceeded %s waiting for the adapter pod to start: %s",
+		adapterType, scope, schedulingBudget, detail)
+}
+
+// podTerminalError fails a wait promptly when the pod-state probe reports a
+// terminal phase: the Job finished or died without ever dialing this shim, so
+// no amount of further waiting can complete the handshake (CRI-137).
+func (s *Shim) podTerminalError(adapterType, scope, phase string) error {
+	return fmt.Errorf("remote adapter %q session wait for scope %q failed without a successful identity handshake: adapter pod phase is %q — the adapter Job ended without dialing this shim (CRI-137)",
+		adapterType, scope, phase)
 }
 
 // CloseHandle removes a session for the given adapter type + scope.
