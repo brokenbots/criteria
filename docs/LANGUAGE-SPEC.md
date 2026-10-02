@@ -375,7 +375,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 - Type refs resolve at compile time, before every consumer pass. An unknown `type.<name>` is a compile error ("unknown workflow type") on the referencing attribute — never a runtime failure.
 - Neutral forms: an inline constraint and its named twin resolve to the identical `cty.Type` (with `optional()` defaults); refactoring inline→named changes nothing at compile or run time.
 - Own namespace: type names are workflow-wide and may share names with steps, states, variables, locals, or data. `type` itself is not a value-namespace binding — `type.<name>` in a value expression is an unknown-variable error.
-- Mis-scoped composition: a type ref composed *inside* another constraint (e.g. `schema = list(type.other)`) does not resolve; constraints must be inline.
+- Mis-scoped composition: a type ref composed *inside* another constraint (e.g. `schema = list(type.other)`) is a compile error naming the constraint position ("type references cannot be composed into other type constraints"); compose built-ins inline instead, or write the bare `type.<name>` traversal.
 
 **Slice-1 restriction (future-widening boundary):** a type block's `schema` may not reference other type blocks; type-to-type composition is deliberately deferred.
 
