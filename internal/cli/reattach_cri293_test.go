@@ -12,7 +12,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"reflect"
 	"strings"
 	"sync"
@@ -68,9 +68,10 @@ state "done" {
 }
 `
 
-// captureLog is a mutex-guarded std-log sink. The remote shim logs its bound
-// address through the slog default logger, which routes through the std log
-// package, so capturing the std log captures shim bind events in-process.
+// captureLog is a mutex-guarded io.Writer sink capturing the slog default
+// logger: shim bind events are emitted via slog.Info/slog.Warn on the slog
+// default logger at call time, so pointing slog.SetDefault at a handler
+// wrapping this sink captures them in-process.
 type captureLog struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -193,9 +194,10 @@ func TestResumeOneLocalRun_CRI293_SharedListenAddressIsolated(t *testing.T) {
 	cp := cri293ReattachCheckpoint(t, "cri293-reattach-iso")
 
 	logSink := &captureLog{}
-	prev := log.Writer()
-	defer log.SetOutput(prev)
-	log.SetOutput(logSink)
+	prevDefault := slog.Default()
+	shimLog := slog.New(slog.NewTextHandler(logSink, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	slog.SetDefault(shimLog)
+	t.Cleanup(func() { slog.SetDefault(prevDefault) })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
