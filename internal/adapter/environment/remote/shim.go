@@ -240,9 +240,9 @@ type Shim struct {
 	verifyFailures      map[string]*verifyFailureState // session key → last identity-verification rejection (diagnostics while a waiter is pending)
 	verifyFailureBudget time.Duration
 
-	schedulingBudget     time.Duration // bounds the wait while the adapter pod has not started (KB-70)
-	podStatePollInterval time.Duration // re-observation cadence while not started
-	podProbe             PodStateProbe // optional pod-state seam; nil in a bare shim
+	schedulingBudget     time.Duration        // bounds the wait while the adapter pod has not started (KB-70)
+	podStatePollInterval time.Duration        // re-observation cadence while not started
+	podProbe             PodStateProbe        // optional pod-state seam; nil in a bare shim
 	dialActivity         map[string]time.Time // session key → last time an adapter presented an identity frame (pod-started evidence)
 
 	peerAcceptor   PeerAcceptor   // receives authenticated role="peer" dials; nil rejects them
@@ -259,6 +259,34 @@ type session struct {
 type waitResult struct {
 	handle adapterhost.Handle
 	err    error
+}
+
+// resolveHandshakeDeadlines defaults the optional TLS and identity handshake
+// deadlines.
+func resolveHandshakeDeadlines(cfg *Config) (tlsDeadline, identityDeadline time.Duration) {
+	tlsDeadline = cfg.TLSHandshakeDeadline
+	if tlsDeadline == 0 {
+		tlsDeadline = DefaultTLSHandshakeDeadline
+	}
+	identityDeadline = cfg.IdentityHandshakeDeadline
+	if identityDeadline == 0 {
+		identityDeadline = DefaultIdentityHandshakeDeadline
+	}
+	return tlsDeadline, identityDeadline
+}
+
+// resolveWaitBudgets defaults the optional KB-70 session-wait budget knobs
+// (zero or negative Config values select the defaults).
+func resolveWaitBudgets(cfg *Config) (handshakeBudget, schedulingBudget time.Duration) {
+	handshakeBudget = cfg.SessionHandshakeBudget
+	if handshakeBudget <= 0 {
+		handshakeBudget = DefaultVerifyFailureBudget
+	}
+	schedulingBudget = cfg.SessionSchedulingBudget
+	if schedulingBudget <= 0 {
+		schedulingBudget = DefaultSchedulingBudget
+	}
+	return handshakeBudget, schedulingBudget
 }
 
 // NewShim builds a Shim from a parsed Config and a digest verifier.
@@ -279,22 +307,8 @@ func NewShim(cfg *Config, verifier DigestVerifier) (*Shim, error) {
 		}
 	}
 
-	tlsDeadline := cfg.TLSHandshakeDeadline
-	if tlsDeadline == 0 {
-		tlsDeadline = DefaultTLSHandshakeDeadline
-	}
-	identityDeadline := cfg.IdentityHandshakeDeadline
-	if identityDeadline == 0 {
-		identityDeadline = DefaultIdentityHandshakeDeadline
-	}
-	handshakeBudget := cfg.SessionHandshakeBudget
-	if handshakeBudget <= 0 {
-		handshakeBudget = DefaultVerifyFailureBudget
-	}
-	schedulingBudget := cfg.SessionSchedulingBudget
-	if schedulingBudget <= 0 {
-		schedulingBudget = DefaultSchedulingBudget
-	}
+	tlsDeadline, identityDeadline := resolveHandshakeDeadlines(cfg)
+	handshakeBudget, schedulingBudget := resolveWaitBudgets(cfg)
 	if err := validateHandshakeDeadline("tls_handshake_deadline", tlsDeadline); err != nil {
 		return nil, fmt.Errorf("remote shim: %w", err)
 	}
@@ -1142,6 +1156,66 @@ func (s *Shim) WaitForFreshHandle(ctx context.Context, adapterType, scope string
 	return s.awaitWaiter(ctx, adapterType, scope, key, ch, nil, func() { s.removeWaiter(key, ch) }, budget)
 }
 
+// waiterState tracks the KB-70 two-budget wait across wake-ups: the adapter
+// start evidence, the armed handshake deadline (start time + budget), and
+// the scheduling deadline.
+type waiterState struct {
+	started           bool
+	handshakeDeadline time.Time
+	schedDeadline     time.Time
+}
+
+// startEvidence reports whether the adapter session for key has provably
+// started: an identity frame was presented for the key (a dial, even one
+// attributed to a verify failure — a stale pre-rotation pod dials and is
+// rejected, CRI-137), or the pod-state probe reports a started phase. Until
+// this returns true the wait is governed by the scheduling budget, not the
+// handshake budget (KB-70).
+func (s *Shim) startEvidence(phase string, phaseKnown bool, key string) bool {
+	return s.activityObserved(key) || (phaseKnown && podPhaseStarted(phase))
+}
+
+// podTerminalFailure returns the terminal wait error for a probe-observed
+// finished pod that never presented an identity frame for key on this shim
+// (KB-70): Succeeded means the Job ran to completion without phone-homing,
+// Failed means it died first. nil when the pod state is unknown or still
+// live, or when dials were observed.
+func (s *Shim) podTerminalFailure(adapterType, scope, key, phase string, phaseKnown bool) error {
+	if phaseKnown && podPhaseTerminal(phase) && !s.dialObserved(key) {
+		return s.podTerminalError(adapterType, scope, phase)
+	}
+	return nil
+}
+
+// handleWaiterWake evaluates one timer wake-up. While the adapter has not
+// started it re-observes the pod, arms the handshake budget on the first
+// start evidence, and fails on scheduling-budget expiry naming the observed
+// pod phase; once started it fails at the handshake deadline. done=true
+// carries the terminal wait result; otherwise the caller re-arms the wake
+// timer from the returned state.
+func (s *Shim) handleWaiterWake(adapterType, scope, key string, handshakeBudget, schedulingBudget time.Duration, st *waiterState) (done bool, err error) {
+	now := time.Now()
+	if st.started {
+		if !now.Before(st.handshakeDeadline) {
+			return true, s.waitTimeoutError(adapterType, scope, key, handshakeBudget)
+		}
+		return false, nil
+	}
+	phase, phaseKnown := s.observePod(adapterType, scope)
+	if terr := s.podTerminalFailure(adapterType, scope, key, phase, phaseKnown); terr != nil {
+		return true, terr
+	}
+	if s.startEvidence(phase, phaseKnown, key) {
+		st.started = true
+		st.handshakeDeadline = now.Add(handshakeBudget)
+		return false, nil
+	}
+	if !now.Before(st.schedDeadline) {
+		return true, s.schedulingTimeoutError(adapterType, scope, key, schedulingBudget, phase, phaseKnown)
+	}
+	return false, nil
+}
+
 // awaitWaiter blocks on one or two waiter result channels until the session
 // resolves, the context is cancelled, or one of the two session-wait budgets
 // expires (KB-70). A nil channel never resolves: the legacy wait passes nil
@@ -1166,18 +1240,16 @@ func (s *Shim) awaitWaiter(ctx context.Context, adapterType, scope, key string, 
 	// Initial observation, so a pod that is already Running (or already
 	// dialing) starts its handshake budget now rather than at the first tick.
 	phase, phaseKnown := s.observePod(adapterType, scope)
-	if phaseKnown && podPhaseTerminal(phase) && !s.dialObserved(key) {
+	if terr := s.podTerminalFailure(adapterType, scope, key, phase, phaseKnown); terr != nil {
 		deregister()
-		return nil, s.podTerminalError(adapterType, scope, phase)
+		return nil, terr
 	}
-	started := s.activityObserved(key) || (phaseKnown && podPhaseStarted(phase))
-	handshakeDeadline := time.Time{}
-	if started {
-		handshakeDeadline = time.Now().Add(handshakeBudget)
+	st := waiterState{schedDeadline: time.Now().Add(schedulingBudget)}
+	if st.started = s.startEvidence(phase, phaseKnown, key); st.started {
+		st.handshakeDeadline = time.Now().Add(handshakeBudget)
 	}
-	schedDeadline := time.Now().Add(schedulingBudget)
 
-	timer := time.NewTimer(waitPollDuration(poll, started, handshakeDeadline, schedDeadline))
+	timer := time.NewTimer(waitPollDuration(poll, st.started, st.handshakeDeadline, st.schedDeadline))
 	defer timer.Stop()
 	for {
 		select {
@@ -1191,32 +1263,12 @@ func (s *Shim) awaitWaiter(ctx context.Context, adapterType, scope, key string, 
 			deregister()
 			return nil, ctx.Err()
 		case <-timer.C:
-			now := time.Now()
-			if !started {
-				phase, phaseKnown = s.observePod(adapterType, scope)
-				if phaseKnown && podPhaseTerminal(phase) && !s.dialObserved(key) {
-					deregister()
-					return nil, s.podTerminalError(adapterType, scope, phase)
-				}
-				if s.activityObserved(key) || (phaseKnown && podPhaseStarted(phase)) {
-					started = true
-					handshakeDeadline = now.Add(handshakeBudget)
-				} else if !now.Before(schedDeadline) {
-					deregister()
-					return nil, s.schedulingTimeoutError(adapterType, scope, key, schedulingBudget, phase, phaseKnown)
-				}
+			done, err := s.handleWaiterWake(adapterType, scope, key, handshakeBudget, schedulingBudget, &st)
+			if done {
+				deregister()
+				return nil, err
 			}
-			if started {
-				if !now.Before(handshakeDeadline) {
-					deregister()
-					return nil, s.waitTimeoutError(adapterType, scope, key, handshakeBudget)
-				}
-				timer.Reset(time.Until(handshakeDeadline))
-				continue
-			}
-			// Still not started: wake again at the closer of the next poll
-			// or the scheduling deadline.
-			timer.Reset(waitPollDuration(poll, false, handshakeDeadline, schedDeadline))
+			timer.Reset(waitPollDuration(poll, st.started, st.handshakeDeadline, st.schedDeadline))
 		}
 	}
 }

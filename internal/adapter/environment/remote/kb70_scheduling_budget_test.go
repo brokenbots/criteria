@@ -54,9 +54,9 @@ func (p *timedPodProbe) PodState(string, string) (PodState, bool) {
 
 // newKB70TestShim wraps newCri137TestShim with the KB-70 knobs: scheduling
 // budget, fast pod-state polling, and an optional pod-state probe.
-func newKB70TestShim(t *testing.T, scope string, handshakeBudget, schedulingBudget time.Duration, probe PodStateProbe) (*Shim, string) {
+func newKB70TestShim(t *testing.T, scope string, handshakeBudget, schedulingBudget time.Duration, probe PodStateProbe) (shim *Shim, addr string) {
 	t.Helper()
-	shim, addr := newCri137TestShim(t, scope, handshakeBudget)
+	shim, addr = newCri137TestShim(t, scope, handshakeBudget)
 	shim.schedulingBudget = schedulingBudget
 	shim.podStatePollInterval = 20 * time.Millisecond
 	if probe != nil {
@@ -288,11 +288,10 @@ func TestPeerWaitForFreshHandle_PodPendingPastHandshakeBudget_StillCompletesOnHa
 
 	done := make(chan error, 1)
 	go func() {
+		// The handle is dropped on return: draining it exercises the wake-up
+		// path fully, while the session stays bound until the shim stops in
+		// fixture cleanup.
 		_, err := provider.WaitForFreshHandle(ctx, "noop", "", nil)
-		if err == nil {
-			// Drain the handle so the wake-up path is fully exercised; the
-			// session stays bound until the shim stops in fixture cleanup.
-		}
 		done <- err
 	}()
 
