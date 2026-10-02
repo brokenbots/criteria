@@ -44,7 +44,7 @@ func compileDataBlock(g *FSMGraph, ds *DataSpec, opts CompileOpts) hcl.Diagnosti
 		return hcl.Diagnostics{d}
 	}
 
-	typ, defs, typDiags := compileDataType(kind, name, ds.Type)
+	typ, defs, typDiags := compileDataType(g, kind, name, ds.Type)
 	if typDiags.HasErrors() {
 		return typDiags
 	}
@@ -132,15 +132,17 @@ func compileDataSecret(kind, name string, remain hcl.Body) (bool, hcl.Diagnostic
 }
 
 // compileDataType parses the Type expression of a data block and returns the
-// resolved cty.Type, optional defaults, plus any diagnostics.
-func compileDataType(kind, name string, typeExpr hcl.Expression) (cty.Type, *typeexpr.Defaults, hcl.Diagnostics) {
+// resolved cty.Type, optional defaults, plus any diagnostics. A `type.<name>`
+// traversal resolves against the workflow's type namespace; every other
+// expression is parsed as an inline typeexpr constraint.
+func compileDataType(g *FSMGraph, kind, name string, typeExpr hcl.Expression) (cty.Type, *typeexpr.Defaults, hcl.Diagnostics) {
 	if isAbsentExpr(typeExpr) {
 		return cty.NilType, nil, hcl.Diagnostics{&hcl.Diagnostic{
 			Severity: hcl.DiagError,
 			Summary:  fmt.Sprintf("data %q %q: attribute \"type\" is required", kind, name),
 		}}
 	}
-	typ, defs, typeDiags := resolveTypeConstraint(typeExpr)
+	typ, defs, typeDiags := resolveNamedTypeConstraint(fmt.Sprintf("data %q %q", kind, name), "Data type constraints", typeExpr, g)
 	if typeDiags.HasErrors() {
 		return cty.NilType, nil, typeDiags
 	}

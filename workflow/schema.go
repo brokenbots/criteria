@@ -23,11 +23,15 @@ type LocalSpec struct {
 // DataSpec is the WS02 form: data "<kind>" "<name>" { ... }.
 // Only kind = "internal" is currently supported.
 type DataSpec struct {
-	Kind        string         `hcl:"kind,label"` // first label, e.g. "internal"
-	Name        string         `hcl:"name,label"` // second label
-	Description string         `hcl:"description,optional"`
-	Type        hcl.Expression `hcl:"type"`    // required; WS01-style type expression
-	Remain      hcl.Body       `hcl:",remain"` // captures the optional "value" expression
+	Kind        string `hcl:"kind,label"` // first label, e.g. "internal"
+	Name        string `hcl:"name,label"` // second label
+	Description string `hcl:"description,optional"`
+	// Type is the data's type constraint: an inline typeexpr expression
+	// (e.g. number, object({...})) or a named type.<block> reference
+	// resolving against this workflow's type blocks. Forms are
+	// indistinguishable internally: one cty.Type (+Defaults) per data node.
+	Type   hcl.Expression `hcl:"type"`    // required: inline or type.<name>
+	Remain hcl.Body       `hcl:",remain"` // captures the optional "value" expression
 }
 
 // DataNode is a compiled data block declaration.
@@ -246,7 +250,9 @@ type Spec struct {
 // VariableSpec is the parsed (but unvalidated) variable declaration.
 // The `type` and `default` attributes are decoded by the compiler.
 type VariableSpec struct {
-	Name        string         `hcl:"name,label"`
+	Name string `hcl:"name,label"`
+	// Type is the variable's type constraint: an inline typeexpr expression
+	// or a named type.<block> reference into this workflow's type blocks.
 	Type        hcl.Expression `hcl:"type,optional"`
 	Description string         `hcl:"description,optional"`
 	Remain      hcl.Body       `hcl:",remain"` // captures the "default" expression
@@ -254,7 +260,9 @@ type VariableSpec struct {
 
 // TypeSpec declares a workflow-level named type block (KB-45): `type "<name>"
 // { schema = <constraint> }`, referenced as `type.<name>` from outcome schema
-// attributes.
+// attributes and, since KB-48, from every widened consumer: data block types,
+// variable declarations, output projections, and subworkflow callee variable
+// types (each workflow body compiles its own type namespace).
 //
 // The label is the type name; the required "schema" attribute carries any WS01
 // type constraint accepted by typeexpr (object({...}), list(T),
@@ -264,9 +272,10 @@ type VariableSpec struct {
 // inside a type block is a compile error (slice-1).
 type TypeSpec struct {
 	Name string `hcl:"name,label"`
-	// Schema is the type constraint this name aliases (object({...}),
-	// list(T), optional(T, default), ...), referenced from outcomes as
-	// type.<name>.
+	// Schema is the type constraint this name aliases (object({...}), list(T),
+	// optional(T, default), ...), referenced as type.<name> from outcome payload
+	// schemas and from data/variable/output type constraints (KB-48); the callee
+	// forms inside subworkflow bodies use the callee's own type namespace.
 	//
 	// spec:required
 	Schema hcl.Expression `hcl:"schema,optional"`
@@ -426,9 +435,12 @@ type BodySpec struct {
 // OutputSpec declares a named output value exposed by a workflow or workflow-step body.
 // The value expression is extracted from Remain by the compiler.
 type OutputSpec struct {
-	Name        string         `hcl:"name,label"`
-	Description string         `hcl:"description,optional"`
+	Name string `hcl:"name,label"`
+	// Type is the output's declared type constraint: an inline typeexpr
+	// expression or a named type.<block> reference; the rendered run output
+	// is converted to it when set.
 	Type        hcl.Expression `hcl:"type,optional"`
+	Description string         `hcl:"description,optional"`
 	Remain      hcl.Body       `hcl:",remain"` // captures the "value" expression
 }
 

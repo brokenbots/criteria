@@ -192,7 +192,9 @@ func TestOutcomeSchema_UnknownTypeRef(t *testing.T) {
 }
 
 // TestOutcomeSchema_MustBeObject rejects non-object schemas before they reach
-// the wire contract: the host predicate accepts only an object root.
+// the wire contract: the host predicate accepts only an object root. The gate
+// applies to named refs and inline constraints alike (KB-48 behavior
+// neutrality: an inline schema and its named twin compile identically).
 func TestOutcomeSchema_MustBeObject(t *testing.T) {
 	_, diags := compileOutcomeSchemaSrc(t, typedWorkflow(`
   outcome "success" {
@@ -205,6 +207,79 @@ func TestOutcomeSchema_MustBeObject(t *testing.T) {
 	}
 	if !strings.Contains(diags.Error(), "schema must be an object(...)") {
 		t.Errorf("diagnostics = %s", diags.Error())
+	}
+}
+
+// TestOutcomeSchema_NamedNonObjectRefGated pins that a named type resolving to
+// a non-object type is rejected by the same object gate as the inline form.
+func TestOutcomeSchema_NamedNonObjectRefGated(t *testing.T) {
+	_, diags := compileOutcomeSchemaSrc(t, `
+workflow {
+  name = "t"
+  version       = "0.1"
+  initial_state = "work"
+  target_state  = "done"
+}
+type "flat" {
+  schema = list(string)
+}
+adapter "typed" "default" {}
+step "work" {
+  target = adapter.typed.default
+  outcome "success" {
+    next   = state.done
+    schema = type.flat
+  }
+}
+state "done" {
+  terminal = true
+  success  = true
+}
+`)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for non-object named schema")
+	}
+	if !strings.Contains(diags.Error(), `outcome "success": schema must be an object(...)`) {
+		t.Errorf("diagnostics = %s", diags.Error())
+	}
+}
+
+// TestOutcomeSchema_ComposedNamedRefRejected pins the outcome path through the
+// same shared resolver (KB-48): composing a named ref into a wider constraint
+// (schema = list(type.flat)) is a constraint-position error, not the object
+// gate and not a value coercion.
+func TestOutcomeSchema_ComposedNamedRefRejected(t *testing.T) {
+	_, diags := compileOutcomeSchemaSrc(t, `
+workflow {
+  name = "t"
+  version       = "0.1"
+  initial_state = "work"
+  target_state  = "done"
+}
+type "flat" {
+  schema = list(string)
+}
+adapter "typed" "default" {}
+step "work" {
+  target = adapter.typed.default
+  outcome "success" {
+    next   = step.done
+    schema = list(type.flat)
+  }
+}
+state "done" {
+  terminal = true
+  success  = true
+}
+`)
+	if !diags.HasErrors() {
+		t.Fatal("expected compile error for composed named schema")
+	}
+	if !strings.Contains(diags.Error(), `step "work" outcome "success": type references cannot be composed into other type constraints`) {
+		t.Errorf("expected composition diagnostic, got: %s", diags.Error())
+	}
+	if strings.Contains(diags.Error(), "schema must be an object") {
+		t.Errorf("composed ref must fail as a constraint, not via the object gate: %s", diags.Error())
 	}
 }
 

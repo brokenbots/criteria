@@ -1,0 +1,31 @@
+digraph "named_types" {
+  rankdir=LR;
+
+  "prepare" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "finish" [shape=box, style="filled", fillcolor="#D6EAF8"];
+  "done" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
+  "failed" [shape=doublecircle, style=filled, fillcolor="#FADBD8"];
+  subgraph cluster_invoke {
+    label="scale";
+    fillcolor="#D5F5E3";
+    style=filled;
+    "invoke/execute" [shape=box, style="filled", fillcolor="#D6EAF8"];
+    "invoke/done" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
+    "invoke/failed" [shape=doublecircle, style=filled, fillcolor="#FADBD8"];
+    "invoke/__start__" [shape=point,width=0.12,label=""];
+    "invoke/__start__" -> "invoke/execute" [label="initial"];
+    "invoke/execute" -> "invoke/failed" [label="failure"];
+    "invoke/execute" -> "invoke/done" [label="success"];
+  }
+
+  "__start__" [shape=point,width=0.12,label=""];
+  "__start__" -> "prepare" [label="initial"];
+  "prepare" -> "failed" [label="failure"];
+  "prepare" -> "invoke/__start__" [label="success"];
+  "invoke/done" -> "failed" [label="failure"];
+  "invoke/done" -> "finish" [label="success"];
+  "invoke/failed" -> "failed" [label="failure"];
+  "invoke/failed" -> "finish" [label="success"];
+  "finish" -> "failed" [label="failure"];
+  "finish" -> "done" [label="success"];
+}
