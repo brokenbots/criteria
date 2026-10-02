@@ -252,14 +252,16 @@ type VariableSpec struct {
 	Remain      hcl.Body       `hcl:",remain"` // captures the "default" expression
 }
 
-// TypeSpec declares a workflow-level named type block (KB-45). The label is
-// the type name; the required "schema" attribute carries any WS01 type
-// constraint accepted by typeexpr (object({...}), list(T), optional(T, default),
-// ...) and is parsed once with TypeConstraintWithDefaults so optional()
-// defaults participate in payload defaulting. Type blocks form their own
-// workflow-scoped namespace referenced as `type.<name>` in outcome schema
-// attributes; referencing other type names from inside a type block is a
-// compile error (slice-1).
+// TypeSpec declares a workflow-level named type block (KB-45): `type "<name>"
+// { schema = <constraint> }`, referenced as `type.<name>` from outcome schema
+// attributes.
+//
+// The label is the type name; the required "schema" attribute carries any WS01
+// type constraint accepted by typeexpr (object({...}), list(T),
+// optional(T, default), ...) and is parsed once with TypeConstraintWithDefaults
+// so optional() defaults participate in payload defaulting. Type blocks form
+// their own workflow-scoped namespace; referencing other type names from
+// inside a type block is a compile error (slice-1).
 type TypeSpec struct {
 	Name string `hcl:"name,label"`
 	// Schema is the type constraint this name aliases (object({...}),
@@ -510,6 +512,7 @@ type AdapterInfo struct {
 }
 
 // OutcomeSpec maps an adapter outcome name to the next node.
+//
 // The Next attribute replaces the removed transition_to attribute (v0.3.0).
 // It is an hcl.Expression decoded by the compiler (traversal form: step.foo,
 // state.done, return, continue).
@@ -528,17 +531,26 @@ type AdapterInfo struct {
 //   - "fallback": at most one per step; fires when the adapter produced no
 //     finalized result at all (distinct from the reserved "default" outcome,
 //     which maps an adapter-returned unmapped name).
+//   - "schema": either a `type.<name>` traversal into a named type block or an
+//     inline typeexpr constraint; both resolve to the same cty.Type. The
+//     schema's fields must be a subset of the adapter's declared output schema
+//     (compile error otherwise). Terminality and static comment authoring are
+//     engine/runtime concerns and are deliberately not outcome attributes.
+//   - "require_comment": the outcome requires a non-empty adapter finalize
+//     comment; an empty comment is a host-rejected result.
+//   - "fallback": at most one per step; fires when the adapter produced no
+//     finalized result at all (distinct from the reserved "default" outcome,
+//     which maps an adapter-returned unmapped name).
 type OutcomeSpec struct {
 	Name string         `hcl:"name,label"`
 	Next hcl.Expression `hcl:"next"`
-	// Schema is the payload contract: a type.<name> traversal into a named
-	// type block or an inline typeexpr constraint. Its fields must be a
-	// subset of the adapter's output schema.
+	// Schema is the payload contract: type.<name> traversal or an inline
+	// typeexpr constraint; must subset the adapter's output schema.
 	Schema hcl.Expression `hcl:"schema,optional"`
 	// RequireComment rejects a result with an empty adapter comment.
 	RequireComment bool `hcl:"require_comment,optional"`
-	// Fallback marks (at most one per step) the outcome that fires when the
-	// adapter produced no finalized result at all.
+	// Fallback marks the per-step outcome that fires when the adapter
+	// produced no finalized result (max one).
 	Fallback bool        `hcl:"fallback,optional"`
 	Writes   []WriteSpec `hcl:"write,block"`
 	Remain   hcl.Body    `hcl:",remain"` // captures the optional "output" expression
