@@ -1,0 +1,80 @@
+{
+  "name": "outcome_contracts",
+  "initial_state": "audit_step",
+  "target_state": "done",
+  "policy": {
+    "MaxTotalSteps": 100,
+    "MaxStepRetries": 0,
+    "MaxToolDepth": 8,
+    "MaxVisitsWarnThreshold": 200
+  },
+  "adapters": [
+    {
+      "type": "noop",
+      "name": "default",
+      "on_crash": "fail",
+      "config_keys": null
+    }
+  ],
+  "steps": [
+    {
+      "name": "audit_step",
+      "adapter": "noop.default",
+      "input_keys": null,
+      "allow_tools": null,
+      "outcomes": [
+        {
+          "name": "audited",
+          "next": "audited"
+        },
+        {
+          "name": "failure",
+          "next": "failed"
+        },
+        {
+          "name": "success",
+          "next": "done"
+        }
+      ]
+    }
+  ],
+  "states": [
+    {
+      "name": "audited",
+      "terminal": true,
+      "success": true
+    },
+    {
+      "name": "defaulted",
+      "terminal": true,
+      "success": false
+    },
+    {
+      "name": "done",
+      "terminal": true,
+      "success": true
+    },
+    {
+      "name": "failed",
+      "terminal": true,
+      "success": false
+    }
+  ],
+  "outputs": [
+    {
+      "name": "audit_summary",
+      "type": "string",
+      "description": "audit summary bound from the success payload (defaults applied)"
+    }
+  ],
+  "switches": [],
+  "step_order": [
+    "audit_step"
+  ],
+  "plugins_required": [
+    "noop"
+  ],
+  "metadata": {
+    "schema_version": 1
+  }
+}
