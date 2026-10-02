@@ -849,8 +849,8 @@ func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps De
 			return adapter.Result{}, err
 		}
 
-		// CRI-271: give the step a live session when an earlier functional
-		// step crashed on the same adapter reference.
+		// CRI-271: give the step a live session when an earlier step crashed
+		// on the same adapter reference.
 		n.reopenCrashedSession(ctx, st, deps, step)
 
 		// W07: each attempt (including retries) counts as one visit toward max_visits.
