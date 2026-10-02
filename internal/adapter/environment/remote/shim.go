@@ -287,6 +287,14 @@ func NewShim(cfg *Config, verifier DigestVerifier) (*Shim, error) {
 	if identityDeadline == 0 {
 		identityDeadline = DefaultIdentityHandshakeDeadline
 	}
+	handshakeBudget := cfg.SessionHandshakeBudget
+	if handshakeBudget <= 0 {
+		handshakeBudget = DefaultVerifyFailureBudget
+	}
+	schedulingBudget := cfg.SessionSchedulingBudget
+	if schedulingBudget <= 0 {
+		schedulingBudget = DefaultSchedulingBudget
+	}
 	if err := validateHandshakeDeadline("tls_handshake_deadline", tlsDeadline); err != nil {
 		return nil, fmt.Errorf("remote shim: %w", err)
 	}
@@ -309,8 +317,8 @@ func NewShim(cfg *Config, verifier DigestVerifier) (*Shim, error) {
 		perScopeSessions:      cfg.PerScopeSessions,
 		scopeTokens:           make(map[string]string),
 		verifyFailures:        make(map[string]*verifyFailureState),
-		verifyFailureBudget:   DefaultVerifyFailureBudget,
-		schedulingBudget:      DefaultSchedulingBudget,
+		verifyFailureBudget:   handshakeBudget,
+		schedulingBudget:      schedulingBudget,
 		podStatePollInterval:  defaultPodStatePollInterval,
 		dialActivity:          make(map[string]time.Time),
 	}, nil
