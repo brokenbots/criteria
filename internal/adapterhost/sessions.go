@@ -288,6 +288,18 @@ type verifiedRecord struct {
 	scopeInstanceID string
 }
 
+// clone deep-copies the record so the owner and any borrower mutate
+// independently (all slice/map fields are value-bearing, so shallow copies
+// would alias them).
+func (r *verifiedRecord) clone() *verifiedRecord {
+	cp := *r
+	cp.config = cloneConfig(r.config)
+	cp.secrets = cloneConfig(r.secrets)
+	cp.secretOriginRefs = cloneOriginRefs(r.secretOriginRefs)
+	cp.capabilities = append([]string(nil), r.capabilities...)
+	return &cp
+}
+
 func (m *SessionManager) heartbeatStallThreshold() time.Duration {
 	if m.HeartbeatStallThreshold > 0 {
 		return m.HeartbeatStallThreshold
@@ -468,60 +480,54 @@ func (m *SessionManager) BorrowToolResourceSessionsFrom(src *SessionManager, nam
 	if src == nil || src == m || len(names) == 0 {
 		return nil
 	}
+	recs, infos := src.snapshotToolResourceRecords(names)
+	if len(recs) == 0 && len(infos) == 0 {
+		return nil
+	}
+	return m.installBorrowedToolResources(recs, infos)
+}
 
+// snapshotToolResourceRecords gathers deep copies of src's verified records
+// and adapter infos for the given tool-resource names. src.mu is held for
+// the whole gather so a concurrent scope change cannot split a name across
+// states.
+func (src *SessionManager) snapshotToolResourceRecords(names []string) (map[string]*verifiedRecord, map[string]*workflow.AdapterInfo) {
 	src.mu.Lock()
+	defer src.mu.Unlock()
 	var recs map[string]*verifiedRecord
 	var infos map[string]*workflow.AdapterInfo
 	for _, name := range names {
 		if rec := src.verified[name]; rec != nil {
-			cp := *rec
-			cp.config = cloneConfig(rec.config)
-			cp.secrets = cloneConfig(rec.secrets)
-			cp.secretOriginRefs = cloneOriginRefs(rec.secretOriginRefs)
-			cp.capabilities = append([]string(nil), rec.capabilities...)
 			if recs == nil {
 				recs = make(map[string]*verifiedRecord, len(names))
 			}
-			recs[name] = &cp
+			recs[name] = rec.clone()
 		}
 		if info := src.adapterInfos[name]; info != nil {
-			captured := *info
 			if infos == nil {
 				infos = make(map[string]*workflow.AdapterInfo, len(names))
 			}
+			captured := *info
 			infos[name] = &captured
 		}
 	}
-	src.mu.Unlock()
+	return recs, infos
+}
 
-	if len(recs) == 0 && len(infos) == 0 {
-		return nil
-	}
-
+// installBorrowedToolResources installs host-local tool-resource records into
+// m and marks them borrowed. Adapters m already binds or verifies are skipped
+// (never overwritten), as are adapters whose declaring environment is remote:
+// those dispatch through the shims borrowed by BorrowRemoteProvisioningFrom
+// and their records stay parent-owned. Returns the names actually borrowed.
+func (m *SessionManager) installBorrowedToolResources(recs map[string]*verifiedRecord, infos map[string]*workflow.AdapterInfo) []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var borrowed []string
+	borrowed := make([]string, 0, len(recs))
 	for name, rec := range recs {
-		if _, ok := m.sessions[name]; ok {
+		if !m.borrowEligibleLocked(name) {
 			continue
 		}
-		if _, ok := m.verified[name]; ok {
-			continue
-		}
-		node, graph := m.adapterDeclarationLocked(name)
-		if node != nil && graph != nil && declaredAdapterEnvironmentIsRemote(node, graph) {
-			// Remote adapters dispatch via the borrowed shims; their records
-			// stay parent-owned.
-			continue
-		}
-		if m.verified == nil {
-			m.verified = make(map[string]*verifiedRecord)
-		}
-		if m.borrowedToolResources == nil {
-			m.borrowedToolResources = make(map[string]bool)
-		}
-		m.verified[name] = rec
-		m.borrowedToolResources[name] = true
+		m.recordBorrowedLocked(name, rec)
 		borrowed = append(borrowed, name)
 	}
 	for _, name := range borrowed {
@@ -533,6 +539,33 @@ func (m *SessionManager) BorrowToolResourceSessionsFrom(src *SessionManager, nam
 		}
 	}
 	return borrowed
+}
+
+// borrowEligibleLocked reports whether name may receive a borrowed
+// tool-resource record: no live binding, no existing verified record, and a
+// host-local declaring environment. Unresolvable declarations are borrowed
+// as-is so the lazy bind reports its own typed resolution error.
+func (m *SessionManager) borrowEligibleLocked(name string) bool {
+	if _, ok := m.sessions[name]; ok {
+		return false
+	}
+	if _, ok := m.verified[name]; ok {
+		return false
+	}
+	node, graph := m.adapterDeclarationLocked(name)
+	return node == nil || graph == nil || !declaredAdapterEnvironmentIsRemote(node, graph)
+}
+
+// recordBorrowedLocked installs the verified record and borrow marker.
+func (m *SessionManager) recordBorrowedLocked(name string, rec *verifiedRecord) {
+	if m.verified == nil {
+		m.verified = make(map[string]*verifiedRecord)
+	}
+	if m.borrowedToolResources == nil {
+		m.borrowedToolResources = make(map[string]bool)
+	}
+	m.verified[name] = rec
+	m.borrowedToolResources[name] = true
 }
 
 // CloseBorrowedToolResources closes every session opened from a borrowed

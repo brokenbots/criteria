@@ -47,7 +47,10 @@ const (
 // kb58TestCallee is the mcp-like dynamic-tool callee fake: a host-local
 // adapter with a dynamic tool surface. It records OpenSession config/secrets,
 // CloseSession, and every executed session/step, and reports a typed
-// `report` output so the caller can re-export callee.* outputs.
+// `report` output so the caller can re-export callee.* outputs. The loader
+// resolves ONE handle per session-manager bind, mirroring the one adapter
+// process per SM the host guarantees in production, so parallel iterations
+// resolve independent callees; assertions aggregate via kb58CalleeProbe.
 type kb58TestCallee struct {
 	rec *nestedEngineRecorder
 
@@ -70,7 +73,7 @@ func (a *kb58TestCallee) Info(context.Context) (adapterhost.Info, error) {
 	}, nil
 }
 
-func (a *kb58TestCallee) OpenSession(_ context.Context, sessionID string, _ map[string]string, secrets map[string]string) error {
+func (a *kb58TestCallee) OpenSession(_ context.Context, sessionID string, _, secrets map[string]string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.openSess = append(a.openSess, sessionID)
@@ -136,21 +139,26 @@ func (a *kb58TestCallee) closeCount(sessionID string) int {
 }
 
 // kb58TestCaller is the claude-like caller fake. Each Execute issues its
-// call sequence sequentially on the shared permission stream with unique
-// request ids, records every tool_call_result, and re-exports the last
+// call sequence sequentially on the session's own permission stream with
+// unique request ids, records every tool_call_result, and re-exports the last
 // successful callee result's outputs as callee.* step outputs
-// (ADR-0004 §5 caller contract).
+// (ADR-0004 §5 caller contract). State is keyed by session id: parallel
+// iterations open concurrent caller sessions on this shared Handle, and a
+// reader on the wrong session's stream would cross them.
 type kb58TestCaller struct {
 	mu sync.Mutex
 	// callIDs is the request-id sequence Execute issues; nil defaults to
 	// ["call-0", "call-1"].
 	callIDs  []string
-	requests <-chan *v2.PermissionEvent
+	requests map[string]<-chan *v2.PermissionEvent
 	results  map[string]*v2.ToolCallResult
 }
 
 func newKB58TestCaller() *kb58TestCaller {
-	return &kb58TestCaller{results: map[string]*v2.ToolCallResult{}}
+	return &kb58TestCaller{
+		requests: map[string]<-chan *v2.PermissionEvent{},
+		results:  map[string]*v2.ToolCallResult{},
+	}
 }
 
 func (a *kb58TestCaller) Info(context.Context) (adapterhost.Info, error) {
@@ -161,16 +169,16 @@ func (a *kb58TestCaller) OpenSession(context.Context, string, map[string]string,
 	return nil
 }
 
-func (a *kb58TestCaller) StartPermissionStream(_ context.Context, _ string, requests <-chan *v2.PermissionEvent) (func(), error) {
+func (a *kb58TestCaller) StartPermissionStream(_ context.Context, sessionID string, requests <-chan *v2.PermissionEvent) (func(), error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.requests = requests
+	a.requests[sessionID] = requests
 	return func() {}, nil
 }
 
-func (a *kb58TestCaller) Execute(ctx context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
+func (a *kb58TestCaller) Execute(ctx context.Context, sessionID string, _ *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	a.mu.Lock()
-	requests := a.requests
+	requests := a.requests[sessionID]
 	a.mu.Unlock()
 	if requests == nil {
 		return adapter.Result{Outcome: "failure"}, errors.New("permission stream not started")
@@ -250,6 +258,102 @@ func awaitToolCallResult(ctx context.Context, requests <-chan *v2.PermissionEven
 	}
 }
 
+// kb58CallerProbe aggregates the fakes the loader resolves for every caller
+// session (parallel iterations resolve one Handle each) behind the single
+// per-call-id view the tests assert against.
+type kb58CallerProbe struct {
+	mu    sync.Mutex
+	ids   []string
+	fakes []*kb58TestCaller
+}
+
+func (p *kb58CallerProbe) setCallIDs(ids []string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.ids = ids
+	for _, f := range p.fakes {
+		f.callIDs = ids
+	}
+}
+
+func (p *kb58CallerProbe) newFake() *kb58TestCaller {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	f := newKB58TestCaller()
+	f.callIDs = p.ids
+	p.fakes = append(p.fakes, f)
+	return f
+}
+
+func (p *kb58CallerProbe) gotResult(id string) *v2.ToolCallResult {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, f := range p.fakes {
+		if r := f.gotResult(id); r != nil {
+			return r
+		}
+	}
+	return nil
+}
+
+func (p *kb58CallerProbe) idsList() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.ids...)
+}
+
+func (p *kb58CallerProbe) fakeCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.fakes)
+}
+
+// kb58CalleeProbe aggregates the per-handle callee fakes behind the single
+// host-local instance view the tests assert against.
+type kb58CalleeProbe struct {
+	mu    sync.Mutex
+	fakes []*kb58TestCallee
+}
+
+func (p *kb58CalleeProbe) newFake() *kb58TestCallee {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	f := &kb58TestCallee{rec: &nestedEngineRecorder{}}
+	p.fakes = append(p.fakes, f)
+	return f
+}
+
+func (p *kb58CalleeProbe) secretsSeen(sessionID string) (map[string]string, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, f := range p.fakes {
+		if secs, ok := f.secretsSeen(sessionID); ok {
+			return secs, true
+		}
+	}
+	return nil, false
+}
+
+func (p *kb58CalleeProbe) closeCount(sessionID string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := 0
+	for _, f := range p.fakes {
+		n += f.closeCount(sessionID)
+	}
+	return n
+}
+
+func (p *kb58CalleeProbe) executeCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := 0
+	for _, f := range p.fakes {
+		n += len(f.rec.sessions)
+	}
+	return n
+}
+
 func kb58DecodeOutputs(raw []byte) map[string]cty.Value {
 	if len(raw) == 0 {
 		return nil
@@ -273,8 +377,10 @@ func copySS(in map[string]string) map[string]string {
 // root declares the host-local dynamic callee "mcp.probe" (with adapter
 // secrets) and a parallel subworkflow step; each iteration body declares its
 // own claude caller whose step allowlists the probe's tool surface.
-func kb58Graph(t *testing.T, callerAllow []string, policy workflow.Policy) (*workflow.FSMGraph, *kb58TestCaller) {
+func kb58Graph(t *testing.T, callerAllow []string, policy workflow.Policy) (*workflow.FSMGraph, *kb58CallerProbe, *kb58CalleeProbe) {
 	t.Helper()
+	callers := &kb58CallerProbe{}
+	callees := &kb58CalleeProbe{}
 
 	body := &workflow.FSMGraph{
 		Name:         "probe-iteration",
@@ -317,7 +423,6 @@ func kb58Graph(t *testing.T, callerAllow []string, policy workflow.Policy) (*wor
 		DeclaredVars: map[string]*workflow.VariableNode{},
 	}
 
-	caller := newKB58TestCaller()
 	g := &workflow.FSMGraph{
 		Name:         "kb58-root",
 		InitialState: "call",
@@ -365,25 +470,16 @@ func kb58Graph(t *testing.T, callerAllow []string, policy workflow.Policy) (*wor
 		},
 		Subworkflows: map[string]*workflow.SubworkflowNode{"probe": sw},
 	}
-	return g, caller
+	return g, callers, callees
 }
 
-// kb58RunGraph wires the loader, runs the graph, and returns the callee,
-// sink, and audit collector for assertions.
-func kb58RunGraph(t *testing.T, g *workflow.FSMGraph, caller *kb58TestCaller) (*kb58TestCallee, *loopOutputSink, *engineAuditCollector) {
-	t.Helper()
-	callee := &kb58TestCallee{rec: &nestedEngineRecorder{}}
-	sink, audit := kb58RunGraphCallee(t, g, caller, callee)
-	return callee, sink, audit
-}
-
-// kb58RunGraphCallee runs the graph with an explicit callee instance and
-// returns the engine sink and audit collector for assertions.
-func kb58RunGraphCallee(t *testing.T, g *workflow.FSMGraph, caller *kb58TestCaller, callee *kb58TestCallee) (*loopOutputSink, *engineAuditCollector) {
+// kb58RunGraph wires the loader, runs the graph, and returns the engine sink
+// and audit collector for assertions.
+func kb58RunGraph(t *testing.T, g *workflow.FSMGraph, callers *kb58CallerProbe, callees *kb58CalleeProbe) (*loopOutputSink, *engineAuditCollector) {
 	t.Helper()
 	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) { return "", os.ErrNotExist })
-	loader.RegisterBuiltin("claude", func() adapterhost.Handle { return caller })
-	loader.RegisterBuiltin("mcp", func() adapterhost.Handle { return callee })
+	loader.RegisterBuiltin("claude", func() adapterhost.Handle { return callers.newFake() })
+	loader.RegisterBuiltin("mcp", func() adapterhost.Handle { return callees.newFake() })
 
 	sink := &loopOutputSink{}
 	audit := &engineAuditCollector{}
@@ -412,12 +508,12 @@ func auditReasons(entries []*adapterhost.DecisionLogEntry, substr string) []stri
 // with the root adapter secrets, the caller never sees them, and the
 // borrowed callee sessions are closed at scope teardown.
 func TestKB58_ParallelIterationResolvesHostLocalToolResource(t *testing.T) {
-	g, caller := kb58Graph(t, []string{"adapter.mcp.probe.tools.*"}, workflow.DefaultPolicy)
-	callee, sink, audit := kb58RunGraph(t, g, caller)
+	g, callers, callees := kb58Graph(t, []string{"adapter.mcp.probe.tools.*"}, workflow.DefaultPolicy)
+	sink, audit := kb58RunGraph(t, g, callers, callees)
 
 	// Every issued call must be resolved and succeed (no typed errors).
 	for _, id := range []string{"call-0", "call-1"} {
-		res := caller.gotResult(id)
+		res := callers.gotResult(id)
 		if res == nil {
 			t.Fatalf("%s: caller never received a tool_call_result", id)
 		}
@@ -429,7 +525,7 @@ func TestKB58_ParallelIterationResolvesHostLocalToolResource(t *testing.T) {
 
 	// Containment: the callee was opened host-local WITH the root adapter's
 	// secrets.
-	if secs, ok := callee.secretsSeen(kb58CalleeSess); !ok {
+	if secs, ok := callees.secretsSeen(kb58CalleeSess); !ok {
 		t.Errorf("callee session %q was never opened on the local handle", kb58CalleeSess)
 	} else if secs["probe_token"] != kb58ProbeSecret {
 		t.Errorf("callee session opened without root adapter secret: got %v; want probe_token=%q", secs, kb58ProbeSecret)
@@ -438,14 +534,14 @@ func TestKB58_ParallelIterationResolvesHostLocalToolResource(t *testing.T) {
 	// Containment: the secret never leaked into callee.* outputs returned to
 	// the caller.
 	for _, id := range []string{"call-0", "call-1"} {
-		if res := caller.gotResult(id); res != nil && strings.Contains(string(res.OutputsJson), kb58ProbeSecret) {
+		if res := callers.gotResult(id); res != nil && strings.Contains(string(res.OutputsJson), kb58ProbeSecret) {
 			t.Errorf("%s: probe secret leaked into results returned to the caller", id)
 		}
 	}
 
 	// The callee must be executed once per tool call: two parallel iterations
 	// × two calls made by each caller step = 4 host-local executions.
-	if got, want := len(callee.rec.allSessions()), 4; got != want {
+	if got, want := callees.executeCount(), 4; got != want {
 		t.Errorf("callee Execute count = %d; want %d (2 iterations × 2 calls)", got, want)
 	}
 
@@ -455,7 +551,7 @@ func TestKB58_ParallelIterationResolvesHostLocalToolResource(t *testing.T) {
 
 	// Lifecycle hygiene: the borrowed callee session is closed when the
 	// borrowed manager tears down (each iteration scope closes its own copy).
-	if n := callee.closeCount(kb58CalleeSess); n < 2 {
+	if n := callees.closeCount(kb58CalleeSess); n < 2 {
 		t.Errorf("callee CloseSession count for %q = %d; want >= 2 (one per iteration scope)", kb58CalleeSess, n)
 	}
 
@@ -476,15 +572,21 @@ func TestKB58_MaxToolCallsBudgetEnforcesCallCount(t *testing.T) {
 	policy := workflow.DefaultPolicy
 	policy.MaxToolCalls = 1
 
-	g, caller := kb58Graph(t, []string{"adapter.mcp.probe.tools.*"}, policy)
+	g, callers, callees := kb58Graph(t, []string{"adapter.mcp.probe.tools.*"}, policy)
 	// Two parallel iterations, each issuing 4 sequential calls: with a budget
 	// of 1 per caller session, call-0 executes and call-1..3 are refused
 	// typed — the callee never sees them.
-	caller.callIDs = []string{"call-0", "call-1", "call-2", "call-3"}
-	callee, sink, audit := kb58RunGraph(t, g, caller)
+	callers.setCallIDs([]string{"call-0", "call-1", "call-2", "call-3"})
+	sink, audit := kb58RunGraph(t, g, callers, callees)
 
-	for _, id := range caller.callIDs {
-		res := caller.gotResult(id)
+	// Per-handle fakes: one caller handle per session-manager resolve (at
+	// least one per parallel iteration), aggregated behind the shared probe.
+	if callers.fakeCount() < 2 {
+		t.Errorf("caller handles resolved = %d; want >= 2 (one per parallel iteration)", callers.fakeCount())
+	}
+
+	for _, id := range callers.idsList() {
+		res := callers.gotResult(id)
 		if res == nil {
 			t.Fatalf("%s: caller never received a tool_call_result", id)
 		}
@@ -502,7 +604,7 @@ func TestKB58_MaxToolCallsBudgetEnforcesCallCount(t *testing.T) {
 
 	// The refused calls never reach the callee: exactly one host-local
 	// execution per iteration makes it through.
-	if got, want := len(callee.rec.allSessions()), 2; got != want {
+	if got, want := callees.executeCount(), 2; got != want {
 		t.Errorf("callee Execute count = %d; want %d (one per iteration)", got, want)
 	}
 
