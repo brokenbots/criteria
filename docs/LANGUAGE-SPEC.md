@@ -367,26 +367,19 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ## Named type blocks
 
-`type "<name>" { schema = <constraint> }` declares a first-class named type. The `schema` attribute is any inline type constraint (`number`, `object({...})`, `list(T)`, `optional(T, default)`, ...). References use traversal syntax `type.<name>`.
+`type "<name>" { schema = <constraint> }` declares a first-class named type; `schema` is any inline constraint (`number`, `object({...})`, `list(T)`, `optional(T, default)`, ...). References use `type.<name>` traversal.
 
-**Resolvers (KB-48).** `type.<name>` may replace an inline type constraint at every position a type constraint is accepted:
+**Resolvers (KB-48):** `type.<name>` may replace an inline type constraint at every position one is accepted — step-outcome payload schemas, data block types, variable declarations, output projections, and subworkflow callee variable/output declarations. A parent binding (`input = { x = <expr> }`) is type-checked against the callee's resolved variable type. Each workflow body compiles its own type namespace: a callee never sees the parent's type blocks.
 
-- step-outcome payload schemas: `outcome "x" { schema = type.audit }`
-- data block types: `data "internal" "b" { type = type.num }`
-- variable declarations: `variable "n" { type = type.num }`
-- output projections: `output "o" { type = type.num }`
-- subworkflow callee bodies: the callee's own `variable` (and `output`) declarations, and the parent's binding is type-checked against the callee's resolved variable type. Each workflow body compiles its own type namespace: a callee never sees the parent's type blocks, so a parent type referenced inside a callee is a compile error in the callee.
+**Rules.**
+- Type refs resolve at compile time, before every consumer pass. An unknown `type.<name>` is a compile error ("unknown workflow type") on the referencing attribute — never a runtime failure.
+- Neutral forms: an inline constraint and its named twin resolve to the identical `cty.Type` (with `optional()` defaults); refactoring inline→named changes nothing at compile or run time.
+- Own namespace: type names are workflow-wide and may share names with steps, states, variables, locals, or data. `type` itself is not a value-namespace binding — `type.<name>` in a value expression is an unknown-variable error.
+- Mis-scoped composition: a type ref composed *inside* another constraint (e.g. `schema = list(type.other)`) does not resolve; constraints must be inline.
 
-**Resolution rules.**
+**Slice-1 restriction (future-widening boundary):** a type block's `schema` may not reference other type blocks; type-to-type composition is deliberately deferred.
 
-- Type references are resolved at compile time, before any consumer pass. An unknown `type.<name>` is a compile error ("unknown workflow type"), reported on the referencing attribute with a hint naming the valid positions — never a runtime failure.
-- Neutral forms: an inline constraint and its named twin resolve to the identical `cty.Type` (with optional() defaults collected identically). Refactoring inline schemas to named types changes nothing at compile or run time.
-- Own namespace: type names live in a dedicated workflow-wide namespace and may share names with steps, states, variables, locals, or data blocks without collision. Conversely, `type` is not a value-namespace binding — `type.<name>` in a value expression is an unknown-variable error, not a type resolution.
-- Mis-scoped composition: a type reference composed *inside* another type constraint (e.g. `schema = list(type.other)`) does not resolve; constraints must be fully inline.
-
-**Slice-1 restriction (future-widening boundary).** A type block's `schema` expression may not itself reference other type blocks (`type.*` traversal inside `schema = ...` is a compile error). Type-to-type composition is deliberately deferred; widening it is a future, separately-scoped change, and workflows must not rely on it.
-
-**Consumer compatibility.** Named outcome schemas run through the same adapter-handshake compatibility check as inline schemas, including the requirement that an outcome schema resolve to an object(...) type; a non-object named type is rejected at compile time exactly like the inline spelling.
+**Consumer compatibility:** named outcome schemas pass the same adapter-handshake compatibility check as inline schemas, including the object(...) gate — a non-object named type is rejected like the inline spelling.
 
 ## Expressions
 

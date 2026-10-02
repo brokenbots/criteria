@@ -7,13 +7,14 @@ import (
 )
 
 // TestSpecTokenBudget_UnderEightThousandWords checks that docs/LANGUAGE-SPEC.md
-// stays under the 5,900-word budget (approximately 8,000 cl100k_base tokens).
+// stays under the 6,200-word budget (approximately 8,000 cl100k_base tokens).
 // This limit prevents LLM context overrun when the spec is injected verbatim.
-// 5900 reflects KB-45's outcome-contract wave: the generated tables now cover
-// the `type "<name>"` block and the outcome schema/require_comment/fallback
-// attributes (+127 words over the previous 5700 cap).
+// 6200 reflects KB-48's outcome-contract wave: the type.<name> alternative is
+// now documented at every consumer (+224 words over the 5900 KB-45 cap — the
+// "Named type blocks" prose section plus the widened data/variable/output type
+// field descriptions in the generated tables).
 func TestSpecTokenBudget_UnderEightThousandWords(t *testing.T) {
-	const maxWords = 5900
+	const maxWords = 6200
 	data, err := os.ReadFile("../../docs/LANGUAGE-SPEC.md")
 	if err != nil {
 		t.Fatalf("docs/LANGUAGE-SPEC.md not found: %v", err)
