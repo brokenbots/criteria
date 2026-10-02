@@ -138,6 +138,8 @@ func TypeString(env *pb.Envelope) string { //nolint:funlen,gocyclo // discrimina
 		return "step.entered"
 	case *pb.Envelope_StepOutcome:
 		return "step.outcome"
+	case *pb.Envelope_StepOutcomeInvalid:
+		return "step.outcome_invalid"
 	case *pb.Envelope_StepTransition:
 		return "step.transition"
 	case *pb.Envelope_StepLog:
