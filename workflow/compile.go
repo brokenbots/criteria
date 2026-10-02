@@ -145,6 +145,7 @@ func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]Adap
 	diags = append(diags, compileVariables(g, spec)...)
 	diags = append(diags, compileLocals(g, spec, opts)...)
 	diags = append(diags, compileData(g, spec, opts)...)
+	diags = append(diags, compileTypes(g, spec)...)
 	diags = append(diags, compileEnvironments(g, spec, opts, builtinEnvRegistry())...)
 	diags = append(diags, compileSubworkflows(ctx, g, spec, opts)...)
 	diags = append(diags, compileOutputs(g, spec, opts)...)
