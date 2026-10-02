@@ -153,6 +153,7 @@ func TestTypedConsumers_TwinRunsProduceIdenticalEvents(t *testing.T) {
 	inline := runTypedConsumerTwin(t, compileTypedConsumerTwin(t, false))
 	named := runTypedConsumerTwin(t, compileTypedConsumerTwin(t, true))
 
+	require.Equal(t, inline.inputs, named.inputs, "adapter-visible inputs")
 	require.Equal(t, inline.stepsRun, named.stepsRun, "step order")
 	require.Equal(t, inline.terminal, named.terminal, "terminal state")
 	require.True(t, inline.terminalOK, "terminal ok")
