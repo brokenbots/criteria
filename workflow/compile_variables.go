@@ -21,7 +21,7 @@ func compileVariables(g *FSMGraph, spec *Spec) hcl.Diagnostics {
 			diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: fmt.Sprintf("duplicate variable %q", name)})
 			continue
 		}
-		typ, defs, typeDiags := resolveVariableType(vs)
+		typ, defs, typeDiags := resolveVariableType(vs, g)
 		if typeDiags.HasErrors() {
 			diags = append(diags, typeDiags...)
 			continue
@@ -54,11 +54,13 @@ func compileVariables(g *FSMGraph, spec *Spec) hcl.Diagnostics {
 
 // resolveVariableType returns the cty.Type (and any optional defaults) for a
 // variable spec, defaulting to cty.String when the type expression is absent.
-func resolveVariableType(vs VariableSpec) (cty.Type, *typeexpr.Defaults, hcl.Diagnostics) {
+// A `type.<name>` traversal resolves against the workflow's type namespace;
+// every other expression is parsed as an inline typeexpr constraint.
+func resolveVariableType(vs VariableSpec, g *FSMGraph) (cty.Type, *typeexpr.Defaults, hcl.Diagnostics) {
 	if isAbsentExpr(vs.Type) {
 		return cty.String, nil, nil
 	}
-	return resolveTypeConstraint(vs.Type)
+	return resolveNamedTypeConstraint(fmt.Sprintf("variable %q", vs.Name), "Variable type constraints", vs.Type, g)
 }
 
 // resolveVariableDefault extracts and coerces the optional default value from

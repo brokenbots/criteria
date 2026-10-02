@@ -142,10 +142,14 @@ func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]Adap
 	g.FileCache = make(map[string]string)
 	initGraphPinSet(g, opts)
 
+	// Types compile first: the type namespace is leaf-level (never reads
+	// variables, locals, or data) and its consumers — variables, data,
+	// outputs, outcome schemas — resolve `type.<name>` refs during their own
+	// passes (KB-48).
+	diags = append(diags, compileTypes(g, spec)...)
 	diags = append(diags, compileVariables(g, spec)...)
 	diags = append(diags, compileLocals(g, spec, opts)...)
 	diags = append(diags, compileData(g, spec, opts)...)
-	diags = append(diags, compileTypes(g, spec)...)
 	diags = append(diags, compileEnvironments(g, spec, opts, builtinEnvRegistry())...)
 	diags = append(diags, compileSubworkflows(ctx, g, spec, opts)...)
 	diags = append(diags, compileOutputs(g, spec, opts)...)

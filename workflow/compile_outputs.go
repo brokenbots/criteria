@@ -68,11 +68,13 @@ func compileOneOutput(g *FSMGraph, os OutputSpec, opts CompileOpts) hcl.Diagnost
 		return diags
 	}
 
-	// Parse and validate type expression from schema (os.Type).
+	// Parse and validate type expression from schema (os.Type). A
+	// `type.<name>` traversal resolves against the workflow's type namespace;
+	// every other expression is parsed as an inline typeexpr constraint.
 	declaredType := cty.NilType
 	var typeDefaults *typeexpr.Defaults
 	if !isAbsentExpr(os.Type) {
-		parsedType, defs, typeDiags := resolveTypeConstraint(os.Type)
+		parsedType, defs, typeDiags := resolveNamedTypeConstraint(fmt.Sprintf("output %q", os.Name), "Output type constraints", os.Type, g)
 		if typeDiags.HasErrors() {
 			diags = append(diags, typeDiags...)
 			return diags

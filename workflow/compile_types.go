@@ -12,21 +12,23 @@ package workflow
 //
 // Slice-1: type blocks cannot reference other type blocks — the namespace is
 // leaf-level. A traversal rooted at "type" inside a schema constraint is a
-// compile error. (References from outcomes are the wired consumer; widening
-// to data/variable/output namespaces is a separate ticket.)
+// compile error. (References from outcomes are the KB-45 wired consumer;
+// KB-48 widens the same resolution to data blocks, variables, and outputs.)
 
 import (
 	"fmt"
 
 	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/ext/typeexpr"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
 )
 
 // compileTypes compiles all type blocks from spec into g.Types in declaration
-// order. Runs after compileData so diagnostics interleave deterministically
-// with the other top-level compile passes; type resolution never reads
-// variables/locals/data (slice-1), so ordering only affects diagnostic layout.
+// order. Runs before every consumer pass (variables, locals, data, outputs):
+// type resolution never reads variables/locals/data (slice-1), so the type
+// namespace must only precede its consumers; ordering only affects diagnostic
+// layout.
 func compileTypes(g *FSMGraph, spec *Spec) hcl.Diagnostics {
 	if len(spec.Types) == 0 {
 		return nil
@@ -149,4 +151,67 @@ func rejectExtraTypeBlockAttrs(typeName string, ts *TypeSpec) *hcl.Diagnostic {
 		}
 	}
 	return nil
+}
+
+// namedTypeRef reports whether expr is exactly the two-segment traversal
+// `type.<name>` and returns the name. Any other expression is not a type
+// reference.
+func namedTypeRef(expr hcl.Expression) (string, bool) {
+	trs := expr.Variables()
+	if len(trs) != 1 {
+		return "", false
+	}
+	tr := trs[0]
+	if len(tr) != 2 {
+		return "", false
+	}
+	root, ok := tr[0].(hcl.TraverseRoot)
+	if !ok || root.Name != "type" {
+		return "", false
+	}
+	second, ok := tr[1].(hcl.TraverseAttr)
+	if !ok {
+		return "", false
+	}
+	return second.Name, true
+}
+
+// resolveNamedTypeConstraint resolves a type-constraint expression authored
+// at a consumer site (KB-48). A `type.<name>` traversal resolves against the
+// workflow's type namespace (g.Types); the declaration-order namespace carries
+// the exact cty.Type and optional() defaults the type block compiled to, so a
+// consumer authored inline and its type-block twin produce identical graphs.
+// Any other expression is parsed as an inline typeexpr constraint via
+// resolveTypeConstraint.
+//
+// loc identifies the consumer in diagnostics (e.g. `data "http" "msg"`),
+// noun names the constraint position (e.g. "Data type constraints") for the
+// unknown-reference hint. Unlike resolveTypeConstraint, an absent expression
+// returns (cty.NilType, nil, nil): consumers keep their own absent semantics
+// (variables default to string, data requires the attribute, outputs and
+// outcome schemas leave the type unconstrained).
+func resolveNamedTypeConstraint(loc, noun string, expr hcl.Expression, g *FSMGraph) (cty.Type, *typeexpr.Defaults, hcl.Diagnostics) {
+	if expr == nil || isAbsentExpr(expr) {
+		return cty.NilType, nil, nil
+	}
+
+	if decl, ok := namedTypeRef(expr); ok {
+		td := g.Types[decl]
+		if td == nil {
+			r := expr.StartRange()
+			return cty.NilType, nil, hcl.Diagnostics{&hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("%s: unknown workflow type %q", loc, decl),
+				Detail:   fmt.Sprintf("%s may reference a top-level type block declared in this workflow, or carry an inline type constraint.", noun),
+				Subject:  &r,
+			}}
+		}
+		return td.Type, td.Defaults, nil
+	}
+
+	typ, defs, diags := resolveTypeConstraint(expr)
+	if diags.HasErrors() {
+		return cty.NilType, nil, diags
+	}
+	return typ, defs, nil
 }

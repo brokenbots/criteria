@@ -34,66 +34,33 @@ import (
 // attribute accepts either a `type.<name>` traversal into the workflow's type
 // namespace or an inline typeexpr constraint (object({...}), list(T),
 // optional(T, default)) — both forms resolve to the same cty.Type and
-// typeexpr.Defaults pair. Nothing else is accepted. Returns cty.NilType (with
-// nil defaults) when the outcome declares no schema.
+// typeexpr.Defaults pair (resolveNamedTypeConstraint). Nothing else is
+// accepted. Returns cty.NilType (with nil defaults) when the outcome declares
+// no schema.
 func compileOutcomeSchemaAttr(stepName, outcomeName string, expr hcl.Expression, g *FSMGraph) (cty.Type, *typeexpr.Defaults, hcl.Diagnostics) {
 	if expr == nil || isAbsentExpr(expr) {
 		return cty.NilType, nil, nil
 	}
 
-	if decl, ok := namedTypeRef(expr); ok {
-		td := g.Types[decl]
-		if td == nil {
-			r := expr.StartRange()
-			return cty.NilType, nil, hcl.Diagnostics{&hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("step %q outcome %q: unknown workflow type %q", stepName, outcomeName, decl),
-				Detail:   "Outcome schemas may reference a top-level type block declared in this workflow, or carry an inline type constraint.",
-				Subject:  &r,
-			}}
-		}
-		return td.Type, td.Defaults, nil
-	}
-
-	typ, defs, diags := resolveTypeConstraint(expr)
+	loc := fmt.Sprintf("step %q outcome %q", stepName, outcomeName)
+	typ, defs, diags := resolveNamedTypeConstraint(loc, "Outcome schemas", expr, g)
 	if diags.HasErrors() {
 		return cty.NilType, nil, diags
 	}
 	// The host-side payload validator only accepts a root object (or an
 	// unconstrained root); anything else (list, map, number, ...) can never be
-	// satisfied as a finalized payload.
+	// satisfied as a finalized payload. The gate applies to named refs and
+	// inline constraints alike: refactoring a schema from inline to a named
+	// type block must not change compile behavior.
 	if typ != cty.DynamicPseudoType && !typ.IsObjectType() {
 		r := expr.StartRange()
 		return cty.NilType, nil, hcl.Diagnostics{&hcl.Diagnostic{
 			Severity: hcl.DiagError,
-			Summary:  fmt.Sprintf("step %q outcome %q: schema must be an object(...) type constraint; got %s", stepName, outcomeName, typ.FriendlyName()),
+			Summary:  fmt.Sprintf("%s: schema must be an object(...) type constraint; got %s", loc, typ.FriendlyName()),
 			Subject:  &r,
 		}}
 	}
 	return typ, defs, nil
-}
-
-// namedTypeRef reports whether expr is exactly the two-segment traversal
-// `type.<name>` and returns the name. Any other expression is not a type
-// reference.
-func namedTypeRef(expr hcl.Expression) (string, bool) {
-	trs := expr.Variables()
-	if len(trs) != 1 {
-		return "", false
-	}
-	tr := trs[0]
-	if len(tr) != 2 {
-		return "", false
-	}
-	root, ok := tr[0].(hcl.TraverseRoot)
-	if !ok || root.Name != "type" {
-		return "", false
-	}
-	second, ok := tr[1].(hcl.TraverseAttr)
-	if !ok {
-		return "", false
-	}
-	return second.Name, true
 }
 
 // validateOutcomeSchemaPayloadContract checks an outcome's compiled schema
