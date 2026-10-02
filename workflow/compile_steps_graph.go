@@ -87,6 +87,7 @@ func compileOutcomeBlock(sp *StepSpec, node *StepNode, g *FSMGraph, opts Compile
 			} else {
 				compiled.SchemaJSON = schemaJSON
 			}
+			compiled.SchemaDefaults = schemaDefaults
 		}
 		if o.Name == "default" {
 			node.DefaultOutcome = compiled

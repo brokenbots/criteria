@@ -363,6 +363,27 @@ func (n *stepNode) applyOutcome(outcomeName string, rawOutputs, swOutputs map[st
 	// Apply output projection if the outcome declares one. Projection returns raw
 	// cty values; both the projection and the raw adapter outputs are already
 	// typed, so they are stored under steps.<name>.* with their native types.
+	//
+	// KB-45: bind the outcome schema's typeexpr defaults into the payload first
+	// (schema = optional(T, default) fields), so both the projection's
+	// output.<key> reads and the stored steps.<step> object see the declared
+	// defaults for fields the adapter omitted. Apply is idempotent on complete
+	// payloads, so results forwarded verbatim by SDK adapters that already
+	// applied the contract defaults are unchanged. The engine-synthesized
+	// fallback outcome finalizes with no payload by contract, so an empty
+	// result on a fallback outcome stays empty even when its schema declares
+	// defaults.
+	if compiled.SchemaDefaults != nil && (len(rawOutputs) > 0 || !compiled.Fallback) {
+		obj := cty.ObjectVal(rawOutputs)
+		defaulted := workflow.ApplyDefaultsIfAny(obj, compiled.SchemaDefaults)
+		if defaulted.Type().IsObjectType() {
+			defaultedOutputs := make(map[string]cty.Value, len(defaulted.Type().AttributeTypes()))
+			for name := range defaulted.Type().AttributeTypes() {
+				defaultedOutputs[name] = defaulted.GetAttr(name)
+			}
+			rawOutputs = defaultedOutputs
+		}
+	}
 	stepOutputs := rawOutputs
 	var projectedCty map[string]cty.Value
 	if compiled.OutputExpr != nil {

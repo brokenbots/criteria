@@ -31,6 +31,7 @@ type contractSink struct {
 	invalid   []invalidOutcomeEvent
 	outcome   []recordedOutcome
 	defaulted [][3]string
+	captured  map[string]map[string]string
 }
 
 type invalidOutcomeEvent struct {
@@ -63,6 +64,15 @@ func (s *contractSink) OnStepOutcomeInvalid(step, outcome string, issues []strin
 
 func (s *contractSink) OnStepOutcomeDefaulted(step, original, mapped string) {
 	s.defaulted = append(s.defaulted, [3]string{step, original, mapped})
+}
+
+func (s *contractSink) OnStepOutputCaptured(step string, outputs map[string]string) {
+	s.mu.Lock()
+	if s.captured == nil {
+		s.captured = map[string]map[string]string{}
+	}
+	s.captured[step] = outputs
+	s.mu.Unlock()
 }
 
 // contractWorkflow declares a named type block plus per-outcome contracts:
@@ -382,4 +392,99 @@ state "done" { terminal = true }`)
 	require.NotNil(t, rejections[1], "attempt 2 carries the payload rejection")
 	require.Nil(t, rejections[2], "the attempt after the transport error resets the repair chain")
 	require.Equal(t, "done", sink.terminal)
+}
+
+// TestRun_SchemaDefaultsBindIntoStepOutputs pins the engine-side default
+// binding (KB-45): a mapped verdict with an empty payload accepts through
+// contract validation and stores the schema's typeexpr defaults under
+// steps.<step>, so a workflow output reading steps.<step>[field] sees the
+// declared default without any adapter cooperation.
+func TestRun_SchemaDefaultsBindIntoStepOutputs(t *testing.T) {
+	g := compile(t, `
+workflow {
+  name          = "binddefaults"
+  version       = "0.1"
+  initial_state = "ship"
+  target_state  = "done"
+}
+type "audit" {
+  schema = object({
+    summary = optional(string, "(no summary)")
+    files   = optional(number, 0)
+  })
+}
+adapter "fake" "default" {}
+step "ship" {
+  target = adapter.fake.default
+  outcome "success" {
+    schema = type.audit
+    next   = state.done
+  }
+}
+state "done" { terminal = true }
+`)
+	var rejections []*criteriav2.ExecutionRejection
+	plug := &adapterFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *criteriav2.ExecutionRejection) (adapter.Result, error) {
+		require.Nil(t, rejection)
+		rejections = append(rejections, rejection)
+		return adapter.Result{Outcome: "success"}, nil // empty payload, no comment
+	}}
+	sink := &contractSink{}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
+	require.NoError(t, NewTestEngine(g, loader, sink).Run(context.Background()))
+
+	require.Equal(t, "done", sink.terminal)
+	require.Empty(t, sink.invalid, "all-optional schema accepts an empty payload")
+	require.Len(t, rejections, 1)
+	require.Equal(t, map[string]string{
+		"summary": "(no summary)",
+		"files":   "0",
+	}, sink.captured["ship"], "schema defaults bind into the stored step outputs")
+}
+
+// TestRun_FallbackSynthesisNeverGrowsPayload pins that the engine-synthesized
+// fallback verdict finalizes with no payload and no comment even when the
+// fallback outcome declares a schema with defaults.
+func TestRun_FallbackSynthesisNeverGrowsPayload(t *testing.T) {
+	g := compile(t, `
+workflow {
+  name          = "fallbackdefaults"
+  version       = "0.1"
+  initial_state = "ship"
+  target_state  = "done"
+}
+adapter "fake" "default" {}
+step "ship" {
+  target = adapter.fake.default
+  outcome "success" {
+    schema = object({ name = string })
+    next   = state.done
+  }
+  outcome "failure" {
+    fallback = true
+    schema = object({ reason = optional(string, "engine-synthesized") })
+    next   = state.failed
+  }
+}
+state "done" { terminal = true }
+state "failed" {
+  terminal = true
+  success  = false
+}
+`)
+	var rejections []*criteriav2.ExecutionRejection
+	plug := &adapterFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *criteriav2.ExecutionRejection) (adapter.Result, error) {
+		rejections = append(rejections, rejection)
+		return adapter.Result{}, nil // never finalizes → fallback lane
+	}}
+	sink := &contractSink{}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": plug}}
+	require.NoError(t, NewTestEngine(g, loader, sink).Run(context.Background()))
+
+	require.Equal(t, "failed", sink.terminal)
+	require.False(t, sink.terminalOK)
+	require.Empty(t, sink.invalid, "the fallback synthesis is not a validation candidate")
+	require.Len(t, rejections, 1)
+	require.Nil(t, rejections[0], "the single Execute has no prior rejection")
+	require.Empty(t, sink.captured["ship"], "the synthesized fallback carries no payload")
 }

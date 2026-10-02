@@ -261,7 +261,12 @@ type VariableSpec struct {
 // attributes; referencing other type names from inside a type block is a
 // compile error (slice-1).
 type TypeSpec struct {
-	Name   string         `hcl:"name,label"`
+	Name string `hcl:"name,label"`
+	// Schema is the type constraint this name aliases (object({...}),
+	// list(T), optional(T, default), ...), referenced from outcomes as
+	// type.<name>.
+	//
+	// spec:required
 	Schema hcl.Expression `hcl:"schema,optional"`
 	Remain hcl.Body       `hcl:",remain"` // rejected: a type block declares schema only
 }
@@ -524,13 +529,19 @@ type AdapterInfo struct {
 //     finalized result at all (distinct from the reserved "default" outcome,
 //     which maps an adapter-returned unmapped name).
 type OutcomeSpec struct {
-	Name           string         `hcl:"name,label"`
-	Next           hcl.Expression `hcl:"next"`
-	Schema         hcl.Expression `hcl:"schema,optional"`
-	RequireComment bool           `hcl:"require_comment,optional"`
-	Fallback       bool           `hcl:"fallback,optional"`
-	Writes         []WriteSpec    `hcl:"write,block"`
-	Remain         hcl.Body       `hcl:",remain"` // captures the optional "output" expression
+	Name string         `hcl:"name,label"`
+	Next hcl.Expression `hcl:"next"`
+	// Schema is the payload contract: a type.<name> traversal into a named
+	// type block or an inline typeexpr constraint. Its fields must be a
+	// subset of the adapter's output schema.
+	Schema hcl.Expression `hcl:"schema,optional"`
+	// RequireComment rejects a result with an empty adapter comment.
+	RequireComment bool `hcl:"require_comment,optional"`
+	// Fallback marks (at most one per step) the outcome that fires when the
+	// adapter produced no finalized result at all.
+	Fallback bool        `hcl:"fallback,optional"`
+	Writes   []WriteSpec `hcl:"write,block"`
+	Remain   hcl.Body    `hcl:",remain"` // captures the optional "output" expression
 }
 
 // WriteSpec is a single data write declaration inside an outcome block.
@@ -803,6 +814,13 @@ type CompiledOutcome struct {
 	// SchemaJSON is the deterministic JSON Schema bytes for Schema, produced
 	// by CTypeToJSONSchema at compile time. Empty when Schema is nil.
 	SchemaJSON []byte
+	// SchemaDefaults carries the typeexpr defaults of an optional(...) field
+	// with a declared default, from the same schema resolution as Schema
+	// (KB-45). The engine binds them into the adapter payload after a final
+	// verdict passes the host contract validation, so output projections and
+	// steps.<step> reads see the declared defaults for omitted fields. Nil
+	// when the schema declares no defaults.
+	SchemaDefaults *typeexpr.Defaults
 	// RequireComment copies the outcome's require_comment attribute (KB-45):
 	// the host rejects a finalize with this outcome when the comment is empty.
 	// The engine treats comments as opaque metadata; adapters enforce authoring.
