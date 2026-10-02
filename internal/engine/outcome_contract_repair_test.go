@@ -12,6 +12,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -487,4 +488,37 @@ state "failed" {
 	require.Len(t, rejections, 1)
 	require.Nil(t, rejections[0], "the single Execute has no prior rejection")
 	require.Empty(t, sink.captured["ship"], "the synthesized fallback carries no payload")
+}
+
+// TestLockedSink_OnStepOutcomeInvalid_SerializesAndDelegates pins the
+// lockedSink arm added for parallel iterations (KB-45): concurrent contract
+// rejections from parallel loops are serialized onto the wrapped sink
+// verbatim (step, outcome, issues, attempt).
+func TestLockedSink_OnStepOutcomeInvalid_SerializesAndDelegates(t *testing.T) {
+	sink := &contractSink{}
+	lk := &lockedSink{Sink: sink}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(attempt int) {
+			defer wg.Done()
+			lk.OnStepOutcomeInvalid("fan", "success", []string{"issue"}, attempt)
+		}(i)
+	}
+	wg.Wait()
+
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if len(sink.invalid) != 8 {
+		t.Fatalf("delegated events: got %d want 8", len(sink.invalid))
+	}
+	for i, ev := range sink.invalid {
+		if ev.step != "fan" || ev.outcome != "success" || len(ev.issues) != 1 || ev.issues[0] != "issue" {
+			t.Fatalf("event %d content: %+v", i, ev)
+		}
+		if ev.attempt < 0 || ev.attempt >= 8 {
+			t.Fatalf("event %d attempt out of range: %d", i, ev.attempt)
+		}
+	}
 }
