@@ -674,6 +674,11 @@ func (n *stepNode) runParallelSubworkflowIteration(ctx context.Context, st *RunS
 	// sessions it opened, so no explicit Shutdown is needed here.
 	iterDeps := deps
 	iterDeps.Sessions = adapterhost.NewSessionManager(deps.Loader)
+	// Audit identity is run-wide (single writer, per-run redaction registry;
+	// KB-58 budget refusals and other nested tool-call decisions inside
+	// parallel iterations must reach the run's audit trail).
+	iterDeps.Sessions.Audit = deps.Sessions.Audit
+	iterDeps.Sessions.RedactionRegistry = deps.Sessions.RedactionRegistry
 	// The fresh SM isolates LOCAL adapter sessions, but a remote environment's
 	// phone-home shim is a single listener per environment (fixed
 	// listen_address) that multiplexes every scope, and isRemoteAdapter consults

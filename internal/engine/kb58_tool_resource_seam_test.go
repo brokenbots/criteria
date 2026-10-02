@@ -141,7 +141,10 @@ func (a *kb58TestCallee) closeCount(sessionID string) int {
 // successful callee result's outputs as callee.* step outputs
 // (ADR-0004 §5 caller contract).
 type kb58TestCaller struct {
-	mu       sync.Mutex
+	mu sync.Mutex
+	// callIDs is the request-id sequence Execute issues; nil defaults to
+	// ["call-0", "call-1"].
+	callIDs  []string
 	requests <-chan *v2.PermissionEvent
 	results  map[string]*v2.ToolCallResult
 }
@@ -174,7 +177,11 @@ func (a *kb58TestCaller) Execute(ctx context.Context, _ string, _ *workflow.Step
 	}
 
 	var lastOutputs map[string]cty.Value
-	for _, id := range []string{"call-0", "call-1"} {
+	ids := a.callIDs
+	if ids == nil {
+		ids = []string{"call-0", "call-1"}
+	}
+	for _, id := range ids {
 		sink.Adapter("permission.request", map[string]any{
 			"request_id": id,
 			"target":     kb58ProbeTarget,
@@ -366,6 +373,14 @@ func kb58Graph(t *testing.T, callerAllow []string, policy workflow.Policy) (*wor
 func kb58RunGraph(t *testing.T, g *workflow.FSMGraph, caller *kb58TestCaller) (*kb58TestCallee, *loopOutputSink, *engineAuditCollector) {
 	t.Helper()
 	callee := &kb58TestCallee{rec: &nestedEngineRecorder{}}
+	sink, audit := kb58RunGraphCallee(t, g, caller, callee)
+	return callee, sink, audit
+}
+
+// kb58RunGraphCallee runs the graph with an explicit callee instance and
+// returns the engine sink and audit collector for assertions.
+func kb58RunGraphCallee(t *testing.T, g *workflow.FSMGraph, caller *kb58TestCaller, callee *kb58TestCallee) (*loopOutputSink, *engineAuditCollector) {
+	t.Helper()
 	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) { return "", os.ErrNotExist })
 	loader.RegisterBuiltin("claude", func() adapterhost.Handle { return caller })
 	loader.RegisterBuiltin("mcp", func() adapterhost.Handle { return callee })
@@ -375,7 +390,7 @@ func kb58RunGraph(t *testing.T, g *workflow.FSMGraph, caller *kb58TestCaller) (*
 	if err := New(g, loader, sink, WithAuditWriter(audit)).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	return callee, sink, audit
+	return sink, audit
 }
 
 // auditReasons returns all audit decision reasons containing substr.
@@ -447,5 +462,56 @@ func TestKB58_ParallelIterationResolvesHostLocalToolResource(t *testing.T) {
 	// Audit hygiene: a pre-fix deny (unknown_adapter) must not be recorded.
 	if reasons := auditReasons(audit.all(), "unknown_adapter"); len(reasons) != 0 {
 		t.Errorf("audit recorded unknown_adapter denials: %v", reasons)
+	}
+}
+
+// TestKB58_MaxToolCallsBudgetEnforcesCallCount pins policy.max_tool_calls
+// (KB-58): the seam counts every nested adapter tool call a caller session
+// makes per iteration and refuses calls beyond the budget with the typed
+// call_error `budget_exhausted` (ADR-0004 SS8 registry) plus an audited deny,
+// while the run keeps going to terminal. Each iteration's caller session gets
+// its own budget, so one successful call survives per iteration. Depth
+// (default 8) is untouched — the loop is sequential, not nested.
+func TestKB58_MaxToolCallsBudgetEnforcesCallCount(t *testing.T) {
+	policy := workflow.DefaultPolicy
+	policy.MaxToolCalls = 1
+
+	g, caller := kb58Graph(t, []string{"adapter.mcp.probe.tools.*"}, policy)
+	// Two parallel iterations, each issuing 4 sequential calls: with a budget
+	// of 1 per caller session, call-0 executes and call-1..3 are refused
+	// typed — the callee never sees them.
+	caller.callIDs = []string{"call-0", "call-1", "call-2", "call-3"}
+	callee, sink, audit := kb58RunGraph(t, g, caller)
+
+	for _, id := range caller.callIDs {
+		res := caller.gotResult(id)
+		if res == nil {
+			t.Fatalf("%s: caller never received a tool_call_result", id)
+		}
+		switch id {
+		case "call-0":
+			if res.CallError != "" {
+				t.Errorf("%s: call_error = %q; want empty (within budget)", id, res.CallError)
+			}
+		default:
+			if res.CallError != "budget_exhausted" {
+				t.Errorf("%s: call_error = %q; want budget_exhausted (budget exhausted)", id, res.CallError)
+			}
+		}
+	}
+
+	// The refused calls never reach the callee: exactly one host-local
+	// execution per iteration makes it through.
+	if got, want := len(callee.rec.allSessions()), 2; got != want {
+		t.Errorf("callee Execute count = %d; want %d (one per iteration)", got, want)
+	}
+
+	// Every refused call is audited as a deny naming the typed code.
+	if got, want := len(auditReasons(audit.all(), "budget_exhausted")), 6; got != want {
+		t.Errorf("budget_exhausted audit entries = %d; want %d (3 refusals × 2 iterations)", got, want)
+	}
+
+	if sink.terminal != "done" || !sink.terminalOK {
+		t.Errorf("terminal state: got %q (ok=%v); want \"done\" (true) — the budget refusal must not kill the run", sink.terminal, sink.terminalOK)
 	}
 }
