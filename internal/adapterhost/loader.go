@@ -700,7 +700,7 @@ type executeCaptureSink struct {
 // outputs_json bytes; finalize-synthesized and typed verdicts serialize
 // through wireOutcomeResult. The needs_review override applies only after
 // validation. Legacy (contract-less) steps pass through untouched.
-func (s *executeCaptureSink) resolvedOutcome(step *workflow.StepNode, v rescueVerdict) (adapter.Result, error) {
+func (s *executeCaptureSink) resolvedOutcome(step *workflow.StepNode, v *rescueVerdict) (adapter.Result, error) {
 	var results []*v2.ExecuteResult
 	switch {
 	case v.delivered:
@@ -764,7 +764,7 @@ func executeWithFallbackStream(ctx context.Context, client Client, adapterName s
 	// KB-53/KB-56: see rescueAdapterVerdict — the rescued verdict still wins
 	// after the finalize cut while the host context is alive.
 	if v, ok := rescueAdapterVerdict(captureSink, execErr, ctx, step.Name); ok {
-		return captureSink.resolvedOutcome(step, v)
+		return captureSink.resolvedOutcome(step, &v)
 	}
 
 	if execErr != nil {
@@ -795,12 +795,12 @@ func executeCapturedVerdict(ctx context.Context, s *executeCaptureSink, step *wo
 			// result — the evaluator engages the fallback lane (or issues
 			// the pinned no_result error) instead of the legacy stream
 			// error, feeding the engine's repair loop.
-			return s.resolvedOutcome(step, rescueVerdict{})
+			return s.resolvedOutcome(step, &rescueVerdict{})
 		}
 		return adapter.Result{Outcome: "failure"}, errors.New("adapter execute stream ended without result")
 	}
 	v := rescueVerdict{result: s.result, rawJSON: s.rawOutputsJSON, delivered: true}
-	return s.resolvedOutcome(step, v)
+	return s.resolvedOutcome(step, &v)
 }
 
 func startFallbackPermStream(ctx context.Context, client Client, requests chan *v2.PermissionEvent, cancelExec func()) (context.Context, context.CancelFunc, chan error) {
@@ -848,7 +848,7 @@ func executeWithActiveStream(ctx context.Context, client Client, step *workflow.
 	// resolved failure. The rescue applies only while the host context is
 	// alive so engine- or run-initiated teardown semantics stay intact.
 	if v, ok := rescueAdapterVerdict(captureSink, execErr, ctx, step.Name); ok {
-		return captureSink.resolvedOutcome(step, v)
+		return captureSink.resolvedOutcome(step, &v)
 	}
 
 	if execErr != nil {
@@ -872,12 +872,12 @@ func executeWithActiveStream(ctx context.Context, client Client, step *workflow.
 			// result — the evaluator engages the fallback lane (or issues
 			// the pinned no_result error) instead of the legacy stream
 			// error, feeding the engine's repair loop.
-			return captureSink.resolvedOutcome(step, rescueVerdict{})
+			return captureSink.resolvedOutcome(step, &rescueVerdict{})
 		}
 		return adapter.Result{Outcome: "failure"}, errors.New("adapter execute stream ended without result")
 	}
 	v := rescueVerdict{result: captureSink.result, rawJSON: captureSink.rawOutputsJSON, delivered: true}
-	return captureSink.resolvedOutcome(step, v)
+	return captureSink.resolvedOutcome(step, &v)
 }
 
 // adapterEventFinalizedOutcome is the adapter event kind used by adapters

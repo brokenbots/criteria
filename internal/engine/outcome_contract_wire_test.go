@@ -105,12 +105,6 @@ type kb45WireClient struct {
 	lastReq  *criteriav2.ExecuteRequest
 }
 
-func (c *kb45WireClient) attempt() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.attempts + 1
-}
-
 func (c *kb45WireClient) Info(context.Context, *criteriav2.InfoRequest) (*criteriav2.InfoResponse, error) {
 	return &criteriav2.InfoResponse{Name: "kb45-wire-stub"}, nil
 }

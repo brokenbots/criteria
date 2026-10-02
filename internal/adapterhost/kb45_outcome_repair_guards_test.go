@@ -14,6 +14,7 @@ package adapterhost
 
 import (
 	"context"
+	"errors"
 	"io"
 	"sync"
 	"testing"
@@ -78,8 +79,8 @@ func TestExecuteViaClient_UndecodablePayloadOnContractStepSurfacesPinnedIssue(t 
 	result, err := ExecuteViaClient(context.Background(), client, "fake", "s1", true, contractStep(), &adapterEventCollector{}, nil)
 
 	require.Equal(t, adapter.Result{}, result, "an invalid delivered payload must not resolve to any verdict")
-	invErr, ok := err.(*OutcomeInvalidError)
-	require.True(t, ok, "ExecuteViaClient err = %v, want *OutcomeInvalidError from contract validation", err)
+	var invErr *OutcomeInvalidError
+	require.True(t, errors.As(err, &invErr), "ExecuteViaClient err = %v, want *OutcomeInvalidError from contract validation", err)
 	require.Equal(t, "success", invErr.Outcome)
 	require.Contains(t, invErr.Issues, kb45PinnedNonObjectIssue)
 }
@@ -112,8 +113,8 @@ func TestExecuteViaClient_FallbackDoesNotFireOnUndecodablePayload(t *testing.T) 
 	result, err := ExecuteViaClient(context.Background(), client, "fake", "s1", true, step, &adapterEventCollector{}, nil)
 
 	require.Equal(t, adapter.Result{}, result, "an invalid delivered payload must not resolve to any verdict")
-	invErr, ok := err.(*OutcomeInvalidError)
-	require.True(t, ok, "err = %v, want the pinned payload_schema rejection (fallback must not fire)", err)
+	var invErr *OutcomeInvalidError
+	require.True(t, errors.As(err, &invErr), "err = %v, want the pinned payload_schema rejection (fallback must not fire)", err)
 	require.Equal(t, "success", invErr.Outcome)
 	require.Contains(t, invErr.Issues, kb45PinnedNonObjectIssue)
 }
