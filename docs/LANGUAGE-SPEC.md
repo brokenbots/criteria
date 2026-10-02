@@ -253,7 +253,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `permissions { ... }`
 
-- **Source:** [`workflow/schema.go:660`](../workflow/schema.go#L660)
+- **Source:** [`workflow/schema.go:669`](../workflow/schema.go#L669)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -272,6 +272,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 | `max_step_retries` | number | no | _(no description)_ |
 | `max_visits_warn_threshold` | number | no | MaxVisitsWarnThreshold controls when the engine emits a warning for excessive revisits while executing a workflow. |
 | `max_tool_depth` | number | no | MaxToolDepth bounds the adapter-to-adapter tool-call stack depth (policy.max_tool_depth). Grammar: integer >= 1; unset (0) uses the engine default of 8. Parsed in CRI-155; graph-level wiring lands in CRI-157. The >= 1 range check is enforced here at parse time as a plain decode diagnostic by checkMaxToolDepthRange (CRI-155 placement decision: checked at parse, CRI-157 owns wiring only). |
+| `max_tool_calls` | number | no | MaxToolCalls bounds the total number of adapter-to-adapter tool calls per session (policy.max_tool_calls, KB-58). Grammar: integer >= 1; unset (0) uses the engine default of 100. The >= 1 range check is enforced at parse time by checkMaxToolCallsRange (placement mirrors CRI-155). Depth bounds call stack depth; this bounds total invocation count so an iterative probe loop (one step cycling tool calls) cannot run unbounded regardless of depth. |
 
 
 ### `config { ... }`
