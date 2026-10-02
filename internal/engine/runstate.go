@@ -88,46 +88,32 @@ type RunState struct {
 	// parent iterations.
 	ParallelSemMu *sync.Mutex
 
-	// CrashedCommentSessions records adapter references whose adapter session
-	// crashed during a comment_* step (CRI-130). Under the default
-	// on_crash=fail policy the session stays registered but dead: every
-	// subsequent Execute on the same reference returns the crash error again,
-	// so follow-on steps (e.g. set_done_state after comment_handler_done)
-	// would otherwise fail the run after its real work already completed.
-	// A reference is recorded only when the crashing comment step was entered
-	// along a success transition (see recordCommentSessionCrash): tail
-	// suppression must stay disarmed when the run reached the comment step
-	// down a failure route, because the functional work did not succeed there.
-	// Entries are never cleared — see commentSessionCrashContinues for the
-	// respawn caveat. Nil-safe: a nil set records nothing and matches
-	// nothing. The set is shared by reference across parallel iteration
-	// states and subworkflow bodies (like Visits) so the crash is observed
-	// wherever a follow-on step executes in the run.
-	CrashedCommentSessions *crashedSessionRefs
-
-	// CrashedFunctionalSessions records adapter references whose adapter
-	// session crashed at a functional (non-comment_*) step (CRI-271). The
-	// default on_crash=fail policy leaves the session registered but dead,
-	// so follow-on steps on the same reference — the run's bookkeeping, e.g.
-	// comment_handler_failed and set_review_state after a mid-turn develop
-	// crash — replay the crash error and bury the run's state. Before
-	// executing a step whose reference is registered here, the engine
-	// re-opens the session (SessionManager.ReopenCrashedSession) and forgets
-	// the entry on success, so a later genuine crash is recorded afresh.
-	// Comment-step crashes are governed by CrashedCommentSessions (CRI-130)
-	// and are never recorded here. Nil-safe: a nil set records nothing and
-	// matches nothing. The set is shared by reference across parallel
-	// iteration states and subworkflow bodies (like Visits).
-	CrashedFunctionalSessions *crashedSessionRefs
+	// CrashedSessions records adapter references whose adapter session crashed
+	// at a step (CRI-271). The default on_crash=fail policy leaves the session
+	// registered but dead: every subsequent Execute on the same reference
+	// returns the crash error again, so follow-on steps on the same reference —
+	// the run's bookkeeping, e.g. comment_handler_failed and set_review_state
+	// after a mid-turn develop crash — replay the crash error and bury the
+	// run's state. Before executing a step whose reference is registered here,
+	// the engine re-opens the session (SessionManager.ReopenCrashedSession)
+	// and forgets the entry on success, so a later genuine crash is recorded
+	// afresh. Recording is step-name-agnostic: the crashed session is repaired
+	// infrastructure, never a policy surface — the step's declared outcomes
+	// remain the only routing policy.
+	// Nil-safe: a nil set records nothing and matches nothing. The set is
+	// shared by reference across parallel iteration states and subworkflow
+	// bodies (like Visits) so the crash is observed wherever a follow-on step
+	// executes in the run.
+	CrashedSessions *crashedSessionRefs
 
 	firstStep        bool
 	firstStepAttempt int
 }
 
 // crashedSessionRefs records adapter references whose adapter session crashed
-// during a best-effort comment step (CRI-130). The zero value is ready to use
-// and every method tolerates a nil receiver, so RunStates that never
-// initialize the set behave as if no session had crashed.
+// at a step (CRI-271). The zero value is ready to use and every method
+// tolerates a nil receiver, so RunStates that never initialize the set behave
+// as if no session had crashed.
 type crashedSessionRefs struct {
 	mu   sync.Mutex
 	refs map[string]struct{}

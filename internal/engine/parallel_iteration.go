@@ -537,12 +537,11 @@ func buildParallelIterState(i, total int, item, key cty.Value, st *RunState, vis
 		// nil RemoteLifecycle and per-scope provisioning failed with "no run data
 		// directory is configured". The subworkflow iteration path derives an
 		// isolated per-iteration lifecycle from this shared one.
-		RemoteLifecycle:        st.RemoteLifecycle,
-		CrashedCommentSessions: st.CrashedCommentSessions,
-		// CRI-271: parallel iterations share the crashed-functional-session set
-		// so a crash recorded in one iteration is re-opened by follow-on steps
-		// in any other.
-		CrashedFunctionalSessions: st.CrashedFunctionalSessions,
+		// CRI-271: the crashed-session set is shared across parallel iteration
+		// states and subworkflow bodies (like Visits) so a crash recorded in
+		// one scope is re-opened by follow-on steps executing in any other.
+		RemoteLifecycle: st.RemoteLifecycle,
+		CrashedSessions: st.CrashedSessions,
 		Vars: workflow.WithEachBinding(st.Vars, &workflow.EachBinding{
 			Value: item,
 			Key:   key,
