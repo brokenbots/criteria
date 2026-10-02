@@ -62,6 +62,8 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
 
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
+
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/engine"
@@ -137,7 +139,7 @@ func (a *chainHopAdapter) Info(context.Context) (adapterhost.Info, error) {
 	}, nil
 }
 
-func (a *chainHopAdapter) Execute(_ context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (a *chainHopAdapter) Execute(_ context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	task := step.Input["task"]
 	a.mu.Lock()
 	a.execs = append(a.execs, chainHopExecution{sessionID: sessionID, task: task})

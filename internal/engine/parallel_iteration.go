@@ -68,10 +68,18 @@ func (s *lockedSink) OnStepEntered(step, adapterName string, attempt int) {
 	s.Sink.OnStepEntered(step, adapterName, attempt)
 }
 
-func (s *lockedSink) OnStepOutcome(step, outcome string, duration time.Duration, err error) {
+func (s *lockedSink) OnStepOutcome(step, outcome string, duration time.Duration, err error, comment string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.Sink.OnStepOutcome(step, outcome, duration, err)
+	s.Sink.OnStepOutcome(step, outcome, duration, err, comment)
+}
+
+// OnStepOutcomeInvalid serializes the contract-validation rejection event
+// (KB-45) across parallel iterations.
+func (s *lockedSink) OnStepOutcomeInvalid(step, outcome string, issues []string, attempt int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Sink.OnStepOutcomeInvalid(step, outcome, issues, attempt)
 }
 
 func (s *lockedSink) OnStepTransition(from, to, viaOutcome string) {

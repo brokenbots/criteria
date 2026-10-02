@@ -144,7 +144,7 @@ func (a *matrixCallerAdapter) StartPermissionStream(_ context.Context, _ string,
 	return func() {}, nil
 }
 
-func (a *matrixCallerAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (a *matrixCallerAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	for i, call := range a.script {
 		if a.beforeCall != nil {
 			a.beforeCall(i)
@@ -308,7 +308,7 @@ func (a *matrixCalleeAdapter) OpenSession(_ context.Context, id string, _, _ map
 	return nil
 }
 
-func (a *matrixCalleeAdapter) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, _ adapter.EventSink) (adapter.Result, error) {
+func (a *matrixCalleeAdapter) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	task := step.Input["task"]
 	// Record at Execute entry so in-flight executions are observable (the
 	// CRI-169 pause cases poll for them); a canceled task updates its
@@ -437,7 +437,7 @@ func (s *matrixEngineSink) OnStepEntered(step, _ string, _ int) {
 	defer s.mu.Unlock()
 	s.entered = append(s.entered, step)
 }
-func (s *matrixEngineSink) OnStepOutcome(step, outcome string, _ time.Duration, _ error) {
+func (s *matrixEngineSink) OnStepOutcome(step, outcome string, _ time.Duration, _ error, _ string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.outcomes = append(s.outcomes, step+"="+outcome)
@@ -474,6 +474,11 @@ func (s *matrixEngineSink) OnStepOutcomeUnknown(step, outcome string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.unknowns = append(s.unknowns, "unknown: "+step+"="+outcome)
+}
+func (s *matrixEngineSink) OnStepOutcomeInvalid(step, outcome string, _ []string, _ int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.unknowns = append(s.unknowns, "invalid: "+step+"="+outcome)
 }
 
 func (s *matrixEngineSink) OnAgentPromptInjected(string, string, string, string, time.Time) {}

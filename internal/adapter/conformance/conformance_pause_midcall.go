@@ -364,7 +364,7 @@ func pauseMidCallCaseSnapshotRestore(t *testing.T) {
 	sm2 := newPauseMidCallManager(loader, graph, audit)
 	restorePauseMidCallSessions(t, ctx, sm2, snaps)
 	sink2 := &matrixEngineSink{}
-	if _, err := sm2.Execute(ctx, "caller.default", step, sink2.StepEventSink("call")); err != nil {
+	if _, err := sm2.Execute(ctx, "caller.default", step, sink2.StepEventSink("call"), nil); err != nil {
 		t.Fatalf("post-restore execute: %v", err)
 	}
 	if results := caller.gotResults(); len(results) != 2 || results[1].outcome != "success" {
@@ -386,7 +386,7 @@ func snapshotAfterCompletedCall(t *testing.T, ctx context.Context, sm *adapterho
 		t.Fatalf("open callee: %v", err)
 	}
 	sink := &matrixEngineSink{}
-	if _, err := sm.Execute(ctx, "caller.default", step, sink.StepEventSink("call")); err != nil {
+	if _, err := sm.Execute(ctx, "caller.default", step, sink.StepEventSink("call"), nil); err != nil {
 		t.Fatalf("pre-snapshot execute: %v", err)
 	}
 	if results := caller.gotResults(); len(results) != 1 || results[0].outcome != "success" {

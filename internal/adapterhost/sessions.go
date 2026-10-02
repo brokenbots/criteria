@@ -2181,7 +2181,7 @@ func idleStringOrEmpty(sess *Session) string {
 	return ""
 }
 
-func (m *SessionManager) handleCrash(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink, sess *Session, execErr error) (adapter.Result, error) {
+func (m *SessionManager) handleCrash(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink, sess *Session, execErr error, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	reason := classifySessionCrash(sess, execErr)
 	sess.crashed.Store(true)
 	slog.Warn("adapter session crashed",
@@ -2212,10 +2212,23 @@ func (m *SessionManager) handleCrash(ctx context.Context, name string, step *wor
 		if sess.mergeBuf != nil {
 			retrySink = sess.mergeBuf
 		}
-		result, retryErr := sess.handle.Execute(ctx, name, step, retrySink)
+		result, retryErr := sess.handle.Execute(ctx, name, step, retrySink, rejection)
 		if retryErr == nil {
-			m.registerSensitiveOutputs(result, step)
-			return result, nil
+			// KB-45: the retried attempt's verdict is contract-validated
+			// before it becomes the step's result.
+			valid, issues := evaluateLocalOutcomeContracts(step, result)
+			if len(issues) > 0 {
+				return adapter.Result{}, &OutcomeInvalidError{Outcome: result.Outcome, Issues: issues}
+			}
+			m.registerSensitiveOutputs(valid, step)
+			return valid, nil
+		}
+		var invErr *OutcomeInvalidError
+		if errors.As(retryErr, &invErr) {
+			// KB-45: the retried attempt may itself be rejected by the
+			// step's outcome contracts; return it to the engine's attempt
+			// loop instead of latching a hard run failure.
+			return adapter.Result{}, invErr
 		}
 		return m.failResult(sink, sess, retryErr)
 	case OnCrashAbortRun:
@@ -2299,17 +2312,23 @@ func (m *SessionManager) bindVerifiedAndLookup(ctx context.Context, name string,
 // of nested tool-call Executes above this one (0 for a step-level Execute)
 // plus the caller adapter ref chain visited so far, seeded with the
 // executing step's own adapter ref.
-func (m *SessionManager) Execute(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (m *SessionManager) Execute(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	// The chain is seeded with the executing step's own adapter ref — the
 	// caller's baseline on the call chain.
 	seed := name
 	if step != nil && step.AdapterRef != "" {
 		seed = step.AdapterRef
 	}
-	return m.execute(ctx, name, step, sink, toolCallNesting{chain: []string{seed}})
+	return m.execute(ctx, name, step, sink, toolCallNesting{chain: []string{seed}}, rejection)
 }
 
-func (m *SessionManager) execute(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink, nesting toolCallNesting) (adapter.Result, error) {
+// nestingSeed builds the nesting state for a step-level Execute (see the
+// Execute doc).
+func nestingSeed(seed string) toolCallNesting {
+	return toolCallNesting{chain: []string{seed}}
+}
+
+func (m *SessionManager) execute(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink, nesting toolCallNesting, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	sess, err := m.lookup(name)
 	if err != nil {
 		if !errors.Is(err, ErrUnknownSession) {
@@ -2336,7 +2355,7 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 	// detector, so we never declare a crash on a heartbeat the adapter was not
 	// sending.
 	if sess.logStreamAlive.Load() && sess.hbMonitor.Stalled(m.heartbeatStallThreshold()) {
-		return m.handleCrash(ctx, name, step, sink, sess, fmt.Errorf("heartbeat stall (>%s)", m.heartbeatStallThreshold()))
+		return m.handleCrash(ctx, name, step, sink, sess, fmt.Errorf("heartbeat stall (>%s)", m.heartbeatStallThreshold()), rejection)
 	}
 
 	m.setStepPolicy(sess, step)
@@ -2346,7 +2365,7 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 	execSink := m.execSinkForSession(sess, sink)
 	permSink := newPermissionInterceptSink(ctx, execSink, sess, step, m.graph, m, nesting)
 
-	result, execErr := sess.handle.Execute(ctx, name, step, permSink)
+	result, execErr := sess.handle.Execute(ctx, name, step, permSink, rejection)
 
 	// CRI-161: nested tool calls were dispatched on their own goroutines;
 	// wait for them to settle (and deliver their replies) before reading the
@@ -2354,6 +2373,17 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 	// nested goroutine's own manager interactions cannot deadlock against
 	// this wait.
 	permSink.waitPending()
+
+	// KB-45: validate the verdict against the step's outcome contracts
+	// BEFORE the permission override and any downstream mapping, so a
+	// permission-denied success cannot launder an invalid payload. Legacy
+	// (contract-less) steps pass through untouched.
+	validated, issues := evaluateLocalOutcomeContracts(step, result)
+	if len(issues) > 0 {
+		return adapter.Result{}, &OutcomeInvalidError{Outcome: result.Outcome, Issues: issues}
+	}
+	result = validated
+
 	m.maybeOverrideOutcome(permSink, &result)
 
 	if execErr == nil {
@@ -2384,6 +2414,14 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 // Close/Shutdown or a host-canceled context) and plain step errors are
 // returned as-is; likely session crashes route to handleCrash (CRI-271).
 func (m *SessionManager) executeError(ctx context.Context, name string, step *workflow.StepNode, sess *Session, sink adapter.EventSink, result adapter.Result, execErr error) (adapter.Result, error) {
+	// KB-45: a contract-rejected verdict is not a crash or transport
+	// failure; it is returned to the engine's attempt loop verbatim before
+	// any crash classification can consume it.
+	var invErr *OutcomeInvalidError
+	if errors.As(execErr, &invErr) {
+		return adapter.Result{}, invErr
+	}
+
 	// An explicit Close/Shutdown (closing flag) or a host-canceled context
 	// (run timeout, user abort) both cause the gRPC stream to produce
 	// EOF/broken-pipe errors. Check this before the string heuristic so
@@ -2434,7 +2472,7 @@ func (m *SessionManager) executeError(ctx context.Context, name string, step *wo
 		return result, execErr
 	}
 
-	return m.handleCrash(ctx, name, step, sink, sess, execErr)
+	return m.handleCrash(ctx, name, step, sink, sess, execErr, nil)
 }
 
 // MarkEngineStepTimeoutTeardown records that the engine canceled a step

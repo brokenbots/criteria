@@ -42,12 +42,23 @@ func (s *RedactingSink) OnStepEntered(step, adapterName string, attempt int) {
 	s.inner.OnStepEntered(s.reg.Redact(step), s.reg.Redact(adapterName), attempt)
 }
 
-func (s *RedactingSink) OnStepOutcome(step, outcome string, duration time.Duration, err error) {
+func (s *RedactingSink) OnStepOutcome(step, outcome string, duration time.Duration, err error, comment string) {
 	var redactedErr error
 	if err != nil {
 		redactedErr = errors.New(s.reg.Redact(err.Error()))
 	}
-	s.inner.OnStepOutcome(s.reg.Redact(step), s.reg.Redact(outcome), duration, redactedErr)
+	s.inner.OnStepOutcome(s.reg.Redact(step), s.reg.Redact(outcome), duration, redactedErr, s.reg.Redact(comment))
+}
+
+// OnStepOutcomeInvalid redacts the rejecting outcome name and each issue line
+// (KB-45). Issues are adapter-produced strings and may embed sensitive
+// payload text.
+func (s *RedactingSink) OnStepOutcomeInvalid(step, outcome string, issues []string, attempt int) {
+	redacted := make([]string, len(issues))
+	for i, issue := range issues {
+		redacted[i] = s.reg.Redact(issue)
+	}
+	s.inner.OnStepOutcomeInvalid(s.reg.Redact(step), s.reg.Redact(outcome), redacted, attempt)
 }
 
 func (s *RedactingSink) OnStepTransition(from, to, viaOutcome string) {

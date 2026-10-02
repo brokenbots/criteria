@@ -621,11 +621,11 @@ func (h *peerHandle) OpenSession(ctx context.Context, id string, config, secrets
 // Execute streams one step through the shared host-side execute plumbing
 // (fallback permission stream, chunk reassembly, needs_review override) —
 // the exact path rpcHandle.Execute uses.
-func (h *peerHandle) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (h *peerHandle) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	h.permMu.Lock()
 	hasPermStream := h.permActive[sessionID]
 	h.permMu.Unlock()
-	return adapterhost.ExecuteViaClient(ctx, h.ps.client, h.ps.dial.AdapterType, sessionID, hasPermStream, step, sink)
+	return adapterhost.ExecuteViaClient(ctx, h.ps.client, h.ps.dial.AdapterType, sessionID, hasPermStream, step, sink, rejection)
 }
 
 // CloseSession closes an adapter session on the peer.

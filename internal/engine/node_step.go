@@ -15,6 +15,8 @@ import (
 	"github.com/zclconf/go-cty/cty"
 	"github.com/zclconf/go-cty/cty/convert"
 
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
+
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapter/secrets"
 	"github.com/brokenbots/criteria/internal/adapterhost"
@@ -569,7 +571,7 @@ func (n *stepNode) evaluateSubworkflowStep(ctx context.Context, st *RunState, de
 
 	outputs, terminalState, runErr := runSubworkflow(ctx, n.step.Name, swNode, st, stepInput, deps, st.Ancestors...)
 	if runErr != nil {
-		deps.Sink.OnStepOutcome(n.step.Name, "failure", 0, runErr)
+		deps.Sink.OnStepOutcome(n.step.Name, "failure", 0, runErr, "")
 	}
 
 	outcome := "success"
@@ -776,7 +778,7 @@ func (n *stepNode) reopenCrashedSession(ctx context.Context, st *RunState, deps 
 
 // executeStepTimed runs one attempt under the step's timeout (if any) and
 // returns the result with its wall-clock duration.
-func (n *stepNode) executeStepTimed(ctx context.Context, deps Deps, step *workflow.StepNode) (adapter.Result, time.Duration, error) {
+func (n *stepNode) executeStepTimed(ctx context.Context, deps Deps, step *workflow.StepNode, rejection *v2.ExecutionRejection) (adapter.Result, time.Duration, error) {
 	stepCtx := ctx
 	var cancel context.CancelFunc
 	if step.Timeout > 0 {
@@ -788,7 +790,7 @@ func (n *stepNode) executeStepTimed(ctx context.Context, deps Deps, step *workfl
 	// watchdog only arms for unbounded adapter steps (Timeout == 0): a
 	// step-declared timeout keeps its CRI-275 ceiling semantics unchanged.
 	watchdog, execCtx := startStepStallWatchdog(stepCtx, deps, step, start)
-	result, err := n.executeStep(execCtx, deps, step)
+	result, err := n.executeStep(execCtx, deps, step, rejection)
 	stalled, stallIdle := watchdog.stop()
 	// CRI-287: when the step deadline expired, this Execute was torn down by
 	// the engine (the CRI-275 step timeout). The cancellation may close
@@ -844,6 +846,8 @@ func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps De
 	}
 
 	var lastErr error
+	var rejection *v2.ExecutionRejection
+	var lastInvalid *adapterhost.OutcomeInvalidError
 	for attempt := startAttempt; attempt <= maxAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return adapter.Result{}, err
@@ -865,24 +869,42 @@ func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps De
 		// session mid-call; held prompts from between attempts flush here.
 		attempts++
 		deps.Prompts.beginExecute(step.Name)
-		result, dur, err := n.executeStepTimed(ctx, deps, step)
+		result, dur, err := n.executeStepTimed(ctx, deps, step, rejection)
 		deps.Prompts.endExecute(step.Name)
 
 		if err == nil {
-			deps.Sink.OnStepOutcome(step.Name, result.Outcome, dur, nil)
+			deps.Sink.OnStepOutcome(step.Name, result.Outcome, dur, nil, result.Comment)
 			return result, nil
 		}
 
+		// KB-45: a verdict rejected by the step's outcome contracts feeds the
+		// STANDARD attempt loop: emit the rejection event, carry the
+		// ExecutionRejection (outcome, issues, attempt) onto the next
+		// Execute, and let the retry budget decide. This is the repair path
+		// for both unmapped names and schema-invalid payloads.
+		var invalid *adapterhost.OutcomeInvalidError
+		if errors.As(err, &invalid) {
+			lastInvalid = invalid
+			lastErr = err
+			deps.Sink.OnStepOutcomeInvalid(step.Name, invalid.Outcome, invalid.Issues, attempt)
+			rejection = adapterhost.ExecutionRejectionChain(invalid.Outcome, invalid.Issues, rejection)
+			continue
+		}
+		// A non-rejection failure (execute error, crash) resets the repair
+		// context: the next attempt starts fresh.
+		lastInvalid = nil
+		rejection = nil
+
 		var fatal *adapterhost.FatalRunError
 		if errors.As(err, &fatal) {
-			deps.Sink.OnStepOutcome(step.Name, "failure", dur, err)
+			deps.Sink.OnStepOutcome(step.Name, "failure", dur, err, "")
 			return adapter.Result{}, err
 		}
 
 		lastErr = err
 		n.recordSessionCrash(st, step, err)
 		if _, hasFailure := step.Outcomes["failure"]; hasFailure {
-			deps.Sink.OnStepOutcome(step.Name, "failure", dur, err)
+			deps.Sink.OnStepOutcome(step.Name, "failure", dur, err, "")
 			return adapter.Result{Outcome: "failure"}, nil
 		}
 		// KB-57: a failed attempt is a real step outcome even when the step
@@ -892,13 +914,22 @@ func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps De
 		// adapters report success only), so the chain appeared truncated. The
 		// engine's canonical failure outcome name keeps the event stream
 		// truthful without touching routing (the routing below is unchanged).
-		deps.Sink.OnStepOutcome(step.Name, "failure", dur, err)
+		deps.Sink.OnStepOutcome(step.Name, "failure", dur, err, "")
+	}
+
+	// KB-45: the repair loop is exhausted and the last failure was a contract
+	// rejection. When the step declares a default outcome, map to it — the
+	// returned default name flows through the standard mapping below
+	// (evaluateOnce→applyOutcome), so the Defaulted event and routing stay
+	// identical to an adapter that returned the default name itself.
+	if lastInvalid != nil && step.DefaultOutcome != nil {
+		return adapter.Result{Outcome: step.DefaultOutcome.Name}, nil
 	}
 
 	return adapter.Result{}, fmt.Errorf("step %q failed after %d attempts: %w", step.Name, maxAttempts-startAttempt+1, lastErr)
 }
 
-func (n *stepNode) executeStep(ctx context.Context, deps Deps, step *workflow.StepNode) (adapter.Result, error) {
+func (n *stepNode) executeStep(ctx context.Context, deps Deps, step *workflow.StepNode, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	// Non-lifecycle step: execute using the referenced adapter.
 	if step.AdapterRef != "" {
 		adapterType := ""
@@ -906,7 +937,7 @@ func (n *stepNode) executeStep(ctx context.Context, deps Deps, step *workflow.St
 			adapterType = adaptrDecl.Type
 		}
 		deps.Sink.OnAdapterLifecycle(step.Name, adapterType, "started", "")
-		result, execErr := deps.Sessions.Execute(ctx, step.AdapterRef, step, deps.Sink.StepEventSink(step.Name))
+		result, execErr := deps.Sessions.Execute(ctx, step.AdapterRef, step, deps.Sink.StepEventSink(step.Name), rejection)
 		if execErr != nil {
 			deps.Sink.OnAdapterLifecycle(step.Name, adapterType, "crashed", execErr.Error())
 		} else {

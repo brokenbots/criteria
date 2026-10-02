@@ -54,9 +54,9 @@ func (m *MultiSink) OnStepEntered(step, adapterName string, attempt int) {
 	}
 }
 
-func (m *MultiSink) OnStepOutcome(step, outcome string, duration time.Duration, err error) {
+func (m *MultiSink) OnStepOutcome(step, outcome string, duration time.Duration, err error, comment string) {
 	for _, c := range m.children {
-		c.OnStepOutcome(step, outcome, duration, err)
+		c.OnStepOutcome(step, outcome, duration, err, comment)
 	}
 }
 
@@ -196,6 +196,14 @@ func (m *MultiSink) OnStepOutcomeDefaulted(step, original, mapped string) {
 func (m *MultiSink) OnStepOutcomeUnknown(step, outcome string) {
 	for _, c := range m.children {
 		c.OnStepOutcomeUnknown(step, outcome)
+	}
+}
+
+// OnStepOutcomeInvalid fans the contract-validation rejection event to all
+// child sinks (KB-45).
+func (m *MultiSink) OnStepOutcomeInvalid(step, outcome string, issues []string, attempt int) {
+	for _, c := range m.children {
+		c.OnStepOutcomeInvalid(step, outcome, issues, attempt)
 	}
 }
 

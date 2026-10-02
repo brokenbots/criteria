@@ -38,6 +38,11 @@ type Result struct {
 	// Producers that decode a string wire (the remote host) coerce raw strings to
 	// these types against the step's OutputSchema via workflow.CoerceStringToCty.
 	Outputs map[string]cty.Value
+	// Comment carries the adapter's own commentary for the result (KB-45,
+	// v0.7.0 ExecuteResult.comment). Opaque metadata for the engine surface:
+	// it is routed to the event stream verbatim and never interpreted,
+	// validated, or projected by the engine.
+	Comment string
 }
 
 // Adapter executes a single step. The engine calls Execute once per step

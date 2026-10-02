@@ -1,6 +1,6 @@
 // Outcome-contract integration (KB-45): builds the wire ExecuteRequest
-// outcome_contracts from compiled steps and evaluates host-side result
-// validation through the shared criteria-adapter-proto evaluator so local
+// outcome_contracts from compiled steps and validates adapter results
+// host-side through the shared criteria-adapter-proto evaluator, so local
 // (typed) and remote (wire) adapter results are treated identically.
 package adapterhost
 
@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	ctyjson "github.com/zclconf/go-cty/cty/json"
+	"github.com/zclconf/go-cty/cty"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 
@@ -23,10 +24,11 @@ import (
 // carries the corresponding ExecutionRejection until the retry budget is
 // exhausted.
 type OutcomeInvalidError struct {
-	// Outcome is the rejected result's outcome name (empty for empty/missing
-	// outcomes).
+	// Outcome is the rejected result's outcome name (empty when the step
+	// ended without a finalized result).
 	Outcome string
-	// Issues carries the per-contract validation errors in evaluation order.
+	// Issues carries the per-contract validation errors in evaluation order
+	// (pinned criteria-adapter-proto conformance issue vocabulary).
 	Issues []string
 }
 
@@ -41,19 +43,13 @@ func joinIssues(issues []string) string {
 // outcomeContractsForStep builds the ExecuteRequest contracts from the
 // compiled step outcomes (KB-45). Named and inline schemas are
 // indistinguishable on the wire: CompiledOutcome.SchemaJSON already carries
-// the deterministic conversion bytes. Legacy steps with no schemas produce
-// name-only contracts; collectAllowedOutcomes remains populated through the
-// deprecation cycle.
+// the deterministic conversion bytes. The contract list activates the
+// evaluator's contract mode, so it is built ONLY for contract-bearing steps
+// (any outcome or default carries a schema, require_comment, or fallback):
+// legacy steps compile and run exactly as before v0.7.0.
 func outcomeContractsForStep(step *workflow.StepNode) []*v2.OutcomeContract {
-	if len(step.Outcomes) == 0 && step.DefaultOutcome == nil {
-		return nil
-	}
 	contracts := make([]*v2.OutcomeContract, 0, len(step.Outcomes)+1)
-	for _, name := range collectAllowedOutcomes(step) {
-		compiled := step.Outcomes[name]
-		if compiled == nil {
-			continue
-		}
+	add := func(name string, compiled *workflow.CompiledOutcome) {
 		c := &v2.OutcomeContract{Name: name}
 		if compiled.Schema != nil {
 			c.SchemaJson = compiled.SchemaJSON
@@ -62,46 +58,109 @@ func outcomeContractsForStep(step *workflow.StepNode) []*v2.OutcomeContract {
 		c.Fallback = compiled.Fallback
 		contracts = append(contracts, c)
 	}
-	// The default outcome participates under its own name so a run that
-	// exhausts retries and maps to it still validates its contract (if any).
-	if d := step.DefaultOutcome; d != nil {
-		if _, declared := step.Outcomes[d.Name]; !declared {
-			c := &v2.OutcomeContract{Name: d.Name}
-			if d.Schema != nil {
-				c.SchemaJson = d.SchemaJSON
-			}
-			c.RequireComment = d.RequireComment
-			c.Fallback = d.Fallback
-			contracts = append(contracts, c)
+	for name, compiled := range step.Outcomes {
+		if compiled == nil {
+			continue
+		}
+		if compiled.Schema != nil || compiled.RequireComment || compiled.Fallback {
+			add(name, compiled)
 		}
 	}
+	if d := step.DefaultOutcome; d != nil && (d.Schema != nil || d.RequireComment || d.Fallback) {
+		if _, declared := step.Outcomes[d.Name]; !declared {
+			// The default outcome participates under its own name so an
+			// adapter returning the default name (or a later
+			// post-exhaustion mapping to it) validates its contract too.
+			add(d.Name, d)
+		}
+	}
+	if len(contracts) == 0 {
+		return nil
+	}
+	// Deterministic wire bytes: map iteration order must not leak into the
+	// serialized contract list.
+	sort.Slice(contracts, func(i, j int) bool { return contracts[i].GetName() < contracts[j].GetName() })
 	return contracts
+}
+
+// allowedOutcomesForContracts returns the allowed outcome names for a
+// contract-bearing step: declared outcome names plus the default outcome's
+// name when it is not itself declared. The default name must be allowed so an
+// adapter that explicitly returns it passes allowed_outcomes and still hits
+// the engine's default mapping with its payload validated against the
+// default's own contract.
+func allowedOutcomesForContracts(step *workflow.StepNode) []string {
+	allowed := make([]string, 0, len(step.Outcomes)+1)
+	for name := range step.Outcomes {
+		allowed = append(allowed, name)
+	}
+	if d := step.DefaultOutcome; d != nil {
+		if _, declared := step.Outcomes[d.Name]; !declared {
+			allowed = append(allowed, d.Name)
+		}
+	}
+	sort.Strings(allowed)
+	return allowed
+}
+
+// evaluateOutcomeContracts applies the pinned shared evaluator to one
+// attempt's captured wire results, gated on contract-bearing steps. A nil
+// results slice (adapter produced no finalized result) engages the fallback
+// lane: the evaluator synthesizes the fallback outcome, returned as a fresh
+// Result with no outputs. Legacy steps pass through untouched
+// (synthesized=nil, issues=nil). Issues follow the pinned conformance
+// vocabulary exactly.
+func evaluateOutcomeContracts(step *workflow.StepNode, results []*v2.ExecuteResult) (*adapter.Result, []string) {
+	contracts := outcomeContractsForStep(step)
+	if len(contracts) == 0 {
+		return nil, nil
+	}
+	req := &v2.ExecuteRequest{
+		AllowedOutcomes:  allowedOutcomesForContracts(step),
+		OutcomeContracts: contracts,
+	}
+	evaluated, issues := v2.EvaluateOutcomeContracts(req, results)
+	if len(issues) > 0 {
+		return nil, issues
+	}
+	if evaluated == nil {
+		// Unreachable with the pinned evaluator; would otherwise read as an
+		// accepted empty-outcome delivery.
+		return nil, []string{"no_result: step ended without a finalized result"}
+	}
+	if len(results) == 0 {
+		// The evaluator synthesized the fallback outcome for the
+		// never-finalized attempt.
+		return &adapter.Result{Outcome: evaluated.GetOutcome(), Comment: evaluated.GetComment()}, nil
+	}
+	return nil, nil
 }
 
 // evaluateLocalOutcomeContracts validates one locally produced adapter Result
 // against the step's compiled outcome contracts through the shared evaluator.
-// A zero-value result (no outcome, no outputs) is the local equivalent of the
-// wire's no-finalize case: EvaluateOutcomeContracts synthesizes the fallback
-// contract result there, which we return as a Result. A valid result is
-// forwarded verbatim. Issues are returned for the engine's attempt loop.
+// On success the original Result is forwarded verbatim (outputs, outcome, and
+// comment) unless the fallback lane synthesized it. On rejection a zero-value
+// Result is returned with the pinned issue list for the engine's attempt loop.
 func evaluateLocalOutcomeContracts(step *workflow.StepNode, result adapter.Result) (adapter.Result, []string) {
-	req := &v2.ExecuteRequest{
-		AllowedOutcomes:  collectAllowedOutcomes(step),
-		OutcomeContracts: outcomeContractsForStep(step),
+	if outcomeContractsForStep(step) == nil {
+		return result, nil
 	}
-	results := []*v2.ExecuteResult{}
+	wire, err := wireOutcomeResult(result)
+	if err != nil {
+		return adapter.Result{}, []string{fmt.Sprintf("payload error: %v", err)}
+	}
+	var results []*v2.ExecuteResult
 	if result.Outcome != "" || len(result.Outputs) > 0 {
-		res, err := wireOutcomeResult(result)
-		if err != nil {
-			return adapter.Result{}, []string{fmt.Sprintf("payload_error: %v", err)}
-		}
-		results = []*v2.ExecuteResult{res}
+		results = []*v2.ExecuteResult{wire}
 	}
-	evaluated, issues := v2.EvaluateOutcomeContracts(req, results)
+	synth, issues := evaluateOutcomeContracts(step, results)
 	if len(issues) > 0 {
 		return adapter.Result{}, issues
 	}
-	return adapter.Result{Outcome: evaluated.GetOutcome(), Comment: evaluated.GetComment()}, nil
+	if synth != nil {
+		return *synth, nil
+	}
+	return result, nil
 }
 
 // wireOutcomeResult serializes a locally typed adapter Result into the wire
@@ -120,10 +179,19 @@ func wireOutcomeResult(result adapter.Result) (*v2.ExecuteResult, error) {
 	return res, nil
 }
 
-// contractsForValidate is used by SessionManager.execute; it keeps the
-// contracts/allowed lists deterministic across attempts.
-func sortedOutcomeNames(step *workflow.StepNode) []string {
-	names := collectAllowedOutcomes(step)
-	sort.Strings(names)
-	return names
+// executionRejectionChain derives the ExecutionRejection carried on the next
+// Execute call after a rejected attempt: the rejected outcome, the pinned
+// issue list, and the incrementing repair attempt counter. Rejections apply
+// to local and wire adapters alike (KB-45 repair loop).
+func executionRejectionChain(outcome string, issues []string, prior *v2.ExecutionRejection) *v2.ExecutionRejection {
+	if len(issues) == 0 {
+		return prior
+	}
+	return v2.NewExecutionRejection(outcome, issues, prior)
+}
+
+// ExecutionRejectionChain is the exported helper the engine uses to derive
+// the next repair-loop rejection (see the unexported doc).
+func ExecutionRejectionChain(outcome string, issues []string, prior *v2.ExecutionRejection) *v2.ExecutionRejection {
+	return executionRejectionChain(outcome, issues, prior)
 }

@@ -43,7 +43,7 @@ func (p adapterSessionTarget) Name() string {
 }
 
 func (p adapterSessionTarget) Execute(ctx context.Context, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
-	return p.handle.Execute(ctx, p.sessionID, step, sink)
+	return p.handle.Execute(ctx, p.sessionID, step, sink, nil)
 }
 
 // baseStep returns a minimal StepNode for use in conformance tests.

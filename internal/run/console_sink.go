@@ -127,14 +127,14 @@ func (c *ConsoleSink) OnStepEntered(step, adapterName string, attempt int) {
 	c.writeln(c.color("1;36", "▶") + " " + line)
 }
 
-func (c *ConsoleSink) OnStepOutcome(step, outcome string, duration time.Duration, err error) {
+func (c *ConsoleSink) OnStepOutcome(step, outcome string, duration time.Duration, err error, comment string) {
 	c.mu.Lock()
 	delete(c.stepStart, step)
 	events := c.stepLifecycle[step]
 	delete(c.stepLifecycle, step)
 	c.mu.Unlock()
 
-	tag := c.adapterLifecycleTag(events)
+	tag := c.adapterLifecycleTag(events) + commentTag(comment)
 	prefix := c.buildLinePrefix(step)
 	if err == nil && (outcome == "success" || outcome == "ok") {
 		c.writeln(prefix + c.color("1;32", "✓") + " " + outcome + " in " + formatDuration(duration) + tag)
@@ -147,6 +147,15 @@ func (c *ConsoleSink) OnStepOutcome(step, outcome string, duration time.Duration
 		body = outcome + " (" + formatDuration(duration) + ")" + tag
 	}
 	c.writeln(prefix + c.color("1;31", "✗") + " " + body)
+}
+
+// commentTag renders the adapter's ExecuteResult comment (KB-45) after the
+// step-outcome line; empty comments stay invisible.
+func commentTag(comment string) string {
+	if comment == "" {
+		return ""
+	}
+	return fmt.Sprintf(" comment=%q", comment)
 }
 
 func (c *ConsoleSink) OnStepTransition(from, to, viaOutcome string) {
@@ -295,6 +304,16 @@ func (c *ConsoleSink) OnStepOutcomeDefaulted(step, original, mapped string) {
 func (c *ConsoleSink) OnStepOutcomeUnknown(step, outcome string) {
 	prefix := c.buildLinePrefix(step)
 	c.writeln(prefix + fmt.Sprintf("✗ unmapped outcome %q (no outcome \"default\" block declared)", outcome))
+}
+
+// OnStepOutcomeInvalid logs the contract-validation issues that rejected a
+// completed attempt (KB-45); the standard attempt loop re-runs the step.
+func (c *ConsoleSink) OnStepOutcomeInvalid(step, outcome string, issues []string, attempt int) {
+	prefix := c.buildLinePrefix(step)
+	c.writeln(prefix + fmt.Sprintf("⚠ attempt %d rejected by outcome contract (outcome %q)", attempt, outcome))
+	for _, issue := range issues {
+		c.writeln(prefix + "  " + issue)
+	}
 }
 
 func (c *ConsoleSink) StepEventSink(step string) adapter.EventSink {

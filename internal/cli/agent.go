@@ -176,11 +176,15 @@ func (s *shutdownSuppressingSink) OnRunFailed(reason, step string) {
 	s.Sink.OnRunFailed(reason, step)
 }
 
-func (s *shutdownSuppressingSink) OnStepOutcome(step, outcome string, duration time.Duration, err error) {
+func (s *shutdownSuppressingSink) OnStepOutcome(step, outcome string, duration time.Duration, err error, comment string) {
 	if err != nil && s.agentCtx.Err() != nil {
 		return
 	}
-	s.Sink.OnStepOutcome(step, outcome, duration, err)
+	s.Sink.OnStepOutcome(step, outcome, duration, err, comment)
+}
+
+func (s *shutdownSuppressingSink) OnStepOutcomeInvalid(step, outcome string, issues []string, attempt int) {
+	s.Sink.OnStepOutcomeInvalid(step, outcome, issues, attempt)
 }
 
 func (a *activeRun) enqueue(assignment *pb.WorkflowAssignment, client *servertrans.Client) {

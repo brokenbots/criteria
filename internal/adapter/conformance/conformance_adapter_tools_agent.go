@@ -151,7 +151,7 @@ func (a *agentCallerAdapter) StartPermissionStream(_ context.Context, _ string, 
 	return func() {}, nil
 }
 
-func (a *agentCallerAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
+func (a *agentCallerAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	a.recordStepInput(step.Input)
 	return adapter.Result{Outcome: a.runTurn(sink)}, nil
 }

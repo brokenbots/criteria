@@ -88,7 +88,18 @@ type Sink interface {
 	OnRunCompleted(finalState string, success bool)
 	OnRunFailed(reason, step string)
 	OnStepEntered(step, adapterName string, attempt int)
-	OnStepOutcome(step, outcome string, duration time.Duration, err error)
+	// OnStepOutcome reports a step's resolved outcome. comment is the
+	// adapter's ExecuteResult.comment (KB-45), opaque adapter-produced
+	// metadata passed through to the event stream verbatim.
+	OnStepOutcome(step, outcome string, duration time.Duration, err error, comment string)
+	// OnStepOutcomeInvalid is emitted when a completed attempt's result or
+	// payload is rejected by the step's outcome-contract validation (KB-45).
+	// outcome is the rejected result's outcome name (empty for a missing
+	// result), issues carries the pinned validation issue list, attempt is
+	// the one-based attempt whose result was rejected. The engine re-enters
+	// the standard attempt loop after this event; no OnStepOutcome is
+	// emitted for the rejected attempt.
+	OnStepOutcomeInvalid(step, outcome string, issues []string, attempt int)
 	OnStepTransition(from, to, viaOutcome string)
 	OnStepResumed(step string, attempt int, reason string)
 	// OnVariableSet is emitted when a workflow variable value is established (W04).
