@@ -1,24 +1,24 @@
 package engine
 
-// cri130_repro_test.go — regression tests for CRI-130: a run where every
-// functional step succeeded must complete with success=true even when a tail
-// comment_* step crashes (adapter session crash) or fails.
+// cri130_repro_test.go — regression tests for CRI-130: the engine must route
+// step outcomes exclusively through the routing the workflow declares. The
+// old CRI-130 "best-effort" mechanism keyed on the step-name prefix comment_
+// rewrote failed tail comment steps into successes (observed in run
+// 6905052a: stepOutcome comment_handler_failed outcome=failure immediately
+// followed by stepTransition to=set_review_state viaOutcome=success), making
+// the declared failure arm dead code. That mechanism is deleted: the engine
+// is step-name-agnostic, and a workflow that wants a soft tail step declares
+// that routing itself (success-flagged terminal, recovery branch).
 //
-// The reported incident: the intake workflow's comment_handler_done shell step
-// crashed with `rpc error: code = Canceled desc = grpc: the client connection
-// is closing` right before the post-comment ticket-state update
-// (set_done_state runs on the same shell.intake session and comes AFTER the
-// comment step in linear_intake_v1). Under the default on_crash=fail policy
-// the crashed session stays registered but dead, so set_done_state re-observed
-// the crash too, routed to the failed terminal, and flipped the run to
-// failed — triggering a scratch re-run of the whole workflow. The engine now
-// treats comment_* steps and their tail follow-on steps as best-effort: the
-// failures are logged and the run continues along the declared success
-// transitions.
+// The CRI-271 session-crash repair (RunState.CrashedSessions) is now
+// step-name-agnostic too: a crashed session is recorded wherever it happens
+// and follow-on steps re-open it and execute for real, routing through their
+// own declared outcomes — no outcome is ever rewired by the engine.
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -83,43 +83,29 @@ func cri130NewLoader(p *cri130Adapter) *fakeLoader {
 	}}
 }
 
-// cri130IntakeWorkflow mirrors the tail of the reported intake run: a
-// functional merge step, the ticket-state transition, then the failing tail
-// comment step whose declared failure outcome routes to a failed terminal —
-// the transition that poisoned the run before the fix.
-func cri130IntakeWorkflow(commentStepOutcomes string) string {
-	return `
-workflow {
-  name = "linear_intake_cri130"
-  version = "0.1"
-  initial_state = "merge_pr"
-  target_state  = "done"
-}
-step "merge_pr" {
-  target = adapter.fake
-  outcome "success" { next = step.set_done_state }
-}
-step "set_done_state" {
-  target = adapter.fake
-  outcome "success" { next = step.comment_handler_done }
-}
-step "comment_handler_done" {
-  target = adapter.fake
-` + commentStepOutcomes + `
-}
-state "done" { terminal = true }
-state "failed" {
-  terminal = true
-  success  = false
-}`
+// cri130ViaSink records transitions with their via outcome, so tests can pin
+// the exact observed failure signature: for the same step execution the
+// stepOutcome event said "failure" while the transition's viaOutcome said
+// "success".
+type cri130ViaSink struct {
+	*fakeSink
+
+	mu   sync.Mutex
+	vias []string
 }
 
-// cri130ProductionTailWorkflow mirrors the shipped linear_intake_v1 success
-// tail exactly: the comment step runs BEFORE the post-comment ticket-state
-// update, and both target the same adapter session (the production
-// shell.intake). This is the shape the incident reproduced in — the inverse of
-// cri130IntakeWorkflow.
-func cri130ProductionTailWorkflow() string {
+func (s *cri130ViaSink) OnStepTransition(from, to, via string) {
+	s.fakeSink.OnStepTransition(from, to, via)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.vias = append(s.vias, from+"->"+to+" via "+via)
+}
+
+// cri130CommentTailWorkflow mirrors the incident tail: merge_pr, the
+// pre-comment ticket-state update, then the comment step whose declared
+// failure outcome routes to the failed terminal and whose success arm feeds
+// the post-comment state update.
+func cri130CommentTailWorkflow() string {
 	return `
 workflow {
   name = "linear_intake_cri130"
@@ -128,6 +114,10 @@ workflow {
   target_state  = "handler_complete"
 }
 step "merge_pr" {
+  target = adapter.fake
+  outcome "success" { next = step.set_review_state }
+}
+step "set_review_state" {
   target = adapter.fake
   outcome "success" { next = step.comment_handler_done }
 }
@@ -148,51 +138,474 @@ state "failed" {
 }`
 }
 
-// TestCRI130_ProductionTailCommentCrashContinues is the primary CRI-130
-// regression: comment_handler_done crashes after merge_pr, leaving the shared
-// adapter session dead; the follow-on set_done_state re-observes the same
-// crash. Both are best-effort tail steps, so the run must finish at the
-// success terminal with no failure routing anywhere.
-func TestCRI130_ProductionTailCommentCrashContinues(t *testing.T) {
-	g := compile(t, cri130ProductionTailWorkflow())
+// TestCRI130_CommentDeclaredFailureRoutesToFailedTerminal is the primary
+// KB-44/CRI-130 regression: the comment step declares
+// outcome "failure" { next = state.failed } (CRI-275 semantics) and fails —
+// cleanly (adapter failure outcome) or by crashing its adapter session. The
+// declared failure arm must be taken: the run ends at the failed terminal
+// with success=false, and the success arm's post-comment bookkeeping never
+// executes. Under the deleted best-effort mechanism the failure outcome was
+// rewritten to success and the run continued to set_review_state via
+// viaOutcome=success — laundering the failure exactly as the incident
+// reported.
+func TestCRI130_CommentDeclaredFailureRoutesToFailedTerminal(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		failMode string
+	}{
+		{"clean_failure_outcome", "failure"},
+		{"session_crash", "crash"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := compile(t, cri130CommentTailWorkflow())
+			p := &cri130Adapter{
+				fakeAdapter: &fakeAdapter{name: "fake", outcome: "success"},
+				failStep:    "comment_handler_done",
+				failMode:    tc.failMode,
+			}
+			sink := &cri130ViaSink{fakeSink: &fakeSink{}}
+			if err := NewTestEngine(g, cri130NewLoader(p), sink).Run(context.Background()); err != nil {
+				t.Fatalf("run: %v (a declared failure arm routes; it does not fail the run at the engine level)", err)
+			}
+			if sink.terminal != "failed" || sink.terminalOK {
+				t.Errorf("terminal state %q success=%v; want failed/false (declared failure arm)", sink.terminal, sink.terminalOK)
+			}
+			if sink.failure != "" {
+				t.Errorf("unexpected run failure: %s", sink.failure)
+			}
+			joined := strings.Join(sink.vias, ",")
+			if !strings.Contains(joined, "comment_handler_done->failed via failure") {
+				t.Errorf("transitions %q; want the declared failure arm taken with via=failure", joined)
+			}
+			if strings.Contains(joined, "comment_handler_done->set_review_state via success") {
+				t.Errorf("transitions %q; the success arm must not be taken for a failed step (the old viaOutcome=success laundering)", joined)
+			}
+			ran := strings.Join(sink.stepsRun, ",")
+			if strings.Contains(ran, "set_done_state") {
+				t.Errorf("steps run %q; the success-arm bookkeeping must not execute after the failure", ran)
+			}
+		})
+	}
+}
+
+// cri130RecoveryWorkflow models the fixed contract on a soft tail: a
+// comment step whose declared failure outcome routes to a recovery step
+// (restate_ticket) on the same adapter session, followed by the recovered
+// and failed terminals.
+func cri130RecoveryWorkflow() string {
+	return `
+workflow {
+  name = "linear_intake_cri130"
+  version = "0.1"
+  initial_state = "merge_pr"
+  target_state  = "done"
+}
+step "merge_pr" {
+  target = adapter.fake
+  outcome "success" { next = step.comment_handler_done }
+}
+step "comment_handler_done" {
+  target = adapter.fake
+  outcome "success" { next = state.done }
+  outcome "failure" { next = step.restate_ticket }
+}
+step "restate_ticket" {
+  target = adapter.fake
+  outcome "success" { next = state.recovered }
+  outcome "failure" { next = state.failed }
+}
+state "done" { terminal = true }
+state "recovered" { terminal = true }
+state "failed" {
+  terminal = true
+  success  = false
+}`
+}
+
+// TestCRI130_CommentDeclaredFailureTakesRecoveryBranch: a comment step may
+// declare its failure outcome to a recovery branch. The recovery branch is
+// taken, not the success arm — the graph is the only policy surface.
+func TestCRI130_CommentDeclaredFailureTakesRecoveryBranch(t *testing.T) {
+	g := compile(t, cri130RecoveryWorkflow())
+	p := &cri130Adapter{
+		fakeAdapter: &fakeAdapter{name: "fake", outcome: "success"},
+		failStep:    "comment_handler_done",
+		failMode:    "failure",
+	}
+	sink := &fakeSink{}
+	if err := NewTestEngine(g, cri130NewLoader(p), sink).Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if sink.terminal != "recovered" || !sink.terminalOK {
+		t.Errorf("terminal state %q success=%v; want recovered/true (declared recovery branch)", sink.terminal, sink.terminalOK)
+	}
+	joined := strings.Join(sink.transitions, ",")
+	if !strings.Contains(joined, "comment_handler_done->restate_ticket") {
+		t.Errorf("transitions %q; want the declared failure arm to the recovery branch", joined)
+	}
+	if strings.Contains(joined, "comment_handler_done->done") {
+		t.Errorf("transitions %q; the success arm must not be taken for a failed comment step", joined)
+	}
+	ran := strings.Join(sink.stepsRun, ",")
+	if !strings.Contains(ran, "restate_ticket") {
+		t.Errorf("steps run %q; the recovery branch must execute", ran)
+	}
+}
+
+// TestCRI130_RoutingIndependentOfStepName pins the layering fix: the engine
+// must route by the declared graph, never by the step name. Two otherwise
+// identical workflows — one with the comment_-prefixed name, one with any
+// other name — must produce the same terminal, the same transitions (modulo
+// the step name), and the same success flag.
+func TestCRI130_RoutingIndependentOfStepName(t *testing.T) {
+	const tpl = `
+workflow {
+  name = "linear_intake_cri130"
+  version = "0.1"
+  initial_state = "merge_pr"
+  target_state  = "handler_complete"
+}
+step "merge_pr" {
+  target = adapter.fake
+  outcome "success" { next = step.%[1]s }
+}
+step "%[1]s" {
+  target = adapter.fake
+  outcome "success" { next = step.set_review_state }
+  outcome "failure" { next = state.failed }
+}
+step "set_review_state" {
+  target = adapter.fake
+  outcome "success" { next = state.handler_complete }
+  outcome "failure" { next = state.failed }
+}
+state "handler_complete" { terminal = true }
+state "failed" {
+  terminal = true
+  success  = false
+}`
+	byName := map[string]string{}
+	for _, stepName := range []string{"comment_handler_done", "finalize_bookkeeping"} {
+		t.Run(stepName, func(t *testing.T) {
+			g := compile(t, fmt.Sprintf(tpl, stepName))
+			p := &cri130Adapter{
+				fakeAdapter: &fakeAdapter{name: "fake", outcome: "success"},
+				failStep:    stepName,
+				failMode:    "failure",
+			}
+			sink := &fakeSink{}
+			if err := NewTestEngine(g, cri130NewLoader(p), sink).Run(context.Background()); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			if sink.terminal != "failed" || sink.terminalOK {
+				t.Errorf("terminal state %q success=%v; want failed/false (declared failure arm, name-independent)", sink.terminal, sink.terminalOK)
+			}
+			got := make([]string, 0, len(sink.transitions))
+			for _, tr := range sink.transitions {
+				got = append(got, strings.Replace(tr, stepName, "FAILSTEP", 1))
+			}
+			byName[stepName] = strings.Join(got, ",")
+		})
+	}
+	if byName["comment_handler_done"] != byName["finalize_bookkeeping"] {
+		t.Errorf("routing depends on the step name: comment-prefixed %q vs plain %q", byName["comment_handler_done"], byName["finalize_bookkeeping"])
+	}
+}
+
+// TestCRI130_CommentCrashRecoveryRunsOnReopenedSession proves the CRI-271
+// session repair now serves comment steps: the comment step crashes its
+// session mid-run and the workflow declares the comment step's failure
+// outcome to a recovery step (restate_ticket) on the SAME adapter reference.
+// The recovery step is re-opened onto a fresh session (a second OpenSession)
+// and executes FOR REAL, reaching the recovered terminal. Under the deleted
+// mechanism the comment crash was laundered to its success arm (state.done)
+// and the recovery branch could never run.
+func TestCRI130_CommentCrashRecoveryRunsOnReopenedSession(t *testing.T) {
+	g := compile(t, cri130RecoveryWorkflow())
+	p := newCri271Adapter("comment_handler_done")
+	sink := &fakeSink{}
+	if err := NewTestEngine(g, cri271NewLoader(p), sink).Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if sink.terminal != "recovered" || !sink.terminalOK {
+		t.Errorf("terminal state %q success=%v; want recovered/true (declared recovery branch on the re-opened session)", sink.terminal, sink.terminalOK)
+	}
+	if sink.failure != "" {
+		t.Errorf("unexpected run failure: %s", sink.failure)
+	}
+	opens, executes := p.callLog()
+	// The crashed comment session is re-opened before the recovery step runs.
+	wantOpens := []string{"fake.default", "fake.default"}
+	if len(opens) != len(wantOpens) {
+		t.Fatalf("OpenSession calls: %v; want %v (the re-open is name-agnostic)", opens, wantOpens)
+	}
+	wantExecutes := []string{"merge_pr", "comment_handler_done", "restate_ticket"}
+	if len(executes) != len(wantExecutes) {
+		t.Fatalf("Execute calls: %v; want %v", executes, wantExecutes)
+	}
+	for i, want := range wantExecutes {
+		if executes[i] != want {
+			t.Errorf("Execute calls[%d] = %q; want %q", i, executes[i], want)
+		}
+	}
+	joined := strings.Join(sink.transitions, ",")
+	if !strings.Contains(joined, "comment_handler_done->restate_ticket") {
+		t.Errorf("transitions %q; want the declared failure arm taken to the recovery branch", joined)
+	}
+	if strings.Contains(joined, "comment_handler_done->done") {
+		t.Errorf("transitions %q; the success arm must not be taken (no laundered continuation)", joined)
+	}
+	if !strings.Contains(joined, "restate_ticket->recovered") {
+		t.Errorf("transitions %q; want the recovery step to complete on the re-opened session", joined)
+	}
+}
+
+// TestCRI130_CommentCrashRecoveryWithReopenDisabledFailsRun pins the reopen
+// kill switch against the recovery shape: with CRITERIA_SESSION_CRASH_REOPEN
+// disabled the crashed session stays dead, so the recovery step replays the
+// crash error and its OWN declared failure outcome routes to the failed
+// terminal. No laundering: under the deleted mechanism the comment crash was
+// rewritten to success and the run ended at done with success=true.
+func TestCRI130_CommentCrashRecoveryWithReopenDisabledFailsRun(t *testing.T) {
+	t.Setenv("CRITERIA_SESSION_CRASH_REOPEN", "0")
+	g := compile(t, cri130RecoveryWorkflow())
+	p := newCri271Adapter("comment_handler_done")
+	sink := &fakeSink{}
+	if err := NewTestEngine(g, cri271NewLoader(p), sink).Run(context.Background()); err != nil {
+		t.Fatalf("run: %v (the run ends at the failed terminal, not with an engine error)", err)
+	}
+	if sink.terminal != "failed" || sink.terminalOK {
+		t.Errorf("terminal state %q success=%v; want failed/false (restate_ticket's declared failure arm on the dead session)", sink.terminal, sink.terminalOK)
+	}
+	opens, executes := p.callLog()
+	if len(opens) != 1 {
+		t.Errorf("OpenSession calls: %v; want exactly the initial open (re-open disabled)", opens)
+	}
+	wantExecutes := []string{"merge_pr", "comment_handler_done", "restate_ticket"}
+	if len(executes) != len(wantExecutes) {
+		t.Fatalf("Execute calls: %v; want %v", executes, wantExecutes)
+	}
+	joined := strings.Join(sink.transitions, ",")
+	if !strings.Contains(joined, "comment_handler_done->restate_ticket") {
+		t.Errorf("transitions %q; want the comment step's declared failure arm taken", joined)
+	}
+	if !strings.Contains(joined, "restate_ticket->failed") {
+		t.Errorf("transitions %q; want the recovery step routed via its declared failure outcome", joined)
+	}
+	if strings.Contains(joined, "restate_ticket->recovered") || strings.Contains(joined, "comment_handler_done->done") {
+		t.Errorf("transitions %q; no step may reach a success arm after the crash replay", joined)
+	}
+}
+
+// TestCRI130_CrashExhaustionFailsRunWhenNoFailureArm: a step that declares no
+// "failure" outcome and crashes has nowhere to route; after the attempts are
+// exhausted the run fails with the wrapped error. Under the deleted mechanism
+// the exhaustion was rewritten into a success continuation.
+func TestCRI130_CrashExhaustionFailsRunWhenNoFailureArm(t *testing.T) {
+	g := compile(t, `
+workflow {
+  name = "linear_intake_cri130"
+  version = "0.1"
+  initial_state = "merge_pr"
+  target_state  = "done"
+}
+step "merge_pr" {
+  target = adapter.fake
+  outcome "success" { next = step.comment_handler_done }
+}
+step "comment_handler_done" {
+  target = adapter.fake
+  outcome "success" { next = state.done }
+}
+state "done" { terminal = true }`)
 	p := &cri130Adapter{
 		fakeAdapter: &fakeAdapter{name: "fake", outcome: "success"},
 		failStep:    "comment_handler_done",
 		failMode:    "crash",
 	}
 	sink := &fakeSink{}
-	if err := NewTestEngine(g, cri130NewLoader(p), sink).Run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
+	err := NewTestEngine(g, cri130NewLoader(p), sink).Run(context.Background())
+	if err == nil {
+		t.Fatal("expected the run to fail when the crashed step has no declared failure outcome")
 	}
-	if sink.terminal != "handler_complete" || !sink.terminalOK {
-		t.Errorf("terminal state %q success=%v; want handler_complete/true (dead tail session must not flip the run)", sink.terminal, sink.terminalOK)
+	if !strings.Contains(err.Error(), "step \"comment_handler_done\" failed after 1 attempts") {
+		t.Errorf("unexpected error: %v", err)
 	}
-	if sink.failure != "" {
-		t.Errorf("unexpected run failure: %s", sink.failure)
+	if !strings.Contains(err.Error(), cri130CrashErr) {
+		t.Errorf("error must carry the observed crash signature; got: %v", err)
 	}
-	joined := strings.Join(sink.transitions, ",")
-	for _, want := range []string{"merge_pr->comment_handler_done", "comment_handler_done->set_done_state", "set_done_state->handler_complete"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("transitions %q; missing %q (suppressed steps must continue along their success routing)", joined, want)
-		}
+	if sink.failure == "" {
+		t.Error("expected OnRunFailed for the crashed step with no declared failure outcome")
 	}
-	if strings.Contains(joined, "->failed") {
-		t.Errorf("transitions %q; no step may route to the failed terminal (CRI-130)", joined)
-	}
-	ran := strings.Join(sink.stepsRun, ",")
-	if !strings.Contains(ran, "set_done_state") {
-		t.Errorf("steps run %q; the follow-on set_done_state must still execute on the crashed session", ran)
+	if sink.terminal != "" {
+		t.Errorf("terminal %q; the failed run must not report a terminal", sink.terminal)
 	}
 }
 
-// cri130FailureBranchWorkflow mirrors the shipped linear_intake_v1 failure
-// branch: run_handler (the functional step) routes its failure outcome to the
-// notification comment step, which is followed by the ticket-state update on
-// the same adapter session. comment_handler_failed is reachable only via
-// run_handler's failure outcome, so a comment crash there must NOT arm tail
-// suppression: the run's functional work did not succeed on this path.
-func cri130FailureBranchWorkflow() string {
-	return `
+// TestCRI130_UnroutedFailureOutcomeFailsRun: a clean failure outcome from a
+// step that declares neither a "failure" outcome nor a default has no place
+// in the graph to route; the engine must refuse (the unmapped-outcome guard)
+// instead of continuing as if the step succeeded. Under the deleted mechanism
+// the clean failure was rewritten to success.
+func TestCRI130_UnroutedFailureOutcomeFailsRun(t *testing.T) {
+	g := compile(t, `
+workflow {
+  name = "linear_intake_cri130"
+  version = "0.1"
+  initial_state = "merge_pr"
+  target_state  = "done"
+}
+step "merge_pr" {
+  target = adapter.fake
+  outcome "success" { next = step.comment_handler_done }
+}
+step "comment_handler_done" {
+  target = adapter.fake
+  outcome "success" { next = state.done }
+}
+state "done" { terminal = true }`)
+	p := &cri130Adapter{
+		fakeAdapter: &fakeAdapter{name: "fake", outcome: "success"},
+		failStep:    "comment_handler_done",
+		failMode:    "failure",
+	}
+	sink := &fakeSink{}
+	err := NewTestEngine(g, cri130NewLoader(p), sink).Run(context.Background())
+	if err == nil {
+		t.Fatal("expected the run to fail on the unmapped failure outcome")
+	}
+	if !strings.Contains(err.Error(), `produced unmapped outcome "failure"`) {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if sink.failure == "" {
+		t.Error("expected OnRunFailed for the unmapped failure outcome")
+	}
+}
+
+// A comment step may declare only its failure outcome (e.g. a comment_invalid
+// tail that reports the invalid condition and stops). The declared routing
+// applies — the comment step's name buys no continuation.
+func TestCRI130_CommentStepWithoutSuccessTransitionKeepsRouting(t *testing.T) {
+	g := compile(t, `
+workflow {
+  name = "linear_intake_cri130"
+  version = "0.1"
+  initial_state = "merge_pr"
+  target_state  = "done"
+}
+step "merge_pr" {
+  target = adapter.fake
+  outcome "success" { next = step.comment_invalid }
+}
+step "comment_invalid" {
+  target = adapter.fake
+  outcome "failure" { next = state.failed }
+}
+state "done" { terminal = true }
+state "failed" {
+  terminal = true
+  success  = false
+}`)
+	p := &cri130Adapter{
+		fakeAdapter: &fakeAdapter{name: "fake", outcome: "success"},
+		failStep:    "comment_invalid",
+		failMode:    "crash",
+	}
+	sink := &fakeSink{}
+	if err := NewTestEngine(g, cri130NewLoader(p), sink).Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if sink.terminal != "failed" || sink.terminalOK {
+		t.Errorf("terminal state %q success=%v; want failed/false (declared failure routing preserved)", sink.terminal, sink.terminalOK)
+	}
+}
+
+// An explicit on_crash=abort_run is author intent: the run must still fail.
+func TestCRI130_CommentStepAbortRunStillFatal(t *testing.T) {
+	g := compile(t, `
+workflow {
+  name = "linear_intake_cri130"
+  version = "0.1"
+  initial_state = "merge_pr"
+  target_state  = "done"
+}
+step "merge_pr" {
+  target = adapter.fake
+  outcome "success" { next = step.comment_handler_done }
+}
+step "comment_handler_done" {
+  target = adapter.fake
+  on_crash = "abort_run"
+  outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
+}
+state "done" { terminal = true }
+state "failed" {
+  terminal = true
+  success  = false
+}`)
+	p := &cri130Adapter{
+		fakeAdapter: &fakeAdapter{name: "fake", outcome: "success"},
+		failStep:    "comment_handler_done",
+		failMode:    "crash",
+	}
+	sink := &fakeSink{}
+	if err := NewTestEngine(g, cri130NewLoader(p), sink).Run(context.Background()); err == nil {
+		t.Fatal("expected run failure for on_crash=abort_run")
+	}
+	if sink.failure == "" {
+		t.Error("expected OnRunFailed for on_crash=abort_run")
+	}
+}
+
+// Non-comment steps are unaffected: a session crash at any step routes via
+// its declared failure outcome (and the CRI-271 re-open repair works the same
+// way).
+func TestCRI130_NonCommentStepCrashStillFailsRun(t *testing.T) {
+	g := compile(t, `
+workflow {
+  name = "t"
+  version = "0.1"
+  initial_state = "merge_pr"
+  target_state  = "done"
+}
+step "merge_pr" {
+  target = adapter.fake
+  outcome "success" { next = step.set_done_state }
+  outcome "failure" { next = state.failed }
+}
+step "set_done_state" {
+  target = adapter.fake
+  outcome "success" { next = state.done }
+}
+state "done" { terminal = true }
+state "failed" {
+  terminal = true
+  success  = false
+}`)
+	p := &cri130Adapter{
+		fakeAdapter: &fakeAdapter{name: "fake", outcome: "success"},
+		failStep:    "merge_pr",
+		failMode:    "crash",
+	}
+	sink := &fakeSink{}
+	if err := NewTestEngine(g, cri130NewLoader(p), sink).Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if sink.terminal != "failed" || sink.terminalOK {
+		t.Errorf("terminal state %q success=%v; want failed/false", sink.terminal, sink.terminalOK)
+	}
+}
+
+// TestCRI130_FunctionalFailureBranchNotReportedSuccess: run_handler fails
+// functionally (clean failure outcome, session alive), the declared failure
+// arm routes to the notification comment step, and the comment step CRASHES.
+// The comment step's own declared failure arm applies — the run ends at the
+// failed terminal and the success arm (set_review_state → awaiting_human)
+// never executes: a functionally failed run must never reach a success
+// terminal.
+func TestCRI130_FunctionalFailureBranchNotReportedSuccess(t *testing.T) {
+	g := compile(t, `
 workflow {
   name = "linear_intake_cri130"
   version = "0.1"
@@ -219,18 +632,7 @@ state "awaiting_human" { terminal = true }
 state "failed" {
   terminal = true
   success  = false
-}`
-}
-
-// TestCRI130_FunctionalFailureBranchNotReportedSuccess guards the arming gate
-// (CRI-115): a functional step fails, the run takes the notification branch,
-// and the shared adapter session dies at comment_handler_failed. The comment
-// crash must not arm tail suppression (the comment step was entered down a
-// failure route), so set_review_state keeps its declared failure routing and
-// the run finishes failed — a functionally failed run must never be reported
-// as a success terminal.
-func TestCRI130_FunctionalFailureBranchNotReportedSuccess(t *testing.T) {
-	g := compile(t, cri130FailureBranchWorkflow())
+}`)
 	p := &cri130Adapter{
 		fakeAdapter: &fakeAdapter{name: "fake", outcome: "success"},
 		failStep:    "run_handler",
@@ -242,29 +644,29 @@ func TestCRI130_FunctionalFailureBranchNotReportedSuccess(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 	if sink.terminal != "failed" || sink.terminalOK {
-		t.Errorf("terminal state %q success=%v; want failed/false (a functionally failed run must not report a success terminal)", sink.terminal, sink.terminalOK)
+		t.Errorf("terminal state %q success=%v; want failed/false (a functionally failed run must not reach a success terminal)", sink.terminal, sink.terminalOK)
 	}
 	joined := strings.Join(sink.transitions, ",")
-	for _, want := range []string{"run_handler->comment_handler_failed", "comment_handler_failed->set_review_state", "set_review_state->failed"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("transitions %q; missing %q (comment crash stays best-effort; follow-on state write keeps its failure routing)", joined, want)
-		}
+	if !strings.Contains(joined, "run_handler->comment_handler_failed") {
+		t.Errorf("transitions %q; want run_handler's declared failure arm taken", joined)
 	}
-	if strings.Contains(joined, "->awaiting_human") {
-		t.Errorf("transitions %q; the crashed tail state write must route to failed, not the success terminal", joined)
+	if !strings.Contains(joined, "comment_handler_failed->failed") {
+		t.Errorf("transitions %q; want the comment step's declared failure arm taken after its crash", joined)
+	}
+	if strings.Contains(joined, "comment_handler_failed->set_review_state") {
+		t.Errorf("transitions %q; the crashed comment step's success arm must not be taken (no viaOutcome=success laundering)", joined)
 	}
 	ran := strings.Join(sink.stepsRun, ",")
-	for _, want := range []string{"comment_handler_failed", "set_review_state"} {
-		if !strings.Contains(ran, want) {
-			t.Errorf("steps run %q; missing %q", ran, want)
-		}
+	if strings.Contains(ran, "set_review_state") {
+		t.Errorf("steps run %q; the success-arm bookkeeping must not execute after the comment crash", ran)
 	}
 }
 
-// A functional follow-on that is not tail bookkeeping — its continuation path
-// crosses another adapter step — must keep its genuine failure routing even on
-// a crashed session, so mid-workflow failures still fail the run and trigger
-// the (correct) scratch re-run instead of silently skipping real work.
+// TestCRI130_NonTailFollowOnStillFailsRun: mid-workflow, a comment step that
+// crashes with a declared failure arm routes through that arm to the failed
+// terminal — the success-arm follow-ons (set_done_state, finalize_report)
+// never execute and the run fails for real instead of silently skipping
+// forward or laundering the crash into success.
 func TestCRI130_NonTailFollowOnStillFailsRun(t *testing.T) {
 	g := compile(t, `
 workflow {
@@ -307,163 +709,12 @@ state "failed" {
 		t.Fatalf("run: %v", err)
 	}
 	if sink.terminal != "failed" || sink.terminalOK {
-		t.Errorf("terminal state %q success=%v; want failed/false (non-tail follow-on failure must keep genuine routing)", sink.terminal, sink.terminalOK)
+		t.Errorf("terminal state %q success=%v; want failed/false (follow-on failure must keep genuine routing)", sink.terminal, sink.terminalOK)
 	}
-	if got := strings.Join(sink.transitions, ","); !strings.Contains(got, "set_done_state->failed") {
-		t.Errorf("transitions %q; want set_done_state to route via its failure outcome (no silent downgrade)", got)
+	if got := strings.Join(sink.transitions, ","); !strings.Contains(got, "comment_progress->failed") {
+		t.Errorf("transitions %q; want comment_progress to route via its failure outcome (no silent downgrade)", got)
 	}
-}
-
-// TestCRI130_CommentStepRetryExhaustionContinues covers the retry-exhausted
-// hook: a comment step with only a success outcome crashes, retries are
-// exhausted, and the exhaustion is still treated as best-effort instead of
-// failing the run with a wrapped error.
-func TestCRI130_CommentStepRetryExhaustionContinues(t *testing.T) {
-	g := compile(t, cri130IntakeWorkflow(`
-  outcome "success" { next = state.done }`))
-	p := &cri130Adapter{
-		fakeAdapter: &fakeAdapter{name: "fake", outcome: "success"},
-		failStep:    "comment_handler_done",
-		failMode:    "crash",
-	}
-	sink := &fakeSink{}
-	if err := NewTestEngine(g, cri130NewLoader(p), sink).Run(context.Background()); err != nil {
-		t.Fatalf("run: %v (retry exhaustion of a comment step must stay best-effort)", err)
-	}
-	if sink.terminal != "done" || !sink.terminalOK {
-		t.Errorf("terminal state %q success=%v; want done/true", sink.terminal, sink.terminalOK)
-	}
-	if sink.failure != "" {
-		t.Errorf("unexpected run failure: %s", sink.failure)
-	}
-}
-
-// TestCRI130_CommentStepCrashAfterMergeSucceeds covers the shape where the
-// comment step is the literal last step before the success terminal.
-func TestCRI130_CommentStepCrashAfterMergeSucceeds(t *testing.T) {
-	g := compile(t, cri130IntakeWorkflow(`
-  outcome "success" { next = state.done }
-  outcome "failure" { next = state.failed }`))
-	p := &cri130Adapter{
-		fakeAdapter: &fakeAdapter{name: "fake", outcome: "success"},
-		failStep:    "comment_handler_done",
-		failMode:    "crash",
-	}
-	sink := &fakeSink{}
-	if err := NewTestEngine(g, cri130NewLoader(p), sink).Run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if sink.terminal != "done" || !sink.terminalOK {
-		t.Errorf("terminal state %q success=%v; want done/true (comment crash must not flip the run)", sink.terminal, sink.terminalOK)
-	}
-	if sink.failure != "" {
-		t.Errorf("unexpected run failure: %s", sink.failure)
-	}
-	if got := strings.Join(sink.transitions, ","); !strings.Contains(got, "comment_handler_done->done") || strings.Contains(got, "comment_handler_done->failed") {
-		t.Errorf("transitions %q; want continuation to done, not the failure outcome", got)
-	}
-}
-
-func TestCRI130_CommentStepCleanFailureOutcomeContinues(t *testing.T) {
-	g := compile(t, cri130IntakeWorkflow(`
-  outcome "success" { next = state.done }
-  outcome "failure" { next = state.failed }`))
-	p := &cri130Adapter{
-		fakeAdapter: &fakeAdapter{name: "fake", outcome: "success"},
-		failStep:    "comment_handler_done",
-		failMode:    "failure",
-	}
-	sink := &fakeSink{}
-	if err := NewTestEngine(g, cri130NewLoader(p), sink).Run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if sink.terminal != "done" || !sink.terminalOK {
-		t.Errorf("terminal state %q success=%v; want done/true", sink.terminal, sink.terminalOK)
-	}
-	if sink.failure != "" {
-		t.Errorf("unexpected run failure: %s", sink.failure)
-	}
-}
-
-// A comment step on a failure branch may declare only its failure outcome
-// (e.g. comment_invalid -> state.failed). Without a success/default
-// transition there is nowhere to continue to, so the step's declared routing
-// still applies.
-func TestCRI130_CommentStepWithoutSuccessTransitionKeepsRouting(t *testing.T) {
-	g := compile(t, cri130IntakeWorkflow(`
-  outcome "failure" { next = state.failed }`))
-	p := &cri130Adapter{
-		fakeAdapter: &fakeAdapter{name: "fake", outcome: "success"},
-		failStep:    "comment_handler_done",
-		failMode:    "crash",
-	}
-	sink := &fakeSink{}
-	if err := NewTestEngine(g, cri130NewLoader(p), sink).Run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if sink.terminal != "failed" || sink.terminalOK {
-		t.Errorf("terminal state %q success=%v; want failed/false (declared failure routing preserved)", sink.terminal, sink.terminalOK)
-	}
-	if sink.failure != "" {
-		t.Errorf("unexpected run failure: %s", sink.failure)
-	}
-}
-
-// An explicit on_crash=abort_run on a comment step is author intent: the run
-// must still fail.
-func TestCRI130_CommentStepAbortRunStillFatal(t *testing.T) {
-	g := compile(t, cri130IntakeWorkflow(`
-  on_crash = "abort_run"
-  outcome "success" { next = state.done }
-  outcome "failure" { next = state.failed }`))
-	p := &cri130Adapter{
-		fakeAdapter: &fakeAdapter{name: "fake", outcome: "success"},
-		failStep:    "comment_handler_done",
-		failMode:    "crash",
-	}
-	sink := &fakeSink{}
-	if err := NewTestEngine(g, cri130NewLoader(p), sink).Run(context.Background()); err == nil {
-		t.Fatal("expected run failure for on_crash=abort_run")
-	}
-	if sink.failure == "" {
-		t.Error("expected OnRunFailed for on_crash=abort_run")
-	}
-}
-
-// Non-comment steps are unaffected: a session crash at a functional step
-// still routes via its declared failure outcome.
-func TestCRI130_NonCommentStepCrashStillFailsRun(t *testing.T) {
-	g := compile(t, `
-workflow {
-  name = "t"
-  version = "0.1"
-  initial_state = "merge_pr"
-  target_state  = "done"
-}
-step "merge_pr" {
-  target = adapter.fake
-  outcome "success" { next = step.set_done_state }
-  outcome "failure" { next = state.failed }
-}
-step "set_done_state" {
-  target = adapter.fake
-  outcome "success" { next = state.done }
-}
-state "done" { terminal = true }
-state "failed" {
-  terminal = true
-  success  = false
-}`)
-	p := &cri130Adapter{
-		fakeAdapter: &fakeAdapter{name: "fake", outcome: "success"},
-		failStep:    "merge_pr",
-		failMode:    "crash",
-	}
-	sink := &fakeSink{}
-	if err := NewTestEngine(g, cri130NewLoader(p), sink).Run(context.Background()); err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if sink.terminal != "failed" || sink.terminalOK {
-		t.Errorf("terminal state %q success=%v; want failed/false", sink.terminal, sink.terminalOK)
+	if ran := strings.Join(sink.stepsRun, ","); strings.Contains(ran, "set_done_state") {
+		t.Errorf("steps run %q; the success-arm follow-ons must not execute after the declared failure routing", ran)
 	}
 }

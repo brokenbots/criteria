@@ -784,21 +784,19 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 // used for the initial step when resuming; subsequent steps start at attempt 1.
 func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManager, current string, firstStepAttempt int, vars map[string]cty.Value, sink Sink, ds *DataStore, rlc *remoteLifecycleContext) error {
 	st := &RunState{
-		Current:                current,
-		Vars:                   vars,
-		PendingSignal:          e.pendingSignal,
-		ResumePayload:          e.resumePayload,
-		IterStack:              append([]workflow.IterCursor{}, e.resumedIterStack...),
-		Visits:                 cloneVisits(e.resumedVisits),
-		WorkflowDir:            e.workflowDir,
-		DataStore:              ds,
-		WorkflowName:           e.graph.Name,
-		RemoteLifecycle:        rlc,
-		CrashedCommentSessions: newCrashedSessionRefs(),
-		// CRI-271: functional-step crash registry for re-open-before-follow-on.
-		CrashedFunctionalSessions: newCrashedSessionRefs(),
-		firstStep:                 true,
-		firstStepAttempt:          firstStepAttempt,
+		Current:          current,
+		Vars:             vars,
+		PendingSignal:    e.pendingSignal,
+		ResumePayload:    e.resumePayload,
+		IterStack:        append([]workflow.IterCursor{}, e.resumedIterStack...),
+		Visits:           cloneVisits(e.resumedVisits),
+		WorkflowDir:      e.workflowDir,
+		DataStore:        ds,
+		WorkflowName:     e.graph.Name,
+		RemoteLifecycle:  rlc,
+		CrashedSessions:  newCrashedSessionRefs(),
+		firstStep:        true,
+		firstStepAttempt: firstStepAttempt,
 	}
 	prompts := NewPromptRouter(ctx, e.agentPromptCh, e.effectivePromptRunID(), e.promptOwnerID, e.graph, sessions, sink, e.logOrDefault())
 	deps := e.buildDeps(sessions, sink, prompts)
