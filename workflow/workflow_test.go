@@ -153,6 +153,40 @@ state "done" { terminal = true }
 	}
 }
 
+// TestCompileDefaultOutcomeEdgeIsReachable verifies that a `default` outcome
+// contributes a reachability edge: a state only reachable via a default
+// mapping must not be diagnosed as unreachable (regression for the
+// nodeTargets DefaultOutcome omission).
+func TestCompileDefaultOutcomeEdgeIsReachable(t *testing.T) {
+	src := `
+workflow {
+  name = "x"
+  version = "0.1"
+  initial_state = "a"
+  target_state  = "done"
+}
+
+adapter "exec" "default" {}
+step "a" {
+  target = adapter.exec.default
+  outcome "success" { next = state.done }
+  outcome "default" { next = state.defaulted }
+}
+state "done" { terminal = true }
+state "defaulted" { terminal = true }
+`
+	spec, parseDiags := Parse("t.hcl", []byte(src))
+	if parseDiags.HasErrors() {
+		t.Fatalf("Parse: %s", parseDiags.Error())
+	}
+	_, diags := Compile(spec, nil)
+	for _, d := range diags {
+		if strings.Contains(d.Summary, `state "defaulted" is unreachable`) {
+			t.Fatalf("default outcome edge ignored: %s", diags.Error())
+		}
+	}
+}
+
 func TestCompileMissingOutcome(t *testing.T) {
 	src := `
 workflow {

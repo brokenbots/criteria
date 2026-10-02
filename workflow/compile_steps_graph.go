@@ -397,6 +397,11 @@ func nodeTargets(name string, g *FSMGraph) []string {
 				targets = append(targets, co.Next)
 			}
 		}
+		if step.DefaultOutcome != nil &&
+			step.DefaultOutcome.Next != "_continue" &&
+			step.DefaultOutcome.Next != ReturnSentinel {
+			targets = append(targets, step.DefaultOutcome.Next)
+		}
 		return targets
 	}
 	if sw, ok := g.Switches[name]; ok {
