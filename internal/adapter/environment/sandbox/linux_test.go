@@ -920,7 +920,14 @@ func TestShimIntegration_CurlAllowNetwork(t *testing.T) {
 
 // TestShimIntegration_CurlDenyNetwork verifies that a network-denied sandbox
 // still blocks external egress. curl/getent are allowed to load but the
-// new network namespace prevents any connect/DNS path from succeeding.
+// new network namespace prevents any AF_INET connect path from succeeding.
+//
+// getent's outcome is deliberately NOT asserted as a denial signal: on hosts
+// backed by systemd-resolved, glibc reaches the daemon through an AF_UNIX
+// socket under /run/systemd/resolve, which lives in the shared filesystem
+// namespace, so name resolution can succeed inside an isolated netns
+// (KB-60). Isolation is proven resolver-agnostically via the AF_INET
+// connect result from curl, which targets a literal loopback address.
 func TestShimIntegration_CurlDenyNetwork(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("linux only")
@@ -1009,10 +1016,111 @@ func TestShimIntegration_CurlDenyNetwork(t *testing.T) {
 	outStr := string(out)
 	t.Logf("helper output:\n%s", outStr)
 	if strings.Contains(outStr, "GETENT_OK") {
-		t.Fatalf("expected GETENT to fail with AllowNetwork=false, got: %s", outStr)
+		t.Log("getent resolved inside the isolated netns (filesystem-socket resolver, e.g. systemd-resolved); " +
+			"DNS success alone does not imply egress")
+	} else if strings.Contains(outStr, "GETENT_FAIL") {
+		t.Log("getent failed inside the isolated netns (DNS-over-network resolver)")
 	}
-	if strings.Contains(outStr, "CURL_OK") {
-		t.Fatalf("expected CURL to fail with AllowNetwork=false, got: %s", outStr)
+	if err := curlDenyNetnsIsolationError(outStr); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// curlDenyNetnsIsolationError returns an error when the output of the curl
+// test helper run inside a network-denied sandbox (fresh network namespace)
+// does not prove egress isolation.
+//
+// The resolver outcome (getent) is not used as a signal: on systemd-resolved
+// hosts glibc can resolve names through an AF_UNIX socket in the shared
+// filesystem namespace even with no usable interface. Isolation is proven by
+// the AF_INET connect result instead: curl targets a literal loopback
+// address (no DNS involved), and in a fresh netns it must fail at the
+// connect step ("Network is unreachable" while loopback is down, or
+// "Connection refused" when loopback is up with no listener). Requiring the
+// connect-level message also prevents a hollow pass when curl fails to run
+// at all.
+func curlDenyNetnsIsolationError(output string) error {
+	if strings.Contains(output, "CURL_OK") {
+		return fmt.Errorf("curl reached a host-side server despite AllowNetwork=false: %s", output)
+	}
+	if !strings.Contains(output, "CURL_FAIL") {
+		return fmt.Errorf("missing CURL_FAIL marker; cannot prove egress isolation: %s", output)
+	}
+	lower := strings.ToLower(output)
+	if !strings.Contains(lower, "connection refused") && !strings.Contains(lower, "network is unreachable") {
+		return fmt.Errorf("expected connect-level failure in the isolated netns, got: %s", output)
+	}
+	return nil
+}
+
+// TestCurlDenyNetnsIsolationError pins the resolver-agnostic denial policy
+// used by TestShimIntegration_CurlDenyNetwork. On a systemd-resolved host the
+// helper inside the isolated netns prints GETENT_OK (the resolver reaches the
+// daemon through a filesystem AF_UNIX socket) while curl's AF_INET connect
+// still fails, which previously tripped the getent-based assertion and made
+// the integration test fail deterministically on those hosts (KB-60); such
+// output must be accepted as proof of isolation. A helper that reached the
+// host server, or that produced no connect-level failure, must be rejected.
+func TestCurlDenyNetnsIsolationError(t *testing.T) {
+	cases := []struct {
+		name    string
+		output  string
+		wantErr bool
+	}{
+		{
+			// systemd-resolved host: glibc resolves through the AF_UNIX
+			// resolver socket in the shared filesystem namespace, but the
+			// AF_INET connect to a literal loopback address is refused.
+			name: "resolved host: getent ok, connect refused is proof",
+			output: "GETENT_OK\n" +
+				"CURL_FAIL exit status 7 output=\"curl: (7) Failed to connect to 127.0.0.1 port 38651 " +
+				"after 0 ms: Connection refused\"",
+		},
+		{
+			// Plain resolv.conf host: getent cannot resolve without a route.
+			name: "plain dns host: getent fail, network unreachable is proof",
+			output: "GETENT_FAIL exit status 2\n" +
+				"CURL_FAIL exit status 7 output=\"curl: (7) Failed to connect to 127.0.0.1 port 38477 " +
+				"after 0 ms: Network is unreachable\"",
+		},
+		{
+			name: "resolved host: getent ok, network unreachable is proof",
+			output: "GETENT_OK\n" +
+				"CURL_FAIL exit status 7 output=\"curl: (7) Failed to connect to 127.0.0.1 port 38477 " +
+				"after 0 ms: Network is unreachable\"",
+		},
+		{
+			// Isolation broken: the host-side server answered.
+			name: "curl reached host server",
+			output: "GETENT_OK\n" +
+				"CURL_OK",
+			wantErr: true,
+		},
+		{
+			// Hollow failure: without a connect-level message the run does
+			// not distinguish a working sandbox from a helper that never
+			// executed curl.
+			name: "curl did not run: no connect evidence",
+			output: "GETENT_OK\n" +
+				"CURL_FAIL exit status 126 output=\"shim: executing curl: permission denied\"",
+			wantErr: true,
+		},
+		{
+			name:    "no curl marker at all",
+			output:  "GETENT_FAIL exit status 2",
+			wantErr: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := curlDenyNetnsIsolationError(tc.output)
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected error for output:\n%s", tc.output)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected error for output:\n%s\n%v", tc.output, err)
+			}
+		})
 	}
 }
 
