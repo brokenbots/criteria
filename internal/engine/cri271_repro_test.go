@@ -17,6 +17,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
@@ -221,10 +222,12 @@ func TestCRI271_FunctionalCrashReopensSessionForBookkeeping(t *testing.T) {
 }
 
 // TestCRI271_ReopenDisabledKeepsPreCRI271Behavior pins the kill switch: with
-// CRITERIA_SESSION_CRASH_REOPEN disabled, a crashed session stays dead, the
-// comment step is still suppressed as best-effort (CRI-130), and the run
-// fails when the follow-on state write replays the crash error — the exact
-// pre-CRI-271 behavior the incident reported.
+// CRITERIA_SESSION_CRASH_REOPEN disabled, a crashed session stays dead and
+// the run fails when the follow-on step replays the crash error. The comment
+// step is not suppressed or laundered (the CRI-130 name-prefix best-effort
+// mechanism is gone): it declares only a success outcome, so its crash has
+// no declared failure arm to route to and the run fails with the exhaustion
+// error — the step's failure is preserved as a failure.
 func TestCRI271_ReopenDisabledKeepsPreCRI271Behavior(t *testing.T) {
 	t.Setenv("CRITERIA_SESSION_CRASH_REOPEN", "0")
 	g := compile(t, cri271Workflow)
@@ -235,16 +238,18 @@ func TestCRI271_ReopenDisabledKeepsPreCRI271Behavior(t *testing.T) {
 	}
 	if sink.failure == "" {
 		t.Error("expected OnRunFailed with re-open disabled")
+	} else if !strings.Contains(sink.failure, "comment_handler_failed") || !strings.Contains(sink.failure, cri271CrashErr) {
+		t.Errorf("OnRunFailed %q; want the comment step's exhaustion failure with the crash signature", sink.failure)
 	}
 	opens, executes := p.callLog()
 	// Only the initial open: no session was re-opened.
 	if len(opens) != 1 {
 		t.Errorf("OpenSession calls: %v; want exactly the initial open", opens)
 	}
-	// The bookkeeping steps were still attempted on the dead session before
-	// the run failed: the comment step was suppressed (CRI-130), the state
-	// write was not.
-	wantExecutes := []string{"develop", "comment_handler_failed", "set_review_state"}
+	// The comment step runs against the dead session, replays the crash error,
+	// has no declared failure arm, and exhausts: the run fails right there and
+	// the success-arm bookkeeping (set_review_state) never executes.
+	wantExecutes := []string{"develop", "comment_handler_failed"}
 	if len(executes) != len(wantExecutes) {
 		t.Fatalf("Execute calls: %v; want %v", executes, wantExecutes)
 	}
