@@ -487,23 +487,21 @@ func (m *SessionManager) BorrowToolResourceSessionsFrom(src *SessionManager, nam
 	return m.installBorrowedToolResources(recs, infos)
 }
 
-// snapshotToolResourceRecords gathers deep copies of src's verified records
-// and adapter infos for the given tool-resource names. src.mu is held for
-// the whole gather so a concurrent scope change cannot split a name across
-// states.
-func (src *SessionManager) snapshotToolResourceRecords(names []string) (map[string]*verifiedRecord, map[string]*workflow.AdapterInfo) {
-	src.mu.Lock()
-	defer src.mu.Unlock()
-	var recs map[string]*verifiedRecord
-	var infos map[string]*workflow.AdapterInfo
+// snapshotToolResourceRecords gathers deep copies of the manager's verified records
+// and adapter infos for the given tool-resource names. The manager mutex is
+// held for the whole gather so a concurrent scope change cannot split a name
+// across states.
+func (m *SessionManager) snapshotToolResourceRecords(names []string) (recs map[string]*verifiedRecord, infos map[string]*workflow.AdapterInfo) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for _, name := range names {
-		if rec := src.verified[name]; rec != nil {
+		if rec := m.verified[name]; rec != nil {
 			if recs == nil {
 				recs = make(map[string]*verifiedRecord, len(names))
 			}
 			recs[name] = rec.clone()
 		}
-		if info := src.adapterInfos[name]; info != nil {
+		if info := m.adapterInfos[name]; info != nil {
 			if infos == nil {
 				infos = make(map[string]*workflow.AdapterInfo, len(names))
 			}
