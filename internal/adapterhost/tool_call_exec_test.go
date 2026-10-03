@@ -339,7 +339,7 @@ func compileNestedToolCallGraph(t *testing.T) *workflow.FSMGraph {
 
 // newNestedToolCallManager builds a SessionManager with builtin caller/callee
 // adapters wired to the given fakes.
-func newNestedToolCallManager(t *testing.T, caller *nestedCallerAdapter, callee *nestedCalleeAdapter) *SessionManager {
+func newNestedToolCallManager(t *testing.T, caller *nestedCallerAdapter, callee Handle) *SessionManager {
 	t.Helper()
 	loader := NewLoaderWithDiscovery(func(string) (string, error) { return "", nil })
 	loader.RegisterBuiltin("caller", func() Handle { return caller })

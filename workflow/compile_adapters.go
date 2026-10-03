@@ -87,26 +87,57 @@ func compileOneAdapter(g *FSMGraph, ad *AdapterDeclSpec, schemas map[string]Adap
 
 	cacheResolvedPolicy(g, key, effectiveEnv, typeName, schemas)
 
-	staticTools := make([]string, 0, len(ad.Tools))
-	for _, t := range ad.Tools {
-		staticTools = append(staticTools, t.Name)
-	}
+	staticTools, toolContracts, toolContractOrder, d := compileAdapterToolDecls(key, ad.Tools, g)
+	diags = append(diags, d...)
 
 	g.Adapters[key] = &AdapterNode{
-		Type:         typeName,
-		Name:         instanceName,
-		Source:       ad.Source,
-		Environment:  effectiveEnv,
-		OnCrash:      effectiveOnCrash,
-		Config:       adapterConfig,
-		ConfigExprs:  configExprs,
-		Secrets:      secrets,
-		StaticTools:  staticTools,
-		DynamicTools: ad.DynamicTools,
+		Type:              typeName,
+		Name:              instanceName,
+		Source:            ad.Source,
+		Environment:       effectiveEnv,
+		OnCrash:           effectiveOnCrash,
+		Config:            adapterConfig,
+		ConfigExprs:       configExprs,
+		Secrets:           secrets,
+		StaticTools:       staticTools,
+		DynamicTools:      ad.DynamicTools,
+		ToolContracts:     toolContracts,
+		ToolContractOrder: toolContractOrder,
 	}
 	// Track adapter declaration order for stable iteration
 	g.AdapterOrder = append(g.AdapterOrder, key)
 	return diags
+}
+
+// compileAdapterToolDecls compiles an adapter's tool declarations: the
+// static tool list, duplicate-tool detection, and (KB-59) each tool's typed
+// in/out contract. Contracts apply only to tools whose block declares a
+// named type; contract-bearing tools keep their declaration order so the
+// single-tool fallback in validateStepInputToolContract stays deterministic.
+func compileAdapterToolDecls(key string, tools []ToolDeclSpec, g *FSMGraph) (staticTools []string, toolContracts map[string]ToolContract, toolContractOrder []string, diags hcl.Diagnostics) {
+	staticTools = make([]string, 0, len(tools))
+	toolContracts = make(map[string]ToolContract, len(tools))
+	seenTools := make(map[string]bool, len(tools))
+	for _, t := range tools {
+		staticTools = append(staticTools, t.Name)
+		if seenTools[t.Name] {
+			r := t.Remain.MissingItemRange()
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("adapter %q: duplicate tool %q", key, t.Name),
+				Subject:  &r,
+			})
+			continue
+		}
+		seenTools[t.Name] = true
+		contract, d := compileToolContract(key, t.Name, &t, g)
+		diags = append(diags, d...)
+		if contract.HasAny() {
+			toolContracts[t.Name] = contract
+			toolContractOrder = append(toolContractOrder, t.Name)
+		}
+	}
+	return staticTools, toolContracts, toolContractOrder, diags
 }
 
 // resolveAdapterOnCrash validates and returns the effective on_crash value.
