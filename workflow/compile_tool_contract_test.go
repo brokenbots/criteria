@@ -65,10 +65,10 @@ func TestKB59_ToolContractCompile_InlineTwin(t *testing.T) {
 	}
 	inline := compileOne(`object({tool = string, message = optional(string)})`, `object({report = string})`)
 	named := compileOne("type.probe_request", "type.probe_response")
-	if string(inline.InSchemaJSON) != string(named.InSchemaJSON) {
+	if !bytes.Equal(inline.InSchemaJSON, named.InSchemaJSON) {
 		t.Errorf("in schema bytes differ inline vs named:\n inline: %s\n named:  %s", inline.InSchemaJSON, named.InSchemaJSON)
 	}
-	if string(inline.OutSchemaJSON) != string(named.OutSchemaJSON) {
+	if !bytes.Equal(inline.OutSchemaJSON, named.OutSchemaJSON) {
 		t.Errorf("out schema bytes differ inline vs named:\n inline: %s\n named:  %s", inline.OutSchemaJSON, named.OutSchemaJSON)
 	}
 }

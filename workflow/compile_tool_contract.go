@@ -106,33 +106,52 @@ func compileToolContractSide(loc, side string, expr hcl.Expression, g *FSMGraph)
 	return schemaJSON, typ, nil
 }
 
-// validateStepInputToolContract resolves the in-type contract that governs a
-// step's input{} block (KB-59), if any. It applies only to dynamic
-// (schema-less) adapters: a schema-ful adapter keeps the handshake-first
-// static posture at compile time, and the seam's declared-type override is
-// the seam's own precedence. Adapters without tool contracts stay
-// byte-identical.
+// validateStepTypedInput applies the KB-59 typed-input contract check to a
+// direct adapter step target's input{} block, if any. It applies only to
+// dynamic (schema-less) adapters: a schema-ful adapter keeps the static
+// handshake-first posture at compile time, and the seam's declared-type
+// override is the seam's own precedence. Adapters without tool contracts
+// stay byte-identical.
 //
 // The input must route to a declared tool as a compile-time literal
 // (input { tool = "<name>" }); a dynamic tool reference stays unchecked at
 // compile time and is validated by the callee adapter at runtime.
-func validateStepInputToolContract(g *FSMGraph, sp *StepSpec, adapterRef string, schemas map[string]AdapterInfo) (ToolContract, bool, hcl.Diagnostics) {
+func validateStepTypedInput(g *FSMGraph, sp *StepSpec, adapterType, adapterRef string, schemas map[string]AdapterInfo) hcl.Diagnostics {
+	contract, contractOK := validateStepInputToolContract(g, sp, adapterRef, schemas)
+	if !contractOK {
+		return nil
+	}
+	var diags hcl.Diagnostics
+	attrs, ad := sp.Input.Remain.JustAttributes()
+	if !ad.HasErrors() {
+		diags = append(diags, validateTypedInputAttrs(fmt.Sprintf("step %q input", sp.Name), attrs, contract.InType, adapterType, sp.Input.Remain.MissingItemRange())...)
+	} else {
+		diags = append(diags, ad...)
+	}
+	return diags
+}
+
+// validateStepInputToolContract resolves the in-type contract that governs a
+// validateStepToolContract applies to a direct adapter step target's input
+// (KB-59). It applies only to dynamic (schema-less) adapters; returns the
+// routed contract and whether the typed check governs this step's input.
+func validateStepInputToolContract(g *FSMGraph, sp *StepSpec, adapterRef string, schemas map[string]AdapterInfo) (ToolContract, bool) {
 	if sp.Input == nil || g == nil || adapterRef == "" {
-		return ToolContract{}, false, nil
+		return ToolContract{}, false
 	}
 	adNode, ok := g.Adapters[adapterRef]
 	if !ok || !adNode.HasToolContracts() {
-		return ToolContract{}, false, nil
+		return ToolContract{}, false
 	}
 	// Schema-ful adapters keep the static handshake-first posture at compile
 	// time.
 	if info, adOK := adapterInfo(schemas, adapterTypeFromRef(adapterRef)); adOK && len(info.InputSchema) > 0 {
-		return ToolContract{}, false, nil
+		return ToolContract{}, false
 	}
 	attrs, d := sp.Input.Remain.JustAttributes()
 	if d.HasErrors() {
 		// Block-content errors are already reported by decodeStepInput.
-		return ToolContract{}, false, nil
+		return ToolContract{}, false
 	}
 	// The input must route to a contract-bearing tool. Two cases qualify:
 	// a compile-time literal tool reference, and (single-tool adapters only)
@@ -148,9 +167,9 @@ func validateStepInputToolContract(g *FSMGraph, sp *StepSpec, adapterRef string,
 		contract, routed = adNode.ToolContractFor(adNode.ToolContractOrder[0])
 	}
 	if !routed || contract.InType == cty.NilType {
-		return ToolContract{}, false, nil
+		return ToolContract{}, false
 	}
-	return contract, true, nil
+	return contract, true
 }
 
 // stepInputToolLiteral returns the tool a step's input block routes to when

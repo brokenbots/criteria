@@ -34,6 +34,17 @@ func resolveOutputSchema(adapterType string, schemas map[string]AdapterInfo) map
 	return map[string]ConfigField{}
 }
 
+// validateAdapterStepPrelude runs the adapter-step checks that precede input
+// decoding and do not gate registration.
+func validateAdapterStepPrelude(sp *StepSpec, spec *Spec, g *FSMGraph, schemas map[string]AdapterInfo, adapterRef string) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	diags = append(diags, validateAllowToolsWithAdapter(sp, adapterRef)...)
+	diags = append(diags, validateLegacyConfig(sp)...)
+	diags = append(diags, validateOnFailureForNonIterating(sp)...)
+	diags = append(diags, validateStepToolRefs(g, sp, spec, schemas, adapterTypeFromRef(adapterRef))...)
+	return diags
+}
+
 func compileAdapterStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts, adapterRef string) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 
@@ -43,10 +54,7 @@ func compileAdapterStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[strin
 		return diags
 	}
 
-	diags = append(diags, validateAllowToolsWithAdapter(sp, adapterRef)...)
-	diags = append(diags, validateLegacyConfig(sp)...)
-	diags = append(diags, validateOnFailureForNonIterating(sp)...)
-	diags = append(diags, validateStepToolRefs(g, sp, spec, schemas, adapterTypeFromRef(adapterRef))...)
+	diags = append(diags, validateAdapterStepPrelude(sp, spec, g, schemas, adapterRef)...)
 
 	effectiveOnCrash, d := resolveStepOnCrashWithAdapter(g, sp, adapterRef)
 	diags = append(diags, d...)
@@ -64,20 +72,9 @@ func compileAdapterStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[strin
 	inputMap, inputExprs, d := decodeStepInput(g, sp, schemas, opts, adapterType)
 	diags = append(diags, d...)
 
-	// KB-59: when the target adapter is schema-less but one of its tool
-	// blocks declares an `in` type contract for the tool this input routes to
-	// (compile-time literal), the input attributes validate against the
-	// declared type instead of passing unchecked.
-	contract, contractOK, contractDiags := validateStepInputToolContract(g, sp, adapterRef, schemas)
-	diags = append(diags, contractDiags...)
-	if contractOK {
-		attrs, ad := sp.Input.Remain.JustAttributes()
-		if !ad.HasErrors() {
-			diags = append(diags, validateTypedInputAttrs(fmt.Sprintf("step %q input", sp.Name), attrs, contract.InType, adapterType, sp.Input.Remain.MissingItemRange())...)
-		} else {
-			diags = append(diags, ad...)
-		}
-	}
+	// KB-59: a schema-less target adapter whose tool block declares an `in`
+	// contract for this input's tool literal gets typed input validation.
+	diags = append(diags, validateStepTypedInput(g, sp, adapterType, adapterRef, schemas)...)
 
 	secretInputMap, secretInputExprs, d := decodeStepSecretInput(g, sp, schemas, opts, adapterType)
 	diags = append(diags, d...)

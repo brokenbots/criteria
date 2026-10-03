@@ -140,7 +140,9 @@ func openFixtureSessions(t *testing.T, sm *SessionManager, graph *workflow.FSMGr
 // tool call carries every needle in its reason.
 func contractIssuesContains(t *testing.T, audit *sliceAuditWriter, needles ...string) bool {
 	t.Helper()
-	for _, entry := range audit.all() {
+	entries := audit.all()
+	for i := range entries {
+		entry := &entries[i]
 		if entry.SessionID != nestedCallerSession || entry.RequestID != "call-1" {
 			continue
 		}

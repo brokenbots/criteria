@@ -839,7 +839,7 @@ type ToolContract struct {
 }
 
 // HasAny reports whether the contract declares at least one side.
-func (c ToolContract) HasAny() bool {
+func (c *ToolContract) HasAny() bool {
 	return c.InType != cty.NilType || c.OutType != cty.NilType
 }
 
