@@ -6,124 +6,41 @@
 // the generated types in sdk/pb/criteria/v1 directly; the helpers here
 // cover the few cross-cutting concerns (schema version, envelope builder,
 // type discriminator, terminal-event check) that aren't generated.
+//
+// Standalone-import note (KB-118): the helpers' single source of truth lives
+// IN the sdk (github.com/brokenbots/criteria/sdk root package) — this root
+// package re-exports it. The sdk must never import this module back (its
+// go.mod require of the criteria root broke every external `go mod tidy`
+// against a released sdk pseudo-version while the dependency pointed this
+// direction).
 package events
 
 import (
-	"fmt"
-	"time"
-
-	"google.golang.org/protobuf/types/known/timestamppb"
-
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+
+	criteria "github.com/brokenbots/criteria/sdk"
 )
 
 // SchemaVersion is the current event protocol version. Bump only with a new
-// criteria.vN proto package.
-const SchemaVersion = 1
+// criteria.vN proto package. Single source of truth: the sdk root package
+// (events re-exports it — bump nothing here by hand).
+const SchemaVersion = criteria.SchemaVersion
 
 // NewEnvelope builds a *pb.Envelope for runID with the given payload message.
-// The schema version is stamped and the timestamp is set to now (UTC).
-// Seq is left at zero; the server assigns the real value on ingest.
-//
-// `payload` must be one of the generated payload message types (e.g.
-// *pb.RunStarted, *pb.StepLog). Passing a nil payload leaves env.Payload
-// unset. Passing a non-nil value of an unknown type panics rather than
-// silently producing an empty envelope — callers are expected to hand in
-// the concrete generated types.
-//
-// NewEnvelope does not set CorrelationId. The agent transport stamps a
-// fresh UUID on every Publish so the server can deduplicate on
-// (run_id, correlation_id) across reconnects; any caller-supplied
-// correlation id would be overwritten there anyway.
+// Single source of truth: the sdk root package (events re-exports it).
+// Compile-time twin: the root-local setPayload switch used to double
+// as the failsafe when a new payload type landed in the proto; the sdk's
+// conformance suite (sdk/conformance) now carries that coverage — run
+// `make test-conformance` after adding envelope payload types.
 func NewEnvelope(runID string, payload any) *pb.Envelope {
-	env := &pb.Envelope{
-		SchemaVersion: SchemaVersion,
-		RunId:         runID,
-		Ts:            timestamppb.New(time.Now().UTC()),
-	}
-	setPayload(env, payload)
-	return env
+	return criteria.NewEnvelope(runID, payload)
 }
 
-// setPayload assigns a payload message to env.Payload by concrete type.
+// switch; kept as a compile-time twin to fail the build when a new payload
+// type lands in the proto without bumping the switch in the sdk) assigns a
+// payload message to env.Payload by concrete type.
 // Unknown non-nil payloads panic to surface caller bugs at construction
 // time rather than producing an empty envelope that looks valid on the wire.
-func setPayload(env *pb.Envelope, payload any) { //nolint:funlen,gocyclo // type switch must cover every concrete payload type in the oneof
-	switch p := payload.(type) {
-	case nil:
-		return
-	case *pb.RunStarted:
-		env.Payload = &pb.Envelope_RunStarted{RunStarted: p}
-	case *pb.RunCompleted:
-		env.Payload = &pb.Envelope_RunCompleted{RunCompleted: p}
-	case *pb.RunFailed:
-		env.Payload = &pb.Envelope_RunFailed{RunFailed: p}
-	case *pb.StepEntered:
-		env.Payload = &pb.Envelope_StepEntered{StepEntered: p}
-	case *pb.StepOutcome:
-		env.Payload = &pb.Envelope_StepOutcome{StepOutcome: p}
-	case *pb.StepOutcomeInvalid:
-		env.Payload = &pb.Envelope_StepOutcomeInvalid{StepOutcomeInvalid: p}
-	case *pb.StepTransition:
-		env.Payload = &pb.Envelope_StepTransition{StepTransition: p}
-	case *pb.StepLog:
-		env.Payload = &pb.Envelope_StepLog{StepLog: p}
-	case *pb.AdapterEvent:
-		env.Payload = &pb.Envelope_AdapterEvent{AdapterEvent: p}
-	case *pb.CriteriaHeartbeat:
-		env.Payload = &pb.Envelope_CriteriaHeartbeat{CriteriaHeartbeat: p}
-	case *pb.CriteriaDisconnected:
-		env.Payload = &pb.Envelope_CriteriaDisconnected{CriteriaDisconnected: p}
-	case *pb.StepResumed:
-		env.Payload = &pb.Envelope_StepResumed{StepResumed: p}
-	case *pb.WatchReady:
-		env.Payload = &pb.Envelope_WatchReady{WatchReady: p}
-	case *pb.VariableSet:
-		env.Payload = &pb.Envelope_VariableSet{VariableSet: p}
-	case *pb.StepOutputCaptured:
-		env.Payload = &pb.Envelope_StepOutputCaptured{StepOutputCaptured: p}
-	case *pb.WaitEntered:
-		env.Payload = &pb.Envelope_WaitEntered{WaitEntered: p}
-	case *pb.WaitResumed:
-		env.Payload = &pb.Envelope_WaitResumed{WaitResumed: p}
-	case *pb.ApprovalRequested:
-		env.Payload = &pb.Envelope_ApprovalRequested{ApprovalRequested: p}
-	case *pb.ApprovalDecision:
-		env.Payload = &pb.Envelope_ApprovalDecision{ApprovalDecision: p}
-	case *pb.BranchEvaluated:
-		env.Payload = &pb.Envelope_BranchEvaluated{BranchEvaluated: p}
-	case *pb.ForEachEntered:
-		env.Payload = &pb.Envelope_ForEachEntered{ForEachEntered: p}
-	case *pb.StepIterationStarted:
-		env.Payload = &pb.Envelope_StepIterationStarted{StepIterationStarted: p}
-	case *pb.StepIterationCompleted:
-		env.Payload = &pb.Envelope_StepIterationCompleted{StepIterationCompleted: p}
-	case *pb.ScopeIterCursorSet:
-		env.Payload = &pb.Envelope_ScopeIterCursorSet{ScopeIterCursorSet: p}
-	case *pb.StepIterationItem:
-		env.Payload = &pb.Envelope_StepIterationItem{StepIterationItem: p}
-	case *pb.RunOutputs:
-		env.Payload = &pb.Envelope_RunOutputs{RunOutputs: p}
-	case *pb.RunMetadata:
-		env.Payload = &pb.Envelope_RunMetadata{RunMetadata: p}
-	case *pb.AdapterLifecycleProvisionWanted:
-		env.Payload = &pb.Envelope_AdapterLifecycleProvisionWanted{AdapterLifecycleProvisionWanted: p}
-	case *pb.AdapterLifecycleReleased:
-		env.Payload = &pb.Envelope_AdapterLifecycleReleased{AdapterLifecycleReleased: p}
-	case *pb.WorkflowGraphs:
-		env.Payload = &pb.Envelope_WorkflowGraphs{WorkflowGraphs: p}
-	case *pb.AgentPromptInjected:
-		env.Payload = &pb.Envelope_AgentPromptInjected{AgentPromptInjected: p}
-	case *pb.CheckpointPointer:
-		env.Payload = &pb.Envelope_CheckpointPointer{CheckpointPointer: p}
-	case *pb.RunPaused:
-		env.Payload = &pb.Envelope_RunPaused{RunPaused: p}
-	case *pb.RunResumed:
-		env.Payload = &pb.Envelope_RunResumed{RunResumed: p}
-	default:
-		panic(fmt.Sprintf("events.NewEnvelope: unsupported payload type %T", payload))
-	}
-}
 
 // TypeString returns a stable discriminator string for env's payload (e.g.
 // "step.log"). It is used as the `type` column in the server's event store and

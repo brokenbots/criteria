@@ -3,7 +3,6 @@ package criteria_test
 import (
 	"testing"
 
-	"github.com/brokenbots/criteria/events"
 	criteria "github.com/brokenbots/criteria/sdk"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
@@ -111,22 +110,13 @@ func TestTypeStringMatchesEvents(t *testing.T) {
 			if got != tc.wantType {
 				t.Errorf("TypeString = %q, want %q", got, tc.wantType)
 			}
-			// Also verify that the SDK wrapper matches the underlying implementation.
-			underlying := events.TypeString(env)
-			if got != underlying {
-				t.Errorf("SDK TypeString %q != events.TypeString %q", got, underlying)
-			}
 		})
 	}
 }
 
 // TestSchemaVersionExportedAsConstant ensures SchemaVersion is exported as a
-// package-level constant equal to the underlying events.SchemaVersion.
+// package-level constant with the wire value.
 func TestSchemaVersionExportedAsConstant(t *testing.T) {
-	if criteria.SchemaVersion != events.SchemaVersion {
-		t.Errorf("criteria.SchemaVersion = %d, events.SchemaVersion = %d",
-			criteria.SchemaVersion, events.SchemaVersion)
-	}
 	if criteria.SchemaVersion != 1 {
 		t.Errorf("expected SchemaVersion = 1, got %d", criteria.SchemaVersion)
 	}
