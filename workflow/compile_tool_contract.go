@@ -132,9 +132,9 @@ func validateStepTypedInput(g *FSMGraph, sp *StepSpec, adapterType, adapterRef s
 }
 
 // validateStepInputToolContract resolves the in-type contract that governs a
-// validateStepToolContract applies to a direct adapter step target's input
-// (KB-59). It applies only to dynamic (schema-less) adapters; returns the
-// routed contract and whether the typed check governs this step's input.
+// direct adapter step target's input{} block (KB-59). It applies only to
+// dynamic (schema-less) adapters; returns the routed contract and whether
+// the typed check governs this step's input.
 func validateStepInputToolContract(g *FSMGraph, sp *StepSpec, adapterRef string, schemas map[string]AdapterInfo) (ToolContract, bool) {
 	if sp.Input == nil || g == nil || adapterRef == "" {
 		return ToolContract{}, false
@@ -220,17 +220,14 @@ func validateTypedInputAttrs(context string, attrs map[string]*hcl.Attribute, in
 			// Deferred to runtime, like the schema path's placeholders.
 			continue
 		}
-		cv, cerr := typedAttrCheck(val, attrType)
-		if cerr != nil {
+		if cerr := typedAttrCheck(val, attrType); cerr != nil {
 			r := attrs[k].Expr.Range()
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  fmt.Sprintf("%s: field %q: %v", context, k, cerr),
 				Subject:  &r,
 			})
-			continue
 		}
-		_ = cv
 	}
 	// Required attributes (non-optional object attributes) must be present.
 	for _, k := range sortedTypeAttrNames(typAttrs) {
@@ -251,20 +248,21 @@ func validateTypedInputAttrs(context string, attrs map[string]*hcl.Attribute, in
 // number-typed one only numbers, and a bool only bools — while structured
 // attributes (list/map/object/tuple/...) convert like the permissive decode
 // does. Unconstrained (dynamic) attribute types accept anything.
-func typedAttrCheck(val cty.Value, attrType cty.Type) (cty.Value, error) {
+func typedAttrCheck(val cty.Value, attrType cty.Type) error {
 	if attrType == cty.DynamicPseudoType {
-		return val, nil
+		return nil
 	}
 	if attrType == cty.String || attrType == cty.Number || attrType == cty.Bool {
 		if val.Type() == attrType {
-			return val, nil
+			return nil
 		}
-		return cty.NilVal, fmt.Errorf("%s required", attrType.FriendlyName())
+		return fmt.Errorf("%s required", attrType.FriendlyName())
 	}
 	if val.Type().Equals(attrType) {
-		return val, nil
+		return nil
 	}
-	return convert.Convert(val, attrType)
+	_, err := convert.Convert(val, attrType)
+	return err
 }
 
 // requiredFieldDiagnostic mirrors the schema path's required-field diagnostic.
