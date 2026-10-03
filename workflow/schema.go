@@ -655,13 +655,11 @@ type PolicySpec struct {
 	// checked at parse, CRI-157 owns wiring only).
 	MaxToolDepth int `hcl:"max_tool_depth,optional"`
 
-	// MaxToolCalls bounds the total number of adapter-to-adapter tool calls
-	// per session (policy.max_tool_calls, KB-58). Grammar: integer >= 1;
-	// unset (0) uses the engine default of 100. The >= 1 range check is
-	// enforced at parse time by checkMaxToolCallsRange (placement mirrors
-	// CRI-155). Depth bounds call stack depth; this bounds total invocation
-	// count so an iterative probe loop (one step cycling tool calls) cannot
-	// run unbounded regardless of depth.
+	// MaxToolCalls bounds the total adapter-to-adapter tool calls per session
+	// (policy.max_tool_calls, KB-58). Integer >= 1; unset (0) uses the
+	// engine default of 100; parse-time range check mirrors CRI-155.
+	// Complements max_tool_depth (count vs stack depth) so an iterative
+	// probe loop cannot run unbounded.
 	MaxToolCalls int `hcl:"max_tool_calls,optional"`
 }
 

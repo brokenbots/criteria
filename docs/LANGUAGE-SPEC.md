@@ -2,18 +2,18 @@
 
 ## Purpose & Audience
 
-This document is the normative reference for the Criteria HCL workflow language, targeting language models and tools that generate or validate workflow files. It is a complete, dense specification: every block type, every attribute, every expression function, every namespace binding, and every outcome rule is listed here. Human-readable prose context lives in [docs/workflow.md](workflow.md).
+Normative reference for the Criteria HCL workflow language, for tools that generate or validate workflow files. Complete and dense: every block type, attribute, expression function, namespace binding, and outcome rule is listed here. Prose context lives in [docs/workflow.md](workflow.md).
 
 ## File structure
 
 A workflow module is either:
 
 1. **Single-file:** one `.chcl` or `.hcl` file containing all declarations.
-2. **Directory module:** a directory of `.chcl` and/or `.hcl` files; exactly one must contain a `workflow` header block. All files are merged before compilation.
+2. **Directory module:** a directory of `.chcl`/`.hcl` files; exactly one must contain a `workflow` header block. All files are merged before compilation.
 
-File names are arbitrary; the `.chcl` extension is preferred for new files (criteria-native tooling uses it for file-type association); `.hcl` is accepted for compatibility. A module must contain exactly one `workflow` block across all files; zero or more than one is a compile error.
+File names are arbitrary; `.chcl` is preferred for new files (criteria-native tooling uses it for file-type association); `.hcl` is accepted for compatibility. A module must contain exactly one `workflow` block; zero or more than one is a compile error.
 
-Encoding: UTF-8. `file()` reads default to a 1 MiB cap (overridable via `CRITERIA_FILE_FUNC_MAX_BYTES`, clamped to [1 KiB, 64 MiB]); no hard limit on source files.
+Encoding: UTF-8. `file()` reads default to a 1 MiB cap (override via `CRITERIA_FILE_FUNC_MAX_BYTES`, clamped to [1 KiB, 64 MiB]); no hard limit on source files.
 
 ## Grammar (EBNF-ish)
 
@@ -66,7 +66,7 @@ Rules:
 - All block keywords are lowercase.
 - STRING values are double-quoted HCL string literals; template interpolation (`${...}`) is supported in most attribute values.
 - Block labels (the quoted strings after the keyword) are identifiers for cross-referencing; they must be unique within their block kind.
-- The `Required: yes` column in the block tables means either: (a) the HCL `optional` tag is absent — HCL itself enforces presence, or (b) the field carries a `// spec:required` annotation — compile.go enforces presence even though HCL accepts absence. Attributes with `Required: no` are syntactically optional; some have conditional compile-time requirements described in the block notes below (e.g. `wait` requires exactly one of `duration` or `signal`).
+- The `Required: yes` column in the block tables means either: (a) the HCL `optional` tag is absent — HCL itself enforces presence, or (b) the field carries a `// spec:required` annotation — compile.go enforces presence even though HCL accepts absence. `Required: no` attributes are syntactically optional; some have conditional compile-time requirements described in the block notes below (e.g. `wait` requires exactly one of `duration` or `signal`).
 
 ## Blocks
 
@@ -253,7 +253,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `permissions { ... }`
 
-- **Source:** [`workflow/schema.go:669`](../workflow/schema.go#L669)
+- **Source:** [`workflow/schema.go:667`](../workflow/schema.go#L667)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -272,7 +272,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 | `max_step_retries` | number | no | _(no description)_ |
 | `max_visits_warn_threshold` | number | no | MaxVisitsWarnThreshold controls when the engine emits a warning for excessive revisits while executing a workflow. |
 | `max_tool_depth` | number | no | MaxToolDepth bounds the adapter-to-adapter tool-call stack depth (policy.max_tool_depth). Grammar: integer >= 1; unset (0) uses the engine default of 8. Parsed in CRI-155; graph-level wiring lands in CRI-157. The >= 1 range check is enforced here at parse time as a plain decode diagnostic by checkMaxToolDepthRange (CRI-155 placement decision: checked at parse, CRI-157 owns wiring only). |
-| `max_tool_calls` | number | no | MaxToolCalls bounds the total number of adapter-to-adapter tool calls per session (policy.max_tool_calls, KB-58). Grammar: integer >= 1; unset (0) uses the engine default of 100. The >= 1 range check is enforced at parse time by checkMaxToolCallsRange (placement mirrors CRI-155). Depth bounds call stack depth; this bounds total invocation count so an iterative probe loop (one step cycling tool calls) cannot run unbounded regardless of depth. |
+| `max_tool_calls` | number | no | MaxToolCalls bounds the total adapter-to-adapter tool calls per session (policy.max_tool_calls, KB-58). Integer >= 1; unset (0) uses the engine default of 100; parse-time range check mirrors CRI-155. Complements max_tool_depth (count vs stack depth) so an iterative probe loop cannot run unbounded. |
 
 
 ### `config { ... }`
@@ -362,7 +362,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 **`switch`** — Conditional routing. `match` sub-blocks are evaluated in declaration order; the first truthy `condition` expression wins. `default` is the fallback; absence without an exhaustive condition set produces a runtime error.
 
-**`policy`** — Global execution guards, declared inside the `workflow` header block. Attributes set hard limits on step execution counts and the tool-call depth; see [Adapter tools](#adapter-tools).
+**`policy`** — Global execution guards, declared inside the `workflow` header block. Attributes set hard limits on step execution counts and tool-call depth; see [Adapter tools](#adapter-tools).
 
 **`permissions`** — Workflow-level tool allowlist. `allow_tools` is a list of glob patterns unioned with any step-level `allow_tools`.
 
@@ -580,20 +580,20 @@ Each rule maps 1:1 to a compiler diagnostic (CRI-156):
 |---|---|---|
 | 1 | error | Every `tools` entry resolves to an adapter declared in the same workflow. |
 | 2 | error | Entry shape is `adapter.<type>.<name>[.tools[.<tool>]]`. |
-| 3 | error | When the callee declares static `tool` blocks, entry tool names must match a declared static tool (static declarations take precedence over every other tool source). |
+| 3 | error | Static `tool` blocks: entry tool names must match a declared static tool (static declarations take precedence over every other tool source). |
 | 4 | lenient | Adapters declaring `dynamic_tools = true` skip the static-name check; enforcement happens at run time via `allow_tools`. |
 | 5 | warning | Duplicate entries in one `tools` list. |
-| 6 | warning | Entry names a callee that presents no tool surface (no `tool` blocks, no `dynamic_tools`, and no handshake-reported tools). |
+| 6 | warning | Entry names a callee that presents no tool surface (no `tool` blocks, `dynamic_tools`, or handshake-reported tools). |
 | 7 | warning | Entry on a step whose target adapter lacks the `adapter_tools` capability. |
 | 8 | warning | Cycle in the adapter-to-adapter call graph (A calls B calls A, directly or transitively). |
 | 9 | error | `max_tool_depth` is an integer ≥ 1; default `8`. |
 
-**Tool-source precedence (CRI-173).** When checking a named `tools` entry, the compiler consults the callee's tool surface in this order, and the first applicable source wins:
+**Tool-source precedence (CRI-173).** When checking a named `tools` entry, the compiler consults the callee's tool surface in this order; the first applicable source wins:
 
-1. **Static `tool` blocks** — entry names must match a declared static tool; this check applies even when `dynamic_tools = true` is also set.
-2. **`dynamic_tools = true`** — the static-name check is skipped entirely; the runtime tool surface is unknown at compile time and enforcement happens at run time via `allow_tools`.
-3. **Handshake-reported tools (`InfoResponse.tools`, CRI-171)** — for callees that declare neither static tool blocks nor `dynamic_tools` but report tools in their adapter handshake, the compiler checks entry names against the reported surface when the handshake is available (through the collected adapter schemas).
-4. **Neither** — named entries are rejected with the rule-6 diagnostic; bare `…tools` entries remain valid and are advisory only.
+1. **Static `tool` blocks** — entry names must match a declared static tool, even when `dynamic_tools = true` is also set.
+2. **`dynamic_tools = true`** — static-name check is skipped entirely; runtime tool surface unknown at compile time, enforced at run time via `allow_tools`.
+3. **Handshake-reported tools (`InfoResponse.tools`, CRI-171)** — for callees with neither static `tool` blocks nor `dynamic_tools`, the compiler checks entry names against the reported surface when available (through the collected adapter schemas).
+4. **Neither** — named entries are rejected with the rule-6 diagnostic; bare `…tools` entries remain valid and advisory only.
 
 ### Reserved interactions
 
@@ -605,7 +605,7 @@ Each rule maps 1:1 to a compiler diagnostic (CRI-156):
 
 ## Error model
 
-**Compile errors** are detected during `make validate` / `criteria compile`. They include: missing required attributes, unknown block types, type mismatches in literal expressions, unresolved `next` references, missing terminal state, policy constraint violations, and adapter config schema violations.
+**Compile errors** are detected during `make validate` / `criteria compile`: missing required attributes, unknown block types, literal type mismatches, unresolved `next` references, missing terminal state, policy constraint violations, and adapter config schema violations.
 
 **Runtime errors** are non-fatal by default unless they propagate to a terminal routing failure. Categories:
 
