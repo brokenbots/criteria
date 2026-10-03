@@ -409,15 +409,13 @@ func (s *Shim) Stop(ctx context.Context) error {
 	if s.listener != nil {
 		_ = s.listener.Close()
 	}
+	stopping := make([]*session, 0, len(s.sessions))
 	for _, sess := range s.sessions {
-		if sess.cancel != nil {
-			sess.cancel()
-		}
-		if sess.handle != nil {
-			_ = sess.handle.CloseSession(ctx, "")
-			sess.handle.Kill()
-		}
+		stopping = append(stopping, sess)
 	}
+	// Empty the registry before tearing the bridges down: the kill path
+	// deregisters synchronously (KB-153) and must not re-enter s.mu, which
+	// this function holds across the teardown.
 	s.sessions = make(map[string]*session)
 	// Wake up any waiters with an error.
 	for _, waiters := range s.waiters {
@@ -427,6 +425,15 @@ func (s *Shim) Stop(ctx context.Context) error {
 	}
 	s.waiters = make(map[string][]chan waitResult)
 	s.mu.Unlock()
+	for _, sess := range stopping {
+		if sess.cancel != nil {
+			sess.cancel()
+		}
+		if sess.handle != nil {
+			_ = sess.handle.CloseSession(ctx, "")
+			sess.handle.Kill()
+		}
+	}
 	return nil
 }
 
@@ -1053,7 +1060,28 @@ func (s *Shim) buildAndStoreHandle(
 	bridgeCtx context.Context,
 	bridgeWG *sync.WaitGroup,
 ) error {
-	handle := makeHandle(adapterName, client, pluginClient, func() {
+	key := s.sessionKey(adapterName, scope)
+
+	// KB-153: deregister this session from the session map synchronously the
+	// moment its bridge starts tearing down. The engine's verify phase kills
+	// its throwaway handshake handle before the bind phase waits, and that
+	// kill is synchronous; with teardown-initiated deregistration the killed
+	// session is invisible by the time Kill returns, so a pending bind-phase
+	// wait can never be handed the dead bridge (whose OpenSession fails with
+	// "grpc: the client connection is closing" as a hard step failure). The
+	// teardown goroutine below re-checks idempotently for bridge cancels that
+	// bypass Kill (a dropped phone-home conn); those remain asynchronous.
+	var handle adapterhost.Handle
+	removeSession := func() {
+		s.mu.Lock()
+		if cur, ok := s.sessions[key]; ok && cur.handle == handle {
+			delete(s.sessions, key)
+		}
+		s.mu.Unlock()
+	}
+
+	handle = makeHandle(adapterName, client, pluginClient, func() {
+		removeSession()
 		bridgeCancel()
 		_ = conn.Close()
 		_ = udsConn.Close()
@@ -1063,7 +1091,6 @@ func (s *Shim) buildAndStoreHandle(
 	})
 
 	s.mu.Lock()
-	key := s.sessionKey(adapterName, scope)
 	var old *session
 	if existing, ok := s.sessions[key]; ok {
 		old = existing
@@ -1098,18 +1125,13 @@ func (s *Shim) buildAndStoreHandle(
 
 	go func() {
 		<-bridgeCtx.Done()
+		removeSession()
 		_ = conn.Close()
 		_ = udsConn.Close()
 		bridgeWG.Wait()
 		_ = lis.Close()
 		pluginClient.Kill()
 		_ = os.RemoveAll(filepath.Dir(socketPath))
-
-		s.mu.Lock()
-		if cur, ok := s.sessions[key]; ok && cur.handle == handle {
-			delete(s.sessions, key)
-		}
-		s.mu.Unlock()
 	}()
 
 	return nil

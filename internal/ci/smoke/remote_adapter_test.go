@@ -519,7 +519,14 @@ func kubectlDeletePod(t *testing.T, labelSelector, namespace string) {
 
 // waitForPodLog polls kubectl logs until the given substring appears or the
 // timeout expires.
-func waitForPodLog(t *testing.T, namespace, labelSelector, substring string, timeout time.Duration) {
+//
+// KB-153: runErrc carries the engine run error so a pod-log wait that times
+// out while the engine is already failing (or failed) does not MASK the
+// engine error — the crash-recovery Gate-3 signature was exactly that: the
+// pod-log timeout fired at 65s and hid the engine's bind error. The channel
+// is drained non-blocking: an empty channel means the engine is still
+// running, which is itself reported.
+func waitForPodLog(t *testing.T, namespace, labelSelector, substring string, timeout time.Duration, runErrc <-chan error) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	var lastOut []byte
@@ -531,10 +538,21 @@ func waitForPodLog(t *testing.T, namespace, labelSelector, substring string, tim
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	// Surface the pod's actual logs + status so a timeout is diagnosable rather
-	// than blind (e.g. a dial error phoning home, or a crash-loop).
+	// Surface the pod's actual logs + status AND the engine's state so a
+	// timeout is diagnosable rather than blind: a dial error phoning home, a
+	// crash-loop, or an engine bind failure racing this wait.
 	desc, _ := exec.Command("kubectl", "describe", "pods", "-n", namespace, "-l", labelSelector).CombinedOutput()
-	t.Fatalf("timeout waiting for pod log containing %q\n--- pod logs ---\n%s\n--- pod describe ---\n%s", substring, lastOut, desc)
+	engineState := "engine run: still in flight when the pod-log wait timed out"
+	select {
+	case runErr := <-runErrc:
+		if runErr != nil {
+			engineState = fmt.Sprintf("engine run error: %v", runErr)
+		} else {
+			engineState = "engine run completed without error"
+		}
+	default:
+	}
+	t.Fatalf("timeout waiting for pod log containing %q\n--- %s ---\n--- pod logs ---\n%s\n--- pod describe ---\n%s", substring, engineState, lastOut, desc)
 }
 
 func TestRemoteAdapter_K8sHappyPath(t *testing.T) {
@@ -543,7 +561,16 @@ func TestRemoteAdapter_K8sHappyPath(t *testing.T) {
 	}
 	requireTools(t, "kind", "kubectl", "docker", "go")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	// Budget: this context bounds the whole run — engine run plus the kubectl
+	// waits around it. KB-153: pod cold-start on GH runners (image-pull +
+	// kind node scheduling) plus the pod's re-dial after the verify-phase
+	// handshake teardown all ride inside this budget on a slow runner class,
+	// so the budget absorbs runner variance instead of the cancel reaping a
+	// handshake mid-flurry and surfacing as a "connection is closing" step
+	// failure. The engine's handshake budget distinguishes scheduler latency
+	// from a dead adapter; this budget only has to be wider than runner
+	// variance.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	moduleRoot := findModuleRoot(t)
@@ -668,7 +695,7 @@ spec:
 	go func() { errCh <- eng.Run(ctx) }()
 
 	// Confirm the pod connected (now that the shim is listening).
-	waitForPodLog(t, namespace, "app=greeter", "serving gRPC", 60*time.Second)
+	waitForPodLog(t, namespace, "app=greeter", "serving gRPC", 60*time.Second, errCh)
 
 	if err := <-errCh; err != nil {
 		t.Fatalf("engine run: %v", err)
@@ -685,7 +712,7 @@ func TestRemoteAdapter_K8sCrashRecovery(t *testing.T) {
 	}
 	requireTools(t, "kind", "kubectl", "docker", "go")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 7*time.Minute)
 	defer cancel()
 
 	moduleRoot := findModuleRoot(t)
@@ -812,10 +839,10 @@ spec:
 	}()
 
 	// Wait for the adapter pod to phone home (shim is now listening).
-	waitForPodLog(t, namespace, "app=greeter", "serving gRPC", 60*time.Second)
+	waitForPodLog(t, namespace, "app=greeter", "serving gRPC", 60*time.Second, errCh)
 
 	// Wait for the step to start executing (delay_ms = 15s).
-	waitForPodLog(t, namespace, "app=greeter", "step execution started", 30*time.Second)
+	waitForPodLog(t, namespace, "app=greeter", "step execution started", 30*time.Second, errCh)
 
 	// Delete the adapter pod mid-execution.
 	kubectlDeletePod(t, "app=greeter", namespace)
