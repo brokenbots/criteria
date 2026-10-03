@@ -5,6 +5,13 @@ import pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 // RunStarted is emitted when a run begins execution.
 type RunStarted = pb.RunStarted
 
+// RunMetadata — external orchestration metadata for a run (CRI-131). Emitted
+// by an orchestrator (e.g. the criteria-k8s operator) after the run record is
+// created, when metadata that was not known at create time (such as the pull
+// request URL) becomes available. Consumers that promote the fields onto the
+// run record must read only the run.metadata envelope, never request fields.
+type RunMetadata = pb.RunMetadata
+
 // RunCompleted is emitted when a run finishes successfully.
 type RunCompleted = pb.RunCompleted
 

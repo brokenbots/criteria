@@ -6,6 +6,66 @@ non-breaking; any change to an exported surface requires a major-version bump.
 
 ---
 
+## [v0.6.0] — 2026-10-03
+
+### Added — KB-104: `OrchestratorService` + `RunMetadata`/`AdapterLifecycle` envelope arms
+
+- **New proto service**: `criteria.v1.OrchestratorService` in
+  `proto/criteria/v1/orchestrator.proto` (new file), carrying
+  `SubscribeRunEvents`, `ListActiveRuns`, and `CancelRun` with their request /
+  response messages. Generated Go bindings in
+  `sdk/pb/criteria/v1/orchestrator.pb.go` and Connect handler stubs in
+  `sdk/pb/criteria/v1/criteriav1connect/orchestrator.connect.go`. The proto
+  file is byte-identical to the orchestrator's shipped proto copy (castle),
+  which is the merge-gate authority for the service, so castle's operator
+  API compiles against the released SDK without a local fork.
+- **New envelope arms** in `proto/criteria/v1/events.proto` (oneof fields
+  34/35/36, previously free), byte-identical to the castle fork's copy:
+  `RunMetadata run_metadata = 34` (kind `run.metadata`; fields `ticket`,
+  `repo_url`, `pr_url`, each "only overwrites when non-empty"), and the
+  adapter-pod reconcile pair `AdapterLifecycleProvisionWanted` = 35 /
+  `AdapterLifecycleReleased` = 36 (kinds `adapter.lifecycle.provision_wanted`
+  / `adapter.lifecycle.released`; shared shape `scope_instance_id`,
+  `shim_listen_address`, `token_ref`, `reason`, `ttl`).
+- **SDK aliases**: `Envelope_RunMetadata`,
+  `Envelope_AdapterLifecycleProvisionWanted`, `Envelope_AdapterLifecycleReleased`
+  in `events.go`; payload aliases `RunMetadata` (`payloads_run.go`) and
+  `AdapterLifecycleProvisionWanted` / `AdapterLifecycleReleased`
+  (`payloads_adapter.go`); `OrchestratorServiceClient` / `OrchestratorServiceHandler`
+  type aliases plus their `New*` constructors and procedure-name constants in
+  `connect.go`; `TypeString`/`IsTerminal` discriminator strings
+  (`run.metadata`, `adapter.lifecycle.*`) in the kind mapping. None of these
+  are new request fields: run context rides the generic `RunMetadata`
+  envelope (CRI-131 ruling — `CreateRunRequest`/`Run` gain no
+  `ticket`/`repo_url`/`pr_url`).
+- **Conformance**: new `RunMetadataRoundTrip` (metadata envelopes persist with
+  fields and submission order preserved) and `AdapterPodReconcileEventsRoundTrip`
+  (provision_wanted/released pair persists with scope_instance_id /
+  shim_listen_address / token_ref preserved, submission ordering stable, and
+  `IsTerminal()==false`) cases; the descriptor-driven `EnvelopeRoundTrip` walk
+  covers the new arms automatically.
+- **Backward compatibility**: consumers unaware of fields 34–36 ignore the new
+  envelope types; readers require no changes. Orchestrator implementations that
+  previously vendored the fork's proto can now delete it and re-pin this SDK.
+
+### Bump rationale
+
+Adding oneof fields 34–36 changes the event field numbers, which AGENTS.md's
+breaking-change policy classifies as a breaking SDK change ("Any change to
+the `Subject`/`ServiceHandler` surface or to event field numbers is a
+breaking SDK change and requires an SDK major-version bump"). Per this
+changelog's established pre-1.0 convention (see v0.3.0 and v0.4.0), pre-1.0
+additive surface is recorded as a minor bump: **v0.6.0**. SDK consumers
+regenerate protobuf bindings from the updated `.proto` files to gain the new
+service and messages; no existing reader or writer code is affected. Castle
+follows up by re-pinning this SDK, switching promotion to envelope-only, and
+deleting its criteria-sdk fork (KB-102); a later criteria PR drops the CRI-131
+first-class request/run fields.
+
+[v0.6.0]: https://github.com/brokenbots/criteria/releases/tag/v0.6.0
+
+---
+
 ## [v0.4.0] — 2026-09-21
 
 ### Added — CRI-278: `WorkflowGraphs` event (oneof field 37)
