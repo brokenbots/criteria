@@ -11,7 +11,9 @@
 // immediately after init (verify kill) returns, with no settle wait. The bind
 // must wait for the adapter pod's reconnect and the step must succeed; the
 // failure signature must never be the torn-down transport error. A genuinely
-// dead adapter is covered at the shim level (see the remote package's KB-153
+// dead adapter fails at the session handshake budget with the CRI-137
+// diagnosis (second test below); the shim level pins the same pair of
+// semantics against the registry itself (see the remote package's KB-153
 // regression tests).
 package engine
 
@@ -20,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -38,7 +41,11 @@ type kb153BindChain struct {
 // runKB153BindChain wires the full remote chain and returns it in the exact
 // state Gate-3 raced: verify completed, the throwaway handshake handle was
 // killed, and init has just returned — no settle wait for the pod's re-dial.
-func runKB153BindChain(t *testing.T) *kb153BindChain {
+// budget > 0 overrides the shim's session-wait budgets (zero selects the
+// defaults); keepRedialing=false stops the pod's phone-home loop right at
+// init return, simulating a genuinely dead adapter: the pod handed out its
+// verify handshake and then vanished.
+func runKB153BindChain(t *testing.T, budget time.Duration, keepRedialing bool) *kb153BindChain {
 	t.Helper()
 	ctx := context.Background()
 	g := perScopeRemoteGraph(t)
@@ -51,7 +58,12 @@ func runKB153BindChain(t *testing.T) *kb153BindChain {
 		}
 	}
 
-	realShim, err := remote.NewShim(&remote.Config{ListenAddress: "127.0.0.1:0", PerScopeSessions: true}, nil)
+	cfg := &remote.Config{ListenAddress: "127.0.0.1:0", PerScopeSessions: true}
+	if budget > 0 {
+		cfg.SessionHandshakeBudget = budget
+		cfg.SessionSchedulingBudget = budget
+	}
+	realShim, err := remote.NewShim(cfg, nil)
 	if err != nil {
 		t.Fatalf("NewShim: %v", err)
 	}
@@ -111,9 +123,11 @@ func runKB153BindChain(t *testing.T) *kb153BindChain {
 	podDone := make(chan struct{})
 	pod := &cri276PodServer{name: "noop", version: "1.0.0"}
 	accepted := &atomic.Int64{}
+	stopDialOnce := &sync.Once{}
+	stopDialing := func() { stopDialOnce.Do(func() { close(stopDial) }) }
 	go podHomeLoop(realShim.ListenAddr(), hs, stopDial, podDone, accepted, pod, nil)
 	t.Cleanup(func() {
-		close(stopDial)
+		stopDialing()
 		<-podDone
 	})
 	// Shut the manager down first (LIFO): it closes bound sessions through
@@ -125,6 +139,14 @@ func runKB153BindChain(t *testing.T) *kb153BindChain {
 	if err := <-initDone; err != nil {
 		t.Fatalf("initScopeAdapters: %v", err)
 	}
+	if !keepRedialing {
+		// Genuinely dead adapter: the pod served the verify handshake, the
+		// kill closed its connection, and it never re-dials. Close the dial
+		// loop before the bind window opens so no fresh session can appear.
+		// The loop re-checks stop only after its bookkeeping, which cannot
+		// beat this synchronous close (see podHomeLoop).
+		stopDialing()
+	}
 
 	// Intentionally NO settle wait for the pod's re-dial: the next step bind
 	// here races the just-killed verify handle's registry cleanup, which is
@@ -133,7 +155,7 @@ func runKB153BindChain(t *testing.T) *kb153BindChain {
 }
 
 func TestBindAfterVerifyKill_WaitsForAdapterRedial(t *testing.T) {
-	chain := runKB153BindChain(t)
+	chain := runKB153BindChain(t, 0, true)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -164,5 +186,36 @@ func TestBindAfterVerifyKill_WaitsForAdapterRedial(t *testing.T) {
 			t.Fatalf("pod served %d Execute calls and counted %d accepted handshakes within 5s of a successful first step; want the verify handshake and the post-kill re-dial (+1 Execute)", chain.pod.execCalls.Load(), chain.accepted.Load())
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// TestBindDeadAdapterAfterVerifyKill_FailsAtHandshakeBudget is the engine-level
+// half of the KB-153 acceptance pair: an adapter that served the verify
+// handshake and then died (never re-dials) must fail the step at the session
+// handshake budget with the CRI-137 diagnosis — never with the torn-down
+// transport's "connection is closing" (the KB-153 signature).
+func TestBindDeadAdapterAfterVerifyKill_FailsAtHandshakeBudget(t *testing.T) {
+	const budget = 400 * time.Millisecond
+	chain := runKB153BindChain(t, budget, false)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	events := cri276AdapterEvents{}
+	step := &workflow.StepNode{Name: "kb153-dead-bind"}
+
+	start := time.Now()
+	_, err := chain.sessions.Execute(ctx, "noop.default", step, events, nil)
+	if err == nil {
+		t.Fatalf("step against a dead adapter succeeded; want handshake-budget failure")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "connection is closing") {
+		t.Fatalf("dead adapter surfaced the torn-down transport signature instead of the budget diagnosis: %v", err)
+	}
+	if !strings.Contains(msg, "identity handshake") {
+		t.Fatalf("dead adapter failure = %q, want CRI-137 diagnosis mentioning identity handshake", msg)
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("dead adapter failure took %s; the 400ms handshake budget should bound it", elapsed)
 	}
 }
