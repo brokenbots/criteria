@@ -1206,4 +1206,3 @@ func (s *permissionInterceptSink) rejectToolCallDetail(requestID, target, argsDi
 	})
 	s.permState.sendToolCallResult(requestID, code)
 }
-

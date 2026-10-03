@@ -112,18 +112,18 @@ func compileOneAdapter(g *FSMGraph, ad *AdapterDeclSpec, schemas map[string]Adap
 	}
 
 	g.Adapters[key] = &AdapterNode{
-		Type:         typeName,
-		Name:         instanceName,
-		Source:       ad.Source,
-		Environment:  effectiveEnv,
-		OnCrash:      effectiveOnCrash,
-		Config:       adapterConfig,
-		ConfigExprs:  configExprs,
-		Secrets:      secrets,
-		StaticTools:  staticTools,
-		DynamicTools: ad.DynamicTools,
-		ToolContracts:      toolContracts,
-		ToolContractOrder:  toolContractOrder,
+		Type:              typeName,
+		Name:              instanceName,
+		Source:            ad.Source,
+		Environment:       effectiveEnv,
+		OnCrash:           effectiveOnCrash,
+		Config:            adapterConfig,
+		ConfigExprs:       configExprs,
+		Secrets:           secrets,
+		StaticTools:       staticTools,
+		DynamicTools:      ad.DynamicTools,
+		ToolContracts:     toolContracts,
+		ToolContractOrder: toolContractOrder,
 	}
 	// Track adapter declaration order for stable iteration
 	g.AdapterOrder = append(g.AdapterOrder, key)
