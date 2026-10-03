@@ -126,6 +126,9 @@ type Envelope struct {
 	//	*Envelope_ScopeIterCursorSet
 	//	*Envelope_StepIterationItem
 	//	*Envelope_RunOutputs
+	//	*Envelope_RunMetadata
+	//	*Envelope_AdapterLifecycleProvisionWanted
+	//	*Envelope_AdapterLifecycleReleased
 	//	*Envelope_WorkflowGraphs
 	//	*Envelope_AgentPromptInjected
 	//	*Envelope_CheckpointPointer
@@ -426,6 +429,33 @@ func (x *Envelope) GetRunOutputs() *RunOutputs {
 	return nil
 }
 
+func (x *Envelope) GetRunMetadata() *RunMetadata {
+	if x != nil {
+		if x, ok := x.Payload.(*Envelope_RunMetadata); ok {
+			return x.RunMetadata
+		}
+	}
+	return nil
+}
+
+func (x *Envelope) GetAdapterLifecycleProvisionWanted() *AdapterLifecycleProvisionWanted {
+	if x != nil {
+		if x, ok := x.Payload.(*Envelope_AdapterLifecycleProvisionWanted); ok {
+			return x.AdapterLifecycleProvisionWanted
+		}
+	}
+	return nil
+}
+
+func (x *Envelope) GetAdapterLifecycleReleased() *AdapterLifecycleReleased {
+	if x != nil {
+		if x, ok := x.Payload.(*Envelope_AdapterLifecycleReleased); ok {
+			return x.AdapterLifecycleReleased
+		}
+	}
+	return nil
+}
+
 func (x *Envelope) GetWorkflowGraphs() *WorkflowGraphs {
 	if x != nil {
 		if x, ok := x.Payload.(*Envelope_WorkflowGraphs); ok {
@@ -602,6 +632,28 @@ type Envelope_RunOutputs struct {
 	RunOutputs *RunOutputs `protobuf:"bytes,33,opt,name=run_outputs,json=runOutputs,proto3,oneof"`
 }
 
+type Envelope_RunMetadata struct {
+	// RunMetadata — emitted by an external orchestrator (e.g. the criteria-k8s
+	// operator) to publish run metadata discovered during orchestration, such
+	// as the pull request URL. The server promotes known fields onto the run
+	// record and stores/fans out the event like any other envelope. CRI-131.
+	RunMetadata *RunMetadata `protobuf:"bytes,34,opt,name=run_metadata,json=runMetadata,proto3,oneof"`
+}
+
+type Envelope_AdapterLifecycleProvisionWanted struct {
+	// AdapterLifecycleProvisionWanted / AdapterLifecycleReleased — engine-
+	// emitted adapter pod reconcile signals (CRI-115). The orchestrator
+	// observes these through the orchestrator event subscription API
+	// (CRI-133) and reconciles adapter pods per scope_instance_id. The server
+	// stores and fans them out verbatim without interpreting the fields.
+	// Permanent field numbers.
+	AdapterLifecycleProvisionWanted *AdapterLifecycleProvisionWanted `protobuf:"bytes,35,opt,name=adapter_lifecycle_provision_wanted,json=adapterLifecycleProvisionWanted,proto3,oneof"` // permanent (CRI-115)
+}
+
+type Envelope_AdapterLifecycleReleased struct {
+	AdapterLifecycleReleased *AdapterLifecycleReleased `protobuf:"bytes,36,opt,name=adapter_lifecycle_released,json=adapterLifecycleReleased,proto3,oneof"` // permanent (CRI-115)
+}
+
 type Envelope_WorkflowGraphs struct {
 	// WorkflowGraphs — compiled subworkflow layers of the run's workflow
 	// (CRI-257). Emitted by the agent after compilation so UIs can render the
@@ -711,6 +763,12 @@ func (*Envelope_ScopeIterCursorSet) isEnvelope_Payload() {}
 func (*Envelope_StepIterationItem) isEnvelope_Payload() {}
 
 func (*Envelope_RunOutputs) isEnvelope_Payload() {}
+
+func (*Envelope_RunMetadata) isEnvelope_Payload() {}
+
+func (*Envelope_AdapterLifecycleProvisionWanted) isEnvelope_Payload() {}
+
+func (*Envelope_AdapterLifecycleReleased) isEnvelope_Payload() {}
 
 func (*Envelope_WorkflowGraphs) isEnvelope_Payload() {}
 
@@ -2304,6 +2362,213 @@ func (x *RunOutputs) GetOutputs() []*RunOutputs_Output {
 	return nil
 }
 
+// RunMetadata — external orchestration metadata for a run (CRI-131). Emitted
+// by an orchestrator (e.g. the criteria-k8s operator) after the run record is
+// created, when metadata that was not known at create time (such as the pull
+// request URL) becomes available. Server behavior: promote known fields onto
+// the run record (only non-empty values overwrite) and persist/fan out the
+// event like any other envelope.
+type RunMetadata struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// ticket is the external ticket identifier; only overwrites when non-empty.
+	Ticket string `protobuf:"bytes,1,opt,name=ticket,proto3" json:"ticket,omitempty"`
+	// repo_url is the repository the run operates on; only overwrites when non-empty.
+	RepoUrl string `protobuf:"bytes,2,opt,name=repo_url,json=repoUrl,proto3" json:"repo_url,omitempty"`
+	// pr_url is the pull request URL produced by the run; only overwrites when non-empty.
+	PrUrl         string `protobuf:"bytes,3,opt,name=pr_url,json=prUrl,proto3" json:"pr_url,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RunMetadata) Reset() {
+	*x = RunMetadata{}
+	mi := &file_criteria_v1_events_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RunMetadata) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RunMetadata) ProtoMessage() {}
+
+func (x *RunMetadata) ProtoReflect() protoreflect.Message {
+	mi := &file_criteria_v1_events_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RunMetadata.ProtoReflect.Descriptor instead.
+func (*RunMetadata) Descriptor() ([]byte, []int) {
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *RunMetadata) GetTicket() string {
+	if x != nil {
+		return x.Ticket
+	}
+	return ""
+}
+
+func (x *RunMetadata) GetRepoUrl() string {
+	if x != nil {
+		return x.RepoUrl
+	}
+	return ""
+}
+
+func (x *RunMetadata) GetPrUrl() string {
+	if x != nil {
+		return x.PrUrl
+	}
+	return ""
+}
+
+// AdapterLifecycleProvisionWanted — the engine requests provisioning of an
+// adapter execution environment (pod) for a scope instance (CRI-115). The
+// orchestrator reconciles the adapter pod for scope_instance_id upon observing
+// this event via the orchestrator event subscription API (CRI-133). The
+// server stores and fans out this event verbatim; it interprets none of the
+// fields. All field numbers permanent.
+type AdapterLifecycleProvisionWanted struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// scope_instance_id identifies the adapter scope instance (run/step scope)
+	// the execution environment must be provisioned for; permanent.
+	ScopeInstanceId string `protobuf:"bytes,1,opt,name=scope_instance_id,json=scopeInstanceId,proto3" json:"scope_instance_id,omitempty"`
+	// shim_listen_address is the address the adapter shim listens on; permanent.
+	ShimListenAddress string `protobuf:"bytes,2,opt,name=shim_listen_address,json=shimListenAddress,proto3" json:"shim_listen_address,omitempty"`
+	// token_ref is the reference to the secret holding the adapter token; permanent.
+	TokenRef      string `protobuf:"bytes,3,opt,name=token_ref,json=tokenRef,proto3" json:"token_ref,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AdapterLifecycleProvisionWanted) Reset() {
+	*x = AdapterLifecycleProvisionWanted{}
+	mi := &file_criteria_v1_events_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AdapterLifecycleProvisionWanted) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AdapterLifecycleProvisionWanted) ProtoMessage() {}
+
+func (x *AdapterLifecycleProvisionWanted) ProtoReflect() protoreflect.Message {
+	mi := &file_criteria_v1_events_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AdapterLifecycleProvisionWanted.ProtoReflect.Descriptor instead.
+func (*AdapterLifecycleProvisionWanted) Descriptor() ([]byte, []int) {
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *AdapterLifecycleProvisionWanted) GetScopeInstanceId() string {
+	if x != nil {
+		return x.ScopeInstanceId
+	}
+	return ""
+}
+
+func (x *AdapterLifecycleProvisionWanted) GetShimListenAddress() string {
+	if x != nil {
+		return x.ShimListenAddress
+	}
+	return ""
+}
+
+func (x *AdapterLifecycleProvisionWanted) GetTokenRef() string {
+	if x != nil {
+		return x.TokenRef
+	}
+	return ""
+}
+
+// AdapterLifecycleReleased — the engine signals that the adapter execution
+// environment for a scope instance is no longer needed and the orchestrator
+// may release (tear down) the corresponding pod (CRI-115). The server stores
+// and fans out this event verbatim; it interprets none of the fields. All
+// field numbers permanent.
+type AdapterLifecycleReleased struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// scope_instance_id identifies the released adapter scope instance; permanent.
+	ScopeInstanceId string `protobuf:"bytes,1,opt,name=scope_instance_id,json=scopeInstanceId,proto3" json:"scope_instance_id,omitempty"`
+	// shim_listen_address is the address the adapter shim listened on; permanent.
+	ShimListenAddress string `protobuf:"bytes,2,opt,name=shim_listen_address,json=shimListenAddress,proto3" json:"shim_listen_address,omitempty"`
+	// token_ref is the reference to the secret holding the adapter token; permanent.
+	TokenRef      string `protobuf:"bytes,3,opt,name=token_ref,json=tokenRef,proto3" json:"token_ref,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AdapterLifecycleReleased) Reset() {
+	*x = AdapterLifecycleReleased{}
+	mi := &file_criteria_v1_events_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AdapterLifecycleReleased) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AdapterLifecycleReleased) ProtoMessage() {}
+
+func (x *AdapterLifecycleReleased) ProtoReflect() protoreflect.Message {
+	mi := &file_criteria_v1_events_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AdapterLifecycleReleased.ProtoReflect.Descriptor instead.
+func (*AdapterLifecycleReleased) Descriptor() ([]byte, []int) {
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *AdapterLifecycleReleased) GetScopeInstanceId() string {
+	if x != nil {
+		return x.ScopeInstanceId
+	}
+	return ""
+}
+
+func (x *AdapterLifecycleReleased) GetShimListenAddress() string {
+	if x != nil {
+		return x.ShimListenAddress
+	}
+	return ""
+}
+
+func (x *AdapterLifecycleReleased) GetTokenRef() string {
+	if x != nil {
+		return x.TokenRef
+	}
+	return ""
+}
+
 // SubworkflowGraph — one compiled subworkflow layer of a run's workflow
 // (CRI-257). The agent compiler emits one flat entry per subworkflow layer at
 // every nesting depth; bodies carry only their own layer (no layer is
@@ -2330,7 +2595,7 @@ type SubworkflowGraph struct {
 
 func (x *SubworkflowGraph) Reset() {
 	*x = SubworkflowGraph{}
-	mi := &file_criteria_v1_events_proto_msgTypes[27]
+	mi := &file_criteria_v1_events_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2342,7 +2607,7 @@ func (x *SubworkflowGraph) String() string {
 func (*SubworkflowGraph) ProtoMessage() {}
 
 func (x *SubworkflowGraph) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[27]
+	mi := &file_criteria_v1_events_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2355,7 +2620,7 @@ func (x *SubworkflowGraph) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubworkflowGraph.ProtoReflect.Descriptor instead.
 func (*SubworkflowGraph) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{27}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *SubworkflowGraph) GetName() string {
@@ -2399,7 +2664,7 @@ type WorkflowGraphs struct {
 
 func (x *WorkflowGraphs) Reset() {
 	*x = WorkflowGraphs{}
-	mi := &file_criteria_v1_events_proto_msgTypes[28]
+	mi := &file_criteria_v1_events_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2411,7 +2676,7 @@ func (x *WorkflowGraphs) String() string {
 func (*WorkflowGraphs) ProtoMessage() {}
 
 func (x *WorkflowGraphs) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[28]
+	mi := &file_criteria_v1_events_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2424,7 +2689,7 @@ func (x *WorkflowGraphs) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkflowGraphs.ProtoReflect.Descriptor instead.
 func (*WorkflowGraphs) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{28}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *WorkflowGraphs) GetSubworkflows() []*SubworkflowGraph {
@@ -2457,7 +2722,7 @@ type AgentPromptInjected struct {
 
 func (x *AgentPromptInjected) Reset() {
 	*x = AgentPromptInjected{}
-	mi := &file_criteria_v1_events_proto_msgTypes[29]
+	mi := &file_criteria_v1_events_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2469,7 +2734,7 @@ func (x *AgentPromptInjected) String() string {
 func (*AgentPromptInjected) ProtoMessage() {}
 
 func (x *AgentPromptInjected) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[29]
+	mi := &file_criteria_v1_events_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2482,7 +2747,7 @@ func (x *AgentPromptInjected) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentPromptInjected.ProtoReflect.Descriptor instead.
 func (*AgentPromptInjected) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{29}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *AgentPromptInjected) GetStep() string {
@@ -2557,7 +2822,7 @@ type CheckpointPointer struct {
 
 func (x *CheckpointPointer) Reset() {
 	*x = CheckpointPointer{}
-	mi := &file_criteria_v1_events_proto_msgTypes[30]
+	mi := &file_criteria_v1_events_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2569,7 +2834,7 @@ func (x *CheckpointPointer) String() string {
 func (*CheckpointPointer) ProtoMessage() {}
 
 func (x *CheckpointPointer) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[30]
+	mi := &file_criteria_v1_events_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2582,7 +2847,7 @@ func (x *CheckpointPointer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckpointPointer.ProtoReflect.Descriptor instead.
 func (*CheckpointPointer) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{30}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *CheckpointPointer) GetStateId() string {
@@ -2662,7 +2927,7 @@ type RunPaused struct {
 
 func (x *RunPaused) Reset() {
 	*x = RunPaused{}
-	mi := &file_criteria_v1_events_proto_msgTypes[31]
+	mi := &file_criteria_v1_events_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2674,7 +2939,7 @@ func (x *RunPaused) String() string {
 func (*RunPaused) ProtoMessage() {}
 
 func (x *RunPaused) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[31]
+	mi := &file_criteria_v1_events_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2687,7 +2952,7 @@ func (x *RunPaused) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunPaused.ProtoReflect.Descriptor instead.
 func (*RunPaused) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{31}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *RunPaused) GetNode() string {
@@ -2731,7 +2996,7 @@ type RunResumed struct {
 
 func (x *RunResumed) Reset() {
 	*x = RunResumed{}
-	mi := &file_criteria_v1_events_proto_msgTypes[32]
+	mi := &file_criteria_v1_events_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2743,7 +3008,7 @@ func (x *RunResumed) String() string {
 func (*RunResumed) ProtoMessage() {}
 
 func (x *RunResumed) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[32]
+	mi := &file_criteria_v1_events_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2756,7 +3021,7 @@ func (x *RunResumed) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunResumed.ProtoReflect.Descriptor instead.
 func (*RunResumed) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{32}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *RunResumed) GetNode() string {
@@ -2777,7 +3042,7 @@ type RunOutputs_Output struct {
 
 func (x *RunOutputs_Output) Reset() {
 	*x = RunOutputs_Output{}
-	mi := &file_criteria_v1_events_proto_msgTypes[36]
+	mi := &file_criteria_v1_events_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2789,7 +3054,7 @@ func (x *RunOutputs_Output) String() string {
 func (*RunOutputs_Output) ProtoMessage() {}
 
 func (x *RunOutputs_Output) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[36]
+	mi := &file_criteria_v1_events_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2830,7 +3095,7 @@ var File_criteria_v1_events_proto protoreflect.FileDescriptor
 
 const file_criteria_v1_events_proto_rawDesc = "" +
 	"\n" +
-	"\x18criteria/v1/events.proto\x12\vcriteria.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf0\x12\n" +
+	"\x18criteria/v1/events.proto\x12\vcriteria.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x93\x15\n" +
 	"\bEnvelope\x12%\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05R\rschemaVersion\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x10\n" +
@@ -2864,7 +3129,10 @@ const file_criteria_v1_events_proto_rawDesc = "" +
 	"\x15scope_iter_cursor_set\x18\x1f \x01(\v2\x1f.criteria.v1.ScopeIterCursorSetH\x00R\x12scopeIterCursorSet\x12P\n" +
 	"\x13step_iteration_item\x18  \x01(\v2\x1e.criteria.v1.StepIterationItemH\x00R\x11stepIterationItem\x12:\n" +
 	"\vrun_outputs\x18! \x01(\v2\x17.criteria.v1.RunOutputsH\x00R\n" +
-	"runOutputs\x12F\n" +
+	"runOutputs\x12=\n" +
+	"\frun_metadata\x18\" \x01(\v2\x18.criteria.v1.RunMetadataH\x00R\vrunMetadata\x12{\n" +
+	"\"adapter_lifecycle_provision_wanted\x18# \x01(\v2,.criteria.v1.AdapterLifecycleProvisionWantedH\x00R\x1fadapterLifecycleProvisionWanted\x12e\n" +
+	"\x1aadapter_lifecycle_released\x18$ \x01(\v2%.criteria.v1.AdapterLifecycleReleasedH\x00R\x18adapterLifecycleReleased\x12F\n" +
 	"\x0fworkflow_graphs\x18% \x01(\v2\x1b.criteria.v1.WorkflowGraphsH\x00R\x0eworkflowGraphs\x12V\n" +
 	"\x15agent_prompt_injected\x18& \x01(\v2 .criteria.v1.AgentPromptInjectedH\x00R\x13agentPromptInjected\x12O\n" +
 	"\x12checkpoint_pointer\x18' \x01(\v2\x1e.criteria.v1.CheckpointPointerH\x00R\x11checkpointPointer\x12S\n" +
@@ -2997,7 +3265,19 @@ const file_criteria_v1_events_proto_rawDesc = "" +
 	"\x06Output\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value\x12#\n" +
-	"\rdeclared_type\x18\x03 \x01(\tR\fdeclaredType\"[\n" +
+	"\rdeclared_type\x18\x03 \x01(\tR\fdeclaredType\"W\n" +
+	"\vRunMetadata\x12\x16\n" +
+	"\x06ticket\x18\x01 \x01(\tR\x06ticket\x12\x19\n" +
+	"\brepo_url\x18\x02 \x01(\tR\arepoUrl\x12\x15\n" +
+	"\x06pr_url\x18\x03 \x01(\tR\x05prUrl\"\x9a\x01\n" +
+	"\x1fAdapterLifecycleProvisionWanted\x12*\n" +
+	"\x11scope_instance_id\x18\x01 \x01(\tR\x0fscopeInstanceId\x12.\n" +
+	"\x13shim_listen_address\x18\x02 \x01(\tR\x11shimListenAddress\x12\x1b\n" +
+	"\ttoken_ref\x18\x03 \x01(\tR\btokenRef\"\x93\x01\n" +
+	"\x18AdapterLifecycleReleased\x12*\n" +
+	"\x11scope_instance_id\x18\x01 \x01(\tR\x0fscopeInstanceId\x12.\n" +
+	"\x13shim_listen_address\x18\x02 \x01(\tR\x11shimListenAddress\x12\x1b\n" +
+	"\ttoken_ref\x18\x03 \x01(\tR\btokenRef\"[\n" +
 	"\x10SubworkflowGraph\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1f\n" +
 	"\vsource_path\x18\x02 \x01(\tR\n" +
@@ -3049,51 +3329,54 @@ func file_criteria_v1_events_proto_rawDescGZIP() []byte {
 }
 
 var file_criteria_v1_events_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_criteria_v1_events_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
+var file_criteria_v1_events_proto_msgTypes = make([]protoimpl.MessageInfo, 40)
 var file_criteria_v1_events_proto_goTypes = []any{
-	(LogStream)(0),                 // 0: criteria.v1.LogStream
-	(*Envelope)(nil),               // 1: criteria.v1.Envelope
-	(*RunStarted)(nil),             // 2: criteria.v1.RunStarted
-	(*RunCompleted)(nil),           // 3: criteria.v1.RunCompleted
-	(*RunFailed)(nil),              // 4: criteria.v1.RunFailed
-	(*StepEntered)(nil),            // 5: criteria.v1.StepEntered
-	(*StepOutcome)(nil),            // 6: criteria.v1.StepOutcome
-	(*StepOutcomeInvalid)(nil),     // 7: criteria.v1.StepOutcomeInvalid
-	(*StepTransition)(nil),         // 8: criteria.v1.StepTransition
-	(*StepLog)(nil),                // 9: criteria.v1.StepLog
-	(*AdapterEvent)(nil),           // 10: criteria.v1.AdapterEvent
-	(*CriteriaHeartbeat)(nil),      // 11: criteria.v1.CriteriaHeartbeat
-	(*CriteriaDisconnected)(nil),   // 12: criteria.v1.CriteriaDisconnected
-	(*StepResumed)(nil),            // 13: criteria.v1.StepResumed
-	(*WatchReady)(nil),             // 14: criteria.v1.WatchReady
-	(*VariableSet)(nil),            // 15: criteria.v1.VariableSet
-	(*StepOutputCaptured)(nil),     // 16: criteria.v1.StepOutputCaptured
-	(*WaitEntered)(nil),            // 17: criteria.v1.WaitEntered
-	(*WaitResumed)(nil),            // 18: criteria.v1.WaitResumed
-	(*ApprovalRequested)(nil),      // 19: criteria.v1.ApprovalRequested
-	(*ApprovalDecision)(nil),       // 20: criteria.v1.ApprovalDecision
-	(*BranchEvaluated)(nil),        // 21: criteria.v1.BranchEvaluated
-	(*ForEachEntered)(nil),         // 22: criteria.v1.ForEachEntered
-	(*StepIterationStarted)(nil),   // 23: criteria.v1.StepIterationStarted
-	(*StepIterationCompleted)(nil), // 24: criteria.v1.StepIterationCompleted
-	(*ScopeIterCursorSet)(nil),     // 25: criteria.v1.ScopeIterCursorSet
-	(*StepIterationItem)(nil),      // 26: criteria.v1.StepIterationItem
-	(*RunOutputs)(nil),             // 27: criteria.v1.RunOutputs
-	(*SubworkflowGraph)(nil),       // 28: criteria.v1.SubworkflowGraph
-	(*WorkflowGraphs)(nil),         // 29: criteria.v1.WorkflowGraphs
-	(*AgentPromptInjected)(nil),    // 30: criteria.v1.AgentPromptInjected
-	(*CheckpointPointer)(nil),      // 31: criteria.v1.CheckpointPointer
-	(*RunPaused)(nil),              // 32: criteria.v1.RunPaused
-	(*RunResumed)(nil),             // 33: criteria.v1.RunResumed
-	nil,                            // 34: criteria.v1.StepOutputCaptured.OutputsEntry
-	nil,                            // 35: criteria.v1.WaitResumed.PayloadEntry
-	nil,                            // 36: criteria.v1.ApprovalDecision.PayloadEntry
-	(*RunOutputs_Output)(nil),      // 37: criteria.v1.RunOutputs.Output
-	(*timestamppb.Timestamp)(nil),  // 38: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),        // 39: google.protobuf.Struct
+	(LogStream)(0),                          // 0: criteria.v1.LogStream
+	(*Envelope)(nil),                        // 1: criteria.v1.Envelope
+	(*RunStarted)(nil),                      // 2: criteria.v1.RunStarted
+	(*RunCompleted)(nil),                    // 3: criteria.v1.RunCompleted
+	(*RunFailed)(nil),                       // 4: criteria.v1.RunFailed
+	(*StepEntered)(nil),                     // 5: criteria.v1.StepEntered
+	(*StepOutcome)(nil),                     // 6: criteria.v1.StepOutcome
+	(*StepOutcomeInvalid)(nil),              // 7: criteria.v1.StepOutcomeInvalid
+	(*StepTransition)(nil),                  // 8: criteria.v1.StepTransition
+	(*StepLog)(nil),                         // 9: criteria.v1.StepLog
+	(*AdapterEvent)(nil),                    // 10: criteria.v1.AdapterEvent
+	(*CriteriaHeartbeat)(nil),               // 11: criteria.v1.CriteriaHeartbeat
+	(*CriteriaDisconnected)(nil),            // 12: criteria.v1.CriteriaDisconnected
+	(*StepResumed)(nil),                     // 13: criteria.v1.StepResumed
+	(*WatchReady)(nil),                      // 14: criteria.v1.WatchReady
+	(*VariableSet)(nil),                     // 15: criteria.v1.VariableSet
+	(*StepOutputCaptured)(nil),              // 16: criteria.v1.StepOutputCaptured
+	(*WaitEntered)(nil),                     // 17: criteria.v1.WaitEntered
+	(*WaitResumed)(nil),                     // 18: criteria.v1.WaitResumed
+	(*ApprovalRequested)(nil),               // 19: criteria.v1.ApprovalRequested
+	(*ApprovalDecision)(nil),                // 20: criteria.v1.ApprovalDecision
+	(*BranchEvaluated)(nil),                 // 21: criteria.v1.BranchEvaluated
+	(*ForEachEntered)(nil),                  // 22: criteria.v1.ForEachEntered
+	(*StepIterationStarted)(nil),            // 23: criteria.v1.StepIterationStarted
+	(*StepIterationCompleted)(nil),          // 24: criteria.v1.StepIterationCompleted
+	(*ScopeIterCursorSet)(nil),              // 25: criteria.v1.ScopeIterCursorSet
+	(*StepIterationItem)(nil),               // 26: criteria.v1.StepIterationItem
+	(*RunOutputs)(nil),                      // 27: criteria.v1.RunOutputs
+	(*RunMetadata)(nil),                     // 28: criteria.v1.RunMetadata
+	(*AdapterLifecycleProvisionWanted)(nil), // 29: criteria.v1.AdapterLifecycleProvisionWanted
+	(*AdapterLifecycleReleased)(nil),        // 30: criteria.v1.AdapterLifecycleReleased
+	(*SubworkflowGraph)(nil),                // 31: criteria.v1.SubworkflowGraph
+	(*WorkflowGraphs)(nil),                  // 32: criteria.v1.WorkflowGraphs
+	(*AgentPromptInjected)(nil),             // 33: criteria.v1.AgentPromptInjected
+	(*CheckpointPointer)(nil),               // 34: criteria.v1.CheckpointPointer
+	(*RunPaused)(nil),                       // 35: criteria.v1.RunPaused
+	(*RunResumed)(nil),                      // 36: criteria.v1.RunResumed
+	nil,                                     // 37: criteria.v1.StepOutputCaptured.OutputsEntry
+	nil,                                     // 38: criteria.v1.WaitResumed.PayloadEntry
+	nil,                                     // 39: criteria.v1.ApprovalDecision.PayloadEntry
+	(*RunOutputs_Output)(nil),               // 40: criteria.v1.RunOutputs.Output
+	(*timestamppb.Timestamp)(nil),           // 41: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),                 // 42: google.protobuf.Struct
 }
 var file_criteria_v1_events_proto_depIdxs = []int32{
-	38, // 0: criteria.v1.Envelope.ts:type_name -> google.protobuf.Timestamp
+	41, // 0: criteria.v1.Envelope.ts:type_name -> google.protobuf.Timestamp
 	2,  // 1: criteria.v1.Envelope.run_started:type_name -> criteria.v1.RunStarted
 	3,  // 2: criteria.v1.Envelope.run_completed:type_name -> criteria.v1.RunCompleted
 	4,  // 3: criteria.v1.Envelope.run_failed:type_name -> criteria.v1.RunFailed
@@ -3118,26 +3401,29 @@ var file_criteria_v1_events_proto_depIdxs = []int32{
 	25, // 22: criteria.v1.Envelope.scope_iter_cursor_set:type_name -> criteria.v1.ScopeIterCursorSet
 	26, // 23: criteria.v1.Envelope.step_iteration_item:type_name -> criteria.v1.StepIterationItem
 	27, // 24: criteria.v1.Envelope.run_outputs:type_name -> criteria.v1.RunOutputs
-	29, // 25: criteria.v1.Envelope.workflow_graphs:type_name -> criteria.v1.WorkflowGraphs
-	30, // 26: criteria.v1.Envelope.agent_prompt_injected:type_name -> criteria.v1.AgentPromptInjected
-	31, // 27: criteria.v1.Envelope.checkpoint_pointer:type_name -> criteria.v1.CheckpointPointer
-	7,  // 28: criteria.v1.Envelope.step_outcome_invalid:type_name -> criteria.v1.StepOutcomeInvalid
-	32, // 29: criteria.v1.Envelope.run_paused:type_name -> criteria.v1.RunPaused
-	33, // 30: criteria.v1.Envelope.run_resumed:type_name -> criteria.v1.RunResumed
-	14, // 31: criteria.v1.Envelope.watch_ready:type_name -> criteria.v1.WatchReady
-	0,  // 32: criteria.v1.StepLog.stream:type_name -> criteria.v1.LogStream
-	39, // 33: criteria.v1.AdapterEvent.data:type_name -> google.protobuf.Struct
-	34, // 34: criteria.v1.StepOutputCaptured.outputs:type_name -> criteria.v1.StepOutputCaptured.OutputsEntry
-	35, // 35: criteria.v1.WaitResumed.payload:type_name -> criteria.v1.WaitResumed.PayloadEntry
-	36, // 36: criteria.v1.ApprovalDecision.payload:type_name -> criteria.v1.ApprovalDecision.PayloadEntry
-	37, // 37: criteria.v1.RunOutputs.outputs:type_name -> criteria.v1.RunOutputs.Output
-	28, // 38: criteria.v1.WorkflowGraphs.subworkflows:type_name -> criteria.v1.SubworkflowGraph
-	38, // 39: criteria.v1.AgentPromptInjected.delivered_at:type_name -> google.protobuf.Timestamp
-	40, // [40:40] is the sub-list for method output_type
-	40, // [40:40] is the sub-list for method input_type
-	40, // [40:40] is the sub-list for extension type_name
-	40, // [40:40] is the sub-list for extension extendee
-	0,  // [0:40] is the sub-list for field type_name
+	28, // 25: criteria.v1.Envelope.run_metadata:type_name -> criteria.v1.RunMetadata
+	29, // 26: criteria.v1.Envelope.adapter_lifecycle_provision_wanted:type_name -> criteria.v1.AdapterLifecycleProvisionWanted
+	30, // 27: criteria.v1.Envelope.adapter_lifecycle_released:type_name -> criteria.v1.AdapterLifecycleReleased
+	32, // 28: criteria.v1.Envelope.workflow_graphs:type_name -> criteria.v1.WorkflowGraphs
+	33, // 29: criteria.v1.Envelope.agent_prompt_injected:type_name -> criteria.v1.AgentPromptInjected
+	34, // 30: criteria.v1.Envelope.checkpoint_pointer:type_name -> criteria.v1.CheckpointPointer
+	7,  // 31: criteria.v1.Envelope.step_outcome_invalid:type_name -> criteria.v1.StepOutcomeInvalid
+	35, // 32: criteria.v1.Envelope.run_paused:type_name -> criteria.v1.RunPaused
+	36, // 33: criteria.v1.Envelope.run_resumed:type_name -> criteria.v1.RunResumed
+	14, // 34: criteria.v1.Envelope.watch_ready:type_name -> criteria.v1.WatchReady
+	0,  // 35: criteria.v1.StepLog.stream:type_name -> criteria.v1.LogStream
+	42, // 36: criteria.v1.AdapterEvent.data:type_name -> google.protobuf.Struct
+	37, // 37: criteria.v1.StepOutputCaptured.outputs:type_name -> criteria.v1.StepOutputCaptured.OutputsEntry
+	38, // 38: criteria.v1.WaitResumed.payload:type_name -> criteria.v1.WaitResumed.PayloadEntry
+	39, // 39: criteria.v1.ApprovalDecision.payload:type_name -> criteria.v1.ApprovalDecision.PayloadEntry
+	40, // 40: criteria.v1.RunOutputs.outputs:type_name -> criteria.v1.RunOutputs.Output
+	31, // 41: criteria.v1.WorkflowGraphs.subworkflows:type_name -> criteria.v1.SubworkflowGraph
+	41, // 42: criteria.v1.AgentPromptInjected.delivered_at:type_name -> google.protobuf.Timestamp
+	43, // [43:43] is the sub-list for method output_type
+	43, // [43:43] is the sub-list for method input_type
+	43, // [43:43] is the sub-list for extension type_name
+	43, // [43:43] is the sub-list for extension extendee
+	0,  // [0:43] is the sub-list for field type_name
 }
 
 func init() { file_criteria_v1_events_proto_init() }
@@ -3170,6 +3456,9 @@ func file_criteria_v1_events_proto_init() {
 		(*Envelope_ScopeIterCursorSet)(nil),
 		(*Envelope_StepIterationItem)(nil),
 		(*Envelope_RunOutputs)(nil),
+		(*Envelope_RunMetadata)(nil),
+		(*Envelope_AdapterLifecycleProvisionWanted)(nil),
+		(*Envelope_AdapterLifecycleReleased)(nil),
 		(*Envelope_WorkflowGraphs)(nil),
 		(*Envelope_AgentPromptInjected)(nil),
 		(*Envelope_CheckpointPointer)(nil),
@@ -3184,7 +3473,7 @@ func file_criteria_v1_events_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_criteria_v1_events_proto_rawDesc), len(file_criteria_v1_events_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   37,
+			NumMessages:   40,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

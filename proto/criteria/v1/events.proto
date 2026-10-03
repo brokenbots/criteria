@@ -71,6 +71,19 @@ message Envelope {
     // RunOutputs — emitted when a run reaches terminal state with declared outputs (W09).
     // Outputs are emitted before run.completed, in declaration order.
     RunOutputs run_outputs = 33;
+    // RunMetadata — emitted by an external orchestrator (e.g. the criteria-k8s
+    // operator) to publish run metadata discovered during orchestration, such
+    // as the pull request URL. The server promotes known fields onto the run
+    // record and stores/fans out the event like any other envelope. CRI-131.
+    RunMetadata run_metadata = 34;
+    // AdapterLifecycleProvisionWanted / AdapterLifecycleReleased — engine-
+    // emitted adapter pod reconcile signals (CRI-115). The orchestrator
+    // observes these through the orchestrator event subscription API
+    // (CRI-133) and reconciles adapter pods per scope_instance_id. The server
+    // stores and fans them out verbatim without interpreting the fields.
+    // Permanent field numbers.
+    AdapterLifecycleProvisionWanted adapter_lifecycle_provision_wanted = 35; // permanent (CRI-115)
+    AdapterLifecycleReleased adapter_lifecycle_released = 36;               // permanent (CRI-115)
     // WorkflowGraphs — compiled subworkflow layers of the run's workflow
     // (CRI-257). Emitted by the agent after compilation so UIs can render the
     // subworkflow graphs the top-level module references; the server stores
@@ -350,6 +363,51 @@ message RunOutputs {
   // google.protobuf.Value typed_value field if programmatic typed consumption becomes a requirement
   // (e.g. W13 sub-workflow callers needing native type access). Until then, assume consumers will
   // JSON-parse value and understand it may be string/number/bool/null/array/object.
+}
+
+// RunMetadata — external orchestration metadata for a run (CRI-131). Emitted
+// by an orchestrator (e.g. the criteria-k8s operator) after the run record is
+// created, when metadata that was not known at create time (such as the pull
+// request URL) becomes available. Server behavior: promote known fields onto
+// the run record (only non-empty values overwrite) and persist/fan out the
+// event like any other envelope.
+message RunMetadata {
+  // ticket is the external ticket identifier; only overwrites when non-empty.
+  string ticket = 1;
+  // repo_url is the repository the run operates on; only overwrites when non-empty.
+  string repo_url = 2;
+  // pr_url is the pull request URL produced by the run; only overwrites when non-empty.
+  string pr_url = 3;
+}
+
+// AdapterLifecycleProvisionWanted — the engine requests provisioning of an
+// adapter execution environment (pod) for a scope instance (CRI-115). The
+// orchestrator reconciles the adapter pod for scope_instance_id upon observing
+// this event via the orchestrator event subscription API (CRI-133). The
+// server stores and fans out this event verbatim; it interprets none of the
+// fields. All field numbers permanent.
+message AdapterLifecycleProvisionWanted {
+  // scope_instance_id identifies the adapter scope instance (run/step scope)
+  // the execution environment must be provisioned for; permanent.
+  string scope_instance_id = 1;
+  // shim_listen_address is the address the adapter shim listens on; permanent.
+  string shim_listen_address = 2;
+  // token_ref is the reference to the secret holding the adapter token; permanent.
+  string token_ref = 3;
+}
+
+// AdapterLifecycleReleased — the engine signals that the adapter execution
+// environment for a scope instance is no longer needed and the orchestrator
+// may release (tear down) the corresponding pod (CRI-115). The server stores
+// and fans out this event verbatim; it interprets none of the fields. All
+// field numbers permanent.
+message AdapterLifecycleReleased {
+  // scope_instance_id identifies the released adapter scope instance; permanent.
+  string scope_instance_id = 1;
+  // shim_listen_address is the address the adapter shim listened on; permanent.
+  string shim_listen_address = 2;
+  // token_ref is the reference to the secret holding the adapter token; permanent.
+  string token_ref = 3;
 }
 
 // SubworkflowGraph — one compiled subworkflow layer of a run's workflow
