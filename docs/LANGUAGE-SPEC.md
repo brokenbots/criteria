@@ -148,7 +148,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `output "name" { ... }`
 
-- **Source:** [`workflow/schema.go:446`](../workflow/schema.go#L446)
+- **Source:** [`workflow/schema.go:445`](../workflow/schema.go#L445)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -177,7 +177,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `subworkflow "name" { ... }`
 
-- **Source:** [`workflow/schema.go:459`](../workflow/schema.go#L459)
+- **Source:** [`workflow/schema.go:458`](../workflow/schema.go#L458)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -191,7 +191,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `step "name" { ... }`
 
-- **Source:** [`workflow/schema.go:350`](../workflow/schema.go#L350)
+- **Source:** [`workflow/schema.go:349`](../workflow/schema.go#L349)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -208,7 +208,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `state "name" { ... }`
 
-- **Source:** [`workflow/schema.go:612`](../workflow/schema.go#L612)
+- **Source:** [`workflow/schema.go:611`](../workflow/schema.go#L611)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -221,7 +221,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `wait "name" { ... }`
 
-- **Source:** [`workflow/schema.go:595`](../workflow/schema.go#L595)
+- **Source:** [`workflow/schema.go:594`](../workflow/schema.go#L594)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -234,7 +234,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `approval "name" { ... }`
 
-- **Source:** [`workflow/schema.go:604`](../workflow/schema.go#L604)
+- **Source:** [`workflow/schema.go:603`](../workflow/schema.go#L603)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -247,13 +247,13 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `switch "name" { ... }`
 
-- **Source:** [`workflow/schema.go:623`](../workflow/schema.go#L623)
+- **Source:** [`workflow/schema.go:622`](../workflow/schema.go#L622)
 - **Labels:** `name`
 - **Nested blocks:** [`match`](#match---), [`default`](#default---)
 
 ### `permissions { ... }`
 
-- **Source:** [`workflow/schema.go:676`](../workflow/schema.go#L676)
+- **Source:** [`workflow/schema.go:675`](../workflow/schema.go#L675)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -263,7 +263,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `policy { ... }`
 
-- **Source:** [`workflow/schema.go:643`](../workflow/schema.go#L643)
+- **Source:** [`workflow/schema.go:642`](../workflow/schema.go#L642)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -291,7 +291,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 | Attribute | Type | Required | Description |
 |---|---|---|---|
-| `in` | hcl.Expression | no | In/out declare the typed tool contract (KB-45 named types or an inline typeexpr constraint). Both are optional; an absent side stays unconstrained. |
+| `in` | hcl.Expression | no | In/out declare the typed tool contract (KB-45 named type <name> or an inline typeexpr); each side is optional and unconstrained if absent. |
 | `out` | hcl.Expression | no | _(no description)_ |
 
 - **Additional attributes:** reserved body; decoded and ignored (CRI-155)
@@ -306,7 +306,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `outcome "name" { ... }`
 
-- **Source:** [`workflow/schema.go:565`](../workflow/schema.go#L565)
+- **Source:** [`workflow/schema.go:564`](../workflow/schema.go#L564)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -322,17 +322,17 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `match { ... }`
 
-- **Source:** [`workflow/schema.go:632`](../workflow/schema.go#L632)
+- **Source:** [`workflow/schema.go:631`](../workflow/schema.go#L631)
 - **Additional attributes:** captures: condition (required), next (required), output (optional)
 
 ### `default { ... }`
 
-- **Source:** [`workflow/schema.go:638`](../workflow/schema.go#L638)
+- **Source:** [`workflow/schema.go:637`](../workflow/schema.go#L637)
 - **Additional attributes:** captures: next (required), output (optional)
 
 ### `write { ... }`
 
-- **Source:** [`workflow/schema.go:581`](../workflow/schema.go#L581)
+- **Source:** [`workflow/schema.go:580`](../workflow/schema.go#L580)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |

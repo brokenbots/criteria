@@ -338,9 +338,8 @@ type AdapterDeclSpec struct {
 // extensions.
 type ToolDeclSpec struct {
 	Name string `hcl:"name,label"`
-	// In/out declare the typed tool contract (KB-45 named types or an inline
-	// typeexpr constraint). Both are optional; an absent side stays
-	// unconstrained.
+	// In/out declare the typed tool contract (KB-45 named type <name> or an
+	// inline typeexpr); each side is optional and unconstrained if absent.
 	In     hcl.Expression `hcl:"in,optional"`
 	Out    hcl.Expression `hcl:"out,optional"`
 	Remain hcl.Body       `hcl:",remain"` // reserved body; decoded and ignored (CRI-155)

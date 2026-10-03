@@ -12,9 +12,10 @@ import (
 // 6200 reflects KB-48's outcome-contract wave: the type.<name> alternative is
 // now documented at every consumer (+224 words over the 5900 KB-45 cap — the
 // "Named type blocks" prose section plus the widened data/variable/output type
-// field descriptions in the generated tables).
+// field descriptions in the generated tables). 6250 reflects KB-59: the tool
+// block gained an in/out typed-contract attribute table (+~45 words).
 func TestSpecTokenBudget_UnderEightThousandWords(t *testing.T) {
-	const maxWords = 6200
+	const maxWords = 6250
 	data, err := os.ReadFile("../../docs/LANGUAGE-SPEC.md")
 	if err != nil {
 		t.Fatalf("docs/LANGUAGE-SPEC.md not found: %v", err)
