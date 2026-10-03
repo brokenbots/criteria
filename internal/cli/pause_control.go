@@ -27,6 +27,16 @@ const (
 // package var so tests can exercise the timeout path quickly.
 var pauseAckWait = pauseAckTimeout
 
+// pauseLandingGrace bounds the landing-race grace after a RequestPause that
+// found the run already tearing down: pauseAtBoundary checkpoints adapter
+// sessions BEFORE publishing RunPaused, so a torn read is possible and a
+// short re-check window closes it (KB-117). Never extends the latch budget:
+// the latch is gone either way.
+const (
+	pauseLandingGrace = 2 * time.Second
+	pauseLandingPoll  = 20 * time.Millisecond
+)
+
 // controlPauseRouter consumes orchestrator-issued pause_run commands for one
 // owned run (CRI-254) and drives Engine.Pause semantics at step boundaries,
 // mirroring the local-control (mode "external") PauseRun path: drain-first,
@@ -134,8 +144,30 @@ func (r *controlPauseRouter) handle(ctx context.Context, msg *pb.PauseRun) pause
 				slog.String("run_id", r.runID), slog.String("node", node))
 			return pauseAckLanded
 		}
-		r.warnDrop("pause_run: run is no longer running", "run_not_running")
-		return pauseAckEnded
+		// Landing race (KB-117): the run may be landing RIGHT NOW —
+		// pauseAtBoundary publishes RunPaused after a session checkpoint,
+		// so PausedAt() is still empty while the run loop is inside the
+		// landing sequence and the engine's live-run state is already
+		// tearing down. Declaring run_ended here acknowledges a pause that
+		// is about to land; give the landing a short grace to publish
+		// before concluding the run ended without one.
+		grace := time.NewTimer(pauseLandingGrace)
+		defer grace.Stop()
+		ticker := time.NewTicker(pauseLandingPoll)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-grace.C:
+				r.warnDrop("pause_run: run is no longer running", "run_not_running")
+				return pauseAckEnded
+			case <-ticker.C:
+				if node := r.sink.PausedAt(); node != "" {
+					r.log.Info("run paused at node during the landing grace",
+						slog.String("run_id", r.runID), slog.String("node", node))
+					return pauseAckLanded
+				}
+			}
+		}
 	}
 	return r.waitForPauseAck(ctx, ack, msg.GetReason())
 }

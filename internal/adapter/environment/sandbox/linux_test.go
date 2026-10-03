@@ -1049,7 +1049,11 @@ func curlDenyNetnsIsolationError(output string) error {
 	lower := strings.ToLower(output)
 	if !strings.Contains(lower, "connection refused") &&
 		!strings.Contains(lower, "network is unreachable") &&
-		!strings.Contains(lower, "couldn't connect to server") {
+		// curl 8.21 (Cachyos, 2026-10) words the generic case without the
+		// apostrophe: "Could not connect to server" — and CI's curl 8.x
+		// carries "Couldn't connect to server"; accept both wordings.
+		!strings.Contains(lower, "couldn't connect to server") &&
+		!strings.Contains(lower, "could not connect to server") {
 		return fmt.Errorf("expected connect-level failure in the isolated netns, got: %s", output)
 	}
 	return nil
@@ -1092,6 +1096,14 @@ func TestCurlDenyNetnsIsolationError(t *testing.T) {
 			output: "GETENT_FAIL exit status 2\n" +
 				"CURL_FAIL exit status 7 output=\"curl: (7) Failed to connect to 127.0.0.1 port 45389 " +
 				"after 0 ms: Couldn't connect to server\"",
+		},
+		{
+			// curl 8.21 (arch hosts) words the generic case without the
+			// apostrophe; same connect-level evidence.
+			name: "curl 8.21 arch: could not connect to server is proof",
+			output: "GETENT_FAIL exit status 2\n" +
+				"CURL_FAIL exit status 7 output=\"curl: (7) Failed to connect to 127.0.0.1 port 45390 " +
+				"after 0 ms: Could not connect to server\"",
 		},
 		{
 			// DNS-failure wording is not connect-level evidence; it does not
