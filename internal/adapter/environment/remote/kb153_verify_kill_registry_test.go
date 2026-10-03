@@ -21,7 +21,7 @@ import (
 // newKB153TestShim starts a legacy-mode shim with tight wait budgets so the
 // tests finish inside their wall-clock deadlines while still exercising the
 // budgeted-wait paths.
-func newKB153TestShim(t *testing.T, waitBudget time.Duration) (*Shim, string) {
+func newKB153TestShim(t *testing.T, waitBudget time.Duration) (shim *Shim, addr string) {
 	t.Helper()
 	verifier := &fixedDigestVerifier{allowed: map[string]string{"noop": "sha256:abcd1234"}}
 	shim, err := NewShim(&Config{
