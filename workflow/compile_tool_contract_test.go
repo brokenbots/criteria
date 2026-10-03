@@ -462,6 +462,167 @@ state "done" {
 	}
 }
 
+// TestKB59_ToolContractCompile_UnconstrainedRoot verifies the unconstrained
+// gate: a contract side authored as `any` resolves to cty.DynamicPseudoType,
+// which validates nothing and cannot route attribute keys (and would panic
+// the consumers that call AttributeTypes() on the stored side), so it is
+// rejected with a typed diagnostic on both the in and the out side instead
+// of being recorded.
+func TestKB59_ToolContractCompile_UnconstrainedRoot(t *testing.T) {
+	_, diags := compileErrToolWorkflow(t, contractWorkflowWithInOut("any", "type.probe_response"))
+	if !strings.Contains(diags.Error(), `tool "echo": in is an unconstrained contract root (any); a typed contract must be an object(...) type constraint`) {
+		t.Errorf("expected unconstrained in-contract diagnostic, got: %s", diags.Error())
+	}
+	_, diags2 := compileErrToolWorkflow(t, contractWorkflowWithInOut("type.probe_request", "any"))
+	if !strings.Contains(diags2.Error(), `tool "echo": out is an unconstrained contract root (any); a typed contract must be an object(...) type constraint`) {
+		t.Errorf("expected unconstrained out-contract diagnostic, got: %s", diags2.Error())
+	}
+}
+
+// TestKB59_ToolContractCompile_NamedTypeResolvingToAny verifies the gate
+// covers the named-ref form: a type block declared `schema = any` resolves to
+// cty.DynamicPseudoType when a contract side references it, and must be
+// rejected like the inline `any` twin.
+func TestKB59_ToolContractCompile_NamedTypeResolvingToAny(t *testing.T) {
+	_, diags := compileErrToolWorkflow(t, `
+workflow {
+  name          = "t"
+  version       = "0.1"
+  initial_state = "probe"
+  target_state  = "done"
+}
+type "loose" {
+  schema = any
+}
+adapter "mcp" "probe" {
+  dynamic_tools = true
+  tool "echo" {
+    in = type.loose
+  }
+}
+step "probe" {
+  target = adapter.mcp.probe
+  input {
+    tool = "echo"
+  }
+  outcome "success" { next = step.done }
+}
+state "done" {
+  terminal = true
+  success  = true
+}
+`)
+	if !strings.Contains(diags.Error(), `tool "echo": in is an unconstrained contract root (any); a typed contract must be an object(...) type constraint`) {
+		t.Errorf("expected unconstrained in-contract diagnostic for the named any type, got: %s", diags.Error())
+	}
+}
+
+// TestKB59_DirectTargetTypedInput_AnyContract verifies the direct-target
+// regression: a step input{} block on an adapter whose lone tool declares
+// `in = any` surfaces the unconstrained-contract diagnostic (not a compile
+// panic — pre-fix, validateTypedInputAttrs called AttributeTypes() on the
+// dynamic root and panicked the compiler).
+func TestKB59_DirectTargetTypedInput_AnyContract(t *testing.T) {
+	_, diags := compileErrToolWorkflow(t, `
+workflow {
+  name          = "t"
+  version       = "0.1"
+  initial_state = "probe"
+  target_state  = "done"
+}
+adapter "mcp" "probe" {
+  dynamic_tools = true
+  tool "echo" {
+    in = any
+  }
+}
+step "probe" {
+  target = adapter.mcp.probe
+  input {
+    tool    = "echo"
+    message = "ping"
+    ghost   = true
+  }
+  outcome "success" { next = step.done }
+}
+state "done" {
+  terminal = true
+  success  = true
+}
+`)
+	if !strings.Contains(diags.Error(), `tool "echo": in is an unconstrained contract root (any); a typed contract must be an object(...) type constraint`) {
+		t.Errorf("expected unconstrained contract diagnostic for the direct-target route, got: %s", diags.Error())
+	}
+}
+
+// TestKB59_ValidateTypedInputAttrs_GuardNonObjectType pins the defensive
+// guard: a future path that leaks a non-object (or dynamic) contract side to
+// validateTypedInputAttrs must not panic on AttributeTypes().
+func TestKB59_ValidateTypedInputAttrs_GuardNonObjectType(t *testing.T) {
+	ghosts := map[string]*hcl.Attribute{}
+	for _, inType := range []cty.Type{cty.NilType, cty.DynamicPseudoType, cty.String, cty.List(cty.String)} {
+		diags := validateTypedInputAttrs("t", ghosts, inType, "adapter", hcl.Range{})
+		if diags != nil {
+			t.Errorf("inType %s: want nil diagnostics, got %s", inType.FriendlyName(), diags.Error())
+		}
+	}
+}
+
+// TestKB59_DirectTargetTypedInput_SingleContractFallback pins the
+// single-contract routing fallback: on an adapter with exactly one
+// contract-bearing tool, an input{} block WITHOUT a `tool` attribute routes
+// to the lone contract and is validated against it — unknown keys and
+// missing required fields are rejected as usual.
+func TestKB59_DirectTargetTypedInput_SingleContractFallback(t *testing.T) {
+	_, diags := compileErrToolWorkflow(t, `
+workflow {
+  name          = "t"
+  version       = "0.1"
+  initial_state = "probe"
+  target_state  = "done"
+}
+type "probe_request" {
+  schema = object({
+    tool    = string
+    message = optional(string)
+  })
+}
+adapter "mcp" "probe" {
+  dynamic_tools = true
+  tool "echo" {
+    in = type.probe_request
+  }
+}
+step "probe" {
+  target = adapter.mcp.probe
+  input {
+    message = "ping"
+    ghost   = true
+  }
+  outcome "success" { next = step.done }
+}
+state "done" {
+  terminal = true
+  success  = true
+}
+`)
+	for _, want := range []string{
+		`step "probe" input: unknown field "ghost"`,
+		`step "probe" input: required field "tool" is missing`,
+	} {
+		found := false
+		for _, d := range diags {
+			if strings.Contains(d.Summary, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("diagnostics missing %q:\n%s", want, diags.Error())
+		}
+	}
+}
+
 // directTargetTypedInputSource builds the direct-target workflow for the
 // golden-diagnostics table with a parametrized input block body.
 func directTargetTypedInputSource(inputBody string) string {

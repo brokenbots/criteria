@@ -434,3 +434,210 @@ func TestNestedToolCall_UncontractedPassthrough(t *testing.T) {
 		t.Errorf("callee input ghost = %q/%v, want boo/unchecked passthrough", got, ok)
 	}
 }
+
+// bareTargetContractWorkflowHCL is the bare-target twin of the contract
+// fixture: the caller's step carries a whole-surface tools grant
+// (adapter.callee.helper.tools, the bare 4-label form whose Tool segment is
+// empty) and the callee's helper_task contract declares the routing key
+// itself (`tool = string`) as a validated payload attribute. A call through
+// the bare target carries the tool name as an args key — the same routing
+// key the mcp bridge reads at dispatch — so the seam must still route the
+// in-contract.
+const bareTargetContractWorkflowHCL = `
+workflow {
+  name            = "x"
+  version         = "0.1"
+  initial_state   = "call"
+  target_state    = "done"
+}
+
+type "bare_request" {
+  schema = object({
+    tool = string
+    task = string
+  })
+}
+
+type "probe_response" {
+  schema = object({
+    report = string
+    count  = optional(number)
+  })
+}
+
+environment "shell" "prod" {
+  os = "linux"
+}
+
+adapter "caller" "instance" {}
+adapter "callee" "helper" {
+  environment   = shell.prod
+  dynamic_tools = true
+
+  tool "helper_task" {
+    in  = type.bare_request
+    out = type.probe_response
+  }
+}
+
+step "call" {
+  target = adapter.caller.instance
+  tools  = [adapter.callee.helper.tools]
+
+  outcome "success" { next = step.done }
+}
+state "done" { terminal = true }
+
+permissions {
+  allow_tools = ["callee.helpers.*"]
+}
+`
+
+const bareCallTarget = "adapter.callee.helper.tools"
+
+// compileNestedToolCallBareGraph compiles the bare-target fixture and asserts
+// both that the contract landed on the callee node and that the step's
+// whole-surface grant compiled to the bare-ref shape the seam's grant gate
+// matches (CalleeRef set, empty Tool).
+func compileNestedToolCallBareGraph(t *testing.T) *workflow.FSMGraph {
+	t.Helper()
+	spec, diags := workflow.Parse("bare_contract.hcl", []byte(bareTargetContractWorkflowHCL))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := workflow.Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+	callee := g.Adapters[nestedCalleeSession]
+	if callee == nil {
+		t.Fatalf("callee node %q missing from compiled graph", nestedCalleeSession)
+	}
+	if contract, ok := callee.ToolContractFor("helper_task"); !ok || contract.InType == cty.NilType {
+		t.Fatalf("contract for helper_task not compiled: %+v", contract)
+	}
+	step := g.Steps["call"]
+	if step == nil || len(step.Tools) != 1 || step.Tools[0].CalleeRef != "callee.helper" || step.Tools[0].Tool != "" {
+		t.Fatalf("bare whole-surface grant not compiled: %+v", step)
+	}
+	return g
+}
+
+// TestNestedToolCall_BareTargetRoutesContractViaArgs: a call to the bare
+// whole-surface target adapter.callee.helper.tools carries the tool name as
+// the args routing key. Pre-fix, the seam resolved the contract from the
+// target's tool segment and the request tool field only — both empty here —
+// so the call skipped the typed contract entirely and executed with bad
+// arguments. Post-fix the args["tool"] fallback routes the contract and the
+// violating args are rejected typed invalid_args before the callee runs.
+func TestNestedToolCall_BareTargetRoutesContractViaArgs(t *testing.T) {
+	audit := &sliceAuditWriter{}
+	calleeRec := &nestedCalleeRecorder{}
+	caller := &nestedCallerAdapter{target: bareCallTarget, args: map[string]any{
+		"tool": "helper_task",
+		"task": 6,
+		"bad":  1,
+	}}
+	callee := &contractCalleeAdapter{&nestedCalleeAdapter{rec: calleeRec}}
+	sm := newNestedToolCallManager(t, caller, callee)
+	sm.Audit = audit
+
+	graph := compileNestedToolCallBareGraph(t)
+	sm.SetGraph(graph)
+	ctx := openFixtureSessions(t, sm, graph)
+	defer func() { _ = sm.Close(ctx, nestedCallerSession) }()
+	defer func() { _ = sm.Close(ctx, nestedCalleeSession) }()
+
+	inner := &adapterEventCollector{}
+	if _, err := sm.Execute(ctx, nestedCallerSession, graph.Steps["call"], inner, nil); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	tcr := caller.gotResult()
+	if tcr == nil || tcr.RequestId != "call-1" || tcr.CallError != callErrorInvalidArgs || tcr.Outcome != "" {
+		t.Fatalf("tool_call_result = %+v, want invalid_args reply", tcr)
+	}
+	if got := calleeRec.calleeSession(); got != "" {
+		t.Errorf("callee executed for rejected args (session %q)", got)
+	}
+	for _, needle := range []string{
+		`payload_schema: property "task": expected "string", got "number"`,
+		`payload_schema: property "bad": undeclared property`,
+	} {
+		if !contractIssuesContains(t, audit, needle) {
+			t.Errorf("audit reason missing %q; entries = %+v", needle, audit.all())
+		}
+	}
+}
+
+// TestNestedToolCall_BareTargetNoRoutingKeyPassthrough preserves the
+// no-routing-key posture: a bare-target call whose args name no tool has no
+// contract to route, so nothing is declared at the seam and the call stays
+// untyped — the args pass through unvalidated and the callee runs, exactly
+// like the pre-KB-59 seam.
+func TestNestedToolCall_BareTargetNoRoutingKeyPassthrough(t *testing.T) {
+	audit := &sliceAuditWriter{}
+	calleeRec := &nestedCalleeRecorder{}
+	caller := &nestedCallerAdapter{target: bareCallTarget, args: map[string]any{
+		"task":  "do-thing",
+		"ghost": "boo",
+	}}
+	callee := &contractCalleeAdapter{&nestedCalleeAdapter{rec: calleeRec}}
+	sm := newNestedToolCallManager(t, caller, callee)
+	sm.Audit = audit
+
+	graph := compileNestedToolCallBareGraph(t)
+	sm.SetGraph(graph)
+	ctx := openFixtureSessions(t, sm, graph)
+	defer func() { _ = sm.Close(ctx, nestedCallerSession) }()
+	defer func() { _ = sm.Close(ctx, nestedCalleeSession) }()
+
+	inner := &adapterEventCollector{}
+	res, err := sm.Execute(ctx, nestedCallerSession, graph.Steps["call"], inner, nil)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.Outcome != "success" {
+		t.Fatalf("caller outcome = %q, want success", res.Outcome)
+	}
+
+	tcr := caller.gotResult()
+	if tcr == nil || tcr.CallError != "" || tcr.Outcome != "success" {
+		t.Fatalf("tool_call_result = %+v, want success/no error", tcr)
+	}
+	if got := calleeRec.calleeSession(); got != nestedCalleeSession {
+		t.Fatalf("callee executed in session %q, want %q", got, nestedCalleeSession)
+	}
+	step := calleeRec.calleeStep()
+	if step == nil {
+		t.Fatal("callee never recorded a step")
+	}
+	if got := step.Input["task"]; got != "do-thing" {
+		t.Errorf("callee input task = %q, want do-thing", got)
+	}
+	if got, ok := step.Input["ghost"]; !ok || got != "boo" {
+		t.Errorf("callee input ghost = %q/%v, want boo/unchecked passthrough", got, ok)
+	}
+}
+
+// TestNestedToolCall_ContractInputArgs_DynamicRootSkipped pins the seam's
+// defensive guard: validateContractInputArgs skips (never panics on
+// AttributeTypes()) when the contract leaks an unconstrained root or any
+// non-object type, even though compileToolContractSide now rejects such
+// contracts at compile time.
+func TestNestedToolCall_ContractInputArgs_DynamicRootSkipped(t *testing.T) {
+	for name, contract := range map[string]*workflow.ToolContract{
+		"unconstrained": {InType: cty.DynamicPseudoType, InSchemaJSON: []byte(`{}`)},
+		"non-object":    {InType: cty.String, InSchemaJSON: []byte(`{"type":"string"}`)},
+		"nil-type":      {InSchemaJSON: []byte(`{}`)},
+	} {
+		issues := validateContractInputArgs(contract, map[string]any{
+			"tool":  "helper_task",
+			"ghost": "boo",
+			"task":  6,
+		})
+		if issues != nil {
+			t.Errorf("%s: want no issues (contract skipped), got %v", name, issues)
+		}
+	}
+}
