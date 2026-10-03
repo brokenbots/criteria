@@ -2,19 +2,20 @@ package conformance
 
 import (
 	"context"
+	"net/http"
 	"testing"
-	"time"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/proto"
 
 	criteria "github.com/brokenbots/criteria/sdk"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 // testRunMetadataRoundTrip submits a sequence of RunMetadata envelopes and
-// asserts they are persisted and returned with key/value fields preserved and
-// ordering stable. Run metadata is the UNIVERSAL wire surface for run context
-// (CRI-131 ruling): implementations promote their own first-class columns from
+// asserts they are persisted and returned with fields preserved and ordering
+// stable. Run metadata is the UNIVERSAL wire surface for run context (CRI-131
+// ruling): implementations promote their own first-class columns from
 // run.metadata envelopes — never from request fields — so fidelity of this
 // arm is the contract.
 func testRunMetadataRoundTrip(t *testing.T, s Subject) {
@@ -33,71 +34,63 @@ func testRunMetadataRoundTrip(t *testing.T, s Subject) {
 	}
 	runID := runResp.Msg.RunId
 
-	envs := []*pb.Envelope{
-		criteria.NewEnvelope(runID, &pb.RunMetadata{Ticket: "CRI-131"}),
-		criteria.NewEnvelope(runID, &pb.RunMetadata{RepoUrl: "https://example.invalid/repo"}),
+	sent := map[string]*pb.Envelope{
+		"metadata-ticket":   criteria.NewEnvelope(runID, &pb.RunMetadata{Ticket: "CRI-131"}),
+		"metadata-repo-url": criteria.NewEnvelope(runID, &pb.RunMetadata{RepoUrl: "https://example.invalid/repo"}),
 	}
-	envs[0].CorrelationId = "metadata-ticket"
-	envs[1].CorrelationId = "metadata-repo-url"
+	for corrID, env := range sent {
+		env.CorrelationId = corrID
+	}
+	ticket, repo := sent["metadata-ticket"], sent["metadata-repo-url"]
 
-	if got := criteria.TypeString(envs[0]); got != "run.metadata" {
+	if got := criteria.TypeString(ticket); got != "run.metadata" {
 		t.Errorf("TypeString(run_metadata)=%q, want run.metadata", got)
 	}
-	if criteria.IsTerminal(envs[0]) || criteria.IsTerminal(envs[1]) {
+	if criteria.IsTerminal(ticket) || criteria.IsTerminal(repo) {
 		t.Error("run.metadata events must not be terminal run events")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	stream := oClient.SubmitEvents(ctx)
-	stream.RequestHeader().Set("Authorization", "Bearer "+token)
-	for _, env := range envs {
-		if err := stream.Send(env); err != nil {
-			t.Fatalf("Send(%s): %v", env.CorrelationId, err)
-		}
-		ack, err := stream.Receive()
-		if err != nil {
-			t.Fatalf("Receive ack(%s): %v", env.CorrelationId, err)
-		}
-		if ack.CorrelationId != env.CorrelationId {
-			t.Errorf("ack.correlation_id=%q want %q", ack.CorrelationId, env.CorrelationId)
-		}
-	}
-	_ = stream.CloseRequest()
-	for {
-		if _, recvErr := stream.Receive(); recvErr != nil {
-			break
-		}
-	}
+	submitEnvelopes(t, oClient, token, []*pb.Envelope{ticket, repo})
+	assertRunMetadataPersisted(t, s, baseURL, client, token, runID)
+}
+
+// assertRunMetadataPersisted reads the run's events back through ListRunEvents
+// and asserts the submitted run.metadata envelopes were persisted field-for-field
+// in submission order.
+func assertRunMetadataPersisted(t *testing.T, s Subject, baseURL string, client *http.Client, token, runID string) {
+	t.Helper()
 
 	events := s.ListRunEvents(t, baseURL, client, token, runID, 0)
-	byCorr := map[string]*pb.RunMetadata{}
-	var seqs = map[string]uint64{}
+	persisted := map[string]*pb.RunMetadata{}
 	for _, ev := range events {
 		if rm := ev.GetRunMetadata(); rm != nil {
-			byCorr[ev.CorrelationId] = rm
-			seqs[ev.CorrelationId] = ev.Seq
+			persisted[ev.CorrelationId] = rm
 		}
 	}
 
-	for _, corrID := range []string{"metadata-ticket", "metadata-repo-url"} {
-		got, ok := byCorr[corrID]
+	for corrID, want := range map[string]*pb.RunMetadata{
+		"metadata-ticket":   {Ticket: "CRI-131"},
+		"metadata-repo-url": {RepoUrl: "https://example.invalid/repo"},
+	} {
+		got, ok := persisted[corrID]
 		if !ok {
 			t.Fatalf("expected run.metadata with correlation_id=%q persisted; run events=%d", corrID, len(events))
 		}
-		if corrID == "metadata-ticket" {
-			if got.Ticket != "CRI-131" || got.RepoUrl != "" || got.PrUrl != "" {
-				t.Errorf("ticket envelope: got ticket=%q repo_url=%q pr_url=%q", got.Ticket, got.RepoUrl, got.PrUrl)
-			}
-		}
-		if corrID == "metadata-repo-url" {
-			if got.RepoUrl != "https://example.invalid/repo" || got.Ticket != "" || got.PrUrl != "" {
-				t.Errorf("repo_url envelope: got ticket=%q repo_url=%q pr_url=%q", got.Ticket, got.RepoUrl, got.PrUrl)
-			}
+		if !proto.Equal(want, got) {
+			t.Errorf("run.metadata %s: field round-trip mismatch:\nwant: %v\ngot:  %v", corrID, want, got)
 		}
 	}
-	if seqs["metadata-ticket"] >= seqs["metadata-repo-url"] {
-		t.Errorf("expected metadata.seq to preserve submission order, got ticket=%d >= repo=%d",
-			seqs["metadata-ticket"], seqs["metadata-repo-url"])
+	if ticketSeq(events, "metadata-ticket") >= ticketSeq(events, "metadata-repo-url") {
+		t.Error("expected run.metadata seq to preserve submission order")
 	}
+}
+
+// ticketSeq returns the stored seq for a correlation_id, or 0 when absent.
+func ticketSeq(events []*pb.Envelope, corrID string) uint64 {
+	for _, ev := range events {
+		if ev.CorrelationId == corrID {
+			return ev.Seq
+		}
+	}
+	return 0
 }

@@ -2,10 +2,12 @@ package conformance
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/proto"
 
 	criteria "github.com/brokenbots/criteria/sdk"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
@@ -227,70 +229,44 @@ func testAdapterPodReconcileEventsRoundTrip(t *testing.T, s Subject) {
 		t.Error("adapter pod reconcile events must not be terminal run events")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	stream := oClient.SubmitEvents(ctx)
-	stream.RequestHeader().Set("Authorization", "Bearer "+token)
-	for _, env := range []*pb.Envelope{wanted, released} {
-		if err := stream.Send(env); err != nil {
-			t.Fatalf("Send(%s): %v", env.CorrelationId, err)
-		}
-		ack, err := stream.Receive()
-		if err != nil {
-			t.Fatalf("Receive ack(%s): %v", env.CorrelationId, err)
-		}
-		if ack.CorrelationId != env.CorrelationId {
-			t.Errorf("ack.correlation_id=%q want %q", ack.CorrelationId, env.CorrelationId)
-		}
-	}
-	_ = stream.CloseRequest()
-	for {
-		if _, recvErr := stream.Receive(); recvErr != nil {
-			break
-		}
+	submitEnvelopes(t, oClient, token, []*pb.Envelope{wanted, released})
+
+	sent := map[string]*pb.Envelope{
+		wanted.CorrelationId:   wanted,
+		released.CorrelationId: released,
 	}
 
+	assertPodReconcilePersisted(t, s, baseURL, client, token, runID, sent)
+}
+
+// assertPodReconcilePersisted reads the run's events back through
+// ListRunEvents and asserts the provision_wanted/released pair was persisted
+// field-for-field (compared via proto.Equal) in submission order.
+func assertPodReconcilePersisted(t *testing.T, s Subject, baseURL string, client *http.Client, token, runID string, sent map[string]*pb.Envelope) {
+	t.Helper()
+
 	events := s.ListRunEvents(t, baseURL, client, token, runID, 0)
-	byCorr := map[string]*pb.Envelope{}
+	persisted := map[string]*pb.Envelope{}
 	for _, ev := range events {
 		switch ev.Payload.(type) {
 		case *pb.Envelope_AdapterLifecycleProvisionWanted, *pb.Envelope_AdapterLifecycleReleased:
-			byCorr[ev.CorrelationId] = ev
+			persisted[ev.CorrelationId] = ev
 		}
 	}
 
-	if byCorr["pod-provision-wanted"] == nil {
-		t.Fatalf("expected adapter.lifecycle.provision_wanted persisted; events=%d", len(events))
-	}
-	if byCorr["pod-released"] == nil {
-		t.Fatalf("expected adapter.lifecycle.released persisted; events=%d", len(events))
-	}
-	for _, ev := range byCorr {
-		switch p := ev.Payload.(type) {
-		case *pb.Envelope_AdapterLifecycleProvisionWanted:
-			if p.AdapterLifecycleProvisionWanted.ScopeInstanceId != scopeInstanceID ||
-				p.AdapterLifecycleProvisionWanted.ShimListenAddress != shimAddr ||
-				p.AdapterLifecycleProvisionWanted.TokenRef != tokenRef {
-				t.Errorf("provision_wanted: got scope=%q shim=%q token_ref=%q, want %q %q %q",
-					p.AdapterLifecycleProvisionWanted.ScopeInstanceId,
-					p.AdapterLifecycleProvisionWanted.ShimListenAddress,
-					p.AdapterLifecycleProvisionWanted.TokenRef,
-					scopeInstanceID, shimAddr, tokenRef)
-			}
-		case *pb.Envelope_AdapterLifecycleReleased:
-			if p.AdapterLifecycleReleased.ScopeInstanceId != scopeInstanceID ||
-				p.AdapterLifecycleReleased.ShimListenAddress != shimAddr ||
-				p.AdapterLifecycleReleased.TokenRef != tokenRef {
-				t.Errorf("released: got scope=%q shim=%q token_ref=%q, want %q %q %q",
-					p.AdapterLifecycleReleased.ScopeInstanceId,
-					p.AdapterLifecycleReleased.ShimListenAddress,
-					p.AdapterLifecycleReleased.TokenRef,
-					scopeInstanceID, shimAddr, tokenRef)
-			}
+	for corrID, env := range sent {
+		got, ok := persisted[corrID]
+		if !ok {
+			t.Fatalf("expected %s persisted; run events=%d", corrID, len(events))
+		}
+		if !proto.Equal(extractPayloadMsg(env), extractPayloadMsg(got)) {
+			t.Errorf("%s: payload round-trip mismatch:\nwant: %v\ngot:  %v",
+				corrID, extractPayloadMsg(env), extractPayloadMsg(got))
 		}
 	}
-	if byCorr["pod-provision-wanted"].Seq >= byCorr["pod-released"].Seq {
+	wanted, released := sent["pod-provision-wanted"], sent["pod-released"]
+	if persisted[wanted.CorrelationId].Seq >= persisted[released.CorrelationId].Seq {
 		t.Errorf("expected provision_wanted.seq < released.seq, got %d >= %d",
-			byCorr["pod-provision-wanted"].Seq, byCorr["pod-released"].Seq)
+			persisted[wanted.CorrelationId].Seq, persisted[released.CorrelationId].Seq)
 	}
 }
