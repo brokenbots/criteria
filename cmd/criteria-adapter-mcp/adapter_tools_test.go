@@ -240,7 +240,8 @@ type mcpToolsEvent struct {
 }
 
 // mcpToolsSink is a full engine.Sink recording the run-level facts the cases
-// assert: which steps ran, the terminal state, and the outcome routing.
+// assert: which steps ran, the terminal state, the outcome routing, and the
+// adapter outputs captured per step.
 type mcpToolsSink struct {
 	mu       sync.Mutex
 	entered  []string
@@ -249,6 +250,19 @@ type mcpToolsSink struct {
 	ok       bool
 	failure  string
 	events   []mcpToolsEvent
+	outputs  map[string]map[string]string
+}
+
+// stepOutputs returns the outputs captured for one step.
+func (s *mcpToolsSink) stepOutputs(step string) map[string]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := s.outputs[step]
+	cp := make(map[string]string, len(out))
+	for k, v := range out {
+		cp[k] = v
+	}
+	return cp
 }
 
 func (s *mcpToolsSink) OnRunStarted(string, string) {}
@@ -273,10 +287,17 @@ func (s *mcpToolsSink) OnStepOutcome(step, outcome string, _ time.Duration, _ er
 	defer s.mu.Unlock()
 	s.outcomes = append(s.outcomes, step+"="+outcome)
 }
+func (s *mcpToolsSink) OnStepOutputCaptured(step string, outputs map[string]string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.outputs == nil {
+		s.outputs = map[string]map[string]string{}
+	}
+	s.outputs[step] = outputs
+}
 func (s *mcpToolsSink) OnStepTransition(from, to, _ string)                          {}
 func (s *mcpToolsSink) OnStepResumed(string, int, string)                            {}
 func (s *mcpToolsSink) OnVariableSet(string, string, string)                         {}
-func (s *mcpToolsSink) OnStepOutputCaptured(string, map[string]string)               {}
 func (s *mcpToolsSink) OnRunPaused(string, string, string)                           {}
 func (s *mcpToolsSink) OnRunResumed(string)                                          {}
 func (s *mcpToolsSink) OnWaitEntered(string, string, string, string)                 {}
@@ -443,10 +464,199 @@ state "unhandled" {
 	return g
 }
 
+// compileMCPToolsTypedGraph compiles the KB-59 variant: the same fixture
+// workflow, but the mcp adapter declares named types and a contract on the
+// echo tool. The callee stays schema-less (no input schema in the compile
+// schemas — the dynamic surface); the contract is the declared schema at the
+// seam.
+func compileMCPToolsTypedGraph(t *testing.T, echoBin, targetState string) *workflow.FSMGraph {
+	t.Helper()
+	src := fmt.Sprintf(`workflow {
+  name          = "mcp_adapter_tools_typed"
+  version       = "0.1"
+  initial_state = "call"
+  target_state  = %q
+}
+
+type "echo_request" {
+  schema = object({
+    tool    = string
+    message = optional(string)
+  })
+}
+
+type "echo_response" {
+  schema = object({
+    text = optional(string)
+  })
+}
+
+permissions {
+  allow_tools = ["echo", "structured"]
+}
+
+adapter "mcp" "tools" {
+  config {
+    command = %q
+  }
+  dynamic_tools = true
+
+  tool "echo" {
+    in  = type.echo_request
+    out = type.echo_response
+  }
+}
+
+adapter "caller" "default" {}
+
+step "call" {
+  target      = adapter.caller.default
+  allow_tools = ["adapter.mcp.tools.tools.*"]
+
+  outcome "handled" {
+    next = state.done
+  }
+
+  outcome "unhandled" {
+    next = state.unhandled
+  }
+}
+
+state "done" {
+  terminal = true
+}
+
+state "unhandled" {
+  terminal = true
+}
+`, targetState, echoBin)
+	spec, diags := workflow.Parse("mcp_tools_typed.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse mcp tools workflow: %s", diags)
+	}
+	g, diags := workflow.Compile(spec, map[string]workflow.AdapterInfo{
+		"caller": {
+			InputSchema:  map[string]workflow.ConfigField{},
+			OutputSchema: map[string]workflow.ConfigField{},
+			Capabilities: []string{"adapter_tools"},
+		},
+		"mcp": {
+			ConfigSchema: map[string]workflow.ConfigField{
+				"command": {Required: true, Type: workflow.ConfigFieldString},
+			},
+			Capabilities: []string{"adapter_tools"},
+		},
+	})
+	if diags.HasErrors() {
+		t.Fatalf("compile mcp tools typed workflow: %s", diags)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("mcp tools typed workflow compiled with warnings, want clean: %s", diags)
+	}
+	return g
+}
+
+// compileMCPDirectTypedGraph compiles the KB-59 direct-target variant: a step
+// targeting adapter.mcp.tools whose typed input block is validated against
+// the declared contract instead of the (absent) step-input schema.
+func compileMCPDirectTypedGraph(t *testing.T, echoBin string) *workflow.FSMGraph {
+	t.Helper()
+	src := fmt.Sprintf(`workflow {
+  name          = "mcp_direct_typed"
+  version       = "0.1"
+  initial_state = "call"
+  target_state  = "done"
+}
+
+type "echo_request" {
+  schema = object({
+    tool    = string
+    message = optional(string)
+  })
+}
+
+type "echo_response" {
+  schema = object({
+    text = optional(string)
+  })
+}
+
+permissions {
+  allow_tools = ["echo", "structured"]
+}
+
+adapter "mcp" "tools" {
+  config {
+    command = %q
+  }
+  dynamic_tools = true
+
+  tool "echo" {
+    in  = type.echo_request
+    out = type.echo_response
+  }
+}
+
+step "call" {
+  target = adapter.mcp.tools
+
+  input {
+    tool    = "echo"
+    message = "direct typed echo"
+  }
+
+  outcome "success" {
+    next = state.done
+  }
+
+  outcome "failure" {
+    next = state.failed
+  }
+}
+
+state "done" {
+  terminal = true
+}
+
+state "failed" {
+  terminal = true
+  success = false
+}
+`, echoBin)
+	spec, diags := workflow.Parse("mcp_direct_typed.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse mcp direct typed workflow: %s", diags)
+	}
+	g, diags := workflow.Compile(spec, map[string]workflow.AdapterInfo{
+		"mcp": {
+			ConfigSchema: map[string]workflow.ConfigField{
+				"command": {Required: true, Type: workflow.ConfigFieldString},
+			},
+			Capabilities: []string{"adapter_tools"},
+		},
+	})
+	if diags.HasErrors() {
+		t.Fatalf("compile mcp direct typed workflow: %s", diags)
+	}
+	if len(diags) != 0 {
+		t.Fatalf("mcp direct typed workflow compiled with warnings, want clean: %s", diags)
+	}
+	return g
+}
+
 // runMCPToolsCase drives one case through the real engine: the caller fake
 // issues its scripted call, the nested callee is the real mcp adapter binary
 // talking to the echo fixture server.
 func runMCPToolsCase(t *testing.T, echoBin, targetState string, caller *mcpToolsCaller) *mcpToolsSink {
+	t.Helper()
+	return runMCPToolsGraphCase(t, compileMCPToolsGraph(t, echoBin, targetState), caller, nil)
+}
+
+// runMCPToolsGraphCase runs a pre-compiled graph through the real engine;
+// audit, when non-nil, captures the host's decision log (the typed issue
+// lists KB-59 asserts live there). A nil caller runs no caller fake — the
+// direct-target cases whose step executes the mcp adapter itself.
+func runMCPToolsGraphCase(t *testing.T, graph *workflow.FSMGraph, caller *mcpToolsCaller, audit adapterhost.AuditWriter) *mcpToolsSink {
 	t.Helper()
 	sink := &mcpToolsSink{}
 	realLoader := adapterhost.NewLoaderWithDiscovery(func(name string) (string, error) {
@@ -455,16 +665,20 @@ func runMCPToolsCase(t *testing.T, echoBin, targetState string, caller *mcpTools
 		}
 		return "", fmt.Errorf("no adapter binary for %q", name)
 	})
-	loader := &mcpToolsLoader{
-		fakes: map[string]adapterhost.Handle{"caller": caller},
-		real:  realLoader,
+	loader := &mcpToolsLoader{real: realLoader}
+	if caller != nil {
+		loader.fakes = map[string]adapterhost.Handle{"caller": caller}
 	}
 	defer func() {
 		if err := realLoader.Shutdown(context.Background()); err != nil {
 			t.Logf("loader shutdown: %v", err)
 		}
 	}()
-	if err := engine.New(compileMCPToolsGraph(t, echoBin, targetState), loader, sink).Run(context.Background()); err != nil {
+	opts := []engine.Option{}
+	if audit != nil {
+		opts = append(opts, engine.WithAuditWriter(audit))
+	}
+	if err := engine.New(graph, loader, sink, opts...).Run(context.Background()); err != nil {
 		t.Fatalf("engine run: %v", err)
 	}
 	return sink
@@ -650,5 +864,108 @@ func TestMCPAdapterTools_InfoSurfacesDiscoveredTools(t *testing.T) {
 		if desc == "" {
 			t.Fatalf("info tool %q description is empty, want the tools/list description", want)
 		}
+	}
+}
+
+// mcpToolsAuditCollector captures the host side's decision log entries.
+type mcpToolsAuditCollector struct {
+	mu      sync.Mutex
+	entries []*adapterhost.DecisionLogEntry
+}
+
+func (w *mcpToolsAuditCollector) Write(e *adapterhost.DecisionLogEntry) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.entries = append(w.entries, e)
+}
+
+func (w *mcpToolsAuditCollector) all() []*adapterhost.DecisionLogEntry {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]*adapterhost.DecisionLogEntry(nil), w.entries...)
+}
+
+// TestMCPAdapterTools_TypedContractRejectsBadArgs is the KB-59 Gap 2 repro at
+// the real seam: the echo tool's args violate the declared contract (message
+// as a JSON number, plus an undeclared key) on a schema-less dynamic
+// adapter — pre-KB-59, anything passed; now the host rejects the call typed
+// `invalid_args` before the callee runs, and the audit carries the typed
+// issue list.
+func TestMCPAdapterTools_TypedContractRejectsBadArgs(t *testing.T) {
+	caller := newMCPToolsCaller("unhandled", toolsCall{
+		requestID: "call-1",
+		target:    "adapter.mcp.tools.tools.echo",
+		args:      map[string]any{"tool": 6, "ghost": "boo"},
+	})
+	audit := &mcpToolsAuditCollector{}
+	sink := runMCPToolsGraphCase(t, compileMCPToolsTypedGraph(t, testEchoBin, "unhandled"), caller, audit)
+
+	reply := assertTypedReply(t, caller)
+	if reply.requestID != "call-1" || reply.callError != "invalid_args" || reply.outcome != "" {
+		t.Fatalf("typed reply = %+v, want request \"call-1\" call_error \"invalid_args\"", reply)
+	}
+	assertRunContinued(t, sink, "unhandled")
+	for _, needle := range []string{
+		`payload_schema: property "tool": expected "string", got "number"`,
+		`payload_schema: property "ghost": undeclared property`,
+	} {
+		found := false
+		for _, e := range audit.all() {
+			if e != nil && strings.Contains(e.Reason, needle) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("audit missing reason %q; entries = %+v", needle, audit.all())
+		}
+	}
+}
+
+// TestMCPAdapterTools_TypedContractValidatesGoodArgs covers the same typed
+// seam on a contract-respecting call: the arguments pass the declared
+// contract, the callee executes, and the response decodes against
+// type.echo_response.
+func TestMCPAdapterTools_TypedContractValidatesGoodArgs(t *testing.T) {
+	caller := newMCPToolsCaller("handled", toolsCall{
+		requestID: "call-1",
+		target:    "adapter.mcp.tools.tools.echo",
+		args:      map[string]any{"tool": "echo", "message": "typed and validated"},
+	})
+	sink := runMCPToolsGraphCase(t, compileMCPToolsTypedGraph(t, testEchoBin, "done"), caller, nil)
+
+	reply := assertTypedReply(t, caller)
+	if reply.requestID != "call-1" || reply.outcome != "success" || reply.callError != "" {
+		t.Fatalf("typed reply = %+v, want request \"call-1\" outcome \"success\"", reply)
+	}
+	text, _ := reply.outputs["text"].(string)
+	if !strings.Contains(text, `"message":"typed and validated"`) {
+		t.Fatalf("outputs text = %q, want the echo response the contract validates", text)
+	}
+	assertRunContinued(t, sink, "done")
+}
+
+// TestMCPAdapterTools_DirectTypedTarget runs the direct-target half of
+// KB-59's repro: a step targeting adapter.mcp.tools (no caller hop) whose
+// typed input block is validated against the declared contract at compile
+// time, then executed for real by the engine — the unknown-field check that
+// would have rejected the dynamic adapter's input keys is bypassed in favor
+// of the contract.
+func TestMCPAdapterTools_DirectTypedTarget(t *testing.T) {
+	sink := runMCPToolsGraphCase(t, compileMCPDirectTypedGraph(t, testEchoBin), nil, nil)
+
+	if got, want := sink.terminalState(), "done"; got != want {
+		t.Fatalf("terminal state = %q, want %q (failure=%q)", got, want, sink.runFailure())
+	}
+	if !sink.runOK() {
+		t.Fatalf("run did not complete successfully: failure=%q", sink.runFailure())
+	}
+	if got, want := sink.stepOutcomes(), []string{"call=success"}; len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("step outcomes = %v, want %v", got, want)
+	}
+	// The adapter's Execute input became the step's outputs: the echo
+	// response text, satisfying type.echo_response.
+	outs := sink.stepOutputs("call")
+	if text := outs["text"]; !strings.Contains(text, `"message":"direct typed echo"`) {
+		t.Fatalf("step outputs = %v, want the echo response text", outs)
 	}
 }

@@ -229,6 +229,7 @@ validate: build ## Validate all example workflow directories
 	@for d in examples/hello examples/tour examples/subworkflow \
 		examples/build_and_test examples/copilot_planning_then_execution \
 		examples/adapter_tools/noop_passthrough examples/adapter_tools/mcp_resource \
+		examples/adapter_tools/mcp_typed_direct \
 		examples/adapter_tools/copilot_mcp_resource \
 		examples/adapter_tools/claude_mcp_resource \
 		examples/outcome_contracts \

@@ -8,6 +8,14 @@
 # built by `make example-adapter-tools` as bin/criteria-echo-mcp and resolved
 # via PATH.
 #
+# KB-59: the mcp tool surface is dynamic (its tools/list is discovered at
+# session open, so the adapter declares no input schema on purpose), which
+# normally leaves tool arguments unvalidated at the seam. The named types
+# here declare the echo tool's contract instead: the host validates both the
+# caller's arguments (type.echo_request) and the callee's response
+# (type.echo_response) at the adapter-tools boundary before either side
+# reaches the mediator.
+#
 # Run with: make example-adapter-tools
 # Or directly:
 #   make build plugins
@@ -21,6 +29,21 @@ workflow {
   target_state  = "done"
 }
 
+# The echo tool's contract: arguments must be an object with the MCP tool
+# name and an optional message; the response must carry a text payload.
+type "echo_request" {
+  schema = object({
+    tool    = string
+    message = optional(string)
+  })
+}
+
+type "echo_response" {
+  schema = object({
+    text = optional(string)
+  })
+}
+
 # Workflow-level allow_tools: the callee's own policy (ADR-0004 §4) — the
 # permission surface of the mcp adapter's session, which gates the calls the
 # mcp adapter itself makes against its MCP server.
@@ -29,12 +52,19 @@ permissions {
 }
 
 # The mcp adapter is consumed as a resource: dynamic_tools = true surfaces
-# the fixture server's tools/list (echo, structured) at runtime.
+# the fixture server's tools/list (echo, structured) at runtime. The
+# `tool "echo"` contract types that one tool's call and response; the
+# uncontracted tools keep the discovery-only surface.
 adapter "mcp" "tools" {
   config {
     command = "criteria-echo-mcp"
   }
   dynamic_tools = true
+
+  tool "echo" {
+    in  = type.echo_request
+    out = type.echo_response
+  }
 }
 
 # The caller is the noop fixture running its tool-call caller mode.
