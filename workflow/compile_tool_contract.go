@@ -28,10 +28,10 @@ import (
 // compileToolContract decodes one tool declaration's typed contract
 // attributes (`in`, `out`). Each resolves through the shared type-constraint
 // path and is gated to the payload shape the seam validator accepts: an
-// object(...) constraint or an unconstrained root (matching the outcome
-// schema posture — the pinned evaluator validates object payloads only).
-// Empty or absent attributes leave that side unconstrained; a contract with
-// no declared side is not recorded.
+// object(...) constraint. An unconstrained root (`any`, or a named type
+// resolving to it) validates nothing and cannot route attributes, so it is
+// rejected instead of recorded. Empty or absent attributes leave that side
+// unconstrained; a contract with no declared side is not recorded.
 func compileToolContract(adapterKey, toolName string, t *ToolDeclSpec, g *FSMGraph) (ToolContract, hcl.Diagnostics) {
 	var diags hcl.Diagnostics
 	var contract ToolContract
@@ -81,12 +81,19 @@ func compileToolContractSide(loc, side string, expr hcl.Expression, g *FSMGraph)
 	if typ == cty.NilType {
 		return nil, cty.NilType, nil
 	}
-	// The seam validator accepts a root object (or an unconstrained root);
-	// anything else (list, map, number, ...) can never be satisfied as a
-	// tool-call payload. The gate applies to named refs and inline
-	// constraints alike: refactoring a contract from inline to a named type
-	// block must not change compile behavior.
-	if typ != cty.DynamicPseudoType && !typ.IsObjectType() {
+	// The seam validator accepts only a root object: any other shape (list,
+	// map, number, ...) can never be satisfied as a tool-call payload, and
+	// an unconstrained root (`any`, or a named type resolving to it)
+	// validates nothing and cannot route attribute keys, so recording it
+	// would both silently skip response validation (out) and panic the
+	// consumers that call AttributeTypes() on the contract sides. The gate
+	// applies to named refs and inline constraints alike: refactoring a
+	// contract from inline to a named type block must not change compile
+	// behavior.
+	if typ == cty.DynamicPseudoType {
+		return nil, cty.NilType, hcl.Diagnostics{unconstrainedContractSideDiag(loc, side, expr)}
+	}
+	if !typ.IsObjectType() {
 		r := expr.StartRange()
 		return nil, cty.NilType, hcl.Diagnostics{&hcl.Diagnostic{
 			Severity: hcl.DiagError,
@@ -198,6 +205,12 @@ func stepInputToolLiteral(attrs map[string]*hcl.Attribute) string {
 // schema path's placeholder handling), and required non-optional attributes
 // must be present. Diagnostics mirror the schema path's vocabulary.
 func validateTypedInputAttrs(context string, attrs map[string]*hcl.Attribute, inType cty.Type, adapterName string, missingRange hcl.Range) hcl.Diagnostics {
+	// Defensive: compileToolContractSide rejects an unconstrained root, but
+	// a future named-type grammar extension could leak a non-object type
+	// here, and AttributeTypes() would panic on it.
+	if inType == cty.NilType || inType == cty.DynamicPseudoType || !inType.IsObjectType() {
+		return nil
+	}
 	var diags hcl.Diagnostics
 	typAttrs := inType.AttributeTypes()
 
@@ -263,6 +276,20 @@ func typedAttrCheck(val cty.Value, attrType cty.Type) error {
 	}
 	_, err := convert.Convert(val, attrType)
 	return err
+}
+
+// unconstrainedContractSideDiag rejects a contract side that resolved to
+// cty.DynamicPseudoType (`any`, including a named type declared as any): an
+// unconstrained contract validates nothing and cannot route attribute keys,
+// so a typed contract side must be a real object(...) constraint. The
+// message is symmetric for the in and out sides.
+func unconstrainedContractSideDiag(loc, side string, expr hcl.Expression) *hcl.Diagnostic {
+	r := expr.StartRange()
+	return &hcl.Diagnostic{
+		Severity: hcl.DiagError,
+		Summary:  fmt.Sprintf("%s: %s is an unconstrained contract root (any); a typed contract must be an object(...) type constraint", loc, side),
+		Subject:  &r,
+	}
 }
 
 // requiredFieldDiagnostic mirrors the schema path's required-field diagnostic.

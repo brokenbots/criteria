@@ -747,8 +747,9 @@ func (s *permissionInterceptSink) dispatchNestedToolCall(req *toolCallPayload, p
 	calleeInfo := s.mgr.cachedAdapterInfo(parsed.AdapterRef)
 
 	// The tool name resolution (KB-59) and the callee's declared typed tool
-	// contract for the named tool.
-	named, contract := resolveToolContract(calleeNode, parsed, req.tool)
+	// contract for the named tool. req.args is threaded through so the
+	// resolution falls back to the args routing key on bare targets.
+	named, contract := resolveToolContract(calleeNode, parsed, req.tool, req.args)
 
 	calleeStep, inputErr := syntheticCalleeStep(parsed, calleeNode, calleeOwningGraph, calleeInfo, &contract, req.args)
 	if inputErr != nil {
@@ -1027,15 +1028,22 @@ func workflowAllowToolsForCallee(owningGraph *workflow.FSMGraph) []string {
 	return owningGraph.WorkflowAllowTools()
 }
 
-// resolveToolContract names the tool-called surface (the §2 target's tool
-// segment, falling back to the request's tool field when the target omits
-// it — the same resolution validateToolCallGraph applies) and looks up the
-// callee's declared typed tool contract for it (KB-59). No declaration, or
-// an unreferenced tool, leaves the zero contract.
-func resolveToolContract(calleeNode *workflow.AdapterNode, parsed toolCallTarget, reqTool string) (string, workflow.ToolContract) {
+// resolveToolContract names the tool-called surface and looks up the
+// callee's declared typed tool contract for it (KB-59). The fallback chain
+// is: the §2 target's tool segment → the request's tool field (the same
+// resolution validateToolCallGraph applies) → args["tool"], the routing key
+// the MCP bridge carries for bare whole-surface targets
+// (adapter.<type>.<name>.tools) and the same disambiguator the compile side
+// accepts as input.tool (stepInputToolLiteral). A non-string or empty
+// args.tool leaves the name unresolved: no declaration, or an unreferenced
+// tool, returns the zero contract and every contract gate is skipped.
+func resolveToolContract(calleeNode *workflow.AdapterNode, parsed toolCallTarget, reqTool string, args map[string]any) (string, workflow.ToolContract) {
 	named := parsed.Tool
 	if named == "" {
 		named = reqTool
+	}
+	if named == "" {
+		named = toolNameArg(args)
 	}
 	if calleeNode == nil {
 		return named, workflow.ToolContract{}
@@ -1046,6 +1054,17 @@ func resolveToolContract(calleeNode *workflow.AdapterNode, parsed toolCallTarget
 	return named, workflow.ToolContract{}
 }
 
+// toolNameArg extracts the routing tool from the call args when the target
+// and the request envelope did not name one: a non-empty string under the
+// standard "tool" key, "" otherwise.
+func toolNameArg(args map[string]any) string {
+	if args == nil {
+		return ""
+	}
+	t, _ := args["tool"].(string)
+	return t
+}
+
 // validateContractInputArgs validates the raw typed call arguments against
 // the named tool's declared in-contract (KB-59): the pinned payload
 // evaluator (the same one the KB-45 outcome contracts run) checks required
@@ -1053,7 +1072,12 @@ func resolveToolContract(calleeNode *workflow.AdapterNode, parsed toolCallTarget
 // not a string — and undeclared properties are rejected against the type's
 // attribute set. Returns the ordered issue list; nil means accepted.
 func validateContractInputArgs(contract *workflow.ToolContract, args map[string]any) []string {
-	if contract == nil || contract.InType == cty.NilType || len(contract.InSchemaJSON) == 0 {
+	// Defensive: compileToolContractSide never records an unconstrained or
+	// non-object root, but this guard keeps a future path that leaks one
+	// from panicking on AttributeTypes() — the contract is skipped instead.
+	if contract == nil || contract.InType == cty.NilType ||
+		contract.InType == cty.DynamicPseudoType || !contract.InType.IsObjectType() ||
+		len(contract.InSchemaJSON) == 0 {
 		return nil
 	}
 	undeclared := undeclaredArgProperties(contract.InType.AttributeTypes(), args)
