@@ -54,12 +54,13 @@ step "review" {
 - **`tool "<name>" {}` / `dynamic_tools = true`** — declares the callee's tool surface (static or runtime).
 - **`allow_tools`** — glob gate on the target string (`filepath.Match`, first match wins, empty denies all); lists union.
 - **`policy { max_tool_depth = N }`** — bounds nested call depth; integer ≥ 1, default `8`.
+- **`policy { max_tool_calls = N }`** — bounds the total tool calls per caller session; integer ≥ 1, default `100`.
 
 ## Common pitfalls
 
 - **The callee never enters the FSM** — a call creates no nodes, fires no outcome blocks, and produces no `steps.<name>` outputs; results return to the caller only.
 - **Pointless entries are flagged, not fatal** — `tools` on a step whose target lacks `adapter_tools` warns it is pointless; named entries on a tool-less callee error, bare entries warn.
-- **Depth caps** — calls beyond `policy.max_tool_depth` fail at run time with typed `depth_exceeded`; cycles draw a compile-time warning.
+- **Depth caps** — calls beyond `policy.max_tool_depth` fail with typed `depth_exceeded` and calls beyond the `policy.max_tool_calls` budget fail with typed `budget_exhausted`; cycles draw a compile-time warning.
 - **Grants are not globs** — entries name exact instances; runtime selection is `allow_tools`' job.
 
 ## See also

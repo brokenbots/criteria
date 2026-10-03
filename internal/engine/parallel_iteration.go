@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -673,6 +674,11 @@ func (n *stepNode) runParallelSubworkflowIteration(ctx context.Context, st *RunS
 	// sessions it opened, so no explicit Shutdown is needed here.
 	iterDeps := deps
 	iterDeps.Sessions = adapterhost.NewSessionManager(deps.Loader)
+	// Audit identity is run-wide (single writer, per-run redaction registry;
+	// KB-58 budget refusals and other nested tool-call decisions inside
+	// parallel iterations must reach the run's audit trail).
+	iterDeps.Sessions.Audit = deps.Sessions.Audit
+	iterDeps.Sessions.RedactionRegistry = deps.Sessions.RedactionRegistry
 	// The fresh SM isolates LOCAL adapter sessions, but a remote environment's
 	// phone-home shim is a single listener per environment (fixed
 	// listen_address) that multiplexes every scope, and isRemoteAdapter consults
@@ -682,6 +688,30 @@ func (n *stepNode) runParallelSubworkflowIteration(ctx context.Context, st *RunS
 	// recognised as remote (instead of a local "adapter not found"). The shims
 	// stay owned by the parent SM, which stops them at run end.
 	iterDeps.Sessions.BorrowRemoteProvisioningFrom(deps.Sessions)
+
+	// KB-58: adapter tool-call grants to tool RESOURCE adapters (granted to a
+	// caller's tools list but never run as a step target, e.g. an mcp server
+	// a claude-agent probes) resolve only through the nested tool-call lazy
+	// bind, which the fresh iteration SessionManager cannot satisfy for a
+	// host-local adapter no scope provisions. Borrow the parent's verified
+	// records and adapter infos for every tool resource the child body
+	// references so the seam stays resolvable inside the iteration; remote
+	// tool resources skip the borrow (they dispatch through the phone-home
+	// shims borrowed above). Containment is preserved: the callee still runs
+	// host-local under the runner with its own adapter secrets, and the agent
+	// session only receives the tool result. Borrowed callee sessions are
+	// torn down when this iteration's scope unwinds.
+	if callees := toolResourceCalleeNames(swNode.Body); len(callees) > 0 {
+		if borrowed := iterDeps.Sessions.BorrowToolResourceSessionsFrom(deps.Sessions, callees); len(borrowed) > 0 {
+			slog.Debug("parallel iteration borrowed host-local tool resources",
+				"step", n.step.Name, "borrowed", strings.Join(borrowed, ","))
+			defer iterDeps.Sessions.CloseBorrowedToolResources(context.WithoutCancel(ctx))
+		}
+	}
+	// KB-58: the iteration manager has no graph of its own; carry the
+	// declaring workflow's policy so the seam's depth and call-count gates
+	// honor the workflow-declared bounds instead of package defaults.
+	iterDeps.Sessions.SetBorrowedGraphPolicy(&n.graph.Policy)
 
 	// Give this iteration its own per-scope lifecycle (isolated record map,
 	// shared run data dir) so concurrent iterations of the same subworkflow

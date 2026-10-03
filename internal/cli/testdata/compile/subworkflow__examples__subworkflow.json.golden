@@ -6,6 +6,7 @@
     "MaxTotalSteps": 100,
     "MaxStepRetries": 0,
     "MaxToolDepth": 8,
+    "MaxToolCalls": 100,
     "MaxVisitsWarnThreshold": 200
   },
   "adapters": [
@@ -57,6 +58,7 @@
           "MaxTotalSteps": 100,
           "MaxStepRetries": 0,
           "MaxToolDepth": 8,
+          "MaxToolCalls": 100,
           "MaxVisitsWarnThreshold": 200
         },
         "adapters": [

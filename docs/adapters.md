@@ -542,13 +542,18 @@ The host gates the call in a fixed order before anything runs:
    the call chain (typed `cycle_detected`) and may not exceed
    `policy.max_tool_depth`, default 8 (typed `depth_exceeded`); each
    rejection is audited and the run continues.
-8. **Argument validation** — call arguments are validated against the
+8. **Call-count budget** — the call-charged budget is the session's
+   `policy.max_tool_calls`, default 100 (typed `budget_exhausted`): once the
+   caller session has exhausted its count, further calls are refused typed
+   and audited, and the run continues. Refused calls (`paused`,
+   `budget_exhausted`) are not charged.
+9. **Argument validation** — call arguments are validated against the
    callee's input schema inside dispatch, after every gate above (typed
    `invalid_args`). Because this runs inside `dispatchNestedToolCall`, a
    self-call, cyclic call, or depth-exceeding call carrying malformed args
    returns the gate code (`self_call` / `cycle_detected` /
    `depth_exceeded`), not `invalid_args`.
-9. **Nested execution** — an allowed call runs the callee in its own
+10. **Nested execution** — an allowed call runs the callee in its own
    session and replies with the callee's result.
 
 Every gate decision is audited — one audit entry per decision, attributed to

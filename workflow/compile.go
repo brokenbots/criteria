@@ -276,6 +276,14 @@ func newFSMGraph(spec *Spec) *FSMGraph {
 		if spec.Header.Policy.MaxToolDepth > 0 {
 			g.Policy.MaxToolDepth = spec.Header.Policy.MaxToolDepth
 		}
+		// MaxToolCalls: unset (0) keeps DefaultPolicy's engine default of
+		// 100; positive values override it. Declared values < 1 are rejected
+		// at parse time by checkMaxToolCallsRange (KB-58) and cannot reach
+		// here. Enforced in the nested tool-call seam against the session's
+		// effective policy.
+		if spec.Header.Policy.MaxToolCalls > 0 {
+			g.Policy.MaxToolCalls = spec.Header.Policy.MaxToolCalls
+		}
 	}
 	return g
 }

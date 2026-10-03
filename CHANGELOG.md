@@ -152,6 +152,13 @@ product version). The release tag and date are finalized by the release gate.
 - **Three SDKs** with consistent helper APIs and single-binary builds —
   TypeScript (Bun), Python (Nuitka), Go — each in its own repo, plus starter
   templates and a reusable `publish-adapter` action.
+- **Tool-call budget.** New `policy { max_tool_calls = N }` (KB-58; engine
+  default 100) bounds the total nested adapter→adapter tool calls per caller
+  session, alongside `max_tool_depth`. An exhaustive caller fails typed
+  `budget_exhausted`; every budget denial is audited and the run continues.
+  Host-local tool-resource callees referenced through a step's `tools`
+  grants (never a step target) now resolve inside parallel per-scope remote
+  iterations by borrowing the parent session's verified records.
 
 ### Breaking changes
 

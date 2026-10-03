@@ -654,6 +654,13 @@ type PolicySpec struct {
 	// decode diagnostic by checkMaxToolDepthRange (CRI-155 placement decision:
 	// checked at parse, CRI-157 owns wiring only).
 	MaxToolDepth int `hcl:"max_tool_depth,optional"`
+
+	// MaxToolCalls bounds the total adapter-to-adapter tool calls per session
+	// (policy.max_tool_calls, KB-58). Integer >= 1; unset (0) uses the
+	// engine default of 100; parse-time range check mirrors CRI-155.
+	// Complements max_tool_depth (count vs stack depth) so an iterative
+	// probe loop cannot run unbounded.
+	MaxToolCalls int `hcl:"max_tool_calls,optional"`
 }
 
 // PermissionsSpec defines workflow-level permission allowlists applied to all steps.
@@ -1010,6 +1017,12 @@ type Policy struct {
 	// of 8 (DefaultPolicy); declared values < 1 are rejected at parse time
 	// by checkMaxToolDepthRange (CRI-155) and cannot reach this struct.
 	MaxToolDepth int
+	// MaxToolCalls bounds the total adapter-to-adapter tool calls per
+	// session (policy.max_tool_calls, KB-58), enforced in the nested-call
+	// seam alongside MaxToolDepth. Unset keeps the engine default of 100
+	// (DefaultPolicy); declared values < 1 are rejected at parse time by
+	// checkMaxToolCallsRange and cannot reach this struct.
+	MaxToolCalls int
 	// MaxVisitsWarnThreshold is the threshold value that max_total_steps is
 	// compared against to determine whether to emit a warning when a step with a
 	// back-edge has no max_visits set (W07). 0 disables the warning. Default is 200.
@@ -1021,6 +1034,7 @@ var DefaultPolicy = Policy{
 	MaxTotalSteps:          100,
 	MaxStepRetries:         0,
 	MaxToolDepth:           8,
+	MaxToolCalls:           100,
 	MaxVisitsWarnThreshold: 200,
 }
 

@@ -247,6 +247,22 @@ type SessionManager struct {
 	// adapterDirs records the workflow directory each adapter was declared in,
 	// keyed by instance ID. Populated by VerifyGraph.
 	adapterDirs map[string]string
+
+	// borrowedToolResources marks sessions opened from verified records
+	// borrowed via BorrowToolResourceSessionsFrom (KB-58), keyed by instance
+	// ID. Guarded by mu. CloseBorrowedToolResources closes exactly these —
+	// the parent keeps its own record and session state.
+	borrowedToolResources map[string]bool
+	// borrowedPolicy is the parent graph's policy, set by the engine on
+	// borrowed managers so the nested tool-call gates (max_tool_depth,
+	// KB-58 max_tool_calls) consult the declaring workflow's values instead
+	// of package defaults. Guarded by mu; nil when not borrowed.
+	borrowedPolicy *workflow.Policy
+	// toolCallBudgets counts reserved nested tool calls per caller session id
+	// (KB-58 policy.max_tool_calls). Guarded by mu. Entries live as long as
+	// the sessions they count for; the map is cleared at Shutdown with the
+	// rest of the session state.
+	toolCallBudgets map[string]int
 }
 
 // verifiedRecord stores the host-visible state of an adapter that has been
@@ -270,6 +286,18 @@ type verifiedRecord struct {
 	// It is used to key per-scope shim sessions when per_scope_sessions is
 	// enabled; when empty the legacy adapter-type-only key is used.
 	scopeInstanceID string
+}
+
+// clone deep-copies the record so the owner and any borrower mutate
+// independently (all slice/map fields are value-bearing, so shallow copies
+// would alias them).
+func (r *verifiedRecord) clone() *verifiedRecord {
+	cp := *r
+	cp.config = cloneConfig(r.config)
+	cp.secrets = cloneConfig(r.secrets)
+	cp.secretOriginRefs = cloneOriginRefs(r.secretOriginRefs)
+	cp.capabilities = append([]string(nil), r.capabilities...)
+	return &cp
 }
 
 func (m *SessionManager) heartbeatStallThreshold() time.Duration {
@@ -428,6 +456,197 @@ func mergeMapInto[K comparable, V any](dst, src map[K]V) map[K]V {
 	return dst
 }
 
+// BorrowToolResourceSessionsFrom copies src's verified records and adapter
+// infos for the given adapters into m so nested adapter tool calls (KB-58)
+// can lazy-bind them LOCALLY on m. BorrowRemoteProvisioningFrom already
+// carries remote shims and graph caches; this method handles the host-local
+// counterpart: a tool-resource adapter (e.g. an mcp server) declared in a
+// parent graph, never a step target, reached only through the nested-execute
+// lazy bind. Without borrowing its verified record, that lazy bind fails on
+// m with ErrUnknownSession even though VerifyGraph handshake-verified the
+// adapter on src.
+//
+// Copies are deep (cloneConfig/cloneOriginRefs) so the parent and child
+// mutate independently; records whose adapter declares a REMOTE environment
+// are skipped (remote adapters dispatch through the shims borrowed by
+// BorrowRemoteProvisioningFrom instead). Names m already has (bound session
+// or its own verified record) are never overwritten.
+//
+// The copied names are remembered so CloseBorrowedToolResources can close
+// exactly the sessions opened from borrowed records — the parent owns its
+// own record and the borrowed session is m's to tear down.
+// Thread-safe.
+func (m *SessionManager) BorrowToolResourceSessionsFrom(src *SessionManager, names []string) []string {
+	if src == nil || src == m || len(names) == 0 {
+		return nil
+	}
+	recs, infos := src.snapshotToolResourceRecords(names)
+	if len(recs) == 0 && len(infos) == 0 {
+		return nil
+	}
+	return m.installBorrowedToolResources(recs, infos)
+}
+
+// snapshotToolResourceRecords gathers deep copies of the manager's verified records
+// and adapter infos for the given tool-resource names. The manager mutex is
+// held for the whole gather so a concurrent scope change cannot split a name
+// across states.
+func (m *SessionManager) snapshotToolResourceRecords(names []string) (recs map[string]*verifiedRecord, infos map[string]*workflow.AdapterInfo) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, name := range names {
+		if rec := m.verified[name]; rec != nil {
+			if recs == nil {
+				recs = make(map[string]*verifiedRecord, len(names))
+			}
+			recs[name] = rec.clone()
+		}
+		if info := m.adapterInfos[name]; info != nil {
+			if infos == nil {
+				infos = make(map[string]*workflow.AdapterInfo, len(names))
+			}
+			captured := *info
+			infos[name] = &captured
+		}
+	}
+	return recs, infos
+}
+
+// installBorrowedToolResources installs host-local tool-resource records into
+// m and marks them borrowed. Adapters m already binds or verifies are skipped
+// (never overwritten), as are adapters whose declaring environment is remote:
+// those dispatch through the shims borrowed by BorrowRemoteProvisioningFrom
+// and their records stay parent-owned. Returns the names actually borrowed.
+func (m *SessionManager) installBorrowedToolResources(recs map[string]*verifiedRecord, infos map[string]*workflow.AdapterInfo) []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	borrowed := make([]string, 0, len(recs))
+	for name, rec := range recs {
+		if !m.borrowEligibleLocked(name) {
+			continue
+		}
+		m.recordBorrowedLocked(name, rec)
+		borrowed = append(borrowed, name)
+	}
+	for _, name := range borrowed {
+		if info, ok := infos[name]; ok {
+			if m.adapterInfos == nil {
+				m.adapterInfos = make(map[string]*workflow.AdapterInfo)
+			}
+			m.adapterInfos[name] = info
+		}
+	}
+	return borrowed
+}
+
+// borrowEligibleLocked reports whether name may receive a borrowed
+// tool-resource record: no live binding, no existing verified record, and a
+// host-local declaring environment. Unresolvable declarations are borrowed
+// as-is so the lazy bind reports its own typed resolution error.
+func (m *SessionManager) borrowEligibleLocked(name string) bool {
+	if _, ok := m.sessions[name]; ok {
+		return false
+	}
+	if _, ok := m.verified[name]; ok {
+		return false
+	}
+	node, graph := m.adapterDeclarationLocked(name)
+	return node == nil || graph == nil || !declaredAdapterEnvironmentIsRemote(node, graph)
+}
+
+// recordBorrowedLocked installs the verified record and borrow marker.
+func (m *SessionManager) recordBorrowedLocked(name string, rec *verifiedRecord) {
+	if m.verified == nil {
+		m.verified = make(map[string]*verifiedRecord)
+	}
+	if m.borrowedToolResources == nil {
+		m.borrowedToolResources = make(map[string]bool)
+	}
+	m.verified[name] = rec
+	m.borrowedToolResources[name] = true
+}
+
+// CloseBorrowedToolResources closes every session opened from a borrowed
+// verified record (KB-58) and forgets the borrow markers. The parent keeps
+// its own record, so closing these sessions does not disturb it. Idempotent:
+// already-closed names (bindVerifiedRecord deletes the record when opening)
+// are skipped. Thread-safe.
+func (m *SessionManager) CloseBorrowedToolResources(ctx context.Context) {
+	m.mu.Lock()
+	if len(m.borrowedToolResources) == 0 {
+		m.mu.Unlock()
+		return
+	}
+	names := make([]string, 0, len(m.borrowedToolResources))
+	for name := range m.borrowedToolResources {
+		names = append(names, name)
+	}
+	m.borrowedToolResources = nil
+	m.mu.Unlock()
+
+	for _, name := range names {
+		m.Close(ctx, name)
+	}
+}
+
+// SetBorrowedGraphPolicy records the parent graph's policy for m to consult
+// when it has no graph of its own (KB-58): the depth gate
+// (policy.max_tool_depth) and the call-count gate (policy.max_tool_calls)
+// must not fall back to package defaults when a per-workflow value was
+// declared. Thread-safe.
+func (m *SessionManager) SetBorrowedGraphPolicy(p *workflow.Policy) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.borrowedPolicy = p
+}
+
+// BorrowedGraphPolicy returns the parent graph policy recorded via
+// SetBorrowedGraphPolicy, or nil when none was borrowed.
+func (m *SessionManager) BorrowedGraphPolicy() *workflow.Policy {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.borrowedPolicy
+}
+
+// reserveToolCallBudget reserves one nested tool call for the caller session
+// against the session's policy.max_tool_calls budget (KB-58), engine-enforced
+// at the seam alongside the depth gate so an iterative agent loop cannot run
+// unbounded. A maxCalls of 0 or less means no cap (hand-built fixtures with
+// no budget configured); otherwise a reservation beyond the cap refuses. The
+// caller releases the reservation via releaseToolCallBudget on the
+// synchronous gate paths only — an asynchronously dispatched call has been
+// executed and keeps consuming budget.
+func (m *SessionManager) reserveToolCallBudget(sessionID string, maxCalls int) bool {
+	if maxCalls <= 0 {
+		return true
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.toolCallBudgets == nil {
+		m.toolCallBudgets = make(map[string]int)
+	}
+	if m.toolCallBudgets[sessionID] >= maxCalls {
+		return false
+	}
+	m.toolCallBudgets[sessionID]++
+	return true
+}
+
+// releaseToolCallBudget gives back one reservation for the caller session
+// (a call refused synchronously after its reservation, e.g. invalid
+// arguments or a losing pause-gate race).
+func (m *SessionManager) releaseToolCallBudget(sessionID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if used, ok := m.toolCallBudgets[sessionID]; ok {
+		if used <= 1 {
+			delete(m.toolCallBudgets, sessionID)
+		} else {
+			m.toolCallBudgets[sessionID] = used - 1
+		}
+	}
+}
+
 // RemoteShim returns the currently registered remote shim (may be nil).
 func (m *SessionManager) RemoteShim() RemoteShim {
 	m.mu.Lock()
@@ -452,12 +671,26 @@ func (m *SessionManager) remoteShimForEnvLocked(envKey string) RemoteShim {
 
 // remoteEnvForAdapter returns the environment key ("remote.<name>") the
 // adapter declaration is bound to, resolving against the DECLARING graph so
-// subworkflow adapters match the provisioning path (CRI-269).
+// subworkflow adapters match the provisioning path (CRI-269). The second
+// result is true only when that environment is REMOTE — callers use this to
+// route dispatch, and a local environment binding must not be taken as
+// remote (pre-refactor semantics).
 func (m *SessionManager) remoteEnvForAdapter(instanceID string) (string, bool) {
 	adapterNode, graph := m.adapterDeclaration(instanceID)
 	if adapterNode == nil || graph == nil {
 		return "", false
 	}
+	if !declaredAdapterEnvironmentIsRemote(adapterNode, graph) {
+		return "", false
+	}
+	return declaredAdapterEnvironmentKey(adapterNode, graph)
+}
+
+// declaredAdapterEnvironmentKey resolves an adapter node's environment key
+// against its declaring graph: the node's environment override, else the
+// graph default. Returns ("", false) when the node or graph is nil or no
+// environment is bound.
+func declaredAdapterEnvironmentKey(adapterNode *workflow.AdapterNode, graph *workflow.FSMGraph) (string, bool) {
 	envKey := adapterNode.Environment
 	if envKey == "" {
 		envKey = graph.DefaultEnvironment
@@ -465,11 +698,19 @@ func (m *SessionManager) remoteEnvForAdapter(instanceID string) (string, bool) {
 	if envKey == "" {
 		return "", false
 	}
-	envNode, ok := graph.Environments[envKey]
-	if !ok || envNode.Type != "remote" {
-		return "", false
-	}
 	return envKey, true
+}
+
+// declaredAdapterEnvironmentIsRemote reports whether the adapter node is
+// bound to a remote environment in its declaring graph. Env-less adapters
+// (host-local by default) report false.
+func declaredAdapterEnvironmentIsRemote(adapterNode *workflow.AdapterNode, graph *workflow.FSMGraph) bool {
+	envKey, ok := declaredAdapterEnvironmentKey(adapterNode, graph)
+	if !ok {
+		return false
+	}
+	envNode, ok := graph.Environments[envKey]
+	return ok && envNode.Type == "remote"
 }
 
 // remoteShimForAdapter returns the shim serving the remote environment the
@@ -1659,6 +1900,11 @@ func (m *SessionManager) lockedAdapterFor(instanceID string) *lockfile.LockedAda
 func (m *SessionManager) adapterDeclaration(instanceID string) (*workflow.AdapterNode, *workflow.FSMGraph) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.adapterDeclarationLocked(instanceID)
+}
+
+// adapterDeclarationLocked is the mu-held core of adapterDeclaration.
+func (m *SessionManager) adapterDeclarationLocked(instanceID string) (*workflow.AdapterNode, *workflow.FSMGraph) {
 	if m.graph != nil {
 		if node, ok := m.graph.Adapters[instanceID]; ok {
 			return node, m.graph
