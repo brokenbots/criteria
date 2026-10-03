@@ -1,0 +1,110 @@
+// OrchestratorService — operator-facing APIs for reconciling run
+// lifecycle directly from Castle (CRI-133). Design note:
+// docs/adrs/ADR-0005-orchestrator-event-subscription.md (polling was chosen
+// over a server stream).
+//
+// The read RPCs are observation-only. CancelRun (CRI-142) is the single
+// operator-facing write: it stamps a run terminal in Castle when the operator
+// deliberately deletes the CriteriaRun, without requiring the owning agent
+// to act. It is never anonymously reachable and is not covered by dev-mode
+// anonymous reads.
+syntax = "proto3";
+
+package criteria.v1;
+
+import "criteria/v1/events.proto";
+import "criteria/v1/criteria.proto";
+
+option go_package = "github.com/brokenbots/criteria/sdk/pb/criteria/v1;criteriav1";
+
+service OrchestratorService {
+  // SubscribeRunEvents returns the persisted events for one run with
+  // seq > since_seq, in ascending seq order (CRI-133).
+  //
+  // Polling semantics: one bounded page per call; the operator re-polls
+  // within its reconcile interval. `since_seq` is exclusive — pass 0 to
+  // replay the run from the beginning, or the previously returned cursor to
+  // resume after an operator restart. Events are durable in the store, so
+  // replay is gapless and duplicate-free under interleaved writers.
+  //
+  // Cursor handling: after consuming a NON-EMPTY page, persist `last_seq`
+  // (the highest seq in the page) as the per-run cursor. When the page is
+  // empty, keep the previously persisted cursor: `last_seq` is 0 on empty
+  // pages and must NOT be persisted, otherwise an idle run would reset its
+  // cursor to 0 and replay from the beginning on every reconcile. When the
+  // page is full (len(events) == limit), `next_since_seq`
+  // is also set so the operator can continue paging immediately; the
+  // terminal event of a run is a normal listable event.
+  rpc SubscribeRunEvents(SubscribeRunEventsRequest) returns (SubscribeRunEventsResponse);
+
+  // ListActiveRuns returns runs that have not reached a terminal state
+  // (pending | running | paused). This is the discovery step of the operator
+  // reconcile loop: subscribe to each returned run with SubscribeRunEvents.
+  // Terminal runs (succeeded | failed | cancelled) are excluded; their final
+  // events remain pollable via SubscribeRunEvents.
+  rpc ListActiveRuns(ListActiveRunsRequest) returns (ListActiveRunsResponse);
+
+  // CancelRun marks one run terminal (status "cancelled") on the operator's
+  // behalf (CRI-142). It exists for deterministic cleanup: when the operator
+  // deletes the CriteriaRun, it stamps the Castle run terminal itself instead
+  // of waiting for a dead agent's SubmitEvents.
+  //
+  // Semantics:
+  //   - Unknown run_id is NotFound.
+  //   - A run already in a terminal state (succeeded | failed | cancelled) is
+  //     FailedPrecondition; terminal states are never overwritten.
+  //   - The run is stamped "cancelled" with ended_at set and the supplied
+  //     reason (default "cancelled by operator") recorded as the run's
+  //     failure reason. Any queued or leased workflow assignment for the run
+  //     is also marked terminal so the work is never re-dispatched.
+  //
+  // Auth: orchestrator identities may cancel any run they can observe; agent
+  // identities may cancel only runs they own. Anonymous callers are rejected
+  // even in dev mode.
+  rpc CancelRun(CancelRunRequest) returns (CancelRunResponse);
+}
+
+// SubscribeRunEventsRequest anchors a single poll of a run's event stream.
+message SubscribeRunEventsRequest {
+  // run_id is the run to poll. Required.
+  string run_id = 1;
+  // since_seq is the exclusive lower bound; 0 replays from the beginning.
+  // Pass the previously persisted cursor to resume after an operator restart.
+  uint64 since_seq = 2;
+  // limit caps the page size; 0 selects the server default. When the page is
+  // full the response carries next_since_seq for immediate continuation.
+  int32 limit = 3;
+}
+
+message SubscribeRunEventsResponse {
+  // events are the persisted envelopes with seq > since_seq, ascending by seq.
+  repeated criteria.v1.Envelope events = 1;
+  // last_seq is the highest seq returned in this page; 0 when the page is
+  // empty. Persist it as the per-run cursor ONLY after a non-empty page —
+  // on an empty page, keep the previously persisted cursor unchanged.
+  uint64 last_seq = 2;
+  // next_since_seq is set only when the page is full; pass it as since_seq to
+  // continue paging without waiting for the next reconcile interval.
+  uint64 next_since_seq = 3;
+}
+
+message ListActiveRunsRequest {
+}
+
+message ListActiveRunsResponse {
+  // runs are the non-terminal runs (pending | running | paused).
+  repeated criteria.v1.Run runs = 1;
+}
+
+message CancelRunRequest {
+  // run_id is the run to cancel. Required.
+  string run_id = 1;
+  // reason is audit metadata describing why the operator cancelled the run
+  // (e.g. "criteriarun deleted"). Empty selects "cancelled by operator".
+  string reason = 2;
+}
+
+message CancelRunResponse {
+  // run is the cancelled run record as persisted.
+  criteria.v1.Run run = 1;
+}

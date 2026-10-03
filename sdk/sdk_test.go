@@ -98,6 +98,9 @@ func TestTypeStringMatchesEvents(t *testing.T) {
 		{&criteria.BranchEvaluated{}, "branch.evaluated"},
 		{&criteria.ForEachEntered{}, "for_each.entered"},
 		{&criteria.AdapterEvent{}, "adapter.event"},
+		{&criteria.RunMetadata{}, "run.metadata"},
+		{&criteria.AdapterLifecycleProvisionWanted{}, "adapter.lifecycle.provision_wanted"},
+		{&criteria.AdapterLifecycleReleased{}, "adapter.lifecycle.released"},
 	}
 
 	for _, tc := range cases {

@@ -2,10 +2,12 @@ package conformance
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/proto"
 
 	criteria "github.com/brokenbots/criteria/sdk"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
@@ -14,9 +16,11 @@ import (
 // testLifecycleAutomatic verifies the wire contract for automatic adapter
 // lifecycle events (W12). Adapter session lifecycle events are carried by the
 // `AdapterEvent` envelope arm with `kind` ∈ {"opened","closed","init_failed",
-// "close_failed"}. This test validates that subjects round-trip those
-// envelopes correctly: submitted via SubmitEvents, persisted, and returned by
-// ListRunEvents with adapter and kind preserved and event ordering stable.
+// "close_failed"}; adapter pod reconcile events are carried by the
+// AdapterLifecycleProvisionWanted / AdapterLifecycleReleased envelope arms.
+// These tests validate that subjects round-trip those envelopes correctly:
+// submitted via SubmitEvents, persisted, and returned by ListRunEvents with
+// their fields preserved and event ordering stable.
 //
 // In-process engine behavior (provisioning before first step, LIFO teardown,
 // scope isolation) is covered by internal/engine/lifecycle_test.go and
@@ -28,6 +32,9 @@ func testLifecycleAutomatic(t *testing.T, s Subject) {
 	})
 	t.Run("AdapterSessionEventsOrdered", func(t *testing.T) {
 		testAdapterSessionEventsOrdered(t, s)
+	})
+	t.Run("AdapterPodReconcileEventsRoundTrip", func(t *testing.T) {
+		testAdapterPodReconcileEventsRoundTrip(t, s)
 	})
 }
 
@@ -170,5 +177,96 @@ func testAdapterSessionEventsOrdered(t *testing.T, s Subject) {
 	}
 	if !(openedSeq < closedSeq) {
 		t.Errorf("expected opened.seq < closed.seq, got opened=%d closed=%d", openedSeq, closedSeq)
+	}
+}
+
+// testAdapterPodReconcileEventsRoundTrip submits a provision_wanted/released
+// pair carried by the AdapterLifecycleProvisionWanted / AdapterLifecycleReleased
+// envelope arms. Subjects MUST persist and return them with scope_instance_id,
+// shim_listen_address, and token_ref preserved — orchestrators reconcile
+// adapter pods per scope from these fields. TypeString discriminators are also
+// asserted: "adapter.lifecycle.provision_wanted" and
+// "adapter.lifecycle.released".
+func testAdapterPodReconcileEventsRoundTrip(t *testing.T, s Subject) {
+	baseURL, client, teardown := s.SetUp(t)
+	defer teardown()
+
+	const token = "token-lifecycle-pod"
+	criteriaID := s.RegisterAgent(t, "criteria-lifecycle-pod", token)
+	oClient := criteria.NewServiceClient(client, baseURL)
+
+	createReq := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-lifecycle-pod"})
+	createReq.Header().Set("Authorization", "Bearer "+token)
+	runResp, err := oClient.CreateRun(context.Background(), createReq)
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	runID := runResp.Msg.RunId
+
+	const scopeInstanceID = "run-pod/step-1/scope-0"
+	const shimAddr = "127.0.0.1:52000"
+	const tokenRef = "criteria/adapter/run-pod-step-1"
+	wanted := criteria.NewEnvelope(runID, &pb.AdapterLifecycleProvisionWanted{
+		ScopeInstanceId:   scopeInstanceID,
+		ShimListenAddress: shimAddr,
+		TokenRef:          tokenRef,
+	})
+	wanted.CorrelationId = "pod-provision-wanted"
+	released := criteria.NewEnvelope(runID, &pb.AdapterLifecycleReleased{
+		ScopeInstanceId:   scopeInstanceID,
+		ShimListenAddress: shimAddr,
+		TokenRef:          tokenRef,
+	})
+	released.CorrelationId = "pod-released"
+
+	if got := criteria.TypeString(wanted); got != "adapter.lifecycle.provision_wanted" {
+		t.Errorf("TypeString(provision_wanted)=%q, want adapter.lifecycle.provision_wanted", got)
+	}
+	if got := criteria.TypeString(released); got != "adapter.lifecycle.released" {
+		t.Errorf("TypeString(released)=%q, want adapter.lifecycle.released", got)
+	}
+	if criteria.IsTerminal(wanted) || criteria.IsTerminal(released) {
+		t.Error("adapter pod reconcile events must not be terminal run events")
+	}
+
+	submitEnvelopes(t, oClient, token, []*pb.Envelope{wanted, released})
+
+	sent := map[string]*pb.Envelope{
+		wanted.CorrelationId:   wanted,
+		released.CorrelationId: released,
+	}
+
+	assertPodReconcilePersisted(t, s, baseURL, client, token, runID, sent)
+}
+
+// assertPodReconcilePersisted reads the run's events back through
+// ListRunEvents and asserts the provision_wanted/released pair was persisted
+// field-for-field (compared via proto.Equal) in submission order.
+func assertPodReconcilePersisted(t *testing.T, s Subject, baseURL string, client *http.Client, token, runID string, sent map[string]*pb.Envelope) {
+	t.Helper()
+
+	events := s.ListRunEvents(t, baseURL, client, token, runID, 0)
+	persisted := map[string]*pb.Envelope{}
+	for _, ev := range events {
+		switch ev.Payload.(type) {
+		case *pb.Envelope_AdapterLifecycleProvisionWanted, *pb.Envelope_AdapterLifecycleReleased:
+			persisted[ev.CorrelationId] = ev
+		}
+	}
+
+	for corrID, env := range sent {
+		got, ok := persisted[corrID]
+		if !ok {
+			t.Fatalf("expected %s persisted; run events=%d", corrID, len(events))
+		}
+		if !proto.Equal(extractPayloadMsg(env), extractPayloadMsg(got)) {
+			t.Errorf("%s: payload round-trip mismatch:\nwant: %v\ngot:  %v",
+				corrID, extractPayloadMsg(env), extractPayloadMsg(got))
+		}
+	}
+	wanted, released := sent["pod-provision-wanted"], sent["pod-released"]
+	if persisted[wanted.CorrelationId].Seq >= persisted[released.CorrelationId].Seq {
+		t.Errorf("expected provision_wanted.seq < released.seq, got %d >= %d",
+			persisted[wanted.CorrelationId].Seq, persisted[released.CorrelationId].Seq)
 	}
 }

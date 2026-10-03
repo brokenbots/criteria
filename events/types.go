@@ -104,6 +104,12 @@ func setPayload(env *pb.Envelope, payload any) { //nolint:funlen,gocyclo // type
 		env.Payload = &pb.Envelope_StepIterationItem{StepIterationItem: p}
 	case *pb.RunOutputs:
 		env.Payload = &pb.Envelope_RunOutputs{RunOutputs: p}
+	case *pb.RunMetadata:
+		env.Payload = &pb.Envelope_RunMetadata{RunMetadata: p}
+	case *pb.AdapterLifecycleProvisionWanted:
+		env.Payload = &pb.Envelope_AdapterLifecycleProvisionWanted{AdapterLifecycleProvisionWanted: p}
+	case *pb.AdapterLifecycleReleased:
+		env.Payload = &pb.Envelope_AdapterLifecycleReleased{AdapterLifecycleReleased: p}
 	case *pb.WorkflowGraphs:
 		env.Payload = &pb.Envelope_WorkflowGraphs{WorkflowGraphs: p}
 	case *pb.AgentPromptInjected:
@@ -184,6 +190,12 @@ func TypeString(env *pb.Envelope) string { //nolint:funlen,gocyclo // discrimina
 		return "step.iteration_item"
 	case *pb.Envelope_RunOutputs:
 		return "run.outputs"
+	case *pb.Envelope_RunMetadata:
+		return "run.metadata"
+	case *pb.Envelope_AdapterLifecycleProvisionWanted:
+		return "adapter.lifecycle.provision_wanted"
+	case *pb.Envelope_AdapterLifecycleReleased:
+		return "adapter.lifecycle.released"
 	case *pb.Envelope_WorkflowGraphs:
 		return "workflow.graphs"
 	case *pb.Envelope_AgentPromptInjected:

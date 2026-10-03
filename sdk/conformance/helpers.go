@@ -1,14 +1,46 @@
 package conformance
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	criteriav1connect "github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
 )
+
+// submitEnvelopes submits envelopes through SubmitEvents and drains the stream
+// to EOF, asserting each ack correlation_id matches the submitted envelope.
+func submitEnvelopes(t *testing.T, oClient criteriav1connect.CriteriaServiceClient, token string, envs []*pb.Envelope) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	stream := oClient.SubmitEvents(ctx)
+	stream.RequestHeader().Set("Authorization", "Bearer "+token)
+	for _, env := range envs {
+		if err := stream.Send(env); err != nil {
+			t.Fatalf("Send(%s): %v", env.CorrelationId, err)
+		}
+		ack, err := stream.Receive()
+		if err != nil {
+			t.Fatalf("Receive ack(%s): %v", env.CorrelationId, err)
+		}
+		if ack.CorrelationId != env.CorrelationId {
+			t.Errorf("ack.correlation_id=%q want %q", ack.CorrelationId, env.CorrelationId)
+		}
+	}
+	_ = stream.CloseRequest()
+	for {
+		if _, recvErr := stream.Receive(); recvErr != nil {
+			break
+		}
+	}
+}
 
 // PayloadOneof returns the "payload" oneof descriptor from the Envelope message.
 // Exported so conformance test authors can enumerate payload variants.
