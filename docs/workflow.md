@@ -1585,8 +1585,9 @@ describes what *may* be called, and dynamic tool surfaces are not fully
 knowable before the run, so a static cycle is not proof that one actually
 occurs. The runtime gates stop pathological recursion: a call that would
 exceed `max_tool_depth` fails with the typed `depth_exceeded` call error,
-and a call that would re-enter an adapter already on the call chain fails
-with the typed `cycle_detected` call error.
+a call that would exhaust the `max_tool_calls` budget fails with the typed
+`budget_exhausted` call error, and a call that would re-enter an adapter
+already on the call chain fails with the typed `cycle_detected` call error.
 
 ---
 

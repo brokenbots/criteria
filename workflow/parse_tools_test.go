@@ -364,6 +364,72 @@ state "done" { terminal = true }
 	}
 }
 
+// TestParseTools_MaxToolCallsRangeCheck mirrors the CRI-155 placement for the
+// call-count policy (KB-58): the >= 1 range check on policy.max_tool_calls is
+// a plain parse-time decode diagnostic. Unset is valid (engine default of
+// 100); declared values below 1 are rejected with a diagnostic.
+func TestParseTools_MaxToolCallsRangeCheck(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{name: "unset", value: "", wantErr: false},
+		{name: "one", value: "1", wantErr: false},
+		{name: "large", value: "64", wantErr: false},
+		{name: "zero", value: "0", wantErr: true},
+		{name: "negative", value: "-1", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var src strings.Builder
+			src.WriteString(`
+workflow {
+  name          = "max-tool-calls"
+  version       = "1"
+  initial_state = "start"
+  target_state  = "done"
+`)
+			if tt.value != "" {
+				src.WriteString("\n  policy {\n    max_tool_calls = " + tt.value + "\n  }\n")
+			}
+			src.WriteString(`}
+
+adapter "shell" "worker" {}
+
+step "start" {
+  target = adapter.shell.worker
+  outcome "success" { next = state.done }
+}
+
+state "done" { terminal = true }
+`)
+			spec, diags := Parse("max_tool_calls.hcl", []byte(src.String()))
+			if tt.wantErr {
+				if !diags.HasErrors() {
+					t.Fatalf("max_tool_calls = %s: want parse error, got none", tt.value)
+				}
+				if !strings.Contains(diags.Error(), "max_tool_calls must be an integer >= 1") {
+					t.Errorf("unexpected diagnostic: %s", diags.Error())
+				}
+				return
+			}
+			if diags.HasErrors() {
+				t.Fatalf("max_tool_calls = %s: unexpected parse error: %s", tt.value, diags.Error())
+			}
+			if tt.value != "" {
+				want, ok := map[string]int{"1": 1, "64": 64}[tt.value]
+				if !ok {
+					t.Fatalf("missing expectation for %q", tt.value)
+				}
+				if got := spec.Header.Policy.MaxToolCalls; got != want {
+					t.Errorf("MaxToolCalls = %d, want %d", got, want)
+				}
+			}
+		})
+	}
+}
+
 // TestParseTools_NonTraversalEntriesDeferred pins the CRI-155 "no validation"
 // boundary: entries in a step `tools` list that are not bare traversals (and
 // non-list values) parse without error and yield no grants. Shape diagnostics

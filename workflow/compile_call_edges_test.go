@@ -654,6 +654,69 @@ func TestCallEdges_PolicyMaxToolDepth(t *testing.T) {
 	}
 }
 
+// TestCallEdges_PolicyMaxToolCalls pins graph.Policy.MaxToolCalls wiring
+// (KB-58): unset keeps DefaultPolicy's engine default of 100, a declared
+// positive value overrides it, and declared values < 1 are parse errors that
+// block compile.
+func TestCallEdges_PolicyMaxToolCalls(t *testing.T) {
+	if DefaultPolicy.MaxToolCalls != 100 {
+		t.Fatalf("DefaultPolicy.MaxToolCalls = %d, want 100", DefaultPolicy.MaxToolCalls)
+	}
+	t.Run("unset defaults to 100", func(t *testing.T) {
+		src := callEdgesSrc("",
+			`adapter "shell" "worker" {
+  tool "git_status" {}
+}`,
+			`step "start" {
+  target = adapter.shell.worker
+  outcome "success" { next = state.done }
+}`)
+		g, diags := compileCallEdges(t, src, callEdgesSchemas("shell"))
+		if len(diags) != 0 {
+			t.Fatalf("compile: %s", diags.Error())
+		}
+		if g.Policy.MaxToolCalls != 100 {
+			t.Errorf("unset max_tool_calls = %d, want 100", g.Policy.MaxToolCalls)
+		}
+	})
+	t.Run("declared value overrides", func(t *testing.T) {
+		src := callEdgesSrc("policy { max_tool_calls = 3 }",
+			`adapter "shell" "worker" {
+  tool "git_status" {}
+}`,
+			`step "start" {
+  target = adapter.shell.worker
+  outcome "success" { next = state.done }
+}`)
+		g, diags := compileCallEdges(t, src, callEdgesSchemas("shell"))
+		if len(diags) != 0 {
+			t.Fatalf("compile: %s", diags.Error())
+		}
+		if g.Policy.MaxToolCalls != 3 {
+			t.Errorf("max_tool_calls = %d, want 3", g.Policy.MaxToolCalls)
+		}
+	})
+	for _, value := range []string{"0", "-1"} {
+		t.Run("rejected "+value, func(t *testing.T) {
+			src := callEdgesSrc("policy { max_tool_calls = "+value+" }",
+				`adapter "shell" "worker" {
+  tool "git_status" {}
+}`,
+				`step "start" {
+  target = adapter.shell.worker
+  outcome "success" { next = state.done }
+}`)
+			_, diags := Parse("t.hcl", []byte(src))
+			if !diags.HasErrors() {
+				t.Fatalf("max_tool_calls = %s: want parse error, got none", value)
+			}
+			if !strings.Contains(diags.Error(), "max_tool_calls must be an integer >= 1") {
+				t.Errorf("unexpected diagnostic: %s", diags.Error())
+			}
+		})
+	}
+}
+
 // TestCallEdges_ReachabilityAndRoutingUnchanged pins the scope guard: adding
 // tool refs to a workflow must not change nodeTargets, reachability, or FSM
 // transitions — only the new edge set appears.
