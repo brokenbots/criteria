@@ -88,8 +88,27 @@ func compileOneAdapter(g *FSMGraph, ad *AdapterDeclSpec, schemas map[string]Adap
 	cacheResolvedPolicy(g, key, effectiveEnv, typeName, schemas)
 
 	staticTools := make([]string, 0, len(ad.Tools))
+	toolContracts := make(map[string]ToolContract, len(ad.Tools))
+	var toolContractOrder []string
+	seenTools := make(map[string]bool, len(ad.Tools))
 	for _, t := range ad.Tools {
 		staticTools = append(staticTools, t.Name)
+		if seenTools[t.Name] {
+			r := t.Remain.MissingItemRange()
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("adapter %q: duplicate tool %q", key, t.Name),
+				Subject:  &r,
+			})
+			continue
+		}
+		seenTools[t.Name] = true
+		contract, d := compileToolContract(key, t.Name, &t, g)
+		diags = append(diags, d...)
+		if contract.HasAny() {
+			toolContracts[t.Name] = contract
+			toolContractOrder = append(toolContractOrder, t.Name)
+		}
 	}
 
 	g.Adapters[key] = &AdapterNode{
@@ -103,6 +122,8 @@ func compileOneAdapter(g *FSMGraph, ad *AdapterDeclSpec, schemas map[string]Adap
 		Secrets:      secrets,
 		StaticTools:  staticTools,
 		DynamicTools: ad.DynamicTools,
+		ToolContracts:      toolContracts,
+		ToolContractOrder:  toolContractOrder,
 	}
 	// Track adapter declaration order for stable iteration
 	g.AdapterOrder = append(g.AdapterOrder, key)

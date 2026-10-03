@@ -64,6 +64,21 @@ func compileAdapterStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[strin
 	inputMap, inputExprs, d := decodeStepInput(g, sp, schemas, opts, adapterType)
 	diags = append(diags, d...)
 
+	// KB-59: when the target adapter is schema-less but one of its tool
+	// blocks declares an `in` type contract for the tool this input routes to
+	// (compile-time literal), the input attributes validate against the
+	// declared type instead of passing unchecked.
+	contract, contractOK, contractDiags := validateStepInputToolContract(g, sp, adapterRef, schemas)
+	diags = append(diags, contractDiags...)
+	if contractOK {
+		attrs, ad := sp.Input.Remain.JustAttributes()
+		if !ad.HasErrors() {
+			diags = append(diags, validateTypedInputAttrs(fmt.Sprintf("step %q input", sp.Name), attrs, contract.InType, adapterType, sp.Input.Remain.MissingItemRange())...)
+		} else {
+			diags = append(diags, ad...)
+		}
+	}
+
 	secretInputMap, secretInputExprs, d := decodeStepSecretInput(g, sp, schemas, opts, adapterType)
 	diags = append(diags, d...)
 

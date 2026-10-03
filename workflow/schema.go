@@ -329,12 +329,21 @@ type AdapterDeclSpec struct {
 }
 
 // ToolDeclSpec declares one statically presented tool on an adapter
-// declaration: tool "<name>" { }. The name label is the tool's stable name;
-// the body is reserved for future use — CRI-155 decodes and ignores it so the
-// schema stays honest without constraining future extensions.
+// declaration: tool "<name>" { }. The name label is the tool's stable name.
+// The body carries the typed tool contract (KB-59, MCP-probe Gap 2 seam):
+// `in = type.<name>` pins the type the tool's input arguments must satisfy at
+// the adapter-tools seam, and `out = type.<name>` pins the type the callee's
+// surfaced outputs must satisfy. Other body content is still decoded and
+// ignored (CRI-155) so the schema stays honest without constraining future
+// extensions.
 type ToolDeclSpec struct {
-	Name   string   `hcl:"name,label"`
-	Remain hcl.Body `hcl:",remain"` // reserved body; decoded and ignored (CRI-155)
+	Name string `hcl:"name,label"`
+	// In/out declare the typed tool contract (KB-45 named types or an inline
+	// typeexpr constraint). Both are optional; an absent side stays
+	// unconstrained.
+	In    hcl.Expression `hcl:"in,optional"`
+	Out   hcl.Expression `hcl:"out,optional"`
+	Remain hcl.Body      `hcl:",remain"` // reserved body; decoded and ignored (CRI-155)
 }
 
 // StepSpec describes a single step in the workflow.
@@ -800,6 +809,50 @@ type AdapterNode struct {
 	// (CRI-155): its surface is extensible, so runtime tool-name validation is
 	// skipped and names resolve when the call executes (CRI-173).
 	DynamicTools bool
+	// ToolContracts carries the typed contracts declared on this adapter's
+	// tool blocks (KB-59), keyed by tool name. Only tools that declared at
+	// least one side (in/out) have an entry.
+	ToolContracts map[string]ToolContract
+	// ToolContractOrder preserves tool-declaration order for deterministic
+	// iteration.
+	ToolContractOrder []string
+}
+
+// ToolContract is the typed contract declared on one tool block (KB-59):
+// the in-type validates nested tool-call arguments at the adapter-tools
+// seam, the out-type validates the callee's surfaced outputs. InType/OutType
+// are the declared object types; *SchemaJSON are their deterministic
+// pinned-schema bytes for the shared payload evaluator (nil when that side
+// is unconstrained).
+type ToolContract struct {
+	// Loc names the declaring adapter tool for diagnostics
+	// (`adapter "<key>" tool "<name>"`).
+	Loc string
+	// InType is the declared request type; cty.NilType when unconstrained.
+	InType cty.Type
+	// InSchemaJSON is InType's deterministic JSON Schema (nil when absent).
+	InSchemaJSON []byte
+	// OutType is the declared response type; cty.NilType when unconstrained.
+	OutType cty.Type
+	// OutSchemaJSON is OutType's deterministic JSON Schema (nil when absent).
+	OutSchemaJSON []byte
+}
+
+// HasAny reports whether the contract declares at least one side.
+func (c ToolContract) HasAny() bool {
+	return c.InType != cty.NilType || c.OutType != cty.NilType
+}
+
+// HasToolContracts reports whether the adapter declared any typed tool
+// contract (KB-59).
+func (a *AdapterNode) HasToolContracts() bool {
+	return len(a.ToolContracts) > 0
+}
+
+// ToolContractFor returns the typed contract declared for a tool, if any.
+func (a *AdapterNode) ToolContractFor(toolName string) (ToolContract, bool) {
+	c, ok := a.ToolContracts[toolName]
+	return c, ok
 }
 
 // StepTargetKind enumerates the kinds of compiled step targets.
