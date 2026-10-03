@@ -570,12 +570,61 @@ func TestNestedToolCall_BareTargetRoutesContractViaArgs(t *testing.T) {
 	}
 }
 
-// TestNestedToolCall_BareTargetNoRoutingKeyPassthrough preserves the
-// no-routing-key posture: a bare-target call whose args name no tool has no
-// contract to route, so nothing is declared at the seam and the call stays
-// untyped — the args pass through unvalidated and the callee runs, exactly
-// like the pre-KB-59 seam.
-func TestNestedToolCall_BareTargetNoRoutingKeyPassthrough(t *testing.T) {
+// soloTaskContractWorkflowHCL carries a callee whose single declared
+// contract does NOT declare the routing key: the whole bare-target surface
+// resolves to the lone helper_task contract, so a call that names no tool
+// anywhere (no target segment, no request field, no args.tool) is still
+// unambiguous and gets routed for validation — the seam's analogue of the
+// compile side's solo-contract fallback for a tool-less input block.
+const soloTaskContractWorkflowHCL = `
+workflow {
+  name            = "x"
+  version         = "0.1"
+  initial_state   = "call"
+  target_state    = "done"
+}
+
+type "task_payload" {
+  schema = object({
+    task = string
+  })
+}
+
+environment "shell" "prod" {
+  os = "linux"
+}
+
+adapter "caller" "instance" {}
+adapter "callee" "helper" {
+  environment   = shell.prod
+  dynamic_tools = true
+
+  tool "helper_task" {
+    in = type.task_payload
+  }
+}
+
+step "call" {
+  target = adapter.caller.instance
+  tools  = [adapter.callee.helper.tools]
+
+  outcome "success" { next = step.done }
+}
+state "done" { terminal = true }
+
+permissions {
+  allow_tools = ["callee.helpers.*"]
+}
+`
+
+// TestNestedToolCall_BareTargetSingleContractViolatingArgsRejected closes
+// the review note on the bare-call finding: a bare whole-surface call that
+// names no tool anywhere, against an adapter with exactly one declared
+// contract, routes to the lone contract (the compile side's solo-contract
+// posture). Pre-fix the name stayed unresolved and the call ran unchecked;
+// post-fix the violating args are rejected typed invalid_args before the
+// callee runs.
+func TestNestedToolCall_BareTargetSingleContractViolatingArgsRejected(t *testing.T) {
 	audit := &sliceAuditWriter{}
 	calleeRec := &nestedCalleeRecorder{}
 	caller := &nestedCallerAdapter{target: bareCallTarget, args: map[string]any{
@@ -587,6 +636,64 @@ func TestNestedToolCall_BareTargetNoRoutingKeyPassthrough(t *testing.T) {
 	sm.Audit = audit
 
 	graph := compileNestedToolCallBareGraph(t)
+	sm.SetGraph(graph)
+	ctx := openFixtureSessions(t, sm, graph)
+	defer func() { _ = sm.Close(ctx, nestedCallerSession) }()
+	defer func() { _ = sm.Close(ctx, nestedCalleeSession) }()
+
+	inner := &adapterEventCollector{}
+	if _, err := sm.Execute(ctx, nestedCallerSession, graph.Steps["call"], inner, nil); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	tcr := caller.gotResult()
+	if tcr == nil || tcr.RequestId != "call-1" || tcr.CallError != callErrorInvalidArgs || tcr.Outcome != "" {
+		t.Fatalf("tool_call_result = %+v, want invalid_args reply", tcr)
+	}
+	if got := calleeRec.calleeSession(); got != "" {
+		t.Errorf("callee executed for rejected args (session %q)", got)
+	}
+	for _, needle := range []string{
+		`property "tool"`,
+		`property "ghost": undeclared property`,
+	} {
+		if !contractIssuesContains(t, audit, needle) {
+			t.Errorf("audit reason missing %q; entries = %+v", needle, audit.all())
+		}
+	}
+}
+
+// TestNestedToolCall_BareTargetSingleContractCompliantArgsValidated pins the
+// passing half of the solo-contract fallback: args that satisfy the lone
+// contract and carry no routing key are accepted, the callee runs, and the
+// input passthrough stays intact (the recorded name stays empty — the call
+// did not name a tool; no audit key is invented).
+func TestNestedToolCall_BareTargetSingleContractCompliantArgsValidated(t *testing.T) {
+	calleeRec := &nestedCalleeRecorder{}
+	caller := &nestedCallerAdapter{target: bareCallTarget, args: map[string]any{
+		"task": "do-thing",
+	}}
+	callee := &contractCalleeAdapter{&nestedCalleeAdapter{rec: calleeRec}}
+	sm := newNestedToolCallManager(t, caller, callee)
+
+	spec, diags := workflow.Parse("solo_contract.hcl", []byte(soloTaskContractWorkflowHCL))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	graph, diags := workflow.Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+	calleeNode := graph.Adapters[nestedCalleeSession]
+	if calleeNode == nil {
+		t.Fatalf("callee node %q missing from compiled graph", nestedCalleeSession)
+	}
+	if got := len(calleeNode.ToolContractOrder); got != 1 {
+		t.Fatalf("callee has %d contracts, want exactly 1", got)
+	}
+	if contract, ok := calleeNode.ToolContractFor("helper_task"); !ok || contract.InType == cty.NilType {
+		t.Fatalf("contract for helper_task not compiled: %+v", contract)
+	}
 	sm.SetGraph(graph)
 	ctx := openFixtureSessions(t, sm, graph)
 	defer func() { _ = sm.Close(ctx, nestedCallerSession) }()
@@ -615,8 +722,8 @@ func TestNestedToolCall_BareTargetNoRoutingKeyPassthrough(t *testing.T) {
 	if got := step.Input["task"]; got != "do-thing" {
 		t.Errorf("callee input task = %q, want do-thing", got)
 	}
-	if got, ok := step.Input["ghost"]; !ok || got != "boo" {
-		t.Errorf("callee input ghost = %q/%v, want boo/unchecked passthrough", got, ok)
+	if _, ok := step.Input["tool"]; ok {
+		t.Errorf("callee input tool key present, want unmodified passthrough")
 	}
 }
 

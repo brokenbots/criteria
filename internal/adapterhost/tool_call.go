@@ -1034,9 +1034,13 @@ func workflowAllowToolsForCallee(owningGraph *workflow.FSMGraph) []string {
 // resolution validateToolCallGraph applies) → args["tool"], the routing key
 // the MCP bridge carries for bare whole-surface targets
 // (adapter.<type>.<name>.tools) and the same disambiguator the compile side
-// accepts as input.tool (stepInputToolLiteral). A non-string or empty
-// args.tool leaves the name unresolved: no declaration, or an unreferenced
-// tool, returns the zero contract and every contract gate is skipped.
+// accepts as input.tool (stepInputToolLiteral). When nothing names a tool
+// at all, a callee with exactly one declared contract routes to that lone
+// contract (the compile side's solo-contract posture) — the contract gates
+// run, but the recorded name stays empty (the call still carried no routing
+// key; the bridge requires args.tool). A non-empty name that references no
+// contract, a non-string args.tool, and contract-less callees all leave the
+// zero contract and every contract gate is skipped.
 func resolveToolContract(calleeNode *workflow.AdapterNode, parsed toolCallTarget, reqTool string, args map[string]any) (string, workflow.ToolContract) {
 	named := parsed.Tool
 	if named == "" {
@@ -1050,6 +1054,11 @@ func resolveToolContract(calleeNode *workflow.AdapterNode, parsed toolCallTarget
 	}
 	if contract, ok := calleeNode.ToolContractFor(named); ok {
 		return named, contract
+	}
+	if named == "" && len(calleeNode.ToolContractOrder) == 1 {
+		if contract, ok := calleeNode.ToolContractFor(calleeNode.ToolContractOrder[0]); ok {
+			return "", contract
+		}
 	}
 	return named, workflow.ToolContract{}
 }
