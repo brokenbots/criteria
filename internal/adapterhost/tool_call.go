@@ -92,7 +92,10 @@ const adapterToolsCapability = "adapter_tools"
 // session's nested tool calls are being drained (ADR-0004 §11);
 // budget_exhausted extends it for calls refused by the KB-58 call-count
 // budget (policy.max_tool_calls, engine-enforced at the seam alongside the
-// depth gate).
+// depth gate); invalid_response extends it for successful callee results
+// whose surfaced outputs fail the callee's declared out-type contract
+// (KB-59 — a host-computed code, never forgivable through the callee's
+// own call_error channel).
 const (
 	callErrorCapabilityMissing = "capability_missing"
 	callErrorMalformedTarget   = "malformed_target"
@@ -108,6 +111,7 @@ const (
 	callErrorCanceled          = "canceled"
 	callErrorPaused            = "paused"
 	callErrorBudgetExhausted   = "budget_exhausted"
+	callErrorInvalidResponse   = "invalid_response"
 )
 
 // calleeReportedCallErrorCode is the reserved output key on a failure result
@@ -611,6 +615,11 @@ type nestedToolCall struct {
 	calleeRef  string
 	calleeStep *workflow.StepNode
 	nesting    toolCallNesting
+	// outContract is the callee's declared out-type contract for this tool
+	// (KB-59): successful results are validated against it before the typed
+	// reply is delivered. Zero value means no declared contract — behavior
+	// unchanged.
+	outContract workflow.ToolContract
 	// startedAt is the dispatch time; the tool.call_result event's duration
 	// (CRI-163) is measured from it.
 	startedAt time.Time
@@ -737,10 +746,33 @@ func (s *permissionInterceptSink) dispatchNestedToolCall(req *toolCallPayload, p
 	// step; nil means permissive (no declared schema).
 	calleeInfo := s.mgr.cachedAdapterInfo(parsed.AdapterRef)
 
-	calleeStep, inputErr := syntheticCalleeStep(parsed, calleeNode, calleeOwningGraph, calleeInfo, req.args)
+	// The tool name resolution (KB-59): the §2 target's tool segment,
+	// falling back to the request's tool field when the target omits it
+	// (dynamic tool surface) — the same resolution validateToolCallGraph
+	// applies. It names the contract looked up on the callee's declaration.
+	named := parsed.Tool
+	if named == "" {
+		named = req.tool
+	}
+
+	// The callee's declared typed tool contract for the named tool (KB-59):
+	// the callee declaration carries in/out types for its tool surface.
+	// No declaration (or an unreferenced tool) leaves the zero contract —
+	// every path below behaves byte-identically to the pre-KB-59 seam.
+	contract := workflow.ToolContract{}
+	if calleeNode != nil {
+		if c, ok := calleeNode.ToolContractFor(named); ok {
+			contract = c
+		}
+	}
+
+	calleeStep, inputErr := syntheticCalleeStep(parsed, calleeNode, calleeOwningGraph, calleeInfo, contract, req.args)
 	if inputErr != nil {
 		s.mgr.releaseToolCallBudget(s.permState.sessionID)
-		s.rejectToolCall(req.requestID, req.target, req.argsDigest, callErrorInvalidArgs)
+		// KB-59: the rejected call carries the typed issue list (declared
+		// contract violations) in the audit's deny reason, so a caller can
+		// see WHY the args failed, not just that they did.
+		s.rejectToolCallDetail(req.requestID, req.target, req.argsDigest, callErrorInvalidArgs, inputErr.Error())
 		return
 	}
 
@@ -749,19 +781,16 @@ func (s *permissionInterceptSink) dispatchNestedToolCall(req *toolCallPayload, p
 	// that pass every gate are registered, so teardown never audits a
 	// synchronously rejected call as abandoned. See startNestedToolCall
 	// for the pause-gate interaction (CRI-169).
-	tool := parsed.Tool
-	if tool == "" {
-		tool = req.tool
-	}
 	call := &nestedToolCall{
-		requestID:  req.requestID,
-		target:     req.target,
-		tool:       tool,
-		argsDigest: req.argsDigest,
-		calleeRef:  parsed.AdapterRef,
-		calleeStep: calleeStep,
-		nesting:    nesting,
-		startedAt:  time.Now(),
+		requestID:   req.requestID,
+		target:      req.target,
+		tool:        named,
+		argsDigest:  req.argsDigest,
+		calleeRef:   parsed.AdapterRef,
+		calleeStep:  calleeStep,
+		nesting:     nesting,
+		outContract: contract,
+		startedAt:   time.Now(),
 	}
 	s.startNestedToolCall(call)
 }
@@ -847,6 +876,32 @@ func (s *permissionInterceptSink) runNestedToolCall(nestedCtx context.Context, n
 	if encErr != nil {
 		s.reportNestedCallFailure(call, encErr)
 		return
+	}
+
+	// KB-59 typed out-contract: a successful callee result is validated
+	// against the tool's declared out-type before it reaches the caller —
+	// the engine validates at the boundary, on top of the runner-side caps,
+	// so a schema-choked response cannot present itself as a valid tool
+	// result to the caller or the mediator. A violation is a typed
+	// `invalid_response` reply (a host-computed code: it cannot be forged
+	// through the callee's call_error channel, which honors only the
+	// callee-meaningful codes above).
+	if call.outContract.OutType != cty.NilType && len(call.outContract.OutSchemaJSON) > 0 {
+		if issues := v2.ValidatePayloadSchema(call.outContract.OutSchemaJSON, outputsJSON); len(issues) > 0 {
+			s.permState.writeAudit(&DecisionLogEntry{
+				SessionID:   s.permState.sessionID,
+				RequestID:   call.requestID,
+				Tool:        call.target,
+				ArgsDigest:  call.argsDigest,
+				Decision:    "deny",
+				Reason:      "nested callee outputs rejected by contract validation: " + strings.Join(issues, "; "),
+				Layer:       s.nesting.depth,
+				EvaluatedAt: time.Now(),
+			})
+			s.emitNestedToolCallResultEvent(call, "", callErrorInvalidResponse)
+			s.permState.sendToolCallResult(call.requestID, callErrorInvalidResponse)
+			return
+		}
 	}
 
 	s.emitNestedToolCallResultEvent(call, result.Outcome, "")
@@ -940,8 +995,9 @@ func (s *permissionInterceptSink) nestedExecCtx() context.Context {
 // syntheticCalleeStep builds the StepNode that executes a tool-called callee
 // (CRI-160). The step carries:
 //   - the callee input keys from the call args, rendered to the wire shape
-//     (plain strings raw, structured values JSON-encoded) and validated
-//     against the callee's declared input schema;
+//     (plain strings raw, structured values JSON-encoded) and validated,
+//     first against the callee's declared typed in-contract (KB-59) and
+//     otherwise against the callee's declared input schema;
 //   - the callee adapter's own environment (AdapterNode.Environment, already
 //     resolved to the workflow default at compile time) — never the caller's;
 //   - the callee's own allow_tools policy: the declaring workflow's
@@ -958,10 +1014,13 @@ func (s *permissionInterceptSink) nestedExecCtx() context.Context {
 // workflow-level allow_tools governs the callee session. A nil callee node
 // (nil graph, gate 4 skipped) yields a permissive step; session resolution
 // decides resolvability.
-func syntheticCalleeStep(parsed toolCallTarget, calleeNode *workflow.AdapterNode, owningGraph *workflow.FSMGraph, calleeInfo *workflow.AdapterInfo, args map[string]any) (*workflow.StepNode, error) {
-	input, err := calleeInputFromArgs(args, calleeInfo)
+func syntheticCalleeStep(parsed toolCallTarget, calleeNode *workflow.AdapterNode, owningGraph *workflow.FSMGraph, calleeInfo *workflow.AdapterInfo, contract workflow.ToolContract, args map[string]any) (*workflow.StepNode, error) {
+	input, issues, err := calleeInputFromArgs(args, calleeInfo, contract)
 	if err != nil {
 		return nil, err
+	}
+	if len(issues) > 0 {
+		return nil, fmt.Errorf("%s", strings.Join(issues, "; "))
 	}
 
 	step := &workflow.StepNode{
@@ -998,11 +1057,19 @@ func workflowAllowToolsForCallee(owningGraph *workflow.FSMGraph) []string {
 // calleeInputFromArgs renders the §8 typed call arguments as the callee's
 // wire input map (map<string,string>, the same shape a step's input{} block
 // produces): string values pass through raw; every other JSON type is
-// encoded. When the callee declares an input schema, the args are validated
-// against it — required keys must be present and non-empty, and on a declared
-// surface no undeclared keys may appear (the compiler enforces the same
-// posture for static input{} blocks).
-func calleeInputFromArgs(args map[string]any, calleeInfo *workflow.AdapterInfo) (map[string]string, error) {
+// encoded. The args are then validated:
+//   - KB-59: when the callee's declaration carries a typed in-contract for
+//     the named tool, the raw typed arguments are validated against it —
+//     required properties present and typed, no undeclared properties —
+//     taking precedence over the callee handshake. Issues are returned as
+//     the ordered issue list (empty when accepted); this is the dynamic
+//     adapter's only real validation, since its discovered surface declares
+//     no input schema on purpose (CRI-172).
+//   - Otherwise, when the callee declares an input schema, the args are
+//     validated against it — required keys must be present and non-empty,
+//     and on a declared surface no undeclared keys may appear (the compiler
+//     enforces the same posture for static input{} blocks).
+func calleeInputFromArgs(args map[string]any, calleeInfo *workflow.AdapterInfo, contract workflow.ToolContract) (map[string]string, []string, error) {
 	input := make(map[string]string, len(args))
 	for key, val := range args {
 		if s, ok := val.(string); ok {
@@ -1011,17 +1078,46 @@ func calleeInputFromArgs(args map[string]any, calleeInfo *workflow.AdapterInfo) 
 		}
 		encoded, err := json.Marshal(val)
 		if err != nil {
-			return nil, fmt.Errorf("render call argument %q: %w", key, err)
+			return nil, nil, fmt.Errorf("render call argument %q: %w", key, err)
 		}
 		input[key] = string(encoded)
 	}
 
+	// KB-59 typed contract: the declared type IS the schema. The pinned
+	// payload evaluator (the same one the KB-45 outcome contracts run)
+	// validates the raw typed arguments — JSON fidelity, so 12345 is a
+	// number, not a string. Declared properties are presence-and-type
+	// checked (required = the schema's required list, per the evaluator's
+	// contract); undeclared properties are rejected against the type.
+	if contract.InType != cty.NilType && len(contract.InSchemaJSON) > 0 {
+		argsJSON, err := json.Marshal(args)
+		if err != nil {
+			return nil, []string{"payload_schema: malformed call arguments: " + err.Error()}, nil
+		}
+		issues := v2.ValidatePayloadSchema(contract.InSchemaJSON, argsJSON)
+		declared := contract.InType.AttributeTypes()
+		var unknown []string
+		for key := range args {
+			if _, ok := declared[key]; !ok {
+				unknown = append(unknown, key)
+			}
+		}
+		sort.Strings(unknown)
+		for _, key := range unknown {
+			issues = append(issues, fmt.Sprintf("payload_schema: property %q: undeclared property", key))
+		}
+		if len(issues) > 0 {
+			return nil, issues, nil
+		}
+		return input, nil, nil
+	}
+
 	if calleeInfo == nil || len(calleeInfo.InputSchema) == 0 {
-		return input, nil
+		return input, nil, nil
 	}
 	for key := range input {
 		if _, declared := calleeInfo.InputSchema[key]; !declared {
-			return nil, fmt.Errorf("undeclared input key %q for callee", key)
+			return nil, nil, fmt.Errorf("undeclared input key %q for callee", key)
 		}
 	}
 	var missing []string
@@ -1036,9 +1132,9 @@ func calleeInputFromArgs(args map[string]any, calleeInfo *workflow.AdapterInfo) 
 	}
 	if len(missing) > 0 {
 		sort.Strings(missing)
-		return nil, fmt.Errorf("missing required input key(s): %s", strings.Join(missing, ", "))
+		return nil, nil, fmt.Errorf("missing required input key(s): %s", strings.Join(missing, ", "))
 	}
-	return input, nil
+	return input, nil, nil
 }
 
 // encodeToolCallOutputs serializes the callee's decoded typed outputs as the
@@ -1087,15 +1183,27 @@ func (s *permissionInterceptSink) validateToolCallGraph(parsed toolCallTarget, r
 // and the caller's outcome routing is unaffected (ADR-0004 §5: a failed tool
 // call is data for the caller, not a run failure).
 func (s *permissionInterceptSink) rejectToolCall(requestID, target, argsDigest, code string) {
+	s.rejectToolCallDetail(requestID, target, argsDigest, code, "")
+}
+
+// rejectToolCallDetail is rejectToolCall with a detailed reason: the detail
+// (e.g. the typed contract issue list, KB-59) is appended to the audit's deny
+// reason. The typed reply is unchanged — the caller sees the call_error code.
+func (s *permissionInterceptSink) rejectToolCallDetail(requestID, target, argsDigest, code, detail string) {
+	reason := "adapter tool call rejected: " + code
+	if detail != "" {
+		reason += ": " + detail
+	}
 	s.permState.writeAudit(&DecisionLogEntry{
 		SessionID:   s.permState.sessionID,
 		RequestID:   requestID,
 		Tool:        target,
 		ArgsDigest:  argsDigest,
 		Decision:    "deny",
-		Reason:      "adapter tool call rejected: " + code,
+		Reason:      reason,
 		Layer:       s.nesting.depth,
 		EvaluatedAt: time.Now(),
 	})
 	s.permState.sendToolCallResult(requestID, code)
 }
+
