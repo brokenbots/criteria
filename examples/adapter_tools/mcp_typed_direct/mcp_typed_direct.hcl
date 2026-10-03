@@ -76,5 +76,5 @@ state "failed" {
 }
 
 output "echo_text" {
-  value = steps.echo.outputs.text
+  value = steps.echo.text
 }
