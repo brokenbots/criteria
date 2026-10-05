@@ -21,4 +21,12 @@ final.
 | [ADR-0006](ADR-0006-sendprompt-injection.md) | SendPrompt: mid-turn agent message injection; redirect deferred | Accepted |
 | [ADR-0007](ADR-0007-peer-execution.md) | Peer execution: criteria-to-criteria remote adapters (staged A→B) | Proposed |
 
+**Pending:** ADR-0013 (System One decision-model adapter, the
+Kanboard 199–208 decision series) has no merged ADR file yet. Its working
+contract is already documented in the
+[criteria-adapter-decision] repository README; the ADR file lands here
+when the series closes.
+
 [template]: https://github.com/joelparkerhenderson/architecture-decision-record
+
+[criteria-adapter-decision]: https://github.com/brokenbots/criteria-adapter-decision
