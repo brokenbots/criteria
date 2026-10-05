@@ -6,7 +6,10 @@ outputs, branching, iteration, wait nodes, approval gates) see
 [workflow.md](workflow.md).
 
 > **Status.** The adapter protocol (v2) and Go SDK are recently reworked and need
-> broad testing; only the `copilot` and `shell` adapters have real use. The
+> broad testing; only the `copilot`, `shell`, and `decision` adapters have real
+> use (`decision` = [`criteria-adapter-decision`](https://github.com/brokenbots/criteria-adapter-decision):
+> System One decision-model calls — TypeSafe AI Jev in the cloud, Ollama Clef
+> locally — with strict compile-time schemas). The
 > TypeScript/Python SDKs and the `sandbox`/`container`/`remote` environments are
 > lightly tested at best. This document describes the intended model; see
 > [README → Component status](../README.md#component-status) for what is exercised

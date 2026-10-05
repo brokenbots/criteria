@@ -41,7 +41,7 @@ implemented, lightly tested; **Untested** = implemented, essentially unverified;
 | `criteria spec` (language spec for LLMs) | Working | See [Authoring with AI](#authoring-workflows-with-ai). |
 | `langserver` (LSP) | Experimental | Basic diagnostics/definitions. |
 | Adapter protocol (v2) + Go SDK | Experimental | Protocol recently reworked; needs broad testing. |
-| `copilot`, `shell` adapters | Experimental | The only adapters with real use. |
+| `copilot`, `shell`, `decision` adapters | Experimental | The adapters with real use; `decision` = [criteria-adapter-decision](https://github.com/brokenbots/criteria-adapter-decision) (System One decision calls). |
 | `mcp` adapter (in-tree) | Experimental | Reference bridge for MCP servers. |
 | Other adapters | Untested | Not validated beyond build. |
 | TypeScript / Python SDKs + adapters | Untested | Smoke-tested at best inside a workflow. |

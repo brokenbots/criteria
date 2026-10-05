@@ -21,4 +21,14 @@ final.
 | [ADR-0006](ADR-0006-sendprompt-injection.md) | SendPrompt: mid-turn agent message injection; redirect deferred | Accepted |
 | [ADR-0007](ADR-0007-peer-execution.md) | Peer execution: criteria-to-criteria remote adapters (staged A→B) | Proposed |
 
+> **Pending — no record yet.** [ADR-0013] (decision adapter: System One
+> decision-model calls with a strict question contract and fail-closed step
+> outcome mapping) is not written yet — its record tracks Kanboard KB-199, and
+> this index only lists ADRs that exist, never a row for an unwritten one.
+> Until the record lands, the contract it will capture is documented in the
+> adapter's own repo: the
+> [`criteria-adapter-decision` README](https://github.com/brokenbots/criteria-adapter-decision)
+> (full adapter contract) and its
+> [backend guide](https://github.com/brokenbots/criteria-adapter-decision/blob/main/docs/backends.md).
+
 [template]: https://github.com/joelparkerhenderson/architecture-decision-record
