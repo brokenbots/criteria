@@ -12,6 +12,14 @@ outputs, branching, iteration, wait nodes, approval gates) see
 > [README → Component status](../README.md#component-status) for what is exercised
 > today.
 
+A reference adapter lives outside the monorepo: the **decision adapter**
+([criteria-adapter-decision](https://github.com/brokenbots/criteria-adapter-decision))
+serves the System One decision-model wire contract — TypeSafe `jev` in the
+cloud, Ollama `clef`/`clef-flash` locally — and keeps its complete
+protocol-v2 contract (config, input, secrets, answer payload rules) in the
+repo README. It is not yet published as an OCI artifact; its `v0.6.0`
+release lands when the decision series closes.
+
 ## Concepts
 
 - **Adapter** — an out-of-process program that performs work for a workflow step
