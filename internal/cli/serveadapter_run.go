@@ -149,10 +149,11 @@ func (g *ringSendGuard) Send(ev *criteriav2.LogEvent) error {
 }
 
 // serveAdapterEvent is one queued event waiting for the Execute stream pump.
+// Everything queued here is droppable on overflow: the queue only carries
+// lifecycle/log events, while the terminal Result event is delivered by the
+// run goroutine straight into the local sink chain (never through the queue).
 type serveAdapterEvent struct {
-	ev      *criteriav2.ExecuteEvent
-	dropOK  bool // non-terminal events may be dropped on overflow
-	kindTag string
+	ev *criteriav2.ExecuteEvent
 }
 
 // serveAdapterBridge wraps the local sink chain (terminal capture over the
@@ -169,19 +170,16 @@ type serveAdapterBridge struct {
 	pushMu sync.Mutex
 }
 
-// push enqueues an event, dropping non-terminal ones on overflow.
-func (b *serveAdapterBridge) push(ev *criteriav2.ExecuteEvent, dropOK bool, kindTag string) {
+// push enqueues a droppable event; on overflow the event is discarded with a
+// warn naming its kind (see serveAdapterEvent for why no queued event is
+// load-bearing).
+func (b *serveAdapterBridge) push(ev *criteriav2.ExecuteEvent, kindTag string) {
 	b.pushMu.Lock()
 	defer b.pushMu.Unlock()
 	select {
-	case b.queue <- serveAdapterEvent{ev: ev, dropOK: dropOK, kindTag: kindTag}:
+	case b.queue <- serveAdapterEvent{ev: ev}:
 	default:
-		if !dropOK {
-			b.log.Error("event queue overflow; terminal marker event delayed", "kind", kindTag)
-			b.queue <- serveAdapterEvent{ev: ev, dropOK: dropOK, kindTag: kindTag}
-		} else {
-			b.log.Warn("event queue overflow; dropping non-terminal event", "kind", kindTag)
-		}
+		b.log.Warn("event queue overflow; dropping event", "kind", kindTag)
 	}
 }
 
@@ -204,7 +202,7 @@ func (b *serveAdapterBridge) pushLifecycle(kind string, fields map[string]any) {
 		Payload:   payload,
 		EmittedAt: timestamppb.Now(),
 	}
-	b.push(&criteriav2.ExecuteEvent{Event: &criteriav2.ExecuteEvent_Adapter{Adapter: adapterEv}}, true, kind)
+	b.push(&criteriav2.ExecuteEvent{Event: &criteriav2.ExecuteEvent_Adapter{Adapter: adapterEv}}, kind)
 }
 
 // structpbMap marshals a field map into a Struct payload.
@@ -388,7 +386,7 @@ func (b *serveAdapterBridge) mirrorStepLog(step, stream string, chunk []byte) {
 		EventKind: serveAdapterEventLog,
 		Payload:   payload,
 		EmittedAt: timestamppb.Now(),
-	}}}, true, serveAdapterEventLog)
+	}}}, serveAdapterEventLog)
 }
 
 func (b *serveAdapterBridge) stepLogEvent(step, stream string, line []byte) *criteriav2.LogEvent {
@@ -454,11 +452,15 @@ type childRunEngine struct {
 
 // buildChildEngine assembles the local-run machinery for a child run: NDJSON
 // events tee, local checkpoint function, output sink chain (the pause tracker
-// rides on it), engine options, and the engine itself. On error the caller
-// has NOT been left with an open events file (closed here).
+// rides on it), engine options, and the engine itself. On error the run slot
+// is cleared on EVERY path — an error leaving c.run set while the engine
+// goroutine never starts would wedge every later Execute into
+// ErrChildRunInFlight and CloseSession into a settle timeout — and the
+// caller is NOT left with an open events file (closed here).
 func (c *serveAdapterClient) buildChildEngine(run *serveAdapterRun, ring *serveAdapterLogRing, queue chan serveAdapterEvent) (*childRunEngine, error) {
 	eventOut, closeEvents, err := openRunEventsFile(run.id)
 	if err != nil {
+		c.clearRun(run)
 		return nil, fmt.Errorf("open run events file: %w", err)
 	}
 	rollback := func(closeFile bool) {

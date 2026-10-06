@@ -377,7 +377,10 @@ func (c *serveAdapterClient) Permissions(_ context.Context, requests <-chan *cri
 // → boundary drain → durable checkpoint + adapter session snapshots) through
 // the control bus. A session without an in-flight child run fails closed.
 func (c *serveAdapterClient) Pause(ctx context.Context, req *criteriav2.PauseRequest) (*criteriav2.PauseResponse, error) {
-	run := c.sessionRun(req.GetSessionId(), "pause")
+	run, err := c.sessionRun(req.GetSessionId(), "pause")
+	if err != nil {
+		return nil, connectErrorStatus(err)
+	}
 	if run == nil {
 		return nil, connectErrorStatus(errors.New("no in-flight child run to pause"))
 	}
@@ -394,7 +397,10 @@ func (c *serveAdapterClient) Pause(ctx context.Context, req *criteriav2.PauseReq
 // terminal state. The response returns when the resume was ACCEPTED, not when
 // the run completes (matching ResumeRun semantics in local mode).
 func (c *serveAdapterClient) Resume(_ context.Context, req *criteriav2.ResumeRequest) (*criteriav2.ResumeResponse, error) {
-	run := c.sessionRun(req.GetSessionId(), "resume")
+	run, err := c.sessionRun(req.GetSessionId(), "resume")
+	if err != nil {
+		return nil, connectErrorStatus(err)
+	}
 	if run == nil {
 		return nil, connectErrorStatus(errors.New("no in-flight child run to resume"))
 	}
@@ -431,7 +437,10 @@ func (c *serveAdapterClient) Restore(_ context.Context, _ *criteriav2.RestoreReq
 // the current step from the run's live engine state, the paused node when a
 // pause landed, and the child run id (the child's local run-store record).
 func (c *serveAdapterClient) Inspect(_ context.Context, req *criteriav2.InspectRequest) (*criteriav2.InspectResponse, error) {
-	run := c.sessionRun(req.GetSessionId(), "inspect")
+	run, err := c.sessionRun(req.GetSessionId(), "inspect")
+	if err != nil {
+		return nil, connectErrorStatus(err)
+	}
 	c.mu.Lock()
 	sess, ok := c.sessions[req.GetSessionId()]
 	c.mu.Unlock()
@@ -513,17 +522,26 @@ func (c *serveAdapterClient) CloseSession(ctx context.Context, req *criteriav2.C
 	return &criteriav2.CloseSessionResponse{}, nil
 }
 
-// sessionRun returns a copy-safe handle to the session's live child run.
-// Sessions are validated first so typos fail closed instead of silently
-// controlling some other session's run.
-func (c *serveAdapterClient) sessionRun(sessionID, verb string) *serveAdapterRun {
+// sessionRun resolves the control-plane run handle for a control verb. The
+// session itself must exist (unknown sessions fail closed as CodeNotFound),
+// and — same invariant CloseSession enforces — a session may only operate on
+// the run IT opened: the single in-flight run is bound to its opening session,
+// so a request naming a different session gets a name-both-sides error and
+// nil (fail closed), never a handle silently transplanted across sessions.
+// (nil, nil) means the session is legitimate but has no in-flight run.
+func (c *serveAdapterClient) sessionRun(sessionID, verb string) (*serveAdapterRun, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if _, ok := c.sessions[sessionID]; !ok {
 		c.log.Warn("control verb rejected: unknown session", "verb", verb, "session_id", sessionID)
-		return nil
+		return nil, errSessionUnknownConnect
 	}
-	return c.run
+	if c.run != nil && c.run.session != nil && c.run.session.id != sessionID {
+		c.log.Warn("control verb rejected: session does not own the in-flight child run",
+			"verb", verb, "session_id", sessionID, "run_session_id", c.run.session.id)
+		return nil, fmt.Errorf("child run %q belongs to session %q, not %q", c.run.id, c.run.session.id, sessionID)
+	}
+	return c.run, nil
 }
 
 // refreshPausedNode syncs the run's cached paused-node from the tracker.

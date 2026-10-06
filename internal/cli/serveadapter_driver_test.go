@@ -22,6 +22,7 @@ import (
 
 	criteriav2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 
+	"github.com/brokenbots/criteria/internal/dirs"
 	"github.com/brokenbots/criteria/internal/peer"
 	"github.com/brokenbots/criteria/internal/runstate"
 	"github.com/brokenbots/criteria/workflow"
@@ -597,5 +598,150 @@ func TestServeAdapter_WaitApprovalNodesRejectedAtServe(t *testing.T) {
 				t.Errorf("error %v does not name the %q node kind", err, tc.kind)
 			}
 		})
+	}
+}
+
+// TestServeAdapter_ControlVerbsFailClosedForNonOwningSession covers the
+// session-ownership invariant on the control verbs: OpenSession permits
+// multiple sessions, but the single in-flight child run belongs to the
+// session that opened it, so Pause/Resume/Inspect issued by a different
+// session fail closed (an error naming both sides) while the owning
+// session's run keeps running untouched.
+func TestServeAdapter_ControlVerbsFailClosedForNonOwningSession(t *testing.T) {
+	env := newServeAdapterEnv(t)
+	for _, id := range []string{"sess-owner", "sess-bystander"} {
+		resp, err := env.client.OpenSession(context.Background(), &criteriav2.OpenSessionRequest{SessionId: id})
+		if err != nil {
+			t.Fatalf("OpenSession(%q): %v", id, err)
+		}
+		if resp == nil {
+			t.Fatalf("OpenSession(%q): nil response", id)
+		}
+	}
+
+	cap2 := &executeCapture{arrived: make(chan struct{}, 8), watch: slowStepStarted()}
+	exErr := make(chan error, 1)
+	go func() {
+		exErr <- env.client.Execute(context.Background(), &criteriav2.ExecuteRequest{
+			SessionId: "sess-owner",
+			StepName:  "warmup",
+		}, cap2)
+	}()
+	select {
+	case <-cap2.arrived:
+	case <-time.After(15 * time.Second):
+		t.Fatal("timed out waiting for the slow step to start")
+	}
+
+	verbs := map[string]func() error{
+		"Pause": func() error {
+			_, err := env.client.Pause(context.Background(), &criteriav2.PauseRequest{SessionId: "sess-bystander"})
+			return err
+		},
+		"Resume": func() error {
+			_, err := env.client.Resume(context.Background(), &criteriav2.ResumeRequest{SessionId: "sess-bystander"})
+			return err
+		},
+		"Inspect": func() error {
+			_, err := env.client.Inspect(context.Background(), &criteriav2.InspectRequest{SessionId: "sess-bystander"})
+			return err
+		},
+	}
+	for _, verb := range []string{"Pause", "Resume", "Inspect"} {
+		err := verbs[verb]()
+		if err == nil {
+			t.Fatalf("%s from a non-owning session succeeded; want fail-closed error", verb)
+		}
+		if !strings.Contains(err.Error(), "belongs to session") {
+			t.Errorf("%s error = %v, want message naming the owning session", verb, err)
+		}
+	}
+
+	// The bystander's rejected verbs left the owner's run alive: the owning
+	// session still sees it and still drives it with the real machinery.
+	insp, err := env.client.Inspect(context.Background(), &criteriav2.InspectRequest{SessionId: "sess-owner"})
+	if err != nil {
+		t.Fatalf("Inspect from the owning session: %v", err)
+	}
+	if insp == nil || insp.GetCurrentStep() == "" {
+		t.Fatalf("Inspect from the owning session shows no run: %+v", insp)
+	}
+	if _, err := env.client.Pause(context.Background(), &criteriav2.PauseRequest{SessionId: "sess-owner"}); err != nil {
+		t.Fatalf("Pause from the owning session: %v", err)
+	}
+	if _, err := env.client.Resume(context.Background(), &criteriav2.ResumeRequest{SessionId: "sess-owner"}); err != nil {
+		t.Fatalf("Resume from the owning session: %v", err)
+	}
+	select {
+	case err := <-exErr:
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+	case <-time.After(40 * time.Second):
+		t.Fatal("Execute did not return after the owner's pause/resume")
+	}
+	if res := cap2.terminal(); res == nil || res.GetOutcome() != serveAdapterOutcomeSuccess {
+		t.Fatalf("terminal = %+v, want success", res)
+	}
+	var sawPaused, sawResumed bool
+	for _, kind := range cap2.adapterEventKinds() {
+		if kind == serveAdapterEventRunPaused {
+			sawPaused = true
+		}
+		if kind == serveAdapterEventRunResumed {
+			sawResumed = true
+		}
+	}
+	if !sawPaused || !sawResumed {
+		t.Fatalf("pause/resume events missing: sawPaused=%t sawResumed=%t kinds=%v", sawPaused, sawResumed, cap2.adapterEventKinds())
+	}
+}
+
+// TestServeAdapter_EventsFileFailureClearsRunSlot guards the buildChildEngine
+// rollback: when the events file cannot be opened, Execute fails but the run
+// slot is cleared, so the next Execute runs to completion instead of failing
+// with ErrChildRunInFlight forever.
+func TestServeAdapter_EventsFileFailureClearsRunSlot(t *testing.T) {
+	env := newServeAdapterEnv(t)
+	sessionID := env.openTestSession(t)
+
+	// Force openRunEventsFile to fail: seed the runs parent as a regular
+	// file so MkdirAll(<home>/runs/<run_id>) fails with ENOTDIR.
+	home, err := dirs.Home()
+	if err != nil {
+		t.Fatalf("dirs.Home: %v", err)
+	}
+	runsParent := filepath.Join(home, "runs")
+	if err := os.WriteFile(runsParent, []byte("not a directory\n"), 0o600); err != nil {
+		t.Fatalf("seeding %q as a file: %v", runsParent, err)
+	}
+
+	err = env.client.Execute(context.Background(), &criteriav2.ExecuteRequest{
+		SessionId: sessionID,
+		StepName:  "warmup",
+	}, &executeCapture{})
+	if err == nil {
+		t.Fatal("Execute succeeded even though the events file could not be opened")
+	}
+	if !strings.Contains(err.Error(), "open run events file") {
+		t.Fatalf("error does not name the events-file failure: %v", err)
+	}
+
+	if err := os.Remove(runsParent); err != nil {
+		t.Fatalf("restoring the runs parent: %v", err)
+	}
+	cap2 := &executeCapture{}
+	if err := env.client.Execute(context.Background(), &criteriav2.ExecuteRequest{
+		SessionId: sessionID,
+		StepName:  "warmup",
+	}, cap2); err != nil {
+		var typed *ErrChildRunInFlight
+		if errors.As(err, &typed) {
+			t.Fatalf("run slot leaked across Execute attempts (ErrChildRunInFlight on retry): %v", err)
+		}
+		t.Fatalf("Execute after the failed attempt: %v", err)
+	}
+	if res := cap2.terminal(); res == nil || res.GetOutcome() != serveAdapterOutcomeSuccess {
+		t.Fatalf("terminal after recovery = %+v, want success", res)
 	}
 }

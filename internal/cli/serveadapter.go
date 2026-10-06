@@ -269,10 +269,10 @@ func rejectWaitApprovalNodes(graph *workflow.FSMGraph) error {
 	var walk func(g *workflow.FSMGraph, root string)
 	walk = func(g *workflow.FSMGraph, root string) {
 		for _, w := range sortedStringKeys(g.Waits) {
-			found = append(found, prefixFor(root)+"wait node \""+w+"\"")
+			found = append(found, root+"wait node \""+w+"\"")
 		}
 		for _, a := range sortedStringKeys(g.Approvals) {
-			found = append(found, prefixFor(root)+"approval node \""+a+"\"")
+			found = append(found, root+"approval node \""+a+"\"")
 		}
 		for _, name := range sortedStringKeys(g.Subworkflows) {
 			if body := g.Subworkflows[name].Body; body != nil {
@@ -305,10 +305,6 @@ func connectErrorStatus(err error) error {
 	}
 	return connect.NewError(connect.CodeInternal, err)
 }
-
-// prefixFor renders the subworkflow prefix for a rejection message; the root
-// graph is unprefixed and callees are prefixed "callee.".
-func prefixFor(root string) string { return root }
 
 // sortedStringKeys returns map keys in sorted order for deterministic
 // messaging and schema output.
