@@ -256,6 +256,11 @@ type Engine struct {
 	// canceling them. Zero means the SessionManager default (60s).
 	pauseToolCallDrainTimeout time.Duration
 
+	// ADR-0008 serve-adapter mode: the run's shared adapter-execution
+	// concurrency ceiling, set by WithParallelCeiling. Zero (the default)
+	// leaves ParallelCeiling unset in the top-level RunState (unbounded).
+	parallelCeiling int
+
 	// WS17: liveSessions holds the active SessionManager while a run is in
 	// progress, enabling Pause/Resume/Inspect from outside runLoop.
 	liveSessions *adapterhost.SessionManager
@@ -795,16 +800,20 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 // used for the initial step when resuming; subsequent steps start at attempt 1.
 func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManager, current string, firstStepAttempt int, vars map[string]cty.Value, sink Sink, ds *DataStore, rlc *remoteLifecycleContext) error {
 	st := &RunState{
-		Current:          current,
-		Vars:             vars,
-		PendingSignal:    e.pendingSignal,
-		ResumePayload:    e.resumePayload,
-		IterStack:        append([]workflow.IterCursor{}, e.resumedIterStack...),
-		Visits:           cloneVisits(e.resumedVisits),
-		WorkflowDir:      e.workflowDir,
-		DataStore:        ds,
-		WorkflowName:     e.graph.Name,
-		RemoteLifecycle:  rlc,
+		Current:         current,
+		Vars:            vars,
+		PendingSignal:   e.pendingSignal,
+		ResumePayload:   e.resumePayload,
+		IterStack:       append([]workflow.IterCursor{}, e.resumedIterStack...),
+		Visits:          cloneVisits(e.resumedVisits),
+		WorkflowDir:     e.workflowDir,
+		DataStore:       ds,
+		WorkflowName:    e.graph.Name,
+		RemoteLifecycle: rlc,
+		// ADR-0008 serve-adapter mode: the top-level run inherits the
+		// serve-adapter concurrency ceiling (WithParallelCeiling); inline
+		// workflow bodies and subworkflows already inherit it from here.
+		ParallelCeiling:  e.parallelCeiling,
 		CrashedSessions:  newCrashedSessionRefs(),
 		firstStep:        true,
 		firstStepAttempt: firstStepAttempt,
