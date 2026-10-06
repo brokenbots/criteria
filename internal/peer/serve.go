@@ -18,6 +18,7 @@ import (
 	"math/rand"
 	"net"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -146,7 +147,21 @@ type Server struct {
 	// its identity frame (ADR-0007 D4). The workflow.v1-scoped Control arm
 	// is gated on it. Tests may narrow the list to simulate an older peer.
 	capabilities []string
+
+	// serve-adapter child role (ADR-0008): when the criteria process serves
+	// a workflow as the adapter itself, it is built without a child runtime;
+	// the in-process adapter registers directly on the phone-home server,
+	// supervision streams from serveAdapterJournal, and RequestExit ends
+	// the loop after a CloseSession teardown (the process exits; the phone
+	// home does not reconnect).
+	impl                adapterhost.Client
+	serveAdapterJournal *EventJournal
+	exitSignal          chan struct{}
+	exitOnce            sync.Once
 }
+
+// NewServeAdapterServer for the serve-adapter child role lives in
+// serveadapter.go, next to its child-role support types.
 
 // NewServer builds a phone-home server for the given resolved configuration
 // and booted runtime. The server takes ownership of neither: Run drives the
@@ -194,10 +209,19 @@ func (s *Server) Run(ctx context.Context) error {
 			return err
 		}
 		err := s.serveOnce(ctx)
+		select {
+		case <-s.exitSignal:
+			// Serve-adapter teardown (ADR-0008 child role): the host closed
+			// the adapter session and the in-process adapter asked for
+			// process exit; do not reconnect — the run record is durable and
+			// the process ends here.
+			return nil
+		default:
+		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
-		if !s.cfg.ChildKeepAlive {
+		if s.rt != nil && !s.cfg.ChildKeepAlive {
 			s.rt.killChild()
 		}
 		delay := s.nextBackoff(prev)
@@ -226,6 +250,14 @@ func (s *Server) Serve(ctx context.Context) error {
 	if err != nil && ctx.Err() != nil {
 		err = nil
 	}
+	if s.rt == nil {
+		// Serve-adapter role: there is no child runtime to shut down. The
+		// CLI command owns the local teardown (cancel any in-flight child
+		// run, close sessions); sessions served in-process are not visible
+		// to the peer runtime. Run returns when ctx is done, so a host
+		// disconnect followed by reconnects is the only path here.
+		return err
+	}
 	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), peerShutdownBudget)
 	defer cancel()
 	if serr := s.rt.Shutdown(shutdownCtx); serr != nil {
@@ -243,9 +275,16 @@ func (s *Server) newServedServer() *grpc.Server {
 	}
 	server := grpc.NewServer(keepaliveOpts...)
 	if child, ok := s.childClient(); ok {
-		wrapper := &serveChildClient{Client: child, rt: s.rt}
-		s.rt.setServedChild(wrapper)
-		adapterhost.RegisterAdapterService(server, wrapper)
+		// Serve-adapter role: the adapter is implemented in this process
+		// (no spawned child) and registers unwrapped. The legacy peer role
+		// wraps the child so session lifecycle and log-flush facts journal.
+		if s.rt == nil {
+			adapterhost.RegisterAdapterService(server, child)
+		} else {
+			wrapper := &serveChildClient{Client: child, rt: s.rt}
+			s.rt.setServedChild(wrapper)
+			adapterhost.RegisterAdapterService(server, wrapper)
+		}
 	} else {
 		s.log.Warn("peer child has no adapter client; serving supervision only",
 			"adapter", s.cfg.AdapterName)
@@ -276,7 +315,12 @@ func (s *Server) serveOnce(ctx context.Context) error {
 		_ = lis.Close()
 	}()
 	go func() {
-		<-ctx.Done()
+		select {
+		case <-ctx.Done():
+		case <-s.exitSignal:
+			// Serve-adapter teardown: stop serving this connection so the
+			// phone-home loop unwinds without reconnecting.
+		}
 		// Bounded stop: grpc-go's Stop blocks on raw conns stuck in the
 		// preface handshake (a host that never speaks gRPC after the identity
 		// frame), so bound it and force close the conn to unblock the read.
@@ -475,6 +519,11 @@ func (s *Server) Control(ctx context.Context, req *criteriav1.ControlRequest) (*
 			"peer did not negotiate %q: CancelChildRun unavailable",
 			peerWorkflowV1Capability)
 	}
+	if s.rt == nil {
+		// Serve-adapter role: control verbs that target a spawned child
+		// process or an out-of-band child run are answered here.
+		return s.controlServeAdapter(req), nil
+	}
 	return s.rt.Control(ctx, req), nil
 }
 
@@ -493,7 +542,7 @@ func (s *Server) superviseHandler(srv interface{}, stream grpc.ServerStream) err
 // The cursor advances with each sent event, so a stream-level reset (host
 // re-opens Supervise) replays exactly the unseen suffix, once.
 func (s *Server) supervise(stream grpc.ServerStream, since uint64) error {
-	journal := s.rt.Journal()
+	journal := s.journalFor()
 	cursor := since
 	replay := func() error {
 		for _, ev := range journal.Replay(cursor) {
