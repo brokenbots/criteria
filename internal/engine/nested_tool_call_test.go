@@ -779,7 +779,7 @@ func TestNestedToolCall_EngineInterleavedReplies(t *testing.T) {
 // TestNestedToolCall_EngineSerializedDefault (KB-155): a callee that declares
 // neither concurrent_execute nor parallel_safe is the non-multiplexed default
 // — the host's execute turn gate serializes its sibling nested Executes, so
-// the slow call's execute settles before the fast call even starts. Pins the
+// one call's execute settles before the other even starts. Pins the
 // engine-level default; the multiplexing route (the interleaved-replies test
 // above) requires the callee to declare a concurrency-safe capability. The
 // dispatch order of the two calls is unspecified (both fire on the caller's
