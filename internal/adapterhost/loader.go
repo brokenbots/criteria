@@ -119,9 +119,9 @@ func ClientOf(h Handle) (Client, bool) {
 
 // rpcHandle is the production Handle: a go-plugin client connected to the
 // adapter subprocess over the adapter v2 gRPC contract.
-// PluginLifecycle is the slice of the go-plugin client surface session code
-// needs: kill the plugin and observe whether its process exited. The narrow
-// type keeps the remote shim's reattach path substitutable in tests.
+// PluginLifecycle is the slice of the go-plugin client surface that session
+// code needs: kill the plugin and observe whether its process exited. The
+// narrow type keeps the remote shim's reattach path substitutable in tests.
 type PluginLifecycle interface {
 	Kill()
 	Exited() bool
