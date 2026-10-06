@@ -364,6 +364,67 @@ func TestGetRun_Failed(t *testing.T) {
 	}
 }
 
+// TestGetRun_CancelledStampOverridesEngineCancel covers the ADR-0008
+// CloseSession teardown stamp: run-state.json status "cancelled" is the
+// teardown's durable last word — it must win over the engine-cancel
+// run-failed event the event stream folds, over a live pid (still running
+// when the stamp lands), and it must end the run (endedAt present, no
+// failure reason attributed to a crash).
+func TestGetRun_CancelledStampOverridesEngineCancel(t *testing.T) {
+	s := newTestStore(t)
+	root, _ := s.RunsRoot()
+
+	// Dead pid + engine-cancel run-failed event: without the stamp this
+	// derives failed ("criteria process exited...").
+	writeRun(t, root, "cancel-dead", &localState{
+		PID: -1, RunID: "cancel-dead", Workflow: "wf-child", Status: StatusCancelled, StartedAt: time.Now().UTC(),
+	}, []ndEnvelope{
+		envPB(t, 1, "RunStarted", &pb.RunStarted{WorkflowName: "wf-child"}),
+		envPB(t, 2, "RunFailed", &pb.RunFailed{Reason: "context canceled", Step: "step-2"}),
+	}, nil)
+	// Live pid (teardown stamping while the serve process is still up).
+	writeRun(t, root, "cancel-live", &localState{
+		PID: os.Getpid(), RunID: "cancel-live", Workflow: "wf-child", Status: StatusCancelled, StartedAt: time.Now().UTC(),
+	}, nil, nil)
+	// Control: identical dead-pid record WITHOUT the stamp stays failed.
+	writeRun(t, root, "crash-control", &localState{
+		PID: -1, RunID: "crash-control", Workflow: "wf-child", StartedAt: time.Now().UTC(),
+	}, []ndEnvelope{
+		envPB(t, 1, "RunStarted", &pb.RunStarted{WorkflowName: "wf-child"}),
+		envPB(t, 2, "RunFailed", &pb.RunFailed{Reason: "context canceled", Step: "step-2"}),
+	}, nil)
+
+	cancelled, err := s.GetRun("cancel-dead")
+	if err != nil {
+		t.Fatalf("GetRun(cancel-dead): %v", err)
+	}
+	if cancelled.Status != StatusCancelled {
+		t.Errorf("status = %q, want cancelled (stamp must override the folded run-failed event)", cancelled.Status)
+	}
+	if cancelled.EndedAt == "" {
+		t.Error("endedAt empty for cancelled run")
+	}
+	if cancelled.FailureReason != "" {
+		t.Errorf("failureReason = %q, want empty (cancellation is not a crash)", cancelled.FailureReason)
+	}
+
+	live, err := s.GetRun("cancel-live")
+	if err != nil {
+		t.Fatalf("GetRun(cancel-live): %v", err)
+	}
+	if live.Status != StatusCancelled {
+		t.Errorf("status = %q, want cancelled even with a live pid", live.Status)
+	}
+
+	crash, err := s.GetRun("crash-control")
+	if err != nil {
+		t.Fatalf("GetRun(crash-control): %v", err)
+	}
+	if crash.Status != StatusFailed {
+		t.Errorf("status = %q, want failed for unstamped dead-pid control", crash.Status)
+	}
+}
+
 // TestGetRun_PausedFromEvents covers the CRI-255 status folds: runPaused
 // marks a live run paused (no endedAt), runResumed returns it to running, a
 // terminal event after a pause still ends the run, and runPaused arriving

@@ -149,6 +149,19 @@ func WithRunID(id string) Option {
 	}
 }
 
+// WithParallelCeiling caps the run's shared adapter-execution concurrency
+// (ADR-0008 serve-adapter mode): the top-level RunState's ParallelCeiling,
+// inherited by inline workflow bodies and subworkflows, becomes
+// min(step.ParallelMax, ceiling) everywhere. A non-positive value leaves
+// the default unbounded posture (ParallelCeiling unset) untouched.
+func WithParallelCeiling(n int) Option {
+	return func(e *Engine) {
+		if n > 0 {
+			e.parallelCeiling = n
+		}
+	}
+}
+
 // WithAgentPrompts wires the run's injected-prompt channel (fed by the CLI
 // from the orchestrator's Control stream), the run owner identity used by
 // the delivery-side caller re-check (ADR-0006 D4), and the run id prompts

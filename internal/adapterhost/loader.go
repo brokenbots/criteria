@@ -119,9 +119,17 @@ func ClientOf(h Handle) (Client, bool) {
 
 // rpcHandle is the production Handle: a go-plugin client connected to the
 // adapter subprocess over the adapter v2 gRPC contract.
+// PluginLifecycle is the slice of the go-plugin client surface that session
+// code needs: kill the plugin and observe whether its process exited. The
+// narrow type keeps the remote shim's reattach path substitutable in tests.
+type PluginLifecycle interface {
+	Kill()
+	Exited() bool
+}
+
 type rpcHandle struct {
 	name   string
-	client *hplugin.Client
+	client PluginLifecycle
 	rpc    Client
 	// cmd is the adapter's exec.Cmd, retained so Kill can signal the process
 	// group it leads. nil on paths that don't own the process (WS20 reattach,
@@ -342,7 +350,7 @@ func (l *DefaultLoader) resolveWith(ctx context.Context, name string, discover D
 // NewRPCHandle creates a Handle from an existing go-plugin client and its
 // dispensed Client interface. This is used by the remote shim (WS20) to wrap
 // a reattached adapter into a session-manager-compatible Handle.
-func NewRPCHandle(name string, client *hplugin.Client, rpc Client) Handle {
+func NewRPCHandle(name string, client PluginLifecycle, rpc Client) Handle {
 	rp := &rpcHandle{name: name, client: client, rpc: rpc}
 	rp.onKill = func() {}
 	return rp

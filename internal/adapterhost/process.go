@@ -1,17 +1,32 @@
 package adapterhost
 
-// ProcessPID returns the underlying adapter subprocess PID when available.
+import hplugin "github.com/hashicorp/go-plugin"
+
+// ProcessPID reports the underlying adapter subprocess PID when available.
 // Built-in adapters and unsupported handle implementations return ok=false.
 func ProcessPID(p Handle) (pid int, ok bool) {
 	rpc, isRPC := p.(*rpcHandle)
 	if !isRPC || rpc == nil || rpc.client == nil {
 		return 0, false
 	}
-	rc := rpc.client.ReattachConfig()
+	// The seam in rpcHandle exposes only lifecycle methods; the reattach PID
+	// is an extra go-plugin capability that substitutes need not provide.
+	src, hasPID := rpc.client.(pluginReattachSource)
+	if !hasPID {
+		return 0, false
+	}
+	rc := src.ReattachConfig()
 	if rc == nil || rc.Pid <= 0 {
 		return 0, false
 	}
 	return rc.Pid, true
+}
+
+// pluginReattachSource is the client surface ProcessPID consults for the
+// subprocess PID: provided by the real go-plugin client, optional on narrow
+// replacement seams.
+type pluginReattachSource interface {
+	ReattachConfig() *hplugin.ReattachConfig
 }
 
 // ProcessWaitReporter is an optional Handle capability: reporting the

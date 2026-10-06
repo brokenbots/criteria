@@ -26,6 +26,7 @@ package tunables
 
 import (
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -110,7 +111,16 @@ const (
 	// EnvPeerJournalLimit overrides DefaultPeerJournalLimit (strict
 	// positive integer; ADR-0007).
 	EnvPeerJournalLimit = "CRITERIA_PEER_JOURNAL_LIMIT"
+	// EnvServeAdapterConcurrency overrides DefaultServeAdapterConcurrency
+	// (lenient positive integer; ADR-0008). It caps the shared container
+	// budget for the workflow's own step-adapter sessions while serving
+	// the `criteria serve-adapter` mode.
+	EnvServeAdapterConcurrency = "CRITERIA_SERVE_ADAPTER_CONCURRENCY"
 )
+
+// DefaultServeAdapterConcurrency is the built-in shared container budget for
+// the workflow's own step-adapter sessions in serve-adapter mode (ADR-0008).
+const DefaultServeAdapterConcurrency = 8
 
 // Registry value kinds (Envar.Kind).
 const (
@@ -145,6 +155,10 @@ type Settings struct {
 	// AgentHeartbeatInterval is the KB-53 operator CLI run heartbeat
 	// cadence against a server-compatible orchestrator.
 	AgentHeartbeatInterval time.Duration
+	// ServeAdapterConcurrency is the ADR-0008 shared container budget for
+	// the workflow's own step-adapter sessions while
+	// `criteria serve-adapter` serves a workflow.
+	ServeAdapterConcurrency int
 }
 
 // Defaults returns the built-in settings.
@@ -155,6 +169,7 @@ func Defaults() Settings {
 		StepTimeoutTeardownWindow: DefaultStepTimeoutTeardownWindow,
 		StepStallWindow:           DefaultStepStallWindow,
 		AgentHeartbeatInterval:    DefaultAgentHeartbeatInterval,
+		ServeAdapterConcurrency:   DefaultServeAdapterConcurrency,
 	}
 }
 
@@ -189,6 +204,9 @@ func New(lookup func(string) string) Settings {
 	if d, ok := resolvePositiveDuration(lookup(EnvAgentHeartbeatInterval)); ok {
 		s.AgentHeartbeatInterval = d
 	}
+	if n, ok := resolvePositiveInt(lookup(EnvServeAdapterConcurrency)); ok {
+		s.ServeAdapterConcurrency = n
+	}
 	return s
 }
 
@@ -209,6 +227,20 @@ func resolvePositiveDuration(raw string) (time.Duration, bool) {
 		return 0, false
 	}
 	return d, true
+}
+
+// resolvePositiveInt parses one lenient integer override. An empty,
+// malformed, or non-positive value means "keep the built-in default".
+func resolvePositiveInt(raw string) (int, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	return n, true
 }
 
 // Envar is one registry row: an operator-facing environment override for a
@@ -240,6 +272,7 @@ func Envvars() []Envar {
 		{Name: EnvPeerBackoffMax, Kind: KindDuration, Default: "30s", Doc: "Peer host reconnect backoff ceiling; must be >= the backoff floor. Peer-owned override: a malformed value aborts peer startup."},
 		{Name: EnvPeerBackoffMin, Kind: KindDuration, Default: "1s", Doc: "Peer host reconnect backoff floor. Peer-owned override: a malformed value aborts peer startup."},
 		{Name: EnvPeerJournalLimit, Kind: KindInt, Default: "4096", Doc: "Bounded supervision journal capacity in events. Peer-owned override: a non-positive or malformed value aborts peer startup."},
+		{Name: EnvServeAdapterConcurrency, Kind: KindInt, Default: "8", Doc: "Shared container budget for the workflow's own step-adapter sessions while `criteria serve-adapter` serves a workflow (ADR-0008)."},
 		{Name: EnvHeartbeatStallThreshold, Kind: KindDuration, Default: "90s", Doc: "How long a session log stream may idle with no chunks or heartbeats before the adapter is treated as wedged (CRI-271)."},
 		{Name: EnvStepStallWindow, Kind: KindDuration, Default: "30m", Doc: "How long an unbounded step may run with no observable adapter activity before the engine tears it down (KB-25). A zero or negative value disables stall detection."},
 		{Name: EnvStepTimeoutTeardownWindow, Kind: KindDuration, Default: "10s", Doc: "Window, opened by an engine-initiated step teardown, during which transport closes are reclassified as teardown consequences instead of session crashes (CRI-287)."},

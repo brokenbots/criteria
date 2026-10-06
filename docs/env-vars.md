@@ -21,6 +21,7 @@ Values are Go durations (`30s`, `5m`, `1500ms`) unless noted otherwise.
 | `CRITERIA_PEER_BACKOFF_MAX` | duration | `30s` | Peer host reconnect backoff ceiling; must be >= the backoff floor. Peer-owned override: a malformed value aborts peer startup. |
 | `CRITERIA_PEER_BACKOFF_MIN` | duration | `1s` | Peer host reconnect backoff floor. Peer-owned override: a malformed value aborts peer startup. |
 | `CRITERIA_PEER_JOURNAL_LIMIT` | int | `4096` | Bounded supervision journal capacity in events. Peer-owned override: a non-positive or malformed value aborts peer startup. |
+| `CRITERIA_SERVE_ADAPTER_CONCURRENCY` | int | `8` | Shared container budget for the workflow's own step-adapter sessions while `criteria serve-adapter` serves a workflow (ADR-0008). |
 | `CRITERIA_SESSION_HEARTBEAT_STALL` | duration | `90s` | How long a session log stream may idle with no chunks or heartbeats before the adapter is treated as wedged (CRI-271). |
 | `CRITERIA_STEP_STALL_WINDOW` | duration | `30m` | How long an unbounded step may run with no observable adapter activity before the engine tears it down (KB-25). A zero or negative value disables stall detection. |
 | `CRITERIA_STEP_TIMEOUT_TEARDOWN_WINDOW` | duration | `10s` | Window, opened by an engine-initiated step teardown, during which transport closes are reclassified as teardown consequences instead of session crashes (CRI-287). |

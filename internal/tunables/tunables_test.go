@@ -16,6 +16,7 @@ func TestDefaultsMatchConstants(t *testing.T) {
 		StepTimeoutTeardownWindow: DefaultStepTimeoutTeardownWindow,
 		StepStallWindow:           DefaultStepStallWindow,
 		AgentHeartbeatInterval:    DefaultAgentHeartbeatInterval,
+		ServeAdapterConcurrency:   DefaultServeAdapterConcurrency,
 	}
 	if got := Defaults(); got != want {
 		t.Errorf("Defaults() = %+v, want %+v", got, want)
@@ -60,6 +61,29 @@ func TestNewLenientOverrides(t *testing.T) {
 			if want := fieldFor(t, Defaults(), tc.env); fieldFor(t, got, tc.env) != want {
 				t.Errorf("%s=%q: got %s, want default %s", tc.env, raw, fieldFor(t, got, tc.env), want)
 			}
+		}
+	}
+}
+
+// TestNewServeAdapterConcurrency pins the ADR-0008 concurrency cap override
+// semantics: a positive value applies, while empty, malformed, and
+// non-positive values keep the built-in default (lenient posture).
+func TestNewServeAdapterConcurrency(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want int
+	}{
+		{"4", 4},
+		{" 12 ", 12},
+		{"0", DefaultServeAdapterConcurrency},
+		{"-3", DefaultServeAdapterConcurrency},
+		{"", DefaultServeAdapterConcurrency},
+		{"garbage", DefaultServeAdapterConcurrency},
+	}
+	for _, tc := range cases {
+		got := New(func(string) string { return tc.raw })
+		if got.ServeAdapterConcurrency != tc.want {
+			t.Errorf("New(%s=%q).ServeAdapterConcurrency = %d, want %d", EnvServeAdapterConcurrency, tc.raw, got.ServeAdapterConcurrency, tc.want)
 		}
 	}
 }
@@ -152,6 +176,7 @@ func TestEnvvarsRegistry(t *testing.T) {
 		EnvAgentHeartbeatInterval, EnvHeartbeatInterval, EnvHeartbeatStallThreshold,
 		EnvLocalApprovalFileTimeout,
 		EnvPeerBackoffMax, EnvPeerBackoffMin, EnvPeerJournalLimit,
+		EnvServeAdapterConcurrency,
 		EnvStepStallWindow, EnvStepTimeoutTeardownWindow,
 	} {
 		if !seen[name] {
@@ -167,6 +192,7 @@ func TestEnvvarsRegistry(t *testing.T) {
 		EnvPeerBackoffMax:            "30s",
 		EnvPeerBackoffMin:            "1s",
 		EnvPeerJournalLimit:          "4096",
+		EnvServeAdapterConcurrency:   "8",
 		EnvHeartbeatStallThreshold:   "90s",
 		EnvStepStallWindow:           "30m",
 		EnvStepTimeoutTeardownWindow: "10s",

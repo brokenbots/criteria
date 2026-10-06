@@ -107,4 +107,9 @@ const (
 	// (CRI-255). A paused run is live, its process alive; it is not terminal
 	// so no endedAt is stamped and it is exempt from checkpoint sweep.
 	StatusPaused = "paused"
+	// StatusCancelled marks a run the operator (or teardown) deliberately
+	// stopped mid-flight through the engine stop machinery — a real terminal
+	// fact distinct from a crash-failed run (adr-0008 CloseSession
+	// teardown: cancel the child run, then stamp the record cancelled).
+	StatusCancelled = "cancelled"
 )

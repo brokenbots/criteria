@@ -150,6 +150,9 @@ type peerServeFixture struct {
 	rt     *peerRuntime
 	server *Server
 	child  *fakePeerChild
+	// impl is set only in the serve-adapter role (rt nil): the in-process
+	// workflow adapter under test.
+	impl   *fakeWorkflowAdapter
 	ctx    context.Context
 	cancel context.CancelFunc
 }

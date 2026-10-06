@@ -22,8 +22,6 @@ import (
 	"sync"
 	"time"
 
-	hplugin "github.com/hashicorp/go-plugin"
-
 	"github.com/brokenbots/criteria/internal/adapterhost"
 )
 
@@ -243,6 +241,7 @@ type Shim struct {
 	schedulingBudget     time.Duration        // bounds the wait while the adapter pod has not started (KB-70)
 	podStatePollInterval time.Duration        // re-observation cadence while not started
 	podProbe             PodStateProbe        // optional pod-state seam; nil in a bare shim
+	dialLocal            dialLocalFunc        // reattach dialer; defaults to adapterhost.LocalSocketDialer (see dialLocalAdapter), substituted in tests
 	dialActivity         map[string]time.Time // session key → last time an adapter presented an identity frame (pod-started evidence)
 
 	peerAcceptor   PeerAcceptor   // receives authenticated role="peer" dials; nil rejects them
@@ -334,6 +333,7 @@ func NewShim(cfg *Config, verifier DigestVerifier) (*Shim, error) {
 		verifyFailureBudget:   handshakeBudget,
 		schedulingBudget:      schedulingBudget,
 		podStatePollInterval:  defaultPodStatePollInterval,
+		dialLocal:             dialLocalAdapter,
 		dialActivity:          make(map[string]time.Time),
 	}, nil
 }
@@ -942,11 +942,29 @@ func (s *Shim) setupUDS(conn net.Conn) (string, net.Listener, error) {
 
 type bridgeResult struct {
 	client       adapterhost.Client
-	pluginClient *hplugin.Client
+	pluginClient adapterhost.PluginLifecycle
 	bridgeCancel func()
 	bridgeCtx    context.Context
 	bridgeWG     *sync.WaitGroup
 	udsConn      net.Conn
+}
+
+// dialLocalFunc is the reattach-dialer seam: it returns the adapter client
+// plus the go-plugin client backing it. It is a Shim field (defaulted in
+// NewShim) so tests can substitute a controllable dialer.
+type dialLocalFunc func(ctx context.Context, socketPath string) (client adapterhost.Client, plugin adapterhost.PluginLifecycle, err error)
+
+// dialLocalAdapter reattaches the host to the adapter listening on socketPath,
+// adapting LocalSocketDialer's concrete go-plugin client to the seam type.
+// LocalSocketDialer's error paths return a nil *hplugin.Client; because Go
+// wraps that typed nil into a non-nil PluginLifecycle interface value, the
+// seam normalises it back to a plain nil so callers' nil checks stay honest.
+func dialLocalAdapter(ctx context.Context, socketPath string) (adapterhost.Client, adapterhost.PluginLifecycle, error) {
+	c, p, err := adapterhost.LocalSocketDialer(ctx, socketPath)
+	if p == nil {
+		return c, nil, err
+	}
+	return c, p, err
 }
 
 //nolint:funlen // split from Accept to reduce cognitive complexity; linear sequence required
@@ -976,26 +994,49 @@ func (s *Shim) bridgeAndDial(
 
 	clientCh := make(chan struct {
 		client adapterhost.Client
-		plugin *hplugin.Client
+		plugin adapterhost.PluginLifecycle
 		err    error
 	}, 1)
 	go func() {
-		c, p, err := adapterhost.LocalSocketDialer(ctx, socketPath)
+		c, p, err := s.dialLocal(ctx, socketPath)
 		clientCh <- struct {
 			client adapterhost.Client
-			plugin *hplugin.Client
+			plugin adapterhost.PluginLifecycle
 			err    error
 		}{client: c, plugin: p, err: err}
 	}()
+
+	// abandonDialer drains the dialer's outcome when the bridge is abandoned
+	// while the dial is still in flight: the dialer completes independently of
+	// the selects below, so without this drain a successful reattach result is
+	// dropped and its go-plugin client — the gRPC ClientConn
+	// callback-serializer goroutines, the redialing addrConn, and the parked
+	// reattach wait goroutine — leaks until process exit. Killing the client
+	// releases them.
+	abandonDialer := func() {
+		go func() {
+			// An error result carries no live plugin: LocalSocketDialer kills
+			// its own client before returning an error. Check err too so a
+			// seam implementation forwarding a typed-nil plugin — a nil
+			// *hplugin.Client wrapped in the interface, which Go reports as
+			// non-nil — is never "Killed": Kill has no nil-receiver guard and
+			// would panic this unrecoverable goroutine.
+			if res := <-clientCh; res.err == nil && res.plugin != nil {
+				res.plugin.Kill()
+			}
+		}()
+	}
 
 	var udsConn net.Conn
 	select {
 	case c := <-udsConnCh:
 		udsConn = c
 	case err := <-udsErrCh:
+		abandonDialer()
 		_ = conn.Close()
 		return nil, fmt.Errorf("uds accept: %w", err)
 	case <-ctx.Done():
+		abandonDialer()
 		_ = conn.Close()
 		return nil, ctx.Err()
 	}
@@ -1015,23 +1056,31 @@ func (s *Shim) bridgeAndDial(
 	}()
 
 	var client adapterhost.Client
-	var pluginClient *hplugin.Client
+	var pluginClient adapterhost.PluginLifecycle
 	select {
 	case res := <-clientCh:
 		if res.err != nil {
+			// Nothing can leak in this arm: LocalSocketDialer kills its own
+			// client before returning an error and reports no plugin for
+			// such a result (the seam normalises the typed nil away), so
+			// fully consuming the error result here releases nothing.
 			bridgeCancel()
-			bridgeWG.Wait()
 			_ = udsConn.Close()
 			_ = conn.Close()
+			bridgeWG.Wait()
 			return nil, fmt.Errorf("local socket dialer: %w", res.err)
 		}
 		client = res.client
 		pluginClient = res.plugin
 	case <-ctx.Done():
+		abandonDialer()
 		bridgeCancel()
-		bridgeWG.Wait()
+		// Close before waiting so the bridge copiers unblock even when the
+		// remote end is still live: the copiers exit on the closed conns and
+		// Wait observes both Done signals.
 		_ = udsConn.Close()
 		_ = conn.Close()
+		bridgeWG.Wait()
 		return nil, ctx.Err()
 	}
 
@@ -1055,7 +1104,7 @@ func (s *Shim) buildAndStoreHandle(
 	lis net.Listener,
 	socketPath string,
 	client adapterhost.Client,
-	pluginClient *hplugin.Client,
+	pluginClient adapterhost.PluginLifecycle,
 	bridgeCancel func(),
 	bridgeCtx context.Context,
 	bridgeWG *sync.WaitGroup,
