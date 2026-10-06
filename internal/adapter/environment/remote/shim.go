@@ -956,8 +956,14 @@ type dialLocalFunc func(ctx context.Context, socketPath string) (client adapterh
 
 // dialLocalAdapter reattaches the host to the adapter listening on socketPath,
 // adapting LocalSocketDialer's concrete go-plugin client to the seam type.
+// LocalSocketDialer's error paths return a nil *hplugin.Client; because Go
+// wraps that typed nil into a non-nil PluginLifecycle interface value, the
+// seam normalises it back to a plain nil so callers' nil checks stay honest.
 func dialLocalAdapter(ctx context.Context, socketPath string) (adapterhost.Client, adapterhost.PluginLifecycle, error) {
 	c, p, err := adapterhost.LocalSocketDialer(ctx, socketPath)
+	if p == nil {
+		return c, nil, err
+	}
 	return c, p, err
 }
 
@@ -1009,7 +1015,13 @@ func (s *Shim) bridgeAndDial(
 	// releases them.
 	abandonDialer := func() {
 		go func() {
-			if res := <-clientCh; res.plugin != nil {
+			// An error result carries no live plugin: LocalSocketDialer kills
+			// its own client before returning an error. Check err too so a
+			// seam implementation forwarding a typed-nil plugin — a nil
+			// *hplugin.Client wrapped in the interface, which Go reports as
+			// non-nil — is never "Killed": Kill has no nil-receiver guard and
+			// would panic this unrecoverable goroutine.
+			if res := <-clientCh; res.err == nil && res.plugin != nil {
 				res.plugin.Kill()
 			}
 		}()
@@ -1048,8 +1060,10 @@ func (s *Shim) bridgeAndDial(
 	select {
 	case res := <-clientCh:
 		if res.err != nil {
-			// The dialer kills its own client on error, and the result is
-			// fully consumed here, so nothing can leak in this arm.
+			// Nothing can leak in this arm: LocalSocketDialer kills its own
+			// client before returning an error and reports no plugin for
+			// such a result (the seam normalises the typed nil away), so
+			// fully consuming the error result here releases nothing.
 			bridgeCancel()
 			_ = udsConn.Close()
 			_ = conn.Close()

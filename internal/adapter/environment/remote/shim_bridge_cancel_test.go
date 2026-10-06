@@ -25,18 +25,25 @@ func (p *stubPluginClient) Kill()        { p.kills.Add(1) }
 func (p *stubPluginClient) Exited() bool { return p.kills.Load() > 0 }
 
 // stubDialer stands in for the reattach dialer: it blocks until release is
-// closed and then reports a successful dial carrying the plugin client, so the
-// abandon window in bridgeAndDial stays open until the test chooses to close
-// it. It deliberately ignores ctx: the real LocalSocketDialer also completes
-// independently of cancellation once past its entry check.
+// closed and then reports a dial result carrying the plugin client plus an
+// optional error, so the abandon window in bridgeAndDial stays open until the
+// test chooses to close it. It deliberately ignores ctx: the real
+// LocalSocketDialer also completes independently of cancellation once past its
+// entry check.
+//
+// A nil *stubPluginClient receiver deliberately mirrors *hplugin.Client.Kill,
+// which locks its mutex with no nil-receiver guard: the underlying atomic
+// field access on a nil pointer panics, so the abandon goroutine dies — as it
+// would with the real client — whenever Kill is invoked on a typed nil.
 type stubDialer struct {
 	release chan struct{}
 	plugin  adapterhost.PluginLifecycle
+	err     error
 }
 
 func (d *stubDialer) dial(_ context.Context, _ string) (adapterhost.Client, adapterhost.PluginLifecycle, error) {
 	<-d.release
-	return nil, d.plugin, nil
+	return nil, d.plugin, d.err
 }
 
 // stubAddr satisfies net.Addr for the test listener.
@@ -215,4 +222,53 @@ func TestShim_BridgeAndDial_UDSAcceptError(t *testing.T) {
 
 	close(dialer.release)
 	waitPluginKilled(t, plugin, 1)
+}
+
+// TestShim_BridgeAndDial_AbandonedDialerErrorTypedNil pins the typed-nil trap
+// in the abandon drain: LocalSocketDialer's failure paths return a nil
+// *hplugin.Client alongside the error, and Go wraps that typed nil into a
+// non-nil PluginLifecycle interface value, so the drain's former
+// res.plugin != nil check held exactly on the error path and Kill on the nil
+// *hplugin.Client receiver — which locks unconditionally — panicked the
+// abandon goroutine, unrecoverably taking the whole criteria process down.
+// A dialer reporting an error must be abandoned without any Kill: the stub's
+// typed nil mirrors the real client's panic-on-nil-receiver Kill, so reaching
+// the end of this test alive is the assertion.
+func TestShim_BridgeAndDial_AbandonedDialerErrorTypedNil(t *testing.T) {
+	dialer := &stubDialer{
+		release: make(chan struct{}),
+		plugin:  (*stubPluginClient)(nil),
+		err:     errors.New("reattach grpc client: connection refused"),
+	}
+
+	hostConn, remoteEnd := net.Pipe()
+	t.Cleanup(func() { _ = hostConn.Close(); _ = remoteEnd.Close() })
+	lis := newControllableListener()
+	t.Cleanup(func() { _ = lis.Close() })
+
+	shim := &Shim{dialLocal: dialer.dial}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // abandon before any select arm can succeed
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := shim.bridgeAndDial(ctx, hostConn, lis, "unused.sock")
+		errCh <- err
+	}()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("bridgeAndDial err = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("bridgeAndDial did not return after cancellation")
+	}
+
+	close(dialer.release) // the in-flight dial now completes with its error
+	// Bounded window for the drain to consume the typed-nil error result:
+	// without the fix the drain calls Kill on the nil receiver and the
+	// process dies inside this window; with the fix the result is dropped
+	// and the window simply elapses.
+	time.Sleep(100 * time.Millisecond)
 }
