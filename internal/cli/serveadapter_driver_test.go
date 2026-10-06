@@ -748,3 +748,57 @@ func TestServeAdapter_EventsFileFailureClearsRunSlot(t *testing.T) {
 		t.Fatalf("terminal after recovery = %+v, want success", res)
 	}
 }
+
+// TestServeAdapter_ControlVerbsFailClosedWhileRunIsStarting covers a blocking
+// invariant the control verbs share with refreshPausedNode: openChildRun
+// publishes the run handle under c.mu BEFORE driveChildRun installs the
+// control bus (run.ctrl) under run.mu, so a host Pause/Resume landing inside
+// that starting window must fail closed with a typed failed_precondition
+// status. grpc-go does not recover handler panics; dereferencing the nil ctrl
+// there would kill the served adapter process.
+func TestServeAdapter_ControlVerbsFailClosedWhileRunIsStarting(t *testing.T) {
+	env := newServeAdapterEnv(t)
+	sessionID := env.openTestSession(t)
+
+	// Reproduce the starting window exactly as openChildRun publishes it: the
+	// run is already in the c.run slot, but driveChildRun has not installed
+	// the control bus yet.
+	env.client.mu.Lock()
+	run := &serveAdapterRun{
+		id:      "run-still-starting",
+		session: env.client.sessions[sessionID],
+		ctx:     context.Background(),
+		cancel:  func() {},
+		done:    make(chan struct{}),
+	}
+	env.client.run = run
+	env.client.mu.Unlock()
+	t.Cleanup(func() { env.client.clearRun(run) })
+
+	ctx := context.Background()
+	for _, verb := range []struct {
+		name string
+		call func() error
+	}{
+		{"Pause", func() error {
+			_, err := env.client.Pause(ctx, &criteriav2.PauseRequest{SessionId: sessionID})
+			return err
+		}},
+		{"Resume", func() error {
+			_, err := env.client.Resume(ctx, &criteriav2.ResumeRequest{SessionId: sessionID})
+			return err
+		}},
+	} {
+		err := verb.call()
+		if err == nil {
+			t.Errorf("%s in the starting window succeeded, want a fail-closed typed error", verb.name)
+			continue
+		}
+		if connect.CodeOf(err) != connect.CodeFailedPrecondition {
+			t.Errorf("%s connect code = %q, want failed_precondition (err = %v)", verb.name, connect.CodeOf(err), err)
+		}
+		if !strings.Contains(err.Error(), errChildRunStillStarting.Error()) {
+			t.Errorf("%s error text = %q, want it to name the still-starting condition", verb.name, err.Error())
+		}
+	}
+}
