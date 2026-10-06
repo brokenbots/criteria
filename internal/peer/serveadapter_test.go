@@ -58,10 +58,11 @@ func (f *fakeWorkflowAdapter) OpenSession(ctx context.Context, req *v2.OpenSessi
 
 func (f *fakeWorkflowAdapter) CloseSession(ctx context.Context, req *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.closedSessions = append(f.closedSessions, req.GetSessionId())
-	if f.exitFn != nil {
-		f.exitFn()
+	exit := f.exitFn
+	f.mu.Unlock()
+	if exit != nil {
+		exit()
 	}
 	return &v2.CloseSessionResponse{}, nil
 }
