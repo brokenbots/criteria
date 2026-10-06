@@ -32,10 +32,11 @@ import (
 	"github.com/brokenbots/criteria/workflow"
 )
 
-// kb155WaitFor polls cond until it holds, failing the test after timeout.
+// kb155WaitFor polls cond until it holds, failing the test after 5s.
 // Condition functions must not take locks the polled goroutine holds.
-func kb155WaitFor(t *testing.T, timeout time.Duration, msg string, cond func() bool) {
+func kb155WaitFor(t *testing.T, msg string, cond func() bool) {
 	t.Helper()
+	const timeout = 5 * time.Second
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if cond() {
@@ -144,7 +145,7 @@ func TestNestedToolCall_ConcurrentCallersSharedCalleeSession(t *testing.T) {
 	}()
 
 	// Confirm caller1's nested dispatch reached the shared callee session...
-	kb155WaitFor(t, 5*time.Second, "callee executing caller1's call", func() bool {
+	kb155WaitFor(t, "callee executing caller1's call", func() bool {
 		return calleeRecordCount(calleeRec) >= 1
 	})
 	// ...then fan the second caller onto the same session. With the
@@ -156,7 +157,7 @@ func TestNestedToolCall_ConcurrentCallersSharedCalleeSession(t *testing.T) {
 			t.Errorf("caller2 Execute: %v", err)
 		}
 	}()
-	kb155WaitFor(t, 5*time.Second, "callee executing both calls concurrently on ONE session", func() bool {
+	kb155WaitFor(t, "callee executing both calls concurrently on ONE session", func() bool {
 		return calleeRecordCount(calleeRec) >= 2
 	})
 
@@ -341,7 +342,7 @@ func TestNestedToolCall_QueuedCallCancelTyped(t *testing.T) {
 	})
 	// Confirm call-1 owns the callee (it started its only execute), then
 	// issue call-2: it queues behind the single-flight in-flight call.
-	kb155WaitFor(t, 5*time.Second, "call-1 reached the callee", func() bool {
+	kb155WaitFor(t, "call-1 reached the callee", func() bool {
 		return indexWhere(t, col, "callee.started", func(d map[string]any) bool { return d["task"] == "slow-a" }) >= 0
 	})
 	sink.Adapter("permission.request", map[string]any{
@@ -349,7 +350,7 @@ func TestNestedToolCall_QueuedCallCancelTyped(t *testing.T) {
 		"target":     nestedCallTarget,
 		"args":       map[string]any{"task": "slow-b"},
 	})
-	kb155WaitFor(t, 5*time.Second, "call-2 registered for correlation", func() bool {
+	kb155WaitFor(t, "call-2 registered for correlation", func() bool {
 		return pendingCount(t, ps) == 2
 	})
 
@@ -424,7 +425,7 @@ func TestNestedToolCall_PerCallPolicyAttribution(t *testing.T) {
 			t.Errorf("alpha Execute = %q/%v, want success (the trailing grant must recover)", res.Outcome, err)
 		}
 	}()
-	kb155WaitFor(t, 5*time.Second, "alpha executing", func() bool {
+	kb155WaitFor(t, "alpha executing", func() bool {
 		return calleeRecordCount(calleeRec) >= 1
 	})
 	go func() {
@@ -516,7 +517,7 @@ func TestNestedToolCall_BudgetUnderConcurrency(t *testing.T) {
 		"target":     nestedCallTarget,
 		"args":       map[string]any{"task": "hold"},
 	})
-	kb155WaitFor(t, 5*time.Second, "call-1 registered (budget reserved)", func() bool {
+	kb155WaitFor(t, "call-1 registered (budget reserved)", func() bool {
 		return pendingCount(t, ps) == 1
 	})
 
@@ -628,37 +629,35 @@ func TestSession_ExecuteTurnGate(t *testing.T) {
 		},
 	})
 	ctx := context.Background()
-	for _, session := range []string{nestedCalleeSession, "callee2.mx"} {
-		typ := "callee"
-		if session != nestedCalleeSession {
-			typ = "callee2"
-		}
-		if err := sm.Open(ctx, session, typ, "", nil, nil); err != nil {
-			t.Fatalf("Open %s: %v", session, err)
-		}
-		defer func() { _ = sm.Close(ctx, session) }()
+	if err := sm.Open(ctx, nestedCalleeSession, "callee", "", nil, nil); err != nil {
+		t.Fatalf("Open callee: %v", err)
 	}
+	defer func() { _ = sm.Close(context.Background(), nestedCalleeSession) }()
+	if err := sm.Open(ctx, "callee2.mx", "callee2", "", nil, nil); err != nil {
+		t.Fatalf("Open callee2.mx: %v", err)
+	}
+	defer func() { _ = sm.Close(context.Background(), "callee2.mx") }()
 
 	// Non-multiplexable: the first acquire takes the turn.
 	sess, err := sm.lookup(nestedCalleeSession)
 	if err != nil {
 		t.Fatalf("lookup: %v", err)
 	}
-	if err := sm.acquireExecuteTurn(ctx, sess); err != nil {
-		t.Fatalf("first acquire: %v", err)
+	if gateErr, queued := sm.acquireExecuteTurn(ctx, sess); gateErr != nil || queued {
+		t.Fatalf("first acquire: gateErr=%v queued=%v, want immediate non-queued turn", gateErr, queued)
 	}
 	// A second caller queued behind it with a deadline: released only by
 	// context cancellation, not by a phantom turn.
 	queuedCtx, cancelQueued := context.WithTimeout(ctx, 30*time.Millisecond)
 	defer cancelQueued()
-	if err := sm.acquireExecuteTurn(queuedCtx, sess); !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("cancel-while-queued err = %v, want context.DeadlineExceeded", err)
+	if gateErr, queued := sm.acquireExecuteTurn(queuedCtx, sess); !errors.Is(gateErr, context.DeadlineExceeded) || !queued {
+		t.Errorf("cancel-while-queued err = %v queued=%v, want context.DeadlineExceeded queued", gateErr, queued)
 	}
 	// The cancelled waiter must NOT have consumed the turn: releasing hands
 	// it to the next waiter, which acquires immediately.
 	sm.releaseExecuteTurn(sess)
-	if err := sm.acquireExecuteTurn(ctx, sess); err != nil {
-		t.Fatalf("acquire after release: %v", err)
+	if gateErr, queued := sm.acquireExecuteTurn(ctx, sess); gateErr != nil || queued {
+		t.Fatalf("acquire after release: gateErr=%v queued=%v", gateErr, queued)
 	}
 	sm.releaseExecuteTurn(sess)
 
@@ -667,7 +666,7 @@ func TestSession_ExecuteTurnGate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lookup mx: %v", err)
 	}
-	if err := sm.acquireExecuteTurn(ctx, mxSess); err != nil {
-		t.Errorf("multiplexable acquire: %v, want nil (gate skipped)", err)
+	if gateErr, queued := sm.acquireExecuteTurn(ctx, mxSess); gateErr != nil || queued {
+		t.Errorf("multiplexable acquire: gateErr=%v queued=%v, want nil (gate skipped)", gateErr, queued)
 	}
 }

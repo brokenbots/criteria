@@ -25,12 +25,12 @@ func kb155Bridge(t *testing.T, b *MCPBridge, sessionID string) {
 
 // kb155RunExecute fires one Execute call on a shared session with the given
 // message, on its own permitting sender.
-func kb155RunExecute(b *MCPBridge, sessionID, tool, message string, sender *permittingEventSender) func() error {
+func kb155RunExecute(b *MCPBridge, sessionID, message string, sender *permittingEventSender) func() error {
 	return func() error {
 		return b.Execute(context.Background(), &v2.ExecuteRequest{
 			SessionId: sessionID,
 			Input: map[string]string{
-				"tool":            tool,
+				"tool":            "echo",
 				"success_outcome": "success",
 				"message":         message,
 				"sleep_ms":        "400",
@@ -39,9 +39,9 @@ func kb155RunExecute(b *MCPBridge, sessionID, tool, message string, sender *perm
 	}
 }
 
-// kb155ResultEvent returns the last event of the stream verified to be a
-// success result, failing the test otherwise.
-func kb155ResultEvent(t *testing.T, events []*v2.ExecuteEvent, label string) *v2.ExecuteEvent {
+// kb155ResultEvent verifies the last event of the stream is a success
+// result, failing the test otherwise.
+func kb155ResultEvent(t *testing.T, events []*v2.ExecuteEvent, label string) {
 	t.Helper()
 	if len(events) == 0 {
 		t.Fatalf("%s: no events", label)
@@ -54,7 +54,6 @@ func kb155ResultEvent(t *testing.T, events []*v2.ExecuteEvent, label string) *v2
 	if res.GetOutcome() != "success" {
 		t.Fatalf("%s: outcome=%q want success", label, res.GetOutcome())
 	}
-	return last
 }
 
 // kb155ContentTexts joins the mcp.content text payloads of a stream.
@@ -146,11 +145,11 @@ func TestMCPBridge_ConcurrentExecuteCorrelatesPerStream(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		_ = kb155RunExecute(b, "sess-mux", "echo", "msg-a", senderA)()
+		_ = kb155RunExecute(b, "sess-mux", "msg-a", senderA)()
 	}()
 	go func() {
 		defer wg.Done()
-		_ = kb155RunExecute(b, "sess-mux", "echo", "msg-b", senderB)()
+		_ = kb155RunExecute(b, "sess-mux", "msg-b", senderB)()
 	}()
 	wg.Wait()
 
@@ -197,11 +196,11 @@ func TestMCPBridge_ProgressAttributionUnderConcurrency(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		_ = kb155RunExecute(b, "sess-prog", "echo", "prog-a", senderA)()
+		_ = kb155RunExecute(b, "sess-prog", "prog-a", senderA)()
 	}()
 	go func() {
 		defer wg.Done()
-		_ = kb155RunExecute(b, "sess-prog", "echo", "prog-b", senderB)()
+		_ = kb155RunExecute(b, "sess-prog", "prog-b", senderB)()
 	}()
 	wg.Wait()
 

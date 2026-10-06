@@ -177,10 +177,10 @@ type MCPBridge struct {
 
 func (b *MCPBridge) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse, error) {
 	resp := &v2.InfoResponse{
-		Name:         adapterName,
-		Version:      adapterVersion,
-		SourceUrl:    "https://github.com/brokenbots/criteria/tree/main/cmd/criteria-adapter-mcp",
-		Platforms:    []string{"linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64"},
+		Name:      adapterName,
+		Version:   adapterVersion,
+		SourceUrl: "https://github.com/brokenbots/criteria/tree/main/cmd/criteria-adapter-mcp",
+		Platforms: []string{"linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64"},
 		// concurrent_execute (KB-155): each Execute RPC runs on its own stream
 		// and the session accepts several in flight; the host fans concurrent
 		// calls onto one shared session and correlates replies and decisions

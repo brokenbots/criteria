@@ -2641,16 +2641,17 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 	// multiplexable sessions skip the gate and fan out freely. Cancel while
 	// queued surfaces as ctx.Err(), which executeError maps to the typed
 	// `canceled` reply path.
-	if err := m.acquireExecuteTurn(ctx, sess); err != nil {
-		return adapter.Result{}, ctx.Err()
+	gateErr, queued := m.acquireExecuteTurn(ctx, sess)
+	if gateErr != nil {
+		return adapter.Result{}, gateErr
 	}
 	defer m.releaseExecuteTurn(sess)
 
-	// KB-155: when the turn arrives after the caller was cancelled
-	// (select unblocked on the token instead of Done), abandon before any
-	// adapter-observable state — a dispatched execute on a cancelled
-	// context would run the queued call. The defer above hands the turn on.
-	if err := ctx.Err(); err != nil {
+	// KB-155: a caller whose turn only arrived after its own cancellation
+	// (the release/cancel race above) abandons before any adapter-observable
+	// state; the defer above hands the turn on. Fast-path (unqueued) callers
+	// keep dispatching so the CRI-161 no-wedge contract holds.
+	if queued && ctx.Err() != nil {
 		return adapter.Result{}, ctx.Err()
 	}
 
@@ -2665,7 +2666,7 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 	m.bindActiveSink(sess, sink)
 	defer m.unbindActiveSink(sess, sink)
 
-	execSink := m.execSinkForSession(sess, sink)
+	execSink := m.execSinkForSession(sink)
 	permSink := newPermissionInterceptSink(ctx, execSink, sess, step, m.graph, m, nesting, stepPolicy)
 
 	result, execErr := sess.handle.Execute(ctx, name, step, permSink, rejection)
@@ -2880,23 +2881,43 @@ func (m *SessionManager) sessionSupportsConcurrentExecute(sess *Session) bool {
 // observe an in-flight sibling's state. Multiplexable sessions skip the
 // gate. Returns ctx.Err() when the caller is cancelled while queued, leaving
 // the turn for the next waiter; the typed execute error mapping turns that
-// into the caller's `canceled` reply.
-func (m *SessionManager) acquireExecuteTurn(ctx context.Context, sess *Session) error {
+// into the caller's `canceled` reply. The queued flag reports whether the
+// caller had to wait behind a sibling: only a queued caller abandons on a
+// ctx that was already cancelled when the turn arrived — a cancellation and
+// the sibling's release race to unblock the waiter, and the abandoned call
+// is the only deterministic outcome. A free-turn fast path keeps the CRI-161
+// no-wedge contract: a call issued past a dead parent context still reaches
+// the adapter and delivers its reply.
+func (m *SessionManager) acquireExecuteTurn(ctx context.Context, sess *Session) (error, bool) {
 	if m.sessionSupportsConcurrentExecute(sess) {
-		return nil
+		return nil, false
 	}
 	if sess.execTurns == nil {
 		// No gate installed: sessions built only by m.Open are seeded, and
 		// releaseExecuteTurn ignores nil as well. A missing channel on a
 		// hand-built session must mean "unserialized", never "blocked
 		// forever" — receiving on a nil channel would hang the caller.
-		return nil
+		return nil, false
 	}
 	select {
 	case <-sess.execTurns:
-		return nil
+		// Fast path: the turn was free. Proceed regardless of ctx state.
+		return nil, false
+	default:
+	}
+	select {
+	case <-sess.execTurns:
+		// Queued behind a sibling. A cancelled sibling releasing the turn and
+		// this caller's own cancellation can unblock the waiter in the same
+		// instant; the cancelled queued call must abandon deterministically.
+		select {
+		case <-ctx.Done():
+			return ctx.Err(), true
+		default:
+			return nil, true
+		}
 	case <-ctx.Done():
-		return ctx.Err()
+		return ctx.Err(), true
 	}
 }
 
@@ -2971,7 +2992,7 @@ func (sess *Session) singleActiveSink() (sink adapter.EventSink, ok bool) {
 // be demoted to structured logs, and delivery delayed up to the 500ms merge
 // window), so it can no longer carry execute-level traffic under
 // multiplexing. mergeBuf remains on the log-stream path only.
-func (m *SessionManager) execSinkForSession(sess *Session, sink adapter.EventSink) adapter.EventSink {
+func (m *SessionManager) execSinkForSession(sink adapter.EventSink) adapter.EventSink {
 	return m.wrapSink(sink)
 }
 
