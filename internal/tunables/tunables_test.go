@@ -150,6 +150,7 @@ func TestEnvvarsRegistry(t *testing.T) {
 	}
 	for _, name := range []string{
 		EnvAgentHeartbeatInterval, EnvHeartbeatInterval, EnvHeartbeatStallThreshold,
+		EnvLocalApprovalFileTimeout,
 		EnvPeerBackoffMax, EnvPeerBackoffMin, EnvPeerJournalLimit,
 		EnvStepStallWindow, EnvStepTimeoutTeardownWindow,
 	} {
@@ -162,6 +163,7 @@ func TestEnvvarsRegistry(t *testing.T) {
 	wantDefault := map[string]string{
 		EnvAgentHeartbeatInterval:    "10s",
 		EnvHeartbeatInterval:         "30s",
+		EnvLocalApprovalFileTimeout:  "1h",
 		EnvPeerBackoffMax:            "30s",
 		EnvPeerBackoffMin:            "1s",
 		EnvPeerJournalLimit:          "4096",

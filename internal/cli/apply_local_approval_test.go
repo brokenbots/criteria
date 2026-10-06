@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/brokenbots/criteria/internal/tunables"
 )
 
 // All tests in this file exercise local-mode approval and signal-wait via
@@ -535,4 +537,55 @@ func TestApplyLocal_Reattach_InvalidPersistedSignalOutcome_Error(t *testing.T) {
 	if !strings.Contains(logOutput, "bogus") {
 		t.Errorf("error log should mention the invalid outcome 'bogus'; got: %s", logOutput)
 	}
+}
+
+// TestLocalResumerOptions_FileTimeoutOverride covers the CRITERIA_
+// LOCAL_APPROVAL_FILE_TIMEOUT override contract: a valid duration wins,
+// an unset value falls back to the tunables default, and a malformed value
+// fails loudly with the env name in the error (the strict parse that keeps
+// a mistyped duration from silently extending the wait to 1h).
+func TestLocalResumerOptions_FileTimeoutOverride(t *testing.T) {
+	stub := func(stdin io.Reader) localApprovalConfig {
+		return localApprovalConfig{
+			stdin:  stdin,
+			stderr: io.Discard,
+			tty:    func() bool { return true },
+		}
+	}
+
+	t.Run("unset leaves the zero for applyDefaults", func(t *testing.T) {
+		t.Setenv(tunables.EnvLocalApprovalFileTimeout, "")
+		opts, err := localResumerOptions(slog.Default(), stub(strings.NewReader("")))
+		if err != nil {
+			t.Fatalf("localResumerOptions: %v", err)
+		}
+		if opts.FileTimeout != 0 {
+			t.Errorf("FileTimeout = %v, want 0 (the tunables default is applied downstream by localresume applyDefaults)", opts.FileTimeout)
+		}
+	})
+
+	t.Run("valid override is applied", func(t *testing.T) {
+		t.Setenv(tunables.EnvLocalApprovalFileTimeout, "200ms")
+		opts, err := localResumerOptions(slog.Default(), stub(strings.NewReader("")))
+		if err != nil {
+			t.Fatalf("localResumerOptions: %v", err)
+		}
+		if opts.FileTimeout != 200*time.Millisecond {
+			t.Errorf("FileTimeout = %v, want 200ms", opts.FileTimeout)
+		}
+	})
+
+	t.Run("malformed value fails loudly and mentions the env name", func(t *testing.T) {
+		t.Setenv(tunables.EnvLocalApprovalFileTimeout, "soon")
+		_, err := localResumerOptions(slog.Default(), stub(strings.NewReader("")))
+		if err == nil {
+			t.Fatal("expected an error for a malformed file timeout, got nil")
+		}
+		if !strings.Contains(err.Error(), tunables.EnvLocalApprovalFileTimeout) {
+			t.Errorf("error must name the offending env var %s; got: %v", tunables.EnvLocalApprovalFileTimeout, err)
+		}
+		if !strings.Contains(err.Error(), "soon") {
+			t.Errorf("error must mention the offending value; got: %v", err)
+		}
+	})
 }

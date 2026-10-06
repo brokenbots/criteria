@@ -16,11 +16,12 @@
 //   - Host knobs (Settings) are lenient: an unset, malformed, or
 //     non-positive value keeps the built-in default. The only field where
 //     zero is meaningful is StepStallWindow (0 = stall detection disabled).
-//   - Peer overrides (CRITERIA_PEER_*) are applied strictly by
-//     internal/peer: an unparseable value aborts peer startup instead of
-//     silently defaulting. The registry documents them; peer/config.go owns
-//     the strict parsing (its defaults come from the DefaultPeer*
-//     constants in this package).
+//   - Peer overrides (CRITERIA_PEER_*) and the CLI's local-approval
+//     file timeout are applied strictly: an unparseable value aborts
+//     startup (peer) or the run (CLI) instead of silently defaulting.
+//     The registry documents them; the strict parsers (peer/config.go,
+//     internal/cli) own the reading and take their defaults from the
+//     exported constants in this package.
 package tunables
 
 import (
@@ -63,6 +64,9 @@ const (
 	// DefaultFilePollingInterval is the local resume status-file polling
 	// budget.
 	DefaultFilePollingInterval = 2 * time.Second
+	// DefaultLocalApprovalFileTimeout is how long local approval file mode
+	// waits for the operator's decision file before failing the pause.
+	DefaultLocalApprovalFileTimeout = time.Hour
 	// DefaultPeerBackoffMin is the floor for the peer's host reconnect
 	// backoff (ADR-0007).
 	DefaultPeerBackoffMin = time.Second
@@ -94,6 +98,10 @@ const (
 	// EnvAgentHeartbeatInterval overrides DefaultAgentHeartbeatInterval
 	// (lenient; KB-53).
 	EnvAgentHeartbeatInterval = "CRITERIA_AGENT_HEARTBEAT_INTERVAL"
+	// EnvLocalApprovalFileTimeout overrides DefaultLocalApprovalFileTimeout
+	// (strict — a malformed value fails the run loudly; internal/cli
+	// localResumerOptions owns the strict parsing).
+	EnvLocalApprovalFileTimeout = "CRITERIA_LOCAL_APPROVAL_FILE_TIMEOUT"
 	// EnvPeerBackoffMin overrides DefaultPeerBackoffMin (strict — a
 	// malformed value aborts peer startup; ADR-0007).
 	EnvPeerBackoffMin = "CRITERIA_PEER_BACKOFF_MIN"
@@ -235,6 +243,12 @@ func Envvars() []Envar {
 			Kind:    KindDuration,
 			Default: "30s",
 			Doc:     "Adapter log-stream heartbeat cadence (the transitional heartbeatutil helper used by in-tree fixture adapters and the MCP bridge) and the peer Supervise stream idle heartbeat.",
+		},
+		{
+			Name:    EnvLocalApprovalFileTimeout,
+			Kind:    KindDuration,
+			Default: "1h",
+			Doc:     "How long file-mode local approval waits for the operator's decision file before the pause fails. Strict override: a malformed value fails the run loudly.",
 		},
 		{
 			Name:    EnvPeerBackoffMax,

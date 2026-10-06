@@ -114,7 +114,7 @@ func (o *Options) applyDefaults() {
 		o.FilePollingInterval = tunables.DefaultFilePollingInterval
 	}
 	if o.FileTimeout == 0 {
-		o.FileTimeout = time.Hour
+		o.FileTimeout = tunables.DefaultLocalApprovalFileTimeout
 	}
 	if o.Log == nil {
 		o.Log = slog.Default()
