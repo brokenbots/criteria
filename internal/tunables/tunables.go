@@ -228,64 +228,21 @@ type Envar struct {
 
 // Envvars returns the registered operator-facing timing and budget
 // overrides, sorted by variable name. Host knobs are applied leniently via
-// Settings; the peer rows are applied strictly by peer/config.go (malformed
-// values abort peer startup rather than silently defaulting).
+// Settings; the strict rows are applied by their owning parsers
+// (peer/config.go for the CRITERIA_PEER_* rows, internal/cli for the
+// local-approval timeout: malformed values abort instead of silently
+// defaulting).
 func Envvars() []Envar {
 	return []Envar{
-		{
-			Name:    EnvAgentHeartbeatInterval,
-			Kind:    KindDuration,
-			Default: "10s",
-			Doc:     "Operator CLI heartbeat cadence against a server-compatible orchestrator while a run is in flight (`criteria agent`, `criteria apply --server`).",
-		},
-		{
-			Name:    EnvHeartbeatInterval,
-			Kind:    KindDuration,
-			Default: "30s",
-			Doc:     "Adapter log-stream heartbeat cadence (the transitional heartbeatutil helper used by in-tree fixture adapters and the MCP bridge) and the peer Supervise stream idle heartbeat.",
-		},
-		{
-			Name:    EnvLocalApprovalFileTimeout,
-			Kind:    KindDuration,
-			Default: "1h",
-			Doc:     "How long file-mode local approval waits for the operator's decision file before the pause fails. Strict override: a malformed value fails the run loudly.",
-		},
-		{
-			Name:    EnvPeerBackoffMax,
-			Kind:    KindDuration,
-			Default: "30s",
-			Doc:     "Peer host reconnect backoff ceiling; must be >= the backoff floor. Peer-owned override: a malformed value aborts peer startup.",
-		},
-		{
-			Name:    EnvPeerBackoffMin,
-			Kind:    KindDuration,
-			Default: "1s",
-			Doc:     "Peer host reconnect backoff floor. Peer-owned override: a malformed value aborts peer startup.",
-		},
-		{
-			Name:    EnvPeerJournalLimit,
-			Kind:    KindInt,
-			Default: "4096",
-			Doc:     "Bounded supervision journal capacity in events. Peer-owned override: a non-positive or malformed value aborts peer startup.",
-		},
-		{
-			Name:    EnvHeartbeatStallThreshold,
-			Kind:    KindDuration,
-			Default: "90s",
-			Doc:     "How long a session log stream may idle with no chunks or heartbeats before the adapter is treated as wedged (CRI-271).",
-		},
-		{
-			Name:    EnvStepStallWindow,
-			Kind:    KindDuration,
-			Default: "30m",
-			Doc:     "How long an unbounded step may run with no observable adapter activity before the engine tears it down (KB-25). A zero or negative value disables stall detection.",
-		},
-		{
-			Name:    EnvStepTimeoutTeardownWindow,
-			Kind:    KindDuration,
-			Default: "10s",
-			Doc:     "Window, opened by an engine-initiated step teardown, during which transport closes are reclassified as teardown consequences instead of session crashes (CRI-287).",
-		},
+		{Name: EnvAgentHeartbeatInterval, Kind: KindDuration, Default: "10s", Doc: "Operator CLI heartbeat cadence against a server-compatible orchestrator while a run is in flight (`criteria agent`, `criteria apply --server`)."},
+		{Name: EnvHeartbeatInterval, Kind: KindDuration, Default: "30s", Doc: "Adapter log-stream heartbeat cadence (the transitional heartbeatutil helper used by in-tree fixture adapters and the MCP bridge) and the peer Supervise stream idle heartbeat."},
+		{Name: EnvLocalApprovalFileTimeout, Kind: KindDuration, Default: "1h", Doc: "How long file-mode local approval waits for the operator's decision file before the pause fails. Strict override: a malformed value fails the run loudly."},
+		{Name: EnvPeerBackoffMax, Kind: KindDuration, Default: "30s", Doc: "Peer host reconnect backoff ceiling; must be >= the backoff floor. Peer-owned override: a malformed value aborts peer startup."},
+		{Name: EnvPeerBackoffMin, Kind: KindDuration, Default: "1s", Doc: "Peer host reconnect backoff floor. Peer-owned override: a malformed value aborts peer startup."},
+		{Name: EnvPeerJournalLimit, Kind: KindInt, Default: "4096", Doc: "Bounded supervision journal capacity in events. Peer-owned override: a non-positive or malformed value aborts peer startup."},
+		{Name: EnvHeartbeatStallThreshold, Kind: KindDuration, Default: "90s", Doc: "How long a session log stream may idle with no chunks or heartbeats before the adapter is treated as wedged (CRI-271)."},
+		{Name: EnvStepStallWindow, Kind: KindDuration, Default: "30m", Doc: "How long an unbounded step may run with no observable adapter activity before the engine tears it down (KB-25). A zero or negative value disables stall detection."},
+		{Name: EnvStepTimeoutTeardownWindow, Kind: KindDuration, Default: "10s", Doc: "Window, opened by an engine-initiated step teardown, during which transport closes are reclassified as teardown consequences instead of session crashes (CRI-287)."},
 	}
 }
 
