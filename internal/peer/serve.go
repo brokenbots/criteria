@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 
@@ -72,9 +74,15 @@ const (
 
 	// peerSupervisionV1Capability advertises the PeerService supervision
 	// surface; peerAdapterV2FullCapability advertises the full v2 adapter
-	// contract served through the shared adapterhost bridge.
+	// contract served through the shared adapterhost bridge. The
+	// ADR-0008 child-run arms (CancelChildRun control +
+	// ChildRunStarted/ChildRunTerminal supervision) are gated on the
+	// workflow.v1 capability string: a peer whose identity frame does not
+	// advertise it must reject Control(CancelChildRun) with a typed
+	// unimplemented error (see proto/criteria/v1/peer.proto header).
 	peerAdapterV2FullCapability = "adapter.v2.full"
 	peerSupervisionV1Capability = "supervision.v1"
+	peerWorkflowV1Capability    = "workflow.v1"
 
 	// peerLogChannel names the supervision channel StreamFlushed events
 	// report (the host-side peer_session consumes the same constant).
@@ -133,6 +141,11 @@ type Server struct {
 	childClient func() (adapterhost.Client, bool)
 	rand        func() float64
 	sleep       func(ctx context.Context, d time.Duration) error
+
+	// capabilities is the negotiated capability set this peer announces in
+	// its identity frame (ADR-0007 D4). The workflow.v1-scoped Control arm
+	// is gated on it. Tests may narrow the list to simulate an older peer.
+	capabilities []string
 }
 
 // NewServer builds a phone-home server for the given resolved configuration
@@ -151,6 +164,9 @@ func NewServer(cfg *Config, rt *peerRuntime, log *slog.Logger) *Server {
 		// idle heartbeat on the same knob as the adapter log-stream
 		// heartbeats.
 		heartbeat: tunables.FromEnv().HeartbeatInterval,
+		// Negotiated capability set advertised in the peer identity frame
+		// (ADR-0007 D4); Control arms gated on workflow.v1 inspect this.
+		capabilities: defaultPeerCapabilities(),
 	}
 	s.dialFunc = s.dial
 	s.childClient = s.defaultChildClient
@@ -352,7 +368,7 @@ func (s *Server) identityFrame() ([]byte, error) {
 		Role:               peerHandshakeRole,
 		Peer: &peerIdentityCapabilities{
 			CriteriaVersion: version.Version,
-			Capabilities:    []string{peerAdapterV2FullCapability, peerSupervisionV1Capability},
+			Capabilities:    append([]string(nil), s.capabilities...),
 		},
 	})
 	if err != nil {
@@ -365,6 +381,26 @@ func (s *Server) identityFrame() ([]byte, error) {
 		return nil, fmt.Errorf("identity frame is %d bytes; exceeds the %d byte cap", len(line), peerHandshakeFrameCap)
 	}
 	return line, nil
+}
+
+// defaultPeerCapabilities is the capability set a production peer
+// advertises in its identity frame (ADR-0007 D4): the full v2 adapter
+// bridge, the PeerService supervision surface, and the ADR-0008 child-run
+// arms (workflow.v1).
+func defaultPeerCapabilities() []string {
+	return []string{peerAdapterV2FullCapability, peerSupervisionV1Capability, peerWorkflowV1Capability}
+}
+
+// negotiated reports whether the capability string was announced in this
+// peer's identity frame — the negotiated capability set of the phone-home
+// connection (ADR-0007 D4).
+func (s *Server) negotiated(capability string) bool {
+	for _, c := range s.capabilities {
+		if c == capability {
+			return true
+		}
+	}
+	return false
 }
 
 // nextBackoff returns the full-jitter delay before the next reconnect
@@ -417,18 +453,29 @@ func (s *Server) controlHandler(srv interface{}, ctx context.Context, dec func(i
 		return nil, err
 	}
 	if interceptor == nil {
-		return s.Control(ctx, in), nil
+		return s.Control(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{Server: srv, FullMethod: peerControlMethod}
 	return interceptor(ctx, in, info, func(ctx context.Context, req interface{}) (interface{}, error) {
-		return s.Control(ctx, req.(*criteriav1.ControlRequest)), nil
+		return s.Control(ctx, req.(*criteriav1.ControlRequest))
 	})
 }
 
 // Control implements PeerService.Control: host-initiated child control,
-// delegated to the runtime.
-func (s *Server) Control(ctx context.Context, req *criteriav1.ControlRequest) *criteriav1.ControlResponse {
-	return s.rt.Control(ctx, req)
+// delegated to the runtime. CancelChildRun (ADR-0008) is capability-gated:
+// when the negotiated capability set (this peer's identity frame) does not
+// carry workflow.v1 the request fails with a typed unimplemented error
+// instead of the accepted/detail shape — an old peer would have decoded the
+// unknown arm into unknown fields and answered an indistinguishable
+// accepted=false, so the gRPC status is the only way a caller can tell a
+// protocol-level gap from a runtime rejection.
+func (s *Server) Control(ctx context.Context, req *criteriav1.ControlRequest) (*criteriav1.ControlResponse, error) {
+	if req.GetCancelChildRun() != nil && !s.negotiated(peerWorkflowV1Capability) {
+		return nil, status.Errorf(codes.Unimplemented,
+			"peer did not negotiate %q: CancelChildRun unavailable",
+			peerWorkflowV1Capability)
+	}
+	return s.rt.Control(ctx, req), nil
 }
 
 // superviseHandler adapts the generated-style stream handler signature.

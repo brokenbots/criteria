@@ -369,7 +369,7 @@ func TestServer_IdentityFrameGoldenJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("identityFrame: %v", err)
 	}
-	want := `{"name":"fakex","version":"9.9.9","digest":"sha256:aa","token":"tok","scope":"sc","sdk_protocol_version":2,"role":"peer","peer":{"criteria_version":"` + version.Version + `","capabilities":["adapter.v2.full","supervision.v1"]}}` + "\n"
+	want := `{"name":"fakex","version":"9.9.9","digest":"sha256:aa","token":"tok","scope":"sc","sdk_protocol_version":2,"role":"peer","peer":{"criteria_version":"` + version.Version + `","capabilities":["adapter.v2.full","supervision.v1","workflow.v1"]}}` + "\n"
 	if string(got) != want {
 		t.Errorf("identity frame =\n%s\nwant\n%s", got, want)
 	}
@@ -893,14 +893,17 @@ func TestServer_ControlRejectsUnsupportedAndDeadChildren(t *testing.T) {
 		t.Fatalf("boot: %v", err)
 	}
 	// Unsupported action.
-	if resp := f.server.Control(f.ctx, &criteriav1.ControlRequest{}); resp.GetAccepted() {
-		t.Errorf("unsupported action accepted: %+v", resp)
+	if resp, err := f.server.Control(f.ctx, &criteriav1.ControlRequest{}); err != nil || resp.GetAccepted() {
+		t.Errorf("unsupported action accepted: resp=%+v err=%v", resp, err)
 	}
 	// Already-exited child.
 	fake.exited.Store(true)
-	resp := f.server.Control(f.ctx, &criteriav1.ControlRequest{
+	resp, err := f.server.Control(f.ctx, &criteriav1.ControlRequest{
 		Kind: &criteriav1.ControlRequest_KillChild{KillChild: &criteriav1.KillChild{}},
 	})
+	if err != nil {
+		t.Fatalf("control: %v", err)
+	}
 	if resp.GetAccepted() {
 		t.Errorf("kill_child accepted for a dead child: %+v", resp)
 	}
@@ -959,9 +962,12 @@ func TestServer_ControlRejectedKillDoesNotPoisonCrashClassification(t *testing.T
 		t.Fatal("child still reported alive after SIGKILL")
 	}
 
-	resp := server.Control(ctx, &criteriav1.ControlRequest{
+	resp, err := server.Control(ctx, &criteriav1.ControlRequest{
 		Kind: &criteriav1.ControlRequest_KillChild{KillChild: &criteriav1.KillChild{}},
 	})
+	if err != nil {
+		t.Fatalf("control: %v", err)
+	}
 	if resp.GetAccepted() {
 		t.Fatalf("kill_child accepted for a dead child: %+v", resp)
 	}

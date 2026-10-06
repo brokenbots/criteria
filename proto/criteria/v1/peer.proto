@@ -9,12 +9,22 @@
 // Evolution discipline (additive-only):
 //   - Field numbers in this file are permanent once assigned. Never reuse,
 //     renumber, or re-type an existing field; only ever append.
-//   - The next free `kind` oneof arm in SupervisionEvent is field 11. Do NOT
+//   - The next free `kind` oneof arm in SupervisionEvent is field 13. Do NOT
 //     `reserved` forward numbers — reserve only genuinely abandoned ones.
 //   - Stage B run-graph events ride THIS journal: extend SupervisionEvent
 //     with new arms; do not fork a second supervision stream or file.
 //   - Supervision protocol evolution is negotiated via capabilities strings,
 //     not proto package churn: `criteria.v1` stays.
+//   - ADR-0008 (criteria-as-adapter, D3) added arms: CancelChildRun = arm 5
+//     in ControlRequest.kind — the next free ControlRequest FIELD (fields
+//     1-4 are taken; oneof arms share the message's field-number space —
+//     kill_child stays arm 1); ChildRunStarted = arm 11 and
+//     ChildRunTerminal = arm 12 in SupervisionEvent.kind. Both the
+//     run-control arm and the ChildRun* run-graph truth arms are gated
+//     on the capability string `workflow.v1` negotiated in the identity
+//     frame (ADR-0007 D4 role/capability machinery): a peer whose identity
+//     frame does not advertise `workflow.v1` must reject
+//     Control(CancelChildRun) with a typed unimplemented error.
 //
 // Delivery semantics:
 //   - At-least-once delivery. Consumers dedup on (peer conn identity,
@@ -71,13 +81,17 @@ message SupervisionEvent {
   // Session-scoped events carry the session id; "" for process-level.
   string session_id = 5;
   // Typed lifecycle payload. Field numbers here are permanent; next arm =
-  // field 11 (additive-only; see file header).
+  // field 13 (additive-only; see file header).
   oneof kind {
     ProcessSpawned spawned = 6;          // pid, binary, digest, version
     ProcessExited exited = 7;            // exit_code, signal, idle_ms, graceful
     CrashClassified crash = 8;           // reason (shared const set), detail
     StreamFlushed flushed = 9;           // channel ("log"), up_to_seq
     SupervisionHeartbeat heartbeat = 10; // last_event_seq (journal lag)
+    // ADR-0008 child-run truth (workflow.v1-gated): control-plane facts only.
+    // Run-graph NDJSON stays on the existing log/stream channels.
+    ChildRunStarted child_run_started = 11;   // run_id, workflow_digest, version
+    ChildRunTerminal child_run_terminal = 12; // run_id, outcome, outputs_digest
   }
 }
 
@@ -125,9 +139,43 @@ message SupervisionHeartbeat {
   uint64 last_event_seq = 1;
 }
 
+// ChildRunStarted records the criteria run the peer started on behalf of a
+// parent: the child run's criteria run id, the digest of the workflow it
+// executes, and the workflow version. workflow.v1-gated control truth only
+// (ADR-0008): the run graph itself flows on the existing log/stream
+// channels.
+message ChildRunStarted {
+  // Criteria run id under the peer (the child run's own run id).
+  string run_id = 1;
+  // Digest of the workflow the child run executes.
+  string workflow_digest = 2;
+  // Version of the workflow (or criteria build) executing the run.
+  string version = 3;
+}
+
+// ChildRunTerminal records the terminal fact of a child run: its criteria
+// run id, the terminal outcome, and the digest of the run's outputs (the
+// outputs themselves never ride this journal). workflow.v1-gated control
+// truth only (ADR-0008).
+message ChildRunTerminal {
+  // Criteria run id under the peer (the child run's own run id).
+  string run_id = 1;
+  // Terminal outcome string of the run (the engine's outcome vocabulary).
+  string outcome = 2;
+  // Digest of the run outputs (truth pointer; outputs flow off-journal).
+  string outputs_digest = 3;
+}
+
 message ControlRequest {
   oneof kind {
     KillChild kill_child = 1;
+    // ADR-0008 run control: cancel a child run under this peer. Gated on
+    // the workflow.v1 capability; a peer not advertising it must reject
+    // this arm with a typed unimplemented error (see file header). Arm 5 =
+    // the next free ControlRequest field (1 was taken by kill_child and
+    // 2-4 by adapter_type/scope/grace_ms; arms share the field-number
+    // space and are append-only).
+    CancelChildRun cancel_child_run = 5;
   }
   // Process-level subject the control applies to.
   string adapter_type = 2;
@@ -135,6 +183,17 @@ message ControlRequest {
   string scope = 3;
   // Grace period before the child is force-terminated.
   uint32 grace_ms = 4;
+}
+
+// CancelChildRun cancels one criteria run under the peer (ADR-0008
+// run control). run_id is the child run's criteria run id; grace_ms is the
+// cancellation grace (independent of control-level grace_ms) before the
+// run is force-cancelled.
+message CancelChildRun {
+  // Criteria run id under the peer.
+  string run_id = 1;
+  // Grace period before the run is force-cancelled.
+  uint32 grace_ms = 2;
 }
 
 message ControlResponse {
