@@ -306,13 +306,23 @@ func toolCallMatchedPattern(reason string) string {
 // so concurrent plain requests keep their existing semantics. The layer is
 // the nested tool-call layer the call is evaluated in (CRI-163).
 func (ps *permissionState) evaluateToolCall(requestID, target string, parsed toolCallTarget, argsDigest, fullCmd string, grants []workflow.AdapterToolRef, layer int) (allow bool, reason string) {
-	ps.mu.Lock()
-	policy := ps.policy
-	ps.mu.Unlock()
+	return ps.evaluateToolCallWithPolicy(nil, requestID, target, parsed, argsDigest, fullCmd, grants, layer)
+}
 
+// evaluateToolCallWithPolicy is evaluateToolCall with an explicit per-Execute
+// policy (KB-155): multiplexed executes on one session each decide under
+// their own step policy instead of the session-global snapshot, which is
+// whatever setStepPolicy wrote last. A nil policy falls back to the
+// session-global snapshot for legacy callers and directly constructed sinks.
+func (ps *permissionState) evaluateToolCallWithPolicy(policy PermissionPolicy, requestID, target string, parsed toolCallTarget, argsDigest, fullCmd string, grants []workflow.AdapterToolRef, layer int) (allow bool, reason string) {
 	if toolGrantAllows(grants, parsed.AdapterRef, parsed.Tool) {
 		allow, reason = true, "granted: tools entry "+parsed.String()
 	} else {
+		if policy == nil {
+			ps.mu.Lock()
+			policy = ps.policy
+			ps.mu.Unlock()
+		}
 		if policy == nil {
 			policy = denyAllPolicy{}
 		}
@@ -423,7 +433,7 @@ func (s *permissionInterceptSink) applyToolCallPolicy(req *toolCallPayload, pars
 	if s.step != nil {
 		grants = s.step.Tools
 	}
-	allow, reason := s.permState.evaluateToolCall(req.requestID, req.target, parsed, req.argsDigest, req.fullCmd, grants, s.nesting.depth)
+	allow, reason := s.permState.evaluateToolCallWithPolicy(s.stepPolicy, req.requestID, req.target, parsed, req.argsDigest, req.fullCmd, grants, s.nesting.depth)
 	if !allow {
 		s.lastDecisionDenied = true
 		deniedTool := req.tool

@@ -11,8 +11,10 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,7 +30,7 @@ import (
 
 const (
 	adapterName    = "mcp"
-	adapterVersion = "0.2.0"
+	adapterVersion = "0.3.0"
 
 	closeGrace  = 5 * time.Second
 	initTimeout = 5 * time.Second
@@ -54,38 +56,90 @@ var reservedExecuteKeys = map[string]struct{}{
 	"cwd":             {},
 }
 
+// sessionExec is one in-flight Execute RPC on the session (KB-155): a v2
+// Execute is a per-request server-streaming RPC, so a session declaring the
+// concurrent_execute capability fans out concurrent executes and each carries
+// its own event stream. The bridge routes session-level MCP server traffic
+// (notifications/progress) back to the issuing execute by the client-side
+// progress token minted for the call, instead of a single "current" sink.
+type sessionExec struct {
+	sink  adapterhost.ExecuteEventSender
+	ctx   context.Context
+	token string
+}
+
 type sessionState struct {
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
 	client *mcpclient.Client
 	stderr *bytes.Buffer
 
-	execMu sync.Mutex
+	mu    sync.Mutex
+	tools map[string]struct{}
 
-	mu       sync.Mutex
-	tools    map[string]struct{}
-	sink     adapterhost.ExecuteEventSender
-	inFlight bool
+	// execSeq mints strictly increasing per-execute progress tokens
+	// ("criteria-N"); they only need uniqueness within the session, and a
+	// prefixed name keeps them recognizable in MCP server logs.
+	execSeq atomic.Uint64
+	// exec is the per-execute registry keyed by progress token (KB-155).
+	exec map[string]*sessionExec
 }
 
-func (s *sessionState) setSink(sink adapterhost.ExecuteEventSender, inFlight bool) {
+// registerExec adds a new in-flight execute with a freshly minted progress
+// token and returns it. The caller unregisters via unregisterExec when the
+// Execute settles.
+func (s *sessionState) registerExec(sink adapterhost.ExecuteEventSender, ctx context.Context) *sessionExec {
+	e := &sessionExec{sink: sink, ctx: ctx, token: "criteria-" + strconv.FormatUint(s.execSeq.Add(1), 10)}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.sink = sink
-	s.inFlight = inFlight
+	if s.exec == nil {
+		s.exec = make(map[string]*sessionExec)
+	}
+	s.exec[e.token] = e
+	return e
 }
 
-func (s *sessionState) currentSink() (adapterhost.ExecuteEventSender, bool) {
+// unregisterExec removes a settled execute from the registry.
+func (s *sessionState) unregisterExec(e *sessionExec) {
+	if e == nil {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.sink, s.inFlight
+	delete(s.exec, e.token)
 }
 
-func (s *sessionState) clearSink() {
+// execWithToken returns the execute bound to a progress token, if any.
+func (s *sessionState) execWithToken(token string) (*sessionExec, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.sink = nil
-	s.inFlight = false
+	e, ok := s.exec[token]
+	return e, ok
+}
+
+// soleExec returns the only in-flight execute when exactly one is registered
+// (KB-155): untokened session-level traffic can be attributed to it without
+// ambiguity — single-execute servers keep today's behavior. With zero or
+// several in-flight executes it returns false, and untokened traffic is
+// dropped: attribution must never guess across concurrent calls.
+func (s *sessionState) soleExec() (*sessionExec, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.exec) != 1 {
+		return nil, false
+	}
+	for _, e := range s.exec {
+		return e, true
+	}
+	return nil, false
+}
+
+// hasExec reports whether any execute is in flight (kept for
+// shutdownSession's best-effort cancel notification parity).
+func (s *sessionState) hasExec() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.exec) > 0
 }
 
 type MCPBridge struct {
@@ -106,7 +160,12 @@ func (b *MCPBridge) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse
 		Version:      adapterVersion,
 		SourceUrl:    "https://github.com/brokenbots/criteria/tree/main/cmd/criteria-adapter-mcp",
 		Platforms:    []string{"linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64"},
-		Capabilities: []string{"single_shot", "permission_gating", "adapter_tools"},
+		// concurrent_execute (KB-155): each Execute RPC runs on its own stream
+		// and the session accepts several in flight; the host fans concurrent
+		// calls onto one shared session and correlates replies and decisions
+		// by request_id. Servers ignore unknown capability values, so older
+		// hosts keep the one-execute-at-a-time posture.
+		Capabilities: []string{"single_shot", "permission_gating", "adapter_tools", "concurrent_execute"},
 		ConfigSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
 			"command": {Required: true, Type: "string", Description: "MCP server binary to launch."},
 			"args":    {Type: "string", Description: "Comma-separated argument list for the server binary."},
@@ -216,11 +275,24 @@ func startMCPServer(cfg map[string]string) (*sessionState, error) {
 		if n.Method != "notifications/progress" {
 			return
 		}
-		sink, inFlight := state.currentSink()
-		if !inFlight || sink == nil {
+		// KB-155: route session-level progress to the issuing execute.
+		// Tokened notifications go to the execute carrying that token; a
+		// token with no registered execute is stale (the call settled) and is
+		// dropped rather than attributed. Untokened notifications are
+		// attributed only when exactly one execute is in flight (single-call
+		// servers keep today's behavior); during a concurrent overlap the
+		// target is ambiguous and the notification is dropped instead of
+		// being misattributed to an arbitrary sibling.
+		token, _ := n.Params["progressToken"].(string)
+		if token != "" {
+			if e, ok := state.execWithToken(token); ok {
+				_ = e.sink.Send(adapterEvent("mcp.progress", n.Params))
+			}
 			return
 		}
-		_ = sink.Send(adapterEvent("mcp.progress", n.Params))
+		if e, ok := state.soleExec(); ok {
+			_ = e.sink.Send(adapterEvent("mcp.progress", n.Params))
+		}
 	})
 	return state, nil
 }
@@ -285,10 +357,15 @@ func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ad
 
 	arguments := buildToolArguments(req.GetInput())
 
-	s.execMu.Lock()
-	defer s.execMu.Unlock()
-	s.setSink(sink, true)
-	defer s.clearSink()
+	// KB-155: register this execute on the session's per-execute registry so
+	// session-level MCP traffic (progress) routes back to its own stream, and
+	// invoke the MCP server with a client-side progress token it can echo in
+	// notifications/progress. No session-wide serialization: the v2 Execute
+	// RPC is per-request streaming, and the bridge's permission gate is
+	// already per-request (its request ids correlate decisions over the
+	// shared Permissions stream).
+	exec := s.registerExec(sink, ctx)
+	defer s.unregisterExec(exec)
 
 	// Permission gate: emit permission.request and block for host decision
 	// before invoking the tool. This ensures denied tools never run. For
@@ -303,7 +380,7 @@ func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ad
 		return sink.Send(resultEvent("failure"))
 	}
 
-	result, err := s.client.CallTool(ctx, toolName, arguments)
+	result, err := s.client.CallToolTracked(ctx, toolName, arguments, exec.token)
 	if err != nil {
 		// Transport and protocol failures propagate: the host maps the
 		// callee's failure to typed callee_crash, and a deadline to
@@ -495,8 +572,11 @@ func shutdownSession(ctx context.Context, s *sessionState) error {
 	if s == nil {
 		return nil
 	}
-	_, inFlight := s.currentSink()
-	if inFlight {
+	// Best-effort parity with the former in-flight sink check: ask any
+	// in-flight execute (unaddressed without a per-execute request id here)
+	// to stop via a session-level cancellation notification with no request
+	// id. Per-call cancels are handled by CallToolTracked.
+	if s.hasExec() {
 		_ = s.client.Notification(context.WithoutCancel(ctx), "notifications/cancelled", map[string]any{"reason": "session_close"})
 	}
 	s.client.Close()

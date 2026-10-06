@@ -68,6 +68,11 @@ type listToolsResult struct {
 type callToolParams struct {
 	Name      string         `json:"name"`
 	Arguments map[string]any `json:"arguments,omitempty"`
+	// Meta carries the MCP `_meta` request field (KB-155): the bridge passes
+	// a progressToken so the server's notifications/progress traffic can be
+	// routed back to the issuing execute when several calls are multiplexed
+	// over one session.
+	Meta map[string]any `json:"_meta,omitempty"`
 }
 
 type requestEnvelope struct {
@@ -150,7 +155,20 @@ func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
 
 // CallTool executes a single MCP tool call.
 func (c *Client) CallTool(ctx context.Context, name string, arguments map[string]any) (CallToolResult, error) {
-	raw, err := c.request(ctx, "tools/call", callToolParams{Name: name, Arguments: arguments})
+	return c.CallToolTracked(ctx, name, arguments, "")
+}
+
+// CallToolTracked executes an MCP tool call carrying `_meta.progressToken`
+// (KB-155): a server that echoes progress notifications keyed by the token
+// lets the bridge route them back to the issuing execute when several calls
+// are multiplexed over one session. progressToken "" is untracked (plain
+// CallTool shape).
+func (c *Client) CallToolTracked(ctx context.Context, name string, arguments map[string]any, progressToken string) (CallToolResult, error) {
+	params := callToolParams{Name: name, Arguments: arguments}
+	if progressToken != "" {
+		params.Meta = map[string]any{"progressToken": progressToken}
+	}
+	raw, err := c.request(ctx, "tools/call", params)
 	if err != nil {
 		return CallToolResult{}, err
 	}
@@ -194,6 +212,18 @@ func (c *Client) request(ctx context.Context, method string, params any) (json.R
 		c.pendMu.Lock()
 		delete(c.pending, id)
 		c.pendMu.Unlock()
+		// KB-155: tell the server the call was abandoned before dropping the
+		// pending entry. Without this, a multiplexed server never learns the
+		// caller gave up: the request stays pending on its side until the
+		// session closes, and its per-request accounting (progress tokens,
+		// in-flight marks) drifts as callers rotate. The notification carries
+		// the client-internal JSON-RPC id — distinct from any progress token
+		// — per the MCP notifications/cancelled shape. Best-effort over a
+		// detached context because the caller's context is already done.
+		_ = c.Notification(context.WithoutCancel(ctx), "notifications/cancelled", map[string]any{
+			"requestId": id,
+			"reason":    ctx.Err().Error(),
+		})
 		return nil, ctx.Err()
 	case <-c.closed:
 		return nil, io.EOF

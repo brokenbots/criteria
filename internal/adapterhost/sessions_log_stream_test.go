@@ -215,11 +215,9 @@ func TestSessionManager_LogLinesRoutedToStepSink(t *testing.T) {
 	sess := sm.sessions["agent"]
 	go func() {
 		<-logReady
-		// Wait a tiny bit for currentSink to be set inside Execute.
+		// Wait a tiny bit for the execute sink to be bound inside Execute.
 		time.Sleep(10 * time.Millisecond)
-		sess.currentSinkMu.Lock()
-		sink := sess.currentSink
-		sess.currentSinkMu.Unlock()
+		sink, _ := sess.singleActiveSink()
 		if sink != nil {
 			sink.Log("stdout", []byte("line1\n"))
 			sink.Log("stdout", []byte("line2\n"))
