@@ -504,6 +504,84 @@ func TestPeerExecuteCarriesChildEventsAndTypedOutputs(t *testing.T) {
 	}
 }
 
+// TestPeerPausePropagatesToChildRunCheckpoint (acceptance 3, paired with
+// the child-card test TestServeAdapter_PauseMidCallResumesToSameCheckpoint):
+// a parent pause issued while the child run's Execute stream is open
+// propagates over the v2 wire to the child, the parked state streams back
+// as a workflow.v1 adapter event on the parent feed, and Resume settles the
+// run to its terminal outcome. A pause must not cancel the run: the tracker
+// keeps it in flight across the pause and no cancel_child_run control is
+// issued — cancellation remains teardown-only.
+func TestPeerPausePropagatesToChildRunCheckpoint(t *testing.T) {
+	fx := startWorkflowPeerFixture(t, []string{peerWorkflowV1Capability})
+	defer func() { _ = fx.provider.Stop(context.Background()) }()
+
+	const runID = "kb95-pair-run"
+	payload, err := structpb.NewStruct(map[string]any{"run_id": runID})
+	if err != nil {
+		t.Fatalf("build payload: %v", err)
+	}
+	fx.peer.mu.Lock()
+	fx.peer.childEvents = []*v2.ExecuteEvent{
+		{Event: &v2.ExecuteEvent_Adapter{Adapter: &v2.AdapterEvent{
+			EventKind: "workflow.v1.run_started", Payload: payload,
+		}}},
+	}
+	fx.peer.holdRunUntilPause = true
+	fx.peer.holdRunID = runID
+	fx.peer.runPausedCh = make(chan struct{})
+	fx.peer.runResumedCh = make(chan struct{})
+	fx.peer.mu.Unlock()
+
+	collector := &childEventCollector{}
+	step := &workflow.StepNode{Name: "probe"}
+	done := make(chan error, 1)
+	go func() {
+		_, err := fx.handle.Execute(context.Background(), "s1", step, collector, nil)
+		done <- err
+	}()
+
+	// The child run is in flight: the parent feed carries the started event
+	// and the tracker consumed the started journal arm.
+	waitFor(t, "run_started event on parent feed", func() bool {
+		return collector.hasKind("workflow.v1.run_started")
+	})
+	waitForInFlightRun(t, fx.ps, runID)
+
+	// Pause mid-run: the propagation reaches the child over the v2 wire
+	// while the Execute stream is still open.
+	if err := fx.handle.Pause(context.Background(), "s1"); err != nil {
+		t.Fatalf("Pause: %v", err)
+	}
+	waitFor(t, "run_paused event on parent feed", func() bool {
+		return collector.hasKind("workflow.v1.run_paused")
+	})
+
+	// The parked run stays in flight and was not cancelled by the pause.
+	waitForInFlightRun(t, fx.ps, runID)
+	if got := fx.peer.cancelChildRunControls(); len(got) != 0 {
+		t.Fatalf("pause issued %d cancel_child_run control(s), want none", len(got))
+	}
+
+	if err := fx.handle.Resume(context.Background(), "s1"); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Execute did not settle after Resume")
+	}
+	if !collector.hasKind("workflow.v1.run_resumed") {
+		t.Fatalf("run_resumed event missing from the parent feed; kinds = %v", collector.kinds)
+	}
+	// The resumed run's terminal arm settles the tracker — the same journal
+	// truth the crash adoption path consumes.
+	waitForNoInFlightRun(t, fx.ps)
+}
+
 // TestChildRunGuardPatternBoundedParsing: the guard parser extracts only the
 // quoted run id and never trusts further message content — a hostile guard
 // message cannot smuggle arbitrary run ids across the quote boundary. Also:

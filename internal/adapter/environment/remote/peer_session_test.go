@@ -77,6 +77,18 @@ type fakePeer struct {
 	ctrlReqs    []*criteriav1.ControlRequest // Control requests received, in order
 	ops         []string                     // ordering witness: control + CloseSession ops, in order
 
+	// holdRunUntilPause models the child-card pause contract (pair with the
+	// serveadapter pause test): Execute journals the child-run started arm,
+	// parks until a Pause lands mid-run, streams the paused/resumed
+	// workflow.v1 adapter events, journals the terminal arm, then returns
+	// the result. holdRunID names the run for the journal arms.
+	holdRunUntilPause bool
+	holdRunID         string
+	runPausedCh       chan struct{}
+	runResumedCh      chan struct{}
+	pauseSignaled     bool
+	resumeSignaled    bool
+
 	v2.UnimplementedAdapterServiceServer
 
 	srv      *grpc.Server
@@ -281,6 +293,10 @@ func (f *fakePeer) CloseSession(ctx context.Context, req *v2.CloseSessionRequest
 func (f *fakePeer) Pause(ctx context.Context, req *v2.PauseRequest) (*v2.PauseResponse, error) {
 	f.mu.Lock()
 	f.paused = true
+	if f.runPausedCh != nil && !f.pauseSignaled {
+		close(f.runPausedCh)
+		f.pauseSignaled = true
+	}
 	f.mu.Unlock()
 	return &v2.PauseResponse{}, nil
 }
@@ -288,6 +304,10 @@ func (f *fakePeer) Pause(ctx context.Context, req *v2.PauseRequest) (*v2.PauseRe
 func (f *fakePeer) Resume(ctx context.Context, req *v2.ResumeRequest) (*v2.ResumeResponse, error) {
 	f.mu.Lock()
 	f.paused = false
+	if f.runResumedCh != nil && !f.resumeSignaled {
+		close(f.runResumedCh)
+		f.resumeSignaled = true
+	}
 	f.mu.Unlock()
 	return &v2.ResumeResponse{}, nil
 }
@@ -361,11 +381,50 @@ func (f *fakePeer) Execute(req *v2.ExecuteRequest, stream grpc.ServerStreamingSe
 	f.mu.Lock()
 	events := append([]*v2.ExecuteEvent(nil), f.childEvents...)
 	execErr := f.executeErr
+	hold := f.holdRunUntilPause
+	holdRunID := f.holdRunID
 	f.mu.Unlock()
 	for _, ev := range events {
 		if err := stream.Send(ev); err != nil {
 			return err
 		}
+	}
+	if hold {
+		// Child-card pause contract mirrored on the fake (pair with the
+		// serveadapter pause test): the run journals its started arm, parks
+		// at a checkpoint when a pause lands mid-run, and releases on
+		// Resume with the paused/resumed events streamed to the parent
+		// feed while parked.
+		f.appendEvent(childRunStartedArm(holdRunID))
+		select {
+		case <-f.runPausedCh:
+		case <-stream.Context().Done():
+			return stream.Context().Err()
+		}
+		payload, err := structpb.NewStruct(map[string]any{"run_id": holdRunID})
+		if err != nil {
+			return status.Error(codes.Internal, err.Error())
+		}
+		pausedEv := &v2.ExecuteEvent{Event: &v2.ExecuteEvent_Adapter{Adapter: &v2.AdapterEvent{
+			EventKind: "workflow.v1.run_paused", Payload: payload,
+		}}}
+		if err := stream.Send(pausedEv); err != nil {
+			return err
+		}
+		select {
+		case <-f.runResumedCh:
+		case <-stream.Context().Done():
+			return stream.Context().Err()
+		}
+		resumedEv := &v2.ExecuteEvent{Event: &v2.ExecuteEvent_Adapter{Adapter: &v2.AdapterEvent{
+			EventKind: "workflow.v1.run_resumed", Payload: payload,
+		}}}
+		if err := stream.Send(resumedEv); err != nil {
+			return err
+		}
+		// The child stamps its run record terminal after resuming; the
+		// parent learns it through the journal replay.
+		f.appendEvent(childRunTerminalArm(holdRunID, "success"))
 	}
 	if execErr != nil {
 		return execErr
