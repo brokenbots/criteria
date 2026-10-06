@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/brokenbots/criteria/internal/dirs"
+	"github.com/brokenbots/criteria/internal/tunables"
 )
 
 // Mode is the local approval resolution mode selected by CRITERIA_LOCAL_APPROVAL.
@@ -110,10 +111,10 @@ func (o *Options) applyDefaults() {
 		o.Stderr = os.Stderr
 	}
 	if o.FilePollingInterval == 0 {
-		o.FilePollingInterval = 2 * time.Second
+		o.FilePollingInterval = tunables.DefaultFilePollingInterval
 	}
 	if o.FileTimeout == 0 {
-		o.FileTimeout = time.Hour
+		o.FileTimeout = tunables.DefaultLocalApprovalFileTimeout
 	}
 	if o.Log == nil {
 		o.Log = slog.Default()

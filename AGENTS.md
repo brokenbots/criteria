@@ -52,6 +52,9 @@ here.
   in-memory reference Subject lives at
   [sdk/conformance/inmem_subject_test.go](sdk/conformance/inmem_subject_test.go).
 - Host-side adapter loader, OCI cache, signing, manifest, environments: [internal/adapter/](internal/adapter/)
+- Tunable timing/budget settings: [internal/tunables/](internal/tunables/) —
+  one typed `Settings` + defaults + the registry of operator-facing env
+  overrides; the generated table lives in [docs/env-vars.md](docs/env-vars.md).
 - In-tree adapters: [cmd/criteria-adapter-mcp/](cmd/criteria-adapter-mcp/)
   (copilot, shell, and noop were extracted to their own repos)
 
@@ -79,6 +82,11 @@ here.
   nodes require a server-compatible orchestrator (`criteria apply --server ...`).
   Local-only execution rejects these node kinds with a clear error.
 - Keep logs structured (`slog` JSON style in entrypoints).
+- **Timing knobs** live in `internal/tunables`: no new raw timing literals
+  or ad-hoc `os.Getenv` timing reads at consumer sites — consume the typed
+  `Settings` (via `tunables.FromEnv()` at configuration points) or the
+  exported `Default*` constants, and register any operator-facing override
+  in the registry so [docs/env-vars.md](docs/env-vars.md) stays current.
 - Preserve existing adapter boundaries (`internal/adapter`,
   `internal/adapters/*`, `internal/plugin`). Do not import `sdk/` from
   `internal/` — `sdk/pb/...` is the only permitted reach into the SDK

@@ -12,6 +12,7 @@ import (
 
 	criteriav2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/internal/tunables"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -147,29 +148,34 @@ func TestCRI271_SessionIdleTracking(t *testing.T) {
 }
 
 // TestCRI271_HeartbeatStallThresholdEnv pins the operator-configurable stall
-// threshold (CRI-271 acceptance 3): a valid duration is honored, empty,
-// malformed, and non-positive values fall back to the built-in default (0).
+// threshold (CRI-271 acceptance 3) through its real consumption path: the
+// tunables registry resolves the override and NewSessionManager seeds the
+// resolved value. Empty, malformed, and non-positive values keep the
+// built-in default.
 func TestCRI271_HeartbeatStallThresholdEnv(t *testing.T) {
 	t.Run("valid", func(t *testing.T) {
-		t.Setenv("CRITERIA_SESSION_HEARTBEAT_STALL", "5m")
-		if got := heartbeatStallThresholdFromEnv(); got != 5*time.Minute {
-			t.Errorf("got %v, want 5m", got)
+		t.Setenv(tunables.EnvHeartbeatStallThreshold, "5m")
+		if got := tunables.FromEnv().HeartbeatStallThreshold; got != 5*time.Minute {
+			t.Errorf("FromEnv threshold = %v, want 5m", got)
 		}
 		if sm := NewSessionManager(nil); sm.HeartbeatStallThreshold != 5*time.Minute {
 			t.Errorf("NewSessionManager threshold = %v, want 5m", sm.HeartbeatStallThreshold)
 		}
 	})
 	t.Run("trimmed", func(t *testing.T) {
-		t.Setenv("CRITERIA_SESSION_HEARTBEAT_STALL", " 10m ")
-		if got := heartbeatStallThresholdFromEnv(); got != 10*time.Minute {
-			t.Errorf("got %v, want 10m", got)
+		t.Setenv(tunables.EnvHeartbeatStallThreshold, " 10m ")
+		if got := tunables.FromEnv().HeartbeatStallThreshold; got != 10*time.Minute {
+			t.Errorf("FromEnv threshold = %v, want 10m", got)
 		}
 	})
 	for _, v := range []string{"", "garbage", "-1s", "0s"} {
 		t.Run("fallback_"+v, func(t *testing.T) {
-			t.Setenv("CRITERIA_SESSION_HEARTBEAT_STALL", v)
-			if got := heartbeatStallThresholdFromEnv(); got != 0 {
-				t.Errorf("heartbeatStallThresholdFromEnv(%q) = %v, want 0", v, got)
+			t.Setenv(tunables.EnvHeartbeatStallThreshold, v)
+			if got := tunables.FromEnv().HeartbeatStallThreshold; got != tunables.DefaultHeartbeatStallThreshold {
+				t.Errorf("FromEnv threshold with override %q = %v, want default", v, got)
+			}
+			if sm := NewSessionManager(nil); sm.HeartbeatStallThreshold != tunables.DefaultHeartbeatStallThreshold {
+				t.Errorf("NewSessionManager threshold = %v, want default", sm.HeartbeatStallThreshold)
 			}
 		})
 	}

@@ -6,13 +6,13 @@ package heartbeatutil
 
 import (
 	"context"
-	"os"
-	"strconv"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
+
+	"github.com/brokenbots/criteria/internal/tunables"
 )
 
 // LogEventSender is the minimal surface this helper needs from the adapter
@@ -24,18 +24,20 @@ type LogEventSender interface {
 }
 
 // RunLogHeartbeat blocks until ctx is canceled, emitting log-stream heartbeat
-// events at the protocol default cadence of 30 s. If the environment variable
-// CRITERIA_TEST_HEARTBEAT_INTERVAL_MS is set to a positive integer, that
-// millisecond interval is used instead so conformance tests can prove liveness
-// with a short stall threshold without waiting the full production interval.
+// events at the registered heartbeat cadence (tunables registry:
+// CRITERIA_HEARTBEAT_INTERVAL, default 30s). The lenient override replaces
+// the removed CRITERIA_TEST_HEARTBEAT_INTERVAL_MS test hatch (KB-132): an
+// unset, malformed, or non-positive value keeps the built-in default, and a
+// short override lets conformance tests prove liveness with a short stall
+// threshold without waiting the full production interval. Adapter fixture
+// subprocesses inherit the variable, so the conformance harness only sets it
+// in the test process.
 //
 // Returning nil for host-initiated cancellation is not a contract violation.
 func RunLogHeartbeat(ctx context.Context, sender LogEventSender) error {
-	interval := 30 * time.Second
-	if raw := os.Getenv("CRITERIA_TEST_HEARTBEAT_INTERVAL_MS"); raw != "" {
-		if ms, err := strconv.Atoi(raw); err == nil && ms > 0 {
-			interval = time.Duration(ms) * time.Millisecond
-		}
+	interval := tunables.FromEnv().HeartbeatInterval
+	if interval <= 0 {
+		interval = tunables.DefaultHeartbeatInterval
 	}
 
 	ticker := time.NewTicker(interval)

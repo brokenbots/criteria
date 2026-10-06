@@ -12,6 +12,7 @@ import (
 
 	"github.com/brokenbots/criteria/internal/cli/localresume"
 	"github.com/brokenbots/criteria/internal/run"
+	"github.com/brokenbots/criteria/internal/tunables"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -149,10 +150,10 @@ func localResumerOptions(log *slog.Logger, cfg localApprovalConfig) (localresume
 		DecisionPathFn: ApprovalDecisionPath,
 		RequestPathFn:  ApprovalRequestPath,
 	}
-	if rawTimeout := os.Getenv("CRITERIA_LOCAL_APPROVAL_FILE_TIMEOUT"); rawTimeout != "" {
+	if rawTimeout := os.Getenv(tunables.EnvLocalApprovalFileTimeout); rawTimeout != "" {
 		d, err := time.ParseDuration(rawTimeout)
 		if err != nil {
-			return opts, fmt.Errorf("invalid CRITERIA_LOCAL_APPROVAL_FILE_TIMEOUT=%q: %w", rawTimeout, err)
+			return opts, fmt.Errorf("invalid %s=%q: %w", tunables.EnvLocalApprovalFileTimeout, rawTimeout, err)
 		}
 		opts.FileTimeout = d
 	}

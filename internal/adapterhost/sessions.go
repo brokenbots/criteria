@@ -24,6 +24,7 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter/environment/sandbox"
 	"github.com/brokenbots/criteria/internal/adapter/secrets"
 	"github.com/brokenbots/criteria/internal/log"
+	"github.com/brokenbots/criteria/internal/tunables"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
@@ -157,8 +158,9 @@ type SessionManager struct {
 	CheckpointSave func(sessionID string, snap *SessionSnapshot) error
 
 	// HeartbeatStallThreshold is the duration after which a log-stream heartbeat
-	// is considered stalled. If zero, the default 90s is used. This is primarily
-	// a test hook so conformance and regression tests can use a short threshold.
+	// is considered stalled. If zero, tunables.DefaultHeartbeatStallThreshold
+	// (90s) applies. This is primarily a test hook so conformance and
+	// regression tests can use a short threshold.
 	HeartbeatStallThreshold time.Duration
 
 	// RespawnLogStreamDrainTimeout is the maximum time restartLogStream waits for
@@ -182,8 +184,9 @@ type SessionManager struct {
 	// mark keeps transport-close reclassification active: the teardown
 	// cascade closes sibling phone-home transports in the same second as the
 	// canceled Execute stream, so follow-on Executes observe the closes
-	// within this window of the mark. If zero, the built-in default is used.
-	// NewSessionManager seeds it from CRITERIA_STEP_TIMEOUT_TEARDOWN_WINDOW.
+	// within this window of the mark. If zero,
+	// tunables.DefaultStepTimeoutTeardownWindow applies. NewSessionManager
+	// seeds it from the tunables registry (CRITERIA_STEP_TIMEOUT_TEARDOWN_WINDOW).
 	StepTimeoutTeardownWindow time.Duration
 
 	mu       sync.Mutex
@@ -304,37 +307,22 @@ func (m *SessionManager) heartbeatStallThreshold() time.Duration {
 	if m.HeartbeatStallThreshold > 0 {
 		return m.HeartbeatStallThreshold
 	}
-	return 90 * time.Second
+	return tunables.DefaultHeartbeatStallThreshold
 }
-
-// stepTimeoutTeardownWindowDefault is how long a CRI-287 step-timeout
-// teardown mark keeps reclassifying transport closes as teardown
-// consequences. The cascade closes sibling transports in the same second as
-// the cancellation, so a window of this length comfortably covers the
-// follow-on steps' first Executes while keeping the period in which a
-// genuine crash is masked short.
-const stepTimeoutTeardownWindowDefault = 10 * time.Second
 
 // stepTimeoutTeardownWindow returns the configured CRI-287 teardown window.
 func (m *SessionManager) stepTimeoutTeardownWindow() time.Duration {
 	if m.StepTimeoutTeardownWindow > 0 {
 		return m.StepTimeoutTeardownWindow
 	}
-	return stepTimeoutTeardownWindowDefault
+	return tunables.DefaultStepTimeoutTeardownWindow
 }
 
 func (m *SessionManager) respawnLogStreamDrainTimeout() time.Duration {
 	if m.RespawnLogStreamDrainTimeout > 0 {
 		return m.RespawnLogStreamDrainTimeout
 	}
-	third := m.heartbeatStallThreshold() / 3
-	if third < 5*time.Second {
-		return 5 * time.Second
-	}
-	if third > 30*time.Second {
-		return 30 * time.Second
-	}
-	return third
+	return tunables.RespawnLogStreamDrain(m.heartbeatStallThreshold())
 }
 
 // RemoteShim is the interface the session manager uses to wait for remote
@@ -1142,10 +1130,11 @@ type Session struct {
 }
 
 // pauseToolCallDrainTimeout returns the effective drain-first pause window
-// for in-flight nested tool calls (CRI-169). Zero means the default 60s.
+// for in-flight nested tool calls (CRI-169). Zero means the built-in default
+// from the tunables registry.
 func (m *SessionManager) pauseToolCallDrainTimeout() time.Duration {
 	if m.PauseToolCallDrainTimeout <= 0 {
-		return defaultToolCallPauseWindow
+		return tunables.DefaultPauseToolCallDrainWindow
 	}
 	return m.PauseToolCallDrainTimeout
 }
@@ -1271,48 +1260,21 @@ func (m *SessionManager) LastSessionActivity(name string) (time.Time, bool) {
 	return time.Unix(0, ns), true
 }
 
-// NewSessionManager builds a SessionManager with the operator-configurable
-// heartbeat stall threshold (CRI-271). The env override lets operators raise
-// the stall boundary for adapters with long quiet streaming turns without a
-// code change; an empty or malformed value keeps the built-in default.
+// NewSessionManager builds a SessionManager seeding the operator-configurable
+// timing tunables from the tunables registry: the CRI-271 heartbeat stall
+// threshold (CRITERIA_SESSION_HEARTBEAT_STALL) and the CRI-287 step-timeout
+// teardown window (CRITERIA_STEP_TIMEOUT_TEARDOWN_WINDOW). Overrides are
+// lenient — an unset, malformed, or non-positive value keeps the built-in
+// default.
 func NewSessionManager(loader Loader) *SessionManager {
+	t := tunables.FromEnv()
 	return &SessionManager{
 		loader:                    loader,
 		sessions:                  map[string]*Session{},
 		verified:                  map[string]*verifiedRecord{},
-		HeartbeatStallThreshold:   heartbeatStallThresholdFromEnv(),
-		StepTimeoutTeardownWindow: stepTimeoutTeardownWindowFromEnv(),
+		HeartbeatStallThreshold:   t.HeartbeatStallThreshold,
+		StepTimeoutTeardownWindow: t.StepTimeoutTeardownWindow,
 	}
-}
-
-// heartbeatStallThresholdFromEnv reads CRITERIA_SESSION_HEARTBEAT_STALL
-// (a Go duration such as "5m") and returns it when positive. Any other value
-// yields 0 so the built-in default applies.
-func heartbeatStallThresholdFromEnv() time.Duration {
-	v := strings.TrimSpace(os.Getenv("CRITERIA_SESSION_HEARTBEAT_STALL"))
-	if v == "" {
-		return 0
-	}
-	d, err := time.ParseDuration(v)
-	if err != nil || d <= 0 {
-		return 0
-	}
-	return d
-}
-
-// stepTimeoutTeardownWindowFromEnv reads CRITERIA_STEP_TIMEOUT_TEARDOWN_WINDOW
-// (a Go duration such as "10s") and returns it when positive. Any other value
-// yields 0 so the built-in default applies.
-func stepTimeoutTeardownWindowFromEnv() time.Duration {
-	v := strings.TrimSpace(os.Getenv("CRITERIA_STEP_TIMEOUT_TEARDOWN_WINDOW"))
-	if v == "" {
-		return 0
-	}
-	d, err := time.ParseDuration(v)
-	if err != nil || d <= 0 {
-		return 0
-	}
-	return d
 }
 
 // SetDeferredRemoteAdapters marks the given remote adapter instance IDs as ones
@@ -2188,7 +2150,7 @@ func (m *SessionManager) startLogStream(ctx context.Context, sess *Session, plug
 func (m *SessionManager) beginLogStream(ctx context.Context, sess *Session, starter LogStreamStarter) {
 	logAdapterSink := &sessionLogAdapterSink{sess: sess}
 	redactedLogSink := m.wrapSink(logAdapterSink)
-	sess.mergeBuf = log.NewMergeBuffer(redactedLogSink, 500*time.Millisecond)
+	sess.mergeBuf = log.NewMergeBuffer(redactedLogSink, tunables.DefaultLogMergeDelay)
 	logSink := &logForwardSink{
 		sink: sess.mergeBuf,
 		onHeartbeat: func() {

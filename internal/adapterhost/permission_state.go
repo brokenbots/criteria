@@ -11,6 +11,7 @@ import (
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/internal/tunables"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -74,7 +75,7 @@ type permissionState struct {
 	toolCallPauseGate bool
 	// pauseDrainWindow is the bounded wait a Session.Pause drain gives
 	// in-flight nested tool calls before canceling stragglers. Zero means
-	// defaultToolCallPauseWindow.
+	// tunables.DefaultPauseToolCallDrainWindow.
 	pauseDrainWindow time.Duration
 
 	// turnCheckpoint, when non-nil, runs after every tool-call reply is
@@ -84,11 +85,6 @@ type permissionState struct {
 	// itself never blocks the reply path.
 	turnCheckpoint func()
 }
-
-// defaultToolCallPauseWindow is the drain-first pause window (CRI-169):
-// Session.Pause waits this long for in-flight nested tool calls to settle
-// before canceling them.
-const defaultToolCallPauseWindow = 60 * time.Second
 
 type requestState struct {
 	requestID  string
@@ -420,12 +416,14 @@ func (ps *permissionState) SetPauseDrainWindow(window time.Duration) {
 	ps.pauseDrainWindow = window
 }
 
-// toolCallDrainWindow returns the effective drain window for Session.Pause.
+// toolCallDrainWindow returns the effective drain window for Session.Pause:
+// the SessionManager-configured value (stamped via SetPauseDrainWindow) or,
+// when unset, the CRI-169 built-in default from the tunables registry.
 func (ps *permissionState) toolCallDrainWindow() time.Duration {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	if ps.pauseDrainWindow <= 0 {
-		return defaultToolCallPauseWindow
+		return tunables.DefaultPauseToolCallDrainWindow
 	}
 	return ps.pauseDrainWindow
 }
@@ -433,17 +431,10 @@ func (ps *permissionState) toolCallDrainWindow() time.Duration {
 // drainSettleGrace is the bounded settle grace the pause drain grants each
 // canceled straggler's goroutine to deliver its typed reply after its pending
 // registration is cleared (clearPendingToolCall closes the settle marker
-// before the reply is sent). Clamped to [100ms, 2s], derived from the window
-// so a short conformance window keeps a proportionally short grace.
+// before the reply is sent). Derived from the window by the tunables
+// package so a short conformance window keeps a proportionally short grace.
 func drainSettleGrace(window time.Duration) time.Duration {
-	grace := window / 10
-	if grace < 100*time.Millisecond {
-		grace = 100 * time.Millisecond
-	}
-	if grace > 2*time.Second {
-		grace = 2 * time.Second
-	}
-	return grace
+	return tunables.PauseSettleGrace(window)
 }
 
 // beginToolCallPause sets the CRI-169 pause gate: new nested tool-call

@@ -1,8 +1,9 @@
 package engine
 
 // KB-25: a step blocked with no observable adapter progress for a bounded
-// window (env-tunable, default 30m) fails the workflow with a typed stall
-// error instead of wedging the run until an operator kills it. The CRI-287
+// window (env-tunable via the tunables registry, default 30m) fails the
+// workflow with a typed stall error instead of wedging the run until an
+// operator kills it. The CRI-287
 // step-timeout teardown window semantics are preserved: the watchdog opens
 // the same engine-initiated teardown mark before cancelling, so transport
 // closes during the Execute unwind are routed as teardown consequences and
@@ -13,11 +14,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	"github.com/brokenbots/criteria/internal/tunables"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -37,47 +37,6 @@ func (e *StepStallError) Error() string {
 }
 
 func (e *StepStallError) Unwrap() error { return errStepStalled }
-
-const stepStallWindowEnv = "CRITERIA_STEP_STALL_WINDOW"
-
-// stepStallWindowDefault bounds how long a step may run with no observable
-// adapter activity (session open, log chunks, log-stream heartbeats,
-// respawn, completed Execute — the CRI-271 activity sources) before the
-// engine cancels it and fails the run (KB-25).
-const stepStallWindowDefault = 30 * time.Minute
-
-// stepStallWindowFromEnv reads CRITERIA_STEP_STALL_WINDOW (a Go duration
-// such as "45m"). An unset or malformed value keeps the built-in default;
-// 0 (or a negative duration) disables stall detection.
-func stepStallWindowFromEnv() time.Duration {
-	v := strings.TrimSpace(os.Getenv(stepStallWindowEnv))
-	if v == "" {
-		return stepStallWindowDefault
-	}
-	d, err := time.ParseDuration(v)
-	if err != nil {
-		return stepStallWindowDefault
-	}
-	if d < 0 {
-		return 0
-	}
-	return d
-}
-
-// stallPollInterval is how often the stall watchdog samples session
-// activity: a quarter of the window clamped to [10ms, 1s], so the detection
-// latency stays within a quarter of the window without polling hot on long
-// windows.
-func stallPollInterval(window time.Duration) time.Duration {
-	poll := window / 4
-	if poll > time.Second {
-		poll = time.Second
-	}
-	if poll < 10*time.Millisecond {
-		poll = 10 * time.Millisecond
-	}
-	return poll
-}
 
 // stepStallWatchdog watches one running step attempt for adapter activity.
 // It fires when the step's session shows no activity for the stall window:
@@ -108,7 +67,9 @@ type stepStallWatchdog struct {
 // time: activity observed before it belongs to earlier attempts or other
 // steps and never counts as progress for this one.
 func startStepStallWatchdog(parent context.Context, deps Deps, step *workflow.StepNode, stepStart time.Time) (*stepStallWatchdog, context.Context) {
-	window := stepStallWindowFromEnv()
+	// KB-25: the stall window (and its disabled posture, window == 0) come
+	// from the tunables registry (CRITERIA_STEP_STALL_WINDOW).
+	window := tunables.FromEnv().StepStallWindow
 	if deps.Sessions == nil || step == nil || step.AdapterRef == "" || step.Timeout > 0 || window <= 0 {
 		return &stepStallWatchdog{}, parent
 	}
@@ -116,7 +77,7 @@ func startStepStallWatchdog(parent context.Context, deps Deps, step *workflow.St
 	w := &stepStallWatchdog{cancel: cancel, done: make(chan struct{}), window: window}
 	go func() {
 		defer close(w.done)
-		ticker := time.NewTicker(stallPollInterval(window))
+		ticker := time.NewTicker(tunables.StepStallPollInterval(window))
 		defer ticker.Stop()
 		for {
 			select {
