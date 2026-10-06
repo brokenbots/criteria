@@ -2667,8 +2667,17 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 	m.bindActiveSink(sess, sink)
 	defer m.unbindActiveSink(sess, sink)
 
-	execSink := m.execSinkForSession(sink)
-	permSink := newPermissionInterceptSink(ctx, execSink, sess, step, m.graph, m, nesting, stepPolicy)
+	// KB-155: execute-level adapter events (mcp.progress, mcp.content, ...)
+	// flow straight through this execute's (already redaction-wrapped) sink
+	// so they keep their per-Execute identity. They are never diverted into
+	// the session log merge buf, whose flush routes through
+	// sessionLogAdapterSink -> singleActiveSink: that attribution is
+	// ambiguous the moment two executes share the session (a
+	// concurrent-caller event would be demoted to structured logs, and
+	// delivery delayed up to the 500ms merge window), so it can no longer
+	// carry execute-level traffic under multiplexing. mergeBuf remains on
+	// the log-stream path only.
+	permSink := newPermissionInterceptSink(ctx, sink, sess, step, m.graph, m, nesting, stepPolicy)
 
 	result, execErr := sess.handle.Execute(ctx, name, step, permSink, rejection)
 
@@ -2677,12 +2686,6 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 	// sink's latches or unbinding the sink. No lock is held here, so the
 	// nested goroutine's own manager interactions cannot deadlock against
 	// this wait.
-	permSink.waitPending()
-
-	// CRI-161: nested tool calls were dispatched on their own goroutines;
-	// wait for them to settle (and deliver their replies) before reading the
-	// verdict — the callee's reply events are queued on the same interceptor
-	// the caller executes on, so a pending nested call can starve this wait.
 	permSink.waitPending()
 
 	return m.finishExecute(ctx, name, step, sess, sink, permSink, result, execErr)
@@ -2988,20 +2991,6 @@ func (s *Session) singleActiveSink() (sink adapter.EventSink, ok bool) {
 		return sink, true
 	}
 	return nil, false
-}
-
-// execSinkForSession returns the event sink an Execute's adapter events flow
-// through. KB-155: execute-level adapter events (mcp.progress, mcp.content,
-// ...) keep their per-Execute identity and go straight to the calling
-// execute's sink — wrapped for redaction parity with the log path. They are
-// never diverted into the session log merge buf, whose flush routes through
-// sessionLogAdapterSink -> singleActiveSink: that attribution is ambiguous
-// the moment two executes share the session (a concurrent-caller event would
-// be demoted to structured logs, and delivery delayed up to the 500ms merge
-// window), so it can no longer carry execute-level traffic under
-// multiplexing. mergeBuf remains on the log-stream path only.
-func (m *SessionManager) execSinkForSession(sink adapter.EventSink) adapter.EventSink {
-	return m.wrapSink(sink)
 }
 
 func newPermissionInterceptSink(ctx context.Context, inner adapter.EventSink, sess *Session, step *workflow.StepNode, graph *workflow.FSMGraph, mgr *SessionManager, nesting toolCallNesting, stepPolicy PermissionPolicy) *permissionInterceptSink {
