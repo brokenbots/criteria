@@ -2953,11 +2953,18 @@ func (sess *Session) singleActiveSink() (sink adapter.EventSink, ok bool) {
 	return nil, false
 }
 
+// execSinkForSession returns the event sink an Execute's adapter events flow
+// through. KB-155: execute-level adapter events (mcp.progress, mcp.content,
+// ...) keep their per-Execute identity and go straight to the calling
+// execute's sink — wrapped for redaction parity with the log path. They are
+// never diverted into the session log merge buf, whose flush routes through
+// sessionLogAdapterSink -> singleActiveSink: that attribution is ambiguous
+// the moment two executes share the session (a concurrent-caller event would
+// be demoted to structured logs, and delivery delayed up to the 500ms merge
+// window), so it can no longer carry execute-level traffic under
+// multiplexing. mergeBuf remains on the log-stream path only.
 func (m *SessionManager) execSinkForSession(sess *Session, sink adapter.EventSink) adapter.EventSink {
-	if sess.mergeBuf != nil {
-		return sess.mergeBuf
-	}
-	return sink
+	return m.wrapSink(sink)
 }
 
 func newPermissionInterceptSink(ctx context.Context, inner adapter.EventSink, sess *Session, step *workflow.StepNode, graph *workflow.FSMGraph, mgr *SessionManager, nesting toolCallNesting, stepPolicy PermissionPolicy) *permissionInterceptSink {

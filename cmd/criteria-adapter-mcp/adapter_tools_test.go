@@ -647,7 +647,7 @@ state "failed" {
 // runMCPToolsCase drives one case through the real engine: the caller fake
 // issues its scripted call, the nested callee is the real mcp adapter binary
 // talking to the echo fixture server.
-func runMCPToolsCase(t *testing.T, echoBin, targetState string, caller *mcpToolsCaller) *mcpToolsSink {
+func runMCPToolsCase(t *testing.T, echoBin, targetState string, caller adapterhost.Handle) *mcpToolsSink {
 	t.Helper()
 	return runMCPToolsGraphCase(t, compileMCPToolsGraph(t, echoBin, targetState), caller, nil)
 }
@@ -656,7 +656,7 @@ func runMCPToolsCase(t *testing.T, echoBin, targetState string, caller *mcpTools
 // audit, when non-nil, captures the host's decision log (the typed issue
 // lists KB-59 asserts live there). A nil caller runs no caller fake — the
 // direct-target cases whose step executes the mcp adapter itself.
-func runMCPToolsGraphCase(t *testing.T, graph *workflow.FSMGraph, caller *mcpToolsCaller, audit adapterhost.AuditWriter) *mcpToolsSink {
+func runMCPToolsGraphCase(t *testing.T, graph *workflow.FSMGraph, caller adapterhost.Handle, audit adapterhost.AuditWriter) *mcpToolsSink {
 	t.Helper()
 	sink := &mcpToolsSink{}
 	realLoader := adapterhost.NewLoaderWithDiscovery(func(name string) (string, error) {
@@ -968,4 +968,231 @@ func TestMCPAdapterTools_DirectTypedTarget(t *testing.T) {
 	if text := outs["text"]; !strings.Contains(text, `"message":"direct typed echo"`) {
 		t.Fatalf("step outputs = %v, want the echo response text", outs)
 	}
+}
+
+// mcpConcurrentToolsCaller fans all scripted calls out at once: every call is
+// emitted on its own goroutine so the nested calls overlap on the shared
+// callee session (KB-155), while ONE reader consumes the shared permission
+// stream and attributes each typed reply to its owner by request_id — the
+// caller-side half of the multiplexing contract.
+type mcpConcurrentToolsCaller struct {
+	mcpToolsCaller
+	wg sync.WaitGroup
+
+	expectedMu sync.Mutex
+	expected   map[string]bool
+}
+
+func newMCPConcurrentToolsCaller(outcome string, calls ...toolsCall) *mcpConcurrentToolsCaller {
+	c := &mcpConcurrentToolsCaller{
+		mcpToolsCaller: mcpToolsCaller{
+			capabilities: []string{"adapter_tools", "execute"},
+			outcome:      outcome,
+			script:       calls,
+		},
+		expected: map[string]bool{},
+	}
+	for _, call := range calls {
+		c.expected[call.requestID] = true
+	}
+	return c
+}
+
+// outstanding reports how many scripted calls still wait for their reply.
+func (a *mcpConcurrentToolsCaller) outstanding() int {
+	a.expectedMu.Lock()
+	defer a.expectedMu.Unlock()
+	n := 0
+	for _, pending := range a.expected {
+		if pending {
+			n++
+		}
+	}
+	return n
+}
+
+func (a *mcpConcurrentToolsCaller) markSettled(requestID string) {
+	a.expectedMu.Lock()
+	defer a.expectedMu.Unlock()
+	a.expected[requestID] = false
+}
+
+// recordMissing types the well-known harness error for every call that never
+// settled (stream closed or deadline), mirroring awaitReply's failure paths.
+func (a *mcpConcurrentToolsCaller) recordMissing(reason string) {
+	a.expectedMu.Lock()
+	defer a.expectedMu.Unlock()
+	for id, pending := range a.expected {
+		if !pending {
+			continue
+		}
+		a.expected[id] = false
+		a.mcpToolsCaller.recordResult(toolsReply{requestID: id, callError: reason})
+	}
+}
+
+func (a *mcpConcurrentToolsCaller) Execute(_ context.Context, _ string, _ *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
+	for _, call := range a.script {
+		a.wg.Add(1)
+		go func(call toolsCall) {
+			defer a.wg.Done()
+			sink.Adapter("permission.request", map[string]any{
+				"request_id": call.requestID,
+				"target":     call.target,
+				"args":       call.args,
+			})
+		}(call)
+	}
+
+	a.mu.Lock()
+	requests := a.requests
+	a.mu.Unlock()
+	if requests != nil {
+		deadline := time.After(mcpToolsAwaitReplyTimeout)
+		for a.outstanding() > 0 {
+			var drained bool
+			select {
+			case ev, ok := <-requests:
+				if !ok {
+					a.recordMissing("test-harness-error: permission stream closed")
+					drained = true
+				} else if reply, settled := toolsTypedReply(ev); settled {
+					a.recordResult(reply)
+					a.markSettled(reply.requestID)
+				} else if cancel := ev.GetCancel(); cancel != nil {
+					a.mu.Lock()
+					a.cancels = append(a.cancels, toolsReply{requestID: cancel.GetRequestId()})
+					a.mu.Unlock()
+					a.markSettled(cancel.GetRequestId())
+				}
+				// Other stream traffic is not part of the call path; skip it.
+			case <-deadline:
+				a.recordMissing("test-harness-error: timed out waiting for reply")
+				drained = true
+			}
+			if drained {
+				break
+			}
+		}
+	}
+	a.wg.Wait()
+
+	a.mu.Lock()
+	outcome := a.outcome
+	a.mu.Unlock()
+	return adapter.Result{Outcome: outcome}, nil
+}
+
+// numeric reads a payload number regardless of how the seam decoded it.
+func numeric(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case uint64:
+		return float64(n), true
+	}
+	return 0, false
+}
+
+// TestMCPAdapterTools_ConcurrentCallsShareSession covers the KB-155 goal end
+// to end: two calls issued concurrently from the caller fan onto ONE shared
+// mcp callee session; each typed reply is correlated to its own
+// request_id carrying only its own message; the fixture's peak-concurrency
+// marker proves the calls ran concurrently on that shared session; and the
+// run continues to its terminal state with no deny anywhere.
+func TestMCPAdapterTools_ConcurrentCallsShareSession(t *testing.T) {
+	caller := newMCPConcurrentToolsCaller("handled",
+		toolsCall{
+			requestID: "call-a",
+			target:    "adapter.mcp.tools.tools.echo",
+			args:      map[string]any{"tool": "echo", "message": "msg-a", "sleep_ms": "400"},
+		},
+		toolsCall{
+			requestID: "call-b",
+			target:    "adapter.mcp.tools.tools.echo",
+			args:      map[string]any{"tool": "echo", "message": "msg-b", "sleep_ms": "400"},
+		},
+	)
+	sink := runMCPToolsCase(t, testEchoBin, "done", caller)
+
+	results := caller.gotResults()
+	if len(results) != 2 {
+		t.Fatalf("typed replies = %d (%+v), want one per scripted call", len(results), results)
+	}
+	if cancels := caller.gotCancels(); len(cancels) != 0 {
+		t.Fatalf("cancels received = %d, want 0: %+v", len(cancels), cancels)
+	}
+	byID := map[string]toolsReply{}
+	for _, reply := range results {
+		byID[reply.requestID] = reply
+	}
+	for id, ownMessage := range map[string]string{"call-a": "msg-a", "call-b": "msg-b"} {
+		reply, ok := byID[id]
+		if !ok {
+			t.Fatalf("no typed reply for %q; results = %+v", id, results)
+		}
+		if reply.outcome != "success" || reply.callError != "" {
+			t.Fatalf("reply for %q = %+v, want success with no call_error", id, reply)
+		}
+		text, _ := reply.outputs["text"].(string)
+		if !strings.Contains(text, ownMessage) {
+			t.Fatalf("reply for %q text %q lacks its own message %q", id, text, ownMessage)
+		}
+	}
+	if text := textOf(byID["call-a"].outputs); strings.Contains(text, "msg-b") {
+		t.Fatalf("reply for call-a text %q carries the sibling's message: cross-call leakage", text)
+	}
+	if text := textOf(byID["call-b"].outputs); strings.Contains(text, "msg-a") {
+		t.Fatalf("reply for call-b text %q carries the sibling's message: cross-call leakage", text)
+	}
+
+	// Shared-session overlap: the callee session's peak in-flight count
+	// reaches 2 only if both calls multiplexed over one bridge session.
+	progress := 0
+	maxOverlap := 0.0
+	tokens := map[string]bool{}
+	for _, ev := range sink.stepEvents() {
+		if ev.kind != "mcp.progress" {
+			continue
+		}
+		progress++
+		if token, _ := ev.payload["progressToken"].(string); token != "" {
+			tokens[token] = true
+		}
+		if overlap, ok := numeric(ev.payload["criteria_overlap"]); ok && overlap > maxOverlap {
+			maxOverlap = overlap
+		}
+	}
+	if progress == 0 {
+		t.Fatalf("no mcp.progress reached the callee stream: %v", kindsOf(sink.stepEvents()))
+	}
+	if maxOverlap < 2 {
+		t.Fatalf("calls did not overlap on the shared session: peak criteria_overlap=%.0f want >= 2", maxOverlap)
+	}
+	if len(tokens) != progress {
+		t.Fatalf("progress tokens %v are not one distinct token per call (progress events = %d)", tokens, progress)
+	}
+
+	assertRunContinued(t, sink, "done")
+}
+
+// textOf extracts the primary text output of a typed reply, for leakage checks.
+func textOf(outputs map[string]any) string {
+	text, _ := outputs["text"].(string)
+	return text
+}
+
+// kindsOf lists the event kinds of a recorded stream for failure messages.
+func kindsOf(events []mcpToolsEvent) string {
+	kinds := make([]string, 0, len(events))
+	for _, ev := range events {
+		kinds = append(kinds, ev.kind)
+	}
+	return strings.Join(kinds, ",")
 }
