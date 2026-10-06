@@ -134,6 +134,27 @@ func (s *sessionState) soleExec() (*sessionExec, bool) {
 	return nil, false
 }
 
+// routeProgress routes one session-level MCP progress notification to the
+// execute that issued it (KB-155). Tokened notifications go to the execute
+// carrying that token; a token with no registered execute is stale (the
+// call settled) and is dropped rather than attributed. Untokened
+// notifications are attributed only when exactly one execute is in flight
+// (single-call servers keep the pre-multiplexing behavior); during a
+// concurrent overlap the target is ambiguous and the notification is
+// dropped instead of being misattributed to an arbitrary sibling.
+func (s *sessionState) routeProgress(n mcpclient.Notification) {
+	token, _ := n.Params["progressToken"].(string)
+	if token != "" {
+		if e, ok := s.execWithToken(token); ok {
+			_ = e.sink.Send(adapterEvent("mcp.progress", n.Params))
+		}
+		return
+	}
+	if e, ok := s.soleExec(); ok {
+		_ = e.sink.Send(adapterEvent("mcp.progress", n.Params))
+	}
+}
+
 // hasExec reports whether any execute is in flight (kept for
 // shutdownSession's best-effort cancel notification parity).
 func (s *sessionState) hasExec() bool {
@@ -275,24 +296,7 @@ func startMCPServer(cfg map[string]string) (*sessionState, error) {
 		if n.Method != "notifications/progress" {
 			return
 		}
-		// KB-155: route session-level progress to the issuing execute.
-		// Tokened notifications go to the execute carrying that token; a
-		// token with no registered execute is stale (the call settled) and is
-		// dropped rather than attributed. Untokened notifications are
-		// attributed only when exactly one execute is in flight (single-call
-		// servers keep today's behavior); during a concurrent overlap the
-		// target is ambiguous and the notification is dropped instead of
-		// being misattributed to an arbitrary sibling.
-		token, _ := n.Params["progressToken"].(string)
-		if token != "" {
-			if e, ok := state.execWithToken(token); ok {
-				_ = e.sink.Send(adapterEvent("mcp.progress", n.Params))
-			}
-			return
-		}
-		if e, ok := state.soleExec(); ok {
-			_ = e.sink.Send(adapterEvent("mcp.progress", n.Params))
-		}
+		state.routeProgress(n)
 	})
 	return state, nil
 }

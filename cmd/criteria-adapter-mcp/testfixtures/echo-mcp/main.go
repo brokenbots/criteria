@@ -89,7 +89,7 @@ func main() {
 			}
 			go func(req request) {
 				defer inFlight.Add(-1)
-				_ = writeProgress(req)
+				writeProgress(req)
 				_ = writeResponse(handleToolCall(req))
 			}(req)
 		case "notifications/cancelled":
