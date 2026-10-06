@@ -498,9 +498,27 @@ func (c *serveAdapterClient) buildChildEngine(run *serveAdapterRun, ring *serveA
 		rollback(true)
 		return nil, fmt.Errorf("resolve run data dir: %w", err)
 	}
-	engOpts, err := localRunEngineOptions(c.workflowPath, dataDir, run.id)
+	engOpts, err := c.childRunEngineOpts(run, dataDir)
 	if err != nil {
 		rollback(true)
+		return nil, err
+	}
+	return &childRunEngine{
+		eng:         engine.New(c.graph, c.loader, bridge, engOpts...),
+		tracker:     tracker,
+		tsSink:      tsSink,
+		local:       local,
+		closeEvents: closeEvents,
+	}, nil
+}
+
+// childRunEngineOpts assembles a child run's engine options: the local-run
+// baseline, the session variable override, the audit writer, the shared
+// concurrency ceiling, and — when the session carries a parked snapshot
+// envelope — the resume options seeded from it.
+func (c *serveAdapterClient) childRunEngineOpts(run *serveAdapterRun, dataDir string) ([]engine.Option, error) {
+	engOpts, err := localRunEngineOptions(c.workflowPath, dataDir, run.id)
+	if err != nil {
 		return nil, fmt.Errorf("resolve engine options: %w", err)
 	}
 	engOpts = append(engOpts,
@@ -511,18 +529,11 @@ func (c *serveAdapterClient) buildChildEngine(run *serveAdapterRun, ring *serveA
 	if run.restore != nil {
 		restoredOpts, err := c.applyChildRunRestore(run)
 		if err != nil {
-			rollback(true)
 			return nil, err
 		}
 		engOpts = append(engOpts, restoredOpts...)
 	}
-	return &childRunEngine{
-		eng:         engine.New(c.graph, c.loader, bridge, engOpts...),
-		tracker:     tracker,
-		tsSink:      tsSink,
-		local:       local,
-		closeEvents: closeEvents,
-	}, nil
+	return engOpts, nil
 }
 
 // armChildRunStart writes the child run's local record (host-of-record

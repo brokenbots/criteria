@@ -202,11 +202,11 @@ func TestServeAdapter_SnapshotEnvelopeCodec(t *testing.T) {
 		SchemaVersion:  serveAdapterSnapshotVersion,
 		WorkflowDigest: "sha256:aa",
 		PausedNode:     "slow",
-		Vars:           `{"label":cty.StringVal("restored-check")}`,
+		Vars:           `{"var":{"label":"restored-check"}}`,
 		Visits:         map[string]int{"warmup": 1},
 		Sessions: map[string]serveAdapterSessionState{
-			"sess-a": {State: []byte("blob-1"), SessionMeta: cloneSnapshotMeta(meta)},
-			"sess-b": {State: []byte("blob-2"), SessionMeta: cloneSnapshotMeta(meta)},
+			"sess-a": {State: []byte("blob-1"), SessionMeta: cloneSnapshotMeta(&meta)},
+			"sess-b": {State: []byte("blob-2"), SessionMeta: cloneSnapshotMeta(&meta)},
 		},
 		CreatedAt: time.Now().UTC().Round(0),
 	}
@@ -268,8 +268,8 @@ func mustMarshal(t *testing.T, env *serveAdapterSnapshotV1) []byte {
 	return blob
 }
 
-func cloneSnapshotMeta(meta adapterhost.SessionSnapshot) *adapterhost.SessionSnapshot {
-	cp := meta
+func cloneSnapshotMeta(meta *adapterhost.SessionSnapshot) *adapterhost.SessionSnapshot {
+	cp := *meta
 	return &cp
 }
 

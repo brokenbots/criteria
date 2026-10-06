@@ -27,12 +27,12 @@ import (
 	"time"
 
 	criteriav2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
+	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/engine"
 	"github.com/brokenbots/criteria/internal/runtime/state"
 	"github.com/brokenbots/criteria/workflow"
-	"github.com/zclconf/go-cty/cty"
 )
 
 // serveAdapterSnapshotSchema and serveAdapterSnapshotVersion identify the
@@ -122,7 +122,7 @@ func digestServeAdapterSnapshot(env *serveAdapterSnapshotV1) (string, error) {
 func unmarshalServeAdapterSnapshot(b []byte) (*serveAdapterSnapshotV1, error) {
 	env := &serveAdapterSnapshotV1{}
 	if err := json.Unmarshal(b, env); err != nil {
-		return nil, fmt.Errorf("%w: decode: %s", errServeSnapshotMalformed, err)
+		return nil, fmt.Errorf("%w: decode: %w", errServeSnapshotMalformed, err)
 	}
 	if env.Schema != serveAdapterSnapshotSchema {
 		return nil, fmt.Errorf("%w: schema %q, want %q", errServeSnapshotMalformed, env.Schema, serveAdapterSnapshotSchema)
@@ -135,7 +135,7 @@ func unmarshalServeAdapterSnapshot(b []byte) (*serveAdapterSnapshotV1, error) {
 	}
 	want, err := digestServeAdapterSnapshot(env)
 	if err != nil {
-		return nil, fmt.Errorf("%w: envelope digest: %s", errServeSnapshotMalformed, err)
+		return nil, fmt.Errorf("%w: envelope digest: %w", errServeSnapshotMalformed, err)
 	}
 	if want != env.Digest {
 		return nil, fmt.Errorf("%w: content digest mismatch (envelope is truncated or corrupted)", errServeSnapshotMalformed)
@@ -206,7 +206,7 @@ func (c *serveAdapterClient) captureServeAdapterSnapshot(run *serveAdapterRun, c
 	}
 	vars, err := workflow.SerializeVarScope(eng.VarScope())
 	if err != nil {
-		return nil, fmt.Errorf("%w: serialize variable scope: %s", errServeSnapshotMalformed, err)
+		return nil, fmt.Errorf("%w: serialize variable scope: %w", errServeSnapshotMalformed, err)
 	}
 
 	home, err := stateDir()
@@ -277,7 +277,7 @@ func (c *serveAdapterClient) Restore(_ context.Context, req *criteriav2.RestoreR
 		})
 	}
 	if _, _, err := restoreRunScope(env.Vars, c.graph); err != nil {
-		return nil, connectErrorStatus(fmt.Errorf("%w: %s", errServeSnapshotMalformed, err))
+		return nil, connectErrorStatus(fmt.Errorf("%w: %w", errServeSnapshotMalformed, err))
 	}
 
 	c.mu.Lock()
@@ -302,7 +302,7 @@ func (c *serveAdapterClient) applyChildRunRestore(run *serveAdapterRun) ([]engin
 	env := run.restore
 	vars, iter, err := restoreRunScope(env.Vars, c.graph)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s", errServeSnapshotMalformed, err)
+		return nil, fmt.Errorf("%w: %w", errServeSnapshotMalformed, err)
 	}
 	home, err := stateDir()
 	if err != nil {
