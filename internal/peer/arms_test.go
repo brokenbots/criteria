@@ -187,7 +187,7 @@ func TestServer_ControlCancelChildRunNegotiated(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("CancelChildRun through the flow.v1 gate: %v", err)
+		t.Fatalf("CancelChildRun through the workflow.v1 gate: %v", err)
 	}
 	if resp.GetAccepted() {
 		t.Errorf("cancel accepted without a child-run substrate: %+v", resp)
