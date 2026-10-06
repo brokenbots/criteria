@@ -62,6 +62,14 @@ type nestedEngineRecorder struct {
 	mu       sync.Mutex
 	sessions []string
 	steps    []*workflow.StepNode
+	marks    []nestedEngineMark
+}
+
+// nestedEngineMark is one callee lifecycle marker for the serialization
+// property: kind is "started" or "finished", task names the call.
+type nestedEngineMark struct {
+	kind string
+	task string
 }
 
 func (r *nestedEngineRecorder) record(session string, step *workflow.StepNode) {
@@ -69,6 +77,18 @@ func (r *nestedEngineRecorder) record(session string, step *workflow.StepNode) {
 	defer r.mu.Unlock()
 	r.sessions = append(r.sessions, session)
 	r.steps = append(r.steps, step)
+}
+
+func (r *nestedEngineRecorder) mark(kind, task string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.marks = append(r.marks, nestedEngineMark{kind: kind, task: task})
+}
+
+func (r *nestedEngineRecorder) allMarks() []nestedEngineMark {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]nestedEngineMark(nil), r.marks...)
 }
 
 func (r *nestedEngineRecorder) calleeSession() string {
@@ -128,6 +148,42 @@ func (a *nestedEngineCallee) recordedCtxErr(i int) error {
 		return nil
 	}
 	return a.ctxErrs[i]
+}
+
+// nestedEngineCalleeSingleFlight pins the non-multiplexed default (KB-155):
+// same callee behavior, but its Info declares no concurrency-safe capability,
+// so sibling nested Executes on its session serialize behind the turn gate.
+type nestedEngineCalleeSingleFlight struct {
+	nestedEngineCallee
+}
+
+func (a *nestedEngineCalleeSingleFlight) Info(ctx context.Context) (adapterhost.Info, error) {
+	info, err := a.nestedEngineCallee.Info(ctx)
+	if err != nil {
+		return adapterhost.Info{}, err
+	}
+	info.Capabilities = []string{"execute"}
+	return info, nil
+}
+
+func (a *nestedEngineCalleeSingleFlight) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
+	a.rec.record(sessionID, step)
+	task := step.Input["task"]
+	a.rec.mark("started", task)
+	// Hold every call for the same window: with one slow and one fast task
+	// the fast-then-slow dispatch order would satisfy the serialization
+	// property even without the gate, so the regression check requires both
+	// windows to overlap if the gate were gone.
+	time.Sleep(150 * time.Millisecond)
+	a.rec.mark("finished", task)
+	outputs := a.outputs
+	if outputs == nil {
+		outputs = map[string]cty.Value{
+			"report": cty.StringVal(task),
+			"count":  cty.NumberIntVal(int64(len(task))),
+		}
+	}
+	return adapter.Result{Outcome: "success", Outputs: outputs}, nil
 }
 
 func (a *nestedEngineCallee) Info(context.Context) (adapterhost.Info, error) {
@@ -709,6 +765,93 @@ func TestNestedToolCall_EngineInterleavedReplies(t *testing.T) {
 	}
 
 	// Both nested Executes ran in the callee's own session.
+	sessions := rec.allSessions()
+	if len(sessions) != 2 {
+		t.Fatalf("callee executed %d times, want 2", len(sessions))
+	}
+	for i, sess := range sessions {
+		if sess != nestedEngineCalleeSess {
+			t.Errorf("callee execution %d ran in session %q, want %q", i, sess, nestedEngineCalleeSess)
+		}
+	}
+}
+
+// TestNestedToolCall_EngineSerializedDefault (KB-155): a callee that declares
+// neither concurrent_execute nor parallel_safe is the non-multiplexed default
+// — the host's execute turn gate serializes its sibling nested Executes, so
+// the slow call's execute settles before the fast call even starts. Pins the
+// engine-level default; the multiplexing route (the interleaved-replies test
+// above) requires the callee to declare a concurrency-safe capability. The
+// dispatch order of the two calls is unspecified (both fire on the caller's
+// turn), so the property is checked like the seam test: exactly one callee
+// finish lies between the two callee starts.
+func TestNestedToolCall_EngineSerializedDefault(t *testing.T) {
+	g := compileNestedToolCallGraph(t, nestedToolCallWorkflowHCL)
+
+	rec := &nestedEngineRecorder{}
+	callee := &nestedEngineCalleeSingleFlight{nestedEngineCallee{rec: rec}}
+	caller := &nestedEngineInterleavedCaller{}
+
+	sink := &nestedEngineSink{}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
+		"caller": caller,
+		"callee": callee,
+	}}
+	if err := New(g, loader, sink).Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !sink.terminalOK {
+		t.Fatalf("run did not complete successfully: terminal=%q failure=%q", sink.terminal, sink.failure)
+	}
+
+	results := caller.snapshotResults()
+	if len(results) != 2 {
+		t.Fatalf("caller received %d tool_call_results, want 2", len(results))
+	}
+	for _, id := range []string{"call-1", "call-2"} {
+		tcr, ok := results[id]
+		if !ok {
+			t.Fatalf("caller never received a result for %s (got %v)", id, results)
+		}
+		if tcr.CallError != "" || tcr.Outcome != "success" {
+			t.Errorf("%s result = %q/%q, want clean success", id, tcr.Outcome, tcr.CallError)
+		}
+	}
+	// Correlation survives serialization: each reply carries its own call's
+	// derived outputs.
+	if got := outputsField(t, results["call-1"], "report"); got != "slow" {
+		t.Errorf("call-1 outputs.report = %q, want slow", got)
+	}
+	if got := outputsField(t, results["call-2"], "report"); got != "fast" {
+		t.Errorf("call-2 outputs.report = %q, want fast", got)
+	}
+
+	// Serialized execution: the two callee executes must not overlap — the
+	// turn gate hands the callee's single turn to the second call only after
+	// the first settles. If the gate regressed to admit every session, both
+	// executes would run at once and no finish would lie between the starts.
+	marks := rec.allMarks()
+	var startIdxs []int
+	for i, mk := range marks {
+		if mk.kind == "started" {
+			startIdxs = append(startIdxs, i)
+		}
+	}
+	if len(startIdxs) != 2 {
+		t.Fatalf("observed %d callee starts, want 2 (marks: %v)", len(startIdxs), marks)
+	}
+	finishesBetween := 0
+	for _, mk := range marks[startIdxs[0]+1 : startIdxs[1]] {
+		if mk.kind == "finished" {
+			finishesBetween++
+		}
+	}
+	if finishesBetween != 1 {
+		t.Fatalf("the two callee executes were not serialized: %d finishes between start@%d and start@%d",
+			finishesBetween, startIdxs[0], startIdxs[1])
+	}
+
+	// Both nested Executes still ran in the callee's own session.
 	sessions := rec.allSessions()
 	if len(sessions) != 2 {
 		t.Fatalf("callee executed %d times, want 2", len(sessions))
