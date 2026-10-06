@@ -132,7 +132,11 @@ func (a *nestedEngineCallee) recordedCtxErr(i int) error {
 
 func (a *nestedEngineCallee) Info(context.Context) (adapterhost.Info, error) {
 	return adapterhost.Info{
-		Capabilities: []string{"execute"},
+		// KB-155: declare concurrent_execute so nested tool calls multiplex
+		// over one callee session (the CRI-161 interleaved-replies test relies
+		// on the fast call overtaking the slow call); without it the
+		// acquireExecuteTurn gate serializes sibling Executes turn-by-turn.
+		Capabilities: []string{"execute", "concurrent_execute"},
 		AdapterInfo: workflow.AdapterInfo{
 			InputSchema: map[string]workflow.ConfigField{
 				"task": {Required: true},
