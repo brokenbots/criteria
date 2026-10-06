@@ -39,11 +39,18 @@ type cri163Callee struct {
 	permTools []string
 	outputs   map[string]cty.Value
 	execErr   error
+	// caps overrides the declared capabilities when non-nil (KB-155:
+	// concurrency tests declare the concurrent_execute capability).
+	caps []string
 }
 
 func (a *cri163Callee) Info(_ context.Context) (Info, error) {
+	capabilities := a.caps
+	if capabilities == nil {
+		capabilities = []string{"execute"}
+	}
 	return Info{
-		Capabilities: []string{"execute"},
+		Capabilities: capabilities,
 		AdapterInfo: workflow.AdapterInfo{
 			InputSchema: map[string]workflow.ConfigField{
 				"task": {Required: true},

@@ -1102,8 +1102,22 @@ type Session struct {
 	// processes for one crash.
 	reopenMu sync.Mutex
 
-	currentSink   adapter.EventSink
-	currentSinkMu sync.Mutex
+	// KB-155: refcounted registry of the per-Execute event sinks bound to
+	// this session. When the adapter declares the concurrent_execute
+	// capability, sibling executes fan out on the same session and nested
+	// siblings sharing a caller's sink collapse onto one entry.
+	// Session-level traffic is attributed only when exactly one sink is
+	// bound — otherwise it falls back to structured logs rather than being
+	// misattributed to an arbitrary execute.
+	activeSinksMu sync.Mutex
+	activeSinks   map[adapter.EventSink]int
+
+	// KB-155: execTurns serializes executes on sessions that do not declare
+	// the concurrent_execute capability: a call acquires the turn before
+	// touching session-global state (step policy, sink bindings) and
+	// releases it when done. Buffered to one and pre-filled at registration;
+	// see acquireExecuteTurn.
+	execTurns chan struct{}
 
 	// WS15: MergeBuffer interleaves log and adapter events by timestamp.
 	mergeBuf *log.MergeBuffer
@@ -2082,6 +2096,11 @@ func (m *SessionManager) registerSession(ctx context.Context, name, adapterName,
 	declared := m.declaredStateLocked(name)
 	m.stampStateFields(sess, declared)
 	m.sessions[name] = sess
+	// KB-155: seed the serialized-execute turn (one token = one turn) and
+	// the sink registry before the streams start delivering traffic.
+	sess.execTurns = make(chan struct{}, 1)
+	sess.execTurns <- struct{}{}
+	sess.activeSinks = make(map[adapter.EventSink]int)
 	sess.noteActivity()
 
 	m.startPermissionStream(ctx, sess, plug)
@@ -2615,12 +2634,50 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 		return m.handleCrash(ctx, name, step, sink, sess, fmt.Errorf("heartbeat stall (>%s)", m.heartbeatStallThreshold()), rejection)
 	}
 
-	m.setStepPolicy(sess, step)
-	m.bindCurrentSink(sess, sink)
-	defer m.unbindCurrentSink(sess)
+	// KB-155: serialize executes on sessions that never declared the
+	// concurrent_execute capability. The turn is taken before any
+	// session-global state (step policy, sink bindings) is touched so a
+	// queued caller can never observe an in-flight sibling's state;
+	// multiplexable sessions skip the gate and fan out freely.
+	queued, gateErr := m.acquireExecuteTurn(ctx, sess)
+	if gateErr != nil {
+		return adapter.Result{}, gateErr
+	}
+	defer m.releaseExecuteTurn(sess)
+	// KB-155 abandon policy: a caller whose turn arrives after its own
+	// cancellation abandons before any adapter-observable state (the defer
+	// handed the turn on) — only when the cancellation is attributable to
+	// this call: it either queued behind a sibling or was dispatched while
+	// its originating Execute context was still alive (issue-time liveness
+	// recorded by startNestedToolCall). A nested follow-up issued after the
+	// context already died keeps the CRI-161 no-wedge contract: the callee
+	// still runs and delivers its typed reply.
+	if ctx.Err() != nil && (queued || nesting.issuedWhileExecAlive) {
+		return adapter.Result{}, ctx.Err()
+	}
 
-	execSink := m.execSinkForSession(sess, sink)
-	permSink := newPermissionInterceptSink(ctx, execSink, sess, step, m.graph, m, nesting)
+	// KB-155: the execute carries its own step policy so concurrent executes
+	// on one multiplexed session each decide under their own allow_tools +
+	// environment policy instead of a session-global last-writer snapshot.
+	// The session-global snapshot keeps its legacy role for surfaces that
+	// evaluate outside an in-flight execute (restore re-present).
+	stepPolicy := m.combinedPolicyFor(sess, step)
+	m.setStepPolicy(sess, step)
+
+	m.bindActiveSink(sess, sink)
+	defer m.unbindActiveSink(sess, sink)
+
+	// KB-155: execute-level adapter events (mcp.progress, mcp.content, ...)
+	// flow straight through this execute's (already redaction-wrapped) sink
+	// so they keep their per-Execute identity. They are never diverted into
+	// the session log merge buf, whose flush routes through
+	// sessionLogAdapterSink -> singleActiveSink: that attribution is
+	// ambiguous the moment two executes share the session (a
+	// concurrent-caller event would be demoted to structured logs, and
+	// delivery delayed up to the 500ms merge window), so it can no longer
+	// carry execute-level traffic under multiplexing. mergeBuf remains on
+	// the log-stream path only.
+	permSink := newPermissionInterceptSink(ctx, sink, sess, step, m.graph, m, nesting, stepPolicy)
 
 	result, execErr := sess.handle.Execute(ctx, name, step, permSink, rejection)
 
@@ -2631,6 +2688,12 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 	// this wait.
 	permSink.waitPending()
 
+	return m.finishExecute(ctx, name, step, sess, sink, permSink, result, execErr)
+}
+
+// finishExecute applies the post-execute pipeline after waitPending: verdict
+// validation, outcome override, and the success postlude.
+func (m *SessionManager) finishExecute(ctx context.Context, name string, step *workflow.StepNode, sess *Session, sink adapter.EventSink, permSink *permissionInterceptSink, result adapter.Result, execErr error) (adapter.Result, error) {
 	// KB-45: validate the verdict against the step's outcome contracts
 	// BEFORE the permission override and any downstream mapping, so a
 	// permission-denied success cannot launder an invalid payload. Legacy
@@ -2652,28 +2715,28 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 
 	m.maybeOverrideOutcome(permSink, &result)
 
-	if execErr == nil {
-		// A completed call proves the session transport was alive (CRI-271).
-		// It deliberately does NOT end the CRI-287 step-timeout teardown
-		// window: a healthy sibling's success is not evidence that a
-		// torn-down sibling has been observed, so the window stays open until
-		// it expires (see the engineStepTimeoutTeardownAt comment).
-		sess.noteActivity()
-		// A nested callee Execute that crashed with on_crash=abort_run latches
-		// its fatal error on the sink (CRI-160): the callee's own crash policy
-		// governs its session, so the error propagates to the engine instead
-		// of the caller's Execute reporting success.
-		if fatalErr := permSink.nestedFatal(); fatalErr != nil {
-			return result, fatalErr
-		}
-		m.registerSensitiveOutputs(result, step)
-		if err := m.checkpointAfterExecute(ctx, sess); err != nil {
-			return result, &FatalRunError{Err: err}
-		}
-		return result, nil
+	if execErr != nil {
+		return m.executeError(ctx, name, step, sess, sink, result, execErr)
 	}
 
-	return m.executeError(ctx, name, step, sess, sink, result, execErr)
+	// A completed call proves the session transport was alive (CRI-271).
+	// It deliberately does NOT end the CRI-287 step-timeout teardown
+	// window: a healthy sibling's success is not evidence that a
+	// torn-down sibling has been observed, so the window stays open until
+	// it expires (see the engineStepTimeoutTeardownAt comment).
+	sess.noteActivity()
+	// A nested callee Execute that crashed with on_crash=abort_run latches
+	// its fatal error on the sink (CRI-160): the callee's own crash policy
+	// governs its session, so the error propagates to the engine instead
+	// of the caller's Execute reporting success.
+	if fatalErr := permSink.nestedFatal(); fatalErr != nil {
+		return result, fatalErr
+	}
+	m.registerSensitiveOutputs(result, step)
+	if err := m.checkpointAfterExecute(ctx, sess); err != nil {
+		return result, &FatalRunError{Err: err}
+	}
+	return result, nil
 }
 
 // executeError classifies a failed Execute call: expected closes (an explicit
@@ -2771,9 +2834,14 @@ func (m *SessionManager) StepTimeoutTeardownWindowOpen() bool {
 	return m.engineStepTimeoutTeardownWindowOpen()
 }
 
-// setStepPolicy builds the CombinedPolicy for this step and wires it into the
-// session's PermissionState.
-func (m *SessionManager) setStepPolicy(sess *Session, step *workflow.StepNode) {
+// combinedPolicyFor builds the step's CombinedPolicy (adapter allow set +
+// environment policy) without touching session-global state. It is the
+// per-Execute policy source: concurrent executes on one multiplexed session
+// each decide under their own step policy (KB-155) instead of a
+// last-writer-wins session-global snapshot. The returned policy is non-nil
+// (its allow_tools matcher denies when the step declares none — the same
+// deny-all semantics the legacy setStepPolicy path had).
+func (m *SessionManager) combinedPolicyFor(sess *Session, step *workflow.StepNode) PermissionPolicy {
 	var envPolicy *workflow.ResolvedPolicy
 	if m.graph != nil && step != nil && step.AdapterRef != "" {
 		adapterNode := m.graph.Adapters[step.AdapterRef]
@@ -2790,44 +2858,165 @@ func (m *SessionManager) setStepPolicy(sess *Session, step *workflow.StepNode) {
 			}
 		}
 	}
-	policy := NewCombinedPolicy(sess.Adapter, step.AllowTools, envPolicy)
-	if sess.PermissionState != nil {
-		sess.PermissionState.SetPolicy(policy)
+	return NewCombinedPolicy(sess.Adapter, step.AllowTools, envPolicy)
+}
+
+// setStepPolicy builds the step's CombinedPolicy and installs it as the
+// session-global snapshot used by legacy surfaces — e.g. the RestoreState
+// re-present path after snapshot/restore, which evaluates outside an
+// in-flight execute. Live execute decisions carry their own per-Execute
+// policies (combinedPolicyFor via the execute's permissionInterceptSink) so
+// concurrent executes attribute correctly (KB-155).
+func (m *SessionManager) setStepPolicy(sess *Session, step *workflow.StepNode) {
+	if m == nil || sess == nil || sess.PermissionState == nil {
+		return
+	}
+	sess.PermissionState.SetPolicy(m.combinedPolicyFor(sess, step))
+}
+
+// concurrentExecuteCapability is the well-known adapter capability (declared
+// in InfoResponse.capabilities) marking a v2 adapter that accepts multiple
+// concurrent in-flight Execute RPCs on one session and correlates replies,
+// per-call events, and decisions by request_id (KB-155). The capability
+// vocabulary is free-form — hosts ignore unknown values for forward
+// compatibility — so hosts without this card keep dispatching concurrent
+// executes on such adapters but only see per-session attribution; per-request
+// attribution is what KB-155 resolves.
+const concurrentExecuteCapability = "concurrent_execute"
+
+// parallelSafeCapability is the adapter side of the long-documented engine
+// parallel contract: sessions declaring it authorize a `parallel = [...]`
+// step's iterations to Execute concurrently (internal/engine, docs/workflow).
+// The turn gate admits it alongside concurrent_execute — serializing those
+// iterations would strip the granted concurrency and deadlock barrier-style
+// adapters (review B1, KB-155).
+const parallelSafeCapability = "parallel_safe"
+
+// sessionSupportsConcurrentExecute reports whether the session's cached
+// capabilities declare a multiplexable execute posture (KB-155): either the
+// concurrent_execute capability or the engine's parallel_safe contract
+// capability. Thread-safe through HasCapability's session/verified-record
+// lookup.
+func (m *SessionManager) sessionSupportsConcurrentExecute(sess *Session) bool {
+	return m.HasCapability(sess.Name, concurrentExecuteCapability) ||
+		m.HasCapability(sess.Name, parallelSafeCapability)
+}
+
+// acquireExecuteTurn serializes executes on sessions that declare neither
+// parallel_safe nor concurrent_execute (KB-155): the turn is taken before
+// any session-global state is touched so a queued caller can never observe
+// an in-flight sibling's state; multiplexable sessions skip the gate. The
+// queued flag
+// reports whether the caller had to wait behind a sibling. Returns ctx.Err()
+// only when the caller is cancelled while queued — in that state the turn
+// was never taken, so the caller must return without releasing (the typed
+// execute error mapping turns ctx.Err() into the caller's `canceled` reply).
+// Abandonment AFTER a successful take — including the release/cancel race
+// where the turn arrives just past the caller's own cancellation — is the
+// caller's decision; see the abandon policy in m.execute.
+func (m *SessionManager) acquireExecuteTurn(ctx context.Context, sess *Session) (bool, error) {
+	if m.sessionSupportsConcurrentExecute(sess) {
+		return false, nil
+	}
+	if sess.execTurns == nil {
+		// No gate installed: sessions built only by m.Open are seeded, and
+		// releaseExecuteTurn ignores nil as well. A missing channel on a
+		// hand-built session must mean "unserialized", never "blocked
+		// forever" — receiving on a nil channel would hang the caller.
+		return false, nil
+	}
+	select {
+	case <-sess.execTurns:
+		// Fast path: the turn was free. Proceed regardless of ctx state.
+		return false, nil
+	default:
+	}
+	select {
+	case <-sess.execTurns:
+		// Queued behind a sibling and the turn is now this caller's: it was
+		// taken, so this return never reports an error (a token taken here
+		// must be released, which only the caller's defer does). Whether the
+		// taken turn is kept is m.execute's abandon decision (queued flag).
+		return true, nil
+	case <-ctx.Done():
+		// Nothing taken: handing back no error would let the caller proceed
+		// with a dead context; the turn stays free for the next waiter.
+		return true, ctx.Err()
 	}
 }
 
-func (m *SessionManager) bindCurrentSink(sess *Session, sink adapter.EventSink) {
-	sess.currentSinkMu.Lock()
-	sess.currentSink = sink
-	sess.currentSinkMu.Unlock()
+// releaseExecuteTurn hands the serialized-execute turn on to the next queued
+// caller (no-op for multiplexable sessions). Safe to defer unconditionally:
+// callers that never acquired the turn release a free slot instead.
+func (m *SessionManager) releaseExecuteTurn(sess *Session) {
+	if sess.execTurns == nil {
+		return
+	}
+	select {
+	case sess.execTurns <- struct{}{}:
+	default:
+	}
 }
 
-func (m *SessionManager) unbindCurrentSink(sess *Session) {
+// bindActiveSink registers a per-Execute event sink on the session's sink
+// registry (KB-155). The registry is refcounted so nested sibling executes
+// that share a caller sink collapse onto one entry; the unbind pairs with
+// each bind. Returns nothing; the refcount handles repeated binds.
+func (m *SessionManager) bindActiveSink(sess *Session, sink adapter.EventSink) {
+	sess.activeSinksMu.Lock()
+	defer sess.activeSinksMu.Unlock()
+	if sess.activeSinks == nil {
+		sess.activeSinks = make(map[adapter.EventSink]int)
+	}
+	sess.activeSinks[sink]++
+}
+
+// unbindActiveSink releases one execute's reference to its sink (KB-155),
+// flushing the merge buffer first exactly as the former single-slot unbind
+// did. An execute unbinds only the binding its own start path created.
+func (m *SessionManager) unbindActiveSink(sess *Session, sink adapter.EventSink) {
 	if sess.mergeBuf != nil {
 		sess.mergeBuf.Flush()
 	}
-	sess.currentSinkMu.Lock()
-	sess.currentSink = nil
-	sess.currentSinkMu.Unlock()
-}
-
-func (m *SessionManager) execSinkForSession(sess *Session, sink adapter.EventSink) adapter.EventSink {
-	if sess.mergeBuf != nil {
-		return sess.mergeBuf
+	sess.activeSinksMu.Lock()
+	defer sess.activeSinksMu.Unlock()
+	if n, ok := sess.activeSinks[sink]; ok {
+		if n <= 1 {
+			delete(sess.activeSinks, sink)
+		} else {
+			sess.activeSinks[sink] = n - 1
+		}
 	}
-	return sink
 }
 
-func newPermissionInterceptSink(ctx context.Context, inner adapter.EventSink, sess *Session, step *workflow.StepNode, graph *workflow.FSMGraph, mgr *SessionManager, nesting toolCallNesting) *permissionInterceptSink {
+// singleActiveSink returns the bound sink when exactly one execute is in
+// flight on the session (KB-155) — the only case where session-level traffic
+// can be attributed without ambiguity. Multi-execute overlaps (concurrent
+// executes on a multiplexed adapter) and idle sessions return false, and
+// callers must fall back to structured logs: attribution must never guess.
+func (s *Session) singleActiveSink() (sink adapter.EventSink, ok bool) {
+	s.activeSinksMu.Lock()
+	defer s.activeSinksMu.Unlock()
+	if len(s.activeSinks) != 1 {
+		return nil, false
+	}
+	for sink := range s.activeSinks {
+		return sink, true
+	}
+	return nil, false
+}
+
+func newPermissionInterceptSink(ctx context.Context, inner adapter.EventSink, sess *Session, step *workflow.StepNode, graph *workflow.FSMGraph, mgr *SessionManager, nesting toolCallNesting, stepPolicy PermissionPolicy) *permissionInterceptSink {
 	return &permissionInterceptSink{
-		inner:     inner,
-		permState: sess.PermissionState,
-		session:   sess,
-		step:      step,
-		graph:     graph,
-		mgr:       mgr,
-		nesting:   nesting,
-		execCtx:   ctx,
+		inner:      inner,
+		permState:  sess.PermissionState,
+		session:    sess,
+		step:       step,
+		graph:      graph,
+		mgr:        mgr,
+		nesting:    nesting,
+		execCtx:    ctx,
+		stepPolicy: stepPolicy,
 	}
 }
 
@@ -3235,10 +3424,10 @@ func (s *sessionLogAdapterSink) Log(stream string, chunk []byte) {
 	// Any delivered log chunk is observable adapter activity (CRI-271); the
 	// crash diagnostics report the idle window since the last one.
 	s.sess.noteActivity()
-	s.sess.currentSinkMu.Lock()
-	sink := s.sess.currentSink
-	s.sess.currentSinkMu.Unlock()
-	if sink != nil {
+	// KB-155: session-level traffic is attributed to the executing step sink
+	// only when exactly one execute holds the session; otherwise it goes to
+	// structured logs so it is never misattributed to an arbitrary sibling.
+	if sink, ok := s.sess.singleActiveSink(); ok {
 		sink.Log(stream, chunk)
 	} else {
 		slog.Info("adapter log", "session", s.sess.Name, "stream", stream, "line", string(chunk))
@@ -3246,10 +3435,7 @@ func (s *sessionLogAdapterSink) Log(stream string, chunk []byte) {
 }
 
 func (s *sessionLogAdapterSink) Adapter(kind string, data any) {
-	s.sess.currentSinkMu.Lock()
-	sink := s.sess.currentSink
-	s.sess.currentSinkMu.Unlock()
-	if sink != nil {
+	if sink, ok := s.sess.singleActiveSink(); ok {
 		sink.Adapter(kind, data)
 	} else {
 		slog.Info("adapter event", "session", s.sess.Name, "kind", kind, "data", data)
@@ -3456,6 +3642,10 @@ func (m *SessionManager) openAndRestoreAdapter(ctx context.Context, name, adapte
 }
 
 func buildRestoredSession(name, adapterName, onCrash string, config, resolvedSecrets map[string]string, originRefs map[string]secrets.OriginRef, caps []string, plug Handle, cleanup func(), permState *permissionState, workingDir, scopeInstanceID string) *Session {
+	// execTurns and activeSinks are deliberately nil here: a restored session
+	// fails open with the legacy unserialized posture (matching the restored
+	// session's pre-KB-155 behavior) until a fresh execute lifecycle binds
+	// them.
 	return &Session{
 		Name:             name,
 		Adapter:          adapterName,

@@ -296,23 +296,26 @@ func toolCallMatchedPattern(reason string) string {
 	return pattern
 }
 
-// evaluateToolCall evaluates an adapter tool-call request against the step's
-// effective allow set: the step's recorded tools grants (literals, checked
-// first) plus the session's permission policy — the same allow_tools surface
-// as any tool request, evaluated on the full target string. It performs the
-// same bookkeeping as Evaluate (decision record, PermissionEvent on the
-// session stream, audit entry) so the permission decision is logged
-// identically for both request shapes. The session policy itself is untouched,
-// so concurrent plain requests keep their existing semantics. The layer is
-// the nested tool-call layer the call is evaluated in (CRI-163).
-func (ps *permissionState) evaluateToolCall(requestID, target string, parsed toolCallTarget, argsDigest, fullCmd string, grants []workflow.AdapterToolRef, layer int) (allow bool, reason string) {
-	ps.mu.Lock()
-	policy := ps.policy
-	ps.mu.Unlock()
-
+// evaluateToolCallWithPolicy evaluates an adapter tool-call request against
+// the step's effective allow set: the step's recorded tools grants (literals,
+// checked first) plus the execute's permission policy — the same allow_tools
+// surface as any tool request, evaluated on the full target string. It
+// performs the same bookkeeping as Evaluate (decision record,
+// PermissionEvent on the session stream, audit entry) so the permission
+// decision is logged identically for both request shapes. The policy is
+// explicit (KB-155): multiplexed executes on one session each decide under
+// their own step policy instead of the session-global snapshot, which is
+// whatever setStepPolicy wrote last. A nil policy falls back to the
+// session-global snapshot for legacy callers and directly constructed sinks.
+func (ps *permissionState) evaluateToolCallWithPolicy(policy PermissionPolicy, requestID, target string, parsed toolCallTarget, argsDigest, fullCmd string, grants []workflow.AdapterToolRef, layer int) (allow bool, reason string) {
 	if toolGrantAllows(grants, parsed.AdapterRef, parsed.Tool) {
 		allow, reason = true, "granted: tools entry "+parsed.String()
 	} else {
+		if policy == nil {
+			ps.mu.Lock()
+			policy = ps.policy
+			ps.mu.Unlock()
+		}
 		if policy == nil {
 			policy = denyAllPolicy{}
 		}
@@ -423,7 +426,7 @@ func (s *permissionInterceptSink) applyToolCallPolicy(req *toolCallPayload, pars
 	if s.step != nil {
 		grants = s.step.Tools
 	}
-	allow, reason := s.permState.evaluateToolCall(req.requestID, req.target, parsed, req.argsDigest, req.fullCmd, grants, s.nesting.depth)
+	allow, reason := s.permState.evaluateToolCallWithPolicy(s.stepPolicy, req.requestID, req.target, parsed, req.argsDigest, req.fullCmd, grants, s.nesting.depth)
 	if !allow {
 		s.lastDecisionDenied = true
 		deniedTool := req.tool
@@ -579,6 +582,17 @@ func (s *permissionInterceptSink) resolveCalleeDeclaration(ref string) (*workflo
 type toolCallNesting struct {
 	depth int
 	chain []string
+	// issuedWhileExecAlive (KB-155) records that the nested call was
+	// registered while its originating Execute context was still alive. Such
+	// a call must never reach the adapter after that context dies: on a
+	// single-flight callee session the waiter races the queued sibling's
+	// release against its own cancellation, so the only deterministic
+	// outcome is abandonment before dispatch (the acquire seam abandons it
+	// as typed canceled). A call issued after the context already died —
+	// the CRI-161 no-wedge follow-up — keeps legacy behavior and runs even
+	// with a dead context. Engine-issued top-level executes carry the zero
+	// value and keep that legacy behavior too.
+	issuedWhileExecAlive bool
 }
 
 // enters reports whether ref is already on the call chain — i.e. the nested
@@ -791,6 +805,9 @@ func (s *permissionInterceptSink) dispatchNestedToolCall(req *toolCallPayload, p
 // the gate is set the pending set only shrinks.
 func (s *permissionInterceptSink) startNestedToolCall(call *nestedToolCall) {
 	nestedCtx, nestedCancel := context.WithCancel(s.nestedExecCtx())
+	// Liveness is read on the caller goroutine right at dispatch: reading it
+	// inside the callee goroutine would race the cancellation machinery.
+	call.nesting.issuedWhileExecAlive = nestedCtx.Err() == nil
 	if !s.permState.registerPendingToolCall(call.requestID, call.target, nestedCancel) {
 		nestedCancel()
 		// The call was dispatched after reserving its budget; give the

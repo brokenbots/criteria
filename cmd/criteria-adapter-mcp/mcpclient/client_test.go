@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -107,6 +109,99 @@ func TestClientMethodDispatch(t *testing.T) {
 
 	_ = serverWrite.Close()
 	_ = serverRead.Close()
+	<-serverDone
+}
+
+// TestClientCancelSendsCancelledNotification pins the KB-155 cancellation
+// contract: when a caller gives up on an in-flight request, the client
+// deletes the pending entry and best-effort notifies the server with
+// notifications/cancelled carrying the client-internal JSON-RPC id — so a
+// multiplexed server learns the call was abandoned instead of waiting for
+// the session to end.
+func TestClientCancelSendsCancelledNotification(t *testing.T) {
+	serverRead, clientWrite := io.Pipe()
+	clientRead, serverWrite := io.Pipe()
+	defer clientWrite.Close()
+	defer clientRead.Close()
+
+	client := New(clientRead, clientWrite, func(n Notification) {})
+	defer client.Close()
+
+	gotCall := make(chan struct{})
+	canceled := make(chan map[string]any, 1)
+	callID := make(chan string, 1)
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		defer serverWrite.Close()
+		defer serverRead.Close()
+		reader := bufio.NewReader(serverRead)
+		for {
+			payload, err := readFrame(reader)
+			if err != nil {
+				return
+			}
+			var req map[string]any
+			if err := json.Unmarshal(payload, &req); err != nil {
+				return
+			}
+			method, _ := req["method"].(string)
+			switch method {
+			case "initialize":
+				_ = writeJSON(serverWrite, map[string]any{"jsonrpc": "2.0", "id": req["id"], "result": map[string]any{"protocolVersion": "2025-03-26"}})
+			case "tools/call":
+				id, _ := req["id"].(string)
+				callID <- id
+				close(gotCall)
+			case "notifications/cancelled":
+				params, _ := req["params"].(map[string]any)
+				canceled <- params
+				return
+			}
+		}
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := client.Initialize(ctx, "test", "0.0.1"); err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := client.CallToolTracked(ctx, "echo", map[string]any{"message": "abandoned"}, "criteria-1")
+		errCh <- err
+	}()
+
+	select {
+	case <-gotCall:
+	case <-time.After(2 * time.Second):
+		t.Fatal("server never received the tools/call")
+	}
+	// The call's client-internal JSON-RPC id, before any cancellation.
+	wantID := <-callID
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("CallToolTracked error = %v want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("CallToolTracked did not settle after cancel")
+	}
+
+	select {
+	case params := <-canceled:
+		if got, _ := params["requestId"].(string); got != wantID {
+			t.Fatalf("cancelled requestId = %q want %q", got, wantID)
+		}
+		if got, _ := params["reason"].(string); !strings.Contains(got, "context canceled") {
+			t.Fatalf("cancelled notification reason = %q want context-canceled reason", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("server never received notifications/cancelled")
+	}
 	<-serverDone
 }
 

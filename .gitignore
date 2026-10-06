@@ -32,3 +32,6 @@ coverage.out
 # python and node
 node_modules
 __python_cache__
+
+# build artifacts (KB-155 checkpoint cleanup)
+/criteria-adapter-mcp

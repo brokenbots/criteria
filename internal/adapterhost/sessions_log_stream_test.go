@@ -152,7 +152,8 @@ func TestSessionManager_Integration_100Logs10Events_Redaction(t *testing.T) {
 			return evs
 		}(),
 		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
-			// Trigger log emission now that currentSink is set.
+			// Trigger the handle's staged log emission while Execute is
+			// still alive, interleaved with the adapter events below.
 			close(trigger)
 			// Keep Execute alive long enough for log delivery.
 			time.Sleep(100 * time.Millisecond)
@@ -215,11 +216,9 @@ func TestSessionManager_LogLinesRoutedToStepSink(t *testing.T) {
 	sess := sm.sessions["agent"]
 	go func() {
 		<-logReady
-		// Wait a tiny bit for currentSink to be set inside Execute.
+		// Wait a tiny bit for the execute sink to be bound inside Execute.
 		time.Sleep(10 * time.Millisecond)
-		sess.currentSinkMu.Lock()
-		sink := sess.currentSink
-		sess.currentSinkMu.Unlock()
+		sink, _ := sess.singleActiveSink()
 		if sink != nil {
 			sink.Log("stdout", []byte("line1\n"))
 			sink.Log("stdout", []byte("line2\n"))

@@ -82,14 +82,21 @@ type nestedCalleeAdapter struct {
 	execErr   error
 	// holdRelease unblocks the "hold" task (CRI-169 test hook).
 	holdRelease chan struct{}
+	// caps overrides the declared capabilities when non-nil (KB-155:
+	// concurrency tests declare the concurrent_execute capability).
+	caps []string
 
 	ctxErrMu sync.Mutex
 	ctxErrs  []error // ctx.Err() values observed by blocking executes
 }
 
 func (a *nestedCalleeAdapter) Info(_ context.Context) (Info, error) {
+	capabilities := a.caps
+	if capabilities == nil {
+		capabilities = []string{"execute"}
+	}
 	return Info{
-		Capabilities: []string{"execute"},
+		Capabilities: capabilities,
 		AdapterInfo: workflow.AdapterInfo{
 			InputSchema: map[string]workflow.ConfigField{
 				"task": {Required: true},
@@ -880,7 +887,11 @@ func pendingCount(t *testing.T, ps *permissionState) int {
 func TestNestedToolCall_InterleavedReplies(t *testing.T) {
 	audit := &sliceAuditWriter{}
 	calleeRec := &nestedCalleeRecorder{}
-	callee := &nestedCalleeAdapter{rec: calleeRec, holdRelease: make(chan struct{})}
+	// KB-155: the callee declares concurrent_execute — two in-flight nested
+	// executes multiplex over ONE callee session (asserted below), which the
+	// concurrent_execute gate would otherwise serialize turn-by-turn.
+	callee := &nestedCalleeAdapter{rec: calleeRec, holdRelease: make(chan struct{}),
+		caps: []string{"execute", concurrentExecuteCapability}}
 	sm := newNestedToolCallManager(t,
 		&nestedCallerAdapter{target: nestedCallTarget},
 		callee,

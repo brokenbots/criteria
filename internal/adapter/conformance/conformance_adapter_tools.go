@@ -283,10 +283,14 @@ func newMatrixCallee() *matrixCalleeAdapter {
 }
 
 func (a *matrixCalleeAdapter) Info(context.Context) (adapterhost.Info, error) {
+	// KB-155: declare concurrent_execute so nested tool calls multiplex
+	// over one callee session (CRI-161 interleave and CRI-183 agent-caller
+	// concurrent-calls both rely on sibling Executes running in parallel;
+	// without it the acquireExecuteTurn gate serializes them turn-by-turn).
 	return adapterhost.Info{
 		Name:         "matrix-callee",
 		Version:      "0.0.0-matrix",
-		Capabilities: []string{"execute"},
+		Capabilities: []string{"execute", "concurrent_execute"},
 		AdapterInfo: workflow.AdapterInfo{
 			InputSchema:  map[string]workflow.ConfigField{"task": {Required: true}},
 			OutputSchema: matrixCalleeOutputSchema(),

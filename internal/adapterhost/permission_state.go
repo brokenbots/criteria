@@ -180,8 +180,20 @@ func (ps *permissionState) Evaluate(requestID, tool, argsDigest, fullCmd string)
 // layers are the callee-side decisions evaluated inside a nested Execute
 // under the callee's own allow_tools.
 func (ps *permissionState) evaluateAtLayer(requestID, tool, argsDigest, fullCmd string, layer int) (allow bool, reason string) {
+	return ps.evaluateAtLayerWithPolicy(nil, requestID, tool, argsDigest, fullCmd, layer)
+}
+
+// evaluateAtLayerWithPolicy is evaluateAtLayer with an explicit per-call
+// policy (KB-155): concurrent Executes on one multiplexed session each carry
+// their own step policy, so the decision must use the executing sink's
+// policy rather than the session-global snapshot — which is whatever
+// setStepPolicy wrote last. A nil policy falls back to the session-global
+// snapshot for legacy callers and directly constructed sinks.
+func (ps *permissionState) evaluateAtLayerWithPolicy(policy PermissionPolicy, requestID, tool, argsDigest, fullCmd string, layer int) (allow bool, reason string) {
 	ps.mu.Lock()
-	policy := ps.policy
+	if policy == nil {
+		policy = ps.policy
+	}
 	ps.mu.Unlock()
 
 	req := PermissionRequest{ID: requestID, Tool: tool}
@@ -684,6 +696,14 @@ type permissionInterceptSink struct {
 	// runs under it so run cancellation (timeout, user abort) reaches the
 	// callee too.
 	execCtx context.Context
+	// stepPolicy is the Execute's own step policy (KB-155): the CombinedPolicy
+	// built from this step's allow_tools plus the environment layer. With
+	// concurrent executes multiplexed over one session, each execute decides
+	// its permission requests under its own policy — the session-global
+	// snapshot is whatever execute ran setStepPolicy last and must not decide
+	// another's requests. Nil (directly constructed sinks, no resolved
+	// environment layer) falls back to the session-global snapshot.
+	stepPolicy PermissionPolicy
 	// nested counts in-flight nested tool-call executes (CRI-161). They run
 	// on their own goroutines so the caller's Execute event loop keeps
 	// reading its Permissions stream while calls are in flight (replies may
@@ -787,7 +807,7 @@ func (s *permissionInterceptSink) handlePermissionRequest(data any) {
 	// The layer is the caller Execute this sink serves: a step-level caller
 	// records layer 0, a nested callee records its own deeper layer, so the
 	// audit log distinguishes the two decision surfaces.
-	allow, reason := s.permState.evaluateAtLayer(requestID, tool, "", fullCmd, s.nesting.depth)
+	allow, reason := s.permState.evaluateAtLayerWithPolicy(s.stepPolicy, requestID, tool, "", fullCmd, s.nesting.depth)
 	if allow {
 		// Strip "matched: " prefix to get the raw pattern for the payload.
 		pattern := strings.TrimPrefix(reason, "matched: ")
