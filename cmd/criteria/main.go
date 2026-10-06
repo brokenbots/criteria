@@ -51,6 +51,7 @@ func main() {
 	root.AddCommand(cli.NewInspectCmd())
 	root.AddCommand(cli.NewAdapterCmd())
 	root.AddCommand(cli.NewPeerCmd())
+	root.AddCommand(cli.NewServeAdapterCmd())
 	root.AddCommand(cli.NewCacheCmd())
 	root.AddCommand(cli.NewLangserverCmd())
 	root.AddCommand(cli.NewVersionCmd())

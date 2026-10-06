@@ -415,6 +415,16 @@ func applyRunResumedEvent(run *Run, decode func(proto.Message) bool) {
 // finalizeRunStatus resolves the terminal-ended vs still-running question
 // once the event stream has been folded in.
 func finalizeRunStatus(dir string, run *Run, st *localState) {
+	// A deliberately cancelled run wins over everything the event stream
+	// folded (the teardown's engine-cancel produces a run-failed event that
+	// would otherwise read "crash"): run-state.json stamped "cancelled" is
+	// the teardown's durable last word.
+	if st != nil && st.Status == StatusCancelled {
+		run.Status = StatusCancelled
+		run.FailureReason = ""
+		run.EndedAt = fileMtimeRFC3339(dir, stateFileName)
+		return
+	}
 	if run.Status == StatusSucceeded || run.Status == StatusFailed {
 		run.EndedAt = fileMtimeRFC3339(dir, eventsFileName)
 		return
