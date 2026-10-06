@@ -348,7 +348,13 @@ func (s *Server) serveOnce(ctx context.Context) error {
 		"scope", s.cfg.Scope,
 		"digest", s.cfg.Digest,
 	)
-	return server.Serve(lis)
+	err = server.Serve(lis)
+	// Serve-adapter teardown: RequestExit stopped the server — report the
+	// intentional end as success so Serve->Run does not log a reconnect.
+	if s.ExitRequested() {
+		return nil
+	}
+	return err
 }
 
 // dial opens the transport: a context-cancellable TCP or unix dial (SIGTERM
