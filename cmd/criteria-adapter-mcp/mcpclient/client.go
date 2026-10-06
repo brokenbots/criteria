@@ -212,8 +212,8 @@ func (c *Client) request(ctx context.Context, method string, params any) (json.R
 		c.pendMu.Lock()
 		delete(c.pending, id)
 		c.pendMu.Unlock()
-		// KB-155: tell the server the call was abandoned before dropping the
-		// pending entry. Without this, a multiplexed server never learns the
+		// KB-155: tell the server the call was abandoned after dropping the
+		// pending entry (deleted above). Without this, a multiplexed server never learns the
 		// caller gave up: the request stays pending on its side until the
 		// session closes, and its per-request accounting (progress tokens,
 		// in-flight marks) drifts as callers rotate. The notification carries

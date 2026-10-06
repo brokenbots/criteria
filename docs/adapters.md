@@ -508,6 +508,17 @@ call comes back as a bare allow-grant with no result, which the caller
 surfaces as the typed `host_unsupported` failure; a denied call returns
 `cancel` as usual.
 
+Execution model: a tool call runs the callee's own v2 `Execute` on the
+callee's session. A callee that declares the `concurrent_execute` capability
+accepts multiple in-flight Executes on **one** session — concurrent tool calls
+multiplex over it and are correlated, per call, by `request_id` (KB-155,
+ADR-0004 superset). A callee without `concurrent_execute` — and without
+`parallel_safe`, the capability the engine's parallel-iteration contract
+already authorizes concurrency with — keeps the serialized posture: sibling
+calls run one Execute at a time on the callee's single turn, a call cancelled
+while queued completes typed `canceled`, and replies cannot overtake each
+other.
+
 ### The call/return lifecycle
 
 A tool call **is** a gated permission request with a payload (ADR-0004 §8).

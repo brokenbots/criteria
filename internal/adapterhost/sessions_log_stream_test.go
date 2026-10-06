@@ -152,7 +152,8 @@ func TestSessionManager_Integration_100Logs10Events_Redaction(t *testing.T) {
 			return evs
 		}(),
 		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
-			// Trigger log emission now that currentSink is set.
+			// Trigger the handle's staged log emission while Execute is
+			// still alive, interleaved with the adapter events below.
 			close(trigger)
 			// Keep Execute alive long enough for log delivery.
 			time.Sleep(100 * time.Millisecond)
