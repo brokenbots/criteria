@@ -26,8 +26,9 @@ import (
 	"fmt"
 	"time"
 
-	criteriav2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/zclconf/go-cty/cty"
+
+	criteriav2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/engine"
