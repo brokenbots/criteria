@@ -2646,6 +2646,14 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 	}
 	defer m.releaseExecuteTurn(sess)
 
+	// KB-155: when the turn arrives after the caller was cancelled
+	// (select unblocked on the token instead of Done), abandon before any
+	// adapter-observable state — a dispatched execute on a cancelled
+	// context would run the queued call. The defer above hands the turn on.
+	if err := ctx.Err(); err != nil {
+		return adapter.Result{}, ctx.Err()
+	}
+
 	// KB-155: the execute carries its own step policy so concurrent executes
 	// on one multiplexed session each decide under their own allow_tools +
 	// environment policy instead of a session-global last-writer snapshot.
