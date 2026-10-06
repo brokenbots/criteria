@@ -652,6 +652,9 @@ func TestServeAdapter_ControlVerbsFailClosedForNonOwningSession(t *testing.T) {
 		if err == nil {
 			t.Fatalf("%s from a non-owning session succeeded; want fail-closed error", verb)
 		}
+		if connect.CodeOf(err) != connect.CodeFailedPrecondition {
+			t.Errorf("%s connect code = %q, want failed_precondition", verb, connect.CodeOf(err))
+		}
 		if !strings.Contains(err.Error(), "belongs to session") {
 			t.Errorf("%s error = %v, want message naming the owning session", verb, err)
 		}

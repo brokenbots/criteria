@@ -491,7 +491,7 @@ func (c *serveAdapterClient) CloseSession(ctx context.Context, req *criteriav2.C
 	var done chan struct{}
 	if run != nil && run.session != nil && run.session.id != sess.id {
 		c.mu.Unlock()
-		return nil, connectErrorStatus(fmt.Errorf("child run %q belongs to session %q", run.id, run.session.id))
+		return nil, connectErrorStatus(&errChildRunNotOwnedBySession{runID: run.id, owner: run.session.id})
 	}
 	if run != nil {
 		c.requestRunCancelLocked(run.id)
@@ -526,8 +526,9 @@ func (c *serveAdapterClient) CloseSession(ctx context.Context, req *criteriav2.C
 // session itself must exist (unknown sessions fail closed as CodeNotFound),
 // and — same invariant CloseSession enforces — a session may only operate on
 // the run IT opened: the single in-flight run is bound to its opening session,
-// so a request naming a different session gets a name-both-sides error and
-// nil (fail closed), never a handle silently transplanted across sessions.
+// so a request naming a different session gets the typed
+// errChildRunNotOwnedBySession (FailedPrecondition over the wire) and nil
+// (fail closed), never a handle silently transplanted across sessions.
 // (nil, nil) means the session is legitimate but has no in-flight run.
 func (c *serveAdapterClient) sessionRun(sessionID, verb string) (*serveAdapterRun, error) {
 	c.mu.Lock()
@@ -539,7 +540,7 @@ func (c *serveAdapterClient) sessionRun(sessionID, verb string) (*serveAdapterRu
 	if c.run != nil && c.run.session != nil && c.run.session.id != sessionID {
 		c.log.Warn("control verb rejected: session does not own the in-flight child run",
 			"verb", verb, "session_id", sessionID, "run_session_id", c.run.session.id)
-		return nil, fmt.Errorf("child run %q belongs to session %q, not %q", c.run.id, c.run.session.id, sessionID)
+		return nil, &errChildRunNotOwnedBySession{runID: c.run.id, owner: c.run.session.id}
 	}
 	return c.run, nil
 }

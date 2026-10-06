@@ -287,12 +287,29 @@ func rejectWaitApprovalNodes(graph *workflow.FSMGraph) error {
 	return fmt.Errorf("serve-adapter requires a workflow with no wait or approval nodes (parent-adjacent control is an ADR-0008 D6 non-goal); found: %s", strings.Join(found, ", "))
 }
 
+// errChildRunNotOwnedBySession marks the run-ownership violation shared by
+// the control verbs (Pause/Resume/Inspect via sessionRun) and CloseSession:
+// the single in-flight child run belongs to a different session than the one
+// the request named. connectErrorStatus maps it to CodeFailedPrecondition.
+type errChildRunNotOwnedBySession struct {
+	runID string
+	owner string
+}
+
+func (e *errChildRunNotOwnedBySession) Error() string {
+	return fmt.Sprintf("child run %q belongs to session %q", e.runID, e.owner)
+}
+
 // connectErrorStatus converts run-level failures into Connect error codes for
 // the v2 wire. Unknown causes fall back to the internal code.
 func connectErrorStatus(err error) error {
 	var inFlight *ErrChildRunInFlight
 	if errors.As(err, &inFlight) {
 		return connect.NewError(connect.CodeFailedPrecondition, inFlight)
+	}
+	var notOwned *errChildRunNotOwnedBySession
+	if errors.As(err, &notOwned) {
+		return connect.NewError(connect.CodeFailedPrecondition, notOwned)
 	}
 	if errors.Is(err, errSessionUnknownConnect) {
 		return connect.NewError(connect.CodeNotFound, errors.New(err.Error()))
