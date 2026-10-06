@@ -69,11 +69,7 @@ func newBarrierAdapter(name string, n int, outcome string) *barrierAdapter {
 }
 
 func (p *barrierAdapter) Info(context.Context) (adapterhost.Info, error) {
-	return adapterhost.Info{
-		Name:         p.name,
-		Version:      "test",
-		Capabilities: []string{"parallel_safe", "concurrent_execute"},
-	}, nil
+	return adapterhost.Info{Name: p.name, Version: "test", Capabilities: []string{"parallel_safe"}}, nil
 }
 func (p *barrierAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
@@ -115,11 +111,7 @@ type concurrencyTrackingAdapter struct {
 }
 
 func (p *concurrencyTrackingAdapter) Info(context.Context) (adapterhost.Info, error) {
-	return adapterhost.Info{
-		Name:         p.name,
-		Version:      "test",
-		Capabilities: []string{"parallel_safe", "concurrent_execute"},
-	}, nil
+	return adapterhost.Info{Name: p.name, Version: "test", Capabilities: []string{"parallel_safe"}}, nil
 }
 func (p *concurrencyTrackingAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil
@@ -669,11 +661,7 @@ func newLoggingBarrierAdapter(name string, n int, outcome string) *loggingBarrie
 }
 
 func (p *loggingBarrierAdapter) Info(context.Context) (adapterhost.Info, error) {
-	return adapterhost.Info{
-		Name:         p.name,
-		Version:      "test",
-		Capabilities: []string{"parallel_safe", "concurrent_execute"},
-	}, nil
+	return adapterhost.Info{Name: p.name, Version: "test", Capabilities: []string{"parallel_safe"}}, nil
 }
 func (p *loggingBarrierAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
 	return nil

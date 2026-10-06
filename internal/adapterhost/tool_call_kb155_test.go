@@ -8,9 +8,11 @@ package adapterhost
 //     independent caller executes out over the shared session, each execute
 //     deciding permissions under its own step policy and each reply
 //     correlated per request_id;
-//   - sessions without the capability stay serialized by the execute turn
-//     gate: a second caller's execute queues, and cancelling while queued
-//     produces the typed canceled call_error without losing calls;
+//   - sessions without a concurrency-safe posture — neither the
+//     concurrent_execute nor the parallel_safe capability — stay serialized
+//     by the execute turn gate: a second caller's execute queues, and
+//     cancelling while queued produces the typed canceled call_error
+//     without losing calls;
 //   - the per-execute sink registry and the turn gate's own semantics.
 //
 // The tests are written to fail deterministically against a pre-KB-155 tree:
@@ -201,6 +203,104 @@ func TestNestedToolCall_ConcurrentCallersSharedCalleeSession(t *testing.T) {
 	}
 }
 
+// TestNestedToolCall_ParallelSafeCalleeMultiplexes (KB-155, B1 remediation):
+// parallel_safe satisfies the execute turn gate on its own. The engine's
+// parallel-concurrency contract already authorizes concurrent Execute calls
+// on one session (docs/workflow.md "Adapter concurrency requirements"), so a
+// callee declaring ONLY parallel_safe — deliberately without
+// concurrent_execute — must not be turn-gated into silent serialization.
+// Same observation shape as the concurrent_execute variant above: the second
+// caller's dispatch reaches the callee while the first call is provably
+// still held open.
+func TestNestedToolCall_ParallelSafeCalleeMultiplexes(t *testing.T) {
+	audit := &sliceAuditWriter{}
+	calleeRec := &nestedCalleeRecorder{}
+	holdRelease := make(chan struct{})
+	callee := &nestedCalleeAdapter{rec: calleeRec, holdRelease: holdRelease,
+		caps: []string{parallelSafeCapability}}
+	caller1 := &nestedCallerAdapter{target: nestedCallTarget, args: map[string]any{"task": "hold"}}
+	caller2 := &nestedCallerAdapter{target: nestedCallTarget, args: map[string]any{"task": "slow"}}
+
+	loader := NewLoaderWithDiscovery(func(string) (string, error) { return "", nil })
+	loader.RegisterBuiltin("caller1", func() Handle { return caller1 })
+	loader.RegisterBuiltin("caller2", func() Handle { return caller2 })
+	loader.RegisterBuiltin("callee", func() Handle { return callee })
+	sm := NewSessionManager(loader)
+	sm.Audit = audit
+
+	graph := &workflow.FSMGraph{
+		Adapters: map[string]*workflow.AdapterNode{
+			"caller1.instance": {Type: "caller1", Name: "instance"},
+			"caller2.instance": {Type: "caller2", Name: "instance"},
+			"callee.helper":    {Type: "callee", Name: "helper", DynamicTools: true},
+		},
+	}
+	sm.SetGraph(graph)
+	ctx := context.Background()
+	if err := sm.Open(ctx, nestedCalleeSession, "callee", "", nil, nil); err != nil {
+		t.Fatalf("Open callee: %v", err)
+	}
+	defer func() { _ = sm.Close(ctx, nestedCalleeSession) }()
+	if err := sm.Open(ctx, "caller1.instance", "caller1", "", nil, nil); err != nil {
+		t.Fatalf("Open caller1: %v", err)
+	}
+	defer func() { _ = sm.Close(ctx, "caller1.instance") }()
+	if err := sm.Open(ctx, "caller2.instance", "caller2", "", nil, nil); err != nil {
+		t.Fatalf("Open caller2: %v", err)
+	}
+	defer func() { _ = sm.Close(ctx, "caller2.instance") }()
+	step1 := &workflow.StepNode{Name: "call-a", AdapterRef: "caller1.instance", AllowTools: []string{"adapter.callee.helper.tools.*"}}
+	step2 := &workflow.StepNode{Name: "call-b", AdapterRef: "caller2.instance", AllowTools: []string{"adapter.callee.helper.tools.*"}}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		if _, err := sm.Execute(ctx, "caller1.instance", step1, &adapterEventCollector{}, nil); err != nil {
+			t.Errorf("caller1 Execute: %v", err)
+		}
+	}()
+
+	kb155WaitFor(t, "callee executing caller1's call", func() bool {
+		return calleeRecordCount(calleeRec) >= 1
+	})
+	// With the parallel_safe route broken (the shared session turn-gated),
+	// caller2 would queue behind caller1's still-held call and never reach
+	// the callee: this wait fails the test after 5s.
+	go func() {
+		defer wg.Done()
+		if _, err := sm.Execute(ctx, "caller2.instance", step2, &adapterEventCollector{}, nil); err != nil {
+			t.Errorf("caller2 Execute: %v", err)
+		}
+	}()
+	kb155WaitFor(t, "callee executing both calls concurrently on ONE parallel_safe-only session", func() bool {
+		return calleeRecordCount(calleeRec) >= 2
+	})
+
+	// Caller1 is provably still in flight (its hold is closed), so the
+	// observed caller2 start is true same-session overlap.
+	close(holdRelease)
+	kb155WaitGroupWithTimeout(t, &wg, 10*time.Second, "caller executes did not settle")
+
+	tcr1 := caller1.gotResult()
+	if tcr1 == nil || tcr1.CallError != "" || tcr1.Outcome != "success" {
+		t.Errorf("caller1 result = %+v, want clean success", tcr1)
+	}
+	tcr2 := caller2.gotResult()
+	if tcr2 == nil || tcr2.CallError != "" || tcr2.Outcome != "success" {
+		t.Errorf("caller2 result = %+v, want clean success", tcr2)
+	}
+	if report := nestedCalleeReport(t, tcr1); report != "hold" {
+		t.Errorf("caller1 outputs.report = %q, want hold", report)
+	}
+	if report := nestedCalleeReport(t, tcr2); report != "slow" {
+		t.Errorf("caller2 outputs.report = %q, want slow", report)
+	}
+	if got := calleeRecordCount(calleeRec); got != 2 {
+		t.Fatalf("callee executed %d times, want 2 concurrent executes on one session", got)
+	}
+}
+
 // nestedCalleeReport decodes a successful tool_call_result's outputs to the
 // callee's report string (both callee fakes emit the report/count contract).
 func nestedCalleeReport(t *testing.T, tcr *v2.ToolCallResult) string {
@@ -216,7 +316,8 @@ func nestedCalleeReport(t *testing.T, tcr *v2.ToolCallResult) string {
 }
 
 // TestNestedToolCall_NonMultiplexedCalleeSerializes (KB-155): a callee
-// session without the concurrent_execute capability is turn-gated — the
+// session that declares no concurrency-safe capability — here plain "execute"
+// without concurrent_execute and without parallel_safe — is turn-gated — the
 // second tool call queues until the first settles, so the adapter never
 // observes two in-flight executes. Both calls still complete with their own
 // outputs.
@@ -619,13 +720,17 @@ func TestSession_ExecuteTurnGate(t *testing.T) {
 	loader.RegisterBuiltin("callee2", func() Handle {
 		return &cri163Callee{rec: mxRec, caps: []string{"execute", concurrentExecuteCapability}}
 	})
+	loader.RegisterBuiltin("callee3", func() Handle {
+		return &cri163Callee{rec: mxRec, caps: []string{parallelSafeCapability}}
+	})
 	sm := NewSessionManager(loader)
 	sm.Audit = audit
 	sm.SetGraph(&workflow.FSMGraph{
 		Adapters: map[string]*workflow.AdapterNode{
-			"caller.instance": {Type: "caller", Name: "instance"},
-			"callee.helper":   {Type: "callee", Name: "helper"},
-			"callee2.mx":      {Type: "callee2", Name: "mx"},
+			"caller.instance":  {Type: "caller", Name: "instance"},
+			"callee.helper":    {Type: "callee", Name: "helper"},
+			"callee2.mx":       {Type: "callee2", Name: "mx"},
+			"callee3.parallel": {Type: "callee3", Name: "parallel"},
 		},
 	})
 	ctx := context.Background()
@@ -637,6 +742,10 @@ func TestSession_ExecuteTurnGate(t *testing.T) {
 		t.Fatalf("Open callee2.mx: %v", err)
 	}
 	defer func() { _ = sm.Close(context.Background(), "callee2.mx") }()
+	if err := sm.Open(ctx, "callee3.parallel", "callee3", "", nil, nil); err != nil {
+		t.Fatalf("Open callee3.parallel: %v", err)
+	}
+	defer func() { _ = sm.Close(context.Background(), "callee3.parallel") }()
 
 	// Non-multiplexable: the first acquire takes the turn.
 	sess, err := sm.lookup(nestedCalleeSession)
@@ -668,5 +777,17 @@ func TestSession_ExecuteTurnGate(t *testing.T) {
 	}
 	if queued, gateErr := sm.acquireExecuteTurn(ctx, mxSess); gateErr != nil || queued {
 		t.Errorf("multiplexable acquire: queued=%v err=%v, want nil (gate skipped)", gateErr, queued)
+	}
+
+	// parallel_safe admits the gate too: the documented parallel-concurrency
+	// contract already grants concurrent Executes on one session, so the
+	// turn must stay untouched without any concurrent_execute opt-in
+	// (KB-155 B1 remediation).
+	pSess, err := sm.lookup("callee3.parallel")
+	if err != nil {
+		t.Fatalf("lookup parallel-only: %v", err)
+	}
+	if queued, gateErr := sm.acquireExecuteTurn(ctx, pSess); gateErr != nil || queued {
+		t.Errorf("parallel_safe-only acquire: queued=%v err=%v, want nil (gate skipped)", gateErr, queued)
 	}
 }

@@ -2879,21 +2879,34 @@ func (m *SessionManager) setStepPolicy(sess *Session, step *workflow.StepNode) {
 // concurrent in-flight Execute RPCs on one session and correlates replies,
 // per-call events, and decisions by request_id (KB-155). The capability
 // vocabulary is free-form — hosts ignore unknown values for forward
-// compatibility — so hosts without this card treat such adapters as
-// single-flight, preserving the de-facto one-execute-per-session posture.
+// compatibility — so hosts without this card keep dispatching concurrent
+// executes on such adapters but only see per-session attribution; per-request
+// attribution is what KB-155 resolves.
 const concurrentExecuteCapability = "concurrent_execute"
 
+// parallelSafeCapability is the adapter side of the long-documented engine
+// parallel contract: sessions declaring it authorize a `parallel = [...]`
+// step's iterations to Execute concurrently (internal/engine, docs/workflow).
+// The turn gate admits it alongside concurrent_execute — serializing those
+// iterations would strip the granted concurrency and deadlock barrier-style
+// adapters (review B1, KB-155).
+const parallelSafeCapability = "parallel_safe"
+
 // sessionSupportsConcurrentExecute reports whether the session's cached
-// capabilities declare concurrent_execute (KB-155). Thread-safe through
-// HasCapability's session/verified-record lookup.
+// capabilities declare a multiplexable execute posture (KB-155): either the
+// concurrent_execute capability or the engine's parallel_safe contract
+// capability. Thread-safe through HasCapability's session/verified-record
+// lookup.
 func (m *SessionManager) sessionSupportsConcurrentExecute(sess *Session) bool {
-	return m.HasCapability(sess.Name, concurrentExecuteCapability)
+	return m.HasCapability(sess.Name, concurrentExecuteCapability) ||
+		m.HasCapability(sess.Name, parallelSafeCapability)
 }
 
-// acquireExecuteTurn serializes executes on sessions that do not declare
-// concurrent_execute (KB-155): the turn is taken before any session-global
-// state is touched so a queued caller can never observe an in-flight
-// sibling's state; multiplexable sessions skip the gate. The queued flag
+// acquireExecuteTurn serializes executes on sessions that declare neither
+// parallel_safe nor concurrent_execute (KB-155): the turn is taken before
+// any session-global state is touched so a queued caller can never observe
+// an in-flight sibling's state; multiplexable sessions skip the gate. The
+// queued flag
 // reports whether the caller had to wait behind a sibling. Returns ctx.Err()
 // only when the caller is cancelled while queued — in that state the turn
 // was never taken, so the caller must return without releasing (the typed
@@ -3629,6 +3642,10 @@ func (m *SessionManager) openAndRestoreAdapter(ctx context.Context, name, adapte
 }
 
 func buildRestoredSession(name, adapterName, onCrash string, config, resolvedSecrets map[string]string, originRefs map[string]secrets.OriginRef, caps []string, plug Handle, cleanup func(), permState *permissionState, workingDir, scopeInstanceID string) *Session {
+	// execTurns and activeSinks are deliberately nil here: a restored session
+	// fails open with the legacy unserialized posture (matching the restored
+	// session's pre-KB-155 behavior) until a fresh execute lifecycle binds
+	// them.
 	return &Session{
 		Name:             name,
 		Adapter:          adapterName,
