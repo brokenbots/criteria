@@ -305,7 +305,7 @@ func checkWorkflowCapabilityHostability(key string, info *AdapterInfo, envKey st
 	return hcl.Diagnostics{{
 		Severity: hcl.DiagWarning,
 		Summary:  fmt.Sprintf("adapter %q: workflow.v1 peer bound to %q environment", key, envTypeFromKey(envKey)),
-		Detail: "a workflow.v1-capable adapter fronts a criteria child process, but this environment type is typically built without the criteria binary itself; prefer a local shell environment (the reference deployment runs both processes on one machine) unless the image intentionally ships the criteria binary.",
+		Detail:   "a workflow.v1-capable adapter fronts a criteria child process, but this environment type is typically built without the criteria binary itself; prefer a local shell environment (the reference deployment runs both processes on one machine) unless the image intentionally ships the criteria binary.",
 	}}
 }
 

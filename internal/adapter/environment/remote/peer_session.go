@@ -487,32 +487,9 @@ func (ps *peerSession) applySupervisionEvent(ev *criteriav1.SupervisionEvent) {
 		}
 		ps.lastSeq = seq
 	}
-	var exited bool
-	var reason, detail string
+	exited, reason, detail := ps.applyProcessTerminalArmLocked(ev)
 	var terminalRunID string
 	switch kind := ev.GetKind().(type) {
-	case *criteriav1.SupervisionEvent_Exited:
-		if !ps.exited {
-			exited = true
-			ps.exited = true
-			ps.exitReason = exitReasonProcessExited
-			ps.exitDetail = fmt.Sprintf("exit_code=%d signal=%d idle_ms=%d",
-				kind.Exited.GetExitCode(), kind.Exited.GetSignal(), kind.Exited.GetIdleMs())
-		}
-	case *criteriav1.SupervisionEvent_Crash:
-		// The peer journals a plain Exited record first and then a
-		// CrashClassified record for the same ungraceful exit
-		// (internal/peer/child.go recordExit → classifyUnexpectedExit), so a
-		// Crash event may arrive after the placeholder exit. Overwrite it:
-		// the journal's classification is the wire fact T-07 consumes
-		// verbatim. CrashClassified is terminal-only (the peer journals it
-		// exclusively at exit paths), so this cannot resurrect a live child.
-		if !ps.exited || ps.exitReason == exitReasonProcessExited {
-			exited = true
-			ps.exited = true
-			ps.exitReason = kind.Crash.GetReason()
-			ps.exitDetail = kind.Crash.GetDetail()
-		}
 	case *criteriav1.SupervisionEvent_Flushed:
 		if kind.Flushed.GetChannel() != "" {
 			ps.logFlushed[kind.Flushed.GetChannel()] = kind.Flushed.GetUpToSeq()
@@ -529,9 +506,6 @@ func (ps *peerSession) applySupervisionEvent(ev *criteriav1.SupervisionEvent) {
 		// broadcast runs after this unlock).
 		terminalRunID = ps.applyChildRunArmLocked(ev)
 	}
-	if exited {
-		reason, detail = ps.exitReason, ps.exitDetail
-	}
 	ps.mu.Unlock()
 
 	if terminalRunID != "" {
@@ -547,6 +521,35 @@ func (ps *peerSession) applySupervisionEvent(ev *criteriav1.SupervisionEvent) {
 			"adapter", ps.dial.AdapterType, "scope", ps.dial.Scope,
 			"reason", reason, "detail", detail)
 	}
+}
+
+// applyProcessTerminalArmLocked merges the journal's terminal process-record
+// arms (Exited placeholder + CrashClassified) under ps.mu. The peer journals
+// a plain Exited record first and then a CrashClassified record for the same
+// ungraceful exit (internal/peer/child.go recordExit →
+// classifyUnexpectedExit), so a Crash event may arrive after the placeholder
+// exit: overwrite it — the journal's classification is the wire fact T-07
+// consumes verbatim. CrashClassified is terminal-only (the peer journals it
+// exclusively at exit paths), so this cannot resurrect a live child.
+func (ps *peerSession) applyProcessTerminalArmLocked(ev *criteriav1.SupervisionEvent) (exited bool, reason, detail string) {
+	switch kind := ev.GetKind().(type) {
+	case *criteriav1.SupervisionEvent_Exited:
+		if !ps.exited {
+			ps.exited = true
+			ps.exitReason = exitReasonProcessExited
+			ps.exitDetail = fmt.Sprintf("exit_code=%d signal=%d idle_ms=%d",
+				kind.Exited.GetExitCode(), kind.Exited.GetSignal(), kind.Exited.GetIdleMs())
+			return true, ps.exitReason, ps.exitDetail
+		}
+	case *criteriav1.SupervisionEvent_Crash:
+		if !ps.exited || ps.exitReason == exitReasonProcessExited {
+			ps.exited = true
+			ps.exitReason = kind.Crash.GetReason()
+			ps.exitDetail = kind.Crash.GetDetail()
+			return true, ps.exitReason, ps.exitDetail
+		}
+	}
+	return false, "", ""
 }
 
 // lastEventSeq reports the last applied journal sequence (the replay cursor).

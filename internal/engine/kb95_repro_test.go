@@ -96,7 +96,7 @@ func (s *kb95Shared) liveManager() *adapterhost.SessionManager {
 // engine's live session manager while it still holds the turn: the probe is
 // the overlapping re-Execute (never queued, never a second child run, the
 // typed guard reply instead).
-func (s *kb95Shared) reExecuteProbe(sessionName string, step *workflow.StepNode) {
+func (s *kb95Shared) reExecuteProbe(ctx context.Context, sessionName string, step *workflow.StepNode) {
 	mgr := s.liveManager()
 	if mgr == nil {
 		// No live manager yet: the probe lands as "not rejected" and the
@@ -105,7 +105,7 @@ func (s *kb95Shared) reExecuteProbe(sessionName string, step *workflow.StepNode)
 	}
 	// The probe never queues: on a busy workflow.v1 session the gate rejects
 	// the call outright with the typed error.
-	probeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	_, err := mgr.Execute(probeCtx, sessionName, step, noopSink{}, nil)
 	s.mu.Lock()
@@ -156,7 +156,7 @@ func (a *kb95ChildAdapter) Execute(ctx context.Context, name string, step *workf
 	a.executes = append(a.executes, stepName)
 	a.mu.Unlock()
 	if stepName == "run_child" {
-		a.shared.reExecuteProbe(name, step)
+		a.shared.reExecuteProbe(ctx, name, step)
 		// The child died mid-run: the transport loss surfaces with the
 		// wrapped child-run evidence, and the peer journal delivered the
 		// terminal classification for the parent to consume.
@@ -207,9 +207,6 @@ func (a *kb95ChildAdapter) executeCount(stepName string) int {
 // outcome error capture (the CRI-271 shape).
 type kb95ReproSink struct {
 	*fakeSink
-
-	engine *Engine
-	shared *kb95Shared
 
 	mu       sync.Mutex
 	events   []cri271Event
@@ -283,7 +280,7 @@ func TestKB95_WorkflowV1ReExecuteGuardFailClosedAndCrashAdoption(t *testing.T) {
 	g := compile(t, kb95Workflow)
 	shared := &kb95Shared{}
 	p := &kb95ChildAdapter{shared: shared}
-	sink := &kb95ReproSink{fakeSink: &fakeSink{}, shared: shared}
+	sink := &kb95ReproSink{fakeSink: &fakeSink{}}
 	eng := NewTestEngine(g, cri271NewLoader(p), sink)
 	shared.engine = eng
 	err := eng.Run(context.Background())

@@ -89,7 +89,7 @@ func (s *kb95WorkflowStub) SupervisionCrashReason() (string, bool) {
 	return s.crashReason, s.crashDelivered
 }
 
-func newKB95Manager(t *testing.T, child *kb95WorkflowStub, mx *kb95WorkflowStub, plain *kb95WorkflowStub) *SessionManager {
+func newKB95Manager(t *testing.T, child, mx, plain *kb95WorkflowStub) *SessionManager {
 	t.Helper()
 	loader := NewLoaderWithDiscovery(func(string) (string, error) { return "", nil })
 	loader.RegisterBuiltin("wfchild", func() Handle { return child })
@@ -127,13 +127,15 @@ func TestSession_WorkflowV1ExecuteTurnGate_KB95(t *testing.T) {
 	plain := &kb95WorkflowStub{}
 	sm := newKB95Manager(t, child, mx, plain)
 	ctx := context.Background()
-	for _, sess := range []struct{ name, adapter string }{
+	names := []string{"wf.child", "wf.mx", "plain.instance"}
+	for i, sess := range []struct{ name, adapter string }{
 		{"wf.child", "wfchild"}, {"wf.mx", "wfmx"}, {"plain.instance", "plain"},
 	} {
 		if err := sm.Open(ctx, sess.name, sess.adapter, "", nil, nil); err != nil {
 			t.Fatalf("Open %s: %v", sess.name, err)
 		}
-		defer func() { _ = sm.Close(context.Background(), sess.name) }()
+		name := names[i]
+		t.Cleanup(func() { _ = sm.Close(context.Background(), name) })
 	}
 
 	// Plain regression (KB-155 unchanged): busy → queue → deadline.

@@ -347,7 +347,7 @@ func (h *peerHandle) adoptSurvivingChildRun(ctx context.Context, guardErr error)
 		if errors.Is(err, errChildRunUnsettled) {
 			return adapter.Result{}, fmt.Errorf("workflow.v1 child run %q adopted from the peer journal but the connection lost it before a terminal outcome: %w", runID, guardErr)
 		}
-		return adapter.Result{}, fmt.Errorf("workflow.v1 child run %q adoption never observed a terminal outcome: %w (guard: %v)", runID, err, guardErr)
+		return adapter.Result{}, fmt.Errorf("workflow.v1 child run %q adoption never observed a terminal outcome: %w (guard: %w)", runID, err, guardErr)
 	}
 	slog.Info("adopted surviving workflow.v1 child run",
 		"adapter", h.ps.dial.AdapterType, "run_id", rec.RunID,
