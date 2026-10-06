@@ -13,21 +13,21 @@ import (
 	"sync"
 	"time"
 
-	criteriav2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
+	"github.com/google/uuid"
+	"github.com/zclconf/go-cty/cty"
 	structpb "google.golang.org/protobuf/types/known/structpb"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/google/uuid"
+	criteriav2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/adapterhost/heartbeatutil"
 	"github.com/brokenbots/criteria/internal/engine"
+	"github.com/brokenbots/criteria/internal/run"
 	"github.com/brokenbots/criteria/internal/runstate"
 	"github.com/brokenbots/criteria/internal/tunables"
 	criteriav1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
-
-	"github.com/zclconf/go-cty/cty"
 )
 
 const (
@@ -57,8 +57,8 @@ type serveAdapterLogRing struct {
 	tailSeen int
 }
 
-func newServeAdapterLogRing(cap int) *serveAdapterLogRing {
-	r := &serveAdapterLogRing{cap: cap}
+func newServeAdapterLogRing(capacity int) *serveAdapterLogRing {
+	r := &serveAdapterLogRing{cap: capacity}
 	r.cond = sync.NewCond(&r.mu)
 	return r
 }
@@ -420,7 +420,7 @@ const (
 // Execute call. The run anchors to the client's base context (signal-driven),
 // per the keepalive doctrine: the Execute RPC stream dying must not kill the
 // run; CloseSession or the Control cancel arm is the explicit teardown path.
-func (c *serveAdapterClient) openChildRun(sess *serveAdapterSession, req *criteriav2.ExecuteRequest) (*serveAdapterRun, error) {
+func (c *serveAdapterClient) openChildRun(sess *serveAdapterSession) (*serveAdapterRun, error) {
 	ctx, cancel := context.WithCancel(c.baseCtx)
 	run := &serveAdapterRun{
 		id:      uuid.NewString(),
@@ -441,22 +441,31 @@ func (c *serveAdapterClient) openChildRun(sess *serveAdapterSession, req *criter
 	return run, nil
 }
 
-// driveChildRun runs the engine loop on its own goroutine and pumps the
-// Execute stream until a terminal state or cancel lands (it returns only
-// after the terminal Result event was delivered). The engine anchors to the
-// child run's own context, not the RPC context.
-func (c *serveAdapterClient) driveChildRun(run *serveAdapterRun, req *criteriav2.ExecuteRequest, sink adapterhost.ExecuteEventSink) error {
-	defer run.cancel()
+// childRunEngine bundles the per-run engine assembly returned by
+// buildChildEngine: the engine itself plus the sink chain pieces the run
+// goroutine and terminal projection need.
+type childRunEngine struct {
+	eng         *engine.Engine
+	tracker     *pauseTracker
+	tsSink      *terminalSuccessSink
+	local       *run.LocalSink
+	closeEvents func()
+}
 
-	ring := run.session.ring
-	queue := make(chan serveAdapterEvent, serveAdapterEventQueueCapacity)
-
-	// Local-run machinery mirror: NDJSON events tee, local checkpointing
-	// function, and the output sink chain the pause tracker rides on.
+// buildChildEngine assembles the local-run machinery for a child run: NDJSON
+// events tee, local checkpoint function, output sink chain (the pause tracker
+// rides on it), engine options, and the engine itself. On error the caller
+// has NOT been left with an open events file (closed here).
+func (c *serveAdapterClient) buildChildEngine(run *serveAdapterRun, ring *serveAdapterLogRing, queue chan serveAdapterEvent) (*childRunEngine, error) {
 	eventOut, closeEvents, err := openRunEventsFile(run.id)
 	if err != nil {
+		return nil, fmt.Errorf("open run events file: %w", err)
+	}
+	rollback := func(closeFile bool) {
+		if closeFile {
+			closeEvents()
+		}
 		c.clearRun(run)
-		return connectErrorStatus(fmt.Errorf("open run events file: %w", err))
 	}
 	getVisits := func() map[string]int { return run.engineVisits() }
 	checkpointFn := buildLocalCheckpointFn(c.log, run.id, c.graph.Name, c.workflowPath, c.sourceHash, getVisits)
@@ -475,31 +484,32 @@ func (c *serveAdapterClient) driveChildRun(run *serveAdapterRun, req *criteriav2
 
 	dataDir, err := runDataDir(run.id)
 	if err != nil {
-		c.clearRun(run)
-		closeEvents()
-		return connectErrorStatus(fmt.Errorf("resolve run data dir: %w", err))
+		rollback(true)
+		return nil, fmt.Errorf("resolve run data dir: %w", err)
 	}
 	engOpts, err := localRunEngineOptions(c.workflowPath, dataDir, run.id)
 	if err != nil {
-		c.clearRun(run)
-		closeEvents()
-		return connectErrorStatus(fmt.Errorf("resolve engine options: %w", err))
+		rollback(true)
+		return nil, fmt.Errorf("resolve engine options: %w", err)
 	}
 	engOpts = append(engOpts,
 		engine.WithVarOverrides(c.mergedSessionVars(run.session)),
 		engine.WithAuditWriter(auditWriterFor(run.id)),
 		engine.WithParallelCeiling(tunables.FromEnv().ServeAdapterConcurrency),
 	)
-	eng := engine.New(c.graph, c.loader, bridge, engOpts...)
+	return &childRunEngine{
+		eng:         engine.New(c.graph, c.loader, bridge, engOpts...),
+		tracker:     tracker,
+		tsSink:      tsSink,
+		local:       local,
+		closeEvents: closeEvents,
+	}, nil
+}
 
-	// Engine construction happens before the control bus is installed so
-	// Pause/Resume/Inspect see a fully-built run.
-	run.mu.Lock()
-	run.ctrl = newLocalRunControl(run.id, c.graph, tracker, eng)
-	run.visitsFn = eng.VisitCounts
-	run.mu.Unlock()
-
-	if err := c.writeChildRunState(run, req); err != nil {
+// armChildRunStart writes the child run's local record (host-of-record
+// doctrine) and journals the ChildRunStarted arm for the parent mapping.
+func (c *serveAdapterClient) armChildRunStart(run *serveAdapterRun) {
+	if err := c.writeChildRunState(run); err != nil {
 		c.log.Warn("could not write local run state for child run", "run_id", run.id, "error", err)
 	}
 	if j := c.journal; j != nil {
@@ -513,16 +523,43 @@ func (c *serveAdapterClient) driveChildRun(run *serveAdapterRun, req *criteriav2
 			c.log.Warn("journal: child run start arm failed", "run_id", run.id, "error", err)
 		}
 	}
-	emitWorkflowGraphsLocal(c.log, local, c.graph)
+}
+
+// driveChildRun runs the engine loop on its own goroutine and pumps the
+// Execute stream until a terminal state or cancel lands (it returns only
+// after the terminal Result event was delivered). The engine anchors to the
+// child run's own context, not the RPC context.
+func (c *serveAdapterClient) driveChildRun(run *serveAdapterRun, sink adapterhost.ExecuteEventSink) error {
+	defer run.cancel()
+
+	ring := run.session.ring
+	queue := make(chan serveAdapterEvent, serveAdapterEventQueueCapacity)
+
+	// Local-run machinery mirror: NDJSON events tee, local checkpointing
+	// function, and the output sink chain the pause tracker rides on.
+	child, err := c.buildChildEngine(run, ring, queue)
+	if err != nil {
+		return connectErrorStatus(err)
+	}
+
+	// Engine construction happens before the control bus is installed so
+	// Pause/Resume/Inspect see a fully-built run.
+	run.mu.Lock()
+	run.ctrl = newLocalRunControl(run.id, c.graph, child.tracker, child.eng)
+	run.visitsFn = child.eng.VisitCounts
+	run.mu.Unlock()
+
+	c.armChildRunStart(run)
+	emitWorkflowGraphsLocal(c.log, child.local, c.graph)
 
 	// Run goroutine: real engine run, then the boundary-resume cycle loop
 	// (the machinery drainLocalResumeCycles rides, minus the approval/signal
 	// paths — those node kinds are compile-rejected in this mode).
 	go func() {
 		defer close(run.done)
-		defer closeEvents()
-		runErr := c.runEngineCycle(run, eng, tracker, run.ctrl)
-		c.settleChildRun(run, runErr, tsSink)
+		defer child.closeEvents()
+		runErr := c.runEngineCycle(run, child.eng, child.tracker, run.ctrl)
+		c.settleChildRun(run, runErr, child.tsSink)
 	}()
 
 	// Execute stream pump: forward queued events, keep the stream warm with
@@ -568,7 +605,7 @@ func auditWriterFor(runID string) adapterhost.AuditWriter {
 
 // writeChildRunState writes the child run's local record so it is visible in
 // the child's own run store (host-of-record doctrine).
-func (c *serveAdapterClient) writeChildRunState(run *serveAdapterRun, req *criteriav2.ExecuteRequest) error {
+func (c *serveAdapterClient) writeChildRunState(run *serveAdapterRun) error {
 	st := newLocalRunState(run.id, c.graph.Name, "")
 	st.Status = runstate.StatusRunning
 	st.WorkflowHash = c.sourceHash
@@ -643,7 +680,31 @@ func (c *serveAdapterClient) settleChildRun(run *serveAdapterRun, runErr error, 
 	run.mu.Unlock()
 	wasCanceled := cancelRequested || run.ctx.Err() != nil
 
-	finalState, success, ok := tsSink.TerminalSuccess()
+	terminal := stampChildRunTerminal(run, runErr, tsSink)
+
+	if runErr != nil && !wasCanceled {
+		c.log.Warn("child run ended with engine error", "run_id", run.id, "error", runErr)
+	}
+
+	c.journalChildRunTerminal(run, terminal, wasCanceled)
+
+	if wasCanceled && terminal != serveAdapterOutcomeSuccess {
+		if err := stampLocalRunStateCancelled(run.id); err != nil {
+			c.log.Warn("could not stamp child run cancelled", "run_id", run.id, "error", err)
+		}
+		return
+	}
+	// Completed run: remove the local record and step checkpoints (apply
+	// convention for finished runs).
+	removeLocalRunState(run.id)
+	RemoveStepCheckpoint(run.id)
+}
+
+// stampChildRunTerminal maps the engine's terminal state onto the adapter
+// outcome vocabulary, stamps terminal fields on the run under its lock, and
+// returns the outcome.
+func stampChildRunTerminal(run *serveAdapterRun, runErr error, tsSink *terminalSuccessSink) string {
+	_, success, ok := tsSink.TerminalSuccess()
 	terminal := serveAdapterOutcomeSuccess
 	comment := ""
 	if !ok || !success {
@@ -652,7 +713,6 @@ func (c *serveAdapterClient) settleChildRun(run *serveAdapterRun, runErr error, 
 	if !ok && runErr != nil {
 		comment = runErr.Error()
 	}
-	_ = finalState
 
 	run.mu.Lock()
 	run.terminal = terminal
@@ -663,36 +723,27 @@ func (c *serveAdapterClient) settleChildRun(run *serveAdapterRun, runErr error, 
 	run.terminalComment = comment
 	run.terminated = true
 	run.mu.Unlock()
+	return terminal
+}
 
-	if runErr != nil && !wasCanceled {
-		c.log.Warn("child run ended with engine error", "run_id", run.id, "error", runErr)
-	}
-
-	if j := c.journal; j != nil {
-		outcome := terminal
-		if wasCanceled && (!ok || !success) {
-			outcome = serveAdapterOutcomeCancelled
-		}
-		if _, err := j.Append(&criteriav1.SupervisionEvent_ChildRunTerminal{
-			ChildRunTerminal: &criteriav1.ChildRunTerminal{
-				RunId:   run.id,
-				Outcome: outcome,
-			},
-		}, serveAdapterJournalAdapterType, c.graph.Name, ""); err != nil {
-			c.log.Warn("journal: child run terminal arm failed", "run_id", run.id, "error", err)
-		}
-	}
-
-	if wasCanceled && (!ok || !success) {
-		if err := stampLocalRunStateCancelled(run.id); err != nil {
-			c.log.Warn("could not stamp child run cancelled", "run_id", run.id, "error", err)
-		}
+// journalChildRunTerminal arms the ChildRunTerminal journal entry; a cancelled
+// unsuccessful run reports outcome "cancelled".
+func (c *serveAdapterClient) journalChildRunTerminal(run *serveAdapterRun, terminal string, wasCanceled bool) {
+	if c.journal == nil {
 		return
 	}
-	// Completed run: remove the local record and step checkpoints (apply
-	// convention for finished runs).
-	removeLocalRunState(run.id)
-	RemoveStepCheckpoint(run.id)
+	outcome := terminal
+	if wasCanceled && terminal != serveAdapterOutcomeSuccess {
+		outcome = serveAdapterOutcomeCancelled
+	}
+	if _, err := c.journal.Append(&criteriav1.SupervisionEvent_ChildRunTerminal{
+		ChildRunTerminal: &criteriav1.ChildRunTerminal{
+			RunId:   run.id,
+			Outcome: outcome,
+		},
+	}, serveAdapterJournalAdapterType, c.graph.Name, ""); err != nil {
+		c.log.Warn("journal: child run terminal arm failed", "run_id", run.id, "error", err)
+	}
 }
 
 // pumpExecuteEvents drains the queue onto the sink until the run goroutine
@@ -728,7 +779,8 @@ func (c *serveAdapterClient) pumpExecuteEvents(run *serveAdapterRun, queue chan 
 				case item := <-queue:
 					emit(item.ev)
 				default:
-					return c.emitTerminalResult(run, sink)
+					c.emitTerminalResult(run, sink)
+					return nil
 				}
 			}
 		case <-ticker.C:
@@ -747,7 +799,7 @@ func (c *serveAdapterClient) pumpExecuteEvents(run *serveAdapterRun, queue chan 
 // emitTerminalResult projects the terminal state onto the stream. On cancel
 // the outcome is failure with a cancellation comment; the record was stamped
 // cancelled by the run goroutine's settle.
-func (c *serveAdapterClient) emitTerminalResult(run *serveAdapterRun, sink adapterhost.ExecuteEventSink) error {
+func (c *serveAdapterClient) emitTerminalResult(run *serveAdapterRun, sink adapterhost.ExecuteEventSink) {
 	run.mu.Lock()
 	terminal := run.terminal
 	comment := run.terminalComment
@@ -763,7 +815,7 @@ func (c *serveAdapterClient) emitTerminalResult(run *serveAdapterRun, sink adapt
 	}
 	if wasCanceled {
 		if comment != "" {
-			comment = comment + "; child run canceled"
+			comment += "; child run canceled"
 		} else {
 			comment = "child run canceled"
 		}
@@ -774,7 +826,7 @@ func (c *serveAdapterClient) emitTerminalResult(run *serveAdapterRun, sink adapt
 	raw := make(map[string]json.RawMessage, len(outputs))
 	for name, value := range outputs {
 		var v interface{}
-		if len(value) > 0 && json.Unmarshal([]byte(value), &v) == nil {
+		if value != "" && json.Unmarshal([]byte(value), &v) == nil {
 			raw[name] = json.RawMessage(value)
 		} else {
 			enc, _ := json.Marshal(value)
@@ -794,7 +846,6 @@ func (c *serveAdapterClient) emitTerminalResult(run *serveAdapterRun, sink adapt
 		c.log.Warn("could not deliver terminal result to host", "run_id", run.id, "error", err)
 	}
 	c.log.Info("child run terminal", "run_id", run.id, "outcome", terminal, "canceled", wasCanceled)
-	return nil
 }
 
 // stampLocalRunStateCancelled stamps the child run's local record with the

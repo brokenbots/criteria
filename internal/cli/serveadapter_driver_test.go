@@ -40,7 +40,7 @@ type serveAdapterTestEnv struct {
 
 // newServeAdapterEnv compiles the toy two-step workflow once and builds a
 // serve-adapter client over it, mirroring runServeAdapter's setup path.
-func newServeAdapterEnv(t *testing.T, fixture string) *serveAdapterTestEnv {
+func newServeAdapterEnv(t *testing.T) *serveAdapterTestEnv {
 	t.Helper()
 	adapterDir := filepath.Dir(buildNoopAdapterBinary(t))
 	stateDir := t.TempDir()
@@ -52,20 +52,20 @@ func newServeAdapterEnv(t *testing.T, fixture string) *serveAdapterTestEnv {
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	log = log.With("test", t.Name())
-	path, err := filepath.Abs(filepath.Join("testdata", fixture))
+	path, err := filepath.Abs(filepath.Join("testdata", "serveadapter_toy"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	src, graph, loader, err := compileForExecution(context.Background(), path, log, false, true)
 	if err != nil {
-		t.Fatalf("compile fixture %s: %v", fixture, err)
+		t.Fatalf("compile fixture serveadapter_toy: %v", err)
 	}
 	if graph == nil {
 		t.Fatal("compiled graph is nil")
 	}
 	digest := serveAdapterWorkflowDigest(src)
 	return &serveAdapterTestEnv{
-		client: newServeAdapterClient(serveAdapterClientOptions{
+		client: newServeAdapterClient(&serveAdapterClientOptions{
 			graph:        graph,
 			loader:       loader,
 			digest:       digest,
@@ -161,7 +161,7 @@ func slowStepStarted() func(*criteriav2.ExecuteEvent) bool {
 // workflow.v1-prefixed adapter events; the terminal state maps to
 // ExecuteResult.outcome + outputs_json matching the projection schema.
 func TestServeAdapter_ExecuteStreamsWorkflowEventsToTerminal(t *testing.T) {
-	env := newServeAdapterEnv(t, "serveadapter_toy")
+	env := newServeAdapterEnv(t)
 	sessionID := env.openTestSession(t)
 
 	cap2 := &executeCapture{arrived: make(chan struct{}, 8)}
@@ -225,7 +225,7 @@ func TestServeAdapter_ExecuteStreamsWorkflowEventsToTerminal(t *testing.T) {
 // the engine's real machinery, and Resume continues it to the same terminal
 // state with pause/resume events streamed.
 func TestServeAdapter_PauseMidCallResumesToSameCheckpoint(t *testing.T) {
-	env := newServeAdapterEnv(t, "serveadapter_toy")
+	env := newServeAdapterEnv(t)
 	sessionID := env.openTestSession(t)
 
 	cap2 := &executeCapture{arrived: make(chan struct{}, 8), watch: slowStepStarted()}
@@ -290,7 +290,7 @@ func TestServeAdapter_PauseMidCallResumesToSameCheckpoint(t *testing.T) {
 // racing a finished run landing in a wedged tracker: pausing a non-live run
 // must return a typed error, not succeed.
 func TestServeAdapter_PauseAfterTerminalFailsClosed(t *testing.T) {
-	env := newServeAdapterEnv(t, "serveadapter_toy")
+	env := newServeAdapterEnv(t)
 	sessionID := env.openTestSession(t)
 
 	cap2 := &executeCapture{}
@@ -310,7 +310,7 @@ func TestServeAdapter_PauseAfterTerminalFailsClosed(t *testing.T) {
 // ErrChildRunInFlight (surviving connect's error wrapping) as
 // CodeFailedPrecondition, and cancelling the run settles the first call.
 func TestServeAdapter_ReExecuteInFlightTypedError(t *testing.T) {
-	env := newServeAdapterEnv(t, "serveadapter_toy")
+	env := newServeAdapterEnv(t)
 	sessionID := env.openTestSession(t)
 
 	cap2 := &executeCapture{arrived: make(chan struct{}, 8), watch: slowStepStarted()}
@@ -357,7 +357,7 @@ func TestServeAdapter_ReExecuteInFlightTypedError(t *testing.T) {
 // CloseSession cancels the live child run through the engine stop machinery
 // and the child run's local record shows cancelled.
 func TestServeAdapter_CloseSessionCancelsLiveRunObservably(t *testing.T) {
-	env := newServeAdapterEnv(t, "serveadapter_toy")
+	env := newServeAdapterEnv(t)
 	sessionID := env.openTestSession(t)
 
 	cap2 := &executeCapture{arrived: make(chan struct{}, 8), watch: slowStepStarted()}
@@ -422,7 +422,7 @@ func assertRunRecordCancelled(t *testing.T, runID string) {
 // variable declarations, and the advertised outcomes vocabulary is the graph's
 // step outcomes plus success/failure.
 func TestServeAdapter_InfoReportsWorkflowV1Contract(t *testing.T) {
-	env := newServeAdapterEnv(t, "serveadapter_toy")
+	env := newServeAdapterEnv(t)
 	info, err := env.client.Info(context.Background(), &criteriav2.InfoRequest{})
 	if err != nil {
 		t.Fatalf("Info: %v", err)
@@ -467,7 +467,7 @@ func TestServeAdapter_InfoReportsWorkflowV1Contract(t *testing.T) {
 // session config coercion: a config key that is not a declared workflow
 // variable is rejected, not silently ignored.
 func TestServeAdapter_OpenSessionUnknownVariableFailsClosed(t *testing.T) {
-	env := newServeAdapterEnv(t, "serveadapter_toy")
+	env := newServeAdapterEnv(t)
 	_, err := env.client.OpenSession(context.Background(), &criteriav2.OpenSessionRequest{
 		SessionId: "sess-bad",
 		Config:    map[string]string{"nonesuch": "value"},
@@ -504,7 +504,7 @@ func TestServeAdapter_JournalArmsRecordChildRunLifecycle(t *testing.T) {
 		t.Fatalf("compile fixture: %v", err)
 	}
 	journal := peer.NewEventJournal(50)
-	c := newServeAdapterClient(serveAdapterClientOptions{
+	c := newServeAdapterClient(&serveAdapterClientOptions{
 		graph:        graph,
 		loader:       loader,
 		digest:       serveAdapterWorkflowDigest(src),
@@ -586,7 +586,7 @@ func TestServeAdapter_WaitApprovalNodesRejectedAtServe(t *testing.T) {
 			// An unreachable-but-parseable host so the gate error (not a
 			// connectivity error) is what surfaces first.
 			t.Setenv("CRITERIA_REMOTE_HOST", "127.0.0.1:59999")
-			err := runServeAdapter(context.Background(), serveAdapterOptions{
+			err := runServeAdapter(context.Background(), &serveAdapterOptions{
 				workflowPath:  filepath.Join("testdata", tc.fixture),
 				allowUnsigned: true,
 			})

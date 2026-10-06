@@ -9,10 +9,11 @@ import (
 	"encoding/json"
 	"sort"
 
-	criteriav2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/hashicorp/hcl/v2/ext/typeexpr"
 	"github.com/zclconf/go-cty/cty"
 	ctyjson "github.com/zclconf/go-cty/cty/json"
+
+	criteriav2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 
 	"github.com/brokenbots/criteria/workflow"
 )

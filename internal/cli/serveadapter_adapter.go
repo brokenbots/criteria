@@ -17,9 +17,10 @@ import (
 	"sync"
 	"time"
 
-	criteriav2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	structpb "google.golang.org/protobuf/types/known/structpb"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
+
+	criteriav2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/peer"
@@ -143,7 +144,7 @@ var (
 	_ peer.ChildRunCanceler = (*serveAdapterClient)(nil)
 )
 
-func newServeAdapterClient(opts serveAdapterClientOptions) *serveAdapterClient {
+func newServeAdapterClient(opts *serveAdapterClientOptions) *serveAdapterClient {
 	return &serveAdapterClient{
 		graph:        opts.graph,
 		loader:       opts.loader,
@@ -264,7 +265,7 @@ func (c *serveAdapterClient) Execute(_ context.Context, req *criteriav2.ExecuteR
 	}
 	c.mu.Unlock()
 
-	run, err := c.openChildRun(sess, req)
+	run, err := c.openChildRun(sess)
 	if err != nil {
 		return connectErrorStatus(err)
 	}
@@ -276,7 +277,7 @@ func (c *serveAdapterClient) Execute(_ context.Context, req *criteriav2.ExecuteR
 	// driveChildRun runs the engine on a separate goroutine and streams this
 	// call's ExecuteEvent sink; it returns only after a terminal state (or
 	// cancel) has been projected.
-	if err := c.driveChildRun(run, req, sink); err != nil {
+	if err := c.driveChildRun(run, sink); err != nil {
 		return err
 	}
 	c.clearRun(run)

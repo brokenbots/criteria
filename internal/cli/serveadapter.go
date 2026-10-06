@@ -22,6 +22,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
+	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/peer"
@@ -65,7 +66,7 @@ func NewServeAdapterCmd() *cobra.Command {
 		Short: "Serve a workflow as an adapter v2 AdapterService over the peer phone-home (ADR-0008)",
 		Long:  serveAdapterEnvDocs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runServeAdapter(cmd.Context(), serveAdapterOptions{
+			return runServeAdapter(cmd.Context(), &serveAdapterOptions{
 				workflowPath:  workflowPath,
 				varFiles:      varFiles,
 				varOverrides:  varOverrides,
@@ -95,7 +96,7 @@ type serveAdapterOptions struct {
 	allowUnsigned bool
 }
 
-func runServeAdapter(parent context.Context, opts serveAdapterOptions) error {
+func runServeAdapter(parent context.Context, opts *serveAdapterOptions) error {
 	probe := newJSONStderrLogger(slog.LevelInfo, "serve-adapter")
 	log := newJSONStderrLogger(peerLogLevel(probe, os.Getenv(peer.EnvLogLevel)), "serve-adapter")
 	slog.SetDefault(log)
@@ -103,48 +104,25 @@ func runServeAdapter(parent context.Context, opts serveAdapterOptions) error {
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	path := strings.TrimSpace(opts.workflowPath)
-	if path == "" {
-		return errors.New("--workflow is required")
-	}
-	path, err := filepath.Abs(path)
-	if err != nil {
-		return fmt.Errorf("resolve workflow path %q: %w", opts.workflowPath, err)
-	}
-	if info, statErr := os.Stat(path); statErr != nil {
-		return fmt.Errorf("workflow path %q: %w", path, statErr)
-	} else if !info.IsDir() && !isWorkflowSourceFile(path) {
-		return fmt.Errorf("workflow path %q is neither a workflow directory nor a .hcl/.chcl source file", path)
-	}
-
 	// ADR-0008 D1: load + compile the workflow ONCE at serve time, before the
 	// phone-home connection is opened. Subsequent Execute calls reuse this
 	// compile.
-	src, graph, loader, err := compileForExecution(ctx, path, log, false, opts.allowUnsigned)
+	compiled, err := prepareServeAdapter(ctx, log, opts)
 	if err != nil {
 		return err
 	}
-	digest := serveAdapterWorkflowDigest(src)
-
-	if err := rejectWaitApprovalNodes(graph); err != nil {
-		return err
-	}
-
-	vars, err := mergeVarSources(opts.varFiles, opts.varOverrides)
-	if err != nil {
-		return err
-	}
+	digest := serveAdapterWorkflowDigest(compiled.src)
 
 	cfg, err := peer.LoadConfigFromEnv()
 	if err != nil {
 		return err
 	}
-	if err := resolvePeerIdentityForWorkflow(&cfg, graph, digest, opts.adapterName, opts.adapterVers, log); err != nil {
+	if err := resolvePeerIdentityForWorkflow(&cfg, compiled.graph, digest, opts.adapterName, opts.adapterVers, log); err != nil {
 		return err
 	}
 	log.Info("serve-adapter config resolved",
 		"adapter", cfg.AdapterName,
-		"workflow", graph.Name,
+		"workflow", compiled.graph.Name,
 		"digest", digest,
 		"host", cfg.Host,
 		"scope", cfg.Scope,
@@ -156,13 +134,13 @@ func runServeAdapter(parent context.Context, opts serveAdapterOptions) error {
 	)
 
 	journal := peer.NewEventJournal(cfg.JournalLimit)
-	impl := newServeAdapterClient(serveAdapterClientOptions{
-		graph:        graph,
-		loader:       loader,
+	impl := newServeAdapterClient(&serveAdapterClientOptions{
+		graph:        compiled.graph,
+		loader:       compiled.loader,
 		digest:       digest,
-		sourceHash:   workflowSourceHash(src),
-		workflowPath: path,
-		vars:         vars,
+		sourceHash:   workflowSourceHash(compiled.src),
+		workflowPath: compiled.path,
+		vars:         compiled.vars,
 		journal:      journal,
 		log:          log,
 		baseCtx:      ctx,
@@ -176,6 +154,52 @@ func runServeAdapter(parent context.Context, opts serveAdapterOptions) error {
 	// exit signal fires, or the substrate gives up. The serve-adapter flavor
 	// never performs child binary shutdown: there is no child binary.
 	return srv.Serve(ctx)
+}
+
+// serveAdapterCompiled bundles the workflow artifacts prepareServeAdapter
+// produces: the compiled graph, the resolved adapter loader, the serving-side
+// variable map, the source bytes (for digest/source-hash derivation), and the
+// resolved workflow path.
+type serveAdapterCompiled struct {
+	src    []byte
+	path   string
+	graph  *workflow.FSMGraph
+	loader *adapterhost.DefaultLoader
+	vars   map[string]cty.Value
+}
+
+// prepareServeAdapter loads, compiles, and gates the served workflow: path
+// resolution, one-time compile, the wait/approval fail-closed gate (mechanics
+// 5), and the serving-side variable map.
+func prepareServeAdapter(ctx context.Context, log *slog.Logger, opts *serveAdapterOptions) (*serveAdapterCompiled, error) {
+	path := strings.TrimSpace(opts.workflowPath)
+	if path == "" {
+		return nil, errors.New("--workflow is required")
+	}
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolve workflow path %q: %w", opts.workflowPath, err)
+	}
+	if info, statErr := os.Stat(path); statErr != nil {
+		return nil, fmt.Errorf("workflow path %q: %w", path, statErr)
+	} else if !info.IsDir() && !isWorkflowSourceFile(path) {
+		return nil, fmt.Errorf("workflow path %q is neither a workflow directory nor a .hcl/.chcl source file", path)
+	}
+
+	src, graph, loader, err := compileForExecution(ctx, path, log, false, opts.allowUnsigned)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := rejectWaitApprovalNodes(graph); err != nil {
+		return nil, err
+	}
+
+	vars, err := mergeVarSources(opts.varFiles, opts.varOverrides)
+	if err != nil {
+		return nil, err
+	}
+	return &serveAdapterCompiled{src: src, path: path, graph: graph, loader: loader, vars: vars}, nil
 }
 
 // resolvePeerIdentityForWorkflow validates the phone-home endpoint and fills
