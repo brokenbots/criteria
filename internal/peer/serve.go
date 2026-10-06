@@ -27,13 +27,16 @@ import (
 	criteriav1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	"github.com/brokenbots/criteria/internal/tunables"
 	"github.com/brokenbots/criteria/workflow/version"
 )
 
 const (
 	// DefaultHeartbeatInterval is the idle interval at which an open
-	// Supervise stream emits a SupervisionHeartbeat.
-	DefaultHeartbeatInterval = 30 * time.Second
+	// Supervise stream emits a SupervisionHeartbeat. Single-sourced from the
+	// tunables registry (KB-172), which also owns the adapter log-stream
+	// heartbeat cadence.
+	DefaultHeartbeatInterval = tunables.DefaultHeartbeatInterval
 
 	// peerDialTimeout bounds a single phone-home dial attempt.
 	peerDialTimeout = 10 * time.Second
@@ -140,10 +143,14 @@ func NewServer(cfg *Config, rt *peerRuntime, log *slog.Logger) *Server {
 		log = slog.Default()
 	}
 	s := &Server{
-		cfg:       cfg,
-		rt:        rt,
-		log:       log,
-		heartbeat: DefaultHeartbeatInterval,
+		cfg: cfg,
+		rt:  rt,
+		log: log,
+		// One source for the heartbeat cadence (KB-172): the registered
+		// heartbeat override applies here too, keeping the peer's Supervise
+		// idle heartbeat on the same knob as the adapter log-stream
+		// heartbeats.
+		heartbeat: tunables.FromEnv().HeartbeatInterval,
 	}
 	s.dialFunc = s.dial
 	s.childClient = s.defaultChildClient
@@ -484,7 +491,7 @@ func (s *Server) supervise(stream grpc.ServerStream, since uint64) error {
 
 func (s *Server) heartbeatInterval() time.Duration {
 	if s.heartbeat <= 0 {
-		return DefaultHeartbeatInterval
+		return tunables.DefaultHeartbeatInterval
 	}
 	return s.heartbeat
 }

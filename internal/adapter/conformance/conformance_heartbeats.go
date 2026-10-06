@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	"github.com/brokenbots/criteria/internal/tunables"
 )
 
 // defaultHeartbeatStallThreshold is the fast threshold used by the heartbeat
@@ -20,10 +21,12 @@ func testHeartbeats(t *testing.T, name string, loader adapterhost.Loader, opts *
 	// Heartbeat conformance is mandatory for any adapter that implements
 	// LogStreamStarter. It is no longer opt-in via opts.Heartbeats.
 	//
-	// In-tree fixtures read this variable and heartbeat faster than the
-	// production 30 s cadence so the idle-survival test can use a short
-	// threshold without waiting 90 s.
-	t.Setenv("CRITERIA_TEST_HEARTBEAT_INTERVAL_MS", "50")
+	// In-tree fixtures read the registered heartbeat override
+	// (tunables.EnvHeartbeatInterval — the replacement for the removed
+	// CRITERIA_TEST_HEARTBEAT_INTERVAL_MS hatch) and heartbeat faster than
+	// the production 30 s cadence so the idle-survival test can use a short
+	// threshold without waiting 90 s. Fixture subprocesses inherit it.
+	t.Setenv(tunables.EnvHeartbeatInterval, "50ms")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

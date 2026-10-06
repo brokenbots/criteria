@@ -26,6 +26,7 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapter/manifest"
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	"github.com/brokenbots/criteria/internal/tunables"
 )
 
 // Environment variables consumed by the peer. The CRITERIA_REMOTE_* block is
@@ -45,19 +46,26 @@ const (
 	EnvAdapterManifest = "CRITERIA_ADAPTER_MANIFEST"
 	EnvLogLevel        = "CRITERIA_LOG_LEVEL"
 	EnvChildKeepAlive  = "CRITERIA_PEER_CHILD_KEEPALIVE"
-	EnvJournalLimit    = "CRITERIA_PEER_JOURNAL_LIMIT"
-	EnvBackoffMin      = "CRITERIA_PEER_BACKOFF_MIN"
-	EnvBackoffMax      = "CRITERIA_PEER_BACKOFF_MAX"
+	// The timing/budget override names are owned by the tunables registry
+	// (KB-172); they are aliased here so the peer's strict parsing and tests
+	// keep their package-local names.
+	EnvJournalLimit = tunables.EnvPeerJournalLimit
+	EnvBackoffMin   = tunables.EnvPeerBackoffMin
+	EnvBackoffMax   = tunables.EnvPeerBackoffMax
 )
 
+// Defaults for the peer's parsed tunables come from the shared tunables
+// registry (KB-172); the single-source constants are aliased here so the
+// peer's own naming and tests keep working. ADR-0007: 4096-event journal,
+// 1s–30s reconnect backoff.
 const (
 	// DefaultJournalLimit is the default bounded journal capacity
 	// (ADR-0007: 4096 events, env-tunable via CRITERIA_PEER_JOURNAL_LIMIT).
-	DefaultJournalLimit = 4096
+	DefaultJournalLimit = tunables.DefaultPeerJournalLimit
 	// DefaultBackoffMin is the default floor for host reconnect backoff.
-	DefaultBackoffMin = time.Second
+	DefaultBackoffMin = tunables.DefaultPeerBackoffMin
 	// DefaultBackoffMax is the default ceiling for host reconnect backoff.
-	DefaultBackoffMax = 30 * time.Second
+	DefaultBackoffMax = tunables.DefaultPeerBackoffMax
 	// DefaultVersion is used when neither the manifest nor the environment
 	// declares an adapter version (runner parity).
 	DefaultVersion = "0.0.0"

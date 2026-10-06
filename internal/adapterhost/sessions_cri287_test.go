@@ -20,6 +20,7 @@ import (
 
 	criteriav2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/internal/tunables"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -284,29 +285,33 @@ func TestCRI287_ProcessExitedDuringTeardownWindowStillCrashClassified(t *testing
 }
 
 // TestCRI287_TeardownWindowFromEnv pins the operator-configurable teardown
-// window: a valid duration is honored, empty, malformed, and non-positive
-// values fall back to the built-in default (0).
+// window through its real consumption path: the tunables registry resolves
+// the override and NewSessionManager seeds the resolved value. Empty,
+// malformed, and non-positive values keep the built-in default.
 func TestCRI287_TeardownWindowFromEnv(t *testing.T) {
 	t.Run("valid", func(t *testing.T) {
-		t.Setenv("CRITERIA_STEP_TIMEOUT_TEARDOWN_WINDOW", "30s")
-		if got := stepTimeoutTeardownWindowFromEnv(); got != 30*time.Second {
-			t.Errorf("got %v, want 30s", got)
+		t.Setenv(tunables.EnvStepTimeoutTeardownWindow, "30s")
+		if got := tunables.FromEnv().StepTimeoutTeardownWindow; got != 30*time.Second {
+			t.Errorf("FromEnv window = %v, want 30s", got)
 		}
 		if sm := NewSessionManager(nil); sm.StepTimeoutTeardownWindow != 30*time.Second {
 			t.Errorf("NewSessionManager window = %v, want 30s", sm.StepTimeoutTeardownWindow)
 		}
 	})
 	t.Run("trimmed", func(t *testing.T) {
-		t.Setenv("CRITERIA_STEP_TIMEOUT_TEARDOWN_WINDOW", " 2m ")
-		if got := stepTimeoutTeardownWindowFromEnv(); got != 2*time.Minute {
-			t.Errorf("got %v, want 2m", got)
+		t.Setenv(tunables.EnvStepTimeoutTeardownWindow, " 2m ")
+		if got := tunables.FromEnv().StepTimeoutTeardownWindow; got != 2*time.Minute {
+			t.Errorf("FromEnv window = %v, want 2m", got)
 		}
 	})
 	for _, v := range []string{"", "garbage", "-1s", "0s"} {
 		t.Run("fallback_"+v, func(t *testing.T) {
-			t.Setenv("CRITERIA_STEP_TIMEOUT_TEARDOWN_WINDOW", v)
-			if got := stepTimeoutTeardownWindowFromEnv(); got != 0 {
-				t.Errorf("stepTimeoutTeardownWindowFromEnv(%q) = %v, want 0", v, got)
+			t.Setenv(tunables.EnvStepTimeoutTeardownWindow, v)
+			if got := tunables.FromEnv().StepTimeoutTeardownWindow; got != tunables.DefaultStepTimeoutTeardownWindow {
+				t.Errorf("FromEnv window with override %q = %v, want default", v, got)
+			}
+			if sm := NewSessionManager(nil); sm.StepTimeoutTeardownWindow != tunables.DefaultStepTimeoutTeardownWindow {
+				t.Errorf("NewSessionManager window = %v, want default", sm.StepTimeoutTeardownWindow)
 			}
 		})
 	}

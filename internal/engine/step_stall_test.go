@@ -17,6 +17,7 @@ import (
 	criteriav2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	"github.com/brokenbots/criteria/internal/tunables"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -247,6 +248,11 @@ func TestStepStall_StepTimeoutCeilingUnchanged(t *testing.T) {
 	}
 }
 
+// TestStepStallWindowFromEnv pins the watchdog's consumption path of the
+// stall knob through the tunables registry (CRITERIA_STEP_STALL_WINDOW): a
+// zero or negative value disables stall detection while a malformed value
+// keeps the built-in default. The parse matrix's ownership lives in the
+// tunables package tests; this asserts the engine reads the same values.
 func TestStepStallWindowFromEnv(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -254,19 +260,19 @@ func TestStepStallWindowFromEnv(t *testing.T) {
 		set   bool
 		want  time.Duration
 	}{
-		{"unset keeps default", "", false, 30 * time.Minute},
+		{"unset keeps default", "", false, tunables.DefaultStepStallWindow},
 		{"configured", "45m", true, 45 * time.Minute},
 		{"zero disables", "0", true, 0},
 		{"negative disables", "-5m", true, 0},
-		{"malformed keeps default", "garbage", true, 30 * time.Minute},
+		{"malformed keeps default", "garbage", true, tunables.DefaultStepStallWindow},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.set {
-				t.Setenv("CRITERIA_STEP_STALL_WINDOW", tc.value)
+				t.Setenv(tunables.EnvStepStallWindow, tc.value)
 			}
-			if got := stepStallWindowFromEnv(); got != tc.want {
-				t.Errorf("stepStallWindowFromEnv() = %s, want %s", got, tc.want)
+			if got := tunables.FromEnv().StepStallWindow; got != tc.want {
+				t.Errorf("FromEnv().StepStallWindow = %s, want %s", got, tc.want)
 			}
 		})
 	}

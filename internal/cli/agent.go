@@ -19,6 +19,7 @@ import (
 	"github.com/brokenbots/criteria/internal/engine"
 	"github.com/brokenbots/criteria/internal/run"
 	servertrans "github.com/brokenbots/criteria/internal/transport/server"
+	"github.com/brokenbots/criteria/internal/tunables"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/workflow"
 	workflowversion "github.com/brokenbots/criteria/workflow/version"
@@ -498,7 +499,7 @@ func setupAgentClient(ctx context.Context, opts *agentOptions, log *slog.Logger)
 		client.Close()
 		return nil, fmt.Errorf("control stream: %w", err)
 	}
-	client.StartHeartbeat(ctx, 10*time.Second)
+	client.StartHeartbeat(ctx, tunables.FromEnv().AgentHeartbeatInterval)
 	log.Info("agent registered and waiting for assignments",
 		"name", name,
 		"version", version,

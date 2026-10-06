@@ -9,12 +9,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/engine"
 	"github.com/brokenbots/criteria/internal/run"
 	servertrans "github.com/brokenbots/criteria/internal/transport/server"
+	"github.com/brokenbots/criteria/internal/tunables"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/workflow"
 )
@@ -383,7 +383,7 @@ func setupServerRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGr
 		client.Close()
 		return nil, "", false, nil, fmt.Errorf("server streams: %w", err)
 	}
-	client.StartHeartbeat(ctx, 10*time.Second)
+	client.StartHeartbeat(ctx, tunables.FromEnv().AgentHeartbeatInterval)
 
 	go func() {
 		for {
