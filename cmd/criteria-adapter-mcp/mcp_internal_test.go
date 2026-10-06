@@ -5,20 +5,33 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria-go-adapter-sdk/adapterhost"
 )
 
-// fakeEventSender collects Execute events for assertions.
+// fakeEventSender collects Execute events for assertions. Send may be called
+// from several goroutines (the Execute goroutine and the bridge's progress
+// router), so the slice is mutex-guarded; read it via all().
 type fakeEventSender struct {
+	mu     sync.Mutex
 	events []*v2.ExecuteEvent
 }
 
 func (f *fakeEventSender) Send(ev *v2.ExecuteEvent) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.events = append(f.events, ev)
 	return nil
+}
+
+// all returns a snapshot of the collected events.
+func (f *fakeEventSender) all() []*v2.ExecuteEvent {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]*v2.ExecuteEvent(nil), f.events...)
 }
 
 var _ adapterhost.ExecuteEventSender = (*fakeEventSender)(nil)
@@ -43,6 +56,11 @@ func (s *permittingEventSender) Send(ev *v2.ExecuteEvent) error {
 		}
 	}
 	return nil
+}
+
+// all returns a snapshot of the wrapped sender's events.
+func (s *permittingEventSender) all() []*v2.ExecuteEvent {
+	return s.inner.all()
 }
 
 // TestParseCSVList covers all parseCSVList branches.

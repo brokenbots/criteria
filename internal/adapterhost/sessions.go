@@ -2877,6 +2877,13 @@ func (m *SessionManager) acquireExecuteTurn(ctx context.Context, sess *Session) 
 	if m.sessionSupportsConcurrentExecute(sess) {
 		return nil
 	}
+	if sess.execTurns == nil {
+		// No gate installed: sessions built only by m.Open are seeded, and
+		// releaseExecuteTurn ignores nil as well. A missing channel on a
+		// hand-built session must mean "unserialized", never "blocked
+		// forever" — receiving on a nil channel would hang the caller.
+		return nil
+	}
 	select {
 	case <-sess.execTurns:
 		return nil
