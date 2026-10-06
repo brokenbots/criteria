@@ -2638,19 +2638,16 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 	// concurrent_execute capability. The turn is taken before any
 	// session-global state (step policy, sink bindings) is touched so a
 	// queued caller can never observe an in-flight sibling's state;
-	// multiplexable sessions skip the gate and fan out freely. Cancel while
-	// queued surfaces as ctx.Err(), which executeError maps to the typed
-	// `canceled` reply path.
-	gateErr, queued := m.acquireExecuteTurn(ctx, sess)
+	// multiplexable sessions skip the gate and fan out freely.
+	queued, gateErr := m.acquireExecuteTurn(ctx, sess)
 	if gateErr != nil {
 		return adapter.Result{}, gateErr
 	}
 	defer m.releaseExecuteTurn(sess)
-
-	// KB-155: a caller whose turn only arrived after its own cancellation
-	// (the release/cancel race above) abandons before any adapter-observable
-	// state; the defer above hands the turn on. Fast-path (unqueued) callers
-	// keep dispatching so the CRI-161 no-wedge contract holds.
+	// A caller whose turn only arrived after its own cancellation abandons
+	// before any adapter-observable state (the release/cancel race); the
+	// defer handed the turn on. Fast-path callers keep dispatching so the
+	// CRI-161 no-wedge contract holds.
 	if queued && ctx.Err() != nil {
 		return adapter.Result{}, ctx.Err()
 	}
@@ -2678,6 +2675,18 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 	// this wait.
 	permSink.waitPending()
 
+	// CRI-161: nested tool calls were dispatched on their own goroutines;
+	// wait for them to settle (and deliver their replies) before reading the
+	// verdict — the callee's reply events are queued on the same interceptor
+	// the caller executes on, so a pending nested call can starve this wait.
+	permSink.waitPending()
+
+	return m.finishExecute(ctx, name, step, sess, sink, permSink, result, execErr)
+}
+
+// finishExecute applies the post-execute pipeline after waitPending: verdict
+// validation, outcome override, and the success postlude.
+func (m *SessionManager) finishExecute(ctx context.Context, name string, step *workflow.StepNode, sess *Session, sink adapter.EventSink, permSink *permissionInterceptSink, result adapter.Result, execErr error) (adapter.Result, error) {
 	// KB-45: validate the verdict against the step's outcome contracts
 	// BEFORE the permission override and any downstream mapping, so a
 	// permission-denied success cannot launder an invalid payload. Legacy
@@ -2699,28 +2708,28 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 
 	m.maybeOverrideOutcome(permSink, &result)
 
-	if execErr == nil {
-		// A completed call proves the session transport was alive (CRI-271).
-		// It deliberately does NOT end the CRI-287 step-timeout teardown
-		// window: a healthy sibling's success is not evidence that a
-		// torn-down sibling has been observed, so the window stays open until
-		// it expires (see the engineStepTimeoutTeardownAt comment).
-		sess.noteActivity()
-		// A nested callee Execute that crashed with on_crash=abort_run latches
-		// its fatal error on the sink (CRI-160): the callee's own crash policy
-		// governs its session, so the error propagates to the engine instead
-		// of the caller's Execute reporting success.
-		if fatalErr := permSink.nestedFatal(); fatalErr != nil {
-			return result, fatalErr
-		}
-		m.registerSensitiveOutputs(result, step)
-		if err := m.checkpointAfterExecute(ctx, sess); err != nil {
-			return result, &FatalRunError{Err: err}
-		}
-		return result, nil
+	if execErr != nil {
+		return m.executeError(ctx, name, step, sess, sink, result, execErr)
 	}
 
-	return m.executeError(ctx, name, step, sess, sink, result, execErr)
+	// A completed call proves the session transport was alive (CRI-271).
+	// It deliberately does NOT end the CRI-287 step-timeout teardown
+	// window: a healthy sibling's success is not evidence that a
+	// torn-down sibling has been observed, so the window stays open until
+	// it expires (see the engineStepTimeoutTeardownAt comment).
+	sess.noteActivity()
+	// A nested callee Execute that crashed with on_crash=abort_run latches
+	// its fatal error on the sink (CRI-160): the callee's own crash policy
+	// governs its session, so the error propagates to the engine instead
+	// of the caller's Execute reporting success.
+	if fatalErr := permSink.nestedFatal(); fatalErr != nil {
+		return result, fatalErr
+	}
+	m.registerSensitiveOutputs(result, step)
+	if err := m.checkpointAfterExecute(ctx, sess); err != nil {
+		return result, &FatalRunError{Err: err}
+	}
+	return result, nil
 }
 
 // executeError classifies a failed Execute call: expected closes (an explicit
@@ -2875,49 +2884,44 @@ func (m *SessionManager) sessionSupportsConcurrentExecute(sess *Session) bool {
 }
 
 // acquireExecuteTurn serializes executes on sessions that do not declare
-// concurrent_execute (KB-155). Single-flight adapters must never see two
-// in-flight executes, and the turn is taken before any session-global state
-// (step policy, sink bindings) is touched so a queued caller can never
-// observe an in-flight sibling's state. Multiplexable sessions skip the
-// gate. Returns ctx.Err() when the caller is cancelled while queued, leaving
-// the turn for the next waiter; the typed execute error mapping turns that
-// into the caller's `canceled` reply. The queued flag reports whether the
-// caller had to wait behind a sibling: only a queued caller abandons on a
-// ctx that was already cancelled when the turn arrived — a cancellation and
-// the sibling's release race to unblock the waiter, and the abandoned call
-// is the only deterministic outcome. A free-turn fast path keeps the CRI-161
-// no-wedge contract: a call issued past a dead parent context still reaches
-// the adapter and delivers its reply.
-func (m *SessionManager) acquireExecuteTurn(ctx context.Context, sess *Session) (error, bool) {
+// concurrent_execute (KB-155): the turn is taken before any session-global
+// state is touched so a queued caller can never observe an in-flight
+// sibling's state; multiplexable sessions skip the gate. The queued flag
+// reports whether the caller had to wait behind a sibling: only a queued
+// caller abandons on a ctx that was already cancelled when the turn arrived
+// — a cancelled sibling's release and the caller's own cancellation race to
+// unblock the waiter, and the abandoned call is the only deterministic
+// outcome. A free-turn fast path keeps the CRI-161 no-wedge contract: a call
+// issued past a dead parent context still reaches the adapter and delivers
+// its reply. Returns ctx.Err() when queued and cancelled; the typed execute
+// error mapping turns it into the caller's `canceled` reply.
+func (m *SessionManager) acquireExecuteTurn(ctx context.Context, sess *Session) (bool, error) {
 	if m.sessionSupportsConcurrentExecute(sess) {
-		return nil, false
+		return false, nil
 	}
 	if sess.execTurns == nil {
 		// No gate installed: sessions built only by m.Open are seeded, and
 		// releaseExecuteTurn ignores nil as well. A missing channel on a
 		// hand-built session must mean "unserialized", never "blocked
 		// forever" — receiving on a nil channel would hang the caller.
-		return nil, false
+		return false, nil
 	}
 	select {
 	case <-sess.execTurns:
 		// Fast path: the turn was free. Proceed regardless of ctx state.
-		return nil, false
+		return false, nil
 	default:
 	}
 	select {
 	case <-sess.execTurns:
-		// Queued behind a sibling. A cancelled sibling releasing the turn and
-		// this caller's own cancellation can unblock the waiter in the same
-		// instant; the cancelled queued call must abandon deterministically.
 		select {
 		case <-ctx.Done():
-			return ctx.Err(), true
+			return true, ctx.Err()
 		default:
-			return nil, true
+			return true, nil
 		}
 	case <-ctx.Done():
-		return ctx.Err(), true
+		return true, ctx.Err()
 	}
 }
 
@@ -2970,13 +2974,13 @@ func (m *SessionManager) unbindActiveSink(sess *Session, sink adapter.EventSink)
 // can be attributed without ambiguity. Multi-execute overlaps (concurrent
 // executes on a multiplexed adapter) and idle sessions return false, and
 // callers must fall back to structured logs: attribution must never guess.
-func (sess *Session) singleActiveSink() (sink adapter.EventSink, ok bool) {
-	sess.activeSinksMu.Lock()
-	defer sess.activeSinksMu.Unlock()
-	if len(sess.activeSinks) != 1 {
+func (s *Session) singleActiveSink() (sink adapter.EventSink, ok bool) {
+	s.activeSinksMu.Lock()
+	defer s.activeSinksMu.Unlock()
+	if len(s.activeSinks) != 1 {
 		return nil, false
 	}
-	for sink := range sess.activeSinks {
+	for sink := range s.activeSinks {
 		return sink, true
 	}
 	return nil, false

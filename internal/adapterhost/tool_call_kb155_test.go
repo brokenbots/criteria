@@ -643,21 +643,21 @@ func TestSession_ExecuteTurnGate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lookup: %v", err)
 	}
-	if gateErr, queued := sm.acquireExecuteTurn(ctx, sess); gateErr != nil || queued {
-		t.Fatalf("first acquire: gateErr=%v queued=%v, want immediate non-queued turn", gateErr, queued)
+	if queued, gateErr := sm.acquireExecuteTurn(ctx, sess); gateErr != nil || queued {
+		t.Fatalf("first acquire: queued=%v err=%v, want immediate non-queued turn", queued, gateErr)
 	}
 	// A second caller queued behind it with a deadline: released only by
 	// context cancellation, not by a phantom turn.
 	queuedCtx, cancelQueued := context.WithTimeout(ctx, 30*time.Millisecond)
 	defer cancelQueued()
-	if gateErr, queued := sm.acquireExecuteTurn(queuedCtx, sess); !errors.Is(gateErr, context.DeadlineExceeded) || !queued {
-		t.Errorf("cancel-while-queued err = %v queued=%v, want context.DeadlineExceeded queued", gateErr, queued)
+	if queued, gateErr := sm.acquireExecuteTurn(queuedCtx, sess); !errors.Is(gateErr, context.DeadlineExceeded) || !queued {
+		t.Errorf("cancel-while-queued err = %v queued=%v, want context.DeadlineExceeded queued", queued, gateErr)
 	}
 	// The cancelled waiter must NOT have consumed the turn: releasing hands
 	// it to the next waiter, which acquires immediately.
 	sm.releaseExecuteTurn(sess)
-	if gateErr, queued := sm.acquireExecuteTurn(ctx, sess); gateErr != nil || queued {
-		t.Fatalf("acquire after release: gateErr=%v queued=%v", gateErr, queued)
+	if queued, gateErr := sm.acquireExecuteTurn(ctx, sess); gateErr != nil || queued {
+		t.Fatalf("acquire after release: queued=%v err=%v", gateErr, queued)
 	}
 	sm.releaseExecuteTurn(sess)
 
@@ -666,7 +666,7 @@ func TestSession_ExecuteTurnGate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lookup mx: %v", err)
 	}
-	if gateErr, queued := sm.acquireExecuteTurn(ctx, mxSess); gateErr != nil || queued {
-		t.Errorf("multiplexable acquire: gateErr=%v queued=%v, want nil (gate skipped)", gateErr, queued)
+	if queued, gateErr := sm.acquireExecuteTurn(ctx, mxSess); gateErr != nil || queued {
+		t.Errorf("multiplexable acquire: queued=%v err=%v, want nil (gate skipped)", gateErr, queued)
 	}
 }

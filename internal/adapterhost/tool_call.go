@@ -296,21 +296,14 @@ func toolCallMatchedPattern(reason string) string {
 	return pattern
 }
 
-// evaluateToolCall evaluates an adapter tool-call request against the step's
-// effective allow set: the step's recorded tools grants (literals, checked
-// first) plus the session's permission policy — the same allow_tools surface
-// as any tool request, evaluated on the full target string. It performs the
-// same bookkeeping as Evaluate (decision record, PermissionEvent on the
-// session stream, audit entry) so the permission decision is logged
-// identically for both request shapes. The session policy itself is untouched,
-// so concurrent plain requests keep their existing semantics. The layer is
-// the nested tool-call layer the call is evaluated in (CRI-163).
-func (ps *permissionState) evaluateToolCall(requestID, target string, parsed toolCallTarget, argsDigest, fullCmd string, grants []workflow.AdapterToolRef, layer int) (allow bool, reason string) {
-	return ps.evaluateToolCallWithPolicy(nil, requestID, target, parsed, argsDigest, fullCmd, grants, layer)
-}
-
-// evaluateToolCallWithPolicy is evaluateToolCall with an explicit per-Execute
-// policy (KB-155): multiplexed executes on one session each decide under
+// evaluateToolCallWithPolicy evaluates an adapter tool-call request against
+// the step's effective allow set: the step's recorded tools grants (literals,
+// checked first) plus the execute's permission policy — the same allow_tools
+// surface as any tool request, evaluated on the full target string. It
+// performs the same bookkeeping as Evaluate (decision record,
+// PermissionEvent on the session stream, audit entry) so the permission
+// decision is logged identically for both request shapes. The policy is
+// explicit (KB-155): multiplexed executes on one session each decide under
 // their own step policy instead of the session-global snapshot, which is
 // whatever setStepPolicy wrote last. A nil policy falls back to the
 // session-global snapshot for legacy callers and directly constructed sinks.
