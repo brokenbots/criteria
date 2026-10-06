@@ -335,7 +335,7 @@ func NewShim(cfg *Config, verifier DigestVerifier) (*Shim, error) {
 		podStatePollInterval:  defaultPodStatePollInterval,
 		dialLocal:             dialLocalAdapter,
 		dialActivity:          make(map[string]time.Time),
-		}, nil
+	}, nil
 }
 
 // phoneHomeKeepAlive is the TCP keepalive applied to accepted phone-home

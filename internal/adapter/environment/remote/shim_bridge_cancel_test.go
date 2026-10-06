@@ -21,7 +21,7 @@ import (
 // internal/engine goleak failure).
 type stubPluginClient struct{ kills atomic.Int32 }
 
-func (p *stubPluginClient) Kill() { p.kills.Add(1) }
+func (p *stubPluginClient) Kill()        { p.kills.Add(1) }
 func (p *stubPluginClient) Exited() bool { return p.kills.Load() > 0 }
 
 // stubDialer stands in for the reattach dialer: it blocks until release is
