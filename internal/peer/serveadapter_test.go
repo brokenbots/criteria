@@ -9,6 +9,10 @@ package peer
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
+	"net"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -31,6 +35,11 @@ type fakeWorkflowAdapter struct {
 	closedSessions []string
 	cancelRequests []string
 	acceptedRunID  string
+	// exitFn, when set, runs as CloseSession's last act inside the handler —
+	// exactly how production wires it (runServeAdapter calls
+	// impl.setExit(peer.Server.RequestExit), the CLI's own adapter impl calls
+	// exit() before returning the response).
+	exitFn func()
 }
 
 func (f *fakeWorkflowAdapter) Info(ctx context.Context, _ *v2.InfoRequest) (*v2.InfoResponse, error) {
@@ -51,7 +60,108 @@ func (f *fakeWorkflowAdapter) CloseSession(ctx context.Context, req *v2.CloseSes
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.closedSessions = append(f.closedSessions, req.GetSessionId())
+	if f.exitFn != nil {
+		f.exitFn()
+	}
 	return &v2.CloseSessionResponse{}, nil
+}
+
+// gatedReadConn wraps the host-side conn so a test can hold back bytes the
+// gRPC transport would otherwise read. While the gate is closed no byte is
+// consumed from the underlying conn: CloseGate pokes (via a short read
+// deadline) any reader already parked inside a raw read so it re-parks at the
+// gate, leaving nothing to drain the (unbuffered net.Pipe) server-side writes
+// — a response written while gated stays blocked in the pipe, so a teardown
+// that kills the transport while it is gated destroys the response for good,
+// exactly like a host TCP receive queue destroyed by an RST. Once the gate
+// opens, the deadline is cleared and reads flow through.
+type gatedReadConn struct {
+	net.Conn
+	mu       sync.Mutex
+	cond     *sync.Cond
+	gateOpen bool
+	buf      bytes.Buffer
+	rawErr   error
+	closed   bool
+}
+
+func newGatedReadConn(c net.Conn) *gatedReadConn {
+	g := &gatedReadConn{Conn: c, gateOpen: true}
+	g.cond = sync.NewCond(&g.mu)
+	return g
+}
+
+func (g *gatedReadConn) OpenGate() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	// Clear the poke deadline before waking readers so their next raw read
+	// is not cut off by a stale poke.
+	_ = g.Conn.SetReadDeadline(time.Time{})
+	g.gateOpen = true
+	g.cond.Broadcast()
+}
+
+func (g *gatedReadConn) CloseGate() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.gateOpen = false
+	// Poke readers parked inside the raw read so they re-evaluate the gate
+	// instead of consuming bytes while it is held.
+	_ = g.Conn.SetReadDeadline(time.Now().Add(20 * time.Millisecond))
+	g.cond.Broadcast()
+}
+
+func (g *gatedReadConn) Read(p []byte) (int, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for {
+		if g.closed {
+			g.buf.Reset()
+			if g.rawErr != nil {
+				return 0, g.rawErr
+			}
+			return 0, io.EOF
+		}
+		if !g.gateOpen {
+			g.cond.Wait()
+			continue
+		}
+		if g.buf.Len() > 0 {
+			return g.buf.Read(p)
+		}
+		raw := make([]byte, len(p))
+		g.mu.Unlock()
+		n, err := g.Conn.Read(raw)
+		g.mu.Lock()
+		if n > 0 && (!g.gateOpen || g.closed) {
+			// Should not happen while the gate is held (CloseGate poked any
+			// parked raw reader away), but if a raw read raced the gate and
+			// consumed bytes, park them rather than delivering them early.
+			g.buf.Write(raw[:n])
+		}
+		if err != nil {
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				// A CloseGate poke, not a transport event: re-evaluate the
+				// gate; the deadline was just consumed.
+				continue
+			}
+			g.rawErr = err
+			g.closed = true
+			continue
+		}
+		if n > 0 && g.gateOpen {
+			copy(p, raw[:n])
+			return n, nil
+		}
+	}
+}
+
+func (g *gatedReadConn) Close() error {
+	g.mu.Lock()
+	g.closed = true
+	g.cond.Broadcast()
+	g.mu.Unlock()
+	return g.Conn.Close()
 }
 
 // CancelChildRun implements ChildRunCanceler: it accepts exactly the run id
@@ -246,6 +356,79 @@ func TestServeAdapterServer_ExitRequestedDefaultsFalse(t *testing.T) {
 	f := newServeAdapterFixture(t, nil)
 	if f.server.ExitRequested() {
 		t.Fatal("ExitRequested = true before any request")
+	}
+}
+
+// TestServeAdapterServer_CloseSessionResponseReachesHostBeforeTeardown is the
+// wire-level regression for the CloseSession exit race: the served adapter
+// requests process exit from inside the CloseSession handler (exactly how
+// production wires it — runServeAdapter calls impl.setExit with
+// peer.Server.RequestExit), and the host must have received the successful
+// CloseSessionResponse BEFORE the watcher starts stopping the server. With
+// the old immediate server.Stop() the teardown killed the transport while the
+// response was still blocked on the unbuffered net.Pipe write, so the host saw
+// the RPC fail as Unavailable; the watcher now drains with a bounded
+// GracefulStop and only then force-closes.
+func TestServeAdapterServer_CloseSessionResponseReachesHostBeforeTeardown(t *testing.T) {
+	f := newServeAdapterFixture(t, nil)
+	f.impl.exitFn = f.server.RequestExit
+
+	conn, _, serveErr := f.startConn()
+	defer conn.Close()
+
+	// Hold the host-side reads so the server's CloseSession response cannot
+	// leave the transport while the gate is held: the response write stays
+	// blocked on the unbuffered pipe for the whole teardown-decision window.
+	gated := newGatedReadConn(conn)
+	cc := f.hostClient(gated)
+	client := adapterhost.NewClientForConn(cc)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if _, err := client.OpenSession(ctx, &v2.OpenSessionRequest{SessionId: "s-wire"}); err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+
+	gated.CloseGate()
+	// Let the CloseGate poke expire: within ~20ms every transport reader is
+	// re-parked at the gate and nothing is draining the pipe, so the
+	// CloseSession response will block server-side until the gate opens.
+	time.Sleep(30 * time.Millisecond)
+
+	closeErr := make(chan error, 1)
+	go func() {
+		_, err := client.CloseSession(ctx, &v2.CloseSessionRequest{SessionId: "s-wire"})
+		closeErr <- err
+	}()
+
+	// Give the watcher a full window to make its teardown decision while the
+	// response is still pinned behind the gate.
+	time.Sleep(100 * time.Millisecond)
+	gated.OpenGate()
+
+	select {
+	case err := <-closeErr:
+		if err != nil {
+			t.Fatalf("CloseSession response never reached the host: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("CloseSession response never reached the host (timeout)")
+	}
+
+	select {
+	case err := <-serveErr:
+		if err != nil {
+			t.Errorf("serveOnce = %v, want nil (exit requested, no teardown error)", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("serveOnce did not return after CloseSession")
+	}
+
+	f.impl.mu.Lock()
+	closedSessions := len(f.impl.closedSessions)
+	f.impl.mu.Unlock()
+	if closedSessions != 1 {
+		t.Errorf("adapter saw %d CloseSession calls, want 1", closedSessions)
 	}
 }
 
