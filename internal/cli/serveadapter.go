@@ -311,6 +311,13 @@ func connectErrorStatus(err error) error {
 	if errors.As(err, &notOwned) {
 		return connect.NewError(connect.CodeFailedPrecondition, notOwned)
 	}
+	var snapPrecondition *errServeSnapshotPrecondition
+	if errors.As(err, &snapPrecondition) {
+		return connect.NewError(connect.CodeFailedPrecondition, snapPrecondition)
+	}
+	if errors.Is(err, errServeSnapshotMalformed) {
+		return connect.NewError(connect.CodeInvalidArgument, errors.New(err.Error()))
+	}
 	if errors.Is(err, errChildRunStillStarting) {
 		return connect.NewError(connect.CodeFailedPrecondition, errors.New(err.Error()))
 	}

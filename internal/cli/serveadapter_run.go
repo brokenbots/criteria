@@ -438,6 +438,13 @@ func (c *serveAdapterClient) openChildRun(sess *serveAdapterSession) (*serveAdap
 	}
 	c.sessions[sess.id] = sess
 	c.run = run
+	if sess.pendingRestore != nil {
+		// Consume the parked Restore exactly once: the pending envelope
+		// moves onto the run and the session slot is cleared, so BuildChildEngine
+		// can seed the fresh run from it and a later Execute starts fresh.
+		run.restore = sess.pendingRestore
+		sess.pendingRestore = nil
+	}
 	return run, nil
 }
 
@@ -501,6 +508,14 @@ func (c *serveAdapterClient) buildChildEngine(run *serveAdapterRun, ring *serveA
 		engine.WithAuditWriter(auditWriterFor(run.id)),
 		engine.WithParallelCeiling(tunables.FromEnv().ServeAdapterConcurrency),
 	)
+	if run.restore != nil {
+		restoredOpts, err := c.applyChildRunRestore(run)
+		if err != nil {
+			rollback(true)
+			return nil, err
+		}
+		engOpts = append(engOpts, restoredOpts...)
+	}
 	return &childRunEngine{
 		eng:         engine.New(c.graph, c.loader, bridge, engOpts...),
 		tracker:     tracker,
@@ -632,7 +647,18 @@ func (r *serveAdapterRun) engineVisits() map[string]int {
 // terminal or canceled.
 func (c *serveAdapterClient) runEngineCycle(run *serveAdapterRun, eng *engine.Engine, tracker *pauseTracker, ctrl *localRunControl) error {
 	ctx := run.ctx
-	if err := eng.Run(ctx); err != nil {
+	if restored := run.restore; restored != nil {
+		// Snapshot-restored child run: enter through the real resume path —
+		// the engine replays captured adapter-session checkpoints
+		// (bootstrapSessionsForResume) and publishes run.resumed for the
+		// parked node — instead of a fresh Run from the initial state.
+		run.restore = nil
+		c.log.Info("child run restored from snapshot; resuming from node", "run_id", run.id, "workflow", c.graph.Name, "node", restored.PausedNode)
+		if err := eng.RunFrom(ctx, restored.PausedNode, 1); err != nil {
+			c.log.Info("child run engine stopped", "run_id", run.id, "error", err)
+			return err
+		}
+	} else if err := eng.Run(ctx); err != nil {
 		c.log.Info("child run engine stopped", "run_id", run.id, "error", err)
 		return err
 	}

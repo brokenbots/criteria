@@ -22,6 +22,7 @@ import (
 
 	criteriav2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/dirs"
 	"github.com/brokenbots/criteria/internal/peer"
 	"github.com/brokenbots/criteria/internal/runstate"
@@ -35,6 +36,8 @@ import (
 type serveAdapterTestEnv struct {
 	client *serveAdapterClient
 	graph  *workflow.FSMGraph
+	loader *adapterhost.DefaultLoader
+	path   string
 	digest string
 	log    *slog.Logger
 }
@@ -77,8 +80,41 @@ func newServeAdapterEnv(t *testing.T) *serveAdapterTestEnv {
 			baseCtx:      context.Background(),
 		}),
 		graph:  graph,
+		loader: loader,
+		path:   path,
 		digest: digest,
 		log:    log,
+	}
+}
+
+// secondClient builds an independent serve-adapter client over the same
+// compiled workflow: same graph, same loader, same digest — the shape the
+// snapshot/restore tests need to simulate a fresh (un-paused) serve instance
+// receiving a RestoreRequest.
+func (env *serveAdapterTestEnv) secondClient(t *testing.T) *serveAdapterClient {
+	t.Helper()
+	return newServeAdapterClient(&serveAdapterClientOptions{
+		graph:        env.graph,
+		loader:       env.loader,
+		digest:       env.digest,
+		sourceHash:   env.digest,
+		workflowPath: env.path,
+		journal:      peer.NewEventJournal(50),
+		log:          env.log,
+		baseCtx:      context.Background(),
+	})
+}
+
+// openSessionWithConfig opens a session on the given client with the given
+// config map, mirroring OpenSessionUnknownVariableFailsClosed's coercion
+// surface.
+func (env *serveAdapterTestEnv) openSessionWithConfig(t *testing.T, client *serveAdapterClient, sessionID string, config map[string]string) {
+	t.Helper()
+	if _, err := client.OpenSession(context.Background(), &criteriav2.OpenSessionRequest{
+		SessionId: sessionID,
+		Config:    config,
+	}); err != nil {
+		t.Fatalf("OpenSession(%q): %v", sessionID, err)
 	}
 }
 
@@ -374,6 +410,12 @@ func TestServeAdapter_CloseSessionCancelsLiveRunObservably(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("timed out waiting for the slow step to start")
 	}
+	if env.client.run == nil {
+		t.Fatal("run slot empty while in flight")
+	}
+	env.client.run.mu.Lock()
+	runID := env.client.run.id
+	env.client.run.mu.Unlock()
 
 	resp, err := env.client.CloseSession(context.Background(), &criteriav2.CloseSessionRequest{SessionId: sessionID})
 	if err != nil {
@@ -395,6 +437,10 @@ func TestServeAdapter_CloseSessionCancelsLiveRunObservably(t *testing.T) {
 	if res == nil || res.GetOutcome() == serveAdapterOutcomeSuccess {
 		t.Fatalf("terminal on cancelled run = %+v, want a non-success outcome", res)
 	}
+	// The cancel path settles the run record with the cancelled stamp; the
+	// record-level invariant belongs here too, not just to the re-Execute
+	// typed-error test.
+	assertRunRecordCancelled(t, runID)
 }
 
 // assertRunRecordCancelled polls the child run's local record until it shows
@@ -439,6 +485,18 @@ func TestServeAdapter_InfoReportsWorkflowV1Contract(t *testing.T) {
 	}
 	if !hasCap {
 		t.Errorf("capabilities %v lack workflow.v1", info.GetCapabilities())
+	}
+	// Mechanics 3: every control verb the child engine machinery really
+	// serves — including snapshot/restore — must be advertised.
+	featureWants := []string{"pause", "resume", "inspect", "snapshot", "restore"}
+	gotFeatures := map[string]bool{}
+	for _, f := range info.GetSupportedFeatures() {
+		gotFeatures[f] = true
+	}
+	for _, f := range featureWants {
+		if !gotFeatures[f] {
+			t.Errorf("supported features %v lack %q", info.GetSupportedFeatures(), f)
+		}
 	}
 	cfgFields := info.GetConfigSchema().GetFields()
 	if _, ok := cfgFields["label"]; !ok {

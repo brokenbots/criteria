@@ -136,6 +136,12 @@ type serveAdapterSession struct {
 	// ring buffers the session's log lines for Log replay/tail. Created in
 	// OpenSession so a Log stream may attach before Execute ever runs.
 	ring *serveAdapterLogRing
+
+	// pendingRestore parks a validated snapshot envelope delivered by
+	// Restore on THIS session; the next Execute consumes it exactly once
+	// (openChildRun pops it) to restart the run from the snapshot's paused
+	// node. Guarded by the client's mutex, like the sessions map.
+	pendingRestore *serveAdapterSnapshotV1
 }
 
 // markActivity records the latest activity observed for the session; a
@@ -166,6 +172,12 @@ func (s *serveAdapterSession) lastActivityTime() time.Time {
 type serveAdapterRun struct {
 	id      string
 	session *serveAdapterSession
+
+	// restore, when non-nil, parks the consumed snapshot envelope until
+	// buildChildEngine seeds the fresh run from it and runEngineCycle
+	// enters via RunFrom instead of Run. Written by openChildRun under the
+	// client lock and consumed on the run goroutine; never read after nil-ing.
+	restore *serveAdapterSnapshotV1
 
 	mu sync.Mutex
 	// ctrl is the in-process pause/resume bus wrapping the live engine
@@ -232,10 +244,10 @@ func (c *serveAdapterClient) Info(_ context.Context, _ *criteriav2.InfoRequest) 
 		Description:  fmt.Sprintf("criteria workflow adapter (ADR-0008 child role): serves workflow %q compiled from %s; outcomes vocabulary: %s", c.graph.Name, c.digest, strings.Join(outcomes, ", ")),
 		Capabilities: []string{serveAdapterCapability},
 		// supported_features: only the controls this mode really implements.
-		// Snapshot/Restore would have to round-trip engine-internal state
-		// bytes the engine does not export; advertising them would be the
-		// approximation ADR-0008 explicitly forbids.
-		SupportedFeatures: []string{"pause", "resume", "inspect"},
+		// Snapshot/Restore ride the engine's real pause/checkpoint machinery
+		// (serveadapter_snapshot.go): Snapshot captures the durable
+		// checkpoint boundary state, Restore replays it through RunFrom.
+		SupportedFeatures: []string{"pause", "resume", "inspect", "snapshot", "restore"},
 		ConfigSchema:      serveAdapterConfigSchema(c.graph),
 		OutputSchema:      serveAdapterOutputSchema(c.graph),
 	}, nil
@@ -484,21 +496,9 @@ func (c *serveAdapterClient) Resume(_ context.Context, req *criteriav2.ResumeReq
 	return &criteriav2.ResumeResponse{}, nil
 }
 
-// Snapshot is not implemented: the engine does not export its internal
-// FSM/session state as round-trippable bytes, and an approximation is exactly
-// what the child-role spec forbids ("engine.pauseSessions path, not an
-// approximation"). The pause machinery's own durable checkpoint (real FSM
-// snapshot + persist) covers recovery in-process. Snapshot is deliberately
-// not declared in capabilities.
-func (c *serveAdapterClient) Snapshot(_ context.Context, _ *criteriav2.SnapshotRequest) (*criteriav2.SnapshotResponse, error) {
-	return nil, connectErrorStatus(errors.New("snapshot is not implemented by the workflow adapter (pause persists a real checkpoint in the child run store; declarable host-side snapshot mobility is not part of this mode)"))
-}
-
-// Restore mirrors Snapshot: the engine has no restore-from-bytes surface, so
-// Restore imports nothing (see Snapshot for the ADR-0008 rationale).
-func (c *serveAdapterClient) Restore(_ context.Context, _ *criteriav2.RestoreRequest) (*criteriav2.RestoreResponse, error) {
-	return nil, connectErrorStatus(errors.New("restore is not implemented by the workflow adapter (see snapshot)"))
-}
+// Snapshot and Restore delegate to the engine's real pause/checkpoint
+// machinery; they live in serveadapter_snapshot.go together with the
+// envelope codec and the parked-restore consumption path.
 
 // Inspect surfaces the child run's live position through the real machinery:
 // the current step from the run's live engine state, the paused node when a
