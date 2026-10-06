@@ -769,7 +769,19 @@ func (c *serveAdapterClient) emitTerminalResult(run *serveAdapterRun, sink adapt
 		}
 	}
 
-	outputsJSON, err := json.Marshal(outputs)
+	// Engine-rendered output values are already JSON strings; embed them as
+	// raw JSON so outputs_json is a clean object (no double encoding).
+	raw := make(map[string]json.RawMessage, len(outputs))
+	for name, value := range outputs {
+		var v interface{}
+		if len(value) > 0 && json.Unmarshal([]byte(value), &v) == nil {
+			raw[name] = json.RawMessage(value)
+		} else {
+			enc, _ := json.Marshal(value)
+			raw[name] = json.RawMessage(enc)
+		}
+	}
+	outputsJSON, err := json.Marshal(raw)
 	if err != nil || outputs == nil {
 		outputsJSON = []byte("{}")
 	}
