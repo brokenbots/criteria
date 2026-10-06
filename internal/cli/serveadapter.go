@@ -311,8 +311,18 @@ func connectErrorStatus(err error) error {
 	if errors.As(err, &notOwned) {
 		return connect.NewError(connect.CodeFailedPrecondition, notOwned)
 	}
+	if errors.Is(err, errChildRunStillStarting) {
+		return connect.NewError(connect.CodeFailedPrecondition, errors.New(err.Error()))
+	}
 	if errors.Is(err, errSessionUnknownConnect) {
 		return connect.NewError(connect.CodeNotFound, errors.New(err.Error()))
+	}
+	if errors.Is(err, errSessionIDRequired) {
+		return connect.NewError(connect.CodeInvalidArgument, errors.New(err.Error()))
+	}
+	var exists *errSessionAlreadyExists
+	if errors.As(err, &exists) {
+		return connect.NewError(connect.CodeAlreadyExists, exists)
 	}
 	if errors.Is(err, context.Canceled) {
 		return connect.NewError(connect.CodeCanceled, err)

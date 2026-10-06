@@ -53,6 +53,28 @@ const closeSessionSettleTimeout = 30 * time.Second
 // for an unknown session id; connectErrorStatus maps it to CodeNotFound.
 var errSessionUnknownConnect = errors.New("unknown session")
 
+// errChildRunStillStarting is the sentinel control verbs return when the
+// in-flight child run is published but its control bus is not installed yet
+// (the openChildRun → driveChildRun build window). The verbs fail closed with
+// CodeFailedPrecondition instead of dereferencing a nil ctrl: grpc-go does
+// not recover handler panics and a host Pause/Resume landing in that window
+// must not kill the served adapter process.
+var errChildRunStillStarting = errors.New("child run is still starting")
+
+// errSessionIDRequired is the missing session_id open failure;
+// connectErrorStatus maps it to CodeInvalidArgument.
+var errSessionIDRequired = errors.New("session_id is required")
+
+// errSessionAlreadyExists marks a duplicate OpenSession session id;
+// connectErrorStatus maps it to CodeAlreadyExists.
+type errSessionAlreadyExists struct {
+	sessionID string
+}
+
+func (e *errSessionAlreadyExists) Error() string {
+	return fmt.Sprintf("session %q already exists", e.sessionID)
+}
+
 // ErrChildRunInFlight is the typed fail-closed error returned when Execute is
 // called while another child run is still executing (ADR-0008 acceptance 2:
 // re-Execute while in-flight = typed error).
@@ -105,9 +127,39 @@ type serveAdapterSession struct {
 	secrets map[string]cty.Value
 	created time.Time
 
+	// actMu guards lastActivity, bumped from the bridge's event-emission path
+	// and the run's settle (whichever goroutine observes the latest activity)
+	// so Inspect reports the session's real latest activity, not creation.
+	actMu        sync.Mutex
+	lastActivity time.Time
+
 	// ring buffers the session's log lines for Log replay/tail. Created in
 	// OpenSession so a Log stream may attach before Execute ever runs.
 	ring *serveAdapterLogRing
+}
+
+// markActivity records the latest activity observed for the session; a
+// monotonic max so late stamps never regress the recorded value.
+func (s *serveAdapterSession) markActivity(at time.Time) {
+	if s == nil {
+		return
+	}
+	s.actMu.Lock()
+	if at.After(s.lastActivity) {
+		s.lastActivity = at
+	}
+	s.actMu.Unlock()
+}
+
+// lastActivityTime returns the latest recorded activity, falling back to
+// the session's creation time when nothing has been recorded yet.
+func (s *serveAdapterSession) lastActivityTime() time.Time {
+	s.actMu.Lock()
+	defer s.actMu.Unlock()
+	if s.lastActivity.IsZero() {
+		return s.created
+	}
+	return s.lastActivity
 }
 
 // serveAdapterRun tracks the single in-flight child run the v2 surface drives.
@@ -196,7 +248,7 @@ func (c *serveAdapterClient) Info(_ context.Context, _ *criteriav2.InfoRequest) 
 func (c *serveAdapterClient) OpenSession(_ context.Context, req *criteriav2.OpenSessionRequest) (*criteriav2.OpenSessionResponse, error) {
 	id := strings.TrimSpace(req.GetSessionId())
 	if id == "" {
-		return nil, connectErrorStatus(errors.New("session_id is required"))
+		return nil, connectErrorStatus(errSessionIDRequired)
 	}
 	config, err := coerceSessionConfig(c.graph, req.GetConfig())
 	if err != nil {
@@ -210,7 +262,7 @@ func (c *serveAdapterClient) OpenSession(_ context.Context, req *criteriav2.Open
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if _, exists := c.sessions[id]; exists {
-		return nil, connectErrorStatus(fmt.Errorf("session %q already exists", id))
+		return nil, connectErrorStatus(&errSessionAlreadyExists{sessionID: id})
 	}
 	c.sessions[id] = &serveAdapterSession{
 		id:      id,
@@ -375,7 +427,10 @@ func (c *serveAdapterClient) Permissions(_ context.Context, requests <-chan *cri
 
 // Pause delegates to the child run's real pause machinery (engine.RequestPause
 // → boundary drain → durable checkpoint + adapter session snapshots) through
-// the control bus. A session without an in-flight child run fails closed.
+// the control bus. A session without an in-flight child run fails closed, as
+// does a run still in its build window (between openChildRun publishing the
+// run and driveChildRun installing its control bus): grpc-go does not recover
+// handler panics and a host Pause landing there must not kill the process.
 func (c *serveAdapterClient) Pause(ctx context.Context, req *criteriav2.PauseRequest) (*criteriav2.PauseResponse, error) {
 	run, err := c.sessionRun(req.GetSessionId(), "pause")
 	if err != nil {
@@ -384,7 +439,13 @@ func (c *serveAdapterClient) Pause(ctx context.Context, req *criteriav2.PauseReq
 	if run == nil {
 		return nil, connectErrorStatus(errors.New("no in-flight child run to pause"))
 	}
-	if err := run.ctrl.pause(ctx); err != nil {
+	run.mu.Lock()
+	ctrl := run.ctrl
+	run.mu.Unlock()
+	if ctrl == nil {
+		return nil, connectErrorStatus(errChildRunStillStarting)
+	}
+	if err := ctrl.pause(ctx); err != nil {
 		return nil, connectErrorStatus(err)
 	}
 	c.refreshPausedNode(run)
@@ -404,10 +465,16 @@ func (c *serveAdapterClient) Resume(_ context.Context, req *criteriav2.ResumeReq
 	if run == nil {
 		return nil, connectErrorStatus(errors.New("no in-flight child run to resume"))
 	}
-	if node := run.ctrl.tracker.PausedAt(); node == "" {
+	run.mu.Lock()
+	ctrl := run.ctrl
+	run.mu.Unlock()
+	if ctrl == nil {
+		return nil, connectErrorStatus(errChildRunStillStarting)
+	}
+	if node := ctrl.tracker.PausedAt(); node == "" {
 		return nil, connectErrorStatus(errors.New("child run is not paused at a node"))
 	}
-	if err := run.ctrl.resume(); err != nil {
+	if err := ctrl.resume(); err != nil {
 		// Wait/approval nodes are gate-rejected at compile in this mode, so
 		// the "deliver via ResolveResume" branch of the bus is unreachable;
 		// any residual message names the paused node, which is the truth.
@@ -515,8 +582,12 @@ func (c *serveAdapterClient) CloseSession(ctx context.Context, req *criteriav2.C
 	c.mu.Unlock()
 	if exit != nil {
 		c.log.Info("close-session teardown complete; exiting", "session_id", req.GetSessionId())
-		// Exit takes effect after this RPC's response reaches the host: the
-		// Serve loop checks the exit signal at its loop boundary.
+		// exit() arms the phone-home watcher while this RPC is still in
+		// flight: the watcher drains with a bounded GracefulStop, which
+		// completes pending RPCs — this response included — before closing
+		// transports, so the host receives the successful response before
+		// the teardown takes effect (the peerServerStopGrace force-close
+		// fallback keeps a lingering stream from hanging the exit).
 		exit()
 	}
 	return &criteriav2.CloseSessionResponse{}, nil
@@ -569,7 +640,8 @@ func structpbStringValue(s string) *structpb.Value {
 }
 
 // sess.lastActivityTimestamp keeps the timestamppb conversion next to the
-// session type.
+// session type; the session's tracked activity (bumped from the bridge event
+// path and the run settle) is the truth, falling back to creation.
 func (s *serveAdapterSession) lastActivityTimestamp() *timestamppb.Timestamp {
-	return timestamppb.New(s.created)
+	return timestamppb.New(s.lastActivityTime())
 }

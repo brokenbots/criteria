@@ -184,9 +184,11 @@ func (b *serveAdapterBridge) push(ev *criteriav2.ExecuteEvent, kindTag string) {
 }
 
 func (b *serveAdapterBridge) stampActivity() {
+	now := time.Now().UTC()
 	b.run.mu.Lock()
-	b.run.lastActivity = time.Now().UTC()
+	b.run.lastActivity = now
 	b.run.mu.Unlock()
+	b.run.session.markActivity(now)
 }
 
 // pushLifecycle builds and queues a workflow.v1-prefixed adapter event.
@@ -683,6 +685,7 @@ func (c *serveAdapterClient) settleChildRun(run *serveAdapterRun, runErr error, 
 	wasCanceled := cancelRequested || run.ctx.Err() != nil
 
 	terminal := stampChildRunTerminal(run, runErr, tsSink)
+	run.session.markActivity(time.Now().UTC())
 
 	if runErr != nil && !wasCanceled {
 		c.log.Warn("child run ended with engine error", "run_id", run.id, "error", runErr)
@@ -743,7 +746,7 @@ func (c *serveAdapterClient) journalChildRunTerminal(run *serveAdapterRun, termi
 			RunId:   run.id,
 			Outcome: outcome,
 		},
-	}, serveAdapterJournalAdapterType, c.graph.Name, ""); err != nil {
+	}, serveAdapterJournalAdapterType, c.graph.Name, run.session.id); err != nil {
 		c.log.Warn("journal: child run terminal arm failed", "run_id", run.id, "error", err)
 	}
 }
@@ -762,7 +765,11 @@ func (c *serveAdapterClient) pumpExecuteEvents(run *serveAdapterRun, queue chan 
 	defer ticker.Stop()
 
 	streamDead := false
+	// The pump observes activity the bridge cannot see: heartbeat ticks and
+	// the terminal result delivery keep the session's activity fresh even
+	// when the bridge emits nothing between them.
 	emit := func(ev *criteriav2.ExecuteEvent) {
+		run.session.markActivity(time.Now().UTC())
 		if streamDead {
 			return
 		}

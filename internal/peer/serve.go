@@ -315,18 +315,29 @@ func (s *Server) serveOnce(ctx context.Context) error {
 		_ = lis.Close()
 	}()
 	go func() {
+		var graceful bool
 		select {
 		case <-ctx.Done():
 		case <-s.exitSignal:
 			// Serve-adapter teardown: stop serving this connection so the
-			// phone-home loop unwinds without reconnecting.
+			// phone-home loop unwinds without reconnecting. GracefulStop
+			// drains pending RPCs before closing transports — the
+			// CloseSession call that armed this signal is itself an in-flight
+			// RPC, so its response reaches the host before the teardown.
+			graceful = true
 		}
 		// Bounded stop: grpc-go's Stop blocks on raw conns stuck in the
 		// preface handshake (a host that never speaks gRPC after the identity
-		// frame), so bound it and force close the conn to unblock the read.
+		// frame), and GracefulStop blocks on long-lived streams the host may
+		// hold open (Log tailing), so bound it and force close the conn to
+		// unblock the stop.
 		stopDone := make(chan struct{})
 		go func() {
-			server.Stop()
+			if graceful {
+				server.GracefulStop()
+			} else {
+				server.Stop()
+			}
 			close(stopDone)
 		}()
 		timer := time.NewTimer(peerServerStopGrace)

@@ -112,7 +112,7 @@ func (s *Server) journalFor() *EventJournal {
 func (s *Server) controlServeAdapter(req *criteriav1.ControlRequest) *criteriav1.ControlResponse {
 	if cancel := req.GetCancelChildRun(); cancel != nil {
 		canceler, ok := s.impl.(ChildRunCanceler)
-		if cancel == nil || !ok {
+		if !ok {
 			return &criteriav1.ControlResponse{
 				Accepted: false,
 				Detail:   "workflow adapter does not support child-run cancellation",
