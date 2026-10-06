@@ -281,6 +281,11 @@ func (p *peerSessionProvider) CloseHandle(ctx context.Context, adapterType, scop
 	delete(p.peers, key)
 	p.mu.Unlock()
 	if ok {
+		// KB-95 teardown ordering (ADR-0008): cancel the in-flight child run
+		// BEFORE the session closes — the child host's process cleanup after
+		// the close must not kill a mid-flight run. Cancellation is
+		// cooperative (bounded, best-effort); v0.6.0 has no detach option.
+		ps.cancelInFlightChildRun(ctx)
 		_ = ps.handle.CloseSession(ctx, "")
 		ps.handle.KillContext(ctx)
 		ps.close("session closed")
@@ -307,7 +312,11 @@ func (p *peerSessionProvider) Stop(ctx context.Context) error {
 		waiters := p.waiters
 		p.waiters = make(map[string][]chan waitResult)
 		p.mu.Unlock()
+		// KB-95: cancel any in-flight child run before closing each peer
+		// session — same ordering contract as CloseHandle on the run-shutdown
+		// teardown path.
 		for _, ps := range peers {
+			ps.cancelInFlightChildRun(ctx)
 			ps.close("shim stopped")
 		}
 		for _, ws := range waiters {
@@ -341,6 +350,20 @@ type peerSession struct {
 	lastSeq       uint64
 	lastHeartbeat time.Time
 	logFlushed    map[string]uint64
+
+	// lost records conn-level loss (supervise consumer or an in-flight
+	// Execute observing the transport die) — the classification input for
+	// the workflow.v1 child-run-loss crash reason (KB-95).
+	lost atomic.Bool
+
+	// childRuns / childWatches are the parent-side child-run tracker
+	// (KB-95): journal arm truth under mu, plus per-run terminal waiters.
+	childRuns    map[string]*childRunRecord
+	childWatches map[string][]chan struct{}
+
+	// done is closed by close(): it wakes child-run terminal waiters on a
+	// lost transport (no terminal can arrive past this point).
+	done chan struct{}
 
 	superviseCtx    context.Context
 	superviseCancel context.CancelFunc
@@ -376,6 +399,9 @@ func newPeerSession(conn net.Conn, dial PeerDial, onDead func(ps *peerSession)) 
 	ps.cc = cc
 	ps.client = adapterhost.NewClientForConn(cc)
 	ps.logFlushed = make(map[string]uint64)
+	ps.childRuns = make(map[string]*childRunRecord)
+	ps.childWatches = make(map[string][]chan struct{})
+	ps.done = make(chan struct{})
 	ps.superviseCtx, ps.superviseCancel = context.WithCancel(context.Background())
 	ps.handle = &peerHandle{ps: ps, name: dial.AdapterType, permActive: make(map[string]bool)}
 	return ps, nil
@@ -463,6 +489,7 @@ func (ps *peerSession) applySupervisionEvent(ev *criteriav1.SupervisionEvent) {
 	}
 	var exited bool
 	var reason, detail string
+	var terminalRunID string
 	switch kind := ev.GetKind().(type) {
 	case *criteriav1.SupervisionEvent_Exited:
 		if !ps.exited {
@@ -495,11 +522,21 @@ func (ps *peerSession) applySupervisionEvent(ev *criteriav1.SupervisionEvent) {
 	case *criteriav1.SupervisionEvent_Spawned:
 		// Informational; the journal's spawn record for T-07's session
 		// records.
+	case *criteriav1.SupervisionEvent_ChildRunStarted,
+		*criteriav1.SupervisionEvent_ChildRunTerminal:
+		// KB-95 (ADR-0008 D2): workflow.v1 child-run tracking. Arm routing
+		// and the watch broadcast happen through the tracker below (the
+		// broadcast runs after this unlock).
+		terminalRunID = ps.applyChildRunArmLocked(ev)
 	}
 	if exited {
 		reason, detail = ps.exitReason, ps.exitDetail
 	}
 	ps.mu.Unlock()
+
+	if terminalRunID != "" {
+		ps.noteChildRunTerminal(terminalRunID)
+	}
 
 	if exited {
 		// Terminal supervision event: the adapter child behind this conn has
@@ -554,8 +591,10 @@ func (ps *peerSession) control(ctx context.Context, req *criteriav1.ControlReque
 }
 
 // died marks the conn-level session dead: drop it from the provider's
-// registry (if still current) and release the transport.
+// registry (if still current) and release the transport. The lost record is
+// the KB-95 classification input: the child-run-loss crash reason keys on it.
 func (ps *peerSession) died(cause error) {
+	ps.lost.Store(true)
 	if ps.onDead != nil {
 		ps.onDead(ps)
 	}
@@ -563,7 +602,8 @@ func (ps *peerSession) died(cause error) {
 }
 
 // close releases the session's transport. Idempotent; safe to call from the
-// consumer, the provider, or both.
+// consumer, the provider, or both. Closing the done channel wakes child-run
+// terminal waiters: no terminal can arrive past this point.
 func (ps *peerSession) close(reason string) {
 	ps.closeOnce.Do(func() {
 		slog.Info("peer adapter session closing", "adapter", ps.dial.AdapterType, "scope", ps.dial.Scope, "reason", reason)
@@ -572,6 +612,7 @@ func (ps *peerSession) close(reason string) {
 		// the explicit conn close covers the accept-time failure path.
 		_ = ps.cc.Close()
 		_ = ps.conn.Close()
+		close(ps.done)
 	})
 }
 
@@ -620,12 +661,14 @@ func (h *peerHandle) OpenSession(ctx context.Context, id string, config, secrets
 
 // Execute streams one step through the shared host-side execute plumbing
 // (fallback permission stream, chunk reassembly, needs_review override) —
-// the exact path rpcHandle.Execute uses.
+// the exact path rpcHandle.Execute uses — with the KB-95 child-run mapping
+// layered on top (one-shot execute, crash adoption, child-run-loss
+// evidence) for workflow.v1 peers.
 func (h *peerHandle) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	h.permMu.Lock()
 	hasPermStream := h.permActive[sessionID]
 	h.permMu.Unlock()
-	return adapterhost.ExecuteViaClient(ctx, h.ps.client, h.ps.dial.AdapterType, sessionID, hasPermStream, step, sink, rejection)
+	return h.executeChildRunAware(ctx, sessionID, hasPermStream, step, sink, rejection)
 }
 
 // CloseSession closes an adapter session on the peer.
@@ -694,10 +737,23 @@ func (h *peerHandle) SupervisionCrashReason() (string, bool) {
 	ps := h.ps
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
-	if !ps.exited || ps.exitReason == exitReasonProcessExited {
-		return "", false
+	if ps.exited {
+		if ps.exitReason == exitReasonProcessExited {
+			return "", false
+		}
+		return ps.exitReason, true
 	}
-	return ps.exitReason, true
+	// KB-95 (ADR-0008): a transport loss while a child run was tracked in
+	// flight is the crash fact for the step — the child's verdict did not
+	// land before the connection died (the classifier prefers this over the
+	// transport heuristics, without overriding the journal's own
+	// CrashClassified evidence above).
+	if ps.lost.Load() {
+		if rec := ps.childRunInFlightLocked(); rec != nil {
+			return adapterhost.CrashReasonChildRunLost, true
+		}
+	}
+	return "", false
 }
 
 // Prompt delivers a mid-turn agent message into the live adapter session on
