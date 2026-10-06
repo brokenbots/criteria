@@ -3,14 +3,12 @@
 package remote
 
 import (
-	hplugin "github.com/hashicorp/go-plugin"
-
 	"github.com/brokenbots/criteria/internal/adapterhost"
 )
 
 // makeHandle wraps a Client + pluginClient into a session-manager-compatible
 // Handle using the existing rpcHandle machinery in adapterhost.
-func makeHandle(name string, client adapterhost.Client, pluginClient *hplugin.Client, onKill func()) adapterhost.Handle {
+func makeHandle(name string, client adapterhost.Client, pluginClient adapterhost.PluginLifecycle, onKill func()) adapterhost.Handle {
 	h := adapterhost.NewRPCHandle(name, pluginClient, client)
 	// Wrap the underlying onKill so we can also run bridge cleanup.
 	if onKill != nil {
