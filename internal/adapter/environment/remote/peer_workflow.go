@@ -95,12 +95,9 @@ func (ps *peerSession) applyChildRunArmLocked(ev *criteriav1.SupervisionEvent) s
 		if id == "" {
 			return ""
 		}
-		if rec, ok := ps.childRuns[id]; ok {
+		if _, ok := ps.childRuns[id]; ok {
 			// Re-arm for a known id (journal replay skew): never erase the
 			// settled truth of an already-terminal run.
-			if !rec.inFlight() {
-				return ""
-			}
 			return ""
 		}
 		ps.childRuns[id] = &childRunRecord{
