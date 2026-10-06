@@ -750,10 +750,10 @@ func TestNestedToolCall_EngineInterleavedReplies(t *testing.T) {
 		}
 	}
 	// Each reply carries its own call's derived outputs.
-	if got := outputsField(t, results["call-1"], "report"); got != "slow" {
+	if got := nestedReport(t, results["call-1"]); got != "slow" {
 		t.Errorf("call-1 outputs.report = %q, want slow", got)
 	}
-	if got := outputsField(t, results["call-2"], "report"); got != "fast" {
+	if got := nestedReport(t, results["call-2"]); got != "fast" {
 		t.Errorf("call-2 outputs.report = %q, want fast", got)
 	}
 
@@ -819,10 +819,10 @@ func TestNestedToolCall_EngineSerializedDefault(t *testing.T) {
 	}
 	// Correlation survives serialization: each reply carries its own call's
 	// derived outputs.
-	if got := outputsField(t, results["call-1"], "report"); got != "slow" {
+	if got := nestedReport(t, results["call-1"]); got != "slow" {
 		t.Errorf("call-1 outputs.report = %q, want slow", got)
 	}
-	if got := outputsField(t, results["call-2"], "report"); got != "fast" {
+	if got := nestedReport(t, results["call-2"]); got != "fast" {
 		t.Errorf("call-2 outputs.report = %q, want fast", got)
 	}
 
@@ -940,9 +940,9 @@ func compileNestedToolCallGraphErr(hcl string) (*workflow.FSMGraph, error) {
 	return g, nil
 }
 
-// outputsField decodes a tool_call_result's outputs_json and returns one
-// string attribute for assertions.
-func outputsField(t *testing.T, tcr *v2.ToolCallResult, field string) string {
+// nestedReport decodes a tool_call_result's outputs_json and returns the
+// "report" string attribute for assertions.
+func nestedReport(t *testing.T, tcr *v2.ToolCallResult) string {
 	t.Helper()
 	typed, err := ctyjson.Unmarshal(tcr.OutputsJson, cty.Object(map[string]cty.Type{
 		"report": cty.String,
@@ -951,5 +951,5 @@ func outputsField(t *testing.T, tcr *v2.ToolCallResult, field string) string {
 	if err != nil {
 		t.Fatalf("decode outputs_json %q: %v", tcr.OutputsJson, err)
 	}
-	return typed.GetAttr(field).AsString()
+	return typed.GetAttr("report").AsString()
 }
