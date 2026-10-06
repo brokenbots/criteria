@@ -22,6 +22,7 @@ import (
 
 	criteriav2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 
+	"github.com/brokenbots/criteria/internal/peer"
 	"github.com/brokenbots/criteria/internal/runstate"
 	"github.com/brokenbots/criteria/workflow"
 
@@ -413,6 +414,159 @@ func assertRunRecordCancelled(t *testing.T, runID string) {
 			t.Fatalf("run record for %q never showed cancelled (last: %q)", runID, last)
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// TestServeAdapter_InfoReportsWorkflowV1Contract covers the Info projection:
+// capabilities advertise workflow.v1, the config schema mirrors workflow
+// variable declarations, and the advertised outcomes vocabulary is the graph's
+// step outcomes plus success/failure.
+func TestServeAdapter_InfoReportsWorkflowV1Contract(t *testing.T) {
+	env := newServeAdapterEnv(t, "serveadapter_toy")
+	info, err := env.client.Info(context.Background(), &criteriav2.InfoRequest{})
+	if err != nil {
+		t.Fatalf("Info: %v", err)
+	}
+	if info.GetName() != "serve_adapter_toy" {
+		t.Errorf("Info name = %q, want serve_adapter_toy", info.GetName())
+	}
+	hasCap := false
+	for _, c := range info.GetCapabilities() {
+		if c == "workflow.v1" {
+			hasCap = true
+		}
+	}
+	if !hasCap {
+		t.Errorf("capabilities %v lack workflow.v1", info.GetCapabilities())
+	}
+	cfgFields := info.GetConfigSchema().GetFields()
+	if _, ok := cfgFields["label"]; !ok {
+		t.Errorf("config schema %v lacks declared variable 'label'", cfgFields)
+	}
+	outFields := info.GetOutputSchema().GetFields()
+	if _, ok := outFields["final"]; !ok {
+		t.Errorf("output schema %v lacks declared output 'final'", outFields)
+	}
+	// The outcomes vocabulary rides Info.Description as "outcomes vocabulary:
+	// ...". Every graph step outcome plus success/failure must be listed.
+	desc := info.GetDescription()
+	if !strings.Contains(desc, "outcomes vocabulary:") {
+		t.Errorf("Info description %q lacks the outcomes vocabulary", desc)
+	}
+	for _, want := range serveAdapterOutcomes(env.graph) {
+		if !strings.Contains(desc, want) {
+			t.Errorf("outcomes vocabulary %q lacks %q", desc, want)
+		}
+	}
+	if !strings.Contains(desc, "success") || !strings.Contains(desc, "failure") {
+		t.Errorf("outcomes vocabulary %q lacks the success/failure terminals", desc)
+	}
+}
+
+// TestServeAdapter_OpenSessionUnknownVariableFailsClosed covers the fail-closed
+// session config coercion: a config key that is not a declared workflow
+// variable is rejected, not silently ignored.
+func TestServeAdapter_OpenSessionUnknownVariableFailsClosed(t *testing.T) {
+	env := newServeAdapterEnv(t, "serveadapter_toy")
+	_, err := env.client.OpenSession(context.Background(), &criteriav2.OpenSessionRequest{
+		SessionId: "sess-bad",
+		Config:    map[string]string{"nonesuch": "value"},
+	})
+	if err == nil {
+		t.Fatal("OpenSession accepted an unknown config key")
+	}
+	if !strings.Contains(err.Error(), "nonesuch") {
+		t.Errorf("error %v does not name the unknown variable", err)
+	}
+}
+
+// TestServeAdapter_JournalArmsRecordChildRunLifecycle covers the supervision
+// journal contract the parent session/run mapping card builds on: the child
+// side arms ChildRunStarted at open and ChildRunTerminal at settle, with
+// outcome "cancelled" for a cancelled run.
+func TestServeAdapter_JournalArmsRecordChildRunLifecycle(t *testing.T) {
+	adapterDir := filepath.Dir(buildNoopAdapterBinary(t))
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_ADAPTERS", adapterDir)
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+	t.Setenv("CRITERIA_LOCAL_APPROVAL", "")
+	t.Setenv("CRITERIA_SERVER_URL", "")
+	t.Setenv("CRITERIA_CONTROL_ADDR", "")
+
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	log = log.With("test", t.Name())
+	path, err := filepath.Abs(filepath.Join("testdata", "serveadapter_toy"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, graph, loader, err := compileForExecution(context.Background(), path, log, false, true)
+	if err != nil {
+		t.Fatalf("compile fixture: %v", err)
+	}
+	journal := peer.NewEventJournal(50)
+	c := newServeAdapterClient(serveAdapterClientOptions{
+		graph:        graph,
+		loader:       loader,
+		digest:       serveAdapterWorkflowDigest(src),
+		sourceHash:   workflowSourceHash(src),
+		workflowPath: path,
+		journal:      journal,
+		log:          log,
+		baseCtx:      context.Background(),
+	})
+
+	cap2 := &executeCapture{arrived: make(chan struct{}, 8), watch: slowStepStarted()}
+	exErr := make(chan error, 1)
+	if _, err := c.OpenSession(context.Background(), &criteriav2.OpenSessionRequest{SessionId: "sess-j"}); err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	go func() {
+		exErr <- c.Execute(context.Background(), &criteriav2.ExecuteRequest{
+			SessionId: "sess-j",
+			StepName:  "warmup",
+		}, cap2)
+	}()
+	select {
+	case <-cap2.arrived:
+	case <-time.After(15 * time.Second):
+		t.Fatal("timed out waiting for the slow step to start")
+	}
+	if c.run == nil {
+		t.Fatal("run slot empty while in flight")
+	}
+	c.run.mu.Lock()
+	runID := c.run.id
+	c.run.mu.Unlock()
+	if _, ok := c.CancelChildRun(runID); !ok {
+		t.Fatalf("CancelChildRun(%q) rejected a live run", runID)
+	}
+	select {
+	case <-exErr:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Execute did not return after cancel")
+	}
+
+	var sawStarted, sawTerminalCancelled bool
+	for _, ev := range journal.Replay(0) {
+		switch {
+		case ev.GetChildRunStarted().GetRunId() == runID:
+			sawStarted = true
+			if d := ev.GetChildRunStarted().GetWorkflowDigest(); d == "" {
+				t.Error("ChildRunStarted arm has an empty workflow digest")
+			}
+		case ev.GetChildRunTerminal().GetRunId() == runID:
+			if ev.GetChildRunTerminal().GetOutcome() == "cancelled" {
+				sawTerminalCancelled = true
+			} else {
+				t.Errorf("ChildRunTerminal outcome = %q, want cancelled", ev.GetChildRunTerminal().GetOutcome())
+			}
+		}
+	}
+	if !sawStarted {
+		t.Error("journal missing ChildRunStarted arm")
+	}
+	if !sawTerminalCancelled {
+		t.Error("journal missing ChildRunTerminal( cancelled ) arm")
 	}
 }
 
