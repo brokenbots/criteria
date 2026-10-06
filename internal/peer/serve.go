@@ -314,45 +314,7 @@ func (s *Server) serveOnce(ctx context.Context) error {
 		<-wrapped.Done()
 		_ = lis.Close()
 	}()
-	go func() {
-		var graceful bool
-		select {
-		case <-ctx.Done():
-		case <-s.exitSignal:
-			// Serve-adapter teardown: stop serving this connection so the
-			// phone-home loop unwinds without reconnecting. GracefulStop
-			// drains pending RPCs before closing transports — the
-			// CloseSession call that armed this signal is itself an in-flight
-			// RPC, so its response reaches the host before the teardown.
-			graceful = true
-		}
-		// Bounded stop: grpc-go's Stop blocks on raw conns stuck in the
-		// preface handshake (a host that never speaks gRPC after the identity
-		// frame), and GracefulStop blocks on long-lived streams the host may
-		// hold open (Log tailing), so bound it and force close the conn to
-		// unblock the stop.
-		stopDone := make(chan struct{})
-		go func() {
-			if graceful {
-				server.GracefulStop()
-			} else {
-				server.Stop()
-			}
-			close(stopDone)
-		}()
-		timer := time.NewTimer(peerServerStopGrace)
-		defer timer.Stop()
-		select {
-		case <-stopDone:
-			// Belt-and-braces: close unconditionally (idempotent) so the
-			// close-signal watcher's lifetime is bounded by this cleanup,
-			// independent of grpc-go's Stop closing behavior.
-			_ = wrapped.Close()
-		case <-timer.C:
-			_ = wrapped.Close()
-			<-stopDone
-		}
-	}()
+	go s.watchConnTeardown(ctx, server, wrapped)
 
 	s.log.Info("peer phone-home connected",
 		"host", s.cfg.Host,
@@ -366,6 +328,51 @@ func (s *Server) serveOnce(ctx context.Context) error {
 		return nil
 	}
 	return err
+}
+
+// watchConnTeardown stops the served gRPC server and closes the conn once the
+// run exits or the caller context ends. A RequestExit teardown drains with
+// GracefulStop — it is armed by an in-flight RPC (CloseSession), whose
+// response must reach the host before the transports close — while a
+// context-end teardown stops immediately.
+func (s *Server) watchConnTeardown(ctx context.Context, server *grpc.Server, wrapped *CloseSignalConn) {
+	var graceful bool
+	select {
+	case <-ctx.Done():
+	case <-s.exitSignal:
+		// Serve-adapter teardown: stop serving this connection so the
+		// phone-home loop unwinds without reconnecting. GracefulStop
+		// drains pending RPCs before closing transports — the
+		// CloseSession call that armed this signal is itself an in-flight
+		// RPC, so its response reaches the host before the teardown.
+		graceful = true
+	}
+	// Bounded stop: grpc-go's Stop blocks on raw conns stuck in the
+	// preface handshake (a host that never speaks gRPC after the identity
+	// frame), and GracefulStop blocks on long-lived streams the host may
+	// hold open (Log tailing), so bound it and force close the conn to
+	// unblock the stop.
+	stopDone := make(chan struct{})
+	go func() {
+		if graceful {
+			server.GracefulStop()
+		} else {
+			server.Stop()
+		}
+		close(stopDone)
+	}()
+	timer := time.NewTimer(peerServerStopGrace)
+	defer timer.Stop()
+	select {
+	case <-stopDone:
+		// Belt-and-braces: close unconditionally (idempotent) so the
+		// close-signal watcher's lifetime is bounded by this cleanup,
+		// independent of grpc-go's Stop closing behavior.
+		_ = wrapped.Close()
+	case <-timer.C:
+		_ = wrapped.Close()
+		<-stopDone
+	}
 }
 
 // dial opens the transport: a context-cancellable TCP or unix dial (SIGTERM
