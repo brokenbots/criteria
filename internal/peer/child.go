@@ -312,11 +312,20 @@ const defaultControlGrace = 5 * time.Second
 // RPC). kill_child acknowledges immediately, waits out the requested grace
 // period (default 5s, host sends 3s), then kills the child; the watcher (or
 // peer shutdown) journals the exit fact, classified as peer-initiated via
-// killRequested. Unsupported actions and dead-or-absent children are
+// killRequested. cancel_child_run (ADR-0008, workflow.v1-gated at the
+// server) is a known arm but there is no child-run substrate yet: nothing to
+// execute a run-level cancellation against, so it is rejected with
+// Accepted=false. Unsupported actions and dead-or-absent children are
 // rejected with Accepted=false.
 func (r *peerRuntime) Control(ctx context.Context, req *criteriav1.ControlRequest) *criteriav1.ControlResponse {
-	if req.GetKillChild() == nil {
+	if req.GetKillChild() == nil && req.GetCancelChildRun() == nil {
 		return &criteriav1.ControlResponse{Accepted: false, Detail: "unsupported control action"}
+	}
+	if cancel := req.GetCancelChildRun(); cancel != nil {
+		return &criteriav1.ControlResponse{
+			Accepted: false,
+			Detail:   fmt.Sprintf("no child run %q in this peer", cancel.GetRunId()),
+		}
 	}
 	grace := time.Duration(req.GetGraceMs()) * time.Millisecond
 	if grace <= 0 {

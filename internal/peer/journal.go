@@ -71,6 +71,24 @@ func (j *EventJournal) Append(kind EventKind, adapterType, scope, sessionID stri
 		ev.Kind = k
 	case *criteriav1.SupervisionEvent_Heartbeat:
 		ev.Kind = k
+	// ADR-0008 child-run arms: structurally accepted like every other
+	// known payload — the journal is capability-agnostic durable truth, so
+	// gate checks for the workflow.v1-scoped arms belong at their
+	// emission/Control call sites, never here (journal truth must survive
+	// reconnect renegotiation).
+	case *criteriav1.SupervisionEvent_ChildRunStarted:
+		ev.Kind = k
+		if k.ChildRunStarted.GetRunId() == "" {
+			return nil, fmt.Errorf("child run started without a run_id")
+		}
+	case *criteriav1.SupervisionEvent_ChildRunTerminal:
+		ev.Kind = k
+		if k.ChildRunTerminal.GetRunId() == "" {
+			return nil, fmt.Errorf("child run terminal without a run_id")
+		}
+		if k.ChildRunTerminal.GetOutcome() == "" {
+			return nil, fmt.Errorf("child run terminal without an outcome")
+		}
 	default:
 		return nil, fmt.Errorf("unsupported supervision event payload %T", kind)
 	}

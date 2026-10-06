@@ -9,12 +9,22 @@
 // Evolution discipline (additive-only):
 //   - Field numbers in this file are permanent once assigned. Never reuse,
 //     renumber, or re-type an existing field; only ever append.
-//   - The next free `kind` oneof arm in SupervisionEvent is field 11. Do NOT
+//   - The next free `kind` oneof arm in SupervisionEvent is field 13. Do NOT
 //     `reserved` forward numbers — reserve only genuinely abandoned ones.
 //   - Stage B run-graph events ride THIS journal: extend SupervisionEvent
 //     with new arms; do not fork a second supervision stream or file.
 //   - Supervision protocol evolution is negotiated via capabilities strings,
 //     not proto package churn: `criteria.v1` stays.
+//   - ADR-0008 (criteria-as-adapter, D3) added arms: CancelChildRun = arm 5
+//     in ControlRequest.kind — the next free ControlRequest FIELD (fields
+//     1-4 are taken; oneof arms share the message's field-number space —
+//     kill_child stays arm 1); ChildRunStarted = arm 11 and
+//     ChildRunTerminal = arm 12 in SupervisionEvent.kind. Both the
+//     run-control arm and the ChildRun* run-graph truth arms are gated
+//     on the capability string `workflow.v1` negotiated in the identity
+//     frame (ADR-0007 D4 role/capability machinery): a peer whose identity
+//     frame does not advertise `workflow.v1` must reject
+//     Control(CancelChildRun) with a typed unimplemented error.
 //
 // Delivery semantics:
 //   - At-least-once delivery. Consumers dedup on (peer conn identity,
