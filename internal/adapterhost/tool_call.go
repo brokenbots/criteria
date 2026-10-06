@@ -582,6 +582,17 @@ func (s *permissionInterceptSink) resolveCalleeDeclaration(ref string) (*workflo
 type toolCallNesting struct {
 	depth int
 	chain []string
+	// issuedWhileExecAlive (KB-155) records that the nested call was
+	// registered while its originating Execute context was still alive. Such
+	// a call must never reach the adapter after that context dies: on a
+	// single-flight callee session the waiter races the queued sibling's
+	// release against its own cancellation, so the only deterministic
+	// outcome is abandonment before dispatch (the acquire seam abandons it
+	// as typed canceled). A call issued after the context already died —
+	// the CRI-161 no-wedge follow-up — keeps legacy behavior and runs even
+	// with a dead context. Engine-issued top-level executes carry the zero
+	// value and keep that legacy behavior too.
+	issuedWhileExecAlive bool
 }
 
 // enters reports whether ref is already on the call chain — i.e. the nested
@@ -794,6 +805,9 @@ func (s *permissionInterceptSink) dispatchNestedToolCall(req *toolCallPayload, p
 // the gate is set the pending set only shrinks.
 func (s *permissionInterceptSink) startNestedToolCall(call *nestedToolCall) {
 	nestedCtx, nestedCancel := context.WithCancel(s.nestedExecCtx())
+	// Liveness is read on the caller goroutine right at dispatch: reading it
+	// inside the callee goroutine would race the cancellation machinery.
+	call.nesting.issuedWhileExecAlive = nestedCtx.Err() == nil
 	if !s.permState.registerPendingToolCall(call.requestID, call.target, nestedCancel) {
 		nestedCancel()
 		// The call was dispatched after reserving its budget; give the

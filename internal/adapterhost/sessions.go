@@ -2644,11 +2644,15 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 		return adapter.Result{}, gateErr
 	}
 	defer m.releaseExecuteTurn(sess)
-	// A caller whose turn only arrived after its own cancellation abandons
-	// before any adapter-observable state (the release/cancel race); the
-	// defer handed the turn on. Fast-path callers keep dispatching so the
-	// CRI-161 no-wedge contract holds.
-	if queued && ctx.Err() != nil {
+	// KB-155 abandon policy: a caller whose turn arrives after its own
+	// cancellation abandons before any adapter-observable state (the defer
+	// handed the turn on) — only when the cancellation is attributable to
+	// this call: it either queued behind a sibling or was dispatched while
+	// its originating Execute context was still alive (issue-time liveness
+	// recorded by startNestedToolCall). A nested follow-up issued after the
+	// context already died keeps the CRI-161 no-wedge contract: the callee
+	// still runs and delivers its typed reply.
+	if ctx.Err() != nil && (queued || nesting.issuedWhileExecAlive) {
 		return adapter.Result{}, ctx.Err()
 	}
 
@@ -2887,14 +2891,13 @@ func (m *SessionManager) sessionSupportsConcurrentExecute(sess *Session) bool {
 // concurrent_execute (KB-155): the turn is taken before any session-global
 // state is touched so a queued caller can never observe an in-flight
 // sibling's state; multiplexable sessions skip the gate. The queued flag
-// reports whether the caller had to wait behind a sibling: only a queued
-// caller abandons on a ctx that was already cancelled when the turn arrived
-// — a cancelled sibling's release and the caller's own cancellation race to
-// unblock the waiter, and the abandoned call is the only deterministic
-// outcome. A free-turn fast path keeps the CRI-161 no-wedge contract: a call
-// issued past a dead parent context still reaches the adapter and delivers
-// its reply. Returns ctx.Err() when queued and cancelled; the typed execute
-// error mapping turns it into the caller's `canceled` reply.
+// reports whether the caller had to wait behind a sibling. Returns ctx.Err()
+// only when the caller is cancelled while queued — in that state the turn
+// was never taken, so the caller must return without releasing (the typed
+// execute error mapping turns ctx.Err() into the caller's `canceled` reply).
+// Abandonment AFTER a successful take — including the release/cancel race
+// where the turn arrives just past the caller's own cancellation — is the
+// caller's decision; see the abandon policy in m.execute.
 func (m *SessionManager) acquireExecuteTurn(ctx context.Context, sess *Session) (bool, error) {
 	if m.sessionSupportsConcurrentExecute(sess) {
 		return false, nil
@@ -2914,13 +2917,14 @@ func (m *SessionManager) acquireExecuteTurn(ctx context.Context, sess *Session) 
 	}
 	select {
 	case <-sess.execTurns:
-		select {
-		case <-ctx.Done():
-			return true, ctx.Err()
-		default:
-			return true, nil
-		}
+		// Queued behind a sibling and the turn is now this caller's: it was
+		// taken, so this return never reports an error (a token taken here
+		// must be released, which only the caller's defer does). Whether the
+		// taken turn is kept is m.execute's abandon decision (queued flag).
+		return true, nil
 	case <-ctx.Done():
+		// Nothing taken: handing back no error would let the caller proceed
+		// with a dead context; the turn stays free for the next waiter.
 		return true, ctx.Err()
 	}
 }
