@@ -48,12 +48,13 @@ type rawEcho struct {
 	waitExit func(time.Duration) error
 }
 
-func startRawEcho(t *testing.T, ndjson bool, extraEnv ...string) *rawEcho {
+func startRawEcho(t *testing.T, ndjson bool) *rawEcho {
 	t.Helper()
 	cmd := exec.Command(testEchoBin)
-	cmd.Env = append(os.Environ(), extraEnv...)
 	if ndjson {
-		cmd.Env = append(cmd.Env, "MCP_FRAMING=ndjson")
+		cmd.Env = append(os.Environ(), "MCP_FRAMING=ndjson")
+	} else {
+		cmd.Env = os.Environ()
 	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -184,8 +185,8 @@ func (f *rawEcho) closeStdinAndExit(t *testing.T) {
 	}
 }
 
-func initializeReq(id int) string {
-	return fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}`, id)
+func initializeReq() string {
+	return `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}`
 }
 
 // assertJSONRPCError parses one reply payload and asserts the error envelope:
@@ -254,7 +255,7 @@ func TestJSONRPCConformance_ParseErrors(t *testing.T) {
 		f := startRawEcho(t, false)
 		f.writeLSP(t, "{@oops")
 		assertJSONRPCError(t, f.readLSPFrame(t), "null", -32700, "parse error")
-		f.writeLSP(t, initializeReq(1))
+		f.writeLSP(t, initializeReq())
 		assertInitializeResult(t, f.readLSPFrame(t))
 		f.writeLSP(t, `{"jsonrpc":"2.0","id":9}`)
 		assertJSONRPCError(t, f.readLSPFrame(t), "9", -32600, "invalid request")
@@ -266,7 +267,7 @@ func TestJSONRPCConformance_ParseErrors(t *testing.T) {
 		assertJSONRPCError(t, f.readNDJSONLine(t), "null", -32700, "parse error")
 		// Blank lines are separators, not garbage: the session keeps working.
 		f.writeNDJSON(t, "")
-		f.writeNDJSON(t, initializeReq(1))
+		f.writeNDJSON(t, initializeReq())
 		assertInitializeResult(t, f.readNDJSONLine(t))
 		f.writeNDJSON(t, `{"jsonrpc":"2.0","id":9}`)
 		assertJSONRPCError(t, f.readNDJSONLine(t), "9", -32600, "invalid request")
@@ -282,7 +283,7 @@ func TestJSONRPCConformance_ParseErrors(t *testing.T) {
 func TestJSONRPCConformance_MisframedClient(t *testing.T) {
 	t.Run("lsp_client_into_ndjson_fixture", func(t *testing.T) {
 		f := startRawEcho(t, true)
-		f.writeLSP(t, initializeReq(1))
+		f.writeLSP(t, initializeReq())
 		// The header line is the first ndjson frame the fixture reads:
 		// unparseable header text answers -32700 with a null id.
 		assertJSONRPCError(t, f.readNDJSONLine(t), "null", -32700, "parse error")
@@ -295,7 +296,7 @@ func TestJSONRPCConformance_MisframedClient(t *testing.T) {
 	})
 	t.Run("ndjson_client_into_lsp_fixture", func(t *testing.T) {
 		f := startRawEcho(t, false)
-		f.writeNDJSON(t, initializeReq(1))
+		f.writeNDJSON(t, initializeReq())
 		// No reply is possible (the line is not a header), and on stdin close
 		// the fixture exits instead of hanging.
 		f.closeStdinAndExit(t)
@@ -341,7 +342,7 @@ func bridgeEnvSession(t *testing.T, ctx context.Context, sessionID, env, framing
 		t.Fatalf("OpenSession %s: %v", sessionID, err)
 	}
 	t.Cleanup(func() {
-		_, _ = bridge.CloseSession(context.Background(), &v2.CloseSessionRequest{SessionId: sessionID})
+		_, _ = bridge.CloseSession(context.WithoutCancel(ctx), &v2.CloseSessionRequest{SessionId: sessionID})
 	})
 	return bridge
 }

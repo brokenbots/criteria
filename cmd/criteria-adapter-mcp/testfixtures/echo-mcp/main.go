@@ -89,104 +89,122 @@ func appendLog(path, line string) {
 
 func main() {
 	appendLog(pidLogFile, fmt.Sprintf("pid=%d", os.Getpid()))
-	reader := bufio.NewReader(os.Stdin)
 	if garbageOnce {
 		// One garbage frame ahead of the first real reply: ndjson mode emits
 		// a raw non-JSON line; header mode emits a well-formed frame whose
 		// payload is not JSON. Frame-robust clients skip it and keep talking.
 		_ = writeFixtureFrame([]byte("not json at all"))
 	}
+	serve(os.Stdin)
+}
+
+// serve reads frames until the peer's stream ends or a framing failure
+// surfaces; either ends the session silently (stderr is the panic channel).
+func serve(r io.Reader) {
+	reader := bufio.NewReader(r)
 	for {
 		payload, err := readFixtureFrame(reader)
 		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return
-			}
 			return
 		}
-		var req request
-		if err := json.Unmarshal(payload, &req); err != nil {
-			// Spec-conformant parse handling: an unparseable payload gets a
-			// -32700 error response with a null id instead of silence, so a
-			// framing-mismatched peer fails deterministically.
-			_ = writeRawResponse(map[string]any{
-				"jsonrpc": "2.0",
-				"id":      nil,
-				"error":   map[string]any{"code": -32700, "message": "parse error"},
-			})
-			continue
-		}
-		if req.Method == "" {
-			// Valid JSON that is not a request: -32600, id preserved when
-			// present, null otherwise.
-			_ = writeRawResponse(map[string]any{
-				"jsonrpc": "2.0",
-				"id":      req.ID,
-				"error":   map[string]any{"code": -32600, "message": "invalid request"},
-			})
-			continue
-		}
+		dispatchFrame(payload)
+	}
+}
 
-		switch req.Method {
-		case "initialize":
-			_ = writeResponse(response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
-				"protocolVersion": "2025-03-26",
-				"capabilities":    map[string]any{"tools": map[string]any{}},
-				"serverInfo":      map[string]any{"name": "echo-mcp", "version": "0.2.0"},
-			}})
-		case "tools/list":
-			_ = writeResponse(response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
-				"tools": []map[string]any{{
-					"name":        "echo",
-					"description": "Echoes the argument map as text",
-					"inputSchema": map[string]any{"type": "object"},
-				}, {
-					"name":        "structured",
-					"description": "Returns text content plus a structuredContent payload",
-					"inputSchema": map[string]any{"type": "object"},
-				}, {
-					"name":        "fault",
-					"description": "Answers with a JSON-RPC error response (MCP_FAIL_CODE, default -32020)",
-					"inputSchema": map[string]any{"type": "object"},
-				}},
-			}})
-		case "tools/call":
-			// KB-155: serve each call from its own goroutine so two
-			// concurrent calls genuinely overlap (the overlap marker in the
-			// progress notification proves it). Requests and responses stay
-			// correlated by JSON-RPC id; the bridge multiplexes them per
-			// Execute stream.
-			if name, _ := req.Params["name"].(string); name != "" {
-				args, _ := req.Params["arguments"].(map[string]any)
-				// The pid lets a caller verify every call in a run was
-				// served by ONE server process (KB-161 shared-session).
-				line := fmt.Sprintf("pid=%d call=%s", os.Getpid(), name)
-				if msg, ok := args["message"].(string); ok {
-					line += " msg=" + msg
-				}
-				appendLog(callLogFile, line)
-			}
-			inFlight.Add(1)
-			n := inFlight.Load()
-			for {
-				hw := maxInFlight.Load()
-				if n <= hw || maxInFlight.CompareAndSwap(hw, n) {
-					break
-				}
-			}
-			go func(req request) {
-				defer inFlight.Add(-1)
-				writeProgress(req)
-				_ = writeResponse(handleToolCall(req))
-			}(req)
-		case "notifications/cancelled":
-			// Best-effort notification from the bridge; per-request work is
-			// not preempted, the call settles and its late response is
-			// dropped by the bridge-side pending map.
-		default:
-			_ = writeResponse(response{JSONRPC: "2.0", ID: req.ID, Error: map[string]any{"code": -32601, "message": "method not found"}})
+func dispatchFrame(payload []byte) {
+	var req request
+	if err := json.Unmarshal(payload, &req); err != nil {
+		// Spec-conformant parse handling: an unparseable payload gets a
+		// -32700 error response with a null id instead of silence, so a
+		// framing-mismatched peer fails deterministically.
+		_ = writeRawResponse(specErrorResponse(nil, -32700, "parse error"))
+		return
+	}
+	if req.Method == "" {
+		// Valid JSON that is not a request: -32600, id preserved when
+		// present, null otherwise.
+		_ = writeRawResponse(specErrorResponse(req.ID, -32600, "invalid request"))
+		return
+	}
+	switch req.Method {
+	case "initialize":
+		_ = writeResponse(response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
+			"protocolVersion": "2025-03-26",
+			"capabilities":    map[string]any{"tools": map[string]any{}},
+			"serverInfo":      map[string]any{"name": "echo-mcp", "version": "0.2.0"},
+		}})
+	case "tools/list":
+		_ = writeResponse(response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
+			"tools": []map[string]any{{
+				"name":        "echo",
+				"description": "Echoes the argument map as text",
+				"inputSchema": map[string]any{"type": "object"},
+			}, {
+				"name":        "structured",
+				"description": "Returns text content plus a structuredContent payload",
+				"inputSchema": map[string]any{"type": "object"},
+			}, {
+				"name":        "fault",
+				"description": "Answers with a JSON-RPC error response (MCP_FAIL_CODE, default -32020)",
+				"inputSchema": map[string]any{"type": "object"},
+			}},
+		}})
+	case "tools/call":
+		dispatchToolCall(req)
+	case "notifications/cancelled":
+		// Best-effort notification from the bridge; per-request work is
+		// not preempted, the call settles and its late response is
+		// dropped by the bridge-side pending map.
+	default:
+		_ = writeResponse(response{JSONRPC: "2.0", ID: req.ID, Error: map[string]any{"code": -32601, "message": "method not found"}})
+	}
+}
+
+// specErrorResponse builds a hand-marshalable error envelope; the nil-typed
+// id marshals as the spec-mandated literal null (`id: null` stays present;
+// response's omitempty would drop it).
+func specErrorResponse(id any, code int, message string) map[string]any {
+	return map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"error":   map[string]any{"code": code, "message": message},
+	}
+}
+
+// dispatchToolCall serves tools/call from its own goroutine so two concurrent
+// calls genuinely overlap (the overlap marker in the progress notification
+// proves it). Requests and responses stay correlated by JSON-RPC id; the
+// bridge multiplexes them per Execute stream.
+func dispatchToolCall(req request) {
+	logToolCall(req)
+	inFlight.Add(1)
+	n := inFlight.Load()
+	for {
+		hw := maxInFlight.Load()
+		if n <= hw || maxInFlight.CompareAndSwap(hw, n) {
+			break
 		}
 	}
+	go func(req request) {
+		defer inFlight.Add(-1)
+		writeProgress(req)
+		_ = writeResponse(handleToolCall(req))
+	}(req)
+}
+
+// logToolCall appends one call-log line with the serving pid so a caller can
+// verify every call in a run was served by ONE server process (KB-161).
+func logToolCall(req request) {
+	name, _ := req.Params["name"].(string)
+	if name == "" {
+		return
+	}
+	args, _ := req.Params["arguments"].(map[string]any)
+	line := fmt.Sprintf("pid=%d call=%s", os.Getpid(), name)
+	if msg, ok := args["message"].(string); ok {
+		line += " msg=" + msg
+	}
+	appendLog(callLogFile, line)
 }
 
 // writeProgress emits the tools/call progress notification, echoing the
@@ -328,7 +346,7 @@ func writeFixtureFrame(payload []byte) error {
 		return err
 	}
 	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(payload))
-	if _, err := io.WriteString(os.Stdout, header); err != nil {
+	if _, err := os.Stdout.WriteString(header); err != nil {
 		return err
 	}
 	_, err := os.Stdout.Write(payload)
@@ -361,18 +379,6 @@ func readFixtureFrame(r *bufio.Reader) ([]byte, error) {
 		}
 	}
 	return readFrame(r)
-}
-
-// writeFrame writes one Content-Length header frame.
-func writeFrame(w io.Writer, payload []byte) error {
-	writeMu.Lock()
-	defer writeMu.Unlock()
-	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(payload))
-	if _, err := io.WriteString(w, header); err != nil {
-		return err
-	}
-	_, err := w.Write(payload)
-	return err
 }
 
 func readFrame(r *bufio.Reader) ([]byte, error) {

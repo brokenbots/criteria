@@ -438,17 +438,10 @@ func readFrame(r *bufio.Reader) ([]byte, error) {
 	for {
 		line, err := r.ReadString('\n')
 		if err != nil {
-			if errors.Is(err, io.EOF) {
-				trimmed := strings.TrimRight(line, "\r\n")
-				if strings.TrimSpace(trimmed) == "" {
-					return nil, io.EOF
-				}
-				if payload, ok := jsonLinePayload(trimmed); ok {
-					return payload, nil
-				}
-				return nil, fmt.Errorf("mcpclient: truncated frame at EOF: %w", io.ErrUnexpectedEOF)
+			if !errors.Is(err, io.EOF) {
+				return nil, fmt.Errorf("mcpclient: read frame: %w", err)
 			}
-			return nil, fmt.Errorf("mcpclient: read frame: %w", err)
+			return finalLineFrame(line)
 		}
 		trimmed := strings.TrimRight(line, "\r\n")
 		if strings.TrimSpace(trimmed) == "" {
@@ -466,6 +459,20 @@ func readFrame(r *bufio.Reader) ([]byte, error) {
 		}
 		// Garbage line: skip it and keep listening.
 	}
+}
+
+// finalLineFrame classifies a final line that arrived without a newline
+// before EOF: a complete JSON line is a valid frame; a header, garbage, or a
+// partial payload is a truncated frame so pending calls fail instead of hang.
+func finalLineFrame(line string) ([]byte, error) {
+	trimmed := strings.TrimRight(line, "\r\n")
+	if strings.TrimSpace(trimmed) == "" {
+		return nil, io.EOF
+	}
+	if payload, ok := jsonLinePayload(trimmed); ok {
+		return payload, nil
+	}
+	return nil, fmt.Errorf("mcpclient: truncated frame at EOF: %w", io.ErrUnexpectedEOF)
 }
 
 // isContentLengthHeader reports whether the line opens header framing.
