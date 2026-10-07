@@ -225,6 +225,7 @@ func (b *MCPBridge) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse
 			"args":    {Type: "string", Description: "Comma-separated argument list for the server binary."},
 			"env":     {Type: "string", Description: "Comma-separated KEY=VALUE environment variable pairs."},
 			"cwd":     {Type: "string", Description: "Working directory for the MCP server process."},
+			"framing": {Type: "string", Description: "JSON-RPC write framing for the stdio transport: lsp (default, Content-Length headers) or ndjson (newline-delimited JSON). Reads auto-detect either framing; a server speaking only one shape rejects the other with a parse error."},
 		}},
 		// InputSchema stays undeclared on purpose: the mcp adapter's input
 		// surface is dynamic (CRI-172). "tool" is the routing key, enforced
@@ -338,6 +339,10 @@ func startMCPServer(cfg map[string]string) (*sessionState, error) {
 	if err != nil {
 		return nil, fmt.Errorf("mcp: parse args: %w", err)
 	}
+	framing, err := mcpclient.ParseFraming(cfg["framing"])
+	if err != nil {
+		return nil, fmt.Errorf("mcp: parse framing: %w", err)
+	}
 	envPairs, err := parseEnvPairs(cfg["env"])
 	if err != nil {
 		return nil, fmt.Errorf("mcp: parse env: %w", err)
@@ -367,7 +372,7 @@ func startMCPServer(cfg map[string]string) (*sessionState, error) {
 	}
 
 	state := &sessionState{cmd: cmd, stdin: stdin, stderr: stderr, tools: map[string]struct{}{}, discoveryTTL: discoveryCacheTTL}
-	state.client = mcpclient.New(stdout, stdin, func(n mcpclient.Notification) {
+	state.client = mcpclient.NewWithFraming(stdout, stdin, framing, func(n mcpclient.Notification) {
 		if n.Method != "notifications/progress" {
 			return
 		}

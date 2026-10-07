@@ -33,16 +33,71 @@ type response struct {
 // interleave on the shared frame stream.
 var writeMu sync.Mutex
 
+// logMu serializes the optional MCP_PIDLOG/MCP_CALLLOG appends.
+var logMu sync.Mutex
+
 // inFlight counts concurrent tools/call requests being served and maxInFlight
 // records the observed high-water mark. The progress notification carries both
 // so test callers can deterministically prove concurrent fan-out (overlap > 1)
 // versus serialized execution (overlap == 1).
 var inFlight, maxInFlight atomic.Int64
 
+// Fixture-mode knobs, read once at startup:
+//   - MCP_FRAMING=ndjson: speak newline-delimited JSON (one JSON object per
+//     line) on both directions, strictly. Default ("" or "lsp") speaks the
+//     Content-Length header dialect. A framed client writing the wrong shape
+//     into either server has its frames rejected with a -32700 parse error.
+//   - MCP_FAIL_CODE: fault tool's JSON-RPC error code (default -32020). The
+//     fault tool answers tools/call with a JSON-RPC error response — not an
+//     isError result — so clients can assert exact error-code boundaries.
+//   - MCP_PIDLOG: appends "pid=<pid>" at startup (single-server-process proof).
+//   - MCP_CALLLOG: appends "call=<name> msg=<message>" per tools/call that
+//     actually reached the fixture (denied/unknown calls never appear).
+//   - MCP_REPLY_MODE=garbage_once: writes one garbage frame ahead of the
+//     first real reply; framed-robust clients skip it.
+var (
+	ndjsonMode  = strings.EqualFold(os.Getenv("MCP_FRAMING"), "ndjson")
+	faultCode   = parseFaultCode(os.Getenv("MCP_FAIL_CODE"))
+	callLogFile = os.Getenv("MCP_CALLLOG")
+	pidLogFile  = os.Getenv("MCP_PIDLOG")
+	garbageOnce = strings.EqualFold(os.Getenv("MCP_REPLY_MODE"), "garbage_once")
+)
+
+func parseFaultCode(raw string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return -32020
+	}
+	return n
+}
+
+// appendLog appends one line to path; unset paths are a no-op. Logging must
+// never fail the fixture (no stderr noise: stderr is the panic channel).
+func appendLog(path, line string) {
+	if path == "" {
+		return
+	}
+	logMu.Lock()
+	defer logMu.Unlock()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "%s\n", line)
+}
+
 func main() {
+	appendLog(pidLogFile, fmt.Sprintf("pid=%d", os.Getpid()))
 	reader := bufio.NewReader(os.Stdin)
+	if garbageOnce {
+		// One garbage frame ahead of the first real reply: ndjson mode emits
+		// a raw non-JSON line; header mode emits a well-formed frame whose
+		// payload is not JSON. Frame-robust clients skip it and keep talking.
+		_ = writeFixtureFrame([]byte("not json at all"))
+	}
 	for {
-		payload, err := readFrame(reader)
+		payload, err := readFixtureFrame(reader)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				return
@@ -51,6 +106,24 @@ func main() {
 		}
 		var req request
 		if err := json.Unmarshal(payload, &req); err != nil {
+			// Spec-conformant parse handling: an unparseable payload gets a
+			// -32700 error response with a null id instead of silence, so a
+			// framing-mismatched peer fails deterministically.
+			_ = writeRawResponse(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      nil,
+				"error":   map[string]any{"code": -32700, "message": "parse error"},
+			})
+			continue
+		}
+		if req.Method == "" {
+			// Valid JSON that is not a request: -32600, id preserved when
+			// present, null otherwise.
+			_ = writeRawResponse(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      req.ID,
+				"error":   map[string]any{"code": -32600, "message": "invalid request"},
+			})
 			continue
 		}
 
@@ -71,6 +144,10 @@ func main() {
 					"name":        "structured",
 					"description": "Returns text content plus a structuredContent payload",
 					"inputSchema": map[string]any{"type": "object"},
+				}, {
+					"name":        "fault",
+					"description": "Answers with a JSON-RPC error response (MCP_FAIL_CODE, default -32020)",
+					"inputSchema": map[string]any{"type": "object"},
 				}},
 			}})
 		case "tools/call":
@@ -79,6 +156,14 @@ func main() {
 			// progress notification proves it). Requests and responses stay
 			// correlated by JSON-RPC id; the bridge multiplexes them per
 			// Execute stream.
+			if name, _ := req.Params["name"].(string); name != "" {
+				args, _ := req.Params["arguments"].(map[string]any)
+				line := "call=" + name
+				if msg, ok := args["message"].(string); ok {
+					line += " msg=" + msg
+				}
+				appendLog(callLogFile, line)
+			}
 			inFlight.Add(1)
 			n := inFlight.Load()
 			for {
@@ -153,6 +238,13 @@ func handleToolCall(req request) response {
 				{"type": "resource", "uri": "memory://echo"},
 			},
 		})
+	case "fault":
+		// KB-161: JSON-RPC error RESPONSE (not an isError result) so clients
+		// can assert exact spec-band error-code boundaries end to end.
+		return response{JSONRPC: "2.0", ID: req.ID, Error: map[string]any{
+			"code":    faultCode,
+			"message": fmt.Sprintf("spec band error: %d", faultCode),
+		}}
 	default:
 		return reply(map[string]any{
 			"isError": true,
@@ -198,7 +290,7 @@ func writeNotification(method string, params map[string]any) error {
 	if err != nil {
 		return err
 	}
-	return writeFrame(os.Stdout, payload)
+	return writeFixtureFrame(payload)
 }
 
 func writeResponse(resp response) error {
@@ -206,13 +298,75 @@ func writeResponse(resp response) error {
 	if err != nil {
 		return err
 	}
-	return writeFrame(os.Stdout, payload)
+	return writeFixtureFrame(payload)
 }
 
+// writeRawResponse marshals and writes a hand-built response envelope. The
+// parse (-32700) and invalid-request (-32600) replies go through here so an
+// unknown id marshals as the spec-mandated null (`id: null` stays present;
+// response's omitempty would drop it).
+func writeRawResponse(env map[string]any) error {
+	payload, err := json.Marshal(env)
+	if err != nil {
+		return err
+	}
+	return writeFixtureFrame(payload)
+}
+
+// writeFixtureFrame writes one already-encoded payload in the fixture's
+// selected framing under the stdout lock.
+func writeFixtureFrame(payload []byte) error {
+	writeMu.Lock()
+	defer writeMu.Unlock()
+	if ndjsonMode {
+		line := make([]byte, 0, len(payload)+1)
+		line = append(line, payload...)
+		line = append(line, '\n')
+		_, err := os.Stdout.Write(line)
+		return err
+	}
+	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(payload))
+	if _, err := io.WriteString(os.Stdout, header); err != nil {
+		return err
+	}
+	_, err := os.Stdout.Write(payload)
+	return err
+}
+
+// readFixtureFrame reads one frame in the fixture's selected framing. In
+// ndjson mode every non-blank line is a frame (bad lines are answered with
+// -32700 by the main loop); in header mode any framing mismatch is
+// surfaced as an error and ends the session.
+func readFixtureFrame(r *bufio.Reader) ([]byte, error) {
+	if ndjsonMode {
+		for {
+			line, err := r.ReadString('\n')
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					t := strings.TrimRight(line, "\r\n")
+					if strings.TrimSpace(t) == "" {
+						return nil, io.EOF
+					}
+					return []byte(t), nil
+				}
+				return nil, err
+			}
+			t := strings.TrimRight(line, "\r\n")
+			if strings.TrimSpace(t) == "" {
+				continue
+			}
+			return []byte(t), nil
+		}
+	}
+	return readFrame(r)
+}
+
+// writeFrame writes one Content-Length header frame.
 func writeFrame(w io.Writer, payload []byte) error {
 	writeMu.Lock()
 	defer writeMu.Unlock()
-	if _, err := fmt.Fprintf(w, "Content-Length: %d\r\n\r\n", len(payload)); err != nil {
+	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(payload))
+	if _, err := io.WriteString(w, header); err != nil {
 		return err
 	}
 	_, err := w.Write(payload)
