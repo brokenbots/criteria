@@ -158,7 +158,9 @@ func main() {
 			// Execute stream.
 			if name, _ := req.Params["name"].(string); name != "" {
 				args, _ := req.Params["arguments"].(map[string]any)
-				line := "call=" + name
+				// The pid lets a caller verify every call in a run was
+				// served by ONE server process (KB-161 shared-session).
+				line := fmt.Sprintf("pid=%d call=%s", os.Getpid(), name)
 				if msg, ok := args["message"].(string); ok {
 					line += " msg=" + msg
 				}
