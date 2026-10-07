@@ -7,30 +7,30 @@ import (
 	"errors"
 	"sort"
 
-	"connectrpc.com/connect"
+	connect "connectrpc.com/connect/v2"
 
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 // Register performs the unary Register RPC.
 func (c *Client) Register(ctx context.Context, name, hostname, version string) error {
-	req := connect.NewRequest(&pb.RegisterRequest{
-		Name:   name,
-		Labels: map[string]string{"hostname": hostname, "version": version},
-	})
 	// Bootstrap (registration) auth: servers configured with a bootstrap
 	// token require this header; without it Register is rejected as
 	// unauthenticated. Servers without bootstrap auth ignore the header.
+	ctx, info := connect.NewClientContext(ctx)
 	if c.opts.BootstrapToken != "" {
-		req.Header().Set("X-Server-Bootstrap", c.opts.BootstrapToken)
+		info.RequestHeader().Set("X-Server-Bootstrap", c.opts.BootstrapToken)
 	}
-	resp, err := c.grpc.Register(ctx, req)
+	resp, err := c.grpc.Register(ctx, &pb.RegisterRequest{
+		Name:   name,
+		Labels: map[string]string{"hostname": hostname, "version": version},
+	})
 	if err != nil {
 		return err
 	}
-	c.criteriaID = resp.Msg.CriteriaId
-	c.token = resp.Msg.Token
-	if creds := resp.Msg.GetBootstrapCredentials(); len(creds) > 0 {
+	c.criteriaID = resp.CriteriaId
+	c.token = resp.Token
+	if creds := resp.GetBootstrapCredentials(); len(creds) > 0 {
 		c.bootstrapCredentials = make(map[string]string, len(creds))
 		for k, v := range creds {
 			c.bootstrapCredentials[k] = v
@@ -58,45 +58,45 @@ func (c *Client) CreateRun(ctx context.Context, workflowName, workflowHCL string
 	if c.criteriaID == "" {
 		return "", errors.New("not registered")
 	}
-	req := connect.NewRequest(&pb.CreateRunRequest{
+	ctx, info := connect.NewClientContext(ctx)
+	c.authorize(info.RequestHeader())
+	resp, err := c.grpc.CreateRun(ctx, &pb.CreateRunRequest{
 		CriteriaId:   c.criteriaID,
 		WorkflowName: workflowName,
 		WorkflowHash: workflowHCL,
 	})
-	c.authorize(req.Header())
-	resp, err := c.grpc.CreateRun(ctx, req)
 	if err != nil {
 		return "", err
 	}
-	return resp.Msg.RunId, nil
+	return resp.RunId, nil
 }
 
 // ReattachRun queries the server about the state of a run that may have been
 // in-flight before a crash. Returns the response or an error.
 func (c *Client) ReattachRun(ctx context.Context, runID, criteriaID string) (*pb.ReattachRunResponse, error) {
-	req := connect.NewRequest(&pb.ReattachRunRequest{
+	ctx, info := connect.NewClientContext(ctx)
+	c.authorize(info.RequestHeader())
+	resp, err := c.grpc.ReattachRun(ctx, &pb.ReattachRunRequest{
 		RunId:      runID,
 		CriteriaId: criteriaID,
 	})
-	c.authorize(req.Header())
-	resp, err := c.grpc.ReattachRun(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	return resp.Msg, nil
+	return resp, nil
 }
 
 // Resume calls the server Resume RPC to deliver a signal to a paused run (W05).
 func (c *Client) Resume(ctx context.Context, runID, signal string, payload map[string]string) (*pb.ResumeResponse, error) {
-	req := connect.NewRequest(&pb.ResumeRequest{
+	ctx, info := connect.NewClientContext(ctx)
+	c.authorize(info.RequestHeader())
+	resp, err := c.grpc.Resume(ctx, &pb.ResumeRequest{
 		RunId:   runID,
 		Signal:  signal,
 		Payload: payload,
 	})
-	c.authorize(req.Header())
-	resp, err := c.grpc.Resume(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	return resp.Msg, nil
+	return resp, nil
 }

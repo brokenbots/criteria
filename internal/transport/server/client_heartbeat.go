@@ -6,7 +6,7 @@ import (
 	"context"
 	"time"
 
-	"connectrpc.com/connect"
+	connect "connectrpc.com/connect/v2"
 
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
@@ -31,9 +31,9 @@ func (c *Client) heartbeat(ctx context.Context) {
 	if c.criteriaID == "" {
 		return
 	}
-	req := connect.NewRequest(&pb.HeartbeatRequest{CriteriaId: c.criteriaID})
-	c.authorize(req.Header())
-	if _, err := c.grpc.Heartbeat(ctx, req); err != nil {
+	ctx, info := connect.NewClientContext(ctx)
+	c.authorize(info.RequestHeader())
+	if _, err := c.grpc.Heartbeat(ctx, &pb.HeartbeatRequest{CriteriaId: c.criteriaID}); err != nil {
 		c.log.Warn("heartbeat failed", "error", err)
 	}
 }

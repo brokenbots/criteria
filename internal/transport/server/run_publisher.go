@@ -13,11 +13,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"connectrpc.com/connect"
+	connect "connectrpc.com/connect/v2"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	criteriav1connect "github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
 )
 
 // RunPublisher manages the SubmitEvents bidi stream for a single run.
@@ -150,14 +151,17 @@ func (p *RunPublisher) publishLoop(ctx context.Context) {
 func (p *RunPublisher) runSubmitEvents(ctx context.Context) error {
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-
-	stream := p.client.grpc.SubmitEvents(streamCtx)
-	p.client.authorize(stream.RequestHeader())
+	streamCtx, info := connect.NewClientContext(streamCtx)
+	p.client.authorize(info.RequestHeader())
 	pendingSnap := p.snapshotPending()
 	if lastAck := p.lastAckedSeq.Load(); lastAck > 0 {
-		stream.RequestHeader().Set("since_seq", strconv.FormatUint(lastAck, 10))
+		info.RequestHeader().Set("since_seq", strconv.FormatUint(lastAck, 10))
 	} else if len(pendingSnap) > 0 {
-		stream.RequestHeader().Set("since_seq", "0")
+		info.RequestHeader().Set("since_seq", "0")
+	}
+	stream, err := p.client.grpc.SubmitEvents(streamCtx)
+	if err != nil {
+		return err
 	}
 
 	recvErr := make(chan error, 1)
@@ -171,16 +175,16 @@ func (p *RunPublisher) runSubmitEvents(ctx context.Context) error {
 		if err := stream.Send(env); err != nil {
 			cancel()
 			<-recvErr
-			_ = stream.CloseRequest()
+			_ = stream.CloseSend()
 			return err
 		}
 	}
 
 	sendErr := p.sendLoop(streamCtx, stream)
-	_ = stream.CloseRequest()
+	_ = stream.CloseSend()
 	cancel()
 	rerr := <-recvErr
-	_ = stream.CloseResponse()
+	_ = stream.Close()
 	if sendErr != nil && !errors.Is(sendErr, context.Canceled) {
 		return sendErr
 	}
@@ -190,7 +194,7 @@ func (p *RunPublisher) runSubmitEvents(ctx context.Context) error {
 	return nil
 }
 
-func (p *RunPublisher) sendLoop(ctx context.Context, stream *connect.BidiStreamForClient[pb.Envelope, pb.Ack]) error {
+func (p *RunPublisher) sendLoop(ctx context.Context, stream criteriav1connect.CriteriaServiceSubmitEventsClientStream) error {
 	for {
 		select {
 		case <-ctx.Done():
@@ -209,7 +213,7 @@ func (p *RunPublisher) sendLoop(ctx context.Context, stream *connect.BidiStreamF
 	}
 }
 
-func (p *RunPublisher) recvAcks(stream *connect.BidiStreamForClient[pb.Envelope, pb.Ack]) error {
+func (p *RunPublisher) recvAcks(stream criteriav1connect.CriteriaServiceSubmitEventsClientStream) error {
 	for {
 		ack, err := stream.Receive()
 		if err != nil {

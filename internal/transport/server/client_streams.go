@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"time"
 
-	"connectrpc.com/connect"
+	connect "connectrpc.com/connect/v2"
 
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
@@ -170,9 +170,9 @@ func (c *Client) controlLoop(ctx context.Context, ready chan<- error) { //nolint
 		if ctx.Err() != nil {
 			return
 		}
-		req := connect.NewRequest(&pb.ControlSubscribeRequest{CriteriaId: c.criteriaID})
-		c.authorize(req.Header())
-		stream, err := c.grpc.Control(ctx, req)
+		ctx, info := connect.NewClientContext(ctx)
+		c.authorize(info.RequestHeader())
+		stream, err := c.grpc.Control(ctx, &pb.ControlSubscribeRequest{CriteriaId: c.criteriaID})
 		if err != nil {
 			if firstAttempt {
 				ready <- err
@@ -186,8 +186,13 @@ func (c *Client) controlLoop(ctx context.Context, ready chan<- error) { //nolint
 		}
 
 		readySent := false
-		for stream.Receive() {
-			msg := stream.Msg()
+		var recvErr error
+		for recvErr == nil {
+			msg, err := stream.Receive()
+			if err != nil {
+				recvErr = err
+				break
+			}
 			if msg.GetControlReady() != nil {
 				if firstAttempt && !readySent {
 					ready <- nil
@@ -254,12 +259,12 @@ func (c *Client) controlLoop(ctx context.Context, ready chan<- error) { //nolint
 			}
 		}
 		if firstAttempt && !readySent {
-			ready <- fmt.Errorf("control stream closed before ready: %w", stream.Err())
+			ready <- fmt.Errorf("control stream closed before ready: %w", recvErr)
 			return
 		}
 		firstAttempt = false
-		if err := stream.Err(); err != nil && !errors.Is(err, context.Canceled) {
-			c.log.Warn("control stream closed", "error", err)
+		if recvErr != nil && !errors.Is(recvErr, context.Canceled) {
+			c.log.Warn("control stream closed", "error", recvErr)
 		}
 		backoff = 500 * time.Millisecond
 		if !c.backoffSleep(ctx, &backoff) {
