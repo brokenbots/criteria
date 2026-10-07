@@ -38,16 +38,57 @@ type CallToolResult struct {
 	StructuredContent json.RawMessage `json:"structuredContent,omitempty"`
 }
 
-type rpcError struct {
+// Framing selects the write-side frame encoding for the JSON-RPC stdio
+// transport. The read side always auto-detects framing per frame (see
+// readFrame), so a client writing either shape can read a peer speaking
+// either shape.
+type Framing string
+
+const (
+	// FramingLSP writes Content-Length header framing: the historical
+	// dialect of the in-tree MCP adapter and fixtures, and the default.
+	FramingLSP Framing = "lsp"
+	// FramingNDJSON writes newline-delimited JSON: the MCP stdio wire
+	// shape. One JSON object per line, terminated by "\n".
+	FramingNDJSON Framing = "ndjson"
+)
+
+// ParseFraming converts an adapter config value into a Framing. "" selects
+// the default (FramingLSP); matching is case-insensitive; any other value
+// is an error so unknown spellings fail the session open instead of
+// silently downgrading the transport.
+func ParseFraming(s string) (Framing, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "":
+		return FramingLSP, nil
+	case string(FramingLSP):
+		return FramingLSP, nil
+	case string(FramingNDJSON):
+		return FramingNDJSON, nil
+	default:
+		return "", fmt.Errorf("mcpclient: unknown framing %q (want %q or %q)", s, FramingLSP, FramingNDJSON)
+	}
+}
+
+// RPCError is a typed JSON-RPC error, exactly as the server delivered it.
+// Server error responses, and the transport error synthesized for pending
+// calls when the session closes, both surface as *RPCError so callers can
+// assert code boundaries with errors.As. The Error string keeps the
+// historical "mcpclient: rpc error %d: %s" shape for log readability.
+type RPCError struct {
 	Code    int             `json:"code"`
 	Message string          `json:"message"`
 	Data    json.RawMessage `json:"data,omitempty"`
 }
 
+func (e *RPCError) Error() string {
+	return fmt.Sprintf("mcpclient: rpc error %d: %s", e.Code, e.Message)
+}
+
 type rpcResponse struct {
 	ID     json.RawMessage `json:"id,omitempty"`
 	Result json.RawMessage `json:"result,omitempty"`
-	Error  *rpcError       `json:"error,omitempty"`
+	Error  *RPCError       `json:"error,omitempty"`
 }
 
 type clientInfo struct {
@@ -88,13 +129,16 @@ type incomingEnvelope struct {
 	Method  string          `json:"method,omitempty"`
 	Params  json.RawMessage `json:"params,omitempty"`
 	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *rpcError       `json:"error,omitempty"`
+	Error   *RPCError       `json:"error,omitempty"`
 }
 
 // Client is a minimal JSON-RPC stdio client for MCP servers.
 type Client struct {
 	reader *bufio.Reader
 	writer io.WriteCloser
+	// framing selects the write-side frame encoding; reads always
+	// auto-detect per frame.
+	framing Framing
 
 	notify func(Notification)
 
@@ -108,11 +152,23 @@ type Client struct {
 	nextID uint64
 }
 
-// New constructs a client and starts a read loop that dispatches responses and notifications.
+// New constructs a client and starts a read loop that dispatches responses
+// and notifications. Writes use the default Content-Length framing; use
+// NewWithFraming to opt into newline-delimited JSON writes.
 func New(reader io.Reader, writer io.WriteCloser, onNotification func(Notification)) *Client {
+	return NewWithFraming(reader, writer, FramingLSP, onNotification)
+}
+
+// NewWithFraming constructs a client like New with an explicit write-side
+// framing (FramingLSP or FramingNDJSON).
+func NewWithFraming(reader io.Reader, writer io.WriteCloser, framing Framing, onNotification func(Notification)) *Client {
+	if framing == "" {
+		framing = FramingLSP
+	}
 	c := &Client{
 		reader:  bufio.NewReader(reader),
 		writer:  writer,
+		framing: framing,
 		notify:  onNotification,
 		pending: map[string]chan rpcResponse{},
 		closed:  make(chan struct{}),
@@ -225,11 +281,9 @@ func (c *Client) request(ctx context.Context, method string, params any) (json.R
 			"reason":    ctx.Err().Error(),
 		})
 		return nil, ctx.Err()
-	case <-c.closed:
-		return nil, io.EOF
 	case resp := <-ch:
 		if resp.Error != nil {
-			return nil, fmt.Errorf("mcpclient: rpc %s failed (%d): %s", method, resp.Error.Code, resp.Error.Message)
+			return nil, resp.Error
 		}
 		return resp.Result, nil
 	}
@@ -251,7 +305,7 @@ func (c *Client) send(ctx context.Context, v any) error {
 
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	if err := writeFrame(c.writer, payload); err != nil {
+	if err := c.writeOut(payload); err != nil {
 		c.closeWithError(err)
 		return err
 	}
@@ -323,7 +377,7 @@ func (c *Client) closeWithError(err error) {
 		c.pendMu.Unlock()
 
 		for _, ch := range deferred {
-			ch <- rpcResponse{Error: &rpcError{Code: -32000, Message: err.Error()}}
+			ch <- rpcResponse{Error: &RPCError{Code: -32000, Message: err.Error()}}
 		}
 	})
 }
@@ -346,6 +400,22 @@ func normalizeID(raw json.RawMessage) string {
 	return strings.TrimSpace(string(raw))
 }
 
+// writeOut writes one frame in the client's write framing. The default is
+// Content-Length header framing (FramingLSP); FramingNDJSON writes a single
+// line terminated by "\n". Reads are framing-agnostic either way.
+func (c *Client) writeOut(payload []byte) error {
+	if c.framing == FramingNDJSON {
+		line := append(bytes.Clone(payload), '\n')
+		if _, err := c.writer.Write(line); err != nil {
+			return fmt.Errorf("mcpclient: write ndjson frame: %w", err)
+		}
+		return nil
+	}
+	return writeFrame(c.writer, payload)
+}
+
+// writeFrame writes one Content-Length header frame (the historical dialect
+// of the in-tree adapter and fixtures).
 func writeFrame(w io.Writer, payload []byte) error {
 	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(payload))
 	if _, err := io.WriteString(w, header); err != nil {
@@ -357,30 +427,87 @@ func writeFrame(w io.Writer, payload []byte) error {
 	return nil
 }
 
+// readFrame reads one JSON-RPC frame, auto-detecting the framing per frame:
+// a Content-Length header line opens header framing (the remaining header
+// block is read to the blank separator, then the payload by length); a line
+// that parses as JSON is taken as an NDJSON frame; anything else is garbage
+// injected into the stream by the peer and is skipped. A truncated final
+// frame surfaces deterministically as io.ErrUnexpectedEOF so pending calls
+// fail on session close instead of hanging.
 func readFrame(r *bufio.Reader) ([]byte, error) {
-	contentLength := -1
 	for {
 		line, err := r.ReadString('\n')
 		if err != nil {
-			if errors.Is(err, io.EOF) && line == "" {
-				return nil, io.EOF
+			if !errors.Is(err, io.EOF) {
+				return nil, fmt.Errorf("mcpclient: read frame: %w", err)
+			}
+			return finalLineFrame(line)
+		}
+		trimmed := strings.TrimRight(line, "\r\n")
+		if strings.TrimSpace(trimmed) == "" {
+			continue
+		}
+		if isContentLengthHeader(trimmed) {
+			payload, err := readHeaderFramedBody(r, trimmed)
+			if err != nil {
+				return nil, err
+			}
+			return payload, nil
+		}
+		if payload, ok := jsonLinePayload(trimmed); ok {
+			return payload, nil
+		}
+		// Garbage line: skip it and keep listening.
+	}
+}
+
+// finalLineFrame classifies a final line that arrived without a newline
+// before EOF: a complete JSON line is a valid frame; a header, garbage, or a
+// partial payload is a truncated frame so pending calls fail instead of hang.
+func finalLineFrame(line string) ([]byte, error) {
+	trimmed := strings.TrimRight(line, "\r\n")
+	if strings.TrimSpace(trimmed) == "" {
+		return nil, io.EOF
+	}
+	if payload, ok := jsonLinePayload(trimmed); ok {
+		return payload, nil
+	}
+	return nil, fmt.Errorf("mcpclient: truncated frame at EOF: %w", io.ErrUnexpectedEOF)
+}
+
+// isContentLengthHeader reports whether the line opens header framing.
+func isContentLengthHeader(line string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "content-length:")
+}
+
+// readHeaderFramedBody consumes the remaining header lines of a Content-
+// Length framed frame (first line already seen: contentLengthHeader), then
+// reads the payload by length.
+func readHeaderFramedBody(r *bufio.Reader, firstHeaderLine string) ([]byte, error) {
+	contentLength := -1
+	line := firstHeaderLine
+	for {
+		name, value, found := strings.Cut(line, ":")
+		if found && strings.EqualFold(strings.TrimSpace(name), "Content-Length") {
+			n, parseErr := strconv.Atoi(strings.TrimSpace(value))
+			if parseErr != nil {
+				return nil, fmt.Errorf("mcpclient: parse content-length %q: %w", value, parseErr)
+			}
+			contentLength = n
+		}
+		next, err := r.ReadString('\n')
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				// A Content-Length header was seen, so the peer started a
+				// frame; EOF before the header block completed is a
+				// truncated frame.
+				return nil, fmt.Errorf("mcpclient: truncated header block at EOF: %w", io.ErrUnexpectedEOF)
 			}
 			return nil, fmt.Errorf("mcpclient: read header line: %w", err)
 		}
-		trimmed := strings.TrimRight(line, "\r\n")
-		if trimmed == "" {
+		line = strings.TrimRight(next, "\r\n")
+		if strings.TrimSpace(line) == "" {
 			break
-		}
-		parts := strings.SplitN(trimmed, ":", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		if strings.EqualFold(strings.TrimSpace(parts[0]), "Content-Length") {
-			n, parseErr := strconv.Atoi(strings.TrimSpace(parts[1]))
-			if parseErr != nil {
-				return nil, fmt.Errorf("mcpclient: parse content-length %q: %w", parts[1], parseErr)
-			}
-			contentLength = n
 		}
 	}
 	if contentLength < 0 {
@@ -394,4 +521,23 @@ func readFrame(r *bufio.Reader) ([]byte, error) {
 		return nil, fmt.Errorf("mcpclient: read payload: %w", err)
 	}
 	return bytes.Clone(payload), nil
+}
+
+// jsonLinePayload reports whether the trimmed line is a complete JSON value
+// and returns it (only objects and arrays count as frames; bare scalars and
+// "null" are treated as garbage so stray lines never resolve as requests).
+func jsonLinePayload(line string) ([]byte, bool) {
+	t := strings.TrimSpace(line)
+	if t == "" {
+		return nil, false
+	}
+	switch t[0] {
+	case '{', '[':
+	default:
+		return nil, false
+	}
+	if !json.Valid([]byte(t)) {
+		return nil, false
+	}
+	return []byte(t), true
 }

@@ -134,7 +134,7 @@ func TestMCPBridge_Info_DiscoveryKeyedPerEnvironment(t *testing.T) {
 	kb157Open(t, b, "sess-echo", map[string]string{"command": testEchoBin})
 	kb157Open(t, b, "sess-shift", map[string]string{"command": testShiftBin})
 
-	want := []string{"early", "echo", "lists", "structured"}
+	want := []string{"early", "echo", "fault", "lists", "structured"}
 	if got := kb157InfoNames(t, b); !kb157SameNames(got, want) {
 		t.Fatalf("union of both environments = [%s], want [%s]", kb157NamesMessage(got), kb157NamesMessage(want))
 	}
@@ -176,7 +176,7 @@ func TestMCPBridge_Info_DiscoveryKeyedPerEnvironment(t *testing.T) {
 // concurrently render identical tool sets.
 func TestMCPBridge_Info_DiscoveryConcurrentEnvironments(t *testing.T) {
 	b := &MCPBridge{sessions: map[string]*sessionState{}}
-	want := []string{"early", "echo", "lists", "structured"}
+	want := []string{"early", "echo", "fault", "lists", "structured"}
 
 	var wg sync.WaitGroup
 	openErrs := make([]error, 2)
