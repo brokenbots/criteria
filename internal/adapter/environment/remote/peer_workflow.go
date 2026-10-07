@@ -196,9 +196,10 @@ func (ps *peerSession) waitChildRunTerminal(ctx context.Context, runID string) (
 	return rec, nil
 }
 
-// removeChildWatch drops one waiter and closes it (the caller's select has
-// already resolved; the closed channel simply releases any concurrent
-// closer without blocking).
+// removeChildWatch drops one waiter whose select already resolved. No close:
+// noteChildRunTerminal is the single closer of every registered watch — if
+// the terminal raced this removal it already consumed the watch from the
+// map (and closed it); the waiter itself reads nothing past its select.
 func (ps *peerSession) removeChildWatch(runID string, watch chan struct{}) {
 	ps.mu.Lock()
 	watches := ps.childWatches[runID]
@@ -214,7 +215,6 @@ func (ps *peerSession) removeChildWatch(runID string, watch chan struct{}) {
 		ps.childWatches[runID] = kept
 	}
 	ps.mu.Unlock()
-	close(watch)
 }
 
 // cancelInFlightChildRun issues the ControlRequest.cancel_child_run control
