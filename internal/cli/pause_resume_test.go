@@ -2,14 +2,14 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	connect "connectrpc.com/connect/v2"
-	"connectrpc.com/connect/v2/connecthttp"
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -33,71 +33,63 @@ func newFakeServerService() *fakeServerService {
 	}
 }
 
-func (f *fakeServerService) ListAgents(context.Context, *pb.ListAgentsRequest) (*pb.ListAgentsResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeServerService) ListAgents(context.Context, *connect.Request[pb.ListAgentsRequest]) (*connect.Response[pb.ListAgentsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
-func (f *fakeServerService) GetAgent(context.Context, *pb.GetAgentRequest) (*pb.Agent, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeServerService) GetAgent(context.Context, *connect.Request[pb.GetAgentRequest]) (*connect.Response[pb.Agent], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
-func (f *fakeServerService) ListRuns(context.Context, *pb.ListRunsRequest) (*pb.ListRunsResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeServerService) ListRuns(context.Context, *connect.Request[pb.ListRunsRequest]) (*connect.Response[pb.ListRunsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
-func (f *fakeServerService) GetRun(context.Context, *pb.GetRunRequest) (*pb.Run, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeServerService) GetRun(context.Context, *connect.Request[pb.GetRunRequest]) (*connect.Response[pb.Run], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
-func (f *fakeServerService) ListRunEvents(context.Context, *pb.ListRunEventsRequest) (*pb.ListRunEventsResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeServerService) ListRunEvents(context.Context, *connect.Request[pb.ListRunEventsRequest]) (*connect.Response[pb.ListRunEventsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
-func (f *fakeServerService) WatchRun(context.Context, *pb.WatchRunRequest, criteriav1connect.ServerServiceWatchRunServerStream) error {
-	return connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeServerService) WatchRun(context.Context, *connect.Request[pb.WatchRunRequest], *connect.ServerStream[pb.Envelope]) error {
+	return connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
-func (f *fakeServerService) StopRun(context.Context, *pb.StopRunRequest) (*pb.StopRunResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeServerService) StopRun(context.Context, *connect.Request[pb.StopRunRequest]) (*connect.Response[pb.StopRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
-func (f *fakeServerService) PauseRun(_ context.Context, req *pb.PauseRunRequest) (*pb.PauseRunResponse, error) {
-	f.pausedRuns[req.RunId] = true
-	return &pb.PauseRunResponse{IssuedAt: timestamppb.New(time.Now())}, nil
+func (f *fakeServerService) PauseRun(_ context.Context, req *connect.Request[pb.PauseRunRequest]) (*connect.Response[pb.PauseRunResponse], error) {
+	f.pausedRuns[req.Msg.RunId] = true
+	return connect.NewResponse(&pb.PauseRunResponse{IssuedAt: timestamppb.New(time.Now())}), nil
 }
-func (f *fakeServerService) ResumeRun(_ context.Context, req *pb.ResumeRunRequest) (*pb.ResumeRunResponse, error) {
-	f.resumedRuns[req.RunId] = true
-	return &pb.ResumeRunResponse{IssuedAt: timestamppb.New(time.Now())}, nil
+func (f *fakeServerService) ResumeRun(_ context.Context, req *connect.Request[pb.ResumeRunRequest]) (*connect.Response[pb.ResumeRunResponse], error) {
+	f.resumedRuns[req.Msg.RunId] = true
+	return connect.NewResponse(&pb.ResumeRunResponse{IssuedAt: timestamppb.New(time.Now())}), nil
 }
-func (f *fakeServerService) InspectRun(_ context.Context, req *pb.InspectRunRequest) (*pb.InspectRunResponse, error) {
-	if resp, ok := f.inspectedRuns[req.RunId]; ok {
-		return resp, nil
+func (f *fakeServerService) InspectRun(_ context.Context, req *connect.Request[pb.InspectRunRequest]) (*connect.Response[pb.InspectRunResponse], error) {
+	if resp, ok := f.inspectedRuns[req.Msg.RunId]; ok {
+		return connect.NewResponse(resp), nil
 	}
 	// Default response
-	return &pb.InspectRunResponse{
-		RunId:       req.RunId,
-		SessionId:   req.SessionId,
+	return connect.NewResponse(&pb.InspectRunResponse{
+		RunId:       req.Msg.RunId,
+		SessionId:   req.Msg.SessionId,
 		CurrentStep: "generate_outline",
 		StateJson:   `{"turns_taken":4,"tools_invoked":["read_file","edit_file"]}`,
-	}, nil
+	}), nil
 }
-func (f *fakeServerService) SendPrompt(context.Context, *pb.SendPromptRequest) (*pb.SendPromptResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeServerService) SendPrompt(context.Context, *connect.Request[pb.SendPromptRequest]) (*connect.Response[pb.SendPromptResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
-func (f *fakeServerService) SubmitWorkflowAssignment(context.Context, *pb.SubmitWorkflowAssignmentRequest) (*pb.SubmitWorkflowAssignmentResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeServerService) SubmitWorkflowAssignment(context.Context, *connect.Request[pb.SubmitWorkflowAssignmentRequest]) (*connect.Response[pb.SubmitWorkflowAssignmentResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
-func (f *fakeServerService) GetAssignmentDisposition(context.Context, *pb.GetAssignmentDispositionRequest) (*pb.GetAssignmentDispositionResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
-}
-
-// serverServiceMux mounts a ServerServiceHandler on the v2 connect
-// server/register/mount pattern (the same shape as the SDK's
-// NewServiceHandler).
-func serverServiceMux(handler criteriav1connect.ServerServiceHandler) *http.ServeMux {
-	mux := http.NewServeMux()
-	server := connect.NewServer()
-	criteriav1connect.RegisterServerServiceHandler(server, handler)
-	connecthttp.Mount(mux, server)
-	return mux
+func (f *fakeServerService) GetAssignmentDisposition(context.Context, *connect.Request[pb.GetAssignmentDispositionRequest]) (*connect.Response[pb.GetAssignmentDispositionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
 
 func startFakeServer(t *testing.T, handler *fakeServerService) string {
 	t.Helper()
-	srv := httptest.NewUnstartedServer(serverServiceMux(handler))
+	mux := http.NewServeMux()
+	path, h := criteriav1connect.NewServerServiceHandler(handler)
+	mux.Handle(path, h)
+	srv := httptest.NewUnstartedServer(mux)
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
 	protocols.SetUnencryptedHTTP2(true)

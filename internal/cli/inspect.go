@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
@@ -31,14 +32,14 @@ func NewInspectCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			resp, err := client.InspectRun(cmd.Context(), &pb.InspectRunRequest{
+			resp, err := client.InspectRun(cmd.Context(), connect.NewRequest(&pb.InspectRunRequest{
 				RunId:     runID,
 				SessionId: sessionID,
-			})
+			}))
 			if err != nil {
 				return fmt.Errorf("inspect: %w", err)
 			}
-			renderInspect(os.Stdout, resp)
+			renderInspect(os.Stdout, resp.Msg)
 			return nil
 		},
 	}

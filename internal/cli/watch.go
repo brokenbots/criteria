@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
 
@@ -72,10 +73,7 @@ func NewWatchCmd() *cobra.Command {
 	return cmd
 }
 
-// eventStream is the pull-style stream shape the watch tail loop is written
-// against (successive Receive, then Msg/Err). The v2 generated WatchRun
-// client stream reports each message as (envelope, error), so
-// ServerServiceWatchRunClientStream is wrapped in watchStreamAdapter below.
+// eventStream is the subset of connect.ServerStreamForClient used by watch.
 type eventStream interface {
 	Receive() bool
 	Msg() *pb.Envelope
@@ -83,64 +81,32 @@ type eventStream interface {
 	Close() error
 }
 
-// watchStreamAdapter wraps a generated ServerServiceWatchRunClientStream into
-// the eventStream shape: Receive returns (msg, error) with io.EOF signalling a
-// clean (non-error) stream end.
-type watchStreamAdapter struct {
-	s   criteriav1connect.ServerServiceWatchRunClientStream
-	msg *pb.Envelope
-	err error
-}
-
-func watchEventStream(s criteriav1connect.ServerServiceWatchRunClientStream) eventStream {
-	return &watchStreamAdapter{s: s}
-}
-
-func (a *watchStreamAdapter) Receive() bool {
-	a.msg, a.err = a.s.Receive()
-	if errors.Is(a.err, io.EOF) {
-		a.err = nil
-		return false
-	}
-	return a.err == nil && a.msg != nil
-}
-
-func (a *watchStreamAdapter) Msg() *pb.Envelope { return a.msg }
-func (a *watchStreamAdapter) Err() error        { return a.err }
-func (a *watchStreamAdapter) Close() error      { return a.s.Close() }
-
-// runEventClient is the watch-facing subset of ServerServiceClient. WatchRun
-// returns the eventStream tail-view so the loop above runs unchanged whether
-// it is fed a fake (tests) or a watchStreamAdapter over the generated v2
-// client stream.
+// runEventClient is the subset of ServerServiceClient used by watch.
 type runEventClient interface {
-	ListRunEvents(context.Context, *pb.ListRunEventsRequest) (*pb.ListRunEventsResponse, error)
-	WatchRun(context.Context, *pb.WatchRunRequest) (eventStream, error)
+	ListRunEvents(context.Context, *connect.Request[pb.ListRunEventsRequest]) (*connect.Response[pb.ListRunEventsResponse], error)
+	WatchRun(context.Context, *connect.Request[pb.WatchRunRequest]) (eventStream, error)
 }
 
-// serverEventClient forwards ServerServiceClient calls and adapts the
-// generated v2 WatchRun client stream (Receive returns (envelope, error)) to
-// the eventStream shape.
-type serverEventClient struct {
+// runEventClientAdapter adapts the generated ServerServiceClient to the
+// narrower runEventClient interface so tests can supply lightweight fakes.
+type runEventClientAdapter struct {
 	c criteriav1connect.ServerServiceClient
 }
 
-func (s serverEventClient) ListRunEvents(ctx context.Context, req *pb.ListRunEventsRequest) (*pb.ListRunEventsResponse, error) {
-	return s.c.ListRunEvents(ctx, req)
+func newRunEventClient(c criteriav1connect.ServerServiceClient) runEventClient {
+	return &runEventClientAdapter{c: c}
 }
 
-func (s serverEventClient) WatchRun(ctx context.Context, req *pb.WatchRunRequest) (eventStream, error) {
-	stream, err := s.c.WatchRun(ctx, req)
+func (a *runEventClientAdapter) ListRunEvents(ctx context.Context, req *connect.Request[pb.ListRunEventsRequest]) (*connect.Response[pb.ListRunEventsResponse], error) {
+	return a.c.ListRunEvents(ctx, req)
+}
+
+func (a *runEventClientAdapter) WatchRun(ctx context.Context, req *connect.Request[pb.WatchRunRequest]) (eventStream, error) {
+	stream, err := a.c.WatchRun(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	return watchEventStream(stream), nil
-}
-
-// newRunEventClient narrows the generated ServerServiceClient to the small
-// surface watch needs; tests supply their own fakes of the same interface.
-func newRunEventClient(c criteriav1connect.ServerServiceClient) runEventClient {
-	return serverEventClient{c: c}
+	return stream, nil
 }
 
 // runWatch replays persisted events for runID, then tails live events until a
@@ -159,19 +125,19 @@ func runWatch(ctx context.Context, client runEventClient, runID string, mode out
 func replayHistoricalEvents(ctx context.Context, client runEventClient, runID string, mode outputMode, out io.Writer) (lastSeq uint64, done bool, err error) {
 	var sinceSeq uint64
 	for {
-		resp, err := client.ListRunEvents(ctx, &pb.ListRunEventsRequest{
+		resp, err := client.ListRunEvents(ctx, connect.NewRequest(&pb.ListRunEventsRequest{
 			RunId:    runID,
 			SinceSeq: sinceSeq,
 			Limit:    watchListPageSize,
-		})
+		}))
 		if err != nil {
 			return 0, false, fmt.Errorf("list events: %w", err)
 		}
-		if resp == nil {
+		if resp == nil || resp.Msg == nil {
 			return 0, false, errors.New("list events: nil response from server")
 		}
 
-		for _, env := range resp.Events {
+		for _, env := range resp.Msg.Events {
 			if env.Seq > lastSeq {
 				lastSeq = env.Seq
 			}
@@ -184,19 +150,19 @@ func replayHistoricalEvents(ctx context.Context, client runEventClient, runID st
 			}
 		}
 
-		if resp.NextSinceSeq == 0 || resp.NextSinceSeq == sinceSeq {
+		if resp.Msg.NextSinceSeq == 0 || resp.Msg.NextSinceSeq == sinceSeq {
 			break
 		}
-		sinceSeq = resp.NextSinceSeq
+		sinceSeq = resp.Msg.NextSinceSeq
 	}
 	return lastSeq, false, nil
 }
 
 func tailLiveEvents(ctx context.Context, client runEventClient, runID string, sinceSeq uint64, mode outputMode, out io.Writer) error {
-	stream, err := client.WatchRun(ctx, &pb.WatchRunRequest{
+	stream, err := client.WatchRun(ctx, connect.NewRequest(&pb.WatchRunRequest{
 		RunId:    runID,
 		SinceSeq: sinceSeq,
-	})
+	}))
 	if err != nil {
 		return fmt.Errorf("watch run: %w", err)
 	}

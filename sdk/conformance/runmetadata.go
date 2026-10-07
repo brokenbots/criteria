@@ -1,9 +1,11 @@
 package conformance
 
 import (
+	"context"
 	"net/http"
 	"testing"
 
+	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
 
 	criteria "github.com/brokenbots/criteria/sdk"
@@ -23,7 +25,14 @@ func testRunMetadataRoundTrip(t *testing.T, s Subject) {
 	const token = "token-run-metadata"
 	criteriaID := s.RegisterAgent(t, "criteria-run-metadata", token)
 	oClient := criteria.NewServiceClient(client, baseURL)
-	runID := authCreateRun(t, oClient, token, criteriaID, "conformance-run-metadata")
+
+	createReq := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-run-metadata"})
+	createReq.Header().Set("Authorization", "Bearer "+token)
+	runResp, err := oClient.CreateRun(context.Background(), createReq)
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	runID := runResp.Msg.RunId
 
 	sent := map[string]*pb.Envelope{
 		"metadata-ticket":   criteria.NewEnvelope(runID, &pb.RunMetadata{Ticket: "CRI-131"}),

@@ -21,8 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	connect "connectrpc.com/connect/v2"
-	"connectrpc.com/connect/v2/connecthttp"
+	"connectrpc.com/connect"
 	"golang.org/x/net/http2"
 
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
@@ -115,12 +114,12 @@ func NewClient(serverURL string, log *slog.Logger, opts ...Options) (*Client, er
 		return nil, err
 	}
 
-	var copts []connecthttp.Option
+	var copts []connect.ClientOption
 	if o.Codec == CodecJSON {
-		copts = append(copts, connecthttp.WithProtoJSON())
+		copts = append(copts, connect.WithProtoJSON())
 	}
 
-	grpc := criteriav1connect.NewCriteriaServiceClient(connect.NewClient(connecthttp.NewTransport(httpClient, u.String(), copts...)))
+	grpc := criteriav1connect.NewCriteriaServiceClient(httpClient, u.String(), copts...)
 
 	return &Client{
 		baseURL:      u,
@@ -284,7 +283,7 @@ func (c *Client) Close() error {
 	return nil
 }
 
-func (c *Client) authorize(h *connect.Header) {
+func (c *Client) authorize(h http.Header) {
 	if c.token == "" {
 		return
 	}

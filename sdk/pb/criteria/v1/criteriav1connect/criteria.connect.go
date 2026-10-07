@@ -14,93 +14,53 @@
 package criteriav1connect
 
 import (
-	connect "connectrpc.com/connect/v2"
+	connect "connectrpc.com/connect"
 	context "context"
+	errors "errors"
 	v1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
-	sync "sync"
+	http "net/http"
+	strings "strings"
 )
+
+// This is a compile-time assertion to ensure that this generated file and the connect package are
+// compatible. If you get a compiler error that this constant is not defined, this code was
+// generated with a version of connect newer than the one compiled into your binary. You can fix the
+// problem by either regenerating this code with an older version of connect or updating the connect
+// version compiled into your binary.
+const _ = connect.IsAtLeastVersion1_13_0
 
 const (
 	// CriteriaServiceName is the fully-qualified name of the CriteriaService service.
 	CriteriaServiceName = "criteria.v1.CriteriaService"
 )
 
-// These constants are the procedure names of the RPCs defined in this package. They're exposed at
-// runtime as Spec.Procedure and as the final two segments of the HTTP route.
+// These constants are the fully-qualified names of the RPCs defined in this package. They're
+// exposed at runtime as Spec.Procedure and as the final two segments of the HTTP route.
 //
 // Note that these are different from the fully-qualified method names used by
 // google.golang.org/protobuf/reflect/protoreflect. To convert from these constants to
 // reflection-formatted method names, remove the leading slash and convert the remaining slash to a
 // period.
 const (
-	// CriteriaServiceRegisterProcedure is the procedure name of the CriteriaService's Register RPC.
+	// CriteriaServiceRegisterProcedure is the fully-qualified name of the CriteriaService's Register
+	// RPC.
 	CriteriaServiceRegisterProcedure = "/criteria.v1.CriteriaService/Register"
-	// CriteriaServiceHeartbeatProcedure is the procedure name of the CriteriaService's Heartbeat RPC.
+	// CriteriaServiceHeartbeatProcedure is the fully-qualified name of the CriteriaService's Heartbeat
+	// RPC.
 	CriteriaServiceHeartbeatProcedure = "/criteria.v1.CriteriaService/Heartbeat"
-	// CriteriaServiceCreateRunProcedure is the procedure name of the CriteriaService's CreateRun RPC.
+	// CriteriaServiceCreateRunProcedure is the fully-qualified name of the CriteriaService's CreateRun
+	// RPC.
 	CriteriaServiceCreateRunProcedure = "/criteria.v1.CriteriaService/CreateRun"
-	// CriteriaServiceReattachRunProcedure is the procedure name of the CriteriaService's ReattachRun
-	// RPC.
+	// CriteriaServiceReattachRunProcedure is the fully-qualified name of the CriteriaService's
+	// ReattachRun RPC.
 	CriteriaServiceReattachRunProcedure = "/criteria.v1.CriteriaService/ReattachRun"
-	// CriteriaServiceResumeProcedure is the procedure name of the CriteriaService's Resume RPC.
+	// CriteriaServiceResumeProcedure is the fully-qualified name of the CriteriaService's Resume RPC.
 	CriteriaServiceResumeProcedure = "/criteria.v1.CriteriaService/Resume"
-	// CriteriaServiceSubmitEventsProcedure is the procedure name of the CriteriaService's SubmitEvents
-	// RPC.
+	// CriteriaServiceSubmitEventsProcedure is the fully-qualified name of the CriteriaService's
+	// SubmitEvents RPC.
 	CriteriaServiceSubmitEventsProcedure = "/criteria.v1.CriteriaService/SubmitEvents"
-	// CriteriaServiceControlProcedure is the procedure name of the CriteriaService's Control RPC.
+	// CriteriaServiceControlProcedure is the fully-qualified name of the CriteriaService's Control RPC.
 	CriteriaServiceControlProcedure = "/criteria.v1.CriteriaService/Control"
-)
-
-var (
-	criteriaServiceRegisterSpec = sync.OnceValue(func() connect.Spec {
-		return connect.Spec{
-			StreamType: connect.StreamTypeUnary,
-			Schema:     v1.File_criteria_v1_criteria_proto.Services().ByName("CriteriaService").Methods().ByName("Register"),
-			Procedure:  CriteriaServiceRegisterProcedure,
-		}
-	})
-	criteriaServiceHeartbeatSpec = sync.OnceValue(func() connect.Spec {
-		return connect.Spec{
-			StreamType: connect.StreamTypeUnary,
-			Schema:     v1.File_criteria_v1_criteria_proto.Services().ByName("CriteriaService").Methods().ByName("Heartbeat"),
-			Procedure:  CriteriaServiceHeartbeatProcedure,
-		}
-	})
-	criteriaServiceCreateRunSpec = sync.OnceValue(func() connect.Spec {
-		return connect.Spec{
-			StreamType: connect.StreamTypeUnary,
-			Schema:     v1.File_criteria_v1_criteria_proto.Services().ByName("CriteriaService").Methods().ByName("CreateRun"),
-			Procedure:  CriteriaServiceCreateRunProcedure,
-		}
-	})
-	criteriaServiceReattachRunSpec = sync.OnceValue(func() connect.Spec {
-		return connect.Spec{
-			StreamType: connect.StreamTypeUnary,
-			Schema:     v1.File_criteria_v1_criteria_proto.Services().ByName("CriteriaService").Methods().ByName("ReattachRun"),
-			Procedure:  CriteriaServiceReattachRunProcedure,
-		}
-	})
-	criteriaServiceResumeSpec = sync.OnceValue(func() connect.Spec {
-		return connect.Spec{
-			StreamType: connect.StreamTypeUnary,
-			Schema:     v1.File_criteria_v1_criteria_proto.Services().ByName("CriteriaService").Methods().ByName("Resume"),
-			Procedure:  CriteriaServiceResumeProcedure,
-		}
-	})
-	criteriaServiceSubmitEventsSpec = sync.OnceValue(func() connect.Spec {
-		return connect.Spec{
-			StreamType: connect.StreamTypeBidi,
-			Schema:     v1.File_criteria_v1_criteria_proto.Services().ByName("CriteriaService").Methods().ByName("SubmitEvents"),
-			Procedure:  CriteriaServiceSubmitEventsProcedure,
-		}
-	})
-	criteriaServiceControlSpec = sync.OnceValue(func() connect.Spec {
-		return connect.Spec{
-			StreamType: connect.StreamTypeServer,
-			Schema:     v1.File_criteria_v1_criteria_proto.Services().ByName("CriteriaService").Methods().ByName("Control"),
-			Procedure:  CriteriaServiceControlProcedure,
-		}
-	})
 )
 
 // CriteriaServiceClient is a client for the criteria.v1.CriteriaService service.
@@ -113,14 +73,14 @@ type CriteriaServiceClient interface {
 	// an `X-Server-Bootstrap` header) before accepting Register. When no
 	// bootstrap mechanism is configured, implementations MUST return
 	// Unimplemented. This prevents open self-registration in production.
-	Register(context.Context, *v1.RegisterRequest) (*v1.RegisterResponse, error)
+	Register(context.Context, *connect.Request[v1.RegisterRequest]) (*connect.Response[v1.RegisterResponse], error)
 	// Heartbeat advances the agent's `last_seen_at`. The orchestrator marks
 	// agents offline whose heartbeat is older than a configurable threshold.
 	//
 	// The authenticated caller's identity is the canonical criteria agent being
 	// updated. Implementations MUST ignore any request-supplied criteria_id and
 	// use the caller's authenticated identity instead.
-	Heartbeat(context.Context, *v1.HeartbeatRequest) (*v1.HeartbeatResponse, error)
+	Heartbeat(context.Context, *connect.Request[v1.HeartbeatRequest]) (*connect.Response[v1.HeartbeatResponse], error)
 	// CreateRun mints a new run owned by the authenticated caller. The
 	// orchestrator is the sole source of run ids.
 	//
@@ -128,14 +88,14 @@ type CriteriaServiceClient interface {
 	// The request's `criteria_id` field is informational only. Implementations
 	// MUST ignore any request-supplied criteria_id and use the caller's
 	// authenticated identity.
-	CreateRun(context.Context, *v1.CreateRunRequest) (*v1.Run, error)
+	CreateRun(context.Context, *connect.Request[v1.CreateRunRequest]) (*connect.Response[v1.Run], error)
 	// ReattachRun lets a Criteria agent query the orchestrator about an in-flight run
 	// after a crash or restart. The orchestrator returns the current status,
 	// last active step, and whether the agent may resume execution.
 	//
 	// Implementations MUST reject the request with PERMISSION_DENIED if the
 	// authenticated caller does not own the target run's criteria agent.
-	ReattachRun(context.Context, *v1.ReattachRunRequest) (*v1.ReattachRunResponse, error)
+	ReattachRun(context.Context, *connect.Request[v1.ReattachRunRequest]) (*connect.Response[v1.ReattachRunResponse], error)
 	// Resume delivers a named signal (or an approval decision) to a paused run.
 	//
 	// Implementations MUST reject the request with PERMISSION_DENIED if the
@@ -143,7 +103,7 @@ type CriteriaServiceClient interface {
 	//
 	// This RPC is SDK contract surface: field names, payload semantics, and
 	// error-reason strings are stable for third-party orchestrators.
-	Resume(context.Context, *v1.ResumeRequest) (*v1.ResumeResponse, error)
+	Resume(context.Context, *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error)
 	// SubmitEvents is a bidirectional stream. The client writes Envelopes and
 	// the server replies with an Ack per persisted envelope (run_id, seq,
 	// correlation_id). On reconnect the client may include `since_seq` in
@@ -153,7 +113,7 @@ type CriteriaServiceClient interface {
 	// Implementations MUST verify on every envelope that the authenticated caller
 	// owns the envelope's run_id. On the first violation the stream MUST be
 	// rejected with PERMISSION_DENIED; envelopes MUST NOT be silently dropped.
-	SubmitEvents(context.Context) (CriteriaServiceSubmitEventsClientStream, error)
+	SubmitEvents(context.Context) *connect.BidiStreamForClient[v1.Envelope, v1.Ack]
 	// Control is a long-lived server-stream that the orchestrator uses to push
 	// commands to a connected Criteria agent (cancel a run, send a prompt to an
 	// agent, ...).
@@ -161,70 +121,109 @@ type CriteriaServiceClient interface {
 	// The authenticated caller's identity determines the registry key for the
 	// Control subscription. Implementations MUST ignore any request-supplied
 	// criteria_id and use the caller's authenticated identity.
-	Control(context.Context, *v1.ControlSubscribeRequest) (CriteriaServiceControlClientStream, error)
+	Control(context.Context, *connect.Request[v1.ControlSubscribeRequest]) (*connect.ServerStreamForClient[v1.ControlMessage], error)
 }
 
-// NewCriteriaServiceClient constructs a client for the criteria.v1.CriteriaService service.
-// Multiple service clients may share a single connect.Client.
-func NewCriteriaServiceClient(client *connect.Client) CriteriaServiceClient {
-	return &criteriaServiceClient{client: client}
-}
-
-// CriteriaServiceSubmitEventsClientStream is the client stream for the CriteriaService's
-// SubmitEvents RPC.
-type CriteriaServiceSubmitEventsClientStream struct {
-	stream connect.ClientStream
-}
-
-// SendHeaders opens the stream and flushes the request headers without a message. The first Send or
-// Receive does this implicitly.
-func (s CriteriaServiceSubmitEventsClientStream) SendHeaders() error {
-	return s.stream.SendHeaders()
-}
-
-// Send sends a request message to the server.
-func (s CriteriaServiceSubmitEventsClientStream) Send(req *v1.Envelope) error {
-	return s.stream.Send(req)
-}
-
-// CloseSend closes the request side of the stream.
-func (s CriteriaServiceSubmitEventsClientStream) CloseSend() error {
-	return s.stream.CloseSend()
-}
-
-// Receive returns the next response message from the server.
-func (s CriteriaServiceSubmitEventsClientStream) Receive() (*v1.Ack, error) {
-	var res v1.Ack
-	if err := s.stream.Receive(&res); err != nil {
-		return nil, err
+// NewCriteriaServiceClient constructs a client for the criteria.v1.CriteriaService service. By
+// default, it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses,
+// and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the
+// connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewCriteriaServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) CriteriaServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	criteriaServiceMethods := v1.File_criteria_v1_criteria_proto.Services().ByName("CriteriaService").Methods()
+	return &criteriaServiceClient{
+		register: connect.NewClient[v1.RegisterRequest, v1.RegisterResponse](
+			httpClient,
+			baseURL+CriteriaServiceRegisterProcedure,
+			connect.WithSchema(criteriaServiceMethods.ByName("Register")),
+			connect.WithClientOptions(opts...),
+		),
+		heartbeat: connect.NewClient[v1.HeartbeatRequest, v1.HeartbeatResponse](
+			httpClient,
+			baseURL+CriteriaServiceHeartbeatProcedure,
+			connect.WithSchema(criteriaServiceMethods.ByName("Heartbeat")),
+			connect.WithClientOptions(opts...),
+		),
+		createRun: connect.NewClient[v1.CreateRunRequest, v1.Run](
+			httpClient,
+			baseURL+CriteriaServiceCreateRunProcedure,
+			connect.WithSchema(criteriaServiceMethods.ByName("CreateRun")),
+			connect.WithClientOptions(opts...),
+		),
+		reattachRun: connect.NewClient[v1.ReattachRunRequest, v1.ReattachRunResponse](
+			httpClient,
+			baseURL+CriteriaServiceReattachRunProcedure,
+			connect.WithSchema(criteriaServiceMethods.ByName("ReattachRun")),
+			connect.WithClientOptions(opts...),
+		),
+		resume: connect.NewClient[v1.ResumeRequest, v1.ResumeResponse](
+			httpClient,
+			baseURL+CriteriaServiceResumeProcedure,
+			connect.WithSchema(criteriaServiceMethods.ByName("Resume")),
+			connect.WithClientOptions(opts...),
+		),
+		submitEvents: connect.NewClient[v1.Envelope, v1.Ack](
+			httpClient,
+			baseURL+CriteriaServiceSubmitEventsProcedure,
+			connect.WithSchema(criteriaServiceMethods.ByName("SubmitEvents")),
+			connect.WithClientOptions(opts...),
+		),
+		control: connect.NewClient[v1.ControlSubscribeRequest, v1.ControlMessage](
+			httpClient,
+			baseURL+CriteriaServiceControlProcedure,
+			connect.WithSchema(criteriaServiceMethods.ByName("Control")),
+			connect.WithClientOptions(opts...),
+		),
 	}
-	return &res, nil
 }
 
-// Close releases the stream's resources. It is idempotent and is typically deferred to clean up a
-// stream abandoned before io.EOF.
-func (s CriteriaServiceSubmitEventsClientStream) Close() error {
-	return s.stream.Close()
+// criteriaServiceClient implements CriteriaServiceClient.
+type criteriaServiceClient struct {
+	register     *connect.Client[v1.RegisterRequest, v1.RegisterResponse]
+	heartbeat    *connect.Client[v1.HeartbeatRequest, v1.HeartbeatResponse]
+	createRun    *connect.Client[v1.CreateRunRequest, v1.Run]
+	reattachRun  *connect.Client[v1.ReattachRunRequest, v1.ReattachRunResponse]
+	resume       *connect.Client[v1.ResumeRequest, v1.ResumeResponse]
+	submitEvents *connect.Client[v1.Envelope, v1.Ack]
+	control      *connect.Client[v1.ControlSubscribeRequest, v1.ControlMessage]
 }
 
-// CriteriaServiceControlClientStream is the client stream for the CriteriaService's Control RPC.
-type CriteriaServiceControlClientStream struct {
-	stream connect.ClientStream
+// Register calls criteria.v1.CriteriaService.Register.
+func (c *criteriaServiceClient) Register(ctx context.Context, req *connect.Request[v1.RegisterRequest]) (*connect.Response[v1.RegisterResponse], error) {
+	return c.register.CallUnary(ctx, req)
 }
 
-// Receive returns the next response message from the server.
-func (s CriteriaServiceControlClientStream) Receive() (*v1.ControlMessage, error) {
-	var res v1.ControlMessage
-	if err := s.stream.Receive(&res); err != nil {
-		return nil, err
-	}
-	return &res, nil
+// Heartbeat calls criteria.v1.CriteriaService.Heartbeat.
+func (c *criteriaServiceClient) Heartbeat(ctx context.Context, req *connect.Request[v1.HeartbeatRequest]) (*connect.Response[v1.HeartbeatResponse], error) {
+	return c.heartbeat.CallUnary(ctx, req)
 }
 
-// Close releases the stream's resources. It is idempotent and is typically deferred to clean up a
-// stream abandoned before io.EOF.
-func (s CriteriaServiceControlClientStream) Close() error {
-	return s.stream.Close()
+// CreateRun calls criteria.v1.CriteriaService.CreateRun.
+func (c *criteriaServiceClient) CreateRun(ctx context.Context, req *connect.Request[v1.CreateRunRequest]) (*connect.Response[v1.Run], error) {
+	return c.createRun.CallUnary(ctx, req)
+}
+
+// ReattachRun calls criteria.v1.CriteriaService.ReattachRun.
+func (c *criteriaServiceClient) ReattachRun(ctx context.Context, req *connect.Request[v1.ReattachRunRequest]) (*connect.Response[v1.ReattachRunResponse], error) {
+	return c.reattachRun.CallUnary(ctx, req)
+}
+
+// Resume calls criteria.v1.CriteriaService.Resume.
+func (c *criteriaServiceClient) Resume(ctx context.Context, req *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error) {
+	return c.resume.CallUnary(ctx, req)
+}
+
+// SubmitEvents calls criteria.v1.CriteriaService.SubmitEvents.
+func (c *criteriaServiceClient) SubmitEvents(ctx context.Context) *connect.BidiStreamForClient[v1.Envelope, v1.Ack] {
+	return c.submitEvents.CallBidiStream(ctx)
+}
+
+// Control calls criteria.v1.CriteriaService.Control.
+func (c *criteriaServiceClient) Control(ctx context.Context, req *connect.Request[v1.ControlSubscribeRequest]) (*connect.ServerStreamForClient[v1.ControlMessage], error) {
+	return c.control.CallServerStream(ctx, req)
 }
 
 // CriteriaServiceHandler is an implementation of the criteria.v1.CriteriaService service.
@@ -237,14 +236,14 @@ type CriteriaServiceHandler interface {
 	// an `X-Server-Bootstrap` header) before accepting Register. When no
 	// bootstrap mechanism is configured, implementations MUST return
 	// Unimplemented. This prevents open self-registration in production.
-	Register(context.Context, *v1.RegisterRequest) (*v1.RegisterResponse, error)
+	Register(context.Context, *connect.Request[v1.RegisterRequest]) (*connect.Response[v1.RegisterResponse], error)
 	// Heartbeat advances the agent's `last_seen_at`. The orchestrator marks
 	// agents offline whose heartbeat is older than a configurable threshold.
 	//
 	// The authenticated caller's identity is the canonical criteria agent being
 	// updated. Implementations MUST ignore any request-supplied criteria_id and
 	// use the caller's authenticated identity instead.
-	Heartbeat(context.Context, *v1.HeartbeatRequest) (*v1.HeartbeatResponse, error)
+	Heartbeat(context.Context, *connect.Request[v1.HeartbeatRequest]) (*connect.Response[v1.HeartbeatResponse], error)
 	// CreateRun mints a new run owned by the authenticated caller. The
 	// orchestrator is the sole source of run ids.
 	//
@@ -252,14 +251,14 @@ type CriteriaServiceHandler interface {
 	// The request's `criteria_id` field is informational only. Implementations
 	// MUST ignore any request-supplied criteria_id and use the caller's
 	// authenticated identity.
-	CreateRun(context.Context, *v1.CreateRunRequest) (*v1.Run, error)
+	CreateRun(context.Context, *connect.Request[v1.CreateRunRequest]) (*connect.Response[v1.Run], error)
 	// ReattachRun lets a Criteria agent query the orchestrator about an in-flight run
 	// after a crash or restart. The orchestrator returns the current status,
 	// last active step, and whether the agent may resume execution.
 	//
 	// Implementations MUST reject the request with PERMISSION_DENIED if the
 	// authenticated caller does not own the target run's criteria agent.
-	ReattachRun(context.Context, *v1.ReattachRunRequest) (*v1.ReattachRunResponse, error)
+	ReattachRun(context.Context, *connect.Request[v1.ReattachRunRequest]) (*connect.Response[v1.ReattachRunResponse], error)
 	// Resume delivers a named signal (or an approval decision) to a paused run.
 	//
 	// Implementations MUST reject the request with PERMISSION_DENIED if the
@@ -267,7 +266,7 @@ type CriteriaServiceHandler interface {
 	//
 	// This RPC is SDK contract surface: field names, payload semantics, and
 	// error-reason strings are stable for third-party orchestrators.
-	Resume(context.Context, *v1.ResumeRequest) (*v1.ResumeResponse, error)
+	Resume(context.Context, *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error)
 	// SubmitEvents is a bidirectional stream. The client writes Envelopes and
 	// the server replies with an Ack per persisted envelope (run_id, seq,
 	// correlation_id). On reconnect the client may include `since_seq` in
@@ -277,7 +276,7 @@ type CriteriaServiceHandler interface {
 	// Implementations MUST verify on every envelope that the authenticated caller
 	// owns the envelope's run_id. On the first violation the stream MUST be
 	// rejected with PERMISSION_DENIED; envelopes MUST NOT be silently dropped.
-	SubmitEvents(context.Context, CriteriaServiceSubmitEventsServerStream) error
+	SubmitEvents(context.Context, *connect.BidiStream[v1.Envelope, v1.Ack]) error
 	// Control is a long-lived server-stream that the orchestrator uses to push
 	// commands to a connected Criteria agent (cancel a run, send a prompt to an
 	// agent, ...).
@@ -285,225 +284,107 @@ type CriteriaServiceHandler interface {
 	// The authenticated caller's identity determines the registry key for the
 	// Control subscription. Implementations MUST ignore any request-supplied
 	// criteria_id and use the caller's authenticated identity.
-	Control(context.Context, *v1.ControlSubscribeRequest, CriteriaServiceControlServerStream) error
+	Control(context.Context, *connect.Request[v1.ControlSubscribeRequest], *connect.ServerStream[v1.ControlMessage]) error
 }
 
-// RegisterCriteriaServiceHandler registers svc as the criteria.v1.CriteriaService implementation on
-// server.
-func RegisterCriteriaServiceHandler(server *connect.Server, svc CriteriaServiceHandler) {
-	adapter := criteriaServiceHandler{svc: svc}
-	server.Register(
-		connect.Method{Spec: criteriaServiceRegisterSpec(), Handler: adapter.register},
-		connect.Method{Spec: criteriaServiceHeartbeatSpec(), Handler: adapter.heartbeat},
-		connect.Method{Spec: criteriaServiceCreateRunSpec(), Handler: adapter.createRun},
-		connect.Method{Spec: criteriaServiceReattachRunSpec(), Handler: adapter.reattachRun},
-		connect.Method{Spec: criteriaServiceResumeSpec(), Handler: adapter.resume},
-		connect.Method{Spec: criteriaServiceSubmitEventsSpec(), Handler: adapter.submitEvents},
-		connect.Method{Spec: criteriaServiceControlSpec(), Handler: adapter.control},
+// NewCriteriaServiceHandler builds an HTTP handler from the service implementation. It returns the
+// path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewCriteriaServiceHandler(svc CriteriaServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	criteriaServiceMethods := v1.File_criteria_v1_criteria_proto.Services().ByName("CriteriaService").Methods()
+	criteriaServiceRegisterHandler := connect.NewUnaryHandler(
+		CriteriaServiceRegisterProcedure,
+		svc.Register,
+		connect.WithSchema(criteriaServiceMethods.ByName("Register")),
+		connect.WithHandlerOptions(opts...),
 	)
-}
-
-// CriteriaServiceSubmitEventsServerStream is the server stream for the CriteriaService's
-// SubmitEvents RPC.
-type CriteriaServiceSubmitEventsServerStream struct {
-	stream connect.ServerStream
-}
-
-// Receive returns the next request message from the client.
-func (s CriteriaServiceSubmitEventsServerStream) Receive() (*v1.Envelope, error) {
-	var req v1.Envelope
-	if err := s.stream.Receive(&req); err != nil {
-		return nil, err
-	}
-	return &req, nil
-}
-
-// SendHeaders flushes the response headers without a message. The first Send does this implicitly.
-func (s CriteriaServiceSubmitEventsServerStream) SendHeaders() error {
-	return s.stream.SendHeaders()
-}
-
-// Send sends a response message to the client.
-func (s CriteriaServiceSubmitEventsServerStream) Send(res *v1.Ack) error {
-	return s.stream.Send(res)
-}
-
-// CriteriaServiceControlServerStream is the server stream for the CriteriaService's Control RPC.
-type CriteriaServiceControlServerStream struct {
-	stream connect.ServerStream
-}
-
-// SendHeaders flushes the response headers without a message. The first Send does this implicitly.
-func (s CriteriaServiceControlServerStream) SendHeaders() error {
-	return s.stream.SendHeaders()
-}
-
-// Send sends a response message to the client.
-func (s CriteriaServiceControlServerStream) Send(res *v1.ControlMessage) error {
-	return s.stream.Send(res)
+	criteriaServiceHeartbeatHandler := connect.NewUnaryHandler(
+		CriteriaServiceHeartbeatProcedure,
+		svc.Heartbeat,
+		connect.WithSchema(criteriaServiceMethods.ByName("Heartbeat")),
+		connect.WithHandlerOptions(opts...),
+	)
+	criteriaServiceCreateRunHandler := connect.NewUnaryHandler(
+		CriteriaServiceCreateRunProcedure,
+		svc.CreateRun,
+		connect.WithSchema(criteriaServiceMethods.ByName("CreateRun")),
+		connect.WithHandlerOptions(opts...),
+	)
+	criteriaServiceReattachRunHandler := connect.NewUnaryHandler(
+		CriteriaServiceReattachRunProcedure,
+		svc.ReattachRun,
+		connect.WithSchema(criteriaServiceMethods.ByName("ReattachRun")),
+		connect.WithHandlerOptions(opts...),
+	)
+	criteriaServiceResumeHandler := connect.NewUnaryHandler(
+		CriteriaServiceResumeProcedure,
+		svc.Resume,
+		connect.WithSchema(criteriaServiceMethods.ByName("Resume")),
+		connect.WithHandlerOptions(opts...),
+	)
+	criteriaServiceSubmitEventsHandler := connect.NewBidiStreamHandler(
+		CriteriaServiceSubmitEventsProcedure,
+		svc.SubmitEvents,
+		connect.WithSchema(criteriaServiceMethods.ByName("SubmitEvents")),
+		connect.WithHandlerOptions(opts...),
+	)
+	criteriaServiceControlHandler := connect.NewServerStreamHandler(
+		CriteriaServiceControlProcedure,
+		svc.Control,
+		connect.WithSchema(criteriaServiceMethods.ByName("Control")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/criteria.v1.CriteriaService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case CriteriaServiceRegisterProcedure:
+			criteriaServiceRegisterHandler.ServeHTTP(w, r)
+		case CriteriaServiceHeartbeatProcedure:
+			criteriaServiceHeartbeatHandler.ServeHTTP(w, r)
+		case CriteriaServiceCreateRunProcedure:
+			criteriaServiceCreateRunHandler.ServeHTTP(w, r)
+		case CriteriaServiceReattachRunProcedure:
+			criteriaServiceReattachRunHandler.ServeHTTP(w, r)
+		case CriteriaServiceResumeProcedure:
+			criteriaServiceResumeHandler.ServeHTTP(w, r)
+		case CriteriaServiceSubmitEventsProcedure:
+			criteriaServiceSubmitEventsHandler.ServeHTTP(w, r)
+		case CriteriaServiceControlProcedure:
+			criteriaServiceControlHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
 }
 
 // UnimplementedCriteriaServiceHandler returns CodeUnimplemented from all methods.
 type UnimplementedCriteriaServiceHandler struct{}
 
-func (UnimplementedCriteriaServiceHandler) Register(context.Context, *v1.RegisterRequest) (*v1.RegisterResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "criteria.v1.CriteriaService.Register is not implemented")
+func (UnimplementedCriteriaServiceHandler) Register(context.Context, *connect.Request[v1.RegisterRequest]) (*connect.Response[v1.RegisterResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.CriteriaService.Register is not implemented"))
 }
 
-func (UnimplementedCriteriaServiceHandler) Heartbeat(context.Context, *v1.HeartbeatRequest) (*v1.HeartbeatResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "criteria.v1.CriteriaService.Heartbeat is not implemented")
+func (UnimplementedCriteriaServiceHandler) Heartbeat(context.Context, *connect.Request[v1.HeartbeatRequest]) (*connect.Response[v1.HeartbeatResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.CriteriaService.Heartbeat is not implemented"))
 }
 
-func (UnimplementedCriteriaServiceHandler) CreateRun(context.Context, *v1.CreateRunRequest) (*v1.Run, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "criteria.v1.CriteriaService.CreateRun is not implemented")
+func (UnimplementedCriteriaServiceHandler) CreateRun(context.Context, *connect.Request[v1.CreateRunRequest]) (*connect.Response[v1.Run], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.CriteriaService.CreateRun is not implemented"))
 }
 
-func (UnimplementedCriteriaServiceHandler) ReattachRun(context.Context, *v1.ReattachRunRequest) (*v1.ReattachRunResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "criteria.v1.CriteriaService.ReattachRun is not implemented")
+func (UnimplementedCriteriaServiceHandler) ReattachRun(context.Context, *connect.Request[v1.ReattachRunRequest]) (*connect.Response[v1.ReattachRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.CriteriaService.ReattachRun is not implemented"))
 }
 
-func (UnimplementedCriteriaServiceHandler) Resume(context.Context, *v1.ResumeRequest) (*v1.ResumeResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "criteria.v1.CriteriaService.Resume is not implemented")
+func (UnimplementedCriteriaServiceHandler) Resume(context.Context, *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.CriteriaService.Resume is not implemented"))
 }
 
-func (UnimplementedCriteriaServiceHandler) SubmitEvents(context.Context, CriteriaServiceSubmitEventsServerStream) error {
-	return connect.NewError(connect.CodeUnimplemented, "criteria.v1.CriteriaService.SubmitEvents is not implemented")
+func (UnimplementedCriteriaServiceHandler) SubmitEvents(context.Context, *connect.BidiStream[v1.Envelope, v1.Ack]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.CriteriaService.SubmitEvents is not implemented"))
 }
 
-func (UnimplementedCriteriaServiceHandler) Control(context.Context, *v1.ControlSubscribeRequest, CriteriaServiceControlServerStream) error {
-	return connect.NewError(connect.CodeUnimplemented, "criteria.v1.CriteriaService.Control is not implemented")
-}
-
-type criteriaServiceClient struct {
-	client *connect.Client
-}
-
-func (c *criteriaServiceClient) Register(ctx context.Context, req *v1.RegisterRequest) (*v1.RegisterResponse, error) {
-	var res v1.RegisterResponse
-	if err := c.client.CallUnary(ctx, criteriaServiceRegisterSpec(), req, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
-}
-
-func (c *criteriaServiceClient) Heartbeat(ctx context.Context, req *v1.HeartbeatRequest) (*v1.HeartbeatResponse, error) {
-	var res v1.HeartbeatResponse
-	if err := c.client.CallUnary(ctx, criteriaServiceHeartbeatSpec(), req, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
-}
-
-func (c *criteriaServiceClient) CreateRun(ctx context.Context, req *v1.CreateRunRequest) (*v1.Run, error) {
-	var res v1.Run
-	if err := c.client.CallUnary(ctx, criteriaServiceCreateRunSpec(), req, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
-}
-
-func (c *criteriaServiceClient) ReattachRun(ctx context.Context, req *v1.ReattachRunRequest) (*v1.ReattachRunResponse, error) {
-	var res v1.ReattachRunResponse
-	if err := c.client.CallUnary(ctx, criteriaServiceReattachRunSpec(), req, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
-}
-
-func (c *criteriaServiceClient) Resume(ctx context.Context, req *v1.ResumeRequest) (*v1.ResumeResponse, error) {
-	var res v1.ResumeResponse
-	if err := c.client.CallUnary(ctx, criteriaServiceResumeSpec(), req, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
-}
-
-func (c *criteriaServiceClient) SubmitEvents(ctx context.Context) (CriteriaServiceSubmitEventsClientStream, error) {
-	stream, err := c.client.CallClientStream(ctx, criteriaServiceSubmitEventsSpec())
-	if err != nil {
-		return CriteriaServiceSubmitEventsClientStream{}, err
-	}
-	return CriteriaServiceSubmitEventsClientStream{stream: stream}, nil
-}
-
-func (c *criteriaServiceClient) Control(ctx context.Context, req *v1.ControlSubscribeRequest) (CriteriaServiceControlClientStream, error) {
-	stream, err := c.client.CallServerStream(ctx, criteriaServiceControlSpec(), req)
-	if err != nil {
-		return CriteriaServiceControlClientStream{}, err
-	}
-	return CriteriaServiceControlClientStream{stream: stream}, nil
-}
-
-type criteriaServiceHandler struct{ svc CriteriaServiceHandler }
-
-func (h criteriaServiceHandler) register(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	var req v1.RegisterRequest
-	if err := stream.Receive(&req); err != nil {
-		return err
-	}
-	res, err := h.svc.Register(ctx, &req)
-	if err != nil {
-		return err
-	}
-	return stream.Send(res)
-}
-
-func (h criteriaServiceHandler) heartbeat(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	var req v1.HeartbeatRequest
-	if err := stream.Receive(&req); err != nil {
-		return err
-	}
-	res, err := h.svc.Heartbeat(ctx, &req)
-	if err != nil {
-		return err
-	}
-	return stream.Send(res)
-}
-
-func (h criteriaServiceHandler) createRun(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	var req v1.CreateRunRequest
-	if err := stream.Receive(&req); err != nil {
-		return err
-	}
-	res, err := h.svc.CreateRun(ctx, &req)
-	if err != nil {
-		return err
-	}
-	return stream.Send(res)
-}
-
-func (h criteriaServiceHandler) reattachRun(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	var req v1.ReattachRunRequest
-	if err := stream.Receive(&req); err != nil {
-		return err
-	}
-	res, err := h.svc.ReattachRun(ctx, &req)
-	if err != nil {
-		return err
-	}
-	return stream.Send(res)
-}
-
-func (h criteriaServiceHandler) resume(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	var req v1.ResumeRequest
-	if err := stream.Receive(&req); err != nil {
-		return err
-	}
-	res, err := h.svc.Resume(ctx, &req)
-	if err != nil {
-		return err
-	}
-	return stream.Send(res)
-}
-
-func (h criteriaServiceHandler) submitEvents(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	return h.svc.SubmitEvents(ctx, CriteriaServiceSubmitEventsServerStream{stream: stream})
-}
-
-func (h criteriaServiceHandler) control(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	var req v1.ControlSubscribeRequest
-	if err := stream.Receive(&req); err != nil {
-		return err
-	}
-	return h.svc.Control(ctx, &req, CriteriaServiceControlServerStream{stream: stream})
+func (UnimplementedCriteriaServiceHandler) Control(context.Context, *connect.Request[v1.ControlSubscribeRequest], *connect.ServerStream[v1.ControlMessage]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.CriteriaService.Control is not implemented"))
 }

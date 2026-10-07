@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	connect "connectrpc.com/connect/v2"
+	"connectrpc.com/connect"
 
 	criteria "github.com/brokenbots/criteria/sdk"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
@@ -65,15 +65,22 @@ func ownershipSetup(t *testing.T, s Subject) (
 	attackerID = s.RegisterAgent(t, "attacker", attackerToken)
 
 	oClient = criteria.NewServiceClient(client, baseURL)
-	runID = authCreateRun(t, oClient, ownerToken, ownerID, "ownership-wf")
+
+	createReq := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: ownerID, WorkflowName: "ownership-wf"})
+	createReq.Header().Set("Authorization", "Bearer "+ownerToken)
+	runResp, err := oClient.CreateRun(context.Background(), createReq)
+	if err != nil {
+		t.Fatalf("ownershipSetup: CreateRun: %v", err)
+	}
+	runID = runResp.Msg.RunId
 	return oClient, ownerID, attackerID, attackerToken, runID
 }
 
 func testOwnershipHeartbeat(t *testing.T, s Subject) {
 	oClient, ownerID, _, attackerToken, _ := ownershipSetup(t, s)
-	hbCtx, hbInfo := connect.NewClientContext(context.Background())
-	hbInfo.RequestHeader().Set("Authorization", "Bearer "+attackerToken)
-	_, err := oClient.Heartbeat(hbCtx, &pb.HeartbeatRequest{CriteriaId: ownerID})
+	req := connect.NewRequest(&pb.HeartbeatRequest{CriteriaId: ownerID})
+	req.Header().Set("Authorization", "Bearer "+attackerToken)
+	_, err := oClient.Heartbeat(context.Background(), req)
 	if connect.CodeOf(err) != connect.CodePermissionDenied {
 		t.Errorf("Heartbeat cross-owner: want CodePermissionDenied, got code=%v err=%v",
 			connect.CodeOf(err), err)
@@ -82,9 +89,9 @@ func testOwnershipHeartbeat(t *testing.T, s Subject) {
 
 func testOwnershipCreateRun(t *testing.T, s Subject) {
 	oClient, ownerID, _, attackerToken, _ := ownershipSetup(t, s)
-	createCtx, createInfo := connect.NewClientContext(context.Background())
-	createInfo.RequestHeader().Set("Authorization", "Bearer "+attackerToken)
-	_, err := oClient.CreateRun(createCtx, &pb.CreateRunRequest{CriteriaId: ownerID, WorkflowName: "wf"})
+	req := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: ownerID, WorkflowName: "wf"})
+	req.Header().Set("Authorization", "Bearer "+attackerToken)
+	_, err := oClient.CreateRun(context.Background(), req)
 	if connect.CodeOf(err) != connect.CodePermissionDenied {
 		t.Errorf("CreateRun cross-owner: want CodePermissionDenied, got code=%v err=%v",
 			connect.CodeOf(err), err)
@@ -93,9 +100,9 @@ func testOwnershipCreateRun(t *testing.T, s Subject) {
 
 func testOwnershipReattachRun(t *testing.T, s Subject) {
 	oClient, _, attackerID, attackerToken, runID := ownershipSetup(t, s)
-	reCtx, reInfo := connect.NewClientContext(context.Background())
-	reInfo.RequestHeader().Set("Authorization", "Bearer "+attackerToken)
-	_, err := oClient.ReattachRun(reCtx, &pb.ReattachRunRequest{RunId: runID, CriteriaId: attackerID})
+	req := connect.NewRequest(&pb.ReattachRunRequest{RunId: runID, CriteriaId: attackerID})
+	req.Header().Set("Authorization", "Bearer "+attackerToken)
+	_, err := oClient.ReattachRun(context.Background(), req)
 	if connect.CodeOf(err) != connect.CodePermissionDenied {
 		t.Errorf("ReattachRun cross-owner: want CodePermissionDenied, got code=%v err=%v",
 			connect.CodeOf(err), err)
@@ -106,7 +113,8 @@ func testOwnershipSubmitEvents(t *testing.T, s Subject) {
 	oClient, _, _, attackerToken, runID := ownershipSetup(t, s)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	stream := authSubmitStream(t, oClient, ctx, attackerToken)
+	stream := oClient.SubmitEvents(ctx)
+	stream.RequestHeader().Set("Authorization", "Bearer "+attackerToken)
 	env := criteria.NewEnvelope(runID, &pb.StepLog{Step: "s", Stream: pb.LogStream_LOG_STREAM_STDOUT, Chunk: "x"})
 	env.CorrelationId = "own-submit"
 	if err := stream.Send(env); err != nil {
@@ -117,10 +125,10 @@ func testOwnershipSubmitEvents(t *testing.T, s Subject) {
 		}
 		return
 	}
-	_, recvErr := stream.Receive()
-	if connect.CodeOf(recvErr) != connect.CodePermissionDenied {
+	_, err := stream.Receive()
+	if connect.CodeOf(err) != connect.CodePermissionDenied {
 		t.Errorf("SubmitEvents cross-owner: want CodePermissionDenied, got code=%v err=%v",
-			connect.CodeOf(recvErr), recvErr)
+			connect.CodeOf(err), err)
 	}
 }
 
@@ -128,9 +136,9 @@ func testOwnershipControl(t *testing.T, s Subject) {
 	oClient, ownerID, _, attackerToken, _ := ownershipSetup(t, s)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	ctrlCtx, ctrlInfo := connect.NewClientContext(ctx)
-	ctrlInfo.RequestHeader().Set("Authorization", "Bearer "+attackerToken)
-	stream, err := oClient.Control(ctrlCtx, &pb.ControlSubscribeRequest{CriteriaId: ownerID})
+	req := connect.NewRequest(&pb.ControlSubscribeRequest{CriteriaId: ownerID})
+	req.Header().Set("Authorization", "Bearer "+attackerToken)
+	stream, err := oClient.Control(ctx, req)
 	if err != nil {
 		if connect.CodeOf(err) == connect.CodePermissionDenied {
 			return
@@ -138,10 +146,10 @@ func testOwnershipControl(t *testing.T, s Subject) {
 		t.Fatalf("Control cross-owner: unexpected error: %v", err)
 	}
 	// Server may send the rejection as the first stream message.
-	_, streamErr := stream.Receive()
-	if connect.CodeOf(streamErr) != connect.CodePermissionDenied {
+	stream.Receive() // return value is bool; error is in stream.Err()
+	if connect.CodeOf(stream.Err()) != connect.CodePermissionDenied {
 		t.Errorf("Control cross-owner: want CodePermissionDenied, got code=%v err=%v",
-			connect.CodeOf(streamErr), streamErr)
+			connect.CodeOf(stream.Err()), stream.Err())
 	}
 }
 
@@ -155,18 +163,18 @@ func testOwnershipResume(t *testing.T, s Subject) {
 	_ = s.RegisterAgent(t, "res-attacker", attackerToken)
 	oClient := criteria.NewServiceClient(client, baseURL)
 
-	createCtx, createInfo := connect.NewClientContext(context.Background())
-	createInfo.RequestHeader().Set("Authorization", "Bearer "+ownerToken)
-	runResp, err := oClient.CreateRun(createCtx, &pb.CreateRunRequest{CriteriaId: ownerID, WorkflowName: "own-resume-wf"})
+	createReq := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: ownerID, WorkflowName: "own-resume-wf"})
+	createReq.Header().Set("Authorization", "Bearer "+ownerToken)
+	runResp, err := oClient.CreateRun(context.Background(), createReq)
 	if err != nil {
 		t.Fatalf("CreateRun: %v", err)
 	}
-	runID := runResp.RunId
+	runID := runResp.Msg.RunId
 	pauseRunViaWaitEntered(t, oClient, ownerToken, runID, "gate-own")
 
-	resumeCtx, resumeInfo := connect.NewClientContext(context.Background())
-	resumeInfo.RequestHeader().Set("Authorization", "Bearer "+attackerToken)
-	_, err = oClient.Resume(resumeCtx, &pb.ResumeRequest{RunId: runID, Signal: "gate-own"})
+	req := connect.NewRequest(&pb.ResumeRequest{RunId: runID, Signal: "gate-own"})
+	req.Header().Set("Authorization", "Bearer "+attackerToken)
+	_, err = oClient.Resume(context.Background(), req)
 	if connect.CodeOf(err) != connect.CodePermissionDenied {
 		t.Errorf("Resume cross-owner: want CodePermissionDenied, got code=%v err=%v",
 			connect.CodeOf(err), err)
@@ -187,7 +195,7 @@ func testOwnershipRegisterBootstrapGate(t *testing.T, s Subject) {
 	defer teardown()
 
 	oClient := criteria.NewServiceClient(client, baseURL)
-	_, err := oClient.Register(context.Background(), &pb.RegisterRequest{Name: "x"})
+	_, err := oClient.Register(context.Background(), connect.NewRequest(&pb.RegisterRequest{Name: "x"}))
 	code := connect.CodeOf(err)
 	if code != connect.CodeUnimplemented && code != connect.CodeUnauthenticated {
 		t.Errorf("Register without bootstrap token: want CodeUnimplemented or CodeUnauthenticated, got code=%v err=%v",

@@ -1,8 +1,6 @@
 package conformance
 
 import (
-	connect "connectrpc.com/connect/v2"
-
 	"context"
 	"testing"
 	"time"
@@ -15,42 +13,6 @@ import (
 	criteriav1connect "github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
 )
 
-// authCreateRun creates a run for the agent identified by token, setting the
-// Authorization header on the request context, and returns the run_id.
-func authCreateRun(t *testing.T, oClient criteriav1connect.CriteriaServiceClient, token, criteriaID, workflowName string) string {
-	t.Helper()
-	ctx, info := connect.NewClientContext(context.Background())
-	info.RequestHeader().Set("Authorization", "Bearer "+token)
-	runResp, err := oClient.CreateRun(ctx, &pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: workflowName})
-	if err != nil {
-		t.Fatalf("CreateRun(%s): %v", workflowName, err)
-	}
-	return runResp.RunId
-}
-
-// authSubmitStream opens an authenticated SubmitEvents stream, setting the
-// Authorization header on ctx. The caller owns draining and closing the stream.
-func authSubmitStream(t *testing.T, oClient criteriav1connect.CriteriaServiceClient, ctx context.Context, token string) criteriav1connect.CriteriaServiceSubmitEventsClientStream {
-	t.Helper()
-	ctx, info := connect.NewClientContext(ctx)
-	info.RequestHeader().Set("Authorization", "Bearer "+token)
-	stream, err := oClient.SubmitEvents(ctx)
-	if err != nil {
-		t.Fatalf("open submit stream: %v", err)
-	}
-	return stream
-}
-
-// submitDrain drains the stream to EOF after CloseSend so the server handler
-// exits cleanly.
-func submitDrain(stream criteriav1connect.CriteriaServiceSubmitEventsClientStream) {
-	for {
-		if _, recvErr := stream.Receive(); recvErr != nil {
-			break
-		}
-	}
-}
-
 // submitEnvelopes submits envelopes through SubmitEvents and drains the stream
 // to EOF, asserting each ack correlation_id matches the submitted envelope.
 func submitEnvelopes(t *testing.T, oClient criteriav1connect.CriteriaServiceClient, token string, envs []*pb.Envelope) {
@@ -58,12 +20,8 @@ func submitEnvelopes(t *testing.T, oClient criteriav1connect.CriteriaServiceClie
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	ctx, info := connect.NewClientContext(ctx)
-	info.RequestHeader().Set("Authorization", "Bearer "+token)
-	stream, err := oClient.SubmitEvents(ctx)
-	if err != nil {
-		t.Fatalf("open submit stream: %v", err)
-	}
+	stream := oClient.SubmitEvents(ctx)
+	stream.RequestHeader().Set("Authorization", "Bearer "+token)
 	for _, env := range envs {
 		if err := stream.Send(env); err != nil {
 			t.Fatalf("Send(%s): %v", env.CorrelationId, err)
@@ -76,7 +34,7 @@ func submitEnvelopes(t *testing.T, oClient criteriav1connect.CriteriaServiceClie
 			t.Errorf("ack.correlation_id=%q want %q", ack.CorrelationId, env.CorrelationId)
 		}
 	}
-	_ = stream.CloseSend()
+	_ = stream.CloseRequest()
 	for {
 		if _, recvErr := stream.Receive(); recvErr != nil {
 			break

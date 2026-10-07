@@ -55,46 +55,38 @@
 package criteriav1connect
 
 import (
-	connect "connectrpc.com/connect/v2"
+	connect "connectrpc.com/connect"
 	context "context"
+	errors "errors"
 	v1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
-	sync "sync"
+	http "net/http"
+	strings "strings"
 )
+
+// This is a compile-time assertion to ensure that this generated file and the connect package are
+// compatible. If you get a compiler error that this constant is not defined, this code was
+// generated with a version of connect newer than the one compiled into your binary. You can fix the
+// problem by either regenerating this code with an older version of connect or updating the connect
+// version compiled into your binary.
+const _ = connect.IsAtLeastVersion1_13_0
 
 const (
 	// PeerServiceName is the fully-qualified name of the PeerService service.
 	PeerServiceName = "criteria.v1.PeerService"
 )
 
-// These constants are the procedure names of the RPCs defined in this package. They're exposed at
-// runtime as Spec.Procedure and as the final two segments of the HTTP route.
+// These constants are the fully-qualified names of the RPCs defined in this package. They're
+// exposed at runtime as Spec.Procedure and as the final two segments of the HTTP route.
 //
 // Note that these are different from the fully-qualified method names used by
 // google.golang.org/protobuf/reflect/protoreflect. To convert from these constants to
 // reflection-formatted method names, remove the leading slash and convert the remaining slash to a
 // period.
 const (
-	// PeerServiceSuperviseProcedure is the procedure name of the PeerService's Supervise RPC.
+	// PeerServiceSuperviseProcedure is the fully-qualified name of the PeerService's Supervise RPC.
 	PeerServiceSuperviseProcedure = "/criteria.v1.PeerService/Supervise"
-	// PeerServiceControlProcedure is the procedure name of the PeerService's Control RPC.
+	// PeerServiceControlProcedure is the fully-qualified name of the PeerService's Control RPC.
 	PeerServiceControlProcedure = "/criteria.v1.PeerService/Control"
-)
-
-var (
-	peerServiceSuperviseSpec = sync.OnceValue(func() connect.Spec {
-		return connect.Spec{
-			StreamType: connect.StreamTypeServer,
-			Schema:     v1.File_criteria_v1_peer_proto.Services().ByName("PeerService").Methods().ByName("Supervise"),
-			Procedure:  PeerServiceSuperviseProcedure,
-		}
-	})
-	peerServiceControlSpec = sync.OnceValue(func() connect.Spec {
-		return connect.Spec{
-			StreamType: connect.StreamTypeUnary,
-			Schema:     v1.File_criteria_v1_peer_proto.Services().ByName("PeerService").Methods().ByName("Control"),
-			Procedure:  PeerServiceControlProcedure,
-		}
-	})
 )
 
 // PeerServiceClient is a client for the criteria.v1.PeerService service.
@@ -102,35 +94,51 @@ type PeerServiceClient interface {
 	// Host->peer: open/reopen supervision. The peer streams lifecycle truth
 	// strictly after since_event_seq (exclusive). Host-initiated: the
 	// phone-home conn has the peer as gRPC server.
-	Supervise(context.Context, *v1.SupervisionRequest) (PeerServiceSuperviseClientStream, error)
+	Supervise(context.Context, *connect.Request[v1.SupervisionRequest]) (*connect.ServerStreamForClient[v1.SupervisionEvent], error)
 	// Host->peer control plane (Stage A: kill child; future: respawn, detach).
-	Control(context.Context, *v1.ControlRequest) (*v1.ControlResponse, error)
+	Control(context.Context, *connect.Request[v1.ControlRequest]) (*connect.Response[v1.ControlResponse], error)
 }
 
-// NewPeerServiceClient constructs a client for the criteria.v1.PeerService service. Multiple
-// service clients may share a single connect.Client.
-func NewPeerServiceClient(client *connect.Client) PeerServiceClient {
-	return &peerServiceClient{client: client}
-}
-
-// PeerServiceSuperviseClientStream is the client stream for the PeerService's Supervise RPC.
-type PeerServiceSuperviseClientStream struct {
-	stream connect.ClientStream
-}
-
-// Receive returns the next response message from the server.
-func (s PeerServiceSuperviseClientStream) Receive() (*v1.SupervisionEvent, error) {
-	var res v1.SupervisionEvent
-	if err := s.stream.Receive(&res); err != nil {
-		return nil, err
+// NewPeerServiceClient constructs a client for the criteria.v1.PeerService service. By default, it
+// uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses, and sends
+// uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the connect.WithGRPC() or
+// connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewPeerServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) PeerServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	peerServiceMethods := v1.File_criteria_v1_peer_proto.Services().ByName("PeerService").Methods()
+	return &peerServiceClient{
+		supervise: connect.NewClient[v1.SupervisionRequest, v1.SupervisionEvent](
+			httpClient,
+			baseURL+PeerServiceSuperviseProcedure,
+			connect.WithSchema(peerServiceMethods.ByName("Supervise")),
+			connect.WithClientOptions(opts...),
+		),
+		control: connect.NewClient[v1.ControlRequest, v1.ControlResponse](
+			httpClient,
+			baseURL+PeerServiceControlProcedure,
+			connect.WithSchema(peerServiceMethods.ByName("Control")),
+			connect.WithClientOptions(opts...),
+		),
 	}
-	return &res, nil
 }
 
-// Close releases the stream's resources. It is idempotent and is typically deferred to clean up a
-// stream abandoned before io.EOF.
-func (s PeerServiceSuperviseClientStream) Close() error {
-	return s.stream.Close()
+// peerServiceClient implements PeerServiceClient.
+type peerServiceClient struct {
+	supervise *connect.Client[v1.SupervisionRequest, v1.SupervisionEvent]
+	control   *connect.Client[v1.ControlRequest, v1.ControlResponse]
+}
+
+// Supervise calls criteria.v1.PeerService.Supervise.
+func (c *peerServiceClient) Supervise(ctx context.Context, req *connect.Request[v1.SupervisionRequest]) (*connect.ServerStreamForClient[v1.SupervisionEvent], error) {
+	return c.supervise.CallServerStream(ctx, req)
+}
+
+// Control calls criteria.v1.PeerService.Control.
+func (c *peerServiceClient) Control(ctx context.Context, req *connect.Request[v1.ControlRequest]) (*connect.Response[v1.ControlResponse], error) {
+	return c.control.CallUnary(ctx, req)
 }
 
 // PeerServiceHandler is an implementation of the criteria.v1.PeerService service.
@@ -138,84 +146,49 @@ type PeerServiceHandler interface {
 	// Host->peer: open/reopen supervision. The peer streams lifecycle truth
 	// strictly after since_event_seq (exclusive). Host-initiated: the
 	// phone-home conn has the peer as gRPC server.
-	Supervise(context.Context, *v1.SupervisionRequest, PeerServiceSuperviseServerStream) error
+	Supervise(context.Context, *connect.Request[v1.SupervisionRequest], *connect.ServerStream[v1.SupervisionEvent]) error
 	// Host->peer control plane (Stage A: kill child; future: respawn, detach).
-	Control(context.Context, *v1.ControlRequest) (*v1.ControlResponse, error)
+	Control(context.Context, *connect.Request[v1.ControlRequest]) (*connect.Response[v1.ControlResponse], error)
 }
 
-// RegisterPeerServiceHandler registers svc as the criteria.v1.PeerService implementation on server.
-func RegisterPeerServiceHandler(server *connect.Server, svc PeerServiceHandler) {
-	adapter := peerServiceHandler{svc: svc}
-	server.Register(
-		connect.Method{Spec: peerServiceSuperviseSpec(), Handler: adapter.supervise},
-		connect.Method{Spec: peerServiceControlSpec(), Handler: adapter.control},
+// NewPeerServiceHandler builds an HTTP handler from the service implementation. It returns the path
+// on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewPeerServiceHandler(svc PeerServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	peerServiceMethods := v1.File_criteria_v1_peer_proto.Services().ByName("PeerService").Methods()
+	peerServiceSuperviseHandler := connect.NewServerStreamHandler(
+		PeerServiceSuperviseProcedure,
+		svc.Supervise,
+		connect.WithSchema(peerServiceMethods.ByName("Supervise")),
+		connect.WithHandlerOptions(opts...),
 	)
-}
-
-// PeerServiceSuperviseServerStream is the server stream for the PeerService's Supervise RPC.
-type PeerServiceSuperviseServerStream struct {
-	stream connect.ServerStream
-}
-
-// SendHeaders flushes the response headers without a message. The first Send does this implicitly.
-func (s PeerServiceSuperviseServerStream) SendHeaders() error {
-	return s.stream.SendHeaders()
-}
-
-// Send sends a response message to the client.
-func (s PeerServiceSuperviseServerStream) Send(res *v1.SupervisionEvent) error {
-	return s.stream.Send(res)
+	peerServiceControlHandler := connect.NewUnaryHandler(
+		PeerServiceControlProcedure,
+		svc.Control,
+		connect.WithSchema(peerServiceMethods.ByName("Control")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/criteria.v1.PeerService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case PeerServiceSuperviseProcedure:
+			peerServiceSuperviseHandler.ServeHTTP(w, r)
+		case PeerServiceControlProcedure:
+			peerServiceControlHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
 }
 
 // UnimplementedPeerServiceHandler returns CodeUnimplemented from all methods.
 type UnimplementedPeerServiceHandler struct{}
 
-func (UnimplementedPeerServiceHandler) Supervise(context.Context, *v1.SupervisionRequest, PeerServiceSuperviseServerStream) error {
-	return connect.NewError(connect.CodeUnimplemented, "criteria.v1.PeerService.Supervise is not implemented")
+func (UnimplementedPeerServiceHandler) Supervise(context.Context, *connect.Request[v1.SupervisionRequest], *connect.ServerStream[v1.SupervisionEvent]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.PeerService.Supervise is not implemented"))
 }
 
-func (UnimplementedPeerServiceHandler) Control(context.Context, *v1.ControlRequest) (*v1.ControlResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "criteria.v1.PeerService.Control is not implemented")
-}
-
-type peerServiceClient struct {
-	client *connect.Client
-}
-
-func (c *peerServiceClient) Supervise(ctx context.Context, req *v1.SupervisionRequest) (PeerServiceSuperviseClientStream, error) {
-	stream, err := c.client.CallServerStream(ctx, peerServiceSuperviseSpec(), req)
-	if err != nil {
-		return PeerServiceSuperviseClientStream{}, err
-	}
-	return PeerServiceSuperviseClientStream{stream: stream}, nil
-}
-
-func (c *peerServiceClient) Control(ctx context.Context, req *v1.ControlRequest) (*v1.ControlResponse, error) {
-	var res v1.ControlResponse
-	if err := c.client.CallUnary(ctx, peerServiceControlSpec(), req, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
-}
-
-type peerServiceHandler struct{ svc PeerServiceHandler }
-
-func (h peerServiceHandler) supervise(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	var req v1.SupervisionRequest
-	if err := stream.Receive(&req); err != nil {
-		return err
-	}
-	return h.svc.Supervise(ctx, &req, PeerServiceSuperviseServerStream{stream: stream})
-}
-
-func (h peerServiceHandler) control(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	var req v1.ControlRequest
-	if err := stream.Receive(&req); err != nil {
-		return err
-	}
-	res, err := h.svc.Control(ctx, &req)
-	if err != nil {
-		return err
-	}
-	return stream.Send(res)
+func (UnimplementedPeerServiceHandler) Control(context.Context, *connect.Request[v1.ControlRequest]) (*connect.Response[v1.ControlResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.PeerService.Control is not implemented"))
 }

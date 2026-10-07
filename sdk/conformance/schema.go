@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	connect "connectrpc.com/connect/v2"
+	"connectrpc.com/connect"
 
 	criteria "github.com/brokenbots/criteria/sdk"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
@@ -48,11 +48,19 @@ func testSchemaVersionAccepted(t *testing.T, s Subject) {
 	const token = "token-schema-v1"
 	criteriaID := s.RegisterAgent(t, "criteria-schema-v1", token)
 	oClient := criteria.NewServiceClient(client, baseURL)
-	runID := authCreateRun(t, oClient, token, criteriaID, "conformance-schema-v1")
+
+	createReq := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-schema-v1"})
+	createReq.Header().Set("Authorization", "Bearer "+token)
+	runResp, err := oClient.CreateRun(context.Background(), createReq)
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	runID := runResp.Msg.RunId
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	stream := authSubmitStream(t, oClient, ctx, token)
+	stream := oClient.SubmitEvents(ctx)
+	stream.RequestHeader().Set("Authorization", "Bearer "+token)
 
 	env := criteria.NewEnvelope(runID, &pb.StepLog{Step: "s", Stream: pb.LogStream_LOG_STREAM_STDOUT, Chunk: "schema-ok"})
 	env.CorrelationId = "schema-v1-ok"
@@ -63,8 +71,12 @@ func testSchemaVersionAccepted(t *testing.T, s Subject) {
 	if _, err := stream.Receive(); err != nil {
 		t.Fatalf("Receive ack: %v (schema_version=%d should be accepted)", err, env.SchemaVersion)
 	}
-	_ = stream.CloseSend()
-	submitDrain(stream)
+	_ = stream.CloseRequest()
+	for {
+		if _, recvErr := stream.Receive(); recvErr != nil {
+			break
+		}
+	}
 }
 
 func testSchemaFutureVersionRejected(t *testing.T, s Subject) {
@@ -74,11 +86,19 @@ func testSchemaFutureVersionRejected(t *testing.T, s Subject) {
 	const token = "token-schema-v2"
 	criteriaID := s.RegisterAgent(t, "criteria-schema-v2", token)
 	oClient := criteria.NewServiceClient(client, baseURL)
-	runID := authCreateRun(t, oClient, token, criteriaID, "conformance-schema-v2")
+
+	createReq := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-schema-v2"})
+	createReq.Header().Set("Authorization", "Bearer "+token)
+	runResp, err := oClient.CreateRun(context.Background(), createReq)
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	runID := runResp.Msg.RunId
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	stream := authSubmitStream(t, oClient, ctx, token)
+	stream := oClient.SubmitEvents(ctx)
+	stream.RequestHeader().Set("Authorization", "Bearer "+token)
 
 	env := criteria.NewEnvelope(runID, &pb.StepLog{Step: "s", Stream: pb.LogStream_LOG_STREAM_STDOUT, Chunk: "future"})
 	env.SchemaVersion = 2 // manually override to simulate a future SDK
@@ -106,13 +126,21 @@ func testSchemaPersistedVersionMatchesSDK(t *testing.T, s Subject) {
 	const token = "token-schema-persist"
 	criteriaID := s.RegisterAgent(t, "criteria-schema-persist", token)
 	oClient := criteria.NewServiceClient(client, baseURL)
-	runID := authCreateRun(t, oClient, token, criteriaID, "conformance-schema-persist")
+
+	createReq := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-schema-persist"})
+	createReq.Header().Set("Authorization", "Bearer "+token)
+	runResp, err := oClient.CreateRun(context.Background(), createReq)
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	runID := runResp.Msg.RunId
 
 	const corrID = "schema-persist-check"
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	stream := authSubmitStream(t, oClient, ctx, token)
+	stream := oClient.SubmitEvents(ctx)
+	stream.RequestHeader().Set("Authorization", "Bearer "+token)
 	env := criteria.NewEnvelope(runID, &pb.StepLog{Step: "s", Stream: pb.LogStream_LOG_STREAM_STDOUT, Chunk: "version-check"})
 	env.CorrelationId = corrID
 	if err := stream.Send(env); err != nil {
@@ -121,8 +149,12 @@ func testSchemaPersistedVersionMatchesSDK(t *testing.T, s Subject) {
 	if _, err := stream.Receive(); err != nil {
 		t.Fatalf("Receive ack: %v", err)
 	}
-	_ = stream.CloseSend()
-	submitDrain(stream)
+	_ = stream.CloseRequest()
+	for {
+		if _, recvErr := stream.Receive(); recvErr != nil {
+			break
+		}
+	}
 
 	events := s.ListRunEvents(t, baseURL, client, token, runID, 0)
 	var found *pb.Envelope

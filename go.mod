@@ -3,7 +3,7 @@ module github.com/brokenbots/criteria
 go 1.26.6
 
 require (
-	connectrpc.com/connect/v2 v2.0.0
+	connectrpc.com/connect v1.20.0
 	github.com/brokenbots/criteria-adapter-proto v0.7.0
 	github.com/brokenbots/criteria-go-adapter-sdk v0.5.3
 	github.com/brokenbots/criteria/sdk v0.0.0

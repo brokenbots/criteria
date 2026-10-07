@@ -28,7 +28,7 @@ import (
 	"github.com/brokenbots/criteria/internal/runstate"
 	"github.com/brokenbots/criteria/workflow"
 
-	connect "connectrpc.com/connect/v2"
+	"connectrpc.com/connect"
 )
 
 // serveAdapterTestEnv is the shared harness: a compiled toy workflow with a

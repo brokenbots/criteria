@@ -25,8 +25,7 @@ import (
 
 	"maps"
 
-	connect "connectrpc.com/connect/v2"
-	"connectrpc.com/connect/v2/connecthttp"
+	"connectrpc.com/connect"
 	"go.uber.org/goleak"
 	"golang.org/x/net/http2"
 
@@ -176,42 +175,39 @@ func newFakeServer() *fakeServer {
 	}
 }
 
-func (f *fakeServer) Register(_ context.Context, _ *pb.RegisterRequest) (*pb.RegisterResponse, error) {
+func (f *fakeServer) Register(_ context.Context, _ *connect.Request[pb.RegisterRequest]) (*connect.Response[pb.RegisterResponse], error) {
 	if f.registerErr != nil {
-		return nil, connect.NewError(connect.CodeUnknown, f.registerErr.Error())
+		return nil, f.registerErr
 	}
-	return &pb.RegisterResponse{CriteriaId: f.criteriaID, Token: f.token, BootstrapCredentials: f.bootstrapCredentials}, nil
+	return connect.NewResponse(&pb.RegisterResponse{CriteriaId: f.criteriaID, Token: f.token, BootstrapCredentials: f.bootstrapCredentials}), nil
 }
 
-func (f *fakeServer) Heartbeat(_ context.Context, _ *pb.HeartbeatRequest) (*pb.HeartbeatResponse, error) {
+func (f *fakeServer) Heartbeat(_ context.Context, _ *connect.Request[pb.HeartbeatRequest]) (*connect.Response[pb.HeartbeatResponse], error) {
 	f.mu.Lock()
 	f.heartbeats++
 	f.mu.Unlock()
-	return &pb.HeartbeatResponse{}, nil
+	return connect.NewResponse(&pb.HeartbeatResponse{}), nil
 }
 
-func (f *fakeServer) CreateRun(_ context.Context, req *pb.CreateRunRequest) (*pb.Run, error) {
+func (f *fakeServer) CreateRun(_ context.Context, req *connect.Request[pb.CreateRunRequest]) (*connect.Response[pb.Run], error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.createRunErr != nil {
-		return nil, connect.NewError(connect.CodeUnknown, f.createRunErr.Error())
+		return nil, f.createRunErr
 	}
 	id := "run-" + strconv.Itoa(len(f.runs)+1)
-	r := &pb.Run{RunId: id, CriteriaId: req.CriteriaId, WorkflowName: req.WorkflowName, Status: "pending"}
+	r := &pb.Run{RunId: id, CriteriaId: req.Msg.CriteriaId, WorkflowName: req.Msg.WorkflowName, Status: "pending"}
 	f.runs = append(f.runs, r)
-	return r, nil
+	return connect.NewResponse(r), nil
 }
 
-func (f *fakeServer) SubmitEvents(ctx context.Context, stream criteriav1connect.CriteriaServiceSubmitEventsServerStream) error {
+func (f *fakeServer) SubmitEvents(ctx context.Context, stream *connect.BidiStream[pb.Envelope, pb.Ack]) error {
 	attempt := int(f.submitEventsAttempts.Add(1))
 	if f.submitEventsFailOnAttempt > 0 && attempt == f.submitEventsFailOnAttempt {
-		return connect.NewError(connect.CodeUnknown, "forced submit events failure")
+		return errors.New("forced submit events failure")
 	}
 
-	var sinceRaw string
-	if info, ok := connect.CallInfoForServerContext(ctx); ok && info != nil {
-		sinceRaw = info.RequestHeader().Get("since_seq")
-	}
+	sinceRaw := stream.RequestHeader().Get("since_seq")
 	f.mu.Lock()
 	f.sinceSeqHdr = append(f.sinceSeqHdr, sinceRaw)
 	f.streamOpenTimes = append(f.streamOpenTimes, time.Now())
@@ -280,7 +276,7 @@ func (f *fakeServer) SubmitEvents(ctx context.Context, stream criteriav1connect.
 		f.mu.Unlock()
 
 		if shouldDrop {
-			return connect.NewError(connect.CodeUnavailable, "ack dropped")
+			return connect.NewError(connect.CodeUnavailable, errors.New("ack dropped"))
 		}
 
 		if err := stream.Send(&pb.Ack{RunId: msg.RunId, Seq: seq, CorrelationId: cid}); err != nil {
@@ -294,33 +290,34 @@ func (f *fakeServer) SubmitEvents(ctx context.Context, stream criteriav1connect.
 		}
 		f.mu.Unlock()
 		if shouldFail {
-			return connect.NewError(connect.CodeUnavailable, "forced disconnect")
+			return connect.NewError(connect.CodeUnavailable, errors.New("forced disconnect"))
 		}
+		_ = ctx
 	}
 }
 
-func (f *fakeServer) Resume(_ context.Context, req *pb.ResumeRequest) (*pb.ResumeResponse, error) {
+func (f *fakeServer) Resume(_ context.Context, req *connect.Request[pb.ResumeRequest]) (*connect.Response[pb.ResumeResponse], error) {
 	f.mu.Lock()
-	f.lastResumeReq = req
+	f.lastResumeReq = req.Msg
 	err := f.resumeErr
 	f.mu.Unlock()
 	if err != nil {
-		return nil, connect.NewError(connect.CodeUnknown, err.Error())
+		return nil, err
 	}
-	return &pb.ResumeResponse{}, nil
+	return connect.NewResponse(&pb.ResumeResponse{}), nil
 }
 
-func (f *fakeServer) ReattachRun(_ context.Context, req *pb.ReattachRunRequest) (*pb.ReattachRunResponse, error) {
+func (f *fakeServer) ReattachRun(_ context.Context, req *connect.Request[pb.ReattachRunRequest]) (*connect.Response[pb.ReattachRunResponse], error) {
 	f.mu.Lock()
-	f.reattachRunReq = req
+	f.reattachRunReq = req.Msg
 	f.mu.Unlock()
-	return &pb.ReattachRunResponse{}, nil
+	return connect.NewResponse(&pb.ReattachRunResponse{}), nil
 }
 
-func (f *fakeServer) Control(ctx context.Context, _ *pb.ControlSubscribeRequest, stream criteriav1connect.CriteriaServiceControlServerStream) error {
+func (f *fakeServer) Control(ctx context.Context, _ *connect.Request[pb.ControlSubscribeRequest], stream *connect.ServerStream[pb.ControlMessage]) error {
 	attempt := int(f.controlAttempts.Add(1))
 	if f.controlFailOnAttempt > 0 && attempt == f.controlFailOnAttempt {
-		return connect.NewError(connect.CodeUnknown, "forced control stream failure")
+		return errors.New("forced control stream failure")
 	}
 	select {
 	case f.ctlAttached <- struct{}{}:
@@ -349,7 +346,7 @@ func (f *fakeServer) Control(ctx context.Context, _ *pb.ControlSubscribeRequest,
 				return err
 			}
 			if f.controlFailAfterMessageCount > 0 && int(f.controlMessagesSent.Add(1)) >= f.controlFailAfterMessageCount {
-				return connect.NewError(connect.CodeUnknown, "forced control close after message")
+				return errors.New("forced control close after message")
 			}
 		}
 	}
@@ -364,9 +361,8 @@ func startFakeServer(t *testing.T, f *fakeServer) string {
 	requireNoGoroutineLeak(t)
 
 	mux := http.NewServeMux()
-	cServer := connect.NewServer()
-	criteriav1connect.RegisterCriteriaServiceHandler(cServer, f)
-	connecthttp.Mount(mux, cServer)
+	path, handler := criteriav1connect.NewCriteriaServiceHandler(f)
+	mux.Handle(path, handler)
 	srv := httptest.NewUnstartedServer(mux)
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)

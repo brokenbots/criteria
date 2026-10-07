@@ -31,8 +31,8 @@ type Server struct {
 	control ControlHandler
 	// localService, when non-nil, is mounted at the fixed Connect service
 	// prefix localServicePattern (CRI-255: the loopback control RPCs). The
-	// owner (apply) passes the pattern reported by the connect-v2
-	// LocalControlService mount helper.
+	// owner (apply) passes the pattern reported by the generated
+	// NewLocalControlServiceHandler.
 	localService        http.Handler
 	localServicePattern string
 	// viewer, when non-nil, serves the embedded run-viewer bundle under

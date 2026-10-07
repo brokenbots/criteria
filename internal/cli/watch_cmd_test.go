@@ -3,12 +3,13 @@ package cli
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	connect "connectrpc.com/connect/v2"
+	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
@@ -25,53 +26,53 @@ type fakeWatchServerService struct {
 	watchRunRequests []*pb.WatchRunRequest
 }
 
-func (f *fakeWatchServerService) ListAgents(context.Context, *pb.ListAgentsRequest) (*pb.ListAgentsResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeWatchServerService) ListAgents(context.Context, *connect.Request[pb.ListAgentsRequest]) (*connect.Response[pb.ListAgentsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
-func (f *fakeWatchServerService) GetAgent(context.Context, *pb.GetAgentRequest) (*pb.Agent, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeWatchServerService) GetAgent(context.Context, *connect.Request[pb.GetAgentRequest]) (*connect.Response[pb.Agent], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
-func (f *fakeWatchServerService) ListRuns(context.Context, *pb.ListRunsRequest) (*pb.ListRunsResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeWatchServerService) ListRuns(context.Context, *connect.Request[pb.ListRunsRequest]) (*connect.Response[pb.ListRunsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
-func (f *fakeWatchServerService) GetRun(context.Context, *pb.GetRunRequest) (*pb.Run, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeWatchServerService) GetRun(context.Context, *connect.Request[pb.GetRunRequest]) (*connect.Response[pb.Run], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
-func (f *fakeWatchServerService) StopRun(context.Context, *pb.StopRunRequest) (*pb.StopRunResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeWatchServerService) StopRun(context.Context, *connect.Request[pb.StopRunRequest]) (*connect.Response[pb.StopRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
-func (f *fakeWatchServerService) PauseRun(context.Context, *pb.PauseRunRequest) (*pb.PauseRunResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeWatchServerService) PauseRun(context.Context, *connect.Request[pb.PauseRunRequest]) (*connect.Response[pb.PauseRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
-func (f *fakeWatchServerService) ResumeRun(context.Context, *pb.ResumeRunRequest) (*pb.ResumeRunResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeWatchServerService) ResumeRun(context.Context, *connect.Request[pb.ResumeRunRequest]) (*connect.Response[pb.ResumeRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
-func (f *fakeWatchServerService) InspectRun(context.Context, *pb.InspectRunRequest) (*pb.InspectRunResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeWatchServerService) InspectRun(context.Context, *connect.Request[pb.InspectRunRequest]) (*connect.Response[pb.InspectRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
-func (f *fakeWatchServerService) SendPrompt(context.Context, *pb.SendPromptRequest) (*pb.SendPromptResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeWatchServerService) SendPrompt(context.Context, *connect.Request[pb.SendPromptRequest]) (*connect.Response[pb.SendPromptResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
-func (f *fakeWatchServerService) SubmitWorkflowAssignment(context.Context, *pb.SubmitWorkflowAssignmentRequest) (*pb.SubmitWorkflowAssignmentResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeWatchServerService) SubmitWorkflowAssignment(context.Context, *connect.Request[pb.SubmitWorkflowAssignmentRequest]) (*connect.Response[pb.SubmitWorkflowAssignmentResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
-func (f *fakeWatchServerService) GetAssignmentDisposition(context.Context, *pb.GetAssignmentDispositionRequest) (*pb.GetAssignmentDispositionResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeWatchServerService) GetAssignmentDisposition(context.Context, *connect.Request[pb.GetAssignmentDispositionRequest]) (*connect.Response[pb.GetAssignmentDispositionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
 
-func (f *fakeWatchServerService) ListRunEvents(_ context.Context, req *pb.ListRunEventsRequest) (*pb.ListRunEventsResponse, error) {
-	f.listCalls = append(f.listCalls, req.SinceSeq)
+func (f *fakeWatchServerService) ListRunEvents(_ context.Context, req *connect.Request[pb.ListRunEventsRequest]) (*connect.Response[pb.ListRunEventsResponse], error) {
+	f.listCalls = append(f.listCalls, req.Msg.SinceSeq)
 	for i, page := range f.pages {
-		if page.sinceSeq == req.SinceSeq {
+		if page.sinceSeq == req.Msg.SinceSeq {
 			f.pages = append(f.pages[:i], f.pages[i+1:]...)
-			return page.resp, nil
+			return connect.NewResponse(page.resp), nil
 		}
 	}
-	return &pb.ListRunEventsResponse{}, nil
+	return connect.NewResponse(&pb.ListRunEventsResponse{}), nil
 }
 
-func (f *fakeWatchServerService) WatchRun(_ context.Context, req *pb.WatchRunRequest, stream criteriav1connect.ServerServiceWatchRunServerStream) error {
-	f.watchRunRequests = append(f.watchRunRequests, req)
+func (f *fakeWatchServerService) WatchRun(_ context.Context, req *connect.Request[pb.WatchRunRequest], stream *connect.ServerStream[pb.Envelope]) error {
+	f.watchRunRequests = append(f.watchRunRequests, req.Msg)
 	for _, env := range f.live {
 		if err := stream.Send(env); err != nil {
 			return err
@@ -82,7 +83,10 @@ func (f *fakeWatchServerService) WatchRun(_ context.Context, req *pb.WatchRunReq
 
 func startWatchFakeServer(t *testing.T, handler *fakeWatchServerService) string {
 	t.Helper()
-	srv := httptest.NewUnstartedServer(serverServiceMux(handler))
+	mux := http.NewServeMux()
+	path, h := criteriav1connect.NewServerServiceHandler(handler)
+	mux.Handle(path, h)
+	srv := httptest.NewUnstartedServer(mux)
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
 	protocols.SetUnencryptedHTTP2(true)

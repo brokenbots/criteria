@@ -83,7 +83,7 @@ func appendLog(path, line string) {
 	if err != nil {
 		return
 	}
-	defer func() { _ = f.Close() }()
+	defer f.Close()
 	fmt.Fprintf(f, "%s\n", line)
 }
 

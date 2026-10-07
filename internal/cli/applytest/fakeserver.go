@@ -26,8 +26,7 @@ import (
 	"testing"
 	"time"
 
-	connect "connectrpc.com/connect/v2"
-	"connectrpc.com/connect/v2/connecthttp"
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
 
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
@@ -123,17 +122,6 @@ func newFakeHandler(f *Fake) *fakeHandler {
 	}
 }
 
-// criteriaServiceMux mounts the fake's CriteriaService on the v2 connect
-// server/register/mount pattern (the same shape as the SDK's
-// NewServiceHandler).
-func criteriaServiceMux(h *fakeHandler) *http.ServeMux {
-	mux := http.NewServeMux()
-	server := connect.NewServer()
-	criteriav1connect.RegisterCriteriaServiceHandler(server, h)
-	connecthttp.Mount(mux, server)
-	return mux
-}
-
 // New starts a fake server on a random loopback port and registers t.Cleanup
 // to cancel pending goroutines, wait for them to exit, then close the server.
 //
@@ -148,7 +136,9 @@ func New(t testing.TB) *Fake {
 	f := &Fake{ctx: ctx, cancel: cancel}
 	f.handler = newFakeHandler(f)
 
-	mux := criteriaServiceMux(f.handler)
+	mux := http.NewServeMux()
+	path, h := criteriav1connect.NewCriteriaServiceHandler(f.handler)
+	mux.Handle(path, h)
 
 	srv := httptest.NewUnstartedServer(mux)
 	var protocols http.Protocols
@@ -255,7 +245,9 @@ func NewTLS(t testing.TB) *Fake {
 	f := &Fake{ctx: ctx, cancel: cancel, caCertPEM: certPEM}
 	f.handler = newFakeHandler(f)
 
-	mux := criteriaServiceMux(f.handler)
+	mux := http.NewServeMux()
+	path, h := criteriav1connect.NewCriteriaServiceHandler(f.handler)
+	mux.Handle(path, h)
 
 	cert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
@@ -341,7 +333,9 @@ func NewMTLS(t testing.TB) *Fake {
 	}
 	f.handler = newFakeHandler(f)
 
-	mux := criteriaServiceMux(f.handler)
+	mux := http.NewServeMux()
+	path, h := criteriav1connect.NewCriteriaServiceHandler(f.handler)
+	mux.Handle(path, h)
 
 	cert, err := tls.X509KeyPair(caCertPEM, caKeyPEM)
 	if err != nil {
@@ -646,14 +640,10 @@ type fakeHandler struct {
 	nextID             atomic.Int32
 }
 
-func (h *fakeHandler) Register(ctx context.Context, _ *pb.RegisterRequest) (*pb.RegisterResponse, error) {
+func (h *fakeHandler) Register(_ context.Context, req *connect.Request[pb.RegisterRequest]) (*connect.Response[pb.RegisterResponse], error) {
 	h.registrationCount.Add(1)
-	bootstrap := ""
-	if info, ok := connect.CallInfoForServerContext(ctx); ok {
-		bootstrap = info.RequestHeader().Get("X-Server-Bootstrap")
-	}
 	h.mu.Lock()
-	h.bootstrapHeaders = append(h.bootstrapHeaders, bootstrap)
+	h.bootstrapHeaders = append(h.bootstrapHeaders, req.Header().Get("X-Server-Bootstrap"))
 	h.mu.Unlock()
 	id := h.nextID.Add(1)
 	criteriaID := fmt.Sprintf("criteria-%d", id)
@@ -661,33 +651,33 @@ func (h *fakeHandler) Register(ctx context.Context, _ *pb.RegisterRequest) (*pb.
 	h.mu.Lock()
 	h.credentials[token] = criteriaID
 	h.mu.Unlock()
-	return &pb.RegisterResponse{
+	return connect.NewResponse(&pb.RegisterResponse{
 		CriteriaId: criteriaID,
 		Token:      token,
-	}, nil
+	}), nil
 }
 
-func (h *fakeHandler) Heartbeat(ctx context.Context, _ *pb.HeartbeatRequest) (*pb.HeartbeatResponse, error) {
-	if err := h.checkAuthHeader(requestHeaders(ctx)); err != nil {
+func (h *fakeHandler) Heartbeat(_ context.Context, req *connect.Request[pb.HeartbeatRequest]) (*connect.Response[pb.HeartbeatResponse], error) {
+	if err := h.checkAuth(req); err != nil {
 		return nil, err
 	}
-	return &pb.HeartbeatResponse{}, nil
+	return connect.NewResponse(&pb.HeartbeatResponse{}), nil
 }
 
-func (h *fakeHandler) ReattachRun(ctx context.Context, req *pb.ReattachRunRequest) (*pb.ReattachRunResponse, error) {
-	if err := h.checkAuthHeader(requestHeaders(ctx)); err != nil {
+func (h *fakeHandler) ReattachRun(_ context.Context, req *connect.Request[pb.ReattachRunRequest]) (*connect.Response[pb.ReattachRunResponse], error) {
+	if err := h.checkAuth(req); err != nil {
 		return nil, err
 	}
 	h.mu.Lock()
-	st, ok := h.runStates[req.RunId]
-	callerToken := extractBearerToken(requestHeaders(ctx))
-	ownerToken, hasOwner := h.runOwners[req.RunId]
+	st, ok := h.runStates[req.Msg.RunId]
+	callerToken := extractBearerToken(req.Header())
+	ownerToken, hasOwner := h.runOwners[req.Msg.RunId]
 	h.mu.Unlock()
 	if !ok || st == nil {
 		// A run that the fake has not explicitly tracked is assumed to be a
 		// fresh assignment owned by this agent. Returning CanResume=true with
 		// an empty current_step lets the agent start the run from the beginning.
-		return &pb.ReattachRunResponse{Status: "running", CanResume: true}, nil
+		return connect.NewResponse(&pb.ReattachRunResponse{Status: "running", CanResume: true}), nil
 	}
 	// Enforce run ownership: only the token that originally sent events for
 	// this run may reattach, and the request's criteria_id must match the one
@@ -695,17 +685,17 @@ func (h *fakeHandler) ReattachRun(ctx context.Context, req *pb.ReattachRunReques
 	canResume := !st.terminal && (!hasOwner || callerToken == ownerToken)
 	if canResume {
 		h.mu.Lock()
-		canResume = req.CriteriaId == h.credentials[callerToken]
+		canResume = req.Msg.CriteriaId == h.credentials[callerToken]
 		h.mu.Unlock()
 	}
-	return &pb.ReattachRunResponse{
+	return connect.NewResponse(&pb.ReattachRunResponse{
 		Status:        st.status,
 		CurrentStep:   st.currentStep,
 		Attempt:       st.attempt,
 		CanResume:     canResume,
 		VariableScope: st.variableScope,
 		PendingSignal: st.pendingSignal,
-	}, nil
+	}), nil
 }
 
 // SetReattachState configures the response returned by ReattachRun for a run.
@@ -724,8 +714,8 @@ func (f *Fake) SetReattachState(runID, status, currentStep string, attempt int32
 	}
 }
 
-func (h *fakeHandler) CreateRun(ctx context.Context, req *pb.CreateRunRequest) (*pb.Run, error) {
-	if err := h.checkAuthHeader(requestHeaders(ctx)); err != nil {
+func (h *fakeHandler) CreateRun(_ context.Context, req *connect.Request[pb.CreateRunRequest]) (*connect.Response[pb.Run], error) {
+	if err := h.checkAuth(req); err != nil {
 		return nil, err
 	}
 	id := uuid.NewString()
@@ -733,20 +723,19 @@ func (h *fakeHandler) CreateRun(ctx context.Context, req *pb.CreateRunRequest) (
 	h.events[id] = nil
 	h.mu.Unlock()
 	h.createRunCount.Add(1)
-	return &pb.Run{
+	return connect.NewResponse(&pb.Run{
 		RunId:        id,
-		CriteriaId:   req.CriteriaId,
-		WorkflowName: req.WorkflowName,
+		CriteriaId:   req.Msg.CriteriaId,
+		WorkflowName: req.Msg.WorkflowName,
 		Status:       "pending",
-	}, nil
+	}), nil
 }
 
-func (h *fakeHandler) SubmitEvents(ctx context.Context, stream criteriav1connect.CriteriaServiceSubmitEventsServerStream) error {
-	hd := requestHeaders(ctx)
-	if err := h.checkAuthHeader(hd); err != nil {
+func (h *fakeHandler) SubmitEvents(_ context.Context, stream *connect.BidiStream[pb.Envelope, pb.Ack]) error {
+	if err := h.checkAuthHeader(stream.RequestHeader()); err != nil {
 		return err
 	}
-	sinceRaw := hd.Get("since_seq")
+	sinceRaw := stream.RequestHeader().Get("since_seq")
 	h.mu.Lock()
 	h.sinceSeqHdr = append(h.sinceSeqHdr, sinceRaw)
 	h.mu.Unlock()
@@ -778,7 +767,7 @@ func (h *fakeHandler) SubmitEvents(ctx context.Context, stream criteriav1connect
 			replayed[msg.RunId] = true
 		}
 
-		if done, err := h.handleSubmitMessage(hd, stream, msg); done {
+		if done, err := h.handleSubmitMessage(stream, msg); done {
 			return err
 		}
 	}
@@ -787,12 +776,12 @@ func (h *fakeHandler) SubmitEvents(ctx context.Context, stream criteriav1connect
 // handleSubmitMessage persists one envelope, sends its ack, and triggers any
 // scripted actions. It returns (done=true, err) when the stream should be closed
 // (for injected drops), otherwise (done=false, nil).
-func (h *fakeHandler) handleSubmitMessage(hd *connect.Header, stream criteriav1connect.CriteriaServiceSubmitEventsServerStream, msg *pb.Envelope) (bool, error) {
-	callerToken := extractBearerToken(hd)
+func (h *fakeHandler) handleSubmitMessage(stream *connect.BidiStream[pb.Envelope, pb.Ack], msg *pb.Envelope) (bool, error) {
+	callerToken := extractBearerToken(stream.RequestHeader())
 	h.mu.Lock()
 	if owner, ok := h.runOwners[msg.RunId]; ok && owner != callerToken {
 		h.mu.Unlock()
-		return true, connect.NewError(connect.CodePermissionDenied, "applytest: run owned by another agent")
+		return true, connect.NewError(connect.CodePermissionDenied, errors.New("applytest: run owned by another agent"))
 	}
 	if _, ok := h.runOwners[msg.RunId]; !ok && callerToken != "" {
 		h.runOwners[msg.RunId] = callerToken
@@ -802,7 +791,7 @@ func (h *fakeHandler) handleSubmitMessage(hd *connect.Header, stream criteriav1c
 	seq, cid, shouldDrop, isDuplicate := h.persistMsg(msg)
 
 	if shouldDrop {
-		return true, connect.NewError(connect.CodeUnavailable, "applytest: stream drop injected")
+		return true, connect.NewError(connect.CodeUnavailable, errors.New("applytest: stream drop injected"))
 	}
 
 	if err := stream.Send(&pb.Ack{RunId: msg.RunId, Seq: seq, CorrelationId: cid}); err != nil {
@@ -817,7 +806,7 @@ func (h *fakeHandler) handleSubmitMessage(hd *connect.Header, stream criteriav1c
 }
 
 // replayAcks sends ack messages for all persisted events above sinceSeq.
-func (h *fakeHandler) replayAcks(stream criteriav1connect.CriteriaServiceSubmitEventsServerStream, runID string, sinceSeq uint64) error {
+func (h *fakeHandler) replayAcks(stream *connect.BidiStream[pb.Envelope, pb.Ack], runID string, sinceSeq uint64) error {
 	h.mu.Lock()
 	prior := append([]*pb.Envelope(nil), h.events[runID]...)
 	h.mu.Unlock()
@@ -983,8 +972,8 @@ func (h *fakeHandler) schedulePauseResume(runID string) {
 	}()
 }
 
-func (h *fakeHandler) Control(ctx context.Context, req *pb.ControlSubscribeRequest, stream criteriav1connect.CriteriaServiceControlServerStream) error {
-	if err := h.checkAuthHeader(requestHeaders(ctx)); err != nil {
+func (h *fakeHandler) Control(ctx context.Context, req *connect.Request[pb.ControlSubscribeRequest], stream *connect.ServerStream[pb.ControlMessage]) error {
+	if err := h.checkAuth(req); err != nil {
 		return err
 	}
 	if err := stream.Send(&pb.ControlMessage{
@@ -1022,7 +1011,7 @@ func (h *fakeHandler) Control(ctx context.Context, req *pb.ControlSubscribeReque
 // sendPendingAssignments sends all queued WorkflowAssignment messages over
 // the control stream. It is called each time the control stream attaches and
 // whenever the assignmentAdded signal fires.
-func (h *fakeHandler) sendPendingAssignments(stream criteriav1connect.CriteriaServiceControlServerStream) {
+func (h *fakeHandler) sendPendingAssignments(stream *connect.ServerStream[pb.ControlMessage]) {
 	h.mu.Lock()
 	pending := h.assignments
 	h.assignments = nil
@@ -1036,22 +1025,14 @@ func (h *fakeHandler) sendPendingAssignments(stream criteriav1connect.CriteriaSe
 	}
 }
 
-// requestHeaders returns the call headers attached by the connect server to
-// the handler context, or nil when the context was not produced by a connect
-// call (e.g. handlers invoked directly in-process). All Header reads are
-// nil-safe.
-func requestHeaders(ctx context.Context) *connect.Header {
-	info, ok := connect.CallInfoForServerContext(ctx)
-	if !ok {
-		return nil
-	}
-	return info.RequestHeader()
-}
-
-// checkAuthHeader verifies the request carries the bearer token required by
+// checkAuth verifies the request carries the bearer token required by
 // RequireAuthToken. Register is intentionally exempt because the client
 // obtains its token from the Register response.
-func (h *fakeHandler) checkAuthHeader(hd *connect.Header) error {
+func (h *fakeHandler) checkAuth(req connect.AnyRequest) error {
+	return h.checkAuthHeader(req.Header())
+}
+
+func (h *fakeHandler) checkAuthHeader(hd http.Header) error {
 	h.mu.Lock()
 	required := h.requireToken
 	h.mu.Unlock()
@@ -1060,12 +1041,12 @@ func (h *fakeHandler) checkAuthHeader(hd *connect.Header) error {
 	}
 	token := extractBearerToken(hd)
 	if token != required {
-		return connect.NewError(connect.CodeUnauthenticated, "applytest: invalid or missing bearer token")
+		return connect.NewError(connect.CodeUnauthenticated, errors.New("applytest: invalid or missing bearer token"))
 	}
 	return nil
 }
 
-func extractBearerToken(hd *connect.Header) string {
+func extractBearerToken(hd http.Header) string {
 	auth := hd.Get("Authorization")
 	if !strings.HasPrefix(auth, "Bearer ") {
 		return ""

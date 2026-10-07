@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
 
 	criteria "github.com/brokenbots/criteria/sdk"
@@ -47,7 +48,14 @@ func testAdapterSessionEventsRoundTrip(t *testing.T, s Subject) {
 	const token = "token-lifecycle-rt"
 	criteriaID := s.RegisterAgent(t, "criteria-lifecycle-rt", token)
 	oClient := criteria.NewServiceClient(client, baseURL)
-	runID := authCreateRun(t, oClient, token, criteriaID, "conformance-lifecycle-rt")
+
+	createReq := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-lifecycle-rt"})
+	createReq.Header().Set("Authorization", "Bearer "+token)
+	runResp, err := oClient.CreateRun(context.Background(), createReq)
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	runID := runResp.Msg.RunId
 
 	const adapterID = "noop.default"
 	opened := criteria.NewEnvelope(runID, &pb.AdapterEvent{Adapter: adapterID, Kind: "opened"})
@@ -57,7 +65,8 @@ func testAdapterSessionEventsRoundTrip(t *testing.T, s Subject) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	stream := authSubmitStream(t, oClient, ctx, token)
+	stream := oClient.SubmitEvents(ctx)
+	stream.RequestHeader().Set("Authorization", "Bearer "+token)
 	for _, env := range []*pb.Envelope{opened, closed} {
 		if err := stream.Send(env); err != nil {
 			t.Fatalf("Send(%s): %v", env.CorrelationId, err)
@@ -70,8 +79,12 @@ func testAdapterSessionEventsRoundTrip(t *testing.T, s Subject) {
 			t.Errorf("ack.correlation_id=%q want %q", ack.CorrelationId, env.CorrelationId)
 		}
 	}
-	_ = stream.CloseSend()
-	submitDrain(stream)
+	_ = stream.CloseRequest()
+	for {
+		if _, recvErr := stream.Receive(); recvErr != nil {
+			break
+		}
+	}
 
 	events := s.ListRunEvents(t, baseURL, client, token, runID, 0)
 	byCorr := map[string]*pb.AdapterEvent{}
@@ -115,7 +128,14 @@ func testAdapterSessionEventsOrdered(t *testing.T, s Subject) {
 	const token = "token-lifecycle-ord"
 	criteriaID := s.RegisterAgent(t, "criteria-lifecycle-ord", token)
 	oClient := criteria.NewServiceClient(client, baseURL)
-	runID := authCreateRun(t, oClient, token, criteriaID, "conformance-lifecycle-ord")
+
+	createReq := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-lifecycle-ord"})
+	createReq.Header().Set("Authorization", "Bearer "+token)
+	runResp, err := oClient.CreateRun(context.Background(), createReq)
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	runID := runResp.Msg.RunId
 
 	opened := criteria.NewEnvelope(runID, &pb.AdapterEvent{Adapter: "noop.default", Kind: "opened"})
 	opened.CorrelationId = "ord-opened"
@@ -124,7 +144,8 @@ func testAdapterSessionEventsOrdered(t *testing.T, s Subject) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	stream := authSubmitStream(t, oClient, ctx, token)
+	stream := oClient.SubmitEvents(ctx)
+	stream.RequestHeader().Set("Authorization", "Bearer "+token)
 	for _, env := range []*pb.Envelope{opened, closed} {
 		if err := stream.Send(env); err != nil {
 			t.Fatalf("Send(%s): %v", env.CorrelationId, err)
@@ -133,8 +154,12 @@ func testAdapterSessionEventsOrdered(t *testing.T, s Subject) {
 			t.Fatalf("Receive ack(%s): %v", env.CorrelationId, err)
 		}
 	}
-	_ = stream.CloseSend()
-	submitDrain(stream)
+	_ = stream.CloseRequest()
+	for {
+		if _, recvErr := stream.Receive(); recvErr != nil {
+			break
+		}
+	}
 
 	events := s.ListRunEvents(t, baseURL, client, token, runID, 0)
 	var openedSeq, closedSeq uint64
@@ -169,7 +194,14 @@ func testAdapterPodReconcileEventsRoundTrip(t *testing.T, s Subject) {
 	const token = "token-lifecycle-pod"
 	criteriaID := s.RegisterAgent(t, "criteria-lifecycle-pod", token)
 	oClient := criteria.NewServiceClient(client, baseURL)
-	runID := authCreateRun(t, oClient, token, criteriaID, "conformance-lifecycle-pod")
+
+	createReq := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-lifecycle-pod"})
+	createReq.Header().Set("Authorization", "Bearer "+token)
+	runResp, err := oClient.CreateRun(context.Background(), createReq)
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	runID := runResp.Msg.RunId
 
 	const scopeInstanceID = "run-pod/step-1/scope-0"
 	const shimAddr = "127.0.0.1:52000"

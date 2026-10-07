@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
+
 	criteria "github.com/brokenbots/criteria/sdk"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
@@ -30,7 +32,14 @@ func testTypeStringStability(t *testing.T, s Subject) { //nolint:funlen,gocognit
 	const token = "token-ts"
 	criteriaID := s.RegisterAgent(t, "criteria-ts", token)
 	oClient := criteria.NewServiceClient(client, baseURL)
-	runID := authCreateRun(t, oClient, token, criteriaID, "conformance-typestring")
+
+	createReq := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-typestring"})
+	createReq.Header().Set("Authorization", "Bearer "+token)
+	runResp, err := oClient.CreateRun(context.Background(), createReq)
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	runID := runResp.Msg.RunId
 
 	oo := PayloadOneof(t)
 	fields := oo.Fields()
@@ -70,15 +79,20 @@ func testTypeStringStability(t *testing.T, s Subject) { //nolint:funlen,gocognit
 			// Submit the envelope and read it back.
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			stream := authSubmitStream(t, oClient, ctx, token)
+			stream := oClient.SubmitEvents(ctx)
+			stream.RequestHeader().Set("Authorization", "Bearer "+token)
 			if err := stream.Send(env); err != nil {
 				t.Fatalf("Send: %v", err)
 			}
 			if _, err := stream.Receive(); err != nil {
 				t.Fatalf("Receive ack: %v", err)
 			}
-			_ = stream.CloseSend()
-			submitDrain(stream)
+			_ = stream.CloseRequest()
+			for {
+				if _, recvErr := stream.Receive(); recvErr != nil {
+					break
+				}
+			}
 
 			// 4. TypeString of the retrieved envelope must match.
 			events := s.ListRunEvents(t, baseURL, client, token, runID, 0)

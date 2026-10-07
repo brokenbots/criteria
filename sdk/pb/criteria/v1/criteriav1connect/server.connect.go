@@ -8,11 +8,20 @@
 package criteriav1connect
 
 import (
-	connect "connectrpc.com/connect/v2"
+	connect "connectrpc.com/connect"
 	context "context"
+	errors "errors"
 	v1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
-	sync "sync"
+	http "net/http"
+	strings "strings"
 )
+
+// This is a compile-time assertion to ensure that this generated file and the connect package are
+// compatible. If you get a compiler error that this constant is not defined, this code was
+// generated with a version of connect newer than the one compiled into your binary. You can fix the
+// problem by either regenerating this code with an older version of connect or updating the connect
+// version compiled into your binary.
+const _ = connect.IsAtLeastVersion1_13_0
 
 const (
 	// ServerServiceName is the fully-qualified name of the ServerService service.
@@ -21,175 +30,84 @@ const (
 	LocalControlServiceName = "criteria.v1.LocalControlService"
 )
 
-// These constants are the procedure names of the RPCs defined in this package. They're exposed at
-// runtime as Spec.Procedure and as the final two segments of the HTTP route.
+// These constants are the fully-qualified names of the RPCs defined in this package. They're
+// exposed at runtime as Spec.Procedure and as the final two segments of the HTTP route.
 //
 // Note that these are different from the fully-qualified method names used by
 // google.golang.org/protobuf/reflect/protoreflect. To convert from these constants to
 // reflection-formatted method names, remove the leading slash and convert the remaining slash to a
 // period.
 const (
-	// ServerServiceListAgentsProcedure is the procedure name of the ServerService's ListAgents RPC.
-	ServerServiceListAgentsProcedure = "/criteria.v1.ServerService/ListAgents"
-	// ServerServiceGetAgentProcedure is the procedure name of the ServerService's GetAgent RPC.
-	ServerServiceGetAgentProcedure = "/criteria.v1.ServerService/GetAgent"
-	// ServerServiceListRunsProcedure is the procedure name of the ServerService's ListRuns RPC.
-	ServerServiceListRunsProcedure = "/criteria.v1.ServerService/ListRuns"
-	// ServerServiceGetRunProcedure is the procedure name of the ServerService's GetRun RPC.
-	ServerServiceGetRunProcedure = "/criteria.v1.ServerService/GetRun"
-	// ServerServiceListRunEventsProcedure is the procedure name of the ServerService's ListRunEvents
+	// ServerServiceListAgentsProcedure is the fully-qualified name of the ServerService's ListAgents
 	// RPC.
+	ServerServiceListAgentsProcedure = "/criteria.v1.ServerService/ListAgents"
+	// ServerServiceGetAgentProcedure is the fully-qualified name of the ServerService's GetAgent RPC.
+	ServerServiceGetAgentProcedure = "/criteria.v1.ServerService/GetAgent"
+	// ServerServiceListRunsProcedure is the fully-qualified name of the ServerService's ListRuns RPC.
+	ServerServiceListRunsProcedure = "/criteria.v1.ServerService/ListRuns"
+	// ServerServiceGetRunProcedure is the fully-qualified name of the ServerService's GetRun RPC.
+	ServerServiceGetRunProcedure = "/criteria.v1.ServerService/GetRun"
+	// ServerServiceListRunEventsProcedure is the fully-qualified name of the ServerService's
+	// ListRunEvents RPC.
 	ServerServiceListRunEventsProcedure = "/criteria.v1.ServerService/ListRunEvents"
-	// ServerServiceWatchRunProcedure is the procedure name of the ServerService's WatchRun RPC.
+	// ServerServiceWatchRunProcedure is the fully-qualified name of the ServerService's WatchRun RPC.
 	ServerServiceWatchRunProcedure = "/criteria.v1.ServerService/WatchRun"
-	// ServerServiceStopRunProcedure is the procedure name of the ServerService's StopRun RPC.
+	// ServerServiceStopRunProcedure is the fully-qualified name of the ServerService's StopRun RPC.
 	ServerServiceStopRunProcedure = "/criteria.v1.ServerService/StopRun"
-	// ServerServicePauseRunProcedure is the procedure name of the ServerService's PauseRun RPC.
+	// ServerServicePauseRunProcedure is the fully-qualified name of the ServerService's PauseRun RPC.
 	ServerServicePauseRunProcedure = "/criteria.v1.ServerService/PauseRun"
-	// ServerServiceResumeRunProcedure is the procedure name of the ServerService's ResumeRun RPC.
+	// ServerServiceResumeRunProcedure is the fully-qualified name of the ServerService's ResumeRun RPC.
 	ServerServiceResumeRunProcedure = "/criteria.v1.ServerService/ResumeRun"
-	// ServerServiceInspectRunProcedure is the procedure name of the ServerService's InspectRun RPC.
+	// ServerServiceInspectRunProcedure is the fully-qualified name of the ServerService's InspectRun
+	// RPC.
 	ServerServiceInspectRunProcedure = "/criteria.v1.ServerService/InspectRun"
-	// ServerServiceSubmitWorkflowAssignmentProcedure is the procedure name of the ServerService's
+	// ServerServiceSubmitWorkflowAssignmentProcedure is the fully-qualified name of the ServerService's
 	// SubmitWorkflowAssignment RPC.
 	ServerServiceSubmitWorkflowAssignmentProcedure = "/criteria.v1.ServerService/SubmitWorkflowAssignment"
-	// ServerServiceGetAssignmentDispositionProcedure is the procedure name of the ServerService's
+	// ServerServiceGetAssignmentDispositionProcedure is the fully-qualified name of the ServerService's
 	// GetAssignmentDisposition RPC.
 	ServerServiceGetAssignmentDispositionProcedure = "/criteria.v1.ServerService/GetAssignmentDisposition"
-	// ServerServiceSendPromptProcedure is the procedure name of the ServerService's SendPrompt RPC.
-	ServerServiceSendPromptProcedure = "/criteria.v1.ServerService/SendPrompt"
-	// LocalControlServicePauseRunProcedure is the procedure name of the LocalControlService's PauseRun
+	// ServerServiceSendPromptProcedure is the fully-qualified name of the ServerService's SendPrompt
 	// RPC.
+	ServerServiceSendPromptProcedure = "/criteria.v1.ServerService/SendPrompt"
+	// LocalControlServicePauseRunProcedure is the fully-qualified name of the LocalControlService's
+	// PauseRun RPC.
 	LocalControlServicePauseRunProcedure = "/criteria.v1.LocalControlService/PauseRun"
-	// LocalControlServiceResumeRunProcedure is the procedure name of the LocalControlService's
+	// LocalControlServiceResumeRunProcedure is the fully-qualified name of the LocalControlService's
 	// ResumeRun RPC.
 	LocalControlServiceResumeRunProcedure = "/criteria.v1.LocalControlService/ResumeRun"
-	// LocalControlServiceResolveResumeProcedure is the procedure name of the LocalControlService's
-	// ResolveResume RPC.
+	// LocalControlServiceResolveResumeProcedure is the fully-qualified name of the
+	// LocalControlService's ResolveResume RPC.
 	LocalControlServiceResolveResumeProcedure = "/criteria.v1.LocalControlService/ResolveResume"
-)
-
-var (
-	serverServiceListAgentsSpec = sync.OnceValue(func() connect.Spec {
-		return connect.Spec{
-			StreamType: connect.StreamTypeUnary,
-			Schema:     v1.File_criteria_v1_server_proto.Services().ByName("ServerService").Methods().ByName("ListAgents"),
-			Procedure:  ServerServiceListAgentsProcedure,
-		}
-	})
-	serverServiceGetAgentSpec = sync.OnceValue(func() connect.Spec {
-		return connect.Spec{
-			StreamType: connect.StreamTypeUnary,
-			Schema:     v1.File_criteria_v1_server_proto.Services().ByName("ServerService").Methods().ByName("GetAgent"),
-			Procedure:  ServerServiceGetAgentProcedure,
-		}
-	})
-	serverServiceListRunsSpec = sync.OnceValue(func() connect.Spec {
-		return connect.Spec{
-			StreamType: connect.StreamTypeUnary,
-			Schema:     v1.File_criteria_v1_server_proto.Services().ByName("ServerService").Methods().ByName("ListRuns"),
-			Procedure:  ServerServiceListRunsProcedure,
-		}
-	})
-	serverServiceGetRunSpec = sync.OnceValue(func() connect.Spec {
-		return connect.Spec{
-			StreamType: connect.StreamTypeUnary,
-			Schema:     v1.File_criteria_v1_server_proto.Services().ByName("ServerService").Methods().ByName("GetRun"),
-			Procedure:  ServerServiceGetRunProcedure,
-		}
-	})
-	serverServiceListRunEventsSpec = sync.OnceValue(func() connect.Spec {
-		return connect.Spec{
-			StreamType: connect.StreamTypeUnary,
-			Schema:     v1.File_criteria_v1_server_proto.Services().ByName("ServerService").Methods().ByName("ListRunEvents"),
-			Procedure:  ServerServiceListRunEventsProcedure,
-		}
-	})
-	serverServiceWatchRunSpec = sync.OnceValue(func() connect.Spec {
-		return connect.Spec{
-			StreamType: connect.StreamTypeServer,
-			Schema:     v1.File_criteria_v1_server_proto.Services().ByName("ServerService").Methods().ByName("WatchRun"),
-			Procedure:  ServerServiceWatchRunProcedure,
-		}
-	})
-	serverServiceStopRunSpec = sync.OnceValue(func() connect.Spec {
-		return connect.Spec{
-			StreamType: connect.StreamTypeUnary,
-			Schema:     v1.File_criteria_v1_server_proto.Services().ByName("ServerService").Methods().ByName("StopRun"),
-			Procedure:  ServerServiceStopRunProcedure,
-		}
-	})
-	serverServicePauseRunSpec = sync.OnceValue(func() connect.Spec {
-		return connect.Spec{
-			StreamType: connect.StreamTypeUnary,
-			Schema:     v1.File_criteria_v1_server_proto.Services().ByName("ServerService").Methods().ByName("PauseRun"),
-			Procedure:  ServerServicePauseRunProcedure,
-		}
-	})
-	serverServiceResumeRunSpec = sync.OnceValue(func() connect.Spec {
-		return connect.Spec{
-			StreamType: connect.StreamTypeUnary,
-			Schema:     v1.File_criteria_v1_server_proto.Services().ByName("ServerService").Methods().ByName("ResumeRun"),
-			Procedure:  ServerServiceResumeRunProcedure,
-		}
-	})
-	serverServiceInspectRunSpec = sync.OnceValue(func() connect.Spec {
-		return connect.Spec{
-			StreamType: connect.StreamTypeUnary,
-			Schema:     v1.File_criteria_v1_server_proto.Services().ByName("ServerService").Methods().ByName("InspectRun"),
-			Procedure:  ServerServiceInspectRunProcedure,
-		}
-	})
-	serverServiceSubmitWorkflowAssignmentSpec = sync.OnceValue(func() connect.Spec {
-		return connect.Spec{
-			StreamType: connect.StreamTypeUnary,
-			Schema:     v1.File_criteria_v1_server_proto.Services().ByName("ServerService").Methods().ByName("SubmitWorkflowAssignment"),
-			Procedure:  ServerServiceSubmitWorkflowAssignmentProcedure,
-		}
-	})
-	serverServiceGetAssignmentDispositionSpec = sync.OnceValue(func() connect.Spec {
-		return connect.Spec{
-			StreamType: connect.StreamTypeUnary,
-			Schema:     v1.File_criteria_v1_server_proto.Services().ByName("ServerService").Methods().ByName("GetAssignmentDisposition"),
-			Procedure:  ServerServiceGetAssignmentDispositionProcedure,
-		}
-	})
-	serverServiceSendPromptSpec = sync.OnceValue(func() connect.Spec {
-		return connect.Spec{
-			StreamType: connect.StreamTypeUnary,
-			Schema:     v1.File_criteria_v1_server_proto.Services().ByName("ServerService").Methods().ByName("SendPrompt"),
-			Procedure:  ServerServiceSendPromptProcedure,
-		}
-	})
 )
 
 // ServerServiceClient is a client for the criteria.v1.ServerService service.
 type ServerServiceClient interface {
-	ListAgents(context.Context, *v1.ListAgentsRequest) (*v1.ListAgentsResponse, error)
-	GetAgent(context.Context, *v1.GetAgentRequest) (*v1.Agent, error)
-	ListRuns(context.Context, *v1.ListRunsRequest) (*v1.ListRunsResponse, error)
-	GetRun(context.Context, *v1.GetRunRequest) (*v1.Run, error)
+	ListAgents(context.Context, *connect.Request[v1.ListAgentsRequest]) (*connect.Response[v1.ListAgentsResponse], error)
+	GetAgent(context.Context, *connect.Request[v1.GetAgentRequest]) (*connect.Response[v1.Agent], error)
+	ListRuns(context.Context, *connect.Request[v1.ListRunsRequest]) (*connect.Response[v1.ListRunsResponse], error)
+	GetRun(context.Context, *connect.Request[v1.GetRunRequest]) (*connect.Response[v1.Run], error)
 	// ListRunEvents replaces the Phase 0 run-events HTTP endpoint.
-	ListRunEvents(context.Context, *v1.ListRunEventsRequest) (*v1.ListRunEventsResponse, error)
+	ListRunEvents(context.Context, *connect.Request[v1.ListRunEventsRequest]) (*connect.Response[v1.ListRunEventsResponse], error)
 	// WatchRun replaces the Phase 0 run-stream endpoint. Emits any already
 	// persisted events (since `since_seq`) and then tails live events until the
 	// client disconnects or the run reaches a terminal state.
-	WatchRun(context.Context, *v1.WatchRunRequest) (ServerServiceWatchRunClientStream, error)
+	WatchRun(context.Context, *connect.Request[v1.WatchRunRequest]) (*connect.ServerStreamForClient[v1.Envelope], error)
 	// StopRun cancels a run. If an agent is attached to the run via its
 	// Control stream, the orchestrator pushes a RunCancel to it. Returns
 	// FAILED_PRECONDITION if the agent is not connected.
 	//
 	// Implementations MUST reject the request with PERMISSION_DENIED if the
 	// authenticated caller does not own the target run's agent.
-	StopRun(context.Context, *v1.StopRunRequest) (*v1.StopRunResponse, error)
+	StopRun(context.Context, *connect.Request[v1.StopRunRequest]) (*connect.Response[v1.StopRunResponse], error)
 	// PauseRun halts a run without losing state. The adapter session is
 	// paused via the v2 adapter Pause RPC.
-	PauseRun(context.Context, *v1.PauseRunRequest) (*v1.PauseRunResponse, error)
+	PauseRun(context.Context, *connect.Request[v1.PauseRunRequest]) (*connect.Response[v1.PauseRunResponse], error)
 	// ResumeRun continues a previously paused run.
-	ResumeRun(context.Context, *v1.ResumeRunRequest) (*v1.ResumeRunResponse, error)
+	ResumeRun(context.Context, *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error)
 	// InspectRun returns structured read-only state for a run. If session_id
 	// is empty the server may return a summary across all sessions.
-	InspectRun(context.Context, *v1.InspectRunRequest) (*v1.InspectRunResponse, error)
+	InspectRun(context.Context, *connect.Request[v1.InspectRunRequest]) (*connect.Response[v1.InspectRunResponse], error)
 	// SubmitWorkflowAssignment enqueues a workflow for execution by a long-lived
 	// Criteria agent. The orchestrator creates the run, records the assignment,
 	// and returns the run id along with the current assignment state.
@@ -206,7 +124,7 @@ type ServerServiceClient interface {
 	// with the same key already exists in the caller's scope, the server MUST
 	// return the existing `run_id` and current state without creating a
 	// duplicate run or assignment.
-	SubmitWorkflowAssignment(context.Context, *v1.SubmitWorkflowAssignmentRequest) (*v1.SubmitWorkflowAssignmentResponse, error)
+	SubmitWorkflowAssignment(context.Context, *connect.Request[v1.SubmitWorkflowAssignmentRequest]) (*connect.Response[v1.SubmitWorkflowAssignmentResponse], error)
 	// GetAssignmentDisposition returns the current queue state of a previously
 	// submitted workflow assignment.
 	//
@@ -215,65 +133,213 @@ type ServerServiceClient interface {
 	// Run ownership is distinct from assignment ownership: agents lease and
 	// execute runs via the Control stream, but the assignment record remains
 	// owned by the submitting caller.
-	GetAssignmentDisposition(context.Context, *v1.GetAssignmentDispositionRequest) (*v1.GetAssignmentDispositionResponse, error)
+	GetAssignmentDisposition(context.Context, *connect.Request[v1.GetAssignmentDispositionRequest]) (*connect.Response[v1.GetAssignmentDispositionResponse], error)
 	// SendPrompt — schema-only stub for Phase 2.3. UI clients can wire up
 	// against this method, but the server currently returns UNIMPLEMENTED.
-	SendPrompt(context.Context, *v1.SendPromptRequest) (*v1.SendPromptResponse, error)
+	SendPrompt(context.Context, *connect.Request[v1.SendPromptRequest]) (*connect.Response[v1.SendPromptResponse], error)
 }
 
-// NewServerServiceClient constructs a client for the criteria.v1.ServerService service. Multiple
-// service clients may share a single connect.Client.
-func NewServerServiceClient(client *connect.Client) ServerServiceClient {
-	return &serverServiceClient{client: client}
-}
-
-// ServerServiceWatchRunClientStream is the client stream for the ServerService's WatchRun RPC.
-type ServerServiceWatchRunClientStream struct {
-	stream connect.ClientStream
-}
-
-// Receive returns the next response message from the server.
-func (s ServerServiceWatchRunClientStream) Receive() (*v1.Envelope, error) {
-	var res v1.Envelope
-	if err := s.stream.Receive(&res); err != nil {
-		return nil, err
+// NewServerServiceClient constructs a client for the criteria.v1.ServerService service. By default,
+// it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses, and
+// sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the connect.WithGRPC()
+// or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewServerServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) ServerServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	serverServiceMethods := v1.File_criteria_v1_server_proto.Services().ByName("ServerService").Methods()
+	return &serverServiceClient{
+		listAgents: connect.NewClient[v1.ListAgentsRequest, v1.ListAgentsResponse](
+			httpClient,
+			baseURL+ServerServiceListAgentsProcedure,
+			connect.WithSchema(serverServiceMethods.ByName("ListAgents")),
+			connect.WithClientOptions(opts...),
+		),
+		getAgent: connect.NewClient[v1.GetAgentRequest, v1.Agent](
+			httpClient,
+			baseURL+ServerServiceGetAgentProcedure,
+			connect.WithSchema(serverServiceMethods.ByName("GetAgent")),
+			connect.WithClientOptions(opts...),
+		),
+		listRuns: connect.NewClient[v1.ListRunsRequest, v1.ListRunsResponse](
+			httpClient,
+			baseURL+ServerServiceListRunsProcedure,
+			connect.WithSchema(serverServiceMethods.ByName("ListRuns")),
+			connect.WithClientOptions(opts...),
+		),
+		getRun: connect.NewClient[v1.GetRunRequest, v1.Run](
+			httpClient,
+			baseURL+ServerServiceGetRunProcedure,
+			connect.WithSchema(serverServiceMethods.ByName("GetRun")),
+			connect.WithClientOptions(opts...),
+		),
+		listRunEvents: connect.NewClient[v1.ListRunEventsRequest, v1.ListRunEventsResponse](
+			httpClient,
+			baseURL+ServerServiceListRunEventsProcedure,
+			connect.WithSchema(serverServiceMethods.ByName("ListRunEvents")),
+			connect.WithClientOptions(opts...),
+		),
+		watchRun: connect.NewClient[v1.WatchRunRequest, v1.Envelope](
+			httpClient,
+			baseURL+ServerServiceWatchRunProcedure,
+			connect.WithSchema(serverServiceMethods.ByName("WatchRun")),
+			connect.WithClientOptions(opts...),
+		),
+		stopRun: connect.NewClient[v1.StopRunRequest, v1.StopRunResponse](
+			httpClient,
+			baseURL+ServerServiceStopRunProcedure,
+			connect.WithSchema(serverServiceMethods.ByName("StopRun")),
+			connect.WithClientOptions(opts...),
+		),
+		pauseRun: connect.NewClient[v1.PauseRunRequest, v1.PauseRunResponse](
+			httpClient,
+			baseURL+ServerServicePauseRunProcedure,
+			connect.WithSchema(serverServiceMethods.ByName("PauseRun")),
+			connect.WithClientOptions(opts...),
+		),
+		resumeRun: connect.NewClient[v1.ResumeRunRequest, v1.ResumeRunResponse](
+			httpClient,
+			baseURL+ServerServiceResumeRunProcedure,
+			connect.WithSchema(serverServiceMethods.ByName("ResumeRun")),
+			connect.WithClientOptions(opts...),
+		),
+		inspectRun: connect.NewClient[v1.InspectRunRequest, v1.InspectRunResponse](
+			httpClient,
+			baseURL+ServerServiceInspectRunProcedure,
+			connect.WithSchema(serverServiceMethods.ByName("InspectRun")),
+			connect.WithClientOptions(opts...),
+		),
+		submitWorkflowAssignment: connect.NewClient[v1.SubmitWorkflowAssignmentRequest, v1.SubmitWorkflowAssignmentResponse](
+			httpClient,
+			baseURL+ServerServiceSubmitWorkflowAssignmentProcedure,
+			connect.WithSchema(serverServiceMethods.ByName("SubmitWorkflowAssignment")),
+			connect.WithClientOptions(opts...),
+		),
+		getAssignmentDisposition: connect.NewClient[v1.GetAssignmentDispositionRequest, v1.GetAssignmentDispositionResponse](
+			httpClient,
+			baseURL+ServerServiceGetAssignmentDispositionProcedure,
+			connect.WithSchema(serverServiceMethods.ByName("GetAssignmentDisposition")),
+			connect.WithClientOptions(opts...),
+		),
+		sendPrompt: connect.NewClient[v1.SendPromptRequest, v1.SendPromptResponse](
+			httpClient,
+			baseURL+ServerServiceSendPromptProcedure,
+			connect.WithSchema(serverServiceMethods.ByName("SendPrompt")),
+			connect.WithClientOptions(opts...),
+		),
 	}
-	return &res, nil
 }
 
-// Close releases the stream's resources. It is idempotent and is typically deferred to clean up a
-// stream abandoned before io.EOF.
-func (s ServerServiceWatchRunClientStream) Close() error {
-	return s.stream.Close()
+// serverServiceClient implements ServerServiceClient.
+type serverServiceClient struct {
+	listAgents               *connect.Client[v1.ListAgentsRequest, v1.ListAgentsResponse]
+	getAgent                 *connect.Client[v1.GetAgentRequest, v1.Agent]
+	listRuns                 *connect.Client[v1.ListRunsRequest, v1.ListRunsResponse]
+	getRun                   *connect.Client[v1.GetRunRequest, v1.Run]
+	listRunEvents            *connect.Client[v1.ListRunEventsRequest, v1.ListRunEventsResponse]
+	watchRun                 *connect.Client[v1.WatchRunRequest, v1.Envelope]
+	stopRun                  *connect.Client[v1.StopRunRequest, v1.StopRunResponse]
+	pauseRun                 *connect.Client[v1.PauseRunRequest, v1.PauseRunResponse]
+	resumeRun                *connect.Client[v1.ResumeRunRequest, v1.ResumeRunResponse]
+	inspectRun               *connect.Client[v1.InspectRunRequest, v1.InspectRunResponse]
+	submitWorkflowAssignment *connect.Client[v1.SubmitWorkflowAssignmentRequest, v1.SubmitWorkflowAssignmentResponse]
+	getAssignmentDisposition *connect.Client[v1.GetAssignmentDispositionRequest, v1.GetAssignmentDispositionResponse]
+	sendPrompt               *connect.Client[v1.SendPromptRequest, v1.SendPromptResponse]
+}
+
+// ListAgents calls criteria.v1.ServerService.ListAgents.
+func (c *serverServiceClient) ListAgents(ctx context.Context, req *connect.Request[v1.ListAgentsRequest]) (*connect.Response[v1.ListAgentsResponse], error) {
+	return c.listAgents.CallUnary(ctx, req)
+}
+
+// GetAgent calls criteria.v1.ServerService.GetAgent.
+func (c *serverServiceClient) GetAgent(ctx context.Context, req *connect.Request[v1.GetAgentRequest]) (*connect.Response[v1.Agent], error) {
+	return c.getAgent.CallUnary(ctx, req)
+}
+
+// ListRuns calls criteria.v1.ServerService.ListRuns.
+func (c *serverServiceClient) ListRuns(ctx context.Context, req *connect.Request[v1.ListRunsRequest]) (*connect.Response[v1.ListRunsResponse], error) {
+	return c.listRuns.CallUnary(ctx, req)
+}
+
+// GetRun calls criteria.v1.ServerService.GetRun.
+func (c *serverServiceClient) GetRun(ctx context.Context, req *connect.Request[v1.GetRunRequest]) (*connect.Response[v1.Run], error) {
+	return c.getRun.CallUnary(ctx, req)
+}
+
+// ListRunEvents calls criteria.v1.ServerService.ListRunEvents.
+func (c *serverServiceClient) ListRunEvents(ctx context.Context, req *connect.Request[v1.ListRunEventsRequest]) (*connect.Response[v1.ListRunEventsResponse], error) {
+	return c.listRunEvents.CallUnary(ctx, req)
+}
+
+// WatchRun calls criteria.v1.ServerService.WatchRun.
+func (c *serverServiceClient) WatchRun(ctx context.Context, req *connect.Request[v1.WatchRunRequest]) (*connect.ServerStreamForClient[v1.Envelope], error) {
+	return c.watchRun.CallServerStream(ctx, req)
+}
+
+// StopRun calls criteria.v1.ServerService.StopRun.
+func (c *serverServiceClient) StopRun(ctx context.Context, req *connect.Request[v1.StopRunRequest]) (*connect.Response[v1.StopRunResponse], error) {
+	return c.stopRun.CallUnary(ctx, req)
+}
+
+// PauseRun calls criteria.v1.ServerService.PauseRun.
+func (c *serverServiceClient) PauseRun(ctx context.Context, req *connect.Request[v1.PauseRunRequest]) (*connect.Response[v1.PauseRunResponse], error) {
+	return c.pauseRun.CallUnary(ctx, req)
+}
+
+// ResumeRun calls criteria.v1.ServerService.ResumeRun.
+func (c *serverServiceClient) ResumeRun(ctx context.Context, req *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error) {
+	return c.resumeRun.CallUnary(ctx, req)
+}
+
+// InspectRun calls criteria.v1.ServerService.InspectRun.
+func (c *serverServiceClient) InspectRun(ctx context.Context, req *connect.Request[v1.InspectRunRequest]) (*connect.Response[v1.InspectRunResponse], error) {
+	return c.inspectRun.CallUnary(ctx, req)
+}
+
+// SubmitWorkflowAssignment calls criteria.v1.ServerService.SubmitWorkflowAssignment.
+func (c *serverServiceClient) SubmitWorkflowAssignment(ctx context.Context, req *connect.Request[v1.SubmitWorkflowAssignmentRequest]) (*connect.Response[v1.SubmitWorkflowAssignmentResponse], error) {
+	return c.submitWorkflowAssignment.CallUnary(ctx, req)
+}
+
+// GetAssignmentDisposition calls criteria.v1.ServerService.GetAssignmentDisposition.
+func (c *serverServiceClient) GetAssignmentDisposition(ctx context.Context, req *connect.Request[v1.GetAssignmentDispositionRequest]) (*connect.Response[v1.GetAssignmentDispositionResponse], error) {
+	return c.getAssignmentDisposition.CallUnary(ctx, req)
+}
+
+// SendPrompt calls criteria.v1.ServerService.SendPrompt.
+func (c *serverServiceClient) SendPrompt(ctx context.Context, req *connect.Request[v1.SendPromptRequest]) (*connect.Response[v1.SendPromptResponse], error) {
+	return c.sendPrompt.CallUnary(ctx, req)
 }
 
 // ServerServiceHandler is an implementation of the criteria.v1.ServerService service.
 type ServerServiceHandler interface {
-	ListAgents(context.Context, *v1.ListAgentsRequest) (*v1.ListAgentsResponse, error)
-	GetAgent(context.Context, *v1.GetAgentRequest) (*v1.Agent, error)
-	ListRuns(context.Context, *v1.ListRunsRequest) (*v1.ListRunsResponse, error)
-	GetRun(context.Context, *v1.GetRunRequest) (*v1.Run, error)
+	ListAgents(context.Context, *connect.Request[v1.ListAgentsRequest]) (*connect.Response[v1.ListAgentsResponse], error)
+	GetAgent(context.Context, *connect.Request[v1.GetAgentRequest]) (*connect.Response[v1.Agent], error)
+	ListRuns(context.Context, *connect.Request[v1.ListRunsRequest]) (*connect.Response[v1.ListRunsResponse], error)
+	GetRun(context.Context, *connect.Request[v1.GetRunRequest]) (*connect.Response[v1.Run], error)
 	// ListRunEvents replaces the Phase 0 run-events HTTP endpoint.
-	ListRunEvents(context.Context, *v1.ListRunEventsRequest) (*v1.ListRunEventsResponse, error)
+	ListRunEvents(context.Context, *connect.Request[v1.ListRunEventsRequest]) (*connect.Response[v1.ListRunEventsResponse], error)
 	// WatchRun replaces the Phase 0 run-stream endpoint. Emits any already
 	// persisted events (since `since_seq`) and then tails live events until the
 	// client disconnects or the run reaches a terminal state.
-	WatchRun(context.Context, *v1.WatchRunRequest, ServerServiceWatchRunServerStream) error
+	WatchRun(context.Context, *connect.Request[v1.WatchRunRequest], *connect.ServerStream[v1.Envelope]) error
 	// StopRun cancels a run. If an agent is attached to the run via its
 	// Control stream, the orchestrator pushes a RunCancel to it. Returns
 	// FAILED_PRECONDITION if the agent is not connected.
 	//
 	// Implementations MUST reject the request with PERMISSION_DENIED if the
 	// authenticated caller does not own the target run's agent.
-	StopRun(context.Context, *v1.StopRunRequest) (*v1.StopRunResponse, error)
+	StopRun(context.Context, *connect.Request[v1.StopRunRequest]) (*connect.Response[v1.StopRunResponse], error)
 	// PauseRun halts a run without losing state. The adapter session is
 	// paused via the v2 adapter Pause RPC.
-	PauseRun(context.Context, *v1.PauseRunRequest) (*v1.PauseRunResponse, error)
+	PauseRun(context.Context, *connect.Request[v1.PauseRunRequest]) (*connect.Response[v1.PauseRunResponse], error)
 	// ResumeRun continues a previously paused run.
-	ResumeRun(context.Context, *v1.ResumeRunRequest) (*v1.ResumeRunResponse, error)
+	ResumeRun(context.Context, *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error)
 	// InspectRun returns structured read-only state for a run. If session_id
 	// is empty the server may return a summary across all sessions.
-	InspectRun(context.Context, *v1.InspectRunRequest) (*v1.InspectRunResponse, error)
+	InspectRun(context.Context, *connect.Request[v1.InspectRunRequest]) (*connect.Response[v1.InspectRunResponse], error)
 	// SubmitWorkflowAssignment enqueues a workflow for execution by a long-lived
 	// Criteria agent. The orchestrator creates the run, records the assignment,
 	// and returns the run id along with the current assignment state.
@@ -290,7 +356,7 @@ type ServerServiceHandler interface {
 	// with the same key already exists in the caller's scope, the server MUST
 	// return the existing `run_id` and current state without creating a
 	// duplicate run or assignment.
-	SubmitWorkflowAssignment(context.Context, *v1.SubmitWorkflowAssignmentRequest) (*v1.SubmitWorkflowAssignmentResponse, error)
+	SubmitWorkflowAssignment(context.Context, *connect.Request[v1.SubmitWorkflowAssignmentRequest]) (*connect.Response[v1.SubmitWorkflowAssignmentResponse], error)
 	// GetAssignmentDisposition returns the current queue state of a previously
 	// submitted workflow assignment.
 	//
@@ -299,410 +365,255 @@ type ServerServiceHandler interface {
 	// Run ownership is distinct from assignment ownership: agents lease and
 	// execute runs via the Control stream, but the assignment record remains
 	// owned by the submitting caller.
-	GetAssignmentDisposition(context.Context, *v1.GetAssignmentDispositionRequest) (*v1.GetAssignmentDispositionResponse, error)
+	GetAssignmentDisposition(context.Context, *connect.Request[v1.GetAssignmentDispositionRequest]) (*connect.Response[v1.GetAssignmentDispositionResponse], error)
 	// SendPrompt — schema-only stub for Phase 2.3. UI clients can wire up
 	// against this method, but the server currently returns UNIMPLEMENTED.
-	SendPrompt(context.Context, *v1.SendPromptRequest) (*v1.SendPromptResponse, error)
+	SendPrompt(context.Context, *connect.Request[v1.SendPromptRequest]) (*connect.Response[v1.SendPromptResponse], error)
 }
 
-// RegisterServerServiceHandler registers svc as the criteria.v1.ServerService implementation on
-// server.
-func RegisterServerServiceHandler(server *connect.Server, svc ServerServiceHandler) {
-	adapter := serverServiceHandler{svc: svc}
-	server.Register(
-		connect.Method{Spec: serverServiceListAgentsSpec(), Handler: adapter.listAgents},
-		connect.Method{Spec: serverServiceGetAgentSpec(), Handler: adapter.getAgent},
-		connect.Method{Spec: serverServiceListRunsSpec(), Handler: adapter.listRuns},
-		connect.Method{Spec: serverServiceGetRunSpec(), Handler: adapter.getRun},
-		connect.Method{Spec: serverServiceListRunEventsSpec(), Handler: adapter.listRunEvents},
-		connect.Method{Spec: serverServiceWatchRunSpec(), Handler: adapter.watchRun},
-		connect.Method{Spec: serverServiceStopRunSpec(), Handler: adapter.stopRun},
-		connect.Method{Spec: serverServicePauseRunSpec(), Handler: adapter.pauseRun},
-		connect.Method{Spec: serverServiceResumeRunSpec(), Handler: adapter.resumeRun},
-		connect.Method{Spec: serverServiceInspectRunSpec(), Handler: adapter.inspectRun},
-		connect.Method{Spec: serverServiceSubmitWorkflowAssignmentSpec(), Handler: adapter.submitWorkflowAssignment},
-		connect.Method{Spec: serverServiceGetAssignmentDispositionSpec(), Handler: adapter.getAssignmentDisposition},
-		connect.Method{Spec: serverServiceSendPromptSpec(), Handler: adapter.sendPrompt},
+// NewServerServiceHandler builds an HTTP handler from the service implementation. It returns the
+// path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewServerServiceHandler(svc ServerServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	serverServiceMethods := v1.File_criteria_v1_server_proto.Services().ByName("ServerService").Methods()
+	serverServiceListAgentsHandler := connect.NewUnaryHandler(
+		ServerServiceListAgentsProcedure,
+		svc.ListAgents,
+		connect.WithSchema(serverServiceMethods.ByName("ListAgents")),
+		connect.WithHandlerOptions(opts...),
 	)
-}
-
-// ServerServiceWatchRunServerStream is the server stream for the ServerService's WatchRun RPC.
-type ServerServiceWatchRunServerStream struct {
-	stream connect.ServerStream
-}
-
-// SendHeaders flushes the response headers without a message. The first Send does this implicitly.
-func (s ServerServiceWatchRunServerStream) SendHeaders() error {
-	return s.stream.SendHeaders()
-}
-
-// Send sends a response message to the client.
-func (s ServerServiceWatchRunServerStream) Send(res *v1.Envelope) error {
-	return s.stream.Send(res)
+	serverServiceGetAgentHandler := connect.NewUnaryHandler(
+		ServerServiceGetAgentProcedure,
+		svc.GetAgent,
+		connect.WithSchema(serverServiceMethods.ByName("GetAgent")),
+		connect.WithHandlerOptions(opts...),
+	)
+	serverServiceListRunsHandler := connect.NewUnaryHandler(
+		ServerServiceListRunsProcedure,
+		svc.ListRuns,
+		connect.WithSchema(serverServiceMethods.ByName("ListRuns")),
+		connect.WithHandlerOptions(opts...),
+	)
+	serverServiceGetRunHandler := connect.NewUnaryHandler(
+		ServerServiceGetRunProcedure,
+		svc.GetRun,
+		connect.WithSchema(serverServiceMethods.ByName("GetRun")),
+		connect.WithHandlerOptions(opts...),
+	)
+	serverServiceListRunEventsHandler := connect.NewUnaryHandler(
+		ServerServiceListRunEventsProcedure,
+		svc.ListRunEvents,
+		connect.WithSchema(serverServiceMethods.ByName("ListRunEvents")),
+		connect.WithHandlerOptions(opts...),
+	)
+	serverServiceWatchRunHandler := connect.NewServerStreamHandler(
+		ServerServiceWatchRunProcedure,
+		svc.WatchRun,
+		connect.WithSchema(serverServiceMethods.ByName("WatchRun")),
+		connect.WithHandlerOptions(opts...),
+	)
+	serverServiceStopRunHandler := connect.NewUnaryHandler(
+		ServerServiceStopRunProcedure,
+		svc.StopRun,
+		connect.WithSchema(serverServiceMethods.ByName("StopRun")),
+		connect.WithHandlerOptions(opts...),
+	)
+	serverServicePauseRunHandler := connect.NewUnaryHandler(
+		ServerServicePauseRunProcedure,
+		svc.PauseRun,
+		connect.WithSchema(serverServiceMethods.ByName("PauseRun")),
+		connect.WithHandlerOptions(opts...),
+	)
+	serverServiceResumeRunHandler := connect.NewUnaryHandler(
+		ServerServiceResumeRunProcedure,
+		svc.ResumeRun,
+		connect.WithSchema(serverServiceMethods.ByName("ResumeRun")),
+		connect.WithHandlerOptions(opts...),
+	)
+	serverServiceInspectRunHandler := connect.NewUnaryHandler(
+		ServerServiceInspectRunProcedure,
+		svc.InspectRun,
+		connect.WithSchema(serverServiceMethods.ByName("InspectRun")),
+		connect.WithHandlerOptions(opts...),
+	)
+	serverServiceSubmitWorkflowAssignmentHandler := connect.NewUnaryHandler(
+		ServerServiceSubmitWorkflowAssignmentProcedure,
+		svc.SubmitWorkflowAssignment,
+		connect.WithSchema(serverServiceMethods.ByName("SubmitWorkflowAssignment")),
+		connect.WithHandlerOptions(opts...),
+	)
+	serverServiceGetAssignmentDispositionHandler := connect.NewUnaryHandler(
+		ServerServiceGetAssignmentDispositionProcedure,
+		svc.GetAssignmentDisposition,
+		connect.WithSchema(serverServiceMethods.ByName("GetAssignmentDisposition")),
+		connect.WithHandlerOptions(opts...),
+	)
+	serverServiceSendPromptHandler := connect.NewUnaryHandler(
+		ServerServiceSendPromptProcedure,
+		svc.SendPrompt,
+		connect.WithSchema(serverServiceMethods.ByName("SendPrompt")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/criteria.v1.ServerService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case ServerServiceListAgentsProcedure:
+			serverServiceListAgentsHandler.ServeHTTP(w, r)
+		case ServerServiceGetAgentProcedure:
+			serverServiceGetAgentHandler.ServeHTTP(w, r)
+		case ServerServiceListRunsProcedure:
+			serverServiceListRunsHandler.ServeHTTP(w, r)
+		case ServerServiceGetRunProcedure:
+			serverServiceGetRunHandler.ServeHTTP(w, r)
+		case ServerServiceListRunEventsProcedure:
+			serverServiceListRunEventsHandler.ServeHTTP(w, r)
+		case ServerServiceWatchRunProcedure:
+			serverServiceWatchRunHandler.ServeHTTP(w, r)
+		case ServerServiceStopRunProcedure:
+			serverServiceStopRunHandler.ServeHTTP(w, r)
+		case ServerServicePauseRunProcedure:
+			serverServicePauseRunHandler.ServeHTTP(w, r)
+		case ServerServiceResumeRunProcedure:
+			serverServiceResumeRunHandler.ServeHTTP(w, r)
+		case ServerServiceInspectRunProcedure:
+			serverServiceInspectRunHandler.ServeHTTP(w, r)
+		case ServerServiceSubmitWorkflowAssignmentProcedure:
+			serverServiceSubmitWorkflowAssignmentHandler.ServeHTTP(w, r)
+		case ServerServiceGetAssignmentDispositionProcedure:
+			serverServiceGetAssignmentDispositionHandler.ServeHTTP(w, r)
+		case ServerServiceSendPromptProcedure:
+			serverServiceSendPromptHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
 }
 
 // UnimplementedServerServiceHandler returns CodeUnimplemented from all methods.
 type UnimplementedServerServiceHandler struct{}
 
-func (UnimplementedServerServiceHandler) ListAgents(context.Context, *v1.ListAgentsRequest) (*v1.ListAgentsResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "criteria.v1.ServerService.ListAgents is not implemented")
+func (UnimplementedServerServiceHandler) ListAgents(context.Context, *connect.Request[v1.ListAgentsRequest]) (*connect.Response[v1.ListAgentsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.ServerService.ListAgents is not implemented"))
 }
 
-func (UnimplementedServerServiceHandler) GetAgent(context.Context, *v1.GetAgentRequest) (*v1.Agent, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "criteria.v1.ServerService.GetAgent is not implemented")
+func (UnimplementedServerServiceHandler) GetAgent(context.Context, *connect.Request[v1.GetAgentRequest]) (*connect.Response[v1.Agent], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.ServerService.GetAgent is not implemented"))
 }
 
-func (UnimplementedServerServiceHandler) ListRuns(context.Context, *v1.ListRunsRequest) (*v1.ListRunsResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "criteria.v1.ServerService.ListRuns is not implemented")
+func (UnimplementedServerServiceHandler) ListRuns(context.Context, *connect.Request[v1.ListRunsRequest]) (*connect.Response[v1.ListRunsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.ServerService.ListRuns is not implemented"))
 }
 
-func (UnimplementedServerServiceHandler) GetRun(context.Context, *v1.GetRunRequest) (*v1.Run, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "criteria.v1.ServerService.GetRun is not implemented")
+func (UnimplementedServerServiceHandler) GetRun(context.Context, *connect.Request[v1.GetRunRequest]) (*connect.Response[v1.Run], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.ServerService.GetRun is not implemented"))
 }
 
-func (UnimplementedServerServiceHandler) ListRunEvents(context.Context, *v1.ListRunEventsRequest) (*v1.ListRunEventsResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "criteria.v1.ServerService.ListRunEvents is not implemented")
+func (UnimplementedServerServiceHandler) ListRunEvents(context.Context, *connect.Request[v1.ListRunEventsRequest]) (*connect.Response[v1.ListRunEventsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.ServerService.ListRunEvents is not implemented"))
 }
 
-func (UnimplementedServerServiceHandler) WatchRun(context.Context, *v1.WatchRunRequest, ServerServiceWatchRunServerStream) error {
-	return connect.NewError(connect.CodeUnimplemented, "criteria.v1.ServerService.WatchRun is not implemented")
+func (UnimplementedServerServiceHandler) WatchRun(context.Context, *connect.Request[v1.WatchRunRequest], *connect.ServerStream[v1.Envelope]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.ServerService.WatchRun is not implemented"))
 }
 
-func (UnimplementedServerServiceHandler) StopRun(context.Context, *v1.StopRunRequest) (*v1.StopRunResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "criteria.v1.ServerService.StopRun is not implemented")
+func (UnimplementedServerServiceHandler) StopRun(context.Context, *connect.Request[v1.StopRunRequest]) (*connect.Response[v1.StopRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.ServerService.StopRun is not implemented"))
 }
 
-func (UnimplementedServerServiceHandler) PauseRun(context.Context, *v1.PauseRunRequest) (*v1.PauseRunResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "criteria.v1.ServerService.PauseRun is not implemented")
+func (UnimplementedServerServiceHandler) PauseRun(context.Context, *connect.Request[v1.PauseRunRequest]) (*connect.Response[v1.PauseRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.ServerService.PauseRun is not implemented"))
 }
 
-func (UnimplementedServerServiceHandler) ResumeRun(context.Context, *v1.ResumeRunRequest) (*v1.ResumeRunResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "criteria.v1.ServerService.ResumeRun is not implemented")
+func (UnimplementedServerServiceHandler) ResumeRun(context.Context, *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.ServerService.ResumeRun is not implemented"))
 }
 
-func (UnimplementedServerServiceHandler) InspectRun(context.Context, *v1.InspectRunRequest) (*v1.InspectRunResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "criteria.v1.ServerService.InspectRun is not implemented")
+func (UnimplementedServerServiceHandler) InspectRun(context.Context, *connect.Request[v1.InspectRunRequest]) (*connect.Response[v1.InspectRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.ServerService.InspectRun is not implemented"))
 }
 
-func (UnimplementedServerServiceHandler) SubmitWorkflowAssignment(context.Context, *v1.SubmitWorkflowAssignmentRequest) (*v1.SubmitWorkflowAssignmentResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "criteria.v1.ServerService.SubmitWorkflowAssignment is not implemented")
+func (UnimplementedServerServiceHandler) SubmitWorkflowAssignment(context.Context, *connect.Request[v1.SubmitWorkflowAssignmentRequest]) (*connect.Response[v1.SubmitWorkflowAssignmentResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.ServerService.SubmitWorkflowAssignment is not implemented"))
 }
 
-func (UnimplementedServerServiceHandler) GetAssignmentDisposition(context.Context, *v1.GetAssignmentDispositionRequest) (*v1.GetAssignmentDispositionResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "criteria.v1.ServerService.GetAssignmentDisposition is not implemented")
+func (UnimplementedServerServiceHandler) GetAssignmentDisposition(context.Context, *connect.Request[v1.GetAssignmentDispositionRequest]) (*connect.Response[v1.GetAssignmentDispositionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.ServerService.GetAssignmentDisposition is not implemented"))
 }
 
-func (UnimplementedServerServiceHandler) SendPrompt(context.Context, *v1.SendPromptRequest) (*v1.SendPromptResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "criteria.v1.ServerService.SendPrompt is not implemented")
+func (UnimplementedServerServiceHandler) SendPrompt(context.Context, *connect.Request[v1.SendPromptRequest]) (*connect.Response[v1.SendPromptResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.ServerService.SendPrompt is not implemented"))
 }
-
-type serverServiceClient struct {
-	client *connect.Client
-}
-
-func (c *serverServiceClient) ListAgents(ctx context.Context, req *v1.ListAgentsRequest) (*v1.ListAgentsResponse, error) {
-	var res v1.ListAgentsResponse
-	if err := c.client.CallUnary(ctx, serverServiceListAgentsSpec(), req, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
-}
-
-func (c *serverServiceClient) GetAgent(ctx context.Context, req *v1.GetAgentRequest) (*v1.Agent, error) {
-	var res v1.Agent
-	if err := c.client.CallUnary(ctx, serverServiceGetAgentSpec(), req, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
-}
-
-func (c *serverServiceClient) ListRuns(ctx context.Context, req *v1.ListRunsRequest) (*v1.ListRunsResponse, error) {
-	var res v1.ListRunsResponse
-	if err := c.client.CallUnary(ctx, serverServiceListRunsSpec(), req, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
-}
-
-func (c *serverServiceClient) GetRun(ctx context.Context, req *v1.GetRunRequest) (*v1.Run, error) {
-	var res v1.Run
-	if err := c.client.CallUnary(ctx, serverServiceGetRunSpec(), req, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
-}
-
-func (c *serverServiceClient) ListRunEvents(ctx context.Context, req *v1.ListRunEventsRequest) (*v1.ListRunEventsResponse, error) {
-	var res v1.ListRunEventsResponse
-	if err := c.client.CallUnary(ctx, serverServiceListRunEventsSpec(), req, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
-}
-
-func (c *serverServiceClient) WatchRun(ctx context.Context, req *v1.WatchRunRequest) (ServerServiceWatchRunClientStream, error) {
-	stream, err := c.client.CallServerStream(ctx, serverServiceWatchRunSpec(), req)
-	if err != nil {
-		return ServerServiceWatchRunClientStream{}, err
-	}
-	return ServerServiceWatchRunClientStream{stream: stream}, nil
-}
-
-func (c *serverServiceClient) StopRun(ctx context.Context, req *v1.StopRunRequest) (*v1.StopRunResponse, error) {
-	var res v1.StopRunResponse
-	if err := c.client.CallUnary(ctx, serverServiceStopRunSpec(), req, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
-}
-
-func (c *serverServiceClient) PauseRun(ctx context.Context, req *v1.PauseRunRequest) (*v1.PauseRunResponse, error) {
-	var res v1.PauseRunResponse
-	if err := c.client.CallUnary(ctx, serverServicePauseRunSpec(), req, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
-}
-
-func (c *serverServiceClient) ResumeRun(ctx context.Context, req *v1.ResumeRunRequest) (*v1.ResumeRunResponse, error) {
-	var res v1.ResumeRunResponse
-	if err := c.client.CallUnary(ctx, serverServiceResumeRunSpec(), req, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
-}
-
-func (c *serverServiceClient) InspectRun(ctx context.Context, req *v1.InspectRunRequest) (*v1.InspectRunResponse, error) {
-	var res v1.InspectRunResponse
-	if err := c.client.CallUnary(ctx, serverServiceInspectRunSpec(), req, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
-}
-
-func (c *serverServiceClient) SubmitWorkflowAssignment(ctx context.Context, req *v1.SubmitWorkflowAssignmentRequest) (*v1.SubmitWorkflowAssignmentResponse, error) {
-	var res v1.SubmitWorkflowAssignmentResponse
-	if err := c.client.CallUnary(ctx, serverServiceSubmitWorkflowAssignmentSpec(), req, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
-}
-
-func (c *serverServiceClient) GetAssignmentDisposition(ctx context.Context, req *v1.GetAssignmentDispositionRequest) (*v1.GetAssignmentDispositionResponse, error) {
-	var res v1.GetAssignmentDispositionResponse
-	if err := c.client.CallUnary(ctx, serverServiceGetAssignmentDispositionSpec(), req, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
-}
-
-func (c *serverServiceClient) SendPrompt(ctx context.Context, req *v1.SendPromptRequest) (*v1.SendPromptResponse, error) {
-	var res v1.SendPromptResponse
-	if err := c.client.CallUnary(ctx, serverServiceSendPromptSpec(), req, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
-}
-
-type serverServiceHandler struct{ svc ServerServiceHandler }
-
-func (h serverServiceHandler) listAgents(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	var req v1.ListAgentsRequest
-	if err := stream.Receive(&req); err != nil {
-		return err
-	}
-	res, err := h.svc.ListAgents(ctx, &req)
-	if err != nil {
-		return err
-	}
-	return stream.Send(res)
-}
-
-func (h serverServiceHandler) getAgent(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	var req v1.GetAgentRequest
-	if err := stream.Receive(&req); err != nil {
-		return err
-	}
-	res, err := h.svc.GetAgent(ctx, &req)
-	if err != nil {
-		return err
-	}
-	return stream.Send(res)
-}
-
-func (h serverServiceHandler) listRuns(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	var req v1.ListRunsRequest
-	if err := stream.Receive(&req); err != nil {
-		return err
-	}
-	res, err := h.svc.ListRuns(ctx, &req)
-	if err != nil {
-		return err
-	}
-	return stream.Send(res)
-}
-
-func (h serverServiceHandler) getRun(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	var req v1.GetRunRequest
-	if err := stream.Receive(&req); err != nil {
-		return err
-	}
-	res, err := h.svc.GetRun(ctx, &req)
-	if err != nil {
-		return err
-	}
-	return stream.Send(res)
-}
-
-func (h serverServiceHandler) listRunEvents(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	var req v1.ListRunEventsRequest
-	if err := stream.Receive(&req); err != nil {
-		return err
-	}
-	res, err := h.svc.ListRunEvents(ctx, &req)
-	if err != nil {
-		return err
-	}
-	return stream.Send(res)
-}
-
-func (h serverServiceHandler) watchRun(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	var req v1.WatchRunRequest
-	if err := stream.Receive(&req); err != nil {
-		return err
-	}
-	return h.svc.WatchRun(ctx, &req, ServerServiceWatchRunServerStream{stream: stream})
-}
-
-func (h serverServiceHandler) stopRun(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	var req v1.StopRunRequest
-	if err := stream.Receive(&req); err != nil {
-		return err
-	}
-	res, err := h.svc.StopRun(ctx, &req)
-	if err != nil {
-		return err
-	}
-	return stream.Send(res)
-}
-
-func (h serverServiceHandler) pauseRun(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	var req v1.PauseRunRequest
-	if err := stream.Receive(&req); err != nil {
-		return err
-	}
-	res, err := h.svc.PauseRun(ctx, &req)
-	if err != nil {
-		return err
-	}
-	return stream.Send(res)
-}
-
-func (h serverServiceHandler) resumeRun(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	var req v1.ResumeRunRequest
-	if err := stream.Receive(&req); err != nil {
-		return err
-	}
-	res, err := h.svc.ResumeRun(ctx, &req)
-	if err != nil {
-		return err
-	}
-	return stream.Send(res)
-}
-
-func (h serverServiceHandler) inspectRun(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	var req v1.InspectRunRequest
-	if err := stream.Receive(&req); err != nil {
-		return err
-	}
-	res, err := h.svc.InspectRun(ctx, &req)
-	if err != nil {
-		return err
-	}
-	return stream.Send(res)
-}
-
-func (h serverServiceHandler) submitWorkflowAssignment(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	var req v1.SubmitWorkflowAssignmentRequest
-	if err := stream.Receive(&req); err != nil {
-		return err
-	}
-	res, err := h.svc.SubmitWorkflowAssignment(ctx, &req)
-	if err != nil {
-		return err
-	}
-	return stream.Send(res)
-}
-
-func (h serverServiceHandler) getAssignmentDisposition(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	var req v1.GetAssignmentDispositionRequest
-	if err := stream.Receive(&req); err != nil {
-		return err
-	}
-	res, err := h.svc.GetAssignmentDisposition(ctx, &req)
-	if err != nil {
-		return err
-	}
-	return stream.Send(res)
-}
-
-func (h serverServiceHandler) sendPrompt(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	var req v1.SendPromptRequest
-	if err := stream.Receive(&req); err != nil {
-		return err
-	}
-	res, err := h.svc.SendPrompt(ctx, &req)
-	if err != nil {
-		return err
-	}
-	return stream.Send(res)
-}
-
-var (
-	localControlServicePauseRunSpec = sync.OnceValue(func() connect.Spec {
-		return connect.Spec{
-			StreamType: connect.StreamTypeUnary,
-			Schema:     v1.File_criteria_v1_server_proto.Services().ByName("LocalControlService").Methods().ByName("PauseRun"),
-			Procedure:  LocalControlServicePauseRunProcedure,
-		}
-	})
-	localControlServiceResumeRunSpec = sync.OnceValue(func() connect.Spec {
-		return connect.Spec{
-			StreamType: connect.StreamTypeUnary,
-			Schema:     v1.File_criteria_v1_server_proto.Services().ByName("LocalControlService").Methods().ByName("ResumeRun"),
-			Procedure:  LocalControlServiceResumeRunProcedure,
-		}
-	})
-	localControlServiceResolveResumeSpec = sync.OnceValue(func() connect.Spec {
-		return connect.Spec{
-			StreamType: connect.StreamTypeUnary,
-			Schema:     v1.File_criteria_v1_server_proto.Services().ByName("LocalControlService").Methods().ByName("ResolveResume"),
-			Procedure:  LocalControlServiceResolveResumeProcedure,
-		}
-	})
-)
 
 // LocalControlServiceClient is a client for the criteria.v1.LocalControlService service.
 type LocalControlServiceClient interface {
 	// PauseRun pauses the owned run at the next checkpoint point (step
 	// boundary): the in-flight step completes, the step and adapter session
 	// checkpoints are written, and only then does the call return.
-	PauseRun(context.Context, *v1.PauseRunRequest) (*v1.PauseRunResponse, error)
+	PauseRun(context.Context, *connect.Request[v1.PauseRunRequest]) (*connect.Response[v1.PauseRunResponse], error)
 	// ResumeRun continues a boundary-paused run. The response is
 	// synchronous: once it returns, apply drives the engine to the next
 	// pause point or to a terminal state.
-	ResumeRun(context.Context, *v1.ResumeRunRequest) (*v1.ResumeRunResponse, error)
+	ResumeRun(context.Context, *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error)
 	// ResolveResume delivers an approval decision or a signal outcome to the
 	// paused run, satisfying node pausing (mode "duration" | "signal"). The
 	// same call replaces the local CRITERIA_LOCAL_APPROVAL file protocol as
 	// the primary integration surface.
-	ResolveResume(context.Context, *v1.ResumeRequest) (*v1.ResumeResponse, error)
+	ResolveResume(context.Context, *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error)
 }
 
 // NewLocalControlServiceClient constructs a client for the criteria.v1.LocalControlService service.
-// Multiple service clients may share a single connect.Client.
-func NewLocalControlServiceClient(client *connect.Client) LocalControlServiceClient {
-	return &localControlServiceClient{client: client}
+// By default, it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped
+// responses, and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the
+// connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewLocalControlServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) LocalControlServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	localControlServiceMethods := v1.File_criteria_v1_server_proto.Services().ByName("LocalControlService").Methods()
+	return &localControlServiceClient{
+		pauseRun: connect.NewClient[v1.PauseRunRequest, v1.PauseRunResponse](
+			httpClient,
+			baseURL+LocalControlServicePauseRunProcedure,
+			connect.WithSchema(localControlServiceMethods.ByName("PauseRun")),
+			connect.WithClientOptions(opts...),
+		),
+		resumeRun: connect.NewClient[v1.ResumeRunRequest, v1.ResumeRunResponse](
+			httpClient,
+			baseURL+LocalControlServiceResumeRunProcedure,
+			connect.WithSchema(localControlServiceMethods.ByName("ResumeRun")),
+			connect.WithClientOptions(opts...),
+		),
+		resolveResume: connect.NewClient[v1.ResumeRequest, v1.ResumeResponse](
+			httpClient,
+			baseURL+LocalControlServiceResolveResumeProcedure,
+			connect.WithSchema(localControlServiceMethods.ByName("ResolveResume")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// localControlServiceClient implements LocalControlServiceClient.
+type localControlServiceClient struct {
+	pauseRun      *connect.Client[v1.PauseRunRequest, v1.PauseRunResponse]
+	resumeRun     *connect.Client[v1.ResumeRunRequest, v1.ResumeRunResponse]
+	resolveResume *connect.Client[v1.ResumeRequest, v1.ResumeResponse]
+}
+
+// PauseRun calls criteria.v1.LocalControlService.PauseRun.
+func (c *localControlServiceClient) PauseRun(ctx context.Context, req *connect.Request[v1.PauseRunRequest]) (*connect.Response[v1.PauseRunResponse], error) {
+	return c.pauseRun.CallUnary(ctx, req)
+}
+
+// ResumeRun calls criteria.v1.LocalControlService.ResumeRun.
+func (c *localControlServiceClient) ResumeRun(ctx context.Context, req *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error) {
+	return c.resumeRun.CallUnary(ctx, req)
+}
+
+// ResolveResume calls criteria.v1.LocalControlService.ResolveResume.
+func (c *localControlServiceClient) ResolveResume(ctx context.Context, req *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error) {
+	return c.resolveResume.CallUnary(ctx, req)
 }
 
 // LocalControlServiceHandler is an implementation of the criteria.v1.LocalControlService service.
@@ -710,106 +621,68 @@ type LocalControlServiceHandler interface {
 	// PauseRun pauses the owned run at the next checkpoint point (step
 	// boundary): the in-flight step completes, the step and adapter session
 	// checkpoints are written, and only then does the call return.
-	PauseRun(context.Context, *v1.PauseRunRequest) (*v1.PauseRunResponse, error)
+	PauseRun(context.Context, *connect.Request[v1.PauseRunRequest]) (*connect.Response[v1.PauseRunResponse], error)
 	// ResumeRun continues a boundary-paused run. The response is
 	// synchronous: once it returns, apply drives the engine to the next
 	// pause point or to a terminal state.
-	ResumeRun(context.Context, *v1.ResumeRunRequest) (*v1.ResumeRunResponse, error)
+	ResumeRun(context.Context, *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error)
 	// ResolveResume delivers an approval decision or a signal outcome to the
 	// paused run, satisfying node pausing (mode "duration" | "signal"). The
 	// same call replaces the local CRITERIA_LOCAL_APPROVAL file protocol as
 	// the primary integration surface.
-	ResolveResume(context.Context, *v1.ResumeRequest) (*v1.ResumeResponse, error)
+	ResolveResume(context.Context, *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error)
 }
 
-// RegisterLocalControlServiceHandler registers svc as the criteria.v1.LocalControlService
-// implementation on server.
-func RegisterLocalControlServiceHandler(server *connect.Server, svc LocalControlServiceHandler) {
-	adapter := localControlServiceHandler{svc: svc}
-	server.Register(
-		connect.Method{Spec: localControlServicePauseRunSpec(), Handler: adapter.pauseRun},
-		connect.Method{Spec: localControlServiceResumeRunSpec(), Handler: adapter.resumeRun},
-		connect.Method{Spec: localControlServiceResolveResumeSpec(), Handler: adapter.resolveResume},
+// NewLocalControlServiceHandler builds an HTTP handler from the service implementation. It returns
+// the path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewLocalControlServiceHandler(svc LocalControlServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	localControlServiceMethods := v1.File_criteria_v1_server_proto.Services().ByName("LocalControlService").Methods()
+	localControlServicePauseRunHandler := connect.NewUnaryHandler(
+		LocalControlServicePauseRunProcedure,
+		svc.PauseRun,
+		connect.WithSchema(localControlServiceMethods.ByName("PauseRun")),
+		connect.WithHandlerOptions(opts...),
 	)
+	localControlServiceResumeRunHandler := connect.NewUnaryHandler(
+		LocalControlServiceResumeRunProcedure,
+		svc.ResumeRun,
+		connect.WithSchema(localControlServiceMethods.ByName("ResumeRun")),
+		connect.WithHandlerOptions(opts...),
+	)
+	localControlServiceResolveResumeHandler := connect.NewUnaryHandler(
+		LocalControlServiceResolveResumeProcedure,
+		svc.ResolveResume,
+		connect.WithSchema(localControlServiceMethods.ByName("ResolveResume")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/criteria.v1.LocalControlService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case LocalControlServicePauseRunProcedure:
+			localControlServicePauseRunHandler.ServeHTTP(w, r)
+		case LocalControlServiceResumeRunProcedure:
+			localControlServiceResumeRunHandler.ServeHTTP(w, r)
+		case LocalControlServiceResolveResumeProcedure:
+			localControlServiceResolveResumeHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
 }
 
 // UnimplementedLocalControlServiceHandler returns CodeUnimplemented from all methods.
 type UnimplementedLocalControlServiceHandler struct{}
 
-func (UnimplementedLocalControlServiceHandler) PauseRun(context.Context, *v1.PauseRunRequest) (*v1.PauseRunResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "criteria.v1.LocalControlService.PauseRun is not implemented")
+func (UnimplementedLocalControlServiceHandler) PauseRun(context.Context, *connect.Request[v1.PauseRunRequest]) (*connect.Response[v1.PauseRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.LocalControlService.PauseRun is not implemented"))
 }
 
-func (UnimplementedLocalControlServiceHandler) ResumeRun(context.Context, *v1.ResumeRunRequest) (*v1.ResumeRunResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "criteria.v1.LocalControlService.ResumeRun is not implemented")
+func (UnimplementedLocalControlServiceHandler) ResumeRun(context.Context, *connect.Request[v1.ResumeRunRequest]) (*connect.Response[v1.ResumeRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.LocalControlService.ResumeRun is not implemented"))
 }
 
-func (UnimplementedLocalControlServiceHandler) ResolveResume(context.Context, *v1.ResumeRequest) (*v1.ResumeResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "criteria.v1.LocalControlService.ResolveResume is not implemented")
-}
-
-type localControlServiceClient struct {
-	client *connect.Client
-}
-
-func (c *localControlServiceClient) PauseRun(ctx context.Context, req *v1.PauseRunRequest) (*v1.PauseRunResponse, error) {
-	var res v1.PauseRunResponse
-	if err := c.client.CallUnary(ctx, localControlServicePauseRunSpec(), req, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
-}
-
-func (c *localControlServiceClient) ResumeRun(ctx context.Context, req *v1.ResumeRunRequest) (*v1.ResumeRunResponse, error) {
-	var res v1.ResumeRunResponse
-	if err := c.client.CallUnary(ctx, localControlServiceResumeRunSpec(), req, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
-}
-
-func (c *localControlServiceClient) ResolveResume(ctx context.Context, req *v1.ResumeRequest) (*v1.ResumeResponse, error) {
-	var res v1.ResumeResponse
-	if err := c.client.CallUnary(ctx, localControlServiceResolveResumeSpec(), req, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
-}
-
-type localControlServiceHandler struct{ svc LocalControlServiceHandler }
-
-func (h localControlServiceHandler) pauseRun(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	var req v1.PauseRunRequest
-	if err := stream.Receive(&req); err != nil {
-		return err
-	}
-	res, err := h.svc.PauseRun(ctx, &req)
-	if err != nil {
-		return err
-	}
-	return stream.Send(res)
-}
-
-func (h localControlServiceHandler) resumeRun(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	var req v1.ResumeRunRequest
-	if err := stream.Receive(&req); err != nil {
-		return err
-	}
-	res, err := h.svc.ResumeRun(ctx, &req)
-	if err != nil {
-		return err
-	}
-	return stream.Send(res)
-}
-
-func (h localControlServiceHandler) resolveResume(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	var req v1.ResumeRequest
-	if err := stream.Receive(&req); err != nil {
-		return err
-	}
-	res, err := h.svc.ResolveResume(ctx, &req)
-	if err != nil {
-		return err
-	}
-	return stream.Send(res)
+func (UnimplementedLocalControlServiceHandler) ResolveResume(context.Context, *connect.Request[v1.ResumeRequest]) (*connect.Response[v1.ResumeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.LocalControlService.ResolveResume is not implemented"))
 }

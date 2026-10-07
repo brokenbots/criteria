@@ -18,8 +18,7 @@ import (
 	"testing"
 	"time"
 
-	connect "connectrpc.com/connect/v2"
-	"connectrpc.com/connect/v2/connecthttp"
+	"connectrpc.com/connect"
 	"golang.org/x/net/http2"
 
 	criteria "github.com/brokenbots/criteria/sdk"
@@ -59,9 +58,8 @@ func (s *inMemSubject) SetUp(t *testing.T) (baseURL string, client *http.Client,
 	mux := http.NewServeMux()
 	oPath, oHandler := criteria.NewServiceHandler(h)
 	mux.Handle(oPath, oHandler)
-	cServer := connect.NewServer()
-	criteriav1connect.RegisterServerServiceHandler(cServer, h)
-	connecthttp.Mount(mux, cServer)
+	cPath, cHandler := criteriav1connect.NewServerServiceHandler(h)
+	mux.Handle(cPath, cHandler)
 
 	srv := httptest.NewUnstartedServer(mux)
 	var protocols http.Protocols
@@ -113,22 +111,22 @@ func (s *inMemSubject) RegisterAgent(t *testing.T, name, token string) string {
 
 func (s *inMemSubject) ListRunEvents(t *testing.T, baseURL string, client *http.Client, token, runID string, sinceSeq uint64) []*pb.Envelope {
 	t.Helper()
-	cClient := criteriav1connect.NewServerServiceClient(connect.NewClient(connecthttp.NewTransport(client, baseURL)))
-	ctx, info := connect.NewClientContext(context.Background())
-	info.RequestHeader().Set("Authorization", "Bearer "+token)
-	resp, err := cClient.ListRunEvents(ctx, &pb.ListRunEventsRequest{RunId: runID, SinceSeq: sinceSeq})
+	cClient := criteriav1connect.NewServerServiceClient(client, baseURL)
+	req := connect.NewRequest(&pb.ListRunEventsRequest{RunId: runID, SinceSeq: sinceSeq})
+	req.Header().Set("Authorization", "Bearer "+token)
+	resp, err := cClient.ListRunEvents(context.Background(), req)
 	if err != nil {
 		t.Fatalf("ListRunEvents: %v", err)
 	}
-	return resp.Events
+	return resp.Msg.Events
 }
 
 func (s *inMemSubject) StopRun(t *testing.T, baseURL string, client *http.Client, token, runID string) error {
 	t.Helper()
-	cClient := criteriav1connect.NewServerServiceClient(connect.NewClient(connecthttp.NewTransport(client, baseURL)))
-	ctx, info := connect.NewClientContext(context.Background())
-	info.RequestHeader().Set("Authorization", "Bearer "+token)
-	_, err := cClient.StopRun(ctx, &pb.StopRunRequest{RunId: runID})
+	cClient := criteriav1connect.NewServerServiceClient(client, baseURL)
+	req := connect.NewRequest(&pb.StopRunRequest{RunId: runID})
+	req.Header().Set("Authorization", "Bearer "+token)
+	_, err := cClient.StopRun(context.Background(), req)
 	return err
 }
 
@@ -224,23 +222,14 @@ func (h *inMemHandler) authAgent(authHeader string) (string, error) {
 	id, ok := h.tokenToID[token]
 	h.mu.Unlock()
 	if !ok {
-		return "", connect.NewError(connect.CodeUnauthenticated, "")
+		return "", connect.NewError(connect.CodeUnauthenticated, nil)
 	}
 	return id, nil
 }
 
-// serverAuthHeader extracts the Authorization header from a server-side call
-// context.
-func serverAuthHeader(ctx context.Context) string {
-	if info, ok := connect.CallInfoForServerContext(ctx); ok {
-		return info.RequestHeader().Get("Authorization")
-	}
-	return ""
-}
-
 func assertOwnsAgent(callerID, ownerID string) error {
 	if callerID != ownerID {
-		return connect.NewError(connect.CodePermissionDenied, "")
+		return connect.NewError(connect.CodePermissionDenied, nil)
 	}
 	return nil
 }
@@ -250,72 +239,72 @@ func (h *inMemHandler) assertOwnsRun(callerID, runID string) (*runRecord, error)
 	run, ok := h.runs[runID]
 	h.mu.Unlock()
 	if !ok {
-		return nil, connect.NewError(connect.CodeNotFound, "")
+		return nil, connect.NewError(connect.CodeNotFound, nil)
 	}
 	if run.criteriaID != callerID {
-		return nil, connect.NewError(connect.CodePermissionDenied, "")
+		return nil, connect.NewError(connect.CodePermissionDenied, nil)
 	}
 	return run, nil
 }
 
 // CriteriaService handlers
 
-func (h *inMemHandler) Register(_ context.Context, _ *pb.RegisterRequest) (*pb.RegisterResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "")
+func (h *inMemHandler) Register(_ context.Context, _ *connect.Request[pb.RegisterRequest]) (*connect.Response[pb.RegisterResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, nil)
 }
 
-func (h *inMemHandler) Heartbeat(ctx context.Context, req *pb.HeartbeatRequest) (*pb.HeartbeatResponse, error) {
-	callerID, err := h.authAgent(serverAuthHeader(ctx))
+func (h *inMemHandler) Heartbeat(_ context.Context, req *connect.Request[pb.HeartbeatRequest]) (*connect.Response[pb.HeartbeatResponse], error) {
+	callerID, err := h.authAgent(req.Header().Get("Authorization"))
 	if err != nil {
 		return nil, err
 	}
-	if err := assertOwnsAgent(callerID, req.CriteriaId); err != nil {
+	if err := assertOwnsAgent(callerID, req.Msg.CriteriaId); err != nil {
 		return nil, err
 	}
-	return &pb.HeartbeatResponse{}, nil
+	return connect.NewResponse(&pb.HeartbeatResponse{}), nil
 }
 
-func (h *inMemHandler) CreateRun(ctx context.Context, req *pb.CreateRunRequest) (*pb.Run, error) {
-	callerID, err := h.authAgent(serverAuthHeader(ctx))
+func (h *inMemHandler) CreateRun(_ context.Context, req *connect.Request[pb.CreateRunRequest]) (*connect.Response[pb.Run], error) {
+	callerID, err := h.authAgent(req.Header().Get("Authorization"))
 	if err != nil {
 		return nil, err
 	}
-	if err := assertOwnsAgent(callerID, req.CriteriaId); err != nil {
+	if err := assertOwnsAgent(callerID, req.Msg.CriteriaId); err != nil {
 		return nil, err
 	}
 	c := h.runCounter.Add(1)
-	runID := fmt.Sprintf("run-%s-%d", req.WorkflowName, c)
-	run := newRunRecord(runID, callerID, req.WorkflowName)
+	runID := fmt.Sprintf("run-%s-%d", req.Msg.WorkflowName, c)
+	run := newRunRecord(runID, callerID, req.Msg.WorkflowName)
 	h.mu.Lock()
 	h.runs[runID] = run
 	h.mu.Unlock()
-	return &pb.Run{RunId: runID, WorkflowName: req.WorkflowName}, nil
+	return connect.NewResponse(&pb.Run{RunId: runID, WorkflowName: req.Msg.WorkflowName}), nil
 }
 
-func (h *inMemHandler) ReattachRun(ctx context.Context, req *pb.ReattachRunRequest) (*pb.ReattachRunResponse, error) {
-	callerID, err := h.authAgent(serverAuthHeader(ctx))
+func (h *inMemHandler) ReattachRun(_ context.Context, req *connect.Request[pb.ReattachRunRequest]) (*connect.Response[pb.ReattachRunResponse], error) {
+	callerID, err := h.authAgent(req.Header().Get("Authorization"))
 	if err != nil {
 		return nil, err
 	}
-	if err := assertOwnsAgent(callerID, req.CriteriaId); err != nil {
+	if err := assertOwnsAgent(callerID, req.Msg.CriteriaId); err != nil {
 		return nil, err
 	}
-	run, err := h.assertOwnsRun(callerID, req.RunId)
+	run, err := h.assertOwnsRun(callerID, req.Msg.RunId)
 	if err != nil {
 		return nil, err
 	}
-	return &pb.ReattachRunResponse{
+	return connect.NewResponse(&pb.ReattachRunResponse{
 		Status:    "created",
 		CanResume: run.state == runStatePaused,
-	}, nil
+	}), nil
 }
 
-func (h *inMemHandler) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.ResumeResponse, error) {
-	callerID, err := h.authAgent(serverAuthHeader(ctx))
+func (h *inMemHandler) Resume(_ context.Context, req *connect.Request[pb.ResumeRequest]) (*connect.Response[pb.ResumeResponse], error) {
+	callerID, err := h.authAgent(req.Header().Get("Authorization"))
 	if err != nil {
 		return nil, err
 	}
-	run, err := h.assertOwnsRun(callerID, req.RunId)
+	run, err := h.assertOwnsRun(callerID, req.Msg.RunId)
 	if err != nil {
 		return nil, err
 	}
@@ -324,21 +313,21 @@ func (h *inMemHandler) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.R
 	defer h.mu.Unlock()
 
 	if run.state != runStatePaused {
-		return &pb.ResumeResponse{Accepted: false, Reason: "run_not_paused"}, nil
+		return connect.NewResponse(&pb.ResumeResponse{Accepted: false, Reason: "run_not_paused"}), nil
 	}
-	if run.signal != req.Signal {
-		return &pb.ResumeResponse{Accepted: false, Reason: "signal_mismatch"}, nil
+	if run.signal != req.Msg.Signal {
+		return connect.NewResponse(&pb.ResumeResponse{Accepted: false, Reason: "signal_mismatch"}), nil
 	}
 
 	// Persist the resume event, then clear paused state.
 	seq := run.seqCounter.Add(1)
-	env := &pb.Envelope{RunId: req.RunId, Seq: seq}
+	env := &pb.Envelope{RunId: req.Msg.RunId, Seq: seq}
 	switch run.pause {
 	case pauseKindApproval:
 		env.Payload = &pb.Envelope_ApprovalDecision{ApprovalDecision: &pb.ApprovalDecision{
 			Node:     run.signal,
-			Decision: req.Payload["decision"],
-			Actor:    req.Payload["actor"],
+			Decision: req.Msg.Payload["decision"],
+			Actor:    req.Msg.Payload["actor"],
 		}}
 	default: // pauseKindWait
 		env.Payload = &pb.Envelope_WaitResumed{WaitResumed: &pb.WaitResumed{
@@ -351,11 +340,11 @@ func (h *inMemHandler) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.R
 	run.pause = pauseKindNone
 	run.signal = ""
 
-	return &pb.ResumeResponse{Accepted: true}, nil
+	return connect.NewResponse(&pb.ResumeResponse{Accepted: true}), nil
 }
 
-func (h *inMemHandler) SubmitEvents(ctx context.Context, stream criteriav1connect.CriteriaServiceSubmitEventsServerStream) error {
-	callerID, err := h.authAgent(serverAuthHeader(ctx))
+func (h *inMemHandler) SubmitEvents(ctx context.Context, stream *connect.BidiStream[pb.Envelope, pb.Ack]) error {
+	callerID, err := h.authAgent(stream.RequestHeader().Get("Authorization"))
 	if err != nil {
 		return err
 	}
@@ -365,18 +354,18 @@ func (h *inMemHandler) SubmitEvents(ctx context.Context, stream criteriav1connec
 			return nil //nolint:nilerr // EOF is normal end-of-stream
 		}
 		if env.SchemaVersion != 0 && env.SchemaVersion != criteria.SchemaVersion {
-			return connect.NewError(connect.CodeFailedPrecondition, "")
+			return connect.NewError(connect.CodeFailedPrecondition, nil)
 		}
 
 		h.mu.Lock()
 		run, ok := h.runs[env.RunId]
 		if !ok {
 			h.mu.Unlock()
-			return connect.NewError(connect.CodeNotFound, "")
+			return connect.NewError(connect.CodeNotFound, nil)
 		}
 		if run.criteriaID != callerID {
 			h.mu.Unlock()
-			return connect.NewError(connect.CodePermissionDenied, "")
+			return connect.NewError(connect.CodePermissionDenied, nil)
 		}
 
 		// Idempotency: same correlation_id → return the same seq without re-persisting.
@@ -422,13 +411,13 @@ func (h *inMemHandler) SubmitEvents(ctx context.Context, stream criteriav1connec
 	}
 }
 
-func (h *inMemHandler) Control(ctx context.Context, req *pb.ControlSubscribeRequest, stream criteriav1connect.CriteriaServiceControlServerStream) error {
-	criteriaID, err := h.authAgent(serverAuthHeader(ctx))
+func (h *inMemHandler) Control(ctx context.Context, req *connect.Request[pb.ControlSubscribeRequest], stream *connect.ServerStream[pb.ControlMessage]) error {
+	criteriaID, err := h.authAgent(req.Header().Get("Authorization"))
 	if err != nil {
 		return err
 	}
-	if req.CriteriaId != "" {
-		if err := assertOwnsAgent(criteriaID, req.CriteriaId); err != nil {
+	if req.Msg.CriteriaId != "" {
+		if err := assertOwnsAgent(criteriaID, req.Msg.CriteriaId); err != nil {
 			return err
 		}
 	}
@@ -475,67 +464,67 @@ func (h *inMemHandler) Control(ctx context.Context, req *pb.ControlSubscribeRequ
 
 // ServerService handlers
 
-func (h *inMemHandler) ListAgents(_ context.Context, _ *pb.ListAgentsRequest) (*pb.ListAgentsResponse, error) {
+func (h *inMemHandler) ListAgents(_ context.Context, _ *connect.Request[pb.ListAgentsRequest]) (*connect.Response[pb.ListAgentsResponse], error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	out := make([]*pb.Agent, 0, len(h.agents))
 	for id, rec := range h.agents {
 		out = append(out, &pb.Agent{CriteriaId: id, Name: rec.name, Status: "online"})
 	}
-	return &pb.ListAgentsResponse{Agents: out}, nil
+	return connect.NewResponse(&pb.ListAgentsResponse{Agents: out}), nil
 }
 
-func (h *inMemHandler) GetAgent(_ context.Context, req *pb.GetAgentRequest) (*pb.Agent, error) {
+func (h *inMemHandler) GetAgent(_ context.Context, req *connect.Request[pb.GetAgentRequest]) (*connect.Response[pb.Agent], error) {
 	h.mu.Lock()
-	rec, ok := h.agents[req.CriteriaId]
+	rec, ok := h.agents[req.Msg.CriteriaId]
 	h.mu.Unlock()
 	if !ok {
-		return nil, connect.NewError(connect.CodeNotFound, "")
+		return nil, connect.NewError(connect.CodeNotFound, nil)
 	}
-	return &pb.Agent{CriteriaId: req.CriteriaId, Name: rec.name}, nil
+	return connect.NewResponse(&pb.Agent{CriteriaId: req.Msg.CriteriaId, Name: rec.name}), nil
 }
 
-func (h *inMemHandler) ListRuns(_ context.Context, _ *pb.ListRunsRequest) (*pb.ListRunsResponse, error) {
-	return &pb.ListRunsResponse{}, nil
+func (h *inMemHandler) ListRuns(_ context.Context, _ *connect.Request[pb.ListRunsRequest]) (*connect.Response[pb.ListRunsResponse], error) {
+	return connect.NewResponse(&pb.ListRunsResponse{}), nil
 }
 
-func (h *inMemHandler) GetRun(_ context.Context, req *pb.GetRunRequest) (*pb.Run, error) {
+func (h *inMemHandler) GetRun(_ context.Context, req *connect.Request[pb.GetRunRequest]) (*connect.Response[pb.Run], error) {
 	h.mu.Lock()
-	run, ok := h.runs[req.RunId]
+	run, ok := h.runs[req.Msg.RunId]
 	h.mu.Unlock()
 	if !ok {
-		return nil, connect.NewError(connect.CodeNotFound, "")
+		return nil, connect.NewError(connect.CodeNotFound, nil)
 	}
-	return &pb.Run{RunId: run.runID, WorkflowName: run.workflow}, nil
+	return connect.NewResponse(&pb.Run{RunId: run.runID, WorkflowName: run.workflow}), nil
 }
 
-func (h *inMemHandler) ListRunEvents(_ context.Context, req *pb.ListRunEventsRequest) (*pb.ListRunEventsResponse, error) {
+func (h *inMemHandler) ListRunEvents(_ context.Context, req *connect.Request[pb.ListRunEventsRequest]) (*connect.Response[pb.ListRunEventsResponse], error) {
 	h.mu.Lock()
-	run, ok := h.runs[req.RunId]
+	run, ok := h.runs[req.Msg.RunId]
 	if !ok {
 		h.mu.Unlock()
-		return nil, connect.NewError(connect.CodeNotFound, "")
+		return nil, connect.NewError(connect.CodeNotFound, nil)
 	}
 	var events []*pb.Envelope
 	for _, e := range run.events {
-		if e.Seq > req.SinceSeq {
+		if e.Seq > req.Msg.SinceSeq {
 			events = append(events, e)
 		}
 	}
 	h.mu.Unlock()
-	return &pb.ListRunEventsResponse{Events: events}, nil
+	return connect.NewResponse(&pb.ListRunEventsResponse{Events: events}), nil
 }
 
-func (h *inMemHandler) WatchRun(ctx context.Context, req *pb.WatchRunRequest, stream criteriav1connect.ServerServiceWatchRunServerStream) error {
+func (h *inMemHandler) WatchRun(ctx context.Context, req *connect.Request[pb.WatchRunRequest], stream *connect.ServerStream[pb.Envelope]) error {
 	h.mu.Lock()
-	run, ok := h.runs[req.RunId]
+	run, ok := h.runs[req.Msg.RunId]
 	if !ok {
 		h.mu.Unlock()
-		return connect.NewError(connect.CodeNotFound, "")
+		return connect.NewError(connect.CodeNotFound, nil)
 	}
 	var lastSent uint64
 	for _, e := range run.events {
-		if e.Seq > req.SinceSeq {
+		if e.Seq > req.Msg.SinceSeq {
 			if err := stream.Send(e); err != nil {
 				h.mu.Unlock()
 				return err
@@ -570,12 +559,12 @@ func (h *inMemHandler) WatchRun(ctx context.Context, req *pb.WatchRunRequest, st
 	}
 }
 
-func (h *inMemHandler) StopRun(_ context.Context, req *pb.StopRunRequest) (*pb.StopRunResponse, error) {
+func (h *inMemHandler) StopRun(_ context.Context, req *connect.Request[pb.StopRunRequest]) (*connect.Response[pb.StopRunResponse], error) {
 	h.mu.Lock()
-	run, ok := h.runs[req.RunId]
+	run, ok := h.runs[req.Msg.RunId]
 	if !ok {
 		h.mu.Unlock()
-		return nil, connect.NewError(connect.CodeNotFound, "")
+		return nil, connect.NewError(connect.CodeNotFound, nil)
 	}
 	ownerID := run.criteriaID
 	var target *controlSubscription
@@ -588,13 +577,13 @@ func (h *inMemHandler) StopRun(_ context.Context, req *pb.StopRunRequest) (*pb.S
 	h.mu.Unlock()
 
 	if target == nil {
-		return nil, connect.NewError(connect.CodeFailedPrecondition, "")
+		return nil, connect.NewError(connect.CodeFailedPrecondition, nil)
 	}
 	select {
 	case target.ch <- &pb.ControlMessage{Command: &pb.ControlMessage_RunCancel{
-		RunCancel: &pb.RunCancel{RunId: req.RunId, Reason: req.Reason},
+		RunCancel: &pb.RunCancel{RunId: req.Msg.RunId, Reason: req.Msg.Reason},
 	}}:
 	default:
 	}
-	return &pb.StopRunResponse{}, nil
+	return connect.NewResponse(&pb.StopRunResponse{}), nil
 }

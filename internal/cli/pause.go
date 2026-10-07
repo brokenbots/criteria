@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 
+	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
@@ -31,7 +32,7 @@ func NewPauseCmd() *cobra.Command {
 					return err
 				}
 				if addr != "" {
-					if _, err := localControlServiceClientFor(addr).PauseRun(cmd.Context(), &pb.PauseRunRequest{RunId: runID}); err != nil {
+					if _, err := localControlServiceClientFor(addr).PauseRun(cmd.Context(), connect.NewRequest(&pb.PauseRunRequest{RunId: runID})); err != nil {
 						return fmt.Errorf("pause: %w", err)
 					}
 					fmt.Printf("pause requested for run %s\n", runID)
@@ -42,7 +43,7 @@ func NewPauseCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if _, err := client.PauseRun(cmd.Context(), &pb.PauseRunRequest{RunId: runID}); err != nil {
+			if _, err := client.PauseRun(cmd.Context(), connect.NewRequest(&pb.PauseRunRequest{RunId: runID})); err != nil {
 				return fmt.Errorf("pause: %w", err)
 			}
 			fmt.Printf("pause requested for run %s\n", runID)

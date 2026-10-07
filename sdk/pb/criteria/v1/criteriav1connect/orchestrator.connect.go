@@ -16,58 +16,43 @@
 package criteriav1connect
 
 import (
-	connect "connectrpc.com/connect/v2"
+	connect "connectrpc.com/connect"
 	context "context"
+	errors "errors"
 	v1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
-	sync "sync"
+	http "net/http"
+	strings "strings"
 )
+
+// This is a compile-time assertion to ensure that this generated file and the connect package are
+// compatible. If you get a compiler error that this constant is not defined, this code was
+// generated with a version of connect newer than the one compiled into your binary. You can fix the
+// problem by either regenerating this code with an older version of connect or updating the connect
+// version compiled into your binary.
+const _ = connect.IsAtLeastVersion1_13_0
 
 const (
 	// OrchestratorServiceName is the fully-qualified name of the OrchestratorService service.
 	OrchestratorServiceName = "criteria.v1.OrchestratorService"
 )
 
-// These constants are the procedure names of the RPCs defined in this package. They're exposed at
-// runtime as Spec.Procedure and as the final two segments of the HTTP route.
+// These constants are the fully-qualified names of the RPCs defined in this package. They're
+// exposed at runtime as Spec.Procedure and as the final two segments of the HTTP route.
 //
 // Note that these are different from the fully-qualified method names used by
 // google.golang.org/protobuf/reflect/protoreflect. To convert from these constants to
 // reflection-formatted method names, remove the leading slash and convert the remaining slash to a
 // period.
 const (
-	// OrchestratorServiceSubscribeRunEventsProcedure is the procedure name of the OrchestratorService's
-	// SubscribeRunEvents RPC.
+	// OrchestratorServiceSubscribeRunEventsProcedure is the fully-qualified name of the
+	// OrchestratorService's SubscribeRunEvents RPC.
 	OrchestratorServiceSubscribeRunEventsProcedure = "/criteria.v1.OrchestratorService/SubscribeRunEvents"
-	// OrchestratorServiceListActiveRunsProcedure is the procedure name of the OrchestratorService's
-	// ListActiveRuns RPC.
+	// OrchestratorServiceListActiveRunsProcedure is the fully-qualified name of the
+	// OrchestratorService's ListActiveRuns RPC.
 	OrchestratorServiceListActiveRunsProcedure = "/criteria.v1.OrchestratorService/ListActiveRuns"
-	// OrchestratorServiceCancelRunProcedure is the procedure name of the OrchestratorService's
+	// OrchestratorServiceCancelRunProcedure is the fully-qualified name of the OrchestratorService's
 	// CancelRun RPC.
 	OrchestratorServiceCancelRunProcedure = "/criteria.v1.OrchestratorService/CancelRun"
-)
-
-var (
-	orchestratorServiceSubscribeRunEventsSpec = sync.OnceValue(func() connect.Spec {
-		return connect.Spec{
-			StreamType: connect.StreamTypeUnary,
-			Schema:     v1.File_criteria_v1_orchestrator_proto.Services().ByName("OrchestratorService").Methods().ByName("SubscribeRunEvents"),
-			Procedure:  OrchestratorServiceSubscribeRunEventsProcedure,
-		}
-	})
-	orchestratorServiceListActiveRunsSpec = sync.OnceValue(func() connect.Spec {
-		return connect.Spec{
-			StreamType: connect.StreamTypeUnary,
-			Schema:     v1.File_criteria_v1_orchestrator_proto.Services().ByName("OrchestratorService").Methods().ByName("ListActiveRuns"),
-			Procedure:  OrchestratorServiceListActiveRunsProcedure,
-		}
-	})
-	orchestratorServiceCancelRunSpec = sync.OnceValue(func() connect.Spec {
-		return connect.Spec{
-			StreamType: connect.StreamTypeUnary,
-			Schema:     v1.File_criteria_v1_orchestrator_proto.Services().ByName("OrchestratorService").Methods().ByName("CancelRun"),
-			Procedure:  OrchestratorServiceCancelRunProcedure,
-		}
-	})
 )
 
 // OrchestratorServiceClient is a client for the criteria.v1.OrchestratorService service.
@@ -89,13 +74,13 @@ type OrchestratorServiceClient interface {
 	// page is full (len(events) == limit), `next_since_seq`
 	// is also set so the operator can continue paging immediately; the
 	// terminal event of a run is a normal listable event.
-	SubscribeRunEvents(context.Context, *v1.SubscribeRunEventsRequest) (*v1.SubscribeRunEventsResponse, error)
+	SubscribeRunEvents(context.Context, *connect.Request[v1.SubscribeRunEventsRequest]) (*connect.Response[v1.SubscribeRunEventsResponse], error)
 	// ListActiveRuns returns runs that have not reached a terminal state
 	// (pending | running | paused). This is the discovery step of the operator
 	// reconcile loop: subscribe to each returned run with SubscribeRunEvents.
 	// Terminal runs (succeeded | failed | cancelled) are excluded; their final
 	// events remain pollable via SubscribeRunEvents.
-	ListActiveRuns(context.Context, *v1.ListActiveRunsRequest) (*v1.ListActiveRunsResponse, error)
+	ListActiveRuns(context.Context, *connect.Request[v1.ListActiveRunsRequest]) (*connect.Response[v1.ListActiveRunsResponse], error)
 	// CancelRun marks one run terminal (status "cancelled") on the operator's
 	// behalf (CRI-142). It exists for deterministic cleanup: when the operator
 	// deletes the CriteriaRun, it stamps the Castle run terminal itself instead
@@ -113,13 +98,61 @@ type OrchestratorServiceClient interface {
 	// Auth: orchestrator identities may cancel any run they can observe; agent
 	// identities may cancel only runs they own. Anonymous callers are rejected
 	// even in dev mode.
-	CancelRun(context.Context, *v1.CancelRunRequest) (*v1.CancelRunResponse, error)
+	CancelRun(context.Context, *connect.Request[v1.CancelRunRequest]) (*connect.Response[v1.CancelRunResponse], error)
 }
 
 // NewOrchestratorServiceClient constructs a client for the criteria.v1.OrchestratorService service.
-// Multiple service clients may share a single connect.Client.
-func NewOrchestratorServiceClient(client *connect.Client) OrchestratorServiceClient {
-	return &orchestratorServiceClient{client: client}
+// By default, it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped
+// responses, and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the
+// connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewOrchestratorServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) OrchestratorServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	orchestratorServiceMethods := v1.File_criteria_v1_orchestrator_proto.Services().ByName("OrchestratorService").Methods()
+	return &orchestratorServiceClient{
+		subscribeRunEvents: connect.NewClient[v1.SubscribeRunEventsRequest, v1.SubscribeRunEventsResponse](
+			httpClient,
+			baseURL+OrchestratorServiceSubscribeRunEventsProcedure,
+			connect.WithSchema(orchestratorServiceMethods.ByName("SubscribeRunEvents")),
+			connect.WithClientOptions(opts...),
+		),
+		listActiveRuns: connect.NewClient[v1.ListActiveRunsRequest, v1.ListActiveRunsResponse](
+			httpClient,
+			baseURL+OrchestratorServiceListActiveRunsProcedure,
+			connect.WithSchema(orchestratorServiceMethods.ByName("ListActiveRuns")),
+			connect.WithClientOptions(opts...),
+		),
+		cancelRun: connect.NewClient[v1.CancelRunRequest, v1.CancelRunResponse](
+			httpClient,
+			baseURL+OrchestratorServiceCancelRunProcedure,
+			connect.WithSchema(orchestratorServiceMethods.ByName("CancelRun")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// orchestratorServiceClient implements OrchestratorServiceClient.
+type orchestratorServiceClient struct {
+	subscribeRunEvents *connect.Client[v1.SubscribeRunEventsRequest, v1.SubscribeRunEventsResponse]
+	listActiveRuns     *connect.Client[v1.ListActiveRunsRequest, v1.ListActiveRunsResponse]
+	cancelRun          *connect.Client[v1.CancelRunRequest, v1.CancelRunResponse]
+}
+
+// SubscribeRunEvents calls criteria.v1.OrchestratorService.SubscribeRunEvents.
+func (c *orchestratorServiceClient) SubscribeRunEvents(ctx context.Context, req *connect.Request[v1.SubscribeRunEventsRequest]) (*connect.Response[v1.SubscribeRunEventsResponse], error) {
+	return c.subscribeRunEvents.CallUnary(ctx, req)
+}
+
+// ListActiveRuns calls criteria.v1.OrchestratorService.ListActiveRuns.
+func (c *orchestratorServiceClient) ListActiveRuns(ctx context.Context, req *connect.Request[v1.ListActiveRunsRequest]) (*connect.Response[v1.ListActiveRunsResponse], error) {
+	return c.listActiveRuns.CallUnary(ctx, req)
+}
+
+// CancelRun calls criteria.v1.OrchestratorService.CancelRun.
+func (c *orchestratorServiceClient) CancelRun(ctx context.Context, req *connect.Request[v1.CancelRunRequest]) (*connect.Response[v1.CancelRunResponse], error) {
+	return c.cancelRun.CallUnary(ctx, req)
 }
 
 // OrchestratorServiceHandler is an implementation of the criteria.v1.OrchestratorService service.
@@ -141,13 +174,13 @@ type OrchestratorServiceHandler interface {
 	// page is full (len(events) == limit), `next_since_seq`
 	// is also set so the operator can continue paging immediately; the
 	// terminal event of a run is a normal listable event.
-	SubscribeRunEvents(context.Context, *v1.SubscribeRunEventsRequest) (*v1.SubscribeRunEventsResponse, error)
+	SubscribeRunEvents(context.Context, *connect.Request[v1.SubscribeRunEventsRequest]) (*connect.Response[v1.SubscribeRunEventsResponse], error)
 	// ListActiveRuns returns runs that have not reached a terminal state
 	// (pending | running | paused). This is the discovery step of the operator
 	// reconcile loop: subscribe to each returned run with SubscribeRunEvents.
 	// Terminal runs (succeeded | failed | cancelled) are excluded; their final
 	// events remain pollable via SubscribeRunEvents.
-	ListActiveRuns(context.Context, *v1.ListActiveRunsRequest) (*v1.ListActiveRunsResponse, error)
+	ListActiveRuns(context.Context, *connect.Request[v1.ListActiveRunsRequest]) (*connect.Response[v1.ListActiveRunsResponse], error)
 	// CancelRun marks one run terminal (status "cancelled") on the operator's
 	// behalf (CRI-142). It exists for deterministic cleanup: when the operator
 	// deletes the CriteriaRun, it stamps the Castle run terminal itself instead
@@ -165,97 +198,59 @@ type OrchestratorServiceHandler interface {
 	// Auth: orchestrator identities may cancel any run they can observe; agent
 	// identities may cancel only runs they own. Anonymous callers are rejected
 	// even in dev mode.
-	CancelRun(context.Context, *v1.CancelRunRequest) (*v1.CancelRunResponse, error)
+	CancelRun(context.Context, *connect.Request[v1.CancelRunRequest]) (*connect.Response[v1.CancelRunResponse], error)
 }
 
-// RegisterOrchestratorServiceHandler registers svc as the criteria.v1.OrchestratorService
-// implementation on server.
-func RegisterOrchestratorServiceHandler(server *connect.Server, svc OrchestratorServiceHandler) {
-	adapter := orchestratorServiceHandler{svc: svc}
-	server.Register(
-		connect.Method{Spec: orchestratorServiceSubscribeRunEventsSpec(), Handler: adapter.subscribeRunEvents},
-		connect.Method{Spec: orchestratorServiceListActiveRunsSpec(), Handler: adapter.listActiveRuns},
-		connect.Method{Spec: orchestratorServiceCancelRunSpec(), Handler: adapter.cancelRun},
+// NewOrchestratorServiceHandler builds an HTTP handler from the service implementation. It returns
+// the path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewOrchestratorServiceHandler(svc OrchestratorServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	orchestratorServiceMethods := v1.File_criteria_v1_orchestrator_proto.Services().ByName("OrchestratorService").Methods()
+	orchestratorServiceSubscribeRunEventsHandler := connect.NewUnaryHandler(
+		OrchestratorServiceSubscribeRunEventsProcedure,
+		svc.SubscribeRunEvents,
+		connect.WithSchema(orchestratorServiceMethods.ByName("SubscribeRunEvents")),
+		connect.WithHandlerOptions(opts...),
 	)
+	orchestratorServiceListActiveRunsHandler := connect.NewUnaryHandler(
+		OrchestratorServiceListActiveRunsProcedure,
+		svc.ListActiveRuns,
+		connect.WithSchema(orchestratorServiceMethods.ByName("ListActiveRuns")),
+		connect.WithHandlerOptions(opts...),
+	)
+	orchestratorServiceCancelRunHandler := connect.NewUnaryHandler(
+		OrchestratorServiceCancelRunProcedure,
+		svc.CancelRun,
+		connect.WithSchema(orchestratorServiceMethods.ByName("CancelRun")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/criteria.v1.OrchestratorService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case OrchestratorServiceSubscribeRunEventsProcedure:
+			orchestratorServiceSubscribeRunEventsHandler.ServeHTTP(w, r)
+		case OrchestratorServiceListActiveRunsProcedure:
+			orchestratorServiceListActiveRunsHandler.ServeHTTP(w, r)
+		case OrchestratorServiceCancelRunProcedure:
+			orchestratorServiceCancelRunHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
 }
 
 // UnimplementedOrchestratorServiceHandler returns CodeUnimplemented from all methods.
 type UnimplementedOrchestratorServiceHandler struct{}
 
-func (UnimplementedOrchestratorServiceHandler) SubscribeRunEvents(context.Context, *v1.SubscribeRunEventsRequest) (*v1.SubscribeRunEventsResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "criteria.v1.OrchestratorService.SubscribeRunEvents is not implemented")
+func (UnimplementedOrchestratorServiceHandler) SubscribeRunEvents(context.Context, *connect.Request[v1.SubscribeRunEventsRequest]) (*connect.Response[v1.SubscribeRunEventsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.OrchestratorService.SubscribeRunEvents is not implemented"))
 }
 
-func (UnimplementedOrchestratorServiceHandler) ListActiveRuns(context.Context, *v1.ListActiveRunsRequest) (*v1.ListActiveRunsResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "criteria.v1.OrchestratorService.ListActiveRuns is not implemented")
+func (UnimplementedOrchestratorServiceHandler) ListActiveRuns(context.Context, *connect.Request[v1.ListActiveRunsRequest]) (*connect.Response[v1.ListActiveRunsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.OrchestratorService.ListActiveRuns is not implemented"))
 }
 
-func (UnimplementedOrchestratorServiceHandler) CancelRun(context.Context, *v1.CancelRunRequest) (*v1.CancelRunResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "criteria.v1.OrchestratorService.CancelRun is not implemented")
-}
-
-type orchestratorServiceClient struct {
-	client *connect.Client
-}
-
-func (c *orchestratorServiceClient) SubscribeRunEvents(ctx context.Context, req *v1.SubscribeRunEventsRequest) (*v1.SubscribeRunEventsResponse, error) {
-	var res v1.SubscribeRunEventsResponse
-	if err := c.client.CallUnary(ctx, orchestratorServiceSubscribeRunEventsSpec(), req, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
-}
-
-func (c *orchestratorServiceClient) ListActiveRuns(ctx context.Context, req *v1.ListActiveRunsRequest) (*v1.ListActiveRunsResponse, error) {
-	var res v1.ListActiveRunsResponse
-	if err := c.client.CallUnary(ctx, orchestratorServiceListActiveRunsSpec(), req, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
-}
-
-func (c *orchestratorServiceClient) CancelRun(ctx context.Context, req *v1.CancelRunRequest) (*v1.CancelRunResponse, error) {
-	var res v1.CancelRunResponse
-	if err := c.client.CallUnary(ctx, orchestratorServiceCancelRunSpec(), req, &res); err != nil {
-		return nil, err
-	}
-	return &res, nil
-}
-
-type orchestratorServiceHandler struct{ svc OrchestratorServiceHandler }
-
-func (h orchestratorServiceHandler) subscribeRunEvents(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	var req v1.SubscribeRunEventsRequest
-	if err := stream.Receive(&req); err != nil {
-		return err
-	}
-	res, err := h.svc.SubscribeRunEvents(ctx, &req)
-	if err != nil {
-		return err
-	}
-	return stream.Send(res)
-}
-
-func (h orchestratorServiceHandler) listActiveRuns(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	var req v1.ListActiveRunsRequest
-	if err := stream.Receive(&req); err != nil {
-		return err
-	}
-	res, err := h.svc.ListActiveRuns(ctx, &req)
-	if err != nil {
-		return err
-	}
-	return stream.Send(res)
-}
-
-func (h orchestratorServiceHandler) cancelRun(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
-	var req v1.CancelRunRequest
-	if err := stream.Receive(&req); err != nil {
-		return err
-	}
-	res, err := h.svc.CancelRun(ctx, &req)
-	if err != nil {
-		return err
-	}
-	return stream.Send(res)
+func (UnimplementedOrchestratorServiceHandler) CancelRun(context.Context, *connect.Request[v1.CancelRunRequest]) (*connect.Response[v1.CancelRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("criteria.v1.OrchestratorService.CancelRun is not implemented"))
 }

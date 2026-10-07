@@ -8,8 +8,7 @@ import (
 	"testing"
 	"time"
 
-	connect "connectrpc.com/connect/v2"
-	"connectrpc.com/connect/v2/connecthttp"
+	"connectrpc.com/connect"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -29,13 +28,13 @@ type scopeServer struct {
 	scope string // VariableScope JSON to return from ReattachRun
 }
 
-func (s *scopeServer) ReattachRun(_ context.Context, req *pb.ReattachRunRequest) (*pb.ReattachRunResponse, error) {
-	return &pb.ReattachRunResponse{
+func (s *scopeServer) ReattachRun(_ context.Context, req *connect.Request[pb.ReattachRunRequest]) (*connect.Response[pb.ReattachRunResponse], error) {
+	return connect.NewResponse(&pb.ReattachRunResponse{
 		Status:        "running",
 		CanResume:     true,
 		CurrentStep:   "deploy",
 		VariableScope: s.scope,
-	}, nil
+	}), nil
 }
 
 // resumeWorkflow has "build" as the initial step and "deploy" as a dependent
@@ -172,9 +171,8 @@ func TestReattachRun_RestoresVarScope(t *testing.T) {
 func startScopeServer(t *testing.T, h criteriav1connect.CriteriaServiceHandler) string {
 	t.Helper()
 	mux := http.NewServeMux()
-	cServer := connect.NewServer()
-	criteriav1connect.RegisterCriteriaServiceHandler(cServer, h)
-	connecthttp.Mount(mux, cServer)
+	path, handler := criteriav1connect.NewCriteriaServiceHandler(h)
+	mux.Handle(path, handler)
 	srv := httptest.NewUnstartedServer(mux)
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)

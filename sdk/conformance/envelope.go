@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
 
 	criteria "github.com/brokenbots/criteria/sdk"
@@ -39,7 +40,13 @@ func testEnvelopeRoundTrip(t *testing.T, s Subject) { //nolint:funlen,gocognit /
 	oClient := criteria.NewServiceClient(client, baseURL)
 
 	// Create a dedicated run for this test.
-	runID := authCreateRun(t, oClient, token, criteriaID, "conformance-envelope-rt")
+	createReq := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-envelope-rt"})
+	createReq.Header().Set("Authorization", "Bearer "+token)
+	runResp, err := oClient.CreateRun(context.Background(), createReq)
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	runID := runResp.Msg.RunId
 
 	oo := PayloadOneof(t)
 	fields := oo.Fields()
@@ -64,7 +71,8 @@ func testEnvelopeRoundTrip(t *testing.T, s Subject) { //nolint:funlen,gocognit /
 			// Submit the envelope.
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			stream := authSubmitStream(t, oClient, ctx, token)
+			stream := oClient.SubmitEvents(ctx)
+			stream.RequestHeader().Set("Authorization", "Bearer "+token)
 
 			if err := stream.Send(env); err != nil {
 				t.Fatalf("Send(%s): %v", armName, err)
@@ -76,9 +84,14 @@ func testEnvelopeRoundTrip(t *testing.T, s Subject) { //nolint:funlen,gocognit /
 			if ack.CorrelationId != corrID {
 				t.Errorf("ack.correlation_id=%q want %q", ack.CorrelationId, corrID)
 			}
-			_ = stream.CloseSend()
+			_ = stream.CloseRequest()
 			// Drain to EOF so the server handler exits cleanly.
-			submitDrain(stream)
+			for {
+				_, recvErr := stream.Receive()
+				if recvErr != nil {
+					break
+				}
+			}
 
 			// Read back and locate the event by correlation_id.
 			events := s.ListRunEvents(t, baseURL, client, token, runID, 0)

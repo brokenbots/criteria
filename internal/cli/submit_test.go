@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	connect "connectrpc.com/connect/v2"
+	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
@@ -47,25 +48,25 @@ type fakeSubmitServerService struct {
 	live  []*pb.Envelope
 }
 
-func (f *fakeSubmitServerService) SubmitWorkflowAssignment(_ context.Context, req *pb.SubmitWorkflowAssignmentRequest) (*pb.SubmitWorkflowAssignmentResponse, error) {
-	f.submitReqs = append(f.submitReqs, req)
+func (f *fakeSubmitServerService) SubmitWorkflowAssignment(_ context.Context, req *connect.Request[pb.SubmitWorkflowAssignmentRequest]) (*connect.Response[pb.SubmitWorkflowAssignmentResponse], error) {
+	f.submitReqs = append(f.submitReqs, req.Msg)
 	if f.submitErr != nil {
 		return nil, f.submitErr
 	}
-	return f.submitResp, nil
+	return connect.NewResponse(f.submitResp), nil
 }
 
-func (f *fakeSubmitServerService) ListRunEvents(_ context.Context, req *pb.ListRunEventsRequest) (*pb.ListRunEventsResponse, error) {
+func (f *fakeSubmitServerService) ListRunEvents(_ context.Context, req *connect.Request[pb.ListRunEventsRequest]) (*connect.Response[pb.ListRunEventsResponse], error) {
 	for i, page := range f.pages {
-		if page.sinceSeq == req.SinceSeq {
+		if page.sinceSeq == req.Msg.SinceSeq {
 			f.pages = append(f.pages[:i], f.pages[i+1:]...)
-			return page.resp, nil
+			return connect.NewResponse(page.resp), nil
 		}
 	}
-	return &pb.ListRunEventsResponse{}, nil
+	return connect.NewResponse(&pb.ListRunEventsResponse{}), nil
 }
 
-func (f *fakeSubmitServerService) WatchRun(_ context.Context, _ *pb.WatchRunRequest, stream criteriav1connect.ServerServiceWatchRunServerStream) error {
+func (f *fakeSubmitServerService) WatchRun(_ context.Context, _ *connect.Request[pb.WatchRunRequest], stream *connect.ServerStream[pb.Envelope]) error {
 	for _, env := range f.live {
 		if err := stream.Send(env); err != nil {
 			return err
@@ -74,40 +75,43 @@ func (f *fakeSubmitServerService) WatchRun(_ context.Context, _ *pb.WatchRunRequ
 	return nil
 }
 
-func (f *fakeSubmitServerService) ListAgents(context.Context, *pb.ListAgentsRequest) (*pb.ListAgentsResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeSubmitServerService) ListAgents(context.Context, *connect.Request[pb.ListAgentsRequest]) (*connect.Response[pb.ListAgentsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
-func (f *fakeSubmitServerService) GetAgent(context.Context, *pb.GetAgentRequest) (*pb.Agent, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeSubmitServerService) GetAgent(context.Context, *connect.Request[pb.GetAgentRequest]) (*connect.Response[pb.Agent], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
-func (f *fakeSubmitServerService) ListRuns(context.Context, *pb.ListRunsRequest) (*pb.ListRunsResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeSubmitServerService) ListRuns(context.Context, *connect.Request[pb.ListRunsRequest]) (*connect.Response[pb.ListRunsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
-func (f *fakeSubmitServerService) GetRun(context.Context, *pb.GetRunRequest) (*pb.Run, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeSubmitServerService) GetRun(context.Context, *connect.Request[pb.GetRunRequest]) (*connect.Response[pb.Run], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
-func (f *fakeSubmitServerService) StopRun(context.Context, *pb.StopRunRequest) (*pb.StopRunResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeSubmitServerService) StopRun(context.Context, *connect.Request[pb.StopRunRequest]) (*connect.Response[pb.StopRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
-func (f *fakeSubmitServerService) PauseRun(context.Context, *pb.PauseRunRequest) (*pb.PauseRunResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeSubmitServerService) PauseRun(context.Context, *connect.Request[pb.PauseRunRequest]) (*connect.Response[pb.PauseRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
-func (f *fakeSubmitServerService) ResumeRun(context.Context, *pb.ResumeRunRequest) (*pb.ResumeRunResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeSubmitServerService) ResumeRun(context.Context, *connect.Request[pb.ResumeRunRequest]) (*connect.Response[pb.ResumeRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
-func (f *fakeSubmitServerService) InspectRun(context.Context, *pb.InspectRunRequest) (*pb.InspectRunResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeSubmitServerService) InspectRun(context.Context, *connect.Request[pb.InspectRunRequest]) (*connect.Response[pb.InspectRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
-func (f *fakeSubmitServerService) SendPrompt(context.Context, *pb.SendPromptRequest) (*pb.SendPromptResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeSubmitServerService) SendPrompt(context.Context, *connect.Request[pb.SendPromptRequest]) (*connect.Response[pb.SendPromptResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
-func (f *fakeSubmitServerService) GetAssignmentDisposition(context.Context, *pb.GetAssignmentDispositionRequest) (*pb.GetAssignmentDispositionResponse, error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, "not implemented")
+func (f *fakeSubmitServerService) GetAssignmentDisposition(context.Context, *connect.Request[pb.GetAssignmentDispositionRequest]) (*connect.Response[pb.GetAssignmentDispositionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("not implemented"))
 }
 
 func startSubmitFakeServer(t *testing.T, handler *fakeSubmitServerService) string {
 	t.Helper()
-	srv := httptest.NewUnstartedServer(serverServiceMux(handler))
+	mux := http.NewServeMux()
+	path, h := criteriav1connect.NewServerServiceHandler(handler)
+	mux.Handle(path, h)
+	srv := httptest.NewUnstartedServer(mux)
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
 	protocols.SetUnencryptedHTTP2(true)
@@ -298,7 +302,7 @@ func TestSubmitCmd_RejectedResponse_Exit4(t *testing.T) {
 
 func TestSubmitCmd_ServerAlreadyExists_Exit4(t *testing.T) {
 	handler := &fakeSubmitServerService{
-		submitErr: connect.NewError(connect.CodeAlreadyExists, "duplicate idempotency key"),
+		submitErr: connect.NewError(connect.CodeAlreadyExists, fmt.Errorf("duplicate idempotency key")),
 	}
 	url := startSubmitFakeServer(t, handler)
 	workflowPath := writeWorkflowFile(t, submitMinimalWorkflow)
@@ -316,7 +320,7 @@ func TestSubmitCmd_ServerAlreadyExists_Exit4(t *testing.T) {
 
 func TestSubmitCmd_ServerPermissionDenied_Exit5(t *testing.T) {
 	handler := &fakeSubmitServerService{
-		submitErr: connect.NewError(connect.CodePermissionDenied, "invalid token"),
+		submitErr: connect.NewError(connect.CodePermissionDenied, fmt.Errorf("invalid token")),
 	}
 	url := startSubmitFakeServer(t, handler)
 	workflowPath := writeWorkflowFile(t, submitMinimalWorkflow)
