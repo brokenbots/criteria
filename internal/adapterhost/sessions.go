@@ -2854,6 +2854,27 @@ const concurrentExecuteCapability = "concurrent_execute"
 // adapters (review B1, KB-155).
 const parallelSafeCapability = "parallel_safe"
 
+// workflowV1Capability marks an ADR-0008 criteria-as-adapter session
+// (internal/cli serve-adapter role): one child run anchors behind the
+// session, so the execute turn gate MUST NOT queue a second concurrent
+// Execute — it fails closed instead (KB-95). The child runs the same
+// serialized policy on its side (its process-wide one-run guard is the
+// final backstop).
+const workflowV1Capability = "workflow.v1"
+
+// ErrChildRunInFlight is the typed re-Execute guard (KB-95, ADR-0008):
+// Execute on a workflow.v1 session while its child run is still in flight
+// fails closed — the caller is never queued behind the in-flight run and no
+// second child run is ever started. The session name is actionable for the
+// engine's step failure.
+type ErrChildRunInFlight struct {
+	Session string
+}
+
+func (e *ErrChildRunInFlight) Error() string {
+	return fmt.Sprintf("workflow.v1 session %q cannot re-execute while its child run is in flight; cancel the child run first (fail closed, no queueing)", e.Session)
+}
+
 // sessionSupportsConcurrentExecute reports whether the session's cached
 // capabilities declare a multiplexable execute posture (KB-155): either the
 // concurrent_execute capability or the engine's parallel_safe contract
@@ -2892,6 +2913,13 @@ func (m *SessionManager) acquireExecuteTurn(ctx context.Context, sess *Session) 
 		// Fast path: the turn was free. Proceed regardless of ctx state.
 		return false, nil
 	default:
+	}
+	// KB-95 (ADR-0008) re-Execute guard for workflow.v1 sessions: the turn
+	// is busy, which means this session's child run is in flight. Fail
+	// closed — the guard caller is never queued and never re-runs the step
+	// against the child.
+	if m.HasCapability(sess.Name, workflowV1Capability) {
+		return false, &ErrChildRunInFlight{Session: sess.Name}
 	}
 	select {
 	case <-sess.execTurns:

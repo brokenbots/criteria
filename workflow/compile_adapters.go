@@ -83,6 +83,7 @@ func compileOneAdapter(g *FSMGraph, ad *AdapterDeclSpec, schemas map[string]Adap
 
 	if info, ok := adapterInfo(schemas, typeName); ok {
 		diags = append(diags, checkAdapterEnvCompatibility(key, &info, effectiveEnv)...)
+		diags = append(diags, checkWorkflowCapabilityHostability(key, &info, effectiveEnv)...)
 	}
 
 	cacheResolvedPolicy(g, key, effectiveEnv, typeName, schemas)
@@ -256,11 +257,7 @@ func checkAdapterEnvCompatibility(key string, info *AdapterInfo, envKey string) 
 	if envKey == "" {
 		return nil
 	}
-	// Extract environment type from "env_type.env_name" key.
-	envType := envKey
-	if idx := strings.LastIndex(envKey, "."); idx != -1 {
-		envType = envKey[:idx]
-	}
+	envType := envTypeFromKey(envKey)
 	for _, compat := range info.CompatibleEnvironments {
 		if compat == envType || compat == "*" {
 			return nil
@@ -269,6 +266,46 @@ func checkAdapterEnvCompatibility(key string, info *AdapterInfo, envKey string) 
 	return hcl.Diagnostics{{
 		Severity: hcl.DiagError,
 		Summary:  fmt.Sprintf("adapter %q: environment type %q is not in the adapter's compatible_environments %v", key, envType, info.CompatibleEnvironments),
+	}}
+}
+
+// workflowV1Capability is the capability an ADR-0008 criteria-as-adapter peer
+// advertises (both directions: the served child reports it in its Info
+// handshake, the host declares it in the peer identity frame).
+const workflowV1Capability = "workflow.v1"
+
+// envTypeFromKey extracts the environment type from an "env_type.env_name"
+// environment key. An empty key keeps the empty string.
+func envTypeFromKey(envKey string) string {
+	if idx := strings.LastIndex(envKey, "."); idx != -1 {
+		return envKey[:idx]
+	}
+	return envKey
+}
+
+// envCannotHostCriteriaProcess reports whether an environment type cannot
+// host a criteria process. Container images and remote pods are built as
+// non-criteria images; the shell (and the OS-sandboxed local sandbox on the
+// same machine) can host one.
+func envCannotHostCriteriaProcess(envType string) bool {
+	return envType == "container" || envType == "remote"
+}
+
+// checkWorkflowCapabilityHostability emits a WARNING-tier advisory when an
+// adapter advertising the workflow.v1 capability (ADR-0008: it serves a
+// criteria workflow as AdapterService) is bound to an environment type that
+// cannot host a criteria process (container/remote). Local shell processes
+// are the legitimate standalone deployment — two processes on one machine —
+// so the remote-shim case stays legitimate too: the diagnostic is advisory
+// only and never fails the compile.
+func checkWorkflowCapabilityHostability(key string, info *AdapterInfo, envKey string) hcl.Diagnostics {
+	if !adapterHasCapability(info, workflowV1Capability) || !envCannotHostCriteriaProcess(envTypeFromKey(envKey)) {
+		return nil
+	}
+	return hcl.Diagnostics{{
+		Severity: hcl.DiagWarning,
+		Summary:  fmt.Sprintf("adapter %q: workflow.v1 peer bound to %q environment", key, envTypeFromKey(envKey)),
+		Detail:   "a workflow.v1-capable adapter fronts a criteria child process, but this environment type is typically built without the criteria binary itself; prefer a local shell environment (the reference deployment runs both processes on one machine) unless the image intentionally ships the criteria binary.",
 	}}
 }
 

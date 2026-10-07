@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
@@ -68,6 +69,27 @@ type fakePeer struct {
 	promptAccept           bool     // Prompt accepts (false → typed rejection)
 	promptDetail           string   // rejection detail
 
+	// KB-95 (ADR-0008) additions:
+	peerCaps     []string                     // handshake Peer identity capabilities; nil keeps the legacy shape
+	executeErr   error                        // Execute returns this error instead of streaming a result
+	resultWire   *v2.ExecuteResult            // Execute's terminal result event; nil keeps the plain success
+	childEvents  []*v2.ExecuteEvent           // Execute streams these before executeErr/result
+	executeCalls int                          // Execute invocations, counted for no-double-run assertions
+	ctrlReqs     []*criteriav1.ControlRequest // Control requests received, in order
+	ops          []string                     // ordering witness: control + CloseSession ops, in order
+
+	// holdRunUntilPause models the child-card pause contract (pair with the
+	// serveadapter pause test): Execute journals the child-run started arm,
+	// parks until a Pause lands mid-run, streams the paused/resumed
+	// workflow.v1 adapter events, journals the terminal arm, then returns
+	// the result. holdRunID names the run for the journal arms.
+	holdRunUntilPause bool
+	holdRunID         string
+	runPausedCh       chan struct{}
+	runResumedCh      chan struct{}
+	pauseSignaled     bool
+	resumeSignaled    bool
+
 	v2.UnimplementedAdapterServiceServer
 
 	srv      *grpc.Server
@@ -100,7 +122,7 @@ func (f *fakePeer) connect(t *testing.T, addr string) {
 		Token:   f.token,
 		Scope:   f.scope,
 		Role:    "peer",
-		Peer:    &PeerClientIdentity{CriteriaVersion: "test"},
+		Peer:    &PeerClientIdentity{CriteriaVersion: "test", Capabilities: append([]string(nil), f.peerCaps...)},
 	}
 	data, err := json.Marshal(hs)
 	if err != nil {
@@ -197,6 +219,17 @@ func (f *fakePeer) controlHandler(srv interface{}, ctx context.Context, dec func
 }
 
 func (f *fakePeer) control(_ context.Context, req *criteriav1.ControlRequest) *criteriav1.ControlResponse {
+	f.mu.Lock()
+	f.ctrlReqs = append(f.ctrlReqs, req)
+	f.mu.Unlock()
+	if req.GetCancelChildRun() != nil {
+		// KB-95: the child-run cancel control is the child-side arm of the
+		// teardown ordering contract; the fake ACKs it accepted.
+		f.mu.Lock()
+		f.ops = append(f.ops, "cancel_child_run:"+req.GetCancelChildRun().GetRunId())
+		f.mu.Unlock()
+		return &criteriav1.ControlResponse{Accepted: true}
+	}
 	if req.GetKillChild() != nil {
 		if f.rejectKillChild {
 			return &criteriav1.ControlResponse{Accepted: false, Detail: "kill rejected by test peer"}
@@ -251,12 +284,20 @@ func (f *fakePeer) OpenSession(ctx context.Context, req *v2.OpenSessionRequest) 
 }
 
 func (f *fakePeer) CloseSession(ctx context.Context, req *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	// op witness so KB-95 tests can assert control-before-close ordering.
+	f.ops = append(f.ops, "close_session:"+req.GetSessionId())
 	return &v2.CloseSessionResponse{}, nil
 }
 
 func (f *fakePeer) Pause(ctx context.Context, req *v2.PauseRequest) (*v2.PauseResponse, error) {
 	f.mu.Lock()
 	f.paused = true
+	if f.runPausedCh != nil && !f.pauseSignaled {
+		close(f.runPausedCh)
+		f.pauseSignaled = true
+	}
 	f.mu.Unlock()
 	return &v2.PauseResponse{}, nil
 }
@@ -264,6 +305,10 @@ func (f *fakePeer) Pause(ctx context.Context, req *v2.PauseRequest) (*v2.PauseRe
 func (f *fakePeer) Resume(ctx context.Context, req *v2.ResumeRequest) (*v2.ResumeResponse, error) {
 	f.mu.Lock()
 	f.paused = false
+	if f.runResumedCh != nil && !f.resumeSignaled {
+		close(f.runResumedCh)
+		f.resumeSignaled = true
+	}
 	f.mu.Unlock()
 	return &v2.ResumeResponse{}, nil
 }
@@ -330,12 +375,71 @@ func (f *fakePeer) Permissions(stream grpc.BidiStreamingServer[v2.PermissionEven
 	}
 }
 
-// Execute streams a single terminal result event, proving the host's shared
-// ExecuteViaClient plumbing consumes the server-streamed events over the
-// peer connection.
+// Execute streams the KB-95 childRunEvents (e.g. workflow.v1-prefixed child
+// node events) before the terminal result, or executeErr instead of the
+// result when the override is set.
 func (f *fakePeer) Execute(req *v2.ExecuteRequest, stream grpc.ServerStreamingServer[v2.ExecuteEvent]) error {
+	f.mu.Lock()
+	events := append([]*v2.ExecuteEvent(nil), f.childEvents...)
+	execErr := f.executeErr
+	hold := f.holdRunUntilPause
+	holdRunID := f.holdRunID
+	f.executeCalls++
+	f.mu.Unlock()
+	for _, ev := range events {
+		if err := stream.Send(ev); err != nil {
+			return err
+		}
+	}
+	if hold {
+		// Child-card pause contract mirrored on the fake (pair with the
+		// serveadapter pause test): the run journals its started arm, parks
+		// at a checkpoint when a pause lands mid-run, and releases on
+		// Resume with the paused/resumed events streamed to the parent
+		// feed while parked.
+		f.appendEvent(childRunStartedArm(holdRunID))
+		select {
+		case <-f.runPausedCh:
+		case <-stream.Context().Done():
+			return stream.Context().Err()
+		}
+		payload, err := structpb.NewStruct(map[string]any{"run_id": holdRunID})
+		if err != nil {
+			return status.Error(codes.Internal, err.Error())
+		}
+		pausedEv := &v2.ExecuteEvent{Event: &v2.ExecuteEvent_Adapter{Adapter: &v2.AdapterEvent{
+			EventKind: "workflow.v1.run_paused", Payload: payload,
+		}}}
+		if err := stream.Send(pausedEv); err != nil {
+			return err
+		}
+		select {
+		case <-f.runResumedCh:
+		case <-stream.Context().Done():
+			return stream.Context().Err()
+		}
+		resumedEv := &v2.ExecuteEvent{Event: &v2.ExecuteEvent_Adapter{Adapter: &v2.AdapterEvent{
+			EventKind: "workflow.v1.run_resumed", Payload: payload,
+		}}}
+		if err := stream.Send(resumedEv); err != nil {
+			return err
+		}
+		// The child stamps its run record terminal after resuming; the
+		// parent learns it through the journal replay.
+		f.appendEvent(childRunTerminalArm(holdRunID, "success"))
+	}
+	if execErr != nil {
+		return execErr
+	}
+	result := &v2.ExecuteResult{Outcome: "success"}
+	f.mu.Lock()
+	if f.resultWire != nil {
+		f.resultWire = proto.Clone(f.resultWire).(*v2.ExecuteResult)
+		result = f.resultWire
+	}
+	f.mu.Unlock()
 	return stream.Send(&v2.ExecuteEvent{
-		Event: &v2.ExecuteEvent_Result{Result: &v2.ExecuteResult{Outcome: "success"}},
+		Event: &v2.ExecuteEvent_Result{Result: result},
 	})
 }
 

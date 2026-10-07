@@ -43,6 +43,15 @@ const (
 	// CrashReasonUnknownAdapterError: an error that matches no known
 	// transport or process signature.
 	CrashReasonUnknownAdapterError = "unknown adapter error"
+
+	// CrashReasonChildRunLost: the phone-home transport to a workflow.v1
+	// peer died while a child run was tracked in flight and the journal
+	// delivered no terminal evidence (ADR-0008, KB-95). The child's verdict
+	// is unknowable at classification time even though the child may still
+	// be alive — the run anchors to the child's base context, so the loss
+	// itself is the crash fact for the parent's step; the surviving run is
+	// the adoption path's subject, not a fresh spawn.
+	CrashReasonChildRunLost = "workflow.v1 child run was in flight when the peer connection was lost"
 )
 
 // SupervisedHandle is the optional Handle capability a peer-supervised
@@ -99,7 +108,8 @@ func isTaxonomyReason(reason string) bool {
 		CrashReasonStdioPipeBroken,
 		CrashReasonStdioEOF,
 		CrashReasonProcessTerminated,
-		CrashReasonUnknownAdapterError:
+		CrashReasonUnknownAdapterError,
+		CrashReasonChildRunLost:
 		return true
 	}
 	return false
