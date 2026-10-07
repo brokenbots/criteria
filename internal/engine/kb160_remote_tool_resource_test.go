@@ -291,7 +291,9 @@ func kb160AwaitRun(t *testing.T, sink *loopOutputSink, done chan error, timeout 
 		case err := <-done:
 			return err
 		case <-ticker.C:
-			if sink.terminal == "" {
+			// Poll through the locked accessor: the engine goroutine writes
+			// the terminal fields while this goroutine reads them.
+			if state, _ := sink.terminalState(); state == "" {
 				continue
 			}
 			// The engine records the terminal state before Run returns;
@@ -303,7 +305,8 @@ func kb160AwaitRun(t *testing.T, sink *loopOutputSink, done chan error, timeout 
 				return nil
 			}
 		case <-deadline:
-			t.Fatalf("run never reached a terminal state (sink.terminal=%q)", sink.terminal)
+			state, _ := sink.terminalState()
+			t.Fatalf("run never reached a terminal state (sink.terminal=%q)", state)
 		}
 	}
 }
@@ -378,8 +381,8 @@ func TestKB160_ParallelIterationRoutesRemoteToolResourceThroughPeer(t *testing.T
 		t.Errorf("peer closes for %q = %d; want %d (owner closes the shared session once)", kb58CalleeSess, got, want)
 	}
 
-	if sink.terminal != "done" || !sink.terminalOK {
-		t.Errorf("terminal state: got %q (ok=%v); want \"done\" (true)", sink.terminal, sink.terminalOK)
+	if state, ok := sink.terminalState(); state != "done" || !ok {
+		t.Errorf("terminal state: got %q (ok=%v); want \"done\" (true)", state, ok)
 	}
 
 	// Audit hygiene: no unknown_adapter deny may be recorded.
