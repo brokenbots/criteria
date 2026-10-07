@@ -316,9 +316,19 @@ func TestJSONRPCConformance_TruncatedFrame(t *testing.T) {
 }
 
 // bridgeEnvSession opens an MCP bridge session against the echo fixture with
-// extra env pairs (comma-separated K=V) and the given framing.
+// extra env pairs (comma-separated K=V) and the given framing. The client
+// framing only configures the bridge's write side; the fixture itself must
+// also be told to speak it, so ndjson requests append MCP_FRAMING=ndjson to
+// the fixture env (the fixture defaults to Content-Length framing).
 func bridgeEnvSession(t *testing.T, ctx context.Context, sessionID, env, framing string) *MCPBridge {
 	t.Helper()
+	if framing == "ndjson" {
+		if env == "" {
+			env = "MCP_FRAMING=ndjson"
+		} else {
+			env += ",MCP_FRAMING=ndjson"
+		}
+	}
 	bridge := &MCPBridge{sessions: map[string]*sessionState{}}
 	cfg := map[string]string{"command": testEchoBin}
 	if env != "" {
@@ -343,7 +353,10 @@ func callTool(bridge *MCPBridge, sessionID, tool string, extra map[string]string
 	for k, v := range extra {
 		input[k] = v
 	}
-	sender := &fakeEventSender{}
+	// The bridge's permission gate is unconditional per Execute; without a
+	// Permissions stream the unit-level sender itself resolves the pending
+	// request as an allow (mirroring the stream's host-allow path).
+	sender := &permittingEventSender{bridge: bridge}
 	err := bridge.Execute(context.Background(), &v2.ExecuteRequest{SessionId: sessionID, Input: input}, sender)
 	for _, ev := range sender.all() {
 		if res := ev.GetResult(); res != nil && len(res.GetOutputsJson()) > 0 {
