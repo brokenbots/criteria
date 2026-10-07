@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
@@ -41,16 +40,16 @@ func NewApproveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			resp, err := localControlServiceClientFor(addr).ResolveResume(cmd.Context(), connect.NewRequest(&pb.ResumeRequest{
+			resp, err := localControlServiceClientFor(addr).ResolveResume(cmd.Context(), &pb.ResumeRequest{
 				RunId:   runID,
 				Signal:  signal,
 				Payload: epayload,
-			}))
+			})
 			if err != nil {
 				return fmt.Errorf("approve: %w", err)
 			}
-			if !resp.Msg.Accepted {
-				return fmt.Errorf("approve rejected: %s", resp.Msg.Reason)
+			if !resp.Accepted {
+				return fmt.Errorf("approve rejected: %s", resp.Reason)
 			}
 			fmt.Printf("decision delivered for run %s\n", runID)
 			return nil

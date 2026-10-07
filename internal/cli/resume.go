@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 
-	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
@@ -32,7 +31,7 @@ func NewResumeCmd() *cobra.Command {
 					return err
 				}
 				if addr != "" {
-					if _, err := localControlServiceClientFor(addr).ResumeRun(cmd.Context(), connect.NewRequest(&pb.ResumeRunRequest{RunId: runID})); err != nil {
+					if _, err := localControlServiceClientFor(addr).ResumeRun(cmd.Context(), &pb.ResumeRunRequest{RunId: runID}); err != nil {
 						return fmt.Errorf("resume: %w", err)
 					}
 					fmt.Printf("resume requested for run %s\n", runID)
@@ -43,7 +42,7 @@ func NewResumeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if _, err := client.ResumeRun(cmd.Context(), connect.NewRequest(&pb.ResumeRunRequest{RunId: runID})); err != nil {
+			if _, err := client.ResumeRun(cmd.Context(), &pb.ResumeRunRequest{RunId: runID}); err != nil {
 				return fmt.Errorf("resume: %w", err)
 			}
 			fmt.Printf("resume requested for run %s\n", runID)

@@ -20,7 +20,7 @@ import (
 	"strings"
 	"syscall"
 
-	"connectrpc.com/connect"
+	connect "connectrpc.com/connect/v2"
 	"github.com/spf13/cobra"
 	"github.com/zclconf/go-cty/cty"
 
@@ -303,41 +303,29 @@ func (e *errChildRunNotOwnedBySession) Error() string {
 // connectErrorStatus converts run-level failures into Connect error codes for
 // the v2 wire. Unknown causes fall back to the internal code.
 func connectErrorStatus(err error) error {
+	code := connect.CodeInternal
 	var inFlight *ErrChildRunInFlight
-	if errors.As(err, &inFlight) {
-		return connect.NewError(connect.CodeFailedPrecondition, inFlight)
-	}
 	var notOwned *errChildRunNotOwnedBySession
-	if errors.As(err, &notOwned) {
-		return connect.NewError(connect.CodeFailedPrecondition, notOwned)
-	}
 	var snapPrecondition *errServeSnapshotPrecondition
-	if errors.As(err, &snapPrecondition) {
-		return connect.NewError(connect.CodeFailedPrecondition, snapPrecondition)
-	}
-	if errors.Is(err, errServeSnapshotMalformed) {
-		return connect.NewError(connect.CodeInvalidArgument, errors.New(err.Error()))
-	}
-	if errors.Is(err, errChildRunStillStarting) {
-		return connect.NewError(connect.CodeFailedPrecondition, errors.New(err.Error()))
-	}
-	if errors.Is(err, errSessionUnknownConnect) {
-		return connect.NewError(connect.CodeNotFound, errors.New(err.Error()))
-	}
-	if errors.Is(err, errSessionIDRequired) {
-		return connect.NewError(connect.CodeInvalidArgument, errors.New(err.Error()))
-	}
 	var exists *errSessionAlreadyExists
-	if errors.As(err, &exists) {
-		return connect.NewError(connect.CodeAlreadyExists, exists)
+	switch {
+	case errors.As(err, &inFlight),
+		errors.As(err, &notOwned),
+		errors.As(err, &snapPrecondition),
+		errors.Is(err, errChildRunStillStarting):
+		code = connect.CodeFailedPrecondition
+	case errors.Is(err, errServeSnapshotMalformed), errors.Is(err, errSessionIDRequired):
+		code = connect.CodeInvalidArgument
+	case errors.Is(err, errSessionUnknownConnect):
+		code = connect.CodeNotFound
+	case errors.As(err, &exists):
+		code = connect.CodeAlreadyExists
+	case errors.Is(err, context.Canceled):
+		code = connect.CodeCanceled
+	case errors.Is(err, context.DeadlineExceeded):
+		code = connect.CodeDeadlineExceeded
 	}
-	if errors.Is(err, context.Canceled) {
-		return connect.NewError(connect.CodeCanceled, err)
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return connect.NewError(connect.CodeDeadlineExceeded, err)
-	}
-	return connect.NewError(connect.CodeInternal, err)
+	return connect.NewError(code, err.Error()).WithCause(err)
 }
 
 // sortedStringKeys returns map keys in sorted order for deterministic

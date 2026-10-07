@@ -3,7 +3,8 @@ package cli
 import (
 	"fmt"
 
-	"connectrpc.com/connect"
+	connect "connectrpc.com/connect/v2"
+	"connectrpc.com/connect/v2/connecthttp"
 	"github.com/spf13/cobra"
 
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
@@ -31,7 +32,7 @@ func (f *serverClientFlags) client() (criteriav1connect.ServerServiceClient, err
 	if err != nil {
 		return nil, err
 	}
-	return criteriav1connect.NewServerServiceClient(hc, f.URL), nil
+	return criteriav1connect.NewServerServiceClient(connect.NewClient(connecthttp.NewTransport(hc, f.URL))), nil
 }
 
 func NewStatusCmd() *cobra.Command {
@@ -55,11 +56,11 @@ func NewStatusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			resp, err := client.ListAgents(cmd.Context(), connect.NewRequest(&pb.ListAgentsRequest{}))
+			resp, err := client.ListAgents(cmd.Context(), &pb.ListAgentsRequest{})
 			if err != nil {
 				return err
 			}
-			for _, o := range resp.Msg.Agents {
+			for _, o := range resp.Agents {
 				fmt.Printf("%-36s  %-20s  %s\n", o.CriteriaId, o.Name, o.Status)
 			}
 			return nil
@@ -87,7 +88,7 @@ func NewStopCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if _, err := client.StopRun(cmd.Context(), connect.NewRequest(&pb.StopRunRequest{RunId: runID, Reason: reason})); err != nil {
+			if _, err := client.StopRun(cmd.Context(), &pb.StopRunRequest{RunId: runID, Reason: reason}); err != nil {
 				return fmt.Errorf("stop: %w", err)
 			}
 			fmt.Printf("stop requested for run %s\n", runID)

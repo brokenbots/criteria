@@ -14,7 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"connectrpc.com/connect"
+	connect "connectrpc.com/connect/v2"
+	"connectrpc.com/connect/v2/connecthttp"
 	"github.com/spf13/cobra"
 
 	"github.com/brokenbots/criteria/internal/engine"
@@ -354,14 +355,14 @@ type localControlService struct {
 	runID string
 }
 
-func (s *localControlService) PauseRun(ctx context.Context, req *connect.Request[pb.PauseRunRequest]) (*connect.Response[pb.PauseRunResponse], error) {
-	if err := s.checkRun(req.Msg.RunId); err != nil {
+func (s *localControlService) PauseRun(ctx context.Context, req *pb.PauseRunRequest) (*pb.PauseRunResponse, error) {
+	if err := s.checkRun(req.RunId); err != nil {
 		return nil, err
 	}
 	if err := s.ctrlPause(ctx); err != nil {
 		return nil, pauseErrorToConnect(err)
 	}
-	return connect.NewResponse(&pb.PauseRunResponse{}), nil
+	return &pb.PauseRunResponse{}, nil
 }
 
 // ctrlPause retries across the pause-landing window: the listener publishes
@@ -384,14 +385,14 @@ func (s *localControlService) ctrlPause(ctx context.Context) error {
 	}
 }
 
-func (s *localControlService) ResumeRun(_ context.Context, req *connect.Request[pb.ResumeRunRequest]) (*connect.Response[pb.ResumeRunResponse], error) {
-	if err := s.checkRun(req.Msg.RunId); err != nil {
+func (s *localControlService) ResumeRun(_ context.Context, req *pb.ResumeRunRequest) (*pb.ResumeRunResponse, error) {
+	if err := s.checkRun(req.RunId); err != nil {
 		return nil, err
 	}
 	if err := s.ctrlResume(); err != nil {
 		return nil, pauseErrorToConnect(err)
 	}
-	return connect.NewResponse(&pb.ResumeRunResponse{}), nil
+	return &pb.ResumeRunResponse{}, nil
 }
 
 // ctrlResume retries across the pause-landing window (see ctrlPause): the
@@ -411,12 +412,12 @@ func (s *localControlService) ctrlResume() error {
 	}
 }
 
-func (s *localControlService) ResolveResume(_ context.Context, req *connect.Request[pb.ResumeRequest]) (*connect.Response[pb.ResumeResponse], error) {
-	if err := s.checkRun(req.Msg.RunId); err != nil {
+func (s *localControlService) ResolveResume(_ context.Context, req *pb.ResumeRequest) (*pb.ResumeResponse, error) {
+	if err := s.checkRun(req.RunId); err != nil {
 		return nil, err
 	}
-	accepted, reason := s.ctrlResolve(req.Msg.Signal, req.Msg.Payload)
-	return connect.NewResponse(&pb.ResumeResponse{Accepted: accepted, Reason: reason}), nil
+	accepted, reason := s.ctrlResolve(req.Signal, req.Payload)
+	return &pb.ResumeResponse{Accepted: accepted, Reason: reason}, nil
 }
 
 // ctrlResolve retries run_not_paused across the pause-landing window
@@ -459,13 +460,25 @@ func (c *localRunControl) markFinished() {
 // serves exactly the apply process's own run.
 func (s *localControlService) checkRun(runID string) error {
 	if runID != s.runID {
-		return connect.NewError(connect.CodeNotFound, fmt.Errorf("run %q is not served by this control listener", runID))
+		return connect.Errorf(connect.CodeNotFound, "run %q is not served by this control listener", runID)
 	}
 	return nil
 }
 
 func pauseErrorToConnect(err error) error {
-	return connect.NewError(connect.CodeFailedPrecondition, err)
+	return connect.NewError(connect.CodeFailedPrecondition, err.Error()).WithCause(err)
+}
+
+// mountLocalControlService builds the HTTP handler for the local run control
+// listener's LocalControlService (v2 connect server/register/mount shape) and
+// returns the service subtree pattern plus handler for
+// runstate.Server.WithLocalService.
+func mountLocalControlService(svc criteriav1connect.LocalControlServiceHandler) (string, http.Handler) {
+	server := connect.NewServer()
+	criteriav1connect.RegisterLocalControlServiceHandler(server, svc)
+	mux := http.NewServeMux()
+	connecthttp.Mount(mux, server)
+	return criteriav1connect.LocalControlServiceName + "/", mux
 }
 
 // controlEndpoint is the discovery record a local apply writes next to its
@@ -547,8 +560,7 @@ func LocalControlEndpoint(runID string) (string, error) {
 // localControlClient builds a Connect LocalControlService client for a
 // loopback control listener address.
 func localControlClient(addr string) criteriav1connect.LocalControlServiceClient {
-	hc := &http.Client{}
-	return criteriav1connect.NewLocalControlServiceClient(hc, "http://"+addr)
+	return criteriav1connect.NewLocalControlServiceClient(connect.NewClient(connecthttp.NewTransport(&http.Client{}, "http://"+addr)))
 }
 
 // localControlServiceClientFor is the client seam used by the pause/resume/

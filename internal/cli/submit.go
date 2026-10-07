@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"connectrpc.com/connect"
+	connect "connectrpc.com/connect/v2"
 	"github.com/spf13/cobra"
 
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
@@ -108,25 +108,25 @@ func submitWorkflow(ctx context.Context, client criteriav1connect.ServerServiceC
 		return "", fmt.Errorf("read lockfile: %w", err)
 	}
 
-	resp, err := client.SubmitWorkflowAssignment(ctx, connect.NewRequest(&pb.SubmitWorkflowAssignmentRequest{
+	resp, err := client.SubmitWorkflowAssignment(ctx, &pb.SubmitWorkflowAssignmentRequest{
 		WorkflowName:   spec.Header.Name,
 		WorkflowSource: string(spec.SourceBytes),
 		LockfileSource: lockfileSource,
 		Labels:         opts.labels,
 		IdempotencyKey: opts.idempotencyKey,
-	}))
+	})
 	if err != nil {
 		return "", classifySubmitError(err)
 	}
 
-	state := resp.Msg.GetState()
+	state := resp.GetState()
 	if state == pb.WorkflowAssignmentState_WORKFLOW_ASSIGNMENT_STATE_REJECTED {
 		return "", &submitError{
-			msg:  fmt.Sprintf("submission rejected: %s", resp.Msg.GetRejectionReason()),
+			msg:  fmt.Sprintf("submission rejected: %s", resp.GetRejectionReason()),
 			code: exitDuplicateSubmission,
 		}
 	}
-	runID := resp.Msg.GetRunId()
+	runID := resp.GetRunId()
 	if runID == "" {
 		return "", &submitError{
 			msg:  "server returned an empty run id",

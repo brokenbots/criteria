@@ -13,7 +13,6 @@ import (
 	"sync"
 
 	"github.com/brokenbots/criteria/internal/runstate"
-	"github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
 )
 
 // openRunEventsFile opens (append-only, CRI-125) the run's ND-JSON events
@@ -65,7 +64,7 @@ func startLocalRunStateServer(ctx context.Context, log *slog.Logger, runID, cont
 	srv := runstate.NewServer(store).WithControl(newRunStateControlHandler(ctx, runID, ctrl, cancelRun))
 	if ctrl != nil {
 		svc := &localControlService{ctrl: ctrl, runID: runID}
-		pattern, h := criteriav1connect.NewLocalControlServiceHandler(svc)
+		pattern, h := mountLocalControlService(svc)
 		srv.WithLocalService(pattern, h)
 	}
 	if withViewer {
