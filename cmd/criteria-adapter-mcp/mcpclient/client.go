@@ -498,7 +498,10 @@ func readHeaderFramedBody(r *bufio.Reader, firstHeaderLine string) ([]byte, erro
 		next, err := r.ReadString('\n')
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				return nil, io.EOF
+				// A Content-Length header was seen, so the peer started a
+				// frame; EOF before the header block completed is a
+				// truncated frame.
+				return nil, fmt.Errorf("mcpclient: truncated header block at EOF: %w", io.ErrUnexpectedEOF)
 			}
 			return nil, fmt.Errorf("mcpclient: read header line: %w", err)
 		}

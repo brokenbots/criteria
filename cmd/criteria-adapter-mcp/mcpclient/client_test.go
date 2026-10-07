@@ -306,10 +306,16 @@ func TestReadFrameAutoDetect(t *testing.T) {
 		t.Fatalf("final read = %v want io.EOF", err)
 	}
 
-	// A header block left truncated (no payload bytes) fails deterministically.
+	// A header block left truncated (no payload bytes) fails deterministically
+	// with ErrUnexpectedEOF, like a truncated payload.
 	truncated := "Content-Length: 42\r\n\r\nshort"
-	if _, err := readFrame(bufio.NewReader(strings.NewReader(truncated))); err == nil {
-		t.Fatal("truncated header-framed body read succeeded, want error")
+	if _, err := readFrame(bufio.NewReader(strings.NewReader(truncated))); !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("truncated header-framed body = %v, want ErrUnexpectedEOF", err)
+	}
+	// EOF before the header block even terminates (no blank separator line)
+	// is also a truncated frame, not a clean session close.
+	if _, err := readFrame(bufio.NewReader(strings.NewReader("Content-Length: 42\r\n"))); !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("truncated header block = %v, want ErrUnexpectedEOF", err)
 	}
 }
 
