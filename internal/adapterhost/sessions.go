@@ -468,7 +468,9 @@ func mergeMapInto[K comparable, V any](dst, src map[K]V) map[K]V {
 // its lease when it unwinds.
 //
 // Names m already hosts (bound session or verified record) are skipped — m
-// would resolve them locally anyway. Names whose declaring environment is
+// would resolve them locally anyway — as are names m already leases (the
+// lease is idempotent; a duplicate registration would leak an owner
+// refcount entry). Names whose declaring environment is
 // remote are skipped (they dispatch through the phone-home shims borrowed by
 // BorrowRemoteProvisioningFrom; the remote-environment shared-session route
 // is tracked separately). Names src cannot host (no bound session and no
@@ -487,8 +489,19 @@ func (m *SessionManager) LeaseToolResourcesFrom(src *SessionManager, names []str
 	}
 	m.mu.Lock()
 	leased := make([]string, 0, len(names))
+	var refresh []string
 	for _, name := range names {
 		if !m.leaseEligibleLocked(name) {
+			continue
+		}
+		// Idempotent re-lease: a second lease attempt for a name this manager
+		// already leases must NOT bump the owner's refcount again, or the
+		// release would underflow and the entry would anchor the owner's
+		// teardown forever.
+		if held, ok := m.leasedToolResources[name]; ok {
+			if held == src {
+				refresh = append(refresh, name)
+			}
 			continue
 		}
 		// Pass-through: resolve the ultimate owner through src's own leases
@@ -498,6 +511,11 @@ func (m *SessionManager) LeaseToolResourcesFrom(src *SessionManager, names []str
 		owner := src.leaseOwner(name)
 		if owner == nil {
 			owner = src
+		}
+		if owner == m {
+			// Out-of-protocol self-owning pass-through that would loop on
+			// itself at execute time; leave the name unresolved.
+			continue
 		}
 		if !owner.acquireToolResourceLease(name) {
 			continue
@@ -512,17 +530,18 @@ func (m *SessionManager) LeaseToolResourcesFrom(src *SessionManager, names []str
 
 	// Install the owner's adapter info surface for the leased names so the
 	// child resolves callee capability and declaration checks against what
-	// the shared session actually serves.
-	if len(leased) > 0 {
-		infos := src.snapshotToolResourceInfos(leased)
+	// the shared session actually serves. Sources for the surface come from
+	// src as-is: for a pass-through lease (src itself leased from a deeper
+	// owner) src already carries the ultimate owner's info, so this works
+	// regardless of which manager ends up hosting the session.
+	if names := append(leased, refresh...); len(names) > 0 {
+		infos := src.snapshotToolResourceInfos(names)
 		m.mu.Lock()
 		for name, info := range infos {
-			if m.leasedToolResources[name] == src {
-				if m.adapterInfos == nil {
-					m.adapterInfos = make(map[string]*workflow.AdapterInfo)
-				}
-				m.adapterInfos[name] = info
+			if m.adapterInfos == nil {
+				m.adapterInfos = make(map[string]*workflow.AdapterInfo)
 			}
+			m.adapterInfos[name] = info
 		}
 		m.mu.Unlock()
 	}

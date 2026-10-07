@@ -231,3 +231,72 @@ func TestKB156_NestedDispatchAfterLeaseReleaseReportsUnknownAdapter(t *testing.T
 		t.Fatalf("execute for a released name: err = %v; want ErrUnknownSession", err)
 	}
 }
+
+// TestKB156_LeaseIsIdempotent: a repeated lease attempt for the same name
+// must not bump the owner's refcount twice — otherwise a single release
+// would underflow and anchor the owner's teardown on a ghost entry.
+func TestKB156_LeaseIsIdempotent(t *testing.T) {
+	owner, child, _, ctx := kb156LeaseSetup(t)
+
+	if leased := child.LeaseToolResourcesFrom(owner, []string{"mcp.probe"}); len(leased) != 1 {
+		t.Fatalf("first lease = %v; want [mcp.probe]", leased)
+	}
+	if leased := child.LeaseToolResourcesFrom(owner, []string{"mcp.probe"}); len(leased) != 0 {
+		t.Errorf("second lease = %v; want none (already leased)", leased)
+	}
+
+	err := owner.Close(ctx, "mcp.probe")
+	var sharedErr *SessionSharedError
+	if !errors.As(err, &sharedErr) || sharedErr.Leases != 1 {
+		t.Fatalf("owner.Close after a duplicated lease attempt: err = %v; want refused with Leases 1", err)
+	}
+
+	child.ReleaseSharedToolResources()
+	if err := owner.Close(ctx, "mcp.probe"); err != nil {
+		t.Fatalf("owner.Close after one release: %v", err)
+	}
+}
+
+// TestKB156_PassThroughLeaseInstallsCalleeInfo: a grandchild leasing through
+// an intermediate child of the owner still gets the shared session's adapter
+// info surface — the intermediate carries the ultimate owner's info, and the
+// skip guard must not filter it out. Without the info the grandchild cannot
+// resolve the callee's declaration/capability surface for the delegated
+// calls.
+func TestKB156_PassThroughLeaseInstallsCalleeInfo(t *testing.T) {
+	owner, mid, _, ctx := kb156LeaseSetup(t)
+	grandchild := kb156ExtraChild(t, owner)
+
+	// Owner hosts the info surface VerifyGraph would have installed.
+	ownerInfo := &workflow.AdapterInfo{
+		Name:    "mcp",
+		Version: "test",
+	}
+	owner.adapterInfos = map[string]*workflow.AdapterInfo{"mcp.probe": ownerInfo}
+
+	if leased := mid.LeaseToolResourcesFrom(owner, []string{"mcp.probe"}); len(leased) != 1 {
+		t.Fatalf("mid lease = %v; want [mcp.probe]", leased)
+	}
+	if leased := grandchild.LeaseToolResourcesFrom(mid, []string{"mcp.probe"}); len(leased) != 1 {
+		t.Fatalf("grandchild lease = %v; want [mcp.probe]", leased)
+	}
+	if got := grandchild.adapterInfos["mcp.probe"]; got == nil {
+		t.Fatalf("grandchild missing the callee info surface after a pass-through lease")
+	} else if got == ownerInfo {
+		t.Errorf("grandchild shares the owner's info pointer; want an owned shallow copy")
+	}
+
+	// The leased surface still routes through the one shared session.
+	res, err := grandchild.execute(ctx, "mcp.probe", kb156CalleeStep(), nil, toolCallNesting{}, nil)
+	if err != nil {
+		t.Fatalf("grandchild delegated execute: %v", err)
+	}
+	if res.Outcome != "success" {
+		t.Errorf("outcome = %q; want success", res.Outcome)
+	}
+	grandchild.ReleaseSharedToolResources()
+	mid.ReleaseSharedToolResources()
+	if err := owner.Close(ctx, "mcp.probe"); err != nil {
+		t.Fatalf("owner.Close after both pass-through releases: %v", err)
+	}
+}
