@@ -244,14 +244,6 @@ func (c *kb160PeerCallee) closeCount(session string) int {
 
 // ─── fixture harness ─────────────────────────────────────────────────────────
 
-type kb160RemoteRun struct {
-	callee  *kb160PeerCallee // the adapter session served INSIDE the peer
-	peerSrv *peerpkg.Server  // the production peer phone-home server
-	sink    *loopOutputSink
-	audit   *engineAuditCollector
-	done    chan error
-}
-
 // kb160StartPeer boots the production peer phone-home server for adapter
 // "mcp" against callee, dialing listen with the pinned digest. The phone-home
 // retry loop keeps dialing until Run starts the shim on the reserved address.
