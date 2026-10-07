@@ -780,6 +780,55 @@ func TestPeerTeardownPartialArmEvidenceRules(t *testing.T) {
 	}
 }
 
+// TestPeerTeardownSettledChildRunRecordPreserved (KB-96 acceptance 1, stop ×
+// child between nodes — settled shape): a child run the parent saw settle on
+// the journal (it finished its work between two parent steps) must survive
+// the teardown untouched. The tracker shows nothing in flight, so the settle
+// wait and the force kill have nothing to act on, while the KB-95 contract
+// still issues the empty-id cancel before the close; the run's settled
+// evidence (its own terminal outcome) is neither wiped nor rewritten.
+func TestPeerTeardownSettledChildRunRecordPreserved(t *testing.T) {
+	fx := startWorkflowPeerFixture(t, []string{peerWorkflowV1Capability})
+	defer func() { _ = fx.provider.Stop(context.Background()) }()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	fx.peer.appendEvent(childRunStartedArm("run-s1"))
+	fx.peer.appendEvent(childRunTerminalArm("run-s1", "success"))
+	waitFor(t, "settled record on the tracker", func() bool {
+		fx.ps.mu.Lock()
+		defer fx.ps.mu.Unlock()
+		rec := fx.ps.childRuns["run-s1"]
+		return rec != nil && rec.TerminalOutcome == "success"
+	})
+
+	start := time.Now()
+	if err := fx.provider.CloseHandle(ctx, "noop", ""); err != nil {
+		t.Fatalf("CloseHandle: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("teardown over a settled record took %s, want an immediate close (no settle wait, no kill)", elapsed)
+	}
+	ops := fx.peer.opsSnapshot()
+	cancelAt, killAt, closeAt := opIndexOf(ops, "cancel_child_run:"), opIndexOf(ops, "kill_child:"), opIndexOf(ops, "close_session:")
+	if cancelAt == -1 || closeAt == -1 || cancelAt > closeAt {
+		t.Fatalf("teardown ops = %v, want cancel before close over a settled run", ops)
+	}
+	if killAt != -1 && killAt < closeAt {
+		t.Errorf("settled-record teardown force-killed before close: ops = %v", ops)
+	}
+	fx.ps.mu.Lock()
+	rec := fx.ps.childRuns["run-s1"]
+	outcome := ""
+	if rec != nil {
+		outcome = rec.TerminalOutcome
+	}
+	fx.ps.mu.Unlock()
+	if outcome != "success" {
+		t.Errorf("settled record rewritten by the teardown: %q, want success preserved", outcome)
+	}
+}
+
 // TestPeerPauseResumeAcksIdleChildRun (KB-96 D2/D3): a workflow.v1 peer
 // with no in-flight child run takes parent pause/resume as idempotent acks
 // WITHOUT a control round-trip (the child hosts its own state; settled
