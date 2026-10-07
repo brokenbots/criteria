@@ -351,14 +351,15 @@ func TestMCPBridge_Execute_RefreshSingleflights(t *testing.T) {
 		"env":     "MCP_LIST_DELAY_MS=100",
 	})
 
-	// Narrow the TTL so the window has elapsed when the misses fire; the
-	// fixture's 100ms listing delay then guarantees any non-single-flighted
-	// design would stack many refreshes.
+	// Backdate the discovery stamp so the window has elapsed when the misses
+	// fire; the fixture's 100ms listing delay then guarantees any
+	// non-single-flighted design would stack many refreshes. Backdating (vs a
+	// tiny TTL) keeps every arrival inside the default 30s window regardless
+	// of scheduler or -race timing, so exactly one refresh is always observed.
 	const misses = 5
 	b.mu.Lock()
-	b.sessions["sess-1f"].discoveryTTL = time.Millisecond
+	b.sessions["sess-1f"].discoveredAt = time.Now().Add(-time.Hour)
 	b.mu.Unlock()
-	time.Sleep(10 * time.Millisecond)
 	var wg sync.WaitGroup
 	senders := make([]*fakeEventSender, misses)
 	exeErrs := make([]error, misses)
