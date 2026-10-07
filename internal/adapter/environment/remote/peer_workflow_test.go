@@ -413,12 +413,14 @@ func TestPeerAdoptionKeepsWaitingWhenJournalReplayIsPending(t *testing.T) {
 	if err := <-resultCh; err != nil {
 		t.Fatalf("adoption of pre-replay journal run failed: %v", err)
 	}
-	// The re-execute must not have spawned a second run: the guard error is
+	// The re-execute must not have spawned a second run: the guarded call is
 	// the only Execute the fake served.
 	fx.peer.mu.Lock()
-	calls := fx.peer.executeErr
+	calls := fx.peer.executeCalls
 	fx.peer.mu.Unlock()
-	_ = calls
+	if calls != 1 {
+		t.Errorf("fake served %d Execute calls, want exactly 1 (the guarded attempt; adoption never respawns)", calls)
+	}
 }
 
 // childEventCollector satisfies adapter.EventSink and records adapter event

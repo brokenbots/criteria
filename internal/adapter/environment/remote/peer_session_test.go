@@ -70,12 +70,13 @@ type fakePeer struct {
 	promptDetail           string   // rejection detail
 
 	// KB-95 (ADR-0008) additions:
-	peerCaps    []string                     // handshake Peer identity capabilities; nil keeps the legacy shape
-	executeErr  error                        // Execute returns this error instead of streaming a result
-	resultWire  *v2.ExecuteResult            // Execute's terminal result event; nil keeps the plain success
-	childEvents []*v2.ExecuteEvent           // Execute streams these before executeErr/result
-	ctrlReqs    []*criteriav1.ControlRequest // Control requests received, in order
-	ops         []string                     // ordering witness: control + CloseSession ops, in order
+	peerCaps     []string                     // handshake Peer identity capabilities; nil keeps the legacy shape
+	executeErr   error                        // Execute returns this error instead of streaming a result
+	resultWire   *v2.ExecuteResult            // Execute's terminal result event; nil keeps the plain success
+	childEvents  []*v2.ExecuteEvent           // Execute streams these before executeErr/result
+	executeCalls int                          // Execute invocations, counted for no-double-run assertions
+	ctrlReqs     []*criteriav1.ControlRequest // Control requests received, in order
+	ops          []string                     // ordering witness: control + CloseSession ops, in order
 
 	// holdRunUntilPause models the child-card pause contract (pair with the
 	// serveadapter pause test): Execute journals the child-run started arm,
@@ -383,6 +384,7 @@ func (f *fakePeer) Execute(req *v2.ExecuteRequest, stream grpc.ServerStreamingSe
 	execErr := f.executeErr
 	hold := f.holdRunUntilPause
 	holdRunID := f.holdRunID
+	f.executeCalls++
 	f.mu.Unlock()
 	for _, ev := range events {
 		if err := stream.Send(ev); err != nil {
