@@ -77,7 +77,18 @@ type childRunRecord struct {
 	Version         string
 	TerminalOutcome string
 	OutputsDigest   string
+	// ForcedTeardown marks a record settled through the child's
+	// ChildRunTeardownPartial arm (a parent force kill on an in-flight,
+	// never-terminal run): the mark is provisional until the child's real
+	// terminal arm arrives late, which outranks it.
+	ForcedTeardown bool
 }
+
+// childRunOutcomeForceKilled is the parent-side outcome vocabulary for a
+// run settled through the ChildRunTeardownPartial journal arm (ADR-0008
+// D2, KB-96): the parent's settle grace expired and the kill_child landed
+// before the run's own terminal ever reached the journal.
+const childRunOutcomeForceKilled = "force_killed"
 
 // inFlight reports whether the run started without a terminal arm yet.
 func (r *childRunRecord) inFlight() bool { return r != nil && r.TerminalOutcome == "" }
@@ -135,12 +146,40 @@ func (ps *peerSession) applyChildRunArmLocked(ev *criteriav1.SupervisionEvent) s
 			ps.childRuns[id] = rec
 		}
 		if !rec.inFlight() {
+			if rec.ForcedTeardown && term.GetOutcome() != "" {
+				// The forced cancel still reached a terminal state and the
+				// child journaled it late: the real terminal outranks the
+				// partial-teardown mark.
+				rec.TerminalOutcome = term.GetOutcome()
+				rec.OutputsDigest = term.GetOutputsDigest()
+				rec.ForcedTeardown = false
+			}
 			return ""
 		}
 		rec.TerminalOutcome = term.GetOutcome()
 		rec.OutputsDigest = term.GetOutputsDigest()
 		slog.Debug("peer child run terminal", "adapter", ps.dial.AdapterType, "scope", ps.dial.Scope,
 			"run_id", id, "outcome", rec.TerminalOutcome)
+		return id
+	case *criteriav1.SupervisionEvent_ChildRunTeardownPartial:
+		// KB-96 (ADR-0008 D2): the parent's force kill landed on an
+		// in-flight run whose terminal never journaled — the partial arm is
+		// the child's last run truth, so it settles the run (deterministic
+		// teardown: no waiter ever hangs on a killed run). A run the
+		// tracker never observed carries no in-flight truth to correct.
+		partial := kind.ChildRunTeardownPartial
+		id := partial.GetRunId()
+		if id == "" {
+			return ""
+		}
+		rec := ps.childRuns[id]
+		if rec == nil || !rec.inFlight() {
+			return ""
+		}
+		rec.TerminalOutcome = childRunOutcomeForceKilled
+		rec.ForcedTeardown = true
+		slog.Warn("peer child run force killed on parent teardown", "adapter", ps.dial.AdapterType,
+			"scope", ps.dial.Scope, "run_id", id, "detail", partial.GetDetail())
 		return id
 	}
 	return ""
@@ -299,16 +338,46 @@ func (ps *peerSession) teardownInFlightChildRun(ctx context.Context) {
 
 	kctx, kcancel := context.WithTimeout(context.WithoutCancel(ctx), peerCancelChildRunTimeout)
 	defer kcancel()
-	if resp, err := ps.control(kctx, &criteriav1.ControlRequest{
+	killResp, killErr := ps.control(kctx, &criteriav1.ControlRequest{
 		AdapterType: ps.dial.AdapterType,
 		Scope:       ps.dial.Scope,
 		GraceMs:     peerKillGraceMs,
 		Kind:        &criteriav1.ControlRequest_KillChild{KillChild: &criteriav1.KillChild{}},
-	}); err != nil {
-		slog.Warn("peer child run force kill control failed", "adapter", ps.dial.AdapterType, "run_id", runID, "error", err)
-	} else if !resp.GetAccepted() {
-		slog.Warn("peer rejected child run force kill", "adapter", ps.dial.AdapterType, "run_id", runID, "detail", resp.GetDetail())
+	})
+	switch {
+	case killErr != nil:
+		slog.Warn("peer child run force kill control failed", "adapter", ps.dial.AdapterType, "run_id", runID, "error", killErr)
+	case !killResp.GetAccepted():
+		slog.Warn("peer rejected child run force kill", "adapter", ps.dial.AdapterType, "run_id", runID, "detail", killResp.GetDetail())
+	default:
+		// KB-96 (ADR-0008 D2): the kill is the parent's own last-knowable
+		// truth about the run it tracked in flight — settle the record
+		// immediately. The child's ChildRunTeardownPartial journal arm
+		// stays the child-feed evidence (and replays into a restarted
+		// parent); here it only confirms an already-settled record or is
+		// outranked by a late real terminal.
+		ps.noteChildRunForceKilled(runID)
 	}
+}
+
+// noteChildRunForceKilled settles a tracked in-flight run as force_killed
+// and wakes its watchers (the parent-side mirror of the child's
+// ChildRunTeardownPartial arm). Runs the tracker did not observe — and
+// records already settled — are left untouched.
+func (ps *peerSession) noteChildRunForceKilled(runID string) {
+	if runID == "" {
+		return
+	}
+	ps.mu.Lock()
+	rec := ps.childRuns[runID]
+	if rec == nil || !rec.inFlight() {
+		ps.mu.Unlock()
+		return
+	}
+	rec.TerminalOutcome = childRunOutcomeForceKilled
+	rec.ForcedTeardown = true
+	ps.mu.Unlock()
+	ps.noteChildRunTerminal(runID)
 }
 
 // waitChildRunSettle waits, bounded by ctx, for the child run's terminal

@@ -89,6 +89,11 @@ func (j *EventJournal) Append(kind EventKind, adapterType, scope, sessionID stri
 		if k.ChildRunTerminal.GetOutcome() == "" {
 			return nil, fmt.Errorf("child run terminal without an outcome")
 		}
+	case *criteriav1.SupervisionEvent_ChildRunTeardownPartial:
+		ev.Kind = k
+		if k.ChildRunTeardownPartial.GetRunId() == "" {
+			return nil, fmt.Errorf("child run teardown partial without a run_id")
+		}
 	default:
 		return nil, fmt.Errorf("unsupported supervision event payload %T", kind)
 	}

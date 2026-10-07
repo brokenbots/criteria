@@ -507,10 +507,11 @@ func (ps *peerSession) applySupervisionEvent(ev *criteriav1.SupervisionEvent) {
 		// Informational; the journal's spawn record for T-07's session
 		// records.
 	case *criteriav1.SupervisionEvent_ChildRunStarted,
-		*criteriav1.SupervisionEvent_ChildRunTerminal:
-		// KB-95 (ADR-0008 D2): workflow.v1 child-run tracking. Arm routing
-		// and the watch broadcast happen through the tracker below (the
-		// broadcast runs after this unlock).
+		*criteriav1.SupervisionEvent_ChildRunTerminal,
+		*criteriav1.SupervisionEvent_ChildRunTeardownPartial:
+		// KB-95/KB-96 (ADR-0008 D2): workflow.v1 child-run tracking. Arm
+		// routing and the watch broadcast happen through the tracker below
+		// (the broadcast runs after this unlock).
 		terminalRunID = ps.applyChildRunArmLocked(ev)
 	}
 	ps.mu.Unlock()

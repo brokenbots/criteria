@@ -273,6 +273,33 @@ func (f *fakePeer) control(_ context.Context, req *criteriav1.ControlRequest) *c
 		f.mu.Lock()
 		f.ops = append(f.ops, "kill_child:")
 		f.mu.Unlock()
+		if f.holdRunOnCancel {
+			// KB-96: a child host journaling the partial-teardown arm when it
+			// accepts a kill on an in-flight, never-terminal child run — the
+			// forced cancel did not reach a terminal state, so this arm is
+			// the run's last journal truth (mirror of the serve-adapter
+			// child's acceptance).
+			f.journalMu.Lock()
+			inFlight := map[string]bool{}
+			for _, ev := range f.journal {
+				switch k := ev.GetKind().(type) {
+				case *criteriav1.SupervisionEvent_ChildRunStarted:
+					inFlight[k.ChildRunStarted.GetRunId()] = true
+				case *criteriav1.SupervisionEvent_ChildRunTerminal:
+					delete(inFlight, k.ChildRunTerminal.GetRunId())
+				}
+			}
+			f.journalMu.Unlock()
+			for id := range inFlight {
+				f.appendEvent(&criteriav1.SupervisionEvent{
+					Kind: &criteriav1.SupervisionEvent_ChildRunTeardownPartial{
+						ChildRunTeardownPartial: &criteriav1.ChildRunTeardownPartial{
+							RunId: id, Detail: "force killed on parent teardown",
+						},
+					},
+				})
+			}
+		}
 		// A kill request on the peer model ends the adapter child: record the
 		// exit in the journal so the host learns it through Supervise.
 		f.appendEvent(&criteriav1.SupervisionEvent{

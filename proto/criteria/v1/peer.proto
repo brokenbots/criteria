@@ -9,7 +9,7 @@
 // Evolution discipline (additive-only):
 //   - Field numbers in this file are permanent once assigned. Never reuse,
 //     renumber, or re-type an existing field; only ever append.
-//   - The next free `kind` oneof arm in SupervisionEvent is field 13. Do NOT
+//   - The next free `kind` oneof arm in SupervisionEvent is field 14. Do NOT
 //     `reserved` forward numbers — reserve only genuinely abandoned ones.
 //   - Stage B run-graph events ride THIS journal: extend SupervisionEvent
 //     with new arms; do not fork a second supervision stream or file.
@@ -25,6 +25,9 @@
 //     frame (ADR-0007 D4 role/capability machinery): a peer whose identity
 //     frame does not advertise `workflow.v1` must reject
 //     Control(CancelChildRun) with a typed unimplemented error.
+//   - ADR-0008 D2 (KB-96) added ChildRunTeardownPartial = arm 13 in
+//     SupervisionEvent.kind: the child's journal evidence for a force
+//     kill_child on an in-flight (unsettled) child run.
 //
 // Delivery semantics:
 //   - At-least-once delivery. Consumers dedup on (peer conn identity,
@@ -81,7 +84,7 @@ message SupervisionEvent {
   // Session-scoped events carry the session id; "" for process-level.
   string session_id = 5;
   // Typed lifecycle payload. Field numbers here are permanent; next arm =
-  // field 13 (additive-only; see file header).
+  // field 14 (additive-only; see file header).
   oneof kind {
     ProcessSpawned spawned = 6;          // pid, binary, digest, version
     ProcessExited exited = 7;            // exit_code, signal, idle_ms, graceful
@@ -92,6 +95,10 @@ message SupervisionEvent {
     // Run-graph NDJSON stays on the existing log/stream channels.
     ChildRunStarted child_run_started = 11;   // run_id, workflow_digest, version
     ChildRunTerminal child_run_terminal = 12; // run_id, outcome, outputs_digest
+    // ADR-0008 D2 (KB-96): a parent teardown's settle grace expired and its
+    // kill_child landed on an in-flight child run — the run's terminal never
+    // journaled, so the force-kill IS the child's last run truth.
+    ChildRunTeardownPartial child_run_teardown_partial = 13; // run_id, detail
   }
 }
 
@@ -164,6 +171,20 @@ message ChildRunTerminal {
   string outcome = 2;
   // Digest of the run outputs (truth pointer; outputs flow off-journal).
   string outputs_digest = 3;
+}
+
+// ChildRunTeardownPartial records a partial teardown of a child run
+// (ADR-0008 D2, KB-96): the parent issued cancel_child_run, the run never
+// journaled terminal evidence within the parent's settle grace, and the
+// parent's kill_child force-landed on the in-flight run. The child
+// journals this arm when it accepts the kill on a live run; a late run
+// terminal (the forced cancel still reaching the engine) outranks it in
+// the host's tracker. workflow.v1-gated control truth only (ADR-0008).
+message ChildRunTeardownPartial {
+  // Criteria run id under the peer that was force-killed mid-flight.
+  string run_id = 1;
+  // Human-readable detail (which teardown phase the force-kill followed).
+  string detail = 2;
 }
 
 message ControlRequest {

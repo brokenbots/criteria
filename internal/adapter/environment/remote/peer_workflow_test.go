@@ -663,6 +663,77 @@ func TestPeerTeardownForceKillsUnsettledChildRun(t *testing.T) {
 	if cancelAt == -1 || closeAt == -1 || !(cancelAt < killAt && killAt < closeAt) {
 		t.Fatalf("teardown ops = %v, want cancel -> force kill -> close", ops)
 	}
+
+	// The child's ChildRunTeardownPartial journal arm (the fake journals it
+	// on kill acceptance) is also the parent's settle evidence: the tracker
+	// stops considering the killed run in flight with the typed
+	// force_killed outcome — a later wait on it can never hang.
+	waitForNoInFlightRun(t, fx.ps)
+	if rec := fx.ps.childRuns["run-t2"]; rec == nil || rec.TerminalOutcome != childRunOutcomeForceKilled {
+		t.Errorf("settled record = %+v, want the force_killed outcome from the partial-teardown arm", rec)
+	}
+}
+
+// TestPeerTeardownPartialArmEvidenceRules (KB-96): how the parent tracker
+// treats the ChildRunTeardownPartial arm — it settles only a live
+// tracked run (the forced kill is the run's last truth), never creates an
+// unobserved record, and a late REAL terminal outranks the provisional
+// force_killed mark.
+func TestPeerTeardownPartialArmEvidenceRules(t *testing.T) {
+	fx := startWorkflowPeerFixture(t, []string{peerWorkflowV1Capability})
+	defer func() { _ = fx.provider.Stop(context.Background()) }()
+
+	// A partial arm for a run the tracker never observed records nothing.
+	fx.peer.appendEvent(&criteriav1.SupervisionEvent{
+		Kind: &criteriav1.SupervisionEvent_ChildRunTeardownPartial{
+			ChildRunTeardownPartial: &criteriav1.ChildRunTeardownPartial{
+				RunId: "run-u1", Detail: "force killed on parent teardown",
+			},
+		},
+	})
+	waitFor(t, "partial arm consumed (nothing tracked)", func() bool {
+		fx.ps.mu.Lock()
+		defer fx.ps.mu.Unlock()
+		return fx.ps.childRuns["run-u1"] == nil
+	})
+
+	// Started, then partial: the run settles with the force_killed mark.
+	fx.peer.appendEvent(childRunStartedArm("run-u2"))
+	waitForInFlightRun(t, fx.ps, "run-u2")
+	fx.peer.appendEvent(&criteriav1.SupervisionEvent{
+		Kind: &criteriav1.SupervisionEvent_ChildRunTeardownPartial{
+			ChildRunTeardownPartial: &criteriav1.ChildRunTeardownPartial{
+				RunId: "run-u2", Detail: "force killed on parent teardown",
+			},
+		},
+	})
+	waitFor(t, "partial arm settles the live run", func() bool {
+		fx.ps.mu.Lock()
+		defer fx.ps.mu.Unlock()
+		rec := fx.ps.childRuns["run-u2"]
+		return rec != nil && rec.TerminalOutcome == childRunOutcomeForceKilled && rec.ForcedTeardown
+	})
+
+	// The real terminal (the forced cancel still reaching the engine) is
+	// strictly better evidence: it replaces the mark, clearing it.
+	fx.peer.appendEvent(childRunTerminalArm("run-u2", "cancelled"))
+	waitFor(t, "late real terminal outranks the mark", func() bool {
+		fx.ps.mu.Lock()
+		defer fx.ps.mu.Unlock()
+		rec := fx.ps.childRuns["run-u2"]
+		return rec != nil && rec.TerminalOutcome == "cancelled" && !rec.ForcedTeardown
+	})
+
+	// A terminal AFTER a real settle stays ignored (settled truth is
+	// final once the mark is gone).
+	fx.peer.appendEvent(childRunTerminalArm("run-u2", "success"))
+	time.Sleep(2 * peerSuperviseReplayBackoff)
+	fx.ps.mu.Lock()
+	outcome := fx.ps.childRuns["run-u2"].TerminalOutcome
+	fx.ps.mu.Unlock()
+	if outcome != "cancelled" {
+		t.Errorf("settled truth overwritten by a late terminal: %q, want cancelled", outcome)
+	}
 }
 
 // TestPeerPauseResumeAcksIdleChildRun (KB-96 D2/D3): a workflow.v1 peer
