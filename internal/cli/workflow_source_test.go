@@ -837,6 +837,18 @@ func TestValidate_RemoteSource_FetchErrorRedactsCredentials(t *testing.T) {
 // serves.
 func serveGitHTTPBackend(t *testing.T, reposDir string) *httptest.Server {
 	t.Helper()
+	// "git http-backend" is a git subcommand resolved against git's exec
+	// path directory as ./http-backend, or as a git-http-backend binary on
+	// PATH — minimal git installs may lack both. Skip rather than fail
+	// deterministically on such runners (CI runners have it); the routing
+	// assertions below need a real smart-HTTP git server.
+	execPathRaw, execErr := exec.Command("git", "--exec-path").Output()
+	_, statErr := os.Stat(filepath.Join(strings.TrimSpace(string(execPathRaw)), "http-backend"))
+	_, lookErr := exec.LookPath("git-http-backend")
+	pathFound := lookErr == nil
+	if (execErr != nil || statErr != nil) && !pathFound {
+		t.Skip("git http-backend is not available on this runner; the smart-HTTP git fixture cannot be served")
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body bytes.Buffer
 		if r.Body != nil {
