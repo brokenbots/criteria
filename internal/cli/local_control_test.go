@@ -12,8 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"connectrpc.com/connect"
-
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 
 	"github.com/brokenbots/criteria/internal/engine"
@@ -80,15 +78,15 @@ func resolveApproval(t *testing.T, addr, runID, signal string, payload map[strin
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	resp, err := localControlServiceClientFor(addr).ResolveResume(ctx, connect.NewRequest(&pb.ResumeRequest{
+	resp, err := localControlServiceClientFor(addr).ResolveResume(ctx, &pb.ResumeRequest{
 		RunId:   runID,
 		Signal:  signal,
 		Payload: payload,
-	}))
+	})
 	if err != nil {
 		t.Fatalf("ResolveResume over %s: %v", addr, err)
 	}
-	return resp.Msg.Accepted, resp.Msg.Reason
+	return resp.Accepted, resp.Reason
 }
 
 // runEventsFile reads the run's ND-JSON events and returns the ordered
@@ -295,11 +293,11 @@ func TestApplyLocal_BoundaryPauseResumeOverLocalControlRPC(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	client := localControlServiceClientFor(addr)
-	if _, err := client.PauseRun(ctx, connect.NewRequest(&pb.PauseRunRequest{RunId: runID})); err != nil {
+	if _, err := client.PauseRun(ctx, &pb.PauseRunRequest{RunId: runID}); err != nil {
 		t.Fatalf("PauseRun: %v", err)
 	}
 
-	if _, err := client.ResumeRun(ctx, connect.NewRequest(&pb.ResumeRunRequest{RunId: runID})); err != nil {
+	if _, err := client.ResumeRun(ctx, &pb.ResumeRunRequest{RunId: runID}); err != nil {
 		t.Fatalf("ResumeRun: %v", err)
 	}
 

@@ -21,7 +21,7 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
 
-	"connectrpc.com/connect"
+	connect "connectrpc.com/connect/v2"
 )
 
 // pauseAndCaptureSnapshot drives an Execute to the deterministic mid-run

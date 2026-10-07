@@ -478,7 +478,7 @@ func mountLocalControlService(svc criteriav1connect.LocalControlServiceHandler) 
 	criteriav1connect.RegisterLocalControlServiceHandler(server, svc)
 	mux := http.NewServeMux()
 	connecthttp.Mount(mux, server)
-	return criteriav1connect.LocalControlServiceName + "/", mux
+	return "/" + criteriav1connect.LocalControlServiceName + "/", mux
 }
 
 // controlEndpoint is the discovery record a local apply writes next to its

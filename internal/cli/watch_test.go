@@ -9,8 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"connectrpc.com/connect"
-
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
@@ -28,20 +26,20 @@ type fakeEventClient struct {
 	watchReq  *pb.WatchRunRequest
 }
 
-func (f *fakeEventClient) ListRunEvents(_ context.Context, req *connect.Request[pb.ListRunEventsRequest]) (*connect.Response[pb.ListRunEventsResponse], error) {
-	f.listCalls = append(f.listCalls, req.Msg.SinceSeq)
+func (f *fakeEventClient) ListRunEvents(_ context.Context, req *pb.ListRunEventsRequest) (*pb.ListRunEventsResponse, error) {
+	f.listCalls = append(f.listCalls, req.SinceSeq)
 	for i, page := range f.pages {
-		if page.sinceSeq == req.Msg.SinceSeq {
+		if page.sinceSeq == req.SinceSeq {
 			// Each page is only consumed once so repeated sinceSeq values return empty.
 			f.pages = append(f.pages[:i], f.pages[i+1:]...)
-			return connect.NewResponse(page.resp), nil
+			return page.resp, nil
 		}
 	}
-	return connect.NewResponse(&pb.ListRunEventsResponse{}), nil
+	return &pb.ListRunEventsResponse{}, nil
 }
 
-func (f *fakeEventClient) WatchRun(_ context.Context, req *connect.Request[pb.WatchRunRequest]) (eventStream, error) {
-	f.watchReq = req.Msg
+func (f *fakeEventClient) WatchRun(_ context.Context, req *pb.WatchRunRequest) (eventStream, error) {
+	f.watchReq = req
 	return &fakeEventStream{events: f.live}, nil
 }
 
@@ -329,13 +327,13 @@ type errorEventClient struct {
 	watchErr error
 }
 
-func (e *errorEventClient) ListRunEvents(context.Context, *connect.Request[pb.ListRunEventsRequest]) (*connect.Response[pb.ListRunEventsResponse], error) {
+func (e *errorEventClient) ListRunEvents(context.Context, *pb.ListRunEventsRequest) (*pb.ListRunEventsResponse, error) {
 	if e.listErr != nil {
 		return nil, e.listErr
 	}
-	return connect.NewResponse(&pb.ListRunEventsResponse{}), nil
+	return &pb.ListRunEventsResponse{}, nil
 }
 
-func (e *errorEventClient) WatchRun(context.Context, *connect.Request[pb.WatchRunRequest]) (eventStream, error) {
+func (e *errorEventClient) WatchRun(context.Context, *pb.WatchRunRequest) (eventStream, error) {
 	return nil, e.watchErr
 }
