@@ -14,6 +14,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -439,9 +440,16 @@ func newMCPFanToolsCaller(outcome string, script ...toolsCall) *mcpFanToolsCalle
 }
 
 // StartPermissionStream stores the shared requests stream and spawns the
-// central reader that routes settled replies/cancels to their owner.
+// central reader that routes settled replies/cancels to their owner. A
+// second start is refused: the whole point of the fan-out is ONE session
+// multiplexing ONE permission stream, so a re-start would mean the fake
+// drifted from the single-active-sink contract.
 func (a *mcpFanToolsCaller) StartPermissionStream(_ context.Context, _ string, requests <-chan *v2.PermissionEvent) (func(), error) {
 	a.mu.Lock()
+	if a.requests != nil {
+		a.mu.Unlock()
+		return func() {}, errors.New("fan caller: permission stream already started")
+	}
 	a.requests = requests
 	a.mu.Unlock()
 	go a.readPermissionStream(requests)

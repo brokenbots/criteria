@@ -321,19 +321,19 @@ func (s *mcpToolsSink) OnStepIterationStarted(step string, _ int, item string, _
 	defer s.mu.Unlock()
 	s.iterationsStarted = append(s.iterationsStarted, step+"="+item)
 }
-func (s *mcpToolsSink) OnStepIterationCompleted(step, outcome string, _ string) {
+func (s *mcpToolsSink) OnStepIterationCompleted(step, outcome, _ string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.iterationsDone = append(s.iterationsDone, step+"="+outcome)
 }
-func (s *mcpToolsSink) OnStepIterationItem(string, int, string)                      {}
-func (s *mcpToolsSink) OnScopeIterCursorSet(string)                                  {}
-func (s *mcpToolsSink) OnAdapterLifecycle(string, string, string, string)            {}
-func (s *mcpToolsSink) OnAdapterLifecycleEvent(*engine.AdapterLifecycleEvent)        {}
-func (s *mcpToolsSink) OnRunOutputs([]map[string]string)                             {}
-func (s *mcpToolsSink) OnStepOutcomeDefaulted(string, string, string)                {}
-func (s *mcpToolsSink) OnStepOutcomeUnknown(string, string)                          {}
-func (s *mcpToolsSink) OnStepOutcomeInvalid(string, string, []string, int)           {}
+func (s *mcpToolsSink) OnStepIterationItem(string, int, string)               {}
+func (s *mcpToolsSink) OnScopeIterCursorSet(string)                           {}
+func (s *mcpToolsSink) OnAdapterLifecycle(string, string, string, string)     {}
+func (s *mcpToolsSink) OnAdapterLifecycleEvent(*engine.AdapterLifecycleEvent) {}
+func (s *mcpToolsSink) OnRunOutputs([]map[string]string)                      {}
+func (s *mcpToolsSink) OnStepOutcomeDefaulted(string, string, string)         {}
+func (s *mcpToolsSink) OnStepOutcomeUnknown(string, string)                   {}
+func (s *mcpToolsSink) OnStepOutcomeInvalid(string, string, []string, int)    {}
 
 func (s *mcpToolsSink) OnAgentPromptInjected(string, string, string, string, time.Time) {}
 
