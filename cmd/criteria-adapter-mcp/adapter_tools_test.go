@@ -251,6 +251,12 @@ type mcpToolsSink struct {
 	failure  string
 	events   []mcpToolsEvent
 	outputs  map[string]map[string]string
+
+	// Iteration fan-out facts (recorded via the lockedSink from the parallel
+	// iteration goroutines; mu keeps them race-free).
+	iterationsStarted []string
+	iterationsDone    []string
+	fanTotal          int
 }
 
 // stepOutputs returns the outputs captured for one step.
@@ -305,9 +311,21 @@ func (s *mcpToolsSink) OnWaitResumed(string, string, string, map[string]string) 
 func (s *mcpToolsSink) OnApprovalRequested(string, []string, string)                 {}
 func (s *mcpToolsSink) OnApprovalDecision(string, string, string, map[string]string) {}
 func (s *mcpToolsSink) OnBranchEvaluated(string, string, string, string)             {}
-func (s *mcpToolsSink) OnForEachEntered(string, int)                                 {}
-func (s *mcpToolsSink) OnStepIterationStarted(string, int, string, bool)             {}
-func (s *mcpToolsSink) OnStepIterationCompleted(string, string, string)              {}
+func (s *mcpToolsSink) OnForEachEntered(step string, total int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fanTotal = total
+}
+func (s *mcpToolsSink) OnStepIterationStarted(step string, _ int, item string, _ bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.iterationsStarted = append(s.iterationsStarted, step+"="+item)
+}
+func (s *mcpToolsSink) OnStepIterationCompleted(step, outcome string, _ string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.iterationsDone = append(s.iterationsDone, step+"="+outcome)
+}
 func (s *mcpToolsSink) OnStepIterationItem(string, int, string)                      {}
 func (s *mcpToolsSink) OnScopeIterCursorSet(string)                                  {}
 func (s *mcpToolsSink) OnAdapterLifecycle(string, string, string, string)            {}
@@ -370,6 +388,34 @@ func (s *mcpToolsSink) stepEvents() []mcpToolsEvent {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]mcpToolsEvent(nil), s.events...)
+}
+
+// iterationsStarted returns the recorded item fan-outs ("step=item") for
+// iterating steps.
+func (s *mcpToolsSink) iterationsStartedList() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.iterationsStarted...)
+}
+
+// fanOutTotal returns the item count the last entered iterating step
+// reported, or -1 when no iterating step was entered.
+func (s *mcpToolsSink) fanOutTotal() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.fanTotal == 0 {
+		return -1
+	}
+	return s.fanTotal
+}
+
+// iterationsCompletedList returns the recorded iteration completions
+// ("step=outcome") for iterating steps; on parallel steps each entry carries
+// the aggregate outcome.
+func (s *mcpToolsSink) iterationsCompletedList() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.iterationsDone...)
 }
 
 // mcpToolsEventRecorder records adapter events attributed to the caller step.
