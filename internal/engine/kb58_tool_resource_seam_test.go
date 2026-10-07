@@ -12,6 +12,9 @@ package engine
 // seam's nested-execute lazy bind misses on the borrowed manager
 // (verified[name] == nil → ErrUnknownSession → typed unknown_adapter), even
 // though VerifyGraph handshake-verified the adapter on the parent manager.
+// KB-156: the seam now resolves through a shared-session lease — the
+// iteration delegates nested executes to the root manager, which binds ONE
+// adapter session per environment; the kb156 tests pin the sharing itself.
 //
 // Containment invariant asserted alongside: the callee is still bound and
 // executed HOST-LOCAL (in this test process) with the root adapter's own
@@ -51,8 +54,17 @@ const (
 // resolves ONE handle per session-manager bind, mirroring the one adapter
 // process per SM the host guarantees in production, so parallel iterations
 // resolve independent callees; assertions aggregate via kb58CalleeProbe.
+// KB-156: with a shared-session lease, the ROOT session manager binds the
+// callee once — iterations route their nested tool calls through the shared
+// session instead of resolving their own handles, so openSess stays at one
+// entry per environment regardless of iteration count.
 type kb58TestCallee struct {
 	rec *nestedEngineRecorder
+
+	// concurrent makes the fake declare the concurrent_execute capability
+	// (KB-155) so sibling nested calls fan out over one shared session
+	// instead of serializing on the execute turn gate.
+	concurrent bool
 
 	mu       sync.Mutex
 	openSess []string
@@ -61,10 +73,14 @@ type kb58TestCallee struct {
 }
 
 func (a *kb58TestCallee) Info(context.Context) (adapterhost.Info, error) {
+	caps := []string{"execute"}
+	if a.concurrent {
+		caps = append(caps, "concurrent_execute")
+	}
 	return adapterhost.Info{
 		Name:         "mcp",
 		Version:      "test",
-		Capabilities: []string{"execute"},
+		Capabilities: caps,
 		AdapterInfo: workflow.AdapterInfo{
 			OutputSchema: map[string]workflow.ConfigField{
 				"report": {CtyType: cty.String},
@@ -313,14 +329,31 @@ func (p *kb58CallerProbe) fakeCount() int {
 type kb58CalleeProbe struct {
 	mu    sync.Mutex
 	fakes []*kb58TestCallee
+	// concurrent makes every fake declare the concurrent_execute capability
+	// (KB-155). Set before the run; fakes are resolved by the loader while
+	// the run executes.
+	concurrent bool
 }
 
 func (p *kb58CalleeProbe) newFake() *kb58TestCallee {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	f := &kb58TestCallee{rec: &nestedEngineRecorder{}}
+	f := &kb58TestCallee{rec: &nestedEngineRecorder{}, concurrent: p.concurrent}
 	p.fakes = append(p.fakes, f)
 	return f
+}
+
+// openCount counts OpenSession calls across all resolved handles: KB-156
+// asserts exactly one open per environment — the shared session the owner
+// manager binds once.
+func (p *kb58CalleeProbe) openCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := 0
+	for _, f := range p.fakes {
+		n += len(f.openSess)
+	}
+	return n
 }
 
 func (p *kb58CalleeProbe) secretsSeen(sessionID string) (map[string]string, bool) {
@@ -504,9 +537,12 @@ func auditReasons(entries []*adapterhost.DecisionLogEntry, substr string) []stri
 // reproduction: a parallel per-scope iteration tool-calls a host-local
 // dynamic adapter declared only in the root graph. Before the fix the seam
 // fails with typed unknown_adapter; after the fix both iterations resolve the
-// callee from the borrowed root verified record, the callee runs host-local
-// with the root adapter secrets, the caller never sees them, and the
-// borrowed callee sessions are closed at scope teardown.
+// callee, the callee runs host-local with the root adapter secrets, the
+// caller never sees them. KB-156 replaces the KB-58 copy-per-iteration borrow:
+// the root (host-of-record) manager binds ONE shared callee session for the
+// environment, iterations route their calls through it, and its close anchors
+// to the parent scope — the owning session is closed exactly once, after both
+// iterations released their leases, not once per iteration scope.
 func TestKB58_ParallelIterationResolvesHostLocalToolResource(t *testing.T) {
 	g, callers, callees := kb58Graph(t, []string{"adapter.mcp.probe.tools.*"}, workflow.DefaultPolicy)
 	sink, audit := kb58RunGraph(t, g, callers, callees)
@@ -549,10 +585,15 @@ func TestKB58_ParallelIterationResolvesHostLocalToolResource(t *testing.T) {
 		t.Errorf("terminal state: got %q (ok=%v); want \"done\" (true)", sink.terminal, sink.terminalOK)
 	}
 
-	// Lifecycle hygiene: the borrowed callee session is closed when the
-	// borrowed manager tears down (each iteration scope closes its own copy).
-	if n := callees.closeCount(kb58CalleeSess); n < 2 {
-		t.Errorf("callee CloseSession count for %q = %d; want >= 2 (one per iteration scope)", kb58CalleeSess, n)
+	// Lifecycle hygiene (KB-156): the shared session is opened once and
+	// closed exactly once — anchored to the parent (owner) scope teardown,
+	// after every iteration released its lease. The KB-58 borrow closed a
+	// per-iteration copy (>= 2 closes).
+	if got, want := callees.closeCount(kb58CalleeSess), 1; got != want {
+		t.Errorf("callee CloseSession count for %q = %d; want %d (one shared session, closed with the owner scope)", kb58CalleeSess, got, want)
+	}
+	if got, want := callees.openCount(), 1; got != want {
+		t.Errorf("callee OpenSession count = %d; want %d (one shared session per environment)", got, want)
 	}
 
 	// Audit hygiene: a pre-fix deny (unknown_adapter) must not be recorded.
