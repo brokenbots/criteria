@@ -1,6 +1,8 @@
 package conformance
 
 import (
+	connect "connectrpc.com/connect/v2"
+
 	"context"
 	"testing"
 	"time"
@@ -20,8 +22,12 @@ func submitEnvelopes(t *testing.T, oClient criteriav1connect.CriteriaServiceClie
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	stream := oClient.SubmitEvents(ctx)
-	stream.RequestHeader().Set("Authorization", "Bearer "+token)
+	ctx, info := connect.NewClientContext(ctx)
+	info.RequestHeader().Set("Authorization", "Bearer "+token)
+	stream, err := oClient.SubmitEvents(ctx)
+	if err != nil {
+		t.Fatalf("open submit stream: %v", err)
+	}
 	for _, env := range envs {
 		if err := stream.Send(env); err != nil {
 			t.Fatalf("Send(%s): %v", env.CorrelationId, err)
@@ -34,7 +40,7 @@ func submitEnvelopes(t *testing.T, oClient criteriav1connect.CriteriaServiceClie
 			t.Errorf("ack.correlation_id=%q want %q", ack.CorrelationId, env.CorrelationId)
 		}
 	}
-	_ = stream.CloseRequest()
+	_ = stream.CloseSend()
 	for {
 		if _, recvErr := stream.Receive(); recvErr != nil {
 			break

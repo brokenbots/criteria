@@ -5,10 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"connectrpc.com/connect"
+	connect "connectrpc.com/connect/v2"
 
 	criteria "github.com/brokenbots/criteria/sdk"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	criteriav1connect "github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
 )
 
 // testControlLifecycle verifies the Control server-stream contract.
@@ -45,19 +46,19 @@ func testControlReady(t *testing.T, s Subject) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
-	req := connect.NewRequest(&pb.ControlSubscribeRequest{CriteriaId: criteriaID})
-	req.Header().Set("Authorization", "Bearer "+token)
-	stream, err := oClient.Control(ctx, req)
+	ctrlCtx, ctrlInfo := connect.NewClientContext(ctx)
+	ctrlInfo.RequestHeader().Set("Authorization", "Bearer "+token)
+	stream, err := oClient.Control(ctrlCtx, &pb.ControlSubscribeRequest{CriteriaId: criteriaID})
 	if err != nil {
 		t.Fatalf("Control subscribe: %v", err)
 	}
 
-	if !stream.Receive() {
-		t.Fatalf("Control first Receive: %v", stream.Err())
+	msg, recvErr := stream.Receive()
+	if recvErr != nil {
+		t.Fatalf("Control first Receive: %v", recvErr)
 	}
-	if _, ok := stream.Msg().Command.(*pb.ControlMessage_ControlReady); !ok {
-		t.Errorf("Control first message: want ControlReady, got %T", stream.Msg().Command)
+	if _, ok := msg.Command.(*pb.ControlMessage_ControlReady); !ok {
+		t.Errorf("Control first message: want ControlReady, got %T", msg.Command)
 	}
 }
 
@@ -69,30 +70,30 @@ func testRunCancelDelivered(t *testing.T, s Subject) {
 	criteriaID := s.RegisterAgent(t, "criteria-ctrl-cancel", token)
 	oClient := criteria.NewServiceClient(client, baseURL)
 
-	createReq := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-ctrl-cancel"})
-	createReq.Header().Set("Authorization", "Bearer "+token)
-	runResp, err := oClient.CreateRun(context.Background(), createReq)
+	createCtx, createInfo := connect.NewClientContext(context.Background())
+	createInfo.RequestHeader().Set("Authorization", "Bearer "+token)
+	runResp, err := oClient.CreateRun(createCtx, &pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-ctrl-cancel"})
 	if err != nil {
 		t.Fatalf("CreateRun: %v", err)
 	}
-	runID := runResp.Msg.RunId
+	runID := runResp.RunId
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-
-	req := connect.NewRequest(&pb.ControlSubscribeRequest{CriteriaId: criteriaID})
-	req.Header().Set("Authorization", "Bearer "+token)
-	stream, err := oClient.Control(ctx, req)
+	ctrlCtx, ctrlInfo := connect.NewClientContext(ctx)
+	ctrlInfo.RequestHeader().Set("Authorization", "Bearer "+token)
+	stream, err := oClient.Control(ctrlCtx, &pb.ControlSubscribeRequest{CriteriaId: criteriaID})
 	if err != nil {
 		t.Fatalf("Control subscribe: %v", err)
 	}
 
 	// Drain ControlReady.
-	if !stream.Receive() {
-		t.Fatalf("Control first Receive: %v", stream.Err())
+	msg, recvErr := stream.Receive()
+	if recvErr != nil {
+		t.Fatalf("Control first Receive: %v", recvErr)
 	}
-	if _, ok := stream.Msg().Command.(*pb.ControlMessage_ControlReady); !ok {
-		t.Errorf("first message want ControlReady, got %T", stream.Msg().Command)
+	if _, ok := msg.Command.(*pb.ControlMessage_ControlReady); !ok {
+		t.Errorf("first message want ControlReady, got %T", msg.Command)
 	}
 
 	// Trigger a stop-run command via the Subject (abstracts over ServerService).
@@ -101,12 +102,13 @@ func testRunCancelDelivered(t *testing.T, s Subject) {
 	}
 
 	// The next message on the Control stream must be RunCancel for our run.
-	if !stream.Receive() {
-		t.Fatalf("Control Receive after StopRun: %v", stream.Err())
+	msg, recvErr = stream.Receive()
+	if recvErr != nil {
+		t.Fatalf("Control Receive after StopRun: %v", recvErr)
 	}
-	rc, ok := stream.Msg().Command.(*pb.ControlMessage_RunCancel)
+	rc, ok := msg.Command.(*pb.ControlMessage_RunCancel)
 	if !ok {
-		t.Fatalf("expected RunCancel, got %T", stream.Msg().Command)
+		t.Fatalf("expected RunCancel, got %T", msg.Command)
 	}
 	if rc.RunCancel.RunId != runID {
 		t.Errorf("RunCancel.run_id=%q want %q", rc.RunCancel.RunId, runID)
@@ -121,26 +123,27 @@ func testControlResubscribe(t *testing.T, s Subject) {
 	criteriaID := s.RegisterAgent(t, "criteria-ctrl-resub", token)
 	oClient := criteria.NewServiceClient(client, baseURL)
 
-	subscribe := func(t *testing.T) *connect.ServerStreamForClient[pb.ControlMessage] {
+	subscribe := func(t *testing.T) criteriav1connect.CriteriaServiceControlClientStream {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		t.Cleanup(cancel)
-		req := connect.NewRequest(&pb.ControlSubscribeRequest{CriteriaId: criteriaID})
-		req.Header().Set("Authorization", "Bearer "+token)
-		stream, err := oClient.Control(ctx, req)
+		ctrlCtx, ctrlInfo := connect.NewClientContext(ctx)
+		ctrlInfo.RequestHeader().Set("Authorization", "Bearer "+token)
+		stream, err := oClient.Control(ctrlCtx, &pb.ControlSubscribeRequest{CriteriaId: criteriaID})
 		if err != nil {
 			t.Fatalf("Control subscribe: %v", err)
 		}
 		return stream
 	}
 
-	assertControlReady := func(t *testing.T, stream *connect.ServerStreamForClient[pb.ControlMessage]) {
+	assertControlReady := func(t *testing.T, stream criteriav1connect.CriteriaServiceControlClientStream) {
 		t.Helper()
-		if !stream.Receive() {
-			t.Fatalf("Receive: %v", stream.Err())
+		msg, err := stream.Receive()
+		if err != nil {
+			t.Fatalf("Receive: %v", err)
 		}
-		if _, ok := stream.Msg().Command.(*pb.ControlMessage_ControlReady); !ok {
-			t.Errorf("want ControlReady, got %T", stream.Msg().Command)
+		if _, ok := msg.Command.(*pb.ControlMessage_ControlReady); !ok {
+			t.Errorf("want ControlReady, got %T", msg.Command)
 		}
 	}
 
@@ -167,39 +170,39 @@ func testControlAgentIsolation(t *testing.T, s Subject) { //nolint:funlen // age
 	oClient := criteria.NewServiceClient(client, baseURL)
 
 	// Create a run owned by agent-A.
-	createReq := connect.NewRequest(&pb.CreateRunRequest{CriteriaId: criteriaAID, WorkflowName: "conformance-iso"})
-	createReq.Header().Set("Authorization", "Bearer "+tokenA)
-	runResp, err := oClient.CreateRun(context.Background(), createReq)
+	createCtx, createInfo := connect.NewClientContext(context.Background())
+	createInfo.RequestHeader().Set("Authorization", "Bearer "+tokenA)
+	runResp, err := oClient.CreateRun(createCtx, &pb.CreateRunRequest{CriteriaId: criteriaAID, WorkflowName: "conformance-iso"})
 	if err != nil {
 		t.Fatalf("CreateRun for A's run: %v", err)
 	}
-	runIDofA := runResp.Msg.RunId
+	runIDofA := runResp.RunId
 
 	// Subscribe BOTH agents to their respective Control streams.
 	ctxA, cancelA := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelA()
-	reqA := connect.NewRequest(&pb.ControlSubscribeRequest{CriteriaId: criteriaAID})
-	reqA.Header().Set("Authorization", "Bearer "+tokenA)
-	streamA, err := oClient.Control(ctxA, reqA)
+	ctrlCtxA, ctrlInfoA := connect.NewClientContext(ctxA)
+	ctrlInfoA.RequestHeader().Set("Authorization", "Bearer "+tokenA)
+	streamA, err := oClient.Control(ctrlCtxA, &pb.ControlSubscribeRequest{CriteriaId: criteriaAID})
 	if err != nil {
 		t.Fatalf("Control subscribe A: %v", err)
 	}
 
 	ctxB, cancelB := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelB()
-	reqB := connect.NewRequest(&pb.ControlSubscribeRequest{CriteriaId: criteriaBID})
-	reqB.Header().Set("Authorization", "Bearer "+tokenB)
-	streamB, err := oClient.Control(ctxB, reqB)
+	ctrlCtxB, ctrlInfoB := connect.NewClientContext(ctxB)
+	ctrlInfoB.RequestHeader().Set("Authorization", "Bearer "+tokenB)
+	streamB, err := oClient.Control(ctrlCtxB, &pb.ControlSubscribeRequest{CriteriaId: criteriaBID})
 	if err != nil {
 		t.Fatalf("Control subscribe B: %v", err)
 	}
 
 	// Drain ControlReady from both streams.
-	if !streamA.Receive() {
-		t.Fatalf("Control A first Receive: %v", streamA.Err())
+	if _, err := streamA.Receive(); err != nil {
+		t.Fatalf("Control A first Receive: %v", err)
 	}
-	if !streamB.Receive() {
-		t.Fatalf("Control B first Receive: %v", streamB.Err())
+	if _, err := streamB.Receive(); err != nil {
+		t.Fatalf("Control B first Receive: %v", err)
 	}
 
 	// Stop A's run — must deliver RunCancel only to A's channel.
@@ -208,27 +211,30 @@ func testControlAgentIsolation(t *testing.T, s Subject) { //nolint:funlen // age
 	}
 
 	// A must receive RunCancel for its run.
-	if !streamA.Receive() {
-		t.Fatalf("A stream Receive: %v", streamA.Err())
+	msgA, err := streamA.Receive()
+	if err != nil {
+		t.Fatalf("A stream Receive: %v", err)
 	}
-	if _, ok := streamA.Msg().Command.(*pb.ControlMessage_RunCancel); !ok {
-		t.Errorf("A stream: want RunCancel, got %T", streamA.Msg().Command)
+	if _, ok := msgA.Command.(*pb.ControlMessage_RunCancel); !ok {
+		t.Errorf("A stream: want RunCancel, got %T", msgA.Command)
 	}
 
 	// B must NOT receive any message within a bounded timeout — the RunCancel
 	// for A's run must not cross agent boundaries.
+	var bMsg *pb.ControlMessage
+	var bErr error
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		streamB.Receive()
+		bMsg, bErr = streamB.Receive()
 	}()
 	select {
 	case <-done:
 		// streamB.Receive() returned — either a message arrived (isolation
 		// broken) or the stream was closed with an error. Check which.
-		if streamB.Err() == nil {
+		if bErr == nil {
 			// A message arrived on B's stream — isolation contract violated.
-			t.Errorf("AgentIsolation: B received a message meant for A (got %T)", streamB.Msg().GetCommand())
+			t.Errorf("AgentIsolation: B received a message meant for A (got %T)", bMsg.GetCommand())
 		}
 		// Error means stream was closed by context cancellation or server EOF;
 		// that is not a violation.
