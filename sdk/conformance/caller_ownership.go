@@ -65,14 +65,7 @@ func ownershipSetup(t *testing.T, s Subject) (
 	attackerID = s.RegisterAgent(t, "attacker", attackerToken)
 
 	oClient = criteria.NewServiceClient(client, baseURL)
-
-	createCtx, createInfo := connect.NewClientContext(context.Background())
-	createInfo.RequestHeader().Set("Authorization", "Bearer "+ownerToken)
-	runResp, err := oClient.CreateRun(createCtx, &pb.CreateRunRequest{CriteriaId: ownerID, WorkflowName: "ownership-wf"})
-	if err != nil {
-		t.Fatalf("ownershipSetup: CreateRun: %v", err)
-	}
-	runID = runResp.RunId
+	runID = authCreateRun(t, oClient, ownerToken, ownerID, "ownership-wf")
 	return oClient, ownerID, attackerID, attackerToken, runID
 }
 
@@ -113,12 +106,7 @@ func testOwnershipSubmitEvents(t *testing.T, s Subject) {
 	oClient, _, _, attackerToken, runID := ownershipSetup(t, s)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	ctx, info := connect.NewClientContext(ctx)
-	info.RequestHeader().Set("Authorization", "Bearer "+attackerToken)
-	stream, err := oClient.SubmitEvents(ctx)
-	if err != nil {
-		t.Fatalf("open submit stream: %v", err)
-	}
+	stream := authSubmitStream(t, oClient, ctx, attackerToken)
 	env := criteria.NewEnvelope(runID, &pb.StepLog{Step: "s", Stream: pb.LogStream_LOG_STREAM_STDOUT, Chunk: "x"})
 	env.CorrelationId = "own-submit"
 	if err := stream.Send(env); err != nil {
@@ -129,10 +117,10 @@ func testOwnershipSubmitEvents(t *testing.T, s Subject) {
 		}
 		return
 	}
-	_, err = stream.Receive()
-	if connect.CodeOf(err) != connect.CodePermissionDenied {
+	_, recvErr := stream.Receive()
+	if connect.CodeOf(recvErr) != connect.CodePermissionDenied {
 		t.Errorf("SubmitEvents cross-owner: want CodePermissionDenied, got code=%v err=%v",
-			connect.CodeOf(err), err)
+			connect.CodeOf(recvErr), recvErr)
 	}
 }
 

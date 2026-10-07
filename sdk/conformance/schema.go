@@ -48,23 +48,11 @@ func testSchemaVersionAccepted(t *testing.T, s Subject) {
 	const token = "token-schema-v1"
 	criteriaID := s.RegisterAgent(t, "criteria-schema-v1", token)
 	oClient := criteria.NewServiceClient(client, baseURL)
-
-	createCtx, createInfo := connect.NewClientContext(context.Background())
-	createInfo.RequestHeader().Set("Authorization", "Bearer "+token)
-	runResp, err := oClient.CreateRun(createCtx, &pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-schema-v1"})
-	if err != nil {
-		t.Fatalf("CreateRun: %v", err)
-	}
-	runID := runResp.RunId
+	runID := authCreateRun(t, oClient, token, criteriaID, "conformance-schema-v1")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	ctx, info := connect.NewClientContext(ctx)
-	info.RequestHeader().Set("Authorization", "Bearer "+token)
-	stream, err := oClient.SubmitEvents(ctx)
-	if err != nil {
-		t.Fatalf("open submit stream: %v", err)
-	}
+	stream := authSubmitStream(t, oClient, ctx, token)
 
 	env := criteria.NewEnvelope(runID, &pb.StepLog{Step: "s", Stream: pb.LogStream_LOG_STREAM_STDOUT, Chunk: "schema-ok"})
 	env.CorrelationId = "schema-v1-ok"
@@ -76,11 +64,7 @@ func testSchemaVersionAccepted(t *testing.T, s Subject) {
 		t.Fatalf("Receive ack: %v (schema_version=%d should be accepted)", err, env.SchemaVersion)
 	}
 	_ = stream.CloseSend()
-	for {
-		if _, recvErr := stream.Receive(); recvErr != nil {
-			break
-		}
-	}
+	submitDrain(stream)
 }
 
 func testSchemaFutureVersionRejected(t *testing.T, s Subject) {
@@ -90,23 +74,11 @@ func testSchemaFutureVersionRejected(t *testing.T, s Subject) {
 	const token = "token-schema-v2"
 	criteriaID := s.RegisterAgent(t, "criteria-schema-v2", token)
 	oClient := criteria.NewServiceClient(client, baseURL)
-
-	createCtx, createInfo := connect.NewClientContext(context.Background())
-	createInfo.RequestHeader().Set("Authorization", "Bearer "+token)
-	runResp, err := oClient.CreateRun(createCtx, &pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-schema-v2"})
-	if err != nil {
-		t.Fatalf("CreateRun: %v", err)
-	}
-	runID := runResp.RunId
+	runID := authCreateRun(t, oClient, token, criteriaID, "conformance-schema-v2")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	ctx, info := connect.NewClientContext(ctx)
-	info.RequestHeader().Set("Authorization", "Bearer "+token)
-	stream, err := oClient.SubmitEvents(ctx)
-	if err != nil {
-		t.Fatalf("open submit stream: %v", err)
-	}
+	stream := authSubmitStream(t, oClient, ctx, token)
 
 	env := criteria.NewEnvelope(runID, &pb.StepLog{Step: "s", Stream: pb.LogStream_LOG_STREAM_STDOUT, Chunk: "future"})
 	env.SchemaVersion = 2 // manually override to simulate a future SDK
@@ -134,25 +106,13 @@ func testSchemaPersistedVersionMatchesSDK(t *testing.T, s Subject) {
 	const token = "token-schema-persist"
 	criteriaID := s.RegisterAgent(t, "criteria-schema-persist", token)
 	oClient := criteria.NewServiceClient(client, baseURL)
-
-	createCtx, createInfo := connect.NewClientContext(context.Background())
-	createInfo.RequestHeader().Set("Authorization", "Bearer "+token)
-	runResp, err := oClient.CreateRun(createCtx, &pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-schema-persist"})
-	if err != nil {
-		t.Fatalf("CreateRun: %v", err)
-	}
-	runID := runResp.RunId
+	runID := authCreateRun(t, oClient, token, criteriaID, "conformance-schema-persist")
 
 	const corrID = "schema-persist-check"
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	ctx, info := connect.NewClientContext(ctx)
-	info.RequestHeader().Set("Authorization", "Bearer "+token)
-	stream, err := oClient.SubmitEvents(ctx)
-	if err != nil {
-		t.Fatalf("open submit stream: %v", err)
-	}
+	stream := authSubmitStream(t, oClient, ctx, token)
 	env := criteria.NewEnvelope(runID, &pb.StepLog{Step: "s", Stream: pb.LogStream_LOG_STREAM_STDOUT, Chunk: "version-check"})
 	env.CorrelationId = corrID
 	if err := stream.Send(env); err != nil {
@@ -162,11 +122,7 @@ func testSchemaPersistedVersionMatchesSDK(t *testing.T, s Subject) {
 		t.Fatalf("Receive ack: %v", err)
 	}
 	_ = stream.CloseSend()
-	for {
-		if _, recvErr := stream.Receive(); recvErr != nil {
-			break
-		}
-	}
+	submitDrain(stream)
 
 	events := s.ListRunEvents(t, baseURL, client, token, runID, 0)
 	var found *pb.Envelope

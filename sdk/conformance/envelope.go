@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	connect "connectrpc.com/connect/v2"
 	"google.golang.org/protobuf/proto"
 
 	criteria "github.com/brokenbots/criteria/sdk"
@@ -40,13 +39,7 @@ func testEnvelopeRoundTrip(t *testing.T, s Subject) { //nolint:funlen,gocognit /
 	oClient := criteria.NewServiceClient(client, baseURL)
 
 	// Create a dedicated run for this test.
-	createCtx, createInfo := connect.NewClientContext(context.Background())
-	createInfo.RequestHeader().Set("Authorization", "Bearer "+token)
-	runResp, err := oClient.CreateRun(createCtx, &pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-envelope-rt"})
-	if err != nil {
-		t.Fatalf("CreateRun: %v", err)
-	}
-	runID := runResp.RunId
+	runID := authCreateRun(t, oClient, token, criteriaID, "conformance-envelope-rt")
 
 	oo := PayloadOneof(t)
 	fields := oo.Fields()
@@ -71,12 +64,7 @@ func testEnvelopeRoundTrip(t *testing.T, s Subject) { //nolint:funlen,gocognit /
 			// Submit the envelope.
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			ctx, info := connect.NewClientContext(ctx)
-			info.RequestHeader().Set("Authorization", "Bearer "+token)
-			stream, err := oClient.SubmitEvents(ctx)
-			if err != nil {
-				t.Fatalf("open submit stream: %v", err)
-			}
+			stream := authSubmitStream(t, oClient, ctx, token)
 
 			if err := stream.Send(env); err != nil {
 				t.Fatalf("Send(%s): %v", armName, err)
@@ -90,12 +78,7 @@ func testEnvelopeRoundTrip(t *testing.T, s Subject) { //nolint:funlen,gocognit /
 			}
 			_ = stream.CloseSend()
 			// Drain to EOF so the server handler exits cleanly.
-			for {
-				_, recvErr := stream.Receive()
-				if recvErr != nil {
-					break
-				}
-			}
+			submitDrain(stream)
 
 			// Read back and locate the event by correlation_id.
 			events := s.ListRunEvents(t, baseURL, client, token, runID, 0)

@@ -69,14 +69,7 @@ func testRunCancelDelivered(t *testing.T, s Subject) {
 	const token = "token-ctrl-cancel"
 	criteriaID := s.RegisterAgent(t, "criteria-ctrl-cancel", token)
 	oClient := criteria.NewServiceClient(client, baseURL)
-
-	createCtx, createInfo := connect.NewClientContext(context.Background())
-	createInfo.RequestHeader().Set("Authorization", "Bearer "+token)
-	runResp, err := oClient.CreateRun(createCtx, &pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-ctrl-cancel"})
-	if err != nil {
-		t.Fatalf("CreateRun: %v", err)
-	}
-	runID := runResp.RunId
+	runID := authCreateRun(t, oClient, token, criteriaID, "conformance-ctrl-cancel")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -170,13 +163,7 @@ func testControlAgentIsolation(t *testing.T, s Subject) { //nolint:funlen // age
 	oClient := criteria.NewServiceClient(client, baseURL)
 
 	// Create a run owned by agent-A.
-	createCtx, createInfo := connect.NewClientContext(context.Background())
-	createInfo.RequestHeader().Set("Authorization", "Bearer "+tokenA)
-	runResp, err := oClient.CreateRun(createCtx, &pb.CreateRunRequest{CriteriaId: criteriaAID, WorkflowName: "conformance-iso"})
-	if err != nil {
-		t.Fatalf("CreateRun for A's run: %v", err)
-	}
-	runIDofA := runResp.RunId
+	runIDofA := authCreateRun(t, oClient, tokenA, criteriaAID, "conformance-iso")
 
 	// Subscribe BOTH agents to their respective Control streams.
 	ctxA, cancelA := context.WithTimeout(context.Background(), 10*time.Second)

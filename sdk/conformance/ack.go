@@ -6,8 +6,6 @@ import (
 	"testing"
 	"time"
 
-	connect "connectrpc.com/connect/v2"
-
 	criteria "github.com/brokenbots/criteria/sdk"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
@@ -43,23 +41,11 @@ func testAckOrderingSequential(t *testing.T, s Subject) { //nolint:funlen // seq
 	const token = "token-ack-seq"
 	criteriaID := s.RegisterAgent(t, "criteria-ack-seq", token)
 	oClient := criteria.NewServiceClient(client, baseURL)
-
-	createCtx, createInfo := connect.NewClientContext(context.Background())
-	createInfo.RequestHeader().Set("Authorization", "Bearer "+token)
-	runResp, err := oClient.CreateRun(createCtx, &pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-ack-seq"})
-	if err != nil {
-		t.Fatalf("CreateRun: %v", err)
-	}
-	runID := runResp.RunId
+	runID := authCreateRun(t, oClient, token, criteriaID, "conformance-ack-seq")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	ctx, info := connect.NewClientContext(ctx)
-	info.RequestHeader().Set("Authorization", "Bearer "+token)
-	stream, err := oClient.SubmitEvents(ctx)
-	if err != nil {
-		t.Fatalf("open submit stream: %v", err)
-	}
+	stream := authSubmitStream(t, oClient, ctx, token)
 
 	corrIDs := make([]string, ackTestN)
 	for i := 0; i < ackTestN; i++ {
@@ -114,14 +100,7 @@ func testAckIdempotentDuplicate(t *testing.T, s Subject) { //nolint:funlen // id
 	const token = "token-ack-idem"
 	criteriaID := s.RegisterAgent(t, "criteria-ack-idem", token)
 	oClient := criteria.NewServiceClient(client, baseURL)
-
-	createCtx, createInfo := connect.NewClientContext(context.Background())
-	createInfo.RequestHeader().Set("Authorization", "Bearer "+token)
-	runResp, err := oClient.CreateRun(createCtx, &pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-ack-idem"})
-	if err != nil {
-		t.Fatalf("CreateRun: %v", err)
-	}
-	runID := runResp.RunId
+	runID := authCreateRun(t, oClient, token, criteriaID, "conformance-ack-idem")
 
 	const corrID = "idem-corr-1"
 
@@ -129,12 +108,7 @@ func testAckIdempotentDuplicate(t *testing.T, s Subject) { //nolint:funlen // id
 		t.Helper()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		ctx, info := connect.NewClientContext(ctx)
-		info.RequestHeader().Set("Authorization", "Bearer "+token)
-		stream, err := oClient.SubmitEvents(ctx)
-		if err != nil {
-			t.Fatalf("open submit stream: %v", err)
-		}
+		stream := authSubmitStream(t, oClient, ctx, token)
 		env := criteria.NewEnvelope(runID, &pb.StepLog{Step: "s", Stream: pb.LogStream_LOG_STREAM_STDOUT, Chunk: "hello"})
 		env.CorrelationId = corrID
 		if err := stream.Send(env); err != nil {
@@ -147,11 +121,7 @@ func testAckIdempotentDuplicate(t *testing.T, s Subject) { //nolint:funlen // id
 		if err := stream.CloseSend(); err != nil {
 			t.Logf("CloseRequest: %v", err)
 		}
-		for {
-			if _, recvErr := stream.Receive(); recvErr != nil {
-				break
-			}
-		}
+		submitDrain(stream)
 		return ack
 	}
 
@@ -195,14 +165,8 @@ func testAckConcurrentStreams(t *testing.T, s Subject) { //nolint:funlen // conc
 
 	const token = "token-ack-conc"
 	criteriaID := s.RegisterAgent(t, "criteria-ack-conc", token)
-
-	createCtx, createInfo := connect.NewClientContext(context.Background())
-	createInfo.RequestHeader().Set("Authorization", "Bearer "+token)
-	runResp, err := criteria.NewServiceClient(client, baseURL).CreateRun(createCtx, &pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-ack-conc"})
-	if err != nil {
-		t.Fatalf("CreateRun: %v", err)
-	}
-	runID := runResp.RunId
+	concClient := criteria.NewServiceClient(client, baseURL)
+	runID := authCreateRun(t, concClient, token, criteriaID, "conformance-ack-conc")
 
 	ctxA, cancelA := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancelA()
@@ -210,18 +174,8 @@ func testAckConcurrentStreams(t *testing.T, s Subject) { //nolint:funlen // conc
 	defer cancelB()
 
 	// Both bidi streams open simultaneously, both targeting the same run_id.
-	streamCtxA, infoA := connect.NewClientContext(ctxA)
-	infoA.RequestHeader().Set("Authorization", "Bearer "+token)
-	streamA, err := criteria.NewServiceClient(client, baseURL).SubmitEvents(streamCtxA)
-	if err != nil {
-		t.Fatalf("open submit stream: %v", err)
-	}
-	streamCtxB, infoB := connect.NewClientContext(ctxB)
-	infoB.RequestHeader().Set("Authorization", "Bearer "+token)
-	streamB, err := criteria.NewServiceClient(client, baseURL).SubmitEvents(streamCtxB)
-	if err != nil {
-		t.Fatalf("open submit stream: %v", err)
-	}
+	streamA := authSubmitStream(t, concClient, ctxA, token)
+	streamB := authSubmitStream(t, concClient, ctxB, token)
 
 	const nPerStream = 3
 	var seqs []uint64

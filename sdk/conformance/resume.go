@@ -50,12 +50,7 @@ func pauseRunViaWaitEntered(t *testing.T, oClient criteria.ServiceClient, token,
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	ctx, info := connect.NewClientContext(ctx)
-	info.RequestHeader().Set("Authorization", "Bearer "+token)
-	stream, err := oClient.SubmitEvents(ctx)
-	if err != nil {
-		t.Fatalf("open submit stream: %v", err)
-	}
+	stream := authSubmitStream(t, oClient, ctx, token)
 	env := criteria.NewEnvelope(runID, &pb.WaitEntered{
 		Node:   signal,
 		Signal: signal,
@@ -69,23 +64,14 @@ func pauseRunViaWaitEntered(t *testing.T, oClient criteria.ServiceClient, token,
 		t.Fatalf("pauseRunViaWaitEntered Receive ack: %v", err)
 	}
 	_ = stream.CloseSend()
-	for {
-		if _, err := stream.Receive(); err != nil {
-			break
-		}
-	}
+	submitDrain(stream)
 }
 
 func pauseRunViaApproval(t *testing.T, oClient criteria.ServiceClient, token, runID, node string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	ctx, info := connect.NewClientContext(ctx)
-	info.RequestHeader().Set("Authorization", "Bearer "+token)
-	stream, err := oClient.SubmitEvents(ctx)
-	if err != nil {
-		t.Fatalf("open submit stream: %v", err)
-	}
+	stream := authSubmitStream(t, oClient, ctx, token)
 	env := criteria.NewEnvelope(runID, &pb.ApprovalRequested{
 		Node: node,
 	})
@@ -97,11 +83,7 @@ func pauseRunViaApproval(t *testing.T, oClient criteria.ServiceClient, token, ru
 		t.Fatalf("pauseRunViaApproval Receive ack: %v", err)
 	}
 	_ = stream.CloseSend()
-	for {
-		if _, err := stream.Receive(); err != nil {
-			break
-		}
-	}
+	submitDrain(stream)
 }
 
 func testResumeWaitSignal(t *testing.T, s Subject) {
@@ -114,14 +96,7 @@ func testResumeWaitSignal(t *testing.T, s Subject) {
 	)
 	criteriaID := s.RegisterAgent(t, "criteria-resume-wait", token)
 	oClient := criteria.NewServiceClient(client, baseURL)
-
-	createCtx, createInfo := connect.NewClientContext(context.Background())
-	createInfo.RequestHeader().Set("Authorization", "Bearer "+token)
-	runResp, err := oClient.CreateRun(createCtx, &pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-resume-wait"})
-	if err != nil {
-		t.Fatalf("CreateRun: %v", err)
-	}
-	runID := runResp.RunId
+	runID := authCreateRun(t, oClient, token, criteriaID, "conformance-resume-wait")
 
 	// Put the run in paused state by submitting a WaitEntered with signal.
 	pauseRunViaWaitEntered(t, oClient, token, runID, signal)
@@ -168,14 +143,7 @@ func testResumeSignalMismatch(t *testing.T, s Subject) {
 	)
 	criteriaID := s.RegisterAgent(t, "criteria-resume-mismatch", token)
 	oClient := criteria.NewServiceClient(client, baseURL)
-
-	createCtx, createInfo := connect.NewClientContext(context.Background())
-	createInfo.RequestHeader().Set("Authorization", "Bearer "+token)
-	runResp, err := oClient.CreateRun(createCtx, &pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-resume-mismatch"})
-	if err != nil {
-		t.Fatalf("CreateRun: %v", err)
-	}
-	runID := runResp.RunId
+	runID := authCreateRun(t, oClient, token, criteriaID, "conformance-resume-mismatch")
 	pauseRunViaWaitEntered(t, oClient, token, runID, signal)
 
 	resumeCtx, resumeInfo := connect.NewClientContext(context.Background())
@@ -204,14 +172,7 @@ func testResumeNotPausedPending(t *testing.T, s Subject) {
 	const token = "token-resume-notpaused"
 	criteriaID := s.RegisterAgent(t, "criteria-resume-notpaused", token)
 	oClient := criteria.NewServiceClient(client, baseURL)
-
-	createCtx, createInfo := connect.NewClientContext(context.Background())
-	createInfo.RequestHeader().Set("Authorization", "Bearer "+token)
-	runResp, err := oClient.CreateRun(createCtx, &pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-resume-notpaused"})
-	if err != nil {
-		t.Fatalf("CreateRun: %v", err)
-	}
-	runID := runResp.RunId
+	runID := authCreateRun(t, oClient, token, criteriaID, "conformance-resume-notpaused")
 	// Do NOT pause the run.
 
 	assertNotPaused(t, oClient, token, runID)
@@ -230,24 +191,12 @@ func testResumeNotPausedTerminal(t *testing.T, s Subject) {
 	const token = "token-resume-terminal"
 	criteriaID := s.RegisterAgent(t, "criteria-resume-terminal", token)
 	oClient := criteria.NewServiceClient(client, baseURL)
-
-	createCtx, createInfo := connect.NewClientContext(context.Background())
-	createInfo.RequestHeader().Set("Authorization", "Bearer "+token)
-	runResp, err := oClient.CreateRun(createCtx, &pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-resume-terminal"})
-	if err != nil {
-		t.Fatalf("CreateRun: %v", err)
-	}
-	runID := runResp.RunId
+	runID := authCreateRun(t, oClient, token, criteriaID, "conformance-resume-terminal")
 
 	// Drive the run to a terminal state by submitting RunCompleted.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	ctx, info := connect.NewClientContext(ctx)
-	info.RequestHeader().Set("Authorization", "Bearer "+token)
-	stream, err := oClient.SubmitEvents(ctx)
-	if err != nil {
-		t.Fatalf("open submit stream: %v", err)
-	}
+	stream := authSubmitStream(t, oClient, ctx, token)
 	env := criteria.NewEnvelope(runID, &pb.RunCompleted{})
 	env.CorrelationId = "terminal-completed"
 	if err := stream.Send(env); err != nil {
@@ -257,11 +206,7 @@ func testResumeNotPausedTerminal(t *testing.T, s Subject) {
 		t.Fatalf("Receive ack for RunCompleted: %v", err)
 	}
 	_ = stream.CloseSend()
-	for {
-		if _, err := stream.Receive(); err != nil {
-			break
-		}
-	}
+	submitDrain(stream)
 
 	assertNotPaused(t, oClient, token, runID)
 }
@@ -297,14 +242,7 @@ func testResumeApprovalDecision(t *testing.T, s Subject) {
 	)
 	criteriaID := s.RegisterAgent(t, "criteria-resume-approval", token)
 	oClient := criteria.NewServiceClient(client, baseURL)
-
-	createCtx, createInfo := connect.NewClientContext(context.Background())
-	createInfo.RequestHeader().Set("Authorization", "Bearer "+token)
-	runResp, err := oClient.CreateRun(createCtx, &pb.CreateRunRequest{CriteriaId: criteriaID, WorkflowName: "conformance-resume-approval"})
-	if err != nil {
-		t.Fatalf("CreateRun: %v", err)
-	}
-	runID := runResp.RunId
+	runID := authCreateRun(t, oClient, token, criteriaID, "conformance-resume-approval")
 	pauseRunViaApproval(t, oClient, token, runID, node)
 
 	resumeCtx, resumeInfo := connect.NewClientContext(context.Background())
