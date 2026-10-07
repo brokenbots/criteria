@@ -697,9 +697,11 @@ func (n *stepNode) runParallelSubworkflowIteration(ctx context.Context, st *RunS
 	// parent manager's one session for the environment — no per-iteration
 	// adapter process, no per-iteration initialize+tools/list handshake, and
 	// no per-iteration Info surface clobbering itself across concurrent
-	// branches. Remote tool resources skip the lease (they dispatch through
-	// the phone-home shims borrowed above; the remote-environment shared-
-	// session route is tracked separately). Containment is preserved: the
+	// branches. A remote-declared tool resource leases the same way (KB-160):
+	// the owner hosts the environment's ONE peer phone-home session opened
+	// through the host-of-record parent, so every call routes over the peer
+	// connection — the peer opens and serves exactly one shared session per
+	// environment — instead of an iteration-local binding. Containment is preserved: the
 	// callee still runs host-local under the runner with its own adapter
 	// secrets, and the agent session only receives the tool result. Leases
 	// are released when this iteration's scope unwinds; the shared session
