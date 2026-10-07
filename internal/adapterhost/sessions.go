@@ -2267,6 +2267,9 @@ func (m *SessionManager) Close(ctx context.Context, name string) error {
 
 // PauseAll iterates over every open session and calls Pause on each.
 // It is reentrant and idempotent: pausing an already-paused session is a no-op.
+// Every session is paused even when some fail; the returned error joins the
+// per-session failures (the KB-96 pause barrier lands only when ALL sessions
+// acked, so the aggregate must report each one, not just the first).
 func (m *SessionManager) PauseAll(ctx context.Context) error {
 	m.mu.Lock()
 	sessions := make([]*Session, 0, len(m.sessions))
@@ -2275,17 +2278,19 @@ func (m *SessionManager) PauseAll(ctx context.Context) error {
 	}
 	m.mu.Unlock()
 
-	var firstErr error
+	var errs []error
 	for _, s := range sessions {
-		if err := s.Pause(ctx); err != nil && firstErr == nil {
-			firstErr = err
+		if err := s.Pause(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("session %q: %w", s.Name, err))
 		}
 	}
-	return firstErr
+	return errors.Join(errs...)
 }
 
 // ResumeAll iterates over every open session and calls Resume on each.
 // It is reentrant and idempotent: resuming an already-active session is a no-op.
+// Mirrors PauseAll: every session is resumed and the returned error joins the
+// per-session failures.
 func (m *SessionManager) ResumeAll(ctx context.Context) error {
 	m.mu.Lock()
 	sessions := make([]*Session, 0, len(m.sessions))
@@ -2294,13 +2299,13 @@ func (m *SessionManager) ResumeAll(ctx context.Context) error {
 	}
 	m.mu.Unlock()
 
-	var firstErr error
+	var errs []error
 	for _, s := range sessions {
-		if err := s.Resume(ctx); err != nil && firstErr == nil {
-			firstErr = err
+		if err := s.Resume(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("session %q: %w", s.Name, err))
 		}
 	}
-	return firstErr
+	return errors.Join(errs...)
 }
 
 // InspectSession returns the inspect response for a single session by name.
