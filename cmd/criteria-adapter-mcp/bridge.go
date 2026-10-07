@@ -34,6 +34,15 @@ const (
 
 	closeGrace  = 5 * time.Second
 	initTimeout = 5 * time.Second
+
+	// discoveryCacheTTL is the per-request cache window for the tools/list
+	// result backing discovery (CRI-171/CRI-172): a session discovered its
+	// surface at OpenSession and refreshes it at most once per window, when
+	// an Execute misses the cached surface with a tool name. The wire-side
+	// CacheableResult/ttlMs mechanics belong to the 2026-07-28 MCP revision
+	// card; this is the adapter-local half, so shapes don't churn twice
+	// (KB-157).
+	discoveryCacheTTL = 30 * time.Second
 )
 
 // callErrorUnknownTool is the well-known typed call_error code (ADR-0004 §8
@@ -76,6 +85,25 @@ type sessionState struct {
 
 	mu    sync.Mutex
 	tools map[string]struct{}
+
+	// envKey is the environment fingerprint of the config that spawned this
+	// session (KB-157): the key under which the bridge keeps this
+	// environment's discovered tool surface. Sessions against different MCP
+	// servers carry different keys and never clobber each other's surface.
+	envKey string
+	// refreshMu single-flights tools/list re-discovery on the session
+	// (KB-157): a tool-name miss triggers at most one concurrent
+	// re-discovery, and the TTL cache absorbs the rest of a miss stampede.
+	// It never serializes known-tool executes — the fast path doesn't take
+	// it — so the KB-155 multiplexing story is unchanged.
+	refreshMu sync.Mutex
+	// discoveryTTL is this session's per-request cache window for
+	// tools/list (KB-157). Defaults to discoveryCacheTTL; tests narrow it to
+	// 0 to force a re-discovery deterministically.
+	discoveryTTL time.Duration
+	// discoveredAt is when the session last successfully obtained a
+	// tools/list surface (OpenSession or refresh). Zero until then.
+	discoveredAt time.Time
 
 	// execSeq mints strictly increasing per-execute progress tokens
 	// ("criteria-N"); they only need uniqueness within the session, and a
@@ -166,10 +194,15 @@ func (s *sessionState) hasExec() bool {
 type MCPBridge struct {
 	mu       sync.Mutex
 	sessions map[string]*sessionState
-	// discovered holds the MCP tools seen by the most recent OpenSession,
-	// keyed by tool name. It outlives sessions so Info can advertise the
-	// dynamic tool surface (CRI-171/CRI-172) between and after runs.
-	discovered map[string]mcpclient.Tool
+	// discovered holds each environment's MCP tool surface from the most
+	// recent tools/list, keyed by the environment fingerprint of the
+	// OpenSession config (KB-157, CRI-171). Concurrent sessions against
+	// different MCP servers each own their entry; a re-open of a known
+	// environment replaces only that environment's surface. Entries outlive
+	// sessions so Info can advertise the dynamic tool surface (CRI-171/
+	// CRI-172) between and after runs: tools that remain validly callable
+	// for a configured environment are never revoked by a session close.
+	discovered map[string]map[string]mcpclient.Tool
 
 	pendingPermsMu sync.Mutex
 	pendingPerms   map[string]chan<- string
@@ -204,19 +237,37 @@ func (b *MCPBridge) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse
 	return resp, nil
 }
 
-// infoTools renders the discovered MCP tools as InfoResponse.tools (CRI-171),
-// sorted by name for deterministic responses. Empty until the first
-// OpenSession discovers the MCP server's tools/list surface.
+// infoTools renders the discovered MCP tools as InfoResponse.tools (CRI-171).
+// The per-environment surfaces aggregate deterministically (KB-157): walk
+// environments in sorted fingerprint order (map iteration is otherwise
+// random), keep the first entry per tool name on cross-environment name
+// conflicts, and emit the union sorted by tool name. Same inputs therefore
+// always render the same tools list — including under concurrent Info calls.
+// Empty until the first OpenSession discovers an MCP server's tools/list
+// surface.
 func (b *MCPBridge) infoTools() []*v2.ToolInfo {
 	b.mu.Lock()
-	names := make([]string, 0, len(b.discovered))
-	for name := range b.discovered {
+	agg := make(map[string]mcpclient.Tool)
+	envKeys := make([]string, 0, len(b.discovered))
+	for envKey := range b.discovered {
+		envKeys = append(envKeys, envKey)
+	}
+	sort.Strings(envKeys)
+	for _, envKey := range envKeys {
+		for name, tool := range b.discovered[envKey] {
+			if _, exists := agg[name]; !exists {
+				agg[name] = tool
+			}
+		}
+	}
+	names := make([]string, 0, len(agg))
+	for name := range agg {
 		names = append(names, name)
 	}
 	tools := make([]mcpclient.Tool, 0, len(names))
 	sort.Strings(names)
 	for _, name := range names {
-		tools = append(tools, b.discovered[name])
+		tools = append(tools, agg[name])
 	}
 	b.mu.Unlock()
 
@@ -235,11 +286,35 @@ func (b *MCPBridge) infoTools() []*v2.ToolInfo {
 	return infos
 }
 
+// environmentKey fingerprints the OpenSession config that selects the MCP
+// server environment (KB-157): command, args, env, cwd, and any other config
+// entries, serialized as a JSON array of [key, value] pairs over sorted keys
+// (JSON escaping makes the encoding injective, so pairs cannot collide).
+// Two configs that differ in any way select different environments and get
+// independent discovery entries; the exact same config re-opens the same
+// environment, whose surface the fresh discovery replaces.
+func environmentKey(cfg map[string]string) string {
+	keys := make([]string, 0, len(cfg))
+	for k := range cfg {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	pairs := make([][2]string, 0, len(keys))
+	for _, k := range keys {
+		pairs = append(pairs, [2]string{k, cfg[k]})
+	}
+	raw, _ := json.Marshal(pairs)
+	return string(raw)
+}
+
 func (b *MCPBridge) OpenSession(ctx context.Context, req *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) {
 	state, err := startMCPServer(req.GetConfig())
 	if err != nil {
 		return nil, err
 	}
+	// KB-157: fingerprint the environment up front so discovery and any
+	// later refresh land under the right per-environment surface.
+	state.envKey = environmentKey(req.GetConfig())
 	tools, err := initializeAndDiscover(ctx, state)
 	if err != nil {
 		_ = shutdownSession(ctx, state)
@@ -291,7 +366,7 @@ func startMCPServer(cfg map[string]string) (*sessionState, error) {
 		return nil, fmt.Errorf("mcp: start server %q: %w", command, err)
 	}
 
-	state := &sessionState{cmd: cmd, stdin: stdin, stderr: stderr, tools: map[string]struct{}{}}
+	state := &sessionState{cmd: cmd, stdin: stdin, stderr: stderr, tools: map[string]struct{}{}, discoveryTTL: discoveryCacheTTL}
 	state.client = mcpclient.New(stdout, stdin, func(n mcpclient.Notification) {
 		if n.Method != "notifications/progress" {
 			return
@@ -313,16 +388,14 @@ func initializeAndDiscover(ctx context.Context, state *sessionState) ([]mcpclien
 	if err != nil {
 		return nil, fmt.Errorf("mcp: tools/list: %w", err)
 	}
-	for _, tool := range tools {
-		if tool.Name != "" {
-			state.tools[tool.Name] = struct{}{}
-		}
-	}
+	state.setTools(tools)
+	state.discoveredAt = time.Now()
 	return tools, nil
 }
 
 // registerSession installs the session under its ID and records the
-// discovered tools as the adapter's dynamic tool surface (CRI-172).
+// discovered tools under the session's environment fingerprint (KB-157)
+// as the adapter's dynamic tool surface (CRI-172).
 func (b *MCPBridge) registerSession(ctx context.Context, sessionID string, state *sessionState, tools []mcpclient.Tool) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -332,13 +405,93 @@ func (b *MCPBridge) registerSession(ctx context.Context, sessionID string, state
 		return fmt.Errorf("mcp: session %q already open", sessionID)
 	}
 	b.sessions[sessionID] = state
-	b.discovered = make(map[string]mcpclient.Tool, len(tools))
+	b.replaceDiscoveryLocked(state.envKey, tools)
+	return nil
+}
+
+// setTools replaces the session's known tool-name set with the given
+// tools/list surface.
+func (s *sessionState) setTools(tools []mcpclient.Tool) {
+	next := make(map[string]struct{}, len(tools))
 	for _, tool := range tools {
 		if tool.Name != "" {
-			b.discovered[tool.Name] = tool
+			next[tool.Name] = struct{}{}
 		}
 	}
-	return nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tools = next
+}
+
+// hasTool reports whether name is in the session's known tool surface.
+func (s *sessionState) hasTool(name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.tools[name]
+	return ok
+}
+
+// refreshAndRecheck handles a tool-name miss against the session's cached
+// surface (KB-157): a tools/list call at OpenSession is one-shot by itself,
+// but the MCP server's surface may change over the session's life, so a miss
+// triggers a re-discovery once the per-request cache window (discoveryTTL)
+// has elapsed, followed by a membership re-check. It reports whether the
+// tool exists by then; a stale-but-still-unknown name keeps the typed
+// unknown_tool signature (CRI-172).
+func (s *sessionState) refreshAndRecheck(ctx context.Context, b *MCPBridge, toolName string) bool {
+	if s.hasTool(toolName) {
+		return true
+	}
+	s.refreshDiscovery(ctx, b)
+	return s.hasTool(toolName)
+}
+
+// refreshDiscovery re-runs tools/list and both surfaces it feeds — the
+// session's routing set and the bridge's per-environment discovered surface —
+// when the per-request cache window has elapsed. The refreshMu single-flights
+// concurrent misses: the winner re-discovers and re-stamps discoveredAt, and
+// the losers see the fresh stamp under the same window and reuse the cached
+// result. A failed refresh is non-fatal by design (KB-157): the surfaces stay
+// as they are and the caller falls back to the typed unknown_tool signature
+// rather than failing an otherwise-legitimate call on a discovery hiccup.
+func (s *sessionState) refreshDiscovery(ctx context.Context, b *MCPBridge) {
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+	if time.Since(s.discoveredAt) < s.discoveryTTL {
+		return
+	}
+	refreshCtx, cancel := context.WithTimeout(ctx, initTimeout)
+	defer cancel()
+	tools, err := s.client.ListTools(refreshCtx)
+	if err != nil {
+		return
+	}
+	s.setTools(tools)
+	s.discoveredAt = time.Now()
+	b.replaceDiscovery(s.envKey, tools)
+}
+
+// replaceDiscovery records tools as the environment's surface under envKey,
+// replacing that environment's previous surface in place.
+func (b *MCPBridge) replaceDiscovery(envKey string, tools []mcpclient.Tool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.replaceDiscoveryLocked(envKey, tools)
+}
+
+// replaceDiscoveryLocked is replaceDiscovery without taking b.mu; the caller
+// must hold it.
+func (b *MCPBridge) replaceDiscoveryLocked(envKey string, tools []mcpclient.Tool) {
+	if b.discovered == nil {
+		b.discovered = make(map[string]map[string]mcpclient.Tool, 1)
+	}
+	surface := make(map[string]mcpclient.Tool, len(tools))
+	for _, tool := range tools {
+		if tool.Name != "" {
+			surface[tool.Name] = tool
+		}
+	}
+	b.discovered[envKey] = surface
 }
 
 func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink adapterhost.ExecuteEventSender) error {
@@ -351,7 +504,7 @@ func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ad
 	if toolName == "" {
 		return fmt.Errorf("mcp: config.tool is required")
 	}
-	if _, ok := s.tools[toolName]; !ok {
+	if !s.refreshAndRecheck(ctx, b, toolName) {
 		// Typed unknown_tool (CRI-172): report a failure result carrying the
 		// reserved call_error output instead of a bare error, so the
 		// adapter-tools seam delivers a typed call_error to the caller —
