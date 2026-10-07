@@ -251,11 +251,21 @@ type SessionManager struct {
 	// keyed by instance ID. Populated by VerifyGraph.
 	adapterDirs map[string]string
 
-	// borrowedToolResources marks sessions opened from verified records
-	// borrowed via BorrowToolResourceSessionsFrom (KB-58), keyed by instance
-	// ID. Guarded by mu. CloseBorrowedToolResources closes exactly these —
-	// the parent keeps its own record and session state.
-	borrowedToolResources map[string]bool
+	// KB-156: tool resources this manager leases from ANOTHER manager's
+	// environment, keyed by instance ID -> the owner manager that created and
+	// owns the shared session. Nested tool calls for leased names delegate to
+	// owner.execute so every caller (root graph, parallel iterations,
+	// subworkflows) shares ONE adapter session per environment, instead of
+	// the KB-58 copy-per-iteration borrow binding a private session per
+	// caller. Guarded by mu.
+	leasedToolResources map[string]*SessionManager
+	// KB-156: outstanding leases OTHER managers hold against THIS manager's
+	// tool-resource sessions, keyed by instance ID -> lease count. While a
+	// name's count is non-zero the shared session stays alive: Close refuses
+	// to tear it down, and deferred releases (leasing scope unwind) only
+	// decrement. The owner scope anchors the session's real teardown. Guarded
+	// by mu.
+	toolResourceLeases map[string]int
 	// borrowedPolicy is the parent graph's policy, set by the engine on
 	// borrowed managers so the nested tool-call gates (max_tool_depth,
 	// KB-58 max_tool_calls) consult the declaring workflow's values instead
@@ -289,18 +299,6 @@ type verifiedRecord struct {
 	// It is used to key per-scope shim sessions when per_scope_sessions is
 	// enabled; when empty the legacy adapter-type-only key is used.
 	scopeInstanceID string
-}
-
-// clone deep-copies the record so the owner and any borrower mutate
-// independently (all slice/map fields are value-bearing, so shallow copies
-// would alias them).
-func (r *verifiedRecord) clone() *verifiedRecord {
-	cp := *r
-	cp.config = cloneConfig(r.config)
-	cp.secrets = cloneConfig(r.secrets)
-	cp.secretOriginRefs = cloneOriginRefs(r.secretOriginRefs)
-	cp.capabilities = append([]string(nil), r.capabilities...)
-	return &cp
 }
 
 func (m *SessionManager) heartbeatStallThreshold() time.Duration {
@@ -444,94 +442,118 @@ func mergeMapInto[K comparable, V any](dst, src map[K]V) map[K]V {
 	return dst
 }
 
-// BorrowToolResourceSessionsFrom copies src's verified records and adapter
-// infos for the given adapters into m so nested adapter tool calls (KB-58)
-// can lazy-bind them LOCALLY on m. BorrowRemoteProvisioningFrom already
-// carries remote shims and graph caches; this method handles the host-local
-// counterpart: a tool-resource adapter (e.g. an mcp server) declared in a
-// parent graph, never a step target, reached only through the nested-execute
-// lazy bind. Without borrowing its verified record, that lazy bind fails on
-// m with ErrUnknownSession even though VerifyGraph handshake-verified the
-// adapter on src.
+// LeaseToolResourcesFrom registers shared-session leases against src for the
+// given tool-resource names (KB-156). It replaces the KB-58
+// BorrowToolResourceSessionsFrom record copy: instead of deep-copying
+// verified records so every parallel iteration lazy-binds its own adapter
+// process and initialize handshakes, the nested tool calls for leased names
+// delegate to src's session — ONE shared session per environment, created
+// once by the host-of-record manager (ADR-0008/0009 one-container-per-
+// environment doctrine). Each delegated call runs through the same process,
+// so a per-iteration Info surface can no longer clobber itself across
+// concurrent callers, and teardown follows lease semantics: the session
+// stays anchored to the owner's scope and each leasing scope merely drops
+// its lease when it unwinds.
 //
-// Copies are deep (cloneConfig/cloneOriginRefs) so the parent and child
-// mutate independently; records whose adapter declares a REMOTE environment
-// are skipped (remote adapters dispatch through the shims borrowed by
-// BorrowRemoteProvisioningFrom instead). Names m already has (bound session
-// or its own verified record) are never overwritten.
+// Names m already hosts (bound session or verified record) are skipped — m
+// would resolve them locally anyway — as are names m already leases (the
+// lease is idempotent; a duplicate registration would leak an owner
+// refcount entry). Names whose declaring environment is
+// remote are skipped (they dispatch through the phone-home shims borrowed by
+// BorrowRemoteProvisioningFrom; the remote-environment shared-session route
+// is tracked separately). Names src cannot host (no bound session and no
+// verified record) are skipped so the nested dispatch keeps reporting its
+// own typed unknown_adapter resolution error. Ownership resolves through
+// src's own leases (pass-through), so a lease never creates an intermediate
+// hop.
 //
-// The copied names are remembered so CloseBorrowedToolResources can close
-// exactly the sessions opened from borrowed records — the parent owns its
-// own record and the borrowed session is m's to tear down.
+// The owner's adapter infos are installed under the leased names so child-side
+// arg validation and nested dispatch resolve without a second Info handshake
+// (AdapterInfo carries no secrets). Returns the names actually leased.
 // Thread-safe.
-func (m *SessionManager) BorrowToolResourceSessionsFrom(src *SessionManager, names []string) []string {
+func (m *SessionManager) LeaseToolResourcesFrom(src *SessionManager, names []string) []string {
 	if src == nil || src == m || len(names) == 0 {
 		return nil
 	}
-	recs, infos := src.snapshotToolResourceRecords(names)
-	if len(recs) == 0 && len(infos) == 0 {
-		return nil
-	}
-	return m.installBorrowedToolResources(recs, infos)
-}
-
-// snapshotToolResourceRecords gathers deep copies of the manager's verified records
-// and adapter infos for the given tool-resource names. The manager mutex is
-// held for the whole gather so a concurrent scope change cannot split a name
-// across states.
-func (m *SessionManager) snapshotToolResourceRecords(names []string) (recs map[string]*verifiedRecord, infos map[string]*workflow.AdapterInfo) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	leased := make([]string, 0, len(names))
+	var refresh []string
 	for _, name := range names {
-		if rec := m.verified[name]; rec != nil {
-			if recs == nil {
-				recs = make(map[string]*verifiedRecord, len(names))
-			}
-			recs[name] = rec.clone()
-		}
-		if info := m.adapterInfos[name]; info != nil {
-			if infos == nil {
-				infos = make(map[string]*workflow.AdapterInfo, len(names))
-			}
-			captured := *info
-			infos[name] = &captured
-		}
-	}
-	return recs, infos
-}
-
-// installBorrowedToolResources installs host-local tool-resource records into
-// m and marks them borrowed. Adapters m already binds or verifies are skipped
-// (never overwritten), as are adapters whose declaring environment is remote:
-// those dispatch through the shims borrowed by BorrowRemoteProvisioningFrom
-// and their records stay parent-owned. Returns the names actually borrowed.
-func (m *SessionManager) installBorrowedToolResources(recs map[string]*verifiedRecord, infos map[string]*workflow.AdapterInfo) []string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	borrowed := make([]string, 0, len(recs))
-	for name, rec := range recs {
-		if !m.borrowEligibleLocked(name) {
+		if !m.leaseEligibleLocked(name) {
 			continue
 		}
-		m.recordBorrowedLocked(name, rec)
-		borrowed = append(borrowed, name)
+		// Idempotent re-lease: a second lease attempt for a name this manager
+		// already leases must NOT bump the owner's refcount again, or the
+		// release would underflow and the entry would anchor the owner's
+		// teardown forever.
+		if held, ok := m.leasedToolResources[name]; ok {
+			if held == src {
+				refresh = append(refresh, name)
+			}
+			continue
+		}
+		if m.leaseToolResourceLocked(src, name) {
+			leased = append(leased, name)
+		}
 	}
-	for _, name := range borrowed {
-		if info, ok := infos[name]; ok {
+	m.mu.Unlock()
+
+	// Install the owner's adapter info surface for the leased names so the
+	// child resolves callee capability and declaration checks against what
+	// the shared session actually serves. Sources for the surface come from
+	// src as-is: for a pass-through lease (src itself leased from a deeper
+	// owner) src already carries the ultimate owner's info, so this works
+	// regardless of which manager ends up hosting the session.
+	// slices.Concat avoids aliasing the returned leased slice (the refresh
+	// tail must not collide with a later caller-side append into it).
+	if all := slices.Concat(leased, refresh); len(all) > 0 {
+		infos := src.snapshotToolResourceInfos(all)
+		m.mu.Lock()
+		for name, info := range infos {
 			if m.adapterInfos == nil {
 				m.adapterInfos = make(map[string]*workflow.AdapterInfo)
 			}
 			m.adapterInfos[name] = info
 		}
+		m.mu.Unlock()
 	}
-	return borrowed
+	return leased
 }
 
-// borrowEligibleLocked reports whether name may receive a borrowed
-// tool-resource record: no live binding, no existing verified record, and a
-// host-local declaring environment. Unresolvable declarations are borrowed
-// as-is so the lazy bind reports its own typed resolution error.
-func (m *SessionManager) borrowEligibleLocked(name string) bool {
+// leaseToolResourceLocked registers one new shared-session lease for name:
+// it resolves the ultimate owner through src's own leases (pass-through, so
+// a lease never creates an intermediate hop), acquires a refcounted lease on
+// the owner, and records name -> owner on m. It reports whether the lease
+// was registered. Pass-through lock ordering stays one-directional (m.mu ->
+// src.mu); no path holds src.mu while taking another manager's mu.
+// m.mu must be held.
+func (m *SessionManager) leaseToolResourceLocked(src *SessionManager, name string) bool {
+	owner := src.leaseOwner(name)
+	if owner == nil {
+		owner = src
+	}
+	if owner == m {
+		// Out-of-protocol self-owning pass-through that would loop on
+		// itself at execute time; leave the name unresolved.
+		return false
+	}
+	if !owner.acquireToolResourceLease(name) {
+		return false
+	}
+	if m.leasedToolResources == nil {
+		m.leasedToolResources = make(map[string]*SessionManager)
+	}
+	m.leasedToolResources[name] = owner
+	return true
+}
+
+// leaseEligibleLocked reports whether name may receive a shared-session
+// lease: no live binding, no verified record of its own, and a host-local
+// declaring environment. Unresolvable declarations lease as-is — when the
+// owner cannot host the name either, the name is skipped and the nested
+// dispatch reports its typed unknown_adapter error.
+// m.mu must be held.
+func (m *SessionManager) leaseEligibleLocked(name string) bool {
 	if _, ok := m.sessions[name]; ok {
 		return false
 	}
@@ -542,38 +564,107 @@ func (m *SessionManager) borrowEligibleLocked(name string) bool {
 	return node == nil || graph == nil || !declaredAdapterEnvironmentIsRemote(node, graph)
 }
 
-// recordBorrowedLocked installs the verified record and borrow marker.
-func (m *SessionManager) recordBorrowedLocked(name string, rec *verifiedRecord) {
-	if m.verified == nil {
-		m.verified = make(map[string]*verifiedRecord)
-	}
-	if m.borrowedToolResources == nil {
-		m.borrowedToolResources = make(map[string]bool)
-	}
-	m.verified[name] = rec
-	m.borrowedToolResources[name] = true
+// leaseOwner returns the manager whose shared session serves the named
+// leased tool resource, or nil when name is not leased here (KB-156).
+func (m *SessionManager) leaseOwner(name string) *SessionManager {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.leasedToolResources[name]
 }
 
-// CloseBorrowedToolResources closes every session opened from a borrowed
-// verified record (KB-58) and forgets the borrow markers. The parent keeps
-// its own record, so closing these sessions does not disturb it. Idempotent:
-// already-closed names (bindVerifiedRecord deletes the record when opening)
-// are skipped. Thread-safe.
-func (m *SessionManager) CloseBorrowedToolResources(ctx context.Context) {
+// snapshotToolResourceInfos gathers copies of the manager's adapter infos for
+// the given names (KB-156 lease side). AdapterInfo carries no secrets, so
+// shallow copies are safe — the KB-58 record copy (config/secrets) is gone:
+// leased names execute on the owner's session and never bind locally. The
+// manager mutex is held for the whole gather so a concurrent scope change
+// cannot split a name across states.
+func (m *SessionManager) snapshotToolResourceInfos(names []string) map[string]*workflow.AdapterInfo {
 	m.mu.Lock()
-	if len(m.borrowedToolResources) == 0 {
+	defer m.mu.Unlock()
+	var infos map[string]*workflow.AdapterInfo
+	for _, name := range names {
+		info := m.adapterInfos[name]
+		if info == nil {
+			continue
+		}
+		if infos == nil {
+			infos = make(map[string]*workflow.AdapterInfo, len(names))
+		}
+		captured := *info
+		infos[name] = &captured
+	}
+	return infos
+}
+
+// acquireToolResourceLease increments the shared-session lease count for the
+// named tool resource (KB-156). It succeeds only when this manager hosts the
+// resource — a bound session or a verified record — and its declaring
+// environment is host-local; remote tool resources keep the per-scope
+// phone-home shim route. Thread-safe.
+func (m *SessionManager) acquireToolResourceLease(name string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, bound := m.sessions[name]; !bound {
+		if _, verified := m.verified[name]; !verified {
+			return false
+		}
+	}
+	if node, graph := m.adapterDeclarationLocked(name); node != nil && graph != nil && declaredAdapterEnvironmentIsRemote(node, graph) {
+		return false
+	}
+	if m.toolResourceLeases == nil {
+		m.toolResourceLeases = make(map[string]int)
+	}
+	m.toolResourceLeases[name]++
+	return true
+}
+
+// releaseToolResourceLease drops one outstanding shared-session lease
+// (KB-156). The session itself is NOT closed here: one caller's release must
+// never rip the environment's shared session out from under the other
+// callers. Its lifecycle is anchored to the owner's own scope teardown
+// (initScopeAdapters/tearDownScopeAdapters), and call nesting guarantees every
+// caller's lease is released before the owner scope unwinds — the count
+// simply reaches zero when the last caller releases. Thread-safe.
+func (m *SessionManager) releaseToolResourceLease(name string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.toolResourceLeases == nil {
+		return
+	}
+	n := m.toolResourceLeases[name]
+	if n <= 1 {
+		delete(m.toolResourceLeases, name)
+		return
+	}
+	m.toolResourceLeases[name] = n - 1
+}
+
+// ReleaseSharedToolResources drops every shared-session lease this manager
+// holds via LeaseToolResourcesFrom (KB-156). Leasing scopes (parallel
+// subworkflow iterations) call it on unwind: the owning manager's lease
+// count drops per name, and at zero the owner's own scope may tear the
+// shared session down. Cached adapter infos installed for the leases are
+// discarded too. Idempotent. Thread-safe.
+func (m *SessionManager) ReleaseSharedToolResources() {
+	m.mu.Lock()
+	if len(m.leasedToolResources) == 0 {
 		m.mu.Unlock()
 		return
 	}
-	names := make([]string, 0, len(m.borrowedToolResources))
-	for name := range m.borrowedToolResources {
-		names = append(names, name)
+	owners := make(map[*SessionManager][]string, len(m.leasedToolResources))
+	for name, owner := range m.leasedToolResources {
+		owners[owner] = append(owners[owner], name)
+		delete(m.leasedToolResources, name)
+		// Discard the cached info installed at lease time: after the release
+		// this manager no longer resolves the callee locally.
+		delete(m.adapterInfos, name)
 	}
-	m.borrowedToolResources = nil
 	m.mu.Unlock()
-
-	for _, name := range names {
-		m.Close(ctx, name)
+	for owner, names := range owners {
+		for _, name := range names {
+			owner.releaseToolResourceLease(name)
+		}
 	}
 }
 
@@ -1611,18 +1702,25 @@ func (m *SessionManager) Verify(ctx context.Context, name, adapterName, onCrash 
 }
 
 // SessionOpen reports whether a session with the given name is already
-// bound or verified. Subworkflow bodies re-declare parent adapters for
-// safety; the engine uses this to skip a second per-scope rotation (and
-// its provision_wanted emission) for an adapter the parent scope already
-// provisioned (CRI-145).
+// bound or verified — or leased from another manager's shared session
+// (KB-156). Subworkflow bodies re-declare parent adapters for safety; the
+// engine uses this to skip a second per-scope rotation (and its
+// provision_wanted emission) for an adapter the parent scope already
+// provisioned (CRI-145). A leased tool resource is served by the owner's
+// shared session and never opened per-caller, so it counts as open: a
+// parallel iteration that re-declares a parent tool resource skips its own
+// rotation just like the KB-58 borrow's copied records did.
 func (m *SessionManager) SessionOpen(name string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.sessions[name]; exists {
 		return true
 	}
-	_, exists := m.verified[name]
-	return exists
+	if _, exists := m.verified[name]; exists {
+		return true
+	}
+	_, leased := m.leasedToolResources[name]
+	return leased
 }
 
 // SessionBound reports whether a session with the given name is bound to a
@@ -2227,10 +2325,36 @@ func (m *SessionManager) watchLogStream(sess *Session, done <-chan error, hostCa
 	}
 }
 
+// SessionSharedError reports that a session close was refused because other
+// callers still hold shared-session leases on it (KB-156): one caller's
+// teardown must not rip the environment's shared session out from under the
+// remaining callers. The close is a no-op; the session stays open until the
+// owner scope tears it down once the last lease drops (or Shutdown wins).
+type SessionSharedError struct {
+	Session string
+	Leases  int
+}
+
+func (e *SessionSharedError) Error() string {
+	return fmt.Sprintf("session %q shared by %d active lease(s); close refused until last lease releases (KB-156)", e.Session, e.Leases)
+}
+
 // Close is intentionally idempotent: closing an unknown session is a no-op.
+// KB-156: a close for a session with outstanding shared-tool-resource leases
+// is refused (SessionSharedError) and the session stays open.
 func (m *SessionManager) Close(ctx context.Context, name string) error {
 	m.mu.Lock()
 	sess, exists := m.sessions[name]
+	// KB-156: a tool-resource session shared by outstanding leases must not
+	// be torn down out from under its callers. Nested-call lifetimes are
+	// strictly shorter than the owner scope's, so this is only reachable via
+	// out-of-protocol callers — refuse loudly and keep the session in place.
+	if leases := m.toolResourceLeases[name]; exists && leases > 0 {
+		m.mu.Unlock()
+		slog.Warn("refusing close of shared tool-resource session with active leases",
+			"session", name, "leases", leases)
+		return &SessionSharedError{Session: name, Leases: leases}
+	}
 	if exists {
 		delete(m.sessions, name)
 	}
@@ -2579,6 +2703,24 @@ func (m *SessionManager) Execute(ctx context.Context, name string, step *workflo
 }
 
 func (m *SessionManager) execute(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink, nesting toolCallNesting, rejection *v2.ExecutionRejection) (adapter.Result, error) {
+	// KB-156: a tool resource leased from another manager's environment
+	// executes through the owner's shared session — one adapter session per
+	// environment, created once by the host-of-record manager. This manager
+	// only routes the call; the owner owns the bind, the execute gating, the
+	// crash classification (callee crash attribution lands on the shared
+	// session, not one caller), and the teardown anchor. Lock ordering stays
+	// one-directional: delegation takes no m.mu lock into the owner (the
+	// lease map was read under m.mu before this call).
+	if owner := m.leaseOwner(name); owner != nil {
+		// Mirror a caller-side step-timeout teardown window onto the owner
+		// (CRI-287): the engine stamps the window on the manager that ran the
+		// canceled step, but a delegated execute classifies on the owner's
+		// window. Without the mirror a teardown cascade observed on the
+		// shared session would be misclassified as a crash and respawn it
+		// out from under the remaining callers.
+		owner.mirrorStepTimeoutTeardownWindow(m)
+		return owner.execute(ctx, name, step, sink, nesting, rejection)
+	}
 	sess, err := m.lookupOrBind(ctx, name, step)
 	if err != nil {
 		return adapter.Result{Outcome: "failure"}, err
@@ -2781,6 +2923,26 @@ func (m *SessionManager) executeError(ctx context.Context, name string, step *wo
 // or subworkflow cancellation never opens the window.
 func (m *SessionManager) MarkEngineStepTimeoutTeardown() {
 	m.engineStepTimeoutTeardownAt.Store(time.Now().UnixNano())
+}
+
+// mirrorStepTimeoutTeardownWindow copies src's CRI-287 step-timeout teardown
+// window onto this manager when src's window is open and this manager's is
+// not (KB-156). Delegated tool-resource executes classify on the owner's
+// window, and the engine stamps the mark on the manager that ran the
+// canceled step (a leasing child); mirroring the mark time preserves the
+// remaining window so a teardown cascade observed on the shared session
+// routes as a timeout, not as a shared-session crash. Mirroring is monotone:
+// it can only open a closed owner window, never shrink an open one.
+func (m *SessionManager) mirrorStepTimeoutTeardownWindow(src *SessionManager) {
+	if src == nil || src == m {
+		return
+	}
+	if m.engineStepTimeoutTeardownWindowOpen() {
+		return
+	}
+	if markedAt := src.engineStepTimeoutTeardownAt.Load(); markedAt != 0 {
+		m.engineStepTimeoutTeardownAt.Store(markedAt)
+	}
 }
 
 // engineStepTimeoutTeardownWindowOpen reports whether a step-timeout teardown

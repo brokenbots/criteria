@@ -689,23 +689,27 @@ func (n *stepNode) runParallelSubworkflowIteration(ctx context.Context, st *RunS
 	// stay owned by the parent SM, which stops them at run end.
 	iterDeps.Sessions.BorrowRemoteProvisioningFrom(deps.Sessions)
 
-	// KB-58: adapter tool-call grants to tool RESOURCE adapters (granted to a
+	// KB-156: adapter tool-call grants to tool RESOURCE adapters (granted to a
 	// caller's tools list but never run as a step target, e.g. an mcp server
-	// a claude-agent probes) resolve only through the nested tool-call lazy
-	// bind, which the fresh iteration SessionManager cannot satisfy for a
-	// host-local adapter no scope provisions. Borrow the parent's verified
-	// records and adapter infos for every tool resource the child body
-	// references so the seam stays resolvable inside the iteration; remote
-	// tool resources skip the borrow (they dispatch through the phone-home
-	// shims borrowed above). Containment is preserved: the callee still runs
-	// host-local under the runner with its own adapter secrets, and the agent
-	// session only receives the tool result. Borrowed callee sessions are
-	// torn down when this iteration's scope unwinds.
+	// a claude-agent probes) resolve through the nested tool-call dispatch,
+	// which routes to the environment's SHARED session: this iteration leases
+	// the parent's host-local tool resources so every call delegates to the
+	// parent manager's one session for the environment — no per-iteration
+	// adapter process, no per-iteration initialize+tools/list handshake, and
+	// no per-iteration Info surface clobbering itself across concurrent
+	// branches. Remote tool resources skip the lease (they dispatch through
+	// the phone-home shims borrowed above; the remote-environment shared-
+	// session route is tracked separately). Containment is preserved: the
+	// callee still runs host-local under the runner with its own adapter
+	// secrets, and the agent session only receives the tool result. Leases
+	// are released when this iteration's scope unwinds; the shared session
+	// itself is anchored to the parent scope and stays open for the remaining
+	// callers.
 	if callees := toolResourceCalleeNames(swNode.Body); len(callees) > 0 {
-		if borrowed := iterDeps.Sessions.BorrowToolResourceSessionsFrom(deps.Sessions, callees); len(borrowed) > 0 {
-			slog.Debug("parallel iteration borrowed host-local tool resources",
-				"step", n.step.Name, "borrowed", strings.Join(borrowed, ","))
-			defer iterDeps.Sessions.CloseBorrowedToolResources(context.WithoutCancel(ctx))
+		if leased := iterDeps.Sessions.LeaseToolResourcesFrom(deps.Sessions, callees); len(leased) > 0 {
+			slog.Debug("parallel iteration routed tool resources through shared session",
+				"step", n.step.Name, "leased", strings.Join(leased, ","))
+			defer iterDeps.Sessions.ReleaseSharedToolResources()
 		}
 	}
 	// KB-58: the iteration manager has no graph of its own; carry the
