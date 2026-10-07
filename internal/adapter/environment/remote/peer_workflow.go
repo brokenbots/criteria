@@ -13,8 +13,10 @@ package remote
 //     its journal record instead of spawning fresh, and a transport loss while
 //     a run is in flight is reported as child-run evidence,
 //   - teardown cancels the in-flight child run over ControlRequest.cancel_child_run
-//     BEFORE the session closes (orphan-by-default is not an option in v0.6.0;
-//     there is no detach).
+//     then waits the bounded settle budget for the terminal journal evidence
+//     before the close proceeds — a run that fails to settle is force-settled
+//     with ControlRequest.kill_child plus a structured partial-teardown warn
+//     (KB-96, ADR-0008 D2 stop semantics; there is no detach in v0.6.0).
 
 import (
 	"context"
@@ -50,6 +52,17 @@ const peerCancelChildRunTimeout = 5 * time.Second
 // peerCancelChildRunGraceMs is the grace period the child applies between
 // signalling the run and force-settling it.
 const peerCancelChildRunGraceMs = 15000
+
+// peerChildRunTeardownWait is the bounded budget the parent waits for the
+// cancelled child run's terminal journal evidence before force-settling
+// (KB-96 ADR-0008 D2). It matches the child's own cancel grace
+// (peerCancelChildRunGraceMs): a healthy child surfaces its terminal arm
+// well inside the budget, and a wedged one is force-settled exactly at it.
+const peerChildRunTeardownWait = time.Duration(peerCancelChildRunGraceMs) * time.Millisecond
+
+// peerChildRunTeardownPoll paces the settle poll for a child run the
+// tracker has not observed yet (no known run id to register a watch on).
+const peerChildRunTeardownPoll = 100 * time.Millisecond
 
 // errChildRunUnsettled reports that no terminal evidence arrived for a child
 // run before the wait ended.
@@ -217,23 +230,36 @@ func (ps *peerSession) removeChildWatch(runID string, watch chan struct{}) {
 	ps.mu.Unlock()
 }
 
-// cancelInFlightChildRun issues the ControlRequest.cancel_child_run control
-// so the child run does not outlive the session teardown (ADR-0008 ordering:
-// cancel, then close, then process cleanup by the child host). An empty run
-// id means "the current one" on the child's control surface, which covers a
-// run the tracker has not yet observed. Best-effort: failures are logged and
-// the teardown proceeds.
-func (ps *peerSession) cancelInFlightChildRun(ctx context.Context) {
+// teardownInFlightChildRun tears down a live child run ahead of a session
+// close (KB-96, ADR-0008 D2 stop semantics). The sequence is:
+//
+//  1. the cooperative cancel control (an empty run id means "the current
+//     one" on the child's control surface, covering a run the tracker has
+//     not yet observed),
+//  2. a bounded wait for the terminal evidence on the supervision journal
+//     — the close that follows must not strand or race an unsettled run,
+//     and the journal terminal is the cross-feed proof the parent step can
+//     attribute its own outcome to,
+//  3. on budget expiry, the KillChild control plus a structured
+//     partial-teardown warn (the child journals its matching arm) — the
+//     parent step's outcome then stays deterministic through the transport
+//     teardown instead of hanging on a wedged child.
+//
+// The wait is detached from the caller's context (teardown paths race
+// context cancellation by design) and stays best-effort: every failure is
+// logged and the teardown proceeds.
+func (ps *peerSession) teardownInFlightChildRun(ctx context.Context) {
 	if !ps.hasPeerCapability(peerWorkflowV1Capability) {
 		return
 	}
-	ps.mu.Lock()
-	rec := ps.childRunInFlightLocked()
+	// KB-95 contract preserved: the cancel is issued even when the tracker
+	// shows nothing (the empty run id means "the current one" child-side,
+	// covering a run the parent has not observed yet).
+	rec, inFlight := ps.childRunInFlight()
 	runID := ""
-	if rec != nil {
+	if inFlight {
 		runID = rec.RunID
 	}
-	ps.mu.Unlock()
 
 	cctx, cancel := context.WithTimeout(ctx, peerCancelChildRunTimeout)
 	defer cancel()
@@ -247,13 +273,68 @@ func (ps *peerSession) cancelInFlightChildRun(ctx context.Context) {
 	})
 	if err != nil {
 		slog.Warn("peer child run cancel control failed", "adapter", ps.dial.AdapterType, "run_id", runID, "error", err)
+	} else if !resp.GetAccepted() {
+		// Rejected means the child holds no live run (e.g. it settled in the
+		// race window): nothing to wait for, nothing to force.
+		slog.Info("peer accepted no child run cancel", "adapter", ps.dial.AdapterType, "run_id", runID, "detail", resp.GetDetail())
 		return
 	}
-	if !resp.GetAccepted() {
-		slog.Info("peer accepted no child run cancel", "adapter", ps.dial.AdapterType, "run_id", runID, "detail", resp.GetDetail())
+
+	wctx, wcancel := context.WithTimeout(context.WithoutCancel(ctx), ps.teardownSettleBudget())
+	defer wcancel()
+	rec, settled := ps.waitChildRunSettle(wctx, runID)
+	if settled {
+		outcome := ""
+		if rec != nil {
+			outcome = rec.TerminalOutcome
+		}
+		slog.Debug("peer child run settled on teardown", "adapter", ps.dial.AdapterType, "run_id", runID,
+			"outcome", outcome)
+		return
+	}
+
+	slog.Warn("peer child run teardown incomplete",
+		"adapter", ps.dial.AdapterType, "scope", ps.dial.Scope, "run_id", runID,
+		"action", "kill_child issued after the settle grace expired")
+
+	kctx, kcancel := context.WithTimeout(context.WithoutCancel(ctx), peerCancelChildRunTimeout)
+	defer kcancel()
+	if resp, err := ps.control(kctx, &criteriav1.ControlRequest{
+		AdapterType: ps.dial.AdapterType,
+		Scope:       ps.dial.Scope,
+		GraceMs:     peerKillGraceMs,
+		Kind:        &criteriav1.ControlRequest_KillChild{KillChild: &criteriav1.KillChild{}},
+	}); err != nil {
+		slog.Warn("peer child run force kill control failed", "adapter", ps.dial.AdapterType, "run_id", runID, "error", err)
+	} else if !resp.GetAccepted() {
+		slog.Warn("peer rejected child run force kill", "adapter", ps.dial.AdapterType, "run_id", runID, "detail", resp.GetDetail())
 	}
 }
 
+// waitChildRunSettle waits, bounded by ctx, for the child run's terminal
+// journal evidence. A known run id registers a journal watch (settles
+// promptly on the terminal arm or the transport closing); an unknown id —
+// a run the tracker has not observed yet — polls the tracker instead: the
+// terminal arm lands on the journal at any point mid-settle and the poll
+// observes its absence. Returns the settled record (nil, true) meaning
+// "no run in flight anymore" and the settled record; (nil, false) when the
+// budget expired without evidence.
+func (ps *peerSession) waitChildRunSettle(ctx context.Context, runID string) (*childRunRecord, bool) {
+	if runID != "" {
+		rec, err := ps.waitChildRunTerminal(ctx, runID)
+		return rec, err == nil
+	}
+	for {
+		if _, ok := ps.childRunInFlight(); !ok {
+			return nil, true
+		}
+		select {
+		case <-ctx.Done():
+			return nil, false
+		case <-time.After(peerChildRunTeardownPoll):
+		}
+	}
+}
 // childRunGuardPattern extracts the run id from the child's one-run
 // re-execute guard. The KB-94 wire shape is a message-only FailedPrecondition
 // status (`child run %q is still in flight for workflow %q; ...`), so the id

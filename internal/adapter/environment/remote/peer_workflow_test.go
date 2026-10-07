@@ -598,3 +598,136 @@ func TestChildRunGuardPatternBoundedParsing(t *testing.T) {
 		t.Errorf("unrelated error parsed a run id %q, want empty", got)
 	}
 }
+
+// TestPeerTeardownSettlesChildRunFromJournalEvidence (KB-96 acceptance 1):
+// the parent's teardown wait consumes the child's journal terminal arm as
+// cancel-settle evidence before closing the session on a healthy child —
+// cancel, then journal-settled truth, then close_session, and the parent
+// tracker ends up with the cancelled outcome without any force kill.
+func TestPeerTeardownSettlesChildRunFromJournalEvidence(t *testing.T) {
+	fx := startWorkflowPeerFixture(t, []string{peerWorkflowV1Capability})
+	defer func() { _ = fx.provider.Stop(context.Background()) }()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	fx.peer.appendEvent(childRunStartedArm("run-t1"))
+	waitForInFlightRun(t, fx.ps, "run-t1")
+
+	if err := fx.provider.CloseHandle(ctx, "noop", ""); err != nil {
+		t.Fatalf("CloseHandle: %v", err)
+	}
+	ops := fx.peer.opsSnapshot()
+	cancelAt, closeAt := opIndexOf(ops, "cancel_child_run:"), opIndexOf(ops, "close_session:")
+	if cancelAt == -1 || closeAt == -1 || cancelAt > closeAt {
+		t.Fatalf("teardown ops = %v, want cancel before close", ops)
+	}
+	// CloseHandle unconditionally issues its own best-effort kill after the
+	// close, so force-kill evidence is a kill op strictly between the cancel
+	// and the close — none may appear on the healthy settle path.
+	for i := cancelAt + 1; i < closeAt; i++ {
+		if strings.HasPrefix(ops[i], "kill_child:") {
+			t.Errorf("healthy settle path force-killed the child: ops = %v", ops)
+			break
+		}
+	}
+	if rec := fx.ps.childRuns["run-t1"]; rec == nil || rec.TerminalOutcome != "cancelled" {
+		t.Errorf("settled record = %+v, want the cancelled terminal from the journal evidence", rec)
+	}
+}
+
+// TestPeerTeardownForceKillsUnsettledChildRun (KB-96 acceptance 2): a child
+// that acks cancel but keeps the run in flight past the settle grace is
+// force-killed (kill_child after the parent's budget), the partially-torn-
+// down teardown still proceeds to close (deterministic step outcome, no
+// hang), and the parent never waited through the whole default budget.
+func TestPeerTeardownForceKillsUnsettledChildRun(t *testing.T) {
+	fx := startWorkflowPeerFixture(t, []string{peerWorkflowV1Capability})
+	defer func() { _ = fx.provider.Stop(context.Background()) }()
+	fx.ps.teardownSettleGrace = 300 * time.Millisecond
+	fx.peer.holdRunOnCancel = true
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	fx.peer.appendEvent(childRunStartedArm("run-t2"))
+	waitForInFlightRun(t, fx.ps, "run-t2")
+
+	start := time.Now()
+	if err := fx.provider.CloseHandle(ctx, "noop", ""); err != nil {
+		t.Fatalf("CloseHandle: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("forced teardown took %s, want bounded by the shrunken settle grace and kill timing", elapsed)
+	}
+	ops := fx.peer.opsSnapshot()
+	cancelAt, killAt, closeAt := opIndexOf(ops, "cancel_child_run:"), opIndexOf(ops, "kill_child:"), opIndexOf(ops, "close_session:")
+	if cancelAt == -1 || closeAt == -1 || !(cancelAt < killAt && killAt < closeAt) {
+		t.Fatalf("teardown ops = %v, want cancel -> force kill -> close", ops)
+	}
+}
+
+// TestPeerPauseResumeAcksIdleChildRun (KB-96 D2/D3): a workflow.v1 peer
+// with no in-flight child run takes parent pause/resume as idempotent acks
+// WITHOUT a control round-trip (the child hosts its own state; settled
+// runs already persisted their checkpoints), while a live child run still
+// parks/resumes through the real Pause/Resume RPCs. A legacy peer keeps
+// the unconditional RPC.
+func TestPeerPauseResumeAcksIdleChildRun(t *testing.T) {
+	fx := startWorkflowPeerFixture(t, []string{peerWorkflowV1Capability})
+	defer func() { _ = fx.provider.Stop(context.Background()) }()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := fx.handle.Pause(ctx, "s1"); err != nil {
+		t.Fatalf("Pause (idle child run): %v", err)
+	}
+	if err := fx.handle.Resume(ctx, "s1"); err != nil {
+		t.Fatalf("Resume (idle child run): %v", err)
+	}
+	if ops := fx.peer.opsSnapshot(); opIndexOf(ops, "pause:") != -1 || opIndexOf(ops, "resume:") != -1 {
+		t.Fatalf("idle child run issued Pause/Resume RPCs; ops = %v", ops)
+	}
+
+	// A live child run still goes over the wire (the child engine's
+	// boundary checkpoint).
+	fx.peer.appendEvent(childRunStartedArm("run-p1"))
+	waitForInFlightRun(t, fx.ps, "run-p1")
+	if err := fx.handle.Pause(ctx, "s1"); err != nil {
+		t.Fatalf("Pause (live child run): %v", err)
+	}
+	if ops := fx.peer.opsSnapshot(); opIndexOf(ops, "pause:") == -1 {
+		t.Fatalf("live child run never parked over the Pause RPC; ops = %v", ops)
+	}
+
+	// Once the run settles on the journal the resume is an idempotent ack
+	// again — settled child runs already persisted their own checkpoints.
+	fx.peer.appendEvent(childRunTerminalArm("run-p1", "success"))
+	waitForNoInFlightRun(t, fx.ps)
+	before := len(fx.peer.opsSnapshot())
+	if err := fx.handle.Resume(ctx, "s1"); err != nil {
+		t.Fatalf("Resume (settled child run): %v", err)
+	}
+	if ops := fx.peer.opsSnapshot(); opIndexOf(ops[before:], "resume:") != -1 {
+		t.Fatalf("settled child run resumed over the wire; ops after settle = %v", ops[before:])
+	}
+}
+
+// TestPeerPauseResumeLegacyPeerKeepsRPC: a peer without the workflow.v1
+// capability has no child-run tracker, so its pause/resume stays the
+// unconditional v2 RPC — the legacy behavior is untouched.
+func TestPeerPauseResumeLegacyPeerKeepsRPC(t *testing.T) {
+	fx := startWorkflowPeerFixture(t, nil)
+	defer func() { _ = fx.provider.Stop(context.Background()) }()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := fx.handle.Pause(ctx, "s1"); err != nil {
+		t.Fatalf("Pause: %v", err)
+	}
+	if err := fx.handle.Resume(ctx, "s1"); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	ops := fx.peer.opsSnapshot()
+	if opIndexOf(ops, "pause:") == -1 || opIndexOf(ops, "resume:") == -1 {
+		t.Fatalf("legacy peer pause/resume = %v, want both RPCs sent", ops)
+	}
+}

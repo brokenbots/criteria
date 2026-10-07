@@ -90,6 +90,11 @@ type fakePeer struct {
 	pauseSignaled     bool
 	resumeSignaled    bool
 
+	// holdRunOnCancel keeps the child run in flight after an accepted
+	// CancelChildRun (the wedged-child shape): the parent's teardown then
+	// exercises its force-kill path (KB-96).
+	holdRunOnCancel bool
+
 	v2.UnimplementedAdapterServiceServer
 
 	srv      *grpc.Server
@@ -190,6 +195,30 @@ func (f *fakePeer) appendEvent(ev *criteriav1.SupervisionEvent) {
 	f.journal = append(f.journal, ev)
 }
 
+// settleOnCancel journals terminal arms for the cancelled child run(s): the
+// fake's healthy settle evidence on the journal. A named run settles that
+// one; an empty run id ("the current one") settles every started-and-
+// unsettled run in the fake's journal.
+func (f *fakePeer) settleOnCancel(runID string) {
+	f.journalMu.Lock()
+	inFlight := map[string]bool{}
+	for _, ev := range f.journal {
+		switch kind := ev.GetKind().(type) {
+		case *criteriav1.SupervisionEvent_ChildRunStarted:
+			inFlight[kind.ChildRunStarted.GetRunId()] = true
+		case *criteriav1.SupervisionEvent_ChildRunTerminal:
+			delete(inFlight, kind.ChildRunTerminal.GetRunId())
+		}
+	}
+	f.journalMu.Unlock()
+	for id := range inFlight {
+		if runID != "" && id != runID {
+			continue
+		}
+		f.appendEvent(childRunTerminalArm(id, "cancelled"))
+	}
+}
+
 // duplicateEvent re-emits an existing journal entry verbatim: same
 // event_seq, delivered again on a later replay (at-least-once delivery).
 func (f *fakePeer) duplicateEvent(seq uint64) {
@@ -224,16 +253,26 @@ func (f *fakePeer) control(_ context.Context, req *criteriav1.ControlRequest) *c
 	f.mu.Unlock()
 	if req.GetCancelChildRun() != nil {
 		// KB-95: the child-run cancel control is the child-side arm of the
-		// teardown ordering contract; the fake ACKs it accepted.
+		// teardown ordering contract; the fake ACKs it accepted. A healthy
+		// child settles the cancelled run promptly (KB-96: the journal
+		// terminal arm is the settle evidence the parent waits for), so the
+		// fake journals a terminal for the acknowledged run — unless the
+		// test holds the run open to exercise the force-killing teardown.
 		f.mu.Lock()
 		f.ops = append(f.ops, "cancel_child_run:"+req.GetCancelChildRun().GetRunId())
 		f.mu.Unlock()
+		if !f.holdRunOnCancel {
+			f.settleOnCancel(req.GetCancelChildRun().GetRunId())
+		}
 		return &criteriav1.ControlResponse{Accepted: true}
 	}
 	if req.GetKillChild() != nil {
 		if f.rejectKillChild {
 			return &criteriav1.ControlResponse{Accepted: false, Detail: "kill rejected by test peer"}
 		}
+		f.mu.Lock()
+		f.ops = append(f.ops, "kill_child:")
+		f.mu.Unlock()
 		// A kill request on the peer model ends the adapter child: record the
 		// exit in the journal so the host learns it through Supervise.
 		f.appendEvent(&criteriav1.SupervisionEvent{
@@ -294,6 +333,8 @@ func (f *fakePeer) CloseSession(ctx context.Context, req *v2.CloseSessionRequest
 func (f *fakePeer) Pause(ctx context.Context, req *v2.PauseRequest) (*v2.PauseResponse, error) {
 	f.mu.Lock()
 	f.paused = true
+	// RPC witness for the KB-96 pause/resume idempotent-ack tests.
+	f.ops = append(f.ops, "pause:"+req.GetSessionId())
 	if f.runPausedCh != nil && !f.pauseSignaled {
 		close(f.runPausedCh)
 		f.pauseSignaled = true
@@ -305,6 +346,7 @@ func (f *fakePeer) Pause(ctx context.Context, req *v2.PauseRequest) (*v2.PauseRe
 func (f *fakePeer) Resume(ctx context.Context, req *v2.ResumeRequest) (*v2.ResumeResponse, error) {
 	f.mu.Lock()
 	f.paused = false
+	f.ops = append(f.ops, "resume:"+req.GetSessionId())
 	if f.runResumedCh != nil && !f.resumeSignaled {
 		close(f.runResumedCh)
 		f.resumeSignaled = true
