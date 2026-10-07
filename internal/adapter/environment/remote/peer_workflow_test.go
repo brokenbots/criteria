@@ -674,6 +674,50 @@ func TestPeerTeardownForceKillsUnsettledChildRun(t *testing.T) {
 	}
 }
 
+// TestPeerTeardownIdleChildRunCancelRejectedSkipsWait (KB-96 acceptance 1,
+// stop × child between nodes): the child host has no live run when the
+// parent tears down (nothing tracked parent-side either) — the cancel
+// control is still issued with the empty id (KB-95 contract), the child
+// REJECTS it (nothing in flight child-side), and the teardown proceeds
+// straight to the close: cancel rejected ⇒ nothing waited on and no force
+// kill, the degenerate-case row of the run-control semantics table.
+func TestPeerTeardownIdleChildRunCancelRejectedSkipsWait(t *testing.T) {
+	fx := startWorkflowPeerFixture(t, []string{peerWorkflowV1Capability})
+	defer func() { _ = fx.provider.Stop(context.Background()) }()
+	fx.peer.rejectCancelNoLiveRun = true
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	if err := fx.provider.CloseHandle(ctx, "noop", ""); err != nil {
+		t.Fatalf("CloseHandle: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("rejected-cancel teardown took %s, want an immediate close (no settle wait, no kill)", elapsed)
+	}
+	cancels := fx.peer.cancelChildRunControls()
+	if len(cancels) == 0 {
+		t.Fatal("no CancelChildRun control reached the peer on the CloseHandle teardown path")
+	}
+	if id := cancels[0].GetCancelChildRun().GetRunId(); id != "" {
+		t.Errorf("cancel run id = %q, want the empty id (nothing tracked in flight)", id)
+	}
+	ops := fx.peer.opsSnapshot()
+	cancelAt, killAt, closeAt := opIndexOf(ops, "cancel_child_run:"), opIndexOf(ops, "kill_child:"), opIndexOf(ops, "close_session:")
+	if cancelAt == -1 || closeAt == -1 || cancelAt > closeAt {
+		t.Fatalf("teardown ops = %v, want cancel before close", ops)
+	}
+	if killAt != -1 && killAt < closeAt {
+		t.Errorf("cancel rejection still force-killed before close: ops = %v", ops)
+	}
+	fx.ps.mu.Lock()
+	tracked := len(fx.ps.childRuns)
+	fx.ps.mu.Unlock()
+	if tracked != 0 {
+		t.Errorf("tracker holds %d record(s) after an idle teardown, want none", tracked)
+	}
+}
+
 // TestPeerTeardownPartialArmEvidenceRules (KB-96): how the parent tracker
 // treats the ChildRunTeardownPartial arm — it settles only a live
 // tracked run (the forced kill is the run's last truth), never creates an
