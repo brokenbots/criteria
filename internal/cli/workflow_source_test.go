@@ -1072,8 +1072,21 @@ func TestResolveWorkflowSource_GitSubtreeSuffix(t *testing.T) {
 	if testing.Short() {
 		t.Skip("requires network git access")
 	}
-	dir, origin, err := resolveWorkflowSource(context.Background(),
-		"git::https://github.com/brokenbots/workflow-example.git//linear_develop_v1?ref=7645feb42e6f2c473696bd63997fca111d41453d", "7645feb42e6f2c473696bd63997fca111d41453d")
+	// A pinned-SHA source bypasses resolveGitRef's bounded ls-remote and goes
+	// straight to the go-getter clone, which on a runner without egress to
+	// github.com stalls for minutes until the package timeout kills the run.
+	// Probe reachability first and skip when the remote cannot be reached; the
+	// full subtree path stays covered on runners where it actually is.
+	const repoURL = "https://github.com/brokenbots/workflow-example.git"
+	skipOnUnreachableGitRemote(t, repoURL, 30*time.Second)
+
+	// Bound the fetch itself: a remote that stalls between probe and clone
+	// would otherwise hang until the package timeout. All git subprocesses
+	// launched by the fetcher and by go-getter honor ctx.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	dir, origin, err := resolveWorkflowSource(ctx,
+		"git::"+repoURL+"//linear_develop_v1?ref=7645feb42e6f2c473696bd63997fca111d41453d", "7645feb42e6f2c473696bd63997fca111d41453d")
 	if err != nil {
 		t.Fatalf("subtree resolution: %v", err)
 	}
@@ -1088,5 +1101,32 @@ func TestResolveWorkflowSource_GitSubtreeSuffix(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "main.chcl")); err != nil {
 		t.Fatalf("subtree main.chcl missing: %v", err)
+	}
+}
+
+// skipOnUnreachableGitRemote probes a git remote with a bounded ls-remote and
+// skips the test when the remote cannot be reached. Network-dependent tests
+// that clone through go-getter would otherwise stall for minutes on runners
+// without egress until the package timeout kills the run; the probe converts
+// that into a fast, explicit skip. GIT_TERMINAL_PROMPT=0 keeps the probe from
+// blocking on a credential prompt if the remote answers with an auth
+// challenge instead of data.
+func skipOnUnreachableGitRemote(t *testing.T, repoURL string, timeout time.Duration) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "ls-remote", "--", repoURL, "HEAD")
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	out, err := cmd.Output()
+	if err != nil {
+		detail := ""
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
+			detail = ": " + strings.TrimSpace(string(exitErr.Stderr))
+		}
+		t.Skipf("skipping: git remote %s unreachable in this environment (%v%s); requires network git access", repoURL, err, detail)
+	}
+	if len(bytes.TrimSpace(out)) == 0 {
+		t.Skipf("skipping: git remote %s answered without refs; requires network git access", repoURL)
 	}
 }
