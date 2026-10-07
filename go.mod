@@ -3,7 +3,7 @@ module github.com/brokenbots/criteria
 go 1.26.6
 
 require (
-	connectrpc.com/connect v1.20.0
+	connectrpc.com/connect/v2 v2.0.0
 	github.com/brokenbots/criteria-adapter-proto v0.7.0
 	github.com/brokenbots/criteria-go-adapter-sdk v0.5.3
 	github.com/brokenbots/criteria/sdk v0.0.0
@@ -46,7 +46,6 @@ require (
 	cloud.google.com/go/iam v1.12.0 // indirect
 	cloud.google.com/go/monitoring v1.30.0 // indirect
 	cloud.google.com/go/storage v1.65.1 // indirect
-	connectrpc.com/connect/v2 v2.0.0 // indirect
 	dario.cat/mergo v1.0.2 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.33.0 // indirect
