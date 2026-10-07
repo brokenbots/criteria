@@ -13,10 +13,11 @@ import (
 var (
 	testAdapterBin string
 	testEchoBin    string
+	testShiftBin   string
 )
 
 func TestMain(m *testing.M) {
-	testAdapterBin, testEchoBin = buildAdapterAndFixtureBinaries()
+	testAdapterBin, testEchoBin, testShiftBin = buildAdapterAndFixtureBinaries()
 	os.Exit(m.Run())
 }
 
@@ -39,7 +40,7 @@ func TestMCPAdapterConformance(t *testing.T) {
 	)
 }
 
-func buildAdapterAndFixtureBinaries() (adapterBin, echoBin string) {
+func buildAdapterAndFixtureBinaries() (adapterBin, echoBin, shiftBin string) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		panic("resolve caller path")
@@ -48,6 +49,7 @@ func buildAdapterAndFixtureBinaries() (adapterBin, echoBin string) {
 	tmpDir := os.TempDir()
 	adapterBin = filepath.Join(tmpDir, "criteria-adapter-mcp-test")
 	echoBin = filepath.Join(tmpDir, "echo-mcp-test")
+	shiftBin = filepath.Join(tmpDir, "shift-mcp-test")
 
 	buildAdapter := exec.Command("go", "build", "-o", adapterBin, "./cmd/criteria-adapter-mcp")
 	buildAdapter.Dir = moduleRoot
@@ -61,5 +63,11 @@ func buildAdapterAndFixtureBinaries() (adapterBin, echoBin string) {
 		panic("build echo fixture: " + err.Error() + "\n" + string(out))
 	}
 
-	return adapterBin, echoBin
+	buildShiftFixture := exec.Command("go", "build", "-o", shiftBin, "./cmd/criteria-adapter-mcp/testfixtures/shift-mcp")
+	buildShiftFixture.Dir = moduleRoot
+	if out, err := buildShiftFixture.CombinedOutput(); err != nil {
+		panic("build shift fixture: " + err.Error() + "\n" + string(out))
+	}
+
+	return adapterBin, echoBin, shiftBin
 }
