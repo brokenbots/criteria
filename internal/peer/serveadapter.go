@@ -28,13 +28,12 @@ import (
 // in-flight Execute stream then resolves with a typed canceled failure.
 type ChildRunCanceler interface {
 	// CancelChildRun cancels the in-flight child run. A non-empty runID is
-// matched exactly; an empty runID targets "the current one" — the parent's
-// teardown uses it to cover a child run it has not observed on its tracker
-// yet (KB-96 / ADR-0008 teardown evidence).
-	// selects that specific run; empty means "the current one". It returns
-	// the matched run id and whether a matching in-flight run was found
-	// (accepted). Cancellation is cooperative: the adapter does not block
-	// the RPC on the run settling — the Execute stream carries the result.
+	// matched exactly; an empty runID targets "the current one" — the parent's
+	// teardown uses it to cover a child run it has not observed on its tracker
+	// yet (KB-96 / ADR-0008 teardown evidence). It returns the matched run id
+	// and whether a matching in-flight run was found (accepted). Cancellation
+	// is cooperative: the adapter does not block the RPC on the run settling —
+	// the Execute stream carries the result.
 	CancelChildRun(runID string) (matched string, accepted bool)
 }
 

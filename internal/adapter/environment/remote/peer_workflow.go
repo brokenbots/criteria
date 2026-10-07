@@ -162,27 +162,30 @@ func (ps *peerSession) applyChildRunArmLocked(ev *criteriav1.SupervisionEvent) s
 			"run_id", id, "outcome", rec.TerminalOutcome)
 		return id
 	case *criteriav1.SupervisionEvent_ChildRunTeardownPartial:
-		// KB-96 (ADR-0008 D2): the parent's force kill landed on an
-		// in-flight run whose terminal never journaled — the partial arm is
-		// the child's last run truth, so it settles the run (deterministic
-		// teardown: no waiter ever hangs on a killed run). A run the
-		// tracker never observed carries no in-flight truth to correct.
-		partial := kind.ChildRunTeardownPartial
-		id := partial.GetRunId()
-		if id == "" {
-			return ""
-		}
-		rec := ps.childRuns[id]
-		if rec == nil || !rec.inFlight() {
-			return ""
-		}
-		rec.TerminalOutcome = childRunOutcomeForceKilled
-		rec.ForcedTeardown = true
-		slog.Warn("peer child run force killed on parent teardown", "adapter", ps.dial.AdapterType,
-			"scope", ps.dial.Scope, "run_id", id, "detail", partial.GetDetail())
-		return id
+		return ps.settleChildRunPartialLocked(kind.ChildRunTeardownPartial)
 	}
 	return ""
+}
+
+// settleChildRunPartialLocked (KB-96, ADR-0008 D2): the parent's force kill
+// landed on an in-flight run whose terminal never journaled — the partial
+// arm is the child's last run truth, so it settles the run (deterministic
+// teardown: no waiter ever hangs on a killed run). A run the tracker never
+// observed carries no in-flight truth to correct. Caller holds ps.mu.
+func (ps *peerSession) settleChildRunPartialLocked(partial *criteriav1.ChildRunTeardownPartial) string {
+	id := partial.GetRunId()
+	if id == "" {
+		return ""
+	}
+	rec := ps.childRuns[id]
+	if rec == nil || !rec.inFlight() {
+		return ""
+	}
+	rec.TerminalOutcome = childRunOutcomeForceKilled
+	rec.ForcedTeardown = true
+	slog.Warn("peer child run force killed on parent teardown", "adapter", ps.dial.AdapterType,
+		"scope", ps.dial.Scope, "run_id", id, "detail", partial.GetDetail())
+	return id
 }
 
 // noteChildRunTerminal wakes every waiter registered on the settled run.
@@ -335,7 +338,16 @@ func (ps *peerSession) teardownInFlightChildRun(ctx context.Context) {
 	slog.Warn("peer child run teardown incomplete",
 		"adapter", ps.dial.AdapterType, "scope", ps.dial.Scope, "run_id", runID,
 		"action", "kill_child issued after the settle grace expired")
+	ps.forceKillInFlightChildRun(ctx, runID)
+}
 
+// forceKillInFlightChildRun issues the KillChild control after the settle
+// grace expired and, on an accepted kill, settles the parent's own tracked
+// record: the kill is the last-knowable truth about the run (the child's
+// ChildRunTeardownPartial arm stays the child-feed evidence and only
+// confirms an already-settled record here, while a late real terminal can
+// still outrank the mark).
+func (ps *peerSession) forceKillInFlightChildRun(ctx context.Context, runID string) {
 	kctx, kcancel := context.WithTimeout(context.WithoutCancel(ctx), peerCancelChildRunTimeout)
 	defer kcancel()
 	killResp, killErr := ps.control(kctx, &criteriav1.ControlRequest{
@@ -350,12 +362,6 @@ func (ps *peerSession) teardownInFlightChildRun(ctx context.Context) {
 	case !killResp.GetAccepted():
 		slog.Warn("peer rejected child run force kill", "adapter", ps.dial.AdapterType, "run_id", runID, "detail", killResp.GetDetail())
 	default:
-		// KB-96 (ADR-0008 D2): the kill is the parent's own last-knowable
-		// truth about the run it tracked in flight — settle the record
-		// immediately. The child's ChildRunTeardownPartial journal arm
-		// stays the child-feed evidence (and replays into a restarted
-		// parent); here it only confirms an already-settled record or is
-		// outranked by a late real terminal.
 		ps.noteChildRunForceKilled(runID)
 	}
 }
@@ -404,6 +410,7 @@ func (ps *peerSession) waitChildRunSettle(ctx context.Context, runID string) (*c
 		}
 	}
 }
+
 // childRunGuardPattern extracts the run id from the child's one-run
 // re-execute guard. The KB-94 wire shape is a message-only FailedPrecondition
 // status (`child run %q is still in flight for workflow %q; ...`), so the id

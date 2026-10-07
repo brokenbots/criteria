@@ -53,8 +53,30 @@ func (j *EventJournal) Append(kind EventKind, adapterType, scope, sessionID stri
 	}
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	j.nextSeq++
+	ev, err := newSupervisionEvent(kind, j.nextSeq, adapterType, scope, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	j.ring = append(j.ring, ev)
+	if over := len(j.ring) - j.limit; over > 0 {
+		j.ring = j.ring[over:]
+	}
+	close(j.appended)
+	j.appended = make(chan struct{})
+	return ev, nil
+}
+
+// newSupervisionEvent builds the journal event and validates its Kind:
+// unknown payloads are rejected, and the child-run arms (ADR-0008) carry
+// required identity fields. The child-run arms are structurally accepted
+// like every other known payload — the journal is capability-agnostic
+// durable truth, so gate checks for the workflow.v1-scoped arms belong at
+// their emission / Control call sites, never here (journal truth must
+// survive reconnect renegotiation).
+func newSupervisionEvent(kind EventKind, seq uint64, adapterType, scope, sessionID string) (*criteriav1.SupervisionEvent, error) {
 	ev := &criteriav1.SupervisionEvent{
-		EventSeq:    j.nextSeq + 1,
+		EventSeq:    seq,
 		At:          timestamppb.Now(),
 		AdapterType: adapterType,
 		Scope:       scope,
@@ -71,39 +93,27 @@ func (j *EventJournal) Append(kind EventKind, adapterType, scope, sessionID stri
 		ev.Kind = k
 	case *criteriav1.SupervisionEvent_Heartbeat:
 		ev.Kind = k
-	// ADR-0008 child-run arms: structurally accepted like every other
-	// known payload — the journal is capability-agnostic durable truth, so
-	// gate checks for the workflow.v1-scoped arms belong at their
-	// emission/Control call sites, never here (journal truth must survive
-	// reconnect renegotiation).
 	case *criteriav1.SupervisionEvent_ChildRunStarted:
-		ev.Kind = k
 		if k.ChildRunStarted.GetRunId() == "" {
 			return nil, fmt.Errorf("child run started without a run_id")
 		}
-	case *criteriav1.SupervisionEvent_ChildRunTerminal:
 		ev.Kind = k
+	case *criteriav1.SupervisionEvent_ChildRunTerminal:
 		if k.ChildRunTerminal.GetRunId() == "" {
 			return nil, fmt.Errorf("child run terminal without a run_id")
 		}
 		if k.ChildRunTerminal.GetOutcome() == "" {
 			return nil, fmt.Errorf("child run terminal without an outcome")
 		}
-	case *criteriav1.SupervisionEvent_ChildRunTeardownPartial:
 		ev.Kind = k
+	case *criteriav1.SupervisionEvent_ChildRunTeardownPartial:
 		if k.ChildRunTeardownPartial.GetRunId() == "" {
 			return nil, fmt.Errorf("child run teardown partial without a run_id")
 		}
+		ev.Kind = k
 	default:
 		return nil, fmt.Errorf("unsupported supervision event payload %T", kind)
 	}
-	j.nextSeq++
-	j.ring = append(j.ring, ev)
-	if over := len(j.ring) - j.limit; over > 0 {
-		j.ring = j.ring[over:]
-	}
-	close(j.appended)
-	j.appended = make(chan struct{})
 	return ev, nil
 }
 
