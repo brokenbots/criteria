@@ -75,6 +75,61 @@ func TestKB156_LeasedNameDelegatesToOwnerSession(t *testing.T) {
 	}
 }
 
+// TestKB156_DelegatedExecuteMirrorsTeardownWindow pins the CRI-287
+// failure-domain re-derivation for shared sessions: the engine stamps the
+// step-timeout teardown window on the manager that ran the canceled step (a
+// leasing child), but delegated executes crash-classify on the OWNER's
+// window. The delegation must mirror the child's mark onto the owner so a
+// teardown cascade observed on the shared session routes as a step timeout,
+// not as a crash that would respawn the session out from under the remaining
+// callers. Mirroring is monotone: it only opens a closed owner window.
+func TestKB156_DelegatedExecuteMirrorsTeardownWindow(t *testing.T) {
+	owner, child, _, ctx := kb156LeaseSetup(t)
+
+	if leased := child.LeaseToolResourcesFrom(owner, []string{"mcp.probe"}); len(leased) != 1 {
+		t.Fatalf("LeaseToolResourcesFrom = %v; want [mcp.probe]", leased)
+	}
+
+	// No mark on the child: the owner's window must stay closed.
+	if _, err := child.execute(ctx, "mcp.probe", kb156CalleeStep(), nil, toolCallNesting{}, nil); err != nil {
+		t.Fatalf("delegated execute: %v", err)
+	}
+	if owner.StepTimeoutTeardownWindowOpen() {
+		t.Errorf("owner teardown window open with no child mark; want closed")
+	}
+
+	// Mark the child (engine canceled a step on the leasing scope) and
+	// delegate again: the owner's window must open, mirroring the child's
+	// exact mark time so the remaining window is preserved.
+	child.MarkEngineStepTimeoutTeardown()
+	wantMark := child.engineStepTimeoutTeardownAt.Load()
+	if _, err := child.execute(ctx, "mcp.probe", kb156CalleeStep(), nil, toolCallNesting{}, nil); err != nil {
+		t.Fatalf("delegated execute after child mark: %v", err)
+	}
+	if !owner.StepTimeoutTeardownWindowOpen() {
+		t.Errorf("owner teardown window closed after mirroring the child's mark; want open")
+	}
+	if got := owner.engineStepTimeoutTeardownAt.Load(); got != wantMark {
+		t.Errorf("owner mark = %d; want the child's %d (remaining window preserved)", got, wantMark)
+	}
+
+	// Monotone: with the owner's window already open (its own earlier mark),
+	// a delegated execute carrying a fresh child mark must NOT replace it.
+	owner.MarkEngineStepTimeoutTeardown()
+	ownerMark := owner.engineStepTimeoutTeardownAt.Load()
+	child.MarkEngineStepTimeoutTeardown()
+	if _, err := child.execute(ctx, "mcp.probe", kb156CalleeStep(), nil, toolCallNesting{}, nil); err != nil {
+		t.Fatalf("delegated execute for monotone check: %v", err)
+	}
+	if got := owner.engineStepTimeoutTeardownAt.Load(); got != ownerMark {
+		t.Errorf("owner mark replaced with %d; want the owner's own %d preserved", got, ownerMark)
+	}
+
+	// Release so the setup cleanup does not observe a refused close for a
+	// session that is still (correctly) lease-anchored.
+	child.ReleaseSharedToolResources()
+}
+
 // TestKB156_SharedSessionCloseRefusedUntilLastLeaseReleases: one caller's
 // close must not tear the shared session out from under other callers. The
 // close is refused (typed SessionSharedError) while leases are outstanding,
