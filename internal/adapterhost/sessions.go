@@ -458,11 +458,13 @@ func mergeMapInto[K comparable, V any](dst, src map[K]V) map[K]V {
 // Names m already hosts (bound session or verified record) are skipped — m
 // would resolve them locally anyway — as are names m already leases (the
 // lease is idempotent; a duplicate registration would leak an owner
-// refcount entry). Names whose declaring environment is
-// remote are skipped (they dispatch through the phone-home shims borrowed by
-// BorrowRemoteProvisioningFrom; the remote-environment shared-session route
-// is tracked separately). Names src cannot host (no bound session and no
-// verified record) are skipped so the nested dispatch keeps reporting its
+// refcount entry). A remote-declared tool resource leases the same way —
+// KB-160's host-of-record route: the owner hosts the environment's ONE peer
+// phone-home session, so nested calls travel over the peer connection the
+// owner opened and the peer opens and serves exactly one shared session for
+// the environment. Names src cannot host (no bound session and no verified
+// record — including a remote callee whose owner never verified it) are
+// skipped so the nested dispatch keeps reporting its
 // own typed unknown_adapter resolution error. Ownership resolves through
 // src's own leases (pass-through), so a lease never creates an intermediate
 // hop.
@@ -548,20 +550,19 @@ func (m *SessionManager) leaseToolResourceLocked(src *SessionManager, name strin
 }
 
 // leaseEligibleLocked reports whether name may receive a shared-session
-// lease: no live binding, no verified record of its own, and a host-local
-// declaring environment. Unresolvable declarations lease as-is — when the
-// owner cannot host the name either, the name is skipped and the nested
-// dispatch reports its typed unknown_adapter error.
+// lease: no live binding and no verified record of its own. Hostability —
+// including for a remote-declared tool resource, whose owner hosts the
+// environment's ONE peer phone-home session (KB-160 host-of-record route) —
+// is decided on the owner, not here. Unresolvable declarations lease as-is
+// — when the owner cannot host the name either, the name is skipped and the
+// nested dispatch reports its typed unknown_adapter error.
 // m.mu must be held.
 func (m *SessionManager) leaseEligibleLocked(name string) bool {
 	if _, ok := m.sessions[name]; ok {
 		return false
 	}
-	if _, ok := m.verified[name]; ok {
-		return false
-	}
-	node, graph := m.adapterDeclarationLocked(name)
-	return node == nil || graph == nil || !declaredAdapterEnvironmentIsRemote(node, graph)
+	_, ok := m.verified[name]
+	return !ok
 }
 
 // leaseOwner returns the manager whose shared session serves the named
@@ -598,9 +599,11 @@ func (m *SessionManager) snapshotToolResourceInfos(names []string) map[string]*w
 
 // acquireToolResourceLease increments the shared-session lease count for the
 // named tool resource (KB-156). It succeeds only when this manager hosts the
-// resource — a bound session or a verified record — and its declaring
-// environment is host-local; remote tool resources keep the per-scope
-// phone-home shim route. Thread-safe.
+// resource — a bound session or a verified record. Host-local and remote-
+// declared tool resources both qualify (KB-160): a remote callee's shared
+// session is the environment's ONE peer phone-home session the owner opened,
+// so the nested call travels over the peer connection (host-of-record route)
+// instead of each caller binding its own copy. Thread-safe.
 func (m *SessionManager) acquireToolResourceLease(name string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -608,9 +611,6 @@ func (m *SessionManager) acquireToolResourceLease(name string) bool {
 		if _, verified := m.verified[name]; !verified {
 			return false
 		}
-	}
-	if node, graph := m.adapterDeclarationLocked(name); node != nil && graph != nil && declaredAdapterEnvironmentIsRemote(node, graph) {
-		return false
 	}
 	if m.toolResourceLeases == nil {
 		m.toolResourceLeases = make(map[string]int)

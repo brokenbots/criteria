@@ -62,6 +62,16 @@ func (s *fakeSink) OnRunCompleted(state string, ok bool) {
 	s.terminalOK = ok
 	s.mu.Unlock()
 }
+
+// terminalState returns the recorded terminal state and success flag. Tests
+// that poll the sink while Run is still in flight must use this accessor —
+// reading terminal/terminalOK directly races with OnRunCompleted on the run's
+// goroutine.
+func (s *fakeSink) terminalState() (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.terminal, s.terminalOK
+}
 func (s *fakeSink) OnRunFailed(reason, step string) { s.failure = reason }
 func (s *fakeSink) OnStepEntered(step, _ string, _ int) {
 	s.mu.Lock()
