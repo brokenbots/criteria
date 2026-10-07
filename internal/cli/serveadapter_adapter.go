@@ -351,13 +351,17 @@ func (c *serveAdapterClient) Execute(_ context.Context, req *criteriav2.ExecuteR
 // CancelChildRun implements peer.ChildRunCanceler: the Control CancelChildRun
 // arm tears the child run down through the engine's real stop machinery (the
 // engine turns context cancellation into a real terminal run-failure event).
+// An empty run id targets "the current one": the child hosts at most one
+// live run per session, and the parent's teardown sends the empty id to
+// cover a child run it has not observed on its tracker yet (KB-95 wire
+// contract, KB-96 teardown evidence).
 func (c *serveAdapterClient) CancelChildRun(runID string) (string, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.run == nil || c.run.id != runID {
+	if c.run == nil || (runID != "" && c.run.id != runID) {
 		return "", false
 	}
-	return c.requestRunCancelLocked(runID), true
+	return c.requestRunCancelLocked(c.run.id), true
 }
 
 // requestRunCancelLocked cancels the named live run if it is still active.

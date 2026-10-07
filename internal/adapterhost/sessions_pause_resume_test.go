@@ -3,6 +3,7 @@ package adapterhost
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -262,6 +263,51 @@ func TestSessionManager_PauseAll_FirstErrorReturned(t *testing.T) {
 	}
 	if h2.pauseCount != 1 {
 		t.Fatalf("expected h2 pause to still be called despite h1 error, got %d", h2.pauseCount)
+	}
+}
+
+// TestSessionManager_PauseAll_JoinsEveryFailure (KB-96): the pause barrier
+// lands only when ALL sessions acked, so its aggregate must carry every
+// per-session failure with its session name — not just the first one.
+func TestSessionManager_PauseAll_JoinsEveryFailure(t *testing.T) {
+	sm := NewSessionManager(nil)
+	h1 := &pauseResumeMockHandle{pauseErr: errors.New("s1 stuck")}
+	h2 := &pauseResumeMockHandle{pauseErr: errors.New("s2 stuck")}
+	sm.sessions["s1"] = &Session{Name: "s1", handle: h1}
+	sm.sessions["s2"] = &Session{Name: "s2", handle: h2}
+
+	err := sm.PauseAll(context.Background())
+	if err == nil {
+		t.Fatal("expected a joined error from both failing sessions")
+	}
+	msg := err.Error()
+	for _, want := range []string{"s1 stuck", "s2 stuck", `session "s1"`, `session "s2"`} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("joined pause error %q does not mention %q", msg, want)
+		}
+	}
+}
+
+// TestSessionManager_ResumeAll_JoinsEveryFailure (KB-96): mirror assertion
+// for the resume aggregate.
+func TestSessionManager_ResumeAll_JoinsEveryFailure(t *testing.T) {
+	sm := NewSessionManager(nil)
+	h1 := &pauseResumeMockHandle{}
+	h2 := &pauseResumeMockHandle{}
+	sm.sessions["s1"] = &Session{Name: "s1", handle: h1, paused: true}
+	sm.sessions["s2"] = &Session{Name: "s2", handle: h2, paused: true}
+	h1.resumeErr = errors.New("s1 resume stuck")
+	h2.resumeErr = errors.New("s2 resume stuck")
+
+	err := sm.ResumeAll(context.Background())
+	if err == nil {
+		t.Fatal("expected a joined error from both failing sessions")
+	}
+	msg := err.Error()
+	for _, want := range []string{"s1 resume stuck", "s2 resume stuck", `session "s1"`, `session "s2"`} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("joined resume error %q does not mention %q", msg, want)
+		}
 	}
 }
 

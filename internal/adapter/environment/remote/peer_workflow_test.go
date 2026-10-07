@@ -598,3 +598,300 @@ func TestChildRunGuardPatternBoundedParsing(t *testing.T) {
 		t.Errorf("unrelated error parsed a run id %q, want empty", got)
 	}
 }
+
+// TestPeerTeardownSettlesChildRunFromJournalEvidence (KB-96 acceptance 1):
+// the parent's teardown wait consumes the child's journal terminal arm as
+// cancel-settle evidence before closing the session on a healthy child —
+// cancel, then journal-settled truth, then close_session, and the parent
+// tracker ends up with the cancelled outcome without any force kill.
+func TestPeerTeardownSettlesChildRunFromJournalEvidence(t *testing.T) {
+	fx := startWorkflowPeerFixture(t, []string{peerWorkflowV1Capability})
+	defer func() { _ = fx.provider.Stop(context.Background()) }()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	fx.peer.appendEvent(childRunStartedArm("run-t1"))
+	waitForInFlightRun(t, fx.ps, "run-t1")
+
+	if err := fx.provider.CloseHandle(ctx, "noop", ""); err != nil {
+		t.Fatalf("CloseHandle: %v", err)
+	}
+	ops := fx.peer.opsSnapshot()
+	cancelAt, closeAt := opIndexOf(ops, "cancel_child_run:"), opIndexOf(ops, "close_session:")
+	if cancelAt == -1 || closeAt == -1 || cancelAt > closeAt {
+		t.Fatalf("teardown ops = %v, want cancel before close", ops)
+	}
+	// CloseHandle unconditionally issues its own best-effort kill after the
+	// close, so force-kill evidence is a kill op strictly between the cancel
+	// and the close — none may appear on the healthy settle path.
+	for i := cancelAt + 1; i < closeAt; i++ {
+		if strings.HasPrefix(ops[i], "kill_child:") {
+			t.Errorf("healthy settle path force-killed the child: ops = %v", ops)
+			break
+		}
+	}
+	if rec := fx.ps.childRuns["run-t1"]; rec == nil || rec.TerminalOutcome != "cancelled" {
+		t.Errorf("settled record = %+v, want the cancelled terminal from the journal evidence", rec)
+	}
+}
+
+// TestPeerTeardownForceKillsUnsettledChildRun (KB-96 acceptance 2): a child
+// that acks cancel but keeps the run in flight past the settle grace is
+// force-killed (kill_child after the parent's budget), the partially-torn-
+// down teardown still proceeds to close (deterministic step outcome, no
+// hang), and the parent never waited through the whole default budget.
+func TestPeerTeardownForceKillsUnsettledChildRun(t *testing.T) {
+	fx := startWorkflowPeerFixture(t, []string{peerWorkflowV1Capability})
+	defer func() { _ = fx.provider.Stop(context.Background()) }()
+	fx.ps.teardownSettleGrace = 300 * time.Millisecond
+	fx.peer.holdRunOnCancel = true
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	fx.peer.appendEvent(childRunStartedArm("run-t2"))
+	waitForInFlightRun(t, fx.ps, "run-t2")
+
+	start := time.Now()
+	if err := fx.provider.CloseHandle(ctx, "noop", ""); err != nil {
+		t.Fatalf("CloseHandle: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("forced teardown took %s, want bounded by the shrunken settle grace and kill timing", elapsed)
+	}
+	ops := fx.peer.opsSnapshot()
+	cancelAt, killAt, closeAt := opIndexOf(ops, "cancel_child_run:"), opIndexOf(ops, "kill_child:"), opIndexOf(ops, "close_session:")
+	if cancelAt == -1 || closeAt == -1 || !(cancelAt < killAt && killAt < closeAt) {
+		t.Fatalf("teardown ops = %v, want cancel -> force kill -> close", ops)
+	}
+
+	// The child's ChildRunTeardownPartial journal arm (the fake journals it
+	// on kill acceptance) is also the parent's settle evidence: the tracker
+	// stops considering the killed run in flight with the typed
+	// force_killed outcome — a later wait on it can never hang.
+	waitForNoInFlightRun(t, fx.ps)
+	if rec := fx.ps.childRuns["run-t2"]; rec == nil || rec.TerminalOutcome != childRunOutcomeForceKilled {
+		t.Errorf("settled record = %+v, want the force_killed outcome from the partial-teardown arm", rec)
+	}
+}
+
+// TestPeerTeardownIdleChildRunCancelRejectedSkipsWait (KB-96 acceptance 1,
+// stop × child between nodes): the child host has no live run when the
+// parent tears down (nothing tracked parent-side either) — the cancel
+// control is still issued with the empty id (KB-95 contract), the child
+// REJECTS it (nothing in flight child-side), and the teardown proceeds
+// straight to the close: cancel rejected ⇒ nothing waited on and no force
+// kill, the degenerate-case row of the run-control semantics table.
+func TestPeerTeardownIdleChildRunCancelRejectedSkipsWait(t *testing.T) {
+	fx := startWorkflowPeerFixture(t, []string{peerWorkflowV1Capability})
+	defer func() { _ = fx.provider.Stop(context.Background()) }()
+	fx.peer.rejectCancelNoLiveRun = true
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	if err := fx.provider.CloseHandle(ctx, "noop", ""); err != nil {
+		t.Fatalf("CloseHandle: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("rejected-cancel teardown took %s, want an immediate close (no settle wait, no kill)", elapsed)
+	}
+	cancels := fx.peer.cancelChildRunControls()
+	if len(cancels) == 0 {
+		t.Fatal("no CancelChildRun control reached the peer on the CloseHandle teardown path")
+	}
+	if id := cancels[0].GetCancelChildRun().GetRunId(); id != "" {
+		t.Errorf("cancel run id = %q, want the empty id (nothing tracked in flight)", id)
+	}
+	ops := fx.peer.opsSnapshot()
+	cancelAt, killAt, closeAt := opIndexOf(ops, "cancel_child_run:"), opIndexOf(ops, "kill_child:"), opIndexOf(ops, "close_session:")
+	if cancelAt == -1 || closeAt == -1 || cancelAt > closeAt {
+		t.Fatalf("teardown ops = %v, want cancel before close", ops)
+	}
+	if killAt != -1 && killAt < closeAt {
+		t.Errorf("cancel rejection still force-killed before close: ops = %v", ops)
+	}
+	fx.ps.mu.Lock()
+	tracked := len(fx.ps.childRuns)
+	fx.ps.mu.Unlock()
+	if tracked != 0 {
+		t.Errorf("tracker holds %d record(s) after an idle teardown, want none", tracked)
+	}
+}
+
+// TestPeerTeardownPartialArmEvidenceRules (KB-96): how the parent tracker
+// treats the ChildRunTeardownPartial arm — it settles only a live
+// tracked run (the forced kill is the run's last truth), never creates an
+// unobserved record, and a late REAL terminal outranks the provisional
+// force_killed mark.
+func TestPeerTeardownPartialArmEvidenceRules(t *testing.T) {
+	fx := startWorkflowPeerFixture(t, []string{peerWorkflowV1Capability})
+	defer func() { _ = fx.provider.Stop(context.Background()) }()
+
+	// A partial arm for a run the tracker never observed records nothing.
+	fx.peer.appendEvent(&criteriav1.SupervisionEvent{
+		Kind: &criteriav1.SupervisionEvent_ChildRunTeardownPartial{
+			ChildRunTeardownPartial: &criteriav1.ChildRunTeardownPartial{
+				RunId: "run-u1", Detail: "force killed on parent teardown",
+			},
+		},
+	})
+	waitFor(t, "partial arm consumed (nothing tracked)", func() bool {
+		fx.ps.mu.Lock()
+		defer fx.ps.mu.Unlock()
+		return fx.ps.childRuns["run-u1"] == nil
+	})
+
+	// Started, then partial: the run settles with the force_killed mark.
+	fx.peer.appendEvent(childRunStartedArm("run-u2"))
+	waitForInFlightRun(t, fx.ps, "run-u2")
+	fx.peer.appendEvent(&criteriav1.SupervisionEvent{
+		Kind: &criteriav1.SupervisionEvent_ChildRunTeardownPartial{
+			ChildRunTeardownPartial: &criteriav1.ChildRunTeardownPartial{
+				RunId: "run-u2", Detail: "force killed on parent teardown",
+			},
+		},
+	})
+	waitFor(t, "partial arm settles the live run", func() bool {
+		fx.ps.mu.Lock()
+		defer fx.ps.mu.Unlock()
+		rec := fx.ps.childRuns["run-u2"]
+		return rec != nil && rec.TerminalOutcome == childRunOutcomeForceKilled && rec.ForcedTeardown
+	})
+
+	// The real terminal (the forced cancel still reaching the engine) is
+	// strictly better evidence: it replaces the mark, clearing it.
+	fx.peer.appendEvent(childRunTerminalArm("run-u2", "cancelled"))
+	waitFor(t, "late real terminal outranks the mark", func() bool {
+		fx.ps.mu.Lock()
+		defer fx.ps.mu.Unlock()
+		rec := fx.ps.childRuns["run-u2"]
+		return rec != nil && rec.TerminalOutcome == "cancelled" && !rec.ForcedTeardown
+	})
+
+	// A terminal AFTER a real settle stays ignored (settled truth is
+	// final once the mark is gone).
+	fx.peer.appendEvent(childRunTerminalArm("run-u2", "success"))
+	time.Sleep(2 * peerSuperviseReplayBackoff)
+	fx.ps.mu.Lock()
+	outcome := fx.ps.childRuns["run-u2"].TerminalOutcome
+	fx.ps.mu.Unlock()
+	if outcome != "cancelled" {
+		t.Errorf("settled truth overwritten by a late terminal: %q, want cancelled", outcome)
+	}
+}
+
+// TestPeerTeardownSettledChildRunRecordPreserved (KB-96 acceptance 1, stop ×
+// child between nodes — settled shape): a child run the parent saw settle on
+// the journal (it finished its work between two parent steps) must survive
+// the teardown untouched. The tracker shows nothing in flight, so the settle
+// wait and the force kill have nothing to act on, while the KB-95 contract
+// still issues the empty-id cancel before the close; the run's settled
+// evidence (its own terminal outcome) is neither wiped nor rewritten.
+func TestPeerTeardownSettledChildRunRecordPreserved(t *testing.T) {
+	fx := startWorkflowPeerFixture(t, []string{peerWorkflowV1Capability})
+	defer func() { _ = fx.provider.Stop(context.Background()) }()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	fx.peer.appendEvent(childRunStartedArm("run-s1"))
+	fx.peer.appendEvent(childRunTerminalArm("run-s1", "success"))
+	waitFor(t, "settled record on the tracker", func() bool {
+		fx.ps.mu.Lock()
+		defer fx.ps.mu.Unlock()
+		rec := fx.ps.childRuns["run-s1"]
+		return rec != nil && rec.TerminalOutcome == "success"
+	})
+
+	start := time.Now()
+	if err := fx.provider.CloseHandle(ctx, "noop", ""); err != nil {
+		t.Fatalf("CloseHandle: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("teardown over a settled record took %s, want an immediate close (no settle wait, no kill)", elapsed)
+	}
+	ops := fx.peer.opsSnapshot()
+	cancelAt, killAt, closeAt := opIndexOf(ops, "cancel_child_run:"), opIndexOf(ops, "kill_child:"), opIndexOf(ops, "close_session:")
+	if cancelAt == -1 || closeAt == -1 || cancelAt > closeAt {
+		t.Fatalf("teardown ops = %v, want cancel before close over a settled run", ops)
+	}
+	if killAt != -1 && killAt < closeAt {
+		t.Errorf("settled-record teardown force-killed before close: ops = %v", ops)
+	}
+	fx.ps.mu.Lock()
+	rec := fx.ps.childRuns["run-s1"]
+	outcome := ""
+	if rec != nil {
+		outcome = rec.TerminalOutcome
+	}
+	fx.ps.mu.Unlock()
+	if outcome != "success" {
+		t.Errorf("settled record rewritten by the teardown: %q, want success preserved", outcome)
+	}
+}
+
+// TestPeerPauseResumeAcksIdleChildRun (KB-96 D2/D3): a workflow.v1 peer
+// with no in-flight child run takes parent pause/resume as idempotent acks
+// WITHOUT a control round-trip (the child hosts its own state; settled
+// runs already persisted their checkpoints), while a live child run still
+// parks/resumes through the real Pause/Resume RPCs. A legacy peer keeps
+// the unconditional RPC.
+func TestPeerPauseResumeAcksIdleChildRun(t *testing.T) {
+	fx := startWorkflowPeerFixture(t, []string{peerWorkflowV1Capability})
+	defer func() { _ = fx.provider.Stop(context.Background()) }()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := fx.handle.Pause(ctx, "s1"); err != nil {
+		t.Fatalf("Pause (idle child run): %v", err)
+	}
+	if err := fx.handle.Resume(ctx, "s1"); err != nil {
+		t.Fatalf("Resume (idle child run): %v", err)
+	}
+	if ops := fx.peer.opsSnapshot(); opIndexOf(ops, "pause:") != -1 || opIndexOf(ops, "resume:") != -1 {
+		t.Fatalf("idle child run issued Pause/Resume RPCs; ops = %v", ops)
+	}
+
+	// A live child run still goes over the wire (the child engine's
+	// boundary checkpoint).
+	fx.peer.appendEvent(childRunStartedArm("run-p1"))
+	waitForInFlightRun(t, fx.ps, "run-p1")
+	if err := fx.handle.Pause(ctx, "s1"); err != nil {
+		t.Fatalf("Pause (live child run): %v", err)
+	}
+	if ops := fx.peer.opsSnapshot(); opIndexOf(ops, "pause:") == -1 {
+		t.Fatalf("live child run never parked over the Pause RPC; ops = %v", ops)
+	}
+
+	// Once the run settles on the journal the resume is an idempotent ack
+	// again — settled child runs already persisted their own checkpoints.
+	fx.peer.appendEvent(childRunTerminalArm("run-p1", "success"))
+	waitForNoInFlightRun(t, fx.ps)
+	before := len(fx.peer.opsSnapshot())
+	if err := fx.handle.Resume(ctx, "s1"); err != nil {
+		t.Fatalf("Resume (settled child run): %v", err)
+	}
+	if ops := fx.peer.opsSnapshot(); opIndexOf(ops[before:], "resume:") != -1 {
+		t.Fatalf("settled child run resumed over the wire; ops after settle = %v", ops[before:])
+	}
+}
+
+// TestPeerPauseResumeLegacyPeerKeepsRPC: a peer without the workflow.v1
+// capability has no child-run tracker, so its pause/resume stays the
+// unconditional v2 RPC — the legacy behavior is untouched.
+func TestPeerPauseResumeLegacyPeerKeepsRPC(t *testing.T) {
+	fx := startWorkflowPeerFixture(t, nil)
+	defer func() { _ = fx.provider.Stop(context.Background()) }()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := fx.handle.Pause(ctx, "s1"); err != nil {
+		t.Fatalf("Pause: %v", err)
+	}
+	if err := fx.handle.Resume(ctx, "s1"); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	ops := fx.peer.opsSnapshot()
+	if opIndexOf(ops, "pause:") == -1 || opIndexOf(ops, "resume:") == -1 {
+		t.Fatalf("legacy peer pause/resume = %v, want both RPCs sent", ops)
+	}
+}

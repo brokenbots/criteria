@@ -281,11 +281,12 @@ func (p *peerSessionProvider) CloseHandle(ctx context.Context, adapterType, scop
 	delete(p.peers, key)
 	p.mu.Unlock()
 	if ok {
-		// KB-95 teardown ordering (ADR-0008): cancel the in-flight child run
-		// BEFORE the session closes — the child host's process cleanup after
-		// the close must not kill a mid-flight run. Cancellation is
-		// cooperative (bounded, best-effort); v0.6.0 has no detach option.
-		ps.cancelInFlightChildRun(ctx)
+		// KB-95/KB-96 teardown ordering (ADR-0008): tear the in-flight child
+		// run down BEFORE the session closes — the child host's process
+		// cleanup after the close must not kill a mid-flight run. The
+		// teardown is bounded and best-effort (cancel control, journal
+		// evidence wait, then force kill); v0.6.0 has no detach option.
+		ps.teardownInFlightChildRun(ctx)
 		_ = ps.handle.CloseSession(ctx, "")
 		ps.handle.KillContext(ctx)
 		ps.close("session closed")
@@ -312,11 +313,11 @@ func (p *peerSessionProvider) Stop(ctx context.Context) error {
 		waiters := p.waiters
 		p.waiters = make(map[string][]chan waitResult)
 		p.mu.Unlock()
-		// KB-95: cancel any in-flight child run before closing each peer
-		// session — same ordering contract as CloseHandle on the run-shutdown
-		// teardown path.
+		// KB-95/KB-96: tear down any in-flight child run before closing each
+		// peer session — same ordering contract as CloseHandle on the
+		// run-shutdown teardown path.
 		for _, ps := range peers {
-			ps.cancelInFlightChildRun(ctx)
+			ps.teardownInFlightChildRun(ctx)
 			ps.close("shim stopped")
 		}
 		for _, ws := range waiters {
@@ -360,6 +361,12 @@ type peerSession struct {
 	// (KB-95): journal arm truth under mu, plus per-run terminal waiters.
 	childRuns    map[string]*childRunRecord
 	childWatches map[string][]chan struct{}
+
+	// teardownSettleGrace shrinks the parent's child-run settle budget for
+	// tests; zero keeps the production default (peerChildRunTeardownWait).
+	// It is set right after session construction, before any teardown can
+	// run, so reads need no synchronization beyond construction.
+	teardownSettleGrace time.Duration
 
 	// done is closed by close(): it wakes child-run terminal waiters on a
 	// lost transport (no terminal can arrive past this point).
@@ -500,10 +507,11 @@ func (ps *peerSession) applySupervisionEvent(ev *criteriav1.SupervisionEvent) {
 		// Informational; the journal's spawn record for T-07's session
 		// records.
 	case *criteriav1.SupervisionEvent_ChildRunStarted,
-		*criteriav1.SupervisionEvent_ChildRunTerminal:
-		// KB-95 (ADR-0008 D2): workflow.v1 child-run tracking. Arm routing
-		// and the watch broadcast happen through the tracker below (the
-		// broadcast runs after this unlock).
+		*criteriav1.SupervisionEvent_ChildRunTerminal,
+		*criteriav1.SupervisionEvent_ChildRunTeardownPartial:
+		// KB-95/KB-96 (ADR-0008 D2): workflow.v1 child-run tracking. Arm
+		// routing and the watch broadcast happen through the tracker below
+		// (the broadcast runs after this unlock).
 		terminalRunID = ps.applyChildRunArmLocked(ev)
 	}
 	ps.mu.Unlock()
@@ -582,6 +590,15 @@ func (ps *peerSession) lastHeartbeatAt() time.Time {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	return ps.lastHeartbeat
+}
+
+// teardownSettleBudget resolves the session's child-run settle budget for
+// teardown waits.
+func (ps *peerSession) teardownSettleBudget() time.Duration {
+	if ps.teardownSettleGrace > 0 {
+		return ps.teardownSettleGrace
+	}
+	return peerChildRunTeardownWait
 }
 
 // control issues a PeerService.Control unary call on the shared connection.
@@ -768,14 +785,43 @@ func (h *peerHandle) Prompt(ctx context.Context, req *adapterhost.PromptRequest)
 	return h.ps.client.Prompt(ctx, req)
 }
 
+// workflowV1IdleChildRun reports whether this peer's workflow.v1 child run
+// tracker shows no in-flight run: the peer's child runs (at most one live
+// serve-adapter run per workflow client) have all settled on the journal,
+// so control verbs that target a live run are no-ops on it.
+func (h *peerHandle) workflowV1IdleChildRun() bool {
+	if h.ps == nil || !h.ps.hasPeerCapability(peerWorkflowV1Capability) {
+		return false
+	}
+	_, inFlight := h.ps.childRunInFlight()
+	return !inFlight
+}
+
 // Pause asks the peer adapter to halt work without losing state.
+//
+// KB-96 (ADR-0008 D2): for a workflow.v1 peer with no in-flight child run
+// the pause is an idempotent ack WITHOUT a control round-trip — the child
+// has nothing to park and its settled runs already persisted their own
+// checkpoints (the child is its state's host of record), so the parent's
+// pause barrier counts the session as acked instead of fail-closing on the
+// child's typed no-live-run error. A live child run parks through the real
+// Pause RPC (the child engine's boundary checkpoint).
 func (h *peerHandle) Pause(ctx context.Context, sessionID string) error {
+	if h.workflowV1IdleChildRun() {
+		return nil
+	}
 	_, err := h.ps.client.Pause(ctx, &v2.PauseRequest{SessionId: sessionID})
 	return err
 }
 
-// Resume asks the peer adapter to continue from where it paused.
+// Resume asks the peer adapter to continue from where it paused. A parked
+// child run resumes through the real Resume RPC; a workflow.v1 peer with
+// nothing in flight (its run settled or was cancelled while the parent
+// considered it parked) acks idempotently without a control round-trip.
 func (h *peerHandle) Resume(ctx context.Context, sessionID string) error {
+	if h.workflowV1IdleChildRun() {
+		return nil
+	}
 	_, err := h.ps.client.Resume(ctx, &v2.ResumeRequest{SessionId: sessionID})
 	return err
 }

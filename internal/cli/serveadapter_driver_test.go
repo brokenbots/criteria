@@ -468,6 +468,66 @@ func assertRunRecordCancelled(t *testing.T, runID string) {
 // capabilities advertise workflow.v1, the config schema mirrors workflow
 // variable declarations, and the advertised outcomes vocabulary is the graph's
 // step outcomes plus success/failure.
+// TestServeAdapter_CancelChildRunEmptyIDMatchesCurrentRun (KB-96): the
+// parent teardown's CancelChildRun arm carries an empty run id to cover a
+// child run the parent has not observed on its tracker yet. The child-side
+// contract: the empty id matches the one live run and tears it down through
+// the engine's real stop machinery (cancelled record), a non-matching id
+// rejects, and canceling with no live run rejects.
+func TestServeAdapter_CancelChildRunEmptyIDMatchesCurrentRun(t *testing.T) {
+	env := newServeAdapterEnv(t)
+	sessionID := env.openTestSession(t)
+
+	// No live run: both an empty id and a concrete id reject.
+	if admitted, ok := env.client.CancelChildRun(""); ok {
+		t.Fatalf("CancelChildRun without a live run admitted %q", admitted)
+	}
+
+	cap2 := &executeCapture{arrived: make(chan struct{}, 8), watch: slowStepStarted()}
+	exErr := make(chan error, 1)
+	go func() {
+		exErr <- env.client.Execute(context.Background(), &criteriav2.ExecuteRequest{
+			SessionId: sessionID,
+			StepName:  "warmup",
+		}, cap2)
+	}()
+	select {
+	case <-cap2.arrived:
+	case <-time.After(15 * time.Second):
+		t.Fatal("timed out waiting for the slow step to start")
+	}
+	if env.client.run == nil {
+		t.Fatal("run slot empty while in flight")
+	}
+	env.client.run.mu.Lock()
+	runID := env.client.run.id
+	env.client.run.mu.Unlock()
+
+	// A concrete id that is not the live run is not in flight.
+	if admitted, ok := env.client.CancelChildRun("not-the-run"); ok || admitted != "" {
+		t.Fatalf("CancelChildRun(other id) admitted %q", admitted)
+	}
+
+	// The empty id targets the current run and settles it.
+	admitted, ok := env.client.CancelChildRun("")
+	if !ok || admitted != runID {
+		t.Fatalf("CancelChildRun(empty) = (%q, %t), want the live run id accepted", admitted, ok)
+	}
+	select {
+	case err := <-exErr:
+		if err != nil {
+			t.Fatalf("Execute after empty-id cancel: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("Execute did not return after the empty-id cancel")
+	}
+	res := cap2.terminal()
+	if res == nil || res.GetOutcome() == serveAdapterOutcomeSuccess {
+		t.Fatalf("terminal on empty-id cancelled run = %+v, want a non-success outcome", res)
+	}
+	assertRunRecordCancelled(t, runID)
+}
+
 func TestServeAdapter_InfoReportsWorkflowV1Contract(t *testing.T) {
 	env := newServeAdapterEnv(t)
 	info, err := env.client.Info(context.Background(), &criteriav2.InfoRequest{})

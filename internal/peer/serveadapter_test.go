@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -165,8 +166,10 @@ func (g *gatedReadConn) Close() error {
 	return g.Conn.Close()
 }
 
-// CancelChildRun implements ChildRunCanceler: it accepts exactly the run id
-// acceptedRunID (a concrete in-flight run); anything else is not in-flight.
+// CancelChildRun implements ChildRunCanceler. KB-96 wire contract: the run
+// id must match the in-flight run, or the empty id targets "the current
+// one" (the parent's teardown sends it to cover a run it has not observed
+// on its tracker yet). No accepted run rejects everything.
 func (f *fakeWorkflowAdapter) CancelChildRun(runID string) (string, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -285,16 +288,124 @@ func TestServeAdapterServer_ControlCancelChildRun(t *testing.T) {
 	if resp.GetDetail() == "" {
 		t.Error("CancelChildRun(missing) detail empty, want a name")
 	}
+}
 
-	// KillChild targets a spawned process; serve-adapter mode has none.
-	resp, err = f.server.Control(ctx, &criteriav1.ControlRequest{
+// TestServeAdapterServer_ControlKillChildForcesLiveChildRun (KB-96,
+// ADR-0008 D2): a KillChild that lands on a live child run force-cancels it
+// through the adapter canceler and journals the ChildRunTeardownPartial arm
+// — the partial-teardown evidence the parent's tracker consumes when the
+// run's own terminal never reaches the journal.
+func TestServeAdapterServer_ControlKillChildForcesLiveChildRun(t *testing.T) {
+	f := newServeAdapterFixture(t, NewEventJournal(0))
+	f.impl.mu.Lock()
+	f.impl.acceptedRunID = "child-run-1"
+	f.impl.mu.Unlock()
+
+	resp, err := f.server.Control(context.Background(), &criteriav1.ControlRequest{
+		AdapterType: f.cfg.AdapterName,
+		Scope:       f.cfg.Scope,
+		Kind:        &criteriav1.ControlRequest_KillChild{KillChild: &criteriav1.KillChild{}},
+	})
+	if err != nil {
+		t.Fatalf("KillChild: %v", err)
+	}
+	if !resp.GetAccepted() {
+		t.Errorf("KillChild(live run) accepted = %v, detail %q, want accepted", resp.GetAccepted(), resp.GetDetail())
+	}
+	// The empty run id is the wire's "the current one" contract.
+	f.impl.mu.Lock()
+	reqs := append([]string(nil), f.impl.cancelRequests...)
+	f.impl.mu.Unlock()
+	if len(reqs) != 1 || reqs[0] != "" {
+		t.Errorf("kill cancel requests = %q, want one empty (the current run)", reqs)
+	}
+	evs := f.server.Journal().Replay(0)
+	var partial *criteriav1.SupervisionEvent
+	for _, ev := range evs {
+		if ev.GetChildRunTeardownPartial() != nil {
+			partial = ev
+			break
+		}
+	}
+	if partial == nil {
+		t.Fatal("kill acceptance did not journal the ChildRunTeardownPartial arm")
+	}
+	got := partial.GetChildRunTeardownPartial()
+	if got.GetRunId() != "child-run-1" || got.GetDetail() == "" {
+		t.Errorf("teardown partial = %+v, want run_id child-run-1 with detail", got)
+	}
+	if partial.GetAdapterType() != "workflow.v1" {
+		t.Errorf("teardown partial adapter_type = %q, want %q", partial.GetAdapterType(), "workflow.v1")
+	}
+}
+
+// TestServeAdapterServer_ControlKillChildNoLiveRun (KB-96): a KillChild on
+// a serve-adapter child with nothing in flight is rejected with a named
+// detail and journals nothing.
+func TestServeAdapterServer_ControlKillChildNoLiveRun(t *testing.T) {
+	f := newServeAdapterFixture(t, NewEventJournal(0))
+	f.impl.mu.Lock()
+	f.impl.acceptedRunID = ""
+	f.impl.mu.Unlock()
+
+	resp, err := f.server.Control(context.Background(), &criteriav1.ControlRequest{
 		Kind: &criteriav1.ControlRequest_KillChild{KillChild: &criteriav1.KillChild{}},
 	})
 	if err != nil {
 		t.Fatalf("KillChild: %v", err)
 	}
 	if resp.GetAccepted() {
-		t.Errorf("KillChild accepted = %v, want rejected", resp.GetAccepted())
+		t.Errorf("KillChild(no live run) accepted = %v, want rejected", resp.GetAccepted())
+	}
+	if !strings.Contains(resp.GetDetail(), "no in-flight child run") {
+		t.Errorf("KillChild(no live run) detail = %q, want a no-in-flight name", resp.GetDetail())
+	}
+	for _, ev := range f.server.Journal().Replay(0) {
+		if ev.GetChildRunTeardownPartial() != nil {
+			t.Errorf("rejected kill journaled a teardown partial arm: %+v", ev.GetKind())
+		}
+	}
+}
+
+// TestServeAdapterServer_ControlKillChildWithoutWorkflowCap (KB-96): the
+// child-run force-kill semantics need the negotiated workflow.v1 contract;
+// without it serve-adapter mode falls back to the legacy "no spawned child"
+// rejection.
+func TestServeAdapterServer_ControlKillChildWithoutWorkflowCap(t *testing.T) {
+	f := newServeAdapterFixture(t, nil)
+	f.server.capabilities = []string{peerAdapterV2FullCapability}
+
+	resp, err := f.server.Control(context.Background(), &criteriav1.ControlRequest{
+		Kind: &criteriav1.ControlRequest_KillChild{KillChild: &criteriav1.KillChild{}},
+	})
+	if err != nil {
+		t.Fatalf("KillChild: %v", err)
+	}
+	if resp.GetAccepted() {
+		t.Errorf("KillChild without workflow.v1 accepted = %v, want the legacy rejection", resp.GetAccepted())
+	}
+	if !strings.Contains(resp.GetDetail(), "no spawned child") {
+		t.Errorf("KillChild detail = %q, want the legacy no-spawned-child shape", resp.GetDetail())
+	}
+}
+
+// TestServeAdapterServer_ControlKillChildWithoutCanceler (KB-96): an
+// adapter with no ChildRunCanceler cannot serve the force-kill semantics.
+func TestServeAdapterServer_ControlKillChildWithoutCanceler(t *testing.T) {
+	cfg, err := LoadConfig(getenvFrom(map[string]string{EnvRemoteHost: "pipe"}))
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.AdapterName = "workflow.child"
+	server := NewServeAdapterServer(&cfg, &fakeWorkflowAdapter{}, nil, captureLogger(&bytes.Buffer{}))
+	resp := server.controlServeAdapter(&criteriav1.ControlRequest{
+		Kind: &criteriav1.ControlRequest_KillChild{KillChild: &criteriav1.KillChild{}},
+	})
+	if resp.GetAccepted() {
+		t.Errorf("KillChild on non-canceler adapter accepted = %v", resp.GetAccepted())
+	}
+	if !strings.Contains(resp.GetDetail(), "force kill") {
+		t.Error("KillChild on non-canceler adapter detail empty or unnamed")
 	}
 }
 

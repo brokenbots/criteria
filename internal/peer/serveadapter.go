@@ -27,11 +27,13 @@ import (
 // adapter's engine-stop machinery cancels that run cooperatively. The
 // in-flight Execute stream then resolves with a typed canceled failure.
 type ChildRunCanceler interface {
-	// CancelChildRun cancels the in-flight child run. A non-empty runID
-	// selects that specific run; empty means "the current one". It returns
-	// the matched run id and whether a matching in-flight run was found
-	// (accepted). Cancellation is cooperative: the adapter does not block
-	// the RPC on the run settling — the Execute stream carries the result.
+	// CancelChildRun cancels the in-flight child run. A non-empty runID is
+	// matched exactly; an empty runID targets "the current one" — the parent's
+	// teardown uses it to cover a child run it has not observed on its tracker
+	// yet (KB-96 / ADR-0008 teardown evidence). It returns the matched run id
+	// and whether a matching in-flight run was found (accepted). Cancellation
+	// is cooperative: the adapter does not block the RPC on the run settling —
+	// the Execute stream carries the result.
 	CancelChildRun(runID string) (matched string, accepted bool)
 }
 
@@ -105,11 +107,71 @@ func (s *Server) journalFor() *EventJournal {
 	return s.serveAdapterJournal
 }
 
+// peerJournalServeAdapterType labels the child-run arms the serve-adapter
+// role journals (the CLI's serve-adapter journal uses the same "workflow.v1"
+// adapter type on its ChildRun* arms).
+const peerJournalServeAdapterType = "workflow.v1"
+
+// journalChildRunTeardownPartial journals the child's evidence for a parent
+// force kill on an in-flight child run (KB-96, ADR-0008 D2). The event goes
+// to the session "" binding: the control plane carries no session id, and
+// the parent's tracker keys on the run id alone.
+func (s *Server) journalChildRunTeardownPartial(runID, detail string) {
+	j := s.journalFor()
+	if j == nil || runID == "" {
+		return
+	}
+	if _, err := j.Append(&criteriav1.SupervisionEvent_ChildRunTeardownPartial{
+		ChildRunTeardownPartial: &criteriav1.ChildRunTeardownPartial{
+			RunId:  runID,
+			Detail: detail,
+		},
+	}, peerJournalServeAdapterType, "", ""); err != nil {
+		slog.Warn("journal: child run teardown partial arm failed", "run_id", runID, "error", err)
+	}
+}
+
 // controlServeAdapter answers Control verbs when there is no child runtime:
 // a child run lives inside this process, so CancelChildRun routes to the
 // optional canceler and KillChild — which targets a spawned process — has
 // nothing to act on (host-initiated teardown rides CloseSession).
 func (s *Server) controlServeAdapter(req *criteriav1.ControlRequest) *criteriav1.ControlResponse {
+	if kill := req.GetKillChild(); kill != nil {
+		// KB-96 (ADR-0008 D2): the parent's teardown settle grace expired and
+		// its KillChild landed. The child run lives inside this process, so
+		// force-kill semantics resolve to a force cancel over the engine's
+		// real stop machinery, and the journal records the partial-teardown
+		// arm — the run's own terminal evidence may never land (the forced
+		// cancel may not reach a terminal state before the session closes).
+		// Gated like cancel_child_run: without the negotiated workflow.v1
+		// contract there is no child-run substrate to kill.
+		if !s.negotiated(peerWorkflowV1Capability) {
+			return &criteriav1.ControlResponse{
+				Accepted: false,
+				Detail:   "serve-adapter mode serves no spawned child",
+			}
+		}
+		canceler, ok := s.impl.(ChildRunCanceler)
+		if !ok {
+			return &criteriav1.ControlResponse{
+				Accepted: false,
+				Detail:   "workflow adapter does not support child-run force kill",
+			}
+		}
+		matched, liveRun := canceler.CancelChildRun("")
+		if !liveRun {
+			return &criteriav1.ControlResponse{
+				Accepted: false,
+				Detail:   "no in-flight child run to force kill",
+			}
+		}
+		s.journalChildRunTeardownPartial(matched,
+			"force killed on parent teardown (cancel settle grace expired)")
+		return &criteriav1.ControlResponse{
+			Accepted: true,
+			Detail:   fmt.Sprintf("force killed child run %q", matched),
+		}
+	}
 	if cancel := req.GetCancelChildRun(); cancel != nil {
 		canceler, ok := s.impl.(ChildRunCanceler)
 		if !ok {

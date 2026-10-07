@@ -40,6 +40,7 @@ func TestPeerWorkflowArmsAdjacency(t *testing.T) {
 		{"heartbeat", 10},
 		{"child_run_started", 11},
 		{"child_run_terminal", 12},
+		{"child_run_teardown_partial", 13},
 	}
 	oneof := supervisionMsg.Oneofs().ByName("kind")
 	if oneof == nil {

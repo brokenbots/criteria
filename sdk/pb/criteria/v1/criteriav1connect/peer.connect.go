@@ -9,7 +9,7 @@
 // Evolution discipline (additive-only):
 //   - Field numbers in this file are permanent once assigned. Never reuse,
 //     renumber, or re-type an existing field; only ever append.
-//   - The next free `kind` oneof arm in SupervisionEvent is field 13. Do NOT
+//   - The next free `kind` oneof arm in SupervisionEvent is field 14. Do NOT
 //     `reserved` forward numbers — reserve only genuinely abandoned ones.
 //   - Stage B run-graph events ride THIS journal: extend SupervisionEvent
 //     with new arms; do not fork a second supervision stream or file.
@@ -25,6 +25,9 @@
 //     frame (ADR-0007 D4 role/capability machinery): a peer whose identity
 //     frame does not advertise `workflow.v1` must reject
 //     Control(CancelChildRun) with a typed unimplemented error.
+//   - ADR-0008 D2 (KB-96) added ChildRunTeardownPartial = arm 13 in
+//     SupervisionEvent.kind: the child's journal evidence for a force
+//     kill_child on an in-flight (unsettled) child run.
 //
 // Delivery semantics:
 //   - At-least-once delivery. Consumers dedup on (peer conn identity,

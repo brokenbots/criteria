@@ -9,7 +9,7 @@
 // Evolution discipline (additive-only):
 //   - Field numbers in this file are permanent once assigned. Never reuse,
 //     renumber, or re-type an existing field; only ever append.
-//   - The next free `kind` oneof arm in SupervisionEvent is field 13. Do NOT
+//   - The next free `kind` oneof arm in SupervisionEvent is field 14. Do NOT
 //     `reserved` forward numbers — reserve only genuinely abandoned ones.
 //   - Stage B run-graph events ride THIS journal: extend SupervisionEvent
 //     with new arms; do not fork a second supervision stream or file.
@@ -25,6 +25,9 @@
 //     frame (ADR-0007 D4 role/capability machinery): a peer whose identity
 //     frame does not advertise `workflow.v1` must reject
 //     Control(CancelChildRun) with a typed unimplemented error.
+//   - ADR-0008 D2 (KB-96) added ChildRunTeardownPartial = arm 13 in
+//     SupervisionEvent.kind: the child's journal evidence for a force
+//     kill_child on an in-flight (unsettled) child run.
 //
 // Delivery semantics:
 //   - At-least-once delivery. Consumers dedup on (peer conn identity,
@@ -130,7 +133,7 @@ type SupervisionEvent struct {
 	// Session-scoped events carry the session id; "" for process-level.
 	SessionId string `protobuf:"bytes,5,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	// Typed lifecycle payload. Field numbers here are permanent; next arm =
-	// field 13 (additive-only; see file header).
+	// field 14 (additive-only; see file header).
 	//
 	// Types that are valid to be assigned to Kind:
 	//
@@ -141,6 +144,7 @@ type SupervisionEvent struct {
 	//	*SupervisionEvent_Heartbeat
 	//	*SupervisionEvent_ChildRunStarted
 	//	*SupervisionEvent_ChildRunTerminal
+	//	*SupervisionEvent_ChildRunTeardownPartial
 	Kind          isSupervisionEvent_Kind `protobuf_oneof:"kind"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -281,6 +285,15 @@ func (x *SupervisionEvent) GetChildRunTerminal() *ChildRunTerminal {
 	return nil
 }
 
+func (x *SupervisionEvent) GetChildRunTeardownPartial() *ChildRunTeardownPartial {
+	if x != nil {
+		if x, ok := x.Kind.(*SupervisionEvent_ChildRunTeardownPartial); ok {
+			return x.ChildRunTeardownPartial
+		}
+	}
+	return nil
+}
+
 type isSupervisionEvent_Kind interface {
 	isSupervisionEvent_Kind()
 }
@@ -315,6 +328,13 @@ type SupervisionEvent_ChildRunTerminal struct {
 	ChildRunTerminal *ChildRunTerminal `protobuf:"bytes,12,opt,name=child_run_terminal,json=childRunTerminal,proto3,oneof"` // run_id, outcome, outputs_digest
 }
 
+type SupervisionEvent_ChildRunTeardownPartial struct {
+	// ADR-0008 D2 (KB-96): a parent teardown's settle grace expired and its
+	// kill_child landed on an in-flight child run — the run's terminal never
+	// journaled, so the force-kill IS the child's last run truth.
+	ChildRunTeardownPartial *ChildRunTeardownPartial `protobuf:"bytes,13,opt,name=child_run_teardown_partial,json=childRunTeardownPartial,proto3,oneof"` // run_id, detail
+}
+
 func (*SupervisionEvent_Spawned) isSupervisionEvent_Kind() {}
 
 func (*SupervisionEvent_Exited) isSupervisionEvent_Kind() {}
@@ -328,6 +348,8 @@ func (*SupervisionEvent_Heartbeat) isSupervisionEvent_Kind() {}
 func (*SupervisionEvent_ChildRunStarted) isSupervisionEvent_Kind() {}
 
 func (*SupervisionEvent_ChildRunTerminal) isSupervisionEvent_Kind() {}
+
+func (*SupervisionEvent_ChildRunTeardownPartial) isSupervisionEvent_Kind() {}
 
 type ProcessSpawned struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -764,6 +786,67 @@ func (x *ChildRunTerminal) GetOutputsDigest() string {
 	return ""
 }
 
+// ChildRunTeardownPartial records a partial teardown of a child run
+// (ADR-0008 D2, KB-96): the parent issued cancel_child_run, the run never
+// journaled terminal evidence within the parent's settle grace, and the
+// parent's kill_child force-landed on the in-flight run. The child
+// journals this arm when it accepts the kill on a live run; a late run
+// terminal (the forced cancel still reaching the engine) outranks it in
+// the host's tracker. workflow.v1-gated control truth only (ADR-0008).
+type ChildRunTeardownPartial struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Criteria run id under the peer that was force-killed mid-flight.
+	RunId string `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	// Human-readable detail (which teardown phase the force-kill followed).
+	Detail        string `protobuf:"bytes,2,opt,name=detail,proto3" json:"detail,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChildRunTeardownPartial) Reset() {
+	*x = ChildRunTeardownPartial{}
+	mi := &file_criteria_v1_peer_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChildRunTeardownPartial) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChildRunTeardownPartial) ProtoMessage() {}
+
+func (x *ChildRunTeardownPartial) ProtoReflect() protoreflect.Message {
+	mi := &file_criteria_v1_peer_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChildRunTeardownPartial.ProtoReflect.Descriptor instead.
+func (*ChildRunTeardownPartial) Descriptor() ([]byte, []int) {
+	return file_criteria_v1_peer_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *ChildRunTeardownPartial) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *ChildRunTeardownPartial) GetDetail() string {
+	if x != nil {
+		return x.Detail
+	}
+	return ""
+}
+
 type ControlRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Kind:
@@ -783,7 +866,7 @@ type ControlRequest struct {
 
 func (x *ControlRequest) Reset() {
 	*x = ControlRequest{}
-	mi := &file_criteria_v1_peer_proto_msgTypes[9]
+	mi := &file_criteria_v1_peer_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -795,7 +878,7 @@ func (x *ControlRequest) String() string {
 func (*ControlRequest) ProtoMessage() {}
 
 func (x *ControlRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_peer_proto_msgTypes[9]
+	mi := &file_criteria_v1_peer_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -808,7 +891,7 @@ func (x *ControlRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ControlRequest.ProtoReflect.Descriptor instead.
 func (*ControlRequest) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_peer_proto_rawDescGZIP(), []int{9}
+	return file_criteria_v1_peer_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ControlRequest) GetKind() isControlRequest_Kind {
@@ -895,7 +978,7 @@ type CancelChildRun struct {
 
 func (x *CancelChildRun) Reset() {
 	*x = CancelChildRun{}
-	mi := &file_criteria_v1_peer_proto_msgTypes[10]
+	mi := &file_criteria_v1_peer_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -907,7 +990,7 @@ func (x *CancelChildRun) String() string {
 func (*CancelChildRun) ProtoMessage() {}
 
 func (x *CancelChildRun) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_peer_proto_msgTypes[10]
+	mi := &file_criteria_v1_peer_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -920,7 +1003,7 @@ func (x *CancelChildRun) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelChildRun.ProtoReflect.Descriptor instead.
 func (*CancelChildRun) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_peer_proto_rawDescGZIP(), []int{10}
+	return file_criteria_v1_peer_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *CancelChildRun) GetRunId() string {
@@ -948,7 +1031,7 @@ type ControlResponse struct {
 
 func (x *ControlResponse) Reset() {
 	*x = ControlResponse{}
-	mi := &file_criteria_v1_peer_proto_msgTypes[11]
+	mi := &file_criteria_v1_peer_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -960,7 +1043,7 @@ func (x *ControlResponse) String() string {
 func (*ControlResponse) ProtoMessage() {}
 
 func (x *ControlResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_peer_proto_msgTypes[11]
+	mi := &file_criteria_v1_peer_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -973,7 +1056,7 @@ func (x *ControlResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ControlResponse.ProtoReflect.Descriptor instead.
 func (*ControlResponse) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_peer_proto_rawDescGZIP(), []int{11}
+	return file_criteria_v1_peer_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ControlResponse) GetAccepted() bool {
@@ -998,7 +1081,7 @@ type KillChild struct {
 
 func (x *KillChild) Reset() {
 	*x = KillChild{}
-	mi := &file_criteria_v1_peer_proto_msgTypes[12]
+	mi := &file_criteria_v1_peer_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1010,7 +1093,7 @@ func (x *KillChild) String() string {
 func (*KillChild) ProtoMessage() {}
 
 func (x *KillChild) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_peer_proto_msgTypes[12]
+	mi := &file_criteria_v1_peer_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1023,7 +1106,7 @@ func (x *KillChild) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KillChild.ProtoReflect.Descriptor instead.
 func (*KillChild) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_peer_proto_rawDescGZIP(), []int{12}
+	return file_criteria_v1_peer_proto_rawDescGZIP(), []int{13}
 }
 
 var File_criteria_v1_peer_proto protoreflect.FileDescriptor
@@ -1032,7 +1115,7 @@ const file_criteria_v1_peer_proto_rawDesc = "" +
 	"\n" +
 	"\x16criteria/v1/peer.proto\x12\vcriteria.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"<\n" +
 	"\x12SupervisionRequest\x12&\n" +
-	"\x0fsince_event_seq\x18\x01 \x01(\x04R\rsinceEventSeq\"\xf6\x04\n" +
+	"\x0fsince_event_seq\x18\x01 \x01(\x04R\rsinceEventSeq\"\xdb\x05\n" +
 	"\x10SupervisionEvent\x12\x1b\n" +
 	"\tevent_seq\x18\x01 \x01(\x04R\beventSeq\x12*\n" +
 	"\x02at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\x12!\n" +
@@ -1047,7 +1130,8 @@ const file_criteria_v1_peer_proto_rawDesc = "" +
 	"\theartbeat\x18\n" +
 	" \x01(\v2!.criteria.v1.SupervisionHeartbeatH\x00R\theartbeat\x12J\n" +
 	"\x11child_run_started\x18\v \x01(\v2\x1c.criteria.v1.ChildRunStartedH\x00R\x0fchildRunStarted\x12M\n" +
-	"\x12child_run_terminal\x18\f \x01(\v2\x1d.criteria.v1.ChildRunTerminalH\x00R\x10childRunTerminalB\x06\n" +
+	"\x12child_run_terminal\x18\f \x01(\v2\x1d.criteria.v1.ChildRunTerminalH\x00R\x10childRunTerminal\x12c\n" +
+	"\x1achild_run_teardown_partial\x18\r \x01(\v2$.criteria.v1.ChildRunTeardownPartialH\x00R\x17childRunTeardownPartialB\x06\n" +
 	"\x04kind\"l\n" +
 	"\x0eProcessSpawned\x12\x16\n" +
 	"\x06binary\x18\x01 \x01(\tR\x06binary\x12\x16\n" +
@@ -1074,7 +1158,10 @@ const file_criteria_v1_peer_proto_rawDesc = "" +
 	"\x10ChildRunTerminal\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x18\n" +
 	"\aoutcome\x18\x02 \x01(\tR\aoutcome\x12%\n" +
-	"\x0eoutputs_digest\x18\x03 \x01(\tR\routputsDigest\"\xee\x01\n" +
+	"\x0eoutputs_digest\x18\x03 \x01(\tR\routputsDigest\"H\n" +
+	"\x17ChildRunTeardownPartial\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x16\n" +
+	"\x06detail\x18\x02 \x01(\tR\x06detail\"\xee\x01\n" +
 	"\x0eControlRequest\x127\n" +
 	"\n" +
 	"kill_child\x18\x01 \x01(\v2\x16.criteria.v1.KillChildH\x00R\tkillChild\x12G\n" +
@@ -1106,25 +1193,26 @@ func file_criteria_v1_peer_proto_rawDescGZIP() []byte {
 	return file_criteria_v1_peer_proto_rawDescData
 }
 
-var file_criteria_v1_peer_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_criteria_v1_peer_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_criteria_v1_peer_proto_goTypes = []any{
-	(*SupervisionRequest)(nil),    // 0: criteria.v1.SupervisionRequest
-	(*SupervisionEvent)(nil),      // 1: criteria.v1.SupervisionEvent
-	(*ProcessSpawned)(nil),        // 2: criteria.v1.ProcessSpawned
-	(*ProcessExited)(nil),         // 3: criteria.v1.ProcessExited
-	(*CrashClassified)(nil),       // 4: criteria.v1.CrashClassified
-	(*StreamFlushed)(nil),         // 5: criteria.v1.StreamFlushed
-	(*SupervisionHeartbeat)(nil),  // 6: criteria.v1.SupervisionHeartbeat
-	(*ChildRunStarted)(nil),       // 7: criteria.v1.ChildRunStarted
-	(*ChildRunTerminal)(nil),      // 8: criteria.v1.ChildRunTerminal
-	(*ControlRequest)(nil),        // 9: criteria.v1.ControlRequest
-	(*CancelChildRun)(nil),        // 10: criteria.v1.CancelChildRun
-	(*ControlResponse)(nil),       // 11: criteria.v1.ControlResponse
-	(*KillChild)(nil),             // 12: criteria.v1.KillChild
-	(*timestamppb.Timestamp)(nil), // 13: google.protobuf.Timestamp
+	(*SupervisionRequest)(nil),      // 0: criteria.v1.SupervisionRequest
+	(*SupervisionEvent)(nil),        // 1: criteria.v1.SupervisionEvent
+	(*ProcessSpawned)(nil),          // 2: criteria.v1.ProcessSpawned
+	(*ProcessExited)(nil),           // 3: criteria.v1.ProcessExited
+	(*CrashClassified)(nil),         // 4: criteria.v1.CrashClassified
+	(*StreamFlushed)(nil),           // 5: criteria.v1.StreamFlushed
+	(*SupervisionHeartbeat)(nil),    // 6: criteria.v1.SupervisionHeartbeat
+	(*ChildRunStarted)(nil),         // 7: criteria.v1.ChildRunStarted
+	(*ChildRunTerminal)(nil),        // 8: criteria.v1.ChildRunTerminal
+	(*ChildRunTeardownPartial)(nil), // 9: criteria.v1.ChildRunTeardownPartial
+	(*ControlRequest)(nil),          // 10: criteria.v1.ControlRequest
+	(*CancelChildRun)(nil),          // 11: criteria.v1.CancelChildRun
+	(*ControlResponse)(nil),         // 12: criteria.v1.ControlResponse
+	(*KillChild)(nil),               // 13: criteria.v1.KillChild
+	(*timestamppb.Timestamp)(nil),   // 14: google.protobuf.Timestamp
 }
 var file_criteria_v1_peer_proto_depIdxs = []int32{
-	13, // 0: criteria.v1.SupervisionEvent.at:type_name -> google.protobuf.Timestamp
+	14, // 0: criteria.v1.SupervisionEvent.at:type_name -> google.protobuf.Timestamp
 	2,  // 1: criteria.v1.SupervisionEvent.spawned:type_name -> criteria.v1.ProcessSpawned
 	3,  // 2: criteria.v1.SupervisionEvent.exited:type_name -> criteria.v1.ProcessExited
 	4,  // 3: criteria.v1.SupervisionEvent.crash:type_name -> criteria.v1.CrashClassified
@@ -1132,17 +1220,18 @@ var file_criteria_v1_peer_proto_depIdxs = []int32{
 	6,  // 5: criteria.v1.SupervisionEvent.heartbeat:type_name -> criteria.v1.SupervisionHeartbeat
 	7,  // 6: criteria.v1.SupervisionEvent.child_run_started:type_name -> criteria.v1.ChildRunStarted
 	8,  // 7: criteria.v1.SupervisionEvent.child_run_terminal:type_name -> criteria.v1.ChildRunTerminal
-	12, // 8: criteria.v1.ControlRequest.kill_child:type_name -> criteria.v1.KillChild
-	10, // 9: criteria.v1.ControlRequest.cancel_child_run:type_name -> criteria.v1.CancelChildRun
-	0,  // 10: criteria.v1.PeerService.Supervise:input_type -> criteria.v1.SupervisionRequest
-	9,  // 11: criteria.v1.PeerService.Control:input_type -> criteria.v1.ControlRequest
-	1,  // 12: criteria.v1.PeerService.Supervise:output_type -> criteria.v1.SupervisionEvent
-	11, // 13: criteria.v1.PeerService.Control:output_type -> criteria.v1.ControlResponse
-	12, // [12:14] is the sub-list for method output_type
-	10, // [10:12] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	9,  // 8: criteria.v1.SupervisionEvent.child_run_teardown_partial:type_name -> criteria.v1.ChildRunTeardownPartial
+	13, // 9: criteria.v1.ControlRequest.kill_child:type_name -> criteria.v1.KillChild
+	11, // 10: criteria.v1.ControlRequest.cancel_child_run:type_name -> criteria.v1.CancelChildRun
+	0,  // 11: criteria.v1.PeerService.Supervise:input_type -> criteria.v1.SupervisionRequest
+	10, // 12: criteria.v1.PeerService.Control:input_type -> criteria.v1.ControlRequest
+	1,  // 13: criteria.v1.PeerService.Supervise:output_type -> criteria.v1.SupervisionEvent
+	12, // 14: criteria.v1.PeerService.Control:output_type -> criteria.v1.ControlResponse
+	13, // [13:15] is the sub-list for method output_type
+	11, // [11:13] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_criteria_v1_peer_proto_init() }
@@ -1158,8 +1247,9 @@ func file_criteria_v1_peer_proto_init() {
 		(*SupervisionEvent_Heartbeat)(nil),
 		(*SupervisionEvent_ChildRunStarted)(nil),
 		(*SupervisionEvent_ChildRunTerminal)(nil),
+		(*SupervisionEvent_ChildRunTeardownPartial)(nil),
 	}
-	file_criteria_v1_peer_proto_msgTypes[9].OneofWrappers = []any{
+	file_criteria_v1_peer_proto_msgTypes[10].OneofWrappers = []any{
 		(*ControlRequest_KillChild)(nil),
 		(*ControlRequest_CancelChildRun)(nil),
 	}
@@ -1169,7 +1259,7 @@ func file_criteria_v1_peer_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_criteria_v1_peer_proto_rawDesc), len(file_criteria_v1_peer_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   13,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
