@@ -34,9 +34,9 @@ func kb156LeaseSetup(t *testing.T) (owner, child *SessionManager, stub *kb95Work
 	return owner, child, stub, ctx
 }
 
-func kb156ExtraChild(t *testing.T, owner *SessionManager) *SessionManager {
+func kb156ExtraChild(t *testing.T) *SessionManager {
 	t.Helper()
-	return NewSessionManager(owner.loader)
+	return NewSessionManager(nil)
 }
 
 func kb156CalleeStep() *workflow.StepNode {
@@ -114,7 +114,7 @@ func TestKB156_SharedSessionCloseRefusedUntilLastLeaseReleases(t *testing.T) {
 // only the LAST release unlocks the owner-scope teardown.
 func TestKB156_LeaseRefcountAcrossTwoLessees(t *testing.T) {
 	owner, child1, _, ctx := kb156LeaseSetup(t)
-	child2 := kb156ExtraChild(t, owner)
+	child2 := kb156ExtraChild(t)
 
 	for _, child := range []*SessionManager{child1, child2} {
 		if leased := child.LeaseToolResourcesFrom(owner, []string{"mcp.probe"}); len(leased) != 1 {
@@ -265,12 +265,11 @@ func TestKB156_LeaseIsIdempotent(t *testing.T) {
 // calls.
 func TestKB156_PassThroughLeaseInstallsCalleeInfo(t *testing.T) {
 	owner, mid, _, ctx := kb156LeaseSetup(t)
-	grandchild := kb156ExtraChild(t, owner)
+	grandchild := kb156ExtraChild(t)
 
 	// Owner hosts the info surface VerifyGraph would have installed.
 	ownerInfo := &workflow.AdapterInfo{
-		Name:    "mcp",
-		Version: "test",
+		SupportedFeatures: []string{"probe"},
 	}
 	owner.adapterInfos = map[string]*workflow.AdapterInfo{"mcp.probe": ownerInfo}
 
