@@ -301,18 +301,6 @@ type verifiedRecord struct {
 	scopeInstanceID string
 }
 
-// clone deep-copies the record so the owner and any borrower mutate
-// independently (all slice/map fields are value-bearing, so shallow copies
-// would alias them).
-func (r *verifiedRecord) clone() *verifiedRecord {
-	cp := *r
-	cp.config = cloneConfig(r.config)
-	cp.secrets = cloneConfig(r.secrets)
-	cp.secretOriginRefs = cloneOriginRefs(r.secretOriginRefs)
-	cp.capabilities = append([]string(nil), r.capabilities...)
-	return &cp
-}
-
 func (m *SessionManager) heartbeatStallThreshold() time.Duration {
 	if m.HeartbeatStallThreshold > 0 {
 		return m.HeartbeatStallThreshold
@@ -483,6 +471,33 @@ func mergeMapInto[K comparable, V any](dst, src map[K]V) map[K]V {
 // arg validation and nested dispatch resolve without a second Info handshake
 // (AdapterInfo carries no secrets). Returns the names actually leased.
 // Thread-safe.
+// leaseToolResourceLocked registers one new shared-session lease for name:
+// it resolves the ultimate owner through src's own leases (pass-through, so
+// a lease never creates an intermediate hop), acquires a refcounted lease on
+// the owner, and records name -> owner on m. It reports whether the lease
+// was registered. Pass-through lock ordering stays one-directional (m.mu ->
+// src.mu); no path holds src.mu while taking another manager's mu.
+// m.mu must be held.
+func (m *SessionManager) leaseToolResourceLocked(src *SessionManager, name string) bool {
+	owner := src.leaseOwner(name)
+	if owner == nil {
+		owner = src
+	}
+	if owner == m {
+		// Out-of-protocol self-owning pass-through that would loop on
+		// itself at execute time; leave the name unresolved.
+		return false
+	}
+	if !owner.acquireToolResourceLease(name) {
+		return false
+	}
+	if m.leasedToolResources == nil {
+		m.leasedToolResources = make(map[string]*SessionManager)
+	}
+	m.leasedToolResources[name] = owner
+	return true
+}
+
 func (m *SessionManager) LeaseToolResourcesFrom(src *SessionManager, names []string) []string {
 	if src == nil || src == m || len(names) == 0 {
 		return nil
@@ -504,27 +519,9 @@ func (m *SessionManager) LeaseToolResourcesFrom(src *SessionManager, names []str
 			}
 			continue
 		}
-		// Pass-through: resolve the ultimate owner through src's own leases
-		// so a lease never creates an intermediate hop. Lock ordering stays
-		// one-directional (m.mu -> src.mu); no path holds src.mu while taking
-		// another manager's mu.
-		owner := src.leaseOwner(name)
-		if owner == nil {
-			owner = src
+		if m.leaseToolResourceLocked(src, name) {
+			leased = append(leased, name)
 		}
-		if owner == m {
-			// Out-of-protocol self-owning pass-through that would loop on
-			// itself at execute time; leave the name unresolved.
-			continue
-		}
-		if !owner.acquireToolResourceLease(name) {
-			continue
-		}
-		if m.leasedToolResources == nil {
-			m.leasedToolResources = make(map[string]*SessionManager)
-		}
-		m.leasedToolResources[name] = owner
-		leased = append(leased, name)
 	}
 	m.mu.Unlock()
 
@@ -534,8 +531,10 @@ func (m *SessionManager) LeaseToolResourcesFrom(src *SessionManager, names []str
 	// src as-is: for a pass-through lease (src itself leased from a deeper
 	// owner) src already carries the ultimate owner's info, so this works
 	// regardless of which manager ends up hosting the session.
-	if names := append(leased, refresh...); len(names) > 0 {
-		infos := src.snapshotToolResourceInfos(names)
+	// slices.Concat avoids aliasing the returned leased slice (the refresh
+	// tail must not collide with a later caller-side append into it).
+	if all := slices.Concat(leased, refresh); len(all) > 0 {
+		infos := src.snapshotToolResourceInfos(all)
 		m.mu.Lock()
 		for name, info := range infos {
 			if m.adapterInfos == nil {
