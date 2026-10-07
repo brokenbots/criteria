@@ -693,7 +693,7 @@ func (n *stepNode) runParallelSubworkflowIteration(ctx context.Context, st *RunS
 	// caller's tools list but never run as a step target, e.g. an mcp server
 	// a claude-agent probes) resolve through the nested tool-call dispatch,
 	// which routes to the environment's SHARED session: this iteration leases
-	// the parent's host-local tool resources so every call delegates to the
+	// the parent's tool resources so every call delegates to the
 	// parent manager's one session for the environment — no per-iteration
 	// adapter process, no per-iteration initialize+tools/list handshake, and
 	// no per-iteration Info surface clobbering itself across concurrent
@@ -701,9 +701,11 @@ func (n *stepNode) runParallelSubworkflowIteration(ctx context.Context, st *RunS
 	// the owner hosts the environment's ONE peer phone-home session opened
 	// through the host-of-record parent, so every call routes over the peer
 	// connection — the peer opens and serves exactly one shared session per
-	// environment — instead of an iteration-local binding. Containment is preserved: the
-	// callee still runs host-local under the runner with its own adapter
-	// secrets, and the agent session only receives the tool result. Leases
+	// environment — instead of an iteration-local binding. Containment is
+	// preserved: the callee keeps its own adapter secrets and the agent
+	// session only receives the tool result; a host-local callee still runs
+	// under the local runner, and a remote callee runs inside its peer
+	// environment. Leases
 	// are released when this iteration's scope unwinds; the shared session
 	// itself is anchored to the parent scope and stays open for the remaining
 	// callers.
