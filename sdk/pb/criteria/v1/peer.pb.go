@@ -77,6 +77,12 @@ type SupervisionRequest struct {
 	// Stream journal entries strictly after this sequence number (exclusive);
 	// 0 replays the journal from the beginning.
 	SinceEventSeq uint64 `protobuf:"varint,1,opt,name=since_event_seq,json=sinceEventSeq,proto3" json:"since_event_seq,omitempty"`
+	// Adapter filter (KB-213 multi-adapter hosting): one supervision stream
+	// per (conn, adapter-type) session; when set, the peer streams journal
+	// entries attributed to that adapter type only (heartbeats always pass).
+	// Empty replays entries for every adapter type on this connection
+	// (single-adapter peers and legacy hosts send empty).
+	AdapterType   string `protobuf:"bytes,2,opt,name=adapter_type,json=adapterType,proto3" json:"adapter_type,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -116,6 +122,13 @@ func (x *SupervisionRequest) GetSinceEventSeq() uint64 {
 		return x.SinceEventSeq
 	}
 	return 0
+}
+
+func (x *SupervisionRequest) GetAdapterType() string {
+	if x != nil {
+		return x.AdapterType
+	}
+	return ""
 }
 
 // SupervisionEvent is one entry of the peer's supervision journal: a typed
@@ -1113,9 +1126,10 @@ var File_criteria_v1_peer_proto protoreflect.FileDescriptor
 
 const file_criteria_v1_peer_proto_rawDesc = "" +
 	"\n" +
-	"\x16criteria/v1/peer.proto\x12\vcriteria.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"<\n" +
+	"\x16criteria/v1/peer.proto\x12\vcriteria.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"_\n" +
 	"\x12SupervisionRequest\x12&\n" +
-	"\x0fsince_event_seq\x18\x01 \x01(\x04R\rsinceEventSeq\"\xdb\x05\n" +
+	"\x0fsince_event_seq\x18\x01 \x01(\x04R\rsinceEventSeq\x12!\n" +
+	"\fadapter_type\x18\x02 \x01(\tR\vadapterType\"\xdb\x05\n" +
 	"\x10SupervisionEvent\x12\x1b\n" +
 	"\tevent_seq\x18\x01 \x01(\x04R\beventSeq\x12*\n" +
 	"\x02at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\x12!\n" +
