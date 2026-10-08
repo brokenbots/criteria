@@ -171,7 +171,7 @@ func newPeerServeFixture(t *testing.T) *peerServeFixture {
 	rt := NewRuntime(&cfg, captureLogger(&bytes.Buffer{}))
 	child := &fakePeerChild{}
 	server := NewServer(&cfg, rt, captureLogger(&bytes.Buffer{}))
-	server.childClient = func() (adapterhost.Client, bool) { return child, true }
+	server.childClient = func(string) (adapterhost.Client, bool) { return child, true }
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	return &peerServeFixture{
@@ -222,7 +222,14 @@ func (f *peerServeFixture) startConn() (conn net.Conn, frame []byte, serveErr <-
 	}()
 
 	serveErrCh := make(chan error, 1)
-	go func() { serveErrCh <- f.server.serveOnce(f.ctx) }()
+	go func() {
+		spec, err := f.server.connProfile()
+		if err != nil {
+			serveErrCh <- err
+			return
+		}
+		serveErrCh <- f.server.serveOnce(f.ctx, spec)
+	}()
 
 	var got []byte
 	select {
@@ -368,7 +375,11 @@ func TestServer_IdentityFrameGoldenJSON(t *testing.T) {
 	rt := NewRuntime(&cfg, captureLogger(&bytes.Buffer{}))
 	server := NewServer(&cfg, rt, captureLogger(&bytes.Buffer{}))
 
-	got, err := server.identityFrame()
+	spec, err := server.connProfile()
+	if err != nil {
+		t.Fatalf("connProfile: %v", err)
+	}
+	got, err := server.identityFrame(spec)
 	if err != nil {
 		t.Fatalf("identityFrame: %v", err)
 	}
@@ -392,7 +403,11 @@ func TestServer_IdentityFrameOverCapRejected(t *testing.T) {
 	cfg.Token = string(make([]byte, peerHandshakeFrameCap))
 	rt := NewRuntime(&cfg, captureLogger(&bytes.Buffer{}))
 	server := NewServer(&cfg, rt, captureLogger(&bytes.Buffer{}))
-	if _, err := server.identityFrame(); err == nil {
+	spec, perr := server.connProfile()
+	if perr != nil {
+		t.Fatalf("connProfile: %v", perr)
+	}
+	if _, err := server.identityFrame(spec); err == nil {
 		t.Fatal("identityFrame accepted a frame over the 16 KiB cap")
 	}
 }
@@ -403,7 +418,11 @@ func TestServer_IdentityFrameOverCapRejected(t *testing.T) {
 func TestServer_ServesAdapterAndPeerServices(t *testing.T) {
 	f := newPeerServeFixture(t)
 	conn, got, serveErr := f.startConn()
-	want, err := f.server.identityFrame()
+	spec, perr := f.server.connProfile()
+	if perr != nil {
+		f.t.Fatalf("connProfile: %v", perr)
+	}
+	want, err := f.server.identityFrame(spec)
 	if err != nil {
 		t.Fatalf("identityFrame: %v", err)
 	}
@@ -809,7 +828,10 @@ func TestServer_ServeShutdown(t *testing.T) {
 		t.Fatalf("OpenSession through bridge: %v", err)
 	}
 	f.rt.mu.Lock()
-	tracked := len(f.rt.openSessions)
+	tracked := 0
+	if p := f.rt.primaryChildLocked(); p != nil {
+		tracked = len(p.openSessions)
+	}
 	f.rt.mu.Unlock()
 	if tracked != 1 {
 		t.Fatalf("tracked open sessions = %d, want 1", tracked)
@@ -983,7 +1005,10 @@ func TestServer_ControlRejectedKillDoesNotPoisonCrashClassification(t *testing.T
 	// CrashClassified{process_terminated}. With the old behavior the
 	// rejected kill had already set killRequested, so the exit was recorded
 	// graceful and no crash event appeared.
-	rt.recordExit(false)
+	rt.mu.Lock()
+	rtPrimary := rt.primaryChildLocked()
+	rt.mu.Unlock()
+	rt.recordExit(rtPrimary, false)
 	events := rt.Journal().Replay(0)
 	if len(events) != 3 {
 		t.Fatalf("journal has %d events, want spawned+exited+crash: %+v", len(events), events)
@@ -1021,7 +1046,7 @@ func TestServer_BackoffProgression(t *testing.T) {
 	cfg.BackoffMax = 30 * time.Second
 	rt := NewRuntime(&cfg, captureLogger(&bytes.Buffer{}))
 	server := NewServer(&cfg, rt, captureLogger(&bytes.Buffer{}))
-	server.childClient = func() (adapterhost.Client, bool) { return nil, false }
+	server.childClient = func(string) (adapterhost.Client, bool) { return nil, false }
 
 	// Fixed rand=0.5 with floor 1s and ceilings 2s,3s,4s,5s yields delays
 	// 1.5s, 2s, 2.5s, 3s — strictly growing, and not the legacy constant 2s.
@@ -1432,7 +1457,14 @@ func (f *peerServeFixture) startConnIdleClosing(idleLimit time.Duration) (conn n
 		frameCh <- data
 	}()
 	serveErrCh := make(chan error, 1)
-	go func() { serveErrCh <- f.server.serveOnce(f.ctx) }()
+	go func() {
+		spec, err := f.server.connProfile()
+		if err != nil {
+			serveErrCh <- err
+			return
+		}
+		serveErrCh <- f.server.serveOnce(f.ctx, spec)
+	}()
 	select {
 	case data := <-frameCh:
 		if data == nil {

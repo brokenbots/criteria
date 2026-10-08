@@ -201,7 +201,11 @@ func TestServer_ControlCancelChildRunNegotiated(t *testing.T) {
 	if !f.server.negotiated(peerWorkflowV1Capability) {
 		t.Fatal("default server does not advertise workflow.v1")
 	}
-	frame, err := f.server.identityFrame()
+	spec, err := f.server.connProfile()
+	if err != nil {
+		t.Fatalf("connProfile: %v", err)
+	}
+	frame, err := f.server.identityFrame(spec)
 	if err != nil {
 		t.Fatalf("identity frame: %v", err)
 	}

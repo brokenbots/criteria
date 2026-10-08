@@ -64,7 +64,7 @@ func NewServeAdapterServer(cfg *Config, impl adapterhost.Client, journal *EventJ
 		exitSignal:          make(chan struct{}),
 	}
 	s.dialFunc = s.dial
-	s.childClient = func() (adapterhost.Client, bool) { return impl, true }
+	s.childClient = func(string) (adapterhost.Client, bool) { return impl, true }
 	s.rand = rand.Float64
 	s.sleep = sleepCtx
 	return s

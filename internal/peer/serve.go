@@ -18,11 +18,14 @@ import (
 	"math/rand"
 	"net"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
@@ -85,6 +88,14 @@ const (
 	peerSupervisionV1Capability = "supervision.v1"
 	peerWorkflowV1Capability    = "workflow.v1"
 
+	// peerAdapterRouteHeader is the gRPC metadata header a multi-adapter
+	// host tags each session's adapter calls with (KB-213): its value is the
+	// adapter type the session belongs to, and the peer's connection mux
+	// routes the call to that child. Must stay in sync with the
+	// host-side constant in internal/adapter/environment/remote
+	// (the two packages cannot import each other).
+	peerAdapterRouteHeader = "x-criteria-adapter"
+
 	// peerLogChannel names the supervision channel StreamFlushed events
 	// report (the host-side peer_session consumes the same constant).
 	peerLogChannel = "log"
@@ -111,6 +122,20 @@ type peerIdentityFrame struct {
 	SDKProtocolVersion int                       `json:"sdk_protocol_version"`
 	Role               string                    `json:"role,omitempty"`
 	Peer               *peerIdentityCapabilities `json:"peer,omitempty"`
+	// Adapters (KB-213) names the FULL child set this peer hosts — every
+	// adapter of the environment, not just this connection's dial child.
+	// Additive and absent for the legacy single-adapter shape; the host shim
+	// verifies each advertised child digest against its own pin (accept-time
+	// fail-closed check for a declared adapter missing from the child set).
+	Adapters []peerAdapterIdentity `json:"adapters,omitempty"`
+}
+
+// peerAdapterIdentity is one hosted child in the identity frame's adapters
+// list: the adapter type plus its version and (when pinned) digest.
+type peerAdapterIdentity struct {
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"`
+	Digest  string `json:"digest,omitempty"`
 }
 
 // peerIdentityCapabilities is the `peer` block of the identity frame: peer
@@ -137,9 +162,11 @@ type Server struct {
 	// keepalive clock without weakening the production cadence.
 	keepaliveOpts []grpc.ServerOption
 	// dialFunc, childClient, rand, and sleep are test seams; NewServer
-	// installs production defaults.
+	// installs production defaults. childClient resolves the served client
+	// for one hosted adapter child by adapter type (KB-213 multi-adapter);
+	// for the serve-adapter role the resolver ignores the name.
 	dialFunc    func(ctx context.Context, network, addr string) (net.Conn, error)
-	childClient func() (adapterhost.Client, bool)
+	childClient func(name string) (adapterhost.Client, bool)
 	rand        func() float64
 	sleep       func(ctx context.Context, d time.Duration) error
 
@@ -190,25 +217,52 @@ func NewServer(cfg *Config, rt *peerRuntime, log *slog.Logger) *Server {
 	return s
 }
 
-// defaultChildClient exposes the local adapter child as a raw v2 client for
-// the phone-home bridge: in-memory (builtin) handles carry no client, so the
-// peer serves only supervision for those.
-func (s *Server) defaultChildClient() (adapterhost.Client, bool) {
-	return adapterhost.ClientOf(s.rt.Child())
+// defaultChildClient exposes a hosted adapter child as a raw v2 client for
+// the phone-home bridge, resolved by adapter type. In-memory (builtin)
+// handles carry no client, so the peer serves only supervision for those.
+func (s *Server) defaultChildClient(name string) (adapterhost.Client, bool) {
+	if s.rt == nil {
+		// Serve-adapter role: the in-process adapter for any name.
+		if s.impl == nil {
+			return nil, false
+		}
+		return s.impl, true
+	}
+	return s.rt.childClientFor(name)
 }
 
 // Run drives the phone-home loop until ctx is done: serve, reconnect with a
 // full-jitter backoff on connection loss, re-serve. The child stays alive
 // across reconnects when child keepalive is enabled (the default); with it
 // disabled the child is killed between attempts (legacy-runner parity: no
-// child survives a host disconnect).
+// child survives a host disconnect). With CRITERIA_REMOTE_SCOPES_DIR set the
+// hosted children are reached over one connection per (scope, adapter) token
+// (scope-set dialing, KB-213): the Run loop becomes a supervisor that starts
+// and stops one connection loop per scanned token, re-scanning at the
+// heartbeat cadence so runner rotation (CRI-137/304) self-heals.
 func (s *Server) Run(ctx context.Context) error {
+	if s.rt != nil && s.cfg.ScopesDir != "" {
+		return s.runScopeSet(ctx)
+	}
+	return s.runSingleConn(ctx)
+}
+
+// runSingleConn drives the single-connection phone-home loop for the legacy
+// single-adapter shape, the run-wide multi-adapter shape (one connection
+// carrying every adapter behind the dial child; routed per session by the
+// host's x-criteria-adapter header), and the serve-adapter role.
+func (s *Server) runSingleConn(ctx context.Context) error {
+	spec, err := s.connProfile()
+	if err != nil {
+		return err
+	}
 	prev := s.cfg.BackoffMin
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		err := s.serveOnce(ctx)
+		err := s.serveOnce(ctx, spec)
+		s.serveCountAdjust(spec)
 		select {
 		case <-s.exitSignal:
 			// Serve-adapter teardown (ADR-0008 child role): the host closed
@@ -221,18 +275,121 @@ func (s *Server) Run(ctx context.Context) error {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
-		if s.rt != nil && !s.cfg.ChildKeepAlive {
-			s.rt.killChild()
-		}
 		delay := s.nextBackoff(prev)
 		s.log.Warn("peer phone-home connection lost; reconnecting",
 			"host", s.cfg.Host,
-			"scope", s.cfg.Scope,
+			"adapter", spec.name,
+			"scope", spec.scope,
 			"error", err,
 			"backoff", delay.String(),
 		)
 		if sleepErr := s.sleep(ctx, delay); sleepErr != nil {
 			return ctx.Err()
+		}
+		prev = delay
+	}
+}
+
+// serveCountAdjust moves the loop's phone-home conn out of the runtime's
+// per-child serve counts: with child keepalive disabled this is where a
+// child whose last serving conn just ended is killed (no child survives a
+// host disconnect).
+func (s *Server) serveCountAdjust(spec serveConnSpec) {
+	if s.rt != nil {
+		s.rt.serveClosed(spec.children)
+	}
+}
+
+// runScopeSet supervises one phone-home connection loop per (scope, adapter)
+// token under CRITERIA_REMOTE_SCOPES_DIR. The token set is the engine's
+// per-instance dial manifest: runner rotation (CRI-137/304) adds new
+// instance dirs and removes dead ones, so the supervisor re-scans at the
+// heartbeat cadence and starts/stops loops to converge. A new token's loop
+// dials immediately (the engine is waiting for its adapter); a vanished
+// token's loop is stopped; its child is killed by the serve-count handoff
+// when child keepalive is disabled.
+func (s *Server) runScopeSet(ctx context.Context) error {
+	var mu sync.Mutex
+	loops := map[string]chan struct{}{}
+
+	rescan := func() {
+		specs, err := s.connSpecs()
+		if err != nil {
+			s.log.Error("peer scope scan failed", "dir", s.cfg.ScopesDir, "error", err)
+		}
+		want := make(map[string]serveConnSpec, len(specs))
+		for _, spec := range specs {
+			want[connKey(spec)] = spec
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		for key, spec := range want {
+			if _, running := loops[key]; running {
+				continue
+			}
+			stop := make(chan struct{})
+			loops[key] = stop
+			s.log.Info("peer scope conn starting", "adapter", spec.name, "scope", spec.scope)
+			go s.loopScopeConn(ctx, spec, stop)
+		}
+		for key := range loops {
+			if _, wanted := want[key]; !wanted {
+				close(loops[key])
+				delete(loops, key)
+				s.log.Info("peer scope conn stopped", "key", key)
+			}
+		}
+	}
+
+	rescan()
+	ticker := time.NewTicker(s.heartbeatInterval())
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			rescan()
+		}
+	}
+}
+
+// loopScopeConn is one (scope, adapter) connection loop: serve once, close
+// the serve count (killing the conn's child when keepalive is disabled),
+// then back off with full jitter before the next attempt.
+func (s *Server) loopScopeConn(ctx context.Context, spec serveConnSpec, stop <-chan struct{}) {
+	prev := s.cfg.BackoffMin
+	for {
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		err := s.serveOnce(ctx, spec)
+		s.serveCountAdjust(spec)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return
+		}
+		select {
+		case <-stop:
+			return
+		default:
+		}
+		delay := s.nextBackoff(prev)
+		s.log.Warn("peer phone-home connection lost; reconnecting",
+			"host", s.cfg.Host,
+			"adapter", spec.name,
+			"scope", spec.scope,
+			"error", err,
+			"backoff", delay.String(),
+		)
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-stop:
+			timer.Stop()
+			return
+		case <-timer.C:
 		}
 		prev = delay
 	}
@@ -266,47 +423,237 @@ func (s *Server) Serve(ctx context.Context) error {
 	return err
 }
 
+// serveConnSpec is one phone-home connection profile: the identity the peer
+// dials and handshakes with, plus which hosted children the connection
+// routes adapter calls to.
+type serveConnSpec struct {
+	name    string // identity-frame dial adapter (the conn's primary child)
+	version string
+	digest  string
+	scope   string
+	token   string
+	// children names the adapter types served through this conn: exactly one
+	// entry (the dial child) in the legacy and per-scope shapes, or the full
+	// hosted set for the run-wide multi-adapter shape (session calls routed
+	// by the host's x-criteria-adapter header).
+	children []string
+}
+
+// connKey is the dedup key for a per-scope connection (scope + adapter).
+func connKey(spec serveConnSpec) string {
+	return spec.scope + "\x00" + spec.name
+}
+
+// connProfile resolves the connection set for the single-connection shapes:
+// the run-wide multi-adapter manifest (one conn, all children) or the legacy
+// single adapter. Exactly one conn for both.
+func (s *Server) connProfile() (serveConnSpec, error) {
+	specs, err := s.connSpecs()
+	if err != nil {
+		return serveConnSpec{}, err
+	}
+	if len(specs) != 1 {
+		return serveConnSpec{}, fmt.Errorf("expected exactly one phone-home connection profile, got %d", len(specs))
+	}
+	return specs[0], nil
+}
+
+// connSpecs resolves the connection set for the configured peer shape
+// (KB-213):
+//   - CRITERIA_REMOTE_SCOPES_DIR set: one conn per (scope, adapter) token
+//     file scanned from the dir; the identity frame dials with that token
+//     and its adapter/scope. A scanned token for an adapter the peer does
+//     not host is fail-closed: the conn is refused with a loud error, the
+//     advertised child set on the other conns still fails the host's
+//     declared-adapter check, and the engine's wait for it types out.
+//   - multi-adapter manifest: one run-wide conn carrying the dial identity
+//     of the first manifest child, able to route to every hosted child.
+//   - legacy: one conn for the single configured adapter.
+func (s *Server) connSpecs() ([]serveConnSpec, error) {
+	cfg := s.cfg
+	if cfg.ScopesDir != "" {
+		scopes, err := ScanRemoteScopes(cfg.ScopesDir)
+		if err != nil {
+			return nil, err
+		}
+		hosted, err := s.hostedSpecs()
+		if err != nil {
+			return nil, err
+		}
+		specs := make([]serveConnSpec, 0, len(scopes))
+		for _, sc := range scopes {
+			hs, ok := hosted[sc.Adapter]
+			if !ok {
+				s.log.Error("peer refuses phone-home conn for an adapter it does not host",
+					"adapter", sc.Adapter,
+					"scope", sc.Scope,
+					"hosted", strings.Join(hostedNames(hosted), ","),
+				)
+				continue
+			}
+			specs = append(specs, serveConnSpec{
+				name:     hs.Name,
+				version:  hs.Version,
+				digest:   hs.Digest,
+				scope:    sc.Scope,
+				token:    sc.Token,
+				children: []string{hs.Name},
+			})
+		}
+		return specs, nil
+	}
+	if cfg.ManifestMode() {
+		children := make([]string, 0, len(cfg.Adapters))
+		for _, spec := range cfg.Adapters {
+			children = append(children, spec.Name)
+		}
+		first := cfg.Adapters[0]
+		return []serveConnSpec{{
+			name:     first.Name,
+			version:  first.Version,
+			digest:   first.Digest,
+			scope:    cfg.Scope,
+			token:    cfg.Token,
+			children: children,
+		}}, nil
+	}
+	return []serveConnSpec{{
+		name:     cfg.AdapterName,
+		version:  cfg.AdapterVersion,
+		digest:   cfg.Digest,
+		scope:    cfg.Scope,
+		token:    cfg.Token,
+		children: []string{cfg.AdapterName},
+	}}, nil
+}
+
+// hostedSpecs maps the hosted adapter set by name from the resolved
+// configuration (the manifest in multi-adapter mode, the legacy single
+// adapter otherwise).
+func (s *Server) hostedSpecs() (map[string]AdapterSpec, error) {
+	if s.cfg.ManifestMode() {
+		out := make(map[string]AdapterSpec, len(s.cfg.Adapters))
+		for _, spec := range s.cfg.Adapters {
+			out[spec.Name] = spec
+		}
+		return out, nil
+	}
+	if s.cfg.AdapterName == "" || s.cfg.Binary() == "" {
+		return nil, fmt.Errorf("peer adapter identity unresolved: set CRITERIA_ADAPTER_NAME and CRITERIA_ADAPTER_BINARY")
+	}
+	return map[string]AdapterSpec{
+		s.cfg.AdapterName: {
+			Name:     s.cfg.AdapterName,
+			Version:  s.cfg.AdapterVersion,
+			Binary:   s.cfg.AdapterBinary,
+			Digest:   s.cfg.Digest,
+			Manifest: s.cfg.AdapterManifest,
+		},
+	}, nil
+}
+
+func hostedNames(hosted map[string]AdapterSpec) []string {
+	names := make([]string, 0, len(hosted))
+	for name := range hosted {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 // newServedServer builds the phone-home gRPC server with both services
-// registered: the adapter bridge (when the child is live) and PeerService.
-func (s *Server) newServedServer() *grpc.Server {
+// registered: the adapter bridge (when the conn's children are live) and
+// PeerService.
+func (s *Server) newServedServer(spec serveConnSpec) *grpc.Server {
 	keepaliveOpts := s.keepaliveOpts
 	if keepaliveOpts == nil {
 		keepaliveOpts = adapterhost.RemoteKeepaliveServerOptions()
 	}
 	server := grpc.NewServer(keepaliveOpts...)
-	if child, ok := s.childClient(); ok {
+	if s.rt == nil {
 		// Serve-adapter role: the adapter is implemented in this process
-		// (no spawned child) and registers unwrapped. The legacy peer role
-		// wraps the child so session lifecycle and log-flush facts journal.
-		if s.rt == nil {
+		// (no spawned child) and registers unwrapped.
+		if child, ok := s.childClient(spec.name); ok {
 			adapterhost.RegisterAdapterService(server, child)
 		} else {
-			wrapper := &serveChildClient{Client: child, rt: s.rt}
-			s.rt.setServedChild(wrapper)
-			adapterhost.RegisterAdapterService(server, wrapper)
+			s.log.Warn("peer child has no adapter client; serving supervision only",
+				"adapter", spec.name)
 		}
 	} else {
-		s.log.Warn("peer child has no adapter client; serving supervision only",
-			"adapter", s.cfg.AdapterName)
+		s.serveChildSet(server, spec)
 	}
 	s.registerPeerService(server)
 	return server
 }
 
+// serveChildSet wraps and registers the adapter bridge for the conn's child
+// set: one conn serving many adapters registers a routing mux over the
+// per-child wrapped clients (session calls carry the x-criteria-adapter
+// header); one conn serving one adapter registers that child's wrapper
+// directly.
+func (s *Server) serveChildSet(server *grpc.Server, spec serveConnSpec) {
+	if len(spec.children) > 1 {
+		byName := make(map[string]adapterhost.Client, len(spec.children))
+		for _, name := range spec.children {
+			child, ok := s.childClient(name)
+			if !ok {
+				s.log.Warn("peer child has no adapter client; serving supervision only",
+					"adapter", name)
+				continue
+			}
+			wrapper := &serveChildClient{Client: child, rt: s.rt, name: name, scope: spec.scope}
+			s.rt.setServedChild(name, wrapper)
+			byName[name] = wrapper
+		}
+		if _, ok := byName[spec.name]; !ok {
+			// The dial child itself has no client: supervision only.
+			s.log.Warn("peer child has no adapter client; serving supervision only",
+				"adapter", spec.name)
+		}
+		adapterhost.RegisterAdapterService(server, &connMux{byName: byName, fallback: spec.name})
+		return
+	}
+	name := spec.children[0]
+	child, ok := s.childClient(name)
+	if !ok {
+		s.log.Warn("peer child has no adapter client; serving supervision only",
+			"adapter", name)
+		return
+	}
+	wrapper := &serveChildClient{Client: child, rt: s.rt, name: name, scope: spec.scope}
+	s.rt.setServedChild(name, wrapper)
+	adapterhost.RegisterAdapterService(server, wrapper)
+}
+
+// supervisionEventMatches reports whether a journaled supervision event
+// belongs to the filtered stream's adapter type (KB-213): an empty filter
+// passes everything (the legacy single-child stream), a set filter passes
+// only events attributed to that child.
+func supervisionEventMatches(ev *criteriav1.SupervisionEvent, adapterType string) bool {
+	if adapterType == "" {
+		return true
+	}
+	return ev.GetAdapterType() == adapterType
+}
+
 // serveOnce dials the host, writes the identity frame, and serves both
 // services on the held connection. It returns when the connection drops or
 // ctx is cancelled (server stopped).
-func (s *Server) serveOnce(ctx context.Context) error {
+func (s *Server) serveOnce(ctx context.Context, spec serveConnSpec) error {
 	conn, err := s.dialFunc(ctx, s.network(), s.cfg.Host)
 	if err != nil {
 		return fmt.Errorf("dial %s: %w", s.cfg.Host, err)
 	}
-	if err := s.writeIdentityFrame(conn); err != nil {
+	if err := s.writeIdentityFrame(conn, spec); err != nil {
 		_ = conn.Close()
 		return fmt.Errorf("handshake: %w", err)
 	}
 
-	server := s.newServedServer()
+	if s.rt != nil {
+		s.rt.serveOpened(spec.children)
+	}
+
+	server := s.newServedServer(spec)
 
 	wrapped := NewCloseSignalConn(conn)
 	lis := NewSingleConnListener(wrapped)
@@ -318,8 +665,9 @@ func (s *Server) serveOnce(ctx context.Context) error {
 
 	s.log.Info("peer phone-home connected",
 		"host", s.cfg.Host,
-		"scope", s.cfg.Scope,
-		"digest", s.cfg.Digest,
+		"adapter", spec.name,
+		"scope", spec.scope,
+		"digest", spec.digest,
 	)
 	err = server.Serve(lis)
 	// Serve-adapter teardown: RequestExit stopped the server — report the
@@ -410,8 +758,8 @@ func (s *Server) network() string {
 
 // writeIdentityFrame marshals the peer identity frame and writes it as a
 // single newline-terminated JSON line bounded to peerHandshakeFrameCap.
-func (s *Server) writeIdentityFrame(conn net.Conn) error {
-	line, err := s.identityFrame()
+func (s *Server) writeIdentityFrame(conn net.Conn, spec serveConnSpec) error {
+	line, err := s.identityFrame(spec)
 	if err != nil {
 		return err
 	}
@@ -421,24 +769,35 @@ func (s *Server) writeIdentityFrame(conn net.Conn) error {
 	return nil
 }
 
-func (s *Server) identityFrame() ([]byte, error) {
-	cfgVersion := s.cfg.AdapterVersion
+func (s *Server) identityFrame(spec serveConnSpec) ([]byte, error) {
+	cfgVersion := spec.version
 	if cfgVersion == "" {
 		cfgVersion = version.Version
 	}
-	data, err := json.Marshal(peerIdentityFrame{
-		Name:               s.cfg.AdapterName,
+	frame := peerIdentityFrame{
+		Name:               spec.name,
 		Version:            cfgVersion,
-		Digest:             s.cfg.Digest,
-		Token:              s.cfg.Token,
-		Scope:              s.cfg.Scope,
+		Digest:             spec.digest,
+		Token:              spec.token,
+		Scope:              spec.scope,
 		SDKProtocolVersion: peerSDKProtocolVersion,
 		Role:               peerHandshakeRole,
 		Peer: &peerIdentityCapabilities{
 			CriteriaVersion: version.Version,
 			Capabilities:    append([]string(nil), s.capabilities...),
 		},
-	})
+	}
+	// KB-213: the multi-adapter manifest advertises the full child set on
+	// every connection; the legacy single-adapter frame keeps its exact
+	// legacy shape (no adapters key).
+	if s.cfg.ManifestMode() {
+		ids := make([]peerAdapterIdentity, 0, len(s.cfg.Adapters))
+		for _, hosted := range s.cfg.Adapters {
+			ids = append(ids, peerAdapterIdentity{Name: hosted.Name, Version: hosted.Version, Digest: hosted.Digest})
+		}
+		frame.Adapters = ids
+	}
+	data, err := json.Marshal(frame)
 	if err != nil {
 		return nil, fmt.Errorf("marshal identity frame: %w", err)
 	}
@@ -557,7 +916,7 @@ func (s *Server) superviseHandler(srv interface{}, stream grpc.ServerStream) err
 	if err := stream.RecvMsg(req); err != nil {
 		return err
 	}
-	return s.supervise(stream, req.GetSinceEventSeq())
+	return s.supervise(stream, req.GetSinceEventSeq(), req.GetAdapterType())
 }
 
 // supervise streams the journal to the host: a replay of every event after
@@ -565,15 +924,28 @@ func (s *Server) superviseHandler(srv interface{}, stream grpc.ServerStream) err
 // SupervisionHeartbeat emitted at the idle interval when nothing else flows.
 // The cursor advances with each sent event, so a stream-level reset (host
 // re-opens Supervise) replays exactly the unseen suffix, once.
-func (s *Server) supervise(stream grpc.ServerStream, since uint64) error {
+//
+// adapterType (KB-213) filters the stream to one hosted child's events: a
+// per-session Supervise on a multi-adapter peer requests the child it
+// serves, and the peer filters every journaled event by adapter type so N
+// children's streams stay independent. An empty filter (the legacy single
+// child and older hosts) passes every event. Heartbeats are stream-generated
+// and always pass.
+func (s *Server) supervise(stream grpc.ServerStream, since uint64, adapterType string) error {
 	journal := s.journalFor()
 	cursor := since
 	replay := func() error {
 		for _, ev := range journal.Replay(cursor) {
-			if err := stream.SendMsg(ev); err != nil {
-				return err
+			seq := ev.GetEventSeq()
+			if supervisionEventMatches(ev, adapterType) {
+				if err := stream.SendMsg(ev); err != nil {
+					return err
+				}
 			}
-			cursor = ev.GetEventSeq()
+			// The cursor advances past filtered-out events too: this
+			// stream's cursor is its own (per-child Supervise), so events
+			// of other children must not be re-scanned on every wake.
+			cursor = seq
 		}
 		return nil
 	}
@@ -629,19 +1001,26 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// serveChildClient wraps the local adapter child's Client for the phone-home
-// bridge. It tracks the sessions the host opens through this peer (closed on
-// peer shutdown) and journals the StreamFlushed fact when the child's log
-// stream ends (ADR-0007 supervision emission points).
+// serveChildClient wraps one local adapter child's Client for the
+// phone-home bridge. It tracks the sessions the host opens through this
+// child (closed on peer shutdown) and journals the StreamFlushed fact when
+// the child's log stream ends (ADR-0007 supervision emission points). The
+// wrapping client carries the child's adapter name so the journal and the
+// runtime's per-child session tables attribute the facts (KB-213).
 type serveChildClient struct {
 	adapterhost.Client
 	rt *peerRuntime
+	// name is the wrapped child's adapter type.
+	name string
+	// scope is the journal attribution scope for this bridge's flushed
+	// facts: the conn's dial scope.
+	scope string
 }
 
 func (c *serveChildClient) OpenSession(ctx context.Context, req *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) {
 	resp, err := c.Client.OpenSession(ctx, req)
 	if err == nil {
-		c.rt.sessionOpened(req.GetSessionId())
+		c.rt.sessionOpened(c.name, req.GetSessionId())
 	}
 	return resp, err
 }
@@ -649,7 +1028,7 @@ func (c *serveChildClient) OpenSession(ctx context.Context, req *v2.OpenSessionR
 func (c *serveChildClient) CloseSession(ctx context.Context, req *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {
 	resp, err := c.Client.CloseSession(ctx, req)
 	if err == nil {
-		c.rt.sessionClosed(req.GetSessionId())
+		c.rt.sessionClosed(c.name, req.GetSessionId())
 	}
 	return resp, err
 }
@@ -660,6 +1039,76 @@ func (c *serveChildClient) CloseSession(ctx context.Context, req *v2.CloseSessio
 // session) is a stream end too — the backlog drained up to that point.
 func (c *serveChildClient) Log(ctx context.Context, req *v2.LogRequest, sink adapterhost.LogEventSink) error {
 	err := c.Client.Log(ctx, req, sink)
-	c.rt.journalFlushed(peerLogChannel, c.rt.Journal().LastSeq())
+	c.rt.journalFlushed(c.name, c.scope, peerLogChannel, c.rt.Journal().LastSeq())
 	return err
+}
+
+// connMux routes one multi-adapter phone-home connection's adapter calls to
+// the named child's wrapper (KB-213). The host tags each session's calls
+// with the x-criteria-adapter metadata header; a call without that header
+// (an older host, or an RPC without a session surface) lands on the
+// connection's dial child.
+type connMux struct {
+	byName map[string]adapterhost.Client
+	// fallback is the adapter type of the connection's dial child.
+	fallback string
+}
+
+func (m *connMux) resolve(ctx context.Context) adapterhost.Client {
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if vals := md.Get(peerAdapterRouteHeader); len(vals) == 1 {
+			if client, hosted := m.byName[vals[0]]; hosted {
+				return client
+			}
+		}
+	}
+	return m.byName[m.fallback]
+}
+
+func (m *connMux) Info(ctx context.Context, req *v2.InfoRequest) (*v2.InfoResponse, error) {
+	return m.resolve(ctx).Info(ctx, req)
+}
+
+func (m *connMux) OpenSession(ctx context.Context, req *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) {
+	return m.resolve(ctx).OpenSession(ctx, req)
+}
+
+func (m *connMux) Execute(ctx context.Context, req *v2.ExecuteRequest, sink adapterhost.ExecuteEventSink) error {
+	return m.resolve(ctx).Execute(ctx, req, sink)
+}
+
+func (m *connMux) Log(ctx context.Context, req *v2.LogRequest, sink adapterhost.LogEventSink) error {
+	return m.resolve(ctx).Log(ctx, req, sink)
+}
+
+func (m *connMux) Permissions(ctx context.Context, requests <-chan *v2.PermissionEvent) error {
+	return m.resolve(ctx).Permissions(ctx, requests)
+}
+
+func (m *connMux) Pause(ctx context.Context, req *v2.PauseRequest) (*v2.PauseResponse, error) {
+	return m.resolve(ctx).Pause(ctx, req)
+}
+
+func (m *connMux) Resume(ctx context.Context, req *v2.ResumeRequest) (*v2.ResumeResponse, error) {
+	return m.resolve(ctx).Resume(ctx, req)
+}
+
+func (m *connMux) Snapshot(ctx context.Context, req *v2.SnapshotRequest) (*v2.SnapshotResponse, error) {
+	return m.resolve(ctx).Snapshot(ctx, req)
+}
+
+func (m *connMux) Restore(ctx context.Context, req *v2.RestoreRequest) (*v2.RestoreResponse, error) {
+	return m.resolve(ctx).Restore(ctx, req)
+}
+
+func (m *connMux) Inspect(ctx context.Context, req *v2.InspectRequest) (*v2.InspectResponse, error) {
+	return m.resolve(ctx).Inspect(ctx, req)
+}
+
+func (m *connMux) CloseSession(ctx context.Context, req *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {
+	return m.resolve(ctx).CloseSession(ctx, req)
+}
+
+func (m *connMux) Prompt(ctx context.Context, req *adapterhost.PromptRequest) (*adapterhost.PromptResponse, error) {
+	return m.resolve(ctx).Prompt(ctx, req)
 }
