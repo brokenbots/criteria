@@ -131,16 +131,14 @@ func (f *fakePeer) connect(t *testing.T, addr string) {
 		t.Fatalf("fake peer dial: %v", err)
 	}
 	hs := &handshakeMessage{
-		Name:    f.name,
-		Version: "1.0.0",
-		Digest:  "sha256:abcd1234",
-		Token:   f.token,
-		Scope:   f.scope,
-		Role:    "peer",
-		Peer:    &PeerClientIdentity{CriteriaVersion: "test", Capabilities: append([]string(nil), f.peerCaps...)},
-	}
-	if len(f.adapters) > 0 {
-		hs.Peer.Adapters = append([]PeerAdapterIdentity(nil), f.adapters...)
+		Name:     f.name,
+		Version:  "1.0.0",
+		Digest:   "sha256:abcd1234",
+		Token:    f.token,
+		Scope:    f.scope,
+		Role:     "peer",
+		Peer:     &PeerClientIdentity{CriteriaVersion: "test", Capabilities: append([]string(nil), f.peerCaps...)},
+		Adapters: append([]PeerAdapterIdentity(nil), f.adapters...),
 	}
 	data, err := json.Marshal(hs)
 	if err != nil {
@@ -1043,12 +1041,13 @@ func providerWaiterCount(p *peerSessionProvider, typ, scope string) int {
 	return len(p.waiters[p.key(typ, scope)])
 }
 
-// waitForWaiterRegistered blocks until a test's pre-dial wait has registered
-// on the provider, so the later dial deterministically exercises the wake arm.
-func waitForWaiterRegistered(t *testing.T, p *peerSessionProvider, scope string) {
+// waitForWaiterRegistered blocks until a test's pre-dial wait for the
+// adapter type + scope has registered on the provider, so the later dial
+// deterministically exercises the wake arm.
+func waitForWaiterRegistered(t *testing.T, p *peerSessionProvider, typ, scope string) {
 	t.Helper()
 	waitFor(t, "waiter registration", func() bool {
-		return providerWaiterCount(p, "noop", scope) > 0
+		return providerWaiterCount(p, typ, scope) > 0
 	})
 }
 
@@ -1070,7 +1069,7 @@ func TestPeerWaitForHandleWakesOnDial(t *testing.T) {
 		handle, err := provider.WaitForHandle(ctx, "noop", "")
 		done <- waitOutcome{handle: handle, err: err}
 	}()
-	waitForWaiterRegistered(t, provider, "")
+	waitForWaiterRegistered(t, provider, "noop", "")
 
 	fp.connect(t, addr)
 
@@ -1110,7 +1109,7 @@ func TestPeerWaitForFreshHandleCancelWhileWaiting(t *testing.T) {
 		handle, err := provider.WaitForFreshHandle(waitCtx, "noop", "", nil)
 		done <- waitOutcome{handle: handle, err: err}
 	}()
-	waitForWaiterRegistered(t, provider, "")
+	waitForWaiterRegistered(t, provider, "noop", "")
 	waitCancel()
 
 	select {
@@ -1186,7 +1185,7 @@ func TestPeerWaitForFreshHandleBudgetSurfacesRejectionDiagnosis(t *testing.T) {
 		handle, err := provider.WaitForFreshHandle(ctx, "noop", "diag-scope", nil)
 		done <- waitOutcome{handle: handle, err: err}
 	}()
-	waitForWaiterRegistered(t, provider, "diag-scope")
+	waitForWaiterRegistered(t, provider, "noop", "diag-scope")
 
 	// A stale adapter pod presents a pre-rotation accept token: the shim
 	// rejects the dial and attributes the failure to the pending waiters, so
@@ -1247,7 +1246,7 @@ func TestPeerWaitForFreshHandleWakesOnLegacyHandshake(t *testing.T) {
 		handle, err := provider.WaitForFreshHandle(ctx, "noop", "", nil)
 		done <- waitOutcome{handle: handle, err: err}
 	}()
-	waitForWaiterRegistered(t, provider, "")
+	waitForWaiterRegistered(t, provider, "noop", "")
 
 	if err := dialFakeAdapter(addr, &handshakeMessage{Name: "noop", Version: "1.0.0", Digest: "sha256:abcd1234"}, nil); err != nil {
 		t.Fatalf("legacy dial: %v", err)
@@ -1512,7 +1511,7 @@ func TestPeerStopWakesPendingWaiters(t *testing.T) {
 		handle, err := provider.WaitForHandle(ctx, "noop", "")
 		done <- waitOutcome{handle: handle, err: err}
 	}()
-	waitForWaiterRegistered(t, provider, "")
+	waitForWaiterRegistered(t, provider, "noop", "")
 
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer stopCancel()

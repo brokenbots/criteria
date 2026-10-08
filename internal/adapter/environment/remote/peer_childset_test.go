@@ -140,10 +140,10 @@ func TestShim_PeerRole_VerifiedChildSetHandedToAcceptor(t *testing.T) {
 		Role:    handshakeRolePeer,
 		Peer: &PeerClientIdentity{
 			Capabilities: []string{"adapter.v2.full"},
-			Adapters: []PeerAdapterIdentity{
-				{Name: "noop", Version: "0.5.7", Digest: "sha256:abcd1234"},
-				{Name: "copilot", Version: "0.5.7", Digest: "sha256:0000ffff"},
-			},
+		},
+		Adapters: []PeerAdapterIdentity{
+			{Name: "noop", Version: "0.5.7", Digest: "sha256:abcd1234"},
+			{Name: "copilot", Version: "0.5.7", Digest: "sha256:0000ffff"},
 		},
 	})
 	defer conn.Close()
@@ -169,11 +169,9 @@ func TestShim_PeerRole_BadChildDigestRejectsDial(t *testing.T) {
 		Name:   "noop",
 		Digest: "sha256:abcd1234",
 		Role:   handshakeRolePeer,
-		Peer: &PeerClientIdentity{
-			Adapters: []PeerAdapterIdentity{
-				{Name: "noop", Digest: "sha256:abcd1234"},
-				{Name: "copilot", Digest: "sha256:replayed"},
-			},
+		Adapters: []PeerAdapterIdentity{
+			{Name: "noop", Digest: "sha256:abcd1234"},
+			{Name: "copilot", Digest: "sha256:replayed"},
 		},
 	})
 	defer conn.Close()
@@ -198,10 +196,8 @@ func TestShim_PeerRole_SelfInconsistentChildSetRejectsDial(t *testing.T) {
 		Name:   "noop",
 		Digest: "sha256:abcd1234",
 		Role:   handshakeRolePeer,
-		Peer: &PeerClientIdentity{
-			Adapters: []PeerAdapterIdentity{
-				{Name: "copilot", Digest: "sha256:0000ffff"},
-			},
+		Adapters: []PeerAdapterIdentity{
+			{Name: "copilot", Digest: "sha256:0000ffff"},
 		},
 	})
 	defer conn.Close()

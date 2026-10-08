@@ -57,23 +57,37 @@ import (
 	"github.com/brokenbots/criteria/workflow"
 )
 
-// buildNoopIntegrationBinary builds the noop conformance adapter and returns
-// its path. The peer runtime and the local-parity handle both spawn this
-// binary, so both transports exercise the identical adapter implementation.
-func buildNoopIntegrationBinary(t *testing.T) string {
+// buildConformanceBinary builds a conformance fixture adapter binary and
+// returns its path. The peer runtime and the local-parity handle both spawn
+// this binary, so both transports exercise the identical adapter
+// implementation.
+func buildConformanceBinary(t *testing.T, pkg string) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("resolve caller path")
 	}
 	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", "..", ".."))
-	binary := filepath.Join(t.TempDir(), "criteria-adapter-noop")
-	cmd := exec.Command("go", "build", "-o", binary, "./internal/adapter/conformance/testdata/noop")
+	base := filepath.Base(pkg)
+	binary := filepath.Join(t.TempDir(), "criteria-adapter-"+base)
+	cmd := exec.Command("go", "build", "-o", binary, pkg)
 	cmd.Dir = moduleRoot
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build noop adapter: %v\n%s", err, string(out))
+		t.Fatalf("build %s: %v\n%s", base, err, string(out))
 	}
 	return binary
+}
+
+// buildNoopIntegrationBinary builds the noop conformance adapter and returns
+// its path.
+func buildNoopIntegrationBinary(t *testing.T) string {
+	return buildConformanceBinary(t, "./internal/adapter/conformance/testdata/noop")
+}
+
+// buildStatefulIntegrationBinary builds the stateful conformance adapter
+// (KB-213 multi-adapter scenarios: a second adapter child next to noop).
+func buildStatefulIntegrationBinary(t *testing.T) string {
+	return buildConformanceBinary(t, "./internal/adapter/conformance/testdata/stateful")
 }
 
 // noopBinaryDigest reads the binary and returns the digest the shim verifier
@@ -202,6 +216,9 @@ type peerOpts struct {
 	host   string
 	binary string
 	digest string
+	// manifest switches the peer to multi-adapter mode (KB-213): ONE conn
+	// hosting every spec as a supervised child. binary/digest stay unset.
+	manifest []peer.AdapterSpec
 }
 
 // startPeer boots a real peer runtime + phone-home server pointed at the
@@ -226,6 +243,12 @@ func (fx *integrationFixture) startPeer(t *testing.T, opts *peerOpts) (*peer.Con
 		ChildKeepAlive: true,
 		BackoffMin:     50 * time.Millisecond,
 		BackoffMax:     200 * time.Millisecond,
+	}
+	if len(opts.manifest) > 0 {
+		pcfg.AdapterName = ""
+		pcfg.AdapterBinary = ""
+		pcfg.Digest = ""
+		pcfg.Adapters = opts.manifest
 	}
 	if err := pcfg.Resolve(); err != nil {
 		t.Fatalf("peer Config.Resolve: %v", err)
@@ -261,12 +284,18 @@ func (fx *integrationFixture) startPeer(t *testing.T, opts *peerOpts) (*peer.Con
 // waitForHandle blocks until the registry holds a peer handle for the given
 // adapter type + scope.
 func (fx *integrationFixture) waitForHandle(t *testing.T, scope string) *peerHandle {
+	return fx.waitForAdapterHandle(t, "noop", scope)
+}
+
+// waitForAdapterHandle is the adapter-parametrized form of waitForHandle
+// (KB-213: one env hosts several adapter children behind one conn).
+func (fx *integrationFixture) waitForAdapterHandle(t *testing.T, adapterType, scope string) *peerHandle {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	handle, err := fx.provider.WaitForHandle(ctx, "noop", scope)
+	handle, err := fx.provider.WaitForHandle(ctx, adapterType, scope)
 	if err != nil {
-		t.Fatalf("WaitForHandle(noop, %q): %v", scope, err)
+		t.Fatalf("WaitForHandle(%s, %q): %v", adapterType, scope, err)
 	}
 	ph, ok := handle.(*peerHandle)
 	if !ok {
@@ -843,7 +872,7 @@ func TestPeerIntegrationStalePeerBudget(t *testing.T) {
 			_, err := fx.provider.WaitForFreshHandle(waitCtx, "noop", "run_x/inst1", nil)
 			waitErr <- err
 		}()
-		waitForWaiterRegistered(t, fx.provider, "run_x/inst1")
+		waitForWaiterRegistered(t, fx.provider, "noop", "run_x/inst1")
 
 		// The restarted peer holds a pre-rotation scope instance: its token
 		// is valid, but its scope key was never re-registered → the stale-pod
@@ -883,7 +912,7 @@ func TestPeerIntegrationStalePeerBudget(t *testing.T) {
 			}
 			handleCh <- h
 		}()
-		waitForWaiterRegistered(t, fx.provider, "run_y/inst1")
+		waitForWaiterRegistered(t, fx.provider, "noop", "run_y/inst1")
 
 		// A stale dial lands first (rejected, recorded for diagnosis), then
 		// the fresh peer with the current scope+token is adopted — well
@@ -1132,4 +1161,221 @@ func bytesRepeat(b byte, n int) []byte {
 		out[i] = b
 	}
 	return out
+}
+
+// --- scenario 9: N>=2 adapter children of one env behind one conn (KB-213) ---
+
+// multiAdapterFixture boots the KB-213 substrate: a shim whose verifier pins
+// BOTH conformance binaries, a provider carrying the environment's declared
+// adapter set, and manifest-mode peers: one phone-home conn advertises the
+// child set, the host routes sessions per adapterType.
+type multiAdapterFixture struct {
+	fx          *integrationFixture
+	noopBin     string
+	stateBin    string
+	noopDigest  string
+	stateDigest string
+}
+
+// startMultiAdapterFixture builds both real binaries, pins each adapter's
+// digest with its own accepted value, wires the declared-adapter set onto the
+// provider, and boots one manifest-mode peer hosting both children.
+func startMultiAdapterFixture(t *testing.T, opts integrationOpts) *multiAdapterFixture {
+	t.Helper()
+	noopBin := buildNoopIntegrationBinary(t)
+	stateBin := buildStatefulIntegrationBinary(t)
+	noopDigest := noopBinaryDigest(t, noopBin)
+	stateDigest := noopBinaryDigest(t, stateBin)
+	token := opts.token
+	if token == "" {
+		token = "integration-accept-token"
+	}
+	shimCfg := &Config{
+		ListenAddress: "127.0.0.1:0",
+		Insecure:      true,
+		AcceptToken:   token,
+	}
+	if opts.perScope {
+		shimCfg.PerScopeSessions = true
+		shimCfg.AcceptToken = ""
+	}
+	shim, err := NewShim(shimCfg, &multiDigestVerifier{allowed: map[string]map[string]bool{
+		"noop":     {noopDigest: true},
+		"stateful": {stateDigest: true},
+	}})
+	if err != nil {
+		t.Fatalf("NewShim: %v", err)
+	}
+	startCtx, cancelStart := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancelStart()
+	if err := shim.Start(startCtx); err != nil {
+		t.Fatalf("shim Start: %v", err)
+	}
+	if opts.perScope {
+		shim.RegisterScope(opts.scope, token)
+	}
+	provider := NewPeerSessionProvider(shim, opts.perScope)
+	provider.SetDeclaredAdapters([]string{"noop", "stateful"})
+	shim.SetPeerAcceptor(provider)
+	ma := &multiAdapterFixture{
+		fx: &integrationFixture{
+			shim:     shim,
+			shims:    []*Shim{shim},
+			provider: provider,
+			addr:     shim.listener.Addr().String(),
+			token:    token,
+			binary:   noopBin,
+			digest:   noopDigest,
+		},
+		noopBin:     noopBin,
+		stateBin:    stateBin,
+		noopDigest:  noopDigest,
+		stateDigest: stateDigest,
+	}
+	t.Cleanup(ma.fx.Close)
+	if !opts.noPeer {
+		ma.bootManifestPeer(t, opts.scope, token)
+	}
+	return ma
+}
+
+// manifestSpecs builds the two-adapters-one-env manifest the peer boots from.
+func (ma *multiAdapterFixture) manifestSpecs() []peer.AdapterSpec {
+	return []peer.AdapterSpec{
+		{Name: "noop", Binary: ma.noopBin, Digest: ma.noopDigest},
+		{Name: "stateful", Binary: ma.stateBin, Digest: ma.stateDigest},
+	}
+}
+
+// bootManifestPeer starts an additional manifest-mode peer against the
+// fixture shim.
+func (ma *multiAdapterFixture) bootManifestPeer(t *testing.T, scope, token string) *peer.Config {
+	t.Helper()
+	pcfg, _ := ma.fx.startPeer(t, &peerOpts{scope: scope, token: token, manifest: ma.manifestSpecs()})
+	return pcfg
+}
+
+// TestPeerIntegrationTwoAdaptersOneEnvOneConn verifies the KB-213 substrate
+// end to end with real children: one manifest peer hosts noop + stateful
+// behind a single phone-home conn, both host-side handles are adopted from
+// that one conn, and session dispatch per adapterType lands on the right
+// child (Info echoes each adapter's own name).
+func TestPeerIntegrationTwoAdaptersOneEnvOneConn(t *testing.T) {
+	ma := startMultiAdapterFixture(t, integrationOpts{})
+
+	phNoop := ma.fx.waitForHandle(t, "")
+	phStateful := ma.fx.waitForAdapterHandle(t, "stateful", "")
+
+	infoNoop, err := phNoop.Info(context.Background())
+	if err != nil {
+		t.Fatalf("noop Info: %v", err)
+	}
+	if infoNoop.Name != "noop" {
+		t.Fatalf("noop handle routed to child %q", infoNoop.Name)
+	}
+	infoState, err := phStateful.Info(context.Background())
+	if err != nil {
+		t.Fatalf("stateful Info: %v", err)
+	}
+	if infoState.Name != "stateful" {
+		t.Fatalf("stateful handle routed to child %q", infoState.Name)
+	}
+
+	// Both children accept sessions over the same conn.
+	if err := phNoop.OpenSession(context.Background(), "s-noop", nil, nil); err != nil {
+		t.Fatalf("noop OpenSession: %v", err)
+	}
+	if err := phStateful.OpenSession(context.Background(), "s-stateful", nil, nil); err != nil {
+		t.Fatalf("stateful OpenSession: %v", err)
+	}
+}
+
+// TestPeerIntegrationMissingManifestAdapterFailClosed verifies the host's
+// fail-closed acceptance with real peers: when a peer's manifest does not
+// cover the environment's declared adapter set, its phone-home conn is
+// rejected on every dial (no session is ever adopted) until a fully-covered
+// manifest dials.
+func TestPeerIntegrationMissingManifestAdapterFailClosed(t *testing.T) {
+	ma := startMultiAdapterFixture(t, integrationOpts{noPeer: true})
+	fx := ma.fx
+
+	// The under-covered peer: manifest hosts only noop.
+	fx.startPeer(t, &peerOpts{manifest: []peer.AdapterSpec{
+		{Name: "noop", Binary: ma.noopBin, Digest: ma.noopDigest},
+	}})
+
+	// Several re-dial cycles at the 50-200ms backoff must leave the
+	// registry empty: every dial is rejected before adoption.
+	time.Sleep(1200 * time.Millisecond)
+	fx.mu.Lock()
+	adopted := len(fx.provider.peers)
+	fx.mu.Unlock()
+	if adopted != 0 {
+		t.Fatalf("under-covered peer adopted while missing declared adapters (%d sessions)", adopted)
+	}
+
+	// Recovery: a manifest peer covering the declared set is adopted for
+	// both adapters.
+	ma.bootManifestPeer(t, "", fx.token)
+	phStateful := ma.fx.waitForAdapterHandle(t, "stateful", "")
+	if info, err := phStateful.Info(context.Background()); err != nil || info.Name != "stateful" {
+		t.Fatalf("recovered stateful dispatch: info=%v err=%v", info, err)
+	}
+}
+
+// TestPeerIntegrationMultiAdapterPerScopeRotation verifies the scope-SET
+// model (CRI-137/304 sweep classes) with the multi-adapter manifest: a
+// per-scope manifest peer is adopted for both adapters, a restarted peer
+// holding a stale scope instance is diagnosed, and the fresh scoped dial is
+// adopted for the full child set.
+func TestPeerIntegrationMultiAdapterPerScopeRotation(t *testing.T) {
+	t.Run("manifest peer adopted per scope for both adapters", func(t *testing.T) {
+		ma := startMultiAdapterFixture(t, integrationOpts{perScope: true, scope: "run_z/inst1"})
+		phNoop := ma.fx.waitForAdapterHandle(t, "noop", "run_z/inst1")
+		phStateful := ma.fx.waitForAdapterHandle(t, "stateful", "run_z/inst1")
+		if phNoop == nil || phStateful == nil {
+			t.Fatal("nil handle")
+		}
+	})
+
+	t.Run("stale scope diagnosed, fresh scope adopted", func(t *testing.T) {
+		ma := startMultiAdapterFixture(t, integrationOpts{perScope: true, scope: "run_w/inst1", noPeer: true})
+		fx := ma.fx
+		fx.shim.verifyFailureBudget = 600 * time.Millisecond
+
+		waitCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		waitErr := make(chan error, 1)
+		go func() {
+			_, err := fx.provider.WaitForFreshHandle(waitCtx, "stateful", "run_w/inst1", nil)
+			waitErr <- err
+		}()
+		waitForWaiterRegistered(t, fx.provider, "stateful", "run_w/inst1")
+
+		// A manifest peer whose scope was never re-registered after the
+		// runner restart is the CRI-137 stale-pod class.
+		fx.startPeer(t, &peerOpts{scope: "run_w/old-inst", token: fx.token, manifest: ma.manifestSpecs()})
+
+		select {
+		case err := <-waitErr:
+			if err == nil {
+				t.Fatal("WaitForFreshHandle succeeded, want the stale-pod diagnosis")
+			}
+			if !strings.Contains(err.Error(), "is not registered") {
+				t.Errorf("diagnosis %q does not name the unregistered scope", err.Error())
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("stale scope not diagnosed within budget")
+		}
+
+		// The fresh scoped dial is adopted for the full child set.
+		fx.startPeer(t, &peerOpts{scope: "run_w/inst1", token: fx.token, manifest: ma.manifestSpecs()})
+		ctx, cancelAdopt := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancelAdopt()
+		for _, adapterType := range []string{"stateful", "noop"} {
+			if _, err := fx.provider.WaitForFreshHandle(ctx, adapterType, "run_w/inst1", nil); err != nil {
+				t.Fatalf("adopted %s handle: %v", adapterType, err)
+			}
+		}
+	})
 }

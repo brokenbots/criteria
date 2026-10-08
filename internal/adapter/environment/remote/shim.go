@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +41,15 @@ type handshakeMessage struct {
 	// runners that never send role keep dialing unchanged.
 	Role string              `json:"role,omitempty"`
 	Peer *PeerClientIdentity `json:"peer,omitempty"`
+	// Adapters (KB-213) is the peer's hosted child set, a top-level key of
+	// the identity frame. It mirrors internal/peer's peerIdentityFrame field
+	// exactly: every adapter the peer container declares, advertised on
+	// every phone-home connection of the environment. Legacy dials
+	// (single-adapter peers) omit the key entirely; its presence is the
+	// signal that the conn can host more than one adapter, and each
+	// advertised child is digest-verified at accept time exactly like the
+	// dialing identity itself. The host tolerates absent/old frames.
+	Adapters []PeerAdapterIdentity `json:"adapters,omitempty"`
 }
 
 // handshakeRolePeer is the identity-frame role value that routes a dial to
@@ -60,13 +70,6 @@ const handshakeFrameCap = 16384
 type PeerClientIdentity struct {
 	CriteriaVersion string   `json:"criteria_version,omitempty"`
 	Capabilities    []string `json:"capabilities,omitempty"`
-	// Adapters is the peer's hosted child set (KB-213): every adapter the
-	// peer container declares, advertised on every phone-home connection of
-	// the environment. Legacy dials (single-adapter peers) omit the key
-	// entirely; its presence is the signal that the conn can host more than
-	// one adapter, and each advertised child is digest-verified at accept
-	// time exactly like the dialing identity itself.
-	Adapters []PeerAdapterIdentity `json:"adapters,omitempty"`
 }
 
 // PeerAdapterIdentity is one hosted adapter child in a peer identity frame
@@ -730,13 +733,25 @@ func (s *Shim) acceptPeerConn(ctx context.Context, conn net.Conn, hs *handshakeM
 	return acceptor.AcceptPeer(ctx, conn, dial)
 }
 
-// dialAdapters extracts the verified hosted child set from an identity frame
-// (nil when the frame did not advertise one).
+// dialAdapters extracts the verified hosted child set from an identity
+// frame's top-level `adapters` key (nil when the frame did not advertise
+// one).
 func dialAdapters(hs *handshakeMessage) []PeerAdapterIdentity {
-	if hs.Peer == nil {
-		return nil
+	return hs.Adapters
+}
+
+// dialAdapterTypes returns the adapter types the dial's conn hosts: the
+// advertised child set when one is present, else the dial child alone (the
+// legacy single-adapter shape).
+func dialAdapterTypes(hs *handshakeMessage) []string {
+	if adapters := dialAdapters(hs); len(adapters) > 0 {
+		types := make([]string, 0, len(adapters))
+		for _, a := range adapters {
+			types = append(types, a.Name)
+		}
+		return types
 	}
-	return hs.Peer.Adapters
+	return []string{hs.Name}
 }
 
 func (s *Shim) performHandshake(ctx context.Context, conn net.Conn) error {
@@ -848,7 +863,7 @@ func (s *Shim) verifyAdapterIdentity(conn net.Conn, hs *handshakeMessage) error 
 	// is a pure check (it no longer closes the dial itself) so the recovery
 	// re-check could run with the connection still open.
 	_ = conn.Close()
-	s.noteVerifyFailure(hs.Name, hs.Scope, class, err)
+	s.noteVerifyFailure(dialAdapterTypes(hs), hs.Scope, class, err)
 	return err
 }
 
@@ -880,15 +895,14 @@ func (s *Shim) tryScopeRecovery(hs *handshakeMessage) bool {
 //
 // Attribution is scoped to the pending waiter's expected identity: a dial
 // whose presented scope is not registered (the stale-pod-on-old-key shape
-// after a runner restart) is attributed only to waiters of the same adapter
-// type whose scope shares the dial's scope name prefix. An unrelated adapter
-// type — or an unrelated scope name — can never have its wait poisoned by
-// another dialer's rejections.
-func (s *Shim) noteVerifyFailure(adapterType, scope string, class identityRejectClass, cause error) {
+// after a runner restart) is attributed only to waiters of hosted adapters
+// whose scope shares the dial's scope name prefix. An unrelated scope name
+// can never have its wait poisoned by another dialer's rejections.
+func (s *Shim) noteVerifyFailure(hosts []string, scope string, class identityRejectClass, cause error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for _, key := range s.failureAttributionKeys(adapterType, scope, class) {
+	for _, key := range s.failureAttributionKeys(hosts, scope, class) {
 		if len(s.waiters[key]) == 0 {
 			delete(s.verifyFailures, key)
 			continue
@@ -904,27 +918,36 @@ func (s *Shim) noteVerifyFailure(adapterType, scope string, class identityReject
 // with its last-failure diagnostics. A dial that failed for its own exact
 // session key only records there. A dial rejected because its presented scope
 // is not registered (stale pre-rotation key) additionally reaches pending
-// waiters of the same adapter type whose scope shares the dial's scope-name
-// prefix; in per-scope mode an unregistered scope can never match a waiter's
-// expected identity exactly, so this prefix affinity is the only way the
-// stale-pod diagnosis reaches the pending wait's terminal error.
-func (s *Shim) failureAttributionKeys(adapterType, scope string, class identityRejectClass) []string {
-	key := s.sessionKey(adapterType, scope)
-	keys := []string{key}
+// waiters whose scope shares the dial's scope-name prefix; in per-scope mode
+// an unregistered scope can never match a waiter's expected identity
+// exactly, so this prefix affinity is the only way the stale-pod diagnosis
+// reaches the pending wait's terminal error.
+//
+// KB-213: a multi-adapter conn presents the hosted child set, so the
+// rejection is a conn-fate fact — waiters of every hosted adapter sharing
+// the dial's scope prefix get enriched, not just the dial adapter's own
+// waiters. hosts is the dial's hosted adapter types (nil → the dial child).
+func (s *Shim) failureAttributionKeys(hosts []string, scope string, class identityRejectClass) []string {
+	var prefixWaiters map[string]bool
 	if s.perScopeSessions && class == rejectScopeNotRegistered && scope != "" {
+		prefixNow := scopeNamePrefix(scope)
+		prefixWaiters = make(map[string]bool, len(s.waiters))
 		for waiterKey := range s.waiters {
-			if waiterKey == key {
-				continue
-			}
 			waiterType, waiterScope, ok := strings.Cut(waiterKey, "\x00")
-			if !ok || waiterType != adapterType {
+			if !ok {
 				continue
 			}
-			if scopeNamePrefix(waiterScope) != scopeNamePrefix(scope) {
-				continue
+			if slices.Contains(hosts, waiterType) && scopeNamePrefix(waiterScope) == prefixNow {
+				prefixWaiters[waiterKey] = true
 			}
-			keys = append(keys, waiterKey)
 		}
+	}
+	keys := make([]string, 0, len(hosts)+len(prefixWaiters))
+	for _, host := range hosts {
+		keys = append(keys, s.sessionKey(host, scope))
+	}
+	for waiterKey := range prefixWaiters {
+		keys = append(keys, waiterKey)
 	}
 	return keys
 }
@@ -966,10 +989,8 @@ func (s *Shim) checkAdapterIdentity(hs *handshakeMessage) (identityRejectClass, 
 	// self-consistency (the dialing adapter must be one of the advertised
 	// children). Nil or empty sets skip these checks: single-adapter peers
 	// keep dialing exactly as before.
-	if hs.Peer != nil {
-		if class, err := checkPeerChildSet(s.digestVerifier, hs.Name, hs.Peer.Adapters); class != rejectNone {
-			return class, err
-		}
+	if class, err := checkPeerChildSet(s.digestVerifier, hs.Name, hs.Adapters); class != rejectNone {
+		return class, err
 	}
 
 	s.mu.Lock()
