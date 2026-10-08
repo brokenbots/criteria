@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -71,6 +73,8 @@ type fakePeer struct {
 
 	// KB-95 (ADR-0008) additions:
 	peerCaps     []string                     // handshake Peer identity capabilities; nil keeps the legacy shape
+	adapters     []PeerAdapterIdentity        // KB-213: hosted child set advertised in the identity frame; nil keeps the legacy single-adapter shape
+	routes       []string                     // x-criteria-adapter route of each Info call (routed-dispatch witness)
 	executeErr   error                        // Execute returns this error instead of streaming a result
 	resultWire   *v2.ExecuteResult            // Execute's terminal result event; nil keeps the plain success
 	childEvents  []*v2.ExecuteEvent           // Execute streams these before executeErr/result
@@ -135,6 +139,9 @@ func (f *fakePeer) connect(t *testing.T, addr string) {
 		Role:    "peer",
 		Peer:    &PeerClientIdentity{CriteriaVersion: "test", Capabilities: append([]string(nil), f.peerCaps...)},
 	}
+	if len(f.adapters) > 0 {
+		hs.Peer.Adapters = append([]PeerAdapterIdentity(nil), f.adapters...)
+	}
 	data, err := json.Marshal(hs)
 	if err != nil {
 		conn.Close()
@@ -196,9 +203,36 @@ func (f *fakePeer) appendEvent(ev *criteriav1.SupervisionEvent) {
 	defer f.journalMu.Unlock()
 	ev.EventSeq = f.nextSeq
 	f.nextSeq++
-	ev.AdapterType = f.name
+	if ev.GetAdapterType() == "" {
+		// Unattributed events belong to the dial adapter (legacy shape).
+		ev.AdapterType = f.name
+	}
 	ev.Scope = f.scope
 	f.journal = append(f.journal, ev)
+}
+
+// appendEventFor journals an event attributed to a specific hosted adapter
+// (KB-213 multi-adapter routing).
+func (f *fakePeer) appendEventFor(adapterType string, ev *criteriav1.SupervisionEvent) {
+	ev.AdapterType = adapterType
+	f.appendEvent(ev)
+}
+
+// routeSnapshot returns the recorded x-criteria-adapter routes of the Info
+// calls the fake served (dispatch witnesses for multi-adapter tests).
+func (f *fakePeer) routeSnapshot() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.routes...)
+}
+
+// handleTypeName identifies an adapterhost.Handle's dynamic type (used in
+// failure messages only).
+func handleTypeName(h interface{}) string {
+	if h == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("%T", h)
 }
 
 // settleOnCancel journals terminal arms for the cancelled child run(s): the
@@ -356,7 +390,19 @@ func (f *fakePeer) Info(ctx context.Context, req *v2.InfoRequest) (*v2.InfoRespo
 	if caps == nil {
 		caps = []string{"pause", "snapshot"}
 	}
-	return &v2.InfoResponse{Name: f.name, Version: "1.0.0", Capabilities: caps}, nil
+	// The connMux on a real multi-adapter peer dispatches by the
+	// x-criteria-adapter route header; the fake simulates that dispatch by
+	// echoing the routed adapter name and recording the route.
+	name := f.name
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if routes := md.Get(peerAdapterRouteHeader); len(routes) > 0 && routes[0] != "" {
+			f.mu.Lock()
+			f.routes = append(f.routes, routes[0])
+			f.mu.Unlock()
+			name = routes[0]
+		}
+	}
+	return &v2.InfoResponse{Name: name, Version: "1.0.0", Capabilities: caps}, nil
 }
 
 func (f *fakePeer) OpenSession(ctx context.Context, req *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) {
