@@ -44,6 +44,16 @@ const (
 	EnvAdapterVersion  = "CRITERIA_ADAPTER_VERSION"
 	EnvAdapterBinary   = "CRITERIA_ADAPTER_BINARY"
 	EnvAdapterManifest = "CRITERIA_ADAPTER_MANIFEST"
+	// The peer's pod-level adapter manifest deliberately lives under the
+	// CRITERIA_REMOTE_* family, NOT CRITERIA_ADAPTERS: that pre-existing name
+	// is the adapter install DIRECTORY consumed by adapterhost discovery
+	// (internal/adapter/dirs, adapterhost), and reusing it for the multi-
+	// adapter list would collapse two different variables into one value.
+	// Under the remote prefix the manifest is also scrubbed from child
+	// environments automatically (see resolve.go ChildEnv).
+	EnvAdapters        = "CRITERIA_REMOTE_ADAPTERS"
+	EnvAdaptersDir     = "CRITERIA_REMOTE_ADAPTERS_DIR"
+	EnvRemoteScopesDir = "CRITERIA_REMOTE_SCOPES_DIR"
 	EnvLogLevel        = "CRITERIA_LOG_LEVEL"
 	EnvChildKeepAlive  = "CRITERIA_PEER_CHILD_KEEPALIVE"
 	// The timing/budget override names are owned by the tunables registry
@@ -92,6 +102,17 @@ type Config struct {
 	AdapterBinary   string // EnvAdapterBinary
 	AdapterManifest string // EnvAdapterManifest
 
+	// Adapters is the multi-adapter manifest (KB-213): one spec per adapter
+	// child the peer hosts, built from CRITERIA_REMOTE_ADAPTERS /
+	// CRITERIA_REMOTE_ADAPTERS_DIR with per-adapter overrides. Empty means
+	// the legacy single-adapter shape above.
+	Adapters []AdapterSpec
+	// ScopesDir is the runner's remote-tokens root (EnvRemoteScopesDir);
+	// when set, the peer dials one conn per (scope, adapter) token file it
+	// finds there — a scope-SET conn set instead of the single run-wide
+	// conn. Empty keeps the legacy single-conn dial.
+	ScopesDir string
+
 	// ChildKeepAlive: when true (the default) the child adapter survives a
 	// host disconnect and is killed only by peer shutdown or a Control RPC.
 	ChildKeepAlive bool
@@ -130,8 +151,27 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	if err := cfg.parseTunables(getenv); err != nil {
 		return Config{}, err
 	}
+	cfg.ScopesDir = strings.TrimSpace(getenv(EnvRemoteScopesDir))
+	// The multi-adapter manifest only replaces the legacy single-adapter
+	// shape when it actually declares entries; a malformed declaration is an
+	// error, never a silent fall-back.
+	adapters, err := ParseAdaptersConfig(getenv)
+	if err != nil {
+		return Config{}, err
+	}
+	if len(adapters) > 0 {
+		cfg.Adapters = adapters
+	}
 	return cfg, nil
 }
+
+// ManifestMode reports whether the adapter set was declared through the
+// multi-adapter manifest (CRITERIA_REMOTE_ADAPTERS / CRITERIA_REMOTE_ADAPTERS_DIR)
+// rather than the legacy single-adapter variables.
+func (c *Config) ManifestMode() bool { return len(c.Adapters) > 0 }
+
+// MultiChild reports whether the peer hosts more than one adapter child.
+func (c *Config) MultiChild() bool { return len(c.Adapters) > 1 }
 
 // parseTunables reads and validates the parsed peer tunables: child
 // keepalive, journal limit, and backoff bounds.
@@ -198,7 +238,10 @@ func LoadConfigFromEnv() (Config, error) {
 // Precedence is ported from the phone-home runner
 // (cmd/criteria-adapter-remote-runner/runner.go resolve()): manifest →
 // CRITERIA_ADAPTER_BINARY → conventional install path → PATH lookup of
-// criteria-adapter-<name> → first PATH entry.
+// criteria-adapter-<name> → first PATH entry. Multi-adapter manifest mode
+// resolves every declared child with the same precedence per adapter
+// (ResolveAdapterSpec); the legacy single-adapter fields do not participate
+// there — the manifest is the declaration of record for the hosted child set.
 func (c *Config) Resolve() error {
 	if c.Host == "" {
 		return errors.New("CRITERIA_REMOTE_HOST is required")
@@ -210,9 +253,14 @@ func (c *Config) Resolve() error {
 	}
 	c.TLS = tlsCfg
 
+	if c.ManifestMode() {
+		return c.resolveManifestChildren()
+	}
+
 	if err := c.resolveFromManifest(); err != nil {
 		return err
 	}
+
 	c.resolveDefaults()
 
 	if c.Binary() == "" {
@@ -222,6 +270,30 @@ func (c *Config) Resolve() error {
 		return err
 	}
 	return c.resolveDigestBinary()
+}
+
+// resolveManifestChildren resolves every manifest child with the per-adapter
+// precedence (KB-213): manifest defaults, binary location, PATH validation,
+// and per-child digest pinning. A child that fails to resolve fails the whole
+// Resolve — a multi-child peer never half-boots on an undeclared child.
+func (c *Config) resolveManifestChildren() error {
+	for i := range c.Adapters {
+		if err := ResolveAdapterSpec(&c.Adapters[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ChildNames returns the names of the declared manifest children, in
+// declaration order. Empty in legacy single-adapter mode, where identity is
+// carried by AdapterName.
+func (c *Config) ChildNames() []string {
+	names := make([]string, 0, len(c.Adapters))
+	for _, spec := range c.Adapters {
+		names = append(names, spec.Name)
+	}
+	return names
 }
 
 // Binary returns the resolved adapter binary path.

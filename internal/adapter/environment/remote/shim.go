@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +41,15 @@ type handshakeMessage struct {
 	// runners that never send role keep dialing unchanged.
 	Role string              `json:"role,omitempty"`
 	Peer *PeerClientIdentity `json:"peer,omitempty"`
+	// Adapters (KB-213) is the peer's hosted child set, a top-level key of
+	// the identity frame. It mirrors internal/peer's peerIdentityFrame field
+	// exactly: every adapter the peer container declares, advertised on
+	// every phone-home connection of the environment. Legacy dials
+	// (single-adapter peers) omit the key entirely; its presence is the
+	// signal that the conn can host more than one adapter, and each
+	// advertised child is digest-verified at accept time exactly like the
+	// dialing identity itself. The host tolerates absent/old frames.
+	Adapters []PeerAdapterIdentity `json:"adapters,omitempty"`
 }
 
 // handshakeRolePeer is the identity-frame role value that routes a dial to
@@ -62,6 +72,14 @@ type PeerClientIdentity struct {
 	Capabilities    []string `json:"capabilities,omitempty"`
 }
 
+// PeerAdapterIdentity is one hosted adapter child in a peer identity frame
+// (KB-213): the adapter type, its version, and its lockfile-verified digest.
+type PeerAdapterIdentity struct {
+	Name    string `json:"name,omitempty"`
+	Version string `json:"version,omitempty"`
+	Digest  string `json:"digest,omitempty"`
+}
+
 // PeerDial is the authenticated peer-role dial handed to a PeerAcceptor
 // (T-06). Every identity field has already been verified by the shim (mTLS,
 // identity pattern, lockfile digest, scope token) before AcceptPeer runs.
@@ -74,6 +92,10 @@ type PeerDial struct {
 	Scope string
 	// Digest is the presented adapter digest (already verified).
 	Digest string
+	// Adapters is the verified hosted child set of the peer container
+	// (KB-213) when the identity frame advertised it; nil for single-adapter
+	// peers (legacy shape, empty set means the conn serves AdapterType only).
+	Adapters []PeerAdapterIdentity
 	// Peer is the parsed `peer` block of the handshake; may be nil when the
 	// dialer omitted it.
 	Peer *PeerClientIdentity
@@ -89,7 +111,7 @@ type PeerDial struct {
 // connection and must close it before returning, whether it succeeds or
 // fails.
 type PeerAcceptor interface {
-	AcceptPeer(ctx context.Context, conn net.Conn, dial PeerDial) error
+	AcceptPeer(ctx context.Context, conn net.Conn, dial *PeerDial) error
 }
 
 // DigestVerifier checks whether a reported adapter digest is acceptable.
@@ -124,6 +146,54 @@ func (e *ScopeNotRegisteredError) Is(target error) bool {
 	return target == ErrScopeNotRegistered
 }
 
+// ErrPeerChildSetMissing marks a fail-closed host rejection rooted in the
+// peer's hosted child set (KB-213): at accept time the peer's advertised
+// children do not cover every adapter the environment declares, or a session
+// wait targets an adapter the environment never declared. It is deliberately
+// distinct from digest and token rejections: the pod must be re-created with
+// a manifest that actually hosts the declared adapters — no re-registration
+// or re-handshake can recover it.
+var ErrPeerChildSetMissing = errors.New("peer child set does not cover the declared adapters")
+
+// PeerChildSetError is the typed form of a child-set failure (KB-213).
+type PeerChildSetError struct {
+	// AdapterType is the adapter the rejection concerned: the dialed adapter
+	// at accept time, or the requested adapter on a session wait.
+	AdapterType string
+	// Scope is the scope the dial or wait concerned ("" in run-wide mode).
+	Scope string
+	// Missing lists the declared adapters the peer does not host, when the
+	// rejection is an accept-time coverage failure; nil on a wait for an
+	// adapter the environment does not declare.
+	Missing []string
+	// Hosted lists the child set the dial advertised, when known.
+	Hosted []string
+}
+
+func (e *PeerChildSetError) Error() string {
+	if len(e.Missing) == 0 {
+		return fmt.Sprintf("adapter %q is not declared for this environment; refusing to wait for a child no peer will host", e.AdapterType)
+	}
+	return fmt.Sprintf("peer for adapter %q (scope %q) does not host declared adapters %s (hosted: %s)",
+		e.AdapterType, e.Scope, strings.Join(e.Missing, ", "), strings.Join(e.Hosted, ","))
+}
+
+// Is reports the sentinel so callers can branch on the rejection class
+// without unwrapping the concrete type.
+func (e *PeerChildSetError) Is(target error) bool {
+	return target == ErrPeerChildSetMissing
+}
+
+// hostedAdapters returns the adapter set a peer dial covers: the advertised
+// child set when present, otherwise the dialed adapter alone (single-child
+// peers).
+func hostedAdapters(dial *PeerDial) []string {
+	if len(dial.Adapters) == 0 {
+		return []string{dial.AdapterType}
+	}
+	return peerChildNames(dial.Adapters)
+}
+
 // ScopeRegistrar is the dial-time re-registration seam (KB-25): when the
 // shim receives a dial whose digest verifies but whose presented scope has
 // no registered accept token, it consults the registrar once with the
@@ -152,6 +222,11 @@ const (
 	rejectDigest
 	rejectScopeNotRegistered
 	rejectBadToken
+	// rejectChildSet marks a peer dial whose advertised adapter child set
+	// failed verification (KB-213): a malformed entry, a duplicate child, a
+	// dial identity missing from the set, or a child whose digest does not
+	// verify against the verifier.
+	rejectChildSet
 )
 
 // verifyFailureState remembers the most recent identity-verification
@@ -654,8 +729,29 @@ func (s *Shim) acceptPeerConn(ctx context.Context, conn net.Conn, hs *handshakeM
 		_ = conn.Close()
 		return fmt.Errorf("peer role dial from %q rejected: no peer acceptor configured", hs.Name)
 	}
-	dial := PeerDial{AdapterType: hs.Name, Scope: hs.Scope, Digest: hs.Digest, Peer: hs.Peer}
-	return acceptor.AcceptPeer(ctx, conn, dial)
+	dial := PeerDial{AdapterType: hs.Name, Scope: hs.Scope, Digest: hs.Digest, Adapters: dialAdapters(hs), Peer: hs.Peer}
+	return acceptor.AcceptPeer(ctx, conn, &dial)
+}
+
+// dialAdapters extracts the verified hosted child set from an identity
+// frame's top-level `adapters` key (nil when the frame did not advertise
+// one).
+func dialAdapters(hs *handshakeMessage) []PeerAdapterIdentity {
+	return hs.Adapters
+}
+
+// dialAdapterTypes returns the adapter types the dial's conn hosts: the
+// advertised child set when one is present, else the dial child alone (the
+// legacy single-adapter shape).
+func dialAdapterTypes(hs *handshakeMessage) []string {
+	if adapters := dialAdapters(hs); len(adapters) > 0 {
+		types := make([]string, 0, len(adapters))
+		for _, a := range adapters {
+			types = append(types, a.Name)
+		}
+		return types
+	}
+	return []string{hs.Name}
 }
 
 func (s *Shim) performHandshake(ctx context.Context, conn net.Conn) error {
@@ -767,7 +863,7 @@ func (s *Shim) verifyAdapterIdentity(conn net.Conn, hs *handshakeMessage) error 
 	// is a pure check (it no longer closes the dial itself) so the recovery
 	// re-check could run with the connection still open.
 	_ = conn.Close()
-	s.noteVerifyFailure(hs.Name, hs.Scope, class, err)
+	s.noteVerifyFailure(dialAdapterTypes(hs), hs.Scope, class, err)
 	return err
 }
 
@@ -799,15 +895,14 @@ func (s *Shim) tryScopeRecovery(hs *handshakeMessage) bool {
 //
 // Attribution is scoped to the pending waiter's expected identity: a dial
 // whose presented scope is not registered (the stale-pod-on-old-key shape
-// after a runner restart) is attributed only to waiters of the same adapter
-// type whose scope shares the dial's scope name prefix. An unrelated adapter
-// type — or an unrelated scope name — can never have its wait poisoned by
-// another dialer's rejections.
-func (s *Shim) noteVerifyFailure(adapterType, scope string, class identityRejectClass, cause error) {
+// after a runner restart) is attributed only to waiters of hosted adapters
+// whose scope shares the dial's scope name prefix. An unrelated scope name
+// can never have its wait poisoned by another dialer's rejections.
+func (s *Shim) noteVerifyFailure(hosts []string, scope string, class identityRejectClass, cause error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for _, key := range s.failureAttributionKeys(adapterType, scope, class) {
+	for _, key := range s.failureAttributionKeys(hosts, scope, class) {
 		if len(s.waiters[key]) == 0 {
 			delete(s.verifyFailures, key)
 			continue
@@ -823,27 +918,36 @@ func (s *Shim) noteVerifyFailure(adapterType, scope string, class identityReject
 // with its last-failure diagnostics. A dial that failed for its own exact
 // session key only records there. A dial rejected because its presented scope
 // is not registered (stale pre-rotation key) additionally reaches pending
-// waiters of the same adapter type whose scope shares the dial's scope-name
-// prefix; in per-scope mode an unregistered scope can never match a waiter's
-// expected identity exactly, so this prefix affinity is the only way the
-// stale-pod diagnosis reaches the pending wait's terminal error.
-func (s *Shim) failureAttributionKeys(adapterType, scope string, class identityRejectClass) []string {
-	key := s.sessionKey(adapterType, scope)
-	keys := []string{key}
+// waiters whose scope shares the dial's scope-name prefix; in per-scope mode
+// an unregistered scope can never match a waiter's expected identity
+// exactly, so this prefix affinity is the only way the stale-pod diagnosis
+// reaches the pending wait's terminal error.
+//
+// KB-213: a multi-adapter conn presents the hosted child set, so the
+// rejection is a conn-fate fact — waiters of every hosted adapter sharing
+// the dial's scope prefix get enriched, not just the dial adapter's own
+// waiters. hosts is the dial's hosted adapter types (nil → the dial child).
+func (s *Shim) failureAttributionKeys(hosts []string, scope string, class identityRejectClass) []string {
+	var prefixWaiters map[string]bool
 	if s.perScopeSessions && class == rejectScopeNotRegistered && scope != "" {
+		prefixNow := scopeNamePrefix(scope)
+		prefixWaiters = make(map[string]bool, len(s.waiters))
 		for waiterKey := range s.waiters {
-			if waiterKey == key {
-				continue
-			}
 			waiterType, waiterScope, ok := strings.Cut(waiterKey, "\x00")
-			if !ok || waiterType != adapterType {
+			if !ok {
 				continue
 			}
-			if scopeNamePrefix(waiterScope) != scopeNamePrefix(scope) {
-				continue
+			if slices.Contains(hosts, waiterType) && scopeNamePrefix(waiterScope) == prefixNow {
+				prefixWaiters[waiterKey] = true
 			}
-			keys = append(keys, waiterKey)
 		}
+	}
+	keys := make([]string, 0, len(hosts)+len(prefixWaiters))
+	for _, host := range hosts {
+		keys = append(keys, s.sessionKey(host, scope))
+	}
+	for waiterKey := range prefixWaiters {
+		keys = append(keys, waiterKey)
 	}
 	return keys
 }
@@ -880,6 +984,15 @@ func (s *Shim) checkAdapterIdentity(hs *handshakeMessage) (identityRejectClass, 
 		}
 	}
 
+	// KB-213: a peer dial that advertises a hosted child set is verified per
+	// child (each child digest-checked like the dial identity itself) plus
+	// self-consistency (the dialing adapter must be one of the advertised
+	// children). Nil or empty sets skip these checks: single-adapter peers
+	// keep dialing exactly as before.
+	if class, err := checkPeerChildSet(s.digestVerifier, hs.Name, hs.Adapters); class != rejectNone {
+		return class, err
+	}
+
 	s.mu.Lock()
 	perScope := s.perScopeSessions
 	s.mu.Unlock()
@@ -910,6 +1023,52 @@ func (s *Shim) checkAdapterIdentity(hs *handshakeMessage) (identityRejectClass, 
 		}
 	}
 	return rejectNone, nil
+}
+
+// checkPeerChildSet verifies a peer identity frame's advertised child set
+// (KB-213): every entry must carry a name, must be unique, must self-consist
+// with the dialing adapter, and — when a verifier is installed — must verify
+// its own pinned digest exactly like the dialing identity. An advertised set
+// a peer cannot back up with verified children is a mis-declaration, never a
+// silent capability downgrade.
+func checkPeerChildSet(verifier DigestVerifier, dialName string, adapters []PeerAdapterIdentity) (identityRejectClass, error) {
+	if len(adapters) == 0 {
+		return rejectNone, nil
+	}
+	seen := make(map[string]struct{}, len(adapters))
+	selfConsistent := false
+	for i := range adapters {
+		a := &adapters[i]
+		if a.Name == "" {
+			return rejectChildSet, fmt.Errorf("peer child set advertises an adapter with an empty name (entry %d)", i)
+		}
+		if _, dup := seen[a.Name]; dup {
+			return rejectChildSet, fmt.Errorf("peer child set advertises adapter %q more than once", a.Name)
+		}
+		seen[a.Name] = struct{}{}
+		if a.Name == dialName {
+			selfConsistent = true
+		}
+		if verifier != nil {
+			if err := verifier.Verify(a.Name, a.Digest); err != nil {
+				return rejectChildSet, fmt.Errorf("peer child %q digest verification: %w", a.Name, err)
+			}
+		}
+	}
+	if !selfConsistent {
+		return rejectChildSet, fmt.Errorf("peer identity frame dials as %q but its child set does not include it (hosted: %s)",
+			dialName, strings.Join(peerChildNames(adapters), ","))
+	}
+	return rejectNone, nil
+}
+
+// peerChildNames lists the names of a child set in declared order.
+func peerChildNames(adapters []PeerAdapterIdentity) []string {
+	names := make([]string, 0, len(adapters))
+	for i := range adapters {
+		names = append(names, adapters[i].Name)
+	}
+	return names
 }
 
 func (s *Shim) setupUDS(conn net.Conn) (string, net.Listener, error) {
@@ -1413,6 +1572,11 @@ func (s *Shim) waitTimeoutError(adapterType, scope, key string, budget time.Dura
 			// Digest failures are their own diagnosis; do not blame the
 			// accept token for them.
 			detail += "; digest verification failed — stale or wrong adapter build? (CRI-137)"
+		case rejectChildSet:
+			// A peer whose advertised child set failed verification is
+			// mis-declared (KB-213); the message already names the offending
+			// child so blame the declaration, not the token.
+			detail += "; peer child set failed verification (KB-213)"
 		case rejectScopeNotRegistered, rejectBadToken:
 			detail += "; stale adapter pod holding a pre-rotation accept token? (CRI-137)"
 		}

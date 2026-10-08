@@ -158,10 +158,10 @@ func newRecordingPeerAcceptor() *recordingPeerAcceptor {
 	return &recordingPeerAcceptor{release: make(chan struct{}), called: make(chan struct{})}
 }
 
-func (a *recordingPeerAcceptor) AcceptPeer(ctx context.Context, conn net.Conn, dial PeerDial) error {
+func (a *recordingPeerAcceptor) AcceptPeer(ctx context.Context, conn net.Conn, dial *PeerDial) error {
 	a.mu.Lock()
 	a.conns = append(a.conns, conn)
-	a.dials = append(a.dials, dial)
+	a.dials = append(a.dials, *dial)
 	a.mu.Unlock()
 	a.calledOnce.Do(func() { close(a.called) })
 	<-a.release
@@ -169,11 +169,11 @@ func (a *recordingPeerAcceptor) AcceptPeer(ctx context.Context, conn net.Conn, d
 	return nil
 }
 
-func (a *recordingPeerAcceptor) waitCalled(timeout time.Duration) bool {
+func (a *recordingPeerAcceptor) waitCalled() bool {
 	select {
 	case <-a.called:
 		return true
-	case <-time.After(timeout):
+	case <-time.After(5 * time.Second):
 		return false
 	}
 }
@@ -362,7 +362,7 @@ func TestShim_PeerRole_RoutedToPeerAcceptor(t *testing.T) {
 	})
 	defer conn.Close()
 
-	if !acceptor.waitCalled(5 * time.Second) {
+	if !acceptor.waitCalled() {
 		t.Fatal("peer dial was not routed to the PeerAcceptor")
 	}
 	dial := acceptor.lastDial()
@@ -679,7 +679,7 @@ func TestShim_PeerRole_AuthenticatedPerScopeDial_ReachesAcceptor(t *testing.T) {
 	})
 	defer conn.Close()
 
-	if !acceptor.waitCalled(5 * time.Second) {
+	if !acceptor.waitCalled() {
 		t.Fatal("authenticated per-scope peer dial was not routed to the acceptor")
 	}
 	acceptor.releaseAll()

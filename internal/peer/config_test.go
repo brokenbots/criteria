@@ -348,6 +348,119 @@ func TestResolve_DigestPrefersPinnedBinary(t *testing.T) {
 	}
 }
 
+// TestResolve_ManifestChildren pins the multi-adapter manifest Resolve
+// contract (KB-213): the legacy single-adapter fields do not participate —
+// every declared child resolves with the per-adapter precedence on its own,
+// a per-child digest prefers its pinned binary, and a missing child binary
+// fails the whole Resolve naming the adapter.
+func TestResolve_ManifestChildren(t *testing.T) {
+	dir := t.TempDir()
+	noopBin := filepath.Join(dir, "criteria-adapter-noop")
+	stateBin := filepath.Join(dir, "criteria-adapter-stateful")
+	writeRunnable(t, noopBin)
+	writeRunnable(t, stateBin)
+
+	cfg := Config{
+		Host: "h:1",
+		Adapters: []AdapterSpec{
+			{Name: "noop"},
+			{Name: "stateful", Version: "1.2.3"},
+		},
+	}
+	t.Setenv("PATH", dir)
+	if err := cfg.Resolve(); err != nil {
+		t.Fatalf("resolve manifest children: %v", err)
+	}
+	if cfg.Adapters[0].Binary != noopBin || cfg.Adapters[0].Version != DefaultVersion {
+		t.Errorf("noop child resolved = %+v, want PATH-located binary and default version", cfg.Adapters[0])
+	}
+	if cfg.Adapters[1].Binary != stateBin || cfg.Adapters[1].Version != "1.2.3" {
+		t.Errorf("stateful child resolved = %+v, want kept binary and version", cfg.Adapters[1])
+	}
+	// The legacy single-adapter identity stays untouched: the manifest set
+	// is the declaration of record for the hosted children.
+	if cfg.AdapterName != "" || cfg.Binary() != "" || cfg.Digest != "" {
+		t.Errorf("legacy identity fields filled in manifest mode: %q/%q/%q", cfg.AdapterName, cfg.Binary(), cfg.Digest)
+	}
+	if !cfg.ManifestMode() || !cfg.MultiChild() {
+		t.Errorf("mode flags: ManifestMode=%v MultiChild=%v", cfg.ManifestMode(), cfg.MultiChild())
+	}
+
+	// Per-child digest pinning prefers the digest-addressed binary from the
+	// discovery roots (runner parity with the single-adapter shape).
+	digestHex := strings.Repeat("ef", 32)
+	enc := "sha256-" + digestHex
+	pinnedDir := filepath.Join(dir, "pinned", enc)
+	if err := os.MkdirAll(pinnedDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	pinnedState := filepath.Join(pinnedDir, "criteria-adapter-stateful")
+	writeRunnable(t, pinnedState)
+	t.Setenv("CRITERIA_ADAPTERS", filepath.Join(dir, "pinned"))
+
+	pinned := Config{
+		Host: "h:1",
+		Adapters: []AdapterSpec{
+			{Name: "stateful", Digest: "sha256:" + digestHex},
+		},
+	}
+	if err := pinned.Resolve(); err != nil {
+		t.Fatalf("resolve pinned child: %v", err)
+	}
+	if pinned.Adapters[0].Binary != pinnedState {
+		t.Errorf("pinned child binary = %q, want %q", pinned.Adapters[0].Binary, pinnedState)
+	}
+
+	if got := pinned.ChildNames(); len(got) != 1 || got[0] != "stateful" {
+		t.Errorf("ChildNames = %v, want [stateful]", got)
+	}
+
+	// A child whose binary cannot be located anywhere fails the whole
+	// Resolve and names the adapter — a multi-child peer never half-boots
+	// on an undeclared child.
+	missing := Config{
+		Host: "h:1",
+		Adapters: []AdapterSpec{
+			{Name: "noop"},
+			{Name: "ghost"},
+		},
+	}
+	err := missing.Resolve()
+	if err == nil || !strings.Contains(err.Error(), "ghost") {
+		t.Fatalf("err = %v, want the missing ghost child's resolve failure", err)
+	}
+}
+
+// TestResolve_ManifestChildrenExplicitBinaries pins the CI-fixture shape:
+// every manifest spec carries its own explicit binary path, so Resolve needs
+// no PATH lookup and no conventional install path — a manifest-only peer
+// declaration resolves even when no criteria-adapter-* binary exists on
+// PATH (the deployment shape of Dockerfile.peer).
+func TestResolve_ManifestChildrenExplicitBinaries(t *testing.T) {
+	dir := t.TempDir()
+	noopBin := filepath.Join(dir, "criteria-adapter-noop")
+	stateBin := filepath.Join(dir, "criteria-adapter-stateful")
+	writeRunnable(t, noopBin)
+	writeRunnable(t, stateBin)
+
+	cfg := Config{
+		Host: "h:1",
+		Adapters: []AdapterSpec{
+			{Name: "noop", Binary: noopBin},
+			{Name: "stateful", Binary: stateBin},
+		},
+	}
+	t.Setenv("PATH", "/nonexistent-empty-dir")
+	if err := cfg.Resolve(); err != nil {
+		t.Fatalf("resolve explicit-binary manifest without any PATH binary: %v", err)
+	}
+	for i, want := range []string{noopBin, stateBin} {
+		if cfg.Adapters[i].Binary != want {
+			t.Errorf("child %d binary = %q, want explicit %q", i, cfg.Adapters[i].Binary, want)
+		}
+	}
+}
+
 func TestResolve_KeepsNilTLSByDefault(t *testing.T) {
 	cfg, err := resolveFixture(t, map[string]string{
 		EnvRemoteHost:     "h:1",

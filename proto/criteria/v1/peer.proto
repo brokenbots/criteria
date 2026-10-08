@@ -68,6 +68,12 @@ message SupervisionRequest {
   // Stream journal entries strictly after this sequence number (exclusive);
   // 0 replays the journal from the beginning.
   uint64 since_event_seq = 1;
+  // Adapter filter (KB-213 multi-adapter hosting): one supervision stream
+  // per (conn, adapter-type) session; when set, the peer streams journal
+  // entries attributed to that adapter type only (heartbeats always pass).
+  // Empty replays entries for every adapter type on this connection
+  // (single-adapter peers and legacy hosts send empty).
+  string adapter_type = 2;
 }
 
 // SupervisionEvent is one entry of the peer's supervision journal: a typed

@@ -11,7 +11,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -23,6 +27,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
@@ -171,7 +176,7 @@ func newPeerServeFixture(t *testing.T) *peerServeFixture {
 	rt := NewRuntime(&cfg, captureLogger(&bytes.Buffer{}))
 	child := &fakePeerChild{}
 	server := NewServer(&cfg, rt, captureLogger(&bytes.Buffer{}))
-	server.childClient = func() (adapterhost.Client, bool) { return child, true }
+	server.childClient = func(string) (adapterhost.Client, bool) { return child, true }
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	return &peerServeFixture{
@@ -222,7 +227,14 @@ func (f *peerServeFixture) startConn() (conn net.Conn, frame []byte, serveErr <-
 	}()
 
 	serveErrCh := make(chan error, 1)
-	go func() { serveErrCh <- f.server.serveOnce(f.ctx) }()
+	go func() {
+		spec, err := f.server.connProfile()
+		if err != nil {
+			serveErrCh <- err
+			return
+		}
+		serveErrCh <- f.server.serveOnce(f.ctx, &spec)
+	}()
 
 	var got []byte
 	select {
@@ -368,7 +380,11 @@ func TestServer_IdentityFrameGoldenJSON(t *testing.T) {
 	rt := NewRuntime(&cfg, captureLogger(&bytes.Buffer{}))
 	server := NewServer(&cfg, rt, captureLogger(&bytes.Buffer{}))
 
-	got, err := server.identityFrame()
+	spec, err := server.connProfile()
+	if err != nil {
+		t.Fatalf("connProfile: %v", err)
+	}
+	got, err := server.identityFrame(&spec)
 	if err != nil {
 		t.Fatalf("identityFrame: %v", err)
 	}
@@ -392,7 +408,11 @@ func TestServer_IdentityFrameOverCapRejected(t *testing.T) {
 	cfg.Token = string(make([]byte, peerHandshakeFrameCap))
 	rt := NewRuntime(&cfg, captureLogger(&bytes.Buffer{}))
 	server := NewServer(&cfg, rt, captureLogger(&bytes.Buffer{}))
-	if _, err := server.identityFrame(); err == nil {
+	spec, perr := server.connProfile()
+	if perr != nil {
+		t.Fatalf("connProfile: %v", perr)
+	}
+	if _, err := server.identityFrame(&spec); err == nil {
 		t.Fatal("identityFrame accepted a frame over the 16 KiB cap")
 	}
 }
@@ -403,7 +423,11 @@ func TestServer_IdentityFrameOverCapRejected(t *testing.T) {
 func TestServer_ServesAdapterAndPeerServices(t *testing.T) {
 	f := newPeerServeFixture(t)
 	conn, got, serveErr := f.startConn()
-	want, err := f.server.identityFrame()
+	spec, perr := f.server.connProfile()
+	if perr != nil {
+		f.t.Fatalf("connProfile: %v", perr)
+	}
+	want, err := f.server.identityFrame(&spec)
 	if err != nil {
 		t.Fatalf("identityFrame: %v", err)
 	}
@@ -536,6 +560,91 @@ func (f *fakePeerChild) executeReqSessions() []string {
 		return nil
 	}
 	return []string{f.executeReq.GetSessionId()}
+}
+
+// --- KB-213 conn mux routing ---
+
+// routeHeaderCtx returns an incoming context carrying one
+// x-criteria-adapter route header (the host's per-session dispatch).
+func routeHeaderCtx(name string) context.Context {
+	return metadata.NewIncomingContext(context.Background(),
+		metadata.Pairs(peerAdapterRouteHeader, name))
+}
+
+// TestConnMuxRouting pins the route-resolution contract: a hosted header
+// target wins; a header-less call lands on the connection's dial child; an
+// unhosted target (host bug or dial child without a client) resolves
+// deterministically to the lexicographically-first hosted child — never nil.
+func TestConnMuxRouting(t *testing.T) {
+	alpha, beta := &fakePeerChild{}, &fakePeerChild{}
+	m := &connMux{
+		byName:   map[string]adapterhost.Client{"alpha": alpha, "beta": beta},
+		fallback: "beta",
+	}
+	if got := m.resolve(context.Background()); got != adapterhost.Client(beta) {
+		t.Error("a header-less call must land on the hosted dial child")
+	}
+	if got := m.resolve(routeHeaderCtx("alpha")); got != adapterhost.Client(alpha) {
+		t.Error("a hosted header target must win over the dial child")
+	}
+	if got := m.resolve(routeHeaderCtx("ghost")); got != adapterhost.Client(beta) {
+		t.Error("an unhosted header target must fall back to the dial child")
+	}
+
+	// The dial child itself is not hosted (its clients are in-memory): calls
+	// route to the first hosted child by sorted name, deterministically.
+	noDial := &connMux{
+		byName:   map[string]adapterhost.Client{"zeta": &fakePeerChild{}, "alpha": alpha},
+		fallback: "ghost",
+	}
+	if got := noDial.resolve(context.Background()); got != adapterhost.Client(alpha) {
+		t.Error("an unhosted dial child must resolve the first hosted child by sorted name")
+	}
+
+	// An empty mux resolves nil (pinned: registration never creates one).
+	empty := &connMux{byName: map[string]adapterhost.Client{}, fallback: "ghost"}
+	if got := empty.resolve(context.Background()); got != nil {
+		t.Error("an empty mux must resolve nil")
+	}
+}
+
+// TestServer_MultiChildNoClientSupervisionOnly: a multi-adapter manifest
+// conn whose children all fail to resolve an adapter client registers NO
+// adapter service — the mux would resolve nil targets and panic on the
+// first adapter call — while PeerService keeps serving.
+func TestServer_MultiChildNoClientSupervisionOnly(t *testing.T) {
+	f := newPeerServeFixture(t)
+	f.cfg.Adapters = []AdapterSpec{{Name: "aa"}, {Name: "bb"}}
+	f.server.childClient = func(string) (adapterhost.Client, bool) { return nil, false }
+
+	conn, frame, serveErr := f.startConn()
+	if len(frame) == 0 {
+		t.Fatal("identity frame was not written")
+	}
+	cc := f.hostClient(conn)
+	client := adapterhost.NewClientForConn(cc)
+	if _, err := client.Info(context.Background(), &v2.InfoRequest{}); status.Code(err) != codes.Unimplemented {
+		t.Fatalf("Info on a client-less multi-child conn = %v, want Unimplemented (no adapter service registered)", err)
+	}
+	// PeerService still serves on the same connection: kill_child probes
+	// the hand-rolled service (no booted children: the runtime answers
+	// with a typed not-live detail rather than a transport failure).
+	out := new(criteriav1.ControlResponse)
+	if err := cc.Invoke(context.Background(), peerControlMethod, &criteriav1.ControlRequest{
+		Kind: &criteriav1.ControlRequest_KillChild{KillChild: &criteriav1.KillChild{}},
+	}, out); err != nil {
+		t.Fatalf("Control kill_child on a client-less conn: %v", err)
+	}
+	if out.GetAccepted() || out.GetDetail() != "no live adapter child" {
+		t.Fatalf("Control response = %+v, want not-accepted/no live adapter child", out)
+	}
+
+	f.cancel()
+	select {
+	case <-serveErr:
+	case <-time.After(5 * time.Second):
+		t.Fatal("serveOnce did not return after cancel")
+	}
 }
 
 type execSinkFn func(*v2.ExecuteEvent) error
@@ -809,7 +918,10 @@ func TestServer_ServeShutdown(t *testing.T) {
 		t.Fatalf("OpenSession through bridge: %v", err)
 	}
 	f.rt.mu.Lock()
-	tracked := len(f.rt.openSessions)
+	tracked := 0
+	if p := f.rt.primaryChildLocked(); p != nil {
+		tracked = len(p.openSessions)
+	}
 	f.rt.mu.Unlock()
 	if tracked != 1 {
 		t.Fatalf("tracked open sessions = %d, want 1", tracked)
@@ -983,7 +1095,10 @@ func TestServer_ControlRejectedKillDoesNotPoisonCrashClassification(t *testing.T
 	// CrashClassified{process_terminated}. With the old behavior the
 	// rejected kill had already set killRequested, so the exit was recorded
 	// graceful and no crash event appeared.
-	rt.recordExit(false)
+	rt.mu.Lock()
+	rtPrimary := rt.primaryChildLocked()
+	rt.mu.Unlock()
+	rt.recordExit(rtPrimary, false)
 	events := rt.Journal().Replay(0)
 	if len(events) != 3 {
 		t.Fatalf("journal has %d events, want spawned+exited+crash: %+v", len(events), events)
@@ -1021,7 +1136,7 @@ func TestServer_BackoffProgression(t *testing.T) {
 	cfg.BackoffMax = 30 * time.Second
 	rt := NewRuntime(&cfg, captureLogger(&bytes.Buffer{}))
 	server := NewServer(&cfg, rt, captureLogger(&bytes.Buffer{}))
-	server.childClient = func() (adapterhost.Client, bool) { return nil, false }
+	server.childClient = func(string) (adapterhost.Client, bool) { return nil, false }
 
 	// Fixed rand=0.5 with floor 1s and ceilings 2s,3s,4s,5s yields delays
 	// 1.5s, 2s, 2.5s, 3s — strictly growing, and not the legacy constant 2s.
@@ -1432,7 +1547,14 @@ func (f *peerServeFixture) startConnIdleClosing(idleLimit time.Duration) (conn n
 		frameCh <- data
 	}()
 	serveErrCh := make(chan error, 1)
-	go func() { serveErrCh <- f.server.serveOnce(f.ctx) }()
+	go func() {
+		spec, err := f.server.connProfile()
+		if err != nil {
+			serveErrCh <- err
+			return
+		}
+		serveErrCh <- f.server.serveOnce(f.ctx, &spec)
+	}()
 	select {
 	case data := <-frameCh:
 		if data == nil {
@@ -1537,4 +1659,105 @@ func TestServer_SuperviseHeartbeatSurvivesIdleClosingMiddlebox(t *testing.T) {
 			t.Errorf("serveOnce did not observe the middlebox teardown")
 		}
 	})
+}
+
+// TestConnSpecsForScopes pins the scope-set conn shape (KB-213): one spec
+// per scanned (scope, adapter) token, every spec carrying the FULL hosted
+// child set so a per-scope conn back its advertised coverage with the
+// routing mux (the host's x-criteria-adapter wake must never cross to the
+// dial child), tokens for adapters the peer does not host skipped loudly,
+// and the root-scope instance layout scanned like the runner writes it.
+func TestConnSpecsForScopes(t *testing.T) {
+	const (
+		instanceA = "8a2bb7d7-6a4b-4ab1-9c8a-2f5d3a4b1c01"
+		instanceB = "4b5d6d29-3ac2-4e11-a5d8-1f0e2b3c4d99"
+	)
+	dir := t.TempDir()
+	writeToken := func(path, token string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(token+"\n"), 0o600); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	writeToken(filepath.Join(dir, "run_a", instanceA, "noop.token"), "tok-noop")
+	writeToken(filepath.Join(dir, "run_a", instanceA, "stateful.token"), "tok-stateful")
+	writeToken(filepath.Join(dir, instanceB, "noop.token"), "tok-root")
+	writeToken(filepath.Join(dir, "run_a", instanceA, "ghost.token"), "tok-ghost")
+
+	var logBuf bytes.Buffer
+	s := NewServer(&Config{
+		ScopesDir: dir,
+		Adapters: []AdapterSpec{
+			{Name: "noop", Version: "1.0.0", Digest: "sha256-noop"},
+			{Name: "stateful", Version: "0.9.0", Digest: "sha256-stateful"},
+		},
+	}, nil, slog.New(slog.NewTextHandler(&logBuf, nil)))
+
+	specs, err := s.connSpecsForScopes()
+	if err != nil {
+		t.Fatalf("connSpecsForScopes: %v", err)
+	}
+
+	want := []serveConnSpec{
+		{
+			name:     "noop",
+			version:  "1.0.0",
+			digest:   "sha256-noop",
+			scope:    "/" + instanceB,
+			token:    "tok-root",
+			children: []string{"noop", "stateful"},
+		},
+		{
+			name:     "noop",
+			version:  "1.0.0",
+			digest:   "sha256-noop",
+			scope:    "run_a/" + instanceA,
+			token:    "tok-noop",
+			children: []string{"noop", "stateful"},
+		},
+		{
+			name:     "stateful",
+			version:  "0.9.0",
+			digest:   "sha256-stateful",
+			scope:    "run_a/" + instanceA,
+			token:    "tok-stateful",
+			children: []string{"noop", "stateful"},
+		},
+	}
+	if len(specs) != len(want) {
+		t.Fatalf("connSpecsForScopes: got %d specs, want %d: %+v", len(specs), len(want), specs)
+	}
+	for i, spec := range specs {
+		if spec.name != want[i].name || spec.version != want[i].version ||
+			spec.digest != want[i].digest || spec.scope != want[i].scope ||
+			spec.token != want[i].token {
+			t.Errorf("spec[%d] identity: got (%s %s %s %s %s), want (%s %s %s %s %s)",
+				i, spec.name, spec.version, spec.digest, spec.scope, spec.token,
+				want[i].name, want[i].version, want[i].digest, want[i].scope, want[i].token)
+		}
+		if len(spec.children) != len(want[i].children) {
+			t.Errorf("spec[%d] children: got %v, want full hosted set %v",
+				i, spec.children, want[i].children)
+			continue
+		}
+		for j, child := range spec.children {
+			if child != want[i].children[j] {
+				t.Errorf("spec[%d] children: got %v, want %v", i, spec.children, want[i].children)
+			}
+		}
+		if spec.children[0] == "ghost" {
+			t.Errorf("spec[%d] advertises the unhosted ghost adapter", i)
+		}
+	}
+
+	// The refusal is loud: the log records the unhosted adapter and scope.
+	logText := logBuf.String()
+	for _, needle := range []string{"does not host", "adapter=ghost", "scope=run_a/" + instanceA} {
+		if !strings.Contains(logText, needle) {
+			t.Errorf("refusal log missing %q in:\n%s", needle, logText)
+		}
+	}
 }

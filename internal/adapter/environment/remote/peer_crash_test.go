@@ -223,7 +223,9 @@ func TestPeerLogEvidenceSurvivesCrash(t *testing.T) {
 	fp.appendEvent(&criteriav1.SupervisionEvent{
 		Kind: &criteriav1.SupervisionEvent_Flushed{Flushed: &criteriav1.StreamFlushed{Channel: "log", UpToSeq: 4}},
 	})
-	waitFor(t, "log drain marker", ps.logDrained)
+	waitFor(t, "log drain marker", func() bool {
+		return ps.logDrained(ps.dial.AdapterType)
+	})
 
 	coll := &logEventCollector{}
 	starter, ok := handle.(adapterhost.LogStreamStarter)
@@ -269,7 +271,7 @@ func TestPeerLogEvidenceSurvivesCrash(t *testing.T) {
 			t.Fatalf("host sink log line %d changed across the crash: before %q, after %q", i, line, after[i])
 		}
 	}
-	if !ps.logDrained() {
+	if !ps.logDrained(ps.dial.AdapterType) {
 		t.Fatal("StreamFlushed drain marker must survive the crash")
 	}
 }

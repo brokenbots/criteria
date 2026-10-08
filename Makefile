@@ -120,11 +120,11 @@ test-flake-watch: ## Re-run previously flaky packages under -count=20 -race (not
 	go test -race -count=20 ./internal/engine/... ./internal/plugin/...
 
 test-conformance: ## Run SDK conformance suite (in-memory Subject)
+	cd sdk && go test -race -run TestConformance ./conformance/...
+
 # CRI-248: canonical workflow-fetcher conformance entry point.
 test-fetcher-conformance: ## Run workflow-fetcher conformance suite (CRI-248)
 	go test -race -run TestWorkflowFetcherConformance -count=1 ./internal/cli/
-
-	cd sdk && go test -race -run TestConformance ./conformance/...
 
 lint-imports: ## Enforce import-graph boundaries (see tools/import-lint/)
 	go run github.com/brokenbots/criteria/tools/import-lint .

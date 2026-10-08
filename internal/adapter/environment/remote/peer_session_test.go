@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -71,6 +73,8 @@ type fakePeer struct {
 
 	// KB-95 (ADR-0008) additions:
 	peerCaps     []string                     // handshake Peer identity capabilities; nil keeps the legacy shape
+	adapters     []PeerAdapterIdentity        // KB-213: hosted child set advertised in the identity frame; nil keeps the legacy single-adapter shape
+	routes       []string                     // x-criteria-adapter route of each Info call (routed-dispatch witness)
 	executeErr   error                        // Execute returns this error instead of streaming a result
 	resultWire   *v2.ExecuteResult            // Execute's terminal result event; nil keeps the plain success
 	childEvents  []*v2.ExecuteEvent           // Execute streams these before executeErr/result
@@ -127,13 +131,14 @@ func (f *fakePeer) connect(t *testing.T, addr string) {
 		t.Fatalf("fake peer dial: %v", err)
 	}
 	hs := &handshakeMessage{
-		Name:    f.name,
-		Version: "1.0.0",
-		Digest:  "sha256:abcd1234",
-		Token:   f.token,
-		Scope:   f.scope,
-		Role:    "peer",
-		Peer:    &PeerClientIdentity{CriteriaVersion: "test", Capabilities: append([]string(nil), f.peerCaps...)},
+		Name:     f.name,
+		Version:  "1.0.0",
+		Digest:   "sha256:abcd1234",
+		Token:    f.token,
+		Scope:    f.scope,
+		Role:     "peer",
+		Peer:     &PeerClientIdentity{CriteriaVersion: "test", Capabilities: append([]string(nil), f.peerCaps...)},
+		Adapters: append([]PeerAdapterIdentity(nil), f.adapters...),
 	}
 	data, err := json.Marshal(hs)
 	if err != nil {
@@ -196,9 +201,36 @@ func (f *fakePeer) appendEvent(ev *criteriav1.SupervisionEvent) {
 	defer f.journalMu.Unlock()
 	ev.EventSeq = f.nextSeq
 	f.nextSeq++
-	ev.AdapterType = f.name
+	if ev.GetAdapterType() == "" {
+		// Unattributed events belong to the dial adapter (legacy shape).
+		ev.AdapterType = f.name
+	}
 	ev.Scope = f.scope
 	f.journal = append(f.journal, ev)
+}
+
+// appendEventFor journals an event attributed to a specific hosted adapter
+// (KB-213 multi-adapter routing).
+func (f *fakePeer) appendEventFor(adapterType string, ev *criteriav1.SupervisionEvent) {
+	ev.AdapterType = adapterType
+	f.appendEvent(ev)
+}
+
+// routeSnapshot returns the recorded x-criteria-adapter routes of the Info
+// calls the fake served (dispatch witnesses for multi-adapter tests).
+func (f *fakePeer) routeSnapshot() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.routes...)
+}
+
+// handleTypeName identifies an adapterhost.Handle's dynamic type (used in
+// failure messages only).
+func handleTypeName(h interface{}) string {
+	if h == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("%T", h)
 }
 
 // settleOnCancel journals terminal arms for the cancelled child run(s): the
@@ -356,7 +388,19 @@ func (f *fakePeer) Info(ctx context.Context, req *v2.InfoRequest) (*v2.InfoRespo
 	if caps == nil {
 		caps = []string{"pause", "snapshot"}
 	}
-	return &v2.InfoResponse{Name: f.name, Version: "1.0.0", Capabilities: caps}, nil
+	// The connMux on a real multi-adapter peer dispatches by the
+	// x-criteria-adapter route header; the fake simulates that dispatch by
+	// echoing the routed adapter name and recording the route.
+	name := f.name
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if routes := md.Get(peerAdapterRouteHeader); len(routes) > 0 && routes[0] != "" {
+			f.mu.Lock()
+			f.routes = append(f.routes, routes[0])
+			f.mu.Unlock()
+			name = routes[0]
+		}
+	}
+	return &v2.InfoResponse{Name: name, Version: "1.0.0", Capabilities: caps}, nil
 }
 
 func (f *fakePeer) OpenSession(ctx context.Context, req *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) {
@@ -800,7 +844,8 @@ func TestPeerProcessExitedAfterJournalEvent(t *testing.T) {
 	waitFor(t, "ProcessExited after journal event", reporter.ProcessExited)
 	ps := mustPeerSession(t, provider)
 	ps.mu.Lock()
-	reason, detail, lastSeq := ps.exitReason, ps.exitDetail, ps.lastSeq
+	aj := ps.journals.trackFor(ps.dial.AdapterType)
+	reason, detail, lastSeq := aj.exitReason, aj.exitDetail, ps.lastSeq
 	ps.mu.Unlock()
 	if reason != "process_exited" {
 		t.Fatalf("exit reason = %q, want process_exited", reason)
@@ -891,7 +936,7 @@ func TestPeerSupervisionHeartbeatUpdatesLiveness(t *testing.T) {
 		t.Fatalf("WaitForHandle: %v", err)
 	}
 	ps := mustPeerSession(t, provider)
-	if got := ps.lastHeartbeatAt(); !got.IsZero() {
+	if got := ps.lastHeartbeatAt(ps.dial.AdapterType); !got.IsZero() {
 		t.Fatalf("heartbeat timestamp set before any heartbeat: %v", got)
 	}
 
@@ -899,7 +944,7 @@ func TestPeerSupervisionHeartbeatUpdatesLiveness(t *testing.T) {
 		Kind: &criteriav1.SupervisionEvent_Heartbeat{Heartbeat: &criteriav1.SupervisionHeartbeat{LastEventSeq: 1}},
 	})
 	waitFor(t, "heartbeat liveness timestamp", func() bool {
-		return !ps.lastHeartbeatAt().IsZero()
+		return !ps.lastHeartbeatAt(ps.dial.AdapterType).IsZero()
 	})
 }
 
@@ -914,7 +959,7 @@ func TestPeerStreamFlushedMarksLogDrain(t *testing.T) {
 		t.Fatalf("WaitForHandle: %v", err)
 	}
 	ps := mustPeerSession(t, provider)
-	if ps.logDrained() {
+	if ps.logDrained(ps.dial.AdapterType) {
 		t.Fatal("log drain marked before any StreamFlushed event")
 	}
 
@@ -923,9 +968,11 @@ func TestPeerStreamFlushedMarksLogDrain(t *testing.T) {
 	fp.appendEvent(&criteriav1.SupervisionEvent{
 		Kind: &criteriav1.SupervisionEvent_Flushed{Flushed: &criteriav1.StreamFlushed{Channel: "log", UpToSeq: 3}},
 	})
-	waitFor(t, "log drain marked after StreamFlushed", ps.logDrained)
+	waitFor(t, "log drain marked after StreamFlushed", func() bool {
+		return ps.logDrained(ps.dial.AdapterType)
+	})
 	ps.mu.Lock()
-	upTo := ps.logFlushed["log"]
+	upTo := ps.journals.trackFor(ps.dial.AdapterType).logFlushed["log"]
 	ps.mu.Unlock()
 	if upTo != 3 {
 		t.Fatalf("log drain watermark = %d, want 3", upTo)
@@ -994,12 +1041,13 @@ func providerWaiterCount(p *peerSessionProvider, typ, scope string) int {
 	return len(p.waiters[p.key(typ, scope)])
 }
 
-// waitForWaiterRegistered blocks until a test's pre-dial wait has registered
-// on the provider, so the later dial deterministically exercises the wake arm.
-func waitForWaiterRegistered(t *testing.T, p *peerSessionProvider, scope string) {
+// waitForWaiterRegistered blocks until a test's pre-dial wait for the
+// adapter type + scope has registered on the provider, so the later dial
+// deterministically exercises the wake arm.
+func waitForWaiterRegistered(t *testing.T, p *peerSessionProvider, typ, scope string) {
 	t.Helper()
 	waitFor(t, "waiter registration", func() bool {
-		return providerWaiterCount(p, "noop", scope) > 0
+		return providerWaiterCount(p, typ, scope) > 0
 	})
 }
 
@@ -1021,7 +1069,7 @@ func TestPeerWaitForHandleWakesOnDial(t *testing.T) {
 		handle, err := provider.WaitForHandle(ctx, "noop", "")
 		done <- waitOutcome{handle: handle, err: err}
 	}()
-	waitForWaiterRegistered(t, provider, "")
+	waitForWaiterRegistered(t, provider, "noop", "")
 
 	fp.connect(t, addr)
 
@@ -1061,7 +1109,7 @@ func TestPeerWaitForFreshHandleCancelWhileWaiting(t *testing.T) {
 		handle, err := provider.WaitForFreshHandle(waitCtx, "noop", "", nil)
 		done <- waitOutcome{handle: handle, err: err}
 	}()
-	waitForWaiterRegistered(t, provider, "")
+	waitForWaiterRegistered(t, provider, "noop", "")
 	waitCancel()
 
 	select {
@@ -1137,7 +1185,7 @@ func TestPeerWaitForFreshHandleBudgetSurfacesRejectionDiagnosis(t *testing.T) {
 		handle, err := provider.WaitForFreshHandle(ctx, "noop", "diag-scope", nil)
 		done <- waitOutcome{handle: handle, err: err}
 	}()
-	waitForWaiterRegistered(t, provider, "diag-scope")
+	waitForWaiterRegistered(t, provider, "noop", "diag-scope")
 
 	// A stale adapter pod presents a pre-rotation accept token: the shim
 	// rejects the dial and attributes the failure to the pending waiters, so
@@ -1198,7 +1246,7 @@ func TestPeerWaitForFreshHandleWakesOnLegacyHandshake(t *testing.T) {
 		handle, err := provider.WaitForFreshHandle(ctx, "noop", "", nil)
 		done <- waitOutcome{handle: handle, err: err}
 	}()
-	waitForWaiterRegistered(t, provider, "")
+	waitForWaiterRegistered(t, provider, "noop", "")
 
 	if err := dialFakeAdapter(addr, &handshakeMessage{Name: "noop", Version: "1.0.0", Digest: "sha256:abcd1234"}, nil); err != nil {
 		t.Fatalf("legacy dial: %v", err)
@@ -1315,7 +1363,7 @@ func TestPeerWaitForFreshHandleNoLostWakeupWhenPeerDialStoresBetweenCheckAndRegi
 	// registry step is replayed, so the gRPC client stays idle.
 	client, server := net.Pipe()
 	defer client.Close()
-	ps, err := newPeerSession(server, PeerDial{AdapterType: "noop", Scope: ""}, provider.peerDied)
+	ps, err := newPeerSession(server, &PeerDial{AdapterType: "noop", Scope: ""}, provider.peerDied)
 	if err != nil {
 		t.Fatalf("newPeerSession: %v", err)
 	}
@@ -1463,7 +1511,7 @@ func TestPeerStopWakesPendingWaiters(t *testing.T) {
 		handle, err := provider.WaitForHandle(ctx, "noop", "")
 		done <- waitOutcome{handle: handle, err: err}
 	}()
-	waitForWaiterRegistered(t, provider, "")
+	waitForWaiterRegistered(t, provider, "noop", "")
 
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer stopCancel()
