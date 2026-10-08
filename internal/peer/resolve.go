@@ -16,17 +16,13 @@ import (
 // local go-plugin handshake (criteria-adapter-shell >= v0.5.3,
 // criteria-adapter-copilot >= v0.5.5).
 //
-// The multi-adapter manifest variables (CRITERIA_ADAPTERS,
-// CRITERIA_ADAPTERS_DIR, CRITERIA_ADAPTER_<NAME>_*, KB-213) are scrubbed the
-// same way: they describe which children the PARENT hosts and must not ride
-// into any child process. The four legacy CRITERIA_ADAPTER_* names keep
-// today's passthrough behavior.
+// The multi-adapter manifest variables (CRITERIA_REMOTE_ADAPTERS,
+// CRITERIA_REMOTE_ADAPTERS_DIR, CRITERIA_ADAPTER_<NAME>_*, KB-213) are
+// scrubbed the same way: they describe which children the PARENT hosts and
+// must not ride into any child process. The four legacy CRITERIA_ADAPTER_*
+// names keep today's passthrough behavior; the adapter install dir
+// CRITERIA_ADAPTERS likewise passes through, matching pre-KB-213 behavior.
 const remoteEnvPrefix = "CRITERIA_REMOTE_"
-
-var scrubbedAdapterVars = map[string]bool{
-	EnvAdapters:    true,
-	EnvAdaptersDir: true,
-}
 
 // adapterOverrideSuffixes are the per-adapter manifest override suffixes;
 // any CRITERIA_ADAPTER_<NAME>_<SUFFIX> other than the four legacy names is
@@ -35,9 +31,6 @@ var adapterOverrideSuffixes = [...]string{"_BINARY", "_VERSION", "_DIGEST", "_MA
 
 func scrubbedPeerVar(name string) bool {
 	if name == "CRITERIA_REMOTE" || strings.HasPrefix(name, remoteEnvPrefix) {
-		return true
-	}
-	if scrubbedAdapterVars[name] {
 		return true
 	}
 	if !strings.HasPrefix(name, "CRITERIA_ADAPTER_") {

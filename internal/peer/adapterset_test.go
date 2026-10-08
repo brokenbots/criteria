@@ -207,8 +207,8 @@ func TestScanRemoteScopes_Missing(t *testing.T) {
 func TestChildEnv_ScrubsMultiManifest(t *testing.T) {
 	env := []string{
 		"PATH=/bin",
-		"CRITERIA_ADAPTERS=shell,copilot",
-		"CRITERIA_ADAPTERS_DIR=/scan",
+		"CRITERIA_REMOTE_ADAPTERS=shell,copilot",
+		"CRITERIA_REMOTE_ADAPTERS_DIR=/scan",
 		"CRITERIA_ADAPTER_SHELL_BINARY=/opt/shell",
 		"CRITERIA_ADAPTER_COPILOT_DIGEST=sha256:abc",
 		// legacy passthrough must survive
@@ -216,19 +216,22 @@ func TestChildEnv_ScrubsMultiManifest(t *testing.T) {
 		"CRITERIA_ADAPTER_BINARY=/bin/x",
 		"CRITERIA_ADAPTER_VERSION=1.0.0",
 		"CRITERIA_ADAPTER_MANIFEST=/etc/m.yaml",
+		// adapter install dir: pre-existing meaning, passes through (KB-213)
+		"CRITERIA_ADAPTERS=/opt/criteria/adapters",
 		"CRITERIA_REMOTE_HOST=10.0.0.1:7000",
 	}
 	got := ChildEnv(env)
 	for _, kv := range got {
 		name, _, _ := strings.Cut(kv, "=")
 		switch name {
-		case "CRITERIA_ADAPTERS", "CRITERIA_ADAPTERS_DIR", "CRITERIA_ADAPTER_SHELL_BINARY",
+		case "CRITERIA_REMOTE_ADAPTERS", "CRITERIA_REMOTE_ADAPTERS_DIR", "CRITERIA_ADAPTER_SHELL_BINARY",
 			"CRITERIA_ADAPTER_COPILOT_DIGEST", "CRITERIA_REMOTE_HOST":
 			t.Errorf("%s not scrubbed from child env", name)
 		}
 	}
 	for _, want := range []string{"CRITERIA_ADAPTER_NAME=shell", "CRITERIA_ADAPTER_BINARY=/bin/x",
-		"CRITERIA_ADAPTER_VERSION=1.0.0", "CRITERIA_ADAPTER_MANIFEST=/etc/m.yaml", "PATH=/bin"} {
+		"CRITERIA_ADAPTER_VERSION=1.0.0", "CRITERIA_ADAPTER_MANIFEST=/etc/m.yaml",
+		"CRITERIA_ADAPTERS=/opt/criteria/adapters", "PATH=/bin"} {
 		found := false
 		for _, kv := range got {
 			if kv == want {

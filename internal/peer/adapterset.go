@@ -20,9 +20,9 @@ import (
 // adapter children of one environment behind one phone-home substrate. The
 // adapter set is declared env-first with two mutually-exclusive sources:
 //
-//   - CRITERIA_ADAPTERS: a comma-separated list of adapter names, optionally
+//   - CRITERIA_REMOTE_ADAPTERS: a comma-separated list of adapter names, optionally
 //     "NAME=PATH" to pin a binary path per entry; or
-//   - CRITERIA_ADAPTERS_DIR: a directory whose criteria-adapter-* binaries
+//   - CRITERIA_REMOTE_ADAPTERS_DIR: a directory whose criteria-adapter-* binaries
 //     are each hosted as one child.
 //
 // Per-adapter overrides refine either source:
@@ -58,7 +58,7 @@ type ScopeTokenSpec struct {
 }
 
 // ParseAdaptersConfig parses the multi-adapter manifest from the environment
-// (env-first): the explicit CRITERIA_ADAPTERS list wins; the binary
+// (env-first): the explicit CRITERIA_REMOTE_ADAPTERS list wins; the binary
 // directory scan is the fallback; per-adapter overrides refine both. An
 // empty result means the legacy single-adapter shape was declared. A
 // duplicate adapter name is an error, never a silent co-host.
@@ -83,7 +83,7 @@ func ParseAdaptersConfig(getenv func(string) string) ([]AdapterSpec, error) {
 	return nil, nil
 }
 
-// ParseAdaptersEnv parses the CRITERIA_ADAPTERS value: a comma-separated
+// ParseAdaptersEnv parses the CRITERIA_REMOTE_ADAPTERS value: a comma-separated
 // list of adapter names, each optionally "NAME=PATH" to pin the binary path.
 // Entries are trimmed; empty entries are skipped.
 func ParseAdaptersEnv(raw string) ([]AdapterSpec, error) {

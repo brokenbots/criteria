@@ -44,8 +44,15 @@ const (
 	EnvAdapterVersion  = "CRITERIA_ADAPTER_VERSION"
 	EnvAdapterBinary   = "CRITERIA_ADAPTER_BINARY"
 	EnvAdapterManifest = "CRITERIA_ADAPTER_MANIFEST"
-	EnvAdapters        = "CRITERIA_ADAPTERS"
-	EnvAdaptersDir     = "CRITERIA_ADAPTERS_DIR"
+	// The peer's pod-level adapter manifest deliberately lives under the
+	// CRITERIA_REMOTE_* family, NOT CRITERIA_ADAPTERS: that pre-existing name
+	// is the adapter install DIRECTORY consumed by adapterhost discovery
+	// (internal/adapter/dirs, adapterhost), and reusing it for the multi-
+	// adapter list would collapse two different variables into one value.
+	// Under the remote prefix the manifest is also scrubbed from child
+	// environments automatically (see resolve.go ChildEnv).
+	EnvAdapters        = "CRITERIA_REMOTE_ADAPTERS"
+	EnvAdaptersDir     = "CRITERIA_REMOTE_ADAPTERS_DIR"
 	EnvRemoteScopesDir = "CRITERIA_REMOTE_SCOPES_DIR"
 	EnvLogLevel        = "CRITERIA_LOG_LEVEL"
 	EnvChildKeepAlive  = "CRITERIA_PEER_CHILD_KEEPALIVE"
@@ -96,7 +103,7 @@ type Config struct {
 	AdapterManifest string // EnvAdapterManifest
 
 	// Adapters is the multi-adapter manifest (KB-213): one spec per adapter
-	// child the peer hosts, built from CRITERIA_ADAPTERS /
+	// child the peer hosts, built from CRITERIA_REMOTE_ADAPTERS /
 	// CRITERIA_ADAPTERS_DIR with per-adapter overrides. Empty means the
 	// legacy single-adapter shape above.
 	Adapters []AdapterSpec
@@ -159,7 +166,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 }
 
 // ManifestMode reports whether the adapter set was declared through the
-// multi-adapter manifest (CRITERIA_ADAPTERS / CRITERIA_ADAPTERS_DIR) rather
+// multi-adapter manifest (# the CRITERIA_REMOTE_ADAPTERS / CRITERIA_REMOTE_ADAPTERS_DIR manifest) rather
 // than the legacy single-adapter variables.
 func (c *Config) ManifestMode() bool { return len(c.Adapters) > 0 }
 
