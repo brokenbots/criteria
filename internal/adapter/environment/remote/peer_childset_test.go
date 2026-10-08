@@ -148,7 +148,7 @@ func TestShim_PeerRole_VerifiedChildSetHandedToAcceptor(t *testing.T) {
 	})
 	defer conn.Close()
 
-	if !acceptor.waitCalled(5 * time.Second) {
+	if !acceptor.waitCalled() {
 		t.Fatal("verified child set was not routed to the PeerAcceptor")
 	}
 	dial := acceptor.lastDial()
@@ -234,7 +234,7 @@ func TestShim_PeerRole_LegacyFrameWithoutChildSetUnchanged(t *testing.T) {
 	conn := dialRawHandshakeBytes(t, addr, data)
 	defer conn.Close()
 
-	if !acceptor.waitCalled(5 * time.Second) {
+	if !acceptor.waitCalled() {
 		t.Fatal("legacy peer dial was not routed to the PeerAcceptor")
 	}
 	if dial := acceptor.lastDial(); dial.Adapters != nil {

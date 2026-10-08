@@ -87,9 +87,10 @@ func ParseAdaptersConfig(getenv func(string) string) ([]AdapterSpec, error) {
 // list of adapter names, each optionally "NAME=PATH" to pin the binary path.
 // Entries are trimmed; empty entries are skipped.
 func ParseAdaptersEnv(raw string) ([]AdapterSpec, error) {
-	var specs []AdapterSpec
+	parts := strings.Split(raw, ",")
+	specs := make([]AdapterSpec, 0, len(parts))
 	seen := make(map[string]bool)
-	for _, entry := range strings.Split(raw, ",") {
+	for _, entry := range parts {
 		entry = strings.TrimSpace(entry)
 		if entry == "" {
 			continue
@@ -128,7 +129,7 @@ func scanAdapterBinaries(dir string) ([]AdapterSpec, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s %q: %w", EnvAdaptersDir, dir, err)
 	}
-	var specs []AdapterSpec
+	specs := make([]AdapterSpec, 0, len(entries))
 	seen := make(map[string]bool)
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -201,32 +202,13 @@ func adapterEnvName(name string) string {
 // fallback of the single-adapter shape does not apply here: an ambiguous
 // multi-child manifest is a configuration error, not a name to guess.
 func ResolveAdapterSpec(spec *AdapterSpec) error {
-	if spec.Manifest != "" {
-		m, err := manifest.ParseFile(spec.Manifest)
-		if err != nil {
-			return fmt.Errorf("read manifest %q: %w", spec.Manifest, err)
-		}
-		if spec.Name == "" {
-			spec.Name = m.Name
-		}
-		if spec.Version == "" {
-			spec.Version = m.Version
-		}
-		if spec.Binary == "" {
-			spec.Binary = defaultBinaryPath(m.Name)
-		}
-	}
-	if spec.Binary == "" && spec.Name != "" {
-		if p, err := exec.LookPath(adapterBinaryPrefix + spec.Name); err == nil {
-			spec.Binary = p
-		}
-	}
-	if spec.Binary == "" && spec.Name != "" {
-		spec.Binary = defaultBinaryPath(spec.Name)
+	if err := applySpecManifestDefaults(spec); err != nil {
+		return err
 	}
 	if spec.Binary == "" {
-		return fmt.Errorf("could not locate an adapter binary for %q; set CRITERIA_ADAPTER_%s_BINARY",
-			spec.Name, adapterEnvName(spec.Name))
+		if err := locateSpecBinary(spec); err != nil {
+			return err
+		}
 	}
 	if spec.Name == "" {
 		spec.Name = nameFromBinary(spec.Binary)
@@ -234,6 +216,58 @@ func ResolveAdapterSpec(spec *AdapterSpec) error {
 	if spec.Version == "" {
 		spec.Version = DefaultVersion
 	}
+	if err := resolveSpecDigest(spec); err != nil {
+		return err
+	}
+	return validateSpecBinary(spec)
+}
+
+// applySpecManifestDefaults seeds Name/Version/Binary from the adapter
+// manifest when the manifest path is set and the fields are unset.
+func applySpecManifestDefaults(spec *AdapterSpec) error {
+	if spec.Manifest == "" {
+		return nil
+	}
+	m, err := manifest.ParseFile(spec.Manifest)
+	if err != nil {
+		return fmt.Errorf("read manifest %q: %w", spec.Manifest, err)
+	}
+	if spec.Name == "" {
+		spec.Name = m.Name
+	}
+	if spec.Version == "" {
+		spec.Version = m.Version
+	}
+	if spec.Binary == "" {
+		spec.Binary = defaultBinaryPath(m.Name)
+	}
+	return nil
+}
+
+// locateSpecBinary finds the binary for a name-only spec: PATH lookup of
+// criteria-adapter-<name> first, then the conventional install path.
+func locateSpecBinary(spec *AdapterSpec) error {
+	if spec.Name == "" {
+		return nil
+	}
+	if p, err := exec.LookPath(adapterBinaryPrefix + spec.Name); err == nil {
+		spec.Binary = p
+	}
+	if spec.Binary == "" {
+		spec.Binary = defaultBinaryPath(spec.Name)
+	}
+	if spec.Binary == "" {
+		return fmt.Errorf("could not locate an adapter binary for %q; set CRITERIA_ADAPTER_%s_BINARY",
+			spec.Name, adapterEnvName(spec.Name))
+	}
+	return nil
+}
+
+// validateSpecBinary resolves bare names against PATH and fails closed when
+// the binary is missing: half-booting N-1 children would leave the
+// undeclared adapter's sessions waiting on a dead dial instead of a loud
+// startup error.
+func validateSpecBinary(spec *AdapterSpec) error {
 	if !strings.Contains(spec.Binary, string(filepath.Separator)) {
 		p, err := exec.LookPath(spec.Binary)
 		if err != nil {
@@ -241,13 +275,7 @@ func ResolveAdapterSpec(spec *AdapterSpec) error {
 		}
 		spec.Binary = p
 	}
-	if err := resolveSpecDigest(spec); err != nil {
-		return err
-	}
 	if info, err := os.Stat(spec.Binary); err != nil || info.IsDir() {
-		// Multi-child manifests fail closed here: half-booting N-1 children
-		// would leave the undeclared adapter's sessions waiting on a dead
-		// dial instead of a loud startup error.
 		return fmt.Errorf("adapter binary %q for adapter %q is missing or not a regular file", spec.Binary, spec.Name)
 	}
 	return nil
@@ -308,63 +336,68 @@ func ScanRemoteScopes(dir string) ([]ScopeTokenSpec, error) {
 }
 
 func scanRemoteScopesEntries(dir string, top []os.DirEntry) ([]ScopeTokenSpec, error) {
-	var specs []ScopeTokenSpec
+	specs := make([]ScopeTokenSpec, 0, len(top))
 	for _, topEntry := range top {
-		if topEntry.Name() == "current" {
+		if topEntry.Name() == "current" || !topEntry.IsDir() {
 			continue
 		}
 		if err := checkPathLabelScan(topEntry.Name()); err != nil {
 			return nil, fmt.Errorf("%s contains unusable entry %q: %w", EnvRemoteScopesDir, topEntry.Name(), err)
 		}
-		if !topEntry.IsDir() {
-			continue
-		}
 		scopePath := filepath.Join(dir, topEntry.Name())
-		// Root-scope shape: the first-level directory IS the instance UUID
-		// and holds the token files directly.
-		tokens, err := readScopeTokenDir(scopePath)
-		if err != nil {
+		appendRootScopeTokens(&specs, scopePath, topEntry)
+		if err := appendWorkflowScopeTokens(&specs, topEntry, scopePath); err != nil {
 			return nil, err
-		}
-		if len(tokens) > 0 && uuid.Validate(topEntry.Name()) == nil {
-			for _, tok := range tokens {
-				specs = append(specs, ScopeTokenSpec{
-					Scope:     "/" + topEntry.Name(),
-					Adapter:   tok.adapter,
-					Token:     tok.token,
-					TokenPath: tok.path,
-				})
-			}
-		}
-		// Workflow-scope shape: the first-level directory is the scope label
-		// and UUID subdirectories hold instance tokens.
-		instances, err := os.ReadDir(scopePath)
-		if err != nil {
-			return nil, fmt.Errorf("read %s %q: %w", EnvRemoteScopesDir, scopePath, err)
-		}
-		for _, instEntry := range instances {
-			if instEntry.Name() == "current" || !instEntry.IsDir() {
-				continue
-			}
-			if uuid.Validate(instEntry.Name()) != nil {
-				continue
-			}
-			instPath := filepath.Join(scopePath, instEntry.Name())
-			tokens, err := readScopeTokenDir(instPath)
-			if err != nil {
-				return nil, err
-			}
-			for _, tok := range tokens {
-				specs = append(specs, ScopeTokenSpec{
-					Scope:     topEntry.Name() + "/" + instEntry.Name(),
-					Adapter:   tok.adapter,
-					Token:     tok.token,
-					TokenPath: tok.path,
-				})
-			}
 		}
 	}
 	return specs, nil
+}
+
+// appendRootScopeTokens appends the root-scope shape: the first-level
+// directory IS the instance UUID and holds the token files directly.
+func appendRootScopeTokens(specs *[]ScopeTokenSpec, scopePath string, topEntry os.DirEntry) {
+	tokens, err := readScopeTokenDir(scopePath)
+	if err != nil {
+		return
+	}
+	if len(tokens) == 0 || uuid.Validate(topEntry.Name()) != nil {
+		return
+	}
+	for _, tok := range tokens {
+		*specs = append(*specs, ScopeTokenSpec{
+			Scope:     "/" + topEntry.Name(),
+			Adapter:   tok.adapter,
+			Token:     tok.token,
+			TokenPath: tok.path,
+		})
+	}
+}
+
+// appendWorkflowScopeTokens appends the workflow-scope shape: the first-level
+// directory is the scope label and UUID subdirectories hold instance tokens.
+func appendWorkflowScopeTokens(specs *[]ScopeTokenSpec, topEntry os.DirEntry, scopePath string) error {
+	instances, err := os.ReadDir(scopePath)
+	if err != nil {
+		return fmt.Errorf("read %s %q: %w", EnvRemoteScopesDir, scopePath, err)
+	}
+	for _, instEntry := range instances {
+		if instEntry.Name() == "current" || !instEntry.IsDir() || uuid.Validate(instEntry.Name()) != nil {
+			continue
+		}
+		tokens, err := readScopeTokenDir(filepath.Join(scopePath, instEntry.Name()))
+		if err != nil {
+			return err
+		}
+		for _, tok := range tokens {
+			*specs = append(*specs, ScopeTokenSpec{
+				Scope:     topEntry.Name() + "/" + instEntry.Name(),
+				Adapter:   tok.adapter,
+				Token:     tok.token,
+				TokenPath: tok.path,
+			})
+		}
+	}
+	return nil
 }
 
 // scopeTokenFile is one <adapterType>.token file found in a token directory
@@ -384,7 +417,7 @@ func readScopeTokenDir(tokenDir string) ([]scopeTokenFile, error) {
 		}
 		return nil, fmt.Errorf("read token directory %q: %w", tokenDir, err)
 	}
-	var found []scopeTokenFile
+	found := make([]scopeTokenFile, 0, len(entries))
 	for _, entry := range entries {
 		name := entry.Name()
 		if !strings.HasSuffix(name, ".token") || entry.IsDir() {

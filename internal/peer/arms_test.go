@@ -205,7 +205,7 @@ func TestServer_ControlCancelChildRunNegotiated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connProfile: %v", err)
 	}
-	frame, err := f.server.identityFrame(spec)
+	frame, err := f.server.identityFrame(&spec)
 	if err != nil {
 		t.Fatalf("identity frame: %v", err)
 	}

@@ -111,7 +111,7 @@ type PeerDial struct {
 // connection and must close it before returning, whether it succeeds or
 // fails.
 type PeerAcceptor interface {
-	AcceptPeer(ctx context.Context, conn net.Conn, dial PeerDial) error
+	AcceptPeer(ctx context.Context, conn net.Conn, dial *PeerDial) error
 }
 
 // DigestVerifier checks whether a reported adapter digest is acceptable.
@@ -187,7 +187,7 @@ func (e *PeerChildSetError) Is(target error) bool {
 // hostedAdapters returns the adapter set a peer dial covers: the advertised
 // child set when present, otherwise the dialed adapter alone (single-child
 // peers).
-func hostedAdapters(dial PeerDial) []string {
+func hostedAdapters(dial *PeerDial) []string {
 	if len(dial.Adapters) == 0 {
 		return []string{dial.AdapterType}
 	}
@@ -730,7 +730,7 @@ func (s *Shim) acceptPeerConn(ctx context.Context, conn net.Conn, hs *handshakeM
 		return fmt.Errorf("peer role dial from %q rejected: no peer acceptor configured", hs.Name)
 	}
 	dial := PeerDial{AdapterType: hs.Name, Scope: hs.Scope, Digest: hs.Digest, Adapters: dialAdapters(hs), Peer: hs.Peer}
-	return acceptor.AcceptPeer(ctx, conn, dial)
+	return acceptor.AcceptPeer(ctx, conn, &dial)
 }
 
 // dialAdapters extracts the verified hosted child set from an identity

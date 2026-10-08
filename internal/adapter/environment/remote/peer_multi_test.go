@@ -32,7 +32,7 @@ func multiAdapterFake(dialName string) *fakePeer {
 // startMultiPeerFixture builds a fixture shim whose digest verifier pins
 // both hosted children (the KB-213 lockfile shape) and wires the provider
 // as the shim's peer acceptor.
-func startMultiPeerFixture(t *testing.T) (*peerSessionProvider, string) {
+func startMultiPeerFixture(t *testing.T) (provider *peerSessionProvider, addr string) {
 	t.Helper()
 	shim, err := NewShim(&Config{ListenAddress: "127.0.0.1:0"}, &fixedDigestVerifier{allowed: multiDigests})
 	if err != nil {
@@ -44,7 +44,7 @@ func startMultiPeerFixture(t *testing.T) (*peerSessionProvider, string) {
 		t.Fatalf("Start: %v", err)
 	}
 	t.Cleanup(func() { _ = shim.Stop(context.Background()) })
-	provider := NewPeerSessionProvider(shim, false)
+	provider = NewPeerSessionProvider(shim, false)
 	shim.SetPeerAcceptor(provider)
 	return provider, shim.listener.Addr().String()
 }

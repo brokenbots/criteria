@@ -228,7 +228,7 @@ func (f *peerServeFixture) startConn() (conn net.Conn, frame []byte, serveErr <-
 			serveErrCh <- err
 			return
 		}
-		serveErrCh <- f.server.serveOnce(f.ctx, spec)
+		serveErrCh <- f.server.serveOnce(f.ctx, &spec)
 	}()
 
 	var got []byte
@@ -379,7 +379,7 @@ func TestServer_IdentityFrameGoldenJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connProfile: %v", err)
 	}
-	got, err := server.identityFrame(spec)
+	got, err := server.identityFrame(&spec)
 	if err != nil {
 		t.Fatalf("identityFrame: %v", err)
 	}
@@ -407,7 +407,7 @@ func TestServer_IdentityFrameOverCapRejected(t *testing.T) {
 	if perr != nil {
 		t.Fatalf("connProfile: %v", perr)
 	}
-	if _, err := server.identityFrame(spec); err == nil {
+	if _, err := server.identityFrame(&spec); err == nil {
 		t.Fatal("identityFrame accepted a frame over the 16 KiB cap")
 	}
 }
@@ -422,7 +422,7 @@ func TestServer_ServesAdapterAndPeerServices(t *testing.T) {
 	if perr != nil {
 		f.t.Fatalf("connProfile: %v", perr)
 	}
-	want, err := f.server.identityFrame(spec)
+	want, err := f.server.identityFrame(&spec)
 	if err != nil {
 		t.Fatalf("identityFrame: %v", err)
 	}
@@ -1463,7 +1463,7 @@ func (f *peerServeFixture) startConnIdleClosing(idleLimit time.Duration) (conn n
 			serveErrCh <- err
 			return
 		}
-		serveErrCh <- f.server.serveOnce(f.ctx, spec)
+		serveErrCh <- f.server.serveOnce(f.ctx, &spec)
 	}()
 	select {
 	case data := <-frameCh:

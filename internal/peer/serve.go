@@ -261,8 +261,8 @@ func (s *Server) runSingleConn(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		err := s.serveOnce(ctx, spec)
-		s.serveCountAdjust(spec)
+		err := s.serveOnce(ctx, &spec)
+		s.serveCountAdjust(&spec)
 		select {
 		case <-s.exitSignal:
 			// Serve-adapter teardown (ADR-0008 child role): the host closed
@@ -294,7 +294,7 @@ func (s *Server) runSingleConn(ctx context.Context) error {
 // per-child serve counts: with child keepalive disabled this is where a
 // child whose last serving conn just ended is killed (no child survives a
 // host disconnect).
-func (s *Server) serveCountAdjust(spec serveConnSpec) {
+func (s *Server) serveCountAdjust(spec *serveConnSpec) {
 	if s.rt != nil {
 		s.rt.serveClosed(spec.children)
 	}
@@ -319,7 +319,7 @@ func (s *Server) runScopeSet(ctx context.Context) error {
 		}
 		want := make(map[string]serveConnSpec, len(specs))
 		for _, spec := range specs {
-			want[connKey(spec)] = spec
+			want[connKey(&spec)] = spec
 		}
 		mu.Lock()
 		defer mu.Unlock()
@@ -330,7 +330,7 @@ func (s *Server) runScopeSet(ctx context.Context) error {
 			stop := make(chan struct{})
 			loops[key] = stop
 			s.log.Info("peer scope conn starting", "adapter", spec.name, "scope", spec.scope)
-			go s.loopScopeConn(ctx, spec, stop)
+			go s.loopScopeConn(ctx, &spec, stop)
 		}
 		for key := range loops {
 			if _, wanted := want[key]; !wanted {
@@ -357,7 +357,7 @@ func (s *Server) runScopeSet(ctx context.Context) error {
 // loopScopeConn is one (scope, adapter) connection loop: serve once, close
 // the serve count (killing the conn's child when keepalive is disabled),
 // then back off with full jitter before the next attempt.
-func (s *Server) loopScopeConn(ctx context.Context, spec serveConnSpec, stop <-chan struct{}) {
+func (s *Server) loopScopeConn(ctx context.Context, spec *serveConnSpec, stop <-chan struct{}) {
 	prev := s.cfg.BackoffMin
 	for {
 		if err := ctx.Err(); err != nil {
@@ -440,7 +440,7 @@ type serveConnSpec struct {
 }
 
 // connKey is the dedup key for a per-scope connection (scope + adapter).
-func connKey(spec serveConnSpec) string {
+func connKey(spec *serveConnSpec) string {
 	return spec.scope + "\x00" + spec.name
 }
 
@@ -472,36 +472,51 @@ func (s *Server) connProfile() (serveConnSpec, error) {
 func (s *Server) connSpecs() ([]serveConnSpec, error) {
 	cfg := s.cfg
 	if cfg.ScopesDir != "" {
-		scopes, err := ScanRemoteScopes(cfg.ScopesDir)
-		if err != nil {
-			return nil, err
-		}
-		hosted, err := s.hostedSpecs()
-		if err != nil {
-			return nil, err
-		}
-		specs := make([]serveConnSpec, 0, len(scopes))
-		for _, sc := range scopes {
-			hs, ok := hosted[sc.Adapter]
-			if !ok {
-				s.log.Error("peer refuses phone-home conn for an adapter it does not host",
-					"adapter", sc.Adapter,
-					"scope", sc.Scope,
-					"hosted", strings.Join(hostedNames(hosted), ","),
-				)
-				continue
-			}
-			specs = append(specs, serveConnSpec{
-				name:     hs.Name,
-				version:  hs.Version,
-				digest:   hs.Digest,
-				scope:    sc.Scope,
-				token:    sc.Token,
-				children: []string{hs.Name},
-			})
-		}
-		return specs, nil
+		return s.connSpecsForScopes()
 	}
+	return legacyOrManifestConnSpecs(cfg), nil
+}
+
+// connSpecsForScopes builds one per-(scope, adapter) conn spec from the
+// scope-token scan; adapters the peer does not host are refused loudly and
+// left out (their host wait types out instead of a silent miss).
+func (s *Server) connSpecsForScopes() ([]serveConnSpec, error) {
+	scopes, err := ScanRemoteScopes(s.cfg.ScopesDir)
+	if err != nil {
+		return nil, err
+	}
+	hosted, err := s.hostedSpecs()
+	if err != nil {
+		return nil, err
+	}
+	specs := make([]serveConnSpec, 0, len(scopes))
+	for _, sc := range scopes {
+		hs, ok := hosted[sc.Adapter]
+		if !ok {
+			s.log.Error("peer refuses phone-home conn for an adapter it does not host",
+				"adapter", sc.Adapter,
+				"scope", sc.Scope,
+				"hosted", strings.Join(hostedNames(hosted), ","),
+			)
+			continue
+		}
+		specs = append(specs, serveConnSpec{
+			name:     hs.Name,
+			version:  hs.Version,
+			digest:   hs.Digest,
+			scope:    sc.Scope,
+			token:    sc.Token,
+			children: []string{hs.Name},
+		})
+	}
+	return specs, nil
+}
+
+// legacyOrManifestConnSpecs collapses the manifest and legacy shapes into
+// their conn set: a manifest dial is ONE run-wide conn carrying the first
+// manifest child's identity, able to route to every hosted child; legacy
+// keeps the single-adapter conn.
+func legacyOrManifestConnSpecs(cfg *Config) []serveConnSpec {
 	if cfg.ManifestMode() {
 		children := make([]string, 0, len(cfg.Adapters))
 		for _, spec := range cfg.Adapters {
@@ -515,7 +530,7 @@ func (s *Server) connSpecs() ([]serveConnSpec, error) {
 			scope:    cfg.Scope,
 			token:    cfg.Token,
 			children: children,
-		}}, nil
+		}}
 	}
 	return []serveConnSpec{{
 		name:     cfg.AdapterName,
@@ -524,7 +539,7 @@ func (s *Server) connSpecs() ([]serveConnSpec, error) {
 		scope:    cfg.Scope,
 		token:    cfg.Token,
 		children: []string{cfg.AdapterName},
-	}}, nil
+	}}
 }
 
 // hostedSpecs maps the hosted adapter set by name from the resolved
@@ -564,7 +579,7 @@ func hostedNames(hosted map[string]AdapterSpec) []string {
 // newServedServer builds the phone-home gRPC server with both services
 // registered: the adapter bridge (when the conn's children are live) and
 // PeerService.
-func (s *Server) newServedServer(spec serveConnSpec) *grpc.Server {
+func (s *Server) newServedServer(spec *serveConnSpec) *grpc.Server {
 	keepaliveOpts := s.keepaliveOpts
 	if keepaliveOpts == nil {
 		keepaliveOpts = adapterhost.RemoteKeepaliveServerOptions()
@@ -591,7 +606,7 @@ func (s *Server) newServedServer(spec serveConnSpec) *grpc.Server {
 // per-child wrapped clients (session calls carry the x-criteria-adapter
 // header); one conn serving one adapter registers that child's wrapper
 // directly.
-func (s *Server) serveChildSet(server *grpc.Server, spec serveConnSpec) {
+func (s *Server) serveChildSet(server *grpc.Server, spec *serveConnSpec) {
 	if len(spec.children) > 1 {
 		byName := make(map[string]adapterhost.Client, len(spec.children))
 		for _, name := range spec.children {
@@ -639,7 +654,7 @@ func supervisionEventMatches(ev *criteriav1.SupervisionEvent, adapterType string
 // serveOnce dials the host, writes the identity frame, and serves both
 // services on the held connection. It returns when the connection drops or
 // ctx is cancelled (server stopped).
-func (s *Server) serveOnce(ctx context.Context, spec serveConnSpec) error {
+func (s *Server) serveOnce(ctx context.Context, spec *serveConnSpec) error {
 	conn, err := s.dialFunc(ctx, s.network(), s.cfg.Host)
 	if err != nil {
 		return fmt.Errorf("dial %s: %w", s.cfg.Host, err)
@@ -758,7 +773,7 @@ func (s *Server) network() string {
 
 // writeIdentityFrame marshals the peer identity frame and writes it as a
 // single newline-terminated JSON line bounded to peerHandshakeFrameCap.
-func (s *Server) writeIdentityFrame(conn net.Conn, spec serveConnSpec) error {
+func (s *Server) writeIdentityFrame(conn net.Conn, spec *serveConnSpec) error {
 	line, err := s.identityFrame(spec)
 	if err != nil {
 		return err
@@ -769,7 +784,7 @@ func (s *Server) writeIdentityFrame(conn net.Conn, spec serveConnSpec) error {
 	return nil
 }
 
-func (s *Server) identityFrame(spec serveConnSpec) ([]byte, error) {
+func (s *Server) identityFrame(spec *serveConnSpec) ([]byte, error) {
 	cfgVersion := spec.version
 	if cfgVersion == "" {
 		cfgVersion = version.Version

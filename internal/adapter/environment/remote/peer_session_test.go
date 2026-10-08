@@ -1363,7 +1363,7 @@ func TestPeerWaitForFreshHandleNoLostWakeupWhenPeerDialStoresBetweenCheckAndRegi
 	// registry step is replayed, so the gRPC client stays idle.
 	client, server := net.Pipe()
 	defer client.Close()
-	ps, err := newPeerSession(server, PeerDial{AdapterType: "noop", Scope: ""}, provider.peerDied)
+	ps, err := newPeerSession(server, &PeerDial{AdapterType: "noop", Scope: ""}, provider.peerDied)
 	if err != nil {
 		t.Fatalf("newPeerSession: %v", err)
 	}

@@ -264,7 +264,7 @@ func (r *peerRuntime) Boot(ctx context.Context) error {
 		return err
 	}
 
-	var spawned []*childState
+	spawned := make([]*childState, 0, len(specs))
 	for i := range specs {
 		c, err := r.spawnChild(ctx, &specs[i])
 		if err != nil {
@@ -356,6 +356,17 @@ func (r *peerRuntime) spawnChild(ctx context.Context, spec *childSpec) (*childSt
 		return nil, fmt.Errorf("start adapter %q: %w", s.Name, err)
 	}
 
+	c := r.recordChild(spec, child)
+	if err := r.verifyChild(ctx, spec, c, child); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// recordChild registers the freshly started child in the runtime registry
+// and spawn order.
+func (r *peerRuntime) recordChild(spec *childSpec, child adapterhost.Handle) *childState {
+	s := &spec.spec
 	c := &childState{
 		name:         s.Name,
 		scope:        spec.scope,
@@ -368,7 +379,13 @@ func (r *peerRuntime) spawnChild(ctx context.Context, spec *childSpec) (*childSt
 	r.children[s.Name] = c
 	r.order = append(r.order, s.Name)
 	r.mu.Unlock()
+	return c
+}
 
+// verifyChild confirms the child answers Info right after spawn; anything
+// else journals a crash, deregisters the child, and kills the process.
+func (r *peerRuntime) verifyChild(ctx context.Context, spec *childSpec, c *childState, child adapterhost.Handle) error {
+	s := &spec.spec
 	info, err := child.Info(ctx)
 	if err != nil {
 		r.log.Error("adapter child failed Info", "adapter", s.Name, "error", err)
@@ -388,14 +405,14 @@ func (r *peerRuntime) spawnChild(ctx context.Context, spec *childSpec) (*childSt
 		}
 		r.mu.Unlock()
 		child.Kill()
-		return nil, fmt.Errorf("adapter %q Info: %w", s.Name, err)
+		return fmt.Errorf("adapter %q Info: %w", s.Name, err)
 	}
 	version := info.Version
 	if version == "" {
 		version = s.Version
 	}
 	c.version = version
-	return c, nil
+	return nil
 }
 
 // watchChild polls one child's process state and journals the exit fact the
@@ -557,30 +574,6 @@ func (r *peerRuntime) Control(ctx context.Context, req *criteriav1.ControlReques
 	return &criteriav1.ControlResponse{Accepted: true, Detail: fmt.Sprintf("kill scheduled after %s grace", grace)}
 }
 
-// killChild terminates live children between reconnect attempts when child
-// keepalive is disabled (legacy runner parity: no child survives a host
-// disconnect). No-op when nothing is alive; safe to call repeatedly. The
-// names argument selects the children; all children when empty.
-func (r *peerRuntime) killChild(names ...string) {
-	r.mu.Lock()
-	selected := names
-	if len(selected) == 0 {
-		selected = append([]string(nil), r.order...)
-	}
-	handles := make([]adapterhost.Handle, 0, len(selected))
-	for _, name := range selected {
-		if c := r.children[name]; c != nil {
-			handles = append(handles, c.handle)
-		}
-	}
-	r.mu.Unlock()
-	for _, h := range handles {
-		if h != nil && !adapterhost.ProcessExited(h) {
-			h.Kill()
-		}
-	}
-}
-
 // serveOpened counts the live phone-home conn serving each named child.
 func (r *peerRuntime) serveOpened(names []string) {
 	r.mu.Lock()
@@ -724,36 +717,49 @@ func (r *peerRuntime) Shutdown(ctx context.Context) error {
 		close(r.stopWatch)
 		r.watchWG.Wait()
 
-		for _, c := range children {
-			sessionIDs := r.openSessionIDs(c)
-			for _, id := range sessionIDs {
-				if c.servedChild == nil {
-					// Nothing the bridge served: no session surface to close.
-					break
-				}
-				ctxSession, cancel := context.WithTimeout(ctx, closeSessionTimeout)
-				_, err := c.servedChild.CloseSession(ctxSession, &v2.CloseSessionRequest{SessionId: id})
-				cancel()
-				if err != nil {
-					r.log.Warn("shutdown close session", "session", id, "error", err)
-				} else {
-					r.sessionClosed(c.name, id)
-				}
-			}
-			if c.handle != nil && !adapterhost.ProcessExited(c.handle) {
-				r.waitChildGrace(c.handle, r.shutdownGrace)
-			}
-			if c.handle != nil && !adapterhost.ProcessExited(c.handle) {
-				c.handle.Kill()
-			}
-			r.recordExit(c, true)
-		}
+		r.shutdownChildren(ctx, children)
 		if err := r.loader.Shutdown(ctx); err != nil {
 			r.log.Warn("loader shutdown", "error", err)
 		}
 		r.log.Info("peer shutdown complete", "adapters", strings.Join(childNames(children), ","))
 	})
 	return nil
+}
+
+// shutdownChildren closes the host-opened sessions of every child in spawn
+// order, grants each a clean-exit grace window, then kills survivors.
+func (r *peerRuntime) shutdownChildren(ctx context.Context, children []*childState) {
+	for _, c := range children {
+		r.closeChildSessions(ctx, c)
+		if c.handle != nil && !adapterhost.ProcessExited(c.handle) {
+			r.waitChildGrace(c.handle, r.shutdownGrace)
+		}
+		if c.handle != nil && !adapterhost.ProcessExited(c.handle) {
+			c.handle.Kill()
+		}
+		r.recordExit(c, true)
+	}
+}
+
+// closeChildSessions asks the served child adapter to close every session
+// the host opened on it, journaling close failures without failing the
+// shutdown.
+func (r *peerRuntime) closeChildSessions(ctx context.Context, c *childState) {
+	sessionIDs := r.openSessionIDs(c)
+	for _, id := range sessionIDs {
+		if c.servedChild == nil {
+			// Nothing the bridge served: no session surface to close.
+			break
+		}
+		ctxSession, cancel := context.WithTimeout(ctx, closeSessionTimeout)
+		_, err := c.servedChild.CloseSession(ctxSession, &v2.CloseSessionRequest{SessionId: id})
+		cancel()
+		if err != nil {
+			r.log.Warn("shutdown close session", "session", id, "error", err)
+		} else {
+			r.sessionClosed(c.name, id)
+		}
+	}
 }
 
 func childNames(children []*childState) []string {

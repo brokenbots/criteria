@@ -198,7 +198,7 @@ func (p *peerSessionProvider) key(adapterType, scope string) string {
 // accepting it would strand the missing adapter's sessions on scheduling
 // budgets. The rejection closes the conn (the acceptor owns it until
 // success) so the peer's next dial repeats the same typed failure.
-func (p *peerSessionProvider) AcceptPeer(ctx context.Context, conn net.Conn, dial PeerDial) error {
+func (p *peerSessionProvider) AcceptPeer(ctx context.Context, conn net.Conn, dial *PeerDial) error {
 	_ = ctx // ownership of the conn is explicit; session lifetime is managed via close()
 	key := p.key(dial.AdapterType, dial.Scope)
 
@@ -222,37 +222,16 @@ func (p *peerSessionProvider) AcceptPeer(ctx context.Context, conn net.Conn, dia
 	// A replacement dial for the same key supersedes the previous session
 	// (mirrors the legacy shim storing the new session and tearing the old
 	// bridge down).
-	p.mu.Lock()
-	old, ok := p.peers[key]
-	p.peers[key] = ps
-	waiters := p.waiters[key]
-	delete(p.waiters, key)
+	replaced, waiters, old := p.storeSession(key, ps)
 
 	// KB-213: drain the session waits for the conn's other hosted adapters
 	// too (run-wide multi-adapter conns serve every hosted adapter); each
 	// waiter receives the routed handle for its own adapter. Waiter keys
 	// follow the registry's key semantics, so in per-scope mode only the
 	// dial's own scope drains here (per-scope conns host one child each).
-	type routedWake struct {
-		ch     chan waitResult
-		handle *peerHandle
-	}
-	var routed []routedWake
-	for _, hostName := range hosted {
-		if hostName == dial.AdapterType {
-			continue
-		}
-		hostKey := p.key(hostName, dial.Scope)
-		if hostWaiters := p.waiters[hostKey]; len(hostWaiters) > 0 {
-			delete(p.waiters, hostKey)
-			handle := ps.handleFor(hostName)
-			for _, ch := range hostWaiters {
-				routed = append(routed, routedWake{ch: ch, handle: handle})
-			}
-		}
-	}
-	p.mu.Unlock()
-	if ok {
+	routed := p.collectRoutedWaiters(ps, hosted, dial.Scope)
+
+	if replaced {
 		old.close("replaced by a new peer dial")
 	}
 	for _, ch := range waiters {
@@ -269,6 +248,51 @@ func (p *peerSessionProvider) AcceptPeer(ctx context.Context, conn net.Conn, dia
 		"digest", dial.Digest,
 		"hosted", strings.Join(hosted, ","))
 	return nil
+}
+
+// routedWake is one routed waiter wake: the wait channel and the handle of
+// the hosted child it waits for.
+type routedWake struct {
+	ch     chan waitResult
+	handle *peerHandle
+}
+
+// storeSession swaps the session into the registry under one p.mu hold,
+// snapshotting (and removing) the dial adapter's pending waiters for the
+// same critical section AcceptPeer documents. The boolean reports whether a
+// previous session was replaced.
+func (p *peerSessionProvider) storeSession(key string, ps *peerSession) (replaced bool, waiters []chan waitResult, old *peerSession) {
+	p.mu.Lock()
+	old, replaced = p.peers[key]
+	p.peers[key] = ps
+	waiters = p.waiters[key]
+	delete(p.waiters, key)
+	p.mu.Unlock()
+	return replaced, waiters, old
+}
+
+// collectRoutedWaiters drains the pending waits of the conn's OTHER hosted
+// adapters under the caller's p.mu hold, resolving each to the routed
+// per-adapter handle. In per-scope mode only the dial's own scope drains
+// here (per-scope conns host one child each).
+func (p *peerSessionProvider) collectRoutedWaiters(ps *peerSession, hosted []string, scope string) []routedWake {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var routed []routedWake
+	for _, hostName := range hosted {
+		if hostName == ps.dial.AdapterType {
+			continue
+		}
+		hostKey := p.key(hostName, scope)
+		if hostWaiters := p.waiters[hostKey]; len(hostWaiters) > 0 {
+			delete(p.waiters, hostKey)
+			handle := ps.handleFor(hostName)
+			for _, ch := range hostWaiters {
+				routed = append(routed, routedWake{ch: ch, handle: handle})
+			}
+		}
+	}
+	return routed
 }
 
 // peerDied is the onDead hook invoked by a session's supervision consumer
@@ -333,28 +357,11 @@ func (p *peerSessionProvider) WaitForFreshHandle(ctx context.Context, adapterTyp
 	// wait for a non-dial hosted adapter of a multi-adapter conn has to
 	// find the conn in the registry by its hosted set instead — including
 	// per-scope conns dialing scoped multi-adapter sets (their keys are
-	// prefixed, never the bare wait key).
-	var routedHost *peerSession
-	staleSession := peerSessionOf(stale)
-	for _, ps := range p.peers {
-		if ps == staleSession {
-			continue
-		}
-		if p.key(ps.dial.AdapterType, ps.dial.Scope) == key {
-			// The exact-key entry already handled the dial adapter itself.
-			continue
-		}
-		if p.perScopeSessions && ps.dial.Scope != scope {
-			continue
-		}
-		if ps.hostsAdapter(adapterType) {
-			routedHost = ps
-			break
-		}
-	}
-	if routedHost != nil {
+	// prefixed, never the bare wait key). Runs under the caller's p.mu
+	// hold.
+	if routed := p.findRoutedPeerSession(key, adapterType, scope, stale); routed != nil {
 		p.mu.Unlock()
-		return routedHost.handleFor(adapterType), nil
+		return routed.handleFor(adapterType), nil
 	}
 
 	peerCh := make(chan waitResult, 1)
@@ -564,18 +571,6 @@ func (j *peerJournals) trackFor(adapterType string) *adapterJournal {
 	return aj
 }
 
-// hostedNames lists every adapter the conn hosts (sorted; includes late
-// journals discovered through supervision events — the authoritative set
-// remains the dial's advertised adapters).
-func (j *peerJournals) hostedNames() []string {
-	names := make([]string, 0, len(j.journals))
-	for name := range j.journals {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
-
 // peerSession is one accepted peer connection: the host-side gRPC client
 // over the held phone-home net.Conn plus the supervision consumer consuming
 // the peer's journal stream, routed into a per-adapter view (adapterJournal
@@ -628,9 +623,9 @@ type peerSession struct {
 // loss the dialer refuses further dials — the phone-home conn cannot be
 // redialed, so a respawned adapter always presents a fresh handshake and a
 // fresh peerSession (no hot reconnect loop, no noopAttachedRunner).
-func newPeerSession(conn net.Conn, dial PeerDial, onDead func(ps *peerSession)) (*peerSession, error) {
+func newPeerSession(conn net.Conn, dial *PeerDial, onDead func(ps *peerSession)) (*peerSession, error) {
 	ps := &peerSession{
-		dial:   dial,
+		dial:   *dial,
 		conn:   conn,
 		onDead: onDead,
 	}
@@ -694,7 +689,7 @@ func (ps *peerSession) handleFor(adapterType string) *peerHandle {
 // hostedJournals returns a journal for each hosted adapter (dial-authoritative
 // set, sorted names; used by full teardown).
 func (ps *peerSession) hostedJournals() []*adapterJournal {
-	names := hostedAdapters(ps.dial)
+	names := hostedAdapters(&ps.dial)
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	journals := make([]*adapterJournal, 0, len(names))
@@ -715,6 +710,29 @@ func (ps *peerSession) journalFor(adapterType string) *adapterJournal {
 // for legacy (shim byte-bridge) handles. Session-level freshness checks use
 // it: a multi-adapter conn hands out several handles over one session, so
 // handle identity cannot express "the same session came back".
+// findRoutedPeerSession scans the registry (under the caller's p.mu hold)
+// for a session of a DIFFERENT conn hosting the waited adapter, returning
+// nil when the exact-key entry or scope mode excludes a hit.
+func (p *peerSessionProvider) findRoutedPeerSession(key, adapterType, scope string, stale adapterhost.Handle) *peerSession {
+	staleSession := peerSessionOf(stale)
+	for _, ps := range p.peers {
+		if ps == staleSession {
+			continue
+		}
+		if p.key(ps.dial.AdapterType, ps.dial.Scope) == key {
+			// The exact-key entry already handled the dial adapter itself.
+			continue
+		}
+		if p.perScopeSessions && ps.dial.Scope != scope {
+			continue
+		}
+		if ps.hostsAdapter(adapterType) {
+			return ps
+		}
+	}
+	return nil
+}
+
 func peerSessionOf(h adapterhost.Handle) *peerSession {
 	if ph, ok := h.(*peerHandle); ok {
 		return ph.ps
@@ -1037,12 +1055,6 @@ func (h *peerHandle) client() adapterhost.Client {
 	return &routedClient{base: h.ps.client, route: h.name}
 }
 
-// routedCtx carries the per-adapter route header into non-client v2 paths
-// (streams that take the client internally, e.g. ExecuteViaClient).
-func (h *peerHandle) routedCtx(ctx context.Context) context.Context {
-	return metadata.AppendToOutgoingContext(ctx, peerAdapterRouteHeader, h.name)
-}
-
 // journal returns the handle's adapter journal (creating it lazily when the
 // conn has not streamed an event for it yet).
 func (h *peerHandle) journal() *adapterJournal {
@@ -1353,8 +1365,6 @@ func (d *declaredAdapters) empty() bool {
 	defer d.mu.RUnlock()
 	return len(d.values) == 0
 }
-
-func (d *declaredAdapters) nonEmpty() bool { return !d.empty() }
 
 func (d *declaredAdapters) has(name string) bool {
 	d.mu.RLock()
