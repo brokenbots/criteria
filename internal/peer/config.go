@@ -238,7 +238,10 @@ func LoadConfigFromEnv() (Config, error) {
 // Precedence is ported from the phone-home runner
 // (cmd/criteria-adapter-remote-runner/runner.go resolve()): manifest →
 // CRITERIA_ADAPTER_BINARY → conventional install path → PATH lookup of
-// criteria-adapter-<name> → first PATH entry.
+// criteria-adapter-<name> → first PATH entry. Multi-adapter manifest mode
+// resolves every declared child with the same precedence per adapter
+// (ResolveAdapterSpec); the legacy single-adapter fields do not participate
+// there — the manifest is the declaration of record for the hosted child set.
 func (c *Config) Resolve() error {
 	if c.Host == "" {
 		return errors.New("CRITERIA_REMOTE_HOST is required")
@@ -250,9 +253,14 @@ func (c *Config) Resolve() error {
 	}
 	c.TLS = tlsCfg
 
+	if c.ManifestMode() {
+		return c.resolveManifestChildren()
+	}
+
 	if err := c.resolveFromManifest(); err != nil {
 		return err
 	}
+
 	c.resolveDefaults()
 
 	if c.Binary() == "" {
@@ -262,6 +270,19 @@ func (c *Config) Resolve() error {
 		return err
 	}
 	return c.resolveDigestBinary()
+}
+
+// resolveManifestChildren resolves every manifest child with the per-adapter
+// precedence (KB-213): manifest defaults, binary location, PATH validation,
+// and per-child digest pinning. A child that fails to resolve fails the whole
+// Resolve — a multi-child peer never half-boots on an undeclared child.
+func (c *Config) resolveManifestChildren() error {
+	for i := range c.Adapters {
+		if err := ResolveAdapterSpec(&c.Adapters[i]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Binary returns the resolved adapter binary path.
