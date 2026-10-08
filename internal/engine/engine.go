@@ -1439,6 +1439,57 @@ func (e *Engine) maybeStartRemoteShim(ctx context.Context, sessions *adapterhost
 	return nil
 }
 
+// declaredAdaptersForEnv walks the compiled graph and returns the adapter
+// types that resolve to the given environment key: top-level adapters, steps
+// with a per-step environment override, and deep-compiled subworkflow bodies
+// (ADR-0008 adapter pass-in), each matched by the "<type>.<name>" environment
+// identity. Adapters without an explicit environment attribute join the
+// declaring graph's default environment.
+//
+// The result feeds the peer provider's declared-adapter set (fail-closed
+// acceptance and wait-time checks). Empty means the walk found no adapter for
+// the environment: callers keep the legacy open behavior (mixed fleets that
+// predate declared-adapter knowledge or flows whose adapter surface cannot be
+// enumerated statically).
+func declaredAdaptersForEnv(envKey string, g *workflow.FSMGraph) []string {
+	set := make(map[string]struct{})
+	collectDeclaredAdapters(envKey, g, set)
+	if len(set) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(set))
+	for adapterType := range set {
+		out = append(out, adapterType)
+	}
+	slices.Sort(out)
+	return out
+}
+
+func collectDeclaredAdapters(envKey string, g *workflow.FSMGraph, set map[string]struct{}) {
+	if g == nil {
+		return
+	}
+	for _, ad := range g.Adapters {
+		if ad == nil {
+			continue
+		}
+		if (ad.Environment != "" && ad.Environment == envKey) || (ad.Environment == "" && g.DefaultEnvironment == envKey) {
+			set[ad.Type] = struct{}{}
+		}
+	}
+	for _, st := range g.Steps {
+		if st == nil || st.Environment != envKey || st.AdapterRef == "" {
+			continue
+		}
+		if ad := g.Adapters[st.AdapterRef]; ad != nil {
+			set[ad.Type] = struct{}{}
+		}
+	}
+	for _, sw := range g.Subworkflows {
+		collectDeclaredAdapters(envKey, sw.Body, set)
+	}
+}
+
 // isolatedShimListenAddress is the address substituted for colliding
 // environment listen_address declarations under local shim isolation: the OS
 // picks a free loopback port per bind and Shim.ListenAddr reports the bound
@@ -1525,6 +1576,7 @@ func (e *Engine) startRemoteShimForEnv(ctx context.Context, envKey string, env *
 	// The session manager is handed the provider, whose RemoteShim methods
 	// resolve peer sessions first and delegate to the shim for legacy ones.
 	provider := remote.NewPeerSessionProvider(shim, cfg.PerScopeSessions)
+	provider.SetDeclaredAdapters(declaredAdaptersForEnv(envKey, e.graph))
 	shim.SetPeerAcceptor(provider)
 	if err := shim.Start(ctx); err != nil {
 		return fmt.Errorf("remote environment %q: %w", env.Name, err)
