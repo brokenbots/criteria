@@ -83,6 +83,15 @@ const (
 	// only delivered Exited reports no classification, and the host falls
 	// through to the ProcessExited evidence path (T-07).
 	exitReasonProcessExited = "process_exited"
+
+	// peerAdapterRouteHeader is the gRPC metadata key the host tags each
+	// per-session adapter call with on a multi-adapter peer connection (one
+	// conn hosting N children, KB-213); the peer-side mux routes the call to
+	// the named child. The literal must stay in sync with the peer-side
+	// constant peerAdapterRouteHeader in internal/peer/serve.go: the packages
+	// cannot import each other (import-boundary lint), so the sync is by
+	// comment contract.
+	peerAdapterRouteHeader = "x-criteria-adapter"
 )
 
 // peerSuperviseStreamDesc describes the PeerService.Supervise server-stream

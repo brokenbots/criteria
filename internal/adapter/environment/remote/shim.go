@@ -60,6 +60,21 @@ const handshakeFrameCap = 16384
 type PeerClientIdentity struct {
 	CriteriaVersion string   `json:"criteria_version,omitempty"`
 	Capabilities    []string `json:"capabilities,omitempty"`
+	// Adapters is the peer's hosted child set (KB-213): every adapter the
+	// peer container declares, advertised on every phone-home connection of
+	// the environment. Legacy dials (single-adapter peers) omit the key
+	// entirely; its presence is the signal that the conn can host more than
+	// one adapter, and each advertised child is digest-verified at accept
+	// time exactly like the dialing identity itself.
+	Adapters []PeerAdapterIdentity `json:"adapters,omitempty"`
+}
+
+// PeerAdapterIdentity is one hosted adapter child in a peer identity frame
+// (KB-213): the adapter type, its version, and its lockfile-verified digest.
+type PeerAdapterIdentity struct {
+	Name    string `json:"name,omitempty"`
+	Version string `json:"version,omitempty"`
+	Digest  string `json:"digest,omitempty"`
 }
 
 // PeerDial is the authenticated peer-role dial handed to a PeerAcceptor
@@ -74,6 +89,10 @@ type PeerDial struct {
 	Scope string
 	// Digest is the presented adapter digest (already verified).
 	Digest string
+	// Adapters is the verified hosted child set of the peer container
+	// (KB-213) when the identity frame advertised it; nil for single-adapter
+	// peers (legacy shape, empty set means the conn serves AdapterType only).
+	Adapters []PeerAdapterIdentity
 	// Peer is the parsed `peer` block of the handshake; may be nil when the
 	// dialer omitted it.
 	Peer *PeerClientIdentity
@@ -152,6 +171,11 @@ const (
 	rejectDigest
 	rejectScopeNotRegistered
 	rejectBadToken
+	// rejectChildSet marks a peer dial whose advertised adapter child set
+	// failed verification (KB-213): a malformed entry, a duplicate child, a
+	// dial identity missing from the set, or a child whose digest does not
+	// verify against the verifier.
+	rejectChildSet
 )
 
 // verifyFailureState remembers the most recent identity-verification
@@ -654,8 +678,17 @@ func (s *Shim) acceptPeerConn(ctx context.Context, conn net.Conn, hs *handshakeM
 		_ = conn.Close()
 		return fmt.Errorf("peer role dial from %q rejected: no peer acceptor configured", hs.Name)
 	}
-	dial := PeerDial{AdapterType: hs.Name, Scope: hs.Scope, Digest: hs.Digest, Peer: hs.Peer}
+	dial := PeerDial{AdapterType: hs.Name, Scope: hs.Scope, Digest: hs.Digest, Adapters: dialAdapters(hs), Peer: hs.Peer}
 	return acceptor.AcceptPeer(ctx, conn, dial)
+}
+
+// dialAdapters extracts the verified hosted child set from an identity frame
+// (nil when the frame did not advertise one).
+func dialAdapters(hs *handshakeMessage) []PeerAdapterIdentity {
+	if hs.Peer == nil {
+		return nil
+	}
+	return hs.Peer.Adapters
 }
 
 func (s *Shim) performHandshake(ctx context.Context, conn net.Conn) error {
@@ -880,6 +913,17 @@ func (s *Shim) checkAdapterIdentity(hs *handshakeMessage) (identityRejectClass, 
 		}
 	}
 
+	// KB-213: a peer dial that advertises a hosted child set is verified per
+	// child (each child digest-checked like the dial identity itself) plus
+	// self-consistency (the dialing adapter must be one of the advertised
+	// children). Nil or empty sets skip these checks: single-adapter peers
+	// keep dialing exactly as before.
+	if hs.Peer != nil {
+		if class, err := checkPeerChildSet(s.digestVerifier, hs.Name, hs.Peer.Adapters); class != rejectNone {
+			return class, err
+		}
+	}
+
 	s.mu.Lock()
 	perScope := s.perScopeSessions
 	s.mu.Unlock()
@@ -910,6 +954,52 @@ func (s *Shim) checkAdapterIdentity(hs *handshakeMessage) (identityRejectClass, 
 		}
 	}
 	return rejectNone, nil
+}
+
+// checkPeerChildSet verifies a peer identity frame's advertised child set
+// (KB-213): every entry must carry a name, must be unique, must self-consist
+// with the dialing adapter, and — when a verifier is installed — must verify
+// its own pinned digest exactly like the dialing identity. An advertised set
+// a peer cannot back up with verified children is a mis-declaration, never a
+// silent capability downgrade.
+func checkPeerChildSet(verifier DigestVerifier, dialName string, adapters []PeerAdapterIdentity) (identityRejectClass, error) {
+	if len(adapters) == 0 {
+		return rejectNone, nil
+	}
+	seen := make(map[string]struct{}, len(adapters))
+	selfConsistent := false
+	for i := range adapters {
+		a := &adapters[i]
+		if a.Name == "" {
+			return rejectChildSet, fmt.Errorf("peer child set advertises an adapter with an empty name (entry %d)", i)
+		}
+		if _, dup := seen[a.Name]; dup {
+			return rejectChildSet, fmt.Errorf("peer child set advertises adapter %q more than once", a.Name)
+		}
+		seen[a.Name] = struct{}{}
+		if a.Name == dialName {
+			selfConsistent = true
+		}
+		if verifier != nil {
+			if err := verifier.Verify(a.Name, a.Digest); err != nil {
+				return rejectChildSet, fmt.Errorf("peer child %q digest verification: %w", a.Name, err)
+			}
+		}
+	}
+	if !selfConsistent {
+		return rejectChildSet, fmt.Errorf("peer identity frame dials as %q but its child set does not include it (hosted: %s)",
+			dialName, strings.Join(peerChildNames(adapters), ","))
+	}
+	return rejectNone, nil
+}
+
+// peerChildNames lists the names of a child set in declared order.
+func peerChildNames(adapters []PeerAdapterIdentity) []string {
+	names := make([]string, 0, len(adapters))
+	for i := range adapters {
+		names = append(names, adapters[i].Name)
+	}
+	return names
 }
 
 func (s *Shim) setupUDS(conn net.Conn) (string, net.Listener, error) {
@@ -1413,6 +1503,11 @@ func (s *Shim) waitTimeoutError(adapterType, scope, key string, budget time.Dura
 			// Digest failures are their own diagnosis; do not blame the
 			// accept token for them.
 			detail += "; digest verification failed — stale or wrong adapter build? (CRI-137)"
+		case rejectChildSet:
+			// A peer whose advertised child set failed verification is
+			// mis-declared (KB-213); the message already names the offending
+			// child so blame the declaration, not the token.
+			detail += "; peer child set failed verification (KB-213)"
 		case rejectScopeNotRegistered, rejectBadToken:
 			detail += "; stale adapter pod holding a pre-rotation accept token? (CRI-137)"
 		}
