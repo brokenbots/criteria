@@ -433,9 +433,10 @@ type serveConnSpec struct {
 	scope   string
 	token   string
 	// children names the adapter types served through this conn: exactly one
-	// entry (the dial child) in the legacy and per-scope shapes, or the full
-	// hosted set for the run-wide multi-adapter shape (session calls routed
-	// by the host's x-criteria-adapter header).
+	// entry (the dial child) in the legacy shape, or the full hosted set in
+	// the run-wide multi-adapter and per-scope scope-set shapes (session
+	// calls routed by the host's x-criteria-adapter header, KB-213). The
+	// identity frame advertises exactly this set.
 	children []string
 }
 
@@ -479,7 +480,12 @@ func (s *Server) connSpecs() ([]serveConnSpec, error) {
 
 // connSpecsForScopes builds one per-(scope, adapter) conn spec from the
 // scope-token scan; adapters the peer does not host are refused loudly and
-// left out (their host wait types out instead of a silent miss).
+// left out (their host wait types out instead of a silent miss). Every
+// per-scope conn serves and advertises the FULL hosted child set (KB-213):
+// the children are keyed by adapter type — not by (scope, adapter) dial — so
+// whichever conn of a scope lands first must be able to carry any of that
+// scope's adapters, and the host's routed wake (x-criteria-adapter header)
+// is honored by the connMux instead of silently crossing to the dial child.
 func (s *Server) connSpecsForScopes() ([]serveConnSpec, error) {
 	scopes, err := ScanRemoteScopes(s.cfg.ScopesDir)
 	if err != nil {
@@ -506,7 +512,7 @@ func (s *Server) connSpecsForScopes() ([]serveConnSpec, error) {
 			digest:   hs.Digest,
 			scope:    sc.Scope,
 			token:    sc.Token,
-			children: []string{hs.Name},
+			children: hostedNames(hosted),
 		})
 	}
 	return specs, nil
@@ -810,9 +816,11 @@ func (s *Server) identityFrame(spec *serveConnSpec) ([]byte, error) {
 			Capabilities:    append([]string(nil), s.capabilities...),
 		},
 	}
-	// KB-213: the multi-adapter manifest advertises the full child set on
-	// every connection; the legacy single-adapter frame keeps its exact
-	// legacy shape (no adapters key).
+	// KB-213: manifest-mode frames advertise the full hosted child set on
+	// every connection — the run-wide conn serves that set directly, and each
+	// per-scope conn muxes the same shared children so the advertised set is
+	// always honored; the legacy single-adapter frame keeps its exact legacy
+	// shape (no adapters key).
 	if s.cfg.ManifestMode() {
 		ids := make([]peerAdapterIdentity, 0, len(s.cfg.Adapters))
 		for _, hosted := range s.cfg.Adapters {

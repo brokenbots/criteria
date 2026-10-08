@@ -11,7 +11,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -1655,4 +1659,105 @@ func TestServer_SuperviseHeartbeatSurvivesIdleClosingMiddlebox(t *testing.T) {
 			t.Errorf("serveOnce did not observe the middlebox teardown")
 		}
 	})
+}
+
+// TestConnSpecsForScopes pins the scope-set conn shape (KB-213): one spec
+// per scanned (scope, adapter) token, every spec carrying the FULL hosted
+// child set so a per-scope conn back its advertised coverage with the
+// routing mux (the host's x-criteria-adapter wake must never cross to the
+// dial child), tokens for adapters the peer does not host skipped loudly,
+// and the root-scope instance layout scanned like the runner writes it.
+func TestConnSpecsForScopes(t *testing.T) {
+	const (
+		instanceA = "8a2bb7d7-6a4b-4ab1-9c8a-2f5d3a4b1c01"
+		instanceB = "4b5d6d29-3ac2-4e11-a5d8-1f0e2b3c4d99"
+	)
+	dir := t.TempDir()
+	writeToken := func(path, token string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(token+"\n"), 0o600); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	writeToken(filepath.Join(dir, "run_a", instanceA, "noop.token"), "tok-noop")
+	writeToken(filepath.Join(dir, "run_a", instanceA, "stateful.token"), "tok-stateful")
+	writeToken(filepath.Join(dir, instanceB, "noop.token"), "tok-root")
+	writeToken(filepath.Join(dir, "run_a", instanceA, "ghost.token"), "tok-ghost")
+
+	var logBuf bytes.Buffer
+	s := NewServer(&Config{
+		ScopesDir: dir,
+		Adapters: []AdapterSpec{
+			{Name: "noop", Version: "1.0.0", Digest: "sha256-noop"},
+			{Name: "stateful", Version: "0.9.0", Digest: "sha256-stateful"},
+		},
+	}, nil, slog.New(slog.NewTextHandler(&logBuf, nil)))
+
+	specs, err := s.connSpecsForScopes()
+	if err != nil {
+		t.Fatalf("connSpecsForScopes: %v", err)
+	}
+
+	want := []serveConnSpec{
+		{
+			name:     "noop",
+			version:  "1.0.0",
+			digest:   "sha256-noop",
+			scope:    "/" + instanceB,
+			token:    "tok-root",
+			children: []string{"noop", "stateful"},
+		},
+		{
+			name:     "noop",
+			version:  "1.0.0",
+			digest:   "sha256-noop",
+			scope:    "run_a/" + instanceA,
+			token:    "tok-noop",
+			children: []string{"noop", "stateful"},
+		},
+		{
+			name:     "stateful",
+			version:  "0.9.0",
+			digest:   "sha256-stateful",
+			scope:    "run_a/" + instanceA,
+			token:    "tok-stateful",
+			children: []string{"noop", "stateful"},
+		},
+	}
+	if len(specs) != len(want) {
+		t.Fatalf("connSpecsForScopes: got %d specs, want %d: %+v", len(specs), len(want), specs)
+	}
+	for i, spec := range specs {
+		if spec.name != want[i].name || spec.version != want[i].version ||
+			spec.digest != want[i].digest || spec.scope != want[i].scope ||
+			spec.token != want[i].token {
+			t.Errorf("spec[%d] identity: got (%s %s %s %s %s), want (%s %s %s %s %s)",
+				i, spec.name, spec.version, spec.digest, spec.scope, spec.token,
+				want[i].name, want[i].version, want[i].digest, want[i].scope, want[i].token)
+		}
+		if len(spec.children) != len(want[i].children) {
+			t.Errorf("spec[%d] children: got %v, want full hosted set %v",
+				i, spec.children, want[i].children)
+			continue
+		}
+		for j, child := range spec.children {
+			if child != want[i].children[j] {
+				t.Errorf("spec[%d] children: got %v, want %v", i, spec.children, want[i].children)
+			}
+		}
+		if spec.children[0] == "ghost" {
+			t.Errorf("spec[%d] advertises the unhosted ghost adapter", i)
+		}
+	}
+
+	// The refusal is loud: the log records the unhosted adapter and scope.
+	logText := logBuf.String()
+	for _, needle := range []string{"does not host", "adapter=ghost", "scope=run_a/" + instanceA} {
+		if !strings.Contains(logText, needle) {
+			t.Errorf("refusal log missing %q in:\n%s", needle, logText)
+		}
+	}
 }
