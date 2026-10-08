@@ -15,7 +15,45 @@ import (
 // environment and switch into ServeRemote/phone-home mode, abandoning the
 // local go-plugin handshake (criteria-adapter-shell >= v0.5.3,
 // criteria-adapter-copilot >= v0.5.5).
+//
+// The multi-adapter manifest variables (CRITERIA_ADAPTERS,
+// CRITERIA_ADAPTERS_DIR, CRITERIA_ADAPTER_<NAME>_*, KB-213) are scrubbed the
+// same way: they describe which children the PARENT hosts and must not ride
+// into any child process. The four legacy CRITERIA_ADAPTER_* names keep
+// today's passthrough behavior.
 const remoteEnvPrefix = "CRITERIA_REMOTE_"
+
+var scrubbedAdapterVars = map[string]bool{
+	EnvAdapters:    true,
+	EnvAdaptersDir: true,
+}
+
+// adapterOverrideSuffixes are the per-adapter manifest override suffixes;
+// any CRITERIA_ADAPTER_<NAME>_<SUFFIX> other than the four legacy names is
+// scrubbed from child environments.
+var adapterOverrideSuffixes = [...]string{"_BINARY", "_VERSION", "_DIGEST", "_MANIFEST"}
+
+func scrubbedPeerVar(name string) bool {
+	if name == "CRITERIA_REMOTE" || strings.HasPrefix(name, remoteEnvPrefix) {
+		return true
+	}
+	if scrubbedAdapterVars[name] {
+		return true
+	}
+	if !strings.HasPrefix(name, "CRITERIA_ADAPTER_") {
+		return false
+	}
+	switch name {
+	case EnvAdapterName, EnvAdapterVersion, EnvAdapterBinary, EnvAdapterManifest:
+		return false
+	}
+	for _, suffix := range adapterOverrideSuffixes {
+		if strings.HasSuffix(name, suffix) && len(name) > len("CRITERIA_ADAPTER_")+len(suffix) {
+			return true
+		}
+	}
+	return false
+}
 
 // ChildEnv returns env with every CRITERIA_REMOTE_* variable (and the bare
 // CRITERIA_REMOTE name itself) removed, plus malformed entries dropped. The
@@ -30,7 +68,7 @@ func ChildEnv(env []string) []string {
 		if !found {
 			continue
 		}
-		if name == "CRITERIA_REMOTE" || strings.HasPrefix(name, remoteEnvPrefix) {
+		if scrubbedPeerVar(name) {
 			continue
 		}
 		out = append(out, kv)

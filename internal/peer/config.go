@@ -44,6 +44,9 @@ const (
 	EnvAdapterVersion  = "CRITERIA_ADAPTER_VERSION"
 	EnvAdapterBinary   = "CRITERIA_ADAPTER_BINARY"
 	EnvAdapterManifest = "CRITERIA_ADAPTER_MANIFEST"
+	EnvAdapters        = "CRITERIA_ADAPTERS"
+	EnvAdaptersDir     = "CRITERIA_ADAPTERS_DIR"
+	EnvRemoteScopesDir = "CRITERIA_REMOTE_SCOPES_DIR"
 	EnvLogLevel        = "CRITERIA_LOG_LEVEL"
 	EnvChildKeepAlive  = "CRITERIA_PEER_CHILD_KEEPALIVE"
 	// The timing/budget override names are owned by the tunables registry
@@ -92,6 +95,17 @@ type Config struct {
 	AdapterBinary   string // EnvAdapterBinary
 	AdapterManifest string // EnvAdapterManifest
 
+	// Adapters is the multi-adapter manifest (KB-213): one spec per adapter
+	// child the peer hosts, built from CRITERIA_ADAPTERS /
+	// CRITERIA_ADAPTERS_DIR with per-adapter overrides. Empty means the
+	// legacy single-adapter shape above.
+	Adapters []AdapterSpec
+	// ScopesDir is the runner's remote-tokens root (EnvRemoteScopesDir);
+	// when set, the peer dials one conn per (scope, adapter) token file it
+	// finds there — a scope-SET conn set instead of the single run-wide
+	// conn. Empty keeps the legacy single-conn dial.
+	ScopesDir string
+
 	// ChildKeepAlive: when true (the default) the child adapter survives a
 	// host disconnect and is killed only by peer shutdown or a Control RPC.
 	ChildKeepAlive bool
@@ -130,8 +144,27 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	if err := cfg.parseTunables(getenv); err != nil {
 		return Config{}, err
 	}
+	cfg.ScopesDir = strings.TrimSpace(getenv(EnvRemoteScopesDir))
+	// The multi-adapter manifest only replaces the legacy single-adapter
+	// shape when it actually declares entries; a malformed declaration is an
+	// error, never a silent fall-back.
+	adapters, err := ParseAdaptersConfig(getenv)
+	if err != nil {
+		return Config{}, err
+	}
+	if len(adapters) > 0 {
+		cfg.Adapters = adapters
+	}
 	return cfg, nil
 }
+
+// ManifestMode reports whether the adapter set was declared through the
+// multi-adapter manifest (CRITERIA_ADAPTERS / CRITERIA_ADAPTERS_DIR) rather
+// than the legacy single-adapter variables.
+func (c *Config) ManifestMode() bool { return len(c.Adapters) > 0 }
+
+// MultiChild reports whether the peer hosts more than one adapter child.
+func (c *Config) MultiChild() bool { return len(c.Adapters) > 1 }
 
 // parseTunables reads and validates the parsed peer tunables: child
 // keepalive, journal limit, and backoff bounds.
