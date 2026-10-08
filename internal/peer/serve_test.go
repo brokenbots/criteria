@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
@@ -555,6 +556,91 @@ func (f *fakePeerChild) executeReqSessions() []string {
 		return nil
 	}
 	return []string{f.executeReq.GetSessionId()}
+}
+
+// --- KB-213 conn mux routing ---
+
+// routeHeaderCtx returns an incoming context carrying one
+// x-criteria-adapter route header (the host's per-session dispatch).
+func routeHeaderCtx(name string) context.Context {
+	return metadata.NewIncomingContext(context.Background(),
+		metadata.Pairs(peerAdapterRouteHeader, name))
+}
+
+// TestConnMuxRouting pins the route-resolution contract: a hosted header
+// target wins; a header-less call lands on the connection's dial child; an
+// unhosted target (host bug or dial child without a client) resolves
+// deterministically to the lexicographically-first hosted child — never nil.
+func TestConnMuxRouting(t *testing.T) {
+	alpha, beta := &fakePeerChild{}, &fakePeerChild{}
+	m := &connMux{
+		byName:   map[string]adapterhost.Client{"alpha": alpha, "beta": beta},
+		fallback: "beta",
+	}
+	if got := m.resolve(context.Background()); got != adapterhost.Client(beta) {
+		t.Error("a header-less call must land on the hosted dial child")
+	}
+	if got := m.resolve(routeHeaderCtx("alpha")); got != adapterhost.Client(alpha) {
+		t.Error("a hosted header target must win over the dial child")
+	}
+	if got := m.resolve(routeHeaderCtx("ghost")); got != adapterhost.Client(beta) {
+		t.Error("an unhosted header target must fall back to the dial child")
+	}
+
+	// The dial child itself is not hosted (its clients are in-memory): calls
+	// route to the first hosted child by sorted name, deterministically.
+	noDial := &connMux{
+		byName:   map[string]adapterhost.Client{"zeta": &fakePeerChild{}, "alpha": alpha},
+		fallback: "ghost",
+	}
+	if got := noDial.resolve(context.Background()); got != adapterhost.Client(alpha) {
+		t.Error("an unhosted dial child must resolve the first hosted child by sorted name")
+	}
+
+	// An empty mux resolves nil (pinned: registration never creates one).
+	empty := &connMux{byName: map[string]adapterhost.Client{}, fallback: "ghost"}
+	if got := empty.resolve(context.Background()); got != nil {
+		t.Error("an empty mux must resolve nil")
+	}
+}
+
+// TestServer_MultiChildNoClientSupervisionOnly: a multi-adapter manifest
+// conn whose children all fail to resolve an adapter client registers NO
+// adapter service — the mux would resolve nil targets and panic on the
+// first adapter call — while PeerService keeps serving.
+func TestServer_MultiChildNoClientSupervisionOnly(t *testing.T) {
+	f := newPeerServeFixture(t)
+	f.cfg.Adapters = []AdapterSpec{{Name: "aa"}, {Name: "bb"}}
+	f.server.childClient = func(string) (adapterhost.Client, bool) { return nil, false }
+
+	conn, frame, serveErr := f.startConn()
+	if len(frame) == 0 {
+		t.Fatal("identity frame was not written")
+	}
+	cc := f.hostClient(conn)
+	client := adapterhost.NewClientForConn(cc)
+	if _, err := client.Info(context.Background(), &v2.InfoRequest{}); status.Code(err) != codes.Unimplemented {
+		t.Fatalf("Info on a client-less multi-child conn = %v, want Unimplemented (no adapter service registered)", err)
+	}
+	// PeerService still serves on the same connection: kill_child probes
+	// the hand-rolled service (no booted children: the runtime answers
+	// with a typed not-live detail rather than a transport failure).
+	out := new(criteriav1.ControlResponse)
+	if err := cc.Invoke(context.Background(), peerControlMethod, &criteriav1.ControlRequest{
+		Kind: &criteriav1.ControlRequest_KillChild{KillChild: &criteriav1.KillChild{}},
+	}, out); err != nil {
+		t.Fatalf("Control kill_child on a client-less conn: %v", err)
+	}
+	if out.GetAccepted() || out.GetDetail() != "no live adapter child" {
+		t.Fatalf("Control response = %+v, want not-accepted/no live adapter child", out)
+	}
+
+	f.cancel()
+	select {
+	case <-serveErr:
+	case <-time.After(5 * time.Second):
+		t.Fatal("serveOnce did not return after cancel")
+	}
 }
 
 type execSinkFn func(*v2.ExecuteEvent) error

@@ -625,6 +625,14 @@ func (s *Server) serveChildSet(server *grpc.Server, spec *serveConnSpec) {
 			s.log.Warn("peer child has no adapter client; serving supervision only",
 				"adapter", spec.name)
 		}
+		if len(byName) == 0 {
+			// No hosted child has an adapter client: register nothing (an
+			// empty routing mux would resolve nil targets on the first call).
+			// Supervision still serves.
+			s.log.Warn("peer hosts no adapter client; serving supervision only",
+				"children", strings.Join(spec.children, ","))
+			return
+		}
 		adapterhost.RegisterAdapterService(server, &connMux{byName: byName, fallback: spec.name})
 		return
 	}
@@ -1077,7 +1085,23 @@ func (m *connMux) resolve(ctx context.Context) adapterhost.Client {
 			}
 		}
 	}
-	return m.byName[m.fallback]
+	if client := m.byName[m.fallback]; client != nil {
+		return client
+	}
+	// Defensive: an unhosted dial child must never produce a nil target —
+	// route to the lexicographically-first hosted child. The host never
+	// dispatches to an adapter the peer did not advertise, and the mux is
+	// only registered when at least one child is hostable, so this path
+	// exists to keep the resolve total.
+	if len(m.byName) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(m.byName))
+	for name := range m.byName {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return m.byName[names[0]]
 }
 
 func (m *connMux) Info(ctx context.Context, req *v2.InfoRequest) (*v2.InfoResponse, error) {

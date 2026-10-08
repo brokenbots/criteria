@@ -104,8 +104,8 @@ type Config struct {
 
 	// Adapters is the multi-adapter manifest (KB-213): one spec per adapter
 	// child the peer hosts, built from CRITERIA_REMOTE_ADAPTERS /
-	// CRITERIA_ADAPTERS_DIR with per-adapter overrides. Empty means the
-	// legacy single-adapter shape above.
+	// CRITERIA_REMOTE_ADAPTERS_DIR with per-adapter overrides. Empty means
+	// the legacy single-adapter shape above.
 	Adapters []AdapterSpec
 	// ScopesDir is the runner's remote-tokens root (EnvRemoteScopesDir);
 	// when set, the peer dials one conn per (scope, adapter) token file it
@@ -166,8 +166,8 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 }
 
 // ManifestMode reports whether the adapter set was declared through the
-// multi-adapter manifest (# the CRITERIA_REMOTE_ADAPTERS / CRITERIA_REMOTE_ADAPTERS_DIR manifest) rather
-// than the legacy single-adapter variables.
+// multi-adapter manifest (CRITERIA_REMOTE_ADAPTERS / CRITERIA_REMOTE_ADAPTERS_DIR)
+// rather than the legacy single-adapter variables.
 func (c *Config) ManifestMode() bool { return len(c.Adapters) > 0 }
 
 // MultiChild reports whether the peer hosts more than one adapter child.
