@@ -411,6 +411,10 @@ func TestResolve_ManifestChildren(t *testing.T) {
 		t.Errorf("pinned child binary = %q, want %q", pinned.Adapters[0].Binary, pinnedState)
 	}
 
+	if got := pinned.ChildNames(); len(got) != 1 || got[0] != "stateful" {
+		t.Errorf("ChildNames = %v, want [stateful]", got)
+	}
+
 	// A child whose binary cannot be located anywhere fails the whole
 	// Resolve and names the adapter — a multi-child peer never half-boots
 	// on an undeclared child.

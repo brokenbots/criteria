@@ -117,13 +117,14 @@ func runPeer(parent context.Context) error {
 		"journal_limit", cfg.JournalLimit,
 		"backoff_min", cfg.BackoffMin.String(),
 		"backoff_max", cfg.BackoffMax.String(),
+		"adapters", cfg.ChildNames(),
 	)
 
 	rt := peer.NewRuntime(&cfg, log)
 	if err := rt.Boot(ctx); err != nil {
 		return err
 	}
-	log.Info("peer ready", "adapter", cfg.AdapterName, "pid", os.Getpid())
+	log.Info("peer ready", "adapter", cfg.AdapterName, "adapters", cfg.ChildNames(), "pid", os.Getpid())
 
 	// Serve runs the phone-home loop until ctx is done (SIGINT/SIGTERM cancel
 	// it), then performs the bounded shutdown sequence (child grace period,

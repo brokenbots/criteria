@@ -285,6 +285,17 @@ func (c *Config) resolveManifestChildren() error {
 	return nil
 }
 
+// ChildNames returns the names of the declared manifest children, in
+// declaration order. Empty in legacy single-adapter mode, where identity is
+// carried by AdapterName.
+func (c *Config) ChildNames() []string {
+	names := make([]string, 0, len(c.Adapters))
+	for _, spec := range c.Adapters {
+		names = append(names, spec.Name)
+	}
+	return names
+}
+
 // Binary returns the resolved adapter binary path.
 func (c *Config) Binary() string {
 	return c.AdapterBinary
