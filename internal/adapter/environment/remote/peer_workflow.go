@@ -109,9 +109,10 @@ func (ps *peerSession) hasPeerCapability(capability string) bool {
 }
 
 // applyChildRunArmLocked routes the workflow.v1 journal arms into the
-// tracker. Caller holds ps.mu. Returns the id of the run whose terminal just
-// settled ("" otherwise) so the watch broadcast can happen after the unlock.
-func (ps *peerSession) applyChildRunArmLocked(ev *criteriav1.SupervisionEvent) string {
+// tracker. Caller holds the owning session's mu. Returns the id of the run
+// whose terminal just settled ("" otherwise) so the watch broadcast can
+// happen after the unlock.
+func (aj *adapterJournal) applyChildRunArmLocked(ev *criteriav1.SupervisionEvent) string {
 	switch kind := ev.GetKind().(type) {
 	case *criteriav1.SupervisionEvent_ChildRunStarted:
 		started := kind.ChildRunStarted
@@ -119,17 +120,17 @@ func (ps *peerSession) applyChildRunArmLocked(ev *criteriav1.SupervisionEvent) s
 		if id == "" {
 			return ""
 		}
-		if _, ok := ps.childRuns[id]; ok {
+		if _, ok := aj.childRuns[id]; ok {
 			// Re-arm for a known id (journal replay skew): never erase the
 			// settled truth of an already-terminal run.
 			return ""
 		}
-		ps.childRuns[id] = &childRunRecord{
+		aj.childRuns[id] = &childRunRecord{
 			RunID:          id,
 			WorkflowDigest: started.GetWorkflowDigest(),
 			Version:        started.GetVersion(),
 		}
-		slog.Debug("peer child run started", "adapter", ps.dial.AdapterType, "scope", ps.dial.Scope,
+		slog.Debug("peer child run started", "adapter", aj.name, "scope", aj.scope,
 			"run_id", id, "workflow_digest", started.GetWorkflowDigest())
 	case *criteriav1.SupervisionEvent_ChildRunTerminal:
 		term := kind.ChildRunTerminal
@@ -137,13 +138,13 @@ func (ps *peerSession) applyChildRunArmLocked(ev *criteriav1.SupervisionEvent) s
 		if id == "" {
 			return ""
 		}
-		rec := ps.childRuns[id]
+		rec := aj.childRuns[id]
 		if rec == nil {
 			// Terminal without a seen Started (replay boundary in between):
 			// record the settled truth so the run is never treated as in
 			// flight on this session.
 			rec = &childRunRecord{RunID: id}
-			ps.childRuns[id] = rec
+			aj.childRuns[id] = rec
 		}
 		if !rec.inFlight() {
 			if rec.ForcedTeardown && term.GetOutcome() != "" {
@@ -158,11 +159,11 @@ func (ps *peerSession) applyChildRunArmLocked(ev *criteriav1.SupervisionEvent) s
 		}
 		rec.TerminalOutcome = term.GetOutcome()
 		rec.OutputsDigest = term.GetOutputsDigest()
-		slog.Debug("peer child run terminal", "adapter", ps.dial.AdapterType, "scope", ps.dial.Scope,
+		slog.Debug("peer child run terminal", "adapter", aj.name, "scope", aj.scope,
 			"run_id", id, "outcome", rec.TerminalOutcome)
 		return id
 	case *criteriav1.SupervisionEvent_ChildRunTeardownPartial:
-		return ps.settleChildRunPartialLocked(kind.ChildRunTeardownPartial)
+		return aj.settleChildRunPartialLocked(kind.ChildRunTeardownPartial)
 	}
 	return ""
 }
@@ -171,28 +172,29 @@ func (ps *peerSession) applyChildRunArmLocked(ev *criteriav1.SupervisionEvent) s
 // landed on an in-flight run whose terminal never journaled — the partial
 // arm is the child's last run truth, so it settles the run (deterministic
 // teardown: no waiter ever hangs on a killed run). A run the tracker never
-// observed carries no in-flight truth to correct. Caller holds ps.mu.
-func (ps *peerSession) settleChildRunPartialLocked(partial *criteriav1.ChildRunTeardownPartial) string {
+// observed carries no in-flight truth to correct. Caller holds the owning
+// session's mu.
+func (aj *adapterJournal) settleChildRunPartialLocked(partial *criteriav1.ChildRunTeardownPartial) string {
 	id := partial.GetRunId()
 	if id == "" {
 		return ""
 	}
-	rec := ps.childRuns[id]
+	rec := aj.childRuns[id]
 	if rec == nil || !rec.inFlight() {
 		return ""
 	}
 	rec.TerminalOutcome = childRunOutcomeForceKilled
 	rec.ForcedTeardown = true
-	slog.Warn("peer child run force killed on parent teardown", "adapter", ps.dial.AdapterType,
-		"scope", ps.dial.Scope, "run_id", id, "detail", partial.GetDetail())
+	slog.Warn("peer child run force killed on parent teardown", "adapter", aj.name,
+		"scope", aj.scope, "run_id", id, "detail", partial.GetDetail())
 	return id
 }
 
 // noteChildRunTerminal wakes every waiter registered on the settled run.
-func (ps *peerSession) noteChildRunTerminal(runID string) {
+func (ps *peerSession) noteChildRunTerminal(aj *adapterJournal, runID string) {
 	ps.mu.Lock()
-	watches := ps.childWatches[runID]
-	delete(ps.childWatches, runID)
+	watches := aj.childWatches[runID]
+	delete(aj.childWatches, runID)
 	ps.mu.Unlock()
 	for _, wake := range watches {
 		close(wake)
@@ -200,9 +202,9 @@ func (ps *peerSession) noteChildRunTerminal(runID string) {
 }
 
 // childRunInFlightLocked returns the tracked in-flight run, if any. Caller
-// holds ps.mu.
-func (ps *peerSession) childRunInFlightLocked() *childRunRecord {
-	for _, rec := range ps.childRuns {
+// holds the owning session's mu.
+func (aj *adapterJournal) childRunInFlightLocked() *childRunRecord {
+	for _, rec := range aj.childRuns {
 		if rec.inFlight() {
 			return rec
 		}
@@ -210,26 +212,27 @@ func (ps *peerSession) childRunInFlightLocked() *childRunRecord {
 	return nil
 }
 
-// childRunInFlight returns the tracked in-flight run (its journal record),
-// if any.
-func (ps *peerSession) childRunInFlight() (*childRunRecord, bool) {
+// childRunInFlight returns the tracked in-flight run (its journal record)
+// for adapterType, if any.
+func (ps *peerSession) childRunInFlight(adapterType string) (*childRunRecord, bool) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
-	rec := ps.childRunInFlightLocked()
+	rec := ps.journals.trackFor(adapterType).childRunInFlightLocked()
 	return rec, rec != nil
 }
 
 // waitChildRunTerminal blocks until the named child run settles on the
 // supervision journal, the session's transport closes (wake via ps.done), or
-// the context is cancelled. It returns the settled record.
-func (ps *peerSession) waitChildRunTerminal(ctx context.Context, runID string) (*childRunRecord, error) {
+// the context is cancelled. It returns the settled record. The run lives in
+// the given adapter's journal.
+func (ps *peerSession) waitChildRunTerminal(ctx context.Context, aj *adapterJournal, runID string) (*childRunRecord, error) {
 	ps.mu.Lock()
-	if rec := ps.childRuns[runID]; rec != nil && !rec.inFlight() {
+	if rec := aj.childRuns[runID]; rec != nil && !rec.inFlight() {
 		ps.mu.Unlock()
 		return rec, nil
 	}
 	wake := make(chan struct{})
-	ps.childWatches[runID] = append(ps.childWatches[runID], wake)
+	aj.childWatches[runID] = append(aj.childWatches[runID], wake)
 	done := ps.done
 	ps.mu.Unlock()
 
@@ -237,13 +240,13 @@ func (ps *peerSession) waitChildRunTerminal(ctx context.Context, runID string) (
 	case <-wake:
 	case <-done:
 	case <-ctx.Done():
-		ps.removeChildWatch(runID, wake)
+		ps.removeChildWatch(aj, runID, wake)
 		return nil, ctx.Err()
 	}
 
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
-	rec := ps.childRuns[runID]
+	rec := aj.childRuns[runID]
 	if rec == nil || rec.inFlight() {
 		// Woken by the transport closing or a removed watch: no terminal.
 		return nil, errChildRunUnsettled
@@ -255,9 +258,9 @@ func (ps *peerSession) waitChildRunTerminal(ctx context.Context, runID string) (
 // noteChildRunTerminal is the single closer of every registered watch — if
 // the terminal raced this removal it already consumed the watch from the
 // map (and closed it); the waiter itself reads nothing past its select.
-func (ps *peerSession) removeChildWatch(runID string, watch chan struct{}) {
+func (ps *peerSession) removeChildWatch(aj *adapterJournal, runID string, watch chan struct{}) {
 	ps.mu.Lock()
-	watches := ps.childWatches[runID]
+	watches := aj.childWatches[runID]
 	kept := make([]chan struct{}, 0, len(watches))
 	for _, w := range watches {
 		if w != watch {
@@ -265,9 +268,9 @@ func (ps *peerSession) removeChildWatch(runID string, watch chan struct{}) {
 		}
 	}
 	if len(kept) == 0 {
-		delete(ps.childWatches, runID)
+		delete(aj.childWatches, runID)
 	} else {
-		ps.childWatches[runID] = kept
+		aj.childWatches[runID] = kept
 	}
 	ps.mu.Unlock()
 }
@@ -289,15 +292,18 @@ func (ps *peerSession) removeChildWatch(runID string, watch chan struct{}) {
 //
 // The wait is detached from the caller's context (teardown paths race
 // context cancellation by design) and stays best-effort: every failure is
-// logged and the teardown proceeds.
-func (ps *peerSession) teardownInFlightChildRun(ctx context.Context) {
+// logged and the teardown proceeds. The run and both control verbs target
+// the given adapter's journal and control surface (KB-213): on a
+// multi-adapter conn the cancel/kill must reach this adapter's child, not
+// the conn's dial adapter.
+func (ps *peerSession) teardownInFlightChildRun(ctx context.Context, aj *adapterJournal) {
 	if !ps.hasPeerCapability(peerWorkflowV1Capability) {
 		return
 	}
 	// KB-95 contract preserved: the cancel is issued even when the tracker
 	// shows nothing (the empty run id means "the current one" child-side,
 	// covering a run the parent has not observed yet).
-	rec, inFlight := ps.childRunInFlight()
+	rec, inFlight := ps.childRunInFlight(aj.name)
 	runID := ""
 	if inFlight {
 		runID = rec.RunID
@@ -306,7 +312,7 @@ func (ps *peerSession) teardownInFlightChildRun(ctx context.Context) {
 	cctx, cancel := context.WithTimeout(ctx, peerCancelChildRunTimeout)
 	defer cancel()
 	resp, err := ps.control(cctx, &criteriav1.ControlRequest{
-		AdapterType: ps.dial.AdapterType,
+		AdapterType: aj.name,
 		Scope:       ps.dial.Scope,
 		GraceMs:     peerCancelChildRunGraceMs,
 		Kind: &criteriav1.ControlRequest_CancelChildRun{
@@ -314,31 +320,31 @@ func (ps *peerSession) teardownInFlightChildRun(ctx context.Context) {
 		},
 	})
 	if err != nil {
-		slog.Warn("peer child run cancel control failed", "adapter", ps.dial.AdapterType, "run_id", runID, "error", err)
+		slog.Warn("peer child run cancel control failed", "adapter", aj.name, "run_id", runID, "error", err)
 	} else if !resp.GetAccepted() {
 		// Rejected means the child holds no live run (e.g. it settled in the
 		// race window): nothing to wait for, nothing to force.
-		slog.Info("peer accepted no child run cancel", "adapter", ps.dial.AdapterType, "run_id", runID, "detail", resp.GetDetail())
+		slog.Info("peer accepted no child run cancel", "adapter", aj.name, "run_id", runID, "detail", resp.GetDetail())
 		return
 	}
 
 	wctx, wcancel := context.WithTimeout(context.WithoutCancel(ctx), ps.teardownSettleBudget())
 	defer wcancel()
-	rec, settled := ps.waitChildRunSettle(wctx, runID)
+	rec, settled := ps.waitChildRunSettle(wctx, aj, runID)
 	if settled {
 		outcome := ""
 		if rec != nil {
 			outcome = rec.TerminalOutcome
 		}
-		slog.Debug("peer child run settled on teardown", "adapter", ps.dial.AdapterType, "run_id", runID,
+		slog.Debug("peer child run settled on teardown", "adapter", aj.name, "run_id", runID,
 			"outcome", outcome)
 		return
 	}
 
 	slog.Warn("peer child run teardown incomplete",
-		"adapter", ps.dial.AdapterType, "scope", ps.dial.Scope, "run_id", runID,
+		"adapter", aj.name, "scope", aj.scope, "run_id", runID,
 		"action", "kill_child issued after the settle grace expired")
-	ps.forceKillInFlightChildRun(ctx, runID)
+	ps.forceKillInFlightChildRun(ctx, aj, runID)
 }
 
 // forceKillInFlightChildRun issues the KillChild control after the settle
@@ -347,22 +353,22 @@ func (ps *peerSession) teardownInFlightChildRun(ctx context.Context) {
 // ChildRunTeardownPartial arm stays the child-feed evidence and only
 // confirms an already-settled record here, while a late real terminal can
 // still outrank the mark).
-func (ps *peerSession) forceKillInFlightChildRun(ctx context.Context, runID string) {
+func (ps *peerSession) forceKillInFlightChildRun(ctx context.Context, aj *adapterJournal, runID string) {
 	kctx, kcancel := context.WithTimeout(context.WithoutCancel(ctx), peerCancelChildRunTimeout)
 	defer kcancel()
 	killResp, killErr := ps.control(kctx, &criteriav1.ControlRequest{
-		AdapterType: ps.dial.AdapterType,
+		AdapterType: aj.name,
 		Scope:       ps.dial.Scope,
 		GraceMs:     peerKillGraceMs,
 		Kind:        &criteriav1.ControlRequest_KillChild{KillChild: &criteriav1.KillChild{}},
 	})
 	switch {
 	case killErr != nil:
-		slog.Warn("peer child run force kill control failed", "adapter", ps.dial.AdapterType, "run_id", runID, "error", killErr)
+		slog.Warn("peer child run force kill control failed", "adapter", aj.name, "run_id", runID, "error", killErr)
 	case !killResp.GetAccepted():
-		slog.Warn("peer rejected child run force kill", "adapter", ps.dial.AdapterType, "run_id", runID, "detail", killResp.GetDetail())
+		slog.Warn("peer rejected child run force kill", "adapter", aj.name, "run_id", runID, "detail", killResp.GetDetail())
 	default:
-		ps.noteChildRunForceKilled(runID)
+		ps.noteChildRunForceKilled(aj, runID)
 	}
 }
 
@@ -370,12 +376,12 @@ func (ps *peerSession) forceKillInFlightChildRun(ctx context.Context, runID stri
 // and wakes its watchers (the parent-side mirror of the child's
 // ChildRunTeardownPartial arm). Runs the tracker did not observe — and
 // records already settled — are left untouched.
-func (ps *peerSession) noteChildRunForceKilled(runID string) {
+func (ps *peerSession) noteChildRunForceKilled(aj *adapterJournal, runID string) {
 	if runID == "" {
 		return
 	}
 	ps.mu.Lock()
-	rec := ps.childRuns[runID]
+	rec := aj.childRuns[runID]
 	if rec == nil || !rec.inFlight() {
 		ps.mu.Unlock()
 		return
@@ -383,7 +389,7 @@ func (ps *peerSession) noteChildRunForceKilled(runID string) {
 	rec.TerminalOutcome = childRunOutcomeForceKilled
 	rec.ForcedTeardown = true
 	ps.mu.Unlock()
-	ps.noteChildRunTerminal(runID)
+	ps.noteChildRunTerminal(aj, runID)
 }
 
 // waitChildRunSettle waits, bounded by ctx, for the child run's terminal
@@ -394,13 +400,13 @@ func (ps *peerSession) noteChildRunForceKilled(runID string) {
 // observes its absence. Returns the settled record (nil, true) meaning
 // "no run in flight anymore" and the settled record; (nil, false) when the
 // budget expired without evidence.
-func (ps *peerSession) waitChildRunSettle(ctx context.Context, runID string) (*childRunRecord, bool) {
+func (ps *peerSession) waitChildRunSettle(ctx context.Context, aj *adapterJournal, runID string) (*childRunRecord, bool) {
 	if runID != "" {
-		rec, err := ps.waitChildRunTerminal(ctx, runID)
+		rec, err := ps.waitChildRunTerminal(ctx, aj, runID)
 		return rec, err == nil
 	}
 	for {
-		if _, ok := ps.childRunInFlight(); !ok {
+		if _, ok := ps.childRunInFlight(aj.name); !ok {
 			return nil, true
 		}
 		select {
@@ -461,7 +467,7 @@ func isPeerTransportLoss(err error) bool {
 //
 // A peer without the workflow.v1 capability takes the unchanged path.
 func (h *peerHandle) executeChildRunAware(ctx context.Context, sessionID string, hasPermStream bool, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
-	result, err := adapterhost.ExecuteViaClient(ctx, h.ps.client, h.ps.dial.AdapterType, sessionID, hasPermStream, step, sink, rejection)
+	result, err := adapterhost.ExecuteViaClient(ctx, h.client(), h.name, sessionID, hasPermStream, step, sink, rejection)
 	if err == nil {
 		return result, nil
 	}
@@ -471,7 +477,7 @@ func (h *peerHandle) executeChildRunAware(ctx context.Context, sessionID string,
 	if status.Code(err) == codes.FailedPrecondition {
 		return h.adoptSurvivingChildRun(ctx, err)
 	}
-	if rec, inFlight := h.ps.childRunInFlight(); inFlight && isPeerTransportLoss(err) {
+	if rec, inFlight := h.ps.childRunInFlight(h.name); inFlight && isPeerTransportLoss(err) {
 		// The loss is conclusive for classification; the supervise consumer
 		// races this observation, so mark it here for the classifier that
 		// runs right after this error is returned.
@@ -492,14 +498,15 @@ func (h *peerHandle) executeChildRunAware(ctx context.Context, sessionID string,
 func (h *peerHandle) adoptSurvivingChildRun(ctx context.Context, guardErr error) (adapter.Result, error) {
 	runID := childRunIDFromGuardError(guardErr)
 	if runID == "" {
-		if rec, ok := h.ps.childRunInFlight(); ok {
+		if rec, ok := h.ps.childRunInFlight(h.name); ok {
 			runID = rec.RunID
 		}
 	}
 	if runID == "" {
 		return adapter.Result{}, fmt.Errorf("workflow.v1 re-execute guard fired but did not identify its child run: %w", guardErr)
 	}
-	rec, err := h.ps.waitChildRunTerminal(ctx, runID)
+	aj := h.journal()
+	rec, err := h.ps.waitChildRunTerminal(ctx, aj, runID)
 	if err != nil {
 		if errors.Is(err, errChildRunUnsettled) {
 			return adapter.Result{}, fmt.Errorf("workflow.v1 child run %q adopted from the peer journal but the connection lost it before a terminal outcome: %w", runID, guardErr)
@@ -507,7 +514,7 @@ func (h *peerHandle) adoptSurvivingChildRun(ctx context.Context, guardErr error)
 		return adapter.Result{}, fmt.Errorf("workflow.v1 child run %q adoption never observed a terminal outcome: %w (guard: %w)", runID, err, guardErr)
 	}
 	slog.Info("adopted surviving workflow.v1 child run",
-		"adapter", h.ps.dial.AdapterType, "run_id", rec.RunID,
+		"adapter", aj.name, "run_id", rec.RunID,
 		"outcome", rec.TerminalOutcome, "outputs_digest", rec.OutputsDigest)
 	return adapter.Result{
 		Outcome: rec.TerminalOutcome,

@@ -143,6 +143,54 @@ func (e *ScopeNotRegisteredError) Is(target error) bool {
 	return target == ErrScopeNotRegistered
 }
 
+// ErrPeerChildSetMissing marks a fail-closed host rejection rooted in the
+// peer's hosted child set (KB-213): at accept time the peer's advertised
+// children do not cover every adapter the environment declares, or a session
+// wait targets an adapter the environment never declared. It is deliberately
+// distinct from digest and token rejections: the pod must be re-created with
+// a manifest that actually hosts the declared adapters — no re-registration
+// or re-handshake can recover it.
+var ErrPeerChildSetMissing = errors.New("peer child set does not cover the declared adapters")
+
+// PeerChildSetError is the typed form of a child-set failure (KB-213).
+type PeerChildSetError struct {
+	// AdapterType is the adapter the rejection concerned: the dialed adapter
+	// at accept time, or the requested adapter on a session wait.
+	AdapterType string
+	// Scope is the scope the dial or wait concerned ("" in run-wide mode).
+	Scope string
+	// Missing lists the declared adapters the peer does not host, when the
+	// rejection is an accept-time coverage failure; nil on a wait for an
+	// adapter the environment does not declare.
+	Missing []string
+	// Hosted lists the child set the dial advertised, when known.
+	Hosted []string
+}
+
+func (e *PeerChildSetError) Error() string {
+	if len(e.Missing) == 0 {
+		return fmt.Sprintf("adapter %q is not declared for this environment; refusing to wait for a child no peer will host", e.AdapterType)
+	}
+	return fmt.Sprintf("peer for adapter %q (scope %q) does not host declared adapters %s (hosted: %s)",
+		e.AdapterType, e.Scope, strings.Join(e.Missing, ", "), strings.Join(e.Hosted, ","))
+}
+
+// Is reports the sentinel so callers can branch on the rejection class
+// without unwrapping the concrete type.
+func (e *PeerChildSetError) Is(target error) bool {
+	return target == ErrPeerChildSetMissing
+}
+
+// hostedAdapters returns the adapter set a peer dial covers: the advertised
+// child set when present, otherwise the dialed adapter alone (single-child
+// peers).
+func hostedAdapters(dial PeerDial) []string {
+	if len(dial.Adapters) == 0 {
+		return []string{dial.AdapterType}
+	}
+	return peerChildNames(dial.Adapters)
+}
+
 // ScopeRegistrar is the dial-time re-registration seam (KB-25): when the
 // shim receives a dial whose digest verifies but whose presented scope has
 // no registered accept token, it consults the registrar once with the

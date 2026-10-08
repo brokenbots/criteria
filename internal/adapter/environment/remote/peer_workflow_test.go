@@ -29,6 +29,21 @@ import (
 	"github.com/brokenbots/criteria/workflow"
 )
 
+// testJournal returns the fixture session's dial-adapter journal (locked
+// variant for standalone reads). All KB-95 fixture supervision events are
+// unattributed, so they land on the dial adapter under the
+// (adapter_type, scope) routing.
+func testJournal(ps *peerSession) *adapterJournal {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	return testJournalLocked(ps)
+}
+
+// testJournalLocked is testJournal for callers already holding ps.mu.
+func testJournalLocked(ps *peerSession) *adapterJournal {
+	return ps.journals.trackFor(ps.dial.AdapterType)
+}
+
 // fixtureWorkflowPeer wires a test shim + provider and connects a fake peer
 // whose handshake advertises the given peer identity capabilities.
 type workflowPeerFixture struct {
@@ -109,7 +124,7 @@ func waitForInFlightRun(t *testing.T, ps *peerSession, runID string) {
 	waitFor(t, "child run "+runID+" tracked in flight", func() bool {
 		ps.mu.Lock()
 		defer ps.mu.Unlock()
-		rec := ps.childRuns[runID]
+		rec := testJournalLocked(ps).childRuns[runID]
 		return rec != nil && rec.inFlight()
 	})
 }
@@ -119,7 +134,7 @@ func waitForNoInFlightRun(t *testing.T, ps *peerSession) {
 	waitFor(t, "no in-flight child run", func() bool {
 		ps.mu.Lock()
 		defer ps.mu.Unlock()
-		return ps.childRunInFlightLocked() == nil
+		return testJournalLocked(ps).childRunInFlightLocked() == nil
 	})
 }
 
@@ -140,7 +155,7 @@ func TestPeerChildRunTrackerFollowsJournalArms(t *testing.T) {
 	// The child's terminal arm settles the run on the parent tracker.
 	fx.peer.appendEvent(childRunTerminalArm("run-1", "success"))
 	waitForNoInFlightRun(t, fx.ps)
-	rec := fx.ps.childRuns["run-1"]
+	rec := testJournal(fx.ps).childRuns["run-1"]
 	if rec == nil || rec.TerminalOutcome != "success" || rec.OutputsDigest != "sha256:outputs" {
 		t.Fatalf("settled record = %+v, want terminal success with outputs digest", rec)
 	}
@@ -151,7 +166,7 @@ func TestPeerChildRunTrackerFollowsJournalArms(t *testing.T) {
 	waitFor(t, "re-armed started keeps settled truth", func() bool {
 		fx.ps.mu.Lock()
 		defer fx.ps.mu.Unlock()
-		return fx.ps.childRuns["run-1"].TerminalOutcome == "success"
+		return testJournalLocked(fx.ps).childRuns["run-1"].TerminalOutcome == "success"
 	})
 
 	// A terminal arm with no seen Started (replay boundary between the
@@ -160,9 +175,9 @@ func TestPeerChildRunTrackerFollowsJournalArms(t *testing.T) {
 	waitFor(t, "terminal-without-started recorded", func() bool {
 		fx.ps.mu.Lock()
 		defer fx.ps.mu.Unlock()
-		return fx.ps.childRuns["run-2"] != nil && fx.ps.childRuns["run-2"].TerminalOutcome == "failure"
+		return testJournalLocked(fx.ps).childRuns["run-2"] != nil && testJournalLocked(fx.ps).childRuns["run-2"].TerminalOutcome == "failure"
 	})
-	if rec, err := fx.ps.waitChildRunTerminal(ctx, "run-2"); err != nil || rec.TerminalOutcome != "failure" {
+	if rec, err := fx.ps.waitChildRunTerminal(ctx, testJournal(fx.ps), "run-2"); err != nil || rec.TerminalOutcome != "failure" {
 		t.Fatalf("waitChildRunTerminal(run-2) = (%+v, %v), want settled failure, nil", rec, err)
 	}
 }
@@ -356,7 +371,7 @@ func TestPeerAdoptionUnsettledConnectionsReportEvidence(t *testing.T) {
 	waitFor(t, "adoption watch registered", func() bool {
 		fx.ps.mu.Lock()
 		defer fx.ps.mu.Unlock()
-		return len(fx.ps.childWatches["run-8"]) > 0
+		return len(testJournalLocked(fx.ps).childWatches["run-8"]) > 0
 	})
 	fx.peer.drop() // the child dies before settling
 	waitFor(t, "adoption failure reported", func() bool { return len(errCh) > 0 })
@@ -405,7 +420,7 @@ func TestPeerAdoptionKeepsWaitingWhenJournalReplayIsPending(t *testing.T) {
 	waitFor(t, "adoption watch registered pre-replay", func() bool {
 		fx.ps.mu.Lock()
 		defer fx.ps.mu.Unlock()
-		return len(fx.ps.childWatches["run-9"]) > 0
+		return len(testJournalLocked(fx.ps).childWatches["run-9"]) > 0
 	})
 	fx.peer.appendEvent(childRunStartedArm("run-9"))
 	fx.peer.appendEvent(childRunTerminalArm("run-9", "canceled"))
@@ -630,7 +645,7 @@ func TestPeerTeardownSettlesChildRunFromJournalEvidence(t *testing.T) {
 			break
 		}
 	}
-	if rec := fx.ps.childRuns["run-t1"]; rec == nil || rec.TerminalOutcome != "cancelled" {
+	if rec := testJournal(fx.ps).childRuns["run-t1"]; rec == nil || rec.TerminalOutcome != "cancelled" {
 		t.Errorf("settled record = %+v, want the cancelled terminal from the journal evidence", rec)
 	}
 }
@@ -669,7 +684,7 @@ func TestPeerTeardownForceKillsUnsettledChildRun(t *testing.T) {
 	// stops considering the killed run in flight with the typed
 	// force_killed outcome — a later wait on it can never hang.
 	waitForNoInFlightRun(t, fx.ps)
-	if rec := fx.ps.childRuns["run-t2"]; rec == nil || rec.TerminalOutcome != childRunOutcomeForceKilled {
+	if rec := testJournal(fx.ps).childRuns["run-t2"]; rec == nil || rec.TerminalOutcome != childRunOutcomeForceKilled {
 		t.Errorf("settled record = %+v, want the force_killed outcome from the partial-teardown arm", rec)
 	}
 }
@@ -711,7 +726,7 @@ func TestPeerTeardownIdleChildRunCancelRejectedSkipsWait(t *testing.T) {
 		t.Errorf("cancel rejection still force-killed before close: ops = %v", ops)
 	}
 	fx.ps.mu.Lock()
-	tracked := len(fx.ps.childRuns)
+	tracked := len(testJournalLocked(fx.ps).childRuns)
 	fx.ps.mu.Unlock()
 	if tracked != 0 {
 		t.Errorf("tracker holds %d record(s) after an idle teardown, want none", tracked)
@@ -738,7 +753,7 @@ func TestPeerTeardownPartialArmEvidenceRules(t *testing.T) {
 	waitFor(t, "partial arm consumed (nothing tracked)", func() bool {
 		fx.ps.mu.Lock()
 		defer fx.ps.mu.Unlock()
-		return fx.ps.childRuns["run-u1"] == nil
+		return testJournalLocked(fx.ps).childRuns["run-u1"] == nil
 	})
 
 	// Started, then partial: the run settles with the force_killed mark.
@@ -754,7 +769,7 @@ func TestPeerTeardownPartialArmEvidenceRules(t *testing.T) {
 	waitFor(t, "partial arm settles the live run", func() bool {
 		fx.ps.mu.Lock()
 		defer fx.ps.mu.Unlock()
-		rec := fx.ps.childRuns["run-u2"]
+		rec := testJournalLocked(fx.ps).childRuns["run-u2"]
 		return rec != nil && rec.TerminalOutcome == childRunOutcomeForceKilled && rec.ForcedTeardown
 	})
 
@@ -764,7 +779,7 @@ func TestPeerTeardownPartialArmEvidenceRules(t *testing.T) {
 	waitFor(t, "late real terminal outranks the mark", func() bool {
 		fx.ps.mu.Lock()
 		defer fx.ps.mu.Unlock()
-		rec := fx.ps.childRuns["run-u2"]
+		rec := testJournalLocked(fx.ps).childRuns["run-u2"]
 		return rec != nil && rec.TerminalOutcome == "cancelled" && !rec.ForcedTeardown
 	})
 
@@ -773,7 +788,7 @@ func TestPeerTeardownPartialArmEvidenceRules(t *testing.T) {
 	fx.peer.appendEvent(childRunTerminalArm("run-u2", "success"))
 	time.Sleep(2 * peerSuperviseReplayBackoff)
 	fx.ps.mu.Lock()
-	outcome := fx.ps.childRuns["run-u2"].TerminalOutcome
+	outcome := testJournalLocked(fx.ps).childRuns["run-u2"].TerminalOutcome
 	fx.ps.mu.Unlock()
 	if outcome != "cancelled" {
 		t.Errorf("settled truth overwritten by a late terminal: %q, want cancelled", outcome)
@@ -798,7 +813,7 @@ func TestPeerTeardownSettledChildRunRecordPreserved(t *testing.T) {
 	waitFor(t, "settled record on the tracker", func() bool {
 		fx.ps.mu.Lock()
 		defer fx.ps.mu.Unlock()
-		rec := fx.ps.childRuns["run-s1"]
+		rec := testJournalLocked(fx.ps).childRuns["run-s1"]
 		return rec != nil && rec.TerminalOutcome == "success"
 	})
 
@@ -818,7 +833,7 @@ func TestPeerTeardownSettledChildRunRecordPreserved(t *testing.T) {
 		t.Errorf("settled-record teardown force-killed before close: ops = %v", ops)
 	}
 	fx.ps.mu.Lock()
-	rec := fx.ps.childRuns["run-s1"]
+	rec := testJournalLocked(fx.ps).childRuns["run-s1"]
 	outcome := ""
 	if rec != nil {
 		outcome = rec.TerminalOutcome

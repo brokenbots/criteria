@@ -800,7 +800,8 @@ func TestPeerProcessExitedAfterJournalEvent(t *testing.T) {
 	waitFor(t, "ProcessExited after journal event", reporter.ProcessExited)
 	ps := mustPeerSession(t, provider)
 	ps.mu.Lock()
-	reason, detail, lastSeq := ps.exitReason, ps.exitDetail, ps.lastSeq
+	aj := ps.journals.trackFor(ps.dial.AdapterType)
+	reason, detail, lastSeq := aj.exitReason, aj.exitDetail, ps.lastSeq
 	ps.mu.Unlock()
 	if reason != "process_exited" {
 		t.Fatalf("exit reason = %q, want process_exited", reason)
@@ -891,7 +892,7 @@ func TestPeerSupervisionHeartbeatUpdatesLiveness(t *testing.T) {
 		t.Fatalf("WaitForHandle: %v", err)
 	}
 	ps := mustPeerSession(t, provider)
-	if got := ps.lastHeartbeatAt(); !got.IsZero() {
+	if got := ps.lastHeartbeatAt(ps.dial.AdapterType); !got.IsZero() {
 		t.Fatalf("heartbeat timestamp set before any heartbeat: %v", got)
 	}
 
@@ -899,7 +900,7 @@ func TestPeerSupervisionHeartbeatUpdatesLiveness(t *testing.T) {
 		Kind: &criteriav1.SupervisionEvent_Heartbeat{Heartbeat: &criteriav1.SupervisionHeartbeat{LastEventSeq: 1}},
 	})
 	waitFor(t, "heartbeat liveness timestamp", func() bool {
-		return !ps.lastHeartbeatAt().IsZero()
+		return !ps.lastHeartbeatAt(ps.dial.AdapterType).IsZero()
 	})
 }
 
@@ -914,7 +915,7 @@ func TestPeerStreamFlushedMarksLogDrain(t *testing.T) {
 		t.Fatalf("WaitForHandle: %v", err)
 	}
 	ps := mustPeerSession(t, provider)
-	if ps.logDrained() {
+	if ps.logDrained(ps.dial.AdapterType) {
 		t.Fatal("log drain marked before any StreamFlushed event")
 	}
 
@@ -923,9 +924,11 @@ func TestPeerStreamFlushedMarksLogDrain(t *testing.T) {
 	fp.appendEvent(&criteriav1.SupervisionEvent{
 		Kind: &criteriav1.SupervisionEvent_Flushed{Flushed: &criteriav1.StreamFlushed{Channel: "log", UpToSeq: 3}},
 	})
-	waitFor(t, "log drain marked after StreamFlushed", ps.logDrained)
+	waitFor(t, "log drain marked after StreamFlushed", func() bool {
+		return ps.logDrained(ps.dial.AdapterType)
+	})
 	ps.mu.Lock()
-	upTo := ps.logFlushed["log"]
+	upTo := ps.journals.trackFor(ps.dial.AdapterType).logFlushed["log"]
 	ps.mu.Unlock()
 	if upTo != 3 {
 		t.Fatalf("log drain watermark = %d, want 3", upTo)
