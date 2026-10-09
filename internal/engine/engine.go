@@ -1282,6 +1282,11 @@ func (e *Engine) handleEvalError(ctx context.Context, st *RunState, err error, s
 		if !ok {
 			missing := fmt.Errorf("terminal node %q is not a state", st.Current)
 			sink.OnRunFailed(missing.Error(), st.Current)
+			if ctx.Err() == nil {
+				// A failed run record is terminal (KB-227/CRI-323); the
+				// registry is sealed with it unless the context says stop.
+				e.sealScopeRegistry("", false)
+			}
 			return missing
 		}
 		// Evaluate outputs at terminal state (W09).
@@ -1289,6 +1294,9 @@ func (e *Engine) handleEvalError(ctx context.Context, st *RunState, err error, s
 		if outErr != nil {
 			// Output evaluation failed; emit error and fail the run.
 			sink.OnRunFailed(outErr.Error(), st.Current)
+			if ctx.Err() == nil {
+				e.sealScopeRegistry("", false)
+			}
 			return outErr
 		}
 		// Emit outputs before run.completed if present.

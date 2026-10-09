@@ -266,6 +266,22 @@ state "done" {
 			t.Errorf("marker state after paused run = %q, want open", rec.State)
 		}
 	})
+
+	t.Run("terminal state missing from graph seals", func(t *testing.T) {
+		dir := t.TempDir()
+		sink := &fakeSink{}
+		eng := New(g, &fakeLoader{}, sink, WithDataDir(dir), WithRunID("kb-227-bad"))
+		eng.markScopeRegistryOpen()
+
+		st := &RunState{Current: "not-a-state"}
+		if err := eng.handleEvalError(context.Background(), st, engineruntime.ErrTerminal, sink); err == nil {
+			t.Fatal("handleEvalError must propagate the missing-state failure")
+		}
+		rec := mustMarker(t, dir)
+		if rec.State != RegistryStateSealed {
+			t.Errorf("marker state after missing-terminal-state failure = %q, want sealed", rec.State)
+		}
+	})
 }
 
 // TestInitScopeAdapters_PerScope_AdoptionRefusesSealedPriorRegistry_KB227 is
