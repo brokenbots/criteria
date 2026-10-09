@@ -1555,16 +1555,7 @@ func (s *Shim) handleWaiterWake(adapterType, scope, key string, handshakeBudget,
 // removing an already-drained channel is a no-op — so a woken wait never
 // leaves a stale channel in a registry.
 func (s *Shim) awaitWaiter(ctx context.Context, adapterType, scope, key string, primary, secondary <-chan waitResult, deregister func(), handshakeBudget time.Duration) (adapterhost.Handle, error) {
-	s.mu.Lock()
-	schedulingBudget := s.schedulingBudget
-	poll := s.podStatePollInterval
-	s.mu.Unlock()
-	if schedulingBudget <= 0 {
-		schedulingBudget = DefaultSchedulingBudget
-	}
-	if poll <= 0 {
-		poll = defaultPodStatePollInterval
-	}
+	schedulingBudget, poll := s.waiterBudgets()
 
 	// Initial observation, so a pod that is already Running (or already
 	// dialing) starts its handshake budget now rather than at the first tick.
@@ -1579,22 +1570,12 @@ func (s *Shim) awaitWaiter(ctx context.Context, adapterType, scope, key string, 
 	}
 
 	// KB-232: derive the wait's effective window for the half-window signal.
-	// A context deadline (the step's session wait) bounds the wait regardless
-	// of the budgets; without one the scheduling budget is the effective
-	// bound (a fresh wait starts without start evidence).
-	window := schedulingBudget
-	if dead, ok := ctx.Deadline(); ok {
-		if rem := time.Until(dead); rem > 0 {
-			window = rem
-		}
-	}
-	waitStart := time.Now()
-	pendingDeadline := waitStart.Add(window / 2)
+	w := newSessionWaitWindow(ctx, schedulingBudget)
 	pendingEmitted := false
 	nextWake := func(st *waiterState) time.Duration {
 		d := waitPollDuration(poll, st.started, st.handshakeDeadline, st.schedDeadline)
 		if !pendingEmitted {
-			d = min(d, time.Until(pendingDeadline))
+			d = min(d, time.Until(w.pendingDeadline))
 		}
 		return d
 	}
@@ -1613,9 +1594,9 @@ func (s *Shim) awaitWaiter(ctx context.Context, adapterType, scope, key string, 
 			deregister()
 			return nil, ctx.Err()
 		case <-timer.C:
-			if !pendingEmitted && !time.Now().Before(pendingDeadline) {
+			if !pendingEmitted && !time.Now().Before(w.pendingDeadline) {
 				pendingEmitted = true
-				s.emitScopeSessionPending(adapterType, scope, key, window, time.Since(waitStart))
+				s.emitScopeSessionPending(adapterType, scope, key, w.window, time.Since(w.start))
 			}
 			done, err := s.handleWaiterWake(adapterType, scope, key, handshakeBudget, schedulingBudget, &st)
 			if done {
@@ -1625,6 +1606,42 @@ func (s *Shim) awaitWaiter(ctx context.Context, adapterType, scope, key string, 
 			timer.Reset(nextWake(&st))
 		}
 	}
+}
+
+// waiterBudgets reads the configured scheduling budget and pod-state poll
+// interval, falling back to defaults when unset.
+func (s *Shim) waiterBudgets() (schedulingBudget, poll time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if schedulingBudget = s.schedulingBudget; schedulingBudget <= 0 {
+		schedulingBudget = DefaultSchedulingBudget
+	}
+	if poll = s.podStatePollInterval; poll <= 0 {
+		poll = defaultPodStatePollInterval
+	}
+	return schedulingBudget, poll
+}
+
+// sessionWaitWindow derives the effective deadline window of a session wait
+// that starts now (KB-232): a context deadline (the step's session wait)
+// bounds the wait regardless of the shim budgets; without one the scheduling
+// budget is the effective bound (a fresh wait starts without start evidence).
+// The half-window observation deadline is start + window/2.
+type sessionWaitWindow struct {
+	window          time.Duration
+	start           time.Time
+	pendingDeadline time.Time
+}
+
+func newSessionWaitWindow(ctx context.Context, schedulingBudget time.Duration) sessionWaitWindow {
+	window := schedulingBudget
+	if dead, ok := ctx.Deadline(); ok {
+		if rem := time.Until(dead); rem > 0 {
+			window = rem
+		}
+	}
+	start := time.Now()
+	return sessionWaitWindow{window: window, start: start, pendingDeadline: start.Add(window / 2)}
 }
 
 // waitPollDuration picks the next wake-up: immediately at the handshake

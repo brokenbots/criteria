@@ -856,21 +856,32 @@ func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, var
 		return nil, nil
 	}
 
-	provisioned := make([]string, 0, len(g.Adapters)) // track in order for LIFO rollback
-
-	// Phase A: prepare inputs and rotate/register per-scope sessions for
-	// every not-yet-open adapter. No handshake blocks here, so all scopes
-	// become registrable before any pod handshake is awaited.
-	type stagedAdapter struct {
-		instanceID  string
-		adapter     *workflow.AdapterNode
-		config      map[string]string
-		secretMap   map[string]string
-		originRefs  map[string]secrets.OriginRef
-		workingDir  string
-		verifyScope string
+	staged, err := stageAndRotateScopeAdapters(ctx, g, deps, vars, workflowDir, scopeName, secretOrigins, lifecycle)
+	if err != nil {
+		return nil, err
 	}
-	staged := make([]stagedAdapter, 0, len(g.AdapterOrder))
+	return verifyStagedScopeAdapters(ctx, deps, scopeName, staged)
+}
+
+// stagedScopeAdapter carries one adapter's prepared inputs between the
+// non-blocking registration phase (A) and the blocking verify phase (B) of
+// initScopeAdapters.
+type stagedScopeAdapter struct {
+	instanceID  string
+	adapter     *workflow.AdapterNode
+	config      map[string]string
+	secretMap   map[string]string
+	originRefs  map[string]secrets.OriginRef
+	workingDir  string
+	verifyScope string
+}
+
+// stageAndRotateScopeAdapters is phase A of initScopeAdapters: prepare inputs
+// and rotate/register per-scope sessions for every not-yet-open adapter. No
+// handshake blocks here, so all scopes become registrable before any pod
+// handshake is awaited.
+func stageAndRotateScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, vars map[string]cty.Value, workflowDir, scopeName string, secretOrigins map[string]secrets.OriginRef, lifecycle *remoteLifecycleContext) ([]stagedScopeAdapter, error) {
+	staged := make([]stagedScopeAdapter, 0, len(g.AdapterOrder))
 
 	for _, instanceID := range g.AdapterOrder {
 		adapter := g.Adapters[instanceID]
@@ -916,7 +927,7 @@ func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, var
 			return nil, err
 		}
 
-		staged = append(staged, stagedAdapter{
+		staged = append(staged, stagedScopeAdapter{
 			instanceID:  instanceID,
 			adapter:     adapter,
 			config:      config,
@@ -927,9 +938,17 @@ func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, var
 		})
 	}
 
-	// Phase B: run the blocking Verify handshakes in declaration order. Every
-	// adapter's scope registration already happened in phase A, so a pod dial
-	// racing any handshake finds its scope registered.
+	return staged, nil
+}
+
+// verifyStagedScopeAdapters is phase B of initScopeAdapters: run the blocking
+// Verify handshakes in declaration order. Every adapter's scope registration
+// already happened in phase A, so a pod dial racing any handshake finds its
+// scope registered. Returns the instances verified by this call, in order for
+// LIFO rollback at the caller's discretion.
+func verifyStagedScopeAdapters(ctx context.Context, deps Deps, scopeName string, staged []stagedScopeAdapter) ([]string, error) {
+	provisioned := make([]string, 0, len(staged)) // track in order for LIFO rollback
+
 	for _, s := range staged {
 		verifyErr := deps.Sessions.Verify(ctx, s.instanceID, s.adapter.Type, s.adapter.OnCrash, s.config, s.secretMap, s.originRefs, s.workingDir, scopeName, s.verifyScope)
 
