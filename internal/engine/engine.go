@@ -32,6 +32,12 @@ import (
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
+// AwaitingHumanTerminalState is the conventional name for a workflow terminal
+// state that parks a run at a human attention gate instead of declaring final
+// success. The CLI exit path treats a completion at this state specially:
+// it must be distinguishable from a restartable run failure (KB-227/CRI-323).
+const AwaitingHumanTerminalState = "awaiting_human"
+
 // AdapterLifecycleEvent carries the controller-visible state needed to
 // provision or release a remote adapter pod. Raw secrets must never appear in
 // this payload with one deliberate exception (CRI-236): the per-scope accept

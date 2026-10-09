@@ -3,10 +3,15 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/brokenbots/criteria/internal/engine"
+	"github.com/brokenbots/criteria/internal/run"
 )
 
 // runAndReadEvents executes runApply for the given workflow and returns the
@@ -222,6 +227,111 @@ state "failed" {
 	}
 	if success, _ := payload["success"].(bool); success {
 		t.Fatal("RunCompleted.success = true, want false")
+	}
+}
+
+// TestApplyLocal_AwaitingHumanTerminal_ExitsWithHumanAttentionCode verifies
+// the KB-227/CRI-323 exit-code distinction: a run that completes at the
+// awaiting_human parking state with success=false must exit through the
+// stable human-attention code (6) rather than the generic restartable
+// failure code (1), so runner restart policies can tell a human gate from a
+// crash. The error message is unchanged.
+func TestApplyLocal_AwaitingHumanTerminal_ExitsWithHumanAttentionCode(t *testing.T) {
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+
+	workflowPath := writeWorkflowFile(t, `
+workflow {
+  name = "awaiting_human_gate"
+  version = "0.1"
+  initial_state = "awaiting_human"
+  target_state  = "awaiting_human"
+}
+
+state "awaiting_human" {
+  terminal = true
+  success  = false
+}
+`)
+
+	runErr, events := runAndReadEvents(t, &applyOptions{workflowPath: workflowPath})
+	if runErr == nil {
+		t.Fatal("expected non-nil error for awaiting_human terminal with success=false")
+	}
+	if got := OSErrorCode(runErr); got != exitAwaitingHuman {
+		t.Fatalf("OSErrorCode(awaiting_human terminal) = %d, want %d (got err: %v)", got, exitAwaitingHuman, runErr)
+	}
+	if !strings.Contains(runErr.Error(), "success=false") {
+		t.Fatalf("error should still report success=false, got: %v", runErr)
+	}
+
+	rc := findRunCompleted(t, events)
+	payload, ok := rc["payload"].(map[string]interface{})
+	if !ok {
+		t.Fatal("RunCompleted payload missing")
+	}
+	if finalState, _ := payload["finalState"].(string); finalState != "awaiting_human" {
+		t.Fatalf("RunCompleted.finalState = %q, want awaiting_human", finalState)
+	}
+}
+
+// TestApplyLocal_NonAwaitingFailure_KeepsGenericExitCode guards the other
+// half of the KB-227 distinction: an ordinary failed terminal must keep the
+// generic failure path, not pick up the human-attention code.
+func TestApplyLocal_NonAwaitingFailure_KeepsGenericExitCode(t *testing.T) {
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+
+	workflowPath := writeWorkflowFile(t, `
+workflow {
+  name = "plain_failure_gate"
+  version = "0.1"
+  initial_state = "failed"
+  target_state  = "failed"
+}
+
+state "failed" {
+  terminal = true
+  success  = false
+}
+`)
+
+	runErr, _ := runAndReadEvents(t, &applyOptions{workflowPath: workflowPath})
+	if runErr == nil {
+		t.Fatal("expected non-nil error for failed terminal")
+	}
+	if got := OSErrorCode(runErr); got != -1 {
+		t.Fatalf("OSErrorCode(failed terminal) = %d, want -1 (untagged; cmd/criteria exits generic 1)", got)
+	}
+}
+
+// TestTerminalStateFailureError_AwaitingHumanVsOther pins the helper behavior
+// directly: awaiting_human carries the stable code, other terminal states
+// stay untagged (generic exit 1 via the untyped error path).
+func TestTerminalStateFailureError_AwaitingHumanVsOther(t *testing.T) {
+	err := terminalStateFailureError(engine.AwaitingHumanTerminalState)
+	if got := OSErrorCode(err); got != exitAwaitingHuman {
+		t.Fatalf("OSErrorCode(awaiting_human) = %d, want %d", got, exitAwaitingHuman)
+	}
+	if want := fmt.Sprintf("run completed with terminal state %q (success=false)", engine.AwaitingHumanTerminalState); err.Error() != want {
+		t.Fatalf("awaiting_human error message changed: got %q, want %q", err.Error(), want)
+	}
+
+	other := terminalStateFailureError("failed")
+	if got := OSErrorCode(other); got != -1 {
+		t.Fatalf("OSErrorCode(failed) = %d, want -1 (untagged, generic exit 1)", got)
+	}
+	if want := "run completed with terminal state \"failed\" (success=false)"; other.Error() != want {
+		t.Fatalf("failed-state error message changed: got %q, want %q", other.Error(), want)
+	}
+}
+
+// TestTerminalFailureError_AwaitingHumanSuccessTrue_StaysNil pins the
+// non-breaking half of the KB-227 decision: an awaiting_human completion with
+// success=true keeps exiting 0 (nil error), unchanged.
+func TestTerminalFailureError_AwaitingHumanSuccessTrue_StaysNil(t *testing.T) {
+	sink := &terminalSuccessSink{Sink: &run.LocalSink{RunID: "kb227-awaiting-human", Out: io.Discard}}
+	sink.OnRunCompleted(engine.AwaitingHumanTerminalState, true)
+	if err := terminalFailureError(sink); err != nil {
+		t.Fatalf("successful awaiting_human terminal must stay nil (exit 0), got: %v", err)
 	}
 }
 

@@ -181,7 +181,7 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 	}
 
 	if finalState, success, ok := runSink.TerminalSuccess(); ok && !success {
-		return fmt.Errorf("run completed with terminal state %q (success=false)", finalState)
+		return terminalStateFailureError(finalState)
 	}
 	return nil
 }
