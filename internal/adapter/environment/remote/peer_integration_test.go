@@ -129,6 +129,10 @@ type integrationOpts struct {
 	// noPeer skips the primary peer boot: scenarios that stage their own
 	// dials (stale-peer budget) need the registry empty for the scope.
 	noPeer bool
+	// skipRegister leaves the per-scope registry empty at fixture start:
+	// KB-232 scenarios where a pod dials BEFORE the runner registers the
+	// scope and must converge once registration happens.
+	skipRegister bool
 }
 
 // startIntegrationFixture builds the noop binary, starts a loopback shim with
@@ -166,7 +170,7 @@ func startIntegrationFixture(t *testing.T, opts integrationOpts) *integrationFix
 	if err := shim.Start(startCtx); err != nil {
 		t.Fatalf("shim Start: %v", err)
 	}
-	if opts.perScope {
+	if opts.perScope && !opts.skipRegister {
 		shim.RegisterScope(opts.scope, token)
 	}
 
@@ -1225,7 +1229,7 @@ func startMultiAdapterFixture(t *testing.T, opts integrationOpts) *multiAdapterF
 	if err := shim.Start(startCtx); err != nil {
 		t.Fatalf("shim Start: %v", err)
 	}
-	if opts.perScope {
+	if opts.perScope && !opts.skipRegister {
 		shim.RegisterScope(opts.scope, token)
 	}
 	provider := NewPeerSessionProvider(shim, opts.perScope)
