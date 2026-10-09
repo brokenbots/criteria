@@ -185,6 +185,14 @@ func adoptablePriorRunDirs(fingerprint, excludeRunID string) ([]string, error) {
 		if markerErr != nil || marker.Fingerprint != fingerprint {
 			continue
 		}
+		// KB-227/CRI-323: a matching invocation whose scope registry is
+		// sealed completed at a terminal status; its rotated tokens are
+		// retired and must never be adopted. The engine-side adoption gate
+		// remains the source of truth — this keeps completed directories out
+		// of the candidate list before any token material is read.
+		if engine.PriorRunRegistrySealed(dataDir) {
+			continue
+		}
 		candidates = append(candidates, markerCandidate{dir: dataDir, when: marker.RecordedAt})
 	}
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].when.After(candidates[j].when) })

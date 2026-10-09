@@ -32,6 +32,12 @@ import (
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
+// AwaitingHumanTerminalState is the conventional name for a workflow terminal
+// state that parks a run at a human attention gate instead of declaring final
+// success. The CLI exit path treats a completion at this state specially:
+// it must be distinguishable from a restartable run failure (KB-227/CRI-323).
+const AwaitingHumanTerminalState = "awaiting_human"
+
 // AdapterLifecycleEvent carries the controller-visible state needed to
 // provision or release a remote adapter pod. Raw secrets must never appear in
 // this payload with one deliberate exception (CRI-236): the per-scope accept
@@ -633,6 +639,9 @@ func (e *Engine) initAdapters(ctx context.Context, sessions *adapterhost.Session
 	lifecycle := newScopeLifecycleState(e.dataDir)
 	lifecycle.adoptableRunDirs = e.adoptableRunDirs
 	lifecycle.setRunID(e.runID)
+	// KB-227/CRI-323: this invocation opens a fresh registry generation for
+	// the data directory before any scope session can rotate tokens.
+	e.markScopeRegistryOpen()
 	rlc := &remoteLifecycleContext{
 		lockfile:       e.effectivePinSet(),
 		scopeLifecycle: lifecycle,
@@ -798,6 +807,23 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 
 // runLoop is the shared execution loop. firstStepAttempt is the attempt index
 // used for the initial step when resuming; subsequent steps start at attempt 1.
+// failUnknownNode handles a transition target that resolves to no defined
+// node (UnknownNodeError): a terminal run-record failure reached after adapter
+// init opened the scope registry epoch and possibly rotated scope tokens.
+func (e *Engine) failUnknownNode(ctx context.Context, st *RunState, err error, sink Sink) error {
+	sink.OnRunFailed(err.Error(), st.Current)
+	if ctx.Err() == nil {
+		// The failed run record is terminal (KB-227/CRI-323): the pod
+		// fleet the scope registry served is released with it, so the
+		// registry is sealed with the failure. A canceled context is
+		// a stop — the run stays resumable (CRI-202 parity).
+		e.sealScopeRegistry("", false)
+	}
+	// CRI-202: the run failed terminally; release its checkpoints.
+	e.discardRunCheckpoints("failed")
+	return err
+}
+
 func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManager, current string, firstStepAttempt int, vars map[string]cty.Value, sink Sink, ds *DataStore, rlc *remoteLifecycleContext) error {
 	st := &RunState{
 		Current:         current,
@@ -838,10 +864,7 @@ func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManag
 		}
 		node, err := nodeFor(e.graph, st.Current)
 		if err != nil {
-			sink.OnRunFailed(err.Error(), st.Current)
-			// CRI-202: the run failed terminally; release its checkpoints.
-			e.discardRunCheckpoints("failed")
-			return err
+			return e.failUnknownNode(ctx, st, err, sink)
 		}
 		next, err := node.Evaluate(ctx, st, deps)
 		if err != nil {
@@ -1192,6 +1215,37 @@ func (e *Engine) varValueFromScope(varObj cty.Value, name string, node *workflow
 	return node.Default
 }
 
+// markScopeRegistryOpen bumps the data directory's registry-epoch marker to
+// open for this invocation: a fresh shim-registry generation starts serving,
+// so surviving rotated tokens stay adoptable (the CRI-137/CRI-304 recovery
+// paths) until a terminal completion seals the marker. Called once per
+// initAdapters, before any rotation can happen. Failures are non-fatal: the
+// adoption gate only ever refuses directories whose marker is sealed.
+func (e *Engine) markScopeRegistryOpen() {
+	if e.dataDir == "" {
+		return
+	}
+	if _, err := bumpScopeRegistryEpoch(e.dataDir); err != nil {
+		e.logOrDefault().Warn("opening scope registry epoch marker failed; adoption treats the directory as unsealed (open)",
+			"data_dir", e.dataDir, "error", err.Error())
+	}
+}
+
+// sealScopeRegistry seals the data directory's registry marker after the run
+// reached a terminal run-record status: the pod fleet the registry served is
+// released with the run, so successor invocations must refuse adoption of
+// these rotated tokens and rotate fresh instead (KB-227/CRI-323). Failures
+// are non-fatal and logged; a sealed marker is a no-op to re-seal.
+func (e *Engine) sealScopeRegistry(finalState string, success bool) {
+	if e.dataDir == "" {
+		return
+	}
+	if err := sealScopeRegistryEpoch(e.dataDir, finalState, success); err != nil {
+		e.logOrDefault().Warn("sealing scope registry epoch marker failed; the directory stays marked open",
+			"data_dir", e.dataDir, "error", err.Error())
+	}
+}
+
 // buildDeps constructs the Deps bundle injected into each node's Evaluate call.
 func (e *Engine) buildDeps(sessions *adapterhost.SessionManager, sink Sink, prompts *PromptRouter) Deps {
 	return Deps{
@@ -1242,6 +1296,11 @@ func (e *Engine) handleEvalError(ctx context.Context, st *RunState, err error, s
 		if !ok {
 			missing := fmt.Errorf("terminal node %q is not a state", st.Current)
 			sink.OnRunFailed(missing.Error(), st.Current)
+			if ctx.Err() == nil {
+				// A failed run record is terminal (KB-227/CRI-323); the
+				// registry is sealed with it unless the context says stop.
+				e.sealScopeRegistry("", false)
+			}
 			return missing
 		}
 		// Evaluate outputs at terminal state (W09).
@@ -1249,6 +1308,9 @@ func (e *Engine) handleEvalError(ctx context.Context, st *RunState, err error, s
 		if outErr != nil {
 			// Output evaluation failed; emit error and fail the run.
 			sink.OnRunFailed(outErr.Error(), st.Current)
+			if ctx.Err() == nil {
+				e.sealScopeRegistry("", false)
+			}
 			return outErr
 		}
 		// Emit outputs before run.completed if present.
@@ -1256,6 +1318,10 @@ func (e *Engine) handleEvalError(ctx context.Context, st *RunState, err error, s
 			sink.OnRunOutputs(outputs)
 		}
 		sink.OnRunCompleted(state.Name, state.Success)
+		// KB-227/CRI-323: the run reached a terminal run-record status; seal
+		// the scope registry so successor invocations refuse adoption of
+		// these rotated tokens and rotate fresh instead.
+		e.sealScopeRegistry(state.Name, state.Success)
 		// CRI-202 retention: the run is terminal; release its checkpoints.
 		e.discardRunCheckpoints("terminal")
 		return nil
@@ -1288,6 +1354,10 @@ func (e *Engine) handleEvalError(ctx context.Context, st *RunState, err error, s
 	// still-resumable run) — its checkpoints must survive so a later resume
 	// restores adapter state instead of starting fresh.
 	if ctx.Err() == nil {
+		// KB-227/CRI-323: a failed run record is terminal too, so its pod
+		// fleet is released; seal the scope registry with it. A canceled
+		// context stays sealed-off-free: the run remains resumable.
+		e.sealScopeRegistry("", false)
 		e.discardRunCheckpoints("failed")
 	}
 	return err
@@ -1307,6 +1377,8 @@ func (e *Engine) handleReturnExit(st *RunState, sink Sink) {
 		}
 	}
 	sink.OnRunCompleted("", true)
+	// KB-227/CRI-323: terminal completion; seal the scope registry.
+	e.sealScopeRegistry("", true)
 	// CRI-202 retention: the run is terminal; release its checkpoints.
 	e.discardRunCheckpoints("terminal")
 }

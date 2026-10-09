@@ -304,7 +304,7 @@ func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		return true, sigErr
 	}
 	if finalState, success, ok := tracked.TerminalSuccess(); ok && !success {
-		return true, fmt.Errorf("run completed with terminal state %q (success=false)", finalState)
+		return true, terminalStateFailureError(finalState)
 	}
 	return true, nil
 }
@@ -448,7 +448,7 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 	}
 	if outcome == nil {
 		if finalState, success, ok := tracked.TerminalSuccess(); ok && !success {
-			outcome = fmt.Errorf("run completed with terminal state %q (success=false)", finalState)
+			outcome = terminalStateFailureError(finalState)
 		}
 	}
 	return true, outcome

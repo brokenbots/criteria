@@ -237,7 +237,7 @@ func terminalFailureError(runSink *terminalSuccessSink) error {
 		}
 		return fmt.Errorf("run completed with terminal state %q (success=false); approval %q was rejected (no reason given)", finalState, node)
 	}
-	return fmt.Errorf("run completed with terminal state %q (success=false)", finalState)
+	return terminalStateFailureError(finalState)
 }
 
 // localRunIdentity carries the CLI variable inputs and the invocation

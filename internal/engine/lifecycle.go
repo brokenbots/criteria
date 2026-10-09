@@ -602,6 +602,29 @@ func logScopeReuseFallback(scopeName, instanceID, reason string) {
 // adopted=false when nothing is adoptable and the caller must rotate fresh,
 // and a non-nil error only when adoption was possible but registration with
 // the shim failed.
+
+// refuseSealedPriorRunRegistry implements the KB-227/CRI-323 adoption gate: a
+// prior invocation whose registry is sealed reached a terminal run-record
+// status — its adapter pod fleet was torn down with it, so its rotated tokens
+// cannot be honored by this invocation's fresh shim registry (no rows for
+// those scopes; the adopting pods would loop forever on "scope not
+// registered"). Logs the epoch mismatch and reports true when adoption must
+// be refused for the directory.
+func refuseSealedPriorRunRegistry(priorDir, dataDir, scopeName, instanceID string) bool {
+	priorRec, ok := readScopeRegistryEpoch(priorDir)
+	if !ok || priorRec.State != RegistryStateSealed {
+		return false
+	}
+	currentRec, _ := readScopeRegistryEpoch(dataDir)
+	slog.Error("prior run invocation completed at a terminal status; its registry is sealed and the rotated scope tokens are retired; refusing adoption and rotating fresh",
+		"scope", scopeName, "adapter_instance", instanceID,
+		"prior_run_dir", priorDir,
+		"prior_registry_epoch", priorRec.RegistryEpoch,
+		"registry_epoch", currentRec.RegistryEpoch,
+		"prior_final_state", priorRec.FinalState)
+	return true
+}
+
 func tryAdoptPriorRunScopeInstance(deps Deps, lifecycle *remoteLifecycleContext, envNode *workflow.EnvironmentNode, adapter *workflow.AdapterNode, instanceID, scopeName string) (scopeKey string, adopted bool, err error) {
 	dirs := lifecycle.scopeLifecycle.adoptableRunDirs
 	if len(dirs) == 0 {
@@ -610,6 +633,9 @@ func tryAdoptPriorRunScopeInstance(deps Deps, lifecycle *remoteLifecycleContext,
 	dataDir := lifecycle.scopeLifecycle.dataDir
 	for _, priorDir := range dirs {
 		if filepath.Clean(priorDir) == filepath.Clean(dataDir) {
+			continue
+		}
+		if refuseSealedPriorRunRegistry(priorDir, dataDir, scopeName, instanceID) {
 			continue
 		}
 		candidates := priorRunScopeCandidates(priorDir, scopeName, instanceID, adapter.Type)
