@@ -1608,11 +1608,13 @@ func (m *SessionManager) buildCommandCustomizer(instanceID, workingDir string) (
 	// KB-224: only when no sandbox customizer owns the launch environment may
 	// the ambient-home isolation apply; a sandbox scrubs the entire
 	// environment itself.
-	ambientCust, _ := m.buildAmbientHomeCustomizer(instanceID)
+	ambientCust, ambientCleanup := m.buildAmbientHomeCustomizer(instanceID)
 
 	if workingDir == "" {
 		if ambientCust != nil {
-			return ambientCust, cleanup, nil
+			// The per-launch cleanup is a no-op (the scratch home outlives
+			// individual launches); root removal happens at Shutdown.
+			return ambientCust, ambientCleanup, nil
 		}
 		return sandboxCust, cleanup, nil
 	}
