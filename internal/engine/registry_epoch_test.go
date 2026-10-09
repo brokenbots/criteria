@@ -284,6 +284,79 @@ state "done" {
 	})
 }
 
+// TestEngine_UnknownNodeFailureSealsRegistry_KB227 pins the runLoop branch the
+// reviewer flagged: a transition target that resolves to no step/wait/
+// approval/switch/state is a reachable terminal run-record failure (it emits
+// OnRunFailed and discards checkpoints), so it must seal the scope registry
+// exactly like every other post-init failure — a canceled context keeps the
+// registry open (stop = still resumable, CRI-202 parity).
+func TestEngine_UnknownNodeFailureSealsRegistry_KB227(t *testing.T) {
+	g := compile(t, `
+workflow {
+  name = "kb227-unknown-node"
+  version = "0.1"
+  initial_state = "done"
+  target_state  = "done"
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}`)
+
+	t.Run("unknown node failure seals", func(t *testing.T) {
+		dir := t.TempDir()
+		sink := &fakeSink{}
+		eng := New(g, &fakeLoader{}, sink, WithDataDir(dir), WithRunID("kb-227-unknown"))
+
+		// Public-path drive: initAdapters opens the registry epoch, then
+		// runLoop hits the unknown-node terminal failure.
+		if err := eng.RunFrom(context.Background(), "missing-node", 1); err == nil {
+			t.Fatal("RunFrom to an unknown node must fail")
+		}
+		if sink.failure == "" {
+			t.Error("OnRunFailed not observed")
+		}
+
+		rec := mustMarker(t, dir)
+		if rec.State != RegistryStateSealed {
+			t.Errorf("marker state after unknown-node failure = %q, want sealed", rec.State)
+		}
+		if rec.RegistryEpoch != 1 {
+			t.Errorf("marker epoch = %d, want 1 (opened at init, sealed after the failure)", rec.RegistryEpoch)
+		}
+		if !PriorRunRegistrySealed(dir) {
+			t.Error("failed invocation's data dir must be reported sealed")
+		}
+	})
+
+	t.Run("canceled context keeps registry open", func(t *testing.T) {
+		dir := t.TempDir()
+		sink := &fakeSink{}
+		eng := New(g, &fakeLoader{}, sink, WithDataDir(dir), WithRunID("kb-227-unknown-stop"))
+		eng.markScopeRegistryOpen()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		// Direct runLoop drive: everything else behaves as above, but the
+		// canceled context must keep the run resumable and open.
+		if err := eng.runLoop(ctx, nil, "missing-node", 1, nil, sink, nil, nil); err == nil {
+			t.Fatal("runLoop to an unknown node must fail")
+		}
+		if sink.failure == "" {
+			t.Error("OnRunFailed not observed")
+		}
+
+		rec := mustMarker(t, dir)
+		if rec.State != RegistryStateOpen {
+			t.Errorf("marker state after canceled unknown-node failure = %q, want open", rec.State)
+		}
+		if PriorRunRegistrySealed(dir) {
+			t.Error("stopped run's registry must stay adoptable")
+		}
+	})
+}
+
 // TestInitScopeAdapters_PerScope_AdoptionRefusesSealedPriorRegistry_KB227 is
 // the regression test for the incident: process 2 crash-resumed by ADOPTING
 // process 1's rotated scope tokens after process 1 completed at

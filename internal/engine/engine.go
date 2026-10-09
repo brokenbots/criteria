@@ -807,6 +807,23 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 
 // runLoop is the shared execution loop. firstStepAttempt is the attempt index
 // used for the initial step when resuming; subsequent steps start at attempt 1.
+// failUnknownNode handles a transition target that resolves to no defined
+// node (UnknownNodeError): a terminal run-record failure reached after adapter
+// init opened the scope registry epoch and possibly rotated scope tokens.
+func (e *Engine) failUnknownNode(ctx context.Context, st *RunState, err error, sink Sink) error {
+	sink.OnRunFailed(err.Error(), st.Current)
+	if ctx.Err() == nil {
+		// The failed run record is terminal (KB-227/CRI-323): the pod
+		// fleet the scope registry served is released with it, so the
+		// registry is sealed with the failure. A canceled context is
+		// a stop — the run stays resumable (CRI-202 parity).
+		e.sealScopeRegistry("", false)
+	}
+	// CRI-202: the run failed terminally; release its checkpoints.
+	e.discardRunCheckpoints("failed")
+	return err
+}
+
 func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManager, current string, firstStepAttempt int, vars map[string]cty.Value, sink Sink, ds *DataStore, rlc *remoteLifecycleContext) error {
 	st := &RunState{
 		Current:         current,
@@ -847,10 +864,7 @@ func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManag
 		}
 		node, err := nodeFor(e.graph, st.Current)
 		if err != nil {
-			sink.OnRunFailed(err.Error(), st.Current)
-			// CRI-202: the run failed terminally; release its checkpoints.
-			e.discardRunCheckpoints("failed")
-			return err
+			return e.failUnknownNode(ctx, st, err, sink)
 		}
 		next, err := node.Evaluate(ctx, st, deps)
 		if err != nil {
