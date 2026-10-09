@@ -50,6 +50,16 @@ func kb232SessionEntry(shim *Shim, key string) (*session, bool) {
 	return sess, ok
 }
 
+// kb232SessionRetired reports whether the shim's entry for key is the
+// stale h1 with retired armed. Reads happen under the shim lock so the
+// armed-retired poll cannot race WaitForFreshHandle's retired store.
+func kb232SessionRetired(shim *Shim, key string, h1 adapterhost.Handle) bool {
+	shim.mu.Lock()
+	defer shim.mu.Unlock()
+	sess, ok := shim.sessions[key]
+	return ok && sess.handle == h1 && sess.retired
+}
+
 // kb232Scope is the single scope newKB232TestShim registers.
 const kb232Scope = "root/scope-1"
 
@@ -152,7 +162,7 @@ func TestShim_WaitForFreshHandleArmsRetiredAndDisplacesOnNextDial(t *testing.T) 
 			t.Fatal("WaitForFreshHandle resolved before a fresh dial arrived")
 		default:
 		}
-		if sess, ok := kb232SessionEntry(shim, key); ok && sess.handle == h1 && sess.retired {
+		if kb232SessionRetired(shim, key, h1) {
 			armed = true
 			break
 		}
