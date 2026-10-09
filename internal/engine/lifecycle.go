@@ -612,6 +612,22 @@ func tryAdoptPriorRunScopeInstance(deps Deps, lifecycle *remoteLifecycleContext,
 		if filepath.Clean(priorDir) == filepath.Clean(dataDir) {
 			continue
 		}
+		// KB-227/CRI-323: a prior invocation whose registry is sealed reached
+		// a terminal run-record status — its adapter pod fleet was torn down
+		// with it, so its rotated tokens cannot be honored by this
+		// invocation's fresh shim registry (no rows for those scopes; the
+		// adopting pods would loop forever on "scope not registered"). Refuse
+		// adoption for the directory and rotate fresh so the run self-heals.
+		if priorRec, ok := readScopeRegistryEpoch(priorDir); ok && priorRec.State == RegistryStateSealed {
+			currentRec, _ := readScopeRegistryEpoch(dataDir)
+			slog.Error("prior run invocation completed at a terminal status; its registry is sealed and the rotated scope tokens are retired; refusing adoption and rotating fresh",
+				"scope", scopeName, "adapter_instance", instanceID,
+				"prior_run_dir", priorDir,
+				"prior_registry_epoch", priorRec.RegistryEpoch,
+				"registry_epoch", currentRec.RegistryEpoch,
+				"prior_final_state", priorRec.FinalState)
+			continue
+		}
 		candidates := priorRunScopeCandidates(priorDir, scopeName, instanceID, adapter.Type)
 		if len(candidates) == 0 {
 			continue

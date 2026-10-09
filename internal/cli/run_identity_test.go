@@ -95,6 +95,11 @@ func TestAdoptablePriorRunDirs_FiltersAndOrders(t *testing.T) {
 	writeInvocationMarker(t, "match-old", fp, base)
 	writeInvocationMarker(t, "match-own", fp, base.Add(3*time.Minute))
 	writeInvocationMarker(t, "match-inflight", fp, base.Add(4*time.Minute))
+	writeInvocationMarker(t, "match-sealed", fp, base.Add(6*time.Minute))
+	// A sealed registry epoch marks an invocation that completed at a
+	// terminal run status (KB-227/CRI-323): its rotated tokens are retired
+	// with the torn-down pod fleet, so the dir must be excluded before any
+	// adoption attempt can dial stale claims into a fresh shim registry.
 	writeInvocationMarker(t, "mismatch", "fp-other", base.Add(5*time.Minute))
 	// A same-fingerprint directory without a marker (pre-CRI-304 run) and one
 	// with a corrupt marker are never adoptable.
@@ -110,6 +115,18 @@ func TestAdoptablePriorRunDirs_FiltersAndOrders(t *testing.T) {
 	// The in-flight run owns a crash-recovery checkpoint and must be excluded.
 	if err := os.WriteFile(filepath.Join(home, "runs", "match-inflight.json"), []byte("{}"), 0o600); err != nil {
 		t.Fatalf("write in-flight checkpoint: %v", err)
+	}
+	// The completed invocation's scope registry is sealed (KB-227); the shape
+	// mirrors engine.registryEpochRecord written by engine sealScopeRegistry.
+	if err := os.MkdirAll(filepath.Join(home, "runs", "match-sealed", "remote-tokens"), 0o700); err != nil {
+		t.Fatalf("mkdir remote-tokens: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "runs", "match-sealed", "remote-tokens", "registry-epoch.json"),
+		[]byte(`{"registry_epoch":3,"state":"sealed","final_state":"done","success":true,"updated_at":"2026-01-01T00:00:00Z"}`), 0o600); err != nil {
+		t.Fatalf("write sealed registry marker: %v", err)
+	}
+	if !engine.PriorRunRegistrySealed(filepath.Join(home, "runs", "match-sealed")) {
+		t.Fatal("sealed marker must be recognized for this test to exercise the filter")
 	}
 
 	dirs, err := adoptablePriorRunDirs(fp, "match-own")
