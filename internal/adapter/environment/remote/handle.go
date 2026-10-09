@@ -30,6 +30,11 @@ type killWrapper struct {
 	onKill func()
 }
 
+// IsPhoneHomeBridge phones home every shim-session handle (KB-232): the
+// wrapped transport carries the adapter's live phone-home session, so the
+// session manager's phase-1 verification must not Kill it.
+func (w *killWrapper) IsPhoneHomeBridge() {}
+
 func (w *killWrapper) Kill() {
 	if w.onKill != nil {
 		w.onKill()

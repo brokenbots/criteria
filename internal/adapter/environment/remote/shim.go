@@ -331,6 +331,10 @@ type session struct {
 	cancel     func()
 	cancelCtx  context.Context
 	socketPath string
+	// retired marks a session the engine declared dead and is re-waiting for
+	// with a fresh-handle resolve (crash respawn): only then may a new dial
+	// displace the stored bridge (KB-232).
+	retired bool
 }
 
 type waitResult struct {
@@ -781,6 +785,18 @@ func (s *Shim) Accept(ctx context.Context, conn net.Conn) error {
 		return s.acceptPeerConn(ctx, conn, &hs)
 	}
 
+	// KB-232: a re-dial that arrives while the scope's session bridge is
+	// still live must not kill the in-use bridge — the displaced session is
+	// exactly what the engine's verify/bind handshake and the running step
+	// use, and killing it races those RPCs into Unavailable/EOF (burned step
+	// deadline). Refuse the takeover instead: the dialing runner retries with
+	// backoff across the scope's session window, and the live bridge keeps
+	// serving. Takeover proceeds only when the engine retired the existing
+	// session (armed via WaitForFreshHandle for crash-respawn convergence).
+	if err := s.refuseEstablishedScopeSession(conn, &hs); err != nil {
+		return err
+	}
+
 	socketPath, lis, err := s.setupUDS(conn)
 	if err != nil {
 		return err
@@ -945,6 +961,23 @@ func (s *Shim) verifyAdapterIdentity(conn net.Conn, hs *handshakeMessage) error 
 	_ = conn.Close()
 	s.noteVerifyFailure(dialAdapterTypes(hs), hs.Scope, class, err)
 	return err
+}
+
+// refuseEstablishedScopeSession closes a re-dial that arrives while the
+// scope's session bridge is already live. This is not an identity failure and
+// is deliberately not attributed to the verify-failure bookkeeping (KB-70):
+// the pod is behaving correctly and will keep retrying with backoff.
+func (s *Shim) refuseEstablishedScopeSession(conn net.Conn, hs *handshakeMessage) error {
+	s.mu.Lock()
+	sess, ok := s.sessions[s.sessionKey(hs.Name, hs.Scope)]
+	retired := ok && sess.retired
+	s.mu.Unlock()
+	if !ok || retired {
+		return nil
+	}
+	_ = conn.Close()
+	slog.Info("remote shim refused re-dial of live session bridge", "adapter", hs.Name, "scope", hs.Scope)
+	return fmt.Errorf("scope %q session bridge already established", hs.Scope)
 }
 
 // tryScopeRecovery consults the installed registrar for a rejected
@@ -1363,14 +1396,15 @@ func (s *Shim) buildAndStoreHandle(
 	key := s.sessionKey(adapterName, scope)
 
 	// KB-153: deregister this session from the session map synchronously the
-	// moment its bridge starts tearing down. The engine's verify phase kills
-	// its throwaway handshake handle before the bind phase waits, and that
-	// kill is synchronous; with teardown-initiated deregistration the killed
-	// session is invisible by the time Kill returns, so a pending bind-phase
-	// wait can never be handed the dead bridge (whose OpenSession fails with
-	// "grpc: the client connection is closing" as a hard step failure). The
-	// teardown goroutine below re-checks idempotently for bridge cancels that
-	// bypass Kill (a dropped phone-home conn); those remain asynchronous.
+	// moment its bridge starts tearing down. A teardown (Kill on this handle
+	// or a dropped phone-home conn) is invisible no later than the teardown
+	// call returns, so a pending verify/bind-phase wait can never be handed
+	// a dead bridge by its key; the goroutine below re-checks idempotently
+	// for bridge cancels that bypass Kill. Combined with the KB-232
+	// no-verify-kill treatment of phone-home bridge handles
+	// (PhoneHomeBridgeHandle), the established bridge is handed to the
+	// engine's verify and then REUSED by the bind phase without any
+	// re-dial cycle, and live-session re-dials are refused at Accept.
 	var handle adapterhost.Handle
 	removeSession := func() {
 		s.mu.Lock()
@@ -1394,6 +1428,9 @@ func (s *Shim) buildAndStoreHandle(
 	var old *session
 	if existing, ok := s.sessions[key]; ok {
 		old = existing
+	}
+	if old != nil && old.retired {
+		slog.Info("remote shim displaced retired session bridge", "adapter", adapterName, "scope", scope)
 	}
 
 	sess := &session{
@@ -1463,9 +1500,16 @@ func (s *Shim) WaitForHandle(ctx context.Context, adapterType, scope string) (ad
 func (s *Shim) WaitForFreshHandle(ctx context.Context, adapterType, scope string, stale adapterhost.Handle) (adapterhost.Handle, error) {
 	key := s.sessionKey(adapterType, scope)
 	s.mu.Lock()
-	if sess, ok := s.sessions[key]; ok && sess.handle != stale {
-		s.mu.Unlock()
-		return sess.handle, nil
+	if sess, ok := s.sessions[key]; ok {
+		if sess.handle != stale {
+			s.mu.Unlock()
+			return sess.handle, nil
+		}
+		// The engine re-waits on a CRASHED session whose bridge teardown is
+		// still in flight: arm displacement so the respawned pod's dial can
+		// replace the stored bridge instead of the KB-232 live-bridge
+		// refusal bouncing the pod until the teardown completes.
+		sess.retired = true
 	}
 	ch := make(chan waitResult, 1)
 	s.waiters[key] = append(s.waiters[key], ch)

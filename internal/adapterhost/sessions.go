@@ -352,6 +352,16 @@ type LifecycleSink interface {
 	OnAdapterLifecycle(runID, adapter, status, detail string)
 }
 
+// PhoneHomeBridgeHandle marks a Handle whose transport IS the adapter
+// session's live phone-home bridge (remote environments, WS20). Killing it
+// during phase-1 handshake verification would sever the session the adapter
+// established with its accepted dial, so verifyAdapterInfo must leave it
+// running; the shim owns the bridge lifecycle, and a stale pod's displacement
+// is armed through RemoteShim.WaitForFreshHandle (KB-232).
+type PhoneHomeBridgeHandle interface {
+	IsPhoneHomeBridge()
+}
+
 // SetGraph provides the compiled workflow graph so the session manager
 // can look up per-adapter environment policies (e.g. sandbox) at open time.
 func (m *SessionManager) SetGraph(g *workflow.FSMGraph) {
@@ -1674,9 +1684,10 @@ func (m *SessionManager) OpenWithOriginRefs(ctx context.Context, name, adapterNa
 // config against the adapter's manifest schema, and ensures required secrets
 // are present. Throwaway verification handles are killed when the call
 // returns; a peer-supervised handle (SupervisedHandle) wraps the peer's one
-// live adapter child, so it is left running and the peer keeps owning its
-// supervision + crash policy. Verification runs eagerly at scope start so
-// broken adapters fail before any step executes.
+// live adapter child, and a phone-home bridge handle (PhoneHomeBridgeHandle)
+// transports the adapter session's live remote bridge, so both are left
+// running and their owners keep their lifecycle. Verification runs eagerly
+// at scope start so broken adapters fail before any step executes.
 //
 // If a verified or bound record already exists for name (e.g. a parent-scope
 // adapter re-declared in a subworkflow), Verify returns ErrSessionAlreadyOpen.
@@ -1772,8 +1783,17 @@ func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterNam
 		// (killRequested turns the next genuine crash into a graceful exit).
 		// The peer owns its child's lifecycle (supervision + on_crash
 		// policy), so phase-1 handshake verification leaves it running.
+		//
+		// The same protection applies to a phone-home bridge handle
+		// (PhoneHomeBridgeHandle, KB-232): the handle transports the
+		// adapter session's live remote bridge — killing it severs the
+		// session the pod established on its (single) accepted dial, and
+		// the subsequent re-establishment race is exactly the never-
+		// established per-scope session KB-232 forbids.
 		if _, supervised := plug.(SupervisedHandle); !supervised {
-			plug.Kill()
+			if _, bridge := plug.(PhoneHomeBridgeHandle); !bridge {
+				plug.Kill()
+			}
 		}
 	}()
 
