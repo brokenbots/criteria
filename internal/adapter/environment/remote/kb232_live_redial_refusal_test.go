@@ -14,6 +14,7 @@ package remote
 
 import (
 	"context"
+	"errors"
 	"io"
 	"testing"
 	"time"
@@ -25,15 +26,16 @@ import (
 // closes the connection after the handshake frame; an accepted dial keeps
 // the connection open (the bridge is pending the engine's UDS traffic), so
 // "not closed within the window" is the acceptance evidence.
-func kb232DialRefused(t *testing.T, shim *Shim, hs *handshakeMessage, window time.Duration) bool {
+func kb232DialRefused(t *testing.T, shim *Shim, hs *handshakeMessage) bool {
 	t.Helper()
+	const window = 2 * time.Second
 	conn := dialRawHandshake(t, shim.listener.Addr().String(), hs)
 	defer conn.Close()
 	if err := conn.SetReadDeadline(time.Now().Add(window)); err != nil {
 		t.Fatalf("set read deadline: %v", err)
 	}
 	buf := make([]byte, 256)
-	if _, readErr := conn.Read(buf); readErr == io.EOF {
+	if _, readErr := conn.Read(buf); errors.Is(readErr, io.EOF) {
 		return true
 	}
 	return false
@@ -72,8 +74,9 @@ func newKB232TestShim(t *testing.T) (shim *Shim, hs *handshakeMessage, key strin
 	const scope = "root/scope-1"
 	const token = "scope-1-token"
 	shim.RegisterScope(scope, token)
+	key = shim.sessionKey("noop", scope)
 	hs = &handshakeMessage{Name: "noop", Version: "1.0.0", Digest: "sha256:abcd1234", Scope: scope, Token: token}
-	return shim, hs, shim.sessionKey("noop", scope)
+	return shim, hs, key
 }
 
 func TestShim_RefusesRedialOfLiveSessionBridge(t *testing.T) {
@@ -98,7 +101,7 @@ func TestShim_RefusesRedialOfLiveSessionBridge(t *testing.T) {
 	// A re-dial while the bridge is live must be refused: the pod-side
 	// runner reconnects with backoff, so a dial storm must not displace the
 	// session the engine's verify/bind handshakes and running steps use.
-	if !kb232DialRefused(t, shim, hs, 2*time.Second) {
+	if !kb232DialRefused(t, shim, hs) {
 		t.Fatal("re-dial of the live session was accepted; want refusal (KB-232)")
 	}
 
@@ -220,7 +223,7 @@ func TestShim_FreshHandleWaiterGetsCurrentHandleAndDoesNotArm(t *testing.T) {
 		t.Fatal("stale-less wait armed displaced-on-next-dial; only the crash-respawn re-wait may")
 	}
 
-	if !kb232DialRefused(t, shim, hs, 2*time.Second) {
+	if !kb232DialRefused(t, shim, hs) {
 		t.Fatal("re-dial was accepted although no respawn re-wait armed displacement")
 	}
 
@@ -257,7 +260,7 @@ func TestShim_ReserveScopeSessionRefusesSiblingsUntilReleased(t *testing.T) {
 
 	// A sibling dial while the flight is establishing must be refused. The
 	// refusal is a close-without-teardown: no bridge, no kill, no stall.
-	if !kb232DialRefused(t, shim, hs, 2*time.Second) {
+	if !kb232DialRefused(t, shim, hs) {
 		t.Fatal("sibling dial was accepted while a placeholder reservation held the scope")
 	}
 
@@ -357,7 +360,7 @@ func TestShim_ConcurrentSameScopeDialsEstablishExactlyOneSession(t *testing.T) {
 	// The losing dial must be refused once the winner established: a
 	// follow-up re-dial (the pods' retry-with-backoff shape) must not
 	// displace the session that resolved, and the winner must keep serving.
-	if !kb232DialRefused(t, shim, hs, 2*time.Second) {
+	if !kb232DialRefused(t, shim, hs) {
 		t.Fatal("follow-up re-dial after the storm was accepted; want refusal")
 	}
 	if again, _ := kb232SessionEntry(shim, key); again.handle != sess.handle {
