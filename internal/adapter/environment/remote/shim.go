@@ -335,6 +335,11 @@ type session struct {
 	// with a fresh-handle resolve (crash respawn): only then may a new dial
 	// displace the stored bridge (KB-232).
 	retired bool
+	// establishing marks a placeholder reservation (KB-232): one accepted
+	// dial flight is mid-bridge-setup and owns this map slot. No bridge
+	// exists yet (handle nil); sibling dials of the scope are refused at
+	// Accept instead of racing a second plugin client into the store.
+	establishing bool
 }
 
 type waitResult struct {
@@ -797,8 +802,21 @@ func (s *Shim) Accept(ctx context.Context, conn net.Conn) error {
 		return err
 	}
 
+	// KB-232: claim the map slot for this per-scope dial before any bridge
+	// resource is built. A sibling dial of the same scope that races past
+	// the established-bridge refusal (no entry existed yet) then loses at
+	// Accept against a placeholder instead of racing two plugin clients
+	// into the store — the loser there would need a full bridge+plugin
+	// teardown, which is exactly the storm cost this design removes.
+	ph, err := s.reserveScopeSession(hs.Name, hs.Scope)
+	if err != nil {
+		_ = conn.Close()
+		return err
+	}
+
 	socketPath, lis, err := s.setupUDS(conn)
 	if err != nil {
+		s.releaseScopeSession(hs.Name, hs.Scope, ph)
 		return err
 	}
 
@@ -806,10 +824,15 @@ func (s *Shim) Accept(ctx context.Context, conn net.Conn) error {
 	if err != nil {
 		_ = lis.Close()
 		_ = os.RemoveAll(filepath.Dir(socketPath))
+		s.releaseScopeSession(hs.Name, hs.Scope, ph)
 		return err
 	}
 
-	return s.buildAndStoreHandle(ctx, hs.Name, hs.Scope, conn, res.udsConn, lis, socketPath, res.client, res.pluginClient, res.bridgeCancel, res.bridgeCtx, res.bridgeWG)
+	if err := s.buildAndStoreHandle(ctx, hs.Name, hs.Scope, conn, res.udsConn, lis, socketPath, res.client, res.pluginClient, res.bridgeCancel, res.bridgeCtx, res.bridgeWG); err != nil {
+		s.releaseScopeSession(hs.Name, hs.Scope, ph)
+		return err
+	}
+	return nil
 }
 
 // acceptPeerConn hands an authenticated peer-role connection to the
@@ -964,20 +987,81 @@ func (s *Shim) verifyAdapterIdentity(conn net.Conn, hs *handshakeMessage) error 
 }
 
 // refuseEstablishedScopeSession closes a re-dial that arrives while the
-// scope's session bridge is already live. This is not an identity failure and
-// is deliberately not attributed to the verify-failure bookkeeping (KB-70):
-// the pod is behaving correctly and will keep retrying with backoff.
+// scope's session bridge is already live or being established. This is not
+// an identity failure and is deliberately not attributed to the
+// verify-failure bookkeeping (KB-70): the pod is behaving correctly and will
+// keep retrying with backoff.
+//
+// Only per-scope sessions are protected. Legacy (scope-less) global sessions
+// keep their established replace+kill semantics: the newest dial of an
+// adapter type takes over the session and the stale handle is killed.
 func (s *Shim) refuseEstablishedScopeSession(conn net.Conn, hs *handshakeMessage) error {
-	s.mu.Lock()
-	sess, ok := s.sessions[s.sessionKey(hs.Name, hs.Scope)]
-	retired := ok && sess.retired
-	s.mu.Unlock()
-	if !ok || retired {
+	if hs.Scope == "" {
 		return nil
 	}
-	_ = conn.Close()
-	slog.Info("remote shim refused re-dial of live session bridge", "adapter", hs.Name, "scope", hs.Scope)
-	return fmt.Errorf("scope %q session bridge already established", hs.Scope)
+	s.mu.Lock()
+	sess, ok := s.sessions[s.sessionKey(hs.Name, hs.Scope)]
+	if ok && !sess.retired {
+		if sess.establishing {
+			// A sibling dial flight reserved the scope mid-setup and owns
+			// the slot; refuse instead of racing a second bridge in
+			// (KB-232 placeholder reservation).
+			s.mu.Unlock()
+			_ = conn.Close()
+			slog.Info("remote shim refused re-dial while session establishing", "adapter", hs.Name, "scope", hs.Scope)
+			return fmt.Errorf("scope %q session is being established: dial refused", hs.Scope)
+		}
+		if sess.handle != nil {
+			// Established live bridge.
+			s.mu.Unlock()
+			_ = conn.Close()
+			slog.Info("remote shim refused re-dial of live session bridge", "adapter", hs.Name, "scope", hs.Scope)
+			return fmt.Errorf("scope %q session bridge already established", hs.Scope)
+		}
+	}
+	s.mu.Unlock()
+	return nil
+}
+
+// reserveScopeSession atomically claims the session-map slot for an
+// in-flight per-scope dial with a placeholder (KB-232). Concurrent same-scope
+// dials then lose at Accept (a close-without-teardown refusal) instead of
+// racing two plugin clients into the store, whose displaced loser would need
+// a full bridge teardown — a go-plugin Kill on an externally managed
+// adapter blocks on its graceful-exit wait, stalling the accept goroutine.
+// It returns the placeholder so the owning flight can release it if the
+// bridge setup fails. Legacy scope-less dials never reserve (the caller's
+// refuseEstablishedScopeSession no-ops for them too).
+func (s *Shim) reserveScopeSession(adapterType, scope string) (*session, error) {
+	if !s.perScopeSessions || scope == "" {
+		return nil, nil
+	}
+	key := s.sessionKey(adapterType, scope)
+	s.mu.Lock()
+	if sess, ok := s.sessions[key]; ok && !sess.retired {
+		// Raced past the Accept-time refusal check: still just refuse.
+		s.mu.Unlock()
+		return nil, fmt.Errorf("scope %q session already claimed: dial refused", scope)
+	}
+	ph := &session{establishing: true}
+	s.sessions[key] = ph
+	s.mu.Unlock()
+	return ph, nil
+}
+
+// releaseScopeSession drops the flight's placeholder reservation when the
+// bridge setup failed, unblocking later dials of the scope. Never touches a
+// slot another flight took over (a retired-displacement store).
+func (s *Shim) releaseScopeSession(adapterType, scope string, ph *session) {
+	if ph == nil || !s.perScopeSessions || scope == "" {
+		return
+	}
+	key := s.sessionKey(adapterType, scope)
+	s.mu.Lock()
+	if cur, ok := s.sessions[key]; ok && cur == ph {
+		delete(s.sessions, key)
+	}
+	s.mu.Unlock()
 }
 
 // tryScopeRecovery consults the installed registrar for a rejected
@@ -1429,8 +1513,21 @@ func (s *Shim) buildAndStoreHandle(
 	if existing, ok := s.sessions[key]; ok {
 		old = existing
 	}
-	if old != nil && old.retired {
-		slog.Info("remote shim displaced retired session bridge", "adapter", adapterName, "scope", scope)
+
+	// KB-232: a same-scope dial that raced the established-bridge refusal
+	// (no entry existed at accept time, so both dials passed the check) must
+	// not displace the established bridge the engine's verify/bind
+	// handshakes and running steps use. First dial wins: the arriving
+	// bridge is torn down without touching the stored entry, and the
+	// dialing runner retries with backoff like any other refused re-dial.
+	// A placeholder reservation never displaces: it is this flight's own
+	// slot from reserveScopeSession, being replaced by the real session.
+	if old != nil && !old.establishing && !old.retired && scope != "" {
+		s.mu.Unlock()
+		handle.Kill()
+		slog.Info("remote shim refused concurrent takeover of live session bridge",
+			"adapter", adapterName, "scope", scope)
+		return fmt.Errorf("scope %q session bridge already established", scope)
 	}
 
 	sess := &session{
@@ -1450,6 +1547,9 @@ func (s *Shim) buildAndStoreHandle(
 	s.mu.Unlock()
 
 	if old != nil {
+		if old.retired {
+			slog.Info("remote shim displaced retired session bridge", "adapter", adapterName, "scope", scope)
+		}
 		if old.cancel != nil {
 			old.cancel()
 		}
@@ -1457,7 +1557,9 @@ func (s *Shim) buildAndStoreHandle(
 			_ = old.handle.CloseSession(ctx, "")
 			old.handle.Kill()
 		}
-		_ = os.RemoveAll(filepath.Dir(old.socketPath))
+		if old.socketPath != "" {
+			_ = os.RemoveAll(filepath.Dir(old.socketPath))
+		}
 	}
 
 	go func() {
@@ -1500,7 +1602,7 @@ func (s *Shim) WaitForHandle(ctx context.Context, adapterType, scope string) (ad
 func (s *Shim) WaitForFreshHandle(ctx context.Context, adapterType, scope string, stale adapterhost.Handle) (adapterhost.Handle, error) {
 	key := s.sessionKey(adapterType, scope)
 	s.mu.Lock()
-	if sess, ok := s.sessions[key]; ok {
+	if sess, ok := s.sessions[key]; ok && sess.handle != nil {
 		if sess.handle != stale {
 			s.mu.Unlock()
 			return sess.handle, nil
@@ -1508,7 +1610,9 @@ func (s *Shim) WaitForFreshHandle(ctx context.Context, adapterType, scope string
 		// The engine re-waits on a CRASHED session whose bridge teardown is
 		// still in flight: arm displacement so the respawned pod's dial can
 		// replace the stored bridge instead of the KB-232 live-bridge
-		// refusal bouncing the pod until the teardown completes.
+		// refusal bouncing the pod until the teardown completes. A
+		// placeholder reservation (sess.handle nil) is skipped rather than
+		// armed and is never returned to a caller.
 		sess.retired = true
 	}
 	ch := make(chan waitResult, 1)
@@ -1708,7 +1812,7 @@ func waitPollDuration(poll time.Duration, started bool, handshakeDeadline, sched
 func (s *Shim) registerFreshWaiter(key string, stale adapterhost.Handle) (adapterhost.Handle, chan waitResult, time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if sess, ok := s.sessions[key]; ok && sess.handle != stale {
+	if sess, ok := s.sessions[key]; ok && sess.handle != nil && sess.handle != stale {
 		return sess.handle, nil, 0
 	}
 	ch := make(chan waitResult, 1)

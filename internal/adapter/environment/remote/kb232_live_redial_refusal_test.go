@@ -48,23 +48,49 @@ func kb232SessionEntry(shim *Shim, key string) (*session, bool) {
 	return sess, ok
 }
 
+// kb232Scope is the single scope newKB232TestShim registers.
+const kb232Scope = "root/scope-1"
+
+// newKB232TestShim starts a per-scope shim with one registered scope and
+// returns the scope's handshake. The refusal/displacement protocol under
+// test only applies to per-scope sessions (legacy replace+kill semantics
+// stay in place for scope-less dials).
+func newKB232TestShim(t *testing.T) (shim *Shim, hs *handshakeMessage, key string) {
+	t.Helper()
+	verifier := &fixedDigestVerifier{allowed: map[string]string{"noop": "sha256:abcd1234"}}
+	shim, err := NewShim(&Config{ListenAddress: "127.0.0.1:0"}, verifier)
+	if err != nil {
+		t.Fatalf("NewShim: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+	if err := shim.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = shim.Stop(context.Background()) })
+	shim.SetPerScopeSessions(true)
+	const scope = "root/scope-1"
+	const token = "scope-1-token"
+	shim.RegisterScope(scope, token)
+	hs = &handshakeMessage{Name: "noop", Version: "1.0.0", Digest: "sha256:abcd1234", Scope: scope, Token: token}
+	return shim, hs, shim.sessionKey("noop", scope)
+}
+
 func TestShim_RefusesRedialOfLiveSessionBridge(t *testing.T) {
-	shim, _ := newKB153TestShim(t, 4*time.Second)
+	shim, hs, key := newKB232TestShim(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	hs := kb153Handshake()
 
 	if err := dialFakeAdapter(shim.listener.Addr().String(), hs, nil); err != nil {
 		t.Fatalf("first dial: %v", err)
 	}
-	h1, err := shim.WaitForHandle(ctx, "noop", "")
+	h1, err := shim.WaitForHandle(ctx, "noop", kb232Scope)
 	if err != nil {
 		t.Fatalf("WaitForHandle: %v", err)
 	}
 	if _, err := h1.Info(ctx); err != nil {
 		t.Fatalf("first bridge not live after its dial: %v", err)
 	}
-	key := shim.sessionKey("noop", "")
 	if first, ok := kb232SessionEntry(shim, key); !ok || first.handle != h1 {
 		t.Fatal("established session missing from the shim registry after the first dial")
 	}
@@ -87,19 +113,17 @@ func TestShim_RefusesRedialOfLiveSessionBridge(t *testing.T) {
 }
 
 func TestShim_WaitForFreshHandleArmsRetiredAndDisplacesOnNextDial(t *testing.T) {
-	shim, _ := newKB153TestShim(t, 4*time.Second)
+	shim, hs, key := newKB232TestShim(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	hs := kb153Handshake()
 
 	if err := dialFakeAdapter(shim.listener.Addr().String(), hs, nil); err != nil {
 		t.Fatalf("first dial: %v", err)
 	}
-	h1, err := shim.WaitForHandle(ctx, "noop", "")
+	h1, err := shim.WaitForHandle(ctx, "noop", kb232Scope)
 	if err != nil {
 		t.Fatalf("WaitForHandle: %v", err)
 	}
-	key := shim.sessionKey("noop", "")
 
 	// Crash respawn: the engine re-waits with the crashed handle in hand.
 	fresh := make(chan adapterhost.Handle, 1)
@@ -107,7 +131,7 @@ func TestShim_WaitForFreshHandleArmsRetiredAndDisplacesOnNextDial(t *testing.T) 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		h2, err := shim.WaitForFreshHandle(ctx, "noop", "", h1)
+		h2, err := shim.WaitForFreshHandle(ctx, "noop", kb232Scope, h1)
 		if err != nil {
 			errCh <- err
 			return
@@ -166,24 +190,22 @@ func TestShim_WaitForFreshHandleArmsRetiredAndDisplacesOnNextDial(t *testing.T) 
 }
 
 func TestShim_FreshHandleWaiterGetsCurrentHandleAndDoesNotArm(t *testing.T) {
-	shim, _ := newKB153TestShim(t, 4*time.Second)
+	shim, hs, key := newKB232TestShim(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	hs := kb153Handshake()
 
 	if err := dialFakeAdapter(shim.listener.Addr().String(), hs, nil); err != nil {
 		t.Fatalf("first dial: %v", err)
 	}
-	h1, err := shim.WaitForHandle(ctx, "noop", "")
+	h1, err := shim.WaitForHandle(ctx, "noop", kb232Scope)
 	if err != nil {
 		t.Fatalf("WaitForHandle: %v", err)
 	}
-	key := shim.sessionKey("noop", "")
 
 	// A resolve that passes no stale handle (plain verify/bind wait) must
 	// receive the current bridge immediately and must NOT arm displacement:
 	// afterwards the live session is still defended by the refusal.
-	h2, err := shim.WaitForFreshHandle(ctx, "noop", "", nil)
+	h2, err := shim.WaitForFreshHandle(ctx, "noop", kb232Scope, nil)
 	if err != nil {
 		t.Fatalf("WaitForFreshHandle(nil): %v", err)
 	}
@@ -203,11 +225,145 @@ func TestShim_FreshHandleWaiterGetsCurrentHandleAndDoesNotArm(t *testing.T) {
 	}
 
 	// The bind phase still resolves the surviving bridge.
-	h3, err := shim.WaitForFreshHandle(ctx, "noop", "", nil)
+	h3, err := shim.WaitForFreshHandle(ctx, "noop", kb232Scope, nil)
 	if err != nil {
 		t.Fatalf("WaitForFreshHandle after refusal: %v", err)
 	}
 	if h3 != h1 {
 		t.Fatal("refusal removed the live session the bind phase must still resolve")
+	}
+}
+
+// TestShim_ReserveScopeSessionRefusesSiblingsUntilReleased exercises the
+// placeholder reservation protocol the store-storm fix is built on (KB-232):
+// a dial flight claims the slot before any bridge resource exists; sibling
+// dials are refused with zero teardown while it runs, and a failed flight
+// releases the slot so later dials converge instead of wedging the scope.
+func TestShim_ReserveScopeSessionRefusesSiblingsUntilReleased(t *testing.T) {
+	shim, hs, key := newKB232TestShim(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	ph, err := shim.reserveScopeSession("noop", kb232Scope)
+	if err != nil {
+		t.Fatalf("reserveScopeSession: %v", err)
+	}
+	if ph == nil {
+		t.Fatal("reserveScopeSession returned no placeholder for a per-scope dial")
+	}
+	if _, ok := kb232SessionEntry(shim, key); !ok {
+		t.Fatal("placeholder reservation missing from the session registry")
+	}
+
+	// A sibling dial while the flight is establishing must be refused. The
+	// refusal is a close-without-teardown: no bridge, no kill, no stall.
+	if !kb232DialRefused(t, shim, hs, 2*time.Second) {
+		t.Fatal("sibling dial was accepted while a placeholder reservation held the scope")
+	}
+
+	// A concurrent second reserve must not steal the slot.
+	if ph2, rerr := shim.reserveScopeSession("noop", kb232Scope); rerr == nil {
+		t.Fatal("second reserve claimed the scope while a flight already held it")
+	} else if ph2 != nil {
+		t.Fatal("second reserve returned a placeholder")
+	}
+
+	// Waiters registered while a placeholder holds the slot must fall
+	// through to the waiter path (never return a nil placeholder handle or
+	// arm the placeholder for displacement) and resolve when the flight
+	// stores the real session.
+	resolve := make(chan adapterhost.Handle, 1)
+	go func() {
+		h, werr := shim.WaitForFreshHandle(ctx, "noop", kb232Scope, nil)
+		if werr == nil {
+			resolve <- h
+		}
+	}()
+	time.Sleep(50 * time.Millisecond)
+	select {
+	case h := <-resolve:
+		if h == nil {
+			t.Fatal("wait resolved a nil placeholder handle")
+		}
+		t.Fatal("WaitForFreshHandle resolved during establishing without a real session")
+	default:
+	}
+
+	// The flight's bridge setup fails: release must unblock later dials.
+	shim.releaseScopeSession("noop", kb232Scope, ph)
+	if _, ok := kb232SessionEntry(shim, key); ok {
+		t.Fatal("released placeholder still holds the session slot")
+	}
+	if err := dialFakeAdapter(shim.listener.Addr().String(), hs, nil); err != nil {
+		t.Fatalf("post-release dial: %v", err)
+	}
+	select {
+	case h := <-resolve:
+		if _, err := h.Info(ctx); err != nil {
+			t.Fatalf("post-release bridge not live: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("waiter registered during establishing did not resolve after the session stored")
+	}
+	sess, ok := kb232SessionEntry(shim, key)
+	if !ok || sess.handle == nil || sess.establishing {
+		t.Fatal("stored session is not a real established entry after the placeholder release")
+	}
+}
+
+// TestShim_ConcurrentSameScopeDialsEstablishExactlyOneSession is the storm
+// regression: two same-scope dials racing into the shim must converge to
+// exactly ONE established session, and the losing dial must be refused
+// instead of being accepted and used to kill the winner's bridge (the
+// original KB-232 failure mode) or requiring a loser teardown at the store.
+func TestShim_ConcurrentSameScopeDialsEstablishExactlyOneSession(t *testing.T) {
+	shim, hs, key := newKB232TestShim(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Barrier so both dials land in the same accept window.
+	start := make(chan struct{})
+	for i := 0; i < 2; i++ {
+		go func() {
+			<-start
+			if err := dialFakeAdapter(shim.listener.Addr().String(), hs, nil); err != nil {
+				t.Errorf("storm dial: %v", err)
+			}
+		}()
+	}
+	close(start)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		sess, ok := kb232SessionEntry(shim, key)
+		if ok && sess.handle != nil && !sess.establishing {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no same-scope session established from the concurrent dials")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Exactly one real session must exist and it must serve RPCs.
+	sess, ok := kb232SessionEntry(shim, key)
+	if !ok || sess.handle == nil || sess.establishing {
+		t.Fatal("storm winner is not a real established session")
+	}
+	if _, err := sess.handle.Info(ctx); err != nil {
+		t.Fatalf("winning bridge not live after the storm: %v", err)
+	}
+
+	// The losing dial must be refused once the winner established: a
+	// follow-up re-dial (the pods' retry-with-backoff shape) must not
+	// displace the session that resolved, and the winner must keep serving.
+	if !kb232DialRefused(t, shim, hs, 2*time.Second) {
+		t.Fatal("follow-up re-dial after the storm was accepted; want refusal")
+	}
+	if again, _ := kb232SessionEntry(shim, key); again.handle != sess.handle {
+		t.Fatal("follow-up re-dial displaced the winning bridge")
+	}
+	if _, err := sess.handle.Info(ctx); err != nil {
+		t.Fatalf("winning bridge stopped serving after the follow-up refusal: %v", err)
 	}
 }
