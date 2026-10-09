@@ -332,9 +332,9 @@ func TestReplaceEnvValue(t *testing.T) {
 func fakeOperatorHome(t *testing.T) string {
 	t.Helper()
 	source := t.TempDir()
-	write := func(rel, content string, mode os.FileMode) {
+	write := func(rel, content string) {
 		t.Helper()
-		if err := os.WriteFile(filepath.Join(source, rel), []byte(content), mode); err != nil {
+		if err := os.WriteFile(filepath.Join(source, rel), []byte(content), 0o600); err != nil {
 			t.Fatalf("write %s: %v", rel, err)
 		}
 	}
@@ -344,15 +344,15 @@ func fakeOperatorHome(t *testing.T) string {
 			t.Fatalf("mkdir %s: %v", rel, err)
 		}
 	}
-	write(".gitconfig", "[user]\n\tname = Operator\n", 0o600)
-	write(".git-credentials", "https://token@example.com\n", 0o600)
-	write(".netrc", "machine example.com\n", 0o600)
+	write(".gitconfig", "[user]\n\tname = Operator\n")
+	write(".git-credentials", "https://token@example.com\n")
+	write(".netrc", "machine example.com\n")
 	mkdir(".ssh", 0o700)
-	write(".ssh/id_ed25519", "KEY", 0o600)
+	write(".ssh/id_ed25519", "KEY")
 	mkdir(".config/git", 0o700)
-	write(".config/git/config", "[alias]\n", 0o600)
+	write(".config/git/config", "[alias]\n")
 	mkdir(".config/gh", 0o700)
-	write(".config/gh/hosts.yml", "github.com:\n", 0o600)
+	write(".config/gh/hosts.yml", "github.com:\n")
 	return source
 }
 

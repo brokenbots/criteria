@@ -254,10 +254,6 @@ func linkAmbientHomeEntry(home, source, rel string) {
 	}
 }
 
-// The env-based credential pointers below complement the symlinks: git and
-// gh read their configuration from dedicated variables, so pointing them at
-// the operator home keeps those tools working under a rewritten HOME.
-
 // ambientGitGlobalConfigPath returns the path for GIT_CONFIG_GLOBAL when the
 // operator home carries a global git config, or "" when it does not.
 func ambientGitGlobalConfigPath(source string) string {
@@ -268,9 +264,9 @@ func ambientGitGlobalConfigPath(source string) string {
 	return path
 }
 
-// ambientGhConfigDir returns the direction for GH_CONFIG_DIR when the
-// operator home carries a gh config directory (XDG_CONFIG_HOME-aware), or ""
-// when it does not.
+// ambientGhConfigDir returns the path for GH_CONFIG_DIR when the operator
+// home carries a gh config directory (XDG_CONFIG_HOME-aware), or "" when it
+// does not.
 func ambientGhConfigDir(source string) string {
 	base := os.Getenv("XDG_CONFIG_HOME")
 	if base == "" {
