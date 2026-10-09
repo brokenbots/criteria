@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/brokenbots/criteria/internal/adapter/environment/remote"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 )
 
@@ -85,4 +86,56 @@ func survivingScopeToken(dataDir, scopeName, instanceID, adapterType, presentedT
 		return cand.token, nil
 	}
 	return "", fmt.Errorf("no surviving token file for instance %q", instanceID)
+}
+
+// scopeSessionEventBridge implements remote.ScopeSessionSink (KB-232): it
+// turns the shim's half-window session-wait signals into named
+// scope_session_pending adapter lifecycle events on the run's event sink, so
+// a step waiting on a slow adapter pod is observable instead of burning the
+// remaining deadline silently.
+//
+// The sink and RunID are read at emit time, not at construction: the shim
+// starts before the run wires the redacting sink, and it can outlive one
+// Run invocation in the same process.
+type scopeSessionEventBridge struct {
+	engine          *Engine
+	environmentName string
+}
+
+// OnScopeSessionPending publishes one scope_session_pending event for the
+// scope the wait is pending on. The payload carries the shim's diagnostics
+// counters (identity frames observed, rejections attributed) and the elapsed
+// wait — no secrets are involved.
+func (b *scopeSessionEventBridge) OnScopeSessionPending(p *remote.ScopeSessionPending) {
+	sink := b.engine.runSink
+	if sink == nil {
+		sink = b.engine.sink
+	}
+	if sink == nil {
+		return
+	}
+	scopeName := ""
+	instanceID := ""
+	if p != nil {
+		if name, inst, ok := splitScopeKey(p.Scope); ok {
+			scopeName, instanceID = name, inst
+		} else {
+			// Root scope ("/<instance>") and other non-scopeName/instanceID
+			// keys keep the root-scope event shape; the trimmed key remains
+			// available for diagnostics.
+			scopeName = ""
+			instanceID = strings.TrimPrefix(p.Scope, "/")
+		}
+		sink.OnAdapterLifecycleEvent(&AdapterLifecycleEvent{
+			Status:             ScopeSessionPendingStatus,
+			RunID:              b.engine.runID,
+			AdapterType:        p.AdapterType,
+			ScopeName:          scopeName,
+			ScopeInstanceID:    instanceID,
+			EnvironmentName:    b.environmentName,
+			SessionWaitSeconds: int(p.Waited.Seconds()),
+			SessionDials:       p.Dials,
+			SessionRejections:  p.Rejections,
+		})
+	}
 }

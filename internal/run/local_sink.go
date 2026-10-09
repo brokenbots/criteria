@@ -172,23 +172,31 @@ func (s *LocalSink) OnAdapterLifecycle(stepName, adapterName, status, detail str
 // token rides the wire (accept_token) alongside the transition-window
 // token_ref file path; released events carry no token.
 func (s *LocalSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent) {
+	data := map[string]any{
+		"run_id":              event.RunID,
+		"scope_name":          event.ScopeName,
+		"scope_instance_id":   event.ScopeInstanceID,
+		"adapter":             event.AdapterName,
+		"adapter_type":        event.AdapterType,
+		"environment_type":    event.EnvironmentType,
+		"environment_name":    event.EnvironmentName,
+		"digest":              event.Digest,
+		"image_reference":     event.ImageReference,
+		"shim_listen_address": event.ShimListenAddress,
+		"token_ref":           event.TokenRef,
+		"accept_token":        event.Token,
+	}
+	// KB-232: carry the session-wait diagnostics on the named pending event
+	// so operators see dialed/rejected/waited without joining separate logs.
+	if event.Status == engine.ScopeSessionPendingStatus {
+		data["session_dials"] = event.SessionDials
+		data["session_rejections"] = event.SessionRejections
+		data["session_wait_seconds"] = event.SessionWaitSeconds
+	}
 	s.emit("AdapterEvent", &pb.AdapterEvent{
 		Adapter: event.AdapterName,
 		Kind:    "adapter.lifecycle." + event.Status,
-		Data: encodeAdapterData(map[string]any{
-			"run_id":              event.RunID,
-			"scope_name":          event.ScopeName,
-			"scope_instance_id":   event.ScopeInstanceID,
-			"adapter":             event.AdapterName,
-			"adapter_type":        event.AdapterType,
-			"environment_type":    event.EnvironmentType,
-			"environment_name":    event.EnvironmentName,
-			"digest":              event.Digest,
-			"image_reference":     event.ImageReference,
-			"shim_listen_address": event.ShimListenAddress,
-			"token_ref":           event.TokenRef,
-			"accept_token":        event.Token,
-		}),
+		Data:    encodeAdapterData(data),
 	})
 }
 

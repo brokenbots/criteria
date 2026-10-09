@@ -38,6 +38,13 @@ import (
 // it must be distinguishable from a restartable run failure (KB-227/CRI-323).
 const AwaitingHumanTerminalState = "awaiting_human"
 
+// ScopeSessionPendingStatus names the adapter lifecycle event emitted (KB-232)
+// when a per-scope adapter session wait crosses half its effective window
+// without a completed handshake, so the wait is observable instead of burning
+// the remaining deadline silently. The shim-side warning carries the same
+// name.
+const ScopeSessionPendingStatus = "scope_session_pending"
+
 // AdapterLifecycleEvent carries the controller-visible state needed to
 // provision or release a remote adapter pod. Raw secrets must never appear in
 // this payload with one deliberate exception (CRI-236): the per-scope accept
@@ -56,7 +63,16 @@ type AdapterLifecycleEvent struct {
 	ShimListenAddress string
 	TokenRef          string // path to the accept-token file; transition-window handoff
 	Token             string // wire-delivered per-scope accept token; empty for released events
-	Status            string // "provision_wanted" or "released"
+	Status            string // "provision_wanted", "released", or "scope_session_pending" (KB-232)
+	// KB-232 session-wait diagnostics, populated only for
+	// ScopeSessionPendingStatus events: the wait that crossed half its
+	// effective window without a completed handshake, the adapter identity
+	// frames observed on the shim for the scope, and the identity rejections
+	// attributed to the scope while a session wait was pending. Additive;
+	// consumers must tolerate other event kinds leaving them zero.
+	SessionWaitSeconds int
+	SessionDials       int
+	SessionRejections  int
 	// Environment identity of the adapter session (CRI-233): the compiled
 	// environment declaration's type + name from the workflow's environment
 	// blocks. Additive fields; consumers must tolerate older events that
@@ -1641,6 +1657,10 @@ func (e *Engine) startRemoteShimForEnv(ctx context.Context, envKey string, env *
 	// on accept-fail rejections. Stale-token dials never reach the registrar.
 	if cfg.PerScopeSessions {
 		shim.SetScopeRegistrar(&dialScopeRegistrar{dataDir: e.dataDir, envKey: envKey, sessions: sessions})
+		// KB-232: session waits that cross half their window without a
+		// completed handshake publish a named scope_session_pending lifecycle
+		// event instead of burning the remaining step deadline silently.
+		shim.SetScopeSessionSink(&scopeSessionEventBridge{engine: e, environmentName: env.Name})
 	}
 	// The peer transport (ADR-0007 Stage A) is served on the same phone-home
 	// listener: role=peer dials branch to the provider after the standard

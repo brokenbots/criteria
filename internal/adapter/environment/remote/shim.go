@@ -318,6 +318,9 @@ type Shim struct {
 	podProbe             PodStateProbe        // optional pod-state seam; nil in a bare shim
 	dialLocal            dialLocalFunc        // reattach dialer; defaults to adapterhost.LocalSocketDialer (see dialLocalAdapter), substituted in tests
 	dialActivity         map[string]time.Time // session key → last time an adapter presented an identity frame (pod-started evidence)
+	dialCount            map[string]int       // session key → count of presented identity frames (KB-232 scope_session_pending diagnostics)
+	rejectCount          map[string]int       // session key → count of attributed identity rejections (KB-232 scope_session_pending diagnostics)
+	pendingSink          ScopeSessionSink     // receives scope_session_pending signals from session waits; nil keeps log-only
 
 	peerAcceptor   PeerAcceptor   // receives authenticated role="peer" dials; nil rejects them
 	scopeRegistrar ScopeRegistrar // consulted for unregistered-scope dials (KB-25); nil keeps reject-only
@@ -333,6 +336,77 @@ type session struct {
 type waitResult struct {
 	handle adapterhost.Handle
 	err    error
+}
+
+// ScopeSessionPending describes a per-scope adapter session wait that crossed
+// half its window without resolving (KB-232): the shim warns about it and
+// hands it to the registered sink so the runner can publish a named
+// scope_session_pending event instead of burning the remaining deadline
+// silently. Window is the wait's effective bound measured at wait start — the
+// caller's context deadline when one is present (a step's session wait),
+// otherwise the applicable KB-70 scheduling budget.
+//
+// Dials and rejections are the shim's per-key diagnostics counters at emit
+// time: identity frames presented for the session key and identity
+// rejections attributed to it (counters persist for the shim's lifetime,
+// like the dial-activity evidence they mirror).
+type ScopeSessionPending struct {
+	AdapterType string
+	Scope       string // full per-scope session key, e.g. "run_handler/<uuid>"
+	Dials       int
+	Rejections  int
+	Waited      time.Duration
+	Window      time.Duration
+}
+
+// ScopeSessionSink receives the shim's scope_session_pending signals (KB-232).
+type ScopeSessionSink interface {
+	OnScopeSessionPending(*ScopeSessionPending)
+}
+
+// SetScopeSessionSink wires the pending-event receiver for this shim. Nil
+// delivery keeps the shim's own structured warning as the only signal (the
+// engine wires a bridge that publishes adapter lifecycle events). The sink is
+// invoked outside the shim's mutex and may re-enter shim accessors.
+func (s *Shim) SetScopeSessionSink(sink ScopeSessionSink) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pendingSink = sink
+}
+
+// sessionDialStats reports the shim's diagnostics counters for key.
+func (s *Shim) sessionDialStats(key string) (dialed, rejected int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.dialCount[key], s.rejectCount[key]
+}
+
+// emitScopeSessionPending logs the half-window signal and delivers it to the
+// registered sink. window is the wait's effective bound and waited the time
+// spent waiting when the signal was crossed.
+func (s *Shim) emitScopeSessionPending(adapterType, scope, key string, window, waited time.Duration) {
+	dialed, rejected := s.sessionDialStats(key)
+	slog.Warn("scope_session_pending",
+		"adapter_type", adapterType,
+		"scope", scope,
+		"dialed", dialed,
+		"rejected", rejected,
+		"waited", waited.String(),
+		"window", window.String())
+	s.mu.Lock()
+	sink := s.pendingSink
+	s.mu.Unlock()
+	if sink == nil {
+		return
+	}
+	sink.OnScopeSessionPending(&ScopeSessionPending{
+		AdapterType: adapterType,
+		Scope:       scope,
+		Dials:       dialed,
+		Rejections:  rejected,
+		Waited:      waited,
+		Window:      window,
+	})
 }
 
 // resolveHandshakeDeadlines defaults the optional TLS and identity handshake
@@ -410,6 +484,8 @@ func NewShim(cfg *Config, verifier DigestVerifier) (*Shim, error) {
 		podStatePollInterval:  defaultPodStatePollInterval,
 		dialLocal:             dialLocalAdapter,
 		dialActivity:          make(map[string]time.Time),
+		dialCount:             make(map[string]int),
+		rejectCount:           make(map[string]int),
 	}, nil
 }
 
@@ -554,7 +630,11 @@ func (s *Shim) noteDialActivity(adapterType, scope string) {
 	if s.dialActivity == nil {
 		s.dialActivity = make(map[string]time.Time)
 	}
+	if s.dialCount == nil {
+		s.dialCount = make(map[string]int)
+	}
 	s.dialActivity[key] = time.Now()
+	s.dialCount[key]++
 }
 
 // dialObserved reports whether any identity frame was ever presented for key.
@@ -910,6 +990,10 @@ func (s *Shim) noteVerifyFailure(hosts []string, scope string, class identityRej
 		if s.verifyFailures == nil {
 			s.verifyFailures = make(map[string]*verifyFailureState)
 		}
+		if s.rejectCount == nil {
+			s.rejectCount = make(map[string]int)
+		}
+		s.rejectCount[key]++
 		s.verifyFailures[key] = &verifyFailureState{lastErr: cause.Error(), class: class}
 	}
 }
@@ -943,11 +1027,19 @@ func (s *Shim) failureAttributionKeys(hosts []string, scope string, class identi
 		}
 	}
 	keys := make([]string, 0, len(hosts)+len(prefixWaiters))
+	seen := make(map[string]bool, len(hosts)+len(prefixWaiters))
 	for _, host := range hosts {
-		keys = append(keys, s.sessionKey(host, scope))
+		key := s.sessionKey(host, scope)
+		if !seen[key] {
+			seen[key] = true
+			keys = append(keys, key)
+		}
 	}
 	for waiterKey := range prefixWaiters {
-		keys = append(keys, waiterKey)
+		if !seen[waiterKey] {
+			seen[waiterKey] = true
+			keys = append(keys, waiterKey)
+		}
 	}
 	return keys
 }
@@ -1451,6 +1543,13 @@ func (s *Shim) handleWaiterWake(adapterType, scope, key string, handshakeBudget,
 // expires (KB-70). A nil channel never resolves: the legacy wait passes nil
 // for its single registry and the peer wait passes both of its registries.
 //
+// KB-232: a wait that crosses half its effective window without resolving
+// emits the scope_session_pending signal once — via slog Warn and the
+// registered ScopeSessionSink — instead of burning the remainder of the
+// window silently. The effective window is the caller's context deadline
+// when one is present (a step's session wait), otherwise the applicable
+// KB-70 scheduling budget.
+//
 // See WaitForFreshHandle for the budget semantics. deregister removes the
 // caller's waiter registrations on every exit path — including success, where
 // removing an already-drained channel is a no-op — so a woken wait never
@@ -1479,7 +1578,28 @@ func (s *Shim) awaitWaiter(ctx context.Context, adapterType, scope, key string, 
 		st.handshakeDeadline = time.Now().Add(handshakeBudget)
 	}
 
-	timer := time.NewTimer(waitPollDuration(poll, st.started, st.handshakeDeadline, st.schedDeadline))
+	// KB-232: derive the wait's effective window for the half-window signal.
+	// A context deadline (the step's session wait) bounds the wait regardless
+	// of the budgets; without one the scheduling budget is the effective
+	// bound (a fresh wait starts without start evidence).
+	window := schedulingBudget
+	if dead, ok := ctx.Deadline(); ok {
+		if rem := time.Until(dead); rem > 0 {
+			window = rem
+		}
+	}
+	waitStart := time.Now()
+	pendingDeadline := waitStart.Add(window / 2)
+	pendingEmitted := false
+	nextWake := func(st *waiterState) time.Duration {
+		d := waitPollDuration(poll, st.started, st.handshakeDeadline, st.schedDeadline)
+		if !pendingEmitted {
+			d = min(d, time.Until(pendingDeadline))
+		}
+		return d
+	}
+
+	timer := time.NewTimer(nextWake(&st))
 	defer timer.Stop()
 	for {
 		select {
@@ -1493,12 +1613,16 @@ func (s *Shim) awaitWaiter(ctx context.Context, adapterType, scope, key string, 
 			deregister()
 			return nil, ctx.Err()
 		case <-timer.C:
+			if !pendingEmitted && !time.Now().Before(pendingDeadline) {
+				pendingEmitted = true
+				s.emitScopeSessionPending(adapterType, scope, key, window, time.Since(waitStart))
+			}
 			done, err := s.handleWaiterWake(adapterType, scope, key, handshakeBudget, schedulingBudget, &st)
 			if done {
 				deregister()
 				return nil, err
 			}
-			timer.Reset(waitPollDuration(poll, st.started, st.handshakeDeadline, st.schedDeadline))
+			timer.Reset(nextWake(&st))
 		}
 	}
 }

@@ -143,6 +143,12 @@ func NewPeerSessionProvider(shim *Shim, perScopeSessions bool) *peerSessionProvi
 	}
 }
 
+// WrappedShim returns the legacy-session shim wrapped by this provider.
+// startRemoteShimForEnv registers only the provider on the session manager,
+// and its callers keep no separate shim reference, so tests that exercise the
+// shim surface end to end reach it through this accessor.
+func (p *peerSessionProvider) WrappedShim() *Shim { return p.shim }
+
 // SetDeclaredAdapters installs the environment's declared-adapter set for
 // the provider (KB-213). A non-empty set turns on two fail-closed host
 // checks:
