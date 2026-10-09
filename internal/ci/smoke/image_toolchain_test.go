@@ -118,8 +118,9 @@ func goBuilderPins(dockerfile string) []goBuilder {
 	digestRe := regexp.MustCompile(`^@sha256:[0-9a-f]{64}$`)
 	re := regexp.MustCompile(`(?m)^FROM golang:(\S+)(?:\s+AS\s+(\S+))?\s*$`)
 
-	var pins []goBuilder
-	for _, m := range re.FindAllStringSubmatch(dockerfile, -1) {
+	matches := re.FindAllStringSubmatch(dockerfile, -1)
+	pins := make([]goBuilder, 0, len(matches))
+	for _, m := range matches {
 		pin := goBuilder{tagFull: m[1], image: "golang:" + m[1], stage: m[2]}
 		if pin.stage == "" {
 			pin.stage = "(unnamed)"
@@ -138,8 +139,8 @@ func goBuilderPins(dockerfile string) []goBuilder {
 }
 
 // effectiveFloor returns the strictest floor and the reason it applies.
-func effectiveFloor(floors []floorSpec) (goVersion, string) {
-	effective, why := goVersion{}, "no floors declared"
+func effectiveFloor(floors []floorSpec) (effective goVersion, why string) {
+	effective, why = goVersion{}, "no floors declared"
 	for _, f := range floors {
 		if f.version.atLeast(effective) {
 			effective, why = f.version, f.reason
