@@ -29,7 +29,7 @@ require (
 	go.lsp.dev/uri v0.3.0
 	go.uber.org/goleak v1.3.0
 	golang.org/x/mod v0.41.0
-	golang.org/x/net v0.58.0
+	golang.org/x/net v0.60.0
 	golang.org/x/sys v0.48.0
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.12
