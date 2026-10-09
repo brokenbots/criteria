@@ -28,7 +28,10 @@ ARG ADAPTER_VERSION=0.0.0
 ARG BASE_IMAGE=alpine:3.20
 ARG COPILOT_VERSION=1.0.82
 
-FROM golang:1.26.6-bookworm AS builder
+# The builder must meet the strictest dependency floor of the modules
+# installed below: criteria-adapter-copilot (installed via `go install`)
+# requires go >= 1.26.9 as of v0.5.16. Keep it exact-pinned.
+FROM golang:1.26.9-bookworm AS builder
 
 ARG ADAPTER_NAME
 ARG ADAPTER_VERSION
