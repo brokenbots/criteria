@@ -1,6 +1,6 @@
 module github.com/brokenbots/criteria/tools
 
-go 1.26.6
+go 1.26.9
 
 // Tool deps: pinned here (no floating @latest) so `go mod tidy` keeps them and
 // the workspace resolves a single version for both CI and local runs.

@@ -31,7 +31,10 @@ ARG CLAUDE_CODE_VERSION=2.1.268
 ARG BUN_IMAGE=oven/bun:1.2
 ARG SDK_REF=main
 
-FROM golang:1.26.6-bookworm AS remote-runner-builder
+# Track the strictest of the repo go.mod floor and the floors of any
+# externally installed adapter modules. Official golang images set
+# GOTOOLCHAIN=local, so a mismatch fails the build outright.
+FROM golang:1.26.9-bookworm AS remote-runner-builder
 
 WORKDIR /src
 
