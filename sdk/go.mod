@@ -1,8 +1,8 @@
 module github.com/brokenbots/criteria/sdk
 
-go 1.26.9
+go 1.27.0
 
 require (
-	connectrpc.com/connect v1.20.0
+	connectrpc.com/connect v1.21.0
 	google.golang.org/protobuf v1.36.12
 )
