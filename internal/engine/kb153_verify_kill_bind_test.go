@@ -1,20 +1,31 @@
-// KB-153 contract test: the engine's first step bind must survive the
-// verify-kill race. The engine's remote-adapter init verifies the adapter
-// through a throwaway handshake handle that is killed synchronously once
-// verification completes; on Gate-3 the bind phase's WaitForHandle raced the
-// shim's asynchronous registry cleanup, resolved the dead bridge, and the
-// step hard-failed with "rpc error: code = Canceled desc = grpc: the client
-// connection is closing" after 1 attempts (the retag-forcing Gate-3 flake).
+// KB-153/KB-232 engine-level contract tests. KB-153's original premise — the
+// engine's verify phase verifying the adapter through a throwaway handshake
+// handle killed synchronously before the bind phase waits — was the remote
+// environment's dial protocol until KB-232: on Gate-3 the bind phase's
+// WaitForHandle raced the shim's asynchronous registry cleanup, resolved the
+// dead bridge, and the step hard-failed with "rpc error: code = Canceled
+// desc = grpc: the client connection is closing" after 1 attempts.
 //
-// This test runs the real chain — real shim, real SessionManager bind path,
-// pod phone-homing with a 20ms re-dial — and binds at the exact CI window:
-// immediately after init (verify kill) returns, with no settle wait. The bind
-// must wait for the adapter pod's reconnect and the step must succeed; the
-// failure signature must never be the torn-down transport error. A genuinely
-// dead adapter fails at the session handshake budget with the CRI-137
-// diagnosis (second test below); the shim level pins the same pair of
-// semantics against the registry itself (see the remote package's KB-153
-// regression tests).
+// KB-232 changed the remote (phone-home) dial protocol: a shim session
+// handle IS the adapter's live phone-home bridge (PhoneHomeBridgeHandle), so
+// the verify phase must NOT kill it — the bridge resolved by verify is
+// reused by the bind phase without any forced re-dial, and the shim refuses
+// (rather than displaces) live-session re-dials. The KB-153 kill-path
+// registry invariant (a torn-down session never serves a fresh wait) remains
+// pinned at the shim level (kb153_verify_kill_registry_test.go) and holds for
+// engine-ordered kills (close/teardown).
+//
+// These tests run the real chain — real shim, real SessionManager bind path,
+// pod phone-homing — in the exact post-init window that used to race:
+//
+//  1. the bind immediately after init must reuse the verify bridge (exactly
+//     one handshake accepted, no forced re-dial, step succeeds), and
+//  2. a genuinely dead adapter (no bridge, no re-dials) must fail the bind
+//     at the session handshake budget with the CRI-137 diagnosis — never the
+//     torn-down transport error.
+//
+// The shim level pins the refusal semantics themselves
+// (kb232_live_redial_refusal_test.go).
 package engine
 
 import (
@@ -34,17 +45,23 @@ import (
 
 type kb153BindChain struct {
 	sessions *adapterhost.SessionManager
+	shim     *remote.Shim
 	pod      *cri276PodServer
 	accepted *atomic.Int64
+	scopeKey string
 }
 
-// runKB153BindChain wires the full remote chain and returns it in the exact
-// state Gate-3 raced: verify completed, the throwaway handshake handle was
-// killed, and init has just returned — no settle wait for the pod's re-dial.
+// runKB153BindChain wires the full remote chain and returns it right at init
+// return — the exact window that used to race the verify-kill against the
+// bind phase's registry wait. With the KB-232 protocol the verify phase
+// resolved the phone-home bridge and left it live, so the returning chain
+// holds one established bridge that the bind phase must reuse as-is.
 // budget > 0 overrides the shim's session-wait budgets (zero selects the
 // defaults); keepRedialing=false stops the pod's phone-home loop right at
-// init return, simulating a genuinely dead adapter: the pod handed out its
-// verify handshake and then vanished.
+// init return — the pod stops serving and closes its connection, so the
+// chain holds a bridge that is about to die with no respawn (the genuinely
+// dead adapter; the test closes it deterministically via the engine's own
+// CloseHandle path).
 func runKB153BindChain(t *testing.T, budget time.Duration, keepRedialing bool) *kb153BindChain {
 	t.Helper()
 	ctx := context.Background()
@@ -140,68 +157,86 @@ func runKB153BindChain(t *testing.T, budget time.Duration, keepRedialing bool) *
 		t.Fatalf("initScopeAdapters: %v", err)
 	}
 	if !keepRedialing {
-		// Genuinely dead adapter: the pod served the verify handshake, the
-		// kill closed its connection, and it never re-dials. Close the dial
-		// loop before the bind window opens so no fresh session can appear.
-		// The loop re-checks stop only after its bookkeeping, which cannot
-		// beat this synchronous close (see podHomeLoop).
+		// Genuinely dead adapter: no bridge survives init. The pod stops
+		// redialing (its loop closes the established connection) and the
+		// test closes the engine-side session deterministically through the
+		// engine's own close path, so the bind below cannot resolve any
+		// bridge and must fail at the handshake budget.
 		stopDialing()
 	}
 
-	// Intentionally NO settle wait for the pod's re-dial: the next step bind
-	// here races the just-killed verify handle's registry cleanup, which is
-	// the Gate-3 window.
-	return &kb153BindChain{sessions: sessions, pod: pod, accepted: accepted}
+	// Intentionally NO settle wait for the bind: the bind phase runs in the
+	// same window as the verify phase that just resolved the phone-home
+	// bridge — the window that the KB-153 kill-path race (and, before that,
+	// the verify kill itself) made flaky.
+	return &kb153BindChain{
+		sessions: sessions,
+		shim:     realShim,
+		pod:      pod,
+		accepted: accepted,
+		scopeKey: first.ScopeName + "/" + first.ScopeInstanceID,
+	}
 }
 
-func TestBindAfterVerifyKill_WaitsForAdapterRedial(t *testing.T) {
+func TestBindAfterInit_ReusesLivePhoneHomeBridge(t *testing.T) {
 	chain := runKB153BindChain(t, 0, true)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	events := cri276AdapterEvents{}
-	step := &workflow.StepNode{Name: "kb153-bind"}
+	step := &workflow.StepNode{Name: "kb232-reuse"}
 
 	res, err := chain.sessions.Execute(ctx, "noop.default", step, events, nil)
 	if err != nil {
 		if strings.Contains(err.Error(), "connection is closing") {
-			t.Fatalf("bind resolved the killed verify handle and failed on the torn-down transport (KB-153 race): %v", err)
+			t.Fatalf("bind resolved a dead bridge and failed on the torn-down transport (KB-153 race): %v", err)
 		}
-		t.Fatalf("first step after verify kill failed: %v", err)
+		t.Fatalf("first step after init failed: %v", err)
 	}
 	if res.Outcome != "success" {
 		t.Fatalf("first step outcome = %q, want success", res.Outcome)
 	}
 
-	// The bind must have waited for the adapter pod's post-kill re-dial and
-	// served the step off the fresh connection. The pod's phone-home loop
-	// counts handshakes asynchronously (its accept poll runs after the
-	// bridge traffic arrives), so settle briefly before asserting the counts.
+	// counts handshakes and its server counts Execute calls asynchronously
+	// (the accept poll runs after the bridge traffic arrives), so settle
+	// briefly before asserting both counters.
 	settleDeadline := time.Now().Add(5 * time.Second)
 	for {
-		if chain.pod.execCalls.Load() >= 1 && chain.accepted.Load() >= 2 {
+		if chain.pod.execCalls.Load() >= 1 && chain.accepted.Load() >= 1 {
 			break
 		}
 		if time.Now().After(settleDeadline) {
-			t.Fatalf("pod served %d Execute calls and counted %d accepted handshakes within 5s of a successful first step; want the verify handshake and the post-kill re-dial (+1 Execute)", chain.pod.execCalls.Load(), chain.accepted.Load())
+			t.Fatalf("pod served %d Execute calls and counted %d accepted handshakes within 5s of a successful first step; want the step to cross the verify bridge", chain.pod.execCalls.Load(), chain.accepted.Load())
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	if got := chain.accepted.Load(); got != 1 {
+		t.Fatalf("pod counted %d accepted handshakes after a step that reused the verify bridge; want exactly 1 (verify dial only — the engine must not kill the phone-home bridge, KB-232)", got)
+	}
 }
 
-// TestBindDeadAdapterAfterVerifyKill_FailsAtHandshakeBudget is the engine-level
-// half of the KB-153 acceptance pair: an adapter that served the verify
-// handshake and then died (never re-dials) must fail the step at the session
-// handshake budget with the CRI-137 diagnosis — never with the torn-down
-// transport's "connection is closing" (the KB-153 signature).
-func TestBindDeadAdapterAfterVerifyKill_FailsAtHandshakeBudget(t *testing.T) {
+// TestBindDeadAdapter_FailsAtHandshakeBudget is the engine-level dead-adapter
+// half of the acceptance pair: an adapter with no established bridge and no
+// re-dialing pod must fail the step at the session handshake budget with the
+// CRI-137 diagnosis — never with a torn-down transport error.
+func TestBindDeadAdapter_FailsAtHandshakeBudget(t *testing.T) {
 	const budget = 400 * time.Millisecond
 	chain := runKB153BindChain(t, budget, false)
+
+	// The pod's phone-home loop is stopped (it closed its bridge
+	// connection); close the engine-side session deterministically through
+	// the engine's own close path so the bind below starts from an empty
+	// registry rather than racing the dying bridge (the KB-153 registry
+	// invariant guarantees the torn-down session is deregistered once
+	// CloseHandle returns).
+	if err := chain.shim.CloseHandle(context.Background(), "noop", chain.scopeKey); err != nil {
+		t.Fatalf("CloseHandle: %v", err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	events := cri276AdapterEvents{}
-	step := &workflow.StepNode{Name: "kb153-dead-bind"}
+	step := &workflow.StepNode{Name: "kb232-dead-bind"}
 
 	start := time.Now()
 	_, err := chain.sessions.Execute(ctx, "noop.default", step, events, nil)

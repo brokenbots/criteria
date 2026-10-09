@@ -462,9 +462,18 @@ func maybeRotateRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, g *wor
 }
 
 // rotateFreshRemoteScope provisions a brand-new scope instance: it generates
-// an accept token, persists the token and the current-instance record under
-// the run data dir, registers the token with the shim, and emits
+// an accept token, registers the token with the shim, persists the token and
+// the current-instance record under the run data dir, and emits
 // provision_wanted so the adapter session gets provisioned against it.
+//
+// KB-232: the shim registration happens BEFORE the token file is written to
+// disk. The rotated token file is what makes a scope dialable — operators
+// reconcile pods from provision_wanted and a starting pod presents the
+// token as soon as it exists — so a disk-first order left a window where a
+// dialing pod was rejected with "scope not registered" and only self-healed
+// on a later re-dial (or never, when the accept loop gave up on the retry
+// budget). Registering the accepting token first means the file becomes
+// visible only after the shim already accepts connections carrying it.
 func rotateFreshRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, envNode *workflow.EnvironmentNode, adapter *workflow.AdapterNode, instanceID, scopeName string) (string, error) {
 	dataDir := lifecycle.scopeLifecycle.dataDir
 	scopeInstanceID := uuid.NewString()
@@ -474,8 +483,16 @@ func rotateFreshRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, envNod
 		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
 		return "", fmt.Errorf("initialize adapter %q: rotate accept token: %w", instanceID, err)
 	}
+	// Register before the token becomes scanner-visible. On any later
+	// failure the registration is rolled back so the shim is never left
+	// holding a token no pod carries.
+	if err := deps.Sessions.RegisterRemoteScopeForEnv(environmentKey(envNode), scopeKey, token); err != nil {
+		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
+		return "", fmt.Errorf("initialize adapter %q: register scope token: %w", instanceID, err)
+	}
 	tokenPath, err := writeRotatedToken(dataDir, scopeName, scopeInstanceID, adapter.Type, token)
 	if err != nil {
+		_ = deps.Sessions.UnregisterRemoteScopeForEnv(environmentKey(envNode), scopeKey)
 		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
 		return "", fmt.Errorf("initialize adapter %q: write accept token: %w", instanceID, err)
 	}
@@ -483,12 +500,9 @@ func rotateFreshRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, envNod
 		ScopeInstanceID: scopeInstanceID,
 		AdapterType:     adapter.Type,
 	}); err != nil {
+		_ = deps.Sessions.UnregisterRemoteScopeForEnv(environmentKey(envNode), scopeKey)
 		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
 		return "", fmt.Errorf("initialize adapter %q: persist scope instance: %w", instanceID, err)
-	}
-	if err := deps.Sessions.RegisterRemoteScopeForEnv(environmentKey(envNode), scopeKey, token); err != nil {
-		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
-		return "", fmt.Errorf("initialize adapter %q: register scope token: %w", instanceID, err)
 	}
 	emitProvisionWanted(deps, lifecycle, scopeName, scopeInstanceID, scopeKey, instanceID, adapter, envNode, tokenPath, token)
 	return scopeKey, nil
@@ -828,14 +842,47 @@ func reusableScopeToken(dataDir, scopeName, instanceID, adapterType string) (sco
 // an event is emitted, and the error is returned.
 // Returns the ordered slice of provisioned adapter IDs (for correct LIFO teardown)
 // and an error if any adapter failed to initialize.
+//
+// KB-232: initialization runs in two phases so a slow one adapter can never
+// delay the scope registration of the others. Phase A prepares every adapter
+// (secrets, working dir, config) and rotates + registers its per-scope
+// session; phase B runs the blocking Verify handshakes. Without the split,
+// adapter N+1's scope registration is gated behind adapter N's handshake
+// completion, so a burst-provisioned pod fleet dials scopes the runner has
+// not registered yet and the step burns its deadline on "scope not
+// registered" rejections.
 func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, vars map[string]cty.Value, workflowDir, scopeName string, secretOrigins map[string]secrets.OriginRef, lifecycle *remoteLifecycleContext) (order []string, err error) {
 	if len(g.Adapters) == 0 {
 		return nil, nil
 	}
 
-	provisioned := make([]string, 0, len(g.Adapters)) // track in order for LIFO rollback
+	staged, err := stageAndRotateScopeAdapters(ctx, g, deps, vars, workflowDir, scopeName, secretOrigins, lifecycle)
+	if err != nil {
+		return nil, err
+	}
+	return verifyStagedScopeAdapters(ctx, deps, scopeName, staged)
+}
 
-	// Provision adapters in declaration order (from AdapterOrder)
+// stagedScopeAdapter carries one adapter's prepared inputs between the
+// non-blocking registration phase (A) and the blocking verify phase (B) of
+// initScopeAdapters.
+type stagedScopeAdapter struct {
+	instanceID  string
+	adapter     *workflow.AdapterNode
+	config      map[string]string
+	secretMap   map[string]string
+	originRefs  map[string]secrets.OriginRef
+	workingDir  string
+	verifyScope string
+}
+
+// stageAndRotateScopeAdapters is phase A of initScopeAdapters: prepare inputs
+// and rotate/register per-scope sessions for every not-yet-open adapter. No
+// handshake blocks here, so all scopes become registrable before any pod
+// handshake is awaited.
+func stageAndRotateScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, vars map[string]cty.Value, workflowDir, scopeName string, secretOrigins map[string]secrets.OriginRef, lifecycle *remoteLifecycleContext) ([]stagedScopeAdapter, error) {
+	staged := make([]stagedScopeAdapter, 0, len(g.AdapterOrder))
+
 	for _, instanceID := range g.AdapterOrder {
 		adapter := g.Adapters[instanceID]
 
@@ -880,7 +927,30 @@ func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, var
 			return nil, err
 		}
 
-		verifyErr := deps.Sessions.Verify(ctx, instanceID, adapter.Type, adapter.OnCrash, config, secretMap, originRefs, workingDir, scopeName, verifyScope)
+		staged = append(staged, stagedScopeAdapter{
+			instanceID:  instanceID,
+			adapter:     adapter,
+			config:      config,
+			secretMap:   secretMap,
+			originRefs:  originRefs,
+			workingDir:  workingDir,
+			verifyScope: verifyScope,
+		})
+	}
+
+	return staged, nil
+}
+
+// verifyStagedScopeAdapters is phase B of initScopeAdapters: run the blocking
+// Verify handshakes in declaration order. Every adapter's scope registration
+// already happened in phase A, so a pod dial racing any handshake finds its
+// scope registered. Returns the instances verified by this call, in order for
+// LIFO rollback at the caller's discretion.
+func verifyStagedScopeAdapters(ctx context.Context, deps Deps, scopeName string, staged []stagedScopeAdapter) ([]string, error) {
+	provisioned := make([]string, 0, len(staged)) // track in order for LIFO rollback
+
+	for _, s := range staged {
+		verifyErr := deps.Sessions.Verify(ctx, s.instanceID, s.adapter.Type, s.adapter.OnCrash, s.config, s.secretMap, s.originRefs, s.workingDir, scopeName, s.verifyScope)
 
 		// Silently swallow ErrSessionAlreadyOpen to support subworkflow bodies that
 		// re-declare parent adapters for safety through re-declaration. Same-scope
@@ -894,14 +964,14 @@ func initScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps Deps, var
 			for i := len(provisioned) - 1; i >= 0; i-- {
 				_ = deps.Sessions.Close(ctx, provisioned[i]) // ignore teardown errors during rollback
 			}
-			deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", verifyErr.Error())
-			return nil, fmt.Errorf("initialize adapter %q: %w", instanceID, verifyErr)
+			deps.Sink.OnAdapterLifecycle(scopeName, s.instanceID, "init_failed", verifyErr.Error())
+			return nil, fmt.Errorf("initialize adapter %q: %w", s.instanceID, verifyErr)
 		}
 		// Only track adapters that we newly verified (not already-verified ones)
 		// This prevents tearing down adapters that belong to a parent scope.
 		if verifyErr == nil {
-			provisioned = append(provisioned, instanceID)
-			deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "verified", "")
+			provisioned = append(provisioned, s.instanceID)
+			deps.Sink.OnAdapterLifecycle(scopeName, s.instanceID, "verified", "")
 		}
 	}
 

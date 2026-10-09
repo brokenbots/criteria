@@ -253,23 +253,31 @@ func (s *Sink) OnAdapterLifecycle(stepName, adapterName, status, detail string) 
 // no longer depends on a criteria-side shared volume to read the token_ref
 // file; token_ref stays populated during the transition window.
 func (s *Sink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent) {
+	data := map[string]any{
+		"run_id":              event.RunID,
+		"scope_name":          event.ScopeName,
+		"scope_instance_id":   event.ScopeInstanceID,
+		"adapter":             event.AdapterName,
+		"adapter_type":        event.AdapterType,
+		"environment_type":    event.EnvironmentType,
+		"environment_name":    event.EnvironmentName,
+		"digest":              event.Digest,
+		"image_reference":     event.ImageReference,
+		"shim_listen_address": event.ShimListenAddress,
+		"token_ref":           event.TokenRef,
+		"accept_token":        event.Token,
+	}
+	// KB-232: carry the session-wait diagnostics on the named pending event
+	// so operators see dialed/rejected/waited without joining separate logs.
+	if event.Status == engine.ScopeSessionPendingStatus {
+		data["session_dials"] = event.SessionDials
+		data["session_rejections"] = event.SessionRejections
+		data["session_wait_seconds"] = event.SessionWaitSeconds
+	}
 	s.publish(&pb.AdapterEvent{
 		Adapter: event.AdapterName,
 		Kind:    "adapter.lifecycle." + event.Status,
-		Data: encodeAdapterData(map[string]any{
-			"run_id":              event.RunID,
-			"scope_name":          event.ScopeName,
-			"scope_instance_id":   event.ScopeInstanceID,
-			"adapter":             event.AdapterName,
-			"adapter_type":        event.AdapterType,
-			"environment_type":    event.EnvironmentType,
-			"environment_name":    event.EnvironmentName,
-			"digest":              event.Digest,
-			"image_reference":     event.ImageReference,
-			"shim_listen_address": event.ShimListenAddress,
-			"token_ref":           event.TokenRef,
-			"accept_token":        event.Token,
-		}),
+		Data:    encodeAdapterData(data),
 	})
 }
 

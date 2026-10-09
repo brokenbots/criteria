@@ -254,9 +254,9 @@ func (cri276AdapterEvents) Adapter(string, any) {}
 // idleChain is a fully wired idle-survival chain: a real shim, a per-scope
 // remote adapter session verified through an idle-closing middlebox, and an
 // adapter pod phone-homing through that middlebox. By the time runIdleChain
-// returns, verification completed, the temporary verify handle was killed (by
-// design), and the pod's re-dial settled — the state the engine is in before
-// its first step binds the session.
+// returns, verification completed on — and the engine is about to bind — the
+// pod's single live phone-home connection (KB-232: the verify handshake's
+// bridge is reused for the bind, never killed).
 type idleChain struct {
 	sessions *adapterhost.SessionManager
 	pod      *cri276PodServer
@@ -358,14 +358,14 @@ func runIdleChain(t *testing.T, podServerOpts []grpc.ServerOption) *idleChain {
 		t.Fatalf("initScopeAdapters: %v", err)
 	}
 
-	// Verify's temporary handle is killed once verification completes (by
-	// design), which tears the first phone-home connection down and makes the
-	// pod re-dial. Wait for the re-dial to settle so the session the engine is
-	// about to bind resolves to the stable, post-verify connection.
+	// The verify handshake resolves the pod's first phone-home connection and
+	// — KB-232 — reuses that same bridge for the bind (no verify-kill
+	// re-dial). Wait for that single handshake to settle so the session the
+	// engine is about to bind resolves to the stable, live connection.
 	acceptedDeadline := time.Now().Add(5 * time.Second)
-	for c := accepted.Load(); c < 2; c = accepted.Load() {
+	for c := accepted.Load(); c < 1; c = accepted.Load() {
 		if time.Now().After(acceptedDeadline) {
-			t.Fatalf("pod completed %d handshakes, want 2 after verify (verify handshake + re-dial)", c)
+			t.Fatalf("pod completed %d handshakes, want 1 (the verify handshake; the engine must not kill the phone-home bridge, KB-232)", c)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

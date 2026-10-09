@@ -318,6 +318,9 @@ type Shim struct {
 	podProbe             PodStateProbe        // optional pod-state seam; nil in a bare shim
 	dialLocal            dialLocalFunc        // reattach dialer; defaults to adapterhost.LocalSocketDialer (see dialLocalAdapter), substituted in tests
 	dialActivity         map[string]time.Time // session key → last time an adapter presented an identity frame (pod-started evidence)
+	dialCount            map[string]int       // session key → count of presented identity frames (KB-232 scope_session_pending diagnostics)
+	rejectCount          map[string]int       // session key → count of attributed identity rejections (KB-232 scope_session_pending diagnostics)
+	pendingSink          ScopeSessionSink     // receives scope_session_pending signals from session waits; nil keeps log-only
 
 	peerAcceptor   PeerAcceptor   // receives authenticated role="peer" dials; nil rejects them
 	scopeRegistrar ScopeRegistrar // consulted for unregistered-scope dials (KB-25); nil keeps reject-only
@@ -328,11 +331,91 @@ type session struct {
 	cancel     func()
 	cancelCtx  context.Context
 	socketPath string
+	// retired marks a session the engine declared dead and is re-waiting for
+	// with a fresh-handle resolve (crash respawn): only then may a new dial
+	// displace the stored bridge (KB-232).
+	retired bool
+	// establishing marks a placeholder reservation (KB-232): one accepted
+	// dial flight is mid-bridge-setup and owns this map slot. No bridge
+	// exists yet (handle nil); sibling dials of the scope are refused at
+	// Accept instead of racing a second plugin client into the store.
+	establishing bool
 }
 
 type waitResult struct {
 	handle adapterhost.Handle
 	err    error
+}
+
+// ScopeSessionPending describes a per-scope adapter session wait that crossed
+// half its window without resolving (KB-232): the shim warns about it and
+// hands it to the registered sink so the runner can publish a named
+// scope_session_pending event instead of burning the remaining deadline
+// silently. Window is the wait's effective bound measured at wait start — the
+// caller's context deadline when one is present (a step's session wait),
+// otherwise the applicable KB-70 scheduling budget.
+//
+// Dials and rejections are the shim's per-key diagnostics counters at emit
+// time: identity frames presented for the session key and identity
+// rejections attributed to it (counters persist for the shim's lifetime,
+// like the dial-activity evidence they mirror).
+type ScopeSessionPending struct {
+	AdapterType string
+	Scope       string // full per-scope session key, e.g. "run_handler/<uuid>"
+	Dials       int
+	Rejections  int
+	Waited      time.Duration
+	Window      time.Duration
+}
+
+// ScopeSessionSink receives the shim's scope_session_pending signals (KB-232).
+type ScopeSessionSink interface {
+	OnScopeSessionPending(*ScopeSessionPending)
+}
+
+// SetScopeSessionSink wires the pending-event receiver for this shim. Nil
+// delivery keeps the shim's own structured warning as the only signal (the
+// engine wires a bridge that publishes adapter lifecycle events). The sink is
+// invoked outside the shim's mutex and may re-enter shim accessors.
+func (s *Shim) SetScopeSessionSink(sink ScopeSessionSink) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pendingSink = sink
+}
+
+// sessionDialStats reports the shim's diagnostics counters for key.
+func (s *Shim) sessionDialStats(key string) (dialed, rejected int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.dialCount[key], s.rejectCount[key]
+}
+
+// emitScopeSessionPending logs the half-window signal and delivers it to the
+// registered sink. window is the wait's effective bound and waited the time
+// spent waiting when the signal was crossed.
+func (s *Shim) emitScopeSessionPending(adapterType, scope, key string, window, waited time.Duration) {
+	dialed, rejected := s.sessionDialStats(key)
+	slog.Warn("scope_session_pending",
+		"adapter_type", adapterType,
+		"scope", scope,
+		"dialed", dialed,
+		"rejected", rejected,
+		"waited", waited.String(),
+		"window", window.String())
+	s.mu.Lock()
+	sink := s.pendingSink
+	s.mu.Unlock()
+	if sink == nil {
+		return
+	}
+	sink.OnScopeSessionPending(&ScopeSessionPending{
+		AdapterType: adapterType,
+		Scope:       scope,
+		Dials:       dialed,
+		Rejections:  rejected,
+		Waited:      waited,
+		Window:      window,
+	})
 }
 
 // resolveHandshakeDeadlines defaults the optional TLS and identity handshake
@@ -410,6 +493,8 @@ func NewShim(cfg *Config, verifier DigestVerifier) (*Shim, error) {
 		podStatePollInterval:  defaultPodStatePollInterval,
 		dialLocal:             dialLocalAdapter,
 		dialActivity:          make(map[string]time.Time),
+		dialCount:             make(map[string]int),
+		rejectCount:           make(map[string]int),
 	}, nil
 }
 
@@ -554,7 +639,11 @@ func (s *Shim) noteDialActivity(adapterType, scope string) {
 	if s.dialActivity == nil {
 		s.dialActivity = make(map[string]time.Time)
 	}
+	if s.dialCount == nil {
+		s.dialCount = make(map[string]int)
+	}
 	s.dialActivity[key] = time.Now()
+	s.dialCount[key]++
 }
 
 // dialObserved reports whether any identity frame was ever presented for key.
@@ -701,8 +790,33 @@ func (s *Shim) Accept(ctx context.Context, conn net.Conn) error {
 		return s.acceptPeerConn(ctx, conn, &hs)
 	}
 
+	// KB-232: a re-dial that arrives while the scope's session bridge is
+	// still live must not kill the in-use bridge — the displaced session is
+	// exactly what the engine's verify/bind handshake and the running step
+	// use, and killing it races those RPCs into Unavailable/EOF (burned step
+	// deadline). Refuse the takeover instead: the dialing runner retries with
+	// backoff across the scope's session window, and the live bridge keeps
+	// serving. Takeover proceeds only when the engine retired the existing
+	// session (armed via WaitForFreshHandle for crash-respawn convergence).
+	if err := s.refuseEstablishedScopeSession(conn, &hs); err != nil {
+		return err
+	}
+
+	// KB-232: claim the map slot for this per-scope dial before any bridge
+	// resource is built. A sibling dial of the same scope that races past
+	// the established-bridge refusal (no entry existed yet) then loses at
+	// Accept against a placeholder instead of racing two plugin clients
+	// into the store — the loser there would need a full bridge+plugin
+	// teardown, which is exactly the storm cost this design removes.
+	ph, err := s.reserveScopeSession(hs.Name, hs.Scope)
+	if err != nil {
+		_ = conn.Close()
+		return err
+	}
+
 	socketPath, lis, err := s.setupUDS(conn)
 	if err != nil {
+		s.releaseScopeSession(hs.Name, hs.Scope, ph)
 		return err
 	}
 
@@ -710,10 +824,15 @@ func (s *Shim) Accept(ctx context.Context, conn net.Conn) error {
 	if err != nil {
 		_ = lis.Close()
 		_ = os.RemoveAll(filepath.Dir(socketPath))
+		s.releaseScopeSession(hs.Name, hs.Scope, ph)
 		return err
 	}
 
-	return s.buildAndStoreHandle(ctx, hs.Name, hs.Scope, conn, res.udsConn, lis, socketPath, res.client, res.pluginClient, res.bridgeCancel, res.bridgeCtx, res.bridgeWG)
+	if err := s.buildAndStoreHandle(ctx, hs.Name, hs.Scope, conn, res.udsConn, lis, socketPath, res.client, res.pluginClient, res.bridgeCancel, res.bridgeCtx, res.bridgeWG); err != nil {
+		s.releaseScopeSession(hs.Name, hs.Scope, ph)
+		return err
+	}
+	return nil
 }
 
 // acceptPeerConn hands an authenticated peer-role connection to the
@@ -867,6 +986,84 @@ func (s *Shim) verifyAdapterIdentity(conn net.Conn, hs *handshakeMessage) error 
 	return err
 }
 
+// refuseEstablishedScopeSession closes a re-dial that arrives while the
+// scope's session bridge is already live or being established. This is not
+// an identity failure and is deliberately not attributed to the
+// verify-failure bookkeeping (KB-70): the pod is behaving correctly and will
+// keep retrying with backoff.
+//
+// Only per-scope sessions are protected. Legacy (scope-less) global sessions
+// keep their established replace+kill semantics: the newest dial of an
+// adapter type takes over the session and the stale handle is killed.
+func (s *Shim) refuseEstablishedScopeSession(conn net.Conn, hs *handshakeMessage) error {
+	if hs.Scope == "" {
+		return nil
+	}
+	s.mu.Lock()
+	sess, ok := s.sessions[s.sessionKey(hs.Name, hs.Scope)]
+	if ok && !sess.retired {
+		if sess.establishing {
+			// A sibling dial flight reserved the scope mid-setup and owns
+			// the slot; refuse instead of racing a second bridge in
+			// (KB-232 placeholder reservation).
+			s.mu.Unlock()
+			_ = conn.Close()
+			slog.Info("remote shim refused re-dial while session establishing", "adapter", hs.Name, "scope", hs.Scope)
+			return fmt.Errorf("scope %q session is being established: dial refused", hs.Scope)
+		}
+		if sess.handle != nil {
+			// Established live bridge.
+			s.mu.Unlock()
+			_ = conn.Close()
+			slog.Info("remote shim refused re-dial of live session bridge", "adapter", hs.Name, "scope", hs.Scope)
+			return fmt.Errorf("scope %q session bridge already established", hs.Scope)
+		}
+	}
+	s.mu.Unlock()
+	return nil
+}
+
+// reserveScopeSession atomically claims the session-map slot for an
+// in-flight per-scope dial with a placeholder (KB-232). Concurrent same-scope
+// dials then lose at Accept (a close-without-teardown refusal) instead of
+// racing two plugin clients into the store, whose displaced loser would need
+// a full bridge teardown — a go-plugin Kill on an externally managed
+// adapter blocks on its graceful-exit wait, stalling the accept goroutine.
+// It returns the placeholder so the owning flight can release it if the
+// bridge setup fails. Legacy scope-less dials never reserve (the caller's
+// refuseEstablishedScopeSession no-ops for them too).
+func (s *Shim) reserveScopeSession(adapterType, scope string) (*session, error) {
+	if !s.perScopeSessions || scope == "" {
+		return nil, nil
+	}
+	key := s.sessionKey(adapterType, scope)
+	s.mu.Lock()
+	if sess, ok := s.sessions[key]; ok && !sess.retired {
+		// Raced past the Accept-time refusal check: still just refuse.
+		s.mu.Unlock()
+		return nil, fmt.Errorf("scope %q session already claimed: dial refused", scope)
+	}
+	ph := &session{establishing: true}
+	s.sessions[key] = ph
+	s.mu.Unlock()
+	return ph, nil
+}
+
+// releaseScopeSession drops the flight's placeholder reservation when the
+// bridge setup failed, unblocking later dials of the scope. Never touches a
+// slot another flight took over (a retired-displacement store).
+func (s *Shim) releaseScopeSession(adapterType, scope string, ph *session) {
+	if ph == nil || !s.perScopeSessions || scope == "" {
+		return
+	}
+	key := s.sessionKey(adapterType, scope)
+	s.mu.Lock()
+	if cur, ok := s.sessions[key]; ok && cur == ph {
+		delete(s.sessions, key)
+	}
+	s.mu.Unlock()
+}
+
 // tryScopeRecovery consults the installed registrar for a rejected
 // unregistered-scope dial. It returns true only when the registrar itself
 // reported success; the caller then re-checks the shim's own token map
@@ -910,6 +1107,10 @@ func (s *Shim) noteVerifyFailure(hosts []string, scope string, class identityRej
 		if s.verifyFailures == nil {
 			s.verifyFailures = make(map[string]*verifyFailureState)
 		}
+		if s.rejectCount == nil {
+			s.rejectCount = make(map[string]int)
+		}
+		s.rejectCount[key]++
 		s.verifyFailures[key] = &verifyFailureState{lastErr: cause.Error(), class: class}
 	}
 }
@@ -943,11 +1144,19 @@ func (s *Shim) failureAttributionKeys(hosts []string, scope string, class identi
 		}
 	}
 	keys := make([]string, 0, len(hosts)+len(prefixWaiters))
+	seen := make(map[string]bool, len(hosts)+len(prefixWaiters))
 	for _, host := range hosts {
-		keys = append(keys, s.sessionKey(host, scope))
+		key := s.sessionKey(host, scope)
+		if !seen[key] {
+			seen[key] = true
+			keys = append(keys, key)
+		}
 	}
 	for waiterKey := range prefixWaiters {
-		keys = append(keys, waiterKey)
+		if !seen[waiterKey] {
+			seen[waiterKey] = true
+			keys = append(keys, waiterKey)
+		}
 	}
 	return keys
 }
@@ -1271,14 +1480,15 @@ func (s *Shim) buildAndStoreHandle(
 	key := s.sessionKey(adapterName, scope)
 
 	// KB-153: deregister this session from the session map synchronously the
-	// moment its bridge starts tearing down. The engine's verify phase kills
-	// its throwaway handshake handle before the bind phase waits, and that
-	// kill is synchronous; with teardown-initiated deregistration the killed
-	// session is invisible by the time Kill returns, so a pending bind-phase
-	// wait can never be handed the dead bridge (whose OpenSession fails with
-	// "grpc: the client connection is closing" as a hard step failure). The
-	// teardown goroutine below re-checks idempotently for bridge cancels that
-	// bypass Kill (a dropped phone-home conn); those remain asynchronous.
+	// moment its bridge starts tearing down. A teardown (Kill on this handle
+	// or a dropped phone-home conn) is invisible no later than the teardown
+	// call returns, so a pending verify/bind-phase wait can never be handed
+	// a dead bridge by its key; the goroutine below re-checks idempotently
+	// for bridge cancels that bypass Kill. Combined with the KB-232
+	// no-verify-kill treatment of phone-home bridge handles
+	// (PhoneHomeBridgeHandle), the established bridge is handed to the
+	// engine's verify and then REUSED by the bind phase without any
+	// re-dial cycle, and live-session re-dials are refused at Accept.
 	var handle adapterhost.Handle
 	removeSession := func() {
 		s.mu.Lock()
@@ -1304,6 +1514,22 @@ func (s *Shim) buildAndStoreHandle(
 		old = existing
 	}
 
+	// KB-232: a same-scope dial that raced the established-bridge refusal
+	// (no entry existed at accept time, so both dials passed the check) must
+	// not displace the established bridge the engine's verify/bind
+	// handshakes and running steps use. First dial wins: the arriving
+	// bridge is torn down without touching the stored entry, and the
+	// dialing runner retries with backoff like any other refused re-dial.
+	// A placeholder reservation never displaces: it is this flight's own
+	// slot from reserveScopeSession, being replaced by the real session.
+	if old != nil && !old.establishing && !old.retired && scope != "" {
+		s.mu.Unlock()
+		handle.Kill()
+		slog.Info("remote shim refused concurrent takeover of live session bridge",
+			"adapter", adapterName, "scope", scope)
+		return fmt.Errorf("scope %q session bridge already established", scope)
+	}
+
 	sess := &session{
 		handle:     handle,
 		cancel:     bridgeCancel,
@@ -1321,6 +1547,9 @@ func (s *Shim) buildAndStoreHandle(
 	s.mu.Unlock()
 
 	if old != nil {
+		if old.retired {
+			slog.Info("remote shim displaced retired session bridge", "adapter", adapterName, "scope", scope)
+		}
 		if old.cancel != nil {
 			old.cancel()
 		}
@@ -1328,7 +1557,9 @@ func (s *Shim) buildAndStoreHandle(
 			_ = old.handle.CloseSession(ctx, "")
 			old.handle.Kill()
 		}
-		_ = os.RemoveAll(filepath.Dir(old.socketPath))
+		if old.socketPath != "" {
+			_ = os.RemoveAll(filepath.Dir(old.socketPath))
+		}
 	}
 
 	go func() {
@@ -1371,9 +1602,18 @@ func (s *Shim) WaitForHandle(ctx context.Context, adapterType, scope string) (ad
 func (s *Shim) WaitForFreshHandle(ctx context.Context, adapterType, scope string, stale adapterhost.Handle) (adapterhost.Handle, error) {
 	key := s.sessionKey(adapterType, scope)
 	s.mu.Lock()
-	if sess, ok := s.sessions[key]; ok && sess.handle != stale {
-		s.mu.Unlock()
-		return sess.handle, nil
+	if sess, ok := s.sessions[key]; ok && sess.handle != nil {
+		if sess.handle != stale {
+			s.mu.Unlock()
+			return sess.handle, nil
+		}
+		// The engine re-waits on a CRASHED session whose bridge teardown is
+		// still in flight: arm displacement so the respawned pod's dial can
+		// replace the stored bridge instead of the KB-232 live-bridge
+		// refusal bouncing the pod until the teardown completes. A
+		// placeholder reservation (sess.handle nil) is skipped rather than
+		// armed and is never returned to a caller.
+		sess.retired = true
 	}
 	ch := make(chan waitResult, 1)
 	s.waiters[key] = append(s.waiters[key], ch)
@@ -1451,21 +1691,19 @@ func (s *Shim) handleWaiterWake(adapterType, scope, key string, handshakeBudget,
 // expires (KB-70). A nil channel never resolves: the legacy wait passes nil
 // for its single registry and the peer wait passes both of its registries.
 //
+// KB-232: a wait that crosses half its effective window without resolving
+// emits the scope_session_pending signal once — via slog Warn and the
+// registered ScopeSessionSink — instead of burning the remainder of the
+// window silently. The effective window is the caller's context deadline
+// when one is present (a step's session wait), otherwise the applicable
+// KB-70 scheduling budget.
+//
 // See WaitForFreshHandle for the budget semantics. deregister removes the
 // caller's waiter registrations on every exit path — including success, where
 // removing an already-drained channel is a no-op — so a woken wait never
 // leaves a stale channel in a registry.
 func (s *Shim) awaitWaiter(ctx context.Context, adapterType, scope, key string, primary, secondary <-chan waitResult, deregister func(), handshakeBudget time.Duration) (adapterhost.Handle, error) {
-	s.mu.Lock()
-	schedulingBudget := s.schedulingBudget
-	poll := s.podStatePollInterval
-	s.mu.Unlock()
-	if schedulingBudget <= 0 {
-		schedulingBudget = DefaultSchedulingBudget
-	}
-	if poll <= 0 {
-		poll = defaultPodStatePollInterval
-	}
+	schedulingBudget, poll := s.waiterBudgets()
 
 	// Initial observation, so a pod that is already Running (or already
 	// dialing) starts its handshake budget now rather than at the first tick.
@@ -1479,7 +1717,18 @@ func (s *Shim) awaitWaiter(ctx context.Context, adapterType, scope, key string, 
 		st.handshakeDeadline = time.Now().Add(handshakeBudget)
 	}
 
-	timer := time.NewTimer(waitPollDuration(poll, st.started, st.handshakeDeadline, st.schedDeadline))
+	// KB-232: derive the wait's effective window for the half-window signal.
+	w := newSessionWaitWindow(ctx, schedulingBudget)
+	pendingEmitted := false
+	nextWake := func(st *waiterState) time.Duration {
+		d := waitPollDuration(poll, st.started, st.handshakeDeadline, st.schedDeadline)
+		if !pendingEmitted {
+			d = min(d, time.Until(w.pendingDeadline))
+		}
+		return d
+	}
+
+	timer := time.NewTimer(nextWake(&st))
 	defer timer.Stop()
 	for {
 		select {
@@ -1493,14 +1742,54 @@ func (s *Shim) awaitWaiter(ctx context.Context, adapterType, scope, key string, 
 			deregister()
 			return nil, ctx.Err()
 		case <-timer.C:
+			if !pendingEmitted && !time.Now().Before(w.pendingDeadline) {
+				pendingEmitted = true
+				s.emitScopeSessionPending(adapterType, scope, key, w.window, time.Since(w.start))
+			}
 			done, err := s.handleWaiterWake(adapterType, scope, key, handshakeBudget, schedulingBudget, &st)
 			if done {
 				deregister()
 				return nil, err
 			}
-			timer.Reset(waitPollDuration(poll, st.started, st.handshakeDeadline, st.schedDeadline))
+			timer.Reset(nextWake(&st))
 		}
 	}
+}
+
+// waiterBudgets reads the configured scheduling budget and pod-state poll
+// interval, falling back to defaults when unset.
+func (s *Shim) waiterBudgets() (schedulingBudget, poll time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if schedulingBudget = s.schedulingBudget; schedulingBudget <= 0 {
+		schedulingBudget = DefaultSchedulingBudget
+	}
+	if poll = s.podStatePollInterval; poll <= 0 {
+		poll = defaultPodStatePollInterval
+	}
+	return schedulingBudget, poll
+}
+
+// sessionWaitWindow derives the effective deadline window of a session wait
+// that starts now (KB-232): a context deadline (the step's session wait)
+// bounds the wait regardless of the shim budgets; without one the scheduling
+// budget is the effective bound (a fresh wait starts without start evidence).
+// The half-window observation deadline is start + window/2.
+type sessionWaitWindow struct {
+	window          time.Duration
+	start           time.Time
+	pendingDeadline time.Time
+}
+
+func newSessionWaitWindow(ctx context.Context, schedulingBudget time.Duration) sessionWaitWindow {
+	window := schedulingBudget
+	if dead, ok := ctx.Deadline(); ok {
+		if rem := time.Until(dead); rem > 0 {
+			window = rem
+		}
+	}
+	start := time.Now()
+	return sessionWaitWindow{window: window, start: start, pendingDeadline: start.Add(window / 2)}
 }
 
 // waitPollDuration picks the next wake-up: immediately at the handshake
@@ -1523,7 +1812,7 @@ func waitPollDuration(poll time.Duration, started bool, handshakeDeadline, sched
 func (s *Shim) registerFreshWaiter(key string, stale adapterhost.Handle) (adapterhost.Handle, chan waitResult, time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if sess, ok := s.sessions[key]; ok && sess.handle != stale {
+	if sess, ok := s.sessions[key]; ok && sess.handle != nil && sess.handle != stale {
 		return sess.handle, nil, 0
 	}
 	ch := make(chan waitResult, 1)
