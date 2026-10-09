@@ -1,5 +1,6 @@
-// Package smoke contains end-to-end smoke tests gated by environment variables
-// so they do not run on every `go test` invocation.
+// Package smoke contains repo-level CI checks: end-to-end smoke tests gated
+// by environment variables so they do not run on every `go test` invocation,
+// plus static checks over the repo's image recipes that run always.
 package smoke
 
 import (

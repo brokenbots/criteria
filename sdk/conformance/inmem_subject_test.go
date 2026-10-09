@@ -7,9 +7,7 @@ package conformance_test
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,7 +17,6 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	"golang.org/x/net/http2"
 
 	criteria "github.com/brokenbots/criteria/sdk"
 	"github.com/brokenbots/criteria/sdk/conformance"
@@ -67,14 +64,11 @@ func (s *inMemSubject) SetUp(t *testing.T) (baseURL string, client *http.Client,
 	protocols.SetUnencryptedHTTP2(true)
 	srv.Config.Protocols = &protocols
 	srv.Start()
-	httpClient := &http.Client{
-		Transport: &http2.Transport{
-			AllowHTTP: true,
-			DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
-				return net.Dial(network, addr)
-			},
-		},
-	}
+	// h2c with prior knowledge and no protocol fallback — parity with the
+	// deprecated http2.Transport{AllowHTTP} this fixture was built on.
+	p := &http.Protocols{}
+	p.SetUnencryptedHTTP2(true)
+	httpClient := &http.Client{Transport: &http.Transport{Protocols: p}}
 	t.Cleanup(srv.Close)
 	return srv.URL, httpClient, srv.Close
 }

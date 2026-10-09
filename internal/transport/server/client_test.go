@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
@@ -27,7 +26,6 @@ import (
 
 	"connectrpc.com/connect"
 	"go.uber.org/goleak"
-	"golang.org/x/net/http2"
 
 	"github.com/brokenbots/criteria/events"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
@@ -397,12 +395,11 @@ func startFakeServer(t *testing.T, f *fakeServer) string {
 }
 
 func h2cHTTPClient() *http.Client {
-	return &http.Client{Transport: &http2.Transport{
-		AllowHTTP: true,
-		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, network, addr)
-		},
-	}}
+	// h2c with prior knowledge and no protocol fallback — parity with the
+	// deprecated http2.Transport{AllowHTTP} this fixture was built on.
+	p := &http.Protocols{}
+	p.SetUnencryptedHTTP2(true)
+	return &http.Client{Transport: &http.Transport{Protocols: p}}
 }
 
 func newTestLogger() *slog.Logger {

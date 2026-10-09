@@ -1,6 +1,6 @@
 module github.com/brokenbots/criteria/tools
 
-go 1.26.6
+go 1.26.9
 
 // Tool deps: pinned here (no floating @latest) so `go mod tidy` keeps them and
 // the workspace resolves a single version for both CI and local runs.
@@ -192,6 +192,7 @@ require (
 	golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20250210185358-939b2ce775ac // indirect
 	golang.org/x/mod v0.41.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
