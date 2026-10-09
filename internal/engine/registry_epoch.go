@@ -55,7 +55,7 @@ type registryEpochRecord struct {
 	// (empty when sealed by a run failure, which has no named terminal).
 	FinalState string `json:"final_state,omitempty"`
 	// Success mirrors the terminal completion's success bit; nil while open.
-	Success *bool `json:"success,omitempty"`
+	Success   *bool     `json:"success,omitempty"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
