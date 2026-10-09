@@ -1,6 +1,6 @@
 package adapterhost
 
-//Regression tests for KB-224 (moved from Linear CRI-292, mirrored in
+// Regression tests for KB-224 (moved from Linear CRI-292, mirrored in
 // criteria-adapter-copilot#31): locally launched copilot adapters must get a
 // fresh ambient home per criteria invocation, while shell-bound and
 // sandbox-bound launches keep their current environment handling.

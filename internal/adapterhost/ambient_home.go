@@ -33,10 +33,10 @@ package adapterhost
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"log/slog"
 	"strings"
 	"sync"
 
@@ -92,12 +92,12 @@ type ambientHomeAllocator struct {
 
 // homeFor returns the scratch home directory for the given adapter instance,
 // creating the scratch root and the per-instance directory on first use. The
-// returned bool reports whether an isolated home applies at all; adapter
+// enabled result reports whether an isolated home applies at all; adapter
 // types outside ambientHomeIsolatedAdapterTypes always disable it so the
 // eligibility check lives next to the seam that consults it. adapterType is
 // the graph-verified adapter type; the leading segment of the instance ID is
 // only a fallback for callers without a graph.
-func (a *ambientHomeAllocator) homeFor(instanceID, adapterType string) (string, bool, error) {
+func (a *ambientHomeAllocator) homeFor(instanceID, adapterType string) (home string, enabled bool, err error) {
 	if _, ok := ambientHomeIsolatedAdapterTypes[adapterType]; !ok {
 		if _, ok := ambientHomeIsolatedAdapterTypes[instanceIDType(instanceID)]; !ok {
 			return "", false, nil
@@ -115,7 +115,7 @@ func (a *ambientHomeAllocator) homeFor(instanceID, adapterType string) (string, 
 	if err := a.ensureRoot(); err != nil {
 		return "", false, err
 	}
-	home := filepath.Join(a.root, sanitizeAmbientHomeInstanceID(instanceID))
+	home = filepath.Join(a.root, sanitizeAmbientHomeInstanceID(instanceID))
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		return "", false, fmt.Errorf("create ambient home for adapter %q: %w", instanceID, err)
 	}
