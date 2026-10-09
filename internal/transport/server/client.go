@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	"golang.org/x/net/http2"
 
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
@@ -185,12 +184,11 @@ func buildHTTPClient(u *url.URL, o *Options) (*http.Client, error) {
 		if u.Scheme == "https" {
 			return nil, errors.New("tls=disable incompatible with https URL")
 		}
-		return &http.Client{Transport: &http2.Transport{
-			AllowHTTP: true,
-			DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
-				return (&net.Dialer{}).DialContext(ctx, network, addr)
-			},
-		}}, nil
+		// h2c with prior knowledge and no protocol fallback — parity with the
+		// deprecated http2.Transport{AllowHTTP} this client was built on.
+		p := &http.Protocols{}
+		p.SetUnencryptedHTTP2(true)
+		return &http.Client{Transport: &http.Transport{Protocols: p}}, nil
 	case TLSEnable, TLSMutual:
 		cfg := &tls.Config{MinVersion: tls.VersionTLS12}
 		if o.CAFile != "" {
@@ -214,7 +212,11 @@ func buildHTTPClient(u *url.URL, o *Options) (*http.Client, error) {
 			}
 			cfg.Certificates = []tls.Certificate{crt}
 		}
-		return &http.Client{Transport: &http2.Transport{TLSClientConfig: cfg}}, nil
+		// h2 over TLS via ALPN only, no protocol fallback — parity with the
+		// deprecated http2.Transport{TLSClientConfig} this client was built on.
+		p := &http.Protocols{}
+		p.SetHTTP2(true)
+		return &http.Client{Transport: &http.Transport{TLSClientConfig: cfg, Protocols: p}}, nil
 	default:
 		return nil, fmt.Errorf("unknown tls mode %q", o.TLSMode)
 	}

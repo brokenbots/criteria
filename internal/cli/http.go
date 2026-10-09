@@ -1,17 +1,13 @@
 package cli
 
 import (
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
-
-	"golang.org/x/net/http2"
 )
 
 // serverHTTPClient builds the HTTP/2 client used by `criteria` CLI commands
@@ -31,12 +27,11 @@ func serverHTTPClient(serverURL, caFile, certFile, keyFile string) (*http.Client
 		if certFile != "" || keyFile != "" || caFile != "" {
 			return nil, errors.New("TLS flags require an https:// server url")
 		}
-		return &http.Client{Transport: &http2.Transport{
-			AllowHTTP: true,
-			DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
-				return (&net.Dialer{}).DialContext(ctx, network, addr)
-			},
-		}}, nil
+		// h2c with prior knowledge and no protocol fallback — parity with the
+		// deprecated http2.Transport{AllowHTTP} this client was built on.
+		p := &http.Protocols{}
+		p.SetUnencryptedHTTP2(true)
+		return &http.Client{Transport: &http.Transport{Protocols: p}}, nil
 	case "https":
 		return buildHTTPSClient(caFile, certFile, keyFile)
 	default:
@@ -70,5 +65,9 @@ func buildHTTPSClient(caFile, certFile, keyFile string) (*http.Client, error) {
 		}
 		cfg.Certificates = []tls.Certificate{crt}
 	}
-	return &http.Client{Transport: &http2.Transport{TLSClientConfig: cfg}}, nil
+	// h2 over TLS via ALPN only, no protocol fallback — parity with the
+	// deprecated http2.Transport{TLSClientConfig} this client was built on.
+	p := &http.Protocols{}
+	p.SetHTTP2(true)
+	return &http.Client{Transport: &http.Transport{TLSClientConfig: cfg, Protocols: p}}, nil
 }
