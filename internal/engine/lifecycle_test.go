@@ -1244,6 +1244,10 @@ type fakeRemoteShim struct {
 	unregistered []string
 	closed       []string
 	calls        []string
+	// onRegister, when set, runs inside RegisterScope after the token is
+	// stored. The KB-232 ordering tests sample on-disk state at
+	// registration time to pin register-before-token-file-visible order.
+	onRegister func(scope, token string)
 }
 
 func newFakeRemoteShim(h adapterhost.Handle) *fakeRemoteShim {
@@ -1254,6 +1258,9 @@ func newFakeRemoteShim(h adapterhost.Handle) *fakeRemoteShim {
 	}
 }
 
+// onRegister, when set, runs inside RegisterScope after the token is stored.
+// The KB-232 ordering tests sample on-disk state at registration time to pin
+// the register-before-token-file-visible order.
 func (f *fakeRemoteShim) record(call string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -1273,7 +1280,14 @@ func (f *fakeRemoteShim) WaitForFreshHandle(_ context.Context, adapterType, scop
 func (f *fakeRemoteShim) RegisterScope(scope, token string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.registered == nil {
+		f.registered = make(map[string]string)
+	}
 	f.registered[scope] = token
+	f.calls = append(f.calls, "RegisterScope:"+scope)
+	if f.onRegister != nil {
+		f.onRegister(scope, token)
+	}
 }
 
 func (f *fakeRemoteShim) UnregisterScope(scope string) {
