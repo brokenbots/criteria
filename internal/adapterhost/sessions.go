@@ -763,6 +763,17 @@ func (m *SessionManager) remoteShimForEnvLocked(envKey string) RemoteShim {
 	return m.remoteShim
 }
 
+// RemoteShimRegisteredForEnv reports whether a shim has been registered for
+// exactly this environment key. Unlike RemoteShimForEnv it never falls back
+// to the legacy default shim, so callers can tell whether the environment
+// has its own hosted shim.
+func (m *SessionManager) RemoteShimRegisteredForEnv(envKey string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.remoteShimsByEnv[envKey]
+	return ok
+}
+
 // remoteEnvForAdapter returns the environment key ("remote.<name>") the
 // adapter declaration is bound to, resolving against the DECLARING graph so
 // subworkflow adapters match the provisioning path (CRI-269). The second

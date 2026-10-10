@@ -452,6 +452,15 @@ func (e *Engine) ackPauseRequested() {
 	}
 }
 
+// LiveSessions returns the session manager for the currently live run, or
+// nil when no run is active. Callers must synchronize with the run (e.g.
+// through a sink event) before reading registration state from it.
+func (e *Engine) LiveSessions() *adapterhost.SessionManager {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.liveSessions
+}
+
 // pauseSessions halts the live adapter sessions and persists their snapshots.
 // Shared by Engine.Pause (caller surfaces the error) and the boundary pause
 // (fail-open: warnings logged, pause still lands — the resume path rebuilds

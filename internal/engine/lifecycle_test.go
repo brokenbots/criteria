@@ -1321,6 +1321,22 @@ type eventTrackingSink struct {
 	lifecycleStatuses []string
 	provisionEvents   []AdapterLifecycleEvent
 	stepOutcomeLog    []string
+	runStarted        bool
+}
+
+// OnRunStarted records the flag under mu so test goroutines get a
+// happens-before edge with everything the run set up before runLoop
+// (shim registration, live session state).
+func (s *eventTrackingSink) OnRunStarted(name, state string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.runStarted = true
+}
+
+func (s *eventTrackingSink) runStartedSeen() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.runStarted
 }
 
 func (s *eventTrackingSink) OnAdapterLifecycle(runID, adapter, status, detail string) {
