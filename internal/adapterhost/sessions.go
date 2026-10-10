@@ -94,6 +94,11 @@ type SessionManager struct {
 	// When nil the real Probe() is used.
 	sandboxProbeOverride func() sandbox.Capabilities
 
+	// ambientHomes allocates the fresh per-invocation scratch home
+	// directories KB-224 gives locally launched agent adapters (copilot); nil
+	// until NewSessionManager initializes it.
+	ambientHomes *ambientHomeAllocator
+
 	// sandboxShimBin is the path to the binary used as the sandbox pre-exec
 	// shim. When empty the current process image (os.Args[0]) is used, matching
 	// production criteria CLI behavior. Tests set this to a dedicated helper
@@ -1373,6 +1378,7 @@ func NewSessionManager(loader Loader) *SessionManager {
 		loader:                    loader,
 		sessions:                  map[string]*Session{},
 		verified:                  map[string]*verifiedRecord{},
+		ambientHomes:              &ambientHomeAllocator{},
 		HeartbeatStallThreshold:   t.HeartbeatStallThreshold,
 		StepTimeoutTeardownWindow: t.StepTimeoutTeardownWindow,
 	}
@@ -1582,10 +1588,12 @@ func (m *SessionManager) sandboxEnvAndPolicy(instanceID string) (envNode *workfl
 	return envNode, rp, true
 }
 
-// buildCommandCustomizer composes the sandbox command customizer (if any) with a
-// working-directory customizer derived from the bound environment. The
-// environment's working_directory becomes the adapter process launch cwd, which
-// shell/copilot adapters inherit as the default directory for their work.
+// buildCommandCustomizer composes the sandbox command customizer (if any), the
+// KB-224 ambient-home isolation customizer (if the adapter instance is
+// eligible), and a working-directory customizer derived from the bound
+// environment. The environment's working_directory becomes the adapter process
+// launch cwd, which shell/copilot adapters inherit as the default directory
+// for their work.
 //
 // Container environments never reach this path (they launch via a container
 // runner) and never carry a working_directory; remote environments apply their
@@ -1597,7 +1605,17 @@ func (m *SessionManager) buildCommandCustomizer(instanceID, workingDir string) (
 		return nil, nil, err
 	}
 
+	// KB-224: only when no sandbox customizer owns the launch environment may
+	// the ambient-home isolation apply; a sandbox scrubs the entire
+	// environment itself.
+	ambientCust, ambientCleanup := m.buildAmbientHomeCustomizer(instanceID)
+
 	if workingDir == "" {
+		if ambientCust != nil {
+			// The per-launch cleanup is a no-op (the scratch home outlives
+			// individual launches); root removal happens at Shutdown.
+			return ambientCust, ambientCleanup, nil
+		}
 		return sandboxCust, cleanup, nil
 	}
 
@@ -1608,6 +1626,11 @@ func (m *SessionManager) buildCommandCustomizer(instanceID, workingDir string) (
 			// sandbox default (ApplyToCmd only sets Dir when empty; the bwrap
 			// path manages the inner cwd via --chdir).
 			sandboxCust(name, cmd)
+		} else if ambientCust != nil {
+			// KB-224: agent adapters eligible for ambient-home isolation set
+			// cmd.Env themselves (host env with HOME rewritten to a fresh
+			// per-invocation scratch directory).
+			ambientCust(name, cmd)
 		} else {
 			// No sandbox customizer, but providing any customizer flips
 			// go-plugin's SkipHostEnv to true (see loader.go). Preserve the host
@@ -3263,6 +3286,11 @@ func (m *SessionManager) Shutdown(ctx context.Context) error {
 		if err := m.loader.Shutdown(ctx); err != nil {
 			errs = append(errs, err)
 		}
+	}
+	// KB-224: drop the per-invocation ambient home scratch root last, after
+	// every adapter process that could still hold it open is gone.
+	if m.ambientHomes != nil {
+		m.ambientHomes.cleanup()
 	}
 	return errors.Join(errs...)
 }
