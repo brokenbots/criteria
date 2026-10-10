@@ -163,14 +163,14 @@ func ConfigureFromEnv(probeTimeout time.Duration) (Config, bool, error) {
 // terminal verdicts, or a failure detail for unknown. Check never returns a
 // transport error: unavailability is a gate outcome (OutcomeUnknown), not a
 // caller error, so the fail-open posture stays explicit at the call site.
-func (c Config) Check(ctx context.Context) (Outcome, string) {
+func (c Config) Check(ctx context.Context) (outcome Outcome, detail string) {
 	viewURL, err := probeURL(c.ViewURL, c.Ticket, c.Job)
 	if err != nil {
 		// Unreachable for a URL Configure already accepted; kept defensive
 		// so a future call-site refactor cannot panic the boot.
 		return OutcomeUnknown, fmt.Sprintf("invalid view URL: %v", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, viewURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, viewURL, http.NoBody)
 	if err != nil {
 		return OutcomeUnknown, fmt.Sprintf("operator view request: %v", err)
 	}
@@ -189,7 +189,7 @@ func (c Config) Check(ctx context.Context) (Outcome, string) {
 
 // classify is the gate predicate over one operator view response: it maps
 // the HTTP status and payload onto the boot outcome.
-func classify(status int, body []byte) (Outcome, string) {
+func classify(status int, body []byte) (outcome Outcome, detail string) {
 	switch status {
 	case http.StatusOK:
 		var v View

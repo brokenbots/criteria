@@ -272,7 +272,7 @@ func TestCheckSlowViewTimesOutToUnknown(t *testing.T) {
 
 func TestCheckOversizedViewPayloadIsMalformed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(fmt.Sprintf(`{"phase":"%s","terminal":false}`, strings.Repeat("x", maxViewBodyBytes+1024))))
+		fmt.Fprintf(w, `{"phase":"%s","terminal":false}`, strings.Repeat("x", maxViewBodyBytes+1024))
 	}))
 	defer srv.Close()
 

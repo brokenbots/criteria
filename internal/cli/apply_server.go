@@ -303,69 +303,31 @@ func runApplyServer(ctx context.Context, opts applyOptions) error {
 		log = newApplyLogger()
 	}
 
-	// KB-234 boot gate: before any castle interaction, resolve this
-	// runner's operator identity and consult the operator's view of its
-	// CriteriaRun. Rule 3 of KB-233 covers adoption (checkpointed runs that
-	// castle reports terminal exit 0); a FRESH start has no run identity to
-	// ask castle about, so the mechanical check derives from the CR object
-	// itself. A terminal CR — or a CR deleted while this pod is still alive
-	// — means the operator will never provision for this boot again, and
-	// registering or creating a run would mint a pending-forever castle run
-	// (the KB-225 boot-1 orphan). Exit 0 instead.
-	gate, gateEnabled, err := bootgate.Configure(os.LookupEnv, tunables.FromEnv().BootGateProbeTimeout)
+	// KB-234 boot gate: consult the operator's CriteriaRun view before any
+	// castle interaction; a terminal or deleted CR means exit 0 instead of
+	// minting a pending-forever run (see gateBootOnOperatorView).
+	blocked, err := gateBootOnOperatorView(runCtx, log)
 	if err != nil {
 		return err
 	}
-	if gateEnabled {
-		outcome, detail := gate.Check(runCtx)
-		switch outcome {
-		case bootgate.OutcomeTerminal, bootgate.OutcomeDeleted:
-			log.Info("runner boot gate: operator CriteriaRun view blocks this boot; exiting without registering with castle",
-				"outcome", outcome.String(), "phase", detail, "ticket", gate.Ticket, "job", gate.Job)
-			return nil
-		case bootgate.OutcomeUnknown:
-			// Fail open: an unavailable view is not an operator statement
-			// that the CR is dead. The residual exposure stays bounded by
-			// KB-233 rule 1 (terminal CRs delete runner Job pods) and castle
-			// rule 2 (created-never-started runs are reaped).
-			log.Warn("runner boot gate: operator CriteriaRun view unavailable; proceeding",
-				"detail", detail, "ticket", gate.Ticket, "job", gate.Job)
-		default:
-			log.Info("runner boot gate: operator CriteriaRun view is live; proceeding",
-				"phase", detail, "ticket", gate.Ticket, "job", gate.Job)
-		}
+	if blocked {
+		return nil
 	}
 
-	// Resolve bootstrap auth before any server interaction so a bad token
-	// spec fails fast with a CLI-adjacent error.
-	bootstrapToken, err := resolveServerBootstrapToken(opts.serverBootstrapToken)
+	prepared, err := prepareServerRun(runCtx, opts, log)
 	if err != nil {
 		return err
 	}
-
-	// Open the events file up front so a bad events path fails fast before
-	// any server interaction, mirroring local mode (the file is created even
-	// when compilation later fails). A nil writer disables dual-write and
-	// leaves server-only behavior unchanged.
-	eventsOut, closeEvents, err := openServerEventsWriter(opts.eventsPath)
-	if err != nil {
-		return err
-	}
-	defer closeEvents()
-
-	src, graph, loader, err := compileForExecution(runCtx, opts.workflowPath, log, opts.warnsAsErrors, opts.allowUnsigned, opts.subworkflowRoots...)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = loader.Shutdown(context.WithoutCancel(runCtx)) }()
+	defer prepared.closeEvents()
+	defer func() { _ = prepared.loader.Shutdown(context.WithoutCancel(runCtx)) }()
 
 	copts := applyClientOptions(opts)
-	copts.BootstrapToken = bootstrapToken
+	copts.BootstrapToken = prepared.bootstrapToken
 	// CRI-125: identify this invocation so a restarted runner resumes (or
 	// keeps failed) the original run instead of forking a second run with a
 	// fresh run_id against stale adapter state.
 	fingerprint := runIdentityFingerprint(opts.workflowPath, opts.serverURL, opts.varFiles, opts.varOverrides)
-	client, runID, resumedMatching, resumeErr, err := setupServerRun(runCtx, log, graph, src, opts.serverURL, opts.name, &copts, cancelRun, eventsOut, fingerprint)
+	client, runID, resumedMatching, resumeErr, err := setupServerRun(runCtx, log, prepared.graph, prepared.src, opts.serverURL, opts.name, &copts, cancelRun, prepared.eventsOut, fingerprint)
 	if err != nil {
 		return err
 	}
@@ -379,12 +341,95 @@ func runApplyServer(ctx context.Context, opts applyOptions) error {
 		return resumeErr
 	}
 
-	state := newLocalRunState(runID, graph.Name, opts.serverURL)
+	state := newLocalRunState(runID, prepared.graph.Name, opts.serverURL)
 	// CRI-225: publish the resolved workflow origin for this fresh server
 	// run; resumed-matching invocations return above and leave the original
 	// run's record untouched. Local sources (nil origin) record nothing.
 	publishRunMetadata(runID, opts.origin, log)
-	return executeServerRun(runCtx, log, loader, client, state, graph, opts, eventsOut)
+	return executeServerRun(runCtx, log, prepared.loader, client, state, prepared.graph, opts, prepared.eventsOut)
+}
+
+// serverRunPrepared bundles the locally-resolved resources a server-mode
+// apply needs before touching the server: bootstrap auth, the compiled
+// workflow, and the dual-write events file handle.
+type serverRunPrepared struct {
+	bootstrapToken string
+	src            []byte
+	graph          *workflow.FSMGraph
+	loader         *adapterhost.DefaultLoader
+	eventsOut      io.Writer
+	closeEvents    func()
+}
+
+// prepareServerRun resolves everything a fresh (or resumed) server-mode
+// execution needs before any server interaction: bootstrap auth, the
+// dual-write events file, and compilation. All steps fail fast with a
+// CLI-adjacent error so a bad local setup never reaches the server.
+func prepareServerRun(ctx context.Context, opts applyOptions, log *slog.Logger) (*serverRunPrepared, error) {
+	// Resolve bootstrap auth before any server interaction so a bad token
+	// spec fails fast with a CLI-adjacent error.
+	bootstrapToken, err := resolveServerBootstrapToken(opts.serverBootstrapToken)
+	if err != nil {
+		return nil, err
+	}
+
+	// Open the events file up front so a bad events path fails fast before
+	// any server interaction, mirroring local mode (the file is created even
+	// when compilation later fails). A nil writer disables dual-write and
+	// leaves server-only behavior unchanged.
+	eventsOut, closeEvents, err := openServerEventsWriter(opts.eventsPath)
+	if err != nil {
+		return nil, err
+	}
+
+	src, graph, loader, err := compileForExecution(ctx, opts.workflowPath, log, opts.warnsAsErrors, opts.allowUnsigned, opts.subworkflowRoots...)
+	if err != nil {
+		closeEvents()
+		return nil, err
+	}
+	return &serverRunPrepared{
+		bootstrapToken: bootstrapToken,
+		src:            src,
+		graph:          graph,
+		loader:         loader,
+		eventsOut:      eventsOut,
+		closeEvents:    closeEvents,
+	}, nil
+}
+
+// gateBootOnOperatorView applies the KB-234 boot gate: resolve the
+// operator-injected identity, probe the operator's CriteriaRun view once,
+// and log the verdict. It returns blocked=true when the operator rules this
+// boot out (terminal CR, or CR deleted while this pod is still alive): the
+// caller must exit 0 without any castle interaction. It returns an error
+// when the gate is misconfigured; an unavailable view is fail-open (blocked
+// stays false) with a loud warning, bounded by the KB-233 backstops.
+func gateBootOnOperatorView(ctx context.Context, log *slog.Logger) (blocked bool, err error) {
+	gate, enabled, err := bootgate.Configure(os.LookupEnv, tunables.FromEnv().BootGateProbeTimeout)
+	if err != nil {
+		return false, err
+	}
+	if !enabled {
+		return false, nil
+	}
+	outcome, detail := gate.Check(ctx)
+	switch outcome {
+	case bootgate.OutcomeTerminal, bootgate.OutcomeDeleted:
+		log.Info("runner boot gate: operator CriteriaRun view blocks this boot; exiting without registering with castle",
+			"outcome", outcome.String(), "phase", detail, "ticket", gate.Ticket, "job", gate.Job)
+		return true, nil
+	case bootgate.OutcomeUnknown:
+		// Fail open: an unavailable view is not an operator statement that
+		// the CR is dead. The residual exposure stays bounded by KB-233
+		// rule 1 (terminal CRs delete runner Job pods) and castle rule 2
+		// (created-never-started runs are reaped).
+		log.Warn("runner boot gate: operator CriteriaRun view unavailable; proceeding",
+			"detail", detail, "ticket", gate.Ticket, "job", gate.Job)
+	default:
+		log.Info("runner boot gate: operator CriteriaRun view is live; proceeding",
+			"phase", detail, "ticket", gate.Ticket, "job", gate.Job)
+	}
+	return false, nil
 }
 
 // setupServerRun registers with the server and creates a fresh run, resuming
