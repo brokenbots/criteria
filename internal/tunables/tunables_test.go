@@ -16,6 +16,7 @@ func TestDefaultsMatchConstants(t *testing.T) {
 		StepTimeoutTeardownWindow: DefaultStepTimeoutTeardownWindow,
 		StepStallWindow:           DefaultStepStallWindow,
 		AgentHeartbeatInterval:    DefaultAgentHeartbeatInterval,
+		BootGateProbeTimeout:      DefaultBootGateProbeTimeout,
 		ServeAdapterConcurrency:   DefaultServeAdapterConcurrency,
 	}
 	if got := Defaults(); got != want {
@@ -38,6 +39,7 @@ func TestNewLenientOverrides(t *testing.T) {
 		{EnvHeartbeatStallThreshold, "5m", 5 * time.Minute},
 		{EnvStepTimeoutTeardownWindow, "2m", 2 * time.Minute},
 		{EnvAgentHeartbeatInterval, "7s", 7 * time.Second},
+		{EnvBootGateProbeTimeout, "3s", 3 * time.Second},
 	}
 	lookupWith := func(env, raw string) func(string) string {
 		return func(name string) string {
@@ -141,6 +143,8 @@ func fieldFor(t *testing.T, s Settings, env string) time.Duration {
 		return s.StepTimeoutTeardownWindow
 	case EnvAgentHeartbeatInterval:
 		return s.AgentHeartbeatInterval
+	case EnvBootGateProbeTimeout:
+		return s.BootGateProbeTimeout
 	default:
 		t.Fatalf("unexpected env knob %q", env)
 		return 0
@@ -173,7 +177,8 @@ func TestEnvvarsRegistry(t *testing.T) {
 		seen[r.Name] = true
 	}
 	for _, name := range []string{
-		EnvAgentHeartbeatInterval, EnvHeartbeatInterval, EnvHeartbeatStallThreshold,
+		EnvAgentHeartbeatInterval, EnvBootGateProbeTimeout, EnvHeartbeatInterval,
+		EnvHeartbeatStallThreshold,
 		EnvLocalApprovalFileTimeout,
 		EnvPeerBackoffMax, EnvPeerBackoffMin, EnvPeerJournalLimit,
 		EnvServeAdapterConcurrency,
@@ -187,6 +192,7 @@ func TestEnvvarsRegistry(t *testing.T) {
 	// outlives a default change.
 	wantDefault := map[string]string{
 		EnvAgentHeartbeatInterval:    "10s",
+		EnvBootGateProbeTimeout:      "5s",
 		EnvHeartbeatInterval:         "30s",
 		EnvLocalApprovalFileTimeout:  "1h",
 		EnvPeerBackoffMax:            "30s",
