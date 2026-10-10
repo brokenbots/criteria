@@ -129,17 +129,6 @@ func kb237Loader(comment string) adapterhost.Loader {
 	}}
 }
 
-// countSteps returns how many times a step was entered.
-func countSteps(stepsRun []string, name string) int {
-	n := 0
-	for _, s := range stepsRun {
-		if s == name {
-			n++
-		}
-	}
-	return n
-}
-
 // TestKB237_NoOpResumeFinalizesReadyForReviewWithoutCheckpoint pins
 // acceptance #1+#2: the identical no-op-resume resubmission (the branch is
 // already converged; the resubmission is byte-equal) must reach the

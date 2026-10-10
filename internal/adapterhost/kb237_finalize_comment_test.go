@@ -102,7 +102,7 @@ func kb237IncidentEvents(t *testing.T, finalized map[string]any) []*v2.ExecuteEv
 
 // runKB237Attempt drives one attempt through ExecuteViaClient and returns
 // the resolved verdict (outcome + comment).
-func runKB237Attempt(t *testing.T, client Client, step *workflow.StepNode) (string, string, error) {
+func runKB237Attempt(t *testing.T, client Client, step *workflow.StepNode) (outcome, comment string, err error) {
 	t.Helper()
 	res, execErr := ExecuteViaClient(context.Background(), client, "copilot", "s1", true, step, &adapterEventCollector{}, nil)
 	return res.Outcome, res.Comment, execErr
