@@ -1499,16 +1499,19 @@ func (e *Engine) bootstrapSessionsForResume(ctx context.Context, sessions *adapt
 // With local shim isolation enabled (CRI-293), environments whose declared
 // listen_address collides with another environment's bind their own
 // auto-chosen loopback port instead.
+//
+// The environment set covers declarations from the root graph AND every
+// compiled subworkflow body (KB-238): subworkflows re-declare the
+// environments their adapters bind to, and without hosting a shim for those
+// declarations the body's session waits fall back to the legacy default
+// shim — another environment's provider — whose declared adapter set lacks
+// the body's adapters, so adapter init fails closed with "not declared for
+// this environment".
 func (e *Engine) maybeStartRemoteShim(ctx context.Context, sessions *adapterhost.SessionManager) error {
-	if e.graph == nil || len(e.graph.Environments) == 0 {
+	if e.graph == nil {
 		return nil
 	}
-	remoteEnvs := make(map[string]*workflow.EnvironmentNode, len(e.graph.Environments))
-	for key, env := range e.graph.Environments {
-		if env.Type == "remote" {
-			remoteEnvs[key] = env
-		}
-	}
+	remoteEnvs := shimEnvironmentDeclarations(e.graph)
 	if len(remoteEnvs) == 0 {
 		return nil
 	}
@@ -1525,6 +1528,38 @@ func (e *Engine) maybeStartRemoteShim(ctx context.Context, sessions *adapterhost
 		}
 	}
 	return nil
+}
+
+// shimEnvironmentDeclarations returns every remote environment the run must
+// host a shim for: the root graph's declarations merged with those of every
+// compiled subworkflow body. Root declarations win on key conflicts so a
+// subworkflow cannot replace the operator's listen/token wiring for a shared
+// environment; between subworkflows, declaration order decides (KB-238).
+func shimEnvironmentDeclarations(g *workflow.FSMGraph) map[string]*workflow.EnvironmentNode {
+	out := make(map[string]*workflow.EnvironmentNode)
+	collectShimEnvironments(g, out)
+	return out
+}
+
+func collectShimEnvironments(g *workflow.FSMGraph, out map[string]*workflow.EnvironmentNode) {
+	if g == nil {
+		return
+	}
+	for key, env := range g.Environments {
+		if env == nil || env.Type != "remote" {
+			continue
+		}
+		if _, ok := out[key]; !ok {
+			out[key] = env
+		}
+	}
+	for _, name := range g.SubworkflowOrder {
+		sw := g.Subworkflows[name]
+		if sw == nil {
+			continue
+		}
+		collectShimEnvironments(sw.Body, out)
+	}
 }
 
 // declaredAdaptersForEnv walks the compiled graph and returns the adapter
