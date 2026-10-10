@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	"github.com/brokenbots/criteria/internal/bootgate"
 	"github.com/brokenbots/criteria/internal/engine"
 	"github.com/brokenbots/criteria/internal/run"
 	servertrans "github.com/brokenbots/criteria/internal/transport/server"
@@ -297,6 +298,44 @@ func runApplyServer(ctx context.Context, opts applyOptions) error {
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
 
+	log := opts.log
+	if log == nil {
+		log = newApplyLogger()
+	}
+
+	// KB-234 boot gate: before any castle interaction, resolve this
+	// runner's operator identity and consult the operator's view of its
+	// CriteriaRun. Rule 3 of KB-233 covers adoption (checkpointed runs that
+	// castle reports terminal exit 0); a FRESH start has no run identity to
+	// ask castle about, so the mechanical check derives from the CR object
+	// itself. A terminal CR — or a CR deleted while this pod is still alive
+	// — means the operator will never provision for this boot again, and
+	// registering or creating a run would mint a pending-forever castle run
+	// (the KB-225 boot-1 orphan). Exit 0 instead.
+	gate, gateEnabled, err := bootgate.Configure(os.LookupEnv, tunables.FromEnv().BootGateProbeTimeout)
+	if err != nil {
+		return err
+	}
+	if gateEnabled {
+		outcome, detail := gate.Check(runCtx)
+		switch outcome {
+		case bootgate.OutcomeTerminal, bootgate.OutcomeDeleted:
+			log.Info("runner boot gate: operator CriteriaRun view blocks this boot; exiting without registering with castle",
+				"outcome", outcome.String(), "phase", detail, "ticket", gate.Ticket, "job", gate.Job)
+			return nil
+		case bootgate.OutcomeUnknown:
+			// Fail open: an unavailable view is not an operator statement
+			// that the CR is dead. The residual exposure stays bounded by
+			// KB-233 rule 1 (terminal CRs delete runner Job pods) and castle
+			// rule 2 (created-never-started runs are reaped).
+			log.Warn("runner boot gate: operator CriteriaRun view unavailable; proceeding",
+				"detail", detail, "ticket", gate.Ticket, "job", gate.Job)
+		default:
+			log.Info("runner boot gate: operator CriteriaRun view is live; proceeding",
+				"phase", detail, "ticket", gate.Ticket, "job", gate.Job)
+		}
+	}
+
 	// Resolve bootstrap auth before any server interaction so a bad token
 	// spec fails fast with a CLI-adjacent error.
 	bootstrapToken, err := resolveServerBootstrapToken(opts.serverBootstrapToken)
@@ -314,7 +353,6 @@ func runApplyServer(ctx context.Context, opts applyOptions) error {
 	}
 	defer closeEvents()
 
-	log := newApplyLogger()
 	src, graph, loader, err := compileForExecution(runCtx, opts.workflowPath, log, opts.warnsAsErrors, opts.allowUnsigned, opts.subworkflowRoots...)
 	if err != nil {
 		return err

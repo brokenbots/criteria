@@ -55,6 +55,9 @@ const (
 	// cadence against a server-compatible orchestrator while a run is in
 	// flight (KB-53).
 	DefaultAgentHeartbeatInterval = 10 * time.Second
+	// DefaultBootGateProbeTimeout bounds the KB-234 boot gate's operator
+	// view request at every server-mode start (fresh or adoption).
+	DefaultBootGateProbeTimeout = 5 * time.Second
 	// DefaultPauseToolCallDrainWindow is the drain-first pause window
 	// (CRI-169): Session.Pause waits this long for in-flight nested tool
 	// calls to settle before cancelling them.
@@ -99,6 +102,9 @@ const (
 	// EnvAgentHeartbeatInterval overrides DefaultAgentHeartbeatInterval
 	// (lenient; KB-53).
 	EnvAgentHeartbeatInterval = "CRITERIA_AGENT_HEARTBEAT_INTERVAL"
+	// EnvBootGateProbeTimeout overrides DefaultBootGateProbeTimeout
+	// (lenient; KB-234).
+	EnvBootGateProbeTimeout = "CRITERIA_BOOT_GATE_PROBE_TIMEOUT"
 	// EnvLocalApprovalFileTimeout overrides DefaultLocalApprovalFileTimeout
 	// (strict — a malformed value fails the run loudly; internal/cli
 	// localResumerOptions owns the strict parsing).
@@ -155,6 +161,9 @@ type Settings struct {
 	// AgentHeartbeatInterval is the KB-53 operator CLI run heartbeat
 	// cadence against a server-compatible orchestrator.
 	AgentHeartbeatInterval time.Duration
+	// BootGateProbeTimeout bounds the KB-234 boot gate's operator view
+	// request at every server-mode start (fresh or adoption).
+	BootGateProbeTimeout time.Duration
 	// ServeAdapterConcurrency is the ADR-0008 shared container budget for
 	// the workflow's own step-adapter sessions while
 	// `criteria serve-adapter` serves a workflow.
@@ -169,6 +178,7 @@ func Defaults() Settings {
 		StepTimeoutTeardownWindow: DefaultStepTimeoutTeardownWindow,
 		StepStallWindow:           DefaultStepStallWindow,
 		AgentHeartbeatInterval:    DefaultAgentHeartbeatInterval,
+		BootGateProbeTimeout:      DefaultBootGateProbeTimeout,
 		ServeAdapterConcurrency:   DefaultServeAdapterConcurrency,
 	}
 }
@@ -203,6 +213,9 @@ func New(lookup func(string) string) Settings {
 	}
 	if d, ok := resolvePositiveDuration(lookup(EnvAgentHeartbeatInterval)); ok {
 		s.AgentHeartbeatInterval = d
+	}
+	if d, ok := resolvePositiveDuration(lookup(EnvBootGateProbeTimeout)); ok {
+		s.BootGateProbeTimeout = d
 	}
 	if n, ok := resolvePositiveInt(lookup(EnvServeAdapterConcurrency)); ok {
 		s.ServeAdapterConcurrency = n
@@ -267,6 +280,7 @@ type Envar struct {
 func Envvars() []Envar {
 	return []Envar{
 		{Name: EnvAgentHeartbeatInterval, Kind: KindDuration, Default: "10s", Doc: "Operator CLI heartbeat cadence against a server-compatible orchestrator while a run is in flight (`criteria agent`, `criteria apply --server`)."},
+		{Name: EnvBootGateProbeTimeout, Kind: KindDuration, Default: "5s", Doc: "Bounds the boot gate's operator-view request at every server-mode start (KB-234): the runner checks its CriteriaRun is still live before registering with castle."},
 		{Name: EnvHeartbeatInterval, Kind: KindDuration, Default: "30s", Doc: "Adapter log-stream heartbeat cadence (the transitional heartbeatutil helper used by in-tree fixture adapters and the MCP bridge) and the peer Supervise stream idle heartbeat."},
 		{Name: EnvLocalApprovalFileTimeout, Kind: KindDuration, Default: "1h", Doc: "How long file-mode local approval waits for the operator's decision file before the pause fails. Strict override: a malformed value fails the run loudly."},
 		{Name: EnvPeerBackoffMax, Kind: KindDuration, Default: "30s", Doc: "Peer host reconnect backoff ceiling; must be >= the backoff floor. Peer-owned override: a malformed value aborts peer startup."},

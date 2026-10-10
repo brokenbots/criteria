@@ -16,6 +16,7 @@ Values are Go durations (`30s`, `5m`, `1500ms`) unless noted otherwise.
 | Variable | Type | Default | Description |
 | --- | --- | --- | --- |
 | `CRITERIA_AGENT_HEARTBEAT_INTERVAL` | duration | `10s` | Operator CLI heartbeat cadence against a server-compatible orchestrator while a run is in flight (`criteria agent`, `criteria apply --server`). |
+| `CRITERIA_BOOT_GATE_PROBE_TIMEOUT` | duration | `5s` | Bounds the boot gate's operator-view request at every server-mode start (KB-234): the runner checks its CriteriaRun is still live before registering with castle. |
 | `CRITERIA_HEARTBEAT_INTERVAL` | duration | `30s` | Adapter log-stream heartbeat cadence (the transitional heartbeatutil helper used by in-tree fixture adapters and the MCP bridge) and the peer Supervise stream idle heartbeat. |
 | `CRITERIA_LOCAL_APPROVAL_FILE_TIMEOUT` | duration | `1h` | How long file-mode local approval waits for the operator's decision file before the pause fails. Strict override: a malformed value fails the run loudly. |
 | `CRITERIA_PEER_BACKOFF_MAX` | duration | `30s` | Peer host reconnect backoff ceiling; must be >= the backoff floor. Peer-owned override: a malformed value aborts peer startup. |
