@@ -286,6 +286,19 @@ func TestCheckOversizedViewPayloadIsMalformed(t *testing.T) {
 	}
 }
 
+func TestCheckOversizedPaddingAfterValidJSONIsMalformed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"phase":"Provisioning","terminal":false}%s`, strings.Repeat(" ", maxViewBodyBytes+1024))
+	}))
+	defer srv.Close()
+
+	cfg := Config{ViewURL: srv.URL, Ticket: "kb-234", Timeout: testProbeTimeout}
+	outcome, _ := cfg.Check(context.Background())
+	if outcome != OutcomeUnknown {
+		t.Fatalf("Check() = %s, want unknown for a payload padded past the size cap", outcome)
+	}
+}
+
 func TestOutcomeStringRendersAllOutcomes(t *testing.T) {
 	cases := map[Outcome]string{
 		OutcomeLive:     "live",

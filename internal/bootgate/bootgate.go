@@ -50,7 +50,7 @@ const (
 )
 
 // maxViewBodyBytes bounds the operator view payload. The document is a tiny
-// JSON object, so anything larger is treated as malformed rather than read.
+// JSON object, so anything larger is treated as malformed rather than parsed.
 const maxViewBodyBytes = 64 * 1024
 
 // Outcome is the gate's verdict about a boot start.
@@ -183,6 +183,9 @@ func (c Config) Check(ctx context.Context) (outcome Outcome, detail string) {
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxViewBodyBytes+1))
 	if err != nil {
 		return OutcomeUnknown, fmt.Sprintf("operator view read failed: %v", err)
+	}
+	if len(body) > maxViewBodyBytes {
+		return OutcomeUnknown, fmt.Sprintf("operator view payload exceeds %d bytes", maxViewBodyBytes)
 	}
 	return classify(resp.StatusCode, body)
 }
