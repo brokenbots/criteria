@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/zclconf/go-cty/cty"
 
@@ -1319,6 +1320,7 @@ type eventTrackingSink struct {
 	mu                sync.Mutex
 	lifecycleStatuses []string
 	provisionEvents   []AdapterLifecycleEvent
+	stepOutcomeLog    []string
 }
 
 func (s *eventTrackingSink) OnAdapterLifecycle(runID, adapter, status, detail string) {
@@ -1353,6 +1355,21 @@ func (s *eventTrackingSink) firstStatus(status string) (AdapterLifecycleEvent, b
 		}
 	}
 	return AdapterLifecycleEvent{}, false
+}
+
+// OnStepOutcome records per-step outcome errors so tests can assert the
+// failure chain (the base fakeSink captures only the run-level reason).
+func (s *eventTrackingSink) OnStepOutcome(step, outcome string, _ time.Duration, err error, _ string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stepOutcomeLog = append(s.stepOutcomeLog, fmt.Sprintf("step=%s outcome=%s err=%v", step, outcome, err))
+}
+
+// stepOutcomes returns the recorded step-outcome lines.
+func (s *eventTrackingSink) stepOutcomes() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.stepOutcomeLog...)
 }
 
 // perScopeRemoteGraph returns a compiled workflow with a remote environment that
