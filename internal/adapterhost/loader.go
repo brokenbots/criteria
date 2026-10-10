@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"sort"
@@ -675,7 +676,18 @@ type executeCaptureSink struct {
 	// step still resolves to the outcome the adapter chose instead of the
 	// synthetic "failure" the dead stream used to produce.
 	finalizedOutcome string
+	finalizedComment string
 	finalizedPayload map[string]any
+
+	// KB-237: the last outcome-submit tool invocation on this attempt
+	// (adapterEventFinalizeTool, guard KB-42). The adapter validates the
+	// comment against the outcome's require_comment contract in-turn, but
+	// neither the outcome.finalized event it forwards nor the turn-terminal
+	// cut (KB-56) is guaranteed to keep that comment on the delivered
+	// verdict — the invocation arguments are the wire copy the host can
+	// still read when the verdict must be reconstructed.
+	finalizeSubmitOutcome string
+	finalizeSubmitComment string
 
 	// KB-56: a finalized outcome is turn-terminal. onTurnFinalized (when
 	// non-nil) cancels the Execute stream the moment a verdict is recorded,
@@ -891,8 +903,16 @@ func executeWithActiveStream(ctx context.Context, client Client, step *workflow.
 // adapterEventFinalizedOutcome is the adapter event kind used by adapters
 // that resolve their turn at the adapter level mid-stream (the copilot
 // submit_outcome tool, guard KB-42). The payload shape is
-// {"outcome": string, "reason": string(possibly redacted upstream)}.
+// {"outcome": string, "reason": string(possibly redacted upstream)}, plus
+// the optional "comment" echo of a contract-mode finalize (KB-237).
 const adapterEventFinalizedOutcome = "outcome.finalized"
+
+// adapterEventFinalizeTool is the outcome-submit tool whose invocation
+// precedes an outcome.finalized verdict (the copilot submit_outcome tool,
+// guard KB-42). The invocation's arguments carry {"outcome": string,
+// "comment": string(when the outcome requires one), ...}; see
+// recordFinalizeSubmit for the durability contract.
+const adapterEventFinalizeTool = "submit_outcome"
 
 // maxChunkBufBytes is the upper bound for chunk-reassembly buffers in
 // executeCaptureSink. Payloads that would exceed this limit are rejected with
@@ -958,12 +978,36 @@ func (s *executeCaptureSink) emitAdapter(adapterEvt *v2.AdapterEvent) error {
 // The payload shape is {"name": string, "arguments": map} — preserved
 // from v1 so existing console and NDJSON consumers do not break.
 func (s *executeCaptureSink) emitTool(toolEvt *v2.ToolInvocation) error {
+	var args map[string]any
+	if as := toolEvt.GetArgs(); as != nil {
+		args = as.AsMap()
+	}
+	if toolEvt.GetToolName() == adapterEventFinalizeTool {
+		s.recordFinalizeSubmit(args)
+	}
 	payload := map[string]any{"name": toolEvt.GetToolName()}
-	if args := toolEvt.GetArgs(); args != nil {
-		payload["arguments"] = args.AsMap()
+	if args != nil {
+		payload["arguments"] = args
 	}
 	s.sink.Adapter("tool.invocation", payload)
 	return nil
+}
+
+// recordFinalizeSubmit captures the LAST outcome-submit invocation on this
+// attempt (KB-237). The adapter checks the contract's require_comment
+// in-turn and would have rejected a comment-less submit, and an accepted
+// finalize hard-rejects resubmission — so the last recorded arguments for
+// the finalized outcome carry exactly the comment the accepted submit used.
+// An invocation without a usable outcome argument is ignored.
+func (s *executeCaptureSink) recordFinalizeSubmit(args map[string]any) {
+	if args == nil {
+		return
+	}
+	if outcome, ok := args["outcome"].(string); ok && outcome != "" {
+		comment, _ := args["comment"].(string)
+		s.finalizeSubmitOutcome = outcome
+		s.finalizeSubmitComment = comment
+	}
 }
 
 func (s *executeCaptureSink) emitResult(resultEvt *v2.ExecuteResult) error {
@@ -1214,14 +1258,18 @@ func (s *executeCaptureSink) emitDenied(requestID, tool, reason string) {
 
 // recordFinalizedOutcome captures an adapter-level outcome.finalized event
 // (last one wins). The payload is redacted upstream; here only the outcome
-// name and reason pass through. It reports whether a usable verdict was
-// recorded: nil payloads and outcome-less payloads never finalize the turn.
+// name, the reason, and the optional contract-mode comment echo pass
+// through. It reports whether a usable verdict was recorded: nil payloads
+// and outcome-less payloads never finalize the turn.
 func (s *executeCaptureSink) recordFinalizedOutcome(payload map[string]any) bool {
 	if payload == nil {
 		return false
 	}
 	if outcome, ok := payload["outcome"].(string); ok && outcome != "" {
 		s.finalizedOutcome = outcome
+		if comment, ok := payload["comment"].(string); ok {
+			s.finalizedComment = comment
+		}
 		s.finalizedPayload = payload
 		return true
 	}
@@ -1249,21 +1297,58 @@ func (s *executeCaptureSink) cutStreamAtFinalized() {
 // outcome.finalized event is synthesized into the equivalent result so the
 // workflow-level step resolves to the outcome the adapter chose (e.g.
 // ready_for_review flows on to create_pr) instead of a synthetic "failure".
+//
+// KB-237: the reconstructed verdict also carries the finalize comment.
+// The comment must ride the delivered result (ExecuteResult.Comment) for the
+// engine's require_comment evaluator — but the KB-56 turn cut ends the
+// stream the instant the adapter resolves its outcome, before the turn's
+// terminal result is delivered, so the synthesis reconstructs the comment
+// from what the host still holds: the outcome.finalized "comment" echo
+// (durable adapter contract) or the accepted submit_outcome invocation
+// arguments (outcome-matched). With neither source present the comment
+// stays empty and the pinned evaluator keeps rejecting the verdict — a
+// missing comment must stay fail-visible, never fabricated.
 func (s *executeCaptureSink) rescueResult() (adapter.Result, bool) {
 	if s.done && s.result.Outcome != "" {
 		return s.result, true
 	}
 	if s.finalizedOutcome != "" {
-		b, err := json.Marshal(s.finalizedPayload)
+		// The comment is verdict metadata, not a step output: strip the
+		// payload's echo member before projecting the payload into outputs
+		// so it never leaks onto the projection surface.
+		outputsPayload := s.finalizedPayload
+		if _, hasEcho := outputsPayload["comment"]; hasEcho {
+			outputsPayload = maps.Clone(outputsPayload)
+			delete(outputsPayload, "comment")
+		}
+		b, err := json.Marshal(outputsPayload)
 		if err == nil && len(b) > 0 {
 			typed, derr := s.decodeOutputsJSON(b)
 			if derr == nil {
-				return adapter.Result{Outcome: s.finalizedOutcome, Outputs: typed}, true
+				return adapter.Result{Outcome: s.finalizedOutcome, Comment: s.finalizeComment(), Outputs: typed}, true
 			}
 		}
-		return adapter.Result{Outcome: s.finalizedOutcome}, true
+		return adapter.Result{Outcome: s.finalizedOutcome, Comment: s.finalizeComment()}, true
 	}
 	return adapter.Result{}, false
+}
+
+// finalizeComment resolves the comment belonging to the captured verdict:
+// the outcome.finalized "comment" echo when the adapter sends one, else the
+// comment recorded from the accepted submit_outcome invocation — but only
+// when that invocation's outcome matches the finalized verdict (the match
+// pins the comment to the submit that became the verdict; a mismatched
+// invocation is not accepted evidence and must not satisfy require_comment).
+// The comment is never aliased from the reason (KB-237 contract: reason is
+// the step's findings; comment is the require_comment satisfaction signal).
+func (s *executeCaptureSink) finalizeComment() string {
+	if s.finalizedComment != "" {
+		return s.finalizedComment
+	}
+	if s.finalizeSubmitOutcome != "" && strings.TrimSpace(s.finalizeSubmitOutcome) == strings.TrimSpace(s.finalizedOutcome) {
+		return s.finalizeSubmitComment
+	}
+	return ""
 }
 
 // applyNeedsReviewOverride applies the denied-permission override (any denied
