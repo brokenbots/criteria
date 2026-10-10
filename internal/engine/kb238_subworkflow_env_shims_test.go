@@ -269,11 +269,13 @@ func kb238CombinedLockfile() *lockfile.Lockfile {
 func kb238Statuses(sink *eventTrackingSink, status string) []AdapterLifecycleEvent {
 	sink.mu.Lock()
 	defer sink.mu.Unlock()
-	var out []AdapterLifecycleEvent
+	out := make([]AdapterLifecycleEvent, 0, len(sink.provisionEvents))
 	for i := range sink.provisionEvents {
-		if sink.provisionEvents[i].Status == status {
-			out = append(out, sink.provisionEvents[i])
+		ev := &sink.provisionEvents[i]
+		if ev.Status != status {
+			continue
 		}
+		out = append(out, *ev)
 	}
 	return out
 }
@@ -289,7 +291,7 @@ type kb238RunResult struct {
 // ./handler subdirectory), runs it to completion within the budget, and
 // optionally serves adapter-type-keyed pods (a copilot pod for the body and
 // a shell pod for the root) against the provisioned shims.
-func kb238RunShape(t *testing.T, rootHCL string, variant string, servePods bool, budget time.Duration) *kb238RunResult {
+func kb238RunShape(t *testing.T, rootHCL, variant string, servePods bool, budget time.Duration) *kb238RunResult {
 	t.Helper()
 	root := t.TempDir()
 	writeFile(t, root+"/main.chcl", rootHCL)
@@ -329,10 +331,12 @@ func kb238RunShape(t *testing.T, rootHCL string, variant string, servePods bool,
 // kb238ProvisionsFor returns the provision events for an adapter type.
 func kb238ProvisionsFor(t *testing.T, sink *eventTrackingSink, adapterType string) []AdapterLifecycleEvent {
 	t.Helper()
+	events := kb238Statuses(sink, "provision_wanted")
 	var out []AdapterLifecycleEvent
-	for _, ev := range kb238Statuses(sink, "provision_wanted") {
+	for i := range events {
+		ev := &events[i]
 		if ev.AdapterType == adapterType {
-			out = append(out, ev)
+			out = append(out, *ev)
 		}
 	}
 	if len(out) == 0 {
@@ -375,7 +379,9 @@ func kb238PodServeType(t *testing.T, sink *eventTrackingSink, stop <-chan struct
 			return
 		case <-time.After(5 * time.Millisecond):
 		}
-		for _, ev := range kb238Statuses(sink, "provision_wanted") {
+		events := kb238Statuses(sink, "provision_wanted")
+		for i := range events {
+			ev := &events[i]
 			if ev.AdapterType != wantType {
 				continue
 			}
