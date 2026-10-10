@@ -456,6 +456,57 @@ func TestBuildCommandCustomizer_CopilotWithWorkingDirStaysIsolated(t *testing.T)
 	}
 }
 
+func TestBuildCommandCustomizer_AmbientHomeKeepsProcessGroup(t *testing.T) {
+	// KB-224 regression guard: the loader applies setProcessGroup only when
+	// no customizer is installed (loader.go), so once the ambient-home
+	// closure is present it owns process setup. Both composition paths must
+	// keep it — the workingDir == "" path that hands the ambient customizer
+	// to the loader directly, and the workingDir != "" composite that invokes
+	// it through the closure — or teardown's kill(-pid) misses the adapter's
+	// process group and orphans the grandchildren it spawned.
+	for _, tc := range []struct {
+		name       string
+		useWorkDir bool
+	}{
+		{"without a working directory", false},
+		{"with a working directory", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workingDir := ""
+			if tc.useWorkDir {
+				workingDir = t.TempDir()
+			}
+			sm := NewSessionManager(nil)
+			t.Cleanup(func() { _ = sm.Shutdown(context.Background()) })
+			sm.graph = copilotGraph(map[string]string{"copilot.main": ""}, nil)
+
+			customizer, _, err := sm.buildCommandCustomizer("copilot.main", workingDir)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if customizer == nil {
+				t.Fatal("expected non-nil customizer: copilot launches must be isolated (KB-224)")
+			}
+			cmd := exec.Command("true")
+			customizer("copilot.main", cmd)
+			if cmd.SysProcAttr == nil {
+				t.Fatal("cmd.SysProcAttr is nil: the loader skips setProcessGroup for customizer-managed launches, so teardown would miss the adapter's process group")
+			}
+			if !cmd.SysProcAttr.Setpgid {
+				t.Fatal("cmd.SysProcAttr.Setpgid is false: teardown cannot signal and reap the adapter's process tree")
+			}
+			if workingDir != "" && cmd.Dir != workingDir {
+				t.Errorf("cmd.Dir = %q, want the environment working directory %q", cmd.Dir, workingDir)
+			}
+			// The customizer under test must be the ambient-home one, not a
+			// fallback: the launch must carry the fresh scratch HOME.
+			if home := envMap(cmd.Env)["HOME"]; home == "" || home == os.Getenv("HOME") {
+				t.Errorf("HOME = %q, want a fresh scratch home", home)
+			}
+		})
+	}
+}
+
 func TestAmbientHomeAllocator_FailOpenOnUnwritableScratchRoot(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("running as root: a read-only parent does not block scratch root creation")

@@ -317,8 +317,11 @@ func appendEnvIfAbsent(env []string, key, value string) []string {
 //
 // It sets the environment itself because providing any customizer to the
 // loader makes go-plugin skip its host-env re-addition (SkipHostEnv; see
-// loader.go). On an allocation failure the customizer is not installed and
-// the launch degrades to the un-isolated host environment with a warning: a
+// loader.go), and it calls setProcessGroup for the same reason: the loader
+// installs process-group setup only when no customizer is provided, so the
+// closure owns process setup for these launches. On an allocation failure
+// the customizer is not installed and the launch degrades to the
+// un-isolated host environment with a warning: a
 // read-only scratch location must degrade to today's behavior rather than
 // wedge the run. The returned cleanup is a no-op by contract: the
 // per-instance scratch home must outlive any single launch because it is
@@ -349,6 +352,12 @@ func (m *SessionManager) buildAmbientHomeCustomizer(instanceID string) (customiz
 	gitGlobal := ambientGitGlobalConfigPath(source)
 	ghConfigDir := ambientGhConfigDir(source)
 	customizer = func(name string, cmd *exec.Cmd) {
+		// The loader installs its own process-group setup only when no
+		// customizer is provided (loader.go), so this closure owns process
+		// setup for the launches it customizes: without setProcessGroup the
+		// adapter process leaves no process group behind and teardown's
+		// kill(-pid) misses it, orphaning the grandchildren it spawned.
+		setProcessGroup(cmd)
 		cmd.Env = replaceEnvValue(os.Environ(), "HOME", home)
 		if gitGlobal != "" {
 			cmd.Env = appendEnvIfAbsent(cmd.Env, "GIT_CONFIG_GLOBAL", gitGlobal)
