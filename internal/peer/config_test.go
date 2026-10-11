@@ -348,6 +348,79 @@ func TestResolve_DigestPrefersPinnedBinary(t *testing.T) {
 	}
 }
 
+// TestResolve_DigestDefinitionIdentity is the KB-246 regression for the Gate 3
+// smoke signature `resolve CRITERIA_REMOTE_DIGEST: invalid adapter name
+// "noop.demo"`: definition-keyed identities (KB-242) must resolve digest pins
+// by TYPE from the local OCI cache. A cache hit swaps the pinned binary in,
+// a cache miss keeps the chain-resolved binary, and neither errors — both
+// shapes boot instead of dying before spawning an adapter child.
+func TestResolve_DigestDefinitionIdentity(t *testing.T) {
+	dir := t.TempDir()
+	digestHex := strings.Repeat("ab", 32)
+	enc := "sha256-" + digestHex
+
+	// Cache hit: the local OCI cache holds the type-keyed binary
+	// criteria-adapter-noop under the pinned digest directory; the
+	// definition identity "noop.demo" must resolve through it.
+	cacheDir := filepath.Join(dir, "cache")
+	pinnedDir := filepath.Join(cacheDir, enc)
+	if err := os.MkdirAll(pinnedDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	pinned := filepath.Join(pinnedDir, "criteria-adapter-noop")
+	writeRunnable(t, pinned)
+	t.Setenv("CRITERIA_ADAPTERS", cacheDir)
+	t.Setenv("PATH", dir)
+
+	hit, err := LoadConfig(getenvFrom(map[string]string{
+		EnvRemoteHost:   "h:1",
+		EnvAdapterName:  "noop.demo",
+		EnvRemoteDigest: "sha256:" + digestHex,
+	}))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if err := hit.Resolve(); err != nil {
+		t.Fatalf("resolve definition-identity digest pin: %v", err)
+	}
+	if hit.Binary() != pinned {
+		t.Errorf("cache-hit binary = %q, want digest-pinned %q", hit.Binary(), pinned)
+	}
+
+	// Manifest-child shape: the same definition identity as a hosted child
+	// of a multi-adapter peer.
+	childCfg := Config{
+		Host:     "h:1",
+		Adapters: []AdapterSpec{{Name: "noop.demo", Digest: "sha256:" + digestHex}},
+	}
+	if err := childCfg.Resolve(); err != nil {
+		t.Fatalf("resolve definition-identity child digest pin: %v", err)
+	}
+	if childCfg.Adapters[0].Binary != pinned {
+		t.Errorf("cache-hit child binary = %q, want digest-pinned %q", childCfg.Adapters[0].Binary, pinned)
+	}
+
+	// Cache miss with an explicit chain-resolved binary (the CI smoke shape):
+	// Resolve succeeds and keeps the declared binary.
+	explicit := filepath.Join(dir, "criteria-adapter-noop")
+	writeRunnable(t, explicit)
+	miss, err := LoadConfig(getenvFrom(map[string]string{
+		EnvRemoteHost:    "h:1",
+		EnvAdapterName:   "noop.demo",
+		EnvAdapterBinary: explicit,
+		EnvRemoteDigest:  "sha256:" + strings.Repeat("cd", 32),
+	}))
+	if err != nil {
+		t.Fatalf("load miss: %v", err)
+	}
+	if err := miss.Resolve(); err != nil {
+		t.Fatalf("resolve cache-miss digest pin: %v", err)
+	}
+	if miss.Binary() != explicit {
+		t.Errorf("cache-miss binary = %q, want explicit %q kept", miss.Binary(), explicit)
+	}
+}
+
 // TestResolve_ManifestChildren pins the multi-adapter manifest Resolve
 // contract (KB-213): the legacy single-adapter fields do not participate —
 // every declared child resolves with the per-adapter precedence on its own,

@@ -1,6 +1,7 @@
 package adapterhost
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -43,6 +44,55 @@ func TestDiscoverBinaryAtMissing(t *testing.T) {
 	t.Setenv(adaptersEnvVar, t.TempDir())
 	if _, err := DiscoverBinaryAt("shell", EncodeDigest(digest.FromString("nope"))); err == nil {
 		t.Fatal("expected not-found error")
+	}
+}
+
+// TestDiscoverBinaryAtDefinitionIdentityResolvesByType is the KB-246
+// regression, digest-addressed half: a digest-pinned child keyed by a
+// definition identity ("noop.demo") resolves the type-keyed binary under the
+// digest directory without ErrInvalidAdapterName, exactly as the peer's
+// resolveDigestBinary path consults the local OCI cache.
+func TestDiscoverBinaryAtDefinitionIdentityResolvesByType(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv(adaptersEnvVar, root)
+
+	enc := EncodeDigest(digest.FromString("pinned"))
+	writeFakeBinary(t, root, enc, "noop") // installed by TYPE
+	want := filepath.Join(root, enc, "criteria-adapter-noop")
+
+	got, err := DiscoverBinaryAt(fixtureDefinitionName, enc)
+	if err != nil {
+		t.Fatalf("DiscoverBinaryAt(%q, %q): %v", fixtureDefinitionName, enc, err)
+	}
+	if got != want {
+		t.Fatalf("path=%q want %q", got, want)
+	}
+
+	// The bare type still resolves to the same binary: both identity shapes
+	// share the type-keyed install.
+	gotBare, err := DiscoverBinaryAt("noop", enc)
+	if err != nil {
+		t.Fatalf("DiscoverBinaryAt(bare): %v", err)
+	}
+	if gotBare != want {
+		t.Fatalf("bare path=%q want %q", gotBare, want)
+	}
+}
+
+// TestDiscoverBinaryAtDefinitionIdentityMissing pins the fleet cache-miss
+// shape: a definition identity with no cached artifact reports
+// *ErrAdapterNotFound (callers keep the chain-resolved binary), never
+// ErrInvalidAdapterName.
+func TestDiscoverBinaryAtDefinitionIdentityMissing(t *testing.T) {
+	t.Setenv(adaptersEnvVar, t.TempDir())
+
+	_, err := DiscoverBinaryAt(fixtureDefinitionName, EncodeDigest(digest.FromString("nope")))
+	var notFound *ErrAdapterNotFound
+	if !errors.As(err, &notFound) {
+		t.Fatalf("err=%T (%v), want *ErrAdapterNotFound", err, err)
+	}
+	if notFound.Name != fixtureDefinitionName {
+		t.Fatalf("name=%q want %q", notFound.Name, fixtureDefinitionName)
 	}
 }
 

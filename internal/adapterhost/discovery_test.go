@@ -8,8 +8,18 @@ import (
 	"testing"
 )
 
+// fixtureDefinitionName is a definition identity (KB-242) used across the
+// KB-246 grammar regression tests: type "noop", definition "demo".
+const fixtureDefinitionName = "noop.demo"
+
 func TestDiscoverBinaryRejectsInvalidAdapterNames(t *testing.T) {
-	invalid := []string{"../noop", "nested/noop", "dot.name", "Noop", "name with space"}
+	invalid := []string{
+		"../noop", "nested/noop", "Noop", "name with space",
+		// Definition identities are legal now, but only with exactly one dot
+		// and both halves valid.
+		".demo", "noop.", "noop..demo", "noop.demo.extra", "..",
+		"Noop.demo", "noop.Demo",
+	}
 	for _, name := range invalid {
 		name := name
 		t.Run(name, func(t *testing.T) {
@@ -18,6 +28,72 @@ func TestDiscoverBinaryRejectsInvalidAdapterNames(t *testing.T) {
 				t.Fatalf("err=%v want ErrInvalidAdapterName", err)
 			}
 		})
+	}
+}
+
+// TestIsValidAdapterNameDefinitionGrammar pins the KB-246 grammar: the
+// definition form "<type>.<name>" (KB-242's child key) is valid alongside the
+// legacy bare names, exactly one dot, both halves non-empty and valid.
+func TestIsValidAdapterNameDefinitionGrammar(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		valid bool
+	}{
+		{"noop", true},
+		{"noop-1_2", true},
+		{"noop.demo", true},
+		{"noop.default", true},
+		{"fail.breaker", true},
+		{"mcp.default", true},
+		{"", false},
+		{".", false},
+		{".demo", false},      // empty type half
+		{"noop.", false},      // empty name half
+		{"noop..demo", false}, // empty middle
+		{"a.b.c", false},      // more than one dot
+		{"Noop.demo", false},
+		{"noop.Demo", false},
+		{"noop/demo", false},
+	} {
+		if got := IsValidAdapterName(tc.name); got != tc.valid {
+			t.Errorf("IsValidAdapterName(%q) = %v, want %v", tc.name, got, tc.valid)
+		}
+	}
+}
+
+// TestDiscoverBinaryDefinitionIdentityResolvesByType is the KB-246 regression,
+// flat-root half: a definition identity ("noop.demo") discovers the type-keyed
+// binary "criteria-adapter-noop" instead of failing with ErrInvalidAdapterName.
+func TestDiscoverBinaryDefinitionIdentityResolvesByType(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("CRITERIA_HOME", "")
+	t.Setenv("CRITERIA_ADAPTERS", root)
+	typePath := filepath.Join(root, "criteria-adapter-noop")
+	writeExecutable(t, typePath)
+
+	got, err := DiscoverBinary(fixtureDefinitionName)
+	if err != nil {
+		t.Fatalf("discover definition identity: %v", err)
+	}
+	if got != typePath {
+		t.Fatalf("path=%q want %q", got, typePath)
+	}
+}
+
+// TestDiscoverBinaryNotFoundNamesDefinitionIdentity checks that a cache miss
+// for a definition identity reports *ErrAdapterNotFound (which callers may
+// treat as non-fatal) with the child key intact, not ErrInvalidAdapterName.
+func TestDiscoverBinaryNotFoundNamesDefinitionIdentity(t *testing.T) {
+	t.Setenv("CRITERIA_HOME", "")
+	t.Setenv("CRITERIA_ADAPTERS", t.TempDir())
+
+	_, err := DiscoverBinary(fixtureDefinitionName)
+	var notFound *ErrAdapterNotFound
+	if !errors.As(err, &notFound) {
+		t.Fatalf("err=%T (%v), want *ErrAdapterNotFound", err, err)
+	}
+	if notFound.Name != fixtureDefinitionName {
+		t.Fatalf("name=%q want %q", notFound.Name, fixtureDefinitionName)
 	}
 }
 
