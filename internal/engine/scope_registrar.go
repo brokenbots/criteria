@@ -14,7 +14,9 @@ import (
 // dialScopeRegistrar implements remote.ScopeRegistrar (KB-25): when a shim
 // receives a digest-verified dial for a scope it has no token registered
 // for, the presented identity is validated here against the run data
-// directory's surviving rotated token files for that scope and adapter type.
+// directory's surviving rotated token files for that scope and adapter
+// definition (KB-242: identity = the "<type>.<name>" adapter-instance key)
+// that matches the presented name.
 // A match is re-registered with the shim so the dialing pod's re-handshake
 // is accepted instead of looping on accept-fail rejections until an
 // operator kills the run.
@@ -31,18 +33,20 @@ type dialScopeRegistrar struct {
 }
 
 // RegisterScopeOnDial validates a rejected dial's presented token against
-// the run's persisted rotated tokens and re-registers a match. It returns a
-// non-nil error when nothing matches so the shim keeps the typed
-// unregistered-scope rejection.
-func (r *dialScopeRegistrar) RegisterScopeOnDial(adapterType, scope, presentedToken string) error {
-	if r == nil || r.dataDir == "" || r.sessions == nil || adapterType == "" || scope == "" {
+// the run's persisted rotated tokens and re-registers a match. The
+// `adapterName` is the dial's adapter definition identity (the
+// "<type>.<name>" adapter-instance key, KB-242; legacy single-adapter dials
+// present the bare adapter type). It returns a non-nil error when nothing
+// matches so the shim keeps the typed unregistered-scope rejection.
+func (r *dialScopeRegistrar) RegisterScopeOnDial(adapterName, scope, presentedToken string) error {
+	if r == nil || r.dataDir == "" || r.sessions == nil || adapterName == "" || scope == "" {
 		return errors.New("scope re-registration is unavailable")
 	}
 	scopeName, instanceID, ok := splitScopeKey(scope)
 	if !ok {
 		return fmt.Errorf("scope %q is not a scopeName/instanceID key", scope)
 	}
-	token, err := survivingScopeToken(r.dataDir, scopeName, instanceID, adapterType, presentedToken)
+	token, err := survivingScopeToken(r.dataDir, scopeName, instanceID, adapterName, presentedToken)
 	if err != nil {
 		return err
 	}
@@ -50,7 +54,7 @@ func (r *dialScopeRegistrar) RegisterScopeOnDial(adapterType, scope, presentedTo
 		return fmt.Errorf("register surviving scope token: %w", err)
 	}
 	slog.Info("re-registered surviving scope token at dial time (KB-25)",
-		"environment", r.envKey, "scope", scope, "adapter_type", adapterType)
+		"environment", r.envKey, "scope", scope, "adapter_identity", adapterName)
 	return nil
 }
 
@@ -65,10 +69,12 @@ func splitScopeKey(scope string) (scopeName, instanceID string, ok bool) {
 }
 
 // survivingScopeToken matches presentedToken (constant-time) against the
-// unclaimed rotated token files persisted for (scopeName, adapterType) and
-// returns the token to register, or an error when nothing matches.
-func survivingScopeToken(dataDir, scopeName, instanceID, adapterType, presentedToken string) (string, error) {
-	candidates, err := scanScopeTokenFiles(dataDir, scopeName, adapterType)
+// unclaimed rotated token files persisted for (scopeName, adapterName) —
+// adapterName being the adapter definition identity ("<type>.<name>",
+// KB-242) the token file is labeled with — and returns the token to
+// register, or an error when nothing matches.
+func survivingScopeToken(dataDir, scopeName, instanceID, adapterName, presentedToken string) (string, error) {
+	candidates, err := scanScopeTokenFiles(dataDir, scopeName, adapterName)
 	if err != nil {
 		return "", fmt.Errorf("scan surviving tokens for scope %q: %w", scopeName, err)
 	}

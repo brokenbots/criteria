@@ -329,20 +329,27 @@ func (m *SessionManager) respawnLogStreamDrainTimeout() time.Duration {
 }
 
 // RemoteShim is the interface the session manager uses to wait for remote
-// adapter connections.
+// adapter connections. Adapter identity is the adapter's DEFINITION identity
+// (the "<type>.<name>" adapter-instance key, KB-242): engine-side waits,
+// scope tokens, peer child addressing, and kill_child all name the
+// definition. Legacy single-adapter shapes may keep presenting the bare
+// adapter type as the identity; the identity plane is name-agnostic.
 type RemoteShim interface {
-	WaitForHandle(ctx context.Context, adapterType, scope string) (Handle, error)
+	WaitForHandle(ctx context.Context, adapterName, scope string) (Handle, error)
 	// WaitForFreshHandle waits for a connection whose handle is not `stale`,
 	// used on crash-respawn so the dead handle is never handed back.
-	WaitForFreshHandle(ctx context.Context, adapterType, scope string, stale Handle) (Handle, error)
+	WaitForFreshHandle(ctx context.Context, adapterName, scope string, stale Handle) (Handle, error)
 	// RegisterScope registers (or rotates) the accept token for a scope.
 	// Only used when per-scope session isolation is enabled.
 	RegisterScope(scope, token string)
 	// UnregisterScope removes the accept token for a scope so reconnects
 	// using the old token are rejected.
 	UnregisterScope(scope string)
-	// CloseHandle closes the active session for the given adapter type + scope.
-	CloseHandle(ctx context.Context, adapterType, scope string) error
+	// CloseHandle closes the active session for the given adapter definition
+	// identity and scope. Only the owning scope's session is addressed: with
+	// per-definition children (KB-242) the kill lands on that definition's
+	// child, never on a sibling definition of the same adapter type.
+	CloseHandle(ctx context.Context, adapterName, scope string) error
 	// ListenAddr returns the shim's bound listen address.
 	ListenAddr() string
 	// Stop tears the shim down: it closes the listener (ending the accept
@@ -931,16 +938,19 @@ func (m *SessionManager) UnregisterRemoteScopeForEnv(envKey, scope string) error
 }
 
 // CloseRemoteHandleForEnv closes the active remote session for the given
-// adapter type and scope on the shim serving envKey. It is a no-op when no
-// shim is registered for the environment.
-func (m *SessionManager) CloseRemoteHandleForEnv(ctx context.Context, envKey, adapterType, scope string) error {
+// adapter definition identity (`adapterName`, the "<type>.<name>"
+// adapter-instance key, KB-242) and scope on the shim serving envKey. With
+// per-definition peers this kills only that definition's child; a sibling
+// definition of the same adapter type served by the same peer is untouched.
+// It is a no-op when no shim is registered for the environment.
+func (m *SessionManager) CloseRemoteHandleForEnv(ctx context.Context, envKey, adapterName, scope string) error {
 	m.mu.Lock()
 	shim := m.remoteShimForEnvLocked(envKey)
 	m.mu.Unlock()
 	if shim == nil {
 		return nil
 	}
-	return shim.CloseHandle(ctx, adapterType, scope)
+	return shim.CloseHandle(ctx, adapterName, scope)
 }
 
 // RemoteListenAddrForEnv returns the bound listen address of the shim serving
@@ -1948,12 +1958,18 @@ func (m *SessionManager) storeVerifiedRecord(name, adapterName, onCrash string, 
 	return nil
 }
 
+// resolveAdapterHandle resolves the adapter handle for one session. Remote
+// dispatch waits under the adapter's definition identity (`name`, the
+// "<type>.<name>" adapter-instance key, KB-242): per-scope tokens, peer
+// children, and kill_child are all keyed by that definition, so the wait
+// must name it too — waiting by the bare adapter type here would hand back a
+// sibling definition's child (the KB-242 cross-scope kill).
 func (m *SessionManager) resolveAdapterHandle(ctx context.Context, name, adapterName, scope string, customizer func(string, *exec.Cmd)) (Handle, error) {
 	// Remote-mode dispatch: if the adapter is bound to a remote environment,
 	// wait for the adapter to phone home via the shim serving that
 	// environment (CRI-293: per-environment shims).
 	if shim, ok := m.remoteShimForAdapter(name); ok {
-		return shim.WaitForHandle(ctx, adapterName, scope)
+		return shim.WaitForHandle(ctx, name, scope)
 	}
 
 	if dl, ok := m.loader.(*DefaultLoader); ok {
@@ -3461,7 +3477,9 @@ func (m *SessionManager) resolveAdapterForRespawn(ctx context.Context, sess *Ses
 	if shim, ok := m.remoteShimForAdapter(sess.Name); ok {
 		// Exclude the just-crashed handle so we wait for the replacement
 		// connection rather than the dead session still in the shim's map.
-		return shim.WaitForFreshHandle(ctx, sess.Adapter, sess.ScopeInstanceID, sess.handle)
+		// (KB-242: waits and kills name the adapter definition identity —
+		// sess.Name is the "<type>.<name>" instance key.)
+		return shim.WaitForFreshHandle(ctx, sess.Name, sess.ScopeInstanceID, sess.handle)
 	}
 
 	if dl, ok := m.loader.(*DefaultLoader); ok {
