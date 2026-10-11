@@ -17,6 +17,11 @@ import (
 	"github.com/brokenbots/criteria/internal/engine"
 )
 
+// fixtureAdapterName is the adapter definition identity the smoke noop
+// fixture is declared under ("adapter noop demo"); the peer smoke tests host
+// exactly this one definition.
+const fixtureAdapterName = "noop.demo"
+
 // TestPeerSmoke_HappyPath exercises the full peer phone-home flow with the
 // real `criteria peer` binary: the engine starts a remote shim, `criteria
 // peer` dials in, presents the identity frame, boots the noop adapter child
@@ -237,7 +242,9 @@ func buildNoopSmokeBinary(t *testing.T, moduleRoot string) string {
 
 // startPeer launches the real `criteria peer` binary against the shim
 // address with compressed backoff so reconnects stay fast under test, and
-// captures its output for failure diagnostics.
+// captures its output for failure diagnostics. The peer hosts the fixture's
+// one adapter definition, noop.demo (the fixture binary pinned by
+// adapterBin).
 func startPeer(ctx context.Context, t *testing.T, criteriaBin, addr, adapterBin, digest string) (*exec.Cmd, *bytes.Buffer, context.CancelFunc) {
 	t.Helper()
 	const token = "smoke-token"
@@ -251,7 +258,7 @@ func startPeer(ctx context.Context, t *testing.T, criteriaBin, addr, adapterBin,
 		"CRITERIA_REMOTE_TOKEN="+token,
 		"CRITERIA_REMOTE_SCOPE=peer-smoke",
 		"CRITERIA_REMOTE_DIGEST="+digest,
-		"CRITERIA_ADAPTER_NAME=noop",
+		"CRITERIA_ADAPTER_NAME="+fixtureAdapterName,
 		"CRITERIA_ADAPTER_VERSION=0.1.0",
 		"CRITERIA_ADAPTER_BINARY="+adapterBin,
 		"CRITERIA_PEER_BACKOFF_MIN=200ms",

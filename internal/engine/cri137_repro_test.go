@@ -122,7 +122,7 @@ func TestInitScopeAdapters_PerScope_ReusesScopeInstanceAfterRestart(t *testing.T
 	}
 	preRestartScopeKey := first.ScopeName + "/" + first.ScopeInstanceID
 	hs := &cri137Handshake{
-		Name:    "noop",
+		Name:    "noop.default",
 		Version: "1.0.0",
 		Digest:  "sha256:abcd1234",
 		Token:   string(tokenBytes),
@@ -356,7 +356,7 @@ func TestInitScopeAdapters_PerScope_FreshRotationAfterRelease(t *testing.T) {
 	if err := json.Unmarshal(rawClaim, &claim); err != nil {
 		t.Fatalf("released claim is not valid JSON: %v", err)
 	}
-	if claim.ScopeInstanceID != first.ScopeInstanceID || claim.AdapterType != "noop" {
+	if claim.ScopeInstanceID != first.ScopeInstanceID || claim.AdapterKey != "noop.default" {
 		t.Errorf("released claim = %+v, want tombstone for instance %q", claim, first.ScopeInstanceID)
 	}
 	if _, err := os.Stat(first.TokenRef); err != nil {
@@ -424,8 +424,8 @@ func TestInitScopeAdapters_PerScope_CorruptRecordRecoversInstanceByTokenScan(t *
 	if err := json.Unmarshal(raw, &rec); err != nil {
 		t.Fatalf("healed record is not valid JSON: %v", err)
 	}
-	if rec.ScopeInstanceID != first.ScopeInstanceID || rec.AdapterType != "noop" {
-		t.Errorf("healed record = %+v, want instance %q for type noop", rec, first.ScopeInstanceID)
+	if rec.ScopeInstanceID != first.ScopeInstanceID || rec.AdapterKey != "noop.default" {
+		t.Errorf("healed record = %+v, want instance %q for adapter noop.default", rec, first.ScopeInstanceID)
 	}
 }
 
@@ -442,7 +442,7 @@ func TestInitScopeAdapters_PerScope_ScanReusesTokensWithoutRecord(t *testing.T) 
 	// Hand-craft the pre-upgrade on-disk state: one rotated token, no record.
 	scopeInstanceID := uuid.NewString()
 	legacyToken := "legacy-surviving-token"
-	tokenPath, err := writeRotatedToken(dataDir, "", scopeInstanceID, "noop", legacyToken)
+	tokenPath, err := writeRotatedToken(dataDir, "", scopeInstanceID, "noop.default", legacyToken)
 	if err != nil {
 		t.Fatalf("write legacy token: %v", err)
 	}
@@ -470,8 +470,8 @@ func TestInitScopeAdapters_PerScope_ScanReusesTokensWithoutRecord(t *testing.T) 
 	if recErr != nil {
 		t.Fatalf("record not written after scan reuse: %v", recErr)
 	}
-	if rec.ScopeInstanceID != scopeInstanceID || rec.AdapterType != "noop" {
-		t.Errorf("healed record = %+v, want instance %q for type noop", rec, scopeInstanceID)
+	if rec.ScopeInstanceID != scopeInstanceID || rec.AdapterKey != "noop.default" {
+		t.Errorf("healed record = %+v, want instance %q for adapter noop.default", rec, scopeInstanceID)
 	}
 }
 
@@ -693,20 +693,20 @@ func TestFilterUnclaimedScopeInstances_ExcludesOtherAdaptersInstances(t *testing
 	// instA is claimed by another adapter's healthy record; instB is free.
 	instA := "11111111-2222-3333-4444-555555555555"
 	instB := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-	if _, err := writeRotatedToken(dataDir, "", instA, "noop", "token-a"); err != nil {
+	if _, err := writeRotatedToken(dataDir, "", instA, "mcp.default", "token-a"); err != nil {
 		t.Fatalf("write token-a: %v", err)
 	}
-	if _, err := writeRotatedToken(dataDir, "", instB, "noop", "token-b"); err != nil {
+	if _, err := writeRotatedToken(dataDir, "", instB, "noop.default", "token-b"); err != nil {
 		t.Fatalf("write token-b: %v", err)
 	}
 	if err := writeCurrentScopeInstance(dataDir, "", "mcp.default", currentScopeInstanceRecord{
 		ScopeInstanceID: instA,
-		AdapterType:     "mcp",
+		AdapterKey:      "mcp.default",
 	}); err != nil {
 		t.Fatalf("write claiming record: %v", err)
 	}
 
-	found, err := scanScopeTokenFiles(dataDir, "", "noop")
+	found, err := scanScopeTokenFiles(dataDir, "", "noop.default")
 	if err != nil {
 		t.Fatalf("scanScopeTokenFiles: %v", err)
 	}

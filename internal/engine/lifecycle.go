@@ -139,10 +139,13 @@ func generateAcceptToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-func writeRotatedToken(dataDir, scopeName, scopeInstanceID, adapterType, token string) (string, error) {
+// writeRotatedToken writes a scope's accept token file labeled with the
+// adapter's definition identity (KB-242): one file per adapter definition,
+// so sibling definitions of the same adapter type never share a token.
+func writeRotatedToken(dataDir, scopeName, scopeInstanceID, adapterKey, token string) (string, error) {
 	// Route through the same checked path builder as the readers so the
 	// validation rules cannot drift between reads and writes.
-	path, err := rotatedTokenPath(dataDir, scopeName, scopeInstanceID, adapterType)
+	path, err := rotatedTokenPath(dataDir, scopeName, scopeInstanceID, adapterKey)
 	if err != nil {
 		return "", err
 	}
@@ -164,7 +167,12 @@ func writeRotatedToken(dataDir, scopeName, scopeInstanceID, adapterType, token s
 // still rotate fresh tokens.
 type currentScopeInstanceRecord struct {
 	ScopeInstanceID string `json:"scope_instance_id"`
-	AdapterType     string `json:"adapter_type"`
+	// AdapterKey is the adapter definition identity ("<type>.<name>", KB-242)
+	// the rotated token file is labeled with. Legacy single-adapter shapes
+	// stored the bare adapter type here; a no-dot value keeps matching such
+	// legacy files unchanged. The JSON tag predates the definition-identity
+	// key and stays for on-disk compatibility.
+	AdapterKey string `json:"adapter_type"`
 }
 
 // checkPathLabel rejects workflow-supplied labels that could escape the token
@@ -189,9 +197,11 @@ func remoteTokensDir(dataDir, scopeName string) (string, error) {
 }
 
 // rotatedTokenPath derives the on-disk path of a scope's accept token file.
-// The record file never stores paths; they are always re-derived from
-// validated components so a tampered record cannot point reads elsewhere.
-func rotatedTokenPath(dataDir, scopeName, scopeInstanceID, adapterType string) (string, error) {
+// The file is labeled with the adapter definition identity (adapterKey,
+// "<type>.<name>"; legacy layouts may carry a bare adapter type). The record
+// file never stores paths; they are always re-derived from validated
+// components so a tampered record cannot point reads elsewhere.
+func rotatedTokenPath(dataDir, scopeName, scopeInstanceID, adapterKey string) (string, error) {
 	dir, err := remoteTokensDir(dataDir, scopeName)
 	if err != nil {
 		return "", fmt.Errorf("scope %q: %w", scopeName, err)
@@ -199,10 +209,10 @@ func rotatedTokenPath(dataDir, scopeName, scopeInstanceID, adapterType string) (
 	if err := checkPathLabel(scopeInstanceID); err != nil {
 		return "", fmt.Errorf("scope instance %q: %w", scopeInstanceID, err)
 	}
-	if err := checkPathLabel(adapterType); err != nil {
-		return "", fmt.Errorf("adapter type %q: %w", adapterType, err)
+	if err := checkPathLabel(adapterKey); err != nil {
+		return "", fmt.Errorf("adapter identity %q: %w", adapterKey, err)
 	}
-	return filepath.Join(dir, scopeInstanceID, adapterType+".token"), nil
+	return filepath.Join(dir, scopeInstanceID, adapterKey+".token"), nil
 }
 
 func currentScopeInstancePath(dataDir, scopeName, adapterInstance string) (string, error) {
@@ -265,10 +275,10 @@ func writeCurrentScopeInstance(dataDir, scopeName, adapterInstance string, rec c
 // rotated token file is kept for post-run forensics, and a claim file under
 // current/ records the released instance so it stays excluded from scan reuse
 // even after later rotations overwrite the live record.
-func releaseScopeInstance(dataDir, scopeName, adapterInstance, scopeInstanceID, adapterType string) {
+func releaseScopeInstance(dataDir, scopeName, adapterInstance, scopeInstanceID, adapterKey string) {
 	if err := writeCurrentScopeInstance(dataDir, scopeName, releasedScopeClaimName(scopeInstanceID), currentScopeInstanceRecord{
 		ScopeInstanceID: scopeInstanceID,
-		AdapterType:     adapterType,
+		AdapterKey:      adapterKey,
 	}); err != nil {
 		slog.Warn("persisting released scope instance tombstone failed; a later token-file scan may reuse the released token",
 			"scope", scopeName, "scope_instance", scopeInstanceID, "error", err.Error())
@@ -490,7 +500,11 @@ func rotateFreshRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, envNod
 		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
 		return "", fmt.Errorf("initialize adapter %q: register scope token: %w", instanceID, err)
 	}
-	tokenPath, err := writeRotatedToken(dataDir, scopeName, scopeInstanceID, adapter.Type, token)
+	// The rotated token file is labeled with the adapter's definition
+	// identity (KB-242): two definitions of the same adapter type in one
+	// environment each get their own token file, so a per-scope scan or a
+	// peer-side child set can tell them apart.
+	tokenPath, err := writeRotatedToken(dataDir, scopeName, scopeInstanceID, instanceID, token)
 	if err != nil {
 		_ = deps.Sessions.UnregisterRemoteScopeForEnv(environmentKey(envNode), scopeKey)
 		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
@@ -498,7 +512,7 @@ func rotateFreshRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, envNod
 	}
 	if err := writeCurrentScopeInstance(dataDir, scopeName, instanceID, currentScopeInstanceRecord{
 		ScopeInstanceID: scopeInstanceID,
-		AdapterType:     adapter.Type,
+		AdapterKey:      instanceID,
 	}); err != nil {
 		_ = deps.Sessions.UnregisterRemoteScopeForEnv(environmentKey(envNode), scopeKey)
 		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
@@ -521,7 +535,7 @@ func rotateFreshRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, envNod
 // failed.
 func tryReuseScopeInstance(deps Deps, lifecycle *remoteLifecycleContext, envNode *workflow.EnvironmentNode, adapter *workflow.AdapterNode, instanceID, scopeName string) (scopeKey string, reused bool, err error) {
 	dataDir := lifecycle.scopeLifecycle.dataDir
-	scopeInstanceID, tokenPath, token, reason, ok := reusableScopeToken(dataDir, scopeName, instanceID, adapter.Type)
+	scopeInstanceID, tokenPath, token, reason, ok := reusableScopeToken(dataDir, scopeName, instanceID, instanceID)
 	if ok {
 		scopeKey = scopeName + "/" + scopeInstanceID
 		if rerr := deps.Sessions.RegisterRemoteScopeForEnv(environmentKey(envNode), scopeKey, token); rerr != nil {
@@ -536,7 +550,7 @@ func tryReuseScopeInstance(deps Deps, lifecycle *remoteLifecycleContext, envNode
 	// Record-based reuse is impossible: scan for rotated token files the
 	// previous runner generation left behind and reuse the newest unclaimed
 	// instance instead of rotating a fresh one.
-	candidates, scanErr := scanScopeTokenFiles(dataDir, scopeName, adapter.Type)
+	candidates, scanErr := scanScopeTokenFiles(dataDir, scopeName, instanceID)
 	if scanErr != nil {
 		slog.Warn("remote scope token scan failed; rotating fresh scope instance",
 			"scope", scopeName, "adapter_instance", instanceID, "error", scanErr.Error())
@@ -552,7 +566,7 @@ func tryReuseScopeInstance(deps Deps, lifecycle *remoteLifecycleContext, envNode
 	// loudly instead of leaving an unregistered token behind.
 	if werr := writeCurrentScopeInstance(dataDir, scopeName, instanceID, currentScopeInstanceRecord{
 		ScopeInstanceID: chosen.instanceID,
-		AdapterType:     adapter.Type,
+		AdapterKey:      instanceID,
 	}); werr != nil {
 		slog.Warn("persisting scanned scope instance failed; rotating fresh scope instance",
 			"scope", scopeName, "adapter_instance", instanceID, "error", werr.Error())
@@ -652,7 +666,7 @@ func tryAdoptPriorRunScopeInstance(deps Deps, lifecycle *remoteLifecycleContext,
 		if refuseSealedPriorRunRegistry(priorDir, dataDir, scopeName, instanceID) {
 			continue
 		}
-		candidates := priorRunScopeCandidates(priorDir, scopeName, instanceID, adapter.Type)
+		candidates := priorRunScopeCandidates(priorDir, scopeName, instanceID, instanceID)
 		if len(candidates) == 0 {
 			continue
 		}
@@ -662,7 +676,7 @@ func tryAdoptPriorRunScopeInstance(deps Deps, lifecycle *remoteLifecycleContext,
 		// records, so the adopted token must exist here for the release path
 		// to cover it. A persist failure falls through to the next directory
 		// (or a fresh rotation, which fails loudly on its own record write).
-		tokenPath, werr := writeRotatedToken(dataDir, scopeName, chosen.instanceID, adapter.Type, chosen.token)
+		tokenPath, werr := writeRotatedToken(dataDir, scopeName, chosen.instanceID, instanceID, chosen.token)
 		if werr != nil {
 			slog.Warn("copying adopted scope token failed; rotating fresh scope instance",
 				"scope", scopeName, "adapter_instance", instanceID, "prior_run_dir", priorDir, "error", werr.Error())
@@ -670,7 +684,7 @@ func tryAdoptPriorRunScopeInstance(deps Deps, lifecycle *remoteLifecycleContext,
 		}
 		if werr := writeCurrentScopeInstance(dataDir, scopeName, instanceID, currentScopeInstanceRecord{
 			ScopeInstanceID: chosen.instanceID,
-			AdapterType:     adapter.Type,
+			AdapterKey:      instanceID,
 		}); werr != nil {
 			slog.Warn("persisting adopted scope instance failed; rotating fresh scope instance",
 				"scope", scopeName, "adapter_instance", instanceID, "prior_run_dir", priorDir, "error", werr.Error())
@@ -679,7 +693,7 @@ func tryAdoptPriorRunScopeInstance(deps Deps, lifecycle *remoteLifecycleContext,
 		// Claim the instance in the prior directory — release tombstone plus
 		// clearing the prior record — so a later replay of the same invocation
 		// cannot double-adopt an instance that is already bound to this run.
-		releaseScopeInstance(priorDir, scopeName, instanceID, chosen.instanceID, adapter.Type)
+		releaseScopeInstance(priorDir, scopeName, instanceID, chosen.instanceID, instanceID)
 		scopeKey = scopeName + "/" + chosen.instanceID
 		if rerr := deps.Sessions.RegisterRemoteScopeForEnv(environmentKey(envNode), scopeKey, chosen.token); rerr != nil {
 			deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", rerr.Error())
@@ -705,12 +719,12 @@ func tryAdoptPriorRunScopeInstance(deps Deps, lifecycle *remoteLifecycleContext,
 // data directory: record-based reuse first (the healthy surviving instance's
 // shape), then the token-file scan filtered against the prior directory's
 // claim records so deliberately released instances are never re-adopted.
-func priorRunScopeCandidates(priorDir, scopeName, instanceID, adapterType string) []scannedScopeToken {
-	scopeInstanceID, tokenPath, token, _, ok := reusableScopeToken(priorDir, scopeName, instanceID, adapterType)
+func priorRunScopeCandidates(priorDir, scopeName, instanceID, adapterKey string) []scannedScopeToken {
+	scopeInstanceID, tokenPath, token, _, ok := reusableScopeToken(priorDir, scopeName, instanceID, adapterKey)
 	if ok {
 		return []scannedScopeToken{{instanceID: scopeInstanceID, tokenPath: tokenPath, token: token}}
 	}
-	candidates, scanErr := scanScopeTokenFiles(priorDir, scopeName, adapterType)
+	candidates, scanErr := scanScopeTokenFiles(priorDir, scopeName, adapterKey)
 	if scanErr != nil {
 		slog.Warn("prior run scope token scan failed; skipping directory",
 			"scope", scopeName, "adapter_instance", instanceID, "prior_run_dir", priorDir, "error", scanErr.Error())
@@ -731,8 +745,11 @@ type scannedScopeToken struct {
 // scanScopeTokenFiles scans <dataDir>/remote-tokens/<scopeName>/ for rotated
 // token files left behind by a prior runner generation. Only directory names
 // that parse as UUIDs are considered instance directories ("current" holds
-// records, not instances); each must contain a non-empty <adapterType>.token.
-func scanScopeTokenFiles(dataDir, scopeName, adapterType string) ([]scannedScopeToken, error) {
+// records, not instances); each must contain a non-empty <adapterKey>.token,
+// where adapterKey is the adapter definition identity ("<type>.<name>",
+// KB-242). Legacy layouts carry a bare adapter type label and simply do not
+// match a definition-keyed scan.
+func scanScopeTokenFiles(dataDir, scopeName, adapterKey string) ([]scannedScopeToken, error) {
 	scopeDir, err := remoteTokensDir(dataDir, scopeName)
 	if err != nil {
 		return nil, err
@@ -752,7 +769,7 @@ func scanScopeTokenFiles(dataDir, scopeName, adapterType string) ([]scannedScope
 		if _, err := uuid.Parse(entry.Name()); err != nil {
 			continue
 		}
-		path, err := rotatedTokenPath(dataDir, scopeName, entry.Name(), adapterType)
+		path, err := rotatedTokenPath(dataDir, scopeName, entry.Name(), adapterKey)
 		if err != nil {
 			continue
 		}
@@ -805,13 +822,13 @@ func filterUnclaimedScopeInstances(dataDir, scopeName string, candidates []scann
 }
 
 // reusableScopeToken returns the persisted scope instance ID, token file path
-// and token when the persisted record is valid for adapterType and the token
-// file is still readable. On failure it returns a reason naming the check
-// that failed (missing record, corrupt record, adapter-type mismatch, missing
-// token file) so the fallback leaves a diagnostic trail, plus ok=false meaning
-// the caller must rotate a fresh scope instance, which also self-heals an
-// unusable record.
-func reusableScopeToken(dataDir, scopeName, instanceID, adapterType string) (scopeInstanceID, tokenPath, token, reason string, ok bool) {
+// and token when the persisted record is valid for adapterKey (the adapter
+// definition identity, KB-242) and the token file is still readable. On
+// failure it returns a reason naming the check that failed (missing record,
+// corrupt record, adapter mismatch, missing token file) so the fallback
+// leaves a diagnostic trail, plus ok=false meaning the caller must rotate a
+// fresh scope instance, which also self-heals an unusable record.
+func reusableScopeToken(dataDir, scopeName, instanceID, adapterKey string) (scopeInstanceID, tokenPath, token, reason string, ok bool) {
 	rec, recErr := readCurrentScopeInstance(dataDir, scopeName, instanceID)
 	if recErr != nil {
 		if errors.Is(recErr, os.ErrNotExist) {
@@ -819,10 +836,16 @@ func reusableScopeToken(dataDir, scopeName, instanceID, adapterType string) (sco
 		}
 		return "", "", "", fmt.Sprintf("corrupt or unreadable record: %v", recErr), false
 	}
-	if rec.AdapterType != adapterType {
-		return "", "", "", fmt.Sprintf("adapter type changed from %q to %q", rec.AdapterType, adapterType), false
+	if rec.AdapterKey != adapterKey {
+		// An adapter mismatch includes a definition change on the same type:
+		// each adapter definition has its own scope instance (KB-242), so a
+		// sibling definition's record must never be reused across instances.
+		return "", "", "", fmt.Sprintf("adapter identity changed from %q to %q", rec.AdapterKey, adapterKey), false
 	}
-	path, pathErr := rotatedTokenPath(dataDir, scopeName, rec.ScopeInstanceID, rec.AdapterType)
+	// The record stores the label the token file was written under; a
+	// legacy no-dot value (a bare adapter type) resolves against the
+	// pre-definition-identity layout it came from.
+	path, pathErr := rotatedTokenPath(dataDir, scopeName, rec.ScopeInstanceID, rec.AdapterKey)
 	if pathErr != nil {
 		return "", "", "", fmt.Sprintf("token path is invalid: %v", pathErr), false
 	}
@@ -1128,12 +1151,18 @@ func tearDownScopeAdapters(ctx context.Context, order []string, deps Deps, lifec
 				})
 				envKey := rec.envType + "." + rec.envName
 				_ = deps.Sessions.UnregisterRemoteScopeForEnv(envKey, rec.scopeKey)
-				_ = deps.Sessions.CloseRemoteHandleForEnv(cleanupCtx, envKey, rec.adapterType, rec.scopeKey)
+				// KB-242: the kill is addressed by the adapter DEFINITION
+				// identity, never the adapter type. Per-definition peer
+				// children each serve one definition; a kind-addressed kill
+				// from this scope's teardown could take down a sibling
+				// definition's child (the pair_programming_loop handshake
+				// kill-chain).
+				_ = deps.Sessions.CloseRemoteHandleForEnv(cleanupCtx, envKey, rec.adapterName, rec.scopeKey)
 				// CRI-137: tombstone the persisted scope instance so the
 				// next deliberate scope entry rotates a fresh token instead
 				// of the token-file scan resurrecting the released one. The
 				// rotated token file is kept for post-run forensics.
-				releaseScopeInstance(lifecycle.scopeLifecycle.dataDir, rec.scopeName, rec.adapterName, rec.scopeInstanceID, rec.adapterType)
+				releaseScopeInstance(lifecycle.scopeLifecycle.dataDir, rec.scopeName, rec.adapterName, rec.scopeInstanceID, rec.adapterName)
 				lifecycle.scopeLifecycle.remove(adapterID)
 			}
 		}

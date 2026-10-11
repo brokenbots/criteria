@@ -11,6 +11,7 @@ import (
 	"net"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1590,31 +1591,36 @@ func declaredAdaptersForEnv(envKey string, g *workflow.FSMGraph) []string {
 		return nil
 	}
 	out := make([]string, 0, len(set))
-	for adapterType := range set {
-		out = append(out, adapterType)
+	for adapterKey := range set {
+		out = append(out, adapterKey)
 	}
 	slices.Sort(out)
 	return out
 }
 
+// collectDeclaredAdapters records the adapter DEFINITION identity (the
+// "<type>.<name>" adapter-instance key, KB-242) for every adapter declared or
+// stepped into envKey. The peer provider keys its children, child-set
+// checks, and kill_child addressing by this identity; a kind-only set cannot
+// tell two same-type definitions apart (the KB-242 cross-scope kill).
 func collectDeclaredAdapters(envKey string, g *workflow.FSMGraph, set map[string]struct{}) {
 	if g == nil {
 		return
 	}
-	for _, ad := range g.Adapters {
+	for key, ad := range g.Adapters {
 		if ad == nil {
 			continue
 		}
 		if (ad.Environment != "" && ad.Environment == envKey) || (ad.Environment == "" && g.DefaultEnvironment == envKey) {
-			set[ad.Type] = struct{}{}
+			set[key] = struct{}{}
 		}
 	}
 	for _, st := range g.Steps {
 		if st == nil || st.Environment != envKey || st.AdapterRef == "" {
 			continue
 		}
-		if ad := g.Adapters[st.AdapterRef]; ad != nil {
-			set[ad.Type] = struct{}{}
+		if g.Adapters[st.AdapterRef] != nil {
+			set[st.AdapterRef] = struct{}{}
 		}
 	}
 	for _, sw := range g.Subworkflows {
@@ -1736,20 +1742,36 @@ type lockfileDigestVerifier struct {
 	lockfile *lockfile.Lockfile
 }
 
-func (v *lockfileDigestVerifier) Verify(adapterType, digest string) error {
+// Verify validates a presented adapter digest against the lockfile. The
+// presented name is the adapter DEFINITION identity ("<type>.<name>",
+// KB-242): it is split back into type + name and matched against the
+// matching LockedAdapter so sibling definitions of one adapter type pin
+// independently. A bare (no-dot) name keeps the legacy type-only lookup —
+// first lockfile entry of that type — used by legacy single-adapter shapes.
+func (v *lockfileDigestVerifier) Verify(adapterName, digest string) error {
 	if v.lockfile == nil {
 		return fmt.Errorf("no lockfile available")
 	}
+	wantType, wantName, hasName := strings.Cut(adapterName, ".")
 	for i := range v.lockfile.Adapters {
 		a := &v.lockfile.Adapters[i]
-		if a.Type == adapterType {
+		if hasName {
+			if a.Type != wantType || a.Name != wantName {
+				continue
+			}
 			if a.ResolvedDigest == digest {
 				return nil
 			}
-			return fmt.Errorf("digest mismatch for adapter %q: got %q, want %q", adapterType, digest, a.ResolvedDigest)
+			return fmt.Errorf("digest mismatch for adapter %q: got %q, want %q", adapterName, digest, a.ResolvedDigest)
+		}
+		if a.Type == adapterName {
+			if a.ResolvedDigest == digest {
+				return nil
+			}
+			return fmt.Errorf("digest mismatch for adapter %q: got %q, want %q", adapterName, digest, a.ResolvedDigest)
 		}
 	}
-	return fmt.Errorf("adapter %q not found in lockfile", adapterType)
+	return fmt.Errorf("adapter %q not found in lockfile", adapterName)
 }
 
 // ErrCancelled is returned when the run context is cancelled mid-step.

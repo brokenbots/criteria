@@ -1,6 +1,7 @@
 package peer
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -42,14 +43,16 @@ type AdapterSpec struct {
 }
 
 // ScopeTokenSpec is one (scope, adapter) phone-home conn discovered in the
-// runner's remote-tokens root. Token file names are "<adapterType>.token".
+// runner's remote-tokens root. Token file names are "<adapter-name>.token",
+// where the name is the minting adapter's definition identity (KB-242).
 type ScopeTokenSpec struct {
 	// Scope is the scope key: "<scopeName>/<instanceID>", or "/<instanceID>"
 	// for the run's root scope (an empty workflow scope label yields a
 	// leading slash in the runner's token layout).
 	Scope string
-	// Adapter is the adapter type the token file is minted for (the
-	// "<adapterType>" half of "<adapterType>.token").
+	// Adapter is the adapter name the token file is minted for — the
+	// definition identity (the "<type>.<name>" label half of
+	// "<name>.token", KB-242).
 	Adapter string
 	// Token is the file's token value (whitespace-trimmed).
 	Token string
@@ -60,8 +63,12 @@ type ScopeTokenSpec struct {
 // ParseAdaptersConfig parses the multi-adapter manifest from the environment
 // (env-first): the explicit CRITERIA_REMOTE_ADAPTERS list wins; the binary
 // directory scan is the fallback; per-adapter overrides refine both. An
-// empty result means the legacy single-adapter shape was declared. A
-// duplicate adapter name is an error, never a silent co-host.
+// empty result means the legacy single-adapter shape was declared. Every
+// entry is one hosted adapter child keyed by its adapter name, which is the
+// adapter's definition identity (KB-242): one environment may declare
+// several children of the same adapter type under distinct names.
+// An exact duplicate name deduplicates first-entry-wins (never a silent
+// co-host of two children under one name).
 func ParseAdaptersConfig(getenv func(string) string) ([]AdapterSpec, error) {
 	raw := strings.TrimSpace(getenv(EnvAdapters))
 	if raw != "" {
@@ -85,7 +92,10 @@ func ParseAdaptersConfig(getenv func(string) string) ([]AdapterSpec, error) {
 
 // ParseAdaptersEnv parses the CRITERIA_REMOTE_ADAPTERS value: a comma-separated
 // list of adapter names, each optionally "NAME=PATH" to pin the binary path.
-// Entries are trimmed; empty entries are skipped.
+// Entries are trimmed; empty entries are skipped. Names are adapter
+// definition identities (KB-242) — the same adapter type may be hosted once
+// per definition name — so re-declaring one name deduplicates
+// first-entry-wins rather than erroring.
 func ParseAdaptersEnv(raw string) ([]AdapterSpec, error) {
 	parts := strings.Split(raw, ",")
 	specs := make([]AdapterSpec, 0, len(parts))
@@ -107,7 +117,9 @@ func ParseAdaptersEnv(raw string) ([]AdapterSpec, error) {
 			}
 		}
 		if seen[name] {
-			return nil, fmt.Errorf("%s declares adapter %q more than once", EnvAdapters, name)
+			// Keep-first dedupe: the first pinned binary wins so an
+			// over-provisioned manifest stays deterministic (KB-242).
+			continue
 		}
 		seen[name] = true
 		spec := AdapterSpec{Name: name}
@@ -311,8 +323,12 @@ func resolveSpecDigest(spec *AdapterSpec) error {
 // layout: "<dir>/<scopeName>/<instanceID>/<adapterType>.token" for workflow
 // scopes and "<dir>/<instanceID>/<adapterType>.token" for the run's root
 // scope (the empty scope label yields a leading slash). The "current"
-// record directories are skipped, and instance directories that are not
-// UUID-named are ignored exactly like the engine's own token-file scan.
+// record directories are skipped, instance directories that are not
+// UUID-named are ignored exactly like the engine's own token-file scan
+// (CRI-137), and scope instances tombstoned by a release-claim record
+// ("<uuid>.json", KB-242) are skipped: the engine unregisters their accept
+// tokens at release, so re-dialing them only produces "scope not
+// registered" rejections for the peer's whole lifetime.
 // The result is sorted by (scope, adapter) for deterministic boot order.
 func ScanRemoteScopes(dir string) ([]ScopeTokenSpec, error) {
 	top, err := os.ReadDir(dir)
@@ -337,6 +353,7 @@ func ScanRemoteScopes(dir string) ([]ScopeTokenSpec, error) {
 
 func scanRemoteScopesEntries(dir string, top []os.DirEntry) ([]ScopeTokenSpec, error) {
 	specs := make([]ScopeTokenSpec, 0, len(top))
+	releasedRoot := releasedScopeInstances(filepath.Join(dir, "current"))
 	for _, topEntry := range top {
 		if topEntry.Name() == "current" || !topEntry.IsDir() {
 			continue
@@ -345,8 +362,10 @@ func scanRemoteScopesEntries(dir string, top []os.DirEntry) ([]ScopeTokenSpec, e
 			return nil, fmt.Errorf("%s contains unusable entry %q: %w", EnvRemoteScopesDir, topEntry.Name(), err)
 		}
 		scopePath := filepath.Join(dir, topEntry.Name())
-		appendRootScopeTokens(&specs, scopePath, topEntry)
-		if err := appendWorkflowScopeTokens(&specs, topEntry, scopePath); err != nil {
+		if !releasedRoot[topEntry.Name()] {
+			appendRootScopeTokens(&specs, scopePath, topEntry)
+		}
+		if err := appendWorkflowScopeTokens(&specs, topEntry, scopePath, releasedScopeInstances(filepath.Join(scopePath, "current"))); err != nil {
 			return nil, err
 		}
 	}
@@ -375,13 +394,18 @@ func appendRootScopeTokens(specs *[]ScopeTokenSpec, scopePath string, topEntry o
 
 // appendWorkflowScopeTokens appends the workflow-scope shape: the first-level
 // directory is the scope label and UUID subdirectories hold instance tokens.
-func appendWorkflowScopeTokens(specs *[]ScopeTokenSpec, topEntry os.DirEntry, scopePath string) error {
+// The released set (release-claim tombstones under the scope's current/
+// record directory) excludes deliberately released instances.
+func appendWorkflowScopeTokens(specs *[]ScopeTokenSpec, topEntry os.DirEntry, scopePath string, released map[string]bool) error {
 	instances, err := os.ReadDir(scopePath)
 	if err != nil {
 		return fmt.Errorf("read %s %q: %w", EnvRemoteScopesDir, scopePath, err)
 	}
 	for _, instEntry := range instances {
 		if instEntry.Name() == "current" || !instEntry.IsDir() || uuid.Validate(instEntry.Name()) != nil {
+			continue
+		}
+		if released[instEntry.Name()] {
 			continue
 		}
 		tokens, err := readScopeTokenDir(filepath.Join(scopePath, instEntry.Name()))
@@ -398,6 +422,57 @@ func appendWorkflowScopeTokens(specs *[]ScopeTokenSpec, topEntry os.DirEntry, sc
 		}
 	}
 	return nil
+}
+
+// releasedScopeClaimPrefix is the record file-name prefix under a scope's
+// current/ record directory holding a released scope instance's tombstone
+// claim ("released-<uuid>.json"); the runner engine owns this name (its
+// releasedScopeClaimName).
+const releasedScopeClaimPrefix = "released-"
+
+// releasedScopeClaim is the tombstone record the runner writes when a scope
+// instance is deliberately released (CRI-137): the token file is kept for
+// post-run forensics, so the scan must consult the claim to stop dialing.
+type releasedScopeClaim struct {
+	ScopeInstanceID string `json:"scope_instance_id"`
+}
+
+// releasedScopeInstances reads the release-claim tombstones from one
+// scope's current/ record directory and returns the set of released
+// scope-instance IDs. Records that are unreadable, malformed, or whose
+// body does not confirm the file name's instance are conservatively
+// treated as live: a spurious re-dial only costs a rejected handshake,
+// while dropping a still-registered token would strand a live scope.
+func releasedScopeInstances(currentDir string) map[string]bool {
+	released := make(map[string]bool)
+	entries, err := os.ReadDir(currentDir)
+	if err != nil {
+		return released
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || filepath.Ext(name) != ".json" {
+			continue
+		}
+		base := strings.TrimSuffix(name, ".json")
+		id, ok := strings.CutPrefix(base, releasedScopeClaimPrefix)
+		if !ok {
+			continue
+		}
+		if _, err := uuid.Parse(id); err != nil {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(currentDir, name))
+		if err != nil {
+			continue
+		}
+		var claim releasedScopeClaim
+		if err := json.Unmarshal(raw, &claim); err != nil || claim.ScopeInstanceID != id {
+			continue
+		}
+		released[id] = true
+	}
+	return released
 }
 
 // scopeTokenFile is one <adapterType>.token file found in a token directory

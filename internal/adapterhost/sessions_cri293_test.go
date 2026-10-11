@@ -153,11 +153,11 @@ func TestSessions_CRI293_PerEnvShimDispatch(t *testing.T) {
 		}
 	}
 
-	if got := alpha.waitForCalls(); len(got) != 1 || got[0] != "noop:" {
-		t.Errorf("alpha shim WaitForHandle calls = %v, want exactly [noop:]", got)
+	if got := alpha.waitForCalls(); len(got) != 1 || got[0] != "noop.alpha:" {
+		t.Errorf("alpha shim WaitForHandle calls = %v, want exactly [noop.alpha:]", got)
 	}
-	if got := beta.waitForCalls(); len(got) != 1 || got[0] != "noop:" {
-		t.Errorf("beta shim WaitForHandle calls = %v, want exactly [noop:]", got)
+	if got := beta.waitForCalls(); len(got) != 1 || got[0] != "noop.beta:" {
+		t.Errorf("beta shim WaitForHandle calls = %v, want exactly [noop.beta:]", got)
 	}
 }
 
@@ -175,8 +175,8 @@ func TestSessions_CRI293_PerEnvRespawnDispatch(t *testing.T) {
 	if _, err := m.resolveAdapterForRespawn(ctx, sess, nil); err != nil {
 		t.Fatalf("resolveAdapterForRespawn: %v", err)
 	}
-	if got := beta.freshWaitCalls(); len(got) != 1 || got[0] != "noop:" {
-		t.Errorf("beta shim WaitForFreshHandle calls = %v, want exactly [noop:]", got)
+	if got := beta.freshWaitCalls(); len(got) != 1 || got[0] != "noop.beta:" {
+		t.Errorf("beta shim WaitForFreshHandle calls = %v, want exactly [noop.beta:]", got)
 	}
 	if got := alpha.freshWaitCalls(); len(got) != 0 {
 		t.Errorf("alpha shim WaitForFreshHandle calls = %v, want none", got)
@@ -264,8 +264,8 @@ func TestSessions_CRI293_LegacyDefaultShimFallback(t *testing.T) {
 	if _, err := m.resolveAdapterHandle(ctx, "noop.alpha", "noop", "", nil); err != nil {
 		t.Fatalf("resolveAdapterHandle(alpha): %v", err)
 	}
-	if got := legacy.waitForCalls(); len(got) != 1 || got[0] != "noop:" {
-		t.Errorf("legacy shim WaitForHandle calls = %v, want exactly [noop:]", got)
+	if got := legacy.waitForCalls(); len(got) != 1 || got[0] != "noop.alpha:" {
+		t.Errorf("legacy shim WaitForHandle calls = %v, want exactly [noop.alpha:]", got)
 	}
 	if err := m.RegisterRemoteScope("scope-x/1", "tok-x"); err != nil {
 		t.Fatalf("RegisterRemoteScope: %v", err)

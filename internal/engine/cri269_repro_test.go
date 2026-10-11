@@ -180,8 +180,8 @@ func TestEngine_CRI269_SubworkflowPerScopeRemoteAdapterIsDeferredAndRemote(t *te
 		t.Errorf("provision_wanted AdapterName = %q, want developer", event.AdapterName)
 	}
 	scopeKey := event.ScopeName + "/" + event.ScopeInstanceID
-	if n := shimWaitForHandleCount(shim, "WaitForHandle:noop:"+scopeKey); n != 1 {
-		t.Fatalf("subworkflow Verify must dispatch remotely exactly once (WaitForHandle:noop:%s), got %d call(s)", scopeKey, n)
+	if n := shimWaitForHandleCount(shim, "WaitForHandle:noop.developer:"+scopeKey); n != 1 {
+		t.Fatalf("subworkflow Verify must dispatch remotely exactly once (WaitForHandle:noop.developer:%s), got %d call(s)", scopeKey, n)
 	}
 
 	// Phase 3: bind attempt. Execute must promote the verified record over the
@@ -193,8 +193,8 @@ func TestEngine_CRI269_SubworkflowPerScopeRemoteAdapterIsDeferredAndRemote(t *te
 	if result.Outcome != "success" {
 		t.Fatalf("execute outcome = %q, want success", result.Outcome)
 	}
-	if n := shimWaitForHandleCount(shim, "WaitForHandle:noop:"+scopeKey); n != 2 {
-		t.Fatalf("bind must dispatch over the shim (second WaitForHandle:noop:%s), got %d total call(s)", scopeKey, n)
+	if n := shimWaitForHandleCount(shim, "WaitForHandle:noop.developer:"+scopeKey); n != 2 {
+		t.Fatalf("bind must dispatch over the shim (second WaitForHandle:noop.developer:%s), got %d total call(s)", scopeKey, n)
 	}
 
 	// Divergence gone: the local OCI-cache dispatch must be unreachable for an

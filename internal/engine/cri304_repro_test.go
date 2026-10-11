@@ -167,8 +167,8 @@ func TestInitScopeAdapters_PerScope_AdoptsPriorRunScopeInstance_CRI304(t *testin
 	if err != nil {
 		t.Fatalf("read replay's current scope record: %v", err)
 	}
-	if ownRec.ScopeInstanceID != first.ScopeInstanceID || ownRec.AdapterType != "noop" {
-		t.Errorf("replay's current scope record = %+v, want instance %q type noop", ownRec, first.ScopeInstanceID)
+	if ownRec.ScopeInstanceID != first.ScopeInstanceID || ownRec.AdapterKey != "noop.default" {
+		t.Errorf("replay's current scope record = %+v, want instance %q adapter noop.default", ownRec, first.ScopeInstanceID)
 	}
 
 	// The prior instance must be claimed in the prior dir: the record is
@@ -200,7 +200,7 @@ func TestInitScopeAdapters_PerScope_AdoptionSkipsClaimedPriorInstance_CRI304(t *
 	}
 	if err := writeCurrentScopeInstance(priorDir, "", "released-"+scopeInstanceID, currentScopeInstanceRecord{
 		ScopeInstanceID: scopeInstanceID,
-		AdapterType:     "noop",
+		AdapterKey:      "noop.default",
 	}); err != nil {
 		t.Fatalf("seed prior claim: %v", err)
 	}

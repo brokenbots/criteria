@@ -51,7 +51,9 @@ const (
 func kb160PinSet() *lockfile.Lockfile {
 	return &lockfile.Lockfile{
 		Adapters: []lockfile.LockedAdapter{
-			{Type: "mcp", ResolvedDigest: kb160PeerDigest},
+			// Pinned by definition identity in the KB-242 grammar: the pin
+			// carries the definition name the peer presents.
+			{Type: "mcp", Name: "probe", ResolvedDigest: kb160PeerDigest},
 		},
 	}
 }
@@ -250,8 +252,10 @@ func (c *kb160PeerCallee) closeCount(session string) int {
 func kb160StartPeer(t *testing.T, listen string, callee *kb160PeerCallee) *peerpkg.Server {
 	t.Helper()
 	cfg := &peerpkg.Config{
-		Host:        listen,
-		AdapterName: "mcp",
+		Host: listen,
+		// The definition identity (KB-242): the peer dials with the adapter
+		// definition it hosts, not the bare kind.
+		AdapterName: "mcp.probe",
 		Digest:      kb160PeerDigest,
 		BackoffMin:  10 * time.Millisecond,
 		BackoffMax:  50 * time.Millisecond,

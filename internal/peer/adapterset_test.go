@@ -1,6 +1,7 @@
 package peer
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -37,17 +38,24 @@ func TestParseAdaptersEnv_PathForm(t *testing.T) {
 }
 
 func TestParseAdaptersEnv_Errors(t *testing.T) {
-	for _, raw := range []string{"=path", "a= ", "a,a"} {
+	for _, raw := range []string{"=path", "a= "} {
 		if _, err := ParseAdaptersEnv(raw); err == nil {
 			t.Errorf("ParseAdaptersEnv(%q) = nil error, want one", raw)
 		}
 	}
 }
 
-func TestParseAdaptersEnv_Duplicate(t *testing.T) {
-	_, err := ParseAdaptersEnv("sh,sh")
-	if err == nil || !strings.Contains(err.Error(), "more than once") {
-		t.Errorf("duplicate not rejected: %v", err)
+// KB-242: environment entries may repeat an adapter definition name when
+// the same child is listed by two sources. Keep-first wins; the duplicate
+// entry is dropped instead of failing the whole peer (the old KB-213
+// grammar rejected it and blocked per-definition entries).
+func TestParseAdaptersEnv_DuplicateKeepFirst(t *testing.T) {
+	specs, err := ParseAdaptersEnv("sh,sh")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(specs) != 1 || specs[0].Name != "sh" {
+		t.Errorf("specs = %+v, want a single \"sh\" spec", specs)
 	}
 }
 
@@ -201,6 +209,84 @@ func TestScanRemoteScopes_Missing(t *testing.T) {
 	specs, err := ScanRemoteScopes(filepath.Join(t.TempDir(), "absent"))
 	if err != nil || specs != nil {
 		t.Errorf("ScanRemoteScopes(absent) = %v, %v", specs, err)
+	}
+}
+
+// TestScanRemoteScopes_ReleaseClaims covers the KB-242 cleanup defect: the
+// engine keeps released scope-instance token files on disk for forensics
+// (CRI-137) and unregisters their accept tokens, so a peer rescan that still
+// dials them only produces "scope not registered" rejections for the peer's
+// entire lifetime. Release-claim tombstones under a scope's current/ record
+// directory must stop the scan from offering those tokens.
+func TestScanRemoteScopes_ReleaseClaims(t *testing.T) {
+	dir := t.TempDir()
+	write := func(rel string) {
+		p := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("tok\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	claim := func(scopeLabel, id string, body any) {
+		dir := filepath.Join(dir, scopeLabel, "current")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "released-"+id+".json"), raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const (
+		liveRoot    = "e28f9f9a-4b0e-4a7f-9a2b-6a9bc2e3f001"
+		goneRoot    = "e28f9f9a-4b0e-4a7f-9a2b-6a9bc2e3f002"
+		liveScoped  = "33ecdb4f-7f5c-4d55-8f0e-4b0d1b2f0022"
+		goneScoped  = "33ecdb4f-7f5c-4d55-8f0e-4b0d1b2f0023"
+		mismatched  = "33ecdb4f-7f5c-4d55-8f0e-4b0d1b2f0024"
+		corruptUUID = "33ecdb4f-7f5c-4d55-8f0e-4b0d1b2f0025"
+	)
+	write(liveRoot + "/copilot.demo.token")
+	write(goneRoot + "/copilot.demo.token")
+	write("worker/" + liveScoped + "/shell.token")
+	write("worker/" + goneScoped + "/shell.token")
+	write("worker/" + mismatched + "/shell.token")
+	write("worker/" + corruptUUID + "/shell.token")
+	claim("", goneRoot, releasedScopeClaim{ScopeInstanceID: goneRoot})
+	claim("worker", goneScoped, releasedScopeClaim{ScopeInstanceID: goneScoped})
+	// Not a claim: the record body names a different instance than the file.
+	claim("worker", mismatched, releasedScopeClaim{ScopeInstanceID: liveScoped})
+	// Malformed body: conservatively treated as live.
+	bad := filepath.Join(dir, "worker", "current", "released-"+corruptUUID+".json")
+	if err := os.MkdirAll(filepath.Dir(bad), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bad, []byte(`{not json`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	specs, err := ScanRemoteScopes(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	type want struct{ scope, adapter string }
+	wants := []want{
+		{"/" + liveRoot, "copilot.demo"},
+		{"worker/" + liveScoped, "shell"},
+		{"worker/" + mismatched, "shell"},
+		{"worker/" + corruptUUID, "shell"},
+	}
+	if len(specs) != len(wants) {
+		t.Fatalf("specs = %+v, want %d entries (released instances dial-stopped)", specs, len(wants))
+	}
+	for i, w := range wants {
+		if specs[i].Scope != w.scope || specs[i].Adapter != w.adapter {
+			t.Errorf("specs[%d] = %+v, want scope=%q adapter=%q", i, specs[i], w.scope, w.adapter)
+		}
 	}
 }
 

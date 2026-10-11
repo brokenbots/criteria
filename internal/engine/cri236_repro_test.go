@@ -119,7 +119,7 @@ func TestInitScopeAdapters_PerScope_ProvisionCarriesWireToken(t *testing.T) {
 		for {
 			if ev, ok := sink.firstStatus("provision_wanted"); ok && ev.Token != "" {
 				hs := &cri137Handshake{
-					Name:    "noop",
+					Name:    "noop.default",
 					Version: "1.0.0",
 					Digest:  "sha256:abcd1234",
 					Token:   ev.Token,
@@ -222,7 +222,7 @@ func TestInitScopeAdapters_PerScope_ReplayAfterRestartRehandshakesWireToken(t *t
 	// the provision event, not the filesystem) and dials the restarted
 	// runner's shim on a retry loop.
 	hs := &cri137Handshake{
-		Name:    "noop",
+		Name:    "noop.default",
 		Version: "1.0.0",
 		Digest:  "sha256:abcd1234",
 		Token:   wireToken,

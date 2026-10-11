@@ -90,8 +90,9 @@ const (
 
 	// peerAdapterRouteHeader is the gRPC metadata header a multi-adapter
 	// host tags each session's adapter calls with (KB-213): its value is the
-	// adapter type the session belongs to, and the peer's connection mux
-	// routes the call to that child. Must stay in sync with the
+	// adapter name the session belongs to — the adapter definition identity
+	// (KB-242) — and the peer's connection mux routes the call to that
+	// child. Must stay in sync with the
 	// host-side constant in internal/adapter/environment/remote
 	// (the two packages cannot import each other).
 	peerAdapterRouteHeader = "x-criteria-adapter"
@@ -123,15 +124,17 @@ type peerIdentityFrame struct {
 	Role               string                    `json:"role,omitempty"`
 	Peer               *peerIdentityCapabilities `json:"peer,omitempty"`
 	// Adapters (KB-213) names the FULL child set this peer hosts — every
-	// adapter of the environment, not just this connection's dial child.
-	// Additive and absent for the legacy single-adapter shape; the host shim
+	// adapter child of the environment, not just this connection's dial
+	// child; each entry names its adapter definition (KB-242). Additive and
+	// absent for the legacy single-adapter shape; the host shim
 	// verifies each advertised child digest against its own pin (accept-time
 	// fail-closed check for a declared adapter missing from the child set).
 	Adapters []peerAdapterIdentity `json:"adapters,omitempty"`
 }
 
 // peerAdapterIdentity is one hosted child in the identity frame's adapters
-// list: the adapter type plus its version and (when pinned) digest.
+// list: the adapter definition name (the child's key, KB-242) plus its
+// version and (when pinned) digest.
 type peerAdapterIdentity struct {
 	Name    string `json:"name"`
 	Version string `json:"version,omitempty"`
@@ -163,7 +166,8 @@ type Server struct {
 	keepaliveOpts []grpc.ServerOption
 	// dialFunc, childClient, rand, and sleep are test seams; NewServer
 	// installs production defaults. childClient resolves the served client
-	// for one hosted adapter child by adapter type (KB-213 multi-adapter);
+	// for one hosted adapter child by its definition name (KB-213
+	// multi-adapter, KB-242 identity);
 	// for the serve-adapter role the resolver ignores the name.
 	dialFunc    func(ctx context.Context, network, addr string) (net.Conn, error)
 	childClient func(name string) (adapterhost.Client, bool)
@@ -432,7 +436,8 @@ type serveConnSpec struct {
 	digest  string
 	scope   string
 	token   string
-	// children names the adapter types served through this conn: exactly one
+	// children names the adapter children served through this conn (their
+	// definition names, KB-242): exactly one
 	// entry (the dial child) in the legacy shape, or the full hosted set in
 	// the run-wide multi-adapter and per-scope scope-set shapes (session
 	// calls routed by the host's x-criteria-adapter header, KB-213). The
@@ -482,7 +487,8 @@ func (s *Server) connSpecs() ([]serveConnSpec, error) {
 // scope-token scan; adapters the peer does not host are refused loudly and
 // left out (their host wait types out instead of a silent miss). Every
 // per-scope conn serves and advertises the FULL hosted child set (KB-213):
-// the children are keyed by adapter type — not by (scope, adapter) dial — so
+// the children are keyed by adapter definition name (KB-242), not by
+// (scope, adapter) dial — so
 // whichever conn of a scope lands first must be able to carry any of that
 // scope's adapters, and the host's routed wake (x-criteria-adapter header)
 // is honored by the connMux instead of silently crossing to the dial child.
@@ -655,14 +661,15 @@ func (s *Server) serveChildSet(server *grpc.Server, spec *serveConnSpec) {
 }
 
 // supervisionEventMatches reports whether a journaled supervision event
-// belongs to the filtered stream's adapter type (KB-213): an empty filter
+// belongs to the filtered stream's adapter name — the addressed child's
+// definition identity (KB-213 multi-adapter, KB-242): an empty filter
 // passes everything (the legacy single-child stream), a set filter passes
 // only events attributed to that child.
-func supervisionEventMatches(ev *criteriav1.SupervisionEvent, adapterType string) bool {
-	if adapterType == "" {
+func supervisionEventMatches(ev *criteriav1.SupervisionEvent, adapterName string) bool {
+	if adapterName == "" {
 		return true
 	}
-	return ev.GetAdapterType() == adapterType
+	return ev.GetAdapterType() == adapterName
 }
 
 // serveOnce dials the host, writes the identity frame, and serves both
@@ -958,7 +965,8 @@ func (s *Server) superviseHandler(srv interface{}, stream grpc.ServerStream) err
 //
 // adapterType (KB-213) filters the stream to one hosted child's events: a
 // per-session Supervise on a multi-adapter peer requests the child it
-// serves, and the peer filters every journaled event by adapter type so N
+// serves — the name carries the adapter's definition identity (KB-242) —
+// and the peer filters every journaled event by that name so N
 // children's streams stay independent. An empty filter (the legacy single
 // child and older hosts) passes every event. Heartbeats are stream-generated
 // and always pass.
@@ -1041,7 +1049,7 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 type serveChildClient struct {
 	adapterhost.Client
 	rt *peerRuntime
-	// name is the wrapped child's adapter type.
+	// name is the wrapped child's definition name (the child key, KB-242).
 	name string
 	// scope is the journal attribution scope for this bridge's flushed
 	// facts: the conn's dial scope.
@@ -1081,7 +1089,8 @@ func (c *serveChildClient) Log(ctx context.Context, req *v2.LogRequest, sink ada
 // connection's dial child.
 type connMux struct {
 	byName map[string]adapterhost.Client
-	// fallback is the adapter type of the connection's dial child.
+	// fallback is the definition name of the connection's dial child
+	// (KB-242).
 	fallback string
 }
 

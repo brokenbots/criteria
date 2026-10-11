@@ -1514,10 +1514,11 @@ func TestInitScopeAdapters_PerScope_EmitsProvisionWanted(t *testing.T) {
 		t.Fatalf("provision event wire token %q, want the rotated token %q", event.Token, token)
 	}
 
-	// WaitForHandle must have been keyed by adapter type + scope.
+	// WaitForHandle must have been keyed by the adapter definition identity
+	// (KB-242) + scope.
 	found := false
 	for _, c := range shim.calls {
-		if c == "WaitForHandle:noop:"+scopeKey {
+		if c == "WaitForHandle:noop.default:"+scopeKey {
 			found = true
 			break
 		}
@@ -1948,9 +1949,9 @@ func TestTearDownScopeAdapters_PerScope_EmitsReleased(t *testing.T) {
 	if !containsString(shim.unregistered, scopeKey) {
 		t.Errorf("expected UnregisterScope %q, got %v", scopeKey, shim.unregistered)
 	}
-	wantClose := "noop:" + scopeKey
+	wantClose := "noop.default:" + scopeKey
 	if !containsString(shim.closed, wantClose) {
-		t.Errorf("expected CloseRemoteHandle %q, got %v", wantClose, shim.closed)
+		t.Errorf("expected CloseRemoteHandle keyed by the adapter definition identity %q, got %v", wantClose, shim.closed)
 	}
 }
 
@@ -2160,10 +2161,11 @@ state "done" {
 		t.Fatalf("released adapter_type: got %v, want shell→shell.intake, copilot→copilot.planner", released)
 	}
 
-	// The shim handshake must stay keyed by the adapter implementation kind.
+	// The shim handshake must stay keyed by the adapter definition identity
+	// (KB-242): each definition dials under its own "<type>.<name>" key.
 	calls := strings.Join(shim.calls, ",")
-	if !strings.Contains(calls, "WaitForHandle:shell:") || !strings.Contains(calls, "WaitForHandle:copilot:") {
-		t.Errorf("expected WaitForHandle keyed by each adapter type, calls=%v", shim.calls)
+	if !strings.Contains(calls, "WaitForHandle:shell.intake:") || !strings.Contains(calls, "WaitForHandle:copilot.planner:") {
+		t.Errorf("expected WaitForHandle keyed by each adapter definition, calls=%v", shim.calls)
 	}
 }
 
@@ -2222,10 +2224,11 @@ state "done" {
 		t.Errorf("expected no scope registrations with per_scope_sessions disabled, got %v", shim.registered)
 	}
 
-	// WaitForHandle must have been called with an empty scope (legacy keying).
+	// WaitForHandle must have been called with an empty scope (legacy scope
+	// keying); the name half is still the adapter definition identity.
 	found := false
 	for _, c := range shim.calls {
-		if c == "WaitForHandle:noop:" {
+		if c == "WaitForHandle:noop.default:" {
 			found = true
 			break
 		}

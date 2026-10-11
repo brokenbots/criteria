@@ -131,7 +131,8 @@ type peerSessionProvider struct {
 
 // NewPeerSessionProvider builds the provider serving peer-mode dials for a
 // shim. perScopeSessions must match the shim's configuration: it decides the
-// session key ("adapterType" in legacy mode, "adapterType\x00scope" with
+// session key ("adapterName" — the adapter definition identity (KB-242) —
+// in legacy mode, "adapterName\x00scope" with
 // per-scope isolation), which must be identical for both registries so a
 // mixed fleet keys coherently.
 func NewPeerSessionProvider(shim *Shim, perScopeSessions bool) *peerSessionProvider {
@@ -185,12 +186,13 @@ func (p *peerSessionProvider) missingDeclared(hosted []string) []string {
 }
 
 // key mirrors Shim.sessionKey (identical algorithm, evaluated from the
-// provider's own perScopeSessions snapshot).
-func (p *peerSessionProvider) key(adapterType, scope string) string {
+// provider's own perScopeSessions snapshot). The name half is the adapter
+// definition identity (KB-242).
+func (p *peerSessionProvider) key(adapterName, scope string) string {
 	if !p.perScopeSessions || scope == "" {
-		return adapterType
+		return adapterName
 	}
-	return adapterType + "\x00" + scope
+	return adapterName + "\x00" + scope
 }
 
 // AcceptPeer implements PeerAcceptor. It is called by the shim after the
@@ -314,10 +316,11 @@ func (p *peerSessionProvider) peerDied(ps *peerSession) {
 	p.mu.Unlock()
 }
 
-// WaitForHandle blocks until a peer (or legacy) session for the adapter type
-// + scope is available.
-func (p *peerSessionProvider) WaitForHandle(ctx context.Context, adapterType, scope string) (adapterhost.Handle, error) {
-	return p.WaitForFreshHandle(ctx, adapterType, scope, nil)
+// WaitForHandle blocks until a peer (or legacy) session for the adapter
+// definition identity (`adapterName`, "<type>.<name>" — KB-242) + scope is
+// available.
+func (p *peerSessionProvider) WaitForHandle(ctx context.Context, adapterName, scope string) (adapterhost.Handle, error) {
+	return p.WaitForFreshHandle(ctx, adapterName, scope, nil)
 }
 
 // WaitForFreshHandle blocks until a handle that is not `stale` is available.
@@ -333,16 +336,17 @@ func (p *peerSessionProvider) WaitForHandle(ctx context.Context, adapterType, sc
 // registerFreshWaiter — mirroring Shim.WaitForFreshHandle. Splitting them
 // would let a handshake store the session and drain an empty waiter list in
 // between, stranding the wait until the budget expired (lost wakeup).
-func (p *peerSessionProvider) WaitForFreshHandle(ctx context.Context, adapterType, scope string, stale adapterhost.Handle) (adapterhost.Handle, error) {
+func (p *peerSessionProvider) WaitForFreshHandle(ctx context.Context, adapterName, scope string, stale adapterhost.Handle) (adapterhost.Handle, error) {
 	// KB-213 fail-closed waits: with a declared adapter set installed,
 	// waiting for an undeclared adapter can never be satisfied (the peer pod
 	// contract is "the pod hosts every declared adapter") — fail fast with
-	// the typed error instead of burning the scheduling budget.
-	if !p.declared.empty() && !p.declared.has(adapterType) {
-		return nil, &PeerChildSetError{AdapterType: adapterType, Scope: scope}
+	// the typed error instead of burning the scheduling budget. The set
+	// holds adapter definition identities (KB-242), matching exactly.
+	if !p.declared.empty() && !p.declared.has(adapterName) {
+		return nil, &PeerChildSetError{AdapterType: adapterName, Scope: scope}
 	}
 
-	key := p.key(adapterType, scope)
+	key := p.key(adapterName, scope)
 
 	// Peek + waiter registration share one p.mu critical section: if a fresh
 	// peer handle is present, return it (never appending a waiter);
@@ -365,9 +369,9 @@ func (p *peerSessionProvider) WaitForFreshHandle(ctx context.Context, adapterTyp
 	// per-scope conns dialing scoped multi-adapter sets (their keys are
 	// prefixed, never the bare wait key). Runs under the caller's p.mu
 	// hold.
-	if routed := p.findRoutedPeerSession(key, adapterType, scope, stale); routed != nil {
+	if routed := p.findRoutedPeerSession(key, adapterName, scope, stale); routed != nil {
 		p.mu.Unlock()
-		return routed.handleFor(adapterType), nil
+		return routed.handleFor(adapterName), nil
 	}
 
 	peerCh := make(chan waitResult, 1)
@@ -385,7 +389,7 @@ func (p *peerSessionProvider) WaitForFreshHandle(ctx context.Context, adapterTyp
 		return legacyHandle, nil
 	}
 
-	return p.shim.awaitWaiter(ctx, adapterType, scope, key, peerCh, legacyCh, func() {
+	return p.shim.awaitWaiter(ctx, adapterName, scope, key, peerCh, legacyCh, func() {
 		p.removeWaiter(key, peerCh)
 		p.shim.removeWaiter(key, legacyCh)
 	}, budget)
@@ -428,8 +432,8 @@ func (p *peerSessionProvider) UnregisterScope(scope string) {
 // down, and the shared conn stays alive for the other hosted adapters — an
 // exact-key conn (the dial adapter's own close) still releases the
 // transport.
-func (p *peerSessionProvider) CloseHandle(ctx context.Context, adapterType, scope string) error {
-	key := p.key(adapterType, scope)
+func (p *peerSessionProvider) CloseHandle(ctx context.Context, adapterName, scope string) error {
+	key := p.key(adapterName, scope)
 	p.mu.Lock()
 	ps, ok := p.peers[key]
 	delete(p.peers, key)
@@ -444,7 +448,7 @@ func (p *peerSessionProvider) CloseHandle(ctx context.Context, adapterType, scop
 			if p.perScopeSessions && cand.dial.Scope != scope {
 				continue
 			}
-			if cand.hostsAdapter(adapterType) {
+			if cand.hostsAdapter(adapterName) {
 				ps = cand
 				ok = true
 				break
@@ -458,8 +462,8 @@ func (p *peerSessionProvider) CloseHandle(ctx context.Context, adapterType, scop
 		// cleanup after the close must not kill a mid-flight run. The
 		// teardown is bounded and best-effort (cancel control, journal
 		// evidence wait, then force kill); v0.6.0 has no detach option.
-		h := ps.handleFor(adapterType)
-		ps.teardownInFlightChildRun(ctx, ps.journalFor(adapterType))
+		h := ps.handleFor(adapterName)
+		ps.teardownInFlightChildRun(ctx, ps.journalFor(adapterName))
 		_ = h.CloseSession(ctx, "")
 		h.KillContext(ctx)
 		if exactConn {
@@ -467,7 +471,7 @@ func (p *peerSessionProvider) CloseHandle(ctx context.Context, adapterType, scop
 		}
 		return nil
 	}
-	return p.shim.CloseHandle(ctx, adapterType, scope)
+	return p.shim.CloseHandle(ctx, adapterName, scope)
 }
 
 // ListenAddr delegates to the shim (the phone-home listener is shared).
@@ -563,16 +567,17 @@ func newPeerJournals(dialAdapter, dialScope string) *peerJournals {
 	return j
 }
 
-// trackFor returns the journal for adapterType, creating it on first use so
+// trackFor returns the journal for the named adapter child (its definition
+// name, KB-242), creating it on first use so
 // late (or unattributed) events are never dropped.
-func (j *peerJournals) trackFor(adapterType string) *adapterJournal {
-	if adapterType == "" {
-		adapterType = j.dialAdapter
+func (j *peerJournals) trackFor(adapterName string) *adapterJournal {
+	if adapterName == "" {
+		adapterName = j.dialAdapter
 	}
-	aj, ok := j.journals[adapterType]
+	aj, ok := j.journals[adapterName]
 	if !ok {
-		aj = newAdapterJournal(adapterType, j.dialScope)
-		j.journals[adapterType] = aj
+		aj = newAdapterJournal(adapterName, j.dialScope)
+		j.journals[adapterName] = aj
 	}
 	return aj
 }
@@ -660,19 +665,20 @@ func newPeerSession(conn net.Conn, dial *PeerDial, onDead func(ps *peerSession))
 	return ps, nil
 }
 
-// hostsAdapter reports whether this conn serves adapterType (KB-213): the
+// hostsAdapter reports whether this conn serves the named adapter child —
+// its definition identity (KB-213/KB-242): the
 // dial adapter always, plus every non-dial adapter the dial's advertised
 // child set names. The dial set — not the observed journals — is the
 // authority: a conn can host an adapter that has not streamed an event yet.
-func (ps *peerSession) hostsAdapter(adapterType string) bool {
-	if adapterType == "" {
-		adapterType = ps.dial.AdapterType
+func (ps *peerSession) hostsAdapter(adapterName string) bool {
+	if adapterName == "" {
+		adapterName = ps.dial.AdapterType
 	}
-	if adapterType == ps.dial.AdapterType {
+	if adapterName == ps.dial.AdapterType {
 		return true
 	}
 	for _, name := range peerChildNames(ps.dial.Adapters) {
-		if name == adapterType {
+		if name == adapterName {
 			return true
 		}
 	}
@@ -685,11 +691,11 @@ func (ps *peerSession) hostsAdapter(adapterType string) bool {
 // conn does not host still get a handle — their requests produce the peer's
 // typed no-live-child error, which keeps misdispatch diagnosable instead of
 // silently crossing to the dial child.
-func (ps *peerSession) handleFor(adapterType string) *peerHandle {
-	if adapterType == "" || adapterType == ps.dial.AdapterType {
+func (ps *peerSession) handleFor(adapterName string) *peerHandle {
+	if adapterName == "" || adapterName == ps.dial.AdapterType {
 		return ps.handle
 	}
-	return &peerHandle{ps: ps, name: adapterType, permActive: make(map[string]bool)}
+	return &peerHandle{ps: ps, name: adapterName, permActive: make(map[string]bool)}
 }
 
 // hostedJournals returns a journal for each hosted adapter (dial-authoritative
@@ -705,11 +711,12 @@ func (ps *peerSession) hostedJournals() []*adapterJournal {
 	return journals
 }
 
-// journalFor returns the requested adapter's journal (creating lazily).
-func (ps *peerSession) journalFor(adapterType string) *adapterJournal {
+// journalFor returns the requested adapter child's journal (its definition
+// name, KB-242; created lazily).
+func (ps *peerSession) journalFor(adapterName string) *adapterJournal {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
-	return ps.journals.trackFor(adapterType)
+	return ps.journals.trackFor(adapterName)
 }
 
 // peerSessionOf extracts the peer session behind a host-side handle, or nil
@@ -717,9 +724,10 @@ func (ps *peerSession) journalFor(adapterType string) *adapterJournal {
 // it: a multi-adapter conn hands out several handles over one session, so
 // handle identity cannot express "the same session came back".
 // findRoutedPeerSession scans the registry (under the caller's p.mu hold)
-// for a session of a DIFFERENT conn hosting the waited adapter, returning
+// for a session of a DIFFERENT conn hosting the waited adapter (by its
+// definition name, KB-242), returning
 // nil when the exact-key entry or scope mode excludes a hit.
-func (p *peerSessionProvider) findRoutedPeerSession(key, adapterType, scope string, stale adapterhost.Handle) *peerSession {
+func (p *peerSessionProvider) findRoutedPeerSession(key, adapterName, scope string, stale adapterhost.Handle) *peerSession {
 	staleSession := peerSessionOf(stale)
 	for _, ps := range p.peers {
 		if ps == staleSession {
@@ -732,7 +740,7 @@ func (p *peerSessionProvider) findRoutedPeerSession(key, adapterType, scope stri
 		if p.perScopeSessions && ps.dial.Scope != scope {
 			continue
 		}
-		if ps.hostsAdapter(adapterType) {
+		if ps.hostsAdapter(adapterName) {
 			return ps
 		}
 	}
@@ -828,11 +836,11 @@ func (ps *peerSession) applySupervisionEvent(ev *criteriav1.SupervisionEvent) {
 		}
 		ps.lastSeq = seq
 	}
-	adapterType := ev.GetAdapterType()
-	if adapterType == "" {
-		adapterType = ps.dial.AdapterType
+	adapterName := ev.GetAdapterType()
+	if adapterName == "" {
+		adapterName = ps.dial.AdapterType
 	}
-	aj := ps.journals.trackFor(adapterType)
+	aj := ps.journals.trackFor(adapterName)
 	exited, reason, detail := aj.applyProcessTerminalArmLocked(ev)
 	var terminalRunID string
 	switch kind := ev.GetKind().(type) {
@@ -865,7 +873,7 @@ func (ps *peerSession) applySupervisionEvent(ev *criteriav1.SupervisionEvent) {
 		// + respawn) onto this hook; the handle's ProcessExited() already
 		// reads the state set here.
 		slog.Warn("peer adapter process exited",
-			"adapter", adapterType, "scope", ps.dial.Scope,
+			"adapter", adapterName, "scope", ps.dial.Scope,
 			"reason", reason, "detail", detail)
 	}
 }
@@ -907,29 +915,30 @@ func (ps *peerSession) lastEventSeq() uint64 {
 }
 
 // processExited reports whether the peer journal delivered a terminal
-// process event for the named adapter. Connection loss alone does not count:
-// the transport may drop for reasons that are not adapter deaths.
-func (ps *peerSession) processExited(adapterType string) bool {
+// process event for the named adapter child (definition name, KB-242).
+// Connection loss alone does not count: the transport may drop for reasons
+// that are not adapter deaths.
+func (ps *peerSession) processExited(adapterName string) bool {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
-	return ps.journals.trackFor(adapterType).exited
+	return ps.journals.trackFor(adapterName).exited
 }
 
 // logDrained reports whether the peer acknowledged draining the log stream
-// backlog (StreamFlushed on the "log" channel) for the named adapter.
-func (ps *peerSession) logDrained(adapterType string) bool {
+// backlog (StreamFlushed on the "log" channel) for the named adapter child.
+func (ps *peerSession) logDrained(adapterName string) bool {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
-	_, ok := ps.journals.trackFor(adapterType).logFlushed[peerLogChannel]
+	_, ok := ps.journals.trackFor(adapterName).logFlushed[peerLogChannel]
 	return ok
 }
 
-// lastHeartbeatAt reports the named adapter's last journal heartbeat
+// lastHeartbeatAt reports the named adapter child's last journal heartbeat
 // timestamp (liveness).
-func (ps *peerSession) lastHeartbeatAt(adapterType string) time.Time {
+func (ps *peerSession) lastHeartbeatAt(adapterName string) time.Time {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
-	return ps.journals.trackFor(adapterType).lastHeartbeat
+	return ps.journals.trackFor(adapterName).lastHeartbeat
 }
 
 // teardownSettleBudget resolves the session's child-run settle budget for

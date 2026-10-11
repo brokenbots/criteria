@@ -859,10 +859,10 @@ func dialAdapters(hs *handshakeMessage) []PeerAdapterIdentity {
 	return hs.Adapters
 }
 
-// dialAdapterTypes returns the adapter types the dial's conn hosts: the
-// advertised child set when one is present, else the dial child alone (the
-// legacy single-adapter shape).
-func dialAdapterTypes(hs *handshakeMessage) []string {
+// dialAdapterNames returns the adapter names (definition identities) the
+// dial's conn hosts: the advertised child set when one is present, else the
+// dial child alone (the legacy single-adapter shape).
+func dialAdapterNames(hs *handshakeMessage) []string {
 	if adapters := dialAdapters(hs); len(adapters) > 0 {
 		types := make([]string, 0, len(adapters))
 		for _, a := range adapters {
@@ -982,7 +982,7 @@ func (s *Shim) verifyAdapterIdentity(conn net.Conn, hs *handshakeMessage) error 
 	// is a pure check (it no longer closes the dial itself) so the recovery
 	// re-check could run with the connection still open.
 	_ = conn.Close()
-	s.noteVerifyFailure(dialAdapterTypes(hs), hs.Scope, class, err)
+	s.noteVerifyFailure(dialAdapterNames(hs), hs.Scope, class, err)
 	return err
 }
 
@@ -1127,7 +1127,8 @@ func (s *Shim) noteVerifyFailure(hosts []string, scope string, class identityRej
 // KB-213: a multi-adapter conn presents the hosted child set, so the
 // rejection is a conn-fate fact — waiters of every hosted adapter sharing
 // the dial's scope prefix get enriched, not just the dial adapter's own
-// waiters. hosts is the dial's hosted adapter types (nil → the dial child).
+// waiters. hosts is the dial's hosted adapter names (definition identities;
+// nil → the dial child).
 func (s *Shim) failureAttributionKeys(hosts []string, scope string, class identityRejectClass) []string {
 	var prefixWaiters map[string]bool
 	if s.perScopeSessions && class == rejectScopeNotRegistered && scope != "" {

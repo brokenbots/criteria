@@ -233,7 +233,7 @@ func TestSessions_CRI269_SubworkflowDeferredRemoteAdapter(t *testing.T) {
 	if n := loader.resolutionsOf("noop"); n != 0 {
 		t.Fatalf("VerifyGraph resolved the remote subworkflow adapter locally %d time(s); a deferred adapter must not be handshaken at VerifyGraph (CRI-269)", n)
 	}
-	if n := shim.waitForHandleCalls("WaitForHandle:noop:"); n != 0 {
+	if n := shim.waitForHandleCalls("WaitForHandle:noop.developer:"); n != 0 {
 		t.Fatalf("VerifyGraph ran %d remote handshake(s) for the deferred adapter; the per-scope token is not rotated until scope entry", n)
 	}
 
@@ -281,7 +281,7 @@ func TestSessions_CRI269_EagerVerifyOfRemoteSubworkflowAdapter(t *testing.T) {
 		t.Fatalf("VerifyGraph: %v", err)
 	}
 
-	if n := shim.waitForHandleCalls("WaitForHandle:noop:"); n != 1 {
+	if n := shim.waitForHandleCalls("WaitForHandle:noop.developer:"); n != 1 {
 		t.Fatalf("eager VerifyGraph handshake must dispatch over the shim exactly once, got %d call(s)", n)
 	}
 	if n := loader.resolutionsOf("noop"); n != 0 {

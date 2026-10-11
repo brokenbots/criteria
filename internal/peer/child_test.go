@@ -17,6 +17,7 @@ import (
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	criteriav1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -415,5 +416,136 @@ func TestPeerRuntime_SpawnLogIsJSONShape(t *testing.T) {
 	}
 	if entry["msg"] != "peer child spawned" || entry["adapter"] != "noop" {
 		t.Errorf("log entry keys wrong: %v", entry)
+	}
+}
+
+// TestPeerRuntime_KillChildPerDefinitionContainment pins the KB-242 kill
+// chain at the peer's only seam: with one child process PER ADAPTER
+// DEFINITION (two copilot-class definitions under distinct names, the
+// pair_programming_loop shape — KB-242), a Control(kill_child) addressed at
+// one definition must terminate only the addressed child and leave the
+// sibling definition's process running. Under the KB-213 kind-keyed grammar
+// (children collapsed by adapter TYPE) the branch_repair scope's teardown
+// kill landed on the developer/reviewer children too — the deterministic
+// `initialize adapter "copilot.developer": adapter "copilot" handshake: rpc
+// error: code = Canceled desc = grpc: the client connection is closing` death
+// recorded in KB-242.
+func TestPeerRuntime_KillChildPerDefinitionContainment(t *testing.T) {
+	if testing.Short() {
+		t.Skip("kill test spawns real adapter subprocesses")
+	}
+	bin := buildNoopAdapter(t)
+
+	cfg, err := LoadConfig(getenvFrom(map[string]string{EnvRemoteHost: "127.0.0.1:7997"}))
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.Adapters = []AdapterSpec{
+		{Name: "copilot.developer", Binary: bin},
+		{Name: "copilot.branch_repair", Binary: bin},
+	}
+	if err := cfg.Resolve(); err != nil {
+		t.Fatalf("resolve manifest children: %v", err)
+	}
+	cfg.JournalLimit = 8
+
+	rt := NewRuntime(&cfg, captureLogger(&bytes.Buffer{}))
+	rt.exitPoll = 20 * time.Millisecond
+	rt.shutdownGrace = 50 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := rt.Boot(ctx); err != nil {
+		t.Fatalf("boot: %v", err)
+	}
+
+	rt.mu.Lock()
+	dev := rt.children["copilot.developer"]
+	repair := rt.children["copilot.branch_repair"]
+	rt.mu.Unlock()
+	if dev == nil || repair == nil {
+		t.Fatalf("children = %v, want both copilot.developer and copilot.branch_repair spawned", func() []string {
+			rt.mu.Lock()
+			defer rt.mu.Unlock()
+			names := make([]string, 0, len(rt.children))
+			for name := range rt.children {
+				names = append(names, name)
+			}
+			return names
+		}())
+	}
+	if dev.handle == nil || repair.handle == nil {
+		t.Fatal("both children must carry live go-plugin handles after boot")
+	}
+
+	// The branch_repair scope exits; its teardown sends kill_child for its
+	// own definition. The peer must kill exactly that child.
+	resp := rt.Control(ctx, &criteriav1.ControlRequest{
+		Kind:        &criteriav1.ControlRequest_KillChild{KillChild: &criteriav1.KillChild{}},
+		AdapterType: "copilot.branch_repair",
+		GraceMs:     10,
+	})
+	if !resp.GetAccepted() {
+		t.Fatalf("kill_child(copilot.branch_repair) rejected: %s", resp.GetDetail())
+	}
+
+	// The addressed child exits (grace is peer-initiated, so graceful); the
+	// sibling definition's child must still be alive.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		rt.mu.Lock()
+		exited := repair.exited
+		rt.mu.Unlock()
+		if exited || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	rt.mu.Lock()
+	repairExited := repair.exited
+	repairKilled := repair.killRequested
+	devKilled := dev.killRequested
+	rt.mu.Unlock()
+	if !repairExited {
+		t.Fatalf("copilot.branch_repair child neither exited nor died within 5s of its addressed kill_child")
+	}
+	if !repairKilled {
+		t.Errorf("copilot.branch_repair killRequested = false, want true (peer-initiated exit)")
+	}
+	if devKilled {
+		t.Errorf("copilot.developer killRequested = true; the sibling definition's child must not be killed by another definition's teardown (KB-242)")
+	}
+	if adapterhost.ProcessExited(dev.handle) {
+		t.Errorf("copilot.developer child process exited; the sibling definition's child must stay live (KB-242 kill chain)")
+	}
+
+	// The sibling definition remains killable by its own address.
+	resp = rt.Control(ctx, &criteriav1.ControlRequest{
+		Kind:        &criteriav1.ControlRequest_KillChild{KillChild: &criteriav1.KillChild{}},
+		AdapterType: "copilot.developer",
+		GraceMs:     10,
+	})
+	if !resp.GetAccepted() {
+		t.Fatalf("kill_child(copilot.developer) after the sibling kill rejected: %s", resp.GetDetail())
+	}
+	deadline = time.Now().Add(5 * time.Second)
+	for {
+		rt.mu.Lock()
+		exited := dev.exited
+		rt.mu.Unlock()
+		if exited || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	rt.mu.Lock()
+	devExited := dev.exited
+	rt.mu.Unlock()
+	if !devExited {
+		t.Fatalf("copilot.developer child not exited within 5s of its addressed kill_child")
+	}
+
+	if err := rt.Shutdown(ctx); err != nil {
+		t.Fatalf("shutdown: %v", err)
 	}
 }

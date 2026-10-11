@@ -66,10 +66,10 @@ func (s *verifyHandleShim) withPhoneHome() *verifyHandleShim {
 	return s
 }
 
-func (s *verifyHandleShim) WaitForHandle(_ context.Context, adapterType, _ string) (Handle, error) {
+func (s *verifyHandleShim) WaitForHandle(_ context.Context, adapter, _ string) (Handle, error) {
 	stub := &verifyHandleStub{}
-	s.stubs[adapterType] = stub
-	s.calls[adapterType]++
+	s.stubs[adapter] = stub
+	s.calls[adapter]++
 	if s.supervised {
 		return &supervisedVerifyHandle{stub}, nil
 	}
@@ -90,8 +90,8 @@ type phoneHomeVerifyHandle struct {
 
 func (h *phoneHomeVerifyHandle) IsPhoneHomeBridge() {}
 
-func (s *verifyHandleShim) WaitForFreshHandle(_ context.Context, adapterType, _ string, _ Handle) (Handle, error) {
-	return s.stubs[adapterType], nil
+func (s *verifyHandleShim) WaitForFreshHandle(_ context.Context, adapter, _ string, _ Handle) (Handle, error) {
+	return s.stubs[adapter], nil
 }
 
 func (s *verifyHandleShim) RegisterScope(string, string)                      {}
@@ -119,8 +119,8 @@ func TestSessions_VerifyHandshakeLeavesPeerSupervisedHandleAlive(t *testing.T) {
 		t.Fatalf("VerifyGraph: %v", err)
 	}
 
-	// resolveAdapterHandle dispatches over the shim with the adapter TYPE.
-	h := shim.stubs["noop"]
+	// resolveAdapterHandle dispatches over the shim with the adapter definition identity.
+	h := shim.stubs[developer]
 	if h == nil {
 		t.Fatalf("verify handshake must resolve %q over the shim", developer)
 	}
@@ -146,8 +146,8 @@ func TestSessions_VerifyHandshakeKillsPlainThrowawayHandle(t *testing.T) {
 		t.Fatalf("VerifyGraph: %v", err)
 	}
 
-	// resolveAdapterHandle dispatches over the shim with the adapter TYPE.
-	h := shim.stubs["noop"]
+	// resolveAdapterHandle dispatches over the shim with the adapter definition identity.
+	h := shim.stubs[developer]
 	if h == nil {
 		t.Fatalf("verify handshake must resolve %q over the shim", developer)
 	}
@@ -176,7 +176,7 @@ func TestSessions_VerifyHandshakeLeavesPhoneHomeBridgeHandleAlive(t *testing.T) 
 		t.Fatalf("VerifyGraph: %v", err)
 	}
 
-	h := shim.stubs["noop"]
+	h := shim.stubs[developer]
 	if h == nil {
 		t.Fatalf("verify handshake must resolve %q over the shim", developer)
 	}

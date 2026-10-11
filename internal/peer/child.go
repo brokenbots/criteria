@@ -190,10 +190,13 @@ type childSpec struct {
 }
 
 // childSpecs resolves the boot list: the multi-adapter manifest when
-// declared, else the single legacy adapter. With CRITERIA_REMOTE_SCOPES_DIR
-// set the hosted children still cover the adapter types of the manifest (or
-// the single legacy adapter); the scope tokens arrive per (scope, adapter)
-// at serve time.
+// declared, else the single legacy adapter. Manifest entries are one per
+// adapter DEFINITION (KB-242): each definition name spawns its own child
+// process even when several definitions share an adapter type (the
+// kind-deduped grammar was the KB-242 defect). With
+// CRITERIA_REMOTE_SCOPES_DIR set the hosted children still cover the
+// adapter set of the manifest (or the single legacy adapter); the scope
+// tokens arrive per (scope, adapter) at serve time.
 func (r *peerRuntime) childSpecs() ([]childSpec, error) {
 	if r.cfg.ManifestMode() {
 		if len(r.cfg.Adapters) == 0 {
@@ -506,7 +509,8 @@ func (r *peerRuntime) classifyUnexpectedExit(c *childState, exitCode, signal int
 // period (default 5s, host sends 3s), then kills the addressed child; the
 // watcher journals the exit fact, classified as peer-initiated via
 // killRequested. The addressed child is the one named by the request's
-// adapter_type; an empty adapter_type addresses the primary child (legacy
+// adapter_type — the host addresses it by adapter DEFINITION identity
+// (KB-242); an empty adapter_type addresses the primary child (legacy
 // single-adapter hosts, KB-213 compat). cancel_child_run (ADR-0008,
 // workflow.v1-gated at the server) is a known arm but there is no child-run
 // substrate in the peer role: nothing to execute a run-level cancellation
