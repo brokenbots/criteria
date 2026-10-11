@@ -74,7 +74,7 @@ state "done" {
 	graph := compileWorkflow(t, spec)
 	lf := buildLockfile("noop", "demo", digest)
 
-	peerCmd, peerLogs, peerCancel := startPeer(ctx, t, criteriaBin, shimAddr, noopBin, digest)
+	peerCmd, peerLogs, peerCancel := startPeer(ctx, t, criteriaBin, shimAddr, "noop.demo", noopBin, digest)
 	defer peerCancel()
 
 	sink := &testSink{}
@@ -173,14 +173,14 @@ state "done" {
 
 	// Give the engine a moment to start the shim, then connect peer #1.
 	time.Sleep(500 * time.Millisecond)
-	peerCmd1, peerLogs1, peerCancel1 := startPeer(ctx, t, criteriaBin, shimAddr, noopBin, digest)
+	peerCmd1, peerLogs1, peerCancel1 := startPeer(ctx, t, criteriaBin, shimAddr, "noop.demo", noopBin, digest)
 
 	// The step sits in a 5s noop delay; land the kill inside that window.
 	time.Sleep(1200 * time.Millisecond)
 
 	// Start the replacement peer BEFORE killing the old one so the shim has
 	// a fresh session ready when the engine calls respawn.
-	_, peerLogs2, peerCancel2 := startPeer(ctx, t, criteriaBin, shimAddr, noopBin, digest)
+	_, peerLogs2, peerCancel2 := startPeer(ctx, t, criteriaBin, shimAddr, "noop.demo", noopBin, digest)
 	defer peerCancel2()
 	defer dumpPeerLogs(t, peerLogs2)
 
@@ -238,7 +238,7 @@ func buildNoopSmokeBinary(t *testing.T, moduleRoot string) string {
 // startPeer launches the real `criteria peer` binary against the shim
 // address with compressed backoff so reconnects stay fast under test, and
 // captures its output for failure diagnostics.
-func startPeer(ctx context.Context, t *testing.T, criteriaBin, addr, adapterBin, digest string) (*exec.Cmd, *bytes.Buffer, context.CancelFunc) {
+func startPeer(ctx context.Context, t *testing.T, criteriaBin, addr, adapterName, adapterBin, digest string) (*exec.Cmd, *bytes.Buffer, context.CancelFunc) {
 	t.Helper()
 	const token = "smoke-token"
 	cmdCtx, cancel := context.WithCancel(ctx)
@@ -251,7 +251,7 @@ func startPeer(ctx context.Context, t *testing.T, criteriaBin, addr, adapterBin,
 		"CRITERIA_REMOTE_TOKEN="+token,
 		"CRITERIA_REMOTE_SCOPE=peer-smoke",
 		"CRITERIA_REMOTE_DIGEST="+digest,
-		"CRITERIA_ADAPTER_NAME=noop",
+		"CRITERIA_ADAPTER_NAME="+adapterName,
 		"CRITERIA_ADAPTER_VERSION=0.1.0",
 		"CRITERIA_ADAPTER_BINARY="+adapterBin,
 		"CRITERIA_PEER_BACKOFF_MIN=200ms",

@@ -675,7 +675,7 @@ spec:
             name: greeter-token
         env:
         - name: CRITERIA_ADAPTER_NAME
-          value: fixture
+          value: fixture.greeter
         - name: CRITERIA_REMOTE_DIGEST
           value: %s
 `, namespace, namespace, adapterHostAddr, namespace, namespace, imageTag, digest))
@@ -818,7 +818,7 @@ spec:
             name: greeter-token
         env:
         - name: CRITERIA_ADAPTER_NAME
-          value: fixture
+          value: fixture.greeter
         - name: CRITERIA_REMOTE_DIGEST
           value: %s
 `, namespace, namespace, adapterHostAddr, namespace, namespace, imageTag, digest))

@@ -256,13 +256,15 @@ func TestPeerSmoke_PerScopeMultiAdapter(t *testing.T) {
 	go func() { engDone <- eng.Run(ctx) }()
 
 	// The operator's (scope, pair) peer contract: one criteria peer per
-	// scope instance, hosting EVERY adapter kind the environment declares
-	// behind that scope's single dial. The engine provisions adapters lazily
-	// as steps execute and blocks each step until its scope's peer dials
-	// in, so dial each scope's pair peer as its provision event arrives.
-	// The hosted set is the sorted kind set (fail, noop): manifest order is
-	// free (the dial identity is simply the first declared child), sorted
-	// order mirrors the operator's stage order.
+	// scope instance, hosting EVERY adapter definition the environment
+	// declares behind that scope's single dial. The engine provisions
+	// adapters lazily as steps execute and blocks each step until its
+	// scope's peer dials in, so dial each scope's pair peer as its
+	// provision event arrives.
+	// The hosted set is the sorted definition-name set (fail.breaker,
+	// noop.demo): manifest order is free (the dial identity is simply the
+	// first declared child), sorted order mirrors the operator's stage
+	// order.
 	peerCancels := make([]context.CancelFunc, 0, 4)
 	defer func() {
 		for _, c := range peerCancels {
@@ -271,8 +273,8 @@ func TestPeerSmoke_PerScopeMultiAdapter(t *testing.T) {
 	}()
 	prov := map[string]provisionInfo{}
 	peerLogs := map[string]*bytes.Buffer{}
-	peerBins := map[string]string{"noop": noopBin, "fail": failBin}
-	peerDigests := map[string]string{"noop": noopDigest, "fail": failDigest}
+	peerBins := map[string]string{"noop.demo": noopBin, "fail.breaker": failBin}
+	peerDigests := map[string]string{"noop.demo": noopDigest, "fail.breaker": failDigest}
 	for _, adapterType := range []string{"noop", "fail"} {
 		p := waitForProvisions(t, sink, []string{adapterType}, 45*time.Second)[adapterType]
 		prov[adapterType] = p
@@ -283,8 +285,8 @@ func TestPeerSmoke_PerScopeMultiAdapter(t *testing.T) {
 		_, logs, pc := startPerScopePeer(ctx, t, criteriaBin, p.ShimListenAddress,
 			scopeKey, p.Token,
 			[]hostedChild{
-				{kind: "noop", binary: peerBins["noop"], digest: peerDigests["noop"]},
-				{kind: "fail", binary: peerBins["fail"], digest: peerDigests["fail"]},
+				{name: "noop.demo", binary: peerBins["noop.demo"], digest: peerDigests["noop.demo"]},
+				{name: "fail.breaker", binary: peerBins["fail.breaker"], digest: peerDigests["fail.breaker"]},
 			})
 		peerCancels = append(peerCancels, pc)
 		peerLogs[p.ScopeInstanceID] = logs
@@ -374,8 +376,12 @@ func TestPeerSmoke_PerScopeChildSetRejection(t *testing.T) {
 		engDone <- eng.Run(engCtx)
 	}()
 
-	// The drift shape: a single noop-kind peer with the matching scope
-	// token, dialed as soon as the noop scope is provisioned.
+	// The drift shape: a legacy single-adapter per-scope dial stamped as the
+	// noop kind with the matching scope token, dialed as soon as the noop
+	// scope is provisioned. Under definition-identity grammar (KB-242
+	// semantic revert) the environment's declared set carries definition
+	// names, so a kind-only hosted set misses them — the negative control
+	// for the fail-closed check.
 	p := waitForProvisions(t, sink, []string{"noop"}, 45*time.Second)["noop"]
 	scopeKey := p.ScopeName + "/" + p.ScopeInstanceID
 	if p.ScopeName == "" {
@@ -390,11 +396,12 @@ func TestPeerSmoke_PerScopeChildSetRejection(t *testing.T) {
 	// reconnect — never a token/digest/scope failure and never an accept.
 	// Two occurrences prove the first dial and the first reconnect were
 	// both rejected; a single one could hide a race in the redial loop.
-	// Declared order is sorted, so the missing kind is spelled "fail" and
-	// the hosted single kind is "noop".
+	// Declared order is sorted, so the missing definition names are spelled
+	// "fail.breaker" and "noop.demo" and the hosted single-kind shape
+	// spells "noop".
 	waitForCondition(t, 20*time.Second, func() bool {
 		return hostLogs.count("remote shim accept failed",
-			fmt.Sprintf("peer for adapter %q (scope %q) does not host declared adapters fail (hosted: noop)",
+			fmt.Sprintf("peer for adapter %q (scope %q) does not host declared adapters fail.breaker, noop.demo (hosted: noop)",
 				"noop", scopeKey)) >= 2
 	}, fmt.Sprintf("host shim never rejected the single-kind dial with a child-set failure; host log:\n%s", hostLogs.dump()))
 
@@ -509,7 +516,7 @@ state "done" {
 	// Connect peer #1; its supervised adapter child is spawned as soon as
 	// the peer starts.
 	time.Sleep(500 * time.Millisecond)
-	peerCmd1, peerLogs1, peerCancel1 := startPeer(ctx, t, criteriaBin, shimAddr, noopBin, digest)
+	peerCmd1, peerLogs1, peerCancel1 := startPeer(ctx, t, criteriaBin, shimAddr, "noop.demo", noopBin, digest)
 	defer dumpPeerLogs(t, peerLogs1)
 
 	childPid := waitForAdapterChild(t, peerCmd1.Process.Pid, 20*time.Second)
@@ -534,7 +541,7 @@ state "done" {
 	_ = peerCmd1.Wait()
 
 	// Fresh dial for the respawn policy to adopt.
-	_, peerLogs2, peerCancel2 := startPeer(ctx, t, criteriaBin, shimAddr, noopBin, digest)
+	_, peerLogs2, peerCancel2 := startPeer(ctx, t, criteriaBin, shimAddr, "noop.demo", noopBin, digest)
 	defer peerCancel2()
 	defer dumpPeerLogs(t, peerLogs2)
 
@@ -612,10 +619,11 @@ func buildMultiLockfile(entries ...lockedAdapter) *lockfile.Lockfile {
 
 // perScopeMultiAdapterFixture builds the compiled workflow and lockfile for
 // the per-scope multi-adapter smoke tests: a per_scope_sessions remote
-// environment bound to two adapter kinds — noop (greet/recover steps) and
-// fail (break step, routed as a failure outcome) — plus a lockfile pinning
-// both child digests at the shim. The environment's declared-adapter set is
-// therefore {fail, noop}, and every per-scope dial must host both kinds.
+// environment bound to two adapter definitions — noop.demo (greet/recover
+// steps) and fail.breaker (break step, routed as a failure outcome) — plus
+// a lockfile pinning both definition digests at the shim. The environment's
+// declared-adapter set is therefore {fail.breaker, noop.demo}, and every
+// per-scope dial must host both definitions.
 func perScopeMultiAdapterFixture(t *testing.T, shimAddr, noopDigest, failDigest string) (*workflow.FSMGraph, *lockfile.Lockfile) {
 	t.Helper()
 	spec := parseWorkflow(t, fmt.Sprintf(`
@@ -691,31 +699,34 @@ func buildFailSmokeBinary(t *testing.T, moduleRoot string) string {
 
 // hostedChild is one hosted adapter child of a per-scope pair peer: an
 // entry of the CRITERIA_REMOTE_ADAPTERS manifest, staged behind its own
-// CRITERIA_ADAPTER_<KIND>_BINARY/_DIGEST override the way the operator's
-// peer pod builds it from the run's adapter pair.
+// CRITERIA_ADAPTER_<NAME>_BINARY/_DIGEST override the way the operator's
+// peer pod builds it from the run's adapter pair. Names are adapter
+// definition identities ("type.name"), one child process per definition.
 type hostedChild struct {
-	kind   string
+	name   string
 	binary string
 	digest string
 }
 
 // startPerScopePeer starts ONE `criteria peer` subprocess for a scope
-// instance, hosting every adapter kind the environment declares behind that
-// scope's single dial — the operator's (scope, pair) peer contract. The
-// manifest (CRITERIA_REMOTE_ADAPTERS) carries the sorted kind set, every
-// hosted kind gets its own CRITERIA_ADAPTER_<KIND>_BINARY/_VERSION/_DIGEST
-// override, and the dial's identity frame advertises the full hosted set.
+// instance, hosting every adapter definition the environment declares
+// behind that scope's single dial — the operator's (scope, pair) peer
+// contract. The manifest (CRITERIA_REMOTE_ADAPTERS) carries the sorted
+// definition-name set, every hosted definition gets its own
+// CRITERIA_ADAPTER_<NAME>_BINARY/_VERSION/_DIGEST override, and the dial's
+// identity frame advertises the full definition set.
 // KB-213's fail-closed accept-time coverage check rejects any per-scope dial
-// whose hosted set misses a declared kind of the environment, so the pair
-// peer is the only dial shape a multi-adapter per-scope environment accepts.
+// whose hosted set misses a declared adapter definition of the environment,
+// so the pair peer is the only dial shape a multi-adapter per-scope
+// environment accepts.
 func startPerScopePeer(ctx context.Context, t *testing.T, criteriaBin, addr, scope, token string, children []hostedChild) (*exec.Cmd, *bytes.Buffer, context.CancelFunc) {
 	t.Helper()
 	sorted := make([]hostedChild, len(children))
 	copy(sorted, children)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].kind < sorted[j].kind })
-	kinds := make([]string, 0, len(sorted))
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].name < sorted[j].name })
+	names := make([]string, 0, len(sorted))
 	for _, c := range sorted {
-		kinds = append(kinds, c.kind)
+		names = append(names, c.name)
 	}
 	cmdCtx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(cmdCtx, criteriaBin, "peer")
@@ -726,16 +737,16 @@ func startPerScopePeer(ctx context.Context, t *testing.T, criteriaBin, addr, sco
 		"CRITERIA_REMOTE_HOST="+addr,
 		"CRITERIA_REMOTE_TOKEN="+token,
 		"CRITERIA_REMOTE_SCOPE="+scope,
-		"CRITERIA_REMOTE_ADAPTERS="+strings.Join(kinds, ","),
+		"CRITERIA_REMOTE_ADAPTERS="+strings.Join(names, ","),
 		"CRITERIA_PEER_BACKOFF_MIN=200ms",
 		"CRITERIA_PEER_BACKOFF_MAX=1s",
 		"CRITERIA_LOG_LEVEL=debug",
 	)
 	for _, c := range sorted {
 		env = append(env,
-			"CRITERIA_ADAPTER_"+adapterEnvToken(c.kind)+"_BINARY="+c.binary,
-			"CRITERIA_ADAPTER_"+adapterEnvToken(c.kind)+"_VERSION=0.1.0",
-			"CRITERIA_ADAPTER_"+adapterEnvToken(c.kind)+"_DIGEST="+c.digest,
+			"CRITERIA_ADAPTER_"+adapterEnvToken(c.name)+"_BINARY="+c.binary,
+			"CRITERIA_ADAPTER_"+adapterEnvToken(c.name)+"_VERSION=0.1.0",
+			"CRITERIA_ADAPTER_"+adapterEnvToken(c.name)+"_DIGEST="+c.digest,
 		)
 	}
 	cmd.Env = env
@@ -750,10 +761,12 @@ func startPerScopePeer(ctx context.Context, t *testing.T, criteriaBin, addr, sco
 	return cmd, logs, cancel
 }
 
-// adapterEnvToken normalizes an adapter kind into the CRITERIA_ADAPTER_<KIND>_
-// override prefix the peer config accepts; mirrors internal/peer's
-// CRITERIA_ADAPTER_<NAME>_* env-name rule (uppercased, every
-// non-alphanumeric character replaced with an underscore).
+// adapterEnvToken normalizes an adapter definition name into the
+// CRITERIA_ADAPTER_<NAME>_ override prefix the peer config accepts; mirrors
+// internal/peer's CRITERIA_ADAPTER_<NAME>_* env-name rule (uppercased,
+// every non-alphanumeric character replaced with an underscore). Definition
+// names keep their dot replaced with an underscore, e.g. "fail.breaker" →
+// FAIL_BREAKER.
 func adapterEnvToken(kind string) string {
 	var b strings.Builder
 	for _, r := range kind {

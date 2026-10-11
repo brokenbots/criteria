@@ -15,9 +15,9 @@ import (
 	"time"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
-	criteriav1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	criteriav1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/workflow"
 )
 
