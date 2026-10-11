@@ -37,17 +37,24 @@ func TestParseAdaptersEnv_PathForm(t *testing.T) {
 }
 
 func TestParseAdaptersEnv_Errors(t *testing.T) {
-	for _, raw := range []string{"=path", "a= ", "a,a"} {
+	for _, raw := range []string{"=path", "a= "} {
 		if _, err := ParseAdaptersEnv(raw); err == nil {
 			t.Errorf("ParseAdaptersEnv(%q) = nil error, want one", raw)
 		}
 	}
 }
 
-func TestParseAdaptersEnv_Duplicate(t *testing.T) {
-	_, err := ParseAdaptersEnv("sh,sh")
-	if err == nil || !strings.Contains(err.Error(), "more than once") {
-		t.Errorf("duplicate not rejected: %v", err)
+// KB-242: environment entries may repeat an adapter definition name when
+// the same child is listed by two sources. Keep-first wins; the duplicate
+// entry is dropped instead of failing the whole peer (the old KB-213
+// grammar rejected it and blocked per-definition entries).
+func TestParseAdaptersEnv_DuplicateKeepFirst(t *testing.T) {
+	specs, err := ParseAdaptersEnv("sh,sh")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(specs) != 1 || specs[0].Name != "sh" {
+		t.Errorf("specs = %+v, want a single \"sh\" spec", specs)
 	}
 }
 
