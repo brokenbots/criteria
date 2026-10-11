@@ -345,6 +345,17 @@ func buildLockfile(adapterType, adapterName, digest string) *lockfile.Lockfile {
 	}
 }
 
+// fixtureDefinitionName is the DEFINITION identity ("<type>.<name>", KB-242
+// revert) of the adapter both local remote smoke workflows declare
+// (`adapter "remote-smoke" "demo"`). The phone-home handshake must present it:
+// deployments bake the definition identity into CRITERIA_ADAPTER_NAME (see the
+// K8s pods below and images/remote-adapters), and the engine's session wait
+// keys on `verify adapter "<type>.<name>"`. A fixture that dials its bare
+// legacy type name registers a session the wait never sees — the v0.5.49
+// Gate 3 signature `verify adapter "remote-smoke.demo" in "": context deadline
+// exceeded`.
+const fixtureDefinitionName = "remote-smoke.demo"
+
 func startAdapter(ctx context.Context, t *testing.T, bin, addr, token, digest string) (*exec.Cmd, context.CancelFunc) {
 	t.Helper()
 	return startAdapterWithMarker(ctx, t, bin, addr, token, digest, "")
@@ -355,6 +366,7 @@ func startAdapterWithMarker(ctx context.Context, t *testing.T, bin, addr, token,
 	cmdCtx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(cmdCtx, bin)
 	cmd.Env = append(os.Environ(),
+		"CRITERIA_ADAPTER_NAME="+fixtureDefinitionName,
 		"CRITERIA_REMOTE_HOST="+addr,
 		"CRITERIA_REMOTE_TOKEN="+token,
 		"CRITERIA_REMOTE_DIGEST="+digest,
