@@ -93,6 +93,12 @@ func AdapterInstallPath(adapterType, digestEncoded string) (string, error) {
 // (used for dev/test bindings that are not digest-pinned). For OCI adapters
 // pinned in the lockfile, prefer DiscoverBinaryAt.
 //
+// name may be a bare adapter type ("noop") or an adapter DEFINITION identity
+// ("noop.demo", KB-242); binaries on the flat install root are keyed by type,
+// so the definition half is stripped for lookup (KB-246, mirroring the #527
+// lockfileDigestVerifier split) while the definition identity stays the
+// child key.
+//
 // Discovery intentionally does not consult PATH to avoid unintentionally
 // executing similarly named binaries from user/system toolchains.
 func DiscoverBinary(name string) (string, error) {
@@ -103,7 +109,7 @@ func DiscoverBinary(name string) (string, error) {
 	if !IsValidAdapterName(name) {
 		return "", fmt.Errorf("%w %q", ErrInvalidAdapterName, name)
 	}
-	binary := adapterBinaryPrefix + name
+	binary := AdapterBinaryName(definitionType(name))
 	roots := adaptersRoots()
 	searched := make([]string, 0, len(roots))
 	for _, root := range roots {
@@ -116,19 +122,25 @@ func DiscoverBinary(name string) (string, error) {
 	return "", &ErrAdapterNotFound{Name: name, Searched: searched}
 }
 
-// DiscoverBinaryAt resolves the installed binary for adapterType pinned to a
+// DiscoverBinaryAt resolves the installed binary for an adapter pinned to a
 // specific resolved digest (digestEncoded as produced by EncodeDigest). This is
 // the digest-addressed path that lets multiple versions of the same adapter
 // type coexist.
-func DiscoverBinaryAt(adapterType, digestEncoded string) (string, error) {
-	adapterType = strings.TrimSpace(adapterType)
-	if adapterType == "" {
+//
+// name may be a bare adapter type ("noop") or an adapter DEFINITION identity
+// ("noop.demo", KB-242): digest-pinned children are keyed by definition, but
+// binaries under a digest directory are installed by type, so lookup strips
+// the definition half (KB-246, mirroring the #527 lockfileDigestVerifier
+// split) while the definition identity stays the child key.
+func DiscoverBinaryAt(name, digestEncoded string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
 		return "", errors.New("adapter type is required")
 	}
-	if !IsValidAdapterName(adapterType) {
-		return "", fmt.Errorf("%w %q", ErrInvalidAdapterName, adapterType)
+	if !IsValidAdapterName(name) {
+		return "", fmt.Errorf("%w %q", ErrInvalidAdapterName, name)
 	}
-	binary := adapterBinaryPrefix + adapterType
+	binary := AdapterBinaryName(definitionType(name))
 	roots := adaptersRoots()
 	searched := make([]string, 0, len(roots))
 	for _, root := range roots {
@@ -138,7 +150,7 @@ func DiscoverBinaryAt(adapterType, digestEncoded string) (string, error) {
 			return candidate, nil
 		}
 	}
-	return "", &ErrAdapterNotFound{Name: adapterType, Searched: searched}
+	return "", &ErrAdapterNotFound{Name: name, Searched: searched}
 }
 
 // IsRunnableFile reports whether path is an executable regular file.
@@ -156,12 +168,44 @@ func IsRunnableFile(path string) bool {
 	return true
 }
 
-// IsValidAdapterName reports whether name is a valid flat adapter name.
+// IsValidAdapterName reports whether name is a valid adapter identity: either
+// a legacy flat (bare type) name ("noop") or an adapter DEFINITION identity
+// ("<type>.<name>" — exactly one dot separator, both halves non-empty and
+// valid, KB-242's per-definition child keying). Names are used directly as
+// path segments, so anything that is not a segment character is rejected.
 func IsValidAdapterName(name string) bool {
 	if name == "" {
 		return false
 	}
-	for _, r := range name {
+	// strings.Cut keeps any further dots in the definition half and the
+	// segment check below rejects them, so multi-dot names stay invalid.
+	typ, def, hasDef := strings.Cut(name, ".")
+	if !hasDef {
+		return isValidAdapterNameSegment(name)
+	}
+	return isValidAdapterNameSegment(typ) && isValidAdapterNameSegment(def)
+}
+
+// definitionType returns the adapter type half of an adapter identity: the
+// bare name passes through; a definition identity "<type>.<name>" strips the
+// definition half so binaries (installed and listed by type) are discoverable
+// under the definition-keyed child grammar (KB-246). Callers must only pass
+// names already validated with IsValidAdapterName.
+func definitionType(name string) string {
+	typ, _, hasDef := strings.Cut(name, ".")
+	if !hasDef {
+		return name
+	}
+	return typ
+}
+
+// isValidAdapterNameSegment reports whether s is one valid identity segment:
+// lowercase alphanumerics, dashes, and underscores; non-empty.
+func isValidAdapterNameSegment(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
 			continue
 		}
