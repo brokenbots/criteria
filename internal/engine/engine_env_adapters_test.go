@@ -27,7 +27,7 @@ func TestDeclaredAdaptersForEnv(t *testing.T) {
 			"local.helper": adapterForEnvWalk("sh", "sandbox.dev"),
 		}, nil, nil)
 		got := declaredAdaptersForEnv("remote.prod", g)
-		if !slices.Equal(got, []string{"noop"}) {
+		if !slices.Equal(got, []string{"noop.main"}) {
 			t.Fatalf("got %v", got)
 		}
 	})
@@ -40,7 +40,7 @@ func TestDeclaredAdaptersForEnv(t *testing.T) {
 			"kick": {Name: "kick", TargetKind: workflow.StepTargetAdapter, AdapterRef: "sh.aux", Environment: "remote.prod"},
 		}, nil)
 		got := declaredAdaptersForEnv("remote.prod", g)
-		if !slices.Equal(got, []string{"noop", "sh"}) {
+		if !slices.Equal(got, []string{"noop.main", "sh.aux"}) {
 			t.Fatalf("got %v", got)
 		}
 	})
@@ -50,7 +50,7 @@ func TestDeclaredAdaptersForEnv(t *testing.T) {
 			"noop.main": adapterForEnvWalk("noop", ""),
 		}, nil, nil)
 		got := declaredAdaptersForEnv("remote.prod", g)
-		if !slices.Equal(got, []string{"noop"}) {
+		if !slices.Equal(got, []string{"noop.main"}) {
 			t.Fatalf("got %v", got)
 		}
 	})
@@ -66,7 +66,7 @@ func TestDeclaredAdaptersForEnv(t *testing.T) {
 			"child": {Name: "child", Body: callee},
 		})
 		got := declaredAdaptersForEnv("remote.prod", g)
-		if !slices.Equal(got, []string{"copilot", "noop"}) {
+		if !slices.Equal(got, []string{"copilot.a", "noop.main"}) {
 			t.Fatalf("got %v", got)
 		}
 	})

@@ -547,7 +547,9 @@ func (p *cri145Pod) serveLoop(sink *eventTrackingSink, stop <-chan struct{}) {
 		}
 		addr = ev.ShimListenAddress
 		hs = &cri137Handshake{
-			Name:    ev.AdapterType,
+			// The token file is labeled with the adapter definition identity
+			// (KB-242); production pods present that identity, not the type.
+			Name:    strings.TrimSuffix(filepath.Base(ev.TokenRef), ".token"),
 			Version: "1.0.0",
 			Digest:  pinDigest,
 			Token:   string(token),

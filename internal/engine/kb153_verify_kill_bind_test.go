@@ -129,7 +129,7 @@ func runKB153BindChain(t *testing.T, budget time.Duration, keepRedialing bool) *
 	}
 	scopeKey := first.ScopeName + "/" + first.ScopeInstanceID
 	hs := &cri137Handshake{
-		Name:    "noop",
+		Name:    "noop.default",
 		Version: "1.0.0",
 		Digest:  "sha256:abcd1234",
 		Token:   string(tokenBytes),
@@ -138,7 +138,7 @@ func runKB153BindChain(t *testing.T, budget time.Duration, keepRedialing bool) *
 
 	stopDial := make(chan struct{})
 	podDone := make(chan struct{})
-	pod := &cri276PodServer{name: "noop", version: "1.0.0"}
+	pod := &cri276PodServer{name: "noop.default", version: "1.0.0"}
 	accepted := &atomic.Int64{}
 	stopDialOnce := &sync.Once{}
 	stopDialing := func() { stopDialOnce.Do(func() { close(stopDial) }) }
@@ -229,7 +229,7 @@ func TestBindDeadAdapter_FailsAtHandshakeBudget(t *testing.T) {
 	// registry rather than racing the dying bridge (the KB-153 registry
 	// invariant guarantees the torn-down session is deregistered once
 	// CloseHandle returns).
-	if err := chain.shim.CloseHandle(context.Background(), "noop", chain.scopeKey); err != nil {
+	if err := chain.shim.CloseHandle(context.Background(), "noop.default", chain.scopeKey); err != nil {
 		t.Fatalf("CloseHandle: %v", err)
 	}
 

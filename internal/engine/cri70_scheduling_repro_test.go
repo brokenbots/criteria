@@ -133,7 +133,7 @@ func startKB70InitChain(t *testing.T, probe remote.PodStateProbe, handshakeBudge
 	}
 	scopeKey := first.ScopeName + "/" + first.ScopeInstanceID
 	hs := &cri137Handshake{
-		Name:    "noop",
+		Name:    "noop.default",
 		Version: "1.0.0",
 		Digest:  "sha256:abcd1234",
 		Token:   string(tokenBytes),

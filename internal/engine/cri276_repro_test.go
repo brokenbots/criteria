@@ -332,7 +332,7 @@ func runIdleChain(t *testing.T, podServerOpts []grpc.ServerOption) *idleChain {
 	}
 	scopeKey := first.ScopeName + "/" + first.ScopeInstanceID
 	hs := &cri137Handshake{
-		Name:    "noop",
+		Name:    "noop.default",
 		Version: "1.0.0",
 		Digest:  "sha256:abcd1234",
 		Token:   string(tokenBytes),
@@ -341,7 +341,7 @@ func runIdleChain(t *testing.T, podServerOpts []grpc.ServerOption) *idleChain {
 
 	stopDial := make(chan struct{})
 	podDone := make(chan struct{})
-	pod := &cri276PodServer{name: "noop", version: "1.0.0"}
+	pod := &cri276PodServer{name: "noop.default", version: "1.0.0"}
 	accepted := &atomic.Int64{}
 	go podHomeLoop(proxy.addr(), hs, stopDial, podDone, accepted, pod, podServerOpts)
 	t.Cleanup(func() {

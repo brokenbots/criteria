@@ -122,7 +122,7 @@ func TestInitScopeAdapters_PerScope_ReusesScopeInstanceAfterRestart(t *testing.T
 	}
 	preRestartScopeKey := first.ScopeName + "/" + first.ScopeInstanceID
 	hs := &cri137Handshake{
-		Name:    "noop",
+		Name:    "noop.default",
 		Version: "1.0.0",
 		Digest:  "sha256:abcd1234",
 		Token:   string(tokenBytes),

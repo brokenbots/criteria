@@ -32,6 +32,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -391,7 +392,10 @@ func kb238PodServeType(t *testing.T, sink *eventTrackingSink, stop <-chan struct
 			}
 			addr = ev.ShimListenAddress
 			hs = &cri137Handshake{
-				Name:    wantType,
+				// The token file is labeled with the adapter definition
+				// identity (KB-242); production pods present that identity,
+				// not the type.
+				Name:    strings.TrimSuffix(filepath.Base(ev.TokenRef), ".token"),
 				Version: "1.0.0",
 				Digest:  pinDigest,
 				Token:   string(token),
