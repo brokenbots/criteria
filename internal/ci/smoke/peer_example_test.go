@@ -210,13 +210,13 @@ func TestPeerExample_CompletesThroughIsolationGate(t *testing.T) {
 // TestPeerSmoke_PerScopeMultiAdapter drives a per_scope_sessions remote
 // environment with two adapter types and the operator's (scope, pair) peer
 // contract from examples/peer-remote: ONE peer per scope instance, hosting
-// EVERY adapter kind the environment declares behind that scope's single
-// dial. The CRITERIA_REMOTE_ADAPTERS manifest carries the sorted kind set
-// and each hosted kind is staged behind its own CRITERIA_ADAPTER_<KIND>_*
-// override. KB-213's fail-closed accept-time coverage check rejects any
-// per-scope dial whose hosted set does not cover the environment's full
-// declared-adapter set, so single-kind per-scope peers cannot satisfy this
-// environment — the rejection itself is pinned by
+// EVERY adapter definition the environment declares behind that scope's
+// single dial. The CRITERIA_REMOTE_ADAPTERS manifest carries the sorted
+// definition-name set and each hosted definition is staged behind its own
+// CRITERIA_ADAPTER_<NAME>_* override. KB-213's fail-closed accept-time
+// coverage check rejects any per-scope dial whose hosted set does not cover
+// the environment's full declared-adapter set, so single-kind per-scope
+// peers cannot satisfy this environment — the rejection itself is pinned by
 // TestPeerSmoke_PerScopeChildSetRejection.
 //
 // The test asserts that each adapter instance is provisioned with its own

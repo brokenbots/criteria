@@ -504,7 +504,6 @@ func TestPeerRuntime_KillChildPerDefinitionContainment(t *testing.T) {
 	rt.mu.Lock()
 	repairExited := repair.exited
 	repairKilled := repair.killRequested
-	devExited := dev.exited
 	devKilled := dev.killRequested
 	rt.mu.Unlock()
 	if !repairExited {
@@ -540,7 +539,7 @@ func TestPeerRuntime_KillChildPerDefinitionContainment(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	rt.mu.Lock()
-	devExited = dev.exited
+	devExited := dev.exited
 	rt.mu.Unlock()
 	if !devExited {
 		t.Fatalf("copilot.developer child not exited within 5s of its addressed kill_child")

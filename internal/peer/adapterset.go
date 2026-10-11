@@ -1,6 +1,7 @@
 package peer
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -322,8 +323,12 @@ func resolveSpecDigest(spec *AdapterSpec) error {
 // layout: "<dir>/<scopeName>/<instanceID>/<adapterType>.token" for workflow
 // scopes and "<dir>/<instanceID>/<adapterType>.token" for the run's root
 // scope (the empty scope label yields a leading slash). The "current"
-// record directories are skipped, and instance directories that are not
-// UUID-named are ignored exactly like the engine's own token-file scan.
+// record directories are skipped, instance directories that are not
+// UUID-named are ignored exactly like the engine's own token-file scan
+// (CRI-137), and scope instances tombstoned by a release-claim record
+// ("<uuid>.json", KB-242) are skipped: the engine unregisters their accept
+// tokens at release, so re-dialing them only produces "scope not
+// registered" rejections for the peer's whole lifetime.
 // The result is sorted by (scope, adapter) for deterministic boot order.
 func ScanRemoteScopes(dir string) ([]ScopeTokenSpec, error) {
 	top, err := os.ReadDir(dir)
@@ -348,6 +353,7 @@ func ScanRemoteScopes(dir string) ([]ScopeTokenSpec, error) {
 
 func scanRemoteScopesEntries(dir string, top []os.DirEntry) ([]ScopeTokenSpec, error) {
 	specs := make([]ScopeTokenSpec, 0, len(top))
+	releasedRoot := releasedScopeInstances(filepath.Join(dir, "current"))
 	for _, topEntry := range top {
 		if topEntry.Name() == "current" || !topEntry.IsDir() {
 			continue
@@ -356,8 +362,10 @@ func scanRemoteScopesEntries(dir string, top []os.DirEntry) ([]ScopeTokenSpec, e
 			return nil, fmt.Errorf("%s contains unusable entry %q: %w", EnvRemoteScopesDir, topEntry.Name(), err)
 		}
 		scopePath := filepath.Join(dir, topEntry.Name())
-		appendRootScopeTokens(&specs, scopePath, topEntry)
-		if err := appendWorkflowScopeTokens(&specs, topEntry, scopePath); err != nil {
+		if !releasedRoot[topEntry.Name()] {
+			appendRootScopeTokens(&specs, scopePath, topEntry)
+		}
+		if err := appendWorkflowScopeTokens(&specs, topEntry, scopePath, releasedScopeInstances(filepath.Join(scopePath, "current"))); err != nil {
 			return nil, err
 		}
 	}
@@ -386,13 +394,18 @@ func appendRootScopeTokens(specs *[]ScopeTokenSpec, scopePath string, topEntry o
 
 // appendWorkflowScopeTokens appends the workflow-scope shape: the first-level
 // directory is the scope label and UUID subdirectories hold instance tokens.
-func appendWorkflowScopeTokens(specs *[]ScopeTokenSpec, topEntry os.DirEntry, scopePath string) error {
+// The released set (release-claim tombstones under the scope's current/
+// record directory) excludes deliberately released instances.
+func appendWorkflowScopeTokens(specs *[]ScopeTokenSpec, topEntry os.DirEntry, scopePath string, released map[string]bool) error {
 	instances, err := os.ReadDir(scopePath)
 	if err != nil {
 		return fmt.Errorf("read %s %q: %w", EnvRemoteScopesDir, scopePath, err)
 	}
 	for _, instEntry := range instances {
 		if instEntry.Name() == "current" || !instEntry.IsDir() || uuid.Validate(instEntry.Name()) != nil {
+			continue
+		}
+		if released[instEntry.Name()] {
 			continue
 		}
 		tokens, err := readScopeTokenDir(filepath.Join(scopePath, instEntry.Name()))
@@ -409,6 +422,57 @@ func appendWorkflowScopeTokens(specs *[]ScopeTokenSpec, topEntry os.DirEntry, sc
 		}
 	}
 	return nil
+}
+
+// releasedScopeClaimPrefix is the record file-name prefix under a scope's
+// current/ record directory holding a released scope instance's tombstone
+// claim ("released-<uuid>.json"); the runner engine owns this name (its
+// releasedScopeClaimName).
+const releasedScopeClaimPrefix = "released-"
+
+// releasedScopeClaim is the tombstone record the runner writes when a scope
+// instance is deliberately released (CRI-137): the token file is kept for
+// post-run forensics, so the scan must consult the claim to stop dialing.
+type releasedScopeClaim struct {
+	ScopeInstanceID string `json:"scope_instance_id"`
+}
+
+// releasedScopeInstances reads the release-claim tombstones from one
+// scope's current/ record directory and returns the set of released
+// scope-instance IDs. Records that are unreadable, malformed, or whose
+// body does not confirm the file name's instance are conservatively
+// treated as live: a spurious re-dial only costs a rejected handshake,
+// while dropping a still-registered token would strand a live scope.
+func releasedScopeInstances(currentDir string) map[string]bool {
+	released := make(map[string]bool)
+	entries, err := os.ReadDir(currentDir)
+	if err != nil {
+		return released
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || filepath.Ext(name) != ".json" {
+			continue
+		}
+		base := strings.TrimSuffix(name, ".json")
+		id, ok := strings.CutPrefix(base, releasedScopeClaimPrefix)
+		if !ok {
+			continue
+		}
+		if _, err := uuid.Parse(id); err != nil {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(currentDir, name))
+		if err != nil {
+			continue
+		}
+		var claim releasedScopeClaim
+		if err := json.Unmarshal(raw, &claim); err != nil || claim.ScopeInstanceID != id {
+			continue
+		}
+		released[id] = true
+	}
+	return released
 }
 
 // scopeTokenFile is one <adapterType>.token file found in a token directory
