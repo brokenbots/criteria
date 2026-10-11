@@ -17,6 +17,11 @@ import (
 	"github.com/brokenbots/criteria/internal/engine"
 )
 
+// fixtureAdapterName is the adapter definition identity the smoke noop
+// fixture is declared under ("adapter noop demo"); the peer smoke tests host
+// exactly this one definition.
+const fixtureAdapterName = "noop.demo"
+
 // TestPeerSmoke_HappyPath exercises the full peer phone-home flow with the
 // real `criteria peer` binary: the engine starts a remote shim, `criteria
 // peer` dials in, presents the identity frame, boots the noop adapter child
@@ -74,7 +79,7 @@ state "done" {
 	graph := compileWorkflow(t, spec)
 	lf := buildLockfile("noop", "demo", digest)
 
-	peerCmd, peerLogs, peerCancel := startPeer(ctx, t, criteriaBin, shimAddr, "noop.demo", noopBin, digest)
+	peerCmd, peerLogs, peerCancel := startPeer(ctx, t, criteriaBin, shimAddr, noopBin, digest)
 	defer peerCancel()
 
 	sink := &testSink{}
@@ -173,14 +178,14 @@ state "done" {
 
 	// Give the engine a moment to start the shim, then connect peer #1.
 	time.Sleep(500 * time.Millisecond)
-	peerCmd1, peerLogs1, peerCancel1 := startPeer(ctx, t, criteriaBin, shimAddr, "noop.demo", noopBin, digest)
+	peerCmd1, peerLogs1, peerCancel1 := startPeer(ctx, t, criteriaBin, shimAddr, noopBin, digest)
 
 	// The step sits in a 5s noop delay; land the kill inside that window.
 	time.Sleep(1200 * time.Millisecond)
 
 	// Start the replacement peer BEFORE killing the old one so the shim has
 	// a fresh session ready when the engine calls respawn.
-	_, peerLogs2, peerCancel2 := startPeer(ctx, t, criteriaBin, shimAddr, "noop.demo", noopBin, digest)
+	_, peerLogs2, peerCancel2 := startPeer(ctx, t, criteriaBin, shimAddr, noopBin, digest)
 	defer peerCancel2()
 	defer dumpPeerLogs(t, peerLogs2)
 
@@ -237,8 +242,10 @@ func buildNoopSmokeBinary(t *testing.T, moduleRoot string) string {
 
 // startPeer launches the real `criteria peer` binary against the shim
 // address with compressed backoff so reconnects stay fast under test, and
-// captures its output for failure diagnostics.
-func startPeer(ctx context.Context, t *testing.T, criteriaBin, addr, adapterName, adapterBin, digest string) (*exec.Cmd, *bytes.Buffer, context.CancelFunc) {
+// captures its output for failure diagnostics. The peer hosts the fixture's
+// one adapter definition, noop.demo (the fixture binary pinned by
+// adapterBin).
+func startPeer(ctx context.Context, t *testing.T, criteriaBin, addr, adapterBin, digest string) (*exec.Cmd, *bytes.Buffer, context.CancelFunc) {
 	t.Helper()
 	const token = "smoke-token"
 	cmdCtx, cancel := context.WithCancel(ctx)
@@ -251,7 +258,7 @@ func startPeer(ctx context.Context, t *testing.T, criteriaBin, addr, adapterName
 		"CRITERIA_REMOTE_TOKEN="+token,
 		"CRITERIA_REMOTE_SCOPE=peer-smoke",
 		"CRITERIA_REMOTE_DIGEST="+digest,
-		"CRITERIA_ADAPTER_NAME="+adapterName,
+		"CRITERIA_ADAPTER_NAME="+fixtureAdapterName,
 		"CRITERIA_ADAPTER_VERSION=0.1.0",
 		"CRITERIA_ADAPTER_BINARY="+adapterBin,
 		"CRITERIA_PEER_BACKOFF_MIN=200ms",

@@ -516,7 +516,7 @@ state "done" {
 	// Connect peer #1; its supervised adapter child is spawned as soon as
 	// the peer starts.
 	time.Sleep(500 * time.Millisecond)
-	peerCmd1, peerLogs1, peerCancel1 := startPeer(ctx, t, criteriaBin, shimAddr, "noop.demo", noopBin, digest)
+	peerCmd1, peerLogs1, peerCancel1 := startPeer(ctx, t, criteriaBin, shimAddr, noopBin, digest)
 	defer dumpPeerLogs(t, peerLogs1)
 
 	childPid := waitForAdapterChild(t, peerCmd1.Process.Pid, 20*time.Second)
@@ -541,7 +541,7 @@ state "done" {
 	_ = peerCmd1.Wait()
 
 	// Fresh dial for the respawn policy to adopt.
-	_, peerLogs2, peerCancel2 := startPeer(ctx, t, criteriaBin, shimAddr, "noop.demo", noopBin, digest)
+	_, peerLogs2, peerCancel2 := startPeer(ctx, t, criteriaBin, shimAddr, noopBin, digest)
 	defer peerCancel2()
 	defer dumpPeerLogs(t, peerLogs2)
 
