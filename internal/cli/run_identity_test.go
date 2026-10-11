@@ -237,10 +237,11 @@ func TestExecuteServerRunPerScopeSessionsAdoptsPriorRunToken_CRI304(t *testing.T
 		t.Fatalf("mkdir prior record dir: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(priorDataDir, "remote-tokens", "current", "noop.default.json"),
-		[]byte(`{"scope_instance_id":"`+priorScopeInstanceID+`","adapter_type":"noop"}`), 0o600); err != nil {
+		[]byte(`{"scope_instance_id":"`+priorScopeInstanceID+`","adapter_type":"noop.default"}`), 0o600); err != nil {
 		t.Fatalf("write prior record: %v", err)
 	}
-	priorTokenPath := filepath.Join(priorDataDir, "remote-tokens", priorScopeInstanceID, "noop.token")
+	// The rotated token file is labeled with the adapter definition identity.
+	priorTokenPath := filepath.Join(priorDataDir, "remote-tokens", priorScopeInstanceID, "noop.default.token")
 	if err := os.MkdirAll(filepath.Dir(priorTokenPath), 0o700); err != nil {
 		t.Fatalf("mkdir prior token dir: %v", err)
 	}

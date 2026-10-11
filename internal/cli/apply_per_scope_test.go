@@ -189,7 +189,7 @@ state "done" {
 // writeScopeSessionWorkflow writes the workflow plus a lockfile pinning
 // noop/default to cri128NoopDigest (the shim's digest verifier requires the
 // pin for phone-home accept).
-func writeScopeSessionWorkflow(t *testing.T, contents string) (workflowPath string) {
+func writeScopeSessionWorkflow(t *testing.T, contents string, extraAdapterDefinitions ...string) (workflowPath string) {
 	t.Helper()
 	dir := t.TempDir()
 	workflowPath = filepath.Join(dir, "workflow.hcl")
@@ -206,6 +206,20 @@ adapter "noop" "default" {
   sdk_protocol_version = 2
 }
 `, cri128NoopDigest)
+	// Extra noop adapter definitions share the same binary digest; each
+	// definition identity needs its own lock entry under the KB-242
+	// definition-keyed grammar.
+	for _, def := range extraAdapterDefinitions {
+		lockContent += fmt.Sprintf(`
+adapter "noop" "%s" {
+  reference            = "ghcr.io/example/noop"
+  version              = "1.0.0"
+  resolved_digest      = "%s"
+  source_url           = "https://github.com/example/noop"
+  sdk_protocol_version = 2
+}
+`, def, cri128NoopDigest)
+	}
 	if err := os.WriteFile(filepath.Join(dir, ".criteria.lock.hcl"), []byte(lockContent), 0o644); err != nil {
 		t.Fatalf("write lockfile: %v", err)
 	}
@@ -603,7 +617,9 @@ func (d *phoneHomeDialer) dialAllProvisions() {
 				return
 			}
 			frame, _ := json.Marshal(handshakeFrame{
-				Name:    "noop",
+				// The token file is labeled with the adapter definition
+				// identity (KB-242); production pods present that identity.
+				Name:    strings.TrimSuffix(filepath.Base(p.tokenPath), ".token"),
 				Version: "1.0.0",
 				Digest:  cri128NoopDigest,
 				Token:   token,
@@ -655,7 +671,7 @@ func (d *phoneHomeDialer) startNegativeDial() {
 			return
 		}
 		frame, _ := json.Marshal(handshakeFrame{
-			Name:    "noop",
+			Name:    strings.TrimSuffix(filepath.Base(wrongScope.tokenPath), ".token"),
 			Version: "1.0.0",
 			Digest:  cri128NoopDigest,
 			Token:   wrongToken,
@@ -1021,7 +1037,7 @@ func TestApplyLocalPerScopeSessionsTwoScopes(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", home)
 
-	wfPath := writeScopeSessionWorkflow(t, scopeSessionTwoAdapterWorkflowHCL)
+	wfPath := writeScopeSessionWorkflow(t, scopeSessionTwoAdapterWorkflowHCL, "one", "two")
 	eventsFile := filepath.Join(t.TempDir(), "events.ndjson")
 
 	dialer := newPhoneHomeDialer(t)
