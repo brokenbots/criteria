@@ -145,7 +145,7 @@ func generateAcceptToken() (string, error) {
 func writeRotatedToken(dataDir, scopeName, scopeInstanceID, adapterKey, token string) (string, error) {
 	// Route through the same checked path builder as the readers so the
 	// validation rules cannot drift between reads and writes.
-	path, err := rotatedTokenPath(dataDir, scopeName, scopeInstanceID, adapterType)
+	path, err := rotatedTokenPath(dataDir, scopeName, scopeInstanceID, adapterKey)
 	if err != nil {
 		return "", err
 	}

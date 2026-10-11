@@ -68,7 +68,7 @@ func TestSurvivingScopeToken_MatchesAndDeclines(t *testing.T) {
 		t.Fatalf("writeRotatedToken: %v", err)
 	}
 	if err := writeCurrentScopeInstance(dataDir, scopeName, "noop.default", currentScopeInstanceRecord{
-		ScopeInstanceID: other, AdapterType: adapterType,
+		ScopeInstanceID: other, AdapterKey: adapterType,
 	}); err != nil {
 		t.Fatalf("writeCurrentScopeInstance: %v", err)
 	}

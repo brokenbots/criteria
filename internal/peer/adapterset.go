@@ -42,14 +42,16 @@ type AdapterSpec struct {
 }
 
 // ScopeTokenSpec is one (scope, adapter) phone-home conn discovered in the
-// runner's remote-tokens root. Token file names are "<adapterType>.token".
+// runner's remote-tokens root. Token file names are "<adapter-name>.token",
+// where the name is the minting adapter's definition identity (KB-242).
 type ScopeTokenSpec struct {
 	// Scope is the scope key: "<scopeName>/<instanceID>", or "/<instanceID>"
 	// for the run's root scope (an empty workflow scope label yields a
 	// leading slash in the runner's token layout).
 	Scope string
-	// Adapter is the adapter type the token file is minted for (the
-	// "<adapterType>" half of "<adapterType>.token").
+	// Adapter is the adapter name the token file is minted for — the
+	// definition identity (the "<type>.<name>" label half of
+	// "<name>.token", KB-242).
 	Adapter string
 	// Token is the file's token value (whitespace-trimmed).
 	Token string
@@ -60,8 +62,12 @@ type ScopeTokenSpec struct {
 // ParseAdaptersConfig parses the multi-adapter manifest from the environment
 // (env-first): the explicit CRITERIA_REMOTE_ADAPTERS list wins; the binary
 // directory scan is the fallback; per-adapter overrides refine both. An
-// empty result means the legacy single-adapter shape was declared. A
-// duplicate adapter name is an error, never a silent co-host.
+// empty result means the legacy single-adapter shape was declared. Every
+// entry is one hosted adapter child keyed by its adapter name, which is the
+// adapter's definition identity (KB-242): one environment may declare
+// several children of the same adapter type under distinct names.
+// An exact duplicate name deduplicates first-entry-wins (never a silent
+// co-host of two children under one name).
 func ParseAdaptersConfig(getenv func(string) string) ([]AdapterSpec, error) {
 	raw := strings.TrimSpace(getenv(EnvAdapters))
 	if raw != "" {
@@ -85,7 +91,10 @@ func ParseAdaptersConfig(getenv func(string) string) ([]AdapterSpec, error) {
 
 // ParseAdaptersEnv parses the CRITERIA_REMOTE_ADAPTERS value: a comma-separated
 // list of adapter names, each optionally "NAME=PATH" to pin the binary path.
-// Entries are trimmed; empty entries are skipped.
+// Entries are trimmed; empty entries are skipped. Names are adapter
+// definition identities (KB-242) — the same adapter type may be hosted once
+// per definition name — so re-declaring one name deduplicates
+// first-entry-wins rather than erroring.
 func ParseAdaptersEnv(raw string) ([]AdapterSpec, error) {
 	parts := strings.Split(raw, ",")
 	specs := make([]AdapterSpec, 0, len(parts))
@@ -107,7 +116,9 @@ func ParseAdaptersEnv(raw string) ([]AdapterSpec, error) {
 			}
 		}
 		if seen[name] {
-			return nil, fmt.Errorf("%s declares adapter %q more than once", EnvAdapters, name)
+			// Keep-first dedupe: the first pinned binary wins so an
+			// over-provisioned manifest stays deterministic (KB-242).
+			continue
 		}
 		seen[name] = true
 		spec := AdapterSpec{Name: name}
