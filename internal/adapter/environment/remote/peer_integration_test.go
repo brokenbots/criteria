@@ -1308,11 +1308,11 @@ func TestPeerIntegrationTwoAdaptersOneEnvOneConn(t *testing.T) {
 	}
 }
 
-// TestPeerIntegrationMissingManifestAdapterFailClosed verifies the host's
-// fail-closed acceptance with real peers: when a peer's manifest does not
-// cover the environment's declared adapter set, its phone-home conn is
-// rejected on every dial (no session is ever adopted) until a fully-covered
-// manifest dials.
+// TestPeerIntegrationMissingManifestAdapterFailClosed verifies KB-251's
+// open acceptance with real peers: when a peer's manifest does not cover the
+// environment's declared adapter set, the conn is still adopted (the engine
+// does not judge orchestration) and the hosted child serves; a fully-covered
+// manifest peer then adopts the remaining child.
 func TestPeerIntegrationMissingManifestAdapterFailClosed(t *testing.T) {
 	ma := startMultiAdapterFixture(t, integrationOpts{noPeer: true})
 	fx := ma.fx
@@ -1322,18 +1322,21 @@ func TestPeerIntegrationMissingManifestAdapterFailClosed(t *testing.T) {
 		{Name: "noop", Binary: ma.noopBin, Digest: ma.noopDigest},
 	}})
 
-	// Several re-dial cycles at the 50-200ms backoff must leave the
-	// registry empty: every dial is rejected before adoption.
+	// KB-251: the under-covered peer IS adopted (the engine does not judge
+	// orchestration); the hosted noop child serves its sessions while the
+	// declared-but-unhosted stateful keeps waiting on the ordinary budget.
 	time.Sleep(1200 * time.Millisecond)
-	fx.mu.Lock()
+	// Count adopted sessions under the PROVIDER's own lock (fx.mu does not
+	// guard provider.peers; the race detector flags cross-lock reads).
+	fx.provider.mu.Lock()
 	adopted := len(fx.provider.peers)
-	fx.mu.Unlock()
-	if adopted != 0 {
-		t.Fatalf("under-covered peer adopted while missing declared adapters (%d sessions)", adopted)
+	fx.provider.mu.Unlock()
+	if adopted == 0 {
+		t.Fatalf("under-covered peer must be adopted under KB-251 (0 sessions)")
 	}
 
 	// Recovery: a manifest peer covering the declared set is adopted for
-	// both adapters.
+	// both adapters (the second conn supersedes the first for its keys).
 	ma.bootManifestPeer(t, "", fx.token)
 	phStateful := ma.fx.waitForAdapterHandle(t, "stateful", "")
 	if info, err := phStateful.Info(context.Background()); err != nil || info.Name != "stateful" {

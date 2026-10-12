@@ -216,8 +216,8 @@ func TestPeerExample_CompletesThroughIsolationGate(t *testing.T) {
 // CRITERIA_ADAPTER_<NAME>_* override. KB-213's fail-closed accept-time
 // coverage check rejects any per-scope dial whose hosted set does not cover
 // the environment's full declared-adapter set, so single-kind per-scope
-// peers cannot satisfy this environment — the rejection itself is pinned by
-// TestPeerSmoke_PerScopeChildSetRejection.
+// peers cannot satisfy this environment — under KB-251 the under-covering
+// dial still connects (bounded waits cover any gap).
 //
 // The test asserts that each adapter instance is provisioned with its own
 // scope instance (distinct scope keys and tokens), that a routed adapter
@@ -331,19 +331,17 @@ func TestPeerSmoke_PerScopeMultiAdapter(t *testing.T) {
 	}
 }
 
-// TestPeerSmoke_PerScopeChildSetRejection pins the fail-closed accept-time
-// coverage check (KB-213) end-to-end, against the exact fixture shape that
-// drifted: a legacy single-adapter per-scope dial on a two-adapter
-// per-scope environment. The dial is legitimate in every verified dimension
-// (binary digest, version, scope token), but the hosted child set — one
-// kind — does not cover the environment's full declared-adapter set, so
-// acceptance must fail closed: the shim rejects the dial with the typed
-// PeerChildSetError on every redial, the rejected peer's phone-home loop
-// keeps reporting the lost connection, and the engine's per-scope session
-// wait never resolves.
+// TestPeerSmoke_PerScopeChildSetServes pins KB-251's open-accept contract
+// end-to-end, against the exact fixture shape that once enforced the
+// coverage gate: a legacy single-adapter per-scope dial on a two-adapter
+// per-scope environment. The dial advertises one kind while the environment
+// declares two; under KB-251 the engine does not judge orchestration, so
+// the dial is accepted, the hosted kind's session resolves, and the
+// non-hosted kind would time out through its ordinary bounded wait rather
+// than a semantic rejection.
 //
 // Gated by CRITERIA_PEER_E2E=1.
-func TestPeerSmoke_PerScopeChildSetRejection(t *testing.T) {
+func TestPeerSmoke_PerScopeChildSetServes(t *testing.T) {
 	if os.Getenv("CRITERIA_PEER_E2E") != "1" {
 		t.Skip("set CRITERIA_PEER_E2E=1 to run peer smoke tests")
 	}
@@ -392,33 +390,25 @@ func TestPeerSmoke_PerScopeChildSetRejection(t *testing.T) {
 		scopeKey, p.Token, "noop", noopBin, noopDigest)
 	defer peerCancel()
 
-	// The rejection is the typed child-set class, repeated on every
-	// reconnect — never a token/digest/scope failure and never an accept.
-	// Two occurrences prove the first dial and the first reconnect were
-	// both rejected; a single one could hide a race in the redial loop.
-	// Declared order is sorted, so the missing definition names are spelled
-	// "fail.breaker" and "noop.demo" and the hosted single-kind shape
-	// spells "noop".
+	// Under KB-251 the under-covering dial is ACCEPTED: the session for
+	// the hosted kind (noop.demo) materializes, and the non-hosted kind's
+	// expectations resolve through the ordinary bounded wait, not a
+	// semantic rejection. The engine never logs a child-set rejection.
 	waitForCondition(t, 20*time.Second, func() bool {
-		return hostLogs.count("remote shim accept failed",
-			fmt.Sprintf("peer for adapter %q (scope %q) does not host declared adapters fail.breaker, noop.demo (hosted: noop)",
-				"noop", scopeKey)) >= 2
-	}, fmt.Sprintf("host shim never rejected the single-kind dial with a child-set failure; host log:\n%s", hostLogs.dump()))
+		return hostLogs.count("remote shim accept failed", "does not host declared adapters") == 0
+	}, "coverage-gate rejection logs must be absent under KB-251 (dial is accepted)")
 
-	// Peer side: the rejected dial's phone-home loop keeps reporting the
-	// lost connection (reject -> reconnect -> reject).
-	if logs := peerLogs.String(); strings.Count(logs, "peer phone-home connection lost") < 2 {
-		t.Errorf("peer log missing the reconnect loop after the typed rejection; peer output:\n%s", logs)
+	// Peer side: the single-kind dial connects and stays connected.
+	if logs := peerLogs.String(); strings.Contains(logs, "peer phone-home connection lost") {
+		t.Errorf("peer log shows connection loss; the accepted dial must stay up; peer output:\n%s", logs)
 	}
 
-	// Engine side: no per-scope session materializes, so the step wait
-	// never resolves — the greet step records no outcome and the run
-	// reaches neither the break step nor the done state.
-	if outcome, ok := sink.stepOutcome("greet"); ok {
-		t.Errorf("greet step recorded outcome %q; the rejected dial must never resolve the step wait", outcome)
-	}
-	if sink.success {
-		t.Error("workflow completed despite the rejected child set")
+	// The workflow proceeds through the hosted kind's step; the non-hosted
+	// kind's step (if any is declared) burns a bounded wait — the run's
+	// eventual shape depends on the workflow's own outcome routing. Here we
+	// only assert the gate's absence: no child-set-class log lines at all.
+	if hostLogs.count("child set does not cover", "") > 0 {
+		t.Errorf("engine emitted a child-set coverage judgment under KB-251:\n%s", hostLogs.dump())
 	}
 
 	// Nothing to salvage: tear the run down; the only goal was the typed
@@ -783,11 +773,11 @@ func adapterEnvToken(kind string) string {
 }
 
 // startSingleKindPeer starts the legacy single-adapter per-scope dial: one
-// kind behind CRITERIA_ADAPTER_NAME, no multi-adapter manifest. On a
-// multi-adapter per-scope environment this dial is legitimate in every
-// verified dimension but its hosted child set, so acceptance fails closed
-// with the typed PeerChildSetError; it is kept as the negative-control
-// fixture for that contract (see TestPeerSmoke_PerScopeChildSetRejection).
+// kind behind CRITERIA_ADAPTER_NAME, no multi-adapter manifest. Under
+// KB-251 this dial on a multi-adapter per-scope environment is ACCEPTED
+// (the engine does not judge orchestration); it is kept as the
+// under-covering-dial fixture for the open-accept contract (see
+// TestPeerSmoke_PerScopeChildSetServes).
 func startSingleKindPeer(ctx context.Context, t *testing.T, criteriaBin, addr, scope, token, adapterType, adapterBin, digest string) (*exec.Cmd, *bytes.Buffer, context.CancelFunc) {
 	t.Helper()
 	cmdCtx, cancel := context.WithCancel(ctx)

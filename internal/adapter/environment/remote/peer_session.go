@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -121,12 +120,6 @@ type peerSessionProvider struct {
 	waiters  map[string][]chan waitResult // sessionKey → pending session waits
 	stopOnce sync.Once
 	stopped  bool
-
-	// declared is the engine-side declared-adapter set for this provider's
-	// environment (KB-213): the adapters the peer pod is expected to host.
-	// Non-empty enables the host-side fail-closed checks; empty keeps the
-	// pre-KB-213 open behavior (undecorated legacy wiring).
-	declared declaredAdapters
 }
 
 // NewPeerSessionProvider builds the provider serving peer-mode dials for a
@@ -150,39 +143,14 @@ func NewPeerSessionProvider(shim *Shim, perScopeSessions bool) *peerSessionProvi
 // shim surface end to end reach it through this accessor.
 func (p *peerSessionProvider) WrappedShim() *Shim { return p.shim }
 
-// SetDeclaredAdapters installs the environment's declared-adapter set for
-// the provider (KB-213). A non-empty set turns on two fail-closed host
-// checks:
-//
-//   - accept time: a peer dial whose hosted child set does not cover every
-//     declared adapter is rejected (typed PeerChildSetError) instead of
-//     accepted partially — a peer pod that cannot host an adapter the
-//     environment uses would otherwise strand that adapter's sessions on
-//     scheduling budgets,
-//   - wait time: waiting for an adapter outside the declared set fails
-//     immediately (typed PeerChildSetError) — no peer will ever host it.
-//
-// An empty list disables both checks (mixed fleets that predate the
-// declared-adapter wiring keep the open behavior).
+// SetDeclaredAdapters is retained (KB-251) as a no-op intake so callers that
+// describe the environment's adapter surface (engine.go's env walk and tests
+// written against the KB-213 surface) keep compiling; the set it used to
+// install gated nothing since the coverage checks were removed. It exists
+// only until those call sites are cleaned up. It is a true no-op since
+// KB-251 removed the coverage machinery.
 func (p *peerSessionProvider) SetDeclaredAdapters(names []string) {
-	p.declared.set(names)
-}
-
-// missingDeclared reports which declared adapters are absent from hosted.
-// The declared set governs peer dials only: legacy runner dials never reach
-// AcceptPeer, so the mixed fleet stays out of this check's blast radius.
-func (p *peerSessionProvider) missingDeclared(hosted []string) []string {
-	hostedSet := make(map[string]bool, len(hosted))
-	for _, name := range hosted {
-		hostedSet[name] = true
-	}
-	var missing []string
-	for _, name := range p.declared.snapshot() {
-		if !hostedSet[name] {
-			missing = append(missing, name)
-		}
-	}
-	return missing
+	_ = names // KB-251: inert — the declared set gates nothing.
 }
 
 // key mirrors Shim.sessionKey (identical algorithm, evaluated from the
@@ -200,26 +168,17 @@ func (p *peerSessionProvider) key(adapterName, scope string) string {
 // becomes the gRPC client on the pre-established connection and starts the
 // supervision consumer.
 //
-// KB-213 fail-closed acceptance: when the environment's declared adapters
-// are known, a dial whose child set does not cover them is rejected — a
-// peer pod that cannot host a declared adapter is a provisioning error, and
-// accepting it would strand the missing adapter's sessions on scheduling
-// budgets. The rejection closes the conn (the acceptor owns it until
-// success) so the peer's next dial repeats the same typed failure.
+// KB-251 (arch ruling): the engine does not judge orchestration. A peer
+// dial that passed identity, digest, and token verification is accepted
+// regardless of which child set it advertises — how an orchestrator groups
+// adapter children into pods is the orchestrator's business, never the
+// engine's. A session the run needs that no peer hosts resolves as an
+// ordinary bounded session wait (the KB-70 budgets + CRI-137 attribution).
 func (p *peerSessionProvider) AcceptPeer(ctx context.Context, conn net.Conn, dial *PeerDial) error {
 	_ = ctx // ownership of the conn is explicit; session lifetime is managed via close()
 	key := p.key(dial.AdapterType, dial.Scope)
 
 	hosted := hostedAdapters(dial)
-	if missing := p.missingDeclared(hosted); len(missing) > 0 {
-		_ = conn.Close()
-		return &PeerChildSetError{
-			AdapterType: dial.AdapterType,
-			Scope:       dial.Scope,
-			Missing:     missing,
-			Hosted:      hosted,
-		}
-	}
 
 	ps, err := newPeerSession(conn, dial, p.peerDied)
 	if err != nil {
@@ -337,14 +296,10 @@ func (p *peerSessionProvider) WaitForHandle(ctx context.Context, adapterName, sc
 // would let a handshake store the session and drain an empty waiter list in
 // between, stranding the wait until the budget expired (lost wakeup).
 func (p *peerSessionProvider) WaitForFreshHandle(ctx context.Context, adapterName, scope string, stale adapterhost.Handle) (adapterhost.Handle, error) {
-	// KB-213 fail-closed waits: with a declared adapter set installed,
-	// waiting for an undeclared adapter can never be satisfied (the peer pod
-	// contract is "the pod hosts every declared adapter") — fail fast with
-	// the typed error instead of burning the scheduling budget. The set
-	// holds adapter definition identities (KB-242), matching exactly.
-	if !p.declared.empty() && !p.declared.has(adapterName) {
-		return nil, &PeerChildSetError{AdapterType: adapterName, Scope: scope}
-	}
+	// KB-251: no declared-set judgment at wait time either — a wait for an
+	// adapter no peer hosts resolves as an ordinary bounded session wait
+	// (KB-70 budgets) instead of an instant semantic rejection; the wait
+	// knows nothing about how pods were grouped.
 
 	key := p.key(adapterName, scope)
 
@@ -1350,51 +1305,5 @@ func isExpectedStreamClose(err error, extra ...codes.Code) bool {
 	return false
 }
 
-// declaredAdapters is the provider's snapshot of the adapters an
-// environment declares (KB-213) — the adapters its peer pod is expected to
-// host. It is immutable once set and only ever swapped whole, so readers
-// work on stable snapshots. An empty set disables the host's fail-closed
-// checks (pre-KB-213 wiring and mixed fleets).
-type declaredAdapters struct {
-	mu     sync.RWMutex
-	values map[string]bool
-}
-
-// set swaps the snapshot. An empty input clears it.
-func (d *declaredAdapters) set(names []string) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if len(names) == 0 {
-		d.values = nil
-		return
-	}
-	values := make(map[string]bool, len(names))
-	for _, name := range names {
-		values[name] = true
-	}
-	d.values = values
-}
-
-func (d *declaredAdapters) empty() bool {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	return len(d.values) == 0
-}
-
-func (d *declaredAdapters) has(name string) bool {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	return d.values[name]
-}
-
-// snapshot returns the sorted declared names (stable for diagnostics).
-func (d *declaredAdapters) snapshot() []string {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	names := make([]string, 0, len(d.values))
-	for name := range d.values {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
+// KB-251 note: KB-213's declaredAdapters snapshot type was deleted with the
+// coverage gate — nothing reads it any more.
