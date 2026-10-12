@@ -198,20 +198,60 @@ type Server struct {
 	// without it (direct serveOnce tests) fall back to context.Background().
 	runCtx atomic.Value
 
-	// KB-253 scan-synthesized hosted specs: definitions the engine dialed
-	// that the boot manifest did not carry, synthesized per scan from the
-	// kind's staged binary + the token-file digest sidecar. The registry is
-	// pruned on every scope scan; spawn support mirrors it into the
-	// runtime's bootSpec.
-	synthMu        sync.Mutex
-	syntheticSpecs map[string]syntheticSpecEntry
+	// servedSpecs remembers scan-synthesized hosted specs (KB-253) for the
+	// identity-frame advertiser and the spawn-on-demand path. It holds ONLY
+	// synthesized definitions — boot-manifest children resolve from
+	// cfg.Adapters — and is pruned on every scope scan.
+	servedSpecs servedSpecRegistry
 }
 
-// syntheticSpecEntry carries a synthesized hosted spec plus the digest the
-// sidecar carried at synthesis time.
-type syntheticSpecEntry struct {
-	spec           AdapterSpec
-	expectedDigest string
+// servedSpecRegistry remembers scan-synthesized hosted specs: definition →
+// spec (+ the digest the sidecar carried at synthesis time).
+type servedSpecRegistry struct {
+	mu     sync.Mutex
+	specs  map[string]AdapterSpec
+	digest map[string]string
+}
+
+func (r *servedSpecRegistry) put(spec AdapterSpec, digest string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.specs == nil {
+		r.specs = map[string]AdapterSpec{}
+		r.digest = map[string]string{}
+	}
+	r.specs[spec.Name] = spec
+	r.digest[spec.Name] = digest
+}
+
+func (r *servedSpecRegistry) get(name string) (AdapterSpec, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s, ok := r.specs[name]
+	return s, ok
+}
+
+func (r *servedSpecRegistry) prune(scanned map[string]struct{}) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for name := range r.specs {
+		if _, ok := scanned[name]; !ok {
+			delete(r.specs, name)
+			delete(r.digest, name)
+		}
+	}
+}
+
+// ensureHostedChild resolves one child's spec for identity-frame
+// advertisement and spawn-on-demand: boot-manifest children from the
+// manifest, scan-synthesized children from the served registry.
+func (s *Server) ensureHostedChild(name string) (AdapterSpec, bool) {
+	for i := range s.cfg.Adapters {
+		if s.cfg.Adapters[i].Name == name {
+			return s.cfg.Adapters[i], true
+		}
+	}
+	return s.servedSpecs.get(name)
 }
 
 // NewServeAdapterServer for the serve-adapter child role lives in
@@ -569,8 +609,9 @@ func (s *Server) connSpecsForScopes() ([]serveConnSpec, error) {
 					"error", serr)
 				continue
 			}
-			// Preserve the synthesized spec for respawn (ensureChild reads
-			// bootSpec) and spawn the child through Boot's exact sequence.
+			// Preserve the synthesized spec for the frame advertiser +
+			// respawn path, and spawn the child through Boot's sequence.
+			s.servedSpecs.put(synthetic, sc.Digest)
 			s.rt.registerBootSpec(synthetic)
 			c, spawnErr := s.rt.spawnChild(s.runCtxOrNil(), &childSpec{spec: synthetic})
 			if spawnErr != nil {
@@ -602,6 +643,7 @@ func (s *Server) connSpecsForScopes() ([]serveConnSpec, error) {
 	if s.rt != nil {
 		s.rt.pruneSyntheticBootSpecs(scanned)
 	}
+	s.servedSpecs.prune(scanned)
 	return specs, nil
 }
 
@@ -953,10 +995,23 @@ func (s *Server) identityFrame(spec *serveConnSpec) ([]byte, error) {
 	// per-scope conn muxes the same shared children so the advertised set is
 	// always honored; the legacy single-adapter frame keeps its exact legacy
 	// shape (no adapters key).
+	// KB-253: scan-synthesized children (hosted after boot, per-scope conns
+	// only) resolve their identity from the SERVER's served-spec registry —
+	// cfg.Adapters can never grow post-boot, so a synthesized definition in
+	// spec.children must come from ensureHostedChild, with the digest it was
+	// synthesized from. The host's accept-time child-set check verifies every
+	// advertised digest against the run's lockfile pin.
 	if s.cfg.ManifestMode() {
 		ids := make([]peerAdapterIdentity, 0, len(s.cfg.Adapters))
 		for _, hosted := range s.cfg.Adapters {
 			ids = append(ids, peerAdapterIdentity{Name: hosted.Name, Version: hosted.Version, Digest: hosted.Digest})
+		}
+		for _, child := range spec.children {
+			synthetic, ok := s.ensureHostedChild(child)
+			if !ok {
+				continue
+			}
+			ids = append(ids, peerAdapterIdentity{Name: synthetic.Name, Version: synthetic.Version, Digest: synthetic.Digest})
 		}
 		frame.Adapters = ids
 	}
