@@ -14,13 +14,19 @@
       "type": "noop",
       "name": "gate",
       "on_crash": "fail",
-      "config_keys": null
+      "config_keys": null,
+      "environment": "remote.default",
+      "source": "ghcr.io/brokenbots/criteria-adapter-noop",
+      "pinned_digest": "sha256:00ab4151baacba3b14e89cdd5c99e0c1924e23198d0ff91387f995021d75ce4f"
     },
     {
       "type": "shell",
       "name": "main",
       "on_crash": "respawn",
-      "config_keys": null
+      "config_keys": null,
+      "environment": "remote.default",
+      "source": "ghcr.io/brokenbots/criteria-adapter-shell",
+      "pinned_digest": "sha256:d9f306c29f4145da8bcc44187c9e4ae0f69ed30db3b3edac6e9b6350469bc635"
     }
   ],
   "steps": [

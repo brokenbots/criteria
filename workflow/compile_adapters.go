@@ -104,6 +104,7 @@ func compileOneAdapter(g *FSMGraph, ad *AdapterDeclSpec, schemas map[string]Adap
 		DynamicTools:      ad.DynamicTools,
 		ToolContracts:     toolContracts,
 		ToolContractOrder: toolContractOrder,
+		PinnedDigest:      lockedAdapterDigest(g.PinSet, typeName, instanceName),
 	}
 	// Track adapter declaration order for stable iteration
 	g.AdapterOrder = append(g.AdapterOrder, key)

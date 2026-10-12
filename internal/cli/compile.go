@@ -118,6 +118,11 @@ type compileAdapter struct {
 	// lockfile-carried identity the graph was compiled against). Empty for
 	// non-OCI adapters.
 	Source string `json:"source,omitempty"`
+	// PinnedDigest is the lockfile-resolved digest at compile time (KB-253):
+	// the published graph carries exactly what it was compiled against, so
+	// operators boot peer children with per-definition digests without
+	// re-reading any lockfile. Empty when the adapter is unpinned.
+	PinnedDigest string `json:"pinned_digest,omitempty"`
 }
 
 type compileStep struct {
@@ -236,6 +241,7 @@ func buildAdaptersJSON(graph *workflow.FSMGraph) []compileAdapter {
 			ConfigKeys:  sortedMapKeys(ad.Config),
 			Environment: env,
 			Source:      ad.Source,
+			PinnedDigest: ad.PinnedDigest,
 		})
 	}
 	return adapters

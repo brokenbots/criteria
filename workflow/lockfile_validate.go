@@ -6,6 +6,21 @@ import (
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
+// lockedAdapterDigest returns the lockfile-pinned digest for one adapter
+// definition ("type.name"), or "" when unpinned.
+func lockedAdapterDigest(lf *lockfile.Lockfile, adapterType, adapterName string) string {
+	if lf == nil {
+		return ""
+	}
+	for i := range lf.Adapters {
+		a := &lf.Adapters[i]
+		if a.Type == adapterType && a.Name == adapterName {
+			return a.ResolvedDigest
+		}
+	}
+	return ""
+}
+
 // ValidateLockfileAgainstGraph ensures every adapter referenced by the compiled
 // graph has a matching lockfile entry, and every lockfile entry refers to an
 // adapter still referenced by the graph.
