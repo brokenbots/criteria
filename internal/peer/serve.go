@@ -1003,11 +1003,20 @@ func (s *Server) identityFrame(spec *serveConnSpec) ([]byte, error) {
 	// advertised digest against the run's lockfile pin.
 	if s.cfg.ManifestMode() {
 		ids := make([]peerAdapterIdentity, 0, len(s.cfg.Adapters))
+		bootNames := make(map[string]struct{}, len(s.cfg.Adapters))
 		for _, hosted := range s.cfg.Adapters {
 			ids = append(ids, peerAdapterIdentity{Name: hosted.Name, Version: hosted.Version, Digest: hosted.Digest})
+			bootNames[hosted.Name] = struct{}{}
 		}
+		// Only scan-synthesized children extend the set here: boot members
+		// are already advertised above, and re-advertising a spec.children
+		// entry that resolves from the manifest duplicates it (accept-time
+		// "advertises adapter %q more than once" rejection).
 		for _, child := range spec.children {
-			synthetic, ok := s.ensureHostedChild(child)
+			if _, isBoot := bootNames[child]; isBoot {
+				continue
+			}
+			synthetic, ok := s.servedSpecs.get(child)
 			if !ok {
 				continue
 			}
