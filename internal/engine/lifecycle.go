@@ -141,8 +141,15 @@ func generateAcceptToken() (string, error) {
 
 // writeRotatedToken writes a scope's accept token file labeled with the
 // adapter's definition identity (KB-242): one file per adapter definition,
-// so sibling definitions of the same adapter type never share a token.
-func writeRotatedToken(dataDir, scopeName, scopeInstanceID, adapterKey, token string) (string, error) {
+// so sibling definitions of one adapter type never share a token. Alongside
+// it, a KB-253 digest sidecar ("<key>.sha256") carries the adapter's pinned
+// lockfile digest to peers that host this definition without a boot-manifest
+// digest of their own (the peer synthesizes its hosted spec from the
+// sidecar; the host's accept-side digest verifier checks the presented
+// digest against the same lockfile pin). The sidecar is best-effort: an
+// empty pinned digest writes no file, and a write failure logs but does not
+// fail the rotation — the token remains authoritative.
+func writeRotatedToken(dataDir, scopeName, scopeInstanceID, adapterKey, token, digest string) (string, error) {
 	// Route through the same checked path builder as the readers so the
 	// validation rules cannot drift between reads and writes.
 	path, err := rotatedTokenPath(dataDir, scopeName, scopeInstanceID, adapterKey)
@@ -154,6 +161,13 @@ func writeRotatedToken(dataDir, scopeName, scopeInstanceID, adapterKey, token st
 	}
 	if err := os.WriteFile(path, []byte(token), 0o600); err != nil {
 		return "", err
+	}
+	if digest != "" {
+		sidecar := strings.TrimSuffix(path, ".token") + ".sha256"
+		if err := os.WriteFile(sidecar, []byte(digest), 0o600); err != nil {
+			slog.Warn("writing adapter digest sidecar failed; peers hosting this definition via scan will synthesize without a pin",
+				"path", sidecar, "adapter", adapterKey, "error", err)
+		}
 	}
 	return path, nil
 }
@@ -504,7 +518,8 @@ func rotateFreshRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, envNod
 	// identity (KB-242): two definitions of the same adapter type in one
 	// environment each get their own token file, so a per-scope scan or a
 	// peer-side child set can tell them apart.
-	tokenPath, err := writeRotatedToken(dataDir, scopeName, scopeInstanceID, instanceID, token)
+	tokenPath, err := writeRotatedToken(dataDir, scopeName, scopeInstanceID, instanceID, token,
+		lockedDigest(lifecycle.lockfile, adapter.Type, adapter.Name))
 	if err != nil {
 		_ = deps.Sessions.UnregisterRemoteScopeForEnv(environmentKey(envNode), scopeKey)
 		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
@@ -676,7 +691,8 @@ func tryAdoptPriorRunScopeInstance(deps Deps, lifecycle *remoteLifecycleContext,
 		// records, so the adopted token must exist here for the release path
 		// to cover it. A persist failure falls through to the next directory
 		// (or a fresh rotation, which fails loudly on its own record write).
-		tokenPath, werr := writeRotatedToken(dataDir, scopeName, chosen.instanceID, instanceID, chosen.token)
+		tokenPath, werr := writeRotatedToken(dataDir, scopeName, chosen.instanceID, instanceID, chosen.token,
+			lockedDigest(lifecycle.lockfile, adapter.Type, adapter.Name))
 		if werr != nil {
 			slog.Warn("copying adopted scope token failed; rotating fresh scope instance",
 				"scope", scopeName, "adapter_instance", instanceID, "prior_run_dir", priorDir, "error", werr.Error())

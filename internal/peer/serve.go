@@ -17,10 +17,12 @@ import (
 	"log/slog"
 	"math/rand"
 	"net"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc"
@@ -189,6 +191,27 @@ type Server struct {
 	serveAdapterJournal *EventJournal
 	exitSignal          chan struct{}
 	exitOnce            sync.Once
+
+	// runCtx is the serving context captured at Run/Serve entry; ensureChild
+	// respawns exited children under it (an spawn racing a cancelled context
+	// fails like any other spawn). Set before any serving conn exists; reads
+	// without it (direct serveOnce tests) fall back to context.Background().
+	runCtx atomic.Value
+
+	// KB-253 scan-synthesized hosted specs: definitions the engine dialed
+	// that the boot manifest did not carry, synthesized per scan from the
+	// kind's staged binary + the token-file digest sidecar. The registry is
+	// pruned on every scope scan; spawn support mirrors it into the
+	// runtime's bootSpec.
+	synthMu        sync.Mutex
+	syntheticSpecs map[string]syntheticSpecEntry
+}
+
+// syntheticSpecEntry carries a synthesized hosted spec plus the digest the
+// sidecar carried at synthesis time.
+type syntheticSpecEntry struct {
+	spec           AdapterSpec
+	expectedDigest string
 }
 
 // NewServeAdapterServer for the serve-adapter child role lives in
@@ -224,6 +247,10 @@ func NewServer(cfg *Config, rt *peerRuntime, log *slog.Logger) *Server {
 // defaultChildClient exposes a hosted adapter child as a raw v2 client for
 // the phone-home bridge, resolved by adapter type. In-memory (builtin)
 // handles carry no client, so the peer serves only supervision for those.
+// A hosted-but-exited child (copilot idle-exit after its serving session
+// closes, or a definition whose first dial lands long after boot) respawns
+// on demand from its preserved boot spec — same binary, same digest pin,
+// no re-resolution (ensureChild).
 func (s *Server) defaultChildClient(name string) (adapterhost.Client, bool) {
 	if s.rt == nil {
 		// Serve-adapter role: the in-process adapter for any name.
@@ -232,7 +259,13 @@ func (s *Server) defaultChildClient(name string) (adapterhost.Client, bool) {
 		}
 		return s.impl, true
 	}
-	return s.rt.childClientFor(name)
+	if c, ok := s.rt.childClientFor(name); ok {
+		return c, true
+	}
+	if ctx, ok := s.runCtx.Load().(context.Context); ok && ctx != nil {
+		return s.rt.ensureChild(ctx, name)
+	}
+	return nil, false
 }
 
 // Run drives the phone-home loop until ctx is done: serve, reconnect with a
@@ -245,6 +278,7 @@ func (s *Server) defaultChildClient(name string) (adapterhost.Client, bool) {
 // and stops one connection loop per scanned token, re-scanning at the
 // heartbeat cadence so runner rotation (CRI-137/304) self-heals.
 func (s *Server) Run(ctx context.Context) error {
+	s.runCtx.Store(ctx) // spawn-on-demand (ensureChild) respawns under this context
 	if s.rt != nil && s.cfg.ScopesDir != "" {
 		return s.runScopeSet(ctx)
 	}
@@ -501,27 +535,118 @@ func (s *Server) connSpecsForScopes() ([]serveConnSpec, error) {
 	if err != nil {
 		return nil, err
 	}
+	// KB-253: a scanned token for a definition OUTSIDE the boot manifest is
+	// not a refusal — it is the engine requesting an instance of an adapter
+	// its compiled workflow declares for this environment. The peer
+	// synthesizes a hosted spec from the definition's KIND binary (the
+	// conventionally installed in-image binary, or the operator's staged
+	// per-kind copy in the pod's own emptyDir) plus the digest sidecar the
+	// engine stamped next to the token file, spawns the child exactly like
+	// Boot does, and serves the dial. Identity verification is unchanged
+	// host-side: the presented digest is checked against the run's lockfile
+	// pin at accept time. Fail closed (refused conn, loud log) when no kind
+	// binary exists or the sidecar is missing.
 	specs := make([]serveConnSpec, 0, len(scopes))
+	scanned := make(map[string]struct{})
 	for _, sc := range scopes {
-		hs, ok := hosted[sc.Adapter]
-		if !ok {
-			s.log.Error("peer refuses phone-home conn for an adapter it does not host",
-				"adapter", sc.Adapter,
-				"scope", sc.Scope,
-				"hosted", strings.Join(hostedNames(hosted), ","),
-			)
-			continue
+		if _, ok := hosted[sc.Adapter]; !ok {
+			if s.rt == nil {
+				// Spec-derivation-only server (no runtime): keep the legacy
+				// refuse shape for tokens the manifest does not cover.
+				s.log.Error("peer refuses phone-home conn for an adapter it does not host",
+					"adapter", sc.Adapter,
+					"scope", sc.Scope,
+					"hosted", strings.Join(hostedNames(hosted), ","),
+				)
+				continue
+			}
+			synthetic, serr := s.synthesizeScannedSpec(sc)
+			if serr != nil {
+				s.log.Error("peer refuses phone-home conn for an adapter it cannot host",
+					"adapter", sc.Adapter,
+					"scope", sc.Scope,
+					"hosted", strings.Join(hostedNames(hosted), ","),
+					"error", serr)
+				continue
+			}
+			// Preserve the synthesized spec for respawn (ensureChild reads
+			// bootSpec) and spawn the child through Boot's exact sequence.
+			s.rt.registerBootSpec(synthetic)
+			c, spawnErr := s.rt.spawnChild(s.runCtxOrNil(), &childSpec{spec: synthetic})
+			if spawnErr != nil {
+				s.log.Error("peer failed to spawn scanned non-manifest definition",
+					"adapter", sc.Adapter, "scope", sc.Scope, "error", spawnErr)
+				continue
+			}
+			if err := s.rt.recordSpawn(c); err != nil {
+				s.log.Error("peer journal append failed for scanned definition",
+					"adapter", sc.Adapter, "error", err)
+			}
+			s.rt.watchWG.Add(1)
+			go s.rt.watchChild(c)
+			s.log.Info("peer hosting scanned non-manifest definition",
+				"adapter", sc.Adapter, "scope", sc.Scope,
+				"binary", synthetic.Binary, "digest", synthetic.Digest)
+			hosted[sc.Adapter] = synthetic
 		}
+		scanned[sc.Adapter] = struct{}{}
 		specs = append(specs, serveConnSpec{
-			name:     hs.Name,
-			version:  hs.Version,
-			digest:   hs.Digest,
+			name:     sc.Adapter,
+			version:  hosted[sc.Adapter].Version,
+			digest:   hosted[sc.Adapter].Digest,
 			scope:    sc.Scope,
 			token:    sc.Token,
 			children: hostedNames(hosted),
 		})
 	}
+	if s.rt != nil {
+		s.rt.pruneSyntheticBootSpecs(scanned)
+	}
 	return specs, nil
+}
+
+// synthesizeScannedSpec builds a hosted spec for a scanned non-manifest
+// definition. The binary resolves from the definition's KIND (the leading
+// "type." of the definition identity): first the kind's conventionally
+// installed in-image binary, then the operator's staged per-kind copy —
+// both are local files the pod itself staged for boot; nothing external is
+// read, no shared host filesystem. The digest comes from the KB-253
+// sidecar; without it the host's digest check would reject the dial, so a
+// sidecar-less scan is refused.
+func (s *Server) synthesizeScannedSpec(sc ScopeTokenSpec) (AdapterSpec, error) {
+	kind, _, hasKind := strings.Cut(sc.Adapter, ".")
+	if !hasKind || kind == "" {
+		return AdapterSpec{}, fmt.Errorf("definition %q carries no kind prefix; cannot infer a binary", sc.Adapter)
+	}
+	binary := ""
+	for _, candidate := range []string{
+		defaultBinaryPath(kind),    // in-image conventional install
+		stagedPeerBinaryPath(kind), // operator-staged per-kind copy (k8s)
+	} {
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			binary = candidate
+			break
+		}
+	}
+	if binary == "" {
+		return AdapterSpec{}, fmt.Errorf("no local binary staged for kind %q (tried %s and %s)", kind, defaultBinaryPath(kind), stagedPeerBinaryPath(kind))
+	}
+	if sc.Digest == "" {
+		return AdapterSpec{}, fmt.Errorf("scanned definition %q carries no digest sidecar; the host's lockfile digest check would reject the dial", sc.Adapter)
+	}
+	return AdapterSpec{
+		Name:    sc.Adapter,
+		Version: DefaultVersion,
+		Binary:  binary,
+		Digest:  sc.Digest,
+	}, nil
+}
+
+// stagedPeerBinaryPath mirrors the k8s operator's per-kind staged copy
+// path (jobbuilder PerScopePeerBinVolumePath) without importing the
+// operator package.
+func stagedPeerBinaryPath(kind string) string {
+	return filepath.Join("/usr/local/share/criteria-peer-adapters", "criteria-adapter-"+kind)
 }
 
 // legacyOrManifestConnSpecs collapses the manifest and legacy shapes into

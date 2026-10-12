@@ -58,6 +58,11 @@ type ScopeTokenSpec struct {
 	Token string
 	// TokenPath is the file the token was read from (diagnostics).
 	TokenPath string
+	// Digest is the adapter's pinned lockfile digest read from the KB-253
+	// digest sidecar next to the token file ("<key>.sha256"), empty when
+	// the engine wrote none (older engines, or adapters pinned without a
+	// digest).
+	Digest string
 }
 
 // ParseAdaptersConfig parses the multi-adapter manifest from the environment
@@ -388,6 +393,7 @@ func appendRootScopeTokens(specs *[]ScopeTokenSpec, scopePath string, topEntry o
 			Adapter:   tok.adapter,
 			Token:     tok.token,
 			TokenPath: tok.path,
+			Digest:    tok.digest,
 		})
 	}
 }
@@ -418,6 +424,7 @@ func appendWorkflowScopeTokens(specs *[]ScopeTokenSpec, topEntry os.DirEntry, sc
 				Adapter:   tok.adapter,
 				Token:     tok.token,
 				TokenPath: tok.path,
+				Digest:    tok.digest,
 			})
 		}
 	}
@@ -481,6 +488,8 @@ type scopeTokenFile struct {
 	adapter string
 	token   string
 	path    string
+	// digest is the KB-253 sidecar ("<key>.sha256") value when present.
+	digest string
 }
 
 // readScopeTokenDir reads every "<adapter>.token" file directly in tokenDir.
@@ -509,11 +518,20 @@ func readScopeTokenDir(tokenDir string) ([]scopeTokenFile, error) {
 		if err != nil || len(raw) == 0 {
 			continue
 		}
-		found = append(found, scopeTokenFile{
+		tf := scopeTokenFile{
 			adapter: adapter,
 			token:   strings.TrimSpace(string(raw)),
 			path:    filepath.Join(tokenDir, name),
-		})
+		}
+		// KB-253 digest sidecar ("<key>.sha256"): the engine stamps the
+		// adapter's pinned lockfile digest next to the token so peers
+		// hosting the definition outside their boot manifest can synthesize
+		// a digest-pinned spec. Best-effort and versioned by absence — an
+		// unreadable or missing sidecar leaves Digest empty.
+		if sideRaw, serr := os.ReadFile(strings.TrimSuffix(tf.path, ".token") + ".sha256"); serr == nil {
+			tf.digest = strings.TrimSpace(string(sideRaw))
+		}
+		found = append(found, tf)
 	}
 	return found, nil
 }

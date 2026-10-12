@@ -442,7 +442,7 @@ func TestInitScopeAdapters_PerScope_ScanReusesTokensWithoutRecord(t *testing.T) 
 	// Hand-craft the pre-upgrade on-disk state: one rotated token, no record.
 	scopeInstanceID := uuid.NewString()
 	legacyToken := "legacy-surviving-token"
-	tokenPath, err := writeRotatedToken(dataDir, "", scopeInstanceID, "noop.default", legacyToken)
+	tokenPath, err := writeRotatedToken(dataDir, "", scopeInstanceID, "noop.default", legacyToken, "")
 	if err != nil {
 		t.Fatalf("write legacy token: %v", err)
 	}
@@ -604,17 +604,17 @@ func TestWriteRotatedToken_UsesCheckedPathBuilder(t *testing.T) {
 
 	// The writer must enforce the same label rules as the readers, so a bad
 	// label cannot drift past validation on the write side.
-	if _, err := writeRotatedToken(dataDir, "", "../escape", "noop", "tok"); err == nil {
+	if _, err := writeRotatedToken(dataDir, "", "../escape", "noop", "tok", ""); err == nil {
 		t.Fatal("writeRotatedToken accepted a traversal scope instance ID")
 	}
-	if _, err := writeRotatedToken(dataDir, "../escape", "00000000-0000-0000-0000-000000000000", "noop", "tok"); err == nil {
+	if _, err := writeRotatedToken(dataDir, "../escape", "00000000-0000-0000-0000-000000000000", "noop", "tok", ""); err == nil {
 		t.Fatal("writeRotatedToken accepted a traversal scope name")
 	}
 
 	// A valid write must land exactly where rotatedTokenPath derives it, so
 	// readers and the writer can never disagree about the layout.
 	instanceID := "11111111-2222-3333-4444-555555555555"
-	path, err := writeRotatedToken(dataDir, "", instanceID, "noop", "tok")
+	path, err := writeRotatedToken(dataDir, "", instanceID, "noop", "tok", "")
 	if err != nil {
 		t.Fatalf("writeRotatedToken: %v", err)
 	}
@@ -642,10 +642,10 @@ func TestScanScopeTokenFiles_IgnoresNonInstanceEntries(t *testing.T) {
 	// dir whose token belongs to another adapter type.
 	instA := "11111111-2222-3333-4444-555555555555"
 	instB := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-	if _, err := writeRotatedToken(dataDir, "", instA, "noop", "token-a"); err != nil {
+	if _, err := writeRotatedToken(dataDir, "", instA, "noop", "token-a", ""); err != nil {
 		t.Fatalf("write token-a: %v", err)
 	}
-	if _, err := writeRotatedToken(dataDir, "", instB, "noop", "token-b"); err != nil {
+	if _, err := writeRotatedToken(dataDir, "", instB, "noop", "token-b", ""); err != nil {
 		t.Fatalf("write token-b: %v", err)
 	}
 	scopeDir := filepath.Join(dataDir, "remote-tokens", "")
@@ -658,7 +658,7 @@ func TestScanScopeTokenFiles_IgnoresNonInstanceEntries(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(scopeDir, "stray.txt"), []byte("x"), 0o600); err != nil {
 		t.Fatalf("write stray: %v", err)
 	}
-	if _, err := writeRotatedToken(dataDir, "", instA, "mcp", "mcp-token"); err != nil {
+	if _, err := writeRotatedToken(dataDir, "", instA, "mcp", "mcp-token", ""); err != nil {
 		t.Fatalf("write mcp token: %v", err)
 	}
 
@@ -693,10 +693,10 @@ func TestFilterUnclaimedScopeInstances_ExcludesOtherAdaptersInstances(t *testing
 	// instA is claimed by another adapter's healthy record; instB is free.
 	instA := "11111111-2222-3333-4444-555555555555"
 	instB := "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-	if _, err := writeRotatedToken(dataDir, "", instA, "mcp.default", "token-a"); err != nil {
+	if _, err := writeRotatedToken(dataDir, "", instA, "mcp.default", "token-a", ""); err != nil {
 		t.Fatalf("write token-a: %v", err)
 	}
-	if _, err := writeRotatedToken(dataDir, "", instB, "noop.default", "token-b"); err != nil {
+	if _, err := writeRotatedToken(dataDir, "", instB, "noop.default", "token-b", ""); err != nil {
 		t.Fatalf("write token-b: %v", err)
 	}
 	if err := writeCurrentScopeInstance(dataDir, "", "mcp.default", currentScopeInstanceRecord{

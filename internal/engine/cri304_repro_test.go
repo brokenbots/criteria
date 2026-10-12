@@ -195,7 +195,7 @@ func TestInitScopeAdapters_PerScope_AdoptionSkipsClaimedPriorInstance_CRI304(t *
 	// Seed a prior dir with a rotated token whose instance is already
 	// claimed: a release tombstone in the prior dir's current records.
 	scopeInstanceID := uuid.NewString()
-	if _, err := writeRotatedToken(priorDir, "", scopeInstanceID, "noop", "prior-token"); err != nil {
+	if _, err := writeRotatedToken(priorDir, "", scopeInstanceID, "noop", "prior-token", ""); err != nil {
 		t.Fatalf("seed prior token: %v", err)
 	}
 	if err := writeCurrentScopeInstance(priorDir, "", "released-"+scopeInstanceID, currentScopeInstanceRecord{
