@@ -133,14 +133,16 @@ func TestPeerSessionMultiAdapterOneConn(t *testing.T) {
 		t.Fatalf("unattributed run missing from the noop dial journal")
 	}
 
-	// A wait for an adapter the environment does not declare can never be
-	// satisfied: fail fast with the typed error, no scheduling budget spent.
+	// KB-251: a wait for an adapter this environment never declares is NOT
+	// semantically rejected any more — it burns its (bounded) scheduling
+	// budget like every other unmatched wait and fails with the wait's own
+	// timeout diagnosis. Verify it stays bounded rather than fail-fast.
 	start := time.Now()
-	if _, err := provider.WaitForHandle(ctx, "mystic", ""); !errors.Is(err, ErrPeerChildSetMissing) {
-		t.Fatalf("WaitForHandle(undeclared) = %v, want PeerChildSetMissing", err)
+	if _, err := provider.WaitForHandle(ctx, "mystic", ""); err == nil {
+		t.Fatalf("WaitForHandle(undeclared) returned a handle")
 	}
-	if elapsed := time.Since(start); elapsed > 2*time.Second {
-		t.Fatalf("WaitForHandle(undeclared) blocked %s, want a fail-fast typed rejection", elapsed)
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("WaitForHandle(undeclared) blocked %s, want a bounded budget wait", elapsed)
 	}
 
 	// Close-scoped teardown on a hosted non-dial adapter must leave the
@@ -161,60 +163,38 @@ func TestPeerSessionMultiAdapterOneConn(t *testing.T) {
 	}
 }
 
-func TestPeerSessionChildSetFailClosedAtAccept(t *testing.T) {
+func TestPeerSessionUndercoveringDialStillServes(t *testing.T) {
 	provider, addr := startMultiPeerFixture(t)
 	provider.SetDeclaredAdapters([]string{"noop", "copilot"})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Unit-level: the coverage predicate itself rejects exactly the missing
-	// declared adapter and reports the hosted set.
-	if missing := provider.missingDeclared([]string{"noop"}); len(missing) != 1 || missing[0] != "copilot" {
-		t.Fatalf("missingDeclared([noop]) = %v, want [copilot]", missing)
-	}
-	if missing := provider.missingDeclared([]string{"noop", "copilot"}); len(missing) != 0 {
-		t.Fatalf("missingDeclared(full set) = %v, want none", missing)
-	}
-
-	// End-to-end: a pod that self-consistently advertises only noop while
-	// the environment declares copilot too cannot host the declared adapter
-	// — accepting it would strand copilot sessions on every scheduling
-	// budget. The dial is rejected and nothing is registered; repeating
-	// mis-declared dials fail the same way (the typed accept-class signal
-	// the shim-side classifier recognizes), while a re-created pod with the
-	// full declared set is accepted.
-	for i := 0; i < 2; i++ {
-		bad := multiAdapterFake("noop")
-		bad.adapters = bad.adapters[:1]
-		bad.connect(t, addr)
-	}
-	if _, ok := peerHandleFrom(provider, ""); ok {
-		t.Fatalf("a rejected dial registered a session")
-	}
-	good := multiAdapterFake("noop")
-	good.connect(t, addr)
+	// KB-251: a dial whose advertised set under-covers the declared set is
+	// ACCEPTED (the engine does not judge orchestration). The conn still
+	// registers and serves the children it does host (the accept loop runs
+	// asynchronously, so poll).
+	bad := multiAdapterFake("noop")
+	bad.adapters = bad.adapters[:1]
+	bad.connect(t, addr)
+	waitFor(t, "under-covering dial registers its session", func() bool {
+		_, ok := peerHandleFrom(provider, "")
+		return ok
+	})
 	handle, err := provider.WaitForHandle(ctx, "noop", "")
 	if err != nil {
-		t.Fatalf("WaitForHandle after a fully-covered re-dial: %v", err)
+		t.Fatalf("WaitForHandle over an accepted under-covering dial: %v", err)
 	}
 	if _, ok := handle.(*peerHandle); !ok {
-		t.Fatalf("recovered dial handle type %T, want *peerHandle", handle)
-	}
-
-	// The copilot session on the accepted pod materializes without a new
-	// conn: the routed-registry scan finds the conn by its hosted set.
-	if _, err := provider.WaitForHandle(ctx, "copilot", ""); err != nil {
-		t.Fatalf("WaitForHandle(copilot) over the accepted multi-adapter conn: %v", err)
+		t.Fatalf("dial handle type %T, want *peerHandle", handle)
 	}
 }
 
-// TestPeerSessionDeclaredAdapterWaitsFailFast pins the wait-time leg of the
-// fail-closed contract on its own: without a declared set, an unmatched wait
-// burns its scheduling budget like every legacy shim wait; with one
-// installed, a wait for an undeclared adapter is rejected immediately so the
-// caller surfaces the mis-declared environment instead of a timeout.
-func TestPeerSessionDeclaredAdapterWaitsFailFast(t *testing.T) {
+// TestPeerSessionUndeclaredWaitBoundsNormally pins KB-251's wait semantics:
+// with a declared set installed, a wait for an adapter outside it is no
+// longer semantically rejected — it runs the same bounded budget an
+// unmatched wait has always had, then fails with the wait's own diagnosis.
+func TestPeerSessionUndeclaredWaitBoundsNormally(t *testing.T) {
 	provider, _ := startMultiPeerFixture(t)
 
 	// No declared set: the wait stays open-budget (mixed-fleet escape).
@@ -222,20 +202,22 @@ func TestPeerSessionDeclaredAdapterWaitsFailFast(t *testing.T) {
 	defer cancel()
 	if _, err := provider.WaitForHandle(ctxOpen, "mystic", ""); err == nil {
 		t.Fatalf("WaitForHandle(mystic) with no declared set returned a handle")
-	} else if errors.Is(err, ErrPeerChildSetMissing) {
-		t.Fatalf("undeclared wait rejected as child-set without a declared set: %v", err)
 	}
 
 	provider.SetDeclaredAdapters([]string{"noop"})
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// The declared set is inert (KB-251): the undeclared wait behaves
+	// identically with one installed — bounded, no typed rejection. The
+	// ctx deadline is shorter than the wait's own budget, so the ctx
+	// cancellation is what bounds the wait here.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	start := time.Now()
 	_, err := provider.WaitForHandle(ctx, "mystic", "")
-	if !errors.Is(err, ErrPeerChildSetMissing) {
-		t.Fatalf("WaitForHandle(mystic) with declared set = %v, want PeerChildSetMissing", err)
+	if err == nil {
+		t.Fatalf("WaitForHandle(mystic) with declared set returned a handle")
 	}
-	if elapsed := time.Since(start); elapsed > 2*time.Second {
-		t.Fatalf("fail-fast wait blocked %s", elapsed)
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("undeclared wait with declared set blocked %s, want a bounded budget wait", elapsed)
 	}
 }
 
