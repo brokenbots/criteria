@@ -58,6 +58,29 @@ func TestNameFromBinary(t *testing.T) {
 	}
 }
 
+// TestDefaultBinaryPathDefinitionIdentity is the KB-246 regression for the
+// remote runner's own binary derivation: deployments bake definition
+// identities into CRITERIA_ADAPTER_NAME (KB-242), and with no binary override
+// present the conventional path must derive from the TYPE half — binaries
+// install by type — never from the full definition identity
+// ("shell.develop" → criteria-adapter-shell.develop).
+func TestDefaultBinaryPathDefinitionIdentity(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"shell.develop", "/usr/local/bin/criteria-adapter-shell"},
+		{"copilot.branch_repair", "/usr/local/bin/criteria-adapter-copilot"},
+		{"demo", "/usr/local/bin/criteria-adapter-demo"},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := defaultBinaryPath(c.in); got != c.want {
+			t.Errorf("defaultBinaryPath(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestAdapterEnvFiltersRemoteVars(t *testing.T) {
 	for _, name := range remoteEnvVars {
 		t.Setenv(name, "leaked-"+name)
