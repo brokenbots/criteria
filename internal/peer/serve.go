@@ -600,7 +600,7 @@ func (s *Server) connSpecsForScopes() ([]serveConnSpec, error) {
 				)
 				continue
 			}
-			synthetic, serr := s.synthesizeScannedSpec(sc)
+			synthetic, serr := s.synthesizeScannedSpec(sc, hosted)
 			if serr != nil {
 				s.log.Error("peer refuses phone-home conn for an adapter it cannot host",
 					"adapter", sc.Adapter,
@@ -655,19 +655,42 @@ func (s *Server) connSpecsForScopes() ([]serveConnSpec, error) {
 // read, no shared host filesystem. The digest comes from the KB-253
 // sidecar; without it the host's digest check would reject the dial, so a
 // sidecar-less scan is refused.
-func (s *Server) synthesizeScannedSpec(sc ScopeTokenSpec) (AdapterSpec, error) {
+func (s *Server) synthesizeScannedSpec(sc ScopeTokenSpec, hosted map[string]AdapterSpec) (AdapterSpec, error) {
 	kind, _, hasKind := strings.Cut(sc.Adapter, ".")
 	if !hasKind || kind == "" {
 		return AdapterSpec{}, fmt.Errorf("definition %q carries no kind prefix; cannot infer a binary", sc.Adapter)
 	}
+	// Binary preference, first hit wins:
+	//  1. a same-kind BOOT member's staged binary (guaranteed present — it
+	//     booted; the operator stages/stages-in-image per kind),
+	//  2. the kind's conventionally installed in-image path,
+	//  3. the operator's staged per-kind copy (k8s multi-kind pods).
 	binary := ""
-	for _, candidate := range []string{
-		defaultBinaryPath(kind),    // in-image conventional install
-		stagedPeerBinaryPath(kind), // operator-staged per-kind copy (k8s)
-	} {
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			binary = candidate
-			break
+	kindOf := func(name string) (string, bool) {
+		k, _, has := strings.Cut(name, ".")
+		if !has {
+			// Legacy/bare names ARE kind identities.
+			return name, name == kind
+		}
+		return k, k == kind
+	}
+	for _, hs := range hosted {
+		if hk, ok := kindOf(hs.Name); ok && hk == kind && hs.Binary != "" {
+			if info, err := os.Stat(hs.Binary); err == nil && !info.IsDir() {
+				binary = hs.Binary
+				break
+			}
+		}
+	}
+	if binary == "" {
+		for _, candidate := range []string{
+			defaultBinaryPath(kind),    // in-image conventional install
+			stagedPeerBinaryPath(kind), // operator-staged per-kind copy (k8s)
+		} {
+			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+				binary = candidate
+				break
+			}
 		}
 	}
 	if binary == "" {
