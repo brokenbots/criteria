@@ -257,12 +257,16 @@ func applySpecManifestDefaults(spec *AdapterSpec) error {
 }
 
 // locateSpecBinary finds the binary for a name-only spec: PATH lookup of
-// criteria-adapter-<name> first, then the conventional install path.
+// criteria-adapter-<name> first, then the conventional install path. Binaries
+// install and are found by TYPE (KB-246, mirroring the adapterhost
+// DiscoverBinary split): a definition-keyed child ("shell.develop", KB-242)
+// locates its binary by its type half while the child stays keyed by the
+// definition identity; defaultBinaryPath applies the same split.
 func locateSpecBinary(spec *AdapterSpec) error {
 	if spec.Name == "" {
 		return nil
 	}
-	if p, err := exec.LookPath(adapterBinaryPrefix + spec.Name); err == nil {
+	if p, err := exec.LookPath(adapterBinaryPrefix + adapterhost.DefinitionType(spec.Name)); err == nil {
 		spec.Binary = p
 	}
 	if spec.Binary == "" {

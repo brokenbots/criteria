@@ -421,6 +421,143 @@ func TestResolve_DigestDefinitionIdentity(t *testing.T) {
 	}
 }
 
+// TestResolve_DefinitionIdentityBinaryLocation is the KB-246 follow-up
+// regression for the single-kind definition-keyed peer boot failure: the
+// peer's own binary-location paths (locateSpecBinary for manifest children,
+// resolveDefaults for the legacy single-adapter shape) must derive the
+// binary NAME from the adapter TYPE half — binaries install by type
+// (criteria-adapter-shell) — while the hosted child stays keyed by the
+// definition identity ("shell.develop", KB-242). Before the fix the full
+// definition identity produced "/usr/local/bin/criteria-adapter-shell.develop"
+// and the pod failed boot closed with "missing or not a regular file" even
+// though the type-keyed binary was installed.
+func TestResolve_DefinitionIdentityBinaryLocation(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CRITERIA_ADAPTERS", filepath.Join(dir, "adapters"))
+	t.Setenv("CRITERIA_HOME", filepath.Join(dir, "home"))
+
+	// A type-keyed binary staged on PATH, with nothing for the full
+	// definition identity: the LookPath arm must find it BY TYPE.
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	typBin := filepath.Join(binDir, "criteria-adapter-shell")
+	writeRunnable(t, typBin)
+	t.Setenv("PATH", binDir)
+
+	// Manifest-mode child: one definition-keyed declaration with no
+	// per-definition _BINARY override (the exposed single-kind fleet shape).
+	child, err := LoadConfig(getenvFrom(map[string]string{
+		EnvRemoteHost: "h:1",
+		EnvAdapters:   "shell.develop",
+	}))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if err := child.Resolve(); err != nil {
+		t.Fatalf("resolve definition-keyed child without override: %v", err)
+	}
+	if child.Adapters[0].Binary != typBin {
+		t.Errorf("child binary = %q, want type-keyed PATH hit %q", child.Adapters[0].Binary, typBin)
+	}
+	if child.Adapters[0].Name != "shell.develop" {
+		t.Errorf("child name = %q, want the definition identity kept as the child key", child.Adapters[0].Name)
+	}
+
+	// Digest-pinned child whose pinned artifact is absent from the local
+	// cache: the chain-resolved type-keyed binary is kept and the digest
+	// stays recorded for host-side identity (no boot error).
+	pinned := Config{
+		Host: "h:1",
+		Adapters: []AdapterSpec{
+			{Name: "shell.develop", Digest: "sha256:" + strings.Repeat("cd", 32)},
+		},
+	}
+	if err := pinned.Resolve(); err != nil {
+		t.Fatalf("resolve digest-pinned child without cached artifact: %v", err)
+	}
+	if pinned.Adapters[0].Binary != typBin {
+		t.Errorf("digest-miss child binary = %q, want chain-resolved %q kept", pinned.Adapters[0].Binary, typBin)
+	}
+
+	// Legacy single-adapter shape: resolveDefaults' LookPath arm resolves
+	// the same type-keyed binary for the definition-keyed name.
+	legacy, err := LoadConfig(getenvFrom(map[string]string{
+		EnvRemoteHost:  "h:1",
+		EnvAdapterName: "shell.develop",
+	}))
+	if err != nil {
+		t.Fatalf("load legacy: %v", err)
+	}
+	if err := legacy.Resolve(); err != nil {
+		t.Fatalf("resolve legacy definition identity: %v", err)
+	}
+	if legacy.Binary() != typBin {
+		t.Errorf("legacy binary = %q, want type-keyed PATH hit %q", legacy.Binary(), typBin)
+	}
+
+	// With nothing on PATH, the conventional install derivation must land
+	// on the TYPE-keyed path (the legacy shape does not stat the binary).
+	empty := filepath.Join(dir, "empty")
+	if err := os.MkdirAll(empty, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	t.Setenv("PATH", empty)
+	conv, err := LoadConfig(getenvFrom(map[string]string{
+		EnvRemoteHost:  "h:1",
+		EnvAdapterName: "shell.develop",
+	}))
+	if err != nil {
+		t.Fatalf("load conventional: %v", err)
+	}
+	if err := conv.Resolve(); err != nil {
+		t.Fatalf("resolve conventional: %v", err)
+	}
+	if want := "/usr/local/bin/criteria-adapter-shell"; conv.Binary() != want {
+		t.Errorf("conventional binary = %q, want %q", conv.Binary(), want)
+	}
+
+	// Manifest-mode fail-closed shape (the boot failure the fleet hit): with
+	// no type-keyed binary anywhere the child still fails closed, but the
+	// error must name the TYPE-keyed conventional path — never the
+	// definition-keyed one.
+	missing, err := LoadConfig(getenvFrom(map[string]string{
+		EnvRemoteHost: "h:1",
+		EnvAdapters:   "shell.develop",
+	}))
+	if err != nil {
+		t.Fatalf("load missing: %v", err)
+	}
+	err = missing.Resolve()
+	if err == nil {
+		t.Fatal("resolve missing binary: want fail-closed error, got nil")
+	}
+	// The error shape is only assertable on machines without a type-keyed
+	// shell adapter installed at the conventional location; skip the shape
+	// checks elsewhere rather than flaking.
+	if _, statErr := os.Stat("/usr/local/bin/criteria-adapter-shell"); os.IsNotExist(statErr) {
+		if !strings.Contains(err.Error(), `/usr/local/bin/criteria-adapter-shell"`) {
+			t.Errorf("err = %v, want the type-keyed conventional path named", err)
+		}
+		if strings.Contains(err.Error(), "criteria-adapter-shell.develop") {
+			t.Errorf("err = %v, want no definition-keyed binary path derived", err)
+		}
+	}
+
+	// defaultBinaryPath applies the split for every conventional-path
+	// derivation: definition identity → type-keyed path; bare name unchanged.
+	if got := defaultBinaryPath("shell.develop"); got != "/usr/local/bin/criteria-adapter-shell" {
+		t.Errorf("defaultBinaryPath(definition identity) = %q, want type-keyed path", got)
+	}
+	if got := defaultBinaryPath("shell"); got != "/usr/local/bin/criteria-adapter-shell" {
+		t.Errorf("defaultBinaryPath(bare type) = %q, want unchanged conventional path", got)
+	}
+	if got := defaultBinaryPath(""); got != "" {
+		t.Errorf("defaultBinaryPath(empty) = %q, want empty", got)
+	}
+}
+
 // TestResolve_ManifestChildren pins the multi-adapter manifest Resolve
 // contract (KB-213): the legacy single-adapter fields do not participate —
 // every declared child resolves with the per-adapter precedence on its own,

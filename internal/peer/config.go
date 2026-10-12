@@ -331,7 +331,11 @@ func (c *Config) resolveFromManifest() error {
 // known adapter must never silently swap to an unrelated binary.
 func (c *Config) resolveDefaults() {
 	if c.AdapterBinary == "" && c.AdapterName != "" {
-		if p, err := exec.LookPath(adapterBinaryPrefix + c.AdapterName); err == nil {
+		// Binaries install and live on PATH by TYPE (KB-246, mirroring the
+		// adapterhost DiscoverBinary split): a definition-keyed identity
+		// ("shell.develop", KB-242) looks up its binary by the type half
+		// while the child stays keyed by the definition identity.
+		if p, err := exec.LookPath(adapterBinaryPrefix + adapterhost.DefinitionType(c.AdapterName)); err == nil {
 			c.AdapterBinary = p
 		}
 	}
@@ -393,12 +397,16 @@ func (c *Config) resolveDigestBinary() error {
 }
 
 // defaultBinaryPath returns the conventional install path for a named adapter
-// (runner parity: k8s manifests install adapters at /usr/local/bin).
+// (runner parity: k8s manifests install adapters at /usr/local/bin). Binaries
+// install by TYPE, so a definition identity ("shell.develop", KB-242) derives
+// its conventional path from the type half while the child stays keyed by the
+// definition identity (KB-246, mirroring the adapterhost DiscoverBinary split
+// and peer locateSpecBinary).
 func defaultBinaryPath(name string) string {
 	if name == "" {
 		return ""
 	}
-	return "/usr/local/bin/" + adapterBinaryPrefix + name
+	return "/usr/local/bin/" + adapterBinaryPrefix + adapterhost.DefinitionType(name)
 }
 
 // nameFromBinary derives an adapter name from a binary path, stripping the
