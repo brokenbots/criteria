@@ -37,7 +37,7 @@ func TestSplitScopeKey(t *testing.T) {
 func TestSurvivingScopeToken_MatchesAndDeclines(t *testing.T) {
 	dataDir := t.TempDir()
 	scopeName, instanceID, adapterType, token := "run_pr_reviewer_loop", "2f0e9d4c-0000-4000-8000-000000000001", "noop", "survivor-token"
-	if _, err := writeRotatedToken(dataDir, scopeName, instanceID, adapterType, token, ""); err != nil {
+	if _, err := writeRotatedToken(dataDir, scopeName, instanceID, adapterType, token); err != nil {
 		t.Fatalf("writeRotatedToken: %v", err)
 	}
 
@@ -64,7 +64,7 @@ func TestSurvivingScopeToken_MatchesAndDeclines(t *testing.T) {
 
 	// A live claim by another adapter instance must also block re-use.
 	other := "11111111-1111-4111-8111-111111111111"
-	if _, err := writeRotatedToken(dataDir, scopeName, other, adapterType, "other-token", ""); err != nil {
+	if _, err := writeRotatedToken(dataDir, scopeName, other, adapterType, "other-token"); err != nil {
 		t.Fatalf("writeRotatedToken: %v", err)
 	}
 	if err := writeCurrentScopeInstance(dataDir, scopeName, "noop.default", currentScopeInstanceRecord{
@@ -87,7 +87,7 @@ func TestDialScopeRegistrar_RecoversUnregisteredScopeDial(t *testing.T) {
 	instanceID := "2f0e9d4c-0000-4000-8000-000000000001"
 	scope := scopeName + "/" + instanceID
 	token := "survivor-token"
-	if _, err := writeRotatedToken(dataDir, scopeName, instanceID, "noop", token, ""); err != nil {
+	if _, err := writeRotatedToken(dataDir, scopeName, instanceID, "noop", token); err != nil {
 		t.Fatalf("writeRotatedToken: %v", err)
 	}
 
@@ -150,7 +150,7 @@ func TestDialScopeRegistrar_DeclinesReleasedInstanceEndToEnd(t *testing.T) {
 	instanceID := "2f0e9d4c-0000-4000-8000-000000000001"
 	scope := scopeName + "/" + instanceID
 	token := "survivor-token"
-	if _, err := writeRotatedToken(dataDir, scopeName, instanceID, "noop", token, ""); err != nil {
+	if _, err := writeRotatedToken(dataDir, scopeName, instanceID, "noop", token); err != nil {
 		t.Fatalf("writeRotatedToken: %v", err)
 	}
 	releaseScopeInstance(dataDir, scopeName, "noop.default", instanceID, "noop")

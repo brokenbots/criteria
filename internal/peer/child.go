@@ -83,10 +83,6 @@ type peerRuntime struct {
 	// bootSpec preserves each child's resolved boot spec so ensureChild can
 	// respawn an exited child verbatim (no re-resolution, same digest pin).
 	bootSpec map[string]childSpec
-	// syntheticSpecNames marks which bootSpec entries were synthesized at
-	// scan time (KB-253) rather than resolved at Boot; only these are
-	// eligible for pruning when their definitions stop dialing.
-	syntheticSpecNames map[string]struct{}
 	// respawnMu serializes respawns per definition name.
 	respawnMu sync.Map
 	// exitPoll is the process-exit poll interval (tunable in tests).
@@ -178,48 +174,6 @@ func (r *peerRuntime) ChildHandle(name string) adapterhost.Handle {
 	return nil
 }
 
-// registerBootSpec preserves a scan-synthesized hosted spec so ensureChild
-// can respawn its child verbatim after an idle exit; the entry wins over a
-// prior synthesis of the same definition (a re-pinned run re-synthesizes).
-// Synthetic entries are prunable; boot-manifest specs are pruned only if a
-// synthetic overwrote them (impossible on this path, but the marker keeps
-// the two classes distinct).
-func (r *peerRuntime) registerBootSpec(spec AdapterSpec) {
-	r.mu.Lock()
-	if r.bootSpec == nil {
-		r.bootSpec = map[string]childSpec{}
-	}
-	if r.syntheticSpecNames == nil {
-		r.syntheticSpecNames = map[string]struct{}{}
-	}
-	r.bootSpec[spec.Name] = childSpec{spec: spec}
-	r.syntheticSpecNames[spec.Name] = struct{}{}
-	r.mu.Unlock()
-}
-
-// pruneSyntheticBootSpecs drops scan-synthesized boot specs whose
-// definitions no longer appear in any scanned token set (released scopes).
-// Boot-manifest specs (seeded at Boot) are never pruned.
-func (r *peerRuntime) pruneSyntheticBootSpecs(scanned map[string]struct{}) {
-	r.mu.Lock()
-	for name := range r.syntheticSpecNames {
-		if _, ok := scanned[name]; !ok {
-			delete(r.bootSpec, name)
-			delete(r.syntheticSpecNames, name)
-		}
-	}
-	r.mu.Unlock()
-}
-
-// runCtxOrNil returns the serving context captured by Run, or nil before
-// the loop started (direct serveOnce tests).
-func (s *Server) runCtxOrNil() context.Context {
-	if ctx, ok := s.runCtx.Load().(context.Context); ok && ctx != nil {
-		return ctx
-	}
-	return nil
-}
-
 // childClientFor resolves the phone-home bridge client for one hosted
 // adapter child (in-memory handles carry no client).
 func (r *peerRuntime) childClientFor(name string) (adapterhost.Client, bool) {
@@ -270,6 +224,13 @@ func (r *peerRuntime) ensureChild(ctx context.Context, name string) (adapterhost
 			client, ok := adapterhost.ClientOf(c.handle)
 			r.mu.Unlock()
 			return client, ok
+		}
+		// Clean exits respawn (adapter lifecycle choice: copilot idle-exit
+		// exit_code=0/signal=0). A crash — signal death or nonzero code —
+		// never respawns: the step's crash policy owns recovery.
+		if c.lastExit == nil || c.lastExit.GetSignal() != 0 || c.lastExit.GetExitCode() != 0 {
+			r.mu.Unlock()
+			return nil, false
 		}
 	}
 	spec, ok := r.bootSpec[name]

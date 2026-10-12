@@ -9,6 +9,7 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	criteriav2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
+	criteriav1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 // TestPeerRuntime_EnschildRespawnsExitedChild pins the serve-on-demand
@@ -72,6 +73,21 @@ func TestPeerRuntime_EnsureChildRespawnsExitedChild(t *testing.T) {
 		t.Fatal("child exit never observed")
 	}
 
+	// A SIGKILL death is a crash (signal != 0): no respawn — the step's
+	// crash policy owns recovery.
+	if _, ok := rt.ensureChild(ctx, "noop"); ok {
+		t.Fatal("ensureChild respawned a crashed (signal-killed) child")
+	}
+
+	// White-box: simulate the clean-exit fact (copilot idle-exit,
+	// exit_code=0, signal=0) and require the respawn.
+	rt.mu.Lock()
+	pid, _ := adapterhost.ProcessPID(rt.children["noop"].handle)
+	rt.children["noop"].handle = nil
+	rt.children["noop"].lastExit = &criteriav1.ProcessExited{ExitCode: 0, Signal: 0}
+	rt.children["noop"].exited = true
+	rt.mu.Unlock()
+	_ = pid
 	client, ok := rt.ensureChild(ctx, "noop")
 	if !ok || client == nil {
 		t.Fatalf("ensureChild after exit did not respawn (ok=%v)", ok)
@@ -87,14 +103,13 @@ func TestPeerRuntime_EnsureChildRespawnsExitedChild(t *testing.T) {
 	rt.mu.Lock()
 	c := rt.children["noop"]
 	newPid, _ := adapterhost.ProcessPID(c.handle)
-	killRequested := c.killRequested
 	exited := adapterhost.ProcessExited(c.handle)
 	rt.mu.Unlock()
 	if newPid == killedPid {
 		t.Fatalf("respawned child has the old pid %d: no respawn actually happened", newPid)
 	}
-	if exited || killRequested {
-		t.Fatalf("respawned child state wrong: exited=%v killRequested=%v", exited, killRequested)
+	if exited {
+		t.Fatal("respawned child already exited")
 	}
 
 	// Journal carries the new spawn fact attributed to the same definition.
@@ -112,6 +127,7 @@ func TestPeerRuntime_EnsureChildRespawnsExitedChild(t *testing.T) {
 	// killRequested honors a host-commanded kill: mark and ensure no respawn.
 	rt.mu.Lock()
 	rt.children["noop"].killRequested = true
+	rt.children["noop"].lastExit = nil
 	rt.mu.Unlock()
 	again, ok := rt.ensureChild(ctx, "noop")
 	if ok || again != nil {

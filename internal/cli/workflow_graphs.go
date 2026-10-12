@@ -53,8 +53,31 @@ type workflowGraphsLayer struct {
 // carries ONLY that layer's own compiled graph — its subworkflows key is
 // stripped, never serialized. The slice is never nil: workflows without
 // subworkflows emit an empty (non-null) payload.
+//
+// KB-253: the ROOT layer is now the first entry, named "root" — the
+// operator composes per-environment peer manifests from the compiled
+// graphs, and the root module's own adapter/environment declarations are
+// part of the graph by definition (its body used to ride only the run
+// record's workflow source, which the operator cannot parse). The entry is
+// additive: older consumers ignore unknown siblings.
 func workflowGraphsLayers(graph *workflow.FSMGraph) ([]workflowGraphsLayer, error) {
-	return workflowGraphsFlatLayers(buildCompileJSON(graph).Subworkflows)
+	all := buildCompileJSON(graph)
+	layers := make([]workflowGraphsLayer, 0, 1+len(all.Subworkflows))
+	// KB-253 root layer: name "root", the root module's own compiled graph
+	// (subworkflows stripped, same shape as every sibling entry).
+	rootBody := all
+	rootBody.Subworkflows = nil
+	raw, err := json.Marshal(&rootBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshal root graph body: %w", err)
+	}
+	layers = append(layers, workflowGraphsLayer{Name: "root", SourcePath: graph.Name, Body: string(raw)})
+	nested, err := workflowGraphsFlatLayers(all.Subworkflows)
+	if err != nil {
+		return nil, err
+	}
+	layers = append(layers, nested...)
+	return layers, nil
 }
 
 // buildWorkflowGraphsPayload builds the server-mode WorkflowGraphs message
