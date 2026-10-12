@@ -1326,9 +1326,11 @@ func TestPeerIntegrationMissingManifestAdapterFailClosed(t *testing.T) {
 	// orchestration); the hosted noop child serves its sessions while the
 	// declared-but-unhosted stateful keeps waiting on the ordinary budget.
 	time.Sleep(1200 * time.Millisecond)
-	fx.mu.Lock()
+	// Count adopted sessions under the PROVIDER's own lock (fx.mu does not
+	// guard provider.peers; the race detector flags cross-lock reads).
+	fx.provider.mu.Lock()
 	adopted := len(fx.provider.peers)
-	fx.mu.Unlock()
+	fx.provider.mu.Unlock()
 	if adopted == 0 {
 		t.Fatalf("under-covered peer must be adopted under KB-251 (0 sessions)")
 	}
