@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -121,12 +120,6 @@ type peerSessionProvider struct {
 	waiters  map[string][]chan waitResult // sessionKey → pending session waits
 	stopOnce sync.Once
 	stopped  bool
-
-	// declared is the engine-side declared-adapter set for this provider's
-	// environment (KB-213): the adapters the peer pod is expected to host.
-	// Non-empty enables the host-side fail-closed checks; empty keeps the
-	// pre-KB-213 open behavior (undecorated legacy wiring).
-	declared declaredAdapters
 }
 
 // NewPeerSessionProvider builds the provider serving peer-mode dials for a
@@ -150,15 +143,14 @@ func NewPeerSessionProvider(shim *Shim, perScopeSessions bool) *peerSessionProvi
 // shim surface end to end reach it through this accessor.
 func (p *peerSessionProvider) WrappedShim() *Shim { return p.shim }
 
-// SetDeclaredAdapters is retained (KB-251) as the declared-set intake for
-// callers that describe the environment's adapter surface — engine.go's
-// env walk still feeds it — but the set no longer gates anything: KB-213's
-// accept-time coverage rejection and wait-time semantic refusal are removed
-// per the arch ruling (the engine does not judge orchestration). The
-// set is inert bookkeeping here; a session request for an adapter no peer
-// hosts resolves as an ordinary bounded session wait.
+// SetDeclaredAdapters is retained (KB-251) as a no-op intake so callers that
+// describe the environment's adapter surface (engine.go's env walk and tests
+// written against the KB-213 surface) keep compiling; the set it used to
+// install gated nothing since the coverage checks were removed. It exists
+// only until those call sites are cleaned up. It is a true no-op since
+// KB-251 removed the coverage machinery.
 func (p *peerSessionProvider) SetDeclaredAdapters(names []string) {
-	p.declared.set(names)
+	_ = names // KB-251: inert — the declared set gates nothing.
 }
 
 // key mirrors Shim.sessionKey (identical algorithm, evaluated from the
@@ -1313,51 +1305,5 @@ func isExpectedStreamClose(err error, extra ...codes.Code) bool {
 	return false
 }
 
-// declaredAdapters is the provider's snapshot of the adapters an
-// environment declares (KB-213) — the adapters its peer pod is expected to
-// host. It is immutable once set and only ever swapped whole, so readers
-// work on stable snapshots. An empty set disables the host's fail-closed
-// checks (pre-KB-213 wiring and mixed fleets).
-type declaredAdapters struct {
-	mu     sync.RWMutex
-	values map[string]bool
-}
-
-// set swaps the snapshot. An empty input clears it.
-func (d *declaredAdapters) set(names []string) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if len(names) == 0 {
-		d.values = nil
-		return
-	}
-	values := make(map[string]bool, len(names))
-	for _, name := range names {
-		values[name] = true
-	}
-	d.values = values
-}
-
-func (d *declaredAdapters) empty() bool {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	return len(d.values) == 0
-}
-
-func (d *declaredAdapters) has(name string) bool {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	return d.values[name]
-}
-
-// snapshot returns the sorted declared names (stable for diagnostics).
-func (d *declaredAdapters) snapshot() []string {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	names := make([]string, 0, len(d.values))
-	for name := range d.values {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
+// KB-251 note: KB-213's declaredAdapters snapshot type was deleted with the
+// coverage gate — nothing reads it any more.
