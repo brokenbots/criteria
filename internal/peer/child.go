@@ -522,7 +522,13 @@ func (r *peerRuntime) watchChild(c *childState) {
 		case <-r.stopWatch:
 			return
 		case <-ticker.C:
-			if adapterhost.ProcessExited(c.handle) {
+			// c.handle is swapped to nil under r.mu by the respawn path
+			// (ensureChild) and by tests; the watcher must read it under
+			// the same lock.
+			r.mu.Lock()
+			handle := c.handle
+			r.mu.Unlock()
+			if handle != nil && adapterhost.ProcessExited(handle) {
 				r.recordExit(c, false)
 				return
 			}

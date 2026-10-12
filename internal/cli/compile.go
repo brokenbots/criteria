@@ -235,12 +235,12 @@ func buildAdaptersJSON(graph *workflow.FSMGraph) []compileAdapter {
 			env = graph.DefaultEnvironment
 		}
 		adapters = append(adapters, compileAdapter{
-			Type:        ad.Type,
-			Name:        ad.Name,
-			OnCrash:     ad.OnCrash,
-			ConfigKeys:  sortedMapKeys(ad.Config),
-			Environment: env,
-			Source:      ad.Source,
+			Type:         ad.Type,
+			Name:         ad.Name,
+			OnCrash:      ad.OnCrash,
+			ConfigKeys:   sortedMapKeys(ad.Config),
+			Environment:  env,
+			Source:       ad.Source,
 			PinnedDigest: ad.PinnedDigest,
 		})
 	}

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brokenbots/criteria/internal/adapterhost"
 	criteriav2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	criteriav1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
@@ -51,7 +51,7 @@ func TestPeerRuntime_EnsureChildRespawnsExitedChild(t *testing.T) {
 	}
 	// Kill the child out from under the runtime exactly once, like an
 	// idle-exit: process gone, no killRequested flag, spec preserved.
-	if err := syscall.Kill(int(killedPid), syscall.SIGKILL); err != nil {
+	if err := syscall.Kill(killedPid, syscall.SIGKILL); err != nil {
 		t.Fatalf("kill child: %v", err)
 	}
 
