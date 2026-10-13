@@ -26,6 +26,7 @@ Values are Go durations (`30s`, `5m`, `1500ms`) unless noted otherwise.
 | `CRITERIA_SESSION_HEARTBEAT_STALL` | duration | `90s` | How long a session log stream may idle with no chunks or heartbeats before the adapter is treated as wedged (CRI-271). |
 | `CRITERIA_STEP_STALL_WINDOW` | duration | `30m` | How long an unbounded step may run with no observable adapter activity before the engine tears it down (KB-25). A zero or negative value disables stall detection. |
 | `CRITERIA_STEP_TIMEOUT_TEARDOWN_WINDOW` | duration | `10s` | Window, opened by an engine-initiated step teardown, during which transport closes are reclassified as teardown consequences instead of session crashes (CRI-287). |
+| `CRITERIA_VERIFY_FAILOVER_BUDGET` | duration | `1m` | How long phase-B adapter verify re-waits for a fresh phone-home line after a transport-class loss (KB-257) before failing the adapter init with the typed budget reason. |
 <!-- END AUTO:TUNABLES -->
 
 ## Override postures
