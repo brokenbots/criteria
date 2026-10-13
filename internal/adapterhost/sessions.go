@@ -1824,12 +1824,14 @@ func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterNam
 	if err != nil {
 		return nil, err
 	}
-	// Closure, not a bare defer: plug is re-assigned by the retry lane when
-	// it adopts a fresh line, and the exit cleanup must abandon the handle
-	// verifyAdapterInfo ends up holding, not the value resolved at entry.
+	// Closure, not a bare defer: the retry lane may adopt a fresh line, and
+	// the exit cleanup must abandon the handle verifyAdapterInfo ends up
+	// holding, not the value resolved at entry.
 	defer func() { abandonVerifyHandle(plug) }()
 
-	info, infoErr := m.verifyHandshakeInfoWithRetry(ctx, name, adapterName, scope, &plug)
+	var infoErr error
+	var info Info
+	plug, info, infoErr = m.verifyHandshakeInfoWithRetry(ctx, name, adapterName, scope, plug)
 	if infoErr != nil {
 		return nil, infoErr
 	}
@@ -1935,33 +1937,34 @@ func abandonVerifyHandle(h Handle) {
 	h.Kill()
 }
 
-// verifyHandshakeInfoWithRetry runs the Verify handshake (Info) with the
-// KB-257 fresh-line retry lane. A transport-class handshake loss on a
-// remote adapter — the pod's single accepted dial being closed while the
-// verify Info is in flight (Canceled / "grpc: the client connection is
-// closing") — does not fail the subworkflow body init atomically: the lane
-// re-waits for the pod's re-dial through the shim's WaitForFreshHandle
-// (KB-232-era atomic registry + waiter registration, bounded by the
-// existing KB-70 session-wait budgets) and re-runs the handshake on the
-// fresh line. Each failed round abandons the dead handle — supervised and
-// phone-home bridge handles are left for their owners (the shim cleans up
-// dead sessions) and the loop only ever stops when the handshake
-// succeeds, fails semantically, the run context is torn down, or the
-// shim's wait budgets expire (typed VerifyHandshakeRetryExhaustedError).
-// Non-transport failures and hosts without a remote lane stay fail-fast
-// under the plain handshake wrap, exactly as before the lane.
-func (m *SessionManager) verifyHandshakeInfoWithRetry(ctx context.Context, name, adapterName, scope string, plug *Handle) (Info, error) {
-	info, infoErr := (*plug).Info(ctx)
+// verifyHandshakeInfoWithRetry is the KB-257 fresh-line retry lane. A
+// transport-class handshake loss on a remote adapter — the pod's single
+// accepted dial being closed while the verify Info is in flight (Canceled /
+// "grpc: the client connection is closing") — does not fail the subworkflow
+// body init atomically: the lane re-waits for the pod's re-dial through the
+// shim's WaitForFreshHandle (KB-232-era atomic registry + waiter
+// registration, bounded by the existing KB-70 session-wait budgets) and
+// re-runs the handshake on the fresh line. Each failed round abandons the
+// dead handle — supervised and phone-home bridge handles are left for their
+// owners (the shim cleans up dead sessions) — and the loop only ever stops
+// when the handshake succeeds, fails semantically, the run context is torn
+// down, or the shim's wait budgets expire (typed
+// VerifyHandshakeRetryExhaustedError). Non-transport failures and hosts
+// without a remote lane stay fail-fast under the plain handshake wrap,
+// exactly as before the lane.
+func (m *SessionManager) verifyHandshakeInfoWithRetry(ctx context.Context, name, adapterName, scope string, initial Handle) (Handle, Info, error) {
+	adopted := initial
+	info, infoErr := adopted.Info(ctx)
 	if infoErr == nil {
-		return info, nil
+		return adopted, info, nil
 	}
 	// Host teardown and semantic failures keep the exact historical
 	// fail-fast shape; the lane never turns them into retries.
 	if ctx.Err() != nil || !verifyHandshakeTransportLost(infoErr) {
-		return Info{}, fmt.Errorf("adapter %q handshake: %w", adapterName, infoErr)
+		return adopted, Info{}, fmt.Errorf("adapter %q handshake: %w", adapterName, infoErr)
 	}
 
-	stale := *plug
+	stale := adopted
 	for {
 		// Only a remote adapter has a re-dial lane: the pod phones home to
 		// the same shim that served the first handshake. A local handle
@@ -1969,7 +1972,7 @@ func (m *SessionManager) verifyHandshakeInfoWithRetry(ctx context.Context, name,
 		// fail-fast.
 		shim, ok := m.remoteShimForAdapter(name)
 		if !ok {
-			return Info{}, fmt.Errorf("adapter %q handshake: %w", adapterName, infoErr)
+			return adopted, Info{}, fmt.Errorf("adapter %q handshake: %w", adapterName, infoErr)
 		}
 
 		// Wait atomically for the pod's re-dial (registry peek + waiter
@@ -1978,9 +1981,9 @@ func (m *SessionManager) verifyHandshakeInfoWithRetry(ctx context.Context, name,
 		fresh, waitErr := shim.WaitForFreshHandle(ctx, name, scope, stale)
 		if waitErr != nil {
 			if ctx.Err() != nil {
-				return Info{}, fmt.Errorf("adapter %q handshake: %w", adapterName, infoErr)
+				return adopted, Info{}, fmt.Errorf("adapter %q handshake: %w", adapterName, infoErr)
 			}
-			return Info{}, &VerifyHandshakeRetryExhaustedError{
+			return adopted, Info{}, &VerifyHandshakeRetryExhaustedError{
 				Adapter: name,
 				Scope:   scope,
 				Reason:  VerifyHandshakeRetryExhaustedReason,
@@ -1990,17 +1993,17 @@ func (m *SessionManager) verifyHandshakeInfoWithRetry(ctx context.Context, name,
 		}
 		abandonVerifyHandle(stale)
 		stale = fresh
-		*plug = fresh
+		adopted = fresh
 
-		info, infoErr = fresh.Info(ctx)
+		info, infoErr = adopted.Info(ctx)
 		if infoErr == nil {
-			return info, nil
+			return adopted, info, nil
 		}
 		// Host teardown or a semantic failure on the fresh line ends the
 		// lane with the plain wrap; another transport loss loops for the
 		// pod's next re-dial until the shim's budgets expire.
 		if ctx.Err() != nil || !verifyHandshakeTransportLost(infoErr) {
-			return Info{}, fmt.Errorf("adapter %q handshake: %w", adapterName, infoErr)
+			return adopted, Info{}, fmt.Errorf("adapter %q handshake: %w", adapterName, infoErr)
 		}
 	}
 }
