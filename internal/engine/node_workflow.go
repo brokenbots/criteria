@@ -74,15 +74,20 @@ func runWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry str
 		return "", nil, nil, fmt.Errorf("%s", diags.Error())
 	}
 
-	bodyOrder, childSt, err := startWorkflowBody(ctx, body, bodyEntry, childVars, workflowDir, deps, rlc, scopeName, parallelCeiling, parallelSem, parallelSemCache, parallelSemMu, crashedSessions, ancestors)
+	bodyOrder, childSt, err := startWorkflowBody(ctx, body, bodyEntry, childVars, workflowDir, deps, rlc, scopeName, parallelCeiling, parallelSem, parallelSemCache, parallelSemMu, crashedSessions, ancestors, rlc.detachedRecords())
 	if err != nil {
 		return "", nil, nil, err
 	}
-	defer func() { tearDownScopeAdapters(ctx, bodyOrder, deps, rlc) }()
+	// KB-257 churn kill: a subworkflow body's exit DETACHES its per-scope
+	// sessions (keeps the live pod connection + shim registration + session
+	// manager binding) instead of releasing them. Re-entry of the same body
+	// re-opens the SAME session through the CRI-145 skip; the run's final
+	// teardown releases what the bodies detached. Releasing here was the
+	// factory of the teardown→rotate→re-dial→handshake-race class.
+	defer func() { detachBodyScopeAdapters(ctx, bodyOrder, deps, rlc) }()
 
 	return runWorkflowBodyLoop(ctx, body, childSt, deps)
 }
-
 func resolveBodyEntry(body *workflow.FSMGraph, bodyEntry string) (string, error) {
 	if bodyEntry == "" {
 		bodyEntry = body.InitialState
@@ -93,7 +98,7 @@ func resolveBodyEntry(body *workflow.FSMGraph, bodyEntry string) (string, error)
 	return bodyEntry, nil
 }
 
-func startWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry string, childVars map[string]cty.Value, workflowDir string, deps Deps, rlc *remoteLifecycleContext, scopeName string, parallelCeiling int, parallelSem chan struct{}, parallelSemCache map[parallelSemKey]chan struct{}, parallelSemMu *sync.Mutex, crashedSessions *crashedSessionRefs, ancestors []string) ([]string, *RunState, error) {
+func startWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry string, childVars map[string]cty.Value, workflowDir string, deps Deps, rlc *remoteLifecycleContext, scopeName string, parallelCeiling int, parallelSem chan struct{}, parallelSemCache map[parallelSemKey]chan struct{}, parallelSemMu *sync.Mutex, crashedSessions *crashedSessionRefs, ancestors []string, detached map[string]*adapterLifecycleRecord) ([]string, *RunState, error) {
 	// CRI-88: subworkflow secret origins are not independently tracked today; the
 	// child scope already carries resolved values from the parent. Passing nil
 	// means adapter session snapshots for child-scope secrets fall back to an
@@ -131,6 +136,23 @@ func startWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry s
 		// wherever they execute — parallel iteration states and subworkflow
 		// bodies included.
 		CrashedSessions: crashedSessions,
+	}
+	// KB-257 re-entry reuse: hand the detached records back to a body that
+	// continues the same engagements. Re-adopting each record into this
+	// scope's lifecycle means (a) phase-A's maybeRotateRemoteScope finds
+	// the persisted instance record for the SAME scope instance via
+	// tryReuseScopeInstance — no rotation, token stays live, NO re-dial and
+	// therefore NO handshake race — and (b) this body's exit re-detaches
+	// the record (keeping the engagement alive) instead of releasing it.
+	// A nil/empty detached map is a body whose scope owns fresh sessions
+	// (first entry, or a body re-declaring a PARENT adapter — the parent's
+	// records never enter the detachment ledger).
+	if rlc != nil && len(detached) > 0 {
+		for id := range detached {
+			if rec := detached[id]; rec != nil && rec.adapterName == id {
+				rlc.adoptDetached(rec)
+			}
+		}
 	}
 	return bodyOrder, childSt, nil
 }
