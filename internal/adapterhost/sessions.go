@@ -18,6 +18,8 @@ import (
 
 	"github.com/opencontainers/go-digest"
 	"github.com/zclconf/go-cty/cty"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
@@ -1806,9 +1808,11 @@ func (m *SessionManager) checkDuplicateLocked(name string) error {
 }
 
 // verifyAdapterInfo performs the phase-1 adapter handshake in a neutral launch
-// directory: it resolves the binary, calls Info, validates config and secrets,
-// validates sandbox primitive availability for strict sandbox adapters, and
-// kills the temporary handle. It returns the adapter capabilities on success.
+// directory: it resolves the binary, calls Info (with the KB-257 fresh-line
+// retry lane for transport-class losses on remote adapters), validates config
+// and secrets, validates sandbox primitive availability for strict sandbox
+// adapters, and abandons the verify handle when done. It returns the adapter
+// capabilities on success.
 func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterName, scope string, config, secrets map[string]string) ([]string, error) {
 	// Phase 1 uses a neutral launch directory. The working-directory-dependent,
 	// side-effecting parts of sandbox setup (cgroup directory creation, the bwrap
@@ -1820,31 +1824,9 @@ func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterNam
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		// A peer-supervised handle wraps the peer's one real adapter child,
-		// not a throwaway verification handle: killing it would destroy the
-		// live child and poison the peer's crash classification
-		// (killRequested turns the next genuine crash into a graceful exit).
-		// The peer owns its child's lifecycle (supervision + on_crash
-		// policy), so phase-1 handshake verification leaves it running.
-		//
-		// The same protection applies to a phone-home bridge handle
-		// (PhoneHomeBridgeHandle, KB-232): the handle transports the
-		// adapter session's live remote bridge — killing it severs the
-		// session the pod established on its (single) accepted dial, and
-		// the subsequent re-establishment race is exactly the never-
-		// established per-scope session KB-232 forbids.
-		if _, supervised := plug.(SupervisedHandle); !supervised {
-			if _, bridge := plug.(PhoneHomeBridgeHandle); !bridge {
-				plug.Kill()
-			}
-		}
-	}()
+	defer abandonVerifyHandle(plug)
 
-	info, infoErr := plug.Info(ctx)
-	if infoErr != nil {
-		return nil, fmt.Errorf("adapter %q handshake: %w", adapterName, infoErr)
-	}
+	info, infoErr := m.verifyHandshakeInfoWithRetry(ctx, name, adapterName, scope, &plug)
 
 	if stateErr := validateStateHandshake(adapterName, info.AdapterInfo.State); stateErr != nil {
 		return nil, stateErr
@@ -1868,6 +1850,153 @@ func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterNam
 	m.cacheAdapterInfo(name, &info.AdapterInfo)
 
 	return info.Capabilities, nil
+}
+
+// VerifyHandshakeRetryExhaustedReason is the typed reason tag of a Verify
+// handshake whose retryable transport losses did not converge within the
+// existing session-wait budgets (KB-257): the fresh-line re-dial lane gave
+// up after the shim reported its budget expiry. The tag is stable so that
+// failure reasons carried upstream (reason lanes, incident greps) can match
+// the class mechanically.
+const VerifyHandshakeRetryExhaustedReason = "handshake_retry_exhausted"
+
+// VerifyHandshakeRetryExhaustedError is the typed failure of the verify
+// fresh-line retry lane: the handshake kept failing with transport-class
+// losses and the shim's wait for the adapter's re-dial ended at its budget
+// (KB-70) instead of converging. Non-transport handshake failures never
+// take this shape — they stay fail-fast under the plain handshake wrap.
+type VerifyHandshakeRetryExhaustedError struct {
+	Adapter string // definition identity ("<type>.<name>") whose handshake was retried
+	Scope   string // verify scope the fresh line was awaited for
+	Reason  string // stable machine-readable reason tag (VerifyHandshakeRetryExhaustedReason)
+	LastErr error  // last transport-class handshake error observed
+	WaitErr error  // the shim's typed wait failure that ended the lane
+}
+
+func (e *VerifyHandshakeRetryExhaustedError) Error() string {
+	if e.LastErr == nil {
+		return fmt.Sprintf("adapter %q handshake: retryable transport loss did not converge within the session wait budget (reason=%s): wait result: %v",
+			e.Adapter, e.Reason, e.WaitErr)
+	}
+	return fmt.Sprintf("adapter %q handshake: retryable transport loss did not converge within the session wait budget (reason=%s): last handshake error: %v: wait result: %v",
+		e.Adapter, e.Reason, e.LastErr, e.WaitErr)
+}
+
+func (e *VerifyHandshakeRetryExhaustedError) Unwrap() error { return e.WaitErr }
+
+// verifyHandshakeTransportLost reports whether a Verify handshake (Info)
+// failure is a transport-class loss of a live line: a gRPC Canceled or
+// Unavailable status, or the legacy "grpc: the client connection is
+// closing" text. Host-side cancellation is excluded by callers before
+// consulting this predicate — a canceled run context is teardown, not a
+// transport loss. Semantic handshake failures (digest, token, config or
+// state validation) never classify as transport losses and stay fail-fast.
+func verifyHandshakeTransportLost(err error) bool {
+	if err == nil {
+		return false
+	}
+	switch status.Code(err) {
+	case codes.Canceled, codes.Unavailable:
+		return true
+	}
+	return strings.Contains(err.Error(), "the client connection is closing")
+}
+
+// abandonVerifyHandle tears down a verify-phase handle. A peer-supervised
+// handle wraps the peer's one real adapter child, not a throwaway
+// verification handle: killing it would destroy the live child and poison
+// the peer's crash classification (killRequested turns the next genuine
+// crash into a graceful exit). The peer owns its child's lifecycle
+// (supervision + on_crash policy), so phase-1 handshake verification leaves
+// it running.
+//
+// The same protection applies to a phone-home bridge handle
+// (PhoneHomeBridgeHandle, KB-232): the handle transports the adapter
+// session's live remote bridge — killing it severs the session the pod
+// established on its (single) accepted dial, and the subsequent
+// re-establishment race is exactly the never-established per-scope session
+// KB-232 forbids.
+func abandonVerifyHandle(h Handle) {
+	if h == nil {
+		return
+	}
+	if _, supervised := h.(SupervisedHandle); supervised {
+		return
+	}
+	if _, bridge := h.(PhoneHomeBridgeHandle); bridge {
+		return
+	}
+	h.Kill()
+}
+
+// verifyHandshakeInfoWithRetry runs the Verify handshake (Info) with the
+// KB-257 fresh-line retry lane. A transport-class handshake loss on a
+// remote adapter — the pod's single accepted dial being closed while the
+// verify Info is in flight (Canceled / "grpc: the client connection is
+// closing") — does not fail the subworkflow body init atomically: the lane
+// re-waits for the pod's re-dial through the shim's WaitForFreshHandle
+// (KB-232-era atomic registry + waiter registration, bounded by the
+// existing KB-70 session-wait budgets) and re-runs the handshake on the
+// fresh line. Each failed round abandons the dead handle — supervised and
+// phone-home bridge handles are left for their owners (the shim cleans up
+// dead sessions) and the loop only ever stops when the handshake
+// succeeds, fails semantically, the run context is torn down, or the
+// shim's wait budgets expire (typed VerifyHandshakeRetryExhaustedError).
+// Non-transport failures and hosts without a remote lane stay fail-fast
+// under the plain handshake wrap, exactly as before the lane.
+func (m *SessionManager) verifyHandshakeInfoWithRetry(ctx context.Context, name, adapterName, scope string, plug *Handle) (Info, error) {
+	info, infoErr := (*plug).Info(ctx)
+	if infoErr == nil {
+		return info, nil
+	}
+	// Host teardown and semantic failures keep the exact historical
+	// fail-fast shape; the lane never turns them into retries.
+	if ctx.Err() != nil || !verifyHandshakeTransportLost(infoErr) {
+		return Info{}, fmt.Errorf("adapter %q handshake: %w", adapterName, infoErr)
+	}
+
+	stale := *plug
+	for {
+		// Only a remote adapter has a re-dial lane: the pod phones home to
+		// the same shim that served the first handshake. A local handle
+		// cannot converge on a re-dial, so its transport loss stays
+		// fail-fast.
+		shim, ok := m.remoteShimForAdapter(name)
+		if !ok {
+			return Info{}, fmt.Errorf("adapter %q handshake: %w", adapterName, infoErr)
+		}
+
+		// Wait atomically for the pod's re-dial (registry peek + waiter
+		// registration under the shim's lock, budgets re-armed per wait);
+		// stale filters the dead line the registry may still hold.
+		fresh, waitErr := shim.WaitForFreshHandle(ctx, name, scope, stale)
+		if waitErr != nil {
+			if ctx.Err() != nil {
+				return Info{}, fmt.Errorf("adapter %q handshake: %w", adapterName, infoErr)
+			}
+			return Info{}, &VerifyHandshakeRetryExhaustedError{
+				Adapter: name,
+				Scope:   scope,
+				Reason:  VerifyHandshakeRetryExhaustedReason,
+				LastErr: infoErr,
+				WaitErr: waitErr,
+			}
+		}
+		abandonVerifyHandle(stale)
+		stale = fresh
+		*plug = fresh
+
+		info, infoErr = fresh.Info(ctx)
+		if infoErr == nil {
+			return info, nil
+		}
+		// Host teardown or a semantic failure on the fresh line ends the
+		// lane with the plain wrap; another transport loss loops for the
+		// pod's next re-dial until the shim's budgets expire.
+		if ctx.Err() != nil || !verifyHandshakeTransportLost(infoErr) {
+			return Info{}, fmt.Errorf("adapter %q handshake: %w", adapterName, infoErr)
+		}
+	}
 }
 
 // validateStateHandshake checks an adapter's checkpoint-state declaration
