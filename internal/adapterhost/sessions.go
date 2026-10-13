@@ -1824,9 +1824,15 @@ func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterNam
 	if err != nil {
 		return nil, err
 	}
-	defer abandonVerifyHandle(plug)
+	// Closure, not a bare defer: plug is re-assigned by the retry lane when
+	// it adopts a fresh line, and the exit cleanup must abandon the handle
+	// verifyAdapterInfo ends up holding, not the value resolved at entry.
+	defer func() { abandonVerifyHandle(plug) }()
 
 	info, infoErr := m.verifyHandshakeInfoWithRetry(ctx, name, adapterName, scope, &plug)
+	if infoErr != nil {
+		return nil, infoErr
+	}
 
 	if stateErr := validateStateHandshake(adapterName, info.AdapterInfo.State); stateErr != nil {
 		return nil, stateErr
