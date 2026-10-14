@@ -155,6 +155,9 @@ type compileSubworkflow struct {
 type compileOutcome struct {
 	Name string `json:"name"`
 	Next string `json:"next"`
+	// Description is the author-stated outcome semantics (KB-259): rendered
+	// by agent adapters in the allowed-outcomes menu. Empty when unset.
+	Description string `json:"description,omitempty"`
 }
 
 type compileOutput struct {
@@ -253,7 +256,7 @@ func buildStepsJSON(graph *workflow.FSMGraph) []compileStep {
 		st := graph.Steps[name]
 		outcomes := make([]compileOutcome, 0, len(st.Outcomes))
 		for _, outcomeName := range sortedMapKeys(st.Outcomes) {
-			outcomes = append(outcomes, compileOutcome{Name: outcomeName, Next: st.Outcomes[outcomeName].Next})
+			outcomes = append(outcomes, compileOutcome{Name: outcomeName, Next: st.Outcomes[outcomeName].Next, Description: st.Outcomes[outcomeName].Description})
 		}
 		var timeout string
 		if st.Timeout > 0 {

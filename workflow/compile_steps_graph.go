@@ -87,7 +87,7 @@ func compileOneOutcome(sp *StepSpec, node *StepNode, g *FSMGraph, opts CompileOp
 	if nextStr == "" {
 		return diags
 	}
-	compiled := &CompiledOutcome{Name: o.Name, Next: nextStr, RequireComment: o.RequireComment, Fallback: o.Fallback}
+	compiled := &CompiledOutcome{Name: o.Name, Next: nextStr, RequireComment: o.RequireComment, Fallback: o.Fallback, Description: o.Description}
 	schemaType, schemaDefaults, d := compileOutcomeSchemaAttr(sp.Name, o.Name, o.Schema, g)
 	diags = append(diags, d...)
 	// Aggregate iterating outcomes (next != "_continue") fire after all
