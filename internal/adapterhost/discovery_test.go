@@ -61,6 +61,24 @@ func TestIsValidAdapterNameDefinitionGrammar(t *testing.T) {
 	}
 }
 
+// TestDefinitionType pins the exported type-half split the peer's own
+// binary-location paths share with adapterhost discovery (KB-246): bare
+// names pass through, definition identities keep only the type half —
+// binaries install and are listed by type. Callers legitimately pass only
+// IsValidAdapterName-accepted names, so multi-dot names never reach here.
+func TestDefinitionType(t *testing.T) {
+	for _, tc := range []struct{ name, want string }{
+		{"noop", "noop"},
+		{"noop.demo", "noop"},
+		{"copilot.branch_repair", "copilot"},
+		{"claude_x.y_z", "claude_x"},
+	} {
+		if got := DefinitionType(tc.name); got != tc.want {
+			t.Errorf("DefinitionType(%q) = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
 // TestDiscoverBinaryDefinitionIdentityResolvesByType is the KB-246 regression,
 // flat-root half: a definition identity ("noop.demo") discovers the type-keyed
 // binary "criteria-adapter-noop" instead of failing with ErrInvalidAdapterName.

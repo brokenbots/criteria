@@ -143,7 +143,12 @@ func defaultBinaryPath(name string) string {
 	if name == "" {
 		return ""
 	}
-	return "/usr/local/bin/criteria-adapter-" + name
+	// Binaries install and live on PATH by TYPE (KB-246, mirroring the
+	// adapterhost DiscoverBinary split and the peer's binary-location paths):
+	// a definition-keyed identity ("shell.develop", KB-242) derives its
+	// conventional path from the type half while the hosted child stays keyed
+	// by the definition identity.
+	return "/usr/local/bin/criteria-adapter-" + internaladapterhost.DefinitionType(name)
 }
 
 func nameFromBinary(binary string) string {

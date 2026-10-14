@@ -109,7 +109,7 @@ func DiscoverBinary(name string) (string, error) {
 	if !IsValidAdapterName(name) {
 		return "", fmt.Errorf("%w %q", ErrInvalidAdapterName, name)
 	}
-	binary := AdapterBinaryName(definitionType(name))
+	binary := AdapterBinaryName(DefinitionType(name))
 	roots := adaptersRoots()
 	searched := make([]string, 0, len(roots))
 	for _, root := range roots {
@@ -140,7 +140,7 @@ func DiscoverBinaryAt(name, digestEncoded string) (string, error) {
 	if !IsValidAdapterName(name) {
 		return "", fmt.Errorf("%w %q", ErrInvalidAdapterName, name)
 	}
-	binary := AdapterBinaryName(definitionType(name))
+	binary := AdapterBinaryName(DefinitionType(name))
 	roots := adaptersRoots()
 	searched := make([]string, 0, len(roots))
 	for _, root := range roots {
@@ -186,12 +186,15 @@ func IsValidAdapterName(name string) bool {
 	return isValidAdapterNameSegment(typ) && isValidAdapterNameSegment(def)
 }
 
-// definitionType returns the adapter type half of an adapter identity: the
-// bare name passes through; a definition identity "<type>.<name>" strips the
-// definition half so binaries (installed and listed by type) are discoverable
-// under the definition-keyed child grammar (KB-246). Callers must only pass
-// names already validated with IsValidAdapterName.
-func definitionType(name string) string {
+// DefinitionType returns the adapter type half of an adapter identity: a
+// bare (legacy flat) name passes through; a definition identity
+// "<type>.<name>" (KB-242's per-definition child keying) strips the
+// definition half so binaries — installed and listed by type — are
+// discoverable under the definition-keyed child grammar (KB-246). Consumers
+// outside this package (e.g. the peer's own binary-location paths) share the
+// same split by calling it directly. Callers must only pass names already
+// validated with IsValidAdapterName.
+func DefinitionType(name string) string {
 	typ, _, hasDef := strings.Cut(name, ".")
 	if !hasDef {
 		return name
