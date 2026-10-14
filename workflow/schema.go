@@ -551,16 +551,11 @@ type AdapterInfo struct {
 //   - "fallback": at most one per step; fires when the adapter produced no
 //     finalized result at all (distinct from the reserved "default" outcome,
 //     which maps an adapter-returned unmapped name).
-//   - "schema": either a `type.<name>` traversal into a named type block or an
-//     inline typeexpr constraint; both resolve to the same cty.Type. The
-//     schema's fields must be a subset of the adapter's declared output schema
-//     (compile error otherwise). Terminality and static comment authoring are
-//     engine/runtime concerns and are deliberately not outcome attributes.
-//   - "require_comment": the outcome requires a non-empty adapter finalize
-//     comment; an empty comment is a host-rejected result.
-//   - "fallback": at most one per step; fires when the adapter produced no
-//     finalized result at all (distinct from the reserved "default" outcome,
-//     which maps an adapter-returned unmapped name).
+//
+// KB-259 adds the optional "description" attribute: author-stated outcome
+// semantics carried on CompiledOutcome for agent-facing rendering. It is
+// compile-validated but runtime-inert — it never alters contract validation
+// or routing.
 type OutcomeSpec struct {
 	Name string         `hcl:"name,label"`
 	Next hcl.Expression `hcl:"next"`

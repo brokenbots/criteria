@@ -32,6 +32,9 @@ import (
 //     handshake output schema); it must be object-typed.
 //   - `require_comment` and `fallback` compile onto the outcome; at most one
 //     outcome per step may set fallback.
+//   - the optional "description" attribute (KB-259) compiles onto the outcome
+//     as author-stated, agent-facing semantics. It never affects validation
+//     or routing.
 //
 // The optional "output" expression is extracted from the outcome's Remain body
 // and stored in CompiledOutcome.OutputExpr. The optional "write" blocks are
