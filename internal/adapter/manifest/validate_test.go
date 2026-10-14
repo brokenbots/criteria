@@ -17,12 +17,36 @@ func validManifest() *manifest.Manifest {
 		SourceURL:          "https://github.com/brokenbots/criteria",
 		Platforms:          []manifest.Platform{{OS: "linux", Arch: "amd64"}},
 		SDKProtocolVersion: 2,
+		// KB-264: the adapter's default output type. Every manifest carries
+		// one; the shell/cp shapes below mirror the real adapters.
+		OutputSchema: manifest.Schema{
+			Fields: map[string]manifest.SchemaField{
+				"stdout": {Type: "string"},
+			},
+		},
 	}
 }
 
-func TestValidate_Success(t *testing.T) {
+// KB-264: the noop conformance fixture's explicitly-empty output_schema is
+// its deliberate permissive passthrough declaration; validation enforces
+// declared-field shapes only. Production adapters (shell, copilot) declare a
+// real default output type, pinned by the conformance suite.
+func TestValidate_OutputSchemaPermissiveEmpty(t *testing.T) {
 	m := validManifest()
-	require.NoError(t, m.Validate())
+	m.OutputSchema = manifest.Schema{}
+	require.NoError(t, m.Validate(), "empty = permissive passthrough declaration")
+
+	m2 := validManifest()
+	m2.OutputSchema = manifest.Schema{Fields: map[string]manifest.SchemaField{
+		"result": {Type: "string"},
+	}}
+	require.NoError(t, m2.Validate())
+
+	m3 := validManifest()
+	m3.OutputSchema = manifest.Schema{Fields: map[string]manifest.SchemaField{
+		"result": {Type: "not-a-type"},
+	}}
+	require.Error(t, m3.Validate(), "declared fields still validate")
 }
 
 func TestValidate_SchemaVersion(t *testing.T) {

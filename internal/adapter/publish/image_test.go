@@ -55,6 +55,11 @@ func writeMinimalManifest(t *testing.T) string {
 		SourceURL:          "https://github.com/brokenbots/test",
 		Platforms:          []manifest.Platform{{OS: "linux", Arch: "amd64"}},
 		SDKProtocolVersion: 2,
+		// KB-264: output_schema (the adapter's default output type) is
+		// required by validation.
+		OutputSchema: manifest.Schema{Fields: map[string]manifest.SchemaField{
+			"result": {Type: "string"},
+		}},
 	}
 	if err := m.Validate(); err != nil {
 		t.Fatalf("seed manifest invalid: %v", err)

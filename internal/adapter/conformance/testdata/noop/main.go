@@ -54,7 +54,13 @@ func (s *noopService) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoRespon
 		SourceUrl:          "https://github.com/brokenbots/criteria",
 		SdkProtocolVersion: "2",
 		Platforms:          []string{"linux/amd64", "linux/arm64", "darwin/arm64"},
-		Capabilities:       []string{"parallel_safe", "adapter_tools", "permission_gating", "permission_request_forwarding"},
+		Capabilities: []string{"parallel_safe", "adapter_tools", "permission_gating", "permission_request_forwarding"},
+		// KB-264: output_schema is the adapter's default output type. The
+		// noop is the unconstrained conformance fixture (its result carries
+		// whatever a test exercise projects); the explicitly empty fields
+		// map is its deliberate permissive passthrough declaration — the
+		// compile-time subset check constrains only declared fields.
+		OutputSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{}},
 	}, nil
 }
 

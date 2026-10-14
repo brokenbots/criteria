@@ -107,6 +107,16 @@ func validatePlatforms(ps []Platform) error {
 }
 
 func validateSchemas(m *Manifest) error {
+	// KB-264: an adapter's output_schema IS its default output type — the
+	// shape untyped outcomes expose to the engine's output projection
+	// (shell: exit_code/stdout/stderr; copilot: outcome/reason). Validation
+	// enforces each declared field's type shape; the REQUIRED/non-empty
+	// enforcement lives in the conformance suite (production adapters must
+	// declare a real default shape — shell and copilot do), while the
+	// conformance noop fixture keeps an explicitly-empty schema as its
+	// deliberate permissive passthrough type (it simulates arbitrary shapes
+	// by design, and the compile-time subset check applies only to declared
+	// fields).
 	for name, f := range m.ConfigSchema.Fields {
 		if err := validateField("config_schema", name, f); err != nil {
 			return err
