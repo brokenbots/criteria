@@ -208,7 +208,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `state "name" { ... }`
 
-- **Source:** [`workflow/schema.go:611`](../workflow/schema.go#L611)
+- **Source:** [`workflow/schema.go:612`](../workflow/schema.go#L612)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -221,7 +221,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `wait "name" { ... }`
 
-- **Source:** [`workflow/schema.go:594`](../workflow/schema.go#L594)
+- **Source:** [`workflow/schema.go:595`](../workflow/schema.go#L595)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -234,7 +234,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `approval "name" { ... }`
 
-- **Source:** [`workflow/schema.go:603`](../workflow/schema.go#L603)
+- **Source:** [`workflow/schema.go:604`](../workflow/schema.go#L604)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -247,13 +247,13 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `switch "name" { ... }`
 
-- **Source:** [`workflow/schema.go:622`](../workflow/schema.go#L622)
+- **Source:** [`workflow/schema.go:623`](../workflow/schema.go#L623)
 - **Labels:** `name`
 - **Nested blocks:** [`match`](#match---), [`default`](#default---)
 
 ### `permissions { ... }`
 
-- **Source:** [`workflow/schema.go:675`](../workflow/schema.go#L675)
+- **Source:** [`workflow/schema.go:676`](../workflow/schema.go#L676)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -263,7 +263,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `policy { ... }`
 
-- **Source:** [`workflow/schema.go:642`](../workflow/schema.go#L642)
+- **Source:** [`workflow/schema.go:643`](../workflow/schema.go#L643)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -306,13 +306,14 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `outcome "name" { ... }`
 
-- **Source:** [`workflow/schema.go:564`](../workflow/schema.go#L564)
+- **Source:** [`workflow/schema.go:559`](../workflow/schema.go#L559)
 - **Labels:** `name`
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
 |---|---|---|---|
 | `next` | hcl.Expression | yes | _(no description)_ |
+| `description` | string | no | Description documents the outcome for agent-facing rendering (KB-259): the copilot adapter renders it in the allowed-outcomes menu so a model chooses a verdict from the author's stated semantics instead of prompt prose. Compile-validated, runtime-inert — it never alters contract validation or routing. |
 | `schema` | hcl.Expression | no | Schema is the payload contract: type.<name> traversal or an inline typeexpr constraint; must subset the adapter's output schema. |
 | `require_comment` | bool | no | RequireComment rejects a result with an empty adapter comment. |
 | `fallback` | bool | no | Fallback marks the per-step outcome that fires when the adapter produced no finalized result (max one). |
@@ -322,17 +323,17 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `match { ... }`
 
-- **Source:** [`workflow/schema.go:631`](../workflow/schema.go#L631)
+- **Source:** [`workflow/schema.go:632`](../workflow/schema.go#L632)
 - **Additional attributes:** captures: condition (required), next (required), output (optional)
 
 ### `default { ... }`
 
-- **Source:** [`workflow/schema.go:637`](../workflow/schema.go#L637)
+- **Source:** [`workflow/schema.go:638`](../workflow/schema.go#L638)
 - **Additional attributes:** captures: next (required), output (optional)
 
 ### `write { ... }`
 
-- **Source:** [`workflow/schema.go:580`](../workflow/schema.go#L580)
+- **Source:** [`workflow/schema.go:581`](../workflow/schema.go#L581)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
