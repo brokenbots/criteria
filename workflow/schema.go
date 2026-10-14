@@ -564,6 +564,12 @@ type AdapterInfo struct {
 type OutcomeSpec struct {
 	Name string         `hcl:"name,label"`
 	Next hcl.Expression `hcl:"next"`
+	// Description documents the outcome for agent-facing rendering (KB-259):
+	// the copilot adapter renders it in the allowed-outcomes menu so a model
+	// chooses a verdict from the author's stated semantics instead of prompt
+	// prose. Compile-validated, runtime-inert — it never alters contract
+	// validation or routing.
+	Description string `hcl:"description,optional"`
 	// Schema is the payload contract: type.<name> traversal or an inline
 	// typeexpr constraint; must subset the adapter's output schema.
 	Schema hcl.Expression `hcl:"schema,optional"`
@@ -919,6 +925,10 @@ type CompiledOutcome struct {
 	// at all (the adapter never finalized), distinct from DefaultOutcome which
 	// maps an adapter-returned unmapped outcome name.
 	Fallback bool
+	// Description copies the outcome's description attribute (KB-259):
+	// author-stated semantics for agent-facing rendering (the copilot
+	// adapter's allowed-outcomes menu). Compile-validated, runtime-inert.
+	Description string
 }
 
 // ReturnSentinel is the reserved next value that signals scope-exit.
