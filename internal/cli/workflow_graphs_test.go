@@ -365,8 +365,8 @@ func TestWorkflowGraphs_LocalFlatShapeRegression(t *testing.T) {
 	}
 
 	entries := assertCRI299FlatLayers(t, first.Payload)
-	if len(entries) != 2 {
-		t.Fatalf("payload has %d sibling layers, want 2 (every layer its own entry, at every depth)", len(entries))
+	if len(entries) != 3 {
+		t.Fatalf("payload has %d sibling layers, want 3 (root + 2 subworkflow layers)", len(entries))
 	}
 
 	// The wire layer entries carry the compile-JSON layer values unchanged:
@@ -377,7 +377,14 @@ func TestWorkflowGraphs_LocalFlatShapeRegression(t *testing.T) {
 	}
 	compileGrandLayer := compileLayers[0]["body"].(map[string]any)["subworkflows"].([]any)[0].(map[string]any)
 
-	childEntry := entries[0]
+	// KB-253: entries[0] is the root layer; layers[1] is the top-level
+	// subworkflow (the compile JSON's own nested shape is unaffected).
+	rootEntry := entries[0]
+	if got := rootEntry["name"]; got != "root" {
+		t.Fatalf("first layer name = %v, want root", got)
+	}
+
+	childEntry := entries[1]
 	if got := childEntry["name"]; got != compileLayers[0]["name"] {
 		t.Fatalf("top-level layer name = %v, want %v", got, compileLayers[0]["name"])
 	}
@@ -397,7 +404,7 @@ func TestWorkflowGraphs_LocalFlatShapeRegression(t *testing.T) {
 	// Depth 2: grand is its own sibling entry right after child, in the same
 	// wire shape, with its compiled body content preserved (grand is a leaf
 	// in the compile JSON too, so the bodies match exactly).
-	grandEntry := entries[1]
+	grandEntry := entries[2]
 	if got := grandEntry["name"]; got != compileGrandLayer["name"] {
 		t.Fatalf("sibling layer name = %v, want %v", got, compileGrandLayer["name"])
 	}
@@ -433,13 +440,18 @@ func TestWorkflowGraphs_LocalNoSubworkflowControl(t *testing.T) {
 	}
 
 	var layers struct {
-		Subworkflows []any `json:"subworkflows"`
+		Subworkflows []map[string]any `json:"subworkflows"`
 	}
 	if err := json.Unmarshal(envs[0].Payload, &layers); err != nil {
 		t.Fatalf("payload is not a WorkflowGraphs message: %v", err)
 	}
-	if len(layers.Subworkflows) != 0 {
-		t.Fatalf("control payload has %d layers, want empty array", len(layers.Subworkflows))
+	// KB-253: the ROOT layer rides the payload as the first entry (the
+	// operator composes every environment's manifest from the graphs).
+	if len(layers.Subworkflows) != 1 {
+		t.Fatalf("control payload has %d layers, want 1 (the root layer)", len(layers.Subworkflows))
+	}
+	if layers.Subworkflows[0]["name"] != "root" {
+		t.Fatalf("first layer name = %v, want root", layers.Subworkflows[0]["name"])
 	}
 
 	kinds := map[string]int{}
@@ -497,14 +509,19 @@ func TestWorkflowGraphs_ServerModeDualWriteParity(t *testing.T) {
 		t.Fatalf("WorkflowGraphs at index %d is after RunStarted at index %d", graphIndexes[0], runStartedIndex)
 	}
 	serverGraphs := serverEvents[graphIndexes[0]].GetWorkflowGraphs()
-	if len(serverGraphs.Subworkflows) != 2 {
-		t.Fatalf("server payload has %d sibling layers, want 2 (every layer its own entry, at every depth)", len(serverGraphs.Subworkflows))
+	if len(serverGraphs.Subworkflows) != 3 {
+		t.Fatalf("server payload has %d sibling layers, want 3 (root + 2 subworkflow layers)", len(serverGraphs.Subworkflows))
 	}
-	if got := serverGraphs.Subworkflows[0].GetName(); got != "child" {
-		t.Fatalf("sibling layer 0 name = %q, want %q", got, "child")
+	// KB-253: Subworkflows[0] is the root layer; [1] is the top-level
+	// subworkflow.
+	if got := serverGraphs.Subworkflows[0].GetName(); got != "root" {
+		t.Fatalf("sibling layer 0 name = %q, want root", got)
 	}
-	if got := serverGraphs.Subworkflows[1].GetName(); got != "grand" {
-		t.Fatalf("sibling layer 1 name = %q, want %q", got, "grand")
+	if got := serverGraphs.Subworkflows[1].GetName(); got != "child" {
+		t.Fatalf("sibling layer 1 name = %q, want child", got)
+	}
+	if got := serverGraphs.Subworkflows[2].GetName(); got != "grand" {
+		t.Fatalf("sibling layer 2 name = %q, want %q", got, "grand")
 	}
 
 	// CRI-299: the flat wire shape holds on the server payload — every layer
@@ -525,15 +542,16 @@ func TestWorkflowGraphs_ServerModeDualWriteParity(t *testing.T) {
 	if err := json.Unmarshal(protoLayerBytes, &protoLayers); err != nil {
 		t.Fatalf("decode protojson subworkflows: %v", err)
 	}
-	if len(protoLayers.Subworkflows) != 2 {
-		t.Fatalf("protojson payload has %d sibling layers, want 2", len(protoLayers.Subworkflows))
+	if len(protoLayers.Subworkflows) != 3 {
+		t.Fatalf("protojson payload has %d sibling layers, want 3", len(protoLayers.Subworkflows))
 	}
-	childEntry := assertCRI299FlatLayer(t, protoLayers.Subworkflows[0])
+	// KB-253: [0] root, [1] child, [2] grand.
+	childEntry := assertCRI299FlatLayer(t, protoLayers.Subworkflows[1])
 	childBody := cri299ParseBody(t, childEntry)
 	if got := childBody["name"]; got != "cri278_child" {
 		t.Fatalf("child body graph name = %v, want cri278_child", got)
 	}
-	grandEntry := assertCRI299FlatLayer(t, protoLayers.Subworkflows[1])
+	grandEntry := assertCRI299FlatLayer(t, protoLayers.Subworkflows[2])
 	grandBody := cri299ParseBody(t, grandEntry)
 	if got := grandBody["name"]; got != "cri278_grand" {
 		t.Fatalf("grand body graph name = %v, want cri278_grand", got)
@@ -600,8 +618,8 @@ func TestWorkflowGraphs_EmittersAgreeOnFlatShape(t *testing.T) {
 		t.Fatalf("local and server payloads differ for the same graph\n local: %s\n server: %s", env.Payload, serverJSON)
 	}
 	entries := assertCRI299FlatLayers(t, serverJSON)
-	if len(entries) != 2 {
-		t.Fatalf("flat payload has %d sibling layers, want 2", len(entries))
+	if len(entries) != 3 {
+		t.Fatalf("flat payload has %d sibling layers, want 3", len(entries))
 	}
 }
 

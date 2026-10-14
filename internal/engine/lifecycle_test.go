@@ -33,7 +33,11 @@ func (s *lifecycleTrackingSink) OnAdapterLifecycle(runID, adapter, status, detai
 	defer s.mu.Unlock()
 	s.adapterLifecycleEvents = append(s.adapterLifecycleEvents, adapter+":"+status)
 }
-func (s *lifecycleTrackingSink) OnAdapterLifecycleEvent(event *AdapterLifecycleEvent) {}
+func (s *lifecycleTrackingSink) OnAdapterLifecycleEvent(event *AdapterLifecycleEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.adapterLifecycleEvents = append(s.adapterLifecycleEvents, event.AdapterName+":"+event.Status)
+}
 
 // lifecycleTrackingAdapter tracks session open/close calls
 type lifecycleTrackingAdapter struct {
@@ -1371,6 +1375,29 @@ func (s *eventTrackingSink) firstStatus(status string) (AdapterLifecycleEvent, b
 		}
 	}
 	return AdapterLifecycleEvent{}, false
+}
+
+// nthStatus returns the n-th (1-based) lifecycle event with the given
+// status, for multi-entry assertions.
+func (s *eventTrackingSink) nthStatus(status string, n int) (AdapterLifecycleEvent, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	count := 0
+	for i := range s.provisionEvents {
+		if s.provisionEvents[i].Status == status {
+			count++
+			if count == n {
+				return s.provisionEvents[i], true
+			}
+		}
+	}
+	return AdapterLifecycleEvent{}, false
+}
+
+func (s *eventTrackingSink) provisionEventsLog() []AdapterLifecycleEvent {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]AdapterLifecycleEvent(nil), s.provisionEvents...)
 }
 
 // OnStepOutcome records per-step outcome errors so tests can assert the

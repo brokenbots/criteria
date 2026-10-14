@@ -46,9 +46,14 @@ type adapterLifecycleRecord struct {
 // remoteLifecycleContext carries the lockfile and per-scope provisioning state
 // that the engine needs to emit remote adapter lifecycle events. It travels
 // in RunState rather than Deps so that Deps stays small for node evaluators.
+// The detachment ledger (KB-257) holds the per-scope records a subworkflow
+// body detached at its exit: the sessions stay LIVE for re-entry, and the
+// run-final teardown releases everything still in the ledger.
 type remoteLifecycleContext struct {
 	lockfile       *lockfile.Lockfile
 	scopeLifecycle *scopeLifecycleState
+	detachMu       sync.Mutex
+	detached       map[string]*adapterLifecycleRecord
 }
 
 // deriveForParallelIteration returns a per-iteration remoteLifecycleContext for
@@ -123,6 +128,80 @@ func (ls *scopeLifecycleState) remove(adapterName string) {
 	ls.mu.Lock()
 	defer ls.mu.Unlock()
 	delete(ls.records, adapterName)
+}
+
+// DetachBodyScope ends a subworkflow-body scope WITHOUT releasing its live
+// per-scope sessions (KB-257 churn kill): each per-scope record moves from
+// this context's scope map to the context's detachment ledger with a
+// "detached" lifecycle event. The session stays bound in the session
+// manager, the shim scope token stays registered, the peer pod keeps its
+// phone-home connection, and the persisted instance record stays reusable.
+// Returns the detached records for the re-entry handback path.
+func (rlc *remoteLifecycleContext) DetachBodyScope(order []string, deps Deps) map[string]*adapterLifecycleRecord {
+	rlc.detachMu.Lock()
+	defer rlc.detachMu.Unlock()
+	detached := make(map[string]*adapterLifecycleRecord, len(order))
+	for i := len(order) - 1; i >= 0; i-- {
+		adapterID := order[i]
+		rec := rlc.scopeLifecycle.get(adapterID)
+		if rec == nil || !rec.perScope {
+			continue
+		}
+		deps.Sink.OnAdapterLifecycleEvent(&AdapterLifecycleEvent{
+			RunID:             rec.runID,
+			ScopeName:         rec.scopeName,
+			ScopeInstanceID:   rec.scopeInstanceID,
+			AdapterName:       rec.adapterName,
+			AdapterType:       rec.adapterType,
+			Digest:            rec.digest,
+			ShimListenAddress: rec.listenAddr,
+			TokenRef:          rec.tokenPath,
+			Status:            "detached",
+			EnvironmentType:   rec.envType,
+			EnvironmentName:   rec.envName,
+		})
+		rlc.scopeLifecycle.remove(adapterID)
+		detached[adapterID] = rec
+	}
+	if len(detached) > 0 {
+		rlc.detached = detached
+	}
+	return detached
+}
+
+// adoptDetached completes the re-entry handback: the scope whose
+// re-provisioning re-used the detached session takes ownership of the
+// record so its own exit re-detaches it (and the run-final teardown
+// releases what no body re-adopted).
+func (rlc *remoteLifecycleContext) adoptDetached(rec *adapterLifecycleRecord) {
+	if rec == nil {
+		return
+	}
+	rlc.detachMu.Lock()
+	defer rlc.detachMu.Unlock()
+	rlc.scopeLifecycle.add(rec)
+	if rlc.detached != nil {
+		delete(rlc.detached, rec.adapterName)
+	}
+}
+
+// detachedRecords snapshots the detachment ledger for a body entry: the
+// records a previous body detached whose sessions are still live. The
+// caller (startWorkflowBody) re-adopts only those its scope re-engages.
+func (rlc *remoteLifecycleContext) detachedRecords() map[string]*adapterLifecycleRecord {
+	if rlc == nil {
+		return nil
+	}
+	rlc.detachMu.Lock()
+	defer rlc.detachMu.Unlock()
+	if len(rlc.detached) == 0 {
+		return nil
+	}
+	snap := make(map[string]*adapterLifecycleRecord, len(rlc.detached))
+	for k, rec := range rlc.detached {
+		snap[k] = rec
+	}
+	return snap
 }
 
 func (ls *scopeLifecycleState) setRunID(id string) {
@@ -1113,12 +1192,99 @@ func buildOriginRefs(adapter *workflow.AdapterNode, secretOrigins map[string]sec
 	return originRefs, nil
 }
 
+// detachBodyScopeAdapters ends a subworkflow-body scope WITHOUT releasing its
+// live adapter sessions (KB-257 churn kill). A body exit must not destroy the
+// per-scope sessions a re-entry — or the run's final teardown — still uses:
+// destroying them is what forced every re-entry into a fresh rotation +
+// re-dial + fresh handshake, whose 12ms host-close races killed phase-B
+// verifies fleet-wide (KB-255). Each per-scope record is removed from this
+// body's lifecycle map and observed with a "detached" lifecycle event; the
+// session stays bound (or verified) in the session manager, the shim scope
+// token stays registered, the pod keeps its phone-home connection, and the
+// persisted instance record stays reusable. The next body entry therefore
+// hits the CRI-145 skip ("already provisioned; reusing") and re-opens the
+// SAME scope session with zero dials; only the run's final teardown
+// (Run/RunFrom defers + SessionManager.Shutdown) releases what a body
+// detached. Errors during detach are logged and do not change the run state.
+func detachBodyScopeAdapters(ctx context.Context, order []string, deps Deps, lifecycle *remoteLifecycleContext) {
+	_ = ctx
+	if len(order) == 0 {
+		return
+	}
+	if lifecycle == nil || lifecycle.scopeLifecycle == nil {
+		// No per-scope lifecycle (host-local shape): the body's verified-only
+		// records must still be RELEASED (the CRI-115 boundary contract those
+		// tests pin) — the non-remote path stays the classic teardown.
+		tearDownScopeAdapters(ctx, order, deps, lifecycle)
+		return
+	}
+	for i := len(order) - 1; i >= 0; i-- {
+		adapterID := order[i]
+		rec := lifecycle.scopeLifecycle.get(adapterID)
+		if rec == nil || !rec.perScope {
+			continue
+		}
+		deps.Sink.OnAdapterLifecycleEvent(&AdapterLifecycleEvent{
+			RunID:             rec.runID,
+			ScopeName:         rec.scopeName,
+			ScopeInstanceID:   rec.scopeInstanceID,
+			AdapterName:       rec.adapterName,
+			AdapterType:       rec.adapterType,
+			Digest:            rec.digest,
+			ShimListenAddress: rec.listenAddr,
+			TokenRef:          rec.tokenPath,
+			Status:            "detached",
+			EnvironmentType:   rec.envType,
+			EnvironmentName:   rec.envName,
+		})
+		lifecycle.scopeLifecycle.remove(adapterID)
+	}
+}
+
 // tearDownScopeAdapters releases all adapter sessions in the given order in reverse (LIFO).
 // The order slice must be the one returned by initScopeAdapters to ensure correct teardown order.
 // Errors during teardown are logged via the adapter lifecycle sink but do not change the run's terminal state.
 // Always called, even if the run errored or was cancelled.
 // Uses context.WithoutCancel to ensure teardown completes even if the run context was canceled.
+// Subworkflow-body scopes must NOT tear down here: use detachBodyScopeAdapters,
+// which ends the body's scope without destroying the live sessions (KB-257).
+//
+// drainDetachedLedger first covers the detachment ledger: records a body
+// detached that NO later body re-adopted are added back to the scope map and
+// released through a follow-up tearDownScopeAdapters invocation (deferred so
+// the owned order tears down first, LIFO with the ledger last).
+// drainDetachedLedger covers the KB-257 detachment ledger at run-final
+// teardown: records a subworkflow body detached and NO later body re-adopted
+// are moved back onto the scope map and released via a follow-up
+// tearDownScopeAdapters invocation, deferred so the caller's owned order
+// (which releases LIFO first) completes before the ledger releases.
+func drainDetachedLedger(ctx context.Context, deps Deps, lifecycle *remoteLifecycleContext) {
+	if lifecycle == nil {
+		return
+	}
+	lifecycle.detachMu.Lock()
+	remaining := lifecycle.detached
+	lifecycle.detached = nil
+	lifecycle.detachMu.Unlock()
+	if len(remaining) == 0 {
+		return
+	}
+	runFinalOrder := make([]string, 0, len(remaining))
+	for id, rec := range remaining {
+		runFinalOrder = append(runFinalOrder, id)
+		lifecycle.scopeLifecycle.add(rec)
+	}
+	sort.Strings(runFinalOrder)
+	// A direct call, not a defer: at run-final teardown the caller has
+	// nothing after drainDetachedLedger except the loop over the owned
+	// order, so releasing the ledger synchronously here keeps the LIFO
+	// read (owned order first via the caller's loop, ledger last via this
+	// call) without a defer placed just before return (gocritic).
+	tearDownScopeAdapters(ctx, runFinalOrder, deps, lifecycle)
+}
+
 func tearDownScopeAdapters(ctx context.Context, order []string, deps Deps, lifecycle *remoteLifecycleContext) {
+	drainDetachedLedger(ctx, deps, lifecycle)
 	if len(order) == 0 {
 		return
 	}

@@ -680,7 +680,11 @@ func TestRunSubworkflow_AdaptersIsolatedFromParent(t *testing.T) {
 		t.Errorf("callee adapter closes: want 0 (verified-only), got %d", closes)
 	}
 
-	// Engine lifecycle events still mark the scope boundary.
+	// Engine lifecycle events still mark the scope boundary. KB-257: the
+	// callee body is a NON-remote shape (no per-scope records), so the
+	// verified-only record is released by the body's own teardown exactly
+	// as before — the detach path only participates for per-scope remote
+	// adapters.
 	sink.mu.Lock()
 	events := append([]string(nil), sink.adapterLifecycleEvents...)
 	sink.mu.Unlock()

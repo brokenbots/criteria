@@ -194,6 +194,12 @@ type SessionManager struct {
 	// seeds it from the tunables registry (CRITERIA_STEP_TIMEOUT_TEARDOWN_WINDOW).
 	StepTimeoutTeardownWindow time.Duration
 
+	// VerifyHandshakeFailoverBudget is how long a remote phase-B verify
+	// handshake may keep re-waiting for a fresh phone-home line after a
+	// transport-class loss before failing with the typed budget reason
+	// (KB-257). Zero applies the tunables default.
+	VerifyHandshakeFailoverBudget time.Duration
+
 	mu       sync.Mutex
 	sessions map[string]*Session
 	// verified holds adapters that have passed eager verification (phase 1)
@@ -1067,7 +1073,7 @@ func (m *SessionManager) verifyGraphAdapter(ctx context.Context, root *workflow.
 	// per scope in initScopeAdapters. Eager verification here would block before
 	// the token exists, so we defer the adapter-info handshake to scope entry.
 	if _, deferVerify := m.deferredRemoteAdapters[ref.instanceID]; !deferVerify {
-		if _, err := m.verifyAdapterInfo(ctx, ref.instanceID, ref.node.Type, "", config, secretMap); err != nil {
+		if _, err := m.verifyAdapterInfo(ctx, ref.instanceID, ref.node.Type, "", "", config, secretMap); err != nil {
 			return fmt.Errorf("verify adapter %q in %q: %w; run 'criteria adapter lock %s'", ref.instanceID, ref.graph.WorkflowDir, err, ref.graph.WorkflowDir)
 		}
 	}
@@ -1266,6 +1272,17 @@ func (m *SessionManager) pauseToolCallDrainTimeout() time.Duration {
 	return m.PauseToolCallDrainTimeout
 }
 
+// verifyHandshakeFailoverBudget returns the effective KB-257 transport-loss
+// convergence budget for phase-B verify handshakes: how long a remote
+// handshake keeps re-waiting for a fresh phone-home line after a
+// transport-class loss. Zero falls back to the tunables default (lenient).
+func (m *SessionManager) verifyHandshakeFailoverBudget() time.Duration {
+	if m.VerifyHandshakeFailoverBudget <= 0 {
+		return tunables.DefaultVerifyFailoverBudget
+	}
+	return m.VerifyHandshakeFailoverBudget
+}
+
 // Pause halts work on the session without losing state. It implements the
 // drain-first pause posture (CRI-169, ADR-0004 §11): before the stream stops,
 // the pause gate is set so no new nested tool call starts, then in-flight
@@ -1396,12 +1413,13 @@ func (m *SessionManager) LastSessionActivity(name string) (time.Time, bool) {
 func NewSessionManager(loader Loader) *SessionManager {
 	t := tunables.FromEnv()
 	return &SessionManager{
-		loader:                    loader,
-		sessions:                  map[string]*Session{},
-		verified:                  map[string]*verifiedRecord{},
-		ambientHomes:              &ambientHomeAllocator{},
-		HeartbeatStallThreshold:   t.HeartbeatStallThreshold,
-		StepTimeoutTeardownWindow: t.StepTimeoutTeardownWindow,
+		loader:                        loader,
+		sessions:                      map[string]*Session{},
+		verified:                      map[string]*verifiedRecord{},
+		ambientHomes:                  &ambientHomeAllocator{},
+		HeartbeatStallThreshold:       t.HeartbeatStallThreshold,
+		StepTimeoutTeardownWindow:     t.StepTimeoutTeardownWindow,
+		VerifyHandshakeFailoverBudget: t.VerifyFailoverBudget,
 	}
 }
 
@@ -1748,7 +1766,7 @@ func (m *SessionManager) Verify(ctx context.Context, name, adapterName, onCrash 
 		return err
 	}
 
-	caps, err := m.verifyAdapterInfo(ctx, name, adapterName, scopeInstanceID, config, secrets)
+	caps, err := m.verifyAdapterInfo(ctx, name, adapterName, scopeInstanceID, scopeInstanceID, config, secrets)
 	if err != nil {
 		return err
 	}
@@ -1809,13 +1827,21 @@ func (m *SessionManager) checkDuplicateLocked(name string) error {
 // directory: it resolves the binary, calls Info, validates config and secrets,
 // validates sandbox primitive availability for strict sandbox adapters, and
 // kills the temporary handle. It returns the adapter capabilities on success.
-func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterName, scope string, config, secrets map[string]string) ([]string, error) {
+func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterName, scope, scopeInstance string, config, secrets map[string]string) ([]string, error) {
 	// Phase 1 uses a neutral launch directory. The working-directory-dependent,
 	// side-effecting parts of sandbox setup (cgroup directory creation, the bwrap
 	// --chdir to the resolved working directory) remain a bind-time concern. The
 	// host-side primitive-availability and strict-mode validation can and do run
 	// eagerly here so that a strict-sandbox adapter with missing primitives fails
 	// before any step executes.
+	//
+	// The resolve+Info attempt runs inside the KB-257 transport-loss
+	// convergence lane: when the phone-home line folds mid-handshake under
+	// a still-live pod (Canceled "client connection is closing",
+	// Unavailable EOF/refused — the attempt-13 signature), the lane
+	// re-waits for the pod's fresh re-dial through the shim's
+	// displacement-armed wait instead of failing the whole init. Only
+	// transport losses converge; semantic failures stay fail-fast.
 	plug, err := m.resolveAdapterHandle(ctx, name, adapterName, scope, nil)
 	if err != nil {
 		return nil, err
@@ -1829,11 +1855,10 @@ func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterNam
 		// policy), so phase-1 handshake verification leaves it running.
 		//
 		// The same protection applies to a phone-home bridge handle
-		// (PhoneHomeBridgeHandle, KB-232): the handle transports the
-		// adapter session's live remote bridge — killing it severs the
-		// session the pod established on its (single) accepted dial, and
-		// the subsequent re-establishment race is exactly the never-
-		// established per-scope session KB-232 forbids.
+		// (PhoneHomeBridgeHandle, KB-232) — and, through the shim's handle
+		// marker, to the KB-257 failover handle that replaced the original
+		// mid-verify: the shim marks every session handle PhoneHomeBridge,
+		// so the guard will not Kill it either.
 		if _, supervised := plug.(SupervisedHandle); !supervised {
 			if _, bridge := plug.(PhoneHomeBridgeHandle); !bridge {
 				plug.Kill()
@@ -1842,6 +1867,18 @@ func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterNam
 	}()
 
 	info, infoErr := plug.Info(ctx)
+	if infoErr != nil && classifyTransportLoss(infoErr) {
+		var fresh Handle
+		var finfo Info
+		fresh, finfo, infoErr = m.verifyTransportFailover(ctx, name, adapterName, scopeInstance, plug)
+		if infoErr == nil {
+			// The fresh handle replaces the verified one; kill nothing.
+			// The shim marks every session handle PhoneHomeBridge, so
+			// the deferred guard below will not Kill either handle.
+			plug = fresh
+			info = finfo
+		}
+	}
 	if infoErr != nil {
 		return nil, fmt.Errorf("adapter %q handshake: %w", adapterName, infoErr)
 	}

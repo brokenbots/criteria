@@ -58,6 +58,13 @@ const (
 	// DefaultBootGateProbeTimeout bounds the KB-234 boot gate's operator
 	// view request at every server-mode start (fresh or adoption).
 	DefaultBootGateProbeTimeout = 5 * time.Second
+	// DefaultVerifyFailoverBudget is how long the KB-257 transport-loss
+	// convergence lane in phase-B adapter verify keeps re-waiting for a
+	// fresh adapter phone-home line: a healthy re-dial converges in
+	// seconds (first-entry evidence ~6s), so a one-minute cap converges
+	// every healthy pod without letting one lost line burn a
+	// scheduling-scale window.
+	DefaultVerifyFailoverBudget = time.Minute
 	// DefaultPauseToolCallDrainWindow is the drain-first pause window
 	// (CRI-169): Session.Pause waits this long for in-flight nested tool
 	// calls to settle before cancelling them.
@@ -122,6 +129,9 @@ const (
 	// budget for the workflow's own step-adapter sessions while serving
 	// the `criteria serve-adapter` mode.
 	EnvServeAdapterConcurrency = "CRITERIA_SERVE_ADAPTER_CONCURRENCY"
+	// EnvVerifyFailoverBudget overrides DefaultVerifyFailoverBudget
+	// (lenient; KB-257).
+	EnvVerifyFailoverBudget = "CRITERIA_VERIFY_FAILOVER_BUDGET"
 )
 
 // DefaultServeAdapterConcurrency is the built-in shared container budget for
@@ -168,6 +178,9 @@ type Settings struct {
 	// the workflow's own step-adapter sessions while
 	// `criteria serve-adapter` serves a workflow.
 	ServeAdapterConcurrency int
+	// VerifyFailoverBudget is the KB-257 transport-loss convergence
+	// budget (SessionManager.VerifyHandshakeFailoverBudget).
+	VerifyFailoverBudget time.Duration
 }
 
 // Defaults returns the built-in settings.
@@ -180,6 +193,7 @@ func Defaults() Settings {
 		AgentHeartbeatInterval:    DefaultAgentHeartbeatInterval,
 		BootGateProbeTimeout:      DefaultBootGateProbeTimeout,
 		ServeAdapterConcurrency:   DefaultServeAdapterConcurrency,
+		VerifyFailoverBudget:      DefaultVerifyFailoverBudget,
 	}
 }
 
@@ -219,6 +233,9 @@ func New(lookup func(string) string) Settings {
 	}
 	if n, ok := resolvePositiveInt(lookup(EnvServeAdapterConcurrency)); ok {
 		s.ServeAdapterConcurrency = n
+	}
+	if d, ok := resolvePositiveDuration(lookup(EnvVerifyFailoverBudget)); ok {
+		s.VerifyFailoverBudget = d
 	}
 	return s
 }
@@ -290,6 +307,7 @@ func Envvars() []Envar {
 		{Name: EnvHeartbeatStallThreshold, Kind: KindDuration, Default: "90s", Doc: "How long a session log stream may idle with no chunks or heartbeats before the adapter is treated as wedged (CRI-271)."},
 		{Name: EnvStepStallWindow, Kind: KindDuration, Default: "30m", Doc: "How long an unbounded step may run with no observable adapter activity before the engine tears it down (KB-25). A zero or negative value disables stall detection."},
 		{Name: EnvStepTimeoutTeardownWindow, Kind: KindDuration, Default: "10s", Doc: "Window, opened by an engine-initiated step teardown, during which transport closes are reclassified as teardown consequences instead of session crashes (CRI-287)."},
+		{Name: EnvVerifyFailoverBudget, Kind: KindDuration, Default: "1m", Doc: "How long phase-B adapter verify re-waits for a fresh phone-home line after a transport-class loss (KB-257) before failing the adapter init with the typed budget reason."},
 	}
 }
 

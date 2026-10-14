@@ -45,7 +45,7 @@ func verifyStateHandshake(t *testing.T, decl *workflow.StateDeclaration) (error,
 	m := NewSessionManager(&stateLoaderStub{handle: &stateHandleStub{
 		info: Info{AdapterInfo: workflow.AdapterInfo{State: decl}},
 	}})
-	_, err := m.verifyAdapterInfo(context.Background(), "state-test", "stateful", "", nil, nil)
+	_, err := m.verifyAdapterInfo(context.Background(), "state-test", "stateful", "", "", nil, nil)
 	return err, m.DeclaredState("state-test")
 }
 

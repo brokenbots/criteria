@@ -109,6 +109,20 @@ type compileAdapter struct {
 	Name       string   `json:"name"`
 	OnCrash    string   `json:"on_crash"`
 	ConfigKeys []string `json:"config_keys"`
+	// Environment is the adapter's compiled environment binding,
+	// "<env_type>.<env_name>" — the pod-composition key operators compose
+	// per-environment peer manifests from (KB-253). Empty means the graph
+	// default environment applies.
+	Environment string `json:"environment,omitempty"`
+	// Source is the adapter's pinned OCI source ref as compiled (the
+	// lockfile-carried identity the graph was compiled against). Empty for
+	// non-OCI adapters.
+	Source string `json:"source,omitempty"`
+	// PinnedDigest is the lockfile-resolved digest at compile time (KB-253):
+	// the published graph carries exactly what it was compiled against, so
+	// operators boot peer children with per-definition digests without
+	// re-reading any lockfile. Empty when the adapter is unpinned.
+	PinnedDigest string `json:"pinned_digest,omitempty"`
 }
 
 type compileStep struct {
@@ -216,11 +230,18 @@ func buildAdaptersJSON(graph *workflow.FSMGraph) []compileAdapter {
 	adapters := make([]compileAdapter, 0, len(graph.Adapters))
 	for _, name := range sortedAdapterNames(graph) {
 		ad := graph.Adapters[name]
+		env := ad.Environment
+		if env == "" {
+			env = graph.DefaultEnvironment
+		}
 		adapters = append(adapters, compileAdapter{
-			Type:       ad.Type,
-			Name:       ad.Name,
-			OnCrash:    ad.OnCrash,
-			ConfigKeys: sortedMapKeys(ad.Config),
+			Type:         ad.Type,
+			Name:         ad.Name,
+			OnCrash:      ad.OnCrash,
+			ConfigKeys:   sortedMapKeys(ad.Config),
+			Environment:  env,
+			Source:       ad.Source,
+			PinnedDigest: ad.PinnedDigest,
 		})
 	}
 	return adapters

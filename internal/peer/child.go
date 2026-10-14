@@ -80,6 +80,11 @@ type peerRuntime struct {
 	order         []string
 	serveCounts   map[string]int
 	shutdownGrace time.Duration
+	// bootSpec preserves each child's resolved boot spec so ensureChild can
+	// respawn an exited child verbatim (no re-resolution, same digest pin).
+	bootSpec map[string]childSpec
+	// respawnMu serializes respawns per definition name.
+	respawnMu sync.Map
 	// exitPoll is the process-exit poll interval (tunable in tests).
 	exitPoll  time.Duration
 	stopWatch chan struct{}
@@ -101,6 +106,7 @@ func NewRuntime(cfg *Config, log *slog.Logger) *peerRuntime {
 		loader:        adapterhost.NewLoader(),
 		journal:       NewEventJournal(cfg.JournalLimit),
 		children:      map[string]*childState{},
+		bootSpec:      map[string]childSpec{},
 		serveCounts:   map[string]int{},
 		shutdownGrace: defaultControlGrace,
 		exitPoll:      defaultExitPollInterval,
@@ -178,6 +184,77 @@ func (r *peerRuntime) childClientFor(name string) (adapterhost.Client, bool) {
 		return nil, false
 	}
 	return adapterhost.ClientOf(c.handle)
+}
+
+// ensureChild returns a live client for one hosted adapter child, spawning
+// it on demand from its boot spec when the child process has exited but its
+// definition is still hosted. Copilot children idle-exit once their serving
+// sessions close (KB-242 canary evidence: exit_code=0 after a session
+// close), and a boot-complete per-environment manifest hosts definitions
+// whose first dial lands long after boot: exit-only semantics turned "an
+// idle period" into a permanent loss of the child. The respawn reuses the
+// boot spec verbatim — same binary path (the staged per-kind copy inside
+// the pod's own emptyDir), same per-definition digest pin, no new
+// resolution, no shared filesystem. Fail-closed: only boot-manifest (or
+// legacy single-adapter) definitions respawn, never while a shutdown or a
+// host-initiated kill is in flight, and the dialing host digest-verifies
+// every identity frame at accept time exactly as it did for the boot spawn.
+func (r *peerRuntime) ensureChild(ctx context.Context, name string) (adapterhost.Client, bool) {
+	// Serialize respawns per definition name: two dialers racing on the same
+	// dead child must not spawn two processes.
+	if m, _ := r.respawnMu.LoadOrStore(name, &sync.Mutex{}); m != nil {
+		m.(*sync.Mutex).Lock()
+		defer m.(*sync.Mutex).Unlock()
+	}
+
+	r.mu.Lock()
+	if r.shuttingDown || !r.booted {
+		r.mu.Unlock()
+		return nil, false
+	}
+	if c := r.children[name]; c != nil {
+		if c.killRequested {
+			// A host Command(kill_child) decided this child dies; it stays
+			// dead — no client for new sessions, no respawn, even while the
+			// grace-window process technically lingers.
+			r.mu.Unlock()
+			return nil, false
+		}
+		if c.handle != nil && !adapterhost.ProcessExited(c.handle) {
+			client, ok := adapterhost.ClientOf(c.handle)
+			r.mu.Unlock()
+			return client, ok
+		}
+		// Clean exits respawn (adapter lifecycle choice: copilot idle-exit
+		// exit_code=0/signal=0). A crash — signal death or nonzero code —
+		// never respawns: the step's crash policy owns recovery.
+		if c.lastExit == nil || c.lastExit.GetSignal() != 0 || c.lastExit.GetExitCode() != 0 {
+			r.mu.Unlock()
+			return nil, false
+		}
+	}
+	spec, ok := r.bootSpec[name]
+	r.mu.Unlock()
+	if !ok {
+		return nil, false
+	}
+
+	// Lock-free spawn: recordChild/verifyChild/recordSpawn manage r.mu
+	// internally (Boot's spawn loop runs unlocked the same way).
+	c, err := r.spawnChild(ctx, &spec)
+	if err != nil {
+		r.log.Error("peer child respawn failed", "adapter", name, "error", err)
+		return nil, false
+	}
+	if err := r.recordSpawn(c); err != nil {
+		r.log.Error("peer child respawn journal append failed", "adapter", name, "error", err)
+	}
+	r.watchWG.Add(1)
+	go r.watchChild(c)
+	client, ok := adapterhost.ClientOf(c.handle)
+	r.log.Info("peer child respawned", "adapter", name,
+		"binary", spec.spec.Binary, "digest", spec.spec.Digest)
+	return client, ok
 }
 
 // childSpec is one boot entry: the manifest-derived adapter spec plus the
@@ -265,6 +342,11 @@ func (r *peerRuntime) Boot(ctx context.Context) error {
 	specs, err := r.childSpecs()
 	if err != nil {
 		return err
+	}
+	// Preserve the resolved boot specs: ensureChild respawns exited children
+	// from these verbatim (no re-resolution, same digest pin).
+	for i := range specs {
+		r.bootSpec[specs[i].spec.Name] = specs[i]
 	}
 
 	spawned := make([]*childState, 0, len(specs))
@@ -367,7 +449,8 @@ func (r *peerRuntime) spawnChild(ctx context.Context, spec *childSpec) (*childSt
 }
 
 // recordChild registers the freshly started child in the runtime registry
-// and spawn order.
+// and spawn order (deduplicated: a respawned child re-registers its state
+// without duplicating the spawn order).
 func (r *peerRuntime) recordChild(spec *childSpec, child adapterhost.Handle) *childState {
 	s := &spec.spec
 	c := &childState{
@@ -379,8 +462,17 @@ func (r *peerRuntime) recordChild(spec *childSpec, child adapterhost.Handle) *ch
 		openSessions: map[string]struct{}{},
 	}
 	r.mu.Lock()
+	existed := false
+	for _, n := range r.order {
+		if n == s.Name {
+			existed = true
+			break
+		}
+	}
 	r.children[s.Name] = c
-	r.order = append(r.order, s.Name)
+	if !existed {
+		r.order = append(r.order, s.Name)
+	}
 	r.mu.Unlock()
 	return c
 }
@@ -430,7 +522,13 @@ func (r *peerRuntime) watchChild(c *childState) {
 		case <-r.stopWatch:
 			return
 		case <-ticker.C:
-			if adapterhost.ProcessExited(c.handle) {
+			// c.handle is swapped to nil under r.mu by the respawn path
+			// (ensureChild) and by tests; the watcher must read it under
+			// the same lock.
+			r.mu.Lock()
+			handle := c.handle
+			r.mu.Unlock()
+			if handle != nil && adapterhost.ProcessExited(handle) {
 				r.recordExit(c, false)
 				return
 			}
