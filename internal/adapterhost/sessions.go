@@ -2607,8 +2607,14 @@ func classifySessionCrash(sess *Session, execErr error) string {
 	switch {
 	case strings.Contains(msg, "heartbeat stall"):
 		return CrashReasonHeartbeatStall
+	// kb-53: "transport is closing" / "the client connection is closing" are
+	// the legacy go-plugin gRPC closing signatures. kb-246: the peer recreate
+	// window closes the phone-home bridge mid-execute and surfaces
+	// "Canceled (connection closing)" — the bare closing text is the shared
+	// signature, including when wrapped by other stacks.
 	case strings.Contains(msg, "transport is closing"),
-		strings.Contains(msg, "the client connection is closing"):
+		strings.Contains(msg, "the client connection is closing"),
+		strings.Contains(msg, "connection closing"):
 		return CrashReasonTransportClosed
 	case strings.Contains(msg, "unavailable"):
 		return CrashReasonEndpointUnavailable
@@ -2659,8 +2665,33 @@ func (m *SessionManager) handleCrash(ctx context.Context, name string, step *wor
 		onCrash = normalizeOnCrash(step.OnCrash)
 	}
 
-	switch onCrash {
-	case OnCrashRespawn:
+	// KB-246 defect-4: a transport-closed crash on a shim-dispatched (remote)
+	// session is the peer-pod recreate window — the recreated pod re-dials the
+	// same session key seconds later, so instead of failing the in-flight step
+	// the session re-enters the wait through the respawn machinery (identical
+	// to OnCrashRespawn). WaitForFreshHandle excludes the just-dead handle, so
+	// it resolves the recreated pod's fresh dial, and any failure along the
+	// way stays fail-closed via that arm's own failResult path. ctx.Err()
+	// guards run-level cancellation: a cancelled step must not re-enter.
+	// Local (in-host) sessions keep CRI-130 crash semantics. on_crash=
+	// abort_run is consulted first and keeps its hard-fail arm.
+	remoteRetry := false
+	if onCrash != OnCrashAbortRun && reason == CrashReasonTransportClosed && ctx.Err() == nil {
+		_, remoteRetry = m.remoteShimForAdapter(sess.Name)
+	}
+
+	switch {
+	case onCrash == OnCrashAbortRun:
+		sink.Adapter("session.crash", map[string]any{
+			"session":               sess.Name,
+			"adapter":               sess.Adapter,
+			"policy":                onCrash,
+			"error":                 execErr.Error(),
+			"crash_reason":          reason,
+			"idle_since_last_event": idleStringOrEmpty(sess),
+		})
+		return adapter.Result{Outcome: "failure"}, &FatalRunError{Err: fmt.Errorf("session %q crashed and on_crash=abort_run", name)}
+	case onCrash == OnCrashRespawn || remoteRetry:
 		sink.Adapter("session.respawned", map[string]any{
 			"session":               sess.Name,
 			"adapter":               sess.Adapter,
@@ -2672,16 +2703,6 @@ func (m *SessionManager) handleCrash(ctx context.Context, name string, step *wor
 			return m.failResult(sink, sess, fmt.Errorf("respawn after crash failed: %w (original crash: %w)", respawnErr, execErr))
 		}
 		return m.retryAfterRespawn(ctx, name, step, sink, sess, rejection)
-	case OnCrashAbortRun:
-		sink.Adapter("session.crash", map[string]any{
-			"session":               sess.Name,
-			"adapter":               sess.Adapter,
-			"policy":                onCrash,
-			"error":                 execErr.Error(),
-			"crash_reason":          reason,
-			"idle_since_last_event": idleStringOrEmpty(sess),
-		})
-		return adapter.Result{Outcome: "failure"}, &FatalRunError{Err: fmt.Errorf("session %q crashed and on_crash=abort_run", name)}
 	default:
 		return m.failResult(sink, sess, execErr)
 	}
