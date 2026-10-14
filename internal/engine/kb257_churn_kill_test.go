@@ -82,8 +82,9 @@ func TestKB257_ReentryReusesDetachedSession(t *testing.T) {
 	}
 
 	provisions, detaches, releases := 0, 0, 0
-	var seen []string
-	for _, ev := range sink.provisionEventsLog() {
+	seen := make([]string, 0, 8)
+	events := sink.provisionEventsLog()
+	for _, ev := range events {
 		seen = append(seen, ev.AdapterName+":"+ev.Status)
 		switch ev.Status {
 		case "provision_wanted":

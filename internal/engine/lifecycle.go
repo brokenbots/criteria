@@ -82,12 +82,8 @@ type scopeLifecycleState struct {
 	// per-scope instances may be adopted instead of rotating fresh (CRI-304);
 	// empty for fresh, non-resumed runs.
 	adoptableRunDirs []string
-	// detachLedger (KB-257) holds per-scope records whose sessions stay live
-	// across a subworkflow-body boundary, waiting for either re-entry
-	// handback or the run-final teardown. Guarded by mu alongside records.
-	detachLedger map[string]*adapterLifecycleRecord
-	mu           sync.Mutex
-	records      map[string]*adapterLifecycleRecord
+	mu               sync.Mutex
+	records          map[string]*adapterLifecycleRecord
 }
 
 func newScopeLifecycleState(dataDir string) *scopeLifecycleState {
@@ -1252,25 +1248,38 @@ func detachBodyScopeAdapters(ctx context.Context, order []string, deps Deps, lif
 // Uses context.WithoutCancel to ensure teardown completes even if the run context was canceled.
 // Subworkflow-body scopes must NOT tear down here: use detachBodyScopeAdapters,
 // which ends the body's scope without destroying the live sessions (KB-257).
-func tearDownScopeAdapters(ctx context.Context, order []string, deps Deps, lifecycle *remoteLifecycleContext) {
-	// KB-257: the detachment ledger holds records whose sessions a
-	// subworkflow body detached and NO later body re-adopted — the run is
-	// ending, so this final release covers them too, after the owned order.
-	if lifecycle != nil {
-		lifecycle.detachMu.Lock()
-		remaining := lifecycle.detached
-		lifecycle.detached = nil
-		lifecycle.detachMu.Unlock()
-		if len(remaining) > 0 {
-			runFinalOrder := make([]string, 0, len(remaining))
-			for id, rec := range remaining {
-				runFinalOrder = append(runFinalOrder, id)
-				lifecycle.scopeLifecycle.add(rec)
-			}
-			sort.Strings(runFinalOrder)
-			defer tearDownScopeAdapters(ctx, runFinalOrder, deps, lifecycle)
-		}
+//
+// drainDetachedLedger first covers the detachment ledger: records a body
+// detached that NO later body re-adopted are added back to the scope map and
+// released through a follow-up tearDownScopeAdapters invocation (deferred so
+// the owned order tears down first, LIFO with the ledger last).
+// drainDetachedLedger covers the KB-257 detachment ledger at run-final
+// teardown: records a subworkflow body detached and NO later body re-adopted
+// are moved back onto the scope map and released via a follow-up
+// tearDownScopeAdapters invocation, deferred so the caller's owned order
+// (which releases LIFO first) completes before the ledger releases.
+func drainDetachedLedger(ctx context.Context, deps Deps, lifecycle *remoteLifecycleContext) {
+	if lifecycle == nil {
+		return
 	}
+	lifecycle.detachMu.Lock()
+	remaining := lifecycle.detached
+	lifecycle.detached = nil
+	lifecycle.detachMu.Unlock()
+	if len(remaining) == 0 {
+		return
+	}
+	runFinalOrder := make([]string, 0, len(remaining))
+	for id, rec := range remaining {
+		runFinalOrder = append(runFinalOrder, id)
+		lifecycle.scopeLifecycle.add(rec)
+	}
+	sort.Strings(runFinalOrder)
+	defer tearDownScopeAdapters(ctx, runFinalOrder, deps, lifecycle)
+}
+
+func tearDownScopeAdapters(ctx context.Context, order []string, deps Deps, lifecycle *remoteLifecycleContext) {
+	drainDetachedLedger(ctx, deps, lifecycle)
 	if len(order) == 0 {
 		return
 	}
