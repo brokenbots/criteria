@@ -1275,7 +1275,12 @@ func drainDetachedLedger(ctx context.Context, deps Deps, lifecycle *remoteLifecy
 		lifecycle.scopeLifecycle.add(rec)
 	}
 	sort.Strings(runFinalOrder)
-	defer tearDownScopeAdapters(ctx, runFinalOrder, deps, lifecycle)
+	// A direct call, not a defer: at run-final teardown the caller has
+	// nothing after drainDetachedLedger except the loop over the owned
+	// order, so releasing the ledger synchronously here keeps the LIFO
+	// read (owned order first via the caller's loop, ledger last via this
+	// call) without a defer placed just before return (gocritic).
+	tearDownScopeAdapters(ctx, runFinalOrder, deps, lifecycle)
 }
 
 func tearDownScopeAdapters(ctx context.Context, order []string, deps Deps, lifecycle *remoteLifecycleContext) {
