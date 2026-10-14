@@ -787,18 +787,18 @@ type TypeDecl struct {
 // AdapterNode is a compiled adapter declaration with resolved type and configuration.
 // The key in FSMGraph.Adapters is "<type>.<name>" (both labels).
 type AdapterNode struct {
-	Type        string            // adapter type (first label)
-	Name        string            // instance name (second label)
-	Source      string            // OCI source location (empty for non-OCI adapters)
-	Environment string            // optional "<env_type>.<env_name>" reference; resolved to default at scope start if not set
+	Type        string // adapter type (first label)
+	Name        string // instance name (second label)
+	Source      string // OCI source location (empty for non-OCI adapters)
+	Environment string // optional "<env_type>.<env_name>" reference; resolved to default at scope start if not set
 	// PinnedDigest is the adapter's lockfile-resolved digest recorded at
 	// compile time (KB-253): the compiled graph is the single carrier of
 	// what it was compiled against, so pod composition hosts every
 	// definition with its digest without re-reading the lockfile. Empty
 	// when the adapter is unpinned (non-OCI).
 	PinnedDigest string
-	OnCrash     string            // "fail" (default) or "continue"
-	Config      map[string]string // compile-folded config from adapter.config { }
+	OnCrash      string            // "fail" (default) or "continue"
+	Config       map[string]string // compile-folded config from adapter.config { }
 	// Secrets holds raw HCL expressions from the adapter-level `secrets { }` block.
 	// These are treated as taint sources.
 	Secrets map[string]hcl.Expression
