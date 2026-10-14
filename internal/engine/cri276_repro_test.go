@@ -449,10 +449,16 @@ func TestRemoteSessionIdleSurvivesWithKeepalives(t *testing.T) {
 // TestRemoteSessionIdleDiesWithoutKeepalives is the negative control: with a
 // default pod-side server (no keepalive pings), the middlebox kills the idle
 // phone-home connection. The first step succeeds (the bind happens before the
-// idle), but the second step on the stored handle fails exactly as it did in
-// production ("gRPC client transport closed"), while the pod's reconnect loop
-// re-handshakes — the CRI-271 reopen machinery restores serviceability on a
-// fresh handle, but the step that reached for the old one already failed.
+// idle). Under CRI-276 the second step on the stored handle failed exactly as
+// it did in production ("gRPC client transport closed") while the pod's
+// reconnect loop re-handshaked — the CRI-271 reopen machinery restored
+// serviceability on a fresh handle, but the step that reached for the old one
+// already failed. KB-246 closes that hole in the default path: the
+// transport-closed crash on a remote session re-enters the wait through the
+// respawn machinery (WaitForFreshHandle), so the second step transparently
+// succeeds on the fresh handle instead. What must still hold is the
+// underlying transport death: the pod re-handshakes (accepts increase) and
+// the retry executes on the re-established bridge.
 func TestRemoteSessionIdleDiesWithoutKeepalives(t *testing.T) {
 	c := runIdleExecCycle(t, nil)
 
@@ -462,11 +468,20 @@ func TestRemoteSessionIdleDiesWithoutKeepalives(t *testing.T) {
 	if c.firstResult.Outcome != "success" {
 		t.Fatalf("first step outcome = %q, want success", c.firstResult.Outcome)
 	}
-	// The second step must fail: this is the production failure signature.
-	// The exact grpc error text varies by failure point, so pin the behavior,
-	// not the wording.
-	if c.secondErr == nil {
-		t.Fatal("second step succeeded after the phone-home connection died; expected a transport error")
+	// The second step must succeed despite the dead transport: KB-246's
+	// re-entry resolves a fresh handle (the pod re-handshaked after the
+	// teardown) and retries on it. A nil error is therefore only meaningful
+	// together with the handshake assertion below — a nil error without any
+	// re-handshake would mean the transport never died and this test proves
+	// nothing about the re-entry path.
+	if c.secondErr != nil {
+		t.Fatalf("second step failed after the phone-home connection died; the KB-246 re-entry should have retried on the fresh handle: %v", c.secondErr)
+	}
+	if c.secondResult.Outcome != "success" {
+		t.Fatalf("second step outcome = %q, want success after the KB-246 re-entry", c.secondResult.Outcome)
+	}
+	if c.chain.pod.execCalls.Load() != 2 {
+		t.Fatalf("pod served %d Execute calls, want 2 (first step + the retried second step; the pre-retry attempt fails client-side on the dead transport)", c.chain.pod.execCalls.Load())
 	}
 	if c.acceptedAfter <= c.acceptedBefore {
 		t.Fatalf("pod handshakes went from %d to %d: the reconnect loop did not re-handshake after the teardown", c.acceptedBefore, c.acceptedAfter)
