@@ -560,10 +560,12 @@ type OutcomeSpec struct {
 	Name string         `hcl:"name,label"`
 	Next hcl.Expression `hcl:"next"`
 	// Description documents the outcome for agent-facing rendering (KB-259):
-	// the copilot adapter renders it in the allowed-outcomes menu so a model
-	// chooses a verdict from the author's stated semantics instead of prompt
-	// prose. Compile-validated, runtime-inert — it never alters contract
-	// validation or routing.
+	// it feeds the copilot adapter's allowed-outcomes menu so a model chooses
+	// a verdict from the author's stated semantics instead of prompt prose.
+	// Compile-validated, runtime-inert — it never alters contract validation
+	// or routing. The menu itself renders once the adapter wire carries
+	// descriptions (adapter-proto field, paired KB-260/KB-263); the compiled
+	// artifacts here are that render's data source.
 	Description string `hcl:"description,optional"`
 	// Schema is the payload contract: type.<name> traversal or an inline
 	// typeexpr constraint; must subset the adapter's output schema.

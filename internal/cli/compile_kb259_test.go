@@ -5,8 +5,10 @@ package cli
 //   - the compile-JSON document (criteria compile --format json), and
 //   - the once-per-run WorkflowGraphs event (root layer body).
 //
-// Descriptions are model-facing metadata rendered by agent adapters in the
-// allowed-outcomes menu; they never alter contract validation or routing.
+// Descriptions are model-facing metadata for the agent adapters'
+// allowed-outcomes menu (their render goes live when the adapter wire
+// carries descriptions; KB-260/KB-263) and never alter contract validation
+// or routing.
 
 import (
 	"context"

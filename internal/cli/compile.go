@@ -155,8 +155,10 @@ type compileSubworkflow struct {
 type compileOutcome struct {
 	Name string `json:"name"`
 	Next string `json:"next"`
-	// Description is the author-stated outcome semantics (KB-259): rendered
-	// by agent adapters in the allowed-outcomes menu. Empty when unset.
+	// Description is the author-stated outcome semantics (KB-259): its
+	// consumer is the copilot adapter's allowed-outcomes menu rendering
+	// (adapter-proto wire publication pending, paired KB-260/KB-263). Empty
+	// when unset.
 	Description string `json:"description,omitempty"`
 }
 
