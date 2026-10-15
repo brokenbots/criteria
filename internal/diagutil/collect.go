@@ -278,7 +278,10 @@ func formatConsultedSources(typeName, resolvedDigest string, lockStatus *lockfil
 
 // noOutputSchemaDiag builds the distinct warning emitted when an adapter is
 // resolved but its manifest declares no output_schema, so step output fields
-// cannot be checked.
+// cannot be checked. Per KB-264, the output_schema doubles as the adapter's
+// default output type: an undeclared adapter leaves untyped outcomes with an
+// empty default output type ({}) — a documented fallback, not a rejection,
+// because schema-less adapters are legitimately shipped.
 func noOutputSchemaDiag(typeName, resolvedDigest string) *hcl.Diagnostic {
 	var detail string
 	if resolvedDigest != "" {
@@ -286,6 +289,7 @@ func noOutputSchemaDiag(typeName, resolvedDigest string) *hcl.Diagnostic {
 	} else {
 		detail = fmt.Sprintf("Adapter %q resolved but declares no output_schema, so its outputs cannot be checked.", typeName)
 	}
+	detail += " The output_schema doubles as the adapter's default output type: with none declared, untyped outcomes resolve to an empty default ({}) and output.<key> reads against it are unchecked. Declare output_schema fields at registration to give untyped outcomes a checked shape."
 	return &hcl.Diagnostic{
 		Severity: hcl.DiagWarning,
 		Summary:  fmt.Sprintf("adapter %q resolved but declares no output schema", typeName),
