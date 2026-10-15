@@ -32,6 +32,9 @@ import (
 //     handshake output schema); it must be object-typed.
 //   - `require_comment` and `fallback` compile onto the outcome; at most one
 //     outcome per step may set fallback.
+//   - the optional "description" attribute (KB-259) compiles onto the outcome
+//     as author-stated, agent-facing semantics. It never affects validation
+//     or routing.
 //
 // The optional "output" expression is extracted from the outcome's Remain body
 // and stored in CompiledOutcome.OutputExpr. The optional "write" blocks are
@@ -87,7 +90,7 @@ func compileOneOutcome(sp *StepSpec, node *StepNode, g *FSMGraph, opts CompileOp
 	if nextStr == "" {
 		return diags
 	}
-	compiled := &CompiledOutcome{Name: o.Name, Next: nextStr, RequireComment: o.RequireComment, Fallback: o.Fallback}
+	compiled := &CompiledOutcome{Name: o.Name, Next: nextStr, RequireComment: o.RequireComment, Fallback: o.Fallback, Description: o.Description}
 	schemaType, schemaDefaults, d := compileOutcomeSchemaAttr(sp.Name, o.Name, o.Schema, g)
 	diags = append(diags, d...)
 	// Aggregate iterating outcomes (next != "_continue") fire after all

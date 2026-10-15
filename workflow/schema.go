@@ -551,19 +551,22 @@ type AdapterInfo struct {
 //   - "fallback": at most one per step; fires when the adapter produced no
 //     finalized result at all (distinct from the reserved "default" outcome,
 //     which maps an adapter-returned unmapped name).
-//   - "schema": either a `type.<name>` traversal into a named type block or an
-//     inline typeexpr constraint; both resolve to the same cty.Type. The
-//     schema's fields must be a subset of the adapter's declared output schema
-//     (compile error otherwise). Terminality and static comment authoring are
-//     engine/runtime concerns and are deliberately not outcome attributes.
-//   - "require_comment": the outcome requires a non-empty adapter finalize
-//     comment; an empty comment is a host-rejected result.
-//   - "fallback": at most one per step; fires when the adapter produced no
-//     finalized result at all (distinct from the reserved "default" outcome,
-//     which maps an adapter-returned unmapped name).
+//
+// KB-259 adds the optional "description" attribute: author-stated outcome
+// semantics carried on CompiledOutcome for agent-facing rendering. It is
+// compile-validated but runtime-inert — it never alters contract validation
+// or routing.
 type OutcomeSpec struct {
 	Name string         `hcl:"name,label"`
 	Next hcl.Expression `hcl:"next"`
+	// Description documents the outcome for agent-facing rendering (KB-259):
+	// it feeds the copilot adapter's allowed-outcomes menu so a model chooses
+	// a verdict from the author's stated semantics instead of prompt prose.
+	// Compile-validated, runtime-inert — it never alters contract validation
+	// or routing. The menu itself renders once the adapter wire carries
+	// descriptions (adapter-proto field, paired KB-260/KB-263); the compiled
+	// artifacts here are that render's data source.
+	Description string `hcl:"description,optional"`
 	// Schema is the payload contract: type.<name> traversal or an inline
 	// typeexpr constraint; must subset the adapter's output schema.
 	Schema hcl.Expression `hcl:"schema,optional"`
@@ -919,6 +922,10 @@ type CompiledOutcome struct {
 	// at all (the adapter never finalized), distinct from DefaultOutcome which
 	// maps an adapter-returned unmapped outcome name.
 	Fallback bool
+	// Description copies the outcome's description attribute (KB-259):
+	// author-stated semantics for agent-facing rendering (the copilot
+	// adapter's allowed-outcomes menu). Compile-validated, runtime-inert.
+	Description string
 }
 
 // ReturnSentinel is the reserved next value that signals scope-exit.

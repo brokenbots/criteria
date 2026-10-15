@@ -233,11 +233,14 @@ func rangeOrNil(expr hcl.Expression) *hcl.Range {
 	return &r
 }
 
-// validateOutcomeContractAttrs rejects schema/require_comment/fallback outcome
-// attributes on node kinds that have no per-outcome payload contract (KB-45
-// scope: wait and approval outcomes are engine-mandated with no payload).
-// Shared by the simple-outcome compile paths so unsupported attributes fail
-// loudly at compile time instead of being silently ignored.
+// validateOutcomeContractAttrs rejects outcome attributes on node kinds that
+// have no per-outcome payload contract (KB-45 scope: wait and approval
+// outcomes are engine-mandated with no payload). Shared by the
+// simple-outcome compile paths so unsupported attributes fail loudly at
+// compile time instead of being silently ignored. Description (KB-259) is
+// likewise rejected: there is no CompiledOutcome on these node kinds to
+// carry it, and a silently dropped author-declared semantics is the exact
+// defect class KB-259 closes.
 func validateOutcomeContractAttrs(kind, nodeName string, outcomes []OutcomeSpec) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	for _, o := range outcomes {
@@ -258,6 +261,13 @@ func validateOutcomeContractAttrs(kind, nodeName string, outcomes []OutcomeSpec)
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  fmt.Sprintf("%s %q outcome %q: fallback is not supported on %s outcomes", kind, nodeName, o.Name, kind),
+			})
+		}
+		if o.Description != "" {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("%s %q outcome %q: description is not supported on %s outcomes", kind, nodeName, o.Name, kind),
+				Detail:   "Outcome descriptions document payload-contract verdicts (KB-259) and are only available on adapter and sub-workflow step outcomes; wait and approval outcomes are engine-mandated with no compiled contract.",
 			})
 		}
 	}
