@@ -290,6 +290,11 @@ func (n *stepNode) evaluateOnce(ctx context.Context, st *RunState, deps Deps) (s
 		return "", err
 	}
 
+	// KB-264: an untyped outcome takes the adapter's default output type.
+	// Materialize declared default fields the legacy lane carries elsewhere
+	// (the comment) before either branch consumes the outputs.
+	result = n.withDefaultOutputs(result)
+
 	st.LastOutcome = result.Outcome
 
 	// For iterating steps: skip the Outcomes lookup — routeIteratingStep

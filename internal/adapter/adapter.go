@@ -39,9 +39,13 @@ type Result struct {
 	// these types against the step's OutputSchema via workflow.CoerceStringToCty.
 	Outputs map[string]cty.Value
 	// Comment carries the adapter's own commentary for the result (KB-45,
-	// v0.7.0 ExecuteResult.comment). Opaque metadata for the engine surface:
-	// it is routed to the event stream verbatim and never interpreted,
-	// validated, or projected by the engine.
+	// v0.7.0 ExecuteResult.comment). It is routed to the event stream
+	// verbatim, and — KB-264 — the engine materializes an adapter-declared
+	// default `reason` output from it on UNTYPED outcomes (see
+	// engine.withDefaultOutputs): a default output type declaring a `reason`
+	// field (e.g. copilot) makes output.reason uniformly readable. Typed
+	// (schema-declared) outcomes are contract-validated verbatim and the
+	// comment is never projected into them.
 	Comment string
 	// SynthesizedFallback marks a result the host synthesized from a fallback
 	// outcome contract (KB-45): the attempt ended without an adapter verdict,
