@@ -203,7 +203,7 @@ step "plan" {
 state "done" { terminal = true }
 `
 	g := compileWithSchemas(t, src, map[string]workflow.AdapterInfo{
-	"copilot": {OutputSchema: copilotDefaultOutputSchema},
+		"copilot": {OutputSchema: copilotDefaultOutputSchema},
 	})
 	runHandle := &commentAdapter{
 		name:    "copilot",
@@ -286,7 +286,7 @@ step "run" {
 state "done" { terminal = true }
 `
 	g := compileWithSchemas(t, src, map[string]workflow.AdapterInfo{
-	"copilot": {OutputSchema: copilotDefaultOutputSchema},
+		"copilot": {OutputSchema: copilotDefaultOutputSchema},
 	})
 	runHandle := &commentAdapter{
 		name:    "copilot",
