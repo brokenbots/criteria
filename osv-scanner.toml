@@ -21,9 +21,11 @@
 # reason = "Vulnerable function not reachable from our code paths; tracked in WS51."
 # ignoreUntil = "2026-09-01T00:00:00Z"
 
-# GO-2026-5932 (golang.org/x/crypto/openpgp): re-checked 2026-10-01. The
-# advisory still has no fixed version and is reported against x/crypto v0.57.0
-# (the latest release). We never parse PGP: the package is linked only because
+# GO-2026-5932 (golang.org/x/crypto/openpgp): re-checked 2026-10-15 against
+# x/crypto v0.57.0 (current in go.mod; advisory still reports "Fixed in: N/A").
+# Mirrors the govulncheck-ignore.txt entry for the same advisory (suppression
+# pair kept aligned; re-justified 2026-10-14/10-15 when the previous review-by
+# expired). We never parse PGP: the package is linked only because
 # sigstore-go/pkg/sign imports rekor's pki registry, which registers a pgp
 # backend we never select (criteria verifies cosign keyless and key-pair
 # signatures via x509/fulcio). govulncheck finds no call into openpgp from our
@@ -35,7 +37,7 @@
 [[IgnoredVulns]]
 id = "GO-2026-5932"
 reason = """golang.org/x/crypto/openpgp is deprecated with no fixed version — the \
-advisory covers every release including v0.54.0, so no upgrade clears it. We never \
+advisory covers every release including v0.57.0, so no upgrade clears it. We never \
 parse PGP: the package is linked only because sigstore-go/pkg/sign imports rekor's \
 pki registry, which registers a pgp backend we never select (criteria verifies \
 cosign keyless and key-pair signatures via x509/fulcio). govulncheck finds no call \
@@ -44,4 +46,4 @@ or interface-dispatch noise (io.ReadAll onto armor.lineReader.Read). Dropping th
 dependency would mean dropping signature verification, which is the trust anchor \
 for `criteria adapter lock` pinning. Re-check whether rekor has split its pgp \
 backend out of pkg/pki."""
-ignoreUntil = "2026-11-01T00:00:00Z"
+ignoreUntil = "2026-12-31T00:00:00Z"
