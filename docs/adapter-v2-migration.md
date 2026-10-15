@@ -112,3 +112,14 @@ For the full reference, see [adapters.md](adapters.md).
    features land in peer mode only, and the runner path is deprecated one
    minor release after peer parity. New remote adapters should not build on
    `ServeRemote`.
+
+6. **Declare your default output type (release note).** The manifest
+   `output_schema` now doubles as the adapter's *default output type*: an
+   untyped outcome block resolves its outputs from it, so `output.<key>`
+   reads work uniformly. Declaring it is the expected upgrade step for
+   out-of-tree adapters (`criteria-adapter-proto` v2 contract); it is
+   validated as a typed schema at load. It is technically optional — an
+   adapter without it keeps loading, untyped outcomes fall back to an empty
+   default (`{}`), and the host warns — but without the declaration
+   `output.<key>` reads on untyped steps are unchecked
+   ([adapters.md → Declare a default output type](adapters.md#declare-a-default-output-type)).

@@ -208,7 +208,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `state "name" { ... }`
 
-- **Source:** [`workflow/schema.go:614`](../workflow/schema.go#L614)
+- **Source:** [`workflow/schema.go:617`](../workflow/schema.go#L617)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -221,7 +221,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `wait "name" { ... }`
 
-- **Source:** [`workflow/schema.go:597`](../workflow/schema.go#L597)
+- **Source:** [`workflow/schema.go:600`](../workflow/schema.go#L600)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -234,7 +234,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `approval "name" { ... }`
 
-- **Source:** [`workflow/schema.go:606`](../workflow/schema.go#L606)
+- **Source:** [`workflow/schema.go:609`](../workflow/schema.go#L609)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -247,13 +247,13 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `switch "name" { ... }`
 
-- **Source:** [`workflow/schema.go:625`](../workflow/schema.go#L625)
+- **Source:** [`workflow/schema.go:628`](../workflow/schema.go#L628)
 - **Labels:** `name`
 - **Nested blocks:** [`match`](#match---), [`default`](#default---)
 
 ### `permissions { ... }`
 
-- **Source:** [`workflow/schema.go:678`](../workflow/schema.go#L678)
+- **Source:** [`workflow/schema.go:681`](../workflow/schema.go#L681)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -263,7 +263,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `policy { ... }`
 
-- **Source:** [`workflow/schema.go:645`](../workflow/schema.go#L645)
+- **Source:** [`workflow/schema.go:648`](../workflow/schema.go#L648)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -314,7 +314,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 |---|---|---|---|
 | `next` | hcl.Expression | yes | _(no description)_ |
 | `description` | string | no | Description documents the outcome for agent-facing rendering (KB-259): it feeds the copilot adapter's allowed-outcomes menu so a model chooses a verdict from the author's stated semantics instead of prompt prose. Compile-validated, runtime-inert — it never alters contract validation or routing. The menu itself renders once the adapter wire carries descriptions (adapter-proto field, paired KB-260/KB-263); the compiled artifacts here are that render's data source. |
-| `schema` | hcl.Expression | no | Schema is the payload contract: type.<name> traversal or an inline typeexpr constraint; must subset the adapter's output schema. |
+| `schema` | hcl.Expression | no | Schema is the payload contract: type.<name> traversal or an inline typeexpr constraint; must subset the adapter's output schema. A typed schema replaces the adapter's default output type for this outcome; an outcome without one is untyped and resolves its outputs from that default (KB-264). |
 | `require_comment` | bool | no | RequireComment rejects a result with an empty adapter comment. |
 | `fallback` | bool | no | Fallback marks the per-step outcome that fires when the adapter produced no finalized result (max one). |
 
@@ -323,17 +323,17 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `match { ... }`
 
-- **Source:** [`workflow/schema.go:634`](../workflow/schema.go#L634)
+- **Source:** [`workflow/schema.go:637`](../workflow/schema.go#L637)
 - **Additional attributes:** captures: condition (required), next (required), output (optional)
 
 ### `default { ... }`
 
-- **Source:** [`workflow/schema.go:640`](../workflow/schema.go#L640)
+- **Source:** [`workflow/schema.go:643`](../workflow/schema.go#L643)
 - **Additional attributes:** captures: next (required), output (optional)
 
 ### `write { ... }`
 
-- **Source:** [`workflow/schema.go:583`](../workflow/schema.go#L583)
+- **Source:** [`workflow/schema.go:586`](../workflow/schema.go#L586)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |

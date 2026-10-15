@@ -270,6 +270,24 @@ manifest emission (`--emit-manifest`).
 | Python | [`criteria-python-adapter-sdk`](https://github.com/brokenbots/criteria-python-adapter-sdk) | Nuitka `--onefile` |
 | Go | [`criteria-go-adapter-sdk`](https://github.com/brokenbots/criteria-go-adapter-sdk) | `go build` |
 
+### Declare a default output type
+
+The manifest's `output_schema` doubles as the adapter's **default output
+type**: an untyped outcome block (one without `schema = ...`) resolves its
+outputs from it, so `output.<key>` reads work uniformly on untyped steps.
+Every adapter should declare its natural result shape at registration — the
+reference adapters declare:
+
+- `shell`: `exit_code` (number), `stdout` (string), `stderr` (string)
+- `copilot`: `reason` (string) — materialized from the legacy result
+  comment on untyped outcomes
+
+A typed outcome (`schema = ...` on the outcome) still replaces the default
+for that step and must subset the declared schema (rejections are
+compile-time). An adapter that declares no `output_schema` leaves untyped
+outcomes with an empty default (`{}`); compilation warns, and
+`output.<key>` reads against it are unchecked until you declare the schema.
+
 ### Publishing
 
 Building is the adapter's own job (its toolchain); publishing is uniform. The

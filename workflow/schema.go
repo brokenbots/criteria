@@ -568,7 +568,10 @@ type OutcomeSpec struct {
 	// artifacts here are that render's data source.
 	Description string `hcl:"description,optional"`
 	// Schema is the payload contract: type.<name> traversal or an inline
-	// typeexpr constraint; must subset the adapter's output schema.
+	// typeexpr constraint; must subset the adapter's output schema. A typed
+	// schema replaces the adapter's default output type for this outcome; an
+	// outcome without one is untyped and resolves its outputs from that
+	// default (KB-264).
 	Schema hcl.Expression `hcl:"schema,optional"`
 	// RequireComment rejects a result with an empty adapter comment.
 	RequireComment bool `hcl:"require_comment,optional"`
