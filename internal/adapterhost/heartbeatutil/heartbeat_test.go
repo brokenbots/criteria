@@ -2,6 +2,7 @@ package heartbeatutil
 
 import (
 	"context"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -80,6 +81,12 @@ func TestRunLogHeartbeatDefaultCadenceSelection(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.value != "" {
 				t.Setenv(tunables.EnvHeartbeatInterval, tc.value)
+			} else if orig, had := os.LookupEnv(tunables.EnvHeartbeatInterval); had {
+				// Hermetic unset: deployment environments (and dev shells) may
+				// legitimately carry the override; remove it for this subtest
+				// and restore afterward.
+				os.Unsetenv(tunables.EnvHeartbeatInterval)
+				t.Cleanup(func() { os.Setenv(tunables.EnvHeartbeatInterval, orig) })
 			}
 			if got := tunables.FromEnv().HeartbeatInterval; got != tunables.DefaultHeartbeatInterval {
 				t.Errorf("cadence with %s=%q = %s, want the built-in default %s (and it must never read 0)", tunables.EnvHeartbeatInterval, tc.value, got, tunables.DefaultHeartbeatInterval)
