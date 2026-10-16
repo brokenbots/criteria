@@ -283,7 +283,7 @@ reference adapters declare:
   comment on untyped outcomes
 
 A typed outcome (`schema = ...` on the outcome) still replaces the default
-for that step and must subset the declared schema (rejections are
+for that outcome and must subset the declared schema (rejections are
 compile-time). An adapter that declares no `output_schema` leaves untyped
 outcomes with an empty default (`{}`); compilation warns, and
 `output.<key>` reads against it are unchecked until you declare the schema.

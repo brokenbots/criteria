@@ -288,7 +288,7 @@ func TestValidate_Full(t *testing.T) {
 	assert.NoError(t, m.Validate())
 }
 
-func TestValidate_DefaultOutputTypeDeclarations(t *testing.T) {
+func TestValidate_OutputSchemaFieldTypesRequired(t *testing.T) {
 	// KB-264: every adapter should declare a default output type in its
 	// manifest output_schema; the engine resolves untyped outcomes from it.
 	// The canonical declarations (shell's natural result set, copilot's
