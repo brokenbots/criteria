@@ -477,13 +477,18 @@ func renderTemplateFile(opts *FunctionOptions, raw string, varsVal cty.Value) (c
 		return cty.StringVal(""), fmt.Errorf("templatefile(): %q parse: %w", raw, err)
 	}
 
-	// If any template variable is unknown (e.g. a var.* with no default during
-	// validation), we cannot render the template yet, but we have already
-	// verified the file exists and the template parses. Return an unknown
-	// string so the expression folds correctly at validation time and is
-	// re-rendered once runtime values are available.
+	// If any template variable is unknown (e.g. a var.* with no default, or a
+	// runtime-only namespace binding during validation), the template cannot
+	// be rendered meaningfully — but KB-266 requires that deferral not waive
+	// TYPE checking. A placeholder render substitutes type-mirroring zero
+	// values for unknown primitive-typed variables so text/template's
+	// function-call signature checks (e.g. shellquote(string) rejecting an
+	// int64) still run at compile time. The render result is discarded and an
+	// unknown string is returned so the expression keeps deferring to the
+	// runtime render. Unknowns of non-primitive (collection/dynamic) type
+	// keep the old behavior: the render is skipped entirely.
 	if hasUnknownValue(varsVal) {
-		return cty.UnknownVal(cty.String), nil
+		return renderTemplateFileUnknown(tmpl, raw, varsVal)
 	}
 
 	// Convert cty vars to Go map for text/template.
@@ -497,6 +502,124 @@ func renderTemplateFile(opts *FunctionOptions, raw string, varsVal cty.Value) (c
 		return cty.StringVal(""), fmt.Errorf("templatefile(): %q execute: %w", raw, err)
 	}
 	return cty.StringVal(buf.String()), nil
+}
+
+// renderTemplateFileUnknown performs the KB-266 compile-time type-check
+// render for templates with unknown variables. Unknown primitive-typed
+// values are replaced with zero-value placeholders mirroring the runtime
+// ctyToGoValue mapping (string→"", bool→false, number→int64) so Go
+// text/template's call-site signature checks run against real Go types —
+// a number-typed variable passed to shellquote() fails here exactly as it
+// would at runtime. The rendered bytes are discarded and an unknown string
+// is returned, preserving value deferral. If any unknown is non-primitive
+// (collection or dynamic), the render is skipped and the expression stays
+// fully deferred.
+func renderTemplateFileUnknown(tmpl *template.Template, raw string, varsVal cty.Value) (cty.Value, error) {
+	ctxMap := make(map[string]any)
+	it := varsVal.ElementIterator()
+	for it.Next() {
+		k, val := it.Element()
+		gv, dynamic, err := placeholderGoValue(val)
+		if err != nil {
+			return cty.StringVal(""), fmt.Errorf("templatefile(): converting vars: %w", err)
+		}
+		if dynamic {
+			// Non-primitive unknown: keep today's skip — the expression stays
+			// runtime-deferred, not a compile error.
+			return cty.UnknownVal(cty.String), nil
+		}
+		ctxMap[k.AsString()] = gv
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, ctxMap); err != nil {
+		return cty.StringVal(""), fmt.Errorf(
+			"templatefile(): %q execute (compile-time type check with deferred variables %s): %w",
+			raw, unknownVarNames(varsVal), err)
+	}
+	// Render type-checked successfully; discard the bytes and defer the real
+	// render to runtime. Unknowns never materialize into renders.
+	return cty.UnknownVal(cty.String), nil
+}
+
+// placeholderGoValue converts a cty value to its Go placeholder equivalent
+// for the KB-266 compile-time type-check render. Known values convert exactly
+// like ctyToGoValue. Unknown values of primitive type return a zero-value
+// placeholder mirroring the runtime mapping; unknown non-primitive values
+// report dynamic=true, which aborts the placeholder render in favor of the
+// old full skip.
+func placeholderGoValue(v cty.Value) (any, bool, error) {
+	if !v.IsKnown() {
+		ty := v.Type()
+		if ty == cty.DynamicPseudoType || !isPrimitiveCtyType(ty) {
+			return nil, true, nil
+		}
+		return placeholderForType(ty), false, nil
+	}
+	if v.IsNull() {
+		return nil, false, nil
+	}
+	ty := v.Type()
+	switch {
+	case ty == cty.String:
+		return v.AsString(), false, nil
+	case ty == cty.Bool:
+		return v.True(), false, nil
+	case ty == cty.Number:
+		// Mirror ctyToGoValue: int64 when exactly representable; else float64.
+		if i, acc := v.AsBigFloat().Int64(); acc == big.Exact {
+			return i, false, nil
+		}
+		f, _ := v.AsBigFloat().Float64()
+		return f, false, nil
+	case ty.IsListType() || ty.IsTupleType() || ty.IsSetType():
+		var out []any
+		it := v.ElementIterator()
+		for it.Next() {
+			_, elem := it.Element()
+			gv, dynamic, err := placeholderGoValue(elem)
+			if err != nil || dynamic {
+				return nil, dynamic, err
+			}
+			out = append(out, gv)
+		}
+		return out, false, nil
+	case ty.IsObjectType() || ty.IsMapType():
+		m := make(map[string]any)
+		it := v.ElementIterator()
+		for it.Next() {
+			k, elem := it.Element()
+			gv, dynamic, err := placeholderGoValue(elem)
+			if err != nil || dynamic {
+				return nil, dynamic, err
+			}
+			m[k.AsString()] = gv
+		}
+		return m, false, nil
+	default:
+		return nil, false, fmt.Errorf("unsupported type: %s", ty.FriendlyName())
+	}
+}
+
+// isPrimitiveCtyType reports whether ty is one of the scalar cty types the
+// placeholder render can mirror.
+func isPrimitiveCtyType(ty cty.Type) bool {
+	return ty == cty.String || ty == cty.Bool || ty == cty.Number
+}
+
+// placeholderForType returns the zero placeholder for a primitive cty type,
+// mirroring how ctyToGoValue maps that type at runtime (number→int64 keeps
+// the live "expected string; got int64" error class unchanged).
+func placeholderForType(ty cty.Type) any {
+	switch {
+	case ty == cty.String:
+		return ""
+	case ty == cty.Bool:
+		return false
+	case ty == cty.Number:
+		return int64(0)
+	}
+	return nil
 }
 
 // hasUnknownValue reports whether v or any nested value inside it is unknown.

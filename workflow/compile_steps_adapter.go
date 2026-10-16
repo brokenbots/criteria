@@ -358,7 +358,7 @@ func decodeStepInput(g *FSMGraph, sp *StepSpec, schemas map[string]AdapterInfo, 
 	for k, attr := range attrs {
 		inputExprs[k] = attr.Expr
 	}
-	diags = append(diags, validateFoldableAttrs(attrs, graphVars(g), graphLocals(g), opts.WorkflowDir)...)
+	diags = append(diags, validateFoldableAttrsTyped(g, sp, attrs, schemas, opts)...)
 	return inputMap, inputExprs, diags
 }
 
@@ -385,6 +385,6 @@ func decodeStepSecretInput(g *FSMGraph, sp *StepSpec, schemas map[string]Adapter
 	for k, attr := range attrs {
 		secretInputExprs[k] = attr.Expr
 	}
-	diags = append(diags, validateFoldableAttrs(attrs, graphVars(g), graphLocals(g), opts.WorkflowDir)...)
+	diags = append(diags, validateFoldableAttrsTyped(g, sp, attrs, schemas, opts)...)
 	return secretInputMap, secretInputExprs, diags
 }
