@@ -205,9 +205,12 @@ func stepOutputBinding(node *StepNode) cty.Value {
 
 // outputSchemaBinding builds the typed object for a set of declared output
 // fields. Fields with cty.NilType (KB-264 declared-permissive) stay dynamic.
-// An "outputs" attribute mirrors the 4-segment steps.<name>.outputs.<field>
-// form so both shapes type-check; field-name validity is validated separately
-// by checkStepsOutputRefs / checkStepsFieldTraversals.
+// The legacy 4-segment steps.<name>.outputs.<field> form binds a dynamic
+// "outputs" attribute: this keeps those traversals compile-clean here so the
+// dedicated field-name validators (checkStepsOutputRefs, with
+// Levenshtein-sorted suggestions) remain the authority without competing
+// duplicate diagnostics; the canonical flat steps.<name>.<field> form carries
+// the declared types.
 func outputSchemaBinding(schema map[string]ConfigField) cty.Value {
 	if len(schema) == 0 {
 		return cty.DynamicVal
@@ -220,11 +223,7 @@ func outputSchemaBinding(schema map[string]ConfigField) cty.Value {
 			fields[name] = field.CtyType
 		}
 	}
-	wrapper := make(map[string]cty.Type, len(fields))
-	for k, v := range fields {
-		wrapper[k] = v
-	}
-	fields["outputs"] = cty.Object(wrapper)
+	fields["outputs"] = cty.DynamicPseudoType
 	return cty.UnknownVal(cty.Object(fields))
 }
 
