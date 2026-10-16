@@ -262,6 +262,15 @@ type SessionManager struct {
 	// keyed by instance ID. Populated by VerifyGraph.
 	adapterDirs map[string]string
 
+	// declaredPermissiveOutputs records the adapter instances whose phase-1
+	// handshake declared NO output_schema, so their permissiveness is the
+	// adapter's own recorded act (KB-266 boot gate) instead of an
+	// engine-side shapeless hole: outputs read against such an adapter take
+	// the documented empty default ({}), unchecked. Keyed by instance ID,
+	// guarded by mu. The typed-surface gate itself lives in verifyAdapterInfo;
+	// DeclaredPermissiveOutput exposes the record.
+	declaredPermissiveOutputs map[string]bool
+
 	// KB-156: tool resources this manager leases from ANOTHER manager's
 	// environment, keyed by instance ID -> the owner manager that created and
 	// owns the shared session. Nested tool calls for leased names delegate to
@@ -1904,6 +1913,17 @@ func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterNam
 	// step to carry their schema, so the host keeps it here instead.
 	m.cacheAdapterInfo(name, &info.AdapterInfo)
 
+	// KB-266 boot gate — typed surface check. A handshake that declares no
+	// output_schema used to ship silently. Per the KB-264/269 doctrine the
+	// absence is the adapter's own declared-permissive act, not engine-side
+	// shapelessness: record it as such and warn by name. It is not a boot
+	// failure — the typed-init-failure arm of the gate is the unresolvable
+	// manifest (the resolve/handshake errors above), where knowledge of the
+	// type is missing rather than missing-by-declaration; knowledge deferral
+	// ("artifact not verifiable in this environment") stays a warning on the
+	// compile surface (diagutil.CollectSchemas).
+	m.recordDeclaredPermissiveOutput(name, adapterName, info.AdapterInfo.OutputSchema)
+
 	return info.Capabilities, nil
 }
 
@@ -1920,6 +1940,45 @@ func validateStateHandshake(adapterName string, d *workflow.StateDeclaration) er
 		return fmt.Errorf("adapter %q handshake: state declaration: %w", adapterName, err)
 	}
 	return nil
+}
+
+// recordDeclaredPermissiveOutput implements the typed-surface arm of the
+// KB-266 boot gate: an adapter whose handshake declares no output_schema is
+// the adapter's own declared-permissive act, so the manager records the
+// instance and warns by name the first time the declaration is observed.
+// Re-verifications (snapshot-restore relaunch) stay silent once recorded.
+// Thread-safe.
+func (m *SessionManager) recordDeclaredPermissiveOutput(name, adapterType string, outputSchema map[string]workflow.ConfigField) {
+	if len(outputSchema) > 0 {
+		return
+	}
+	m.mu.Lock()
+	if m.declaredPermissiveOutputs[name] {
+		m.mu.Unlock()
+		return
+	}
+	if m.declaredPermissiveOutputs == nil {
+		m.declaredPermissiveOutputs = make(map[string]bool)
+	}
+	m.declaredPermissiveOutputs[name] = true
+	m.mu.Unlock()
+	slog.Warn("adapter declares no output type (declared permissive)",
+		"adapter_instance", name,
+		"adapter_type", adapterType,
+		"detail", "the handshake declared no output_schema, so untyped outcomes resolve to the empty default ({}); output.<key> reads against it are unchecked. Declare output_schema fields at registration to give untyped outcomes a checked shape.",
+	)
+}
+
+// DeclaredPermissiveOutput reports whether the named instance's handshake
+// declared no output_schema: the adapter's recorded declared-permissive act.
+// Outputs read against such an adapter resolve to the empty default ({})
+// unchecked. Backed by the record the verify handshake wrote; false when the
+// instance declared an output schema or was never verified here.
+// Thread-safe.
+func (m *SessionManager) DeclaredPermissiveOutput(name string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.declaredPermissiveOutputs[name]
 }
 
 // cacheAdapterInfo stores the adapter's captured declared surface. It backs

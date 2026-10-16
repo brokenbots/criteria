@@ -64,11 +64,23 @@ func FoldExpr(
 		}
 	}
 
+	ctx := buildFoldEvalContext(vars, locals, workflowDir, nil)
+	val, diags := expr.Value(ctx)
+	return val, true, diags
+}
+
+// buildFoldEvalContext builds the hcl.EvalContext used by the fold family:
+// var/local closures, the workflow function registry, and optional extra
+// runtime bindings. When workflowDir is "", file() and fileexists() are
+// replaced with stubs that return unknown values so that var/local reference
+// checks still run without triggering "workflow directory not configured"
+// errors. Literal-string args return unknown rather than erroring.
+func buildFoldEvalContext(vars, locals map[string]cty.Value, workflowDir string, runtimeBindings map[string]cty.Value) *hcl.EvalContext {
 	funcs := workflowFunctions(DefaultFunctionOptions(workflowDir))
 	if workflowDir == "" {
 		// Stub file() and fileexists() so var/local reference checks still run
 		// but path validation is not attempted when no workflow directory is
-		// configured. Literal-string args return unknown rather than erroring.
+		// configured.
 		funcs["file"] = function.New(&function.Spec{
 			Params: []function.Parameter{{Name: "path", Type: cty.String}},
 			Type:   function.StaticReturnType(cty.String),
@@ -84,7 +96,6 @@ func FoldExpr(
 			},
 		})
 	}
-
 	ctx := &hcl.EvalContext{
 		Variables: map[string]cty.Value{
 			"var":   ctyObjectOrEmpty(vars),
@@ -92,7 +103,55 @@ func FoldExpr(
 		},
 		Functions: funcs,
 	}
+	for name, val := range runtimeBindings {
+		ctx.Variables[name] = val
+	}
+	return ctx
+}
 
+// FoldExprWithRuntimeBindings evaluates expr in the closure (var ∪ local ∪
+// funcs) plus explicit bindings for runtime-only namespaces. It is the
+// KB-266 type-check entry point: when a runtime-only root is bound to
+// cty.UnknownVal(declaredType), HCL and cty semantics type-check operations
+// against the declared types even though values are unknown, while
+// type-correct operations still fold to unknown values (value deferral is
+// preserved). An expression containing no runtime-only root behaves exactly
+// like FoldExpr and may return a known value.
+//
+// FoldExprWithRuntimeBindings never folds to a known value when bindings are
+// present: callers own the deferral contract (the returned value is
+// discarded for diagnostic-only validation).
+//
+// Diagnostics from the evaluation are returned; they carry expression-site
+// ranges. Dynamic-typed operands produce no diagnostics — operations on
+// cty.UnknownVal(cty.DynamicPseudoType) stay runtime-deferred.
+func FoldExprWithRuntimeBindings(
+	expr hcl.Expression,
+	vars, locals map[string]cty.Value,
+	workflowDir string,
+	runtimeBindings map[string]cty.Value,
+) (cty.Value, bool, hcl.Diagnostics) {
+	// Identical deferral decision as FoldExpr: expressions without
+	// runtime-only roots should not pay for the extended context.
+	deferred := false
+	for _, traversal := range expr.Variables() {
+		if len(traversal) == 0 {
+			continue
+		}
+		root, ok := traversal[0].(hcl.TraverseRoot)
+		if !ok {
+			continue
+		}
+		if runtimeOnlyNamespaces[root.Name] {
+			deferred = true
+			break
+		}
+	}
+	if !deferred {
+		return FoldExpr(expr, vars, locals, workflowDir)
+	}
+
+	ctx := buildFoldEvalContext(vars, locals, workflowDir, runtimeBindings)
 	val, diags := expr.Value(ctx)
 	return val, true, diags
 }
