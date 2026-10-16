@@ -270,6 +270,31 @@ manifest emission (`--emit-manifest`).
 | Python | [`criteria-python-adapter-sdk`](https://github.com/brokenbots/criteria-python-adapter-sdk) | Nuitka `--onefile` |
 | Go | [`criteria-go-adapter-sdk`](https://github.com/brokenbots/criteria-go-adapter-sdk) | `go build` |
 
+### Declare a default output type
+
+The manifest's `output_schema` doubles as the adapter's **default output
+type**: an untyped outcome block (one without `schema = ...`) resolves its
+outputs from it, so `output.<key>` reads work uniformly on untyped steps.
+Every adapter should declare its natural result shape at registration — the
+reference adapters declare:
+
+- `shell`: `exit_code` (number), `stdout` (string), `stderr` (string)
+- `copilot`: `reason` (string) — materialized from the legacy result
+  comment on untyped outcomes
+
+A typed outcome (`schema = ...` on the outcome) still replaces the default
+for that outcome and must subset the declared schema (rejections are
+compile-time). An adapter that declares no `output_schema` leaves untyped
+outcomes with an empty default (`{}`); compilation warns, and
+`output.<key>` reads against it are unchecked until you declare the schema.
+
+The bundled `criteria-adapter-mcp` adapter intentionally does not declare a
+default output type: like its input surface (undeclared by design,
+CRI-172), its result shape is dynamic — tool-result shaped and varying with
+the discovered MCP tool — so a closed static schema would reject legitimate
+results. The documented empty default (`{}`) applies, with the compile-time
+warning naming the declaration as the adapter's own responsibility.
+
 ### Publishing
 
 Building is the adapter's own job (its toolchain); publishing is uniform. The

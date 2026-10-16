@@ -568,7 +568,10 @@ type OutcomeSpec struct {
 	// artifacts here are that render's data source.
 	Description string `hcl:"description,optional"`
 	// Schema is the payload contract: type.<name> traversal or an inline
-	// typeexpr constraint; must subset the adapter's output schema.
+	// typeexpr constraint; must subset the adapter's output schema. A typed
+	// schema replaces the adapter's default output type for this outcome; an
+	// outcome without one is untyped and resolves its outputs from that
+	// default (KB-264).
 	Schema hcl.Expression `hcl:"schema,optional"`
 	// RequireComment rejects a result with an empty adapter comment.
 	RequireComment bool `hcl:"require_comment,optional"`
@@ -1005,8 +1008,11 @@ type StepNode struct {
 	// block's environment and the workflow-level default for this step only.
 	// Applies env-var injection only; does not create a new adapter session.
 	Environment string
-	// OutputSchema is the adapter's declared output schema for this step.
-	// Populated during compilation when the step targets an adapter.
+	// OutputSchema is the adapter's declared output schema for this step —
+	// the adapter's DEFAULT OUTPUT TYPE (KB-264): untyped outcomes resolve
+	// their output shape from it, and typed (schema-declared) outcomes are
+	// subset-validated against it at compile time. Populated during
+	// compilation when the step targets an adapter.
 	OutputSchema map[string]ConfigField
 	// Tainted is set by the taint compiler pass when this step receives secret
 	// data (secret_input, predecessor taint, or sensitive output references).

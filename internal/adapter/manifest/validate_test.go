@@ -288,6 +288,36 @@ func TestValidate_Full(t *testing.T) {
 	assert.NoError(t, m.Validate())
 }
 
+func TestValidate_OutputSchemaFieldTypesRequired(t *testing.T) {
+	// KB-264: every adapter should declare a default output type in its
+	// manifest output_schema; the engine resolves untyped outcomes from it.
+	// The canonical declarations (shell's natural result set, copilot's
+	// object({reason})) must validate as typed schemas.
+	shellDefaults := map[string]manifest.SchemaField{
+		"exit_code": {Type: "number", Description: "Process exit status"},
+		"stdout":    {Type: "string"},
+		"stderr":    {Type: "string"},
+	}
+	copilotDefaults := map[string]manifest.SchemaField{
+		"reason": {Type: "string", Description: "Single legacy reason/comment string"},
+	}
+
+	m := validManifest()
+	m.OutputSchema.Fields = shellDefaults
+	assert.NoError(t, m.Validate())
+	m.OutputSchema.Fields = copilotDefaults
+	assert.NoError(t, m.Validate())
+
+	// A declaration with an untyped field is rejected at load, not left to a
+	// runtime surprise.
+	m.OutputSchema.Fields = map[string]manifest.SchemaField{
+		"stdout": {Description: "missing type"},
+	}
+	err := m.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `output_schema.fields["stdout"].type is required`)
+}
+
 func TestValidate_AllRulesCovered(t *testing.T) {
 	// Every validation rule in the workstream spec must have a dedicated test.
 	// Rules: schema_version, name, version, source_url, platforms,

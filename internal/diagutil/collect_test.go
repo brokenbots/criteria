@@ -273,6 +273,12 @@ func TestCollectSchemas_NoOutputSchemaWarning(t *testing.T) {
 		if !strings.Contains(d.Detail, testDigest) {
 			t.Errorf("warning detail should name the resolved digest %q, got %q", testDigest, d.Detail)
 		}
+		// KB-264: the warning must state the documented fallback — no
+		// output_schema means untyped outcomes resolve to an empty default
+		// output type, so the declaration is the adapter's own responsibility.
+		if !strings.Contains(d.Detail, "doubles as the adapter's default output type") {
+			t.Errorf("warning detail should state the KB-264 default-output-type doctrine, got %q", d.Detail)
+		}
 		found = true
 	}
 	if !found {
