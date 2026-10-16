@@ -54,7 +54,7 @@ func runDefaultOutput(t *testing.T, g *workflow.FSMGraph, handlers map[string]ad
 // adapter step with an untyped outcome writes one output.<key> read into a
 // data value, and a verify step projects the data value back so the sink
 // captures it.
-func writeBackWorkflow(dataType string) string {
+func writeBackWorkflow() string {
 	return `
 workflow {
   name = "default_outputs"
@@ -64,7 +64,7 @@ workflow {
 }
 
 data "internal" "captured" {
-  type = ` + dataType + `
+  type = string
 }
 
 step "run" {
@@ -167,7 +167,7 @@ func (p *commentAdapter) Restore(context.Context, string, []byte, uint32) error 
 // the outcome projection; write {value = output.stdout} lands the command's
 // text.
 func TestDefaultOutputs_UntypedShellOutcomeWritesStdout(t *testing.T) {
-	src := strings.ReplaceAll(writeBackWorkflow("string"), "OUTPUTKEY", "stdout")
+	src := strings.ReplaceAll(writeBackWorkflow(), "OUTPUTKEY", "stdout")
 	g := compileWithSchemas(t, src, map[string]workflow.AdapterInfo{
 		"target": {OutputSchema: shellDefaultOutputSchema},
 	})
@@ -192,7 +192,7 @@ func TestDefaultOutputs_UntypedShellOutcomeWritesStdout(t *testing.T) {
 // untyped copilot-step outcome exposes output.reason = the legacy reason
 // string, with the adapter emitting no outputs of its own.
 func TestDefaultOutputs_UntypedCopilotOutcomeWritesReason(t *testing.T) {
-	src := strings.ReplaceAll(writeBackWorkflow("string"), "OUTPUTKEY", "reason")
+	src := strings.ReplaceAll(writeBackWorkflow(), "OUTPUTKEY", "reason")
 	g := compileWithSchemas(t, src, map[string]workflow.AdapterInfo{
 		"target": {OutputSchema: copilotDefaultOutputSchema},
 	})
@@ -293,7 +293,7 @@ state "done" { terminal = true }
 // reads "" (the declared type is satisfied in full) instead of failing the
 // run with `output key "reason" not found`.
 func TestDefaultOutputs_UntypedCopilotEmptyCommentYieldsEmptyReason(t *testing.T) {
-	src := strings.ReplaceAll(writeBackWorkflow("string"), "OUTPUTKEY", "reason")
+	src := strings.ReplaceAll(writeBackWorkflow(), "OUTPUTKEY", "reason")
 	g := compileWithSchemas(t, src, map[string]workflow.AdapterInfo{
 		"target": {OutputSchema: copilotDefaultOutputSchema},
 	})
@@ -646,7 +646,7 @@ state "failed" { terminal = true }
 // into the untyped payload and the output.<key> read of the undeclared-output
 // key fails exactly like any other missing output.
 func TestDefaultOutputs_UntypedReasonDeclaredNonStringNotMaterialized(t *testing.T) {
-	src := strings.ReplaceAll(writeBackWorkflow("string"), "OUTPUTKEY", "reason")
+	src := strings.ReplaceAll(writeBackWorkflow(), "OUTPUTKEY", "reason")
 	g := compileWithSchemas(t, src, map[string]workflow.AdapterInfo{
 		"target": {OutputSchema: map[string]workflow.ConfigField{
 			"reason": {Type: workflow.ConfigFieldNumber, CtyType: cty.Number},
