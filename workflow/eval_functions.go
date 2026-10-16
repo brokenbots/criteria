@@ -548,7 +548,7 @@ func renderTemplateFileUnknown(tmpl *template.Template, raw string, varsVal cty.
 // placeholder mirroring the runtime mapping; unknown non-primitive values
 // report dynamic=true, which aborts the placeholder render in favor of the
 // old full skip.
-func placeholderGoValue(v cty.Value) (any, bool, error) {
+func placeholderGoValue(v cty.Value) (placeholder any, dynamic bool, err error) {
 	if !v.IsKnown() {
 		ty := v.Type()
 		if ty == cty.DynamicPseudoType || !isPrimitiveCtyType(ty) {
@@ -567,38 +567,56 @@ func placeholderGoValue(v cty.Value) (any, bool, error) {
 		return v.True(), false, nil
 	case ty == cty.Number:
 		// Mirror ctyToGoValue: int64 when exactly representable; else float64.
-		if i, acc := v.AsBigFloat().Int64(); acc == big.Exact {
-			return i, false, nil
-		}
-		f, _ := v.AsBigFloat().Float64()
-		return f, false, nil
+		return placeholderGoNumber(v), false, nil
 	case ty.IsListType() || ty.IsTupleType() || ty.IsSetType():
-		var out []any
-		it := v.ElementIterator()
-		for it.Next() {
-			_, elem := it.Element()
-			gv, dynamic, err := placeholderGoValue(elem)
-			if err != nil || dynamic {
-				return nil, dynamic, err
-			}
-			out = append(out, gv)
-		}
-		return out, false, nil
+		return placeholderGoElements(v)
 	case ty.IsObjectType() || ty.IsMapType():
-		m := make(map[string]any)
-		it := v.ElementIterator()
-		for it.Next() {
-			k, elem := it.Element()
-			gv, dynamic, err := placeholderGoValue(elem)
-			if err != nil || dynamic {
-				return nil, dynamic, err
-			}
-			m[k.AsString()] = gv
-		}
-		return m, false, nil
+		return placeholderGoAttributes(v)
 	default:
 		return nil, false, fmt.Errorf("unsupported type: %s", ty.FriendlyName())
 	}
+}
+
+// placeholderGoNumber maps a known cty number to its Go placeholder:
+// int64 when exactly representable, else float64.
+func placeholderGoNumber(v cty.Value) any {
+	if i, acc := v.AsBigFloat().Int64(); acc == big.Exact {
+		return i
+	}
+	f, _ := v.AsBigFloat().Float64()
+	return f
+}
+
+// placeholderGoElements converts a list/tuple/set value to a Go slice;
+// unknown-of-non-primitive elements abort with dynamic=true.
+func placeholderGoElements(v cty.Value) (placeholder any, dynamic bool, err error) {
+	var out []any
+	it := v.ElementIterator()
+	for it.Next() {
+		_, elem := it.Element()
+		gv, dynamic, err := placeholderGoValue(elem)
+		if err != nil || dynamic {
+			return nil, dynamic, err
+		}
+		out = append(out, gv)
+	}
+	return out, false, nil
+}
+
+// placeholderGoAttributes converts an object/map value to a Go map keyed by
+// attribute name; unknown-of-non-primitive members abort with dynamic=true.
+func placeholderGoAttributes(v cty.Value) (placeholder any, dynamic bool, err error) {
+	m := make(map[string]any)
+	it := v.ElementIterator()
+	for it.Next() {
+		k, elem := it.Element()
+		gv, dynamic, err := placeholderGoValue(elem)
+		if err != nil || dynamic {
+			return nil, dynamic, err
+		}
+		m[k.AsString()] = gv
+	}
+	return m, false, nil
 }
 
 // isPrimitiveCtyType reports whether ty is one of the scalar cty types the

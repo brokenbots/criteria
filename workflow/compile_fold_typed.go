@@ -31,14 +31,13 @@ import (
 // cty.UnknownVal(declared type). Type errors surface as compile diagnostics
 // at the binding site; type-correct expressions still defer unchanged.
 //
-// g and schemas carry the declared types; sp is the step whose input /
+// g carries the declared types; sp is the step whose input /
 // secret_input block is being validated (used to resolve iteration binding
 // types and self refs).
 func validateFoldableAttrsTyped(
 	g *FSMGraph,
 	sp *StepSpec,
 	attrs hcl.Attributes,
-	schemas map[string]AdapterInfo,
 	opts CompileOpts,
 ) hcl.Diagnostics {
 	var diags hcl.Diagnostics
@@ -46,7 +45,7 @@ func validateFoldableAttrsTyped(
 		return diags
 	}
 	vars, locals := graphVars(g), graphLocals(g)
-	bindings := stepInputRuntimeBindings(g, sp, schemas, opts)
+	bindings := stepInputRuntimeBindings(g, sp, opts)
 	for _, attr := range attrs {
 		_, foldable, d := FoldExpr(attr.Expr, vars, locals, opts.WorkflowDir)
 		if !foldable {
@@ -69,7 +68,7 @@ func validateFoldableAttrsTyped(
 //
 // Members with no declared type bind cty.UnknownVal(cty.DynamicPseudoType);
 // operations on them stay runtime-deferred rather than erroring.
-func stepInputRuntimeBindings(g *FSMGraph, sp *StepSpec, schemas map[string]AdapterInfo, opts CompileOpts) map[string]cty.Value {
+func stepInputRuntimeBindings(g *FSMGraph, sp *StepSpec, opts CompileOpts) map[string]cty.Value {
 	bindings := map[string]cty.Value{
 		// Not exposed to step input evaluation at runtime; opaque bindings
 		// keep refs to them deferred without introducing "undefined
