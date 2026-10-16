@@ -323,16 +323,7 @@ func unknownVarNames(v cty.Value) string {
 			}
 			return
 		}
-		if cur.IsNull() {
-			return
-		}
-		ty := cur.Type()
-		if !(ty.IsObjectType() || ty.IsMapType() || ty.IsListType() || ty.IsTupleType() || ty.IsSetType()) {
-			return
-		}
-		if ty.IsListType() || ty.IsSetType() {
-			// Homogeneous collections: the root already names the element
-			// type; per-element paths add noise.
+		if cur.IsNull() || !isNestedUnknownContainer(cur.Type()) {
 			return
 		}
 		if len(paths) >= maxUnknownVarNames-1 {
@@ -342,17 +333,11 @@ func unknownVarNames(v cty.Value) string {
 		it := cur.ElementIterator()
 		for it.Next() {
 			k, elem := it.Element()
-			// Object and map iterators yield String keys; tuple iterators
-			// yield Number element indexes (cty guarantees this). AsString
-			// panics on non-String keys, so each key is formatted by type.
-			switch {
-			case k.Type() == cty.String:
-				walk(elem, joinPath(path, k.AsString()))
-			case k.Type() == cty.Number:
-				// Tuple keys are exact element indexes.
-				i, _ := k.AsBigFloat().Int64()
-				walk(elem, joinPath(path, strconv.FormatInt(i, 10)))
+			name, ok := elementKeyPathName(k)
+			if !ok {
+				continue
 			}
+			walk(elem, joinPath(path, name))
 		}
 	}
 	walk(v, "")
@@ -363,6 +348,39 @@ func unknownVarNames(v cty.Value) string {
 // maxUnknownVarNames caps the number of unknown-variable paths reported in a
 // single type-validation diagnostic so messages stay readable.
 const maxUnknownVarNames = 8
+
+// isNestedUnknownContainer reports whether a known, non-null value's
+// unknown members are worth walking into: objects and maps (named
+// attributes). Lists and sets already name their element type at the root
+// path, so per-element paths just add noise.
+func isNestedUnknownContainer(ty cty.Type) bool {
+	switch {
+	case ty.IsObjectType() || ty.IsMapType():
+		return true
+	case ty.IsTupleType():
+		return true
+	default:
+		return false
+	}
+}
+
+// elementKeyPathName formats an iterator key for a diagnostic path. Object
+// and map iterators yield String attribute keys; tuple iterators yield
+// Number element indexes (cty guarantees both). Any other key type is not
+// traversable and reports ok=false — never call AsString on a non-String
+// key.
+func elementKeyPathName(k cty.Value) (name string, ok bool) {
+	switch k.Type() {
+	case cty.String:
+		return k.AsString(), true
+	case cty.Number:
+		// Tuple keys are exact element indexes.
+		i, _ := k.AsBigFloat().Int64()
+		return strconv.FormatInt(i, 10), true
+	default:
+		return "", false
+	}
+}
 
 func joinPath(prefix, name string) string {
 	if prefix == "" {
