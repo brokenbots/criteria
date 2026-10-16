@@ -288,6 +288,13 @@ compile-time). An adapter that declares no `output_schema` leaves untyped
 outcomes with an empty default (`{}`); compilation warns, and
 `output.<key>` reads against it are unchecked until you declare the schema.
 
+The bundled `criteria-adapter-mcp` adapter intentionally does not declare a
+default output type: like its input surface (undeclared by design,
+CRI-172), its result shape is dynamic — tool-result shaped and varying with
+the discovered MCP tool — so a closed static schema would reject legitimate
+results. The documented empty default (`{}`) applies, with the compile-time
+warning naming the declaration as the adapter's own responsibility.
+
 ### Publishing
 
 Building is the adapter's own job (its toolchain); publishing is uniform. The

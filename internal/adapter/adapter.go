@@ -43,7 +43,9 @@ type Result struct {
 	// verbatim, and — KB-264 — the engine materializes an adapter-declared
 	// default `reason` output from it on UNTYPED outcomes (see
 	// engine.withDefaultOutputs): a default output type declaring a `reason`
-	// field (e.g. copilot) makes output.reason uniformly readable. Typed
+	// field (e.g. copilot) makes output.reason uniformly readable — an empty
+	// comment materializes `reason = ""`, matching the declared type in full.
+	// Typed
 	// (schema-declared) outcomes are contract-validated verbatim and the
 	// comment is never projected into them.
 	Comment string

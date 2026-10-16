@@ -258,6 +258,88 @@ state "done" { terminal = true }
 	}, sink.captured["run"])
 }
 
+// TestDefaultOutputs_UntypedCopilotEmptyCommentYieldsEmptyReason
+// (acceptance b, empty-comment half): an untyped copilot-step outcome carries
+// the declared default field even when the comment is empty — output.reason
+// reads "" (the declared type is satisfied in full) instead of failing the
+// run with `output key "reason" not found`.
+func TestDefaultOutputs_UntypedCopilotEmptyCommentYieldsEmptyReason(t *testing.T) {
+	src := strings.ReplaceAll(writeBackWorkflow("string"), "OUTPUTKEY", "reason")
+	g := compileWithSchemas(t, src, map[string]workflow.AdapterInfo{
+		"target": {OutputSchema: copilotDefaultOutputSchema},
+	})
+
+	runHandle := &commentAdapter{
+		name:    "target",
+		outcome: "success",
+		comment: "",
+	}
+	sink, err := runDefaultOutput(t, g, map[string]adapterhost.Handle{
+		"target":   runHandle,
+		"verifier": &fakeAdapter{name: "verifier", outcome: "success"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "", sink.captured["verify"]["result"])
+	// The declared shape is materialized for the capture too: an empty
+	// comment still renders {"reason": ""}, never {}.
+	assert.Equal(t, map[string]string{"reason": ""}, sink.captured["run"])
+}
+
+// TestDefaultOutputs_UntypedFallbackArmMaterializesEmptyReason (acceptance b,
+// synthesized-fallback half): the host's KB-45 fallback lane synthesizes a
+// verdict with no payload and an empty comment; an untyped fallback arm on a
+// reason-declaring adapter still exposes output.reason = "" and the
+// write-through read succeeds.
+func TestDefaultOutputs_UntypedFallbackArmMaterializesEmptyReason(t *testing.T) {
+	src := `
+workflow {
+  name = "copilot_fallback_reason"
+  version       = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+}
+
+data "internal" "captured" {
+  type = string
+}
+
+step "run" {
+  target = adapter.target
+  outcome "failed" {
+    fallback = true
+    next = step.report
+    write {
+      target = data.internal.captured.value
+      value  = output.reason
+    }
+  }
+  outcome "success" { next = step.done }
+}
+
+step "report" {
+  target = adapter.verifier
+  outcome "success" {
+    next = step.done
+    output = { result = data.internal.captured.value }
+  }
+}
+
+state "done" { terminal = true }
+`
+	g := compileWithSchemas(t, src, map[string]workflow.AdapterInfo{
+		"target": {OutputSchema: copilotDefaultOutputSchema},
+	})
+	// An empty Result never finalizes: the host synthesizes the fallback
+	// verdict (no payload, empty comment).
+	sink, err := runDefaultOutput(t, g, map[string]adapterhost.Handle{
+		"target":   &commentAdapter{name: "target", outcome: "", comment: ""},
+		"verifier": &fakeAdapter{name: "verifier", outcome: "success"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "", sink.captured["report"]["result"])
+	assert.Equal(t, map[string]string{"reason": ""}, sink.captured["run"])
+}
+
 // TestDefaultOutputs_TypedOutcomeKeepsVerbatimPayload pins requirement 4 for
 // typed (contract) steps: a schema-declared outcome is the model-submitted
 // payload; the comment is NOT projected into it even when the adapter's
