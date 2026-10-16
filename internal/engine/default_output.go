@@ -39,6 +39,8 @@ const defaultReasonOutputField = "reason"
 // withDefaultOutputs resolves an untyped outcome's raw outputs from the
 // adapter's default output type. Typed (schema-declared) outcomes pass
 // through untouched: the model-submitted payload is the finalized output.
+// Called at every result-bearing return of runStepFromAttempt, so all three
+// executor shapes (plain, while, parallel) enrich identically.
 func (n *stepNode) withDefaultOutputs(result adapter.Result) adapter.Result {
 	if _, has := result.Outputs[defaultReasonOutputField]; has {
 		return result
@@ -52,10 +54,18 @@ func (n *stepNode) withDefaultOutputs(result adapter.Result) adapter.Result {
 		// never enriches such payloads.
 		return result
 	}
-	if _, declared := n.step.OutputSchema[defaultReasonOutputField]; !declared {
+	field, declared := n.step.OutputSchema[defaultReasonOutputField]
+	if !declared {
 		// The adapter's default output type is what an untyped outcome takes;
 		// without a declared reason field (e.g. shell) the comment stays
 		// event-stream-only and captures are unchanged.
+		return result
+	}
+	if field.CtyType != cty.String {
+		// The comment is a string; a default output type that declares reason
+		// as any other type is not satisfied by it, so no cty.StringVal is
+		// forced into the payload — the comment stays event-stream-only and
+		// the adapter owns emitting that field as an output itself.
 		return result
 	}
 	enriched := make(map[string]cty.Value, len(result.Outputs)+1)

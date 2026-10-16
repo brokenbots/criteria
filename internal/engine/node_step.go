@@ -290,11 +290,6 @@ func (n *stepNode) evaluateOnce(ctx context.Context, st *RunState, deps Deps) (s
 		return "", err
 	}
 
-	// KB-264: an untyped outcome takes the adapter's default output type.
-	// Materialize declared default fields the legacy lane carries elsewhere
-	// (the comment) before either branch consumes the outputs.
-	result = n.withDefaultOutputs(result)
-
 	st.LastOutcome = result.Outcome
 
 	// For iterating steps: skip the Outcomes lookup — routeIteratingStep
@@ -909,6 +904,12 @@ func (n *stepNode) declareFailedAttempt(st *RunState, deps Deps, step *workflow.
 	return adapter.Result{}, false
 }
 
+// runStepFromAttempt is the single execution funnel every adapter step
+// outcome flows through — plain steps (evaluateOnce), while iterations
+// (runWhileStep), and parallel iterations (runParallelAdapterIteration) all
+// route here, so executor-shape-agnostic post-processing belongs at its
+// return sites only (KB-264: untyped outcomes resolve the adapter's default
+// output type at each result-bearing return).
 func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps Deps, step *workflow.StepNode, startAttempt int) (adapter.Result, error) {
 	// ADR-0006: prompts held between attempts resolve when the loop ends;
 	// attempts lets endStep drain exactly the inFlight balance.
@@ -938,7 +939,7 @@ func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps De
 
 		if err == nil {
 			deps.Sink.OnStepOutcome(step.Name, result.Outcome, dur, nil, result.Comment)
-			return result, nil
+			return n.withDefaultOutputs(result), nil
 		}
 
 		// KB-45: a host-rejected verdict feeds the STANDARD attempt loop (see
@@ -960,7 +961,7 @@ func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps De
 		}
 
 		if res, declared := n.declareFailedAttempt(st, deps, step, dur, err); declared {
-			return res, nil
+			return n.withDefaultOutputs(res), nil
 		}
 		// KB-57: an undeclared failure still emits the canonical "failure"
 		// event (see declareFailedAttempt).
@@ -971,7 +972,7 @@ func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps De
 	// standard mapping so the Defaulted event and routing stay identical to
 	// an adapter that returned the default name itself.
 	if res, mapped := mapExhaustedInvalid(step, lastInvalid); mapped {
-		return res, nil
+		return n.withDefaultOutputs(res), nil
 	}
 
 	return adapter.Result{}, fmt.Errorf("step %q failed after %d attempts: %w", step.Name, maxAttempts-startAttempt+1, lastErr)
