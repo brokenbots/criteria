@@ -18,8 +18,11 @@ import (
 // row (+43 words). 6320 reflects KB-259's review amendment: the description
 // row's wording was softened to state the pending adapter-proto wire
 // publication instead of claiming a live copilot adapter render (+13 words).
+// 6345 reflects KB-264: the outcome schema row documents the adapter
+// default-output-type doctrine — a typed schema replaces the default, and
+// untyped outcomes resolve their outputs from it (+26 words).
 func TestSpecTokenBudget_UnderEightThousandWords(t *testing.T) {
-	const maxWords = 6320
+	const maxWords = 6345
 	data, err := os.ReadFile("../../docs/LANGUAGE-SPEC.md")
 	if err != nil {
 		t.Fatalf("docs/LANGUAGE-SPEC.md not found: %v", err)
