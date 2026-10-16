@@ -18,6 +18,7 @@ package workflow
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/hashicorp/hcl/v2"
@@ -76,9 +77,15 @@ func stepInputRuntimeBindings(g *FSMGraph, sp *StepSpec, opts CompileOpts) map[s
 		"subworkflow": cty.DynamicVal,
 	}
 	bindings["path"] = cty.ObjectVal(map[string]cty.Value{
-		"workflow": cty.StringVal(opts.WorkflowDir),
-		"root":     cty.StringVal(opts.WorkflowDir),
-		"cwd":      cty.StringVal(opts.WorkflowDir),
+		// Unknown-of-string keeps path composition type-checked (string ops stay
+		// valid, arity/typing enforced) without evaluating filesystem functions
+		// at compile time: file() and templatefile() short-circuit on unknown
+		// args and keep deferring to runtime. Runtime binds the real dirs
+		// (eval.go), and file()/templatefile() reject absolute paths there, so
+		// no currently-valid workflow loses its runtime render.
+		"workflow": cty.UnknownVal(cty.String),
+		"root":     cty.UnknownVal(cty.String),
+		"cwd":      cty.UnknownVal(cty.String),
 	})
 	bindings["data"] = dataNamespaceBinding(g)
 	bindings["steps"] = stepsNamespaceBinding(g, stepNameOf(sp))
@@ -335,7 +342,17 @@ func unknownVarNames(v cty.Value) string {
 		it := cur.ElementIterator()
 		for it.Next() {
 			k, elem := it.Element()
-			walk(elem, joinPath(path, k.AsString()))
+			// Object and map iterators yield String keys; tuple iterators
+			// yield Number element indexes (cty guarantees this). AsString
+			// panics on non-String keys, so each key is formatted by type.
+			switch {
+			case k.Type() == cty.String:
+				walk(elem, joinPath(path, k.AsString()))
+			case k.Type() == cty.Number:
+				// Tuple keys are exact element indexes.
+				i, _ := k.AsBigFloat().Int64()
+				walk(elem, joinPath(path, strconv.FormatInt(i, 10)))
+			}
 		}
 	}
 	walk(v, "")

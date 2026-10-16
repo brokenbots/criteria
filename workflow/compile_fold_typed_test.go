@@ -200,6 +200,57 @@ func TestKB266_FoldLevelTypeCorrectCompilesClean(t *testing.T) {
 	}
 }
 
+// TestKB266_TupleVarRealDiagnosticNotPanic is the review regression: a
+// heterogeneous list literal among the templatefile vars (tuple element
+// iteration) plus a failing placeholder render must surface the real
+// execute error. cty's tuple ElementIterator yields Number keys; calling
+// k.AsString() on them panicked ("panic in function implementation: not a
+// string"), replacing the diagnostic with a panic error that named neither
+// the binding site, the operation, nor the mismatch.
+func TestKB266_TupleVarRealDiagnosticNotPanic(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "deploy.tmpl"), []byte(`{{ shellquote .port }}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hclContent := kb266Workflow(
+		kb266NumberVar,
+		kb266DataStr,
+		`templatefile("./deploy.tmpl", { args = [var.port, "x"], port = var.port })`,
+	)
+	diags := compileWorkflowInDir(t, dir, hclContent)
+	if !diags.HasErrors() {
+		t.Fatalf("expected compile error for number variable through shellquote, got none: %v", diags)
+	}
+	msg := diags.Error()
+	if strings.Contains(msg, "panic") {
+		t.Fatalf("diagnostic must be the real execute error, never a panic; got: %s", msg)
+	}
+	for _, want := range []string{"wrong type for value", "expected string", "int64"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("diagnostic should contain %q; got: %s", want, msg)
+		}
+	}
+}
+
+// TestKB266_PathCompositionCompilesClean pins the path.* binding contract:
+// path.workflow/root/cwd bind unknown-of-string, so path-composed filesystem
+// args keep deferring and compile clean. (Known-wrong-dir bindings used to
+// evaluate file() at compile and falsely reject the composed absolute path —
+// the same error the runtime raises; unknown args short-circuit before Impl
+// and the render stays runtime-owned.)
+func TestKB266_PathCompositionCompilesClean(t *testing.T) {
+	dir := t.TempDir()
+	hclContent := kb266Workflow(
+		kb266StringVar,
+		kb266DataStr,
+		`file(format("%s/sub/deploy.tmpl", path.workflow))`,
+	)
+	diags := compileWorkflowInDir(t, dir, hclContent)
+	if diags.HasErrors() {
+		t.Fatalf("path-composed file() in a deferred input must compile clean: %s", diags.Error())
+	}
+}
+
 // TestKB266_NumberVarThroughShellquoteWithoutDataRef pins that the pure
 // templatefile placeholder render (no data.* ref at all) also rejects the
 // type mismatch — the same failure that previously surfaced at arm execution.

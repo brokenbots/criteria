@@ -514,6 +514,13 @@ func renderTemplateFile(opts *FunctionOptions, raw string, varsVal cty.Value) (c
 // is returned, preserving value deferral. If any unknown is non-primitive
 // (collection or dynamic), the render is skipped and the expression stays
 // fully deferred.
+//
+// Coverage limit (conservative, false-negative only): the abort-on-dynamic
+// rule is per render, not per variable — one collection/dynamic-typed
+// sibling among the template vars suppresses the type check of every other
+// var in that render. The expression then stays runtime-deferred, so the
+// runtime failure mode is unchanged; only the compile-time check is lost
+// for that expression.
 func renderTemplateFileUnknown(tmpl *template.Template, raw string, varsVal cty.Value) (cty.Value, error) {
 	ctxMap := make(map[string]any)
 	it := varsVal.ElementIterator()
