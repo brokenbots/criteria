@@ -654,3 +654,31 @@ func TestCalleeReportedCallError_UnknownValue(t *testing.T) {
 		t.Fatalf("calleeReportedCallError with unknown call_error = %q, want \"\"", got)
 	}
 }
+
+// TestCalleeReportedCallError_HonoredCodes pins the callee-meaningful
+// whitelist: unknown_tool, capability_missing, not_yet_supported and — since
+// KB-158 — input_required (the MCP callee's interim multi-round-trip verdict,
+// SEP-2322) surface as typed codes to the nested caller, while
+// host-computed codes, unknown spellings, success outcomes, and missing keys
+// stay unrecognized so a hostile callee cannot forge host gate decisions.
+func TestCalleeReportedCallError_HonoredCodes(t *testing.T) {
+	for _, code := range []string{callErrorUnknownTool, callErrorCapabilityMissing, callErrorNotYetSupported, callErrorInputRequired} {
+		got := calleeReportedCallError(adapter.Result{
+			Outcome: "failure",
+			Outputs: map[string]cty.Value{calleeReportedCallErrorCode: cty.StringVal(code)},
+		})
+		if got != code {
+			t.Errorf("callee-reported %q not honored: got %q", code, got)
+		}
+	}
+	for name, res := range map[string]adapter.Result{
+		"host-computed code": {Outcome: "failure", Outputs: map[string]cty.Value{calleeReportedCallErrorCode: cty.StringVal(callErrorCycleDetected)}},
+		"unknown code":       {Outcome: "failure", Outputs: map[string]cty.Value{calleeReportedCallErrorCode: cty.StringVal("made_up_code")}},
+		"success outcome":    {Outcome: "success", Outputs: map[string]cty.Value{calleeReportedCallErrorCode: cty.StringVal(callErrorInputRequired)}},
+		"missing key":        {Outcome: "failure"},
+	} {
+		if got := calleeReportedCallError(res); got != "" {
+			t.Errorf("%s leaked through the whitelist: got %q", name, got)
+		}
+	}
+}
