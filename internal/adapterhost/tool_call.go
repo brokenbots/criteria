@@ -95,7 +95,11 @@ const adapterToolsCapability = "adapter_tools"
 // depth gate); invalid_response extends it for successful callee results
 // whose surfaced outputs fail the callee's declared out-type contract
 // (KB-59 — a host-computed code, never forgivable through the callee's
-// own call_error channel).
+// own call_error channel); input_required extends it for KB-158: an MCP
+// callee's interim multi-round-trip result (SEP-2322, protocol rev
+// 2026-07-28) surfaces as a typed failure so a nested caller learns the
+// invocation needs more input — the full MRTR retry round-trip is a
+// follow-up card.
 const (
 	callErrorCapabilityMissing = "capability_missing"
 	callErrorMalformedTarget   = "malformed_target"
@@ -112,6 +116,7 @@ const (
 	callErrorPaused            = "paused"
 	callErrorBudgetExhausted   = "budget_exhausted"
 	callErrorInvalidResponse   = "invalid_response"
+	callErrorInputRequired     = "input_required"
 )
 
 // calleeReportedCallErrorCode is the reserved output key on a failure result
@@ -952,7 +957,9 @@ func (s *permissionInterceptSink) reportNestedCallFailure(call *nestedToolCall, 
 // with a well-known code whose semantics belong to the callee. Only
 // callee-meaningful codes are honored — host-computed codes (unknown adapter,
 // cycle, depth, self-call, pause, cancellation, ...) stay host-computed so a
-// callee cannot forge host gate decisions. Returns "" for any other result.
+// callee cannot forge host gate decisions. input_required is honored to
+// forward the callee's interim multi-round-trip verdict (KB-158) to the
+// nested caller as a typed failure. Returns "" for any other result.
 func calleeReportedCallError(result adapter.Result) string {
 	if result.Outcome != "failure" {
 		return ""
@@ -963,7 +970,7 @@ func calleeReportedCallError(result adapter.Result) string {
 	}
 	code := strings.TrimSpace(raw.AsString())
 	switch code {
-	case callErrorUnknownTool, callErrorCapabilityMissing, callErrorNotYetSupported:
+	case callErrorUnknownTool, callErrorCapabilityMissing, callErrorNotYetSupported, callErrorInputRequired:
 		return code
 	default:
 		return ""

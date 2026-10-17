@@ -29,20 +29,36 @@ import (
 )
 
 const (
-	adapterName    = "mcp"
+	adapterName = "mcp"
+	// mcpClientName is this client's identity in the legacy initialize
+	// handshake and in the per-request _meta of stateless sessions (KB-158).
+	mcpClientName  = "criteria-adapter-mcp"
 	adapterVersion = "0.3.0"
 
 	closeGrace  = 5 * time.Second
 	initTimeout = 5 * time.Second
 
+	// openTimeout bounds a whole session open: the probe-first negotiation
+	// (one server/discover probe, KB-158) plus the legacy handshake and
+	// discovery budget.
+	openTimeout = mcpclient.DefaultProbeTimeout + initTimeout
+
 	// discoveryCacheTTL is the per-request cache window for the tools/list
 	// result backing discovery (CRI-171/CRI-172): a session discovered its
 	// surface at OpenSession and refreshes it at most once per window, when
-	// an Execute misses the cached surface with a tool name. The wire-side
-	// CacheableResult/ttlMs mechanics belong to the 2026-07-28 MCP revision
-	// card; this is the adapter-local half, so shapes don't churn twice
-	// (KB-157).
+	// an Execute misses the cached surface with a tool name. It is the
+	// default half of the freshness contract: on 2026-07-28 servers the
+	// tools/list CacheableResult hint (SEP-2549, KB-158) adapts the window
+	// per session, clamped into the guardrails below.
 	discoveryCacheTTL = 30 * time.Second
+
+	// discoveryTTLFloor and discoveryTTLCeiling clamp a server-supplied
+	// CacheableResult freshness hint into adapter-local guardrails, so a
+	// degenerate hint can neither force a re-discovery on every miss nor pin
+	// a stale surface for the life of the session. Adapter policy, like the
+	// other timing constants here.
+	discoveryTTLFloor   = 5 * time.Second
+	discoveryTTLCeiling = 10 * time.Minute
 )
 
 // callErrorUnknownTool is the well-known typed call_error code (ADR-0004 §8
@@ -51,6 +67,15 @@ const (
 // failure result; the host's adapter-tools seam delivers it to the caller as
 // the typed call_error, distinguishable from a policy deny.
 const callErrorUnknownTool = "unknown_tool"
+
+// callErrorInputRequired is the well-known typed call_error code (ADR-0004
+// §8 registry) reported when an MCP tool answers an invocation with an
+// interim input_required result (SEP-2322, MCP protocol rev 2026-07-28): the
+// server needs additional input before the call can complete. The first pass
+// maps it to this typed failure — the failure outputs name the requested
+// input requests — instead of wedging the step mid-MRTR; the full
+// inputResponses retry round-trip is a follow-up card.
+const callErrorInputRequired = "input_required"
 
 // callErrorOutputKey is the reserved output key carrying a callee-reported
 // typed call_error code on a failure result (CRI-172).
@@ -99,12 +124,18 @@ type sessionState struct {
 	refreshMu sync.Mutex
 	// discoveryTTL is this session's per-request cache window for
 	// tools/list (KB-157). Defaults to discoveryCacheTTL; tests narrow it to
-	// 0 to force a re-discovery deterministically.
+	// 0 to force a re-discovery deterministically. A modern server's
+	// CacheableResult hint adapts it per session (KB-158, see
+	// adoptDiscoveryTTL).
 	discoveryTTL time.Duration
 	// discoveredAt is when the session last successfully obtained a
 	// tools/list surface (OpenSession or refresh). Zero until then.
 	discoveredAt time.Time
 
+	// negotiation is the session-open dialect (KB-158): probe-first
+	// server/discover with a legacy fallback, initialize-only, or
+	// discover-only.
+	negotiation mcpclient.Negotiation
 	// execSeq mints strictly increasing per-execute progress tokens
 	// ("criteria-N"); they only need uniqueness within the session, and a
 	// prefixed name keeps them recognizable in MCP server logs.
@@ -221,11 +252,12 @@ func (b *MCPBridge) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse
 		// hosts keep the one-execute-at-a-time posture.
 		Capabilities: []string{"single_shot", "permission_gating", "adapter_tools", "concurrent_execute"},
 		ConfigSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
-			"command": {Required: true, Type: "string", Description: "MCP server binary to launch."},
-			"args":    {Type: "string", Description: "Comma-separated argument list for the server binary."},
-			"env":     {Type: "string", Description: "Comma-separated KEY=VALUE environment variable pairs."},
-			"cwd":     {Type: "string", Description: "Working directory for the MCP server process."},
-			"framing": {Type: "string", Description: "JSON-RPC write framing for the stdio transport: lsp (default, Content-Length headers) or ndjson (newline-delimited JSON). Reads auto-detect either framing; a server speaking only one shape rejects the other with a parse error."},
+			"command":   {Required: true, Type: "string", Description: "MCP server binary to launch."},
+			"args":      {Type: "string", Description: "Comma-separated argument list for the server binary."},
+			"env":       {Type: "string", Description: "Comma-separated KEY=VALUE environment variable pairs."},
+			"cwd":       {Type: "string", Description: "Working directory for the MCP server process."},
+			"framing":   {Type: "string", Description: "JSON-RPC write framing for the stdio transport: lsp (default, Content-Length headers) or ndjson (newline-delimited JSON). Reads auto-detect either framing; a server speaking only one shape rejects the other with a parse error."},
+			"handshake": {Type: "string", Description: "Session-open negotiation with the MCP server (KB-158, MCP protocol rev 2026-07-28): probe-first (default — probe server/discover, adopting the stateless core when the server advertises it, and fall back to the legacy 2025-03-26 initialize handshake otherwise), initialize (always the legacy handshake), discover (stateless core only, no legacy fallback)."},
 		}},
 		// InputSchema stays undeclared on purpose: the mcp adapter's input
 		// surface is dynamic (CRI-172). "tool" is the routing key, enforced
@@ -329,31 +361,53 @@ func (b *MCPBridge) OpenSession(ctx context.Context, req *v2.OpenSessionRequest)
 
 // startMCPServer parses the adapter config, launches the MCP server process
 // over a stdio transport, and wires the progress-notification forwarder.
+// mcpServerConfig is the parsed adapter config block for one MCP server
+// process.
+type mcpServerConfig struct {
+	command     string
+	args        []string
+	framing     mcpclient.Framing
+	negotiation mcpclient.Negotiation
+	envPairs    []string
+	cwd         string
+}
+
+// parseServerConfig validates the adapter config block: command, args CSV,
+// framing, session-open negotiation (KB-158), env pairs, and cwd.
+func parseServerConfig(cfg map[string]string) (mcpServerConfig, error) {
+	parsed := mcpServerConfig{command: strings.TrimSpace(cfg["command"])}
+	if parsed.command == "" {
+		return parsed, fmt.Errorf("mcp: config.command is required")
+	}
+	var err error
+	if parsed.args, err = parseCSVList(cfg["args"]); err != nil {
+		return parsed, fmt.Errorf("mcp: parse args: %w", err)
+	}
+	if parsed.framing, err = mcpclient.ParseFraming(cfg["framing"]); err != nil {
+		return parsed, fmt.Errorf("mcp: parse framing: %w", err)
+	}
+	if parsed.negotiation, err = mcpclient.ParseNegotiation(cfg["handshake"]); err != nil {
+		return parsed, fmt.Errorf("mcp: parse handshake: %w", err)
+	}
+	if parsed.envPairs, err = parseEnvPairs(cfg["env"]); err != nil {
+		return parsed, fmt.Errorf("mcp: parse env: %w", err)
+	}
+	parsed.cwd = strings.TrimSpace(cfg["cwd"])
+	return parsed, nil
+}
+
 func startMCPServer(cfg map[string]string) (*sessionState, error) {
-	command := strings.TrimSpace(cfg["command"])
-	if command == "" {
-		return nil, fmt.Errorf("mcp: config.command is required")
+	parsed, err := parseServerConfig(cfg)
+	if err != nil {
+		return nil, err
 	}
 
-	args, err := parseCSVList(cfg["args"])
-	if err != nil {
-		return nil, fmt.Errorf("mcp: parse args: %w", err)
+	cmd := exec.Command(parsed.command, parsed.args...)
+	if parsed.cwd != "" {
+		cmd.Dir = parsed.cwd
 	}
-	framing, err := mcpclient.ParseFraming(cfg["framing"])
-	if err != nil {
-		return nil, fmt.Errorf("mcp: parse framing: %w", err)
-	}
-	envPairs, err := parseEnvPairs(cfg["env"])
-	if err != nil {
-		return nil, fmt.Errorf("mcp: parse env: %w", err)
-	}
-
-	cmd := exec.Command(command, args...)
-	if cwd := strings.TrimSpace(cfg["cwd"]); cwd != "" {
-		cmd.Dir = cwd
-	}
-	if len(envPairs) > 0 {
-		cmd.Env = append(os.Environ(), envPairs...)
+	if len(parsed.envPairs) > 0 {
+		cmd.Env = append(os.Environ(), parsed.envPairs...)
 	}
 
 	stdin, err := cmd.StdinPipe()
@@ -368,11 +422,11 @@ func startMCPServer(cfg map[string]string) (*sessionState, error) {
 	cmd.Stderr = stderr
 
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("mcp: start server %q: %w", command, err)
+		return nil, fmt.Errorf("mcp: start server %q: %w", parsed.command, err)
 	}
 
-	state := &sessionState{cmd: cmd, stdin: stdin, stderr: stderr, tools: map[string]struct{}{}, discoveryTTL: discoveryCacheTTL}
-	state.client = mcpclient.NewWithFraming(stdout, stdin, framing, func(n mcpclient.Notification) {
+	state := &sessionState{cmd: cmd, stdin: stdin, stderr: stderr, tools: map[string]struct{}{}, discoveryTTL: discoveryCacheTTL, negotiation: parsed.negotiation}
+	state.client = mcpclient.NewWithFraming(stdout, stdin, parsed.framing, func(n mcpclient.Notification) {
 		if n.Method != "notifications/progress" {
 			return
 		}
@@ -381,21 +435,44 @@ func startMCPServer(cfg map[string]string) (*sessionState, error) {
 	return state, nil
 }
 
-// initializeAndDiscover performs the MCP handshake and the tools/list
+// initializeAndDiscover negotiates the session dialect (KB-158: probe-first
+// server/discover with the legacy initialize fallback) and runs the tools/list
 // discovery that populates the session's dynamic tool surface (CRI-171).
 func initializeAndDiscover(ctx context.Context, state *sessionState) ([]mcpclient.Tool, error) {
-	handshakeCtx, cancel := context.WithTimeout(ctx, initTimeout)
+	openCtx, cancel := context.WithTimeout(ctx, openTimeout)
 	defer cancel()
-	if err := state.client.Initialize(handshakeCtx, "criteria-adapter-mcp", adapterVersion); err != nil {
-		return nil, fmt.Errorf("mcp: initialize: %w", err)
+	if err := state.client.Connect(openCtx, state.negotiation, mcpClientName, adapterVersion); err != nil {
+		return nil, fmt.Errorf("mcp: open: %w", err)
 	}
-	tools, err := state.client.ListTools(handshakeCtx)
+	page, err := state.client.ListToolsDetailed(openCtx)
 	if err != nil {
 		return nil, fmt.Errorf("mcp: tools/list: %w", err)
 	}
-	state.setTools(tools)
+	state.setTools(page.Tools)
+	state.adoptDiscoveryTTL(page.TTLms)
 	state.discoveredAt = time.Now()
-	return tools, nil
+	return page.Tools, nil
+}
+
+// adoptDiscoveryTTL adapts the session's tools/list cache window from a
+// modern server's CacheableResult freshness hint (SEP-2549, KB-158). A hint
+// of 0 (legacy server, or a modern server hinting nothing) keeps the
+// adapter-local default; hints outside the guardrails clamp into
+// [discoveryTTLFloor, discoveryTTLCeiling] so a degenerate hint can neither
+// force a re-discovery on every miss nor pin a stale surface for the life of
+// the session.
+func (s *sessionState) adoptDiscoveryTTL(ttlMs int64) {
+	if ttlMs <= 0 {
+		return
+	}
+	ttl := time.Duration(ttlMs) * time.Millisecond
+	if ttl < discoveryTTLFloor {
+		ttl = discoveryTTLFloor
+	}
+	if ttl > discoveryTTLCeiling {
+		ttl = discoveryTTLCeiling
+	}
+	s.discoveryTTL = ttl
 }
 
 // registerSession installs the session under its ID and records the
@@ -467,13 +544,14 @@ func (s *sessionState) refreshDiscovery(ctx context.Context, b *MCPBridge) {
 	}
 	refreshCtx, cancel := context.WithTimeout(ctx, initTimeout)
 	defer cancel()
-	tools, err := s.client.ListTools(refreshCtx)
+	page, err := s.client.ListToolsDetailed(refreshCtx)
 	if err != nil {
 		return
 	}
-	s.setTools(tools)
+	s.setTools(page.Tools)
+	s.adoptDiscoveryTTL(page.TTLms)
 	s.discoveredAt = time.Now()
-	b.replaceDiscovery(s.envKey, tools)
+	b.replaceDiscovery(s.envKey, page.Tools)
 }
 
 // replaceDiscovery records tools as the environment's surface under envKey,
@@ -549,6 +627,15 @@ func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ad
 		// callee_timeout.
 		return fmt.Errorf("mcp: tools/call %q: %w", toolName, err)
 	}
+	if result.IsInputRequired() {
+		// SEP-2322 first pass (KB-158): an interim input_required result is
+		// not a content payload — surface the typed call_error with the
+		// requested input requests before any content/outcome handling, so
+		// the caller learns the invocation needs more input instead of
+		// seeing a degenerate success. The full MRTR retry round-trip
+		// (retrying with inputResponses) is a follow-up card.
+		return sink.Send(typedFailureEventWithDetail(callErrorInputRequired, inputRequestsOutputs(&result)))
+	}
 
 	for _, item := range result.Content {
 		if err := sink.Send(adapterEvent("mcp.content", item)); err != nil {
@@ -563,7 +650,7 @@ func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ad
 	if result.IsError {
 		outcome = "failure"
 	}
-	return sink.Send(resultEventWithOutputs(outcome, mcpOutputs(result)))
+	return sink.Send(resultEventWithOutputs(outcome, mcpOutputs(&result)))
 }
 
 // mcpOutputs maps an MCP tools/call result into adapter outputs (CRI-172):
@@ -571,7 +658,7 @@ func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ad
 // "text", and structuredContent, when present, is passed through verbatim
 // under "structured". Other content kinds stay available via mcp.content
 // adapter events.
-func mcpOutputs(result mcpclient.CallToolResult) map[string]any {
+func mcpOutputs(result *mcpclient.CallToolResult) map[string]any {
 	outputs := map[string]any{}
 	var texts []string
 	for _, item := range result.Content {
@@ -787,6 +874,51 @@ func resultEventWithOutputs(outcome string, outputs map[string]any) *v2.ExecuteE
 // code in the reserved "call_error" output (CRI-172).
 func typedFailureEvent(code string) *v2.ExecuteEvent {
 	return resultEventWithOutputs("failure", map[string]any{callErrorOutputKey: code})
+}
+
+// typedFailureEventWithDetail builds a typed failure result carrying extra
+// detail outputs alongside the reserved call_error code.
+func typedFailureEventWithDetail(code string, outputs map[string]any) *v2.ExecuteEvent {
+	if outputs == nil {
+		outputs = map[string]any{}
+	}
+	outputs[callErrorOutputKey] = code
+	return resultEventWithOutputs("failure", outputs)
+}
+
+// maxInputRequestDetailEntries bounds the input_requests detail surfaced on
+// an input_required failure (SEP-2322): the wire shape is unbounded and the
+// output is diagnostic — which input requests the server wants — not a
+// transport channel.
+const maxInputRequestDetailEntries = 32
+
+// inputRequestsOutputs renders an interim input_required result (SEP-2322)
+// for the call_error detail outputs: a sorted "<key>: <method>" list plus the
+// server's opaque requestState handle. Method extraction is defensive — a
+// malformed envelope degrades to "(unparseable request)" instead of breaking
+// the failure surface.
+func inputRequestsOutputs(result *mcpclient.CallToolResult) map[string]any {
+	keys := make([]string, 0, len(result.InputRequests))
+	for key := range result.InputRequests {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	detail := make([]string, 0, len(keys))
+	for i, key := range keys {
+		if i == maxInputRequestDetailEntries {
+			detail = append(detail, fmt.Sprintf("... %d more", len(keys)-i))
+			break
+		}
+		method := "(unparseable request)"
+		var envelope struct {
+			Method string `json:"method"`
+		}
+		if err := json.Unmarshal(result.InputRequests[key], &envelope); err == nil && strings.TrimSpace(envelope.Method) != "" {
+			method = strings.TrimSpace(envelope.Method)
+		}
+		detail = append(detail, fmt.Sprintf("%s: %s", key, method))
+	}
+	return map[string]any{"input_requests": detail, "request_state": result.RequestState}
 }
 
 func adapterEvent(kind string, data map[string]any) *v2.ExecuteEvent {

@@ -36,6 +36,25 @@ type CallToolResult struct {
 	// StructuredContent carries the MCP structuredContent field verbatim when
 	// the server provides one (CRI-172: passthrough into adapter outputs).
 	StructuredContent json.RawMessage `json:"structuredContent,omitempty"`
+	// ResultType is the required 2026-07-28 discriminator on every result
+	// ("complete" | "input_required"). Legacy results omit it and MUST be
+	// treated as complete (see IsInputRequired).
+	ResultType string `json:"resultType,omitempty"`
+	// InputRequests carries the interim multi-round-trip contract
+	// (SEP-2322) when ResultType is input_required: a map of caller-facing
+	// input request keys to full request envelopes. The retry contract is
+	// not supported yet (first pass maps input_required to a typed call
+	// error); RequestState is the server's opaque round-trip handle.
+	InputRequests map[string]json.RawMessage `json:"inputRequests,omitempty"`
+	RequestState  string                     `json:"requestState,omitempty"`
+}
+
+// IsInputRequired reports an interim multi-round-trip result (SEP-2322):
+// the server needs additional input before the call can complete. A result
+// with no resultType is an earlier-protocol server and is complete by
+// definition.
+func (r *CallToolResult) IsInputRequired() bool {
+	return r.ResultType == ResultTypeInputRequired
 }
 
 // Framing selects the write-side frame encoding for the JSON-RPC stdio
@@ -104,6 +123,11 @@ type initializeParams struct {
 
 type listToolsResult struct {
 	Tools []Tool `json:"tools"`
+	// 2026-07-28: every result carries a required resultType and is a
+	// SEP-2549 CacheableResult (freshness contract for client-side caching).
+	ResultType string `json:"resultType,omitempty"`
+	TTLms      int64  `json:"ttlMs,omitempty"`
+	CacheScope string `json:"cacheScope,omitempty"`
 }
 
 type callToolParams struct {
@@ -141,6 +165,16 @@ type Client struct {
 	framing Framing
 
 	notify func(Notification)
+
+	// protocolVersion and stateless carry the negotiated session dialect.
+	// Stateless sessions (2026-07-28) stamp _meta onto every request; legacy
+	// sessions keep the historical bare request shape.
+	protocolVersion string
+	stateless       bool
+	// clientName/clientVersion identify this client in the legacy initialize
+	// handshake and in the per-request _meta of stateless sessions.
+	clientName    string
+	clientVersion string
 
 	writeMu sync.Mutex
 	pendMu  sync.Mutex
@@ -182,31 +216,95 @@ func (c *Client) Close() {
 	c.closeWithError(io.EOF)
 }
 
-// Initialize performs the MCP initialize request.
+// Initialize performs the legacy MCP initialize handshake and pins the
+// session to the pre-2026-07-28 dialect: requests carry no _meta. This is
+// the 2025-03-26 contract; new callers should use Connect, which negotiates
+// per the stdio backward-compat procedure (probe-first server/discover with
+// an initialize fallback).
 func (c *Client) Initialize(ctx context.Context, clientName, clientVersion string) error {
+	c.clientName = clientName
+	c.clientVersion = clientVersion
+	return c.initializeLegacy(ctx)
+}
+
+// initializeLegacy performs the 2025-03-26 initialize handshake and marks
+// the session legacy (no per-request _meta).
+func (c *Client) initializeLegacy(ctx context.Context) error {
 	params := initializeParams{
-		ProtocolVersion: "2025-03-26",
+		ProtocolVersion: ProtocolVersion20250326,
 		Capabilities:    map[string]any{},
 		ClientInfo: clientInfo{
-			Name:    clientName,
-			Version: clientVersion,
+			Name:    c.clientName,
+			Version: c.clientVersion,
 		},
 	}
-	_, err := c.request(ctx, "initialize", params)
-	return err
+	if _, err := c.request(ctx, "initialize", params); err != nil {
+		return err
+	}
+	c.protocolVersion = ProtocolVersion20250326
+	return nil
+}
+
+// requestMeta builds the per-request `_meta` of the 2026-07-28 stateless
+// core: the negotiated protocol version and this client's capabilities ride
+// on every request because the initialize handshake no longer exists. Legacy
+// sessions send no _meta — the historical wire shape is preserved byte for
+// byte.
+func (c *Client) requestMeta() map[string]any {
+	if !c.stateless {
+		return nil
+	}
+	meta := map[string]any{
+		MetaProtocolVersion:    c.protocolVersion,
+		MetaClientCapabilities: map[string]any{},
+	}
+	if c.clientName != "" {
+		meta[MetaClientInfo] = clientInfo{Name: c.clientName, Version: c.clientVersion}
+	}
+	return meta
+}
+
+// ToolsList is one decoded tools/list page. On 2026-07-28 servers the whole
+// result is a SEP-2549 CacheableResult: TTLms bounds how long the advertised
+// tools surface may be cached and CacheScope governs shared intermediaries
+// only (per-connection tool snapshots stay per-connection). Legacy servers
+// omit all of it; TTLms 0 then means "no hint".
+type ToolsList struct {
+	Tools      []Tool
+	TTLms      int64
+	CacheScope string
+}
+
+// ListToolsDetailed fetches tool metadata, exposing the CacheableResult
+// freshness contract (SEP-2549) alongside the tools. Stateless sessions
+// carry _meta on the request; legacy sessions keep the historical
+// empty-params shape.
+func (c *Client) ListToolsDetailed(ctx context.Context) (ToolsList, error) {
+	params := map[string]any{}
+	if meta := c.requestMeta(); meta != nil {
+		params = map[string]any{"_meta": meta}
+	}
+	raw, err := c.request(ctx, "tools/list", params)
+	if err != nil {
+		return ToolsList{}, err
+	}
+	var out listToolsResult
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return ToolsList{}, fmt.Errorf("mcpclient: decode tools/list: %w", err)
+	}
+	if out.ResultType == ResultTypeInputRequired {
+		return ToolsList{}, fmt.Errorf("mcpclient: tools/list returned resultType %q (SEP-2322); discovery is not a multi-round-trip call", out.ResultType)
+	}
+	return ToolsList{Tools: out.Tools, TTLms: out.TTLms, CacheScope: out.CacheScope}, nil
 }
 
 // ListTools fetches tool metadata from the MCP server.
 func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
-	raw, err := c.request(ctx, "tools/list", map[string]any{})
+	page, err := c.ListToolsDetailed(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var out listToolsResult
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, fmt.Errorf("mcpclient: decode tools/list: %w", err)
-	}
-	return out.Tools, nil
+	return page.Tools, nil
 }
 
 // CallTool executes a single MCP tool call.
@@ -221,8 +319,20 @@ func (c *Client) CallTool(ctx context.Context, name string, arguments map[string
 // CallTool shape).
 func (c *Client) CallToolTracked(ctx context.Context, name string, arguments map[string]any, progressToken string) (CallToolResult, error) {
 	params := callToolParams{Name: name, Arguments: arguments}
+	// KB-155: the progress token rides the same _meta as the 2026-07-28
+	// stateless-core keys; the stateless meta is merged last so the
+	// protocolVersion/capabilities keys are always present.
 	if progressToken != "" {
 		params.Meta = map[string]any{"progressToken": progressToken}
+	}
+	if meta := c.requestMeta(); meta != nil {
+		if params.Meta == nil {
+			params.Meta = meta
+		} else {
+			for k, v := range meta {
+				params.Meta[k] = v
+			}
+		}
 	}
 	raw, err := c.request(ctx, "tools/call", params)
 	if err != nil {
@@ -346,7 +456,29 @@ func (c *Client) handleNotification(method string, raw json.RawMessage) {
 
 func (c *Client) handleResponse(msg *incomingEnvelope) {
 	key := normalizeID(msg.ID)
+	// A JSON-RPC parse error (or similar global failure) replies with id
+	// null: the peer could not parse the request id either. It binds to no
+	// pending call by id, but when exactly one request is outstanding it is
+	// unambiguously the answer to it (or a global peer failure for that
+	// frame) — resolve it right away instead of leaving the caller to wedge
+	// until its timeout. With several outstanding requests the attribution
+	// is ambiguous (KB-155: never guess across concurrent calls) and the
+	// response stays dropped, as does any id-less reply with nothing
+	// pending.
 	if key == "" {
+		c.pendMu.Lock()
+		if len(c.pending) == 1 {
+			for id, ch := range c.pending {
+				delete(c.pending, id)
+				c.pendMu.Unlock()
+				if msg.Error == nil {
+					msg.Error = &RPCError{Code: -32000, Message: "mcpclient: response carries no request id"}
+				}
+				ch <- rpcResponse{ID: msg.ID, Error: msg.Error}
+				return
+			}
+		}
+		c.pendMu.Unlock()
 		return
 	}
 	c.pendMu.Lock()
@@ -386,18 +518,24 @@ func normalizeID(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
 	}
+	trimmed := strings.TrimSpace(string(raw))
+	// JSON null is the spec's "no id" marker (parse-error replies): it binds
+	// to no pending call, same as an absent id.
+	if trimmed == "" || trimmed == "null" {
+		return ""
+	}
 	var s string
-	if err := json.Unmarshal(raw, &s); err == nil {
+	if err := json.Unmarshal([]byte(trimmed), &s); err == nil {
 		return s
 	}
 	var n float64
-	if err := json.Unmarshal(raw, &n); err == nil {
+	if err := json.Unmarshal([]byte(trimmed), &n); err == nil {
 		if n == float64(int64(n)) {
 			return strconv.FormatInt(int64(n), 10)
 		}
 		return strconv.FormatFloat(n, 'f', -1, 64)
 	}
-	return strings.TrimSpace(string(raw))
+	return trimmed
 }
 
 // writeOut writes one frame in the client's write framing. The default is
