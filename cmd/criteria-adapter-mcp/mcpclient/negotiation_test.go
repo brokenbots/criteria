@@ -537,18 +537,17 @@ func TestNullIDErrorResolvesSolePendingRequest(t *testing.T) {
 	serverRead, clientWrite := io.Pipe()
 	clientRead, serverWrite := io.Pipe()
 	client := New(clientRead, clientWrite, nil)
-	cleanup := func() {
+	var mu sync.Mutex
+	first := true
+	done := make(chan struct{})
+	t.Cleanup(func() {
 		client.Close()
 		clientWrite.Close()
 		clientRead.Close()
 		serverWrite.Close()
 		serverRead.Close()
-	}
-	t.Cleanup(cleanup)
-
-	var mu sync.Mutex
-	first := true
-	done := make(chan struct{})
+		<-done
+	})
 	go func() {
 		defer close(done)
 		defer serverWrite.Close()
@@ -596,5 +595,4 @@ func TestNullIDErrorResolvesSolePendingRequest(t *testing.T) {
 	if _, err := client.request(ctx, "probe/second", nil); err != nil {
 		t.Fatalf("subsequent id-bearing request failed: %v", err)
 	}
-	<-done
 }
