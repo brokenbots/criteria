@@ -13,16 +13,19 @@ package engine
 //	"copilot.coordinator": adapter "copilot" is not declared for this
 //	environment; refusing to wait for a child no peer will host
 //
-// The pairing below:
-//   - TestKB238_ShimsHostedForSubworkflowDeclaredEnvironments is the pre-fix
-//     reproduce at the wiring level: it parks the run in a session wait (no
-//     pods) and requires a shim to be registered for every remote
-//     environment declared by ANY graph in the run. Without the fix the
-//     body-only environments have no shim (RemoteShimForEnv returns nil).
+// The tests below:
 //   - TestKB238_SubworkflowEnvAdapterRunsOnItsOwnEnvShim is the post-fix
 //     green: the live repro shape completes and the body's provision event
 //     carries a shim address distinct from the root environment's. Without
 //     the fix it fails with the exact live PeerChildSetError chain.
+//
+// KB-245 (dave ruling 2026-10-17): the pre-fix wiring test
+// TestKB238_ShimsHostedForSubworkflowDeclaredEnvironments is removed.
+// v0.5.x carries no shim-related fixes — the shim machinery is cut
+// wholesale at v0.6.0 (cards 129/210/244) — and the test raced shim
+// registration state under load while its assertion encoded the
+// adapter-hosting grading that KB-251 removed from the engine. The
+// remaining tests here are green and stay until the v0.6.0 shim cut.
 //
 // Fail-closed semantics are untouched: only the env keying/composition
 // changed. An environment with no statically-declarable adapters keeps an
@@ -420,84 +423,6 @@ func kb238PodServeType(t *testing.T, sink *eventTrackingSink, stop <-chan struct
 			case <-time.After(2 * time.Millisecond):
 			}
 		}
-	}
-}
-
-// TestKB238_ShimsHostedForSubworkflowDeclaredEnvironments is the pre-fix
-// reproduce at the wiring level. A root pod is served (so root provisioning
-// completes and the run reaches runLoop) while the body's copilot pod is
-// withheld, parking the run in the body's session wait with the session
-// manager live. Every remote environment declared by ANY graph in the run
-// must then have its own registered shim. Without the fix the body-only
-// environments (worktree, primary) have none — RemoteShimRegisteredForEnv
-// reports no registration even though RemoteShimForEnv falls back to the
-// develop shim — and the body's adapter init later dies with the
-// child-set rejection.
-func TestKB238_ShimsHostedForSubworkflowDeclaredEnvironments(t *testing.T) {
-	root := t.TempDir()
-	writeFile(t, root+"/main.chcl", kb238DevelopRootHCL)
-	writeFile(t, root+"/handler/main.chcl", kb238HandlerHCL)
-	writeLockfile(t, root, kb238CombinedLockfile())
-	g := compileWorkflowDir(t, root)
-
-	sink := &eventTrackingSink{}
-	e := NewTestEngine(g, &fakeLoader{adapters: map[string]adapterhost.Handle{
-		"noop": &fakeAdapter{name: "noop", outcome: "success"},
-	}}, sink,
-		WithWorkflowDir(g.WorkflowDir),
-		WithDataDir(root),
-		WithRunID("kb238-presence"))
-
-	// Serve the root's shell pod only; withhold copilot so the body parks.
-	stopPod := make(chan struct{})
-	t.Cleanup(func() { close(stopPod) })
-	go kb238PodServeType(t, sink, stopPod, "shell", new(atomic.Int64))
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	t.Cleanup(cancel)
-	runErr := make(chan error, 1)
-	go func() { runErr <- e.Run(ctx) }()
-
-	want := []string{"remote.develop", "remote.worktree", "remote.primary"}
-	saw := map[string]bool{}
-	deadline := time.Now().Add(8 * time.Second)
-	for len(saw) < len(want) {
-		select {
-		case err := <-runErr:
-			t.Fatalf("run returned before all shims observed (saw %v): %v", saw, err)
-		case <-time.After(time.Millisecond):
-		}
-		if time.Now().After(deadline) {
-			break
-		}
-		// Waiting for run-start orders this goroutine's reads after the
-		// run goroutine's setup: OnRunStarted fires after setLiveRunState
-		// and after shim registration in maybeStartRemoteShim, so the
-		// session-manager read below is race-safe.
-		if !sink.runStartedSeen() {
-			continue
-		}
-		sessions := e.LiveSessions()
-		if sessions == nil {
-			// runLoop already completed and cleared the live state: the
-			// run died before (or instead of) parking in the body's wait —
-			// the pre-fix signature.
-			t.Fatalf("run finished before all shims observed: want %v, saw %v — subworkflow-declared remote environments got no shim", want, saw)
-		}
-		for _, key := range want {
-			if !saw[key] && sessions.RemoteShimRegisteredForEnv(key) {
-				saw[key] = true
-			}
-		}
-	}
-	cancel()
-	select {
-	case <-runErr:
-	case <-time.After(5 * time.Second):
-		t.Fatal("run did not return after context cancellation")
-	}
-	if len(saw) != len(want) {
-		t.Fatalf("shims hosted for %v; want all of %v — subworkflow-declared remote environments got no shim", saw, want)
 	}
 }
 

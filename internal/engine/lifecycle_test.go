@@ -1337,12 +1337,6 @@ func (s *eventTrackingSink) OnRunStarted(name, state string) {
 	s.runStarted = true
 }
 
-func (s *eventTrackingSink) runStartedSeen() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.runStarted
-}
-
 func (s *eventTrackingSink) OnAdapterLifecycle(runID, adapter, status, detail string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
