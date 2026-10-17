@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -523,4 +524,78 @@ func TestReservedErrorHelpers(t *testing.T) {
 	if versions := UnsupportedVersions(wrapped); len(versions) != 1 || versions[0] != "2036-07-28" {
 		t.Fatalf("errors.As chain must still surface versions: %v", versions)
 	}
+}
+
+// TestNullIDErrorResolvesSolePendingRequest pins the KB-158 open-time
+// behavior that keeps framing-mismatched sessions bounded: a spec-shaped
+// parse error replies with id null (the peer could not parse the request id
+// either), and the client must resolve the sole outstanding request with
+// that error instead of wedging until its deadline. Attribution must stay
+// unambiguous — the fix only ever resolves when exactly one request is
+// pending; id-less replies with more than one outstanding request (or with
+// nothing pending) remain dropped.
+func TestNullIDErrorResolvesSolePendingRequest(t *testing.T) {
+	serverRead, clientWrite := io.Pipe()
+	clientRead, serverWrite := io.Pipe()
+	client := New(clientRead, clientWrite, nil)
+	cleanup := func() {
+		client.Close()
+		clientWrite.Close()
+		clientRead.Close()
+		serverWrite.Close()
+		serverRead.Close()
+	}
+	t.Cleanup(cleanup)
+
+	var mu sync.Mutex
+	first := true
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer serverWrite.Close()
+		reader := bufio.NewReader(serverRead)
+		for {
+			payload, err := readFrame(reader)
+			if err != nil {
+				return
+			}
+			var req struct {
+				ID json.RawMessage `json:"id"`
+			}
+			_ = json.Unmarshal(payload, &req)
+			mu.Lock()
+			var out map[string]any
+			if first {
+				first = false
+				out = map[string]any{"jsonrpc": "2.0", "id": nil, "error": map[string]any{"code": -32700, "message": "parse error: cannot parse request frame"}}
+			} else {
+				out = map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(req.ID), "result": map[string]any{"ok": true}}
+			}
+			mu.Unlock()
+			_ = writeJSON(serverWrite, out)
+		}
+	}()
+
+	start := time.Now()
+	_, err := client.request(context.Background(), "probe/test", nil)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("the id-less error did not fail the sole outstanding request")
+	}
+	var rpcErr *RPCError
+	if !errors.As(err, &rpcErr) || rpcErr.Code != -32700 {
+		t.Fatalf("sole pending request resolved with wrong error: %v", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("id-less error left the sole pending request wedged for %s", elapsed)
+	}
+
+	// Correlation of id-bearing responses still works on the same client
+	// after the id-less resolution.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := client.request(ctx, "probe/second", nil); err != nil {
+		t.Fatalf("subsequent id-bearing request failed: %v", err)
+	}
+	<-done
 }

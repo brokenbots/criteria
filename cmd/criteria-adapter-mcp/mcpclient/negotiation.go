@@ -55,10 +55,12 @@ const (
 )
 
 // DefaultProbeTimeout bounds one server/discover probe. It is a session-open
-// budget, not a call budget: legacy peers answer "unknown method" promptly;
-// a slow-starting legacy process costs this budget once per session open
-// before the initialize fallback.
-const DefaultProbeTimeout = 5 * time.Second
+// budget, not a call budget: healthy peers of either era answer the probe
+// promptly (modern servers with a DiscoverResult, legacy ones with "unknown
+// method"), so it burns in full only against silent peers. Keep it well
+// under initTimeout so a probe-then-initialize open stays inside the
+// pre-probe overall open budget: DefaultProbeTimeout + initTimeout.
+const DefaultProbeTimeout = 500 * time.Millisecond
 
 // Negotiation selects how a session is opened with an MCP server. The
 // default implements the stdio backward-compat procedure of the 2026-07-28

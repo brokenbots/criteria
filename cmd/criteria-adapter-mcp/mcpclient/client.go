@@ -456,7 +456,29 @@ func (c *Client) handleNotification(method string, raw json.RawMessage) {
 
 func (c *Client) handleResponse(msg *incomingEnvelope) {
 	key := normalizeID(msg.ID)
+	// A JSON-RPC parse error (or similar global failure) replies with id
+	// null: the peer could not parse the request id either. It binds to no
+	// pending call by id, but when exactly one request is outstanding it is
+	// unambiguously the answer to it (or a global peer failure for that
+	// frame) — resolve it right away instead of leaving the caller to wedge
+	// until its timeout. With several outstanding requests the attribution
+	// is ambiguous (KB-155: never guess across concurrent calls) and the
+	// response stays dropped, as does any id-less reply with nothing
+	// pending.
 	if key == "" {
+		c.pendMu.Lock()
+		if len(c.pending) == 1 {
+			for id, ch := range c.pending {
+				delete(c.pending, id)
+				c.pendMu.Unlock()
+				if msg.Error == nil {
+					msg.Error = &RPCError{Code: -32000, Message: "mcpclient: response carries no request id"}
+				}
+				ch <- rpcResponse{ID: msg.ID, Error: msg.Error}
+				return
+			}
+		}
+		c.pendMu.Unlock()
 		return
 	}
 	c.pendMu.Lock()
@@ -496,18 +518,24 @@ func normalizeID(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
 	}
+	trimmed := strings.TrimSpace(string(raw))
+	// JSON null is the spec's "no id" marker (parse-error replies): it binds
+	// to no pending call, same as an absent id.
+	if trimmed == "" || trimmed == "null" {
+		return ""
+	}
 	var s string
-	if err := json.Unmarshal(raw, &s); err == nil {
+	if err := json.Unmarshal([]byte(trimmed), &s); err == nil {
 		return s
 	}
 	var n float64
-	if err := json.Unmarshal(raw, &n); err == nil {
+	if err := json.Unmarshal([]byte(trimmed), &n); err == nil {
 		if n == float64(int64(n)) {
 			return strconv.FormatInt(int64(n), 10)
 		}
 		return strconv.FormatFloat(n, 'f', -1, 64)
 	}
-	return strings.TrimSpace(string(raw))
+	return trimmed
 }
 
 // writeOut writes one frame in the client's write framing. The default is
