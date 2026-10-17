@@ -39,13 +39,13 @@ func kb158ReadMethodlog(t *testing.T, path string) []string {
 	if err != nil {
 		t.Fatalf("read method log %s: %v", path, err)
 	}
-	var methods []string
-	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		methods = append(methods, strings.TrimPrefix(line, "method="))
+	var lines []string
+	if s := strings.TrimSpace(string(raw)); s != "" {
+		lines = strings.Split(s, "\n")
+	}
+	methods := make([]string, 0, len(lines))
+	for _, line := range lines {
+		methods = append(methods, strings.TrimPrefix(strings.TrimSpace(line), "method="))
 	}
 	return methods
 }

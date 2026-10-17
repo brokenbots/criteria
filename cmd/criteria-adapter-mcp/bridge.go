@@ -361,35 +361,53 @@ func (b *MCPBridge) OpenSession(ctx context.Context, req *v2.OpenSessionRequest)
 
 // startMCPServer parses the adapter config, launches the MCP server process
 // over a stdio transport, and wires the progress-notification forwarder.
+// mcpServerConfig is the parsed adapter config block for one MCP server
+// process.
+type mcpServerConfig struct {
+	command     string
+	args        []string
+	framing     mcpclient.Framing
+	negotiation mcpclient.Negotiation
+	envPairs    []string
+	cwd         string
+}
+
+// parseServerConfig validates the adapter config block: command, args CSV,
+// framing, session-open negotiation (KB-158), env pairs, and cwd.
+func parseServerConfig(cfg map[string]string) (mcpServerConfig, error) {
+	parsed := mcpServerConfig{command: strings.TrimSpace(cfg["command"])}
+	if parsed.command == "" {
+		return parsed, fmt.Errorf("mcp: config.command is required")
+	}
+	var err error
+	if parsed.args, err = parseCSVList(cfg["args"]); err != nil {
+		return parsed, fmt.Errorf("mcp: parse args: %w", err)
+	}
+	if parsed.framing, err = mcpclient.ParseFraming(cfg["framing"]); err != nil {
+		return parsed, fmt.Errorf("mcp: parse framing: %w", err)
+	}
+	if parsed.negotiation, err = mcpclient.ParseNegotiation(cfg["handshake"]); err != nil {
+		return parsed, fmt.Errorf("mcp: parse handshake: %w", err)
+	}
+	if parsed.envPairs, err = parseEnvPairs(cfg["env"]); err != nil {
+		return parsed, fmt.Errorf("mcp: parse env: %w", err)
+	}
+	parsed.cwd = strings.TrimSpace(cfg["cwd"])
+	return parsed, nil
+}
+
 func startMCPServer(cfg map[string]string) (*sessionState, error) {
-	command := strings.TrimSpace(cfg["command"])
-	if command == "" {
-		return nil, fmt.Errorf("mcp: config.command is required")
+	parsed, err := parseServerConfig(cfg)
+	if err != nil {
+		return nil, err
 	}
 
-	args, err := parseCSVList(cfg["args"])
-	if err != nil {
-		return nil, fmt.Errorf("mcp: parse args: %w", err)
+	cmd := exec.Command(parsed.command, parsed.args...)
+	if parsed.cwd != "" {
+		cmd.Dir = parsed.cwd
 	}
-	framing, err := mcpclient.ParseFraming(cfg["framing"])
-	if err != nil {
-		return nil, fmt.Errorf("mcp: parse framing: %w", err)
-	}
-	negotiation, err := mcpclient.ParseNegotiation(cfg["handshake"])
-	if err != nil {
-		return nil, fmt.Errorf("mcp: parse handshake: %w", err)
-	}
-	envPairs, err := parseEnvPairs(cfg["env"])
-	if err != nil {
-		return nil, fmt.Errorf("mcp: parse env: %w", err)
-	}
-
-	cmd := exec.Command(command, args...)
-	if cwd := strings.TrimSpace(cfg["cwd"]); cwd != "" {
-		cmd.Dir = cwd
-	}
-	if len(envPairs) > 0 {
-		cmd.Env = append(os.Environ(), envPairs...)
+	if len(parsed.envPairs) > 0 {
+		cmd.Env = append(os.Environ(), parsed.envPairs...)
 	}
 
 	stdin, err := cmd.StdinPipe()
@@ -404,11 +422,11 @@ func startMCPServer(cfg map[string]string) (*sessionState, error) {
 	cmd.Stderr = stderr
 
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("mcp: start server %q: %w", command, err)
+		return nil, fmt.Errorf("mcp: start server %q: %w", parsed.command, err)
 	}
 
-	state := &sessionState{cmd: cmd, stdin: stdin, stderr: stderr, tools: map[string]struct{}{}, discoveryTTL: discoveryCacheTTL, negotiation: negotiation}
-	state.client = mcpclient.NewWithFraming(stdout, stdin, framing, func(n mcpclient.Notification) {
+	state := &sessionState{cmd: cmd, stdin: stdin, stderr: stderr, tools: map[string]struct{}{}, discoveryTTL: discoveryCacheTTL, negotiation: parsed.negotiation}
+	state.client = mcpclient.NewWithFraming(stdout, stdin, parsed.framing, func(n mcpclient.Notification) {
 		if n.Method != "notifications/progress" {
 			return
 		}
@@ -616,7 +634,7 @@ func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ad
 		// the caller learns the invocation needs more input instead of
 		// seeing a degenerate success. The full MRTR retry round-trip
 		// (retrying with inputResponses) is a follow-up card.
-		return sink.Send(typedFailureEventWithDetail(callErrorInputRequired, inputRequestsOutputs(result)))
+		return sink.Send(typedFailureEventWithDetail(callErrorInputRequired, inputRequestsOutputs(&result)))
 	}
 
 	for _, item := range result.Content {
@@ -632,7 +650,7 @@ func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ad
 	if result.IsError {
 		outcome = "failure"
 	}
-	return sink.Send(resultEventWithOutputs(outcome, mcpOutputs(result)))
+	return sink.Send(resultEventWithOutputs(outcome, mcpOutputs(&result)))
 }
 
 // mcpOutputs maps an MCP tools/call result into adapter outputs (CRI-172):
@@ -640,7 +658,7 @@ func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ad
 // "text", and structuredContent, when present, is passed through verbatim
 // under "structured". Other content kinds stay available via mcp.content
 // adapter events.
-func mcpOutputs(result mcpclient.CallToolResult) map[string]any {
+func mcpOutputs(result *mcpclient.CallToolResult) map[string]any {
 	outputs := map[string]any{}
 	var texts []string
 	for _, item := range result.Content {
@@ -879,7 +897,7 @@ const maxInputRequestDetailEntries = 32
 // server's opaque requestState handle. Method extraction is defensive — a
 // malformed envelope degrades to "(unparseable request)" instead of breaking
 // the failure surface.
-func inputRequestsOutputs(result mcpclient.CallToolResult) map[string]any {
+func inputRequestsOutputs(result *mcpclient.CallToolResult) map[string]any {
 	keys := make([]string, 0, len(result.InputRequests))
 	for key := range result.InputRequests {
 		keys = append(keys, key)

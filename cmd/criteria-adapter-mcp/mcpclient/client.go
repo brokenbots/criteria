@@ -53,7 +53,7 @@ type CallToolResult struct {
 // the server needs additional input before the call can complete. A result
 // with no resultType is an earlier-protocol server and is complete by
 // definition.
-func (r CallToolResult) IsInputRequired() bool {
+func (r *CallToolResult) IsInputRequired() bool {
 	return r.ResultType == ResultTypeInputRequired
 }
 

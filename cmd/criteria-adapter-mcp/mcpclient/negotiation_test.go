@@ -59,7 +59,7 @@ type handlerResult struct {
 
 // startFakeServer serves one client over in-process pipes, answering each
 // request via handler (mirrors the harness of client_test.go).
-func startFakeServer(t *testing.T, handler func(method string, params map[string]any) handlerResult) (*Client, *recordServer, func()) {
+func startFakeServer(t *testing.T, handler func(method string, params map[string]any) handlerResult) (*Client, *recordServer) {
 	t.Helper()
 	serverRead, clientWrite := io.Pipe()
 	clientRead, serverWrite := io.Pipe()
@@ -93,7 +93,7 @@ func startFakeServer(t *testing.T, handler func(method string, params map[string
 			if ans.err != nil {
 				errPayload := map[string]any{"code": ans.err.Code, "message": ans.err.Message}
 				if len(ans.err.Data) > 0 {
-					errPayload["data"] = json.RawMessage(ans.err.Data)
+					errPayload["data"] = ans.err.Data
 				}
 				_ = writeJSON(serverWrite, map[string]any{"jsonrpc": "2.0", "id": id, "error": errPayload})
 				continue
@@ -102,16 +102,15 @@ func startFakeServer(t *testing.T, handler func(method string, params map[string
 		}
 	}()
 
-	cleanup := func() {
+	t.Cleanup(func() {
 		client.Close()
 		clientWrite.Close()
 		clientRead.Close()
 		serverWrite.Close()
 		serverRead.Close()
 		<-done
-	}
-	t.Cleanup(cleanup)
-	return client, rec, cleanup
+	})
+	return client, rec
 }
 
 // modernDiscoverResult is a spec-shaped server/discover result.
@@ -175,7 +174,7 @@ func TestParseNegotiation(t *testing.T) {
 }
 
 func TestConnectProbeFirstAdoptsStatelessCore(t *testing.T) {
-	client, rec, _ := startFakeServer(t, func(method string, params map[string]any) handlerResult {
+	client, rec := startFakeServer(t, func(method string, params map[string]any) handlerResult {
 		switch method {
 		case "server/discover":
 			return handlerResult{result: modernDiscoverResult("echo", "1.0.0", 5000)}
@@ -247,7 +246,7 @@ func TestConnectProbeFirstAdoptsStatelessCore(t *testing.T) {
 }
 
 func TestConnectProbeFirstFallsBackToLegacyHandshake(t *testing.T) {
-	client, rec, _ := startFakeServer(t, func(method string, params map[string]any) handlerResult {
+	client, rec := startFakeServer(t, func(method string, params map[string]any) handlerResult {
 		switch method {
 		case "server/discover":
 			return unknownMethodError()
@@ -290,7 +289,7 @@ func TestConnectLegacyParityForFreshClient(t *testing.T) {
 	// A client used without Connect/Initialize (direct New -> CallTool) must
 	// ship the exact historical wire shape: empty-params tools/list and a
 	// tools/call without _meta.
-	client, rec, _ := startFakeServer(t, func(method string, params map[string]any) handlerResult {
+	client, rec := startFakeServer(t, func(method string, params map[string]any) handlerResult {
 		if method == "tools/call" {
 			return handlerResult{result: map[string]any{"content": []map[string]any{{"type": "text", "text": "ok"}}}}
 		}
@@ -311,7 +310,7 @@ func TestConnectUnsupportedProtocolVersionDoesNotFallBack(t *testing.T) {
 	// peer answered server/discover and rejected the requested version —
 	// that is a modern peer, so the fallback must NOT run; negotiation fails
 	// deterministically naming the advertised versions.
-	client, rec, _ := startFakeServer(t, func(method string, params map[string]any) handlerResult {
+	client, rec := startFakeServer(t, func(method string, params map[string]any) handlerResult {
 		switch method {
 		case "server/discover":
 			return unsupportedVersionError([]string{"2036-07-28"})
@@ -345,7 +344,7 @@ func TestConnectUnsupportedProtocolVersionDoesNotFallBack(t *testing.T) {
 }
 
 func TestConnectDiscoverModeHasNoLegacyFallback(t *testing.T) {
-	client, rec, _ := startFakeServer(t, func(method string, params map[string]any) handlerResult {
+	client, rec := startFakeServer(t, func(method string, params map[string]any) handlerResult {
 		if method == "server/discover" {
 			return unknownMethodError()
 		}
@@ -364,7 +363,7 @@ func TestConnectDiscoverModeHasNoLegacyFallback(t *testing.T) {
 }
 
 func TestConnectInitializeModeSkipsProbe(t *testing.T) {
-	client, rec, _ := startFakeServer(t, func(method string, params map[string]any) handlerResult {
+	client, rec := startFakeServer(t, func(method string, params map[string]any) handlerResult {
 		if method == "initialize" {
 			return handlerResult{result: map[string]any{"protocolVersion": ProtocolVersion20250326}}
 		}
@@ -387,7 +386,7 @@ func TestConnectInitializeModeSkipsProbe(t *testing.T) {
 }
 
 func TestDiscoverParsesResultAndDoesNotMutateSession(t *testing.T) {
-	client, _, _ := startFakeServer(t, func(method string, params map[string]any) handlerResult {
+	client, _ := startFakeServer(t, func(method string, params map[string]any) handlerResult {
 		return handlerResult{result: modernDiscoverResult("echo", "2.0.0", 4200)}
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -418,7 +417,7 @@ func TestDiscoverParsesResultAndDoesNotMutateSession(t *testing.T) {
 }
 
 func TestCallToolResultTypes(t *testing.T) {
-	client, _, _ := startFakeServer(t, func(method string, params map[string]any) handlerResult {
+	client, _ := startFakeServer(t, func(method string, params map[string]any) handlerResult {
 		switch method {
 		case "server/discover":
 			return handlerResult{result: modernDiscoverResult("echo", "1.0.0", 0)}
@@ -487,7 +486,7 @@ func TestCallToolResultTypes(t *testing.T) {
 }
 
 func TestToolsListInputRequiredRejected(t *testing.T) {
-	client, _, _ := startFakeServer(t, func(method string, params map[string]any) handlerResult {
+	client, _ := startFakeServer(t, func(method string, params map[string]any) handlerResult {
 		if method == "tools/list" {
 			return handlerResult{result: map[string]any{
 				"resultType": ResultTypeInputRequired,
@@ -569,7 +568,7 @@ func TestNullIDErrorResolvesSolePendingRequest(t *testing.T) {
 				first = false
 				out = map[string]any{"jsonrpc": "2.0", "id": nil, "error": map[string]any{"code": -32700, "message": "parse error: cannot parse request frame"}}
 			} else {
-				out = map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(req.ID), "result": map[string]any{"ok": true}}
+				out = map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": map[string]any{"ok": true}}
 			}
 			mu.Unlock()
 			_ = writeJSON(serverWrite, out)
