@@ -542,6 +542,15 @@ func ExecuteViaClient(ctx context.Context, client Client, adapterName, sessionID
 		SecretInputs:    cloneConfig(step.SecretInputs),
 		AllowedOutcomes: collectAllowedOutcomes(step),
 	}
+	// KB-212: forward the declared step timeout on the wire (criteria-adapter-
+	// proto v0.8.0 additive timeout_ms) so adapters stop falling back to their
+	// private default for long steps. The same guard as the engine's context
+	// ceiling (step.Timeout > 0) keeps unset and non-positive declarations
+	// byte-identical to the pre-v0.8.0 request (timeout_ms == 0 = adapter's
+	// own default); enforcement stays adapter policy.
+	if step.Timeout > 0 {
+		req.TimeoutMs = step.Timeout.Milliseconds()
+	}
 	if contracts := outcomeContractsForStep(step); contracts != nil {
 		// KB-45: contract-bearing steps publish their outcome contracts (and
 		// the repair context for a rejected prior attempt) on the wire;

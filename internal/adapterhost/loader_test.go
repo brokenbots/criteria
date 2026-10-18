@@ -439,6 +439,52 @@ func TestLoader_PopulatesAllowedOutcomes_Empty(t *testing.T) {
 	}
 }
 
+// TestLoader_ForwardsDeclaredStepTimeoutMs verifies (KB-212) that a declared
+// step timeout is forwarded to the adapter on ExecuteRequest.timeout_ms
+// (criteria-adapter-proto v0.8.0), so long steps stop being killed by the
+// adapter's private default. timeout_ms = 0 = unset: a step with no declared
+// timeout (or a non-positive one, treated like the engine's own ceiling
+// guard) keeps the pre-v0.8.0 request byte-identical; enforcement stays
+// adapter policy.
+func TestLoader_ForwardsDeclaredStepTimeoutMs(t *testing.T) {
+	tests := []struct {
+		name          string
+		declared      time.Duration
+		wantTimeoutMs int64
+	}{
+		{"declared 60m forwarded as 3600000", 60 * time.Minute, 60 * 60 * 1000},
+		{"unset stays 0", 0, 0},
+		{"non-positive stays 0", -5 * time.Minute, 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rc := &recordingClient{}
+			p := &rpcHandle{name: "recording-stub", rpc: rc}
+
+			step := &workflow.StepNode{
+				Name:    "ci_gate",
+				Timeout: tc.declared,
+				Outcomes: map[string]*workflow.CompiledOutcome{
+					"success": {Next: "done"},
+				},
+			}
+
+			sink := &adapterEventCollector{}
+			if _, err := p.Execute(context.Background(), "sess-timeout", step, sink, nil); err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+
+			req := rc.lastExecuteReq
+			if req == nil {
+				t.Fatal("no ExecuteRequest was captured")
+			}
+			if req.TimeoutMs != tc.wantTimeoutMs {
+				t.Fatalf("TimeoutMs = %d, want %d", req.TimeoutMs, tc.wantTimeoutMs)
+			}
+		})
+	}
+}
+
 // TestLoader_ExecuteUsesInputNotConfig verifies that the ExecuteRequest uses
 // the Input field (v2 rename from Config).
 func TestLoader_ExecuteUsesInputNotConfig(t *testing.T) {
