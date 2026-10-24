@@ -60,13 +60,22 @@ func newRunStateControlHandler(ctx context.Context, runID string, ctrl *localRun
 	}
 }
 
-func startLocalRunStateServer(ctx context.Context, log *slog.Logger, runID, controlListenAddr string, ctrl *localRunControl, withViewer bool, cancelRun context.CancelFunc) (viewerURL string, stop func(), err error) {
+func startLocalRunStateServer(ctx context.Context, log *slog.Logger, runID, controlListenAddr string, ctrl *localRunControl, withViewer bool, castleURL string, cancelRun context.CancelFunc) (viewerURL string, stop func(), err error) {
 	store := runstate.NewStore().Scoped(runID)
 	srv := runstate.NewServer(store).WithControl(newRunStateControlHandler(ctx, runID, ctrl, cancelRun))
 	if ctrl != nil {
 		svc := &localControlService{ctrl: ctrl, runID: runID}
 		pattern, h := criteriav1connect.NewLocalControlServiceHandler(svc)
 		srv.WithLocalService(pattern, h)
+		// KB-328: the console surface proxies castle's login verbs to the
+		// configured control plane and resolves ResolveResume decisions
+		// through this run's own control service — the same vocabulary the
+		// Connect control RPCs above answer.
+		console, consoleErr := runstate.NewCastleConsole(castleURL, svc, log)
+		if consoleErr != nil {
+			return "", nil, consoleErr
+		}
+		srv.WithCastleConsole(console.Handler())
 	}
 	if withViewer {
 		viewer, viewerErr := runstate.NewViewer()
@@ -112,13 +121,13 @@ func startLocalRunStateServer(ctx context.Context, log *slog.Logger, runID, cont
 // stop: the viewer is a lifeline, not a gate. A run that pauses while no
 // listener is attached waits for its state to be resolved out-of-band
 // (CRITERIA_LOCAL_APPROVAL) or for an invocation restart.
-func attachLocalRunStateServer(ctx context.Context, log *slog.Logger, runID, controlListenAddr string, ctrl *localRunControl, withViewer bool) (runCtx context.Context, stop func()) {
+func attachLocalRunStateServer(ctx context.Context, log *slog.Logger, runID, controlListenAddr string, ctrl *localRunControl, withViewer bool, castleURL string) (runCtx context.Context, stop func()) {
 	runCtx, cancelRun := context.WithCancel(ctx)
 	// srvStop is deliberately a fresh variable: binding it to the named
 	// return "stop" would make the returned closure call itself (the return
 	// statement assigns the closure to "stop"), recursing to a stack
 	// overflow when apply tears the server down.
-	url, srvStop, err := startLocalRunStateServer(ctx, log, runID, controlListenAddr, ctrl, withViewer, cancelRun)
+	url, srvStop, err := startLocalRunStateServer(ctx, log, runID, controlListenAddr, ctrl, withViewer, castleURL, cancelRun)
 	if err != nil {
 		log.Warn("local control listener unavailable; continuing without it", "run_id", runID, "error", err)
 		if ctrl != nil {

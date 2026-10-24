@@ -11,6 +11,8 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+
+	"github.com/brokenbots/criteria/internal/runstate"
 )
 
 type applyOptions struct {
@@ -29,6 +31,7 @@ type applyOptions struct {
 	ui                   bool         // --ui: serve the loopback run-state server + run-viewer during local apply (default true)
 	uiPort               int          // --ui-port: loopback port for the run-state server (0 = auto)
 	controlAddr          string       // --control-addr: loopback listen address for the run's control listener ("host:port"; default random loopback port)
+	castleAddr           string       // --castle-addr: castle control plane base URL the run-viewer console proxies Login/Logout/ListSessions to (KB-328, local mode)
 	serverBootstrapToken string       // --server-bootstrap-token: X-Server-Bootstrap value sent on Register; "file:<path>" reads the token from a file
 	subworkflowRoots     []string     // --subworkflow-root flag (repeatable); populates AllowedRoots on LocalSubWorkflowResolver
 	workflowRef          string       // --workflow-ref: caller-declared expected pin (git SHA or sha256:<digest>); run fails closed on mismatch (CRI-226)
@@ -82,6 +85,7 @@ func NewApplyCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.ui, "ui", true, "Serve the local run viewer on loopback while a local run executes (local mode)")
 	cmd.Flags().IntVar(&opts.uiPort, "ui-port", 0, "Port for the local run viewer's run-state server (0 = auto-select; loopback only)")
 	cmd.Flags().StringVar(&opts.controlAddr, "control-addr", envOrDefault("CRITERIA_CONTROL_ADDR", ""), "Listen address (host:port) for the run's control/run-state listener (empty = random loopback port; loopback only; local mode)")
+	cmd.Flags().StringVar(&opts.castleAddr, "castle-addr", envOrDefault("CRITERIA_CASTLE_ADDR", ""), "Castle control plane base URL the run-viewer's console proxies Login/Logout/ListSessions to (KB-328: castle is the single source of truth for console login; ResolveResume stays local; local mode)")
 	cmd.Flags().StringArrayVar(&opts.subworkflowRoots, "subworkflow-root", nil, "Restrict subworkflow source resolution to this root path (repeatable; empty = no restriction)")
 	cmd.Flags().StringVar(&opts.workflowRef, "workflow-ref", "", "Expected ref/digest the workflow source must resolve to — a git commit SHA or sha256:<digest>; the run fails closed on mismatch (CRI-226)")
 	cmd.Flags().BoolVar(&opts.warnsAsErrors, "warnings-as-errors", false, "Refuse to run when a warning is raised (e.g. an adapter whose schema could not be verified)")
@@ -93,6 +97,20 @@ func NewApplyCmd() *cobra.Command {
 func runApply(ctx context.Context, opts applyOptions) error {
 	if strings.TrimSpace(opts.workflowPath) == "" {
 		return errors.New("workflow path is required")
+	}
+	// KB-328: --castle-addr is a local-mode flag. The console surfaces of a
+	// server-run belong to castle's own operator console, so combining it
+	// with --server is refused; the URL is validated eagerly here because
+	// attachLocalRunStateServer degrades to a viewer-less local run when
+	// the listener cannot attach (bind failures and the like) and a
+	// malformed console target must fail the run up front, not vanish.
+	if castle := strings.TrimSpace(opts.castleAddr); castle != "" {
+		if strings.TrimSpace(opts.serverURL) != "" {
+			return errors.New("--castle-addr is a local-mode flag: in server mode the run's console belongs to the castle control plane itself")
+		}
+		if _, err := runstate.NewCastleConsole(castle, nil, nil); err != nil {
+			return err
+		}
 	}
 
 	// ADR-0005 D1/D3: remote workflow sources (git refs, http(s) archives)

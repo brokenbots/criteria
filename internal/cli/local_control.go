@@ -437,6 +437,20 @@ func (s *localControlService) ctrlResolve(signal string, payload map[string]stri
 	}
 }
 
+// ResolveConsoleResume is the KB-328 console resolver surface:
+// the loopback console's ResolveResume decision delivery. It answers the
+// local control vocabulary exactly like ResolveResume above — checkRun for
+// foreign run ids (a *connect.Error NotFound), then the landing-retried
+// resolve — so the console resolves what the control RPCs resolve, nothing
+// more.
+func (s *localControlService) ResolveConsoleResume(runID, signal string, payload map[string]string) (bool, string, error) {
+	if err := s.checkRun(runID); err != nil {
+		return false, "", err
+	}
+	accepted, reason := s.ctrlResolve(signal, payload)
+	return accepted, reason, nil
+}
+
 // isFinished reports whether the owning run reached a terminal state (or
 // otherwise exited its owning function): a finished run never pauses, so a
 // not-yet-paused answer is final rather than transient.
