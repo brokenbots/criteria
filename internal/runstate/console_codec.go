@@ -143,18 +143,19 @@ func decodeConsoleResolveProto(body []byte) (req consoleResolveRequest, derr str
 // returns (nil, false, "") and the caller skips it generically.
 func decodeConsoleProtoField(req *consoleResolveRequest, field, wire int, b []byte) (tail []byte, recognized bool, derr string) {
 	var what string
+	recognized = true
 	switch field {
 	case 1:
-		what, recognized = "run_id", true
+		what = "run_id"
 	case 2:
-		what, recognized = "signal", true
+		what = "signal"
 	case 3:
-		what, recognized = "payload", true
+		what = "payload"
 	default:
 		return nil, false, ""
 	}
 	if wire != 2 {
-		return nil, true, fmt.Sprintf("invalid proto request body: field %d (%s) has wire type %d, want 2", field, what, wire)
+		return nil, recognized, fmt.Sprintf("invalid proto request body: field %d (%s) has wire type %d, want 2", field, what, wire)
 	}
 	v, tail, ok := protoConsumeBytes(b)
 	if !ok {
@@ -162,7 +163,7 @@ func decodeConsoleProtoField(req *consoleResolveRequest, field, wire int, b []by
 		if field == 3 {
 			name = "payload entry"
 		}
-		return nil, true, "invalid proto request body: truncated " + name
+		return nil, recognized, "invalid proto request body: truncated " + name
 	}
 	if field != 3 {
 		if field == 1 {
@@ -170,14 +171,14 @@ func decodeConsoleProtoField(req *consoleResolveRequest, field, wire int, b []by
 		} else {
 			req.signal = string(v)
 		}
-		return tail, true, ""
+		return tail, recognized, ""
 	}
 	k, val, ok := protoConsumeMapEntry(v)
 	if !ok {
-		return nil, true, "invalid proto request body: malformed payload entry"
+		return nil, recognized, "invalid proto request body: malformed payload entry"
 	}
 	req.payload = mergeProtoPayloadEntry(req.payload, k, val)
-	return tail, true, ""
+	return tail, recognized, ""
 }
 
 // decodeConsoleProtoStep owns one decode-loop iteration: a schema field
