@@ -1,6 +1,6 @@
 module github.com/brokenbots/criteria/sdk
 
-go 1.26.9
+go 1.26.10
 
 require (
 	connectrpc.com/connect v1.20.0

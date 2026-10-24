@@ -130,7 +130,7 @@ func executeFreshLocalRun(ctx context.Context, log *slog.Logger, graph *workflow
 	// it mounts the Connect LocalControlService (control surface) and, when
 	// the UI is enabled, the run viewer. Its stop verb cancels the engine
 	// context (the engine then emits a real terminal RunFailed event).
-	runCtx, stopServer := attachLocalRunStateServer(ctx, log, runID, resolveRunListenAddr(&opts), ctrl, opts.ui)
+	runCtx, stopServer := attachLocalRunStateServer(ctx, log, runID, resolveRunListenAddr(&opts), ctrl, opts.ui, opts.castleAddr)
 	defer stopServer()
 	defer ctrl.markFinished()
 	if err := eng.Run(runCtx); err != nil {
@@ -359,7 +359,7 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 	// crashed process's listener is gone): the fresh attachment publishes a
 	// renewed control.json for the same run id.
 	ctrl := newLocalRunControl(cp.RunID, graph, tracker, eng)
-	runCtx, stopServer := attachLocalRunStateServer(ctx, log, cp.RunID, resolveRunListenAddr(&opts), ctrl, opts.ui)
+	runCtx, stopServer := attachLocalRunStateServer(ctx, log, cp.RunID, resolveRunListenAddr(&opts), ctrl, opts.ui, opts.castleAddr)
 	defer stopServer()
 	defer ctrl.markFinished()
 	if runErr := eng.RunFrom(runCtx, cp.CurrentStep, nextAttempt); runErr != nil {

@@ -38,6 +38,11 @@ type Server struct {
 	// viewer, when non-nil, serves the embedded run-viewer bundle under
 	// /runview/.
 	viewer http.Handler
+	// castleConsole, when non-nil, is mounted at the fixed
+	// castle.v1.ConsoleService prefix (KB-328): the loopback console
+	// surface. Login/Logout/ListSessions pass through to the configured
+	// castle control plane; ResolveResume stays local.
+	castleConsole http.Handler
 	// srv is the http.Server created by Serve; Stop closes it. ln is the
 	// listener stored by Listen: Stop closes it directly, because
 	// http.Server.Shutdown only closes listeners that Serve has already
@@ -91,6 +96,17 @@ func (s *Server) WithLocalService(pattern string, h http.Handler) *Server {
 	return s
 }
 
+// WithCastleConsole mounts h — NewCastleConsole().Handler() — at the fixed
+// castle.v1.ConsoleService prefix (KB-328): the loopback console surface
+// proxying Login/Logout/ListSessions to the configured castle control plane
+// and resolving ResolveResume decisions through the locally owned control
+// wire. nil (unconfigured) leaves the console procedures answerable only as
+// 404s at the mux.
+func (s *Server) WithCastleConsole(h http.Handler) *Server {
+	s.castleConsole = h
+	return s
+}
+
 // Handler returns the server's HTTP handler (exported for httptest).
 //
 // The seam API is mounted under /runview/api — the viewer bundle's default
@@ -121,6 +137,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/runview/", http.StatusFound)
 	})
+	if s.castleConsole != nil {
+		mux.Handle(castleConsolePrefix, s.castleConsole)
+	}
 	h := http.Handler(mux)
 	if s.viewer != nil {
 		// The viewer is mounted with a manual dispatcher rather than a mux

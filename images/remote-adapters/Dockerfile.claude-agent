@@ -34,7 +34,7 @@ ARG SDK_REF=main
 # Track the strictest of the repo go.mod floor and the floors of any
 # externally installed adapter modules. Official golang images set
 # GOTOOLCHAIN=local, so a mismatch fails the build outright.
-FROM golang:1.26.9-bookworm AS remote-runner-builder
+FROM golang:1.26.10-bookworm AS remote-runner-builder
 
 WORKDIR /src
 
