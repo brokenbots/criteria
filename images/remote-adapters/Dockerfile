@@ -30,7 +30,9 @@ ARG COPILOT_VERSION=1.0.82
 
 # The builder must meet the strictest dependency floor of the modules
 # installed below: criteria-adapter-copilot (installed via `go install`)
-# requires go >= 1.26.9 as of v0.5.16. Keep it exact-pinned.
+# required go >= 1.26.9 as of v0.5.16, and the root criteria module's floor
+# (1.26.10, enforced by the image-toolchain pin-discipline test) is at least
+# as strict. Keep it exact-pinned.
 FROM golang:1.26.10-bookworm AS builder
 
 ARG ADAPTER_NAME

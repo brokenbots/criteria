@@ -41,7 +41,9 @@ type recordedCastleRequest struct {
 
 // fakeCastle serves a scripted castle.v1.ConsoleService for pass-through
 // tests. Login answers a session token plus Set-Cookie noise the proxy must
-// drop; Logout answers an empty JSON object; anything else answers 404.
+// drop; Logout answers an empty JSON object; ListSessions answers a session
+// list carrying protocol headers (Grpc-/Connect-*) plus a Server
+// fingerprint, for the response-header whitelist; anything else answers 404.
 func fakeCastle(t *testing.T, logs *[]recordedCastleRequest) string {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -59,6 +61,15 @@ func fakeCastle(t *testing.T, logs *[]recordedCastleRequest) string {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{}`))
+		case strings.HasSuffix(r.URL.Path, "/ListSessions"):
+			w.Header().Set("Content-Type", "application/json")
+			// Protocol headers the response whitelist must relay, plus a
+			// server fingerprint it must drop.
+			w.Header().Set("Grpc-Status", "0")
+			w.Header().Set("Connect-Custom-Flag", "on")
+			w.Header().Set("Server", "castle-test/1")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"sessions":[]}`))
 		default:
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusNotFound)
@@ -577,5 +588,99 @@ func TestServerMountsConsole(t *testing.T) {
 	}
 	if len(*logs) > 1 {
 		t.Error("rejected request reached castle")
+	}
+}
+
+// TestConsoleProxyRefusesRedirects pins the credential-replay control: a
+// castle answering a redirect is passed through as the status it returned —
+// the caller's Authorization is never replayed at the redirect target.
+func TestConsoleProxyRefusesRedirects(t *testing.T) {
+	replayed := &[]recordedCastleRequest{}
+	steal := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*replayed = append(*replayed, recordedCastleRequest{path: r.URL.Path, headers: r.Header.Clone()})
+	}))
+	t.Cleanup(steal.Close)
+	redir := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", steal.URL+"/take-auth")
+		w.WriteHeader(http.StatusFound)
+	}))
+	t.Cleanup(redir.Close)
+	c, err := NewCastleConsole(redir.URL, nil, nil)
+	if err != nil {
+		t.Fatalf("ctor: %v", err)
+	}
+	code, body, hdr := postConsole(t, c.Handler(), "Login", "application/json", []byte(`{}`),
+		map[string]string{"Authorization": "Bearer st-x"})
+	if code != http.StatusFound {
+		t.Fatalf("redirected Login: code=%d body=%s", code, body)
+	}
+	if loc := hdr.Get("Location"); loc != "" {
+		t.Errorf("redirect Location relayed outside the response whitelist: %q", loc)
+	}
+	if got := len(*replayed); got != 0 {
+		t.Errorf("Authorization was replayed: %d request(s) reached %s", got, steal.URL)
+	}
+}
+
+// TestConsoleRequestBodyCap pins the abuse bound on the credential
+// surfaces: bodies past maxConsoleRequestBody answer invalid_argument and
+// castle and the local resolver see nothing.
+func TestConsoleRequestBodyCap(t *testing.T) {
+	logs := &[]recordedCastleRequest{}
+	res := &errResolver{accept: true}
+	console := newTestConsole(t, logs, res)
+	h := console.Handler()
+	oversized := bytes.Repeat([]byte("a"), maxConsoleRequestBody+1)
+	for _, proc := range []string{"Login", "ResolveResume"} {
+		code, body, _ := postConsole(t, h, proc, "application/json", oversized, nil)
+		if code != http.StatusBadRequest {
+			t.Errorf("%s capped: code=%d body=%s", proc, code, body)
+		}
+		gcode, gmsg := readConnectErr(t, body)
+		want := fmt.Sprintf("console request body exceeds %d bytes", maxConsoleRequestBody)
+		if gcode != connect.CodeInvalidArgument.String() || !strings.Contains(gmsg, want) {
+			t.Errorf("%s capped = (%q, %q), want invalid_argument %q", proc, gcode, gmsg, want)
+		}
+	}
+	if got := len(*logs); got != 0 {
+		t.Errorf("castle received %d request(s) for capped bodies", got)
+	}
+	if res.gotRunID != "" {
+		t.Errorf("resolver reached with a capped body: runID %q", res.gotRunID)
+	}
+}
+
+// TestConsoleListSessionsPassThrough pins the third forwarded verb and the
+// response-header whitelist's positive side: ListSessions is relayed to
+// castle verbatim (it runs revocation-aware session listing, KB-325), the
+// Connect and gRPC protocol headers come back, and castle's server
+// fingerprint does not.
+func TestConsoleListSessionsPassThrough(t *testing.T) {
+	logs := &[]recordedCastleRequest{}
+	console := newTestConsole(t, logs, nil)
+	code, body, hdr := postConsole(t, console.Handler(), "ListSessions", "application/json",
+		[]byte(`{"sessionToken":"st-123"}`), nil)
+	if code != http.StatusOK {
+		t.Fatalf("ListSessions: code=%d body=%s", code, body)
+	}
+	if want := `{"sessions":[]}`; body != want {
+		t.Errorf("ListSessions body = %q, want %q", body, want)
+	}
+	got := &(*logs)[len(*logs)-1]
+	if got.path != castleConsolePrefix+"ListSessions" || got.method != http.MethodPost {
+		t.Errorf("castle saw %s %s, want POST %sListSessions", got.method, got.path, castleConsolePrefix)
+	}
+	if want := `{"sessionToken":"st-123"}`; got.body != want {
+		t.Errorf("castle got body %q, want %q", got.body, want)
+	}
+	// Whitelisted protocol headers survive the hop.
+	for name, want := range map[string]string{"Content-Type": "application/json", "Grpc-Status": "0", "Connect-Custom-Flag": "on"} {
+		if v := hdr.Get(name); v != want {
+			t.Errorf("response header %s = %q, want %q", name, v, want)
+		}
+	}
+	// Castle's server fingerprint does not.
+	if v := hdr.Get("Server"); v != "" {
+		t.Errorf("castle Server fingerprint relayed: %q", v)
 	}
 }

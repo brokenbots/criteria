@@ -35,10 +35,18 @@ import (
 // ListSessions answer UNAVAILABLE, since a live console session can be
 // revoked once the plane is back.
 //
-// The surface serves the Connect unary and gRPC-Web protocols (the console
-// client's protocols): gRPC's HTTP/2 trailer status encoding does not
-// survive a pass-through hop, and the loopback has no gRPC-native console
-// callers.
+// The pass-through serves the Connect unary protocol, plus whatever media
+// types castle itself answers over it (the console client's HTTP surface
+// today is Connect unary; the loopback has no gRPC-native console callers
+// and no gRPC trailers to bridge). The local ResolveResume speaks Connect
+// unary JSON and application/proto only.
+//
+// Auth-transport assumption (load-bearing for the KB-325 revocation flow):
+// castle's console session travels as a token in the procedure bodies and
+// the Authorization header. This surface drops Set-Cookie from castle's
+// responses and never forwards the caller's Cookie, so a castle that starts
+// session-traveling via cookies breaks here loudly — visible — instead of
+// silently regressing to cookie-dependent revocation.
 
 // CastleConsole is the loopback server's castle.v1.ConsoleService surface.
 type CastleConsole struct {
@@ -70,7 +78,11 @@ type ConsoleResumeResolver interface {
 const (
 	// consoleProxyTimeout bounds one pass-through exchange, response body
 	// reads included, so a wedged castle cannot hang a console request
-	// (Client.Timeout covers the whole round trip).
+	// (Client.Timeout covers the whole round trip). It is a transport
+	// bound, not an operator knob — no tunables row because every console
+	// procedure must stay inside a browser interaction's patience; slow
+	// castle is surfaced on the console UI as a login-disabled/unreachable
+	// answer, which is the knob-free operator behavior this maps to.
 	consoleProxyTimeout = 10 * time.Second
 	// maxConsoleRequestBody bounds the request body the surface buffers for
 	// pass-through or decoding: console procedures are credential and
@@ -205,7 +217,10 @@ func (c *CastleConsole) forward(w http.ResponseWriter, r *http.Request) {
 // the "console login is disabled" state (UNIMPLEMENTED), exactly as the task
 // mapping requires; for the already-authenticated surfaces the failure is
 // temporal (UNAVAILABLE), since the session itself may still be live and
-// revocable once the plane is back.
+// revocable once the plane is back. A Login timeout inside the 10s transport
+// bound is reported with the same wording: honest about what the human can
+// act on (plane not reachable from here now) without claiming to know
+// whether castle is simply slow.
 func (c *CastleConsole) proxyDown(w http.ResponseWriter, proc string, err error) {
 	c.log.Warn("castle console proxy: forwarding failed",
 		"procedure", proc, "castle", c.baseURL, "error", err)
@@ -236,8 +251,8 @@ func copyConsoleResponseHeaders(dst, src http.Header) {
 		switch {
 		case strings.EqualFold(k, "Content-Type"),
 			strings.EqualFold(k, "Content-Encoding"),
-			strings.HasPrefix(k, "Connect-"),
-			strings.HasPrefix(k, "Grpc-"):
+			hasPrefixFold(k, "Connect-"),
+			hasPrefixFold(k, "Grpc-"):
 		default:
 			continue
 		}
@@ -245,6 +260,13 @@ func copyConsoleResponseHeaders(dst, src http.Header) {
 			dst.Add(k, v)
 		}
 	}
+}
+
+// hasPrefixFold reports whether s starts with prefix, ASCII
+// case-insensitively: the drop/relay table above must not depend on the
+// sender having canonicalized its header casing.
+func hasPrefixFold(s, prefix string) bool {
+	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
 }
 
 // readConsoleBody reads the request body whole, bounding it. capped reports
