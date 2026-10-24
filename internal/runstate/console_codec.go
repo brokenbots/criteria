@@ -69,12 +69,12 @@ func decodeConsoleResolve(body []byte, codec consoleCodec) (req consoleResolveRe
 	return consoleResolveRequest{}, "unknown console codec"
 }
 
-func decodeConsoleResolveJSON(body []byte) (consoleResolveRequest, string) {
+func decodeConsoleResolveJSON(body []byte) (req consoleResolveRequest, derr string) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(body, &fields); err != nil {
 		return consoleResolveRequest{}, "invalid JSON request body: " + err.Error()
 	}
-	req, derr := consoleResolveFields(fields)
+	req, derr = consoleResolveFields(fields)
 	if derr != "" {
 		return consoleResolveRequest{}, derr
 	}
@@ -90,8 +90,7 @@ func decodeConsoleResolveJSON(body []byte) (consoleResolveRequest, string) {
 
 // consoleResolveFields extracts the runId and signal fields, accepting both
 // protojson's camelCase and the snake_case spellings.
-func consoleResolveFields(fields map[string]json.RawMessage) (consoleResolveRequest, string) {
-	var req consoleResolveRequest
+func consoleResolveFields(fields map[string]json.RawMessage) (req consoleResolveRequest, derr string) {
 	raw, ok := fields["runId"]
 	if !ok {
 		raw, ok = fields["run_id"]
@@ -116,74 +115,109 @@ func consoleResolveFields(fields map[string]json.RawMessage) (consoleResolveRequ
 // Unknown fields are skipped so the surface tolerates forward-compatible
 // callers; unknown wire types are rejected loudly for the same reason a
 // proto codec would.
-func decodeConsoleResolveProto(body []byte) (consoleResolveRequest, string) {
-	var req consoleResolveRequest
+func decodeConsoleResolveProto(body []byte) (req consoleResolveRequest, derr string) {
 	b := body
-	seenPayload := false
 	for len(b) > 0 {
 		tag, n := binary.Uvarint(b)
 		if n <= 0 {
-			return req, "invalid proto request body: malformed field tag"
+			return consoleResolveRequest{}, "invalid proto request body: malformed field tag"
 		}
 		b = b[n:]
 		field, wire := int(tag>>3), int(tag&0x7)
-		switch {
-		case field == 1 && wire == 2:
-			v, rest, ok := protoConsumeBytes(b)
-			if !ok {
-				return req, "invalid proto request body: truncated run_id"
-			}
-			req.runID, b = string(v), rest
-		case field == 2 && wire == 2:
-			v, rest, ok := protoConsumeBytes(b)
-			if !ok {
-				return req, "invalid proto request body: truncated signal"
-			}
-			req.signal, b = string(v), rest
-		case field == 3 && wire == 2:
-			entry, rest, ok := protoConsumeBytes(b)
-			if !ok {
-				return req, "invalid proto request body: truncated payload entry"
-			}
-			k, v, ok := protoConsumeMapEntry(entry)
-			if !ok {
-				return req, "invalid proto request body: malformed payload entry"
-			}
-			if !seenPayload {
-				req.payload = map[string]string{}
-				seenPayload = true
-			}
-			// A repeated map entry key: the last value wins, as protobuf
-			// map merge semantics define.
-			req.payload[k] = v
-			b = rest
-		case wire == 0:
-			_, rest, ok := protoConsumeVarint(b)
-			if !ok {
-				return req, "invalid proto request body: truncated varint field"
-			}
-			b = rest
-		case wire == 1:
-			if len(b) < 8 {
-				return req, "invalid proto request body: truncated fixed64 field"
-			}
-			b = b[8:]
-		case wire == 2:
-			_, rest, ok := protoConsumeBytes(b)
-			if !ok {
-				return req, "invalid proto request body: truncated length-delimited field"
-			}
-			b = rest
-		case wire == 5:
-			if len(b) < 4 {
-				return req, "invalid proto request body: truncated fixed32 field"
-			}
-			b = b[4:]
-		default:
-			return req, fmt.Sprintf("invalid proto request body: unsupported wire type %d", wire)
+		rest, ferr := decodeConsoleProtoField(&req, field, wire, b)
+		if rest == nil {
+			rest, ferr = protoSkipUnknownField(b, wire)
 		}
+		if ferr != "" {
+			return consoleResolveRequest{}, ferr
+		}
+		b = rest
 	}
 	return req, ""
+}
+
+// decodeConsoleProtoField decodes one ResolveResumeRequest field into req.
+// A nil rest means the field was unrecognized and is left for generic
+// wire-type skipping.
+func decodeConsoleProtoField(req *consoleResolveRequest, field, wire int, b []byte) (tail []byte, derr string) {
+	switch field {
+	case 1, 2:
+		if wire != 2 {
+			return nil, ""
+		}
+		v, tail, ok := protoConsumeBytes(b)
+		if !ok {
+			what := "run_id"
+			if field == 2 {
+				what = "signal"
+			}
+			return nil, fmt.Sprintf("invalid proto request body: truncated %s", what)
+		}
+		if field == 1 {
+			req.runID = string(v)
+		} else {
+			req.signal = string(v)
+		}
+		return tail, ""
+	case 3:
+		if wire != 2 {
+			return nil, ""
+		}
+		entry, tail, ok := protoConsumeBytes(b)
+		if !ok {
+			return nil, "invalid proto request body: truncated payload entry"
+		}
+		k, v, ok := protoConsumeMapEntry(entry)
+		if !ok {
+			return nil, "invalid proto request body: malformed payload entry"
+		}
+		req.payload = mergeProtoPayloadEntry(req.payload, k, v)
+		return tail, ""
+	}
+	return nil, ""
+}
+
+// mergeProtoPayloadEntry merges one map<string,string> entry into a
+// payload under protobuf map merge semantics: the last value for a repeated
+// key wins.
+func mergeProtoPayloadEntry(payload map[string]string, k, v string) map[string]string {
+	if payload == nil {
+		payload = map[string]string{}
+	}
+	payload[k] = v
+	return payload
+}
+
+// protoSkipUnknownField consumes an unrecognized field's data for the given
+// wire type so a decode loop can step past forward-compatible extensions.
+func protoSkipUnknownField(b []byte, wire int) (rest []byte, derr string) {
+	switch wire {
+	case 0:
+		_, tail, ok := protoConsumeVarint(b)
+		if !ok {
+			return nil, "invalid proto request body: truncated varint field"
+		}
+		rest = tail
+	case 1:
+		if len(b) < 8 {
+			return nil, "invalid proto request body: truncated fixed64 field"
+		}
+		rest = b[8:]
+	case 2:
+		_, tail, ok := protoConsumeBytes(b)
+		if !ok {
+			return nil, "invalid proto request body: truncated length-delimited field"
+		}
+		rest = tail
+	case 5:
+		if len(b) < 4 {
+			return nil, "invalid proto request body: truncated fixed32 field"
+		}
+		rest = b[4:]
+	default:
+		return nil, fmt.Sprintf("invalid proto request body: unsupported wire type %d", wire)
+	}
+	return rest, ""
 }
 
 func protoConsumeBytes(b []byte) (val, rest []byte, ok bool) {
@@ -194,7 +228,7 @@ func protoConsumeBytes(b []byte) (val, rest []byte, ok bool) {
 	return b[used : used+int(n)], b[used+int(n):], true
 }
 
-func protoConsumeVarint(b []byte) (uint64, []byte, bool) {
+func protoConsumeVarint(b []byte) (v uint64, rest []byte, ok bool) {
 	v, n := binary.Uvarint(b)
 	if n <= 0 {
 		return 0, nil, false
@@ -232,7 +266,7 @@ func protoConsumeMapEntry(b []byte) (k, v string, ok bool) {
 
 // encodeConsoleResolve encodes a ResolveResumeResponse carrying only
 // issued_at (field 1).
-func encodeConsoleResolve(issuedAt time.Time, codec consoleCodec) ([]byte, string) {
+func encodeConsoleResolve(issuedAt time.Time, codec consoleCodec) (resp []byte, derr string) {
 	switch codec {
 	case consoleCodecJSON:
 		body, err := json.Marshal(struct {
@@ -252,13 +286,19 @@ func encodeConsoleResolve(issuedAt time.Time, codec consoleCodec) ([]byte, strin
 	return nil, "unknown console codec"
 }
 
+// protoTag builds the field tag for the given wire type (0 = varint,
+// 2 = length-delimited).
+func protoTag(field int, wireType byte) uint64 {
+	return uint64(field)<<3 | uint64(wireType)
+}
+
 func appendProtoVarintField(dst []byte, field int, v uint64) []byte {
-	dst = binary.AppendUvarint(dst, uint64(field)<<3|0)
+	dst = binary.AppendUvarint(dst, protoTag(field, 0))
 	return binary.AppendUvarint(dst, v)
 }
 
 func appendProtoBytesField(dst []byte, field int, val []byte) []byte {
-	dst = binary.AppendUvarint(dst, uint64(field)<<3|2)
+	dst = binary.AppendUvarint(dst, protoTag(field, 2))
 	dst = binary.AppendUvarint(dst, uint64(len(val)))
 	return append(dst, val...)
 }

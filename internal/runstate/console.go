@@ -330,27 +330,10 @@ func (c *CastleConsole) serveResolve(w http.ResponseWriter, r *http.Request) {
 			"console resolve is not available on this viewer: no local run control is wired to it")
 		return
 	}
-	codec, ok := consoleCodecName(r.Header.Get("Content-Type"))
-	if !ok {
+	codec, req, code, emsg := c.decodeResolveRequest(r)
+	if emsg != "" {
 		w.Header().Set("Accept-Post", "application/json, application/proto")
-		c.writeConnectError(w, connect.CodeUnimplemented,
-			fmt.Sprintf("unsupported content-type %q: the console surface speaks application/json or application/proto", r.Header.Get("Content-Type")))
-		return
-	}
-	body, capped, err := readConsoleBody(r)
-	if capped {
-		c.writeConnectError(w, connect.CodeInvalidArgument,
-			fmt.Sprintf("console request body exceeds %d bytes", maxConsoleRequestBody))
-		return
-	}
-	if err != nil {
-		c.writeConnectError(w, connect.CodeInvalidArgument,
-			"read console request body: "+err.Error())
-		return
-	}
-	req, derr := decodeConsoleResolve(body, codec)
-	if derr != "" {
-		c.writeConnectError(w, connect.CodeInvalidArgument, derr)
+		c.writeConnectErrorAt(w, connectHTTPStatus(code), code, emsg)
 		return
 	}
 	accepted, reason, rerr := c.resolver.ResolveConsoleResume(req.runID, req.signal, req.payload)
@@ -375,6 +358,32 @@ func (c *CastleConsole) serveResolve(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", codec.contentType())
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(resp)
+}
+
+// decodeResolveRequest negotiates the codec, drains the request body and
+// decodes the ResolveResumeRequest. A non-empty error message carries the
+// connect code to report: unimplemented for an unsupported content type,
+// invalid_argument for a capped, unreadable or undecodable body.
+func (c *CastleConsole) decodeResolveRequest(r *http.Request) (consoleCodec, consoleResolveRequest, connect.Code, string) {
+	codec, ok := consoleCodecName(r.Header.Get("Content-Type"))
+	if !ok {
+		return codec, consoleResolveRequest{}, connect.CodeUnimplemented,
+			fmt.Sprintf("unsupported content-type %q: the console surface speaks application/json or application/proto", r.Header.Get("Content-Type"))
+	}
+	body, capped, err := readConsoleBody(r)
+	if capped {
+		return codec, consoleResolveRequest{}, connect.CodeInvalidArgument,
+			fmt.Sprintf("console request body exceeds %d bytes", maxConsoleRequestBody)
+	}
+	if err != nil {
+		return codec, consoleResolveRequest{}, connect.CodeInvalidArgument,
+			"read console request body: " + err.Error()
+	}
+	req, derr := decodeConsoleResolve(body, codec)
+	if derr != "" {
+		return codec, consoleResolveRequest{}, connect.CodeInvalidArgument, derr
+	}
+	return codec, req, connect.Code(0), ""
 }
 
 // consoleRejectMessage renders the local control vocabulary's rejection

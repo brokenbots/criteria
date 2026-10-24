@@ -26,7 +26,7 @@ type errResolver struct {
 	gotBody  map[string]string
 }
 
-func (r *errResolver) ResolveConsoleResume(runID, signal string, payload map[string]string) (bool, string, error) {
+func (r *errResolver) ResolveConsoleResume(runID, signal string, payload map[string]string) (accepted bool, reason string, err error) {
 	r.gotRunID, r.gotSig, r.gotBody = runID, signal, payload
 	return r.accept, r.reason, r.err
 }
@@ -69,13 +69,12 @@ func fakeCastle(t *testing.T, logs *[]recordedCastleRequest) string {
 	return srv.URL
 }
 
-// newTestConsole wires a console surface for a test. A castleURL of "fake"
-// dials the in-test castle above (whose requests accumulate into logs).
-func newTestConsole(t *testing.T, logs *[]recordedCastleRequest, castleURL string, resolver ConsoleResumeResolver) *CastleConsole {
+// newTestConsole wires a console surface for a test that dials the in-test
+// castle above (whose requests accumulate into logs). Disabled-mode tests
+// construct CastleConsole directly.
+func newTestConsole(t *testing.T, logs *[]recordedCastleRequest, resolver ConsoleResumeResolver) *CastleConsole {
 	t.Helper()
-	if castleURL == "fake" {
-		castleURL = fakeCastle(t, logs)
-	}
+	castleURL := fakeCastle(t, logs)
 	c, err := NewCastleConsole(castleURL, resolver, nil)
 	if err != nil {
 		t.Fatalf("NewCastleConsole(%q): %v", castleURL, err)
@@ -86,9 +85,9 @@ func newTestConsole(t *testing.T, logs *[]recordedCastleRequest, castleURL strin
 // postConsole POSTs to the console surface the way a loopback console
 // client would (the server wrapper refuses other Hosts by design): a
 // loopback Host literal, the given body and headers, and Connect version 1.
-func postConsole(t *testing.T, h http.Handler, proc, contentType string, body []byte, hdrs map[string]string) (int, string, http.Header) {
+func postConsole(t *testing.T, h http.Handler, proc, contentType string, reqBody []byte, hdrs map[string]string) (status int, body string, hdr http.Header) {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, castleConsolePrefix+proc, bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, castleConsolePrefix+proc, bytes.NewReader(reqBody))
 	req.Host = "127.0.0.1:0"
 	if contentType == "" {
 		contentType = "application/json"
@@ -174,7 +173,7 @@ func TestConsoleLoginUnreachable(t *testing.T) {
 // browser-context noise dropped at the boundary.
 func TestConsoleLoginPassThrough(t *testing.T) {
 	logs := &[]recordedCastleRequest{}
-	console := newTestConsole(t, logs, "fake", nil)
+	console := newTestConsole(t, logs, nil)
 	h := console.Handler()
 
 	code, body, hdr := postConsole(t, h, "Login", "application/json",
@@ -231,7 +230,7 @@ func TestConsoleLoginPassThrough(t *testing.T) {
 
 	// Logout is forwarded too: revocation stays castle-side (KB-325).
 	logs2 := &[]recordedCastleRequest{}
-	console2 := newTestConsole(t, logs2, "fake", nil)
+	console2 := newTestConsole(t, logs2, nil)
 	code, body, _ = postConsole(t, console2.Handler(), "Logout", "application/json", []byte(`{"sessionToken":"gone"}`), nil)
 	if code != http.StatusOK {
 		t.Errorf("Logout: code=%d body=%s", code, body)
@@ -260,7 +259,7 @@ func TestConsoleLoginPassThrough(t *testing.T) {
 func TestConsoleResolveLocal(t *testing.T) {
 	logs := &[]recordedCastleRequest{}
 	res := &errResolver{accept: true}
-	console := newTestConsole(t, logs, "fake", res)
+	console := newTestConsole(t, logs, res)
 
 	code, body, _ := postConsole(t, console.Handler(), "ResolveResume", "application/json",
 		[]byte(`{"runId":"r-1","signal":"gate","payload":{"decision":"approve"}}`), nil)
@@ -434,7 +433,7 @@ func decodeTimestampProto(msg []byte) (time.Time, error) {
 func TestConsoleResolveProto(t *testing.T) {
 	logs := &[]recordedCastleRequest{}
 	res := &errResolver{accept: true}
-	console := newTestConsole(t, logs, "fake", res)
+	console := newTestConsole(t, logs, res)
 
 	req := encodeConsoleResolveReq("r-9", "sig", map[string]string{"a": "1"})
 	code, body, hdr := postConsole(t, console.Handler(), "ResolveResume", "application/proto", req, nil)
@@ -551,7 +550,7 @@ func TestCastleConsoleCtorValidation(t *testing.T) {
 // unaffected, and non-loopback Hosts are refused before touching castle.
 func TestServerMountsConsole(t *testing.T) {
 	logs := &[]recordedCastleRequest{}
-	console := newTestConsole(t, logs, "fake", nil)
+	console := newTestConsole(t, logs, nil)
 	res := &errResolver{accept: true}
 	console.resolver = res
 	srv := newTestServer(t)

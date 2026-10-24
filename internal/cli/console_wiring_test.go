@@ -17,9 +17,9 @@ import (
 
 // startFakeCastle serves the three castle.v1.ConsoleService procedures the
 // loopback console proxies, recording every request.
-func startFakeCastle(t *testing.T) (string, *[]string) {
+func startFakeCastle(t *testing.T) (addr string, logs *[]string) {
 	t.Helper()
-	logs := &[]string{}
+	logs = &[]string{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		*logs = append(*logs, fmt.Sprintf("%s %s %s", r.Method, r.URL.Path, body))
@@ -36,10 +36,11 @@ func startFakeCastle(t *testing.T) (string, *[]string) {
 }
 
 // consolePost POSTs one Connect unary request to the loopback URL the
-// started listener reported.
-func consolePost(t *testing.T, base, proc, body string, headers map[string]string) *http.Response {
+// started listener reported, draining and closing the response body before
+// returning status and body.
+func consolePost(t *testing.T, base, proc, reqBody string, headers map[string]string) (status int, body string) {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodPost, base+"/castle.v1.ConsoleService/"+proc, bytes.NewReader([]byte(body)))
+	req, err := http.NewRequest(http.MethodPost, base+"/castle.v1.ConsoleService/"+proc, bytes.NewReader([]byte(reqBody)))
 	if err != nil {
 		t.Fatalf("build %s: %v", proc, err)
 	}
@@ -53,18 +54,12 @@ func consolePost(t *testing.T, base, proc, body string, headers map[string]strin
 	if err != nil {
 		t.Fatalf("POST %s: %v", proc, err)
 	}
-	t.Cleanup(func() { _ = resp.Body.Close() })
-	return resp
-}
-
-// consoleBodyString drains a response body.
-func consoleBodyString(t *testing.T, resp *http.Response) string {
-	t.Helper()
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read %s body: %v", resp.Request.URL, err)
+	defer func() { _ = resp.Body.Close() }()
+	b, rerr := io.ReadAll(resp.Body)
+	if rerr != nil {
+		t.Fatalf("read %s body: %v", proc, rerr)
 	}
-	return string(b)
+	return resp.StatusCode, string(b)
 }
 
 // TestLocalRunStateServerConsole pins the KB-328 wiring end to end over the
@@ -99,11 +94,11 @@ func TestLocalRunStateServerConsole(t *testing.T) {
 
 	// Login is castle's: the fake plane saw the credentials and the real
 	// session comes back through the loopback surface.
-	resp := consolePost(t, base, "Login", `{"username":"ops","password":"pw"}`, map[string]string{"Authorization": "Bearer tok"})
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("Login: %d %s", resp.StatusCode, consoleBodyString(t, resp))
+	status, body := consolePost(t, base, "Login", `{"username":"ops","password":"pw"}`, map[string]string{"Authorization": "Bearer tok"})
+	if status != http.StatusOK {
+		t.Fatalf("Login: %d %s", status, body)
 	}
-	if body := consoleBodyString(t, resp); body != `{"sessionToken":"kx","username":"ops"}` {
+	if body != `{"sessionToken":"kx","username":"ops"}` {
 		t.Errorf("Login body = %q", body)
 	}
 	if len(*castleLog) != 1 {
@@ -119,15 +114,15 @@ func TestLocalRunStateServerConsole(t *testing.T) {
 
 	// A foreign run id keeps the honest not-found answer the control verbs
 	// produce (checkRun), and mismatches keep the local vocabulary.
-	resp = consolePost(t, base, "ResolveResume", `{"runId":"other-run","signal":"resume"}`, nil)
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("foreign run: %d %s", resp.StatusCode, consoleBodyString(t, resp))
+	status, body = consolePost(t, base, "ResolveResume", `{"runId":"other-run","signal":"resume"}`, nil)
+	if status != http.StatusNotFound {
+		t.Fatalf("foreign run: %d %s", status, body)
 	}
 	var ce struct {
 		Code    string `json:"code"`
 		Message string `json:"message"`
 	}
-	if err := json.Unmarshal([]byte(consoleBodyString(t, resp)), &ce); err != nil {
+	if err := json.Unmarshal([]byte(body), &ce); err != nil {
 		t.Fatalf("foreign run body: %v", err)
 	}
 	if ce.Code != "not_found" || ce.Message != `run "other-run" is not served by this control listener` {
@@ -137,11 +132,11 @@ func TestLocalRunStateServerConsole(t *testing.T) {
 		t.Errorf("resolve reached castle: %v", *castleLog)
 	}
 
-	resp = consolePost(t, base, "ResolveResume", `{"runId":"console-run","signal":"wrong"}`, nil)
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("mismatch: %d %s", resp.StatusCode, consoleBodyString(t, resp))
+	status, body = consolePost(t, base, "ResolveResume", `{"runId":"console-run","signal":"wrong"}`, nil)
+	if status != http.StatusBadRequest {
+		t.Fatalf("mismatch: %d %s", status, body)
 	}
-	if err := json.Unmarshal([]byte(consoleBodyString(t, resp)), &ce); err != nil {
+	if err := json.Unmarshal([]byte(body), &ce); err != nil {
 		t.Fatalf("mismatch body: %v", err)
 	}
 	// An undeclared signal has no pause target at all: the local control
@@ -155,14 +150,14 @@ func TestLocalRunStateServerConsole(t *testing.T) {
 	// The matching signal delivers the decision through the run's own
 	// control service: parked on the control bus for the engine's drain
 	// loop and answered with issued_at.
-	resp = consolePost(t, base, "ResolveResume", `{"runId":"console-run","signal":"resume","payload":{"outcome":"received"}}`, nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("resolve: %d %s", resp.StatusCode, consoleBodyString(t, resp))
+	status, body = consolePost(t, base, "ResolveResume", `{"runId":"console-run","signal":"resume","payload":{"outcome":"received"}}`, nil)
+	if status != http.StatusOK {
+		t.Fatalf("resolve: %d %s", status, body)
 	}
 	var ro struct {
 		IssuedAt string `json:"issuedAt"`
 	}
-	if err := json.Unmarshal([]byte(consoleBodyString(t, resp)), &ro); err != nil {
+	if err := json.Unmarshal([]byte(body), &ro); err != nil {
 		t.Fatalf("resolve body: %v", err)
 	}
 	if issued, err := time.Parse(time.RFC3339, ro.IssuedAt); err != nil || time.Since(issued) > time.Minute {
@@ -206,15 +201,15 @@ func TestLocalRunStateServerConsoleDisabled(t *testing.T) {
 	defer stop()
 	base = base[:len(base)-len("/runview/")]
 
-	resp := consolePost(t, base, "Login", `{}`, nil)
-	if resp.StatusCode != http.StatusNotImplemented {
-		t.Fatalf("disabled Login: %d %s", resp.StatusCode, consoleBodyString(t, resp))
+	status, body := consolePost(t, base, "Login", `{}`, nil)
+	if status != http.StatusNotImplemented {
+		t.Fatalf("disabled Login: %d %s", status, body)
 	}
 	var ce struct {
 		Code    string `json:"code"`
 		Message string `json:"message"`
 	}
-	if err := json.Unmarshal([]byte(consoleBodyString(t, resp)), &ce); err != nil {
+	if err := json.Unmarshal([]byte(body), &ce); err != nil {
 		t.Fatalf("disabled body: %v", err)
 	}
 	if ce.Code != "unimplemented" || ce.Message != "console login is disabled: no castle control plane is configured for this run-viewer (set --castle-addr or CRITERIA_CASTLE_ADDR to enable console login)" {

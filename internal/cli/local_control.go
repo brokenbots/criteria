@@ -443,11 +443,11 @@ func (s *localControlService) ctrlResolve(signal string, payload map[string]stri
 // foreign run ids (a *connect.Error NotFound), then the landing-retried
 // resolve — so the console resolves what the control RPCs resolve, nothing
 // more.
-func (s *localControlService) ResolveConsoleResume(runID, signal string, payload map[string]string) (bool, string, error) {
+func (s *localControlService) ResolveConsoleResume(runID, signal string, payload map[string]string) (accepted bool, reason string, err error) {
 	if err := s.checkRun(runID); err != nil {
 		return false, "", err
 	}
-	accepted, reason := s.ctrlResolve(signal, payload)
+	accepted, reason = s.ctrlResolve(signal, payload)
 	return accepted, reason, nil
 }
 
