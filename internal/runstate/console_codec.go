@@ -113,8 +113,9 @@ func consoleResolveFields(fields map[string]json.RawMessage) (req consoleResolve
 // decodeConsoleResolveProto decodes a binary ResolveResumeRequest: field 1
 // run_id, field 2 signal, field 3 a map<string,string> payload entry pair.
 // Unknown fields are skipped so the surface tolerates forward-compatible
-// callers; unknown wire types are rejected loudly for the same reason a
-// proto codec would.
+// callers; everything else a real proto codec rejects — a known field with
+// an unexpected wire type, a truncated value, a malformed map entry — is
+// rejected loudly as well.
 func decodeConsoleResolveProto(body []byte) (req consoleResolveRequest, derr string) {
 	b := body
 	for len(b) > 0 {
@@ -124,57 +125,70 @@ func decodeConsoleResolveProto(body []byte) (req consoleResolveRequest, derr str
 		}
 		b = b[n:]
 		field, wire := int(tag>>3), int(tag&0x7)
-		rest, ferr := decodeConsoleProtoField(&req, field, wire, b)
-		if rest == nil {
-			rest, ferr = protoSkipUnknownField(b, wire)
-		}
+		var ferr string
+		b, ferr = decodeConsoleProtoStep(&req, field, wire, b)
 		if ferr != "" {
 			return consoleResolveRequest{}, ferr
 		}
-		b = rest
 	}
 	return req, ""
 }
 
 // decodeConsoleProtoField decodes one ResolveResumeRequest field into req.
-// A nil rest means the field was unrecognized and is left for generic
-// wire-type skipping.
-func decodeConsoleProtoField(req *consoleResolveRequest, field, wire int, b []byte) (tail []byte, derr string) {
+// recognized reports whether the field number belongs to the schema
+// (fields 1, 2, 3), independently of wire type: a known field is fully
+// owned here, so a schema-impossible wire type is a hard reject ("want 2")
+// exactly as a real proto codec would reject it, never an unknown-field
+// skip. derr is non-empty only for hard errors; an unknown field number
+// returns (nil, false, "") and the caller skips it generically.
+func decodeConsoleProtoField(req *consoleResolveRequest, field, wire int, b []byte) (tail []byte, recognized bool, derr string) {
+	var what string
 	switch field {
-	case 1, 2:
-		if wire != 2 {
-			return nil, ""
+	case 1:
+		what, recognized = "run_id", true
+	case 2:
+		what, recognized = "signal", true
+	case 3:
+		what, recognized = "payload", true
+	default:
+		return nil, false, ""
+	}
+	if wire != 2 {
+		return nil, true, fmt.Sprintf("invalid proto request body: field %d (%s) has wire type %d, want 2", field, what, wire)
+	}
+	v, tail, ok := protoConsumeBytes(b)
+	if !ok {
+		name := what
+		if field == 3 {
+			name = "payload entry"
 		}
-		v, tail, ok := protoConsumeBytes(b)
-		if !ok {
-			what := "run_id"
-			if field == 2 {
-				what = "signal"
-			}
-			return nil, fmt.Sprintf("invalid proto request body: truncated %s", what)
-		}
+		return nil, true, "invalid proto request body: truncated " + name
+	}
+	if field != 3 {
 		if field == 1 {
 			req.runID = string(v)
 		} else {
 			req.signal = string(v)
 		}
-		return tail, ""
-	case 3:
-		if wire != 2 {
-			return nil, ""
-		}
-		entry, tail, ok := protoConsumeBytes(b)
-		if !ok {
-			return nil, "invalid proto request body: truncated payload entry"
-		}
-		k, v, ok := protoConsumeMapEntry(entry)
-		if !ok {
-			return nil, "invalid proto request body: malformed payload entry"
-		}
-		req.payload = mergeProtoPayloadEntry(req.payload, k, v)
-		return tail, ""
+		return tail, true, ""
 	}
-	return nil, ""
+	k, val, ok := protoConsumeMapEntry(v)
+	if !ok {
+		return nil, true, "invalid proto request body: malformed payload entry"
+	}
+	req.payload = mergeProtoPayloadEntry(req.payload, k, val)
+	return tail, true, ""
+}
+
+// decodeConsoleProtoStep owns one decode-loop iteration: a schema field
+// decodes or hard-rejects; only an unrecognized field number is skipped
+// generically.
+func decodeConsoleProtoStep(req *consoleResolveRequest, field, wire int, b []byte) (rest []byte, derr string) {
+	tail, recognized, ferr := decodeConsoleProtoField(req, field, wire, b)
+	if recognized {
+		return tail, ferr
+	}
+	return protoSkipUnknownField(b, wire)
 }
 
 // mergeProtoPayloadEntry merges one map<string,string> entry into a

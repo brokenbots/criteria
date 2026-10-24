@@ -91,6 +91,28 @@ const (
 	maxConsoleRequestBody = 64 << 10
 )
 
+// ValidateCastleURL applies the console proxy's base-URL contract to raw:
+// it must parse to an http/https URL with an authority and target the
+// castle control-plane root — no path; query, fragment and user data are
+// ignored — and it returns the normalized base URL. NewCastleConsole and
+// the CLI's eager --castle-addr validation share this helper so the
+// contract cannot drift between the two paths, and validation alone never
+// dials anything or logs.
+func ValidateCastleURL(raw string) (baseURL string, err error) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", fmt.Errorf("invalid castle address %q: want a URL like http://127.0.0.1:8080", raw)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("invalid castle address %q: scheme must be http or https", raw)
+	}
+	if u.Path != "" && u.Path != "/" {
+		return "", fmt.Errorf("invalid castle address %q: the console proxy targets the castle control-plane root (no path)", raw)
+	}
+	u.Path, u.RawQuery, u.Fragment, u.User = "", "", "", nil
+	return u.String(), nil
+}
+
 // NewCastleConsole builds the console surface. castleURL (--castle-addr,
 // CRITERIA_CASTLE_ADDR) is the castle control plane's base URL. An empty
 // castleURL keeps the surface mounted but answers the disabled mapping —
@@ -103,18 +125,11 @@ func NewCastleConsole(castleURL string, resolver ConsoleResumeResolver, log *slo
 	if castleURL == "" {
 		return c, nil
 	}
-	u, err := url.Parse(castleURL)
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		return nil, fmt.Errorf("invalid castle address %q: want a URL like http://127.0.0.1:8080", castleURL)
+	baseURL, err := ValidateCastleURL(castleURL)
+	if err != nil {
+		return nil, err
 	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return nil, fmt.Errorf("invalid castle address %q: scheme must be http or https", castleURL)
-	}
-	if u.Path != "" && u.Path != "/" {
-		return nil, fmt.Errorf("invalid castle address %q: the console proxy targets the castle control-plane root (no path)", castleURL)
-	}
-	u.Path, u.RawQuery, u.Fragment, u.User = "", "", "", nil
-	c.baseURL = u.String()
+	c.baseURL = baseURL
 	log.Info("castle console login proxied to the castle control plane", "castle", c.baseURL, "resolve_source", "local control wire")
 
 	tr := http.DefaultTransport.(*http.Transport).Clone()

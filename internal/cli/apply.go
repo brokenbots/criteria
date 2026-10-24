@@ -100,15 +100,20 @@ func runApply(ctx context.Context, opts applyOptions) error {
 	}
 	// KB-328: --castle-addr is a local-mode flag. The console surfaces of a
 	// server-run belong to castle's own operator console, so combining it
-	// with --server is refused; the URL is validated eagerly here because
-	// attachLocalRunStateServer degrades to a viewer-less local run when
-	// the listener cannot attach (bind failures and the like) and a
-	// malformed console target must fail the run up front, not vanish.
+	// with --server is refused. The URL is validated eagerly here, against
+	// the same contract NewCastleConsole enforces but without building a
+	// console client (its own cloned transport) or logging through the
+	// default logger: the run's logger does not exist yet and
+	// startLocalRunStateServer constructs the real console. This stays
+	// ahead of attachLocalRunStateServer degrading to a viewer-less local
+	// run when the listener cannot attach (bind failures and the like), so
+	// a malformed console target fails the run up front instead of
+	// vanishing.
 	if castle := strings.TrimSpace(opts.castleAddr); castle != "" {
 		if strings.TrimSpace(opts.serverURL) != "" {
 			return errors.New("--castle-addr is a local-mode flag: in server mode the run's console belongs to the castle control plane itself")
 		}
-		if _, err := runstate.NewCastleConsole(castle, nil, nil); err != nil {
+		if _, err := runstate.ValidateCastleURL(castle); err != nil {
 			return err
 		}
 	}

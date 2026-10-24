@@ -24,9 +24,11 @@ type errResolver struct {
 	gotRunID string
 	gotSig   string
 	gotBody  map[string]string
+	calls    int
 }
 
 func (r *errResolver) ResolveConsoleResume(runID, signal string, payload map[string]string) (accepted bool, reason string, err error) {
+	r.calls++
 	r.gotRunID, r.gotSig, r.gotBody = runID, signal, payload
 	return r.accept, r.reason, r.err
 }
@@ -239,16 +241,22 @@ func TestConsoleLoginPassThrough(t *testing.T) {
 		t.Errorf("castle got the caller's User-Agent")
 	}
 
-	// Logout is forwarded too: revocation stays castle-side (KB-325).
+	// Logout is forwarded too: revocation stays castle-side (KB-325). The
+	// caller's console credential is what castle identifies the session
+	// by, so it must reach castle on this hop unchanged.
 	logs2 := &[]recordedCastleRequest{}
 	console2 := newTestConsole(t, logs2, nil)
-	code, body, _ = postConsole(t, console2.Handler(), "Logout", "application/json", []byte(`{"sessionToken":"gone"}`), nil)
+	code, body, _ = postConsole(t, console2.Handler(), "Logout", "application/json",
+		[]byte(`{"sessionToken":"gone"}`), map[string]string{"Authorization": "Bearer st-123"})
 	if code != http.StatusOK {
 		t.Errorf("Logout: code=%d body=%s", code, body)
 	}
 	logged := &(*logs2)[len(*logs2)-1]
 	if !strings.HasSuffix(logged.path, "/Logout") || logged.body != `{"sessionToken":"gone"}` {
 		t.Errorf("castle saw Logout %+v", logged)
+	}
+	if got := logged.headers.Get("Authorization"); got != "Bearer st-123" {
+		t.Errorf("castle saw Logout Authorization %q, want the caller's credential", got)
 	}
 
 	// Unknown procedures answer a CastleConsole-shaped error, not a
@@ -260,6 +268,43 @@ func TestConsoleLoginPassThrough(t *testing.T) {
 	gcode, gmsg := readConnectErr(t, body)
 	if gcode != connect.CodeUnimplemented.String() || !strings.Contains(gmsg, "no such console procedure") {
 		t.Errorf("unknown proc = (%q, %q)", gcode, gmsg)
+	}
+}
+
+// TestCopyConsoleResponseHeadersNonCanonical pins the response whitelist's
+// case-insensitive matching directly: Go's HTTP client canonicalizes
+// header names on read, so a lowercase key can never arrive through a
+// round trip and only a direct helper call can exercise it.
+func TestCopyConsoleResponseHeadersNonCanonical(t *testing.T) {
+	src := http.Header{
+		"grpc-status":         []string{"0"},
+		"connect-custom-flag": []string{"on"},
+		"set-cookie":          []string{"castle-cookie=1"},
+		"server":              []string{"castle/1"},
+	}
+	dst := http.Header{}
+	copyConsoleResponseHeaders(dst, src)
+	// The whitelist decides on the source key case-insensitively, while
+	// relayed values land under Go's canonicalized spelling of the key
+	// (values pass through http.Header.Add). Scan dst case-insensitively
+	// to judge matching, because dst.Get would canonicalize the lookup.
+	valueOfFold := func(srcKey string) string {
+		for k, vs := range dst {
+			if strings.EqualFold(k, srcKey) && len(vs) > 0 {
+				return vs[0]
+			}
+		}
+		return ""
+	}
+	for _, relayed := range [][2]string{{"grpc-status", "0"}, {"connect-custom-flag", "on"}} {
+		if got := valueOfFold(relayed[0]); got != relayed[1] {
+			t.Errorf("%s relayed as %q, want %q (dst=%v)", relayed[0], got, relayed[1], dst)
+		}
+	}
+	for _, dropped := range []string{"set-cookie", "server"} {
+		if got := valueOfFold(dropped); got != "" {
+			t.Errorf("%s must be dropped, got %q (dst=%v)", dropped, got, dst)
+		}
 	}
 }
 
@@ -468,16 +513,27 @@ func TestConsoleResolveProto(t *testing.T) {
 		t.Errorf("issued_at = %v, want approximately now", issued)
 	}
 
-	// Malformed bodies are rejected outright.
+	// Malformed bodies are rejected outright. The payload-entry cases carry
+	// a valid outer length, so they previously slipped past the
+	// unknown-field skip: the inner error must reach the caller, and a
+	// rejected body must never invoke the resolver.
 	for name, bad := range map[string][]byte{
-		"empty-typed":   {0x0a},       // field 1 length-delim with no length
-		"group-wire":    {0x0b, 0x01}, // wire type 3 is a group
-		"short-fixed64": {0x09, 0x01}, // wire type 1, fewer than 8 bytes
-		"short-fixed32": {0x0d, 0x01}, // wire type 5, fewer than 4 bytes
+		"empty-typed":          {0x0a},                                              // field 1 length-delim with no length
+		"group-wire":           {0x0b, 0x01},                                        // schema field 1, wire type 3 (group)
+		"short-fixed64":        {0x09, 0x01},                                        // schema field 1, wire type 1, <8 bytes
+		"short-fixed32":        {0x0d, 0x01},                                        // schema field 1, wire type 5, <4 bytes
+		"run-id-wrong-wire":    {0x08, 0x01},                                        // schema field 1 as a varint, want length-delim
+		"payload-bad-entry":    {0x1a, 0x02, 0x08, 0x01},                            // inner map entry with wire type 0
+		"payload-after-run-id": {0x0a, 0x03, 'r', '-', '9', 0x1a, 0x02, 0x08, 0x01}, // valid run id, broken payload entry
 	} {
+		before := res.calls
+		res.gotBody = nil
 		code, body, _ = postConsole(t, console.Handler(), "ResolveResume", "application/proto", bad, nil)
 		if code != http.StatusBadRequest || !strings.Contains(body, "invalid proto request body") {
 			t.Errorf("%s: code=%d body=%s", name, code, body)
+		}
+		if res.calls != before || res.gotBody != nil {
+			t.Errorf("%s: resolver invoked (calls %d -> %d, payload %v)", name, before, res.calls, res.gotBody)
 		}
 	}
 
