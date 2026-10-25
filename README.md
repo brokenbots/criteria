@@ -84,7 +84,7 @@ Pin to a specific release:
 CRITERIA_VERSION=v0.5.6 curl -fsSL https://raw.githubusercontent.com/brokenbots/criteria/main/install.sh | sh
 ```
 
-Install from source with Go 1.26 or later:
+Install from source with Go 1.27 or later:
 
 ```bash
 go install github.com/brokenbots/criteria/cmd/criteria@latest

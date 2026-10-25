@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/devcontainers/go:1.26-bookworm
+FROM mcr.microsoft.com/devcontainers/go:1.27-bookworm
 
 USER root
 
