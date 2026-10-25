@@ -192,12 +192,12 @@ lint: lint-imports lint-go lint-baseline-check spec-check lint-no-todos lint-sh 
 # Pinned osv-scanner version — keep in sync with the osv-scan CI job. Run via
 # `go run pkg@version` so it does not touch any module's go.mod/go.sum (the build
 # is module-aware but ignores the main module).
-OSV_SCANNER_VERSION := v2.3.8
+OSV_SCANNER_VERSION := v2.7.0
 vuln-scan: ## Scan all workspace modules for known vulnerabilities (osv-scanner; local parity with CI osv-scan)
 	go run github.com/google/osv-scanner/v2/cmd/osv-scanner@$(OSV_SCANNER_VERSION) scan source -r .
 
 # Pinned govulncheck version — keep in sync with the govulncheck CI job.
-VULNCHECK_VERSION := v1.1.4
+VULNCHECK_VERSION := v1.9.0
 
 bin/govulncheck: ## Build the govulncheck binary (pinned version; output: bin/govulncheck)
 	@install -d bin
