@@ -244,7 +244,7 @@ func tokenFilesUnderAnyRun(t *testing.T, home string) []string {
 	if err != nil {
 		t.Fatalf("glob runs: %v", err)
 	}
-	var out []string
+	out := make([]string, 0, len(runDirs))
 	for _, dir := range runDirs {
 		out = append(out, walkTokenFiles(t, filepath.Join(dir, "remote-tokens"))...)
 	}

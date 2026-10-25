@@ -1,5 +1,5 @@
 // Command lint-baseline reads golangci-lint JSON output and emits a
-// .golangci.baseline.yml file containing issues.exclude-rules entries that
+// .golangci.baseline.yml file containing linters.exclusions.rules entries that
 // suppress every current finding. Each entry is annotated with a
 // workstream-pointer comment so reviewers know which future workstream is
 // responsible for removing it.
@@ -134,7 +134,7 @@ func parseReport(path string) ([]issue, error) {
 }
 
 // buildRules converts the raw issues list into a deduplicated, sorted slice of
-// exclude-rules entries. The text field is regexp-quoted so characters like
+// linters.exclusions.rules entries. The text field is regexp-quoted so characters like
 // '(', '*', ')' and '.' in pointer-receiver method names don't break the
 // golangci-lint regexp engine.
 func buildRules(issues []issue) []rule {
@@ -179,20 +179,25 @@ func buildRules(issues []issue) []rule {
 	return rules
 }
 
-// renderYAML produces the YAML text for the baseline file.
+// renderYAML produces the YAML text for the baseline file: the 3-line v2
+// fragment header followed by the rule items nested under
+// linters.exclusions.rules, ready for the lint-go target to append after
+// stripping that header.
 func renderYAML(rules []rule) string {
 	var sb strings.Builder
-	sb.WriteString("issues:\n")
-	sb.WriteString("  exclude-rules:\n")
+	sb.WriteString("linters:\n")
+	sb.WriteString("  exclusions:\n")
+	sb.WriteString("    rules:\n")
 	for _, r := range rules {
-		fmt.Fprintf(&sb, "    - path: %s\n", yamlScalar(r.path))
-		fmt.Fprintf(&sb, "      linters:\n        - %s\n", r.linter)
-		fmt.Fprintf(&sb, "      text: %s # %s\n", yamlScalar(r.text), r.comment)
+		fmt.Fprintf(&sb, "      - path: %s\n", yamlScalar(r.path))
+		fmt.Fprintf(&sb, "        linters:\n          - %s\n", r.linter)
+		fmt.Fprintf(&sb, "        text: %s # %s\n", yamlScalar(r.text), r.comment)
 	}
 	return sb.String()
 }
 
-// countBaselineRules counts top-level exclude-rules entries from a baseline file.
+// countBaselineRules counts top-level linters.exclusions.rules entries from a
+// baseline file.
 func countBaselineRules(path string) (int, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -200,14 +205,16 @@ func countBaselineRules(path string) (int, error) {
 	}
 
 	var doc struct {
-		Issues struct {
-			ExcludeRules []map[string]any `yaml:"exclude-rules"`
-		} `yaml:"issues"`
+		Linters struct {
+			Exclusions struct {
+				Rules []map[string]any `yaml:"rules"`
+			} `yaml:"exclusions"`
+		} `yaml:"linters"`
 	}
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return 0, fmt.Errorf("parse YAML: %w", err)
 	}
-	return len(doc.Issues.ExcludeRules), nil
+	return len(doc.Linters.Exclusions.Rules), nil
 }
 
 func main() {

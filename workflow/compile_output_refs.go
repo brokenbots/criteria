@@ -18,8 +18,9 @@ import (
 // compiled graph. It returns diagnostics with error severity for unknown
 // output fields, and includes Levenshtein-distance-sorted suggestions.
 func compileOutputRefs(g *FSMGraph) hcl.Diagnostics {
-	var diags hcl.Diagnostics
-	for _, ne := range collectOutputRefExprs(g) {
+	refs := collectOutputRefExprs(g)
+	diags := make(hcl.Diagnostics, 0, len(refs))
+	for _, ne := range refs {
 		diags = append(diags, checkStepsOutputRefs(ne.context, ne.expr, g)...)
 	}
 	return diags

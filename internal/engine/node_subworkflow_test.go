@@ -50,7 +50,8 @@ func minimalSubworkflowNode(name string) *workflow.SubworkflowNode {
 // traversalExpr builds an hcl.Expression for a dotted traversal like "var.x"
 // or "each.value" without requiring HCL text parsing.
 func traversalExpr(root string, attrs ...string) hcl.Expression {
-	t := hcl.Traversal{hcl.TraverseRoot{Name: root}}
+	t := make(hcl.Traversal, 0, 1+len(attrs))
+	t = append(t, hcl.TraverseRoot{Name: root})
 	for _, a := range attrs {
 		t = append(t, hcl.TraverseAttr{Name: a})
 	}

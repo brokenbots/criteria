@@ -170,7 +170,7 @@ func (p *RunPublisher) runSubmitEvents(ctx context.Context) error {
 	for _, env := range pendingSnap {
 		if err := stream.Send(env); err != nil {
 			cancel()
-			<-recvErr
+			_ = <-recvErr
 			_ = stream.CloseRequest()
 			return err
 		}

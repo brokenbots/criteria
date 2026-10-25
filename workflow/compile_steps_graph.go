@@ -486,8 +486,9 @@ func switchTargets(sw *SwitchNode) []string {
 // This is a post-compilation pass: all steps must be registered in g.Steps
 // before it runs so forward-references resolve correctly.
 func checkCrossStepFieldRefs(g *FSMGraph, schemas map[string]AdapterInfo) hcl.Diagnostics {
-	var diags hcl.Diagnostics
-	for _, ne := range collectCrossStepExprs(g) {
+	exprs := collectCrossStepExprs(g)
+	diags := make(hcl.Diagnostics, 0, len(exprs))
+	for _, ne := range exprs {
 		diags = append(diags, checkStepsFieldTraversals(ne.context, ne.expr, g, schemas)...)
 	}
 	return diags

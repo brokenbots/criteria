@@ -258,11 +258,12 @@ func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost
 		log.Info("received resume signal", "run_id", state.RunID, "signal", resumeMsg.Signal)
 		pausedNode := sink.PausedAt()
 		sink.ClearPaused()
-		resumedOpts := []engine.Option{
+		resumedOpts := make([]engine.Option, 0, 3+len(baseOpts)+1+len(adoptionOpts))
+		resumedOpts = append(resumedOpts,
 			engine.WithResumedVars(eng.VarScope()),
 			engine.WithResumedVisits(eng.VisitCounts()),
 			engine.WithResumePayload(resumeMsg.Payload),
-		}
+		)
 		resumedOpts = append(resumedOpts, baseOpts...)
 		// ADR-0006: resumed engines stay wired to the run's prompt channel so
 		// injected prompts route to the replayed steps too.

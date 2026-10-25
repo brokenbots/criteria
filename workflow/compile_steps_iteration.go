@@ -15,7 +15,7 @@ import (
 // compileIteratingStep compiles a for_each/count/while iterating step and registers
 // it in g. targetKind, adapterRef, and subworkflowRef come from resolveStepTarget.
 //
-//nolint:funlen // comprehensive iteration step: validates parallel/serial, adapter schema, subworkflow ref, and environment override in sequence
+//nolint:funlen,gocognit // comprehensive iteration step: validates parallel/serial, adapter schema, subworkflow ref, and environment override in sequence; gocognit 1.3 counts this pre-existing structure above the threshold kept for the v1 toolchain
 func compileIteratingStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts,
 	targetKind StepTargetKind, adapterRef, subworkflowRef string) hcl.Diagnostics {
 	var diags hcl.Diagnostics

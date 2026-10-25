@@ -275,7 +275,7 @@ func renderDocRows() string {
 	lines := make([]string, 0, len(rows)+2)
 	lines = append(lines, "| Variable | Type | Default | Description |", "| --- | --- | --- | --- |")
 	for _, r := range rows {
-		lines = append(lines, fmt.Sprintf("| `%s` | %s | `%s` | %s |", r.Name, r.Kind, r.Default, r.Doc))
+		lines = append(lines, fmt.Sprintf("| %#q | %s | %#q | %s |", r.Name, r.Kind, r.Default, r.Doc))
 	}
 	return strings.Join(lines, "\n")
 }

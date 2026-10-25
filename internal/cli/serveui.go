@@ -51,7 +51,7 @@ func runServeUI(ctx context.Context, store *runstate.Store, host string, port in
 		return err
 	case <-ctx.Done():
 		srv.Stop(ctx)
-		<-serveErr // drain the graceful close
+		_ = <-serveErr // drain the graceful close
 		return nil
 	}
 }

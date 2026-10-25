@@ -844,7 +844,7 @@ func shutdownSession(ctx context.Context, s *sessionState) error {
 		return nil
 	case <-time.After(closeGrace):
 		_ = s.cmd.Process.Kill()
-		<-waitDone
+		_ = <-waitDone
 		return nil
 	}
 }

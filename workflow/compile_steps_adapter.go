@@ -19,7 +19,7 @@ const allowToolsPatternSyntaxDoc = "see docs/workflow.md#pattern-matching for th
 // compileAdapterStep compiles a non-iterating adapter-targeted step and registers
 // it in g. adapterRef is the pre-resolved "<type>.<name>" string from resolveStepTarget.
 func validateTopLevelStepRefs(stepName string, inputExprs, secretInputExprs map[string]hcl.Expression) hcl.Diagnostics {
-	var diags hcl.Diagnostics
+	diags := make(hcl.Diagnostics, 0, 4)
 	diags = append(diags, validateEachRefs(stepName, inputExprs)...)
 	diags = append(diags, validateWhileRefs(stepName, inputExprs)...)
 	diags = append(diags, validateEachRefs(stepName, secretInputExprs)...)
@@ -37,7 +37,7 @@ func resolveOutputSchema(adapterType string, schemas map[string]AdapterInfo) map
 // validateAdapterStepPrelude runs the adapter-step checks that precede input
 // decoding and do not gate registration.
 func validateAdapterStepPrelude(sp *StepSpec, spec *Spec, g *FSMGraph, schemas map[string]AdapterInfo, adapterRef string) hcl.Diagnostics {
-	var diags hcl.Diagnostics
+	diags := make(hcl.Diagnostics, 0, 4)
 	diags = append(diags, validateAllowToolsWithAdapter(sp, adapterRef)...)
 	diags = append(diags, validateLegacyConfig(sp)...)
 	diags = append(diags, validateOnFailureForNonIterating(sp)...)
@@ -155,7 +155,7 @@ func validateAllowTools(stepName, adapterType string, tools []string, schemas ma
 		aliases = map[string]string{}
 	}
 
-	var diags hcl.Diagnostics
+	diags := make(hcl.Diagnostics, 0, len(tools))
 	for _, tool := range tools {
 		diags = append(diags, validateAllowToolsEntry(stepName, tool, perms, aliases)...)
 	}

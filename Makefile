@@ -131,14 +131,15 @@ lint-imports: ## Enforce import-graph boundaries (see tools/import-lint/)
 	@echo "Import boundaries OK."
 
 bin/golangci-lint: tools/go.mod tools/go.sum
-	(cd tools && go build -o ../bin/golangci-lint github.com/golangci/golangci-lint/cmd/golangci-lint)
+	(cd tools && go build -o ../bin/golangci-lint github.com/golangci/golangci-lint/v2/cmd/golangci-lint)
 
 lint-go: bin/golangci-lint ## Run golangci-lint across all modules with the baseline allowlist
-	@# Merge configs: .golangci.yml ends with exclude-rules:; strip the
-	@# "issues:\n  exclude-rules:\n" header from .golangci.baseline.yml and
-	@# append the remaining items so they extend the exclude-rules list.
+	@# Merge configs: .golangci.yml ends with the linters.exclusions.rules
+	@# list; strip the 3-line v2 header ("linters:\n  exclusions:\n    rules:")
+	@# from .golangci.baseline.yml and append the remaining items so they
+	@# extend that rules list.
 	@cat .golangci.yml > .golangci.merged.yml
-	@tail -n +3 .golangci.baseline.yml >> .golangci.merged.yml
+	@tail -n +4 .golangci.baseline.yml >> .golangci.merged.yml
 	./bin/golangci-lint run --config .golangci.merged.yml ./...             || { rm -f .golangci.merged.yml; exit 1; }
 	(cd sdk      && ../bin/golangci-lint run --config ../.golangci.merged.yml ./...) || { rm -f .golangci.merged.yml; exit 1; }
 	(cd workflow && ../bin/golangci-lint run --config ../.golangci.merged.yml ./...) || { rm -f .golangci.merged.yml; exit 1; }
