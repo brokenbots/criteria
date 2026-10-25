@@ -258,7 +258,7 @@ func TestEvents_CheckpointPointerSeam(t *testing.T) {
 	if ptr == nil {
 		t.Fatalf("run never served a checkpointPointer event; served types: %v",
 			func() []string {
-				var out []string
+				out := make([]string, 0, len(page.Events))
 				for _, ev := range page.Events {
 					out = append(out, ev.Type)
 				}

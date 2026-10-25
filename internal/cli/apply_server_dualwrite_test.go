@@ -215,7 +215,7 @@ func TestRunApplyServerDualWriteLeavesServerStreamUnchanged(t *testing.T) {
 		if err := runApplyServer(context.Background(), runOpts); err != nil {
 			t.Fatalf("runApplyServer (%s): %v", mode, err)
 		}
-		var types []string
+		types := make([]string, 0, len(fake.Events()))
 		for _, env := range fake.Events() {
 			types = append(types, payloadMessageName(env))
 		}

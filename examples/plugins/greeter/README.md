@@ -9,7 +9,7 @@ The greeter accepts one input key (`name`) and returns:
 
 ## Prerequisites
 
-- Go 1.26+ (matches the `go` directive in `go.mod`)
+- Go 1.27+ (matches the `go` directive in `go.mod`)
 - The `criteria` binary (built with `make build` from the criteria repo root)
 
 ## Build and install

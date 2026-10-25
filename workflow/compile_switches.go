@@ -224,7 +224,7 @@ func validateSwitchOutputExpr(switchName, location string, attr *hcl.Attribute, 
 // Rejects legacy quoted-string form with a migration hint.
 // Returns the resolved name and any diagnostics.
 func resolveNextAttr(expr hcl.Expression, context, location string) (string, hcl.Diagnostics) {
-	var diags hcl.Diagnostics
+	diags := make(hcl.Diagnostics, 0, 1)
 
 	vars := expr.Variables()
 	if len(vars) == 0 {

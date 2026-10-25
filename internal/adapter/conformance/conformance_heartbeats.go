@@ -117,7 +117,7 @@ func countHeartbeatProbeEvents(t *testing.T, name string, sm *adapterhost.Sessio
 	// A correct adapter closes `done` promptly after cancellation. Bound the
 	// drain so a broken adapter cannot hang the conformance run.
 	select {
-	case <-done:
+	case _ = <-done:
 	case <-hbCtx.Done():
 		t.Fatalf("%s: probe log stream did not finish after cancel: %v", name, hbCtx.Err())
 	}

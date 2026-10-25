@@ -108,7 +108,7 @@ func startLocalRunStateServer(ctx context.Context, log *slog.Logger, runID, cont
 		stopOnce.Do(func() {
 			removeControlEndpoint(runID)
 			srv.Stop(ctx)
-			<-serveErr // drain (Serve returns nil on Stop)
+			_ = <-serveErr // drain (Serve returns nil on Stop)
 		})
 	}
 	return url, stop, nil

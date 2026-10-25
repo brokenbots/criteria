@@ -384,13 +384,13 @@ func rejectLegacySharedWritesInBody(body hcl.Body) hcl.Diagnostics {
 // rejectLegacySharedVariableBlock checks for and rejects the legacy
 // `shared_variable "name" { ... }` block, replaced by `data "internal" "name"` in WS02.
 func rejectLegacySharedVariableBlock(body hcl.Body) hcl.Diagnostics {
-	var diags hcl.Diagnostics
 	schema := &hcl.BodySchema{
 		Blocks: []hcl.BlockHeaderSchema{
 			{Type: "shared_variable", LabelNames: []string{"name"}},
 		},
 	}
 	content, _, _ := body.PartialContent(schema)
+	diags := make(hcl.Diagnostics, 0, len(content.Blocks))
 	for _, block := range content.Blocks {
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
@@ -429,13 +429,13 @@ func rejectLegacyAttrInBlocks(body hcl.Body, blockType string, blockLabels []str
 // rejectLegacyWorkflowLabel checks for and rejects the legacy labelled
 // workflow "name" { ... } header block. The new syntax is workflow { name = "..." ... }.
 func rejectLegacyWorkflowLabel(body hcl.Body) hcl.Diagnostics {
-	var diags hcl.Diagnostics
 	schema := &hcl.BodySchema{
 		Blocks: []hcl.BlockHeaderSchema{
 			{Type: "workflow", LabelNames: []string{"name"}},
 		},
 	}
 	content, _, _ := body.PartialContent(schema)
+	diags := make(hcl.Diagnostics, 0, len(content.Blocks))
 	for _, block := range content.Blocks {
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
@@ -450,13 +450,13 @@ func rejectLegacyWorkflowLabel(body hcl.Body) hcl.Diagnostics {
 // rejectLegacyPolicyBlock checks for and rejects a top-level policy { ... } block.
 // Policy is now nested inside the workflow header block: workflow { policy { ... } }.
 func rejectLegacyPolicyBlock(body hcl.Body) hcl.Diagnostics {
-	var diags hcl.Diagnostics
 	schema := &hcl.BodySchema{
 		Blocks: []hcl.BlockHeaderSchema{
 			{Type: "policy", LabelNames: nil},
 		},
 	}
 	content, _, _ := body.PartialContent(schema)
+	diags := make(hcl.Diagnostics, 0, len(content.Blocks))
 	for _, block := range content.Blocks {
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,

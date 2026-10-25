@@ -2466,7 +2466,7 @@ func (m *SessionManager) watchLogStream(sess *Session, done <-chan error, hostCa
 		// Host-initiated teardown for this specific stream generation. Drain
 		// any terminal error and return without touching logStreamAlive.
 		select {
-		case <-done:
+		case _ = <-done:
 		default:
 		}
 		return
@@ -3653,7 +3653,7 @@ func (m *SessionManager) restartLogStream(ctx context.Context, sess *Session, pl
 		// respawn path and prevent the step retry from starting.
 		drainTimeout := m.respawnLogStreamDrainTimeout()
 		select {
-		case <-oldDone:
+		case _ = <-oldDone:
 		case <-ctx.Done():
 		case <-time.After(drainTimeout):
 			slog.Warn("adapter log stream did not drain after cancel; continuing respawn to avoid wedge",

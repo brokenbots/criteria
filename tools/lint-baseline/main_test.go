@@ -45,7 +45,7 @@ func TestDeduplication(t *testing.T) {
 // TestEmptyInput verifies that a null/empty Issues array produces valid YAML.
 func TestEmptyInput(t *testing.T) {
 	got := renderYAML(buildRules(nil))
-	want := "issues:\n  exclude-rules:\n"
+	want := "linters:\n  exclusions:\n    rules:\n"
 	if got != want {
 		t.Errorf("empty input: got %q, want %q", got, want)
 	}
@@ -142,39 +142,43 @@ func TestCountBaselineRules(t *testing.T) {
 	}{
 		{
 			name: "multiple entries",
-			content: "issues:\n" +
-				"  exclude-rules:\n" +
-				"    - path: a.go\n" +
-				"      linters:\n" +
-				"        - funlen\n" +
-				"    - path: b.go\n" +
-				"      linters:\n" +
-				"        - gocyclo\n",
+			content: "linters:\n" +
+				"  exclusions:\n" +
+				"    rules:\n" +
+				"      - path: a.go\n" +
+				"        linters:\n" +
+				"          - funlen\n" +
+				"      - path: b.go\n" +
+				"        linters:\n" +
+				"          - gocyclo\n",
 			want: 2,
 		},
 		{
 			name: "header only",
-			content: "issues:\n" +
-				"  exclude-rules:\n",
+			content: "linters:\n" +
+				"  exclusions:\n" +
+				"    rules:\n",
 			want: 0,
 		},
 		{
 			name: "text value starts with path token",
-			content: "issues:\n" +
-				"  exclude-rules:\n" +
-				"    - path: a.go\n" +
-				"      linters:\n" +
-				"        - revive\n" +
-				"      text: '- path: internal/foo.go'\n",
+			content: "linters:\n" +
+				"  exclusions:\n" +
+				"    rules:\n" +
+				"      - path: a.go\n" +
+				"        linters:\n" +
+				"          - revive\n" +
+				"        text: '- path: internal/foo.go'\n",
 			want: 1,
 		},
 		{
 			name: "single entry with alternate valid indentation",
-			content: "issues:\n" +
-				"  exclude-rules:\n" +
-				"  - path: a.go\n" +
-				"    linters:\n" +
-				"      - revive\n",
+			content: "linters:\n" +
+				"  exclusions:\n" +
+				"    rules:\n" +
+				"    - path: a.go\n" +
+				"      linters:\n" +
+				"        - revive\n",
 			want: 1,
 		},
 	}

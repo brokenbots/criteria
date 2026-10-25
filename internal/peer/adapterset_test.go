@@ -14,7 +14,7 @@ func TestParseAdaptersEnv_List(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got := []string{}
+	got := make([]string, 0, len(specs))
 	for _, s := range specs {
 		got = append(got, s.Name)
 	}

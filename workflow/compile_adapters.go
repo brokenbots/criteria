@@ -47,7 +47,7 @@ func adapterConfigEvalContext(vars, locals map[string]cty.Value, workflowDir str
 // Environment references are validated against g.Environments at this time.
 // Adapter declaration order is recorded in g.AdapterOrder for stable iteration.
 func compileAdapters(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, opts CompileOpts) hcl.Diagnostics {
-	var diags hcl.Diagnostics
+	diags := make(hcl.Diagnostics, 0, len(spec.Adapters))
 	configEvalCtx := adapterConfigEvalContext(graphVars(g), graphLocals(g), opts.WorkflowDir, g.FileCache)
 	for i := range spec.Adapters {
 		diags = append(diags, compileOneAdapter(g, &spec.Adapters[i], schemas, configEvalCtx)...)
