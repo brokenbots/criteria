@@ -22,6 +22,7 @@ adapter "copilot" "default" {}
 step "open" {
   target = adapter.copilot.default
   outcome "success" { next = step.run }
+  outcome "failure" { next = step.run }
 }
 step "run" {
   target = adapter.copilot.default
@@ -30,10 +31,12 @@ step "run" {
     system_prompt = "You are a bot."
   }
   outcome "success" { next = step.close }
+  outcome "failure" { next = step.close }
 }
 step "close" {
   target = adapter.copilot.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -113,6 +116,7 @@ adapter "copilot" "default" {}
 step "open" {
   target = adapter.copilot.default
   outcome "success" { next = step.run }
+  outcome "failure" { next = step.run }
 }
 step "run" {
   target = adapter.copilot.default
@@ -121,10 +125,12 @@ step "run" {
     reasoning_effort = "high"
   }
   outcome "success" { next = step.close }
+  outcome "failure" { next = step.close }
 }
 step "close" {
   target = adapter.copilot.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -161,6 +167,7 @@ adapter "copilot" "default" {}
 step "open" {
   target = adapter.copilot.default
   outcome "success" { next = step.run }
+  outcome "failure" { next = step.run }
 }
 step "run" {
   target = adapter.copilot.default
@@ -169,10 +176,12 @@ step "run" {
     prompt = "hello"
   }
   outcome "success" { next = step.close }
+  outcome "failure" { next = step.close }
 }
 step "close" {
   target = adapter.copilot.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -237,6 +246,7 @@ adapter "copilot" "default" {}
 step "open" {
   target = adapter.copilot.default
   outcome "success" { next = step.run }
+  outcome "failure" { next = step.run }
 }
 step "run" {
   target = adapter.copilot.default
@@ -245,10 +255,12 @@ step "run" {
     prompt = "hello"
   }
   outcome "success" { next = step.close }
+  outcome "failure" { next = step.close }
 }
 step "close" {
   target = adapter.copilot.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -294,6 +306,7 @@ step "run" {
     api_key = var.api_key
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -343,6 +356,7 @@ step "run" {
   allow_tools = ["Bash[unclosed"]
   input { prompt = "hello" }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -392,6 +406,7 @@ step "run" {
   allow_tools = ["Bash(git log:*)"]
   input { prompt = "hello" }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -441,6 +456,7 @@ step "run" {
   allow_tools = ["Bash:git *"]
   input { prompt = "hello" }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -494,6 +510,7 @@ step "run" {
   allow_tools = ["get_file"]
   input { prompt = "hello" }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -540,6 +557,7 @@ step "run" {
   allow_tools = ["AnythingGoes"]
   input { prompt = "hello" }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `

@@ -42,8 +42,58 @@ func compileSwitches(g *FSMGraph, spec *Spec, schemas map[string]AdapterInfo, op
 				node.Conditions = append(node.Conditions, *cond)
 			}
 		}
+		diags = append(diags, validateSwitchDeterminism(name, ss.Matches, node.Conditions, g, opts)...)
 
 		g.Switches[name] = node
+	}
+	return diags
+}
+
+// validateSwitchDeterminism checks that no switch block declares duplicate
+// match conditions, constant-false match conditions, or match conditions
+// shadowed by an earlier unconditional (constant-true) match arm.
+func validateSwitchDeterminism(switchName string, matches []MatchSpec, conditions []SwitchCondition, g *FSMGraph, opts CompileOpts) hcl.Diagnostics {
+	var diags hcl.Diagnostics
+	seenSrc := make(map[string]int, len(conditions))
+	unconditionalTrueIdx := -1
+
+	for i, cs := range matches {
+		if unconditionalTrueIdx >= 0 {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("switch %q match[%d]: unreachable match condition shadowed by unconditional match[%d] (condition = true)", switchName, i, unconditionalTrueIdx),
+			})
+		}
+		if i < len(conditions) {
+			src := conditions[i].MatchSrc
+			if src != "" {
+				if prevIdx, dup := seenSrc[src]; dup {
+					diags = append(diags, &hcl.Diagnostic{
+						Severity: hcl.DiagError,
+						Summary:  fmt.Sprintf("switch %q match[%d]: duplicate match condition %q (already declared at match[%d])", switchName, i, src, prevIdx),
+					})
+				} else {
+					seenSrc[src] = i
+				}
+			}
+		}
+		attrs, _ := cs.Remain.JustAttributes()
+		conditionAttr, ok := attrs["condition"]
+		if !ok || exprRefsVar(conditionAttr.Expr) {
+			continue
+		}
+		val, foldable, fd := FoldExpr(conditionAttr.Expr, nil, graphLocals(g), opts.WorkflowDir)
+		if fd.HasErrors() || !foldable || !val.IsKnown() || val.IsNull() {
+			continue
+		}
+		if val == cty.True && unconditionalTrueIdx < 0 {
+			unconditionalTrueIdx = i
+		} else if val == cty.False {
+			diags = append(diags, &hcl.Diagnostic{
+				Severity: hcl.DiagError,
+				Summary:  fmt.Sprintf("switch %q match[%d]: match condition evaluates to constant false and can never be taken", switchName, i),
+			})
+		}
 	}
 	return diags
 }

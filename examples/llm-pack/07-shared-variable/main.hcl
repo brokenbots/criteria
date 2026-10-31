@@ -20,6 +20,7 @@ step "increment" {
       value  = "1"
     }
   }
+  outcome "failure" { next = state.failed }
 }
 
 step "double" {
@@ -34,9 +35,15 @@ step "double" {
       value  = "2"
     }
   }
+  outcome "failure" { next = state.failed }
 }
 
 state "done" {
   terminal = true
   success  = true
+}
+
+state "failed" {
+  terminal = true
+  success  = false
 }

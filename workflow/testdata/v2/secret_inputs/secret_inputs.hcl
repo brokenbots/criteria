@@ -19,6 +19,7 @@ step "run" {
     command = var.api_key
   }
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" { terminal = true }

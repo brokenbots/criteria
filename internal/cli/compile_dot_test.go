@@ -38,6 +38,7 @@ adapter "noop" "default" {}
 step "do_work" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -359,6 +360,7 @@ func writeTempSubworkflow(t *testing.T, parent, name, stepName string) {
 		sb.WriteString("step \"" + stepName + "\" {\n")
 		sb.WriteString("  target = adapter.noop.default\n")
 		sb.WriteString("  outcome \"success\" { next = step." + termState + " }\n")
+		sb.WriteString("  outcome \"failure\" { next = step." + termState + " }\n")
 		sb.WriteString("}\n")
 	}
 	sb.WriteString("state \"" + termState + "\" {\n  terminal = true\n  success  = true\n}\n")
@@ -387,6 +389,7 @@ subworkflow "inner" {
 step "delegate" {
   target = subworkflow.inner
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -501,6 +504,7 @@ subworkflow "leaf" {
 step "run_leaf" {
   target = subworkflow.leaf
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -525,6 +529,7 @@ subworkflow "outer" {
 step "run_outer" {
   target = subworkflow.outer
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -583,10 +588,12 @@ subworkflow "shared" {
 step "first_call" {
   target = subworkflow.shared
   outcome "success" { next = step.second_call }
+  outcome "failure" { next = step.second_call }
 }
 step "second_call" {
   target = subworkflow.shared
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true

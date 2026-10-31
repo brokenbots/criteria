@@ -27,6 +27,7 @@ func TestParseFileOrDir_FilePath_DelegatesToParentDir(t *testing.T) {
 step "run" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -92,6 +93,7 @@ func TestParseFileOrDir_DirPath(t *testing.T) {
 step "run" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -205,6 +207,7 @@ adapter "noop" "default" {}
 step "run" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }

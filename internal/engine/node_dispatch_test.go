@@ -20,6 +20,7 @@ workflow {
 step "a" {
   target = adapter.fake
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }`)
 
@@ -57,6 +58,7 @@ workflow {
 step "a" {
   target = adapter.fake
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }`)
 
@@ -86,6 +88,7 @@ workflow {
 step "a" {
   target = adapter.fake
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }`)
 
@@ -144,6 +147,7 @@ workflow {
 step "a" {
   target = adapter.fake
   outcome "again" { next = step.a }
+  outcome "done"  { next = state.done }
 }
 state "done" { terminal = true }
 `)
@@ -171,6 +175,7 @@ workflow {
 step "a" {
   target = adapter.fake
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true

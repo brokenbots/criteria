@@ -323,6 +323,7 @@ step "call" {
   target = adapter.caller.instance
   allow_tools = ["adapter.callee.helper.tools.*", "caller.only.*"]
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 

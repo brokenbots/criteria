@@ -88,6 +88,7 @@ step "call" {
   allow_tools = ["adapter.callee.helper.tools.*"]
 
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 
@@ -485,6 +486,7 @@ step "call" {
   tools  = [adapter.callee.helper.tools]
 
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 
@@ -609,6 +611,7 @@ step "call" {
   tools  = [adapter.callee.helper.tools]
 
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 

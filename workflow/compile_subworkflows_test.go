@@ -893,6 +893,7 @@ step "noop" {
   target = adapter.noop.default
   input { value = var.item.id }
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" {
@@ -968,6 +969,7 @@ step "noop" {
   target = adapter.noop.default
   input { value = var.item[0] }
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" {
@@ -1044,6 +1046,7 @@ step "noop" {
   target = adapter.noop.default
   input { value = var.item.id }
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" {
@@ -1122,6 +1125,7 @@ step "noop" {
   target = adapter.noop.default
   input { value = var.items[0].id }
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" {
@@ -1197,6 +1201,7 @@ step "noop" {
   target = adapter.noop.default
   input { value = var.items["a"].id }
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" {
@@ -1274,6 +1279,7 @@ step "noop" {
   target = adapter.noop.default
   input { value = var.item.id }
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" {

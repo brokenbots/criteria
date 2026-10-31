@@ -147,6 +147,7 @@ step "work" {
     next   = step.done
     schema = type.sig
   }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -230,6 +231,7 @@ step "work" {
     next   = state.done
     schema = type.flat
   }
+  outcome "failure" { next = state.done }
 }
 state "done" {
   terminal = true
@@ -266,6 +268,7 @@ step "work" {
     next   = step.done
     schema = list(type.flat)
   }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -325,6 +328,7 @@ func TestOutcomeSchema_SubsetOfNestedObject(t *testing.T) {
     next   = step.done
     schema = object({ meta = object({ a = string }) })
   }
+  outcome "failure" { next = step.done }
 `))
 	if diags.HasErrors() {
 		t.Fatalf("compile: %s", diags.Error())
@@ -375,6 +379,7 @@ func TestOutcomeSchema_PermissiveAdapterField(t *testing.T) {
     next   = step.done
     schema = object({ free = object({ any = string }) })
   }
+  outcome "failure" { next = step.done }
 `))
 	if diags.HasErrors() {
 		t.Fatalf("compile: %s", diags.Error())
@@ -402,6 +407,7 @@ step "work" {
     next   = step.done
     schema = object({ severity = string })
   }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -578,6 +584,7 @@ adapter "typed" "default" {}
 step "work" {
   target = adapter.typed.default
   outcome "success" { next = wait.pause }
+  outcome "failure" { next = wait.pause }
 }
 wait "pause" {
   duration = "1s"
@@ -634,6 +641,7 @@ adapter "typed" "default" {}
 step "work" {
   target = adapter.typed.default
   outcome "success" { next = approval.gate }
+  outcome "failure" { next = approval.gate }
 }
 approval "gate" {
   approvers = ["alice"]
@@ -670,6 +678,7 @@ func TestOutcomeSchema_BackCompat(t *testing.T) {
     next   = step.done
     output = { severity = "low" }
   }
+  outcome "failure" { next = step.done }
 `))
 	if diags.HasErrors() {
 		t.Fatalf("compile: %s", diags.Error())

@@ -702,6 +702,7 @@ step "hello" {
   target = adapter.lockvalidate.default
   input { delay_ms = "0" }
   outcome "success" { next = state.hello }
+  outcome "failure" { next = state.hello }
 }
 `
 	workflowPath := filepath.Join(workflowDir, "workflow.hcl")

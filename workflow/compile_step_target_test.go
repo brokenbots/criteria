@@ -27,6 +27,7 @@ adapter "noop" "default" {}
 step "s" {
 ` + stepBody + `
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -75,6 +76,7 @@ subworkflow "inner" {
 step "s" {
   target = subworkflow.inner
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -129,6 +131,7 @@ adapter "noop" "default" {}
 step "s" {
   target = subworkflow.nonexistent
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -158,6 +161,7 @@ adapter "noop" "default" {}
 step "s" {
   adapter = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -201,6 +205,7 @@ workflow {
 adapter "noop" "default" {}
 step "s" {
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -232,6 +237,7 @@ step "s" {
   target      = adapter.noop.default
   environment = shell.ci
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -266,6 +272,7 @@ step "s" {
   target      = adapter.noop.default
   environment = shell.missing
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -300,6 +307,7 @@ step "s" {
   target      = adapter.noop.default
   environment = "shell.ci"
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -364,6 +372,7 @@ step "s" {
   target      = adapter.noop.default
   environment = "shell.ci"
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -419,6 +428,7 @@ step "s" {
     greeting = "hello"
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -474,6 +484,7 @@ step "s" {
     typo = "oops"
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -569,6 +580,7 @@ step "s" {
   target      = subworkflow.inner
   environment = shell.ci
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `

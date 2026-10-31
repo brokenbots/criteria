@@ -21,12 +21,14 @@ adapter "shell" "host" {
 step "begin" {
   target = subworkflow.call
   outcome "success" { next = step.finish }
+  outcome "failure" { next = step.finish }
 }
 
 step "finish" {
   target = adapter.shell.host
   tools  = [adapter.shell.host.tools.status]
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" { terminal = true }

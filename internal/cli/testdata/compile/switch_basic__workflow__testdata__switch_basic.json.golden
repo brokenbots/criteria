@@ -1,7 +1,7 @@
 {
   "name": "switch_basic",
   "initial_state": "build",
-  "target_state": "done",
+  "target_state": "deploy",
   "policy": {
     "MaxTotalSteps": 100,
     "MaxStepRetries": 0,
@@ -25,6 +25,10 @@
       "allow_tools": null,
       "outcomes": [
         {
+          "name": "failure",
+          "next": "decide"
+        },
+        {
           "name": "success",
           "next": "decide"
         }
@@ -39,11 +43,6 @@
     },
     {
       "name": "deploy_staging",
-      "terminal": true,
-      "success": true
-    },
-    {
-      "name": "done",
       "terminal": true,
       "success": true
     },

@@ -117,10 +117,12 @@ workflow {
 step "merge_pr" {
   target = adapter.fake
   outcome "success" { next = step.set_review_state }
+  outcome "failure" { next = step.set_review_state }
 }
 step "set_review_state" {
   target = adapter.fake
   outcome "success" { next = step.comment_handler_done }
+  outcome "failure" { next = step.comment_handler_done }
 }
 step "comment_handler_done" {
   target = adapter.fake
@@ -204,6 +206,7 @@ workflow {
 step "merge_pr" {
   target = adapter.fake
   outcome "success" { next = step.comment_handler_done }
+  outcome "failure" { next = step.comment_handler_done }
 }
 step "comment_handler_done" {
   target = adapter.fake
@@ -269,6 +272,7 @@ workflow {
 step "merge_pr" {
   target = adapter.fake
   outcome "success" { next = step.%[1]s }
+  outcome "failure" { next = state.failed }
 }
 step "%[1]s" {
   target = adapter.fake
@@ -413,10 +417,12 @@ workflow {
 step "merge_pr" {
   target = adapter.fake
   outcome "success" { next = step.comment_handler_done }
+  outcome "failure" { next = step.comment_handler_done }
 }
 step "comment_handler_done" {
   target = adapter.fake
   outcome "success" { next = state.done }
+  outcome "error"   { next = state.done }
 }
 state "done" { terminal = true }`)
 	p := &cri130Adapter{
@@ -459,10 +465,12 @@ workflow {
 step "merge_pr" {
   target = adapter.fake
   outcome "success" { next = step.comment_handler_done }
+  outcome "failure" { next = step.comment_handler_done }
 }
 step "comment_handler_done" {
   target = adapter.fake
   outcome "success" { next = state.done }
+  outcome "error"   { next = state.done }
 }
 state "done" { terminal = true }`)
 	p := &cri130Adapter{
@@ -497,10 +505,13 @@ workflow {
 step "merge_pr" {
   target = adapter.fake
   outcome "success" { next = step.comment_invalid }
+  outcome "done"    { next = state.done }
+  outcome "failure" { next = state.failed }
 }
 step "comment_invalid" {
   target = adapter.fake
   outcome "failure" { next = state.failed }
+  outcome "success" { next = state.failed }
 }
 state "done" { terminal = true }
 state "failed" {
@@ -533,6 +544,7 @@ workflow {
 step "merge_pr" {
   target = adapter.fake
   outcome "success" { next = step.comment_handler_done }
+  outcome "failure" { next = step.comment_handler_done }
 }
 step "comment_handler_done" {
   target = adapter.fake
@@ -578,6 +590,7 @@ step "merge_pr" {
 step "set_done_state" {
   target = adapter.fake
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 state "done" { terminal = true }
 state "failed" {
@@ -679,6 +692,7 @@ workflow {
 step "merge_pr" {
   target = adapter.fake
   outcome "success" { next = step.comment_progress }
+  outcome "failure" { next = step.comment_progress }
 }
 step "comment_progress" {
   target = adapter.fake

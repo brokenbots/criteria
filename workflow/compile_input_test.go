@@ -138,6 +138,7 @@ step "open" {
     prompt = "hello"
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -165,10 +166,12 @@ step "open" {
   target = adapter.copilot.default
   lifecycle = "open"
   outcome "success" { next = step.run }
+  outcome "failure" { next = step.run }
 }
 step "run" {
   target = adapter.copilot.default
   outcome "success" { next = step.close }
+  outcome "failure" { next = step.close }
 }
 step "close" {
   target = adapter.copilot.default
@@ -177,6 +180,7 @@ step "close" {
     prompt = "bye"
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -310,6 +314,7 @@ adapter "copilot" "default" {}
 step "open" {
   target = adapter.copilot.default
   outcome "success" { next = step.run }
+  outcome "failure" { next = step.run }
 }
 step "run" {
   target = adapter.copilot.default
@@ -318,10 +323,12 @@ step "run" {
     max_turns = "not-a-number"
   }
   outcome "success" { next = step.close }
+  outcome "failure" { next = step.close }
 }
 step "close" {
   target = adapter.copilot.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -352,6 +359,7 @@ adapter "copilot" "default" {}
 step "open" {
   target = adapter.copilot.default
   outcome "success" { next = step.run }
+  outcome "failure" { next = step.run }
 }
 step "run" {
   target = adapter.copilot.default
@@ -359,10 +367,12 @@ step "run" {
     prompt = 42
   }
   outcome "success" { next = step.close }
+  outcome "failure" { next = step.close }
 }
 step "close" {
   target = adapter.copilot.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -395,6 +405,7 @@ step "run" {
     items = ["a", "b"]
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -424,6 +435,7 @@ step "run" {
     items = ["a", 1]
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `

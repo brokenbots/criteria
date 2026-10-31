@@ -151,6 +151,7 @@ step "run" {
   target = adapter.noop.default
   input { command = "echo hi" }
   outcome "ok" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" {

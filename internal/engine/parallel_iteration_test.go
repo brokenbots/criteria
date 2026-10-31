@@ -437,6 +437,7 @@ step "check" {
     idx2 = steps.work[2].idx
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -728,9 +729,13 @@ func (e *sharedLogEventSink) Adapter(string, any) {}
 // succeeded and the run reached "done".
 func TestParallelIteration_MaxVisitsEnforced(t *testing.T) {
 	g := compile(t, parallelWorkflowHCL(`
+variable "items" {
+  type    = list(string)
+  default = ["a", "b"]
+}
 step "work" {
   target     = adapter.fake
-  parallel   = ["a", "b"]
+  parallel   = var.items
   max_visits = 1
   outcome "all_succeeded" { next = step.done }
   outcome "any_failed"    { next = step.failed }

@@ -316,6 +316,7 @@ subworkflow "child" {
 step "pre" {
   target = adapter.shell.default
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" {
@@ -371,6 +372,7 @@ subworkflow "child" {
 step "warmup" {
   target = adapter.noop.default
   outcome "success" { next = step.pre }
+  outcome "failure" { next = step.pre }
 }
 
 step "pre" {
@@ -378,6 +380,7 @@ step "pre" {
   # No explicit failure outcome: a step error is retried once via
   # max_step_retries and only fails the run if it persists.
   outcome "success" { next = step.engage }
+  outcome "failure" { next = step.engage }
 }
 
 step "engage" {
@@ -390,6 +393,7 @@ step "engage" {
 step "post" {
   target = adapter.shell.default
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" {

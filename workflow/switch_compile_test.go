@@ -355,6 +355,7 @@ adapter "noop" "default" {}
 step "start" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 switch "orphan" {
@@ -666,6 +667,7 @@ switch "check" {
 step "foo" {
   target = adapter.noop.default
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" { terminal = true }

@@ -853,6 +853,7 @@ func (e *Engine) failUnknownNode(ctx context.Context, st *RunState, err error, s
 func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManager, current string, firstStepAttempt int, vars map[string]cty.Value, sink Sink, ds *DataStore, rlc *remoteLifecycleContext) error {
 	st := &RunState{
 		Current:         current,
+		TotalSteps:      sumVisits(e.resumedVisits),
 		Vars:            vars,
 		PendingSignal:   e.pendingSignal,
 		ResumePayload:   e.resumePayload,
@@ -1313,10 +1314,11 @@ func (e *Engine) advanceTo(st *RunState, next string) {
 // engine log distinguishes an adapter session crash (a dead session, not a
 // user action) from a host-initiated run cancellation.
 func (e *Engine) handleEvalError(ctx context.Context, st *RunState, err error, sink Sink) error {
-	// Capture the visit state and clear the live pointer so VisitCounts()
-	// returns a stable snapshot after the run ends (W07).
+	// Capture the visit state and variable scope, then clear the live pointer
+	// so VisitCounts() and VarScope() return a stable snapshot after the run ends.
 	e.clearLiveRunStatePtr()
 	e.lastVisits = st.Visits
+	e.lastVars = st.Vars
 	if errors.Is(err, engineruntime.ErrTerminal) {
 		state, ok := e.graph.States[st.Current]
 		if !ok {
@@ -1439,6 +1441,16 @@ func cloneVisits(v map[string]int) map[string]int {
 		out[k] = c
 	}
 	return out
+}
+
+func sumVisits(v map[string]int) int {
+	total := 0
+	for _, c := range v {
+		if c > 0 {
+			total += c
+		}
+	}
+	return total
 }
 
 // bootstrapSessionsForResume restores adapter session state from the last

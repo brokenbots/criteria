@@ -1,5 +1,5 @@
 workflow: switch_basic  (version 0.1)
-initial_state: build   target_state: done
+initial_state: build   target_state: deploy
 policy: max_total_steps=100  max_step_retries=0
 
 variables:
@@ -13,12 +13,11 @@ steps (declaration order):
   build   adapter=noop.default
     input keys: (none)
     allow_tools: (none)
-    outcomes: success -> decide
+    outcomes: success -> decide, failure -> decide
 
 states:
   deploy    terminal=true   success=true
   deploy_staging    terminal=true   success=true
-  done    terminal=true   success=true
   skip_deploy    terminal=true   success=true
 
 switches:

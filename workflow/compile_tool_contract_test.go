@@ -116,6 +116,7 @@ adapter "mcp" "probe" {
 step "a" {
   target = adapter.mcp.probe
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -145,6 +146,7 @@ adapter "mcp" "probe" {
 step "a" {
   target = adapter.mcp.probe
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -174,6 +176,7 @@ step "a" {
   target = adapter.noop.callee
   tools = [adapter.noop.callee.tools.echo_data]
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -256,6 +259,7 @@ step "probe" {
     loose = "keys pass for uncontracted tools"
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -312,6 +316,7 @@ step "a" {
     nonsense = 12345
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -361,6 +366,7 @@ step "probe" {
     ghost = true
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -397,6 +403,7 @@ step "a" {
     tool_args = { message = "ping" }
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -451,6 +458,7 @@ step "probe" {
     message = var.runtime_message
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -506,6 +514,7 @@ step "probe" {
     tool = "echo"
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -544,6 +553,7 @@ step "probe" {
     ghost   = true
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -600,6 +610,7 @@ step "probe" {
     ghost   = true
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -650,6 +661,7 @@ step "probe" {
   input {` + inputBody + `
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -693,6 +705,7 @@ step "probe" {
     message = "ping"
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true

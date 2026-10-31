@@ -104,6 +104,7 @@ step "run" {
     prompt = "hello"
   }
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" { terminal = true }

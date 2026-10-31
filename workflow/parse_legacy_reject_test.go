@@ -44,6 +44,7 @@ adapter "noop" "default" {}
 step "start" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -110,6 +111,7 @@ func TestLegacyReject_StepAgentAttr(t *testing.T) {
 step "run" {
   agent = "gpt-4"
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -137,6 +139,7 @@ step "outer" {
     step "inner" {
       agent = "gpt-4"
       outcome "success" { next = step.done }
+      outcome "failure" { next = step.done }
     }
   }
   outcome "success" { next = step.done }
@@ -167,6 +170,7 @@ func TestLegacyReject_StepAdapterAttr(t *testing.T) {
 step "run" {
   adapter = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -195,6 +199,7 @@ step "run" {
   target    = adapter.noop.default
   lifecycle = "open"
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -222,6 +227,7 @@ step "outer" {
     step "inner" {
       lifecycle = "open"
       outcome "success" { next = step.done }
+      outcome "failure" { next = step.done }
     }
   }
   outcome "success" { next = step.done }
@@ -256,6 +262,7 @@ step "run" {
     step "child" {
       target = adapter.noop.default
       outcome "success" { next = step.done }
+      outcome "failure" { next = step.done }
     }
     state "done" { terminal = true }
   }
@@ -289,6 +296,7 @@ step "run" {
   target        = adapter.noop.default
   workflow_file = "child.hcl"
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -316,6 +324,7 @@ func TestLegacyReject_StepTypeAttr(t *testing.T) {
 step "run" {
   type = "adapter"
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -495,6 +504,7 @@ step "run" {
   target         = adapter.noop.default
   default_outcome = "success"
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -558,6 +568,7 @@ step "run" {
   target      = adapter.noop.default
   environment = "shell.ci"
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -591,6 +602,7 @@ step "run" {
   target      = adapter.noop.default
   environment = shell.ci
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -782,6 +794,7 @@ step "start" {
     next = step.done
     shared_writes = { counter = "stdout" }
   }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `

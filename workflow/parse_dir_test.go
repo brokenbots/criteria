@@ -27,6 +27,7 @@ adapter "noop" "default" {}
 step "run" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -111,11 +112,13 @@ func TestParseDir_MultipleFiles(t *testing.T) {
 	writeHCLFile(t, dir, "steps", `step "step_a" {
   target = adapter.noop.default
   outcome "success" { next = step.step_b }
+  outcome "failure" { next = step.step_b }
 }
 
 step "step_b" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 `)
 	writeHCLFile(t, dir, "states", `state "done" { terminal = true }
@@ -175,6 +178,7 @@ output "audit_summary" {
     schema = type.audit
     next = step.done
   }
+  outcome "failure" { next = step.done }
 }
 `)
 	writeHCLFile(t, dir, "states", `state "done" { terminal = true }
@@ -215,6 +219,7 @@ func TestParseDir_TypeBlocksDuplicateAcrossFiles_Error(t *testing.T) {
 	writeHCLFile(t, dir, "steps", `step "step_a" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 `)
 	writeHCLFile(t, dir, "types_a", `type "audit" {
@@ -292,6 +297,7 @@ adapter "noop" "default" {}
 step "run" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -300,6 +306,7 @@ state "done" { terminal = true }
 	writeHCLFile(t, dir, "steps2", `step "run" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 `)
 
@@ -378,6 +385,7 @@ func TestParseDir_NoWorkflowBlock_Error(t *testing.T) {
 step "run" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `)

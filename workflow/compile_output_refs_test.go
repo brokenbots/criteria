@@ -38,12 +38,14 @@ step "first" {
   target = adapter.exec.default
   input { command = "echo hi" }
   outcome "success" { next = step.second }
+  outcome "failure" { next = step.second }
 }
 
 step "second" {
   target = adapter.exec.default
   input { command = steps.first.outputs.result }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -78,12 +80,14 @@ step "first" {
   target = adapter.exec.default
   input { command = "echo hi" }
   outcome "success" { next = step.second }
+  outcome "failure" { next = step.second }
 }
 
 step "second" {
   target = adapter.exec.default
   input { command = steps.first.outputs.not_a_field }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -124,12 +128,14 @@ step "first" {
   target = adapter.exec.default
   input { command = "echo hi" }
   outcome "success" { next = step.second }
+  outcome "failure" { next = step.second }
 }
 
 step "second" {
   target = adapter.exec.default
   input { command = steps.first.outputs.reslt }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -169,6 +175,7 @@ step "first" {
   target = adapter.exec.default
   input { command = "echo hi" }
   outcome "success" { next = step.sw }
+  outcome "failure" { next = step.sw }
 }
 
 switch "sw" {
@@ -213,6 +220,7 @@ step "first" {
   target = adapter.exec.default
   input { command = "echo hi" }
   outcome "success" { next = step.sw }
+  outcome "failure" { next = step.sw }
 }
 
 switch "sw" {
@@ -262,6 +270,7 @@ step "first" {
   target = adapter.exec.default
   input { command = "echo hi" }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -297,6 +306,7 @@ step "first" {
   target = adapter.exec.default
   input { command = "echo hi" }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -364,12 +374,14 @@ adapter "noop" "default" {}
 step "first" {
   target = adapter.noop.default
   outcome "success" { next = step.second }
+  outcome "failure" { next = step.second }
 }
 
 step "second" {
   target = adapter.noop.default
   input { command = steps.first.outputs.result }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -406,6 +418,7 @@ step "first" {
   target = adapter.exec.default
   input { command = "echo hi" }
   outcome "success" { next = step.second }
+  outcome "failure" { next = step.second }
 }
 
 step "second" {
@@ -415,6 +428,7 @@ step "second" {
     output = { copied = steps.first.outputs.status }
     next = step.done
   }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -446,6 +460,7 @@ step "first" {
   target = adapter.exec.default
   input { command = "echo hi" }
   outcome "success" { next = step.second }
+  outcome "failure" { next = step.second }
 }
 
 step "second" {
@@ -455,6 +470,7 @@ step "second" {
     output = { copied = steps.first.outputs.bogus }
     next = step.done
   }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }

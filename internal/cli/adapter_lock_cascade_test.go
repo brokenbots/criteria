@@ -217,6 +217,7 @@ func TestRunLock_RecursiveCascade_FakeFetcherDepthTwo(t *testing.T) {
 		"step \"run_inner\" {\n" +
 		"  target = subworkflow.remote\n" +
 		"  outcome \"success\" { next = step.done }\n" +
+		"  outcome \"failure\" { next = step.done }\n" +
 		"}\n\n" +
 		"state \"done\" {\n" +
 		"  terminal = true\n" +
@@ -532,6 +533,7 @@ func TestRunLock_RecursiveCascade_DoesNotAdoptPropagatedPinForSameSource(t *test
 		"step \"run\" {\n" +
 		"  target = subworkflow.alpha\n" +
 		"  outcome \"success\" { next = step.done }\n" +
+		"  outcome \"failure\" { next = step.done }\n" +
 		"}\n\n" +
 		"state \"done\" {\n" +
 		"  terminal = true\n" +

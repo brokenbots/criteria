@@ -31,6 +31,7 @@ adapter "copilot" "bot" {
 step "work" {
   target = adapter.copilot.bot
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -69,6 +70,7 @@ adapter "copilot" "bot" {
 step "work" {
   target = adapter.copilot.bot
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -114,6 +116,7 @@ adapter "copilot" "bot" {
 step "work" {
   target = adapter.copilot.bot
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -153,6 +156,7 @@ adapter "copilot" "bot" {
 step "work" {
   target = adapter.copilot.bot
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -199,6 +203,7 @@ adapter "exec" "bot" {
 step "work" {
   target = adapter.exec.bot
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 state "done" { terminal = true }
 `
@@ -239,6 +244,7 @@ adapter "exec" "bot" {}
 step "work" {
   target = adapter.exec.bot
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 state "done" { terminal = true }
 `
@@ -277,6 +283,7 @@ adapter "exec" "bot" {
 step "work" {
   target = adapter.exec.bot
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 state "done" { terminal = true }
 `
@@ -315,6 +322,7 @@ adapter "exec" "main" {}
 step "run" {
   target = adapter.exec.main
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 state "done" { terminal = true }
 `
@@ -359,6 +367,7 @@ adapter "copilot" "bot" {
 step "work" {
   target = adapter.copilot.bot
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }

@@ -80,6 +80,7 @@ subworkflow "handler" {
 step "start" {
   target = adapter.noop.default
   outcome "success" { next = step.engage }
+  outcome "failure" { next = step.engage }
 }
 
 step "engage" {
@@ -128,6 +129,7 @@ subworkflow "handler" {
 step "start" {
   target = adapter.noop.default
   outcome "success" { next = step.engage }
+  outcome "failure" { next = step.engage }
 }
 
 step "engage" {
@@ -180,6 +182,7 @@ subworkflow "handler" {
 step "start" {
   target = adapter.noop.default
   outcome "success" { next = step.engage }
+  outcome "failure" { next = step.engage }
 }
 
 step "engage" {

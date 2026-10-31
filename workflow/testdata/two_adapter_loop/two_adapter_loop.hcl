@@ -17,6 +17,7 @@ step "execute" {
 
   outcome "approved" { next = step.review }
   outcome "retry"    { next = step.review }
+  outcome "failure"  { next = state.done }
 }
 
 step "review" {
@@ -24,6 +25,7 @@ step "review" {
 
   outcome "approved" { next = state.done }
   outcome "changes"  { next = step.execute }
+  outcome "failure"  { next = state.done }
 }
 
 state "done" {

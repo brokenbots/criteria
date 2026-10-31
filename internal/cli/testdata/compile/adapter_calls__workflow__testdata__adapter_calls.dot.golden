@@ -7,7 +7,9 @@ digraph "adapter-calls" {
 
   "__start__" [shape=point,width=0.12,label=""];
   "__start__" -> "start" [label="initial"];
+  "start" -> "audit" [label="failure"];
   "start" -> "audit" [label="success"];
+  "audit" -> "done" [label="failure"];
   "audit" -> "done" [label="success"];
   "adapter:mcp.registry" [shape=note, style="filled", fillcolor="#D6EAF8", label="mcp.registry\ntools: *"];
   "adapter:shell.worker" [shape=note, style="filled", fillcolor="#E8DAEF", label="shell.worker\ntools: git_status"];

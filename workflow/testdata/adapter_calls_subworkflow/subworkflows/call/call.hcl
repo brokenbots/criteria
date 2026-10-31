@@ -17,12 +17,14 @@ step "probe" {
   target = adapter.mcp.registry
   tools  = [adapter.mcp.registry.tools]
   outcome "success" { next = step.fetch }
+  outcome "failure" { next = step.fetch }
 }
 
 step "fetch" {
   target = adapter.mcp.registry
   tools  = [adapter.mcp.registry.tools.fetch]
   outcome "success" { next = state.ready }
+  outcome "failure" { next = state.ready }
 }
 
 state "ready" { terminal = true }

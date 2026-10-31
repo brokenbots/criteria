@@ -50,10 +50,12 @@ step "develop" {
 step "comment_handler_failed" {
   target = adapter.fake
   outcome "success" { next = step.set_review_state }
+  outcome "failure" { next = step.set_review_state }
 }
 step "set_review_state" {
   target = adapter.fake
   outcome "success" { next = state.awaiting_human }
+  outcome "failure" { next = state.awaiting_human }
 }
 state "awaiting_human" {
   terminal = true

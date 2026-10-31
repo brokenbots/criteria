@@ -225,6 +225,7 @@ step "a" {
   target = adapter.promptable.default
   input { ` + stepInput + ` }
   outcome "success" { next = wait.settle }
+  outcome "failure" { next = wait.settle }
 }
 wait "settle" {
   duration = "1500ms"
@@ -415,6 +416,7 @@ step "a" {
   target = adapter.noop.default
   input { delay_ms = "2500" }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 adapter "noop" "default" {}`)

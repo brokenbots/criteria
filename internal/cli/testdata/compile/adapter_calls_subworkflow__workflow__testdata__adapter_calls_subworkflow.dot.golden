@@ -12,7 +12,9 @@ digraph "adapter-calls-subworkflow" {
     "begin/ready" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
     "begin/__start__" [shape=point,width=0.12,label=""];
     "begin/__start__" -> "begin/probe" [label="initial"];
+    "begin/probe" -> "begin/fetch" [label="failure"];
     "begin/probe" -> "begin/fetch" [label="success"];
+    "begin/fetch" -> "begin/ready" [label="failure"];
     "begin/fetch" -> "begin/ready" [label="success"];
     "begin/adapter:mcp.registry" [shape=note, style="filled", fillcolor="#E8DAEF", label="mcp.registry\ntools: *"];
     "begin/probe" -> "begin/adapter:mcp.registry" [style=dashed, color="#E8DAEF"];
@@ -21,7 +23,9 @@ digraph "adapter-calls-subworkflow" {
 
   "__start__" [shape=point,width=0.12,label=""];
   "__start__" -> "begin/__start__" [label="initial"];
+  "begin/ready" -> "finish" [label="failure"];
   "begin/ready" -> "finish" [label="success"];
+  "finish" -> "done" [label="failure"];
   "finish" -> "done" [label="success"];
   "adapter:shell.host" [shape=note, style="filled", fillcolor="#D6EAF8", label="shell.host\ntools: status"];
   "finish" -> "adapter:shell.host" [style=dashed, color="#D6EAF8", label="status"];

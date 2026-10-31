@@ -128,6 +128,7 @@ step "hello" {
   target = adapter.noop.default
   input { command = "echo hi" }
   outcome "success" { next = state.hello }
+  outcome "failure" { next = state.hello }
 }
 `
 	err := os.WriteFile(wfPath, []byte(src), 0o644)

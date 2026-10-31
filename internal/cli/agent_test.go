@@ -439,11 +439,13 @@ step "slow" {
   target = adapter.noop.default
   input { delay_ms = "2000" }
   outcome "success" { next = step.fast }
+  outcome "failure" { next = step.fast }
 }
 
 step "fast" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" {

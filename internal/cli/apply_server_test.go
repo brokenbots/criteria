@@ -95,6 +95,7 @@ step "step_two" {
   target = adapter.noop.default
   input { delay_ms = "30000" }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" {

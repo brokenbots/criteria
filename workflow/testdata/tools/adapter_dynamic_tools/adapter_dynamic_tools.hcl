@@ -12,6 +12,7 @@ adapter "mcp" "registry" {
 step "start" {
   target = adapter.mcp.registry
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" { terminal = true }

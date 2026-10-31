@@ -39,6 +39,7 @@ step "start" {
   target = adapter.noop.rootbot
   input {}
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" { terminal = true }
@@ -75,6 +76,7 @@ step "work" {
   target = adapter.shell.runner
   input { command = "echo ok" }
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" { terminal = true }
@@ -148,6 +150,7 @@ step "start" {
   target = adapter.noop.bot
   input {}
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" { terminal = true }

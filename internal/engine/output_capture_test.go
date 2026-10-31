@@ -73,6 +73,7 @@ adapter "fake_out" "default" {}
 step "produce" {
   target = adapter.fake_out.default
   outcome "success" { next = step.__done__ }
+  outcome "failure" { next = step.__done__ }
 }
 state "__done__" { terminal = true }
 `
@@ -132,6 +133,7 @@ adapter "fake_consumer" "default" {}
 step "build" {
   target = adapter.fake_out.default
   outcome "success" { next = step.deploy }
+  outcome "failure" { next = step.deploy }
 }
 step "deploy" {
   target = adapter.fake_consumer.default
@@ -139,6 +141,7 @@ step "deploy" {
     artifact = "${steps.build.result}"
   }
   outcome "success" { next = step.__done__ }
+  outcome "failure" { next = step.__done__ }
 }
 state "__done__" { terminal = true }
 `
@@ -229,10 +232,12 @@ adapter "fake_out" "default" {}
 step "first" {
   target = adapter.fake_out.default
   outcome "success" { next = step.second }
+  outcome "failure" { next = step.second }
 }
 step "second" {
   target = adapter.fake_out.default
   outcome "success" { next = step.__done__ }
+  outcome "failure" { next = step.__done__ }
 }
 state "__done__" { terminal = true }
 `

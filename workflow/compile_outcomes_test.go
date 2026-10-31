@@ -47,10 +47,12 @@ adapter "noop" "default" {}
 step "a" {
   target = adapter.noop.default
   outcome "success" { next = step.b }
+  outcome "failure" { next = step.b }
 }
 step "b" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -114,6 +116,7 @@ adapter "noop" "default" {}
 step "work" {
   target = adapter.noop.default
   outcome "success" { next = return }
+  outcome "failure" { next = return }
 }
 state "done" {
   terminal = true
@@ -151,6 +154,7 @@ adapter "noop" "default" {}
 step "work" {
   target = adapter.noop.default
   outcome "success" { next = step.return }
+  outcome "failure" { next = step.return }
 }
 state "done" {
   terminal = true
@@ -182,6 +186,7 @@ func TestCompileOutcome_OutputExprFolds(t *testing.T) {
       next = step.done
       output = { status = "ok" }
     }
+    outcome "failure" { next = step.failed }
 `)
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -215,6 +220,7 @@ adapter "noop" "default" {}
 step "a" {
   target = adapter.noop.default
   outcome "success" { next = step.b }
+  outcome "failure" { next = step.b }
 }
 step "b" {
   target = adapter.noop.default
@@ -222,6 +228,7 @@ step "b" {
     next = step.done
     output = { result = steps.a.exit_code }
   }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -332,6 +339,7 @@ step "a" {
     next = step.done
     output = { result = subworkflow.answer }
   }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -360,6 +368,7 @@ adapter "noop" "default" {}
 step "return" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -397,6 +406,7 @@ step "work" {
     next = step.done
     output = { x = step.output.result }
   }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -434,6 +444,7 @@ step "work" {
     next = step.done
     output = { x = step.output.ghost }
   }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -474,6 +485,7 @@ step "work" {
     next = step.done
     output = { x = step.output.ghost }
   }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -559,6 +571,7 @@ adapter "noop" "default" {}
 step "step1" {
   target = adapter.noop.default
   outcome "success" { next = step.return }
+  outcome "failure" { next = step.return }
 }
 state "return" {
   terminal = true
@@ -578,6 +591,7 @@ adapter "noop" "default" {}
 step "step1" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 switch "return" {
   match {

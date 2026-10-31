@@ -15,7 +15,7 @@ func TestPrintSpec_SpecOnly(t *testing.T) {
 	}
 	out := buf.String()
 	// Spec must contain the normative section headers
-	for _, anchor := range []string{"## Blocks", "## Functions", "## Iteration semantics", "## Outcome model"} {
+	for _, anchor := range []string{"## Blocks", "## Functions", "## Iteration semantics", "## Outcome model", "## Static FSM Graph Verification"} {
 		if !strings.Contains(out, anchor) {
 			t.Errorf("spec output missing expected anchor %q", anchor)
 		}

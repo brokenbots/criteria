@@ -194,6 +194,7 @@ step "work" {
     msg = while.index
   }
   outcome "succeeded" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -328,6 +329,7 @@ step "work" {
   target     = adapter.noop.default
   on_failure = "continue"
   outcome "succeeded" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -409,6 +411,7 @@ step "s" {
     x = while.index
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true

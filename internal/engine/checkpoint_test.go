@@ -33,6 +33,7 @@ adapter "ck" "default" {}
 step "a" {
   target = adapter.ck.default
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 state "done" { terminal = true }
 `)
@@ -53,10 +54,12 @@ adapter "ck" "default" {}
 step "a" {
   target = adapter.ck.default
   outcome "success" { next = step.b }
+  outcome "failure" { next = step.b }
 }
 step "b" {
   target = adapter.ck.default
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 state "done" { terminal = true }
 `)

@@ -15,11 +15,11 @@ steps (declaration order):
   execute   adapter=copilot.executor
     input keys: (none)
     allow_tools: (none)
-    outcomes: approved -> review, retry -> review
+    outcomes: approved -> review, retry -> review, failure -> done
   review   adapter=copilot.reviewer
     input keys: (none)
     allow_tools: (none)
-    outcomes: approved -> done, changes -> execute
+    outcomes: approved -> done, changes -> execute, failure -> done
 
 states:
   done    terminal=true   success=true

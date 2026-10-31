@@ -87,6 +87,7 @@ adapter "exec" "default" {}
 step "a" {
   target = adapter.exec.default
   outcome "success" { next = step.missing }
+  outcome "failure" { next = step.missing }
 }
 state "done" { terminal = true }
 `
@@ -116,6 +117,7 @@ adapter "exec" "default" {}
 step "a" {
   target = adapter.exec.default
   outcome "success" { next = step.halfway }
+  outcome "failure" { next = step.halfway }
 }
 state "halfway" {}
 `
@@ -139,10 +141,12 @@ adapter "exec" "default" {}
 step "a" {
   target = adapter.exec.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 step "orphan" {
   target = adapter.exec.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -225,10 +229,12 @@ step "open" {
   lifecycle   = "open"
   allow_tools = ["read_file"]
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 step "close" {
   target = adapter.copilot.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -256,6 +262,7 @@ step "run" {
   target      = adapter.exec.default
   allow_tools = ["shell:git status"]
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -287,6 +294,7 @@ step "run" {
   target = adapter.copilot.default
   allow_tools = ["read_file"]
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 

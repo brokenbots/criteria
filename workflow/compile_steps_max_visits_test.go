@@ -48,6 +48,7 @@ step "execute" {
   target     = adapter.noop.default
   max_visits = ` + maxVisitsExpr + `
   outcome "done" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" {
@@ -188,11 +189,13 @@ adapter "noop" "default" {}
 step "first" {
   target     = adapter.noop.default
   outcome "done" { next = step.second }
+  outcome "failure" { next = step.second }
 }
 step "second" {
   target     = adapter.noop.default
   max_visits = steps.first.done
   outcome "done" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true

@@ -22,6 +22,7 @@ step "warmup" {
     prompt = "warmup"
   }
   outcome "success" { next = step.slow }
+  outcome "failure" { next = step.slow }
 }
 
 step "slow" {
@@ -31,6 +32,7 @@ step "slow" {
     delay_ms = 4000
   }
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" {

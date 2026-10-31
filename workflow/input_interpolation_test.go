@@ -49,6 +49,7 @@ step "build" {
     command = "echo building"
   }
   outcome "success" { next = step.publish }
+  outcome "failure" { next = step.publish }
 }
 step "publish" {
   target = adapter.exec.default
@@ -56,6 +57,7 @@ step "publish" {
     command = "echo ${steps.build.stdout}"
   }
   outcome "success" { next = step.__done__ }
+  outcome "failure" { next = step.__done__ }
 }
 state "__done__" { terminal = true }
 `

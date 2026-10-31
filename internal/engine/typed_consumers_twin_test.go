@@ -53,6 +53,7 @@ step "work" {
     next   = step.done
     schema = object({ amount_out = number })
   }
+  outcome "failure" { next = step.done }
   write {
     target = data.internal.store.value
     value  = var.amount

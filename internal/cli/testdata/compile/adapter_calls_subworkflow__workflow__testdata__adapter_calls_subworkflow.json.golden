@@ -25,6 +25,10 @@
       "allow_tools": null,
       "outcomes": [
         {
+          "name": "failure",
+          "next": "finish"
+        },
+        {
           "name": "success",
           "next": "finish"
         }
@@ -36,6 +40,10 @@
       "input_keys": null,
       "allow_tools": null,
       "outcomes": [
+        {
+          "name": "failure",
+          "next": "done"
+        },
         {
           "name": "success",
           "next": "done"
@@ -91,6 +99,10 @@
             "allow_tools": null,
             "outcomes": [
               {
+                "name": "failure",
+                "next": "fetch"
+              },
+              {
                 "name": "success",
                 "next": "fetch"
               }
@@ -102,6 +114,10 @@
             "input_keys": null,
             "allow_tools": null,
             "outcomes": [
+              {
+                "name": "failure",
+                "next": "ready"
+              },
               {
                 "name": "success",
                 "next": "ready"

@@ -302,6 +302,7 @@ adapter "fake" "default" {}
 step "ship" {
   target = adapter.fake.default
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 state "done" { terminal = true }
 `)

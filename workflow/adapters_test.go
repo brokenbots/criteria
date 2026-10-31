@@ -49,6 +49,7 @@ adapter "copilot" "review" {
 step "run" {
   target = adapter.copilot.exec
   outcome "approved" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -100,6 +101,7 @@ step "step_one" {
   target = adapter.noop.default
   lifecycle = "open"
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -127,6 +129,7 @@ workflow {
 step "a" {
   target = adapter.ghost.default
   outcome "ok" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `,
@@ -150,6 +153,7 @@ adapter "copilot" "worker" {
 step "a" {
   target = adapter.copilot.worker
   outcome "ok" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `,
@@ -171,6 +175,7 @@ adapter "exec" "default" {
 step "a" {
   target = adapter.exec.default
   outcome "ok" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `,

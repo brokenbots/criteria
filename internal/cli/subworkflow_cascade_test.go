@@ -51,6 +51,7 @@ func cascadeWorkflowHCL(name, source, ref string) string {
 		"step \"run_inner\" {\n" +
 		"  target = subworkflow.inner\n" +
 		"  outcome \"success\" { next = step.done }\n" +
+		"  outcome \"failure\" { next = step.done }\n" +
 		"}\n\n" +
 		"state \"done\" {\n" +
 		"  terminal = true\n" +

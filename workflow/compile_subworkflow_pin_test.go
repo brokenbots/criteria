@@ -81,6 +81,7 @@ func parentWithPinnedSubworkflow(swName, source, ref, inputAttrs string) string 
 		"step \"run_inner\" {\n" +
 		"  target = subworkflow." + swName + "\n" +
 		"  outcome \"success\" { next = step.done }\n" +
+		"  outcome \"failure\" { next = step.done }\n" +
 		"}\n\n" +
 		"state \"done\" {\n  terminal = true\n  success  = true\n}\n"
 }
