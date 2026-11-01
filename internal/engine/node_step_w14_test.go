@@ -35,6 +35,7 @@ workflow {
 step "do" {
   target = adapter.fake
   outcome "success" { next = step.done }
+  outcome "error" { next = step.done }
 }
 state "done" { terminal = true }`)
 

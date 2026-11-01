@@ -22,10 +22,12 @@ workflow {
 step "step1" {
   target = adapter.fake
   outcome "success" { next = step.step2 }
+  outcome "error" { next = step.step2 }
 }
 step "step2" {
   target = adapter.fake
   outcome "success" { next = step.done }
+  outcome "error" { next = step.done }
 }
 state "done" { terminal = true }
 `

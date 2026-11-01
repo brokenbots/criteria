@@ -40,6 +40,7 @@ adapter "noop" "default" {}
 step "build" {
   target = adapter.noop.default
   outcome "success" { next = step.check }
+  outcome "failure" { next = step.check }
 }
 switch "check" {
   match {
@@ -66,6 +67,7 @@ adapter "noop" "default" {}
 step "build" {
   target = adapter.noop.default
   outcome "success" { next = step.check }
+  outcome "failure" { next = step.check }
 }
 switch "check" {
   match {
@@ -94,6 +96,7 @@ adapter "noop" "default" {}
 step "build" {
   target = adapter.noop.default
   outcome "success" { next = step.run }
+  outcome "failure" { next = step.run }
 }
 step "run" {
   target = adapter.noop.default
@@ -101,6 +104,7 @@ step "run" {
     command = steps.build.` + field + `
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -120,6 +124,7 @@ adapter "noop" "default" {}
 step "build" {
   target = adapter.noop.default
   outcome "success" { next = step.run }
+  outcome "failure" { next = step.run }
 }
 step "run" {
   target = adapter.noop.default
@@ -127,6 +132,7 @@ step "run" {
     next = step.done
     output = { x = steps.build.` + field + ` }
   }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -326,6 +332,7 @@ step "run" {
     command = steps.bulid.stdout
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `

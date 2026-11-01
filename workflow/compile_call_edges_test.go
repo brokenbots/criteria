@@ -134,6 +134,7 @@ adapter "shell" "worker" {
   target = adapter.copilot.worker
   tools  = [adapter.shell.worker.tools, adapter.shell.worker.tools.git_status]
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }`)
 	g, diags := compileCallEdges(t, src, callEdgesSchemas("copilot", "shell"))
 	if len(diags) != 0 {
@@ -168,6 +169,7 @@ func TestCallEdges_CallerIsSelf(t *testing.T) {
   target = adapter.mcp.registry
   tools  = [adapter.mcp.registry.tools.search]
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }`)
 	g, diags := compileCallEdges(t, src, callEdgesSchemas("mcp"))
 	if len(diags) != 0 {
@@ -200,6 +202,7 @@ adapter "shell" "worker" {
 		`step "start" {
   target = adapter.copilot.worker
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }`)
 	g, diags := compileCallEdges(t, src, callEdgesSchemas("copilot", "shell"))
 	if len(diags) != 0 {
@@ -275,6 +278,7 @@ step "run" {
   target = subworkflow.child
   tools  = [adapter.mcp.registry.tools.search]
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }`)
 	spec, diags := Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {
@@ -332,6 +336,7 @@ step "run" {
   target = subworkflow.child
   tools  = [adapter.mcp.registry.tools.search]
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }`)
 	opts := func(schemas map[string]AdapterInfo) CompileOpts {
 		return CompileOpts{
@@ -407,12 +412,14 @@ adapter "b" "two" {
   target = adapter.a.one
   tools  = [adapter.b.two.tools]
   outcome "success" { next = step.s2 }
+  outcome "failure" { next = step.s2 }
 }
 
 step "s2" {
   target = adapter.b.two
   tools  = [adapter.a.one.tools]
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }`)
 	g, diags := compileCallEdges(t, src, callEdgesSchemas("a", "b"))
 	if diags.HasErrors() {
@@ -465,18 +472,21 @@ adapter "c" "three" {
   target = adapter.a.one
   tools  = [adapter.b.two.tools]
   outcome "success" { next = step.s2 }
+  outcome "failure" { next = step.s2 }
 }
 
 step "s2" {
   target = adapter.b.two
   tools  = [adapter.c.three.tools]
   outcome "success" { next = step.s3 }
+  outcome "failure" { next = step.s3 }
 }
 
 step "s3" {
   target = adapter.c.three
   tools  = [adapter.a.one.tools]
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }`)
 	_, diags := compileCallEdges(t, src, callEdgesSchemas("a", "b", "c"))
 	if diags.HasErrors() {
@@ -506,18 +516,21 @@ adapter "b" "two" {
   target = adapter.a.one
   tools  = [adapter.b.two.tools]
   outcome "success" { next = step.s2 }
+  outcome "failure" { next = step.s2 }
 }
 
 step "s2" {
   target = adapter.a.one
   tools  = [adapter.b.two.tools.y]
   outcome "success" { next = step.s3 }
+  outcome "failure" { next = step.s3 }
 }
 
 step "s3" {
   target = adapter.b.two
   tools  = [adapter.a.one.tools]
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }`)
 	g, diags := compileCallEdges(t, src, callEdgesSchemas("a", "b"))
 	if diags.HasErrors() {
@@ -544,6 +557,8 @@ func TestCallEdges_CycleDistinctFromBackEdgeWarnings(t *testing.T) {
 			`step "start" {
   target = adapter.shell.worker
   outcome "success" { next = step.start }
+  outcome "done"    { next = state.done }
+  outcome "failure" { next = state.done }
 }`)
 		g, diags := compileCallEdges(t, src, callEdgesSchemas("shell"))
 		if diags.HasErrors() {
@@ -572,12 +587,14 @@ adapter "b" "two" {
   target = adapter.a.one
   tools  = [adapter.b.two.tools]
   outcome "success" { next = step.s2 }
+  outcome "failure" { next = step.s2 }
 }
 
 step "s2" {
   target = adapter.b.two
   tools  = [adapter.a.one.tools]
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }`)
 		_, diags := compileCallEdges(t, src, callEdgesSchemas("a", "b"))
 		if diags.HasErrors() {
@@ -607,6 +624,7 @@ func TestCallEdges_PolicyMaxToolDepth(t *testing.T) {
 			`step "start" {
   target = adapter.shell.worker
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }`)
 		g, diags := compileCallEdges(t, src, callEdgesSchemas("shell"))
 		if len(diags) != 0 {
@@ -624,6 +642,7 @@ func TestCallEdges_PolicyMaxToolDepth(t *testing.T) {
 			`step "start" {
   target = adapter.shell.worker
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }`)
 		g, diags := compileCallEdges(t, src, callEdgesSchemas("shell"))
 		if len(diags) != 0 {
@@ -642,6 +661,7 @@ func TestCallEdges_PolicyMaxToolDepth(t *testing.T) {
 				`step "start" {
   target = adapter.shell.worker
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }`)
 			_, diags := Parse("t.hcl", []byte(src))
 			if !diags.HasErrors() {
@@ -670,6 +690,7 @@ func TestCallEdges_PolicyMaxToolCalls(t *testing.T) {
 			`step "start" {
   target = adapter.shell.worker
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }`)
 		g, diags := compileCallEdges(t, src, callEdgesSchemas("shell"))
 		if len(diags) != 0 {
@@ -687,6 +708,7 @@ func TestCallEdges_PolicyMaxToolCalls(t *testing.T) {
 			`step "start" {
   target = adapter.shell.worker
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }`)
 		g, diags := compileCallEdges(t, src, callEdgesSchemas("shell"))
 		if len(diags) != 0 {
@@ -705,6 +727,7 @@ func TestCallEdges_PolicyMaxToolCalls(t *testing.T) {
 				`step "start" {
   target = adapter.shell.worker
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }`)
 			_, diags := Parse("t.hcl", []byte(src))
 			if !diags.HasErrors() {
@@ -731,6 +754,7 @@ adapter "b" "two" {
 	stepsWithout := `step "s1" {
   target = adapter.a.one
   outcome "success" { next = step.s2 }
+  outcome "failure" { next = step.s2 }
 }
 
 step "s2" {
@@ -742,6 +766,7 @@ step "s2" {
 step "s3" {
   target = adapter.a.one
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }`
 	stepsWith := strings.NewReplacer(
 		"target = adapter.a.one\n  outcome \"success\" { next = step.s2 }",
@@ -794,11 +819,13 @@ adapter "b" "two" {
 	stepsWithout := `step "s1" {
   target = adapter.a.one
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }`
 	stepsWith := `step "s1" {
   target = adapter.a.one
   tools  = [adapter.b.two.tools.y]
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }`
 	_, diagsWithout := compileCallEdges(t, callEdgesSrcNamed("s1", "", adapters, stepsWithout), callEdgesSchemas("a", "b"))
 	gWith, diagsWith := compileCallEdges(t, callEdgesSrcNamed("s1", "", adapters, stepsWith), callEdgesSchemas("a", "b"))
@@ -829,6 +856,7 @@ adapter "mcp" "fs" {
 		`step "start" {
   target = adapter.shell.runner
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }`)
 	g, diags := compileCallEdges(t, src, callEdgesSchemas("shell", "mcp"))
 	if len(diags) != 0 {

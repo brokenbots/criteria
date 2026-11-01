@@ -16,12 +16,12 @@ steps (declaration order):
     input keys: (none)
     allow_tools: (none)
     tools: mcp.registry.tools, shell.worker.tools.git_status
-    outcomes: success -> audit
+    outcomes: success -> audit, failure -> audit
   audit   adapter=shell.worker
     input keys: (none)
     allow_tools: (none)
     tools: shell.worker.tools.git_status
-    outcomes: success -> done
+    outcomes: success -> done, failure -> done
 
 states:
   done    terminal=true   success=true

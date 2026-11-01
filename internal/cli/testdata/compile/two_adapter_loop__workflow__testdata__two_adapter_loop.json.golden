@@ -35,6 +35,10 @@
           "next": "review"
         },
         {
+          "name": "failure",
+          "next": "done"
+        },
+        {
           "name": "retry",
           "next": "review"
         }
@@ -53,6 +57,10 @@
         {
           "name": "changes",
           "next": "execute"
+        },
+        {
+          "name": "failure",
+          "next": "done"
         }
       ]
     }

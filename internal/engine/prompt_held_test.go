@@ -54,6 +54,7 @@ step "a" {
   target = adapter.promptable.default
   input { delay_ms = "0" }
   outcome "success" { next = step.done }
+  outcome "error" { next = step.done }
 }
 state "done" { terminal = true }
 adapter "promptable" "default" {}`)

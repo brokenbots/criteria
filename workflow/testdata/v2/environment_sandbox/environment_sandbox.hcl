@@ -28,6 +28,7 @@ step "run" {
     command = "echo hi"
   }
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" { terminal = true }

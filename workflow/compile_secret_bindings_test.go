@@ -101,6 +101,7 @@ step "run" {
   target = adapter.exec.bot
   secret_input { api_key = "literal-secret" }
   outcome "ok" { next = state.s }
+  outcome "failure" { next = state.s }
 }
 state "s" { terminal = true }
 `
@@ -124,6 +125,7 @@ step "run" {
   target = adapter.exec.bot
   secret_input { api_key = var.api_key }
   outcome "ok" { next = state.s }
+  outcome "failure" { next = state.s }
 }
 state "s" { terminal = true }
 `
@@ -150,6 +152,7 @@ step "run" {
   target = adapter.exec.bot
   secret_input { api_key = var.api_key }
   outcome "ok" { next = state.s }
+  outcome "failure" { next = state.s }
 }
 state "s" { terminal = true }
 `

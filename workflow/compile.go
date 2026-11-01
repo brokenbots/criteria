@@ -377,12 +377,28 @@ func resolveTransitions(g *FSMGraph) hcl.Diagnostics {
 	return diags
 }
 
-// checkReachability performs a reachability walk from g.InitialState and
-// emits diagnostics for unreachable nodes.
+// checkReachability performs static topology verification on g starting from
+// g.InitialState:
+//  1. Forward reachability (unreachable steps/nodes/states)
+//  2. Backward reachability / livelock cycle detection
+//  3. target_state reachability
+//  4. Static step_budget and per-step max_visits feasibility
 func checkReachability(g *FSMGraph) hcl.Diagnostics {
 	reachable := collectReachableNodes(g, g.InitialState)
 	diags := diagnoseUnreachableSteps(g, reachable)
 	diags = append(diags, diagnoseUnreachableNodes(g, reachable)...)
+	diags = append(diags, checkLivelocks(g, reachable)...)
+	targetDiags, targetReachable := checkTargetStateReachability(g, reachable)
+	diags = append(diags, targetDiags...)
+	if targetReachable {
+		diags = append(diags, checkBudgetAndVisitFeasibility(g)...)
+	}
+	for _, name := range g.stepOrder {
+		step := g.Steps[name]
+		if step.ForEach == nil && step.Count == nil && step.Parallel == nil && step.While == nil {
+			diags = append(diags, validateStepOutcomeCompleteness(name, step)...)
+		}
+	}
 	return diags
 }
 

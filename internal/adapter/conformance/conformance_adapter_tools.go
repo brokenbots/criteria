@@ -763,6 +763,7 @@ func matrixGraph(name, targetState, callerStepBody string) string {
 		"step \"call\" {\n" +
 		"  target = adapter.caller.default\n" +
 		callerStepBody +
+		"  outcome \"error\" { next = state." + targetState + " }\n" +
 		"}\n" +
 		"\n" +
 		"state \"" + targetState + "\" {\n" +

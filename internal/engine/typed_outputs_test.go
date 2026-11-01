@@ -57,6 +57,7 @@ adapter "fake_consumer" "default" {}
 step "build" {
   target = adapter.fake_out.default
   outcome "success" { next = step.consume }
+  outcome "error" { next = step.consume }
 }
 step "consume" {
   target = adapter.fake_consumer.default
@@ -66,6 +67,7 @@ step "consume" {
     count = "${steps.build.count}"
   }
   outcome "success" { next = step.__done__ }
+  outcome "error" { next = step.__done__ }
 }
 state "__done__" { terminal = true }
 `

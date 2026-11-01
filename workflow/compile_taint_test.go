@@ -32,6 +32,7 @@ step "run" {
     key = var.api_key
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -77,6 +78,7 @@ step "run" {
     command = var.api_key
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -124,6 +126,7 @@ step "run" {
     command = data.internal.token.value
   }
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 state "done" { terminal = true }
 `
@@ -171,6 +174,7 @@ step "run" {
     key = data.internal.token.value
   }
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 state "done" { terminal = true }
 `
@@ -215,6 +219,7 @@ step "run" {
     command = data.internal.greeting.value
   }
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 state "done" { terminal = true }
 `
@@ -255,6 +260,7 @@ step "run" {
     command = var.token
   }
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 state "done" { terminal = true }
 `
@@ -304,11 +310,13 @@ step "first" {
     command = var.api_key
   }
   outcome "success" { next = step.second }
+  outcome "failure" { next = step.second }
 }
 
 step "second" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -353,6 +361,7 @@ step "run" {
     command = var.greeting
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -388,18 +397,21 @@ adapter "noop" "default" {}
 
 step "first" {
   target = adapter.noop.default
-  outcome "ok"   { next = step.second }
-  outcome "skip" { next = step.third }
+  outcome "ok"      { next = step.second }
+  outcome "skip"    { next = step.third }
+  outcome "failure" { next = step.done }
 }
 
 step "second" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 step "third" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -452,6 +464,7 @@ step "run" {
     command = "echo hi"
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -500,6 +513,7 @@ step "first" {
     command = "echo hi"
   }
   outcome "success" { next = step.second }
+  outcome "failure" { next = step.second }
 }
 
 step "second" {
@@ -508,6 +522,7 @@ step "second" {
     command = steps.first.token
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -561,6 +576,7 @@ step "first" {
     command = "echo hi"
   }
   outcome "success" { next = step.second }
+  outcome "failure" { next = step.second }
 }
 
 step "second" {
@@ -569,6 +585,7 @@ step "second" {
     command = steps.first.outputs.token
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -622,6 +639,7 @@ step "first" {
     command = "echo hi"
   }
   outcome "success" { next = step.second }
+  outcome "failure" { next = step.second }
 }
 
 step "second" {
@@ -630,6 +648,7 @@ step "second" {
     command = steps.first.outputs.token
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -682,6 +701,7 @@ step "run" {
     prompt = "hi"
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -742,6 +762,7 @@ step "first" {
     command = "echo hi"
   }
   outcome "success" { next = step.second }
+  outcome "failure" { next = step.second }
 }
 
 step "second" {
@@ -750,6 +771,7 @@ step "second" {
     prompt = "hi"
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }

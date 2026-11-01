@@ -8,7 +8,9 @@ digraph "two_agent_loop" {
   "__start__" [shape=point,width=0.12,label=""];
   "__start__" -> "execute" [label="initial"];
   "execute" -> "review" [label="approved"];
+  "execute" -> "done" [label="failure"];
   "execute" -> "review" [label="retry"];
   "review" -> "done" [label="approved"];
   "review" -> "execute" [label="changes"];
+  "review" -> "done" [label="failure"];
 }

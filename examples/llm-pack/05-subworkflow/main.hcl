@@ -32,6 +32,7 @@ step "finish" {
     processed = steps.invoke.result
   }
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
 }
 
 state "done" {

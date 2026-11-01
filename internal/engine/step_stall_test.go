@@ -123,6 +123,7 @@ step "boot" {
 step "finish" {
   target = adapter.wedge.default
   outcome "success" { next = state.done }
+  outcome "error" { next = state.done }
 }
 state "done" {
   terminal = true

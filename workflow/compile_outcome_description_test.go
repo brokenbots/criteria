@@ -165,6 +165,7 @@ adapter "noop" "default" {}
 step "work" {
   target = adapter.noop.default
   outcome "success" { next = wait.pause }
+  outcome "failure" { next = wait.pause }
 }
 wait "pause" {
   duration = "1s"
@@ -201,6 +202,7 @@ adapter "noop" "default" {}
 step "work" {
   target = adapter.noop.default
   outcome "success" { next = approval.gate }
+  outcome "failure" { next = approval.gate }
 }
 approval "gate" {
   approvers = ["alice"]

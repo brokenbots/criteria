@@ -70,10 +70,12 @@ step "push_checkpoint" {
   target     = adapter.pipeline.default
   max_visits = 3
   outcome "success" { next = step.develop }
+  outcome "error" { next = step.develop }
 }
 step "create_pr" {
   target = adapter.pipeline.default
   outcome "success" { next = state.awaiting_human }
+  outcome "error" { next = state.awaiting_human }
 }
 state "awaiting_human" {
   terminal = true
@@ -243,6 +245,7 @@ step "develop" {
     require_comment = true
     next            = state.awaiting_human
   }
+  outcome "error" { next = state.awaiting_human }
 }
 state "awaiting_human" {
   terminal = true

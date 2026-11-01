@@ -68,6 +68,7 @@ step "run" {
     emit_log = "peer-smoke-hello"
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" {
@@ -147,6 +148,7 @@ step "run" {
     delay_ms = "5000"
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" {

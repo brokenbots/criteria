@@ -29,6 +29,7 @@ adapter "child" "bot" {
 step "work" {
   target = adapter.child.bot
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 state "done" { terminal = true }
 `

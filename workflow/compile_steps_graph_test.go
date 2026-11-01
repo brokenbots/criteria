@@ -37,6 +37,7 @@ step "execute" {
   target = adapter.fake.default
 ` + maxVisitsAttr + `  outcome "again" { next = step.execute }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `
@@ -205,8 +206,9 @@ workflow {
 adapter "fake" "default" {}
 step "work" {
   target = adapter.fake.default
-  outcome "check" { next = step.decide }
-  outcome "done"  { next = step.done }
+  outcome "check"   { next = step.decide }
+  outcome "done"    { next = step.done }
+  outcome "failure" { next = step.done }
 }
 switch "decide" {
   match {
@@ -255,6 +257,7 @@ workflow {
 step "execute" {
   target = adapter.fake.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true

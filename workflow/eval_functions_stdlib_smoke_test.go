@@ -26,6 +26,7 @@ step "run" {
     command = format("echo %s", substr(join("-", ["hello", "world"]), 0, 5))
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -64,6 +65,7 @@ step "check" {
     command = "echo hello"
   }
   outcome "success" { next = step.decide }
+  outcome "failure" { next = step.decide }
 }
 
 switch "decide" {

@@ -46,6 +46,7 @@ step "run" {
 		sb.WriteString(toolsAttr + "\n")
 	}
 	sb.WriteString(`  outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -426,6 +427,7 @@ subworkflow "child" { source = "./child" }
 step "run" {
   target = subworkflow.child
 ` + "%s" + `  outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }

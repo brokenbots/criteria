@@ -80,6 +80,7 @@ step "call" {
     task = var.api_key
   }
 ` + tools + `  outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -173,6 +174,7 @@ step "call" {
     token = var.api_key
   }
 %s  outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }

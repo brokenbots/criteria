@@ -5,11 +5,11 @@ digraph "switch_basic" {
   "decide" [shape=diamond, style=filled, fillcolor="#FEF9E7"];
   "deploy" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
   "deploy_staging" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
-  "done" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
   "skip_deploy" [shape=doublecircle, style=filled, fillcolor="#D5F5E3"];
 
   "__start__" [shape=point,width=0.12,label=""];
   "__start__" -> "build" [label="initial"];
+  "build" -> "decide" [label="failure"];
   "build" -> "decide" [label="success"];
   "decide" -> "deploy" [label="match[0]"];
   "decide" -> "deploy_staging" [label="match[1]"];

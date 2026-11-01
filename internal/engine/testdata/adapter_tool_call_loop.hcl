@@ -33,6 +33,7 @@ step "call" {
   tools = [adapter.callee.default.tools.helper_task]
 
   outcome "success" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" { terminal = true }

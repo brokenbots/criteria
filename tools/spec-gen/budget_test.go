@@ -20,9 +20,11 @@ import (
 // publication instead of claiming a live copilot adapter render (+13 words).
 // 6345 reflects KB-264: the outcome schema row documents the adapter
 // default-output-type doctrine — a typed schema replaces the default, and
-// untyped outcomes resolve their outputs from it (+26 words).
+// untyped outcomes resolve their outputs from it (+26 words). 6520
+// reflects static FSM graph verification and outcome completeness
+// doctrine (+~170 words).
 func TestSpecTokenBudget_UnderEightThousandWords(t *testing.T) {
-	const maxWords = 6345
+	const maxWords = 6520
 	data, err := os.ReadFile("../../docs/LANGUAGE-SPEC.md")
 	if err != nil {
 		t.Fatalf("docs/LANGUAGE-SPEC.md not found: %v", err)

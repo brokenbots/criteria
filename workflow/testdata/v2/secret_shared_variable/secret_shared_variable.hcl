@@ -18,6 +18,7 @@ step "run" {
     key = data.internal.token.value
   }
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" { terminal = true }

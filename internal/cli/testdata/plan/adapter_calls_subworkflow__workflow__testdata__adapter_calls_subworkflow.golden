@@ -13,12 +13,12 @@ steps (declaration order):
   begin
     input keys: (none)
     allow_tools: (none)
-    outcomes: success -> finish
+    outcomes: success -> finish, failure -> finish
   finish   adapter=shell.host
     input keys: (none)
     allow_tools: (none)
     tools: shell.host.tools.status
-    outcomes: success -> done
+    outcomes: success -> done, failure -> done
 
 states:
   done    terminal=true   success=true

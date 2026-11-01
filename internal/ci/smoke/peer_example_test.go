@@ -475,6 +475,7 @@ step "crash_demo" {
     delay_ms = "15000"
   }
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" {
@@ -644,6 +645,7 @@ step "greet" {
     emit_log = "per-scope-greet"
   }
   outcome "success" { next = step.break }
+  outcome "failure" { next = step.break }
 }
 
 step "break" {
@@ -658,6 +660,7 @@ step "recover" {
     emit_log = "per-scope-recover"
   }
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" {

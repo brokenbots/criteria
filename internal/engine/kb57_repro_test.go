@@ -51,19 +51,23 @@ step "develop" {
 step "write_work_log" {
   target = adapter.pipeline
   outcome "success" { next = step.commit_work_log }
+  outcome "error" { next = step.commit_work_log }
 }
 step "commit_work_log" {
   target = adapter.pipeline
   outcome "success" { next = step.push_wip_checkpoint }
+  outcome "error" { next = step.push_wip_checkpoint }
 }
 step "push_wip_checkpoint" {
   target = adapter.shell
   timeout = "40ms"
   outcome "success" { next = state.done }
+  outcome "error" { next = state.done }
 }
 step "comment_handler_failed" {
   target = adapter.pipeline
   outcome "success" { next = state.done }
+  outcome "error" { next = state.done }
 }
 state "done" {
   terminal = true
@@ -84,6 +88,7 @@ workflow {
 step "push_wip_checkpoint" {
   target = adapter.shell
   outcome "success" { next = state.done }
+  outcome "error" { next = state.done }
 }
 state "done" {
   terminal = true

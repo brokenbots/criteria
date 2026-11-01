@@ -273,6 +273,7 @@ adapter "shell" "worker" {}
 step "start" {
   target = adapter.shell.worker
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" { terminal = true }
@@ -334,6 +335,7 @@ adapter "shell" "worker" {}
 step "start" {
   target = adapter.shell.worker
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" { terminal = true }
@@ -400,6 +402,7 @@ adapter "shell" "worker" {}
 step "start" {
   target = adapter.shell.worker
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" { terminal = true }
@@ -459,6 +462,7 @@ step "start" {
   target = adapter.mcp.registry
   ` + tt.tools + `
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" { terminal = true }

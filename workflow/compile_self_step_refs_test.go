@@ -32,6 +32,7 @@ step "first" {
       value  = ` + writeValue + `
     }
   }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -75,6 +76,7 @@ step "first" {
   target = adapter.exec.default
   input { command = "echo hi" }
   outcome "success" { next = step.second }
+  outcome "failure" { next = step.second }
 }
 
 step "second" {
@@ -87,6 +89,7 @@ step "second" {
       value  = steps.first.stdout
     }
   }
+  outcome "failure" { next = step.done }
 }
 
 state "done" { terminal = true }

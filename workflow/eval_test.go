@@ -215,6 +215,7 @@ step "s" {
     command = "${each.value}"
   }
   outcome "success" { next = step.__done__ }
+  outcome "failure" { next = step.__done__ }
 }
 state "__done__" { terminal = true }
 `

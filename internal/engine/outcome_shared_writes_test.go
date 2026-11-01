@@ -99,6 +99,7 @@ step "inc" {
     value  = output.count_val
   }
   }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -150,6 +151,7 @@ step "set_val" {
     value  = output.the_msg
   }
   }
+  outcome "error" { next = step.read_val }
 }
 
 step "read_val" {
@@ -158,6 +160,7 @@ step "read_val" {
     next = step.done
     output = { result = data.internal.msg.value }
   }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -225,6 +228,7 @@ step "bad" {
     value  = output.nonexistent_key
   }
   }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -278,6 +282,7 @@ step "bad" {
     value  = output.val
   }
   }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -337,6 +342,7 @@ step "collect" {
     value  = output.tag_list
   }
   }
+  outcome "error" { next = step.read_back }
 }
 
 step "read_back" {
@@ -345,6 +351,7 @@ step "read_back" {
     next = step.done
     output = { first = data.internal.items.value[0], second = data.internal.items.value[1] }
   }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -409,6 +416,7 @@ step "read_initial" {
     next = step.done
     output = { val = data.internal.greeting.value }
   }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -474,6 +482,7 @@ step "read_back" {
     next = step.done
     output = { result = data.internal.last_tag.value }
   }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -555,6 +564,7 @@ step "read_back" {
     next = step.done
     output = { result = data.internal.done_flag.value }
   }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -615,6 +625,7 @@ step "compute" {
       value  = data.internal.counter.value + var.bump + step.output.delta
     }
   }
+  outcome "error" { next = step.read_back }
 }
 
 step "read_back" {
@@ -623,6 +634,7 @@ step "read_back" {
     next   = step.done
     output = { result = data.internal.counter.value }
   }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -697,6 +709,7 @@ step "mutate" {
       value  = data.internal.a.value
     }
   }
+  outcome "error" { next = step.read_back }
 }
 
 step "read_back" {
@@ -705,6 +718,7 @@ step "read_back" {
     next   = step.done
     output = { a_val = data.internal.a.value, b_val = data.internal.b.value }
   }
+  outcome "error" { next = step.done }
 }
 
 state "done" {

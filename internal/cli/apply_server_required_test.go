@@ -26,6 +26,7 @@ step "execute" {
     command = "echo hello"
   }
   outcome "success" { next = step.wait_for_signal }
+  outcome "done"    { next = step.done }
   outcome "failure" { next = step.failed }
 }
 

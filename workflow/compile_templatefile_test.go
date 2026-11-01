@@ -41,6 +41,7 @@ step "step1" {
     prompt = templatefile("./command.tmpl", { name = var.name })
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 `
 	diags := compileWorkflowInDir(t, dir, hclContent)
@@ -79,6 +80,7 @@ step "step1" {
     prompt = templatefile("./missing.tmpl", { name = var.name })
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 `
 	diags := compileWorkflowInDir(t, dir, hclContent)
@@ -123,6 +125,7 @@ step "step1" {
     prompt = templatefile("./bad.tmpl", { name = var.name })
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 `
 	diags := compileWorkflowInDir(t, dir, hclContent)
@@ -168,6 +171,7 @@ step "step1" {
     prompt = templatefile("./command.tmpl", { name = var.name })
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 `
 	diags := compileWorkflowInDir(t, dir, hclContent)

@@ -25,6 +25,7 @@ adapter "noop" "default" {}
 step "work" {
   target = adapter.noop.default
   ` + stepBody + `
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -74,6 +75,7 @@ adapter "noop" "default" {}
 step "work" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -113,6 +115,7 @@ adapter "noop" "default" {}
 step "work" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -152,6 +155,7 @@ adapter "noop" "default" {}
 step "work" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true

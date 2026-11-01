@@ -56,6 +56,7 @@ step "build" {
   target = adapter.noop.default
   input { command = "echo build" }
   outcome "success" { next = step.deploy }
+  outcome "failure" { next = step.deploy }
 }
 
 step "deploy" {

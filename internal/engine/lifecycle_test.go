@@ -104,6 +104,7 @@ workflow {
 step "step1" {
   target = adapter.noop
   outcome "success" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -182,6 +183,7 @@ workflow {
 step "step1" {
   target = adapter.noop
   outcome "success" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -233,6 +235,7 @@ workflow {
 step "fail_step" {
   target = adapter.noop
   outcome "success" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -282,11 +285,13 @@ workflow {
 step "step1" {
   target = adapter.noop_a
   outcome "success" { next = step.step2 }
+  outcome "error" { next = step.step2 }
 }
 
 step "step2" {
   target = adapter.noop_b
   outcome "success" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -382,6 +387,7 @@ workflow {
 step "step1" {
   target = adapter.noop
   outcome "success" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -446,11 +452,13 @@ workflow {
 step "step1" {
   target = adapter.noop_a
   outcome "success" { next = step.step2 }
+  outcome "error" { next = step.step2 }
 }
 
 step "step2" {
   target = adapter.noop_b
   outcome "success" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -556,6 +564,7 @@ adapter "noop" "default" {
 step "step1" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -649,11 +658,13 @@ step "mkdir" {
     path = var.dir
   }
   outcome "success" { next = step.use }
+  outcome "error" { next = step.use }
 }
 
 step "use" {
   target = adapter.noop.use
   outcome "success" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -741,6 +752,7 @@ adapter "noop" "use" {
 step "use" {
   target = adapter.noop.use
   outcome "success" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -1168,6 +1180,7 @@ adapter "configful" "x" {
 step "use" {
   target = adapter.configful.x
   outcome "success" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -1433,6 +1446,7 @@ adapter "noop" "default" {
 step "start" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -1582,6 +1596,7 @@ adapter "noop" "default" {
 step "start" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -1672,6 +1687,7 @@ adapter "noop" "default" {
 step "start" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -1805,6 +1821,7 @@ adapter "noop" "default" {
 step "start" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -2023,6 +2040,7 @@ adapter "copilot" "planner" {
 step "start" {
   target = adapter.shell.intake
   outcome "success" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -2128,6 +2146,7 @@ adapter "copilot" "planner" {
 step "start" {
   target = adapter.shell.intake
   outcome "success" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -2211,6 +2230,7 @@ adapter "noop" "default" {
 step "start" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -2295,11 +2315,13 @@ adapter "noop" "staging" {
 step "start" {
   target = adapter.noop.prod
   outcome "success" { next = step.staging }
+  outcome "error" { next = step.staging }
 }
 
 step "staging" {
   target = adapter.noop.staging
   outcome "success" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {

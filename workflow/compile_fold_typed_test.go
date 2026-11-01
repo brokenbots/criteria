@@ -38,6 +38,7 @@ adapter "noop" "default" {
 step "pri" {
   target = adapter.noop.default
   outcome "success" { next = step.work }
+  outcome "failure" { next = step.work }
 }
 
 step "work" {
@@ -46,6 +47,7 @@ step "work" {
     cmd = ` + inputExpr + `
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" {

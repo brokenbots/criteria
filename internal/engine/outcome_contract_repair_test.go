@@ -247,6 +247,7 @@ step "ship" {
     schema = object({ reason = string })
     next   = state.done
   }
+  outcome "error" { next = state.done }
 }
 state "done" { terminal = true }`)
 	plug := &adapterFunc{fn: func(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, rejection *criteriav2.ExecutionRejection) (adapter.Result, error) {
@@ -319,6 +320,7 @@ adapter "fake" "default" {}
 step "a" {
   target = adapter.fake.default
   outcome "again" { next = step.b }
+  outcome "error" { next = step.b }
 }
 step "b" {
   target = adapter.fake.default
@@ -368,6 +370,7 @@ step "a" {
     schema = object({ name = string })
     next   = state.done
   }
+  outcome "error" { next = state.done }
 }
 state "done" { terminal = true }`)
 	var rejections []*criteriav2.ExecutionRejection
@@ -421,6 +424,7 @@ step "ship" {
     schema = type.audit
     next   = state.done
   }
+  outcome "error" { next = state.done }
 }
 state "done" { terminal = true }
 `)

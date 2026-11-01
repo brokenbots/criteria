@@ -1970,8 +1970,14 @@ step "report" {
 ### Compilation semantics
 
 1. **Deep-compile**: The parent workflow's `compileSubworkflows` pass resolves each `source`, reads all `.hcl` files in the directory, merges them, and recursively compiles the callee into a child `FSMGraph`. All validation (type errors, undeclared adapters, missing variables) happens at compile time before any step executes.
-2. **Cycle detection**: If a subworkflow's source path already appears in the current compilation chain, a compile error is produced listing the full cycle path.
-3. **Scope isolation**: The callee declares its own adapters; sessions are isolated and torn down when the callee reaches a terminal state.
+2. **Static FSM graph verification**: Every workflow and recursively compiled subworkflow undergoes deterministic graph-theoretic verification during `criteria compile`, `criteria validate`, and `criteria apply`:
+   - **Forward reachability**: Unreachable `step`, `switch`, `wait`, or `approval` nodes fail compilation; unreachable non-`target_state` `state` blocks emit a warning.
+   - **Livelock / black-hole cycle detection**: Every forward-reachable node must be able to reach at least one terminal state (or `return`); inescapable cycles and non-terminal dead-ends fail compilation with a counterexample path (`[node_a -> node_b -> node_a]`).
+   - **`target_state` reachability**: `workflow.target_state` must be reachable from `workflow.initial_state`.
+   - **Budget & visit bound feasibility**: The shortest path from `initial_state` to `target_state` must fit within `policy.max_total_steps` and each step's `max_visits` bound.
+   - **Outcome completeness & switch determinism**: Every non-iterating step must handle both success and failure/error paths (or declare `outcome "default"` / `fallback = true`), and `switch` blocks cannot contain duplicate, constant-`false`, or shadowed `match` arms.
+3. **Cycle detection**: If a subworkflow's source path already appears in the current compilation chain, a compile error is produced listing the full cycle path.
+4. **Scope isolation**: The callee declares its own adapters; sessions are isolated and torn down when the callee reaches a terminal state.
 
 ### CLI flags
 

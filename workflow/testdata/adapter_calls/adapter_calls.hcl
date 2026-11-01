@@ -24,6 +24,7 @@ step "start" {
   target = adapter.mcp.registry
   tools  = [adapter.mcp.registry.tools, adapter.shell.worker.tools.git_status]
   outcome "success" { next = step.audit }
+  outcome "failure" { next = step.audit }
 }
 
 // Caller grants one of its own named tools.
@@ -31,6 +32,7 @@ step "audit" {
   target = adapter.shell.worker
   tools  = [adapter.shell.worker.tools.git_status]
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" { terminal = true }

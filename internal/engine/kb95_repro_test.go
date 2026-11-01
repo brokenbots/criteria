@@ -62,6 +62,7 @@ step "run_child" {
 step "collect_outcome" {
   target = adapter.fake
   outcome "success" { next = state.done }
+  outcome "error" { next = state.done }
 }
 state "done" {
   terminal = true

@@ -78,6 +78,7 @@ adapter "noop" "default" {}
 step "run" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `,
@@ -117,6 +118,7 @@ adapter "noop" "default" {}
 step "run" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 policy { max_total_steps = 10 }
@@ -157,6 +159,7 @@ adapter "noop" "default" {}
 step "run" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 permissions { allow_tools = ["*"] }
@@ -193,12 +196,14 @@ adapter "noop" "default" {}
 step "build" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `,
 		"b.hcl": `step "build" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 `,
 	})
@@ -245,6 +250,7 @@ adapter "exec" "primary" {}
 step "run" {
   target = adapter.exec.primary
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `,
@@ -271,12 +277,14 @@ adapter "noop" "default" {}
 step "step_a" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `,
 		"b.hcl": `step "step_b" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 `,
 	})
@@ -316,17 +324,20 @@ adapter "noop" "default" {}
 step "a_step" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `,
 		"b.hcl": `step "b_step" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 `,
 		"c.hcl": `step "c_step" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 `,
 	})
@@ -365,12 +376,14 @@ adapter "noop" "default" {}
 step "build" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `,
 		"b.hcl": `step "build" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 `,
 	})
@@ -436,10 +449,12 @@ adapter "exec" "runner" {}
 step "run" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 step "cleanup" {
   target = adapter.exec.runner
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 state "failed" { terminal = true }
@@ -502,6 +517,7 @@ adapter "noop" "default" {}
 step "run" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `,

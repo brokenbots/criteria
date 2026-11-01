@@ -56,13 +56,13 @@ adapter "noop" "default" {}
 step "step_one" {
   target = adapter.noop.default
   outcome "success" { next = step.step_two }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 step "step_two" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -88,13 +88,14 @@ adapter "noop" "default" {}
 step "step_one" {
   target = adapter.noop.default
   outcome "success" { next = step.step_two }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 step "step_two" {
   target = adapter.noop.default
   input { delay_ms = "30000" }
   outcome "success" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -117,7 +118,7 @@ adapter "noop" "default" {}
 step "step_one" {
   target = adapter.noop.default
   outcome "success" { next = step.gate }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 wait "gate" {
@@ -128,7 +129,7 @@ wait "gate" {
 step "step_three" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -405,20 +406,20 @@ adapter "noop" "default" {}
 step "step_one" {
   target = adapter.noop.default
   outcome "success" { next = step.step_two }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 step "step_two" {
   target = adapter.noop.default
   input { delay_ms = "500" }
   outcome "success" { next = step.step_three }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 step "step_three" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {

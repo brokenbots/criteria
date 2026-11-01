@@ -77,6 +77,57 @@ func uniqueFallbackOutcome(sp *StepSpec) hcl.Diagnostics {
 	return diags
 }
 
+// validateStepOutcomeCompleteness verifies that a non-iterating step defines
+// handling for both standard adapter failure/error paths and success paths
+// (or an explicit fallback/default outcome) so an adapter failure cannot leave
+// the FSM without a valid next transition.
+func validateStepOutcomeCompleteness(stepName string, node *StepNode) hcl.Diagnostics {
+	if len(node.Outcomes) == 0 && node.DefaultOutcome == nil {
+		return hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("step %q: at least one outcome is required", stepName),
+		}}
+	}
+	if node.DefaultOutcome != nil {
+		return nil
+	}
+	hasFallback := false
+	hasFailure := false
+	hasSuccess := false
+	for name, co := range node.Outcomes {
+		if co.Fallback {
+			hasFallback = true
+		}
+		if isFailureOutcomeName(name) {
+			hasFailure = true
+		} else {
+			hasSuccess = true
+		}
+	}
+	if !hasFailure && !hasFallback {
+		return hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("step %q: outcome completeness requires handling adapter failure/error paths: declare outcome \"failure\", outcome \"error\", outcome \"default\", or set fallback = true", stepName),
+		}}
+	}
+	if !hasSuccess {
+		return hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("step %q: outcome completeness requires handling both success and failure/error paths: declare a success outcome or outcome \"default\"", stepName),
+		}}
+	}
+	return nil
+}
+
+func isFailureOutcomeName(name string) bool {
+	switch strings.ToLower(name) {
+	case "failure", "error", "fail", "failed", "err", "rejected", "timed_out", "timeout", "aborted", "invalid", "unhandled", "crash", "cancelled", "canceled":
+		return true
+	default:
+		return false
+	}
+}
+
 // compileOneOutcome compiles a single outcome spec onto the step node,
 // returning the diagnostics raised for it.
 func compileOneOutcome(sp *StepSpec, node *StepNode, g *FSMGraph, opts CompileOpts, adapterOutputSchema map[string]ConfigField, o *OutcomeSpec, isIter bool) hcl.Diagnostics {
@@ -424,21 +475,32 @@ func nodeTargets(name string, g *FSMGraph) []string {
 	return nil
 }
 
-// mapValues returns the values of a string-keyed map (unsorted; callers sort
-// before use).
+// mapValues returns the values of a string-keyed map sorted by key for
+// deterministic graph traversal.
 func mapValues(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
 	out := make([]string, 0, len(m))
-	for _, v := range m {
-		out = append(out, v)
+	for _, k := range keys {
+		out = append(out, m[k])
 	}
 	return out
 }
 
 // stepOutcomeTargets collects the real transition targets declared by a
-// step's outcomes and default outcome.
+// step's outcomes (sorted by outcome name) and default outcome.
 func stepOutcomeTargets(step *StepNode) []string {
+	names := make([]string, 0, len(step.Outcomes))
+	for name := range step.Outcomes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
 	var targets []string
-	for _, co := range step.Outcomes {
+	for _, name := range names {
+		co := step.Outcomes[name]
 		if co.Next != "_continue" && co.Next != ReturnSentinel {
 			targets = append(targets, co.Next)
 		}

@@ -18,6 +18,7 @@ step "run_step" {
     prompt = "finish"
   }
   outcome "success" { next = state.done }
+  outcome "error" { next = state.done }
 }
 
 state "done" {

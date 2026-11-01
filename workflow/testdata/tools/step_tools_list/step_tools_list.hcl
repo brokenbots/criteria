@@ -18,6 +18,7 @@ step "start" {
   target = adapter.mcp.registry
   tools  = [adapter.mcp.registry.tools, adapter.mcp.registry.tools.search, adapter.shell.worker.tools.git_status]
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" { terminal = true }

@@ -233,7 +233,9 @@ func TestFetchingSubWorkflowResolver_LocalDelegatesAndSkipsFetcher(t *testing.T)
 	resolver := newFetchingSubWorkflowResolver([]string{root})
 	dir, pin, err := resolver.ResolveSource(context.Background(), root, "./inner")
 	require.NoError(t, err)
-	assert.Equal(t, inner, dir)
+	expectedInner, err := filepath.EvalSymlinks(inner)
+	require.NoError(t, err)
+	assert.Equal(t, expectedInner, dir)
 	assert.Nil(t, pin, "local sources carry no pin")
 	assert.Empty(t, stub.fetchCalls(), "local sources must not reach the fetcher")
 
@@ -267,6 +269,7 @@ func cascadedPinParentHCL(source, ref string) string {
 		"step \"run_inner\" {\n" +
 		"  target = subworkflow.inner\n" +
 		"  outcome \"success\" { next = step.done }\n" +
+		"  outcome \"failure\" { next = step.done }\n" +
 		"}\n\n" +
 		"state \"done\" {\n" +
 		"  terminal = true\n" +

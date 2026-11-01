@@ -298,6 +298,7 @@ step "call" {
   target = adapter.caller.default
   allow_tools = ["adapter.callee.default.tools.*", "caller.only.*", "shell:echo *"]
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 

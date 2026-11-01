@@ -43,6 +43,7 @@ subworkflow "inner_task" { source = "./inner" }
 step "call" {
   target = subworkflow.inner_task
   outcome "success" { next = step.use }
+  outcome "failure" { next = step.use }
 }
 
 step "use" {
@@ -51,6 +52,7 @@ step "use" {
     next   = step.done
     output = { x = steps.call.` + field + ` }
   }
+  outcome "failure" { next = step.done }
 }
 
 state "done" {

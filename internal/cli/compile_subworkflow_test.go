@@ -86,6 +86,7 @@ subworkflow "inner" {
 step "run_inner" {
   target = subworkflow.inner
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" {
@@ -135,6 +136,7 @@ step "run_inner" {
     greeting = "hello"
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" {
@@ -184,6 +186,7 @@ subworkflow "inner" {
 step "run_inner" {
   target = subworkflow.inner
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" {
@@ -240,6 +243,7 @@ step "run" {
     command = "echo hi"
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" {
@@ -274,6 +278,7 @@ step "run" {
     command = "echo hi"
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" {
@@ -332,6 +337,7 @@ step "greet" {
     greeting = "hello"
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 
 state "done" {
@@ -366,6 +372,10 @@ state "done" {
   ],
   "allow_tools": null,
   "outcomes": [
+    {
+      "name": "failure",
+      "next": "done"
+    },
     {
       "name": "success",
       "next": "done"

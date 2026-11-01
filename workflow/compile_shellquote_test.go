@@ -42,6 +42,7 @@ step "step1" {
     prompt = templatefile("./command.tmpl", { value = var.value })
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 `
 	diags := compileWorkflowInDir(t, dir, hclContent)
@@ -85,6 +86,7 @@ step "step1" {
     prompt = templatefile("./bad.tmpl", { value = var.value })
   }
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 `
 	diags := compileWorkflowInDir(t, dir, hclContent)

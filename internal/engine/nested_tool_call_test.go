@@ -43,6 +43,7 @@ step "call" {
   target = adapter.caller.default
   allow_tools = ["adapter.callee.default.tools.*", "caller.only.*"]
   outcome "success" { next = step.done }
+  outcome "error" { next = step.done }
 }
 state "done" { terminal = true }
 
@@ -536,6 +537,7 @@ step "call" {
   allow_tools = ["adapter.callee.default.tools.*"]
   timeout = "200ms"
   outcome "success" { next = step.done }
+  outcome "error" { next = step.done }
 }
 state "done" { terminal = true }
 `

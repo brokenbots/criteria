@@ -93,7 +93,7 @@ workflow {
   name = "t"
   version       = "0.1"
   initial_state = "decide"
-  target_state  = "done"
+  target_state  = "deploy"
 }
 
 variable "env" {
@@ -118,7 +118,6 @@ switch "decide" {
 state "deploy"         { terminal = true }
 state "staging_deploy" { terminal = true }
 state "skip"           { terminal = true }
-state "done"           { terminal = true }
 `
 	spec, diags := workflow.Parse("t.hcl", []byte(src))
 	if diags.HasErrors() {

@@ -274,6 +274,7 @@ step "run" {
     command = "echo hi"
   }
   outcome "ok" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 `
 	if err := os.WriteFile(filepath.Join(dir, "multi_error.hcl"), []byte(hclContent), 0o600); err != nil {

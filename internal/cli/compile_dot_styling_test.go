@@ -108,6 +108,7 @@ adapter "noop" "default" {}
 step "work" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -147,10 +148,12 @@ adapter "fake" "b" {
 step "step_a" {
   target = adapter.noop.a
   outcome "success" { next = step.step_b }
+  outcome "failure" { next = step.step_b }
 }
 step "step_b" {
   target = adapter.fake.b
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -266,6 +269,7 @@ adapter "noop" "default" {}
 step "build" {
   target = adapter.noop.default
   outcome "success" { next = step.decide }
+  outcome "failure" { next = step.decide }
 }
 switch "decide" {
   match {
@@ -303,6 +307,7 @@ adapter "noop" "default" {}
 step "work" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -407,6 +412,7 @@ adapter "noop" "default" {
 step "do_shell" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -793,7 +799,7 @@ adapter "noop" "default" {}
 step "work" {
   target = adapter.noop.default
   outcome "success" { next = step.done }
-  outcome "retry"   { next = step.pending }
+  outcome "failure" { next = step.done }
 }
 state "pending" {}
 state "done" {

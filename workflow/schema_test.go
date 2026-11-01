@@ -40,10 +40,12 @@ adapter "noop" "default" {}
 step "a" {
   target = adapter.noop.default
   outcome "ok" { next = step.b }
+  outcome "failure" { next = step.b }
 }
 step "b" {
   target = adapter.noop.default
   outcome "ok" { next = step.done }
+  outcome "failure" { next = step.done }
 }
 state "done" { terminal = true }
 `)

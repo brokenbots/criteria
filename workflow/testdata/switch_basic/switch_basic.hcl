@@ -6,7 +6,7 @@ workflow {
   name = "switch_basic"
   version       = "0.1"
   initial_state = "build"
-  target_state  = "done"
+  target_state  = "deploy"
 }
 
 variable "env" {
@@ -19,6 +19,7 @@ adapter "noop" "default" {}
 step "build" {
   target = adapter.noop.default
   outcome "success" { next = switch.decide }
+  outcome "failure" { next = switch.decide }
 }
 
 switch "decide" {
@@ -50,11 +51,6 @@ state "deploy_staging" {
 }
 
 state "skip_deploy" {
-  terminal = true
-  success  = true
-}
-
-state "done" {
   terminal = true
   success  = true
 }

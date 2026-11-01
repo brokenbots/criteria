@@ -49,6 +49,7 @@ step "start" {
   target = adapter.copilot.coordinator
   input {}
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 `
 	require.NoError(t, os.WriteFile(filepath.Join(rootDir, "workflow.hcl"), []byte(rootWorkflow), 0o600))
@@ -69,6 +70,7 @@ step "start" {
   target = adapter.copilot.driver
   input {}
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 `
 	require.NoError(t, os.WriteFile(filepath.Join(subDir, "workflow.hcl"), []byte(subWorkflow), 0o600))

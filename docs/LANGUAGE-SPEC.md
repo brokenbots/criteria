@@ -535,7 +535,17 @@ Each step, wait, and approval node declares one or more `outcome` blocks mapping
 
 **Terminal routing:** A `state` block with `terminal = true` terminates the run. `success = true` marks the run as succeeded; `success = false` marks it as failed. A run that reaches no terminal state is a runtime error (infinite loop guard via `policy.max_total_steps`).
 
-**Default outcome:** If a step declares only one `outcome` block and the adapter returns no named outcome, the engine routes to that single outcome automatically (implicit default). With multiple outcomes, an `outcome "default"` block must be declared.
+**Outcome completeness:** Every non-iterating `step` must handle both adapter success and failure/error paths (or declare `outcome "default"` or `fallback = true`) so failures cannot strand the FSM without a transition. Duplicate outcome labels or multiple fallback outcomes are compile errors.
+
+## Static FSM Graph Verification
+
+`criteria compile` and `criteria apply` deterministically verify the compiled FSM graph (and any `subworkflow`). Violations yield counterexample traces (`[n1 -> n2 -> ...]`) for single-turn self-correction:
+
+1. **Forward Reachability (Orphan Detection):** BFS from `initial_state`. Unreachable steps, switches, waits, or approvals fail compilation; unreachable states emit a warning.
+2. **Backward Reachability (Livelock / Dead-End Detection):** Multi-source reverse BFS from terminal exits (`terminal = true`). Forward-reachable nodes unable to reach a terminal state fail compilation with a livelock cycle or trap path trace.
+3. **`target_state` Reachability:** Proves `target_state` is reachable from `initial_state` along at least one non-failure path.
+4. **Budget & Visit Bound Feasibility:** Computes shortest-path step distance from `initial_state` to `target_state`. Fails compilation if the shortest path exceeds `policy.max_total_steps` or any step's `max_visits`.
+5. **Switch Arm Determinism:** Rejects duplicate match conditions, constant-false conditions, and match arms shadowed by earlier unconditional arms.
 
 ## Adapter tools
 
@@ -577,6 +587,7 @@ step "lint" {
 
   input { path = "pkg/engine" }
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 ```
 
@@ -643,6 +654,7 @@ adapter "noop" "default" {}
 step "hello" {
   target = adapter.noop.default
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" {
@@ -803,6 +815,7 @@ adapter "noop" "default" {}
 step "hello" {
   target = adapter.noop.default
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.done }
 }
 
 state "done" {

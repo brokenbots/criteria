@@ -271,10 +271,12 @@ workflow {
 step "a" {
   target = adapter.fake
   outcome "success" { next = step.b }
+  outcome "error" { next = step.b }
 }
 step "b" {
   target = adapter.fake
   outcome "success" { next = step.done }
+  outcome "error" { next = step.done }
 }
 state "done" { terminal = true }`)
 	sink := &fakeSink{}
@@ -331,6 +333,8 @@ workflow {
 step "a" {
   target = adapter.fake
   outcome "again" { next = step.a }
+  outcome "done"  { next = state.done }
+  outcome "error" { next = state.done }
 }
 state "done" { terminal = true }
 `)
@@ -563,6 +567,7 @@ step "run" {
   allow_tools = ["read_file"]
   outcome "success"      { next = step.done }
   outcome "needs_review" { next = step.done }
+  outcome "error"        { next = step.done }
 }
 state "done" { terminal = true }`)
 
@@ -626,6 +631,7 @@ step "run" {
   input { perm_tools = "read_file" }
   outcome "needs_review" { next = step.done }
   outcome "success"      { next = step.done }
+  outcome "error"        { next = step.done }
 }
 state "done" { terminal = true }`)
 
@@ -664,6 +670,7 @@ step "run" {
   allow_tools = ["shell:git *"]
   outcome "success"      { next = step.done }
   outcome "needs_review" { next = step.done }
+  outcome "error"        { next = step.done }
 }
 state "done" { terminal = true }`)
 
@@ -700,6 +707,7 @@ step "loop" {
   max_visits = 3
   outcome "again" { next = step.loop }
   outcome "done"  { next = step.done }
+  outcome "error" { next = step.done }
 }
 state "done" { terminal = true }
 `)
@@ -758,6 +766,7 @@ step "loop" {
   max_visits = 100
   outcome "again" { next = step.loop }
   outcome "done"  { next = step.done }
+  outcome "error" { next = step.done }
 }
 state "done" { terminal = true }
 `)
@@ -784,6 +793,7 @@ workflow {
 step "a" {
   target = adapter.fake
   outcome "success" { next = step.done }
+  outcome "error" { next = step.done }
 }
 state "done" { terminal = true }`)
 	step := g.Steps["a"]
@@ -818,6 +828,7 @@ step "work" {
   target = adapter.fake
   max_visits = 2
   outcome "done" { next = step.done }
+  outcome "error" { next = step.done }
 }
 state "done" { terminal = true }
 `)
@@ -863,6 +874,7 @@ step "loop" {
   max_visits = 5
   outcome "again" { next = step.loop }
   outcome "done"  { next = step.done }
+  outcome "error" { next = step.done }
 }
 state "done" { terminal = true }
 `)
@@ -900,6 +912,7 @@ step "loop" {
   max_visits = 5
   outcome "again" { next = step.loop }
   outcome "done"  { next = step.done }
+  outcome "error" { next = step.done }
 }
 state "done" { terminal = true }
 `)
@@ -1010,6 +1023,7 @@ step "work" {
   target = adapter.fake
   max_visits = 1
   outcome "done" { next = step.done }
+  outcome "error" { next = step.done }
 }
 state "done" { terminal = true }
 `)
@@ -1051,7 +1065,7 @@ workflow {
 step "a" {
   target = adapter.fake
   outcome "success" { next = step.done }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 state "done" { terminal = true }`)
 
@@ -1099,6 +1113,7 @@ step "process" {
     step "inner" {
       target = adapter.fake
       outcome "success" { next = continue }
+      outcome "error" { next = continue }
     }
   }
   outcome "all_succeeded" { next = step.done }

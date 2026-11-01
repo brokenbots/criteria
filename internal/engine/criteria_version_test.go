@@ -38,6 +38,7 @@ workflow {
 step "run" {
   target = adapter.fake
   outcome "success" { next = state.done }
+  outcome "error" { next = state.done }
 }
 
 state "done" {
@@ -188,6 +189,7 @@ step "loop" {
   max_visits = 5
   outcome "again" { next = step.loop }
   outcome "done"  { next = state.done }
+  outcome "error" { next = state.done }
 }
 
 state "done" {

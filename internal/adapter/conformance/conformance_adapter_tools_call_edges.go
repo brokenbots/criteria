@@ -303,6 +303,8 @@ step "call" {
   allow_tools = ["adapter.callee.default.tools.*"]
 
   outcome "success" { next = step.success }
+
+  outcome "error"   { next = step.success }
 }
 
 state "success" { terminal = true }
@@ -357,6 +359,8 @@ step "call" {
   allow_tools = ["` + callEdgesHopBGlob + `", "` + callEdgesHopCGlob + `"]
 
   outcome "success" { next = step.success }
+
+  outcome "error"   { next = step.success }
 }
 
 state "success" { terminal = true }

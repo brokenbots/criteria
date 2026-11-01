@@ -48,6 +48,7 @@ subworkflow "child" {
 step "warmup" {
   target = adapter.noop.default
   outcome "success" { next = step.engage }
+  outcome "error" { next = step.engage }
 }
 
 step "engage" {
