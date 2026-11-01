@@ -689,7 +689,7 @@ func TestLockThenValidate_FullSchemaVerification(t *testing.T) {
   name = "lock-validate-test"
   version = "1.0"
   initial_state = "hello"
-  target_state = "hello"
+  target_state = "done"
 }
 
 adapter "lockvalidate" "default" {
@@ -701,8 +701,13 @@ adapter "lockvalidate" "default" {
 step "hello" {
   target = adapter.lockvalidate.default
   input { delay_ms = "0" }
-  outcome "success" { next = state.hello }
-  outcome "failure" { next = state.hello }
+  outcome "success" { next = state.done }
+  outcome "error" { next = state.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
 }
 `
 	workflowPath := filepath.Join(workflowDir, "workflow.hcl")

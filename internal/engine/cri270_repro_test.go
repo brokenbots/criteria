@@ -135,7 +135,7 @@ adapter "noop" "default" {
 step "work" {
   target = adapter.noop.default
   outcome "success" { next = step.override }
-  outcome "failure" { next = step.override }
+  outcome "error" { next = step.override }
 }
 
 step "override" {
@@ -144,7 +144,7 @@ step "override" {
     working_directory = "/cri270/step-own-cwd"
   }
   outcome "success" { next = state.done }
-  outcome "failure" { next = state.done }
+  outcome "error" { next = state.done }
 }
 
 state "done" {
@@ -296,7 +296,7 @@ adapter "noop" "default" {
 step "work" {
   target = adapter.noop.default
   outcome "success" { next = state.done }
-  outcome "failure" { next = state.done }
+  outcome "error" { next = state.done }
 }
 
 state "done" {
@@ -361,7 +361,7 @@ step "work" {
     task = "run-intake"
   }
   outcome "success" { next = state.done }
-  outcome "failure" { next = state.done }
+  outcome "error" { next = state.done }
 }
 
 state "done" {
@@ -489,7 +489,7 @@ step "work" {
     task = "run-intake"
   }
   outcome "success" { next = state.done }
-  outcome "failure" { next = state.done }
+  outcome "error" { next = state.done }
 }
 
 state "done" {

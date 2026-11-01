@@ -183,7 +183,7 @@ subworkflow "child" {
 step "start" {
   target = subworkflow.child
   outcome "success" { next = state.done }
-  outcome "failure" { next = state.done }
+  outcome "error" { next = state.done }
 }
 
 state "done" { terminal = true }
@@ -205,7 +205,7 @@ adapter "noop" "bot" {
 step "run" {
   target = adapter.noop.bot
   outcome "success" { next = state.done }
-  outcome "failure" { next = state.done }
+  outcome "error" { next = state.done }
 }
 
 state "done" { terminal = true }
@@ -317,7 +317,7 @@ adapter "noop" "bot" {
 step "start" {
   target = adapter.noop.bot
   outcome "success" { next = state.done }
-  outcome "failure" { next = state.done }
+  outcome "error" { next = state.done }
 }
 
 state "done" { terminal = true }
@@ -393,7 +393,7 @@ adapter "noop" "bot" {
 step "start" {
   target = adapter.noop.bot
   outcome "success" { next = state.done }
-  outcome "failure" { next = state.done }
+  outcome "error" { next = state.done }
 }
 
 state "done" { terminal = true }
@@ -442,7 +442,7 @@ adapter "noop" "bot" {
 step "start" {
   target = adapter.noop.bot
   outcome "success" { next = state.done }
-  outcome "failure" { next = state.done }
+  outcome "error" { next = state.done }
 }
 
 state "done" { terminal = true }
@@ -489,7 +489,7 @@ adapter "noop" "bot" {
 step "start" {
   target = adapter.noop.bot
   outcome "success" { next = state.done }
-  outcome "failure" { next = state.done }
+  outcome "error" { next = state.done }
 }
 
 state "done" { terminal = true }

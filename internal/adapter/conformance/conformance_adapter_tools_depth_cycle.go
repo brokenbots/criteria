@@ -486,6 +486,8 @@ step "call" {
   allow_tools = ["` + depthCycleHopBGlob + `"]
 
   outcome "success" { next = step.success }
+
+  outcome "error"   { next = step.success }
 }
 
 state "success" { terminal = true }
@@ -526,6 +528,8 @@ step "call" {
   allow_tools = ["` + depthCycleHopBGlob + `"]
 
   outcome "success" { next = step.success }
+
+  outcome "error"   { next = step.success }
 }
 
 state "success" { terminal = true }
@@ -561,12 +565,14 @@ step "call" {
   target = adapter.caller.default
   tools  = [adapter.hopb.default.tools]
   outcome "success" { next = step.hop }
+  outcome "error"   { next = step.hop }
 }
 
 step "hop" {
   target = adapter.hopb.default
   tools  = [adapter.caller.default.tools]
   outcome "success" { next = state.done }
+  outcome "error"   { next = state.done }
 }
 
 state "done" { terminal = true }

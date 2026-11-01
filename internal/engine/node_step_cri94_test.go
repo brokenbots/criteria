@@ -51,7 +51,7 @@ step "check" {
       value  = output.stdout == "open"
     }
   }
-  outcome "failure" { next = step.verify }
+  outcome "error" { next = step.verify }
 }
 
 step "verify" {
@@ -60,7 +60,7 @@ step "verify" {
     next = step.done
     output = { result = data.internal.is_open.value }
   }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -101,7 +101,7 @@ step "check" {
       value  = trimspace(output.stdout) == "open"
     }
   }
-  outcome "failure" { next = step.verify }
+  outcome "error" { next = step.verify }
 }
 
 step "verify" {
@@ -110,7 +110,7 @@ step "verify" {
     next = step.done
     output = { result = data.internal.is_open.value }
   }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -146,7 +146,7 @@ step "inc" {
       value  = output.count + 1
     }
   }
-  outcome "failure" { next = step.verify }
+  outcome "error" { next = step.verify }
 }
 
 step "verify" {
@@ -155,7 +155,7 @@ step "verify" {
     next = step.done
     output = { result = data.internal.next_count.value }
   }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -191,7 +191,7 @@ step "prefix" {
       value  = "prefix:${output.token}"
     }
   }
-  outcome "failure" { next = step.verify }
+  outcome "error" { next = step.verify }
 }
 
 step "verify" {
@@ -200,7 +200,7 @@ step "verify" {
     next = step.done
     output = { result = data.internal.combined.value }
   }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -236,7 +236,7 @@ step "check" {
       value  = output.stdout
     }
   }
-  outcome "failure" { next = step.verify }
+  outcome "error" { next = step.verify }
 }
 
 step "verify" {
@@ -245,7 +245,7 @@ step "verify" {
     next = step.done
     output = { result = data.internal.flag.value }
   }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -286,7 +286,7 @@ step "check" {
       value  = output.stdout
     }
   }
-  outcome "failure" { next = step.verify }
+  outcome "error" { next = step.verify }
 }
 
 step "verify" {
@@ -295,7 +295,7 @@ step "verify" {
     next = step.done
     output = { result = data.internal.msg.value }
   }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -331,7 +331,7 @@ step "check" {
       value  = output.val
     }
   }
-  outcome "failure" { next = step.verify }
+  outcome "error" { next = step.verify }
 }
 
 step "verify" {
@@ -340,7 +340,7 @@ step "verify" {
     next = step.done
     output = { result = data.internal.num.value }
   }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -380,7 +380,7 @@ step "check" {
       value  = output.count > local.threshold
     }
   }
-  outcome "failure" { next = step.verify }
+  outcome "error" { next = step.verify }
 }
 
 step "verify" {
@@ -389,7 +389,7 @@ step "verify" {
     next = step.done
     output = { result = data.internal.above.value }
   }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -429,7 +429,7 @@ step "check" {
       value  = local.const_value
     }
   }
-  outcome "failure" { next = step.verify }
+  outcome "error" { next = step.verify }
 }
 
 step "verify" {
@@ -438,7 +438,7 @@ step "verify" {
     next = step.done
     output = { result = data.internal.msg.value }
   }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -475,7 +475,7 @@ step "collect" {
       value  = output.cleaned
     }
   }
-  outcome "failure" { next = step.verify }
+  outcome "error" { next = step.verify }
 }
 
 step "verify" {
@@ -484,7 +484,7 @@ step "verify" {
     next = step.done
     output = { result = data.internal.clean.value }
   }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -524,7 +524,7 @@ step "check" {
       value  = (output.stdout)
     }
   }
-  outcome "failure" { next = step.verify }
+  outcome "error" { next = step.verify }
 }
 
 step "verify" {
@@ -533,7 +533,7 @@ step "verify" {
     next = step.done
     output = { result = data.internal.msg.value }
   }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {

@@ -24,9 +24,9 @@ import (
 
 // rapidStepSpec describes a generated step for runtime property testing.
 type rapidStepSpec struct {
-	name       string
-	maxVisits  int
-	hasRetry   bool
+	name        string
+	maxVisits   int
+	hasRetry    bool
 	retryTarget string
 	nextTarget  string
 	failTarget  string
@@ -619,19 +619,19 @@ func TestRapid_StateMachineMultiPauseResume(t *testing.T) {
 
 		// State machine state tracked across rapid actions.
 		var (
-			currentNode   = g.InitialState
-			started       = false
-			terminated    = false
-			visits        = make(map[string]int)
-			scopeJSON     string
-			allSteps      []string
-			allTrans      []recordedTransition
-			finalDone     bool
-			finalState    string
-			finalOK       bool
-			finalFailed   bool
-			finalFailMsg  string
-			runStateFile  = filepath.Join(stateDir, "sm-run-state.json")
+			currentNode  = g.InitialState
+			started      = false
+			terminated   = false
+			visits       = make(map[string]int)
+			scopeJSON    string
+			allSteps     []string
+			allTrans     []recordedTransition
+			finalDone    bool
+			finalState   string
+			finalOK      bool
+			finalFailed  bool
+			finalFailMsg string
+			runStateFile = filepath.Join(stateDir, "sm-run-state.json")
 		)
 
 		t.Repeat(map[string]func(*rapid.T){

@@ -340,7 +340,7 @@ step "items" {
 step "post" {
   target = adapter.fake
   outcome "success" { next = step.done }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 state "done" {
   terminal = true
@@ -397,7 +397,7 @@ step "run" {
     step "body" {
       target = adapter.fake
       outcome "success" { next = continue }
-      outcome "failure" { next = continue }
+      outcome "error" { next = continue }
     }
   }
   outcome "all_succeeded" { next = step.done }
@@ -447,12 +447,12 @@ step "run" {
     step "prepare" {
       target = adapter.fake
       outcome "success" { next = step.verify }
-      outcome "failure" { next = step.verify }
+      outcome "error" { next = step.verify }
     }
     step "verify" {
       target = adapter.fake
       outcome "success" { next = continue }
-      outcome "failure" { next = continue }
+      outcome "error" { next = continue }
     }
   }
   outcome "all_succeeded" { next = step.done }
@@ -1056,7 +1056,7 @@ step "outer" {
       target = adapter.fake
       input   { label = "${each.value}" }
       outcome "success" { next = continue }
-      outcome "failure" { next = continue }
+      outcome "error" { next = continue }
     }
   }
   outcome "all_succeeded" { next = step.done }
@@ -1199,7 +1199,7 @@ step "produce" {
     step "body" {
       target = adapter.fake
       outcome "success" { next = continue }
-      outcome "failure" { next = continue }
+      outcome "error" { next = continue }
     }
   }
   outcome "all_succeeded" { next = step.consume }
@@ -1212,7 +1212,7 @@ step "consume" {
     got = "${steps.produce[0].score}"
   }
   outcome "success" { next = step.done }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -1275,7 +1275,7 @@ step "consume" {
     second_val = "${steps.produce[1].val}"
   }
   outcome "success" { next = step.done }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -1573,7 +1573,7 @@ step "consume" {
     got_alpha = "${steps.produce.alpha.val}"
   }
   outcome "success" { next = step.done }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 state "done" {
   terminal = true

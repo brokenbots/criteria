@@ -41,7 +41,7 @@ workflow {
 step "a" {
   target = adapter.fake
   outcome "success" { next = state.done }
-  outcome "failure" { next = state.done }
+  outcome "error" { next = state.done }
 }
 state "done" { terminal = true }`)
 	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": &fakeAdapter{name: "fake", outcome: "success"}}}
@@ -146,7 +146,7 @@ workflow {
 step "a" {
   target = adapter.fake
   outcome "success" { next = state.done }
-  outcome "failure" { next = state.done }
+  outcome "error" { next = state.done }
 }
 state "done" { terminal = true }`)
 	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"fake": &fakeAdapter{name: "fake", outcome: "success"}}}

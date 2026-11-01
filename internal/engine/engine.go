@@ -1314,8 +1314,7 @@ func (e *Engine) advanceTo(st *RunState, next string) {
 // engine log distinguishes an adapter session crash (a dead session, not a
 // user action) from a host-initiated run cancellation.
 func (e *Engine) handleEvalError(ctx context.Context, st *RunState, err error, sink Sink) error {
-	// Capture the visit state and variable scope, then clear the live pointer
-	// so VisitCounts() and VarScope() return a stable snapshot after the run ends.
+	// Capture visit counts and variable scope before clearing the live pointer.
 	e.clearLiveRunStatePtr()
 	e.lastVisits = st.Visits
 	e.lastVars = st.Vars
@@ -1362,7 +1361,6 @@ func (e *Engine) handleEvalError(ctx context.Context, st *RunState, err error, s
 		if wait, ok := e.graph.Waits[st.Current]; ok && wait.Duration > 0 {
 			mode = "duration"
 		}
-		e.lastVars = st.Vars
 		sink.OnRunPaused(st.Current, mode, st.PendingSignal)
 		return nil
 	}

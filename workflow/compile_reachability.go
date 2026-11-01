@@ -134,6 +134,20 @@ func nodeHasReturnEdge(name string, g *FSMGraph) bool {
 // least one terminal exit is flagged with a deterministic cycle or dead-end
 // counterexample trace.
 func checkLivelocks(g *FSMGraph, reachable map[string]bool) hcl.Diagnostics {
+	revAdj := buildReverseAdjacency(g, reachable)
+	canReachTerminal := computeCoAccessibleNodes(g, reachable, revAdj)
+
+	var diags hcl.Diagnostics
+	for _, u := range orderedReachableNodes(g, reachable) {
+		if canReachTerminal[u] {
+			continue
+		}
+		diags = append(diags, formatLivelockDiag(u, g))
+	}
+	return diags
+}
+
+func buildReverseAdjacency(g *FSMGraph, reachable map[string]bool) map[string][]string {
 	revAdj := make(map[string][]string)
 	for u := range reachable {
 		for _, v := range nodeTargets(u, g) {
@@ -143,7 +157,10 @@ func checkLivelocks(g *FSMGraph, reachable map[string]bool) hcl.Diagnostics {
 	for v := range revAdj {
 		sort.Strings(revAdj[v])
 	}
+	return revAdj
+}
 
+func computeCoAccessibleNodes(g *FSMGraph, reachable map[string]bool, revAdj map[string][]string) map[string]bool {
 	canReachTerminal := make(map[string]bool)
 	var queue []string
 	for _, name := range sortedMapKeys(g.States) {
@@ -169,28 +186,23 @@ func checkLivelocks(g *FSMGraph, reachable map[string]bool) hcl.Diagnostics {
 			}
 		}
 	}
+	return canReachTerminal
+}
 
-	var diags hcl.Diagnostics
-	for _, u := range orderedReachableNodes(g, reachable) {
-		if canReachTerminal[u] {
-			continue
-		}
-		kind, _ := g.Lookup(u)
-		trace, isCycle := reconstructLivelockTrace(u, g)
-		traceStr := strings.Join(trace, " -> ")
-		if isCycle {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("livelock detected: %s %q enters cycle [%s] with no exit path to any terminal state", kind, u, traceStr),
-			})
-		} else {
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("livelock detected: %s %q reaches dead-end [%s] with no exit path to any terminal state", kind, u, traceStr),
-			})
+func formatLivelockDiag(u string, g *FSMGraph) *hcl.Diagnostic {
+	kind, _ := g.Lookup(u)
+	trace, isCycle := reconstructLivelockTrace(u, g)
+	traceStr := strings.Join(trace, " -> ")
+	if isCycle {
+		return &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("livelock detected: %s %q enters cycle [%s] with no exit path to any terminal state", kind, u, traceStr),
 		}
 	}
-	return diags
+	return &hcl.Diagnostic{
+		Severity: hcl.DiagError,
+		Summary:  fmt.Sprintf("livelock detected: %s %q reaches dead-end [%s] with no exit path to any terminal state", kind, u, traceStr),
+	}
 }
 
 // orderedReachableNodes returns all forward-reachable nodes in a deterministic
@@ -278,16 +290,7 @@ func shortestCycleFrom(start string, g *FSMGraph) []string {
 		queue = queue[1:]
 		for _, next := range nodeTargets(curr, g) {
 			if next == start {
-				var cycle []string
-				for p := curr; p != start; p = parent[p] {
-					cycle = append(cycle, p)
-				}
-				cycle = append(cycle, start)
-				for i, j := 0, len(cycle)-1; i < j; i, j = i+1, j-1 {
-					cycle[i], cycle[j] = cycle[j], cycle[i]
-				}
-				cycle = append(cycle, start)
-				return cycle
+				return append(reconstructBFSPath(parent, start, curr), start)
 			}
 			if !visited[next] {
 				visited[next] = true
@@ -422,33 +425,39 @@ func outgoingWeightedEdges(u string, g *FSMGraph) []weightedEdge {
 
 // stepOutcomeCosts returns the static minimum (stepCost, visitCost) incurred
 // by executing step and taking outcome co.
-func stepOutcomeCosts(step *StepNode, co *CompiledOutcome, g *FSMGraph) (int, int) {
-	stepCost := 1
-	visitCost := 1
-
+func stepOutcomeCosts(step *StepNode, co *CompiledOutcome, g *FSMGraph) (stepCost, visitCost int) {
 	takesAllIterations := co.Name == "all_succeeded" ||
 		(co.Name == "any_failed" && (step.OnFailure == "continue" || step.OnFailure == "ignore"))
-
-	if takesAllIterations {
-		if step.Count != nil && !exprRefsVar(step.Count) {
-			if n, ok := foldStaticCount(step.Count, g); ok && n >= 1 {
-				stepCost = n
-				visitCost = n
-			}
-		} else if step.ForEach != nil && !exprRefsVar(step.ForEach) {
-			if n, ok := foldStaticCollectionLen(step.ForEach, g); ok && n >= 1 {
-				stepCost = n
-				visitCost = n
-			}
-		} else if step.Parallel != nil && !exprRefsVar(step.Parallel) {
-			if n, ok := foldStaticCollectionLen(step.Parallel, g); ok && n >= 1 {
-				stepCost = 1
-				visitCost = n
-			}
-		}
+	if !takesAllIterations {
+		return 1, 1
 	}
 
-	return stepCost, visitCost
+	if n, ok := staticExprCount(step.Count, g); ok {
+		return n, n
+	}
+	if n, ok := staticCollectionCount(step.ForEach, g); ok {
+		return n, n
+	}
+	if n, ok := staticCollectionCount(step.Parallel, g); ok {
+		return 1, n
+	}
+	return 1, 1
+}
+
+func staticExprCount(expr hcl.Expression, g *FSMGraph) (int, bool) {
+	if expr == nil || exprRefsVar(expr) {
+		return 0, false
+	}
+	n, ok := foldStaticCount(expr, g)
+	return n, ok && n >= 1
+}
+
+func staticCollectionCount(expr hcl.Expression, g *FSMGraph) (int, bool) {
+	if expr == nil || exprRefsVar(expr) {
+		return 0, false
+	}
+	n, ok := foldStaticCollectionLen(expr, g)
+	return n, ok && n >= 1
 }
 
 // exprRefsVar reports whether expr references any var.* variable (which can be
@@ -532,49 +541,60 @@ func checkBudgetAndVisitFeasibility(g *FSMGraph) hcl.Diagnostics {
 // shortestStepPathToTarget runs Dijkstra's algorithm from g.InitialState to
 // g.TargetState (or ReturnSentinel). When enforceMaxVisits is true, edges whose
 // visitCost exceeds step.MaxVisits (when MaxVisits > 0) are excluded.
-func shortestStepPathToTarget(g *FSMGraph, enforceMaxVisits bool) (int, []string, bool) {
+func shortestStepPathToTarget(g *FSMGraph, enforceMaxVisits bool) (minSteps int, minPath []string, found bool) {
 	dist := map[string]int{g.InitialState: 0}
 	parent := make(map[string]string)
 	visited := make(map[string]bool)
 
 	for {
-		u := ""
-		bestDist := math.MaxInt
-		for node, d := range dist {
-			if !visited[node] && (d < bestDist || (d == bestDist && node < u)) {
-				u = node
-				bestDist = d
-			}
-		}
+		u, bestDist := nextUnvisitedDijkstraNode(dist, visited)
 		if u == "" {
 			break
 		}
 		if u == g.TargetState || u == ReturnSentinel {
-			path := reconstructBFSPath(parent, g.InitialState, u)
-			if u == ReturnSentinel && len(path) > 0 && path[len(path)-1] == ReturnSentinel {
-				path[len(path)-1] = g.TargetState
-			}
-			return bestDist, path, true
+			return bestDist, finalizeTargetPath(parent, g, u), true
 		}
 		visited[u] = true
-
-		step := g.Steps[u]
-		for _, edge := range outgoingWeightedEdges(u, g) {
-			if enforceMaxVisits && step != nil && step.MaxVisits > 0 && edge.visitCost > step.MaxVisits {
-				continue
-			}
-			nd := bestDist + edge.stepCost
-			if old, exists := dist[edge.to]; !exists || nd < old {
-				dist[edge.to] = nd
-				parent[edge.to] = u
-			}
-		}
+		relaxDijkstraEdges(u, bestDist, g, enforceMaxVisits, dist, parent)
 	}
 
 	return 0, nil, false
 }
 
-func findVisitBoundViolationOnPath(path []string, g *FSMGraph) (string, int, int) {
+func nextUnvisitedDijkstraNode(dist map[string]int, visited map[string]bool) (bestNode string, bestDist int) {
+	bestDist = math.MaxInt
+	for node, d := range dist {
+		if !visited[node] && (d < bestDist || (d == bestDist && node < bestNode)) {
+			bestNode = node
+			bestDist = d
+		}
+	}
+	return bestNode, bestDist
+}
+
+func finalizeTargetPath(parent map[string]string, g *FSMGraph, u string) []string {
+	path := reconstructBFSPath(parent, g.InitialState, u)
+	if u == ReturnSentinel && len(path) > 0 && path[len(path)-1] == ReturnSentinel {
+		path[len(path)-1] = g.TargetState
+	}
+	return path
+}
+
+func relaxDijkstraEdges(u string, bestDist int, g *FSMGraph, enforceMaxVisits bool, dist map[string]int, parent map[string]string) {
+	step := g.Steps[u]
+	for _, edge := range outgoingWeightedEdges(u, g) {
+		if enforceMaxVisits && step != nil && step.MaxVisits > 0 && edge.visitCost > step.MaxVisits {
+			continue
+		}
+		nd := bestDist + edge.stepCost
+		if old, exists := dist[edge.to]; !exists || nd < old {
+			dist[edge.to] = nd
+			parent[edge.to] = u
+		}
+	}
+}
+
+func findVisitBoundViolationOnPath(path []string, g *FSMGraph) (stepName string, reqVisits, maxVisits int) {
 	for i := 0; i+1 < len(path); i++ {
 		u := path[i]
 		v := path[i+1]

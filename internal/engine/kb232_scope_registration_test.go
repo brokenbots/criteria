@@ -40,7 +40,7 @@ adapter "copilot" "planner" {
 step "start" {
   target = adapter.shell.intake
   outcome "success" { next = step.done }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {

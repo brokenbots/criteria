@@ -64,26 +64,11 @@ func validateSwitchDeterminism(switchName string, matches []MatchSpec, condition
 				Summary:  fmt.Sprintf("switch %q match[%d]: unreachable match condition shadowed by unconditional match[%d] (condition = true)", switchName, i, unconditionalTrueIdx),
 			})
 		}
-		if i < len(conditions) {
-			src := conditions[i].MatchSrc
-			if src != "" {
-				if prevIdx, dup := seenSrc[src]; dup {
-					diags = append(diags, &hcl.Diagnostic{
-						Severity: hcl.DiagError,
-						Summary:  fmt.Sprintf("switch %q match[%d]: duplicate match condition %q (already declared at match[%d])", switchName, i, src, prevIdx),
-					})
-				} else {
-					seenSrc[src] = i
-				}
-			}
+		if d := checkDuplicateSwitchMatchSrc(switchName, i, conditions, seenSrc); d != nil {
+			diags = append(diags, d)
 		}
-		attrs, _ := cs.Remain.JustAttributes()
-		conditionAttr, ok := attrs["condition"]
-		if !ok || exprRefsVar(conditionAttr.Expr) {
-			continue
-		}
-		val, foldable, fd := FoldExpr(conditionAttr.Expr, nil, graphLocals(g), opts.WorkflowDir)
-		if fd.HasErrors() || !foldable || !val.IsKnown() || val.IsNull() {
+		val, ok := foldStaticSwitchMatchCondition(cs, g, opts)
+		if !ok {
 			continue
 		}
 		if val == cty.True && unconditionalTrueIdx < 0 {
@@ -96,6 +81,34 @@ func validateSwitchDeterminism(switchName string, matches []MatchSpec, condition
 		}
 	}
 	return diags
+}
+
+func checkDuplicateSwitchMatchSrc(switchName string, idx int, conditions []SwitchCondition, seenSrc map[string]int) *hcl.Diagnostic {
+	if idx >= len(conditions) || conditions[idx].MatchSrc == "" {
+		return nil
+	}
+	src := conditions[idx].MatchSrc
+	if prevIdx, dup := seenSrc[src]; dup {
+		return &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("switch %q match[%d]: duplicate match condition %q (already declared at match[%d])", switchName, idx, src, prevIdx),
+		}
+	}
+	seenSrc[src] = idx
+	return nil
+}
+
+func foldStaticSwitchMatchCondition(cs MatchSpec, g *FSMGraph, opts CompileOpts) (cty.Value, bool) {
+	attrs, _ := cs.Remain.JustAttributes()
+	conditionAttr, ok := attrs["condition"]
+	if !ok || exprRefsVar(conditionAttr.Expr) {
+		return cty.NilVal, false
+	}
+	val, foldable, fd := FoldExpr(conditionAttr.Expr, nil, graphLocals(g), opts.WorkflowDir)
+	if fd.HasErrors() || !foldable || !val.IsKnown() || val.IsNull() {
+		return cty.NilVal, false
+	}
+	return val, true
 }
 
 // checkSwitchNameClash returns a diagnostic if the given switch name clashes

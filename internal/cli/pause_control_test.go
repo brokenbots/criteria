@@ -41,17 +41,17 @@ adapter "gate" "default" {}
 step "a" {
   target = adapter.gate.default
   outcome "success" { next = step.b }
-  outcome "failure" { next = step.b }
+  outcome "error" { next = step.b }
 }
 step "b" {
   target = adapter.gate.default
   outcome "success" { next = step.c }
-  outcome "failure" { next = step.c }
+  outcome "error" { next = step.c }
 }
 step "c" {
   target = adapter.gate.default
   outcome "success" { next = step.done }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 state "done" { terminal = true }`
 
@@ -413,17 +413,17 @@ adapter "gate" "default" {}
 step "a" {
   target = adapter.gate.default
   outcome "success" { next = step.b }
-  outcome "failure" { next = step.b }
+  outcome "error" { next = step.b }
 }
 step "b" {
   target = adapter.gate.default
   outcome "success" { next = step.c }
-  outcome "failure" { next = step.c }
+  outcome "error" { next = step.c }
 }
 step "c" {
   target = adapter.gate.default
   outcome "success" { next = step.done }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 state "done" { terminal = true }`
 

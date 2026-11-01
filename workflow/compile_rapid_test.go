@@ -300,4 +300,3 @@ func TestRapid_CompilerRejectsMutatedWorkflows(t *testing.T) {
 		}
 	})
 }
-

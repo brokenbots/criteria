@@ -105,7 +105,7 @@ workflow {
 step "work" {
   target = adapter.fake
   outcome "success" { next = step.done }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 state "done" { terminal = true }`)
 	sink := &outcomeSink{}
@@ -142,7 +142,7 @@ workflow {
 step "work" {
   target = adapter.fake
   outcome "success" { next = step.return }
-  outcome "failure" { next = step.return }
+  outcome "error" { next = step.return }
 }
 state "done" { terminal = true }`)
 	sink := &fakeSink{}
@@ -250,12 +250,12 @@ step "a" {
     next = step.b
     output = { result = "projected" }
   }
-  outcome "failure" { next = step.b }
+  outcome "error" { next = step.b }
 }
 step "b" {
   target = adapter.fake
   outcome "success" { next = step.done }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 state "done" { terminal = true }`)
 	sink := &fakeSink{}

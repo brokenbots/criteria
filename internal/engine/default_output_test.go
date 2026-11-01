@@ -76,7 +76,7 @@ step "run" {
       value  = output.OUTPUTKEY
     }
   }
-  outcome "failure" { next = step.verify }
+  outcome "error" { next = step.verify }
 }
 
 step "verify" {
@@ -85,7 +85,7 @@ step "verify" {
     next = step.done
     output = { result = data.internal.captured.value }
   }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -229,7 +229,7 @@ adapter "copilot" "default" {}
 step "plan" {
   target = adapter.copilot.default
   outcome "success" { next = step.done }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -264,7 +264,7 @@ adapter "shell" "default" {}
 step "run" {
   target = adapter.shell.default
   outcome "success" { next = step.done }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -355,7 +355,7 @@ step "report" {
     next = step.done
     output = { result = data.internal.captured.value }
   }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -397,7 +397,7 @@ step "run" {
       reason = optional(string, "(no reason)")
     })
   }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" { terminal = true }
@@ -515,7 +515,7 @@ step "verify" {
     next = step.done
     output = { result = data.internal.captured.value }
   }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done"   { terminal = true }
@@ -617,7 +617,7 @@ step "verify" {
     next = step.done
     output = { result = data.internal.captured.value }
   }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done"   { terminal = true }

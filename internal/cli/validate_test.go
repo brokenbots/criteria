@@ -20,7 +20,7 @@ workflow {
   name = "test"
   version = "1.0"
   initial_state = "hello"
-  target_state = "hello"
+  target_state = "done"
 }
 
 adapter "noop" "default" {
@@ -30,8 +30,13 @@ adapter "noop" "default" {
 step "hello" {
   target = adapter.noop.default
   input { command = "echo hi" }
-  outcome "success" { next = state.hello }
-  outcome "failure" { next = state.hello }
+  outcome "success" { next = state.done }
+  outcome "error" { next = state.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
 }
 `
 	err := os.WriteFile(path, []byte(src), 0o644)

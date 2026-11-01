@@ -139,6 +139,17 @@ func (s *promptInjectSink) OnAgentPromptInjected(step, sessionID, prompt, caller
 	s.mu.Unlock()
 }
 
+func (s *promptInjectSink) hasEntered(step string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, m := range s.markers {
+		if m == "entered:"+step {
+			return true
+		}
+	}
+	return false
+}
+
 // armForStep launches a goroutine that waits for the delivery window to be
 // open, then sends the provided prompts in order. The wait for the
 // promptable fixture is the adapter's own call log (Execute in flight);
@@ -161,6 +172,19 @@ func (s *promptInjectSink) armForStep(t *testing.T, prompts ...*pb.AgentPrompt) 
 				time.Sleep(10 * time.Millisecond)
 			}
 		} else {
+			if len(prompts) > 0 {
+				targetStep := prompts[0].GetStep()
+				deadline := time.Now().Add(5 * time.Second)
+				for {
+					if s.hasEntered(targetStep) {
+						break
+					}
+					if time.Now().After(deadline) {
+						return
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+			}
 			time.Sleep(s.settle)
 		}
 		for _, msg := range prompts {
@@ -225,7 +249,7 @@ step "a" {
   target = adapter.promptable.default
   input { ` + stepInput + ` }
   outcome "success" { next = wait.settle }
-  outcome "failure" { next = wait.settle }
+  outcome "error" { next = wait.settle }
 }
 wait "settle" {
   duration = "1500ms"
@@ -416,7 +440,7 @@ step "a" {
   target = adapter.noop.default
   input { delay_ms = "2500" }
   outcome "success" { next = step.done }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 state "done" { terminal = true }
 adapter "noop" "default" {}`)

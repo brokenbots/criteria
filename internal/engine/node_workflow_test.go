@@ -58,7 +58,7 @@ step "process" {
         label = var.prefix
       }
       outcome "success" { next = continue }
-      outcome "failure" { next = continue }
+      outcome "error" { next = continue }
     }
   }
 
@@ -127,7 +127,7 @@ step "produce" {
     step "inner" {
       target = adapter.fake_producer
       outcome "success" { next = continue }
-      outcome "failure" { next = continue }
+      outcome "error" { next = continue }
     }
   }
 
@@ -141,7 +141,7 @@ step "check" {
     received = steps.inner.result
   }
   outcome "success" { next = step.done }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -191,7 +191,7 @@ step "produce" {
     step "inner" {
       target = adapter.fake_producer
       outcome "success" { next = continue }
-      outcome "failure" { next = continue }
+      outcome "error" { next = continue }
     }
   }
 
@@ -205,7 +205,7 @@ step "consume" {
     received = steps.produce[0].tag
   }
   outcome "success" { next = step.done }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -269,7 +269,7 @@ step "process" {
     step "body" {
       target = adapter.fake
       outcome "success" { next = continue }
-      outcome "failure" { next = continue }
+      outcome "error" { next = continue }
     }
   }
 
@@ -317,7 +317,7 @@ step "process" {
     step "body_step" {
       target = adapter.noop
       outcome "success" { next = continue }
-      outcome "failure" { next = continue }
+      outcome "error" { next = continue }
     }
   }
 
@@ -379,7 +379,7 @@ workflow {
 step "pre" {
   target = adapter.noop_a
   outcome "success" { next = step.body }
-  outcome "failure" { next = step.body }
+  outcome "error" { next = step.body }
 }
 
 step "body" {
@@ -390,7 +390,7 @@ step "body" {
     step "inner" {
       target = adapter.noop_b
       outcome "success" { next = continue }
-      outcome "failure" { next = continue }
+      outcome "error" { next = continue }
     }
   }
 
@@ -401,7 +401,7 @@ step "body" {
 step "post" {
   target = adapter.noop_a
   outcome "success" { next = step.done }
-  outcome "failure" { next = step.done }
+  outcome "error" { next = step.done }
 }
 
 state "done" {
@@ -504,7 +504,7 @@ step "outer" {
     step "inner" {
       target = adapter.noop.parent_only
       outcome "success" { next = continue }
-      outcome "failure" { next = continue }
+      outcome "error" { next = continue }
     }
   }
 

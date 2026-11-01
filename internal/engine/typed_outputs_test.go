@@ -57,7 +57,7 @@ adapter "fake_consumer" "default" {}
 step "build" {
   target = adapter.fake_out.default
   outcome "success" { next = step.consume }
-  outcome "failure" { next = step.consume }
+  outcome "error" { next = step.consume }
 }
 step "consume" {
   target = adapter.fake_consumer.default

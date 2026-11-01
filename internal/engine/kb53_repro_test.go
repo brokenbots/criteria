@@ -53,22 +53,23 @@ step "develop" {
 step "create_pr" {
   target = adapter.pipeline
   outcome "success" { next = step.reviewer_loop }
-  outcome "failure" { next = step.reviewer_loop }
+  outcome "error" { next = step.reviewer_loop }
 }
 step "reviewer_loop" {
   target = adapter.pipeline
-  outcome "success"          { next = step.set_review_state }
+  outcome "success"           { next = step.set_review_state }
   outcome "changes_requested" { next = step.develop }
+  outcome "error"             { next = step.comment_handler_failed }
 }
 step "set_review_state" {
   target = adapter.pipeline
   outcome "success" { next = state.awaiting_human }
-  outcome "failure" { next = state.awaiting_human }
+  outcome "error" { next = state.awaiting_human }
 }
 step "comment_handler_failed" {
   target = adapter.pipeline
   outcome "success" { next = state.awaiting_human }
-  outcome "failure" { next = state.awaiting_human }
+  outcome "error" { next = state.awaiting_human }
 }
 state "awaiting_human" {
   terminal = true
