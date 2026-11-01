@@ -421,7 +421,7 @@ func TestNestedToolCall_NonMultiplexedCalleeSerializes(t *testing.T) {
 func TestNestedToolCall_QueuedCallCancelTyped(t *testing.T) {
 	audit := &sliceAuditWriter{}
 	calleeRec := &nestedCalleeRecorder{}
-	callee := &cri163Callee{rec: calleeRec, delay: 150 * time.Millisecond}
+	callee := &cri163Callee{rec: calleeRec, delay: 500 * time.Millisecond}
 	sm := newNestedToolCallManager(t, &nestedCallerAdapter{target: nestedCallTarget}, callee)
 	sm.Audit = audit
 	sm.SetGraph(nestedToolCallGraph())
