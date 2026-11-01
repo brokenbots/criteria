@@ -41,11 +41,17 @@ step "report" {
     command = "echo some-failed"
   }
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
 }
 
 state "done" {
   terminal = true
   success  = true
+}
+
+state "failed" {
+  terminal = true
+  success  = false
 }
 ```
 

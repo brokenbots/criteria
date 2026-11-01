@@ -40,16 +40,19 @@ switch "route" {
 step "handle_urgent" {
   target = adapter.noop.default
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
 }
 
 step "handle_normal" {
   target = adapter.noop.default
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
 }
 
 step "handle_other" {
   target = adapter.noop.default
   outcome "success" { next = state.done }
+  outcome "failure" { next = state.failed }
 }
 
 state "done" {

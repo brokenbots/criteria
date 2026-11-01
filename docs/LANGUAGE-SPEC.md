@@ -535,38 +535,17 @@ Each step, wait, and approval node declares one or more `outcome` blocks mapping
 
 **Terminal routing:** A `state` block with `terminal = true` terminates the run. `success = true` marks the run as succeeded; `success = false` marks it as failed. A run that reaches no terminal state is a runtime error (infinite loop guard via `policy.max_total_steps`).
 
-**Outcome completeness:** Every non-iterating `step` must handle both standard adapter success and failure/error paths so an adapter failure cannot leave the FSM without a valid next transition. A step satisfies outcome completeness when it either:
-- declares at least one success outcome (e.g. `outcome "success"`) and at least one failure/error outcome (`"failure"`, `"error"`, `"fail"`, `"err"`, `"rejected"`, `"timed_out"`, `"timeout"`, `"aborted"`, or `"invalid"`), or
-- declares an `outcome "default"` block, or
-- sets `fallback = true` on a declared outcome alongside a success outcome.
-
-Duplicate `outcome` labels or multiple `fallback = true` outcomes on the same step are compile errors.
+**Outcome completeness:** Every non-iterating `step` must handle both adapter success and failure/error paths (or declare `outcome "default"` or `fallback = true`) so failures cannot strand the FSM without a transition. Duplicate outcome labels or multiple fallback outcomes are compile errors.
 
 ## Static FSM Graph Verification
 
-Both `criteria compile` and `criteria apply` run a deterministic static topology and feasibility verifier over the compiled FSM graph (and recursively over every compiled `subworkflow` body). Violations produce structured compiler diagnostics with counterexample node/edge traces (`[node_a -> node_b -> ...]`) so human and LLM authors can self-correct in a single turn:
+`criteria compile` and `criteria apply` deterministically verify the compiled FSM graph (and any `subworkflow`). Violations yield counterexample traces (`[n1 -> n2 -> ...]`) for single-turn self-correction:
 
-1. **Forward Reachability (Orphan Detection):**
-   - Breadth-First Search (BFS) from `workflow.initial_state`.
-   - Any unreachable `step`, `switch`, `wait`, or `approval` node is a compile error (`step "<name>" is unreachable from initial_state`).
-   - Any unreachable non-`target_state` `state` block emits a compile warning (`state "<name>" is unreachable from initial_state`).
-2. **Backward Reachability (Livelock / Black-Hole Cycle Detection):**
-   - Multi-source BFS on the reverse adjacency graph starting from all terminal exit points (`state` where `terminal = true` or `requires != ""`, and transitions to `return`).
-   - Any forward-reachable node that cannot reach at least one terminal exit fails compilation with a deterministic cycle or dead-end counterexample trace:
-     - `livelock detected: step "<name>" enters cycle [n1 -> n2 -> n1] with no exit path to any terminal state`
-     - `livelock detected: step "<name>" reaches dead-end [n1 -> limbo] with no exit path to any terminal state`
-3. **`target_state` Reachability:**
-   - Proves that `workflow.target_state` (or `return`) is reachable from `workflow.initial_state`.
-   - If all paths from `initial_state` only reach failure states (`terminal = true, success = false`), compilation fails with:
-     `target_state "<target>" is unreachable from initial_state "<initial>": no happy path to target_state exists`
-4. **Static Budget & Visit Bound Feasibility (Shortest-Path Proof):**
-   - Computes the minimum step-execution distance $d(\text{initial\_state}, \text{target\_state})$ across all paths (accounting for static `count` and `for_each` iteration counts when known at compile time; `switch`, `wait`, `approval`, and `state` transitions cost 0 steps).
-   - If `policy.max_total_steps` is exceeded on the shortest path ($d > \text{max\_total\_steps}$), compilation fails with:
-     `unsatisfiable step_budget: shortest path from "<initial>" to "<target>" [n1 -> ... -> target] requires D steps, but budget is M`
-   - If the shortest path to `target_state` requires visiting any step more times than its configured `max_visits` bound, compilation fails with:
-     `unsatisfiable max_visits: shortest path from "<initial>" to "<target>" [n1 -> ... -> target] requires visiting step "<step>" V times, but max_visits is B`
-5. **Switch Arm Determinism:**
-   - `switch` blocks reject duplicate `match` condition expressions (`duplicate match condition`), constant `false` `match` conditions (`match condition evaluates to constant false and can never be taken`), and `match` arms shadowed by an earlier unconditional `condition = true` `match` arm (`unreachable match condition shadowed by unconditional match[i]`).
+1. **Forward Reachability (Orphan Detection):** BFS from `initial_state`. Unreachable steps, switches, waits, or approvals fail compilation; unreachable states emit a warning.
+2. **Backward Reachability (Livelock / Dead-End Detection):** Multi-source reverse BFS from terminal exits (`terminal = true`). Forward-reachable nodes unable to reach a terminal state fail compilation with a livelock cycle or trap path trace.
+3. **`target_state` Reachability:** Proves `target_state` is reachable from `initial_state` along at least one non-failure path.
+4. **Budget & Visit Bound Feasibility:** Computes shortest-path step distance from `initial_state` to `target_state`. Fails compilation if the shortest path exceeds `policy.max_total_steps` or any step's `max_visits`.
+5. **Switch Arm Determinism:** Rejects duplicate match conditions, constant-false conditions, and match arms shadowed by earlier unconditional arms.
 
 ## Adapter tools
 
