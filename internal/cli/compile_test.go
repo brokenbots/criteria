@@ -11,8 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/brokenbots/criteria/internal/testutil"
 	"github.com/spf13/cobra"
+
+	"github.com/brokenbots/criteria/internal/testutil"
 )
 
 var updateGolden = flag.Bool("update", false, "update golden files")

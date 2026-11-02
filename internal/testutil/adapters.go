@@ -12,10 +12,10 @@ import (
 )
 
 var (
-	unixDialOnce     sync.Once
-	unixDialAllowed  bool
-	tcpDialOnce      sync.Once
-	tcpDialAllowed   bool
+	unixDialOnce    sync.Once
+	unixDialAllowed bool
+	tcpDialOnce     sync.Once
+	tcpDialAllowed  bool
 )
 
 // CanDialLoopbackTCP returns whether dialing a loopback TCP socket (127.0.0.1)

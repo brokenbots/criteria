@@ -29,8 +29,9 @@ import (
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 
-	"github.com/brokenbots/criteria/internal/testutil"
 	"google.golang.org/grpc/status"
+
+	"github.com/brokenbots/criteria/internal/testutil"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	criteriav1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"

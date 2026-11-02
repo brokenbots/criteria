@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+
 	"github.com/brokenbots/criteria/internal/testutil"
 )
 

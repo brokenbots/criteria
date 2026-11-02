@@ -100,36 +100,49 @@ func (s *finalizedTestSink) snapshot() (outcomes, transitions, events []string) 
 }
 
 type kb53CopilotSink = finalizedTestSink
-type kb53CopilotEventRecorder = finalizedTestEventRecorder
 
 type baseFakeClient struct{}
 
 func (b *baseFakeClient) Info(context.Context, *v2.InfoRequest) (*v2.InfoResponse, error) {
 	return &v2.InfoResponse{Name: "test", Version: "1.0.0"}, nil
 }
+
 func (b *baseFakeClient) OpenSession(context.Context, *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) {
 	return &v2.OpenSessionResponse{}, nil
 }
+
 func (b *baseFakeClient) CloseSession(context.Context, *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {
 	return &v2.CloseSessionResponse{}, nil
 }
-func (b *baseFakeClient) Log(context.Context, *v2.LogRequest, adapterhost.LogEventSink) error { return nil }
-func (b *baseFakeClient) Permissions(context.Context, <-chan *v2.PermissionEvent) error       { return nil }
+
+func (b *baseFakeClient) Log(context.Context, *v2.LogRequest, adapterhost.LogEventSink) error {
+	return nil
+}
+
+func (b *baseFakeClient) Permissions(context.Context, <-chan *v2.PermissionEvent) error {
+	return nil
+}
+
 func (b *baseFakeClient) Prompt(context.Context, *adapterhost.PromptRequest) (*adapterhost.PromptResponse, error) {
 	return &adapterhost.PromptResponse{}, nil
 }
+
 func (b *baseFakeClient) Pause(context.Context, *v2.PauseRequest) (*v2.PauseResponse, error) {
 	return &v2.PauseResponse{}, nil
 }
+
 func (b *baseFakeClient) Resume(context.Context, *v2.ResumeRequest) (*v2.ResumeResponse, error) {
 	return &v2.ResumeResponse{}, nil
 }
+
 func (b *baseFakeClient) Snapshot(context.Context, *v2.SnapshotRequest) (*v2.SnapshotResponse, error) {
 	return &v2.SnapshotResponse{}, nil
 }
+
 func (b *baseFakeClient) Restore(context.Context, *v2.RestoreRequest) (*v2.RestoreResponse, error) {
 	return &v2.RestoreResponse{}, nil
 }
+
 func (b *baseFakeClient) Inspect(context.Context, *v2.InspectRequest) (*v2.InspectResponse, error) {
 	return &v2.InspectResponse{}, nil
 }

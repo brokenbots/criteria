@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	servertrans "github.com/brokenbots/criteria/internal/transport/server"
 	"github.com/brokenbots/criteria/internal/testutil"
+	servertrans "github.com/brokenbots/criteria/internal/transport/server"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/workflow"
 )

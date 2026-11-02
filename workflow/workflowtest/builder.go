@@ -458,6 +458,8 @@ func (b *WorkflowBuilder) WithRaw(raw string) *WorkflowBuilder {
 }
 
 // Build generates formatted, canonical HCL source.
+//
+//nolint:gocognit,funlen,gocyclo // Build serializes all builder blocks into canonical HCL text
 func (b *WorkflowBuilder) Build() string {
 	var sb strings.Builder
 
@@ -524,7 +526,8 @@ func (b *WorkflowBuilder) Build() string {
 	}
 
 	// 5. Steps
-	for _, s := range b.steps {
+	for stepIdx := range b.steps {
+		s := &b.steps[stepIdx]
 		sb.WriteString(fmt.Sprintf("step %q {\n", s.Name))
 		if s.Target != "" {
 			sb.WriteString(fmt.Sprintf("  target = %s\n", s.Target))
@@ -558,7 +561,8 @@ func (b *WorkflowBuilder) Build() string {
 		if s.RawBody != "" {
 			sb.WriteString("  " + strings.TrimSpace(s.RawBody) + "\n")
 		}
-		for _, o := range s.Outcomes {
+		for outcomeIdx := range s.Outcomes {
+			o := &s.Outcomes[outcomeIdx]
 			sb.WriteString(fmt.Sprintf("  outcome %q {\n", o.Name))
 			if o.Fallback {
 				sb.WriteString("    fallback = true\n")

@@ -128,4 +128,3 @@ func TestFixtureHelpers(t *testing.T) {
 		t.Errorf("expected subworkflow ref and input in generated HCL, got:\n%s", subHCL)
 	}
 }
-

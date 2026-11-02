@@ -91,6 +91,20 @@ here.
   `internal/adapters/*`, `internal/plugin`). Do not import `sdk/` from
   `internal/` — `sdk/pb/...` is the only permitted reach into the SDK
   tree (enforced by `make lint-imports`).
+- **Test workflow construction**: Do not write raw HCL strings, multi-line
+  print statements, or ad-hoc string formatting directly in test files to construct
+  test workflows. Always use the test workflow builder in package
+  `github.com/brokenbots/criteria/workflow/workflowtest`:
+  - `workflowtest.New()` or `workflowtest.NewStandard()` to initialize a typed
+    `WorkflowBuilder`.
+  - Fluent configuration: `.WithAdapter(...)`, `.WithEnv(...)`, `.WithStep(...)`,
+    `.WithParallel(...)`, `.WithSwitch(...)`, `.WithWait(...)`, `.WithApproval(...)`,
+    `.WithSubWorkflow(...)`.
+  - Output helpers: `.Build()` (generates canonical HCL), `.BuildToFile(t, path)`
+    (writes directly to disk), or `.Compile(t)` (parses and compiles directly into
+    a `*workflow.CompiledWorkflow`).
+  - Standard test scaffolding and shared mock adapters live in `workflowtest`
+    and `internal/testutil`.
 
 ## Common pitfalls
 
@@ -102,6 +116,9 @@ here.
   per `run_id`; avoid client-side ordering assumptions.
 - Avoid introducing CGO-only SQLite dependencies; current storage uses
   pure-Go `modernc.org/sqlite`.
+- Do not interpolate raw HCL snippets or print statements into test files.
+  Use `workflowtest.New()` / `workflowtest.Builder` to ensure type-safe,
+  canonical test workflow generation.
 - Prefer `make test` over ad-hoc partial test runs unless task scope is
   clearly limited.
 - `proto/criteria/v1/server.proto` exists in this repo because the CLI

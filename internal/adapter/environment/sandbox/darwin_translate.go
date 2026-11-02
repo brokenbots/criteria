@@ -29,6 +29,8 @@ type dnsEntry struct {
 }
 
 // FromPolicy translates a ResolvedPolicy into an SBPL Profile.
+//
+//nolint:gocritic // hugeParam: ResolvedPolicy passed by value
 func FromPolicy(p workflow.ResolvedPolicy, adapterBinary string) Profile {
 	prof := Profile{
 		DefaultDeny: true,
@@ -75,6 +77,8 @@ func FromPolicy(p workflow.ResolvedPolicy, adapterBinary string) Profile {
 
 // typeSpecific returns the named entry from a policy's TypeSpecific map, or
 // cty.NilVal when absent.
+//
+//nolint:gocritic // hugeParam: ResolvedPolicy passed by value
 func typeSpecific(p workflow.ResolvedPolicy, key string) cty.Value {
 	if p.TypeSpecific == nil {
 		return cty.NilVal

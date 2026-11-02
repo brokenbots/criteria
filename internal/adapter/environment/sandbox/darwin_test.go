@@ -108,7 +108,7 @@ func TestProfile_Render(t *testing.T) {
 		{
 			name: "wildcard network-outbound is unrestricted",
 			profile: Profile{
-				DefaultDeny:         true,
+				DefaultDeny:          true,
 				AllowNetworkWildcard: true,
 			},
 			want: []string{
@@ -121,7 +121,7 @@ func TestProfile_Render(t *testing.T) {
 		{
 			name: "exact network-outbound keeps remote ip filter",
 			profile: Profile{
-				DefaultDeny:      true,
+				DefaultDeny:       true,
 				AllowNetworkHosts: []string{"127.0.0.1:443"},
 			},
 			want: []string{
@@ -150,18 +150,18 @@ func TestProfile_Render(t *testing.T) {
 
 func TestFromPolicy(t *testing.T) {
 	tests := []struct {
-		name            string
-		policy          workflow.ResolvedPolicy
-		adapterBinary   string
-		wantReads       []string
-		wantWrites      []string
-		wantExec        []string
-		wantNetwork          []string
-		wantNetworkWildcard  bool
-		wantNetworkBind      bool
-		wantWarnings         int
-		wantBlockKext        bool
-		wantBlockMach        bool
+		name                string
+		policy              workflow.ResolvedPolicy
+		adapterBinary       string
+		wantReads           []string
+		wantWrites          []string
+		wantExec            []string
+		wantNetwork         []string
+		wantNetworkWildcard bool
+		wantNetworkBind     bool
+		wantWarnings        int
+		wantBlockKext       bool
+		wantBlockMach       bool
 	}{
 		{
 			name: "filesystem read and write directories",

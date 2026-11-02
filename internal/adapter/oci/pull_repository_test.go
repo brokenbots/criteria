@@ -6,8 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/brokenbots/criteria/internal/testutil"
 	"oras.land/oras-go/v2/registry/remote/auth"
+
+	"github.com/brokenbots/criteria/internal/testutil"
 )
 
 // TestPullerNewRepository_DedicatedClient pins the leak-fix contract in

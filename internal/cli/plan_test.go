@@ -6,8 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/brokenbots/criteria/internal/testutil"
 	"github.com/zclconf/go-cty/cty"
+
+	"github.com/brokenbots/criteria/internal/testutil"
 )
 
 func TestPlanGolden(t *testing.T) {
