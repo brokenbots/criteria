@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"go.uber.org/goleak"
+
+	"github.com/brokenbots/criteria/internal/testutil"
 )
 
 func TestMain(m *testing.M) {
@@ -21,12 +23,14 @@ func TestMain(m *testing.M) {
 	// that execute real workflows can discover an adapter out-of-process (shell
 	// and other adapters are external binaries, not in-process builtins). Tests
 	// that need a different plugin set override CRITERIA_ADAPTERS via t.Setenv.
-	dir, err := buildNoopPluginsDir()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	if testutil.CanDialUnixSockets() {
+		dir, err := buildNoopPluginsDir()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		_ = os.Setenv("CRITERIA_ADAPTERS", dir)
 	}
-	_ = os.Setenv("CRITERIA_ADAPTERS", dir)
 
 	// IgnoreCurrent captures goroutines started before tests run (e.g. race
 	// detector, test infrastructure) so they do not trigger false positives.

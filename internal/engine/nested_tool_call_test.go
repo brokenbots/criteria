@@ -29,9 +29,7 @@ workflow {
   target_state  = "done"
 }
 
-environment "shell" "prod" {
-  os = "linux"
-}
+environment "shell" "prod" {}
 
 adapter "caller" "default" {}
 adapter "callee" "default" {
@@ -522,9 +520,7 @@ workflow {
   target_state  = "done"
 }
 
-environment "shell" "prod" {
-  os = "linux"
-}
+environment "shell" "prod" {}
 
 adapter "caller" "default" {}
 adapter "callee" "default" {

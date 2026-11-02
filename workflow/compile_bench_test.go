@@ -5,8 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
+
+	"github.com/brokenbots/criteria/workflow/workflowtest"
 )
 
 // fixtureHCL returns the bytes for a named workflow fixture relative to this
@@ -46,36 +47,13 @@ func BenchmarkCompile_Hello(b *testing.B) {
 // step nodes, each using adapter "exec" with a no-op echo command. The
 // generated string exercises the HCL parser and compiler at scale.
 func gen1000StepHCL(n int) []byte {
-	var b strings.Builder
-	fmt.Fprintf(&b, `workflow {
-  name = "perf_%d_steps"
-  version       = "0.1"
-  initial_state = "step_0"
-  target_state  = "done"
-  policy { max_total_steps = %d }
-`, n, n+10)
-	for i := 0; i < n; i++ {
-		next := fmt.Sprintf("step_%d", i+1)
-		if i == n-1 {
-			next = "done"
-		}
-		fmt.Fprintf(&b, `
-  step "step_%d" {
-    target = adapter.exec.default
-    input { command = "echo step_%d" }
-    outcome "success" { next = step.%s }
-    outcome "failure" { next = step.done }
-  }
-`, i, i, next)
-	}
-	b.WriteString(`
-  state "done" {
-    terminal = true
-    success  = true
-  }
-}
-`)
-	return []byte(b.String())
+	return []byte(workflowtest.Linear(n,
+		workflowtest.LinearName(fmt.Sprintf("perf_%d_steps", n)),
+		workflowtest.LinearAdapter("exec", "default"),
+		workflowtest.LinearInput(func(i int) string {
+			return fmt.Sprintf("input { command = %q }", fmt.Sprintf("echo step_%d", i))
+		}),
+	).Build())
 }
 
 // BenchmarkCompile_1000Steps measures Parse+Compile on an in-memory generated

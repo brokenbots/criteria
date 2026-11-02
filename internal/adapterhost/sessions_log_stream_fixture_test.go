@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/brokenbots/criteria/internal/testutil"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -20,6 +21,10 @@ import (
 // emitting heartbeats on the adapter's behalf, so the host must accept those
 // heartbeats and let Execute succeed after idling past the threshold.
 func TestSessionManager_RealEarlyLogAdapter_SurvivesIdleStall(t *testing.T) {
+	testutil.RequireUnixSockets(t)
+	if testing.Short() {
+		t.Skip("skipping slow idle stall test in -short mode")
+	}
 	rec := &recordingSlogHandler{}
 	oldLogger := slog.Default()
 	slog.SetDefault(slog.New(rec))

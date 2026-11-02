@@ -20,6 +20,7 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
+	"github.com/brokenbots/criteria/workflow/workflowtest"
 )
 
 // rapidStepSpec describes a generated step for runtime property testing.
@@ -44,52 +45,52 @@ type rapidWorkflowSpec struct {
 }
 
 func (w rapidWorkflowSpec) toHCL() string {
-	var sb strings.Builder
-	sb.WriteString("workflow {\n")
-	sb.WriteString("  name          = \"rapid_runtime_test\"\n")
-	sb.WriteString("  version       = \"1.0\"\n")
-	sb.WriteString(fmt.Sprintf("  initial_state = %q\n", w.steps[0].name))
-	sb.WriteString("  target_state  = \"done\"\n")
-	sb.WriteString("  policy {\n")
-	sb.WriteString(fmt.Sprintf("    max_total_steps  = %d\n", w.maxTotalSteps))
-	sb.WriteString("    max_step_retries = 0\n")
-	sb.WriteString("  }\n")
-	sb.WriteString("}\n\n")
-	sb.WriteString("adapter \"fake\" \"default\" {}\n\n")
+	b := workflowtest.New().
+		WithHeader("rapid_runtime_test", "1.0", w.steps[0].name, "done").
+		WithPolicy(workflowtest.PolicyDef{
+			MaxTotalSteps:  w.maxTotalSteps,
+			MaxStepRetries: 0,
+		}).
+		WithAdapter("fake", "default")
+
 	if w.hasSwitch {
 		condLit := "false"
 		if w.switchCond {
 			condLit = "true"
 		}
-		sb.WriteString(fmt.Sprintf("variable \"branch_flag\" {\n  type    = bool\n  default = %s\n}\n\n", condLit))
+		b.WithVariable("branch_flag", "bool", condLit)
 	}
 
 	for _, st := range w.steps {
-		sb.WriteString(fmt.Sprintf("step %q {\n", st.name))
-		sb.WriteString("  target = adapter.fake.default\n")
+		opts := []workflowtest.StepOpt{
+			workflowtest.Target("adapter.fake.default"),
+		}
 		if st.maxVisits > 0 {
-			sb.WriteString(fmt.Sprintf("  max_visits = %d\n", st.maxVisits))
+			opts = append(opts, workflowtest.MaxVisits(st.maxVisits))
 		}
-		sb.WriteString(fmt.Sprintf("  outcome \"success\" {\n    next   = %s\n    output = { tag = %q }\n  }\n", st.nextTarget, st.name+"_ok"))
+		opts = append(opts, workflowtest.OutcomeWithOutput("success", st.nextTarget, map[string]string{"tag": fmt.Sprintf("%q", st.name+"_ok")}))
 		if st.hasRetry {
-			sb.WriteString(fmt.Sprintf("  outcome \"retry\" {\n    next   = %s\n    output = { tag = %q }\n  }\n", st.retryTarget, st.name+"_retry"))
+			opts = append(opts, workflowtest.OutcomeWithOutput("retry", st.retryTarget, map[string]string{"tag": fmt.Sprintf("%q", st.name+"_retry")}))
 		}
-		sb.WriteString(fmt.Sprintf("  outcome \"failure\" {\n    next   = %s\n    output = { tag = %q }\n  }\n", st.failTarget, st.name+"_fail"))
-		sb.WriteString("}\n\n")
+		opts = append(opts, workflowtest.OutcomeWithOutput("failure", st.failTarget, map[string]string{"tag": fmt.Sprintf("%q", st.name+"_fail")}))
+		b.WithStep(st.name, opts...)
 	}
 
 	if w.hasSwitch {
 		n := len(w.steps)
 		lastStep := fmt.Sprintf("step.step_%d", n-1)
-		sb.WriteString("switch \"switch_0\" {\n")
-		sb.WriteString(fmt.Sprintf("  match {\n    condition = var.branch_flag\n    next      = %s\n  }\n", lastStep))
-		sb.WriteString("  default {\n    next = step.failed\n  }\n")
-		sb.WriteString("}\n\n")
+		b.WithSwitch("switch_0",
+			workflowtest.Match("var.branch_flag", lastStep),
+			workflowtest.DefaultNext("step.failed"),
+		)
 	}
 
-	sb.WriteString("state \"done\" {\n  terminal = true\n  success  = true\n}\n\n")
-	sb.WriteString("state \"failed\" {\n  terminal = true\n  success  = false\n}\n")
-	return sb.String()
+	trueVal := true
+	falseVal := false
+	b.WithState("done", true, &trueVal).
+		WithState("failed", true, &falseVal)
+
+	return b.Build()
 }
 
 func genRapidWorkflowSpec() *rapid.Generator[rapidWorkflowSpec] {

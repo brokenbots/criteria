@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"pgregory.net/rapid"
+
+	"github.com/brokenbots/criteria/workflow/workflowtest"
 )
 
 type synthStep struct {
@@ -18,8 +20,7 @@ type synthStep struct {
 
 type synthSwitch struct {
 	name        string
-	condStep    string
-	matchNext   string
+	matches     []workflowtest.MatchArm
 	defaultNext string
 }
 
@@ -30,53 +31,41 @@ type synthWorkflow struct {
 }
 
 func (w synthWorkflow) RenderHCL() string {
-	var sb strings.Builder
-	sb.WriteString("workflow {\n")
-	sb.WriteString("  name          = \"rapid_synth\"\n")
-	sb.WriteString("  version       = \"1\"\n")
-	sb.WriteString(fmt.Sprintf("  initial_state = %q\n", w.steps[0].name))
-	sb.WriteString("  target_state  = \"done\"\n")
+	b := workflowtest.NewStandard().
+		WithHeader("rapid_synth", "1", w.steps[0].name, "done")
 	if w.maxTotalSteps > 0 {
-		sb.WriteString("  policy {\n")
-		sb.WriteString(fmt.Sprintf("    max_total_steps = %d\n", w.maxTotalSteps))
-		sb.WriteString("  }\n")
+		b.WithMaxTotalSteps(w.maxTotalSteps)
 	}
-	sb.WriteString("}\n\n")
-	sb.WriteString("adapter \"noop\" \"default\" {}\n\n")
 
 	for _, st := range w.steps {
-		sb.WriteString(fmt.Sprintf("step %q {\n", st.name))
-		sb.WriteString("  target = adapter.noop.default\n")
+		var opts []workflowtest.StepOpt
 		if st.maxVisits > 0 {
-			sb.WriteString(fmt.Sprintf("  max_visits = %d\n", st.maxVisits))
+			opts = append(opts, workflowtest.MaxVisits(st.maxVisits))
 		}
 		if st.successNext != "" {
-			sb.WriteString(fmt.Sprintf("  outcome \"success\" { next = %s }\n", st.successNext))
+			opts = append(opts, workflowtest.Outcome("success", st.successNext))
 		}
 		if st.retryNext != "" {
-			sb.WriteString(fmt.Sprintf("  outcome \"retry\"   { next = %s }\n", st.retryNext))
+			opts = append(opts, workflowtest.Outcome("retry", st.retryNext))
 		}
 		if st.failureNext != "" {
-			sb.WriteString(fmt.Sprintf("  outcome \"failure\" { next = %s }\n", st.failureNext))
+			opts = append(opts, workflowtest.Outcome("failure", st.failureNext))
 		}
-		sb.WriteString("}\n\n")
+		b.WithStep(st.name, opts...)
 	}
 
 	for _, sw := range w.switches {
-		sb.WriteString(fmt.Sprintf("switch %q {\n", sw.name))
-		sb.WriteString("  match {\n")
-		sb.WriteString(fmt.Sprintf("    condition = steps.%s.outcome == \"success\"\n", sw.condStep))
-		sb.WriteString(fmt.Sprintf("    next      = %s\n", sw.matchNext))
-		sb.WriteString("  }\n")
-		sb.WriteString("  default {\n")
-		sb.WriteString(fmt.Sprintf("    next = %s\n", sw.defaultNext))
-		sb.WriteString("  }\n")
-		sb.WriteString("}\n\n")
+		var swOpts []workflowtest.SwitchOpt
+		for _, m := range sw.matches {
+			swOpts = append(swOpts, workflowtest.Match(m.Condition, m.Next))
+		}
+		if sw.defaultNext != "" {
+			swOpts = append(swOpts, workflowtest.DefaultNext(sw.defaultNext))
+		}
+		b.WithSwitch(sw.name, swOpts...)
 	}
 
-	sb.WriteString("state \"done\" {\n  terminal = true\n  success  = true\n}\n\n")
-	sb.WriteString("state \"failed\" {\n  terminal = true\n  success  = false\n}\n")
-	return sb.String()
+	return b.Build()
 }
 
 func genValidWorkflow() *rapid.Generator[synthWorkflow] {
@@ -117,9 +106,13 @@ func genValidWorkflow() *rapid.Generator[synthWorkflow] {
 			last := n - 1
 			steps[last].successNext = "switch.final_gate"
 			switches = append(switches, synthSwitch{
-				name:        "final_gate",
-				condStep:    steps[last].name,
-				matchNext:   "state.done",
+				name: "final_gate",
+				matches: []workflowtest.MatchArm{
+					{
+						Condition: fmt.Sprintf("steps.%s.outcome == \"success\"", steps[last].name),
+						Next:      "state.done",
+					},
+				},
 				defaultNext: "state.failed",
 			})
 		}
@@ -197,8 +190,10 @@ func genMutatedInvalidWorkflow() *rapid.Generator[mutatedCase] {
 				}
 			}
 			for i := range base.switches {
-				if base.switches[i].matchNext == "state.done" {
-					base.switches[i].matchNext = "state.failed"
+				for j := range base.switches[i].matches {
+					if base.switches[i].matches[j].Next == "state.done" {
+						base.switches[i].matches[j].Next = "state.failed"
+					}
 				}
 				if base.switches[i].defaultNext == "state.done" {
 					base.switches[i].defaultNext = "state.failed"
@@ -243,25 +238,20 @@ func genMutatedInvalidWorkflow() *rapid.Generator[mutatedCase] {
 		default: // duplicate_switch_condition
 			last := len(base.steps) - 1
 			base.steps[last].successNext = "switch.dup_switch"
-			base.switches = nil
-			hcl := base.RenderHCL() + fmt.Sprintf(`
-switch "dup_switch" {
-  match {
-    condition = steps.%s.outcome == "success"
-    next      = state.done
-  }
-  match {
-    condition = steps.%s.outcome == "success"
-    next      = state.failed
-  }
-  default {
-    next = state.failed
-  }
-}
-`, base.steps[last].name, base.steps[last].name)
+			cond := fmt.Sprintf("steps.%s.outcome == \"success\"", base.steps[last].name)
+			base.switches = []synthSwitch{
+				{
+					name: "dup_switch",
+					matches: []workflowtest.MatchArm{
+						{Condition: cond, Next: "state.done"},
+						{Condition: cond, Next: "state.failed"},
+					},
+					defaultNext: "state.failed",
+				},
+			}
 			return mutatedCase{
 				kind:           mutation,
-				hcl:            hcl,
+				hcl:            base.RenderHCL(),
 				expectedSubstr: `switch "dup_switch" match[1]: duplicate match condition`,
 			}
 		}

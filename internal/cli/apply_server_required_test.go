@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/brokenbots/criteria/internal/testutil"
 )
 
 func TestApplyLocal_ServerRequiredSignalWait(t *testing.T) {
@@ -54,6 +56,7 @@ state "failed" {
 }
 
 func TestApplyLocal_WaitSignalNode(t *testing.T) {
+	testutil.RequireLoopbackTCP(t)
 	// Since CRI-255 a first-class wait { signal } node pauses the local run
 	// and is resolved over the run's control listener (ResolveResume), not
 	// rejected. Clear CRITERIA_LOCAL_APPROVAL so the global env value does
@@ -99,6 +102,7 @@ state "done" {
 }
 
 func TestApplyLocal_ApprovalNode(t *testing.T) {
+	testutil.RequireLoopbackTCP(t)
 	// Since CRI-255 an approval node pauses the local run and is resolved
 	// over the run's control listener (ResolveResume), not rejected. Clear
 	// CRITERIA_LOCAL_APPROVAL so the global env value does not auto-approve

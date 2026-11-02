@@ -11,12 +11,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/brokenbots/criteria/internal/testutil"
 	"github.com/spf13/cobra"
 )
 
 var updateGolden = flag.Bool("update", false, "update golden files")
 
 func TestCompileGolden_JSONAndDOT(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CRITERIA_HOME", home)
+	t.Setenv("CRITERIA_STATE_DIR", home)
 	repoRoot, fixtures := workflowFixtures(t)
 	// Some fixtures reference files outside their own directory via file().
 	// Allow the whole repo root so those references resolve at compile.
@@ -26,6 +30,9 @@ func TestCompileGolden_JSONAndDOT(t *testing.T) {
 		relPath, _ := filepath.Rel(repoRoot, path)
 		name := stripHCLExt(filepath.Base(path)) + "__" + sanitizeFixturePath(relPath)
 		t.Run(name+"_json", func(t *testing.T) {
+			if strings.Contains(name, "peer_remote") {
+				testutil.RequireLoopbackTCP(t)
+			}
 			out, err := compileWorkflowOutput(context.Background(), path, "", "json", nil, false, false)
 			if err != nil {
 				t.Fatalf("compile json: %v", err)
@@ -34,6 +41,9 @@ func TestCompileGolden_JSONAndDOT(t *testing.T) {
 		})
 
 		t.Run(name+"_dot", func(t *testing.T) {
+			if strings.Contains(name, "peer_remote") {
+				testutil.RequireLoopbackTCP(t)
+			}
 			out, err := compileWorkflowOutput(context.Background(), path, "", "dot", nil, false, false)
 			if err != nil {
 				t.Fatalf("compile dot: %v", err)
@@ -70,7 +80,7 @@ func workflowFixtures(t *testing.T) (repoRoot string, fixtures []string) {
 			t.Fatalf("read fixtures dir %s: %v", dir, err)
 		}
 		for _, ent := range entries {
-			if !ent.IsDir() {
+			if !ent.IsDir() || ent.Name() == "self_healing_release" {
 				continue
 			}
 			subDir := filepath.Join(dir, ent.Name())

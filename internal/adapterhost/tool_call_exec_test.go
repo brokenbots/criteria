@@ -309,9 +309,7 @@ workflow {
   target_state  = "done"
 }
 
-environment "shell" "prod" {
-  os = "linux"
-}
+environment "shell" "prod" {}
 
 adapter "caller" "instance" {}
 adapter "callee" "helper" {

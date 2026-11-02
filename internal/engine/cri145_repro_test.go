@@ -44,6 +44,9 @@ import (
 // provision_wanted for the whole run and a single released event paired to it
 // by scope instance ID and token ref.
 func TestCRI145_SubworkflowRedeclaredAdapterLifecycleStream(t *testing.T) {
+	if !canDialLoopbackTCP() {
+		t.Skip("skipping test: loopback TCP dialing is restricted in current environment")
+	}
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "main.chcl"), cri145RootHCL())
 	writeFile(t, filepath.Join(root, "child", "main.chcl"), cri145ChildHCL())

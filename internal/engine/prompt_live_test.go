@@ -264,6 +264,12 @@ adapter "promptable" "default" {}`
 // run plumbing, host capability gate (positive), adapter Prompt RPC, and the
 // first-class AgentPromptInjected event (CRI-259 exit criteria 2, 3, 8).
 func TestEngineAgentPromptLiveDelivery(t *testing.T) {
+	if !canDialUnixSockets() {
+		t.Skip("skipping live adapter test: dialing unix sockets is restricted in current environment")
+	}
+	if testing.Short() {
+		t.Skip("skipping live adapter test in -short mode")
+	}
 	adapterBin := buildPromptableAdapter(t)
 	callLog := filepath.Join(t.TempDir(), "promptable-calls.log")
 	t.Setenv("PROMPTABLE_CALL_LOG", callLog)
@@ -423,6 +429,12 @@ func TestEngineAgentPromptLiveDelivery(t *testing.T) {
 // declare supports_prompt, so delivery fails with UNSUPPORTED_ADAPTER and no
 // AgentPromptInjected event is emitted (CRI-259 exit criterion 4).
 func TestEngineAgentPromptUnsupportedAdapter(t *testing.T) {
+	if !canDialUnixSockets() {
+		t.Skip("skipping live adapter test: dialing unix sockets is restricted in current environment")
+	}
+	if testing.Short() {
+		t.Skip("skipping live adapter test in -short mode")
+	}
 	adapterBin := buildNoopAdapter(t)
 	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
 		return adapterBin, nil

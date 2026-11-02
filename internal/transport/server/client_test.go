@@ -28,6 +28,7 @@ import (
 	"go.uber.org/goleak"
 
 	"github.com/brokenbots/criteria/events"
+	"github.com/brokenbots/criteria/internal/testutil"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
 )
@@ -354,6 +355,7 @@ func (f *fakeServer) Control(ctx context.Context, _ *connect.Request[pb.ControlS
 
 func startFakeServer(t *testing.T, f *fakeServer) string {
 	t.Helper()
+	testutil.RequireLoopbackTCP(t)
 	// Register goleak check before any goroutine-spawning setup so that its
 	// cleanup (LIFO order) runs after the server and connection cleanup below.
 	requireNoGoroutineLeak(t)

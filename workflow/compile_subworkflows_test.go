@@ -11,47 +11,25 @@ import (
 	"github.com/hashicorp/hcl/v2"
 
 	"github.com/brokenbots/criteria/workflow/lockfile"
+	"github.com/brokenbots/criteria/workflow/workflowtest"
 )
 
 // minimalCalleeHCL returns a minimal valid callee workflow HCL with the given name.
 // Variables is a map from varName -> hasDefault (true = has default, false = required).
 func minimalCalleeHCL(name string, variables map[string]bool) string {
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("workflow {\n  name = %q\n  version = \"1\"\n  initial_state = \"done\"\n  target_state  = \"done\"\n}\n\n", name))
-	for varName, hasDefault := range variables {
-		if hasDefault {
-			sb.WriteString(fmt.Sprintf("variable %q {\n  type    = string\n  default = \"default_value\"\n}\n", varName))
-		} else {
-			sb.WriteString(fmt.Sprintf("variable %q {\n  type = string\n}\n", varName))
-		}
-	}
-	sb.WriteString("state \"done\" {\n  terminal = true\n  success  = true\n}\n")
-	return sb.String()
+	return workflowtest.CalleeHCL(name, variables)
 }
 
 // writeSubworkflowDir creates a directory with a single main.hcl file containing the given HCL content.
 func writeSubworkflowDir(t *testing.T, parent, name, content string) string {
 	t.Helper()
-	dir := filepath.Join(parent, name)
-	if err := os.Mkdir(dir, 0o755); err != nil {
-		t.Fatalf("create subworkflow dir %q: %v", dir, err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "main.hcl"), []byte(content), 0o644); err != nil {
-		t.Fatalf("write main.hcl in %q: %v", dir, err)
-	}
-	return dir
+	return workflowtest.WriteDir(t, parent, name, content)
 }
 
 // parentHCLWithSubworkflow returns a parent workflow HCL that declares a subworkflow with the given source.
 // inputAttrs is the raw content of the input = { ... } block, or "" for no input.
 func parentHCLWithSubworkflow(swName, source, inputAttrs string) string {
-	var sw string
-	if inputAttrs != "" {
-		sw = fmt.Sprintf("subworkflow %q {\n  source = %q\n  input = {\n    %s\n  }\n}\n\n", swName, source, inputAttrs)
-	} else {
-		sw = fmt.Sprintf("subworkflow %q {\n  source = %q\n}\n\n", swName, source)
-	}
-	return fmt.Sprintf("workflow {\n  name = \"parent\"\n  version = \"1\"\n  initial_state = \"done\"\n  target_state  = \"done\"\n}\n\n%sstate \"done\" {\n  terminal = true\n  success  = true\n}\n", sw)
+	return workflowtest.ParentWithSubworkflow(swName, source, inputAttrs)
 }
 
 // compileParentSpec parses and compiles a workflow HCL with a LocalSubWorkflowResolver.

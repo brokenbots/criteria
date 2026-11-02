@@ -16,6 +16,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/brokenbots/criteria/internal/testutil"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
@@ -402,6 +403,7 @@ func TestServerViewer(t *testing.T) {
 // TestServerLiveOverSocket exercises the full loop: bind, serve, request,
 // stop — the same path apply and serve-ui take (real net.Listener).
 func TestServerLiveOverSocket(t *testing.T) {
+	testutil.RequireLoopbackTCP(t)
 	srv := newTestServer(t)
 	ln, err := srv.Listen("127.0.0.1", 0)
 	if err != nil {

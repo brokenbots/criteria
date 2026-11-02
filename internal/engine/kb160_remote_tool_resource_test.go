@@ -327,6 +327,9 @@ func kb160AwaitRun(t *testing.T, sink *loopOutputSink, done chan error, timeout 
 // adapter's secrets), one execution per tool call, one close at owner
 // teardown — and the callee's outputs reach every caller.
 func TestKB160_ParallelIterationRoutesRemoteToolResourceThroughPeer(t *testing.T) {
+	if !canDialLoopbackTCP() {
+		t.Skip("skipping test: loopback TCP dialing is restricted in current environment")
+	}
 	listen := kb160ReservePort(t)
 	g := kb160RemoteGraph(t, listen)
 	callers := &kb58CallerProbe{}

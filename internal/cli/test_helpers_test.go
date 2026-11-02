@@ -6,25 +6,43 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/brokenbots/criteria/internal/testutil"
+)
+
+var (
+	cliNoopBinOnce sync.Once
+	cliNoopBinPath string
+	cliFailBinOnce sync.Once
+	cliFailBinPath string
 )
 
 func buildNoopAdapterBinary(t *testing.T) string {
 	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve caller path")
-	}
-	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
-	binary := filepath.Join(t.TempDir(), "criteria-adapter-noop")
+	testutil.RequireUnixSockets(t)
+	cliNoopBinOnce.Do(func() {
+		_, file, _, ok := runtime.Caller(0)
+		if !ok {
+			t.Fatal("resolve caller path")
+		}
+		moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
+		dir, err := os.MkdirTemp("", "criteria-cli-noop-*")
+		if err != nil {
+			t.Fatalf("create temp dir: %v", err)
+		}
+		binary := filepath.Join(dir, "criteria-adapter-noop")
 
-	cmd := exec.Command("go", "build", "-o", binary, "./internal/adapter/conformance/testdata/noop")
-	cmd.Dir = moduleRoot
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("build noop adapter: %v\n%s", err, string(out))
-	}
-	return binary
+		cmd := exec.Command("go", "build", "-o", binary, "./internal/adapter/conformance/testdata/noop")
+		cmd.Dir = moduleRoot
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("build noop adapter: %v\n%s", err, string(out))
+		}
+		cliNoopBinPath = binary
+	})
+	return cliNoopBinPath
 }
 
 // buildFailAdapterBinary builds a test adapter that always returns outcome
@@ -32,20 +50,28 @@ func buildNoopAdapterBinary(t *testing.T) string {
 // target adapter.fail.default.
 func buildFailAdapterBinary(t *testing.T) string {
 	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve caller path")
-	}
-	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
-	binary := filepath.Join(t.TempDir(), "criteria-adapter-fail")
+	testutil.RequireUnixSockets(t)
+	cliFailBinOnce.Do(func() {
+		_, file, _, ok := runtime.Caller(0)
+		if !ok {
+			t.Fatal("resolve caller path")
+		}
+		moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
+		dir, err := os.MkdirTemp("", "criteria-cli-fail-*")
+		if err != nil {
+			t.Fatalf("create temp dir: %v", err)
+		}
+		binary := filepath.Join(dir, "criteria-adapter-fail")
 
-	cmd := exec.Command("go", "build", "-o", binary, "./internal/adapter/conformance/testdata/fail")
-	cmd.Dir = moduleRoot
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("build fail adapter: %v\n%s", err, string(out))
-	}
-	return binary
+		cmd := exec.Command("go", "build", "-o", binary, "./internal/adapter/conformance/testdata/fail")
+		cmd.Dir = moduleRoot
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("build fail adapter: %v\n%s", err, string(out))
+		}
+		cliFailBinPath = binary
+	})
+	return cliFailBinPath
 }
 
 func writeWorkflowFile(t *testing.T, contents string) string {

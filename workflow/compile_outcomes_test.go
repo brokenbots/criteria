@@ -6,31 +6,13 @@ package workflow
 import (
 	"strings"
 	"testing"
+
+	"github.com/brokenbots/criteria/workflow/workflowtest"
 )
 
 // minimalWorkflowWithStep wraps a step body in a minimal compilable workflow.
 func minimalWorkflowWithStep(stepBody string) string {
-	return `
-workflow {
-  name = "t"
-  version       = "0.1"
-  initial_state = "work"
-  target_state  = "done"
-}
-adapter "noop" "default" {}
-step "work" {
-  target = adapter.noop.default
-  ` + stepBody + `
-}
-state "done" {
-  terminal = true
-  success  = true
-}
-state "failed" {
-  terminal = true
-  success  = false
-}
-`
+	return workflowtest.WrapStep(stepBody)
 }
 
 // TestCompileOutcome_NextIsStep verifies that next = step.<step_name> compiles

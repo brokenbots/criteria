@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/brokenbots/criteria/internal/testutil"
 )
 
 // errResolver is a ConsoleResumeResolver scripted by the test.
@@ -48,6 +49,7 @@ type recordedCastleRequest struct {
 // fingerprint, for the response-header whitelist; anything else answers 404.
 func fakeCastle(t *testing.T, logs *[]recordedCastleRequest) string {
 	t.Helper()
+	testutil.RequireLoopbackTCP(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		*logs = append(*logs, recordedCastleRequest{
@@ -651,6 +653,7 @@ func TestServerMountsConsole(t *testing.T) {
 // castle answering a redirect is passed through as the status it returned —
 // the caller's Authorization is never replayed at the redirect target.
 func TestConsoleProxyRefusesRedirects(t *testing.T) {
+	testutil.RequireLoopbackTCP(t)
 	replayed := &[]recordedCastleRequest{}
 	steal := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		*replayed = append(*replayed, recordedCastleRequest{path: r.URL.Path, headers: r.Header.Clone()})

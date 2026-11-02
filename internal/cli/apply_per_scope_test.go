@@ -34,6 +34,7 @@ import (
 	applytest "github.com/brokenbots/criteria/internal/cli/applytest"
 	"github.com/brokenbots/criteria/internal/engine"
 	"github.com/brokenbots/criteria/internal/run"
+	"github.com/brokenbots/criteria/internal/testutil"
 	servertrans "github.com/brokenbots/criteria/internal/transport/server"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
@@ -191,6 +192,7 @@ state "done" {
 // pin for phone-home accept).
 func writeScopeSessionWorkflow(t *testing.T, contents string, extraAdapterDefinitions ...string) (workflowPath string) {
 	t.Helper()
+	testutil.RequireUnixSockets(t)
 	dir := t.TempDir()
 	workflowPath = filepath.Join(dir, "workflow.hcl")
 	if err := os.WriteFile(workflowPath, []byte(contents), 0o644); err != nil {
@@ -463,6 +465,8 @@ func (l *singleConnListener) Addr() net.Addr { return l.conn.LocalAddr() }
 
 func newPhoneHomeDialer(t *testing.T) *phoneHomeDialer {
 	t.Helper()
+	testutil.RequireLoopbackTCP(t)
+	testutil.RequireUnixSockets(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	d := &phoneHomeDialer{
 		ctx:         ctx,

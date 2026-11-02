@@ -16,6 +16,7 @@ import (
 	"time"
 
 	servertrans "github.com/brokenbots/criteria/internal/transport/server"
+	"github.com/brokenbots/criteria/internal/testutil"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/workflow"
 )
@@ -631,6 +632,7 @@ func TestBuildLocalCheckpointFn_VisitsPersisted(t *testing.T) {
 // leaving the persisted checkpoint with nil/empty visits — which would cause
 // subsequent crash-recovery resumes to ignore prior visit history.
 func TestBuildReattachTrackerAndEngine_VisitsPersisted(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	stateDir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 
@@ -693,6 +695,7 @@ func TestBuildReattachTrackerAndEngine_VisitsPersisted(t *testing.T) {
 // TestResumeOneLocalRun_HappyPath verifies that a local checkpoint is resumed
 // and the checkpoint file is cleaned up after successful completion.
 func TestResumeOneLocalRun_HappyPath(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	stateDir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 
@@ -755,6 +758,7 @@ func TestResumeOneLocalRun_MissingWorkflow(t *testing.T) {
 // immediately, making mid-step crash recovery useless. The fix restarts the
 // interrupted step at attempt 1, so the resume completes the step.
 func TestResumeOneLocalRun_FreshAttemptBudgetOnResume(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	stateDir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 
@@ -802,6 +806,7 @@ func TestResumeOneLocalRun_FreshAttemptBudgetOnResume(t *testing.T) {
 // exhausted max_visits before the crash still fails terminally instead of
 // looping forever across restarts.
 func TestResumeOneLocalRun_VisitsRestored(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	stateDir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 
@@ -945,6 +950,7 @@ func TestAttemptReattach_Success(t *testing.T) {
 // response carries Attempt=1 with max_step_retries=0 (maxAttempts=1); under
 // the pre-fix semantics nextAttempt=2 > 1 dispatched to a RunFailed resume.
 func TestResumeActiveRun_FreshAttemptBudgetOnResume(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	stateDir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 
@@ -1150,6 +1156,7 @@ func TestResumePausedRun_DualWriteMirrorsEventsFile(t *testing.T) {
 // (the CRI-302 re-run stayed "running" when provisioning failures were
 // silent).
 func TestResumeActiveRun_MaxRetriesDualWriteMirrorsEventsFile(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	stateDir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 
@@ -1226,6 +1233,7 @@ state "failed" {
 // enforced against the restored count. With Visits={"work":1} and
 // max_visits=1, the first incrementVisit call in the resumed engine must fail.
 func TestResumeActiveRun_VisitsRestored(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	stateDir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 
@@ -1427,6 +1435,7 @@ func hasEnvelope(envs []*pb.Envelope, match func(*pb.Envelope) bool) bool {
 // driver.
 func newRecoveredRunFixture(t *testing.T, resp *pb.ReattachRunResponse, runID string) (*StepCheckpoint, *workflow.FSMGraph, *fakeTransport, *slog.Logger, *bytes.Buffer) {
 	t.Helper()
+	testutil.RequireUnixSockets(t)
 	stateDir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 	wfFile := writeWorkflowFile(t, recoveryPauseWorkflow)
@@ -1715,6 +1724,8 @@ func TestResumeActiveRun_RunCancelForeignRunIDLoggedNotRun(t *testing.T) {
 // gone): the decision arrives via ResolveResume, the run completes, and the
 // checkpoint is removed.
 func TestResumeOneLocalRun_ServerNodeResolved(t *testing.T) {
+	testutil.RequireLoopbackTCP(t)
+	testutil.RequireUnixSockets(t)
 	stateDir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", stateDir)
 

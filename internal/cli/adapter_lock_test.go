@@ -16,6 +16,7 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter/oci"
 	"github.com/brokenbots/criteria/internal/adapter/signing"
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	"github.com/brokenbots/criteria/internal/testutil"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
@@ -647,6 +648,7 @@ func TestRunLock_ExtractsBinaryForSchemaVerification(t *testing.T) {
 }
 
 func TestLockThenValidate_FullSchemaVerification(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	ctx := context.Background()
 
 	// Save the real noop binary built by TestMain before overriding

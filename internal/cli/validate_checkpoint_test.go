@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/brokenbots/criteria/internal/testutil"
 )
 
 // TestValidate_WorkflowWithCheckpointingAdapter is the CRI-203 acceptance
@@ -20,6 +22,7 @@ import (
 // fixture's missing output schema produces; an unresolved binary would have
 // produced the "schema unverified" warning instead.
 func TestValidate_WorkflowWithCheckpointingAdapter(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	dir := t.TempDir()
 	plugins := t.TempDir()
 	buildStatefulTestPlugin(t, plugins)

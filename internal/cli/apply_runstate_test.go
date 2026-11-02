@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/brokenbots/criteria/internal/runstate"
+	"github.com/brokenbots/criteria/internal/testutil"
 )
 
 // newTestLogger returns a quiet test logger.
@@ -38,6 +39,7 @@ func freePort(t *testing.T) int {
 // answers 204.
 func waitHealth(t *testing.T, base string) {
 	t.Helper()
+	testutil.RequireLoopbackTCP(t)
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		res, err := http.Get(base + "/runview/api/health")

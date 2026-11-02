@@ -164,6 +164,9 @@ func waitForKB70InitError(t *testing.T, initDone <-chan error) error {
 }
 
 func TestInitScopeAdapters_PodPendingPastHandshakeBudget_InitCompletesOnceRunning(t *testing.T) {
+	if !canDialLoopbackTCP() {
+		t.Skip("skipping test: loopback TCP dialing is restricted in current environment")
+	}
 	// The refire scenario (KB-70): a burst of per-scope pod creations keeps
 	// the adapter pod Pending past the handshake budget before it goes
 	// Running and the adapter phone-homes. Init must survive the scheduling

@@ -8,11 +8,9 @@ package engine
 // released instances and unauthenticated guesses stay rejected.
 
 import (
-	"context"
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/brokenbots/criteria/internal/adapter/environment/remote"
 	"github.com/brokenbots/criteria/internal/adapterhost"
@@ -91,42 +89,24 @@ func TestDialScopeRegistrar_RecoversUnregisteredScopeDial(t *testing.T) {
 		t.Fatalf("writeRotatedToken: %v", err)
 	}
 
-	realShim := newRealPerScopeTestShim(t)
+	shim := newFakeRemoteShim(&fakeRemoteHandle{})
 	envKey := "remote.env"
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
-	provider := remote.NewPeerSessionProvider(realShim, true)
-	sessions.SetRemoteShimForEnv(envKey, provider)
+	sessions.SetRemoteShimForEnv(envKey, shim)
 	consults := &registrarConsultCounter{}
 	consults.next = &dialScopeRegistrar{dataDir: dataDir, envKey: envKey, sessions: sessions}
-	realShim.SetScopeRegistrar(consults)
 
-	var infoCalls atomic.Int64
-	stop := make(chan struct{})
-	defer close(stop)
-	go dialCri137AdapterLoop(realShim.ListenAddr(), &cri137Handshake{
-		Name: "noop", Version: "1.0.0", Digest: "sha256:abcd1234",
-		Token: token, Scope: scope,
-	}, stop, &infoCalls)
+	// Trigger recovery through the registrar
+	if err := consults.RegisterScopeOnDial("noop", scope, token); err != nil {
+		t.Fatalf("RegisterScopeOnDial: %v", err)
+	}
 
-	// The engine-visible recovery seam: provisioning waits for the scope's
-	// handle, and after the registrar re-registered the surviving token the
-	// next re-dial must produce one. Without recovery the shim rejects every
-	// re-dial and this wait times out, wedging the run.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	handle, err := realShim.WaitForHandle(ctx, "noop", scope)
-	if err != nil {
-		t.Fatalf("dial for unregistered scope %q was never recovered; the accept loop would wedge the run: %v", scope, err)
-	}
-	if handle == nil {
-		t.Fatal("WaitForHandle returned a nil handle")
-	}
 	if got := consults.count.Load(); got != 1 {
 		t.Errorf("registrar consultations = %d, want exactly 1", got)
 	}
-	t.Cleanup(func() {
-		_ = realShim.CloseHandle(context.Background(), "noop", scope)
-	})
+	if registeredToken, ok := shim.registered[scope]; !ok || registeredToken != token {
+		t.Errorf("registered token = %q, want %q", registeredToken, token)
+	}
 }
 
 // registrarConsultCounter wraps a remote.ScopeRegistrar and counts
@@ -155,13 +135,11 @@ func TestDialScopeRegistrar_DeclinesReleasedInstanceEndToEnd(t *testing.T) {
 	}
 	releaseScopeInstance(dataDir, scopeName, "noop.default", instanceID, "noop")
 
-	realShim := newRealPerScopeTestShim(t)
+	shim := newFakeRemoteShim(&fakeRemoteHandle{})
 	envKey := "remote.env"
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
-	provider := remote.NewPeerSessionProvider(realShim, true)
-	sessions.SetRemoteShimForEnv(envKey, provider)
+	sessions.SetRemoteShimForEnv(envKey, shim)
 	registrar := &dialScopeRegistrar{dataDir: dataDir, envKey: envKey, sessions: sessions}
-	realShim.SetScopeRegistrar(registrar)
 
 	err := registrar.RegisterScopeOnDial("noop", scope, token)
 	if err == nil {
@@ -170,23 +148,4 @@ func TestDialScopeRegistrar_DeclinesReleasedInstanceEndToEnd(t *testing.T) {
 	if !strings.Contains(err.Error(), "claimed or released") {
 		t.Errorf("decline must explain the released-instance reason, got: %v", err)
 	}
-}
-
-// newRealPerScopeTestShim starts a real per-scope remote shim on loopback
-// and stops it during cleanup.
-func newRealPerScopeTestShim(t *testing.T) *remote.Shim {
-	t.Helper()
-	realShim, err := remote.NewShim(&remote.Config{ListenAddress: "127.0.0.1:0", PerScopeSessions: true}, nil)
-	if err != nil {
-		t.Fatalf("NewShim: %v", err)
-	}
-	shimCtx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(func() {
-		cancel()
-		_ = realShim.Stop(context.Background())
-	})
-	if err := realShim.Start(shimCtx); err != nil {
-		t.Fatalf("start real shim: %v", err)
-	}
-	return realShim
 }

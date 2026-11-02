@@ -10,6 +10,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/brokenbots/criteria/internal/testutil"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -18,6 +19,7 @@ import (
 // stateful adapter binary: mode blob, schema stateful.v1, 64KiB cap,
 // per-turn granularity.
 func TestLoader_Info_PropagatesStateDeclarationViaProto(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	loader := NewLoaderWithDiscovery(func(string) (string, error) { return testStatefulAdapterBin, nil })
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
@@ -55,6 +57,7 @@ func TestLoader_Info_PropagatesStateDeclarationViaProto(t *testing.T) {
 // to a nil declaration, so adapters without a declaration behave exactly as
 // today.
 func TestLoader_Info_StateDeclarationAbsent(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	loader := NewLoaderWithDiscovery(func(string) (string, error) { return testNoopAdapterBin, nil })
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 

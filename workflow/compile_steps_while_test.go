@@ -7,31 +7,13 @@ package workflow
 import (
 	"strings"
 	"testing"
+
+	"github.com/brokenbots/criteria/workflow/workflowtest"
 )
 
 // whileWorkflow wraps a while step body in a minimal compilable workflow.
 func whileWorkflow(stepBody string) string {
-	return `
-workflow {
-  name = "t"
-  version       = "0.1"
-  initial_state = "work"
-  target_state  = "done"
-}
-adapter "noop" "default" {}
-step "work" {
-  target   = adapter.noop.default
-  ` + stepBody + `
-}
-state "done" {
-  terminal = true
-  success  = true
-}
-state "failed" {
-  terminal = true
-  success  = false
-}
-`
+	return workflowtest.WrapStep(stepBody)
 }
 
 // TestWhile_CompileBasic verifies that a minimal while step compiles without errors

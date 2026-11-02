@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/brokenbots/criteria/internal/testutil"
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
@@ -152,6 +153,7 @@ type archiveFixture struct {
 // digest refs.
 func createWorkflowArchiveFixture(t *testing.T) archiveFixture {
 	t.Helper()
+	testutil.RequireLoopbackTCP(t)
 	entries := map[string][]byte{"workflow.hcl": []byte(runnableWorkflowHCL)}
 	tarBody := buildTarGz(t, entries)
 	zipBody := buildZip(t, entries)
@@ -564,6 +566,7 @@ func requireRunMetadata(t *testing.T, eventsFile string) *RunMetadata {
 // (source URL, resolved ref, cache path) must be logged for RunMetadata
 // recording (CRI-225).
 func TestApply_RemoteGitSource_EndToEnd(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	start := time.Now().UTC().Add(-2 * time.Second)
 	setWorkflowCacheHome(t)
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
@@ -602,6 +605,7 @@ func TestApply_RemoteGitSource_EndToEnd(t *testing.T) {
 // TestApply_RemoteArchiveSource_EndToEnd runs apply with an http archive
 // source, asserting the same origin contract with the sha256 digest ref.
 func TestApply_RemoteArchiveSource_EndToEnd(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	start := time.Now().UTC().Add(-2 * time.Second)
 	setWorkflowCacheHome(t)
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
@@ -642,6 +646,7 @@ func TestApply_RemoteArchiveSource_EndToEnd(t *testing.T) {
 // (the slug is redacted before the directory is created) and no byte of the
 // structured log may contain the userinfo in raw or slugified form.
 func TestApply_RemoteSource_CredentialsNotLogged(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	setWorkflowCacheHome(t)
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 	fx := createWorkflowArchiveFixture(t)
@@ -685,6 +690,7 @@ func TestApply_RemoteSource_CredentialsNotLogged(t *testing.T) {
 // entry without touching git (the fixture is deleted) and without
 // re-materializing the tree (a sentinel file survives).
 func TestApply_RemoteSource_CacheReuse(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	setWorkflowCacheHome(t)
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 	fx := createWorkflowGitFixture(t)
@@ -720,6 +726,7 @@ func TestApply_RemoteSource_CacheReuse(t *testing.T) {
 // pre-fix this source was misrouted to the git fetcher and failed with a
 // git ls-remote error.
 func TestApply_RemoteSource_RoutesGitPatternArchiveURL(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	setWorkflowCacheHome(t)
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 	fx := createWorkflowArchiveFixture(t)
@@ -747,6 +754,7 @@ func TestApply_RemoteSource_RoutesGitPatternArchiveURL(t *testing.T) {
 
 // TestValidate_RemoteGitSource validates a git ref source end to end.
 func TestValidate_RemoteGitSource(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	setWorkflowCacheHome(t)
 	fx := createWorkflowGitFixture(t)
 	source := "git::file://" + fx.path + "?ref=main"

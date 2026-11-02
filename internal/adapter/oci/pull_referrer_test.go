@@ -15,6 +15,7 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapter/oci"
 	"github.com/brokenbots/criteria/internal/adapter/signing"
+	"github.com/brokenbots/criteria/internal/testutil"
 )
 
 const (
@@ -107,6 +108,7 @@ func newReferrerStubFixture(t *testing.T) *referrerStubFixture {
 // failure picks the injected referrer-copy failure mode.
 func serveReferrerStub(t *testing.T, f *referrerStubFixture, failure referrerFailure) *httptest.Server {
 	t.Helper()
+	testutil.RequireLoopbackTCP(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		const prefix = "/v2/" + stubRepoPath + "/"
 		if r.URL.Path == "/v2/" {

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/brokenbots/criteria/internal/adapter/oci"
+	"github.com/brokenbots/criteria/internal/testutil"
 
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -501,6 +502,7 @@ func makeTestCert(t *testing.T, issuer, subject string) *x509.Certificate {
 // shared http.DefaultClient pools that leak idle HTTP/2 readers) carrying the
 // criteria user agent on every request it makes.
 func TestNewTUFFetcher_DedicatedTransportAndUserAgent(t *testing.T) {
+	testutil.RequireLoopbackTCP(t)
 	var gotUA string
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -10,9 +10,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/brokenbots/criteria/internal/testutil"
 )
 
 func TestValidateDiagJSON_ValidWorkflow(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "workflow.hcl")
 	src := `

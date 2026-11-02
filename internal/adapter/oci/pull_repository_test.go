@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/brokenbots/criteria/internal/testutil"
 	"oras.land/oras-go/v2/registry/remote/auth"
 )
 
@@ -79,6 +80,7 @@ func TestPullerNewRepository_RejectsInvalidReference(t *testing.T) {
 // stub OCI registry, covering the caller wiring (newRepository + deferred
 // cleanup + tag paging).
 func TestPullerListTags_FetchesFromRegistry(t *testing.T) {
+	testutil.RequireLoopbackTCP(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v2/":

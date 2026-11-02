@@ -6,10 +6,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/brokenbots/criteria/internal/testutil"
 	"github.com/zclconf/go-cty/cty"
 )
 
 func TestPlanGolden(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CRITERIA_HOME", home)
+	t.Setenv("CRITERIA_STATE_DIR", home)
 	repoRoot, fixtures := workflowFixtures(t)
 	// Some fixtures reference files outside their own directory via file().
 	// Allow the whole repo root so those references resolve at compile.
@@ -19,6 +23,9 @@ func TestPlanGolden(t *testing.T) {
 		relPath, _ := filepath.Rel(repoRoot, path)
 		name := stripHCLExt(filepath.Base(path)) + "__" + sanitizeFixturePath(relPath)
 		t.Run(name, func(t *testing.T) {
+			if strings.Contains(name, "peer_remote") {
+				testutil.RequireLoopbackTCP(t)
+			}
 			out, err := renderPlanOutput(context.Background(), path, nil)
 			if err != nil {
 				t.Fatalf("plan output: %v", err)

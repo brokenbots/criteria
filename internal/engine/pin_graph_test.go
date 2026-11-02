@@ -141,6 +141,14 @@ func newDefaultLoader(t *testing.T, adaptersRoot string) *adapterhost.DefaultLoa
 
 func runEngine(t *testing.T, g *workflow.FSMGraph, loader adapterhost.Loader, opts ...Option) (*fakeSink, error) {
 	t.Helper()
+	if _, ok := loader.(*adapterhost.DefaultLoader); ok {
+		if !canDialUnixSockets() {
+			t.Skip("skipping live adapter execution: dialing unix sockets is restricted in current environment")
+		}
+		if testing.Short() {
+			t.Skip("skipping live adapter execution in -short mode")
+		}
+	}
 	sink := &fakeSink{}
 	allOpts := append([]Option{WithWorkflowDir(g.WorkflowDir)}, opts...)
 	eng := NewTestEngine(g, loader, sink, allOpts...)

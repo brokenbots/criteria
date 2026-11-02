@@ -1,37 +1,14 @@
-package engine_test
+package engine
 
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
-	"github.com/brokenbots/criteria/internal/engine"
 	"github.com/brokenbots/criteria/workflow"
 )
-
-// buildNoopAdapter compiles the in-tree noop adapter binary for tests that
-// need a real out-of-process adapter but do not depend on adapter outputs.
-func buildNoopAdapter(t *testing.T) string {
-	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve caller path")
-	}
-	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
-	binary := filepath.Join(t.TempDir(), "criteria-adapter-noop")
-
-	cmd := exec.Command("go", "build", "-o", binary, "./internal/adapter/conformance/testdata/noop")
-	cmd.Dir = moduleRoot
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("build noop adapter: %v\n%s", err, string(out))
-	}
-	return binary
-}
 
 // compileParentWithSubworkflow writes a child subworkflow into parentDir/child
 // and parses/compiles the parent HCL located in parentDir.
@@ -140,8 +117,8 @@ state "fail" {
 	g := compileParentWithSubworkflow(t, parentHCL, parentDir)
 
 	vars := workflow.SeedVarsFromGraph(g)
-	sink := &switchSink{}
-	eng := engine.New(g, adapterhost.NewLoader(), sink, engine.WithResumedVars(vars))
+	sink := &fakeSink{}
+	eng := New(g, adapterhost.NewLoader(), sink, WithResumedVars(vars))
 	if err := eng.Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -219,15 +196,15 @@ state "fail" {
 		t.Fatalf("compile: %s", diags.Error())
 	}
 
-	adapterBin := buildNoopAdapter(t)
-	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
-		return adapterBin, nil
-	})
-	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
-
+	loader := &fakeLoader{
+		adapters: map[string]adapterhost.Handle{
+			"noop":         &fakeAdapter{name: "noop", outcome: "success"},
+			"noop.default": &fakeAdapter{name: "noop", outcome: "success"},
+		},
+	}
 	vars := workflow.SeedVarsFromGraph(g)
-	sink := &switchSink{}
-	eng := engine.New(g, loader, sink, engine.WithResumedVars(vars))
+	sink := &fakeSink{}
+	eng := New(g, loader, sink, WithResumedVars(vars))
 	if err := eng.Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}

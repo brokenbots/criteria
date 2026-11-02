@@ -15,6 +15,7 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/engine"
+	"github.com/brokenbots/criteria/internal/testutil"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
 	"github.com/brokenbots/criteria/workflow"
@@ -171,6 +172,7 @@ func TestReattachRun_RestoresVarScope(t *testing.T) {
 // startScopeServer starts an httptest Connect server using any service handler.
 func startScopeServer(t *testing.T, h criteriav1connect.CriteriaServiceHandler) string {
 	t.Helper()
+	testutil.RequireLoopbackTCP(t)
 	mux := http.NewServeMux()
 	path, handler := criteriav1connect.NewCriteriaServiceHandler(h)
 	mux.Handle(path, handler)

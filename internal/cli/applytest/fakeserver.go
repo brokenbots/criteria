@@ -29,6 +29,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 
+	"github.com/brokenbots/criteria/internal/testutil"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
 )
@@ -132,6 +133,7 @@ func newFakeHandler(f *Fake) *fakeHandler {
 // serverConn.serve goroutines so goleak.VerifyNone(t) in per-test cleanup passes.
 func New(t testing.TB) *Fake {
 	t.Helper()
+	testutil.RequireLoopbackTCP(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	f := &Fake{ctx: ctx, cancel: cancel}
 	f.handler = newFakeHandler(f)
@@ -239,6 +241,7 @@ func generateClientLeafCert(t testing.TB, caPriv *rsa.PrivateKey, caCert *x509.C
 // that clients must trust.
 func NewTLS(t testing.TB) *Fake {
 	t.Helper()
+	testutil.RequireLoopbackTCP(t)
 	certPEM, keyPEM := generateSelfSignedCert(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -318,6 +321,7 @@ func rejectCACertClient(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 // (enforced by the rejectCACertClient VerifyPeerCertificate hook).
 func NewMTLS(t testing.TB) *Fake {
 	t.Helper()
+	testutil.RequireLoopbackTCP(t)
 	caCertPEM, caKeyPEM := generateSelfSignedCert(t)
 	caPriv, caCert := parseCACert(t, caCertPEM, caKeyPEM)
 	clientCertPEM, clientKeyPEM := generateClientLeafCert(t, caPriv, caCert)

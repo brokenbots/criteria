@@ -98,6 +98,12 @@ func (h *promptFailureSignal) WithGroup(name string) slog.Handler {
 //     arrival (no hold, no AgentPromptInjected event, no Prompt RPC);
 //   - iteration 2 (the later visit) delivers nothing retroactively.
 func TestEngineAgentPromptMultiAttemptBalance(t *testing.T) {
+	if !canDialUnixSockets() {
+		t.Skip("skipping live adapter test: dialing unix sockets is restricted in current environment")
+	}
+	if testing.Short() {
+		t.Skip("skipping live adapter test in -short mode")
+	}
 	adapterBin := buildPromptableAdapter(t)
 	callLog := filepath.Join(t.TempDir(), "promptable-calls.log")
 	t.Setenv("PROMPTABLE_CALL_LOG", callLog)

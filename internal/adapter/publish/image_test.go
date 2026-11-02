@@ -15,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/brokenbots/criteria/internal/adapter/manifest"
+	"github.com/brokenbots/criteria/internal/testutil"
 )
 
 // mockRegistry serves just enough of the OCI distribution API for
@@ -23,6 +24,7 @@ import (
 // the runnable image.
 func newMockRegistry(t *testing.T) (host string, imageDigest digest.Digest) {
 	t.Helper()
+	testutil.RequireLoopbackTCP(t)
 	body := []byte(`{"schemaVersion":2,"mediaType":"` + ocispec.MediaTypeImageManifest + `"}`)
 	imageDigest = digest.FromBytes(body)
 

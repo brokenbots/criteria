@@ -12,25 +12,22 @@ import (
 	"testing"
 
 	"github.com/hashicorp/hcl/v2"
+
+	"github.com/brokenbots/criteria/workflow/workflowtest"
 )
 
 // minimalWorkflow returns a minimal workflow HCL string with a single step using the given target line.
 func minimalWorkflow(stepBody string) string {
-	return `
-workflow {
-  name = "t"
-  version       = "0.1"
-  initial_state = "s"
-  target_state  = "done"
-}
-adapter "noop" "default" {}
-step "s" {
-` + stepBody + `
-  outcome "success" { next = step.done }
-  outcome "failure" { next = step.done }
-}
-state "done" { terminal = true }
-`
+	return workflowtest.New().
+		WithHeader("t", "0.1", "s", "done").
+		WithAdapter("noop", "default").
+		WithStep("s",
+			workflowtest.Target(""),
+			workflowtest.StepRaw(stepBody),
+			workflowtest.Next("step.done"),
+		).
+		WithState("done", true, nil).
+		Build()
 }
 
 func TestCompileStep_TargetAdapter(t *testing.T) {

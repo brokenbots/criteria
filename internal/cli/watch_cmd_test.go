@@ -12,6 +12,7 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/brokenbots/criteria/internal/testutil"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
 )
@@ -83,6 +84,7 @@ func (f *fakeWatchServerService) WatchRun(_ context.Context, req *connect.Reques
 
 func startWatchFakeServer(t *testing.T, handler *fakeWatchServerService) string {
 	t.Helper()
+	testutil.RequireLoopbackTCP(t)
 	mux := http.NewServeMux()
 	path, h := criteriav1connect.NewServerServiceHandler(handler)
 	mux.Handle(path, h)

@@ -13,9 +13,7 @@ workflow {
   target_state  = "done"
 }
 
-environment "shell" "prod" {
-  os = "linux"
-}
+environment "shell" "prod" {}
 
 adapter "callee" "default" {
   environment = shell.prod
