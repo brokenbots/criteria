@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	servertrans "github.com/brokenbots/criteria/internal/transport/server"
+	"github.com/brokenbots/criteria/workflow/workflowtest"
 )
 
 func TestApplyLocal_NoopAdapter_EmitsExpectedEvents(t *testing.T) {
@@ -27,38 +28,21 @@ func TestApplyLocal_NoopAdapter_EmitsExpectedEvents(t *testing.T) {
 	t.Setenv("CRITERIA_ADAPTERS", adapterDir)
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 
-	workflowPath := writeWorkflowFile(t, `
-workflow {
-  name = "local_apply_noop"
-  version = "0.1"
-  initial_state = "run_adapter"
-  target_state  = "done"
-}
-
-adapter "noop" "demo" {
-  config {
-    bootstrap = "true"
-  }
-}
-
-step "run_adapter" {
-  target = adapter.noop.demo
-  input {
+	falseVal := false
+	workflowPath := writeWorkflowFile(t, workflowtest.New().
+		WithHeader("local_apply_noop", "0.1", "run_adapter", "done").
+		WithAdapter("noop", "demo").
+		WithStep("run_adapter",
+			workflowtest.Target("adapter.noop.demo"),
+			workflowtest.StepRaw(`  input {
     prompt = "hello"
-  }
-  outcome "success" { next = step.done }
-  outcome "failure" { next = step.failed }
-}
-
-state "done" {
-  terminal = true
-  success  = true
-}
-state "failed" {
-  terminal = true
-  success  = false
-}
-`)
+  }`),
+			workflowtest.Outcome("success", "step.done"),
+			workflowtest.Outcome("failure", "step.failed"),
+		).
+		WithState("done", true, nil).
+		WithState("failed", true, &falseVal).
+		Build())
 
 	eventsFile := filepath.Join(t.TempDir(), "events.ndjson")
 	if err := runApply(context.Background(), applyOptions{workflowPath: workflowPath, eventsPath: eventsFile}); err != nil {
@@ -173,10 +157,7 @@ func TestWriteRunCheckpoint_Success(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CRITERIA_STATE_DIR", dir)
 
-	wfFile := writeWorkflowFile(t, `workflow {
-  name = "w"
- version = "0.1" 
-}`)
+	wfFile := writeWorkflowFile(t, workflowtest.New().WithHeader("w", "0.1", "", "").Build())
 	log := newApplyLogger()
 
 	// Must not panic; checkpoint written to stateDir.
@@ -206,16 +187,10 @@ func TestRunApply_InvalidWorkflow_ReturnsError(t *testing.T) {
 
 func TestRunApply_BadEventsFile_ReturnsError(t *testing.T) {
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
-	wfFile := writeWorkflowFile(t, `workflow {
-  name = "w"
-  version = "0.1"
-  initial_state = "done"
-  target_state  = "done"
-}
-state "done" {
-  terminal = true
-  success  = true
-}`)
+	wfFile := writeWorkflowFile(t, workflowtest.New().
+		WithHeader("w", "0.1", "done", "done").
+		WithState("done", true, nil).
+		Build())
 	err := runApply(context.Background(), applyOptions{
 		workflowPath: wfFile,
 		eventsPath:   "/nonexistent-dir/deeply/nested/events.ndjson",
@@ -237,10 +212,7 @@ func TestResumeInFlightRuns_ServerFn_EmptyCheckpoints(t *testing.T) {
 
 func TestRunApplyLocal_InvalidOutputMode_ReturnsError(t *testing.T) {
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
-	wfFile := writeWorkflowFile(t, `workflow {
-  name = "w"
- version = "0.1" 
-}`)
+	wfFile := writeWorkflowFile(t, workflowtest.New().WithHeader("w", "0.1", "", "").Build())
 	err := runApply(context.Background(), applyOptions{
 		workflowPath: wfFile,
 		output:       "verbose", // invalid → resolveOutputMode error
@@ -272,38 +244,21 @@ func TestApplyLocal_CHCLWorkflowFile(t *testing.T) {
 
 	dir := t.TempDir()
 	workflowPath := filepath.Join(dir, "workflow.chcl")
-	if err := os.WriteFile(workflowPath, []byte(`
-workflow {
-  name = "chcl_wf"
-  version = "0.1"
-  initial_state = "run_adapter"
-  target_state  = "done"
-}
-
-adapter "noop" "demo" {
-  config {
-    bootstrap = "true"
-  }
-}
-
-step "run_adapter" {
-  target = adapter.noop.demo
-  input {
+	falseVal := false
+	if err := os.WriteFile(workflowPath, []byte(workflowtest.New().
+		WithHeader("chcl_wf", "0.1", "run_adapter", "done").
+		WithAdapter("noop", "demo").
+		WithStep("run_adapter",
+			workflowtest.Target("adapter.noop.demo"),
+			workflowtest.StepRaw(`  input {
     prompt = "hello"
-  }
-  outcome "success" { next = step.done }
-  outcome "failure" { next = step.failed }
-}
-
-state "done" {
-  terminal = true
-  success  = true
-}
-state "failed" {
-  terminal = true
-  success  = false
-}
-`), 0o600); err != nil {
+  }`),
+			workflowtest.Outcome("success", "step.done"),
+			workflowtest.Outcome("failure", "step.failed"),
+		).
+		WithState("done", true, nil).
+		WithState("failed", true, &falseVal).
+		Build()), 0o600); err != nil {
 		t.Fatalf("write workflow.chcl: %v", err)
 	}
 
@@ -331,28 +286,14 @@ state "failed" {
 func TestApplyLocal_VarFileOverridesVariable(t *testing.T) {
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 
-	workflowPath := writeWorkflowFile(t, `
-workflow {
-  name          = "var_file_override"
-  version       = "1"
-  initial_state = "done"
-  target_state  = "done"
-}
-
-variable "greeting" {
-  type    = string
-  default = "hello"
-}
-
-output "greeting" {
+	workflowPath := writeWorkflowFile(t, workflowtest.New().
+		WithHeader("var_file_override", "1", "done", "done").
+		WithVariable("greeting", "string", `"hello"`).
+		WithRaw(`output "greeting" {
   value = var.greeting
-}
-
-state "done" {
-  terminal = true
-  success  = true
-}
-`)
+}`).
+		WithState("done", true, nil).
+		Build())
 
 	varFilePath := filepath.Join(t.TempDir(), "vars.chcl")
 	if err := os.WriteFile(varFilePath, []byte(`greeting = "world"`+"\n"), 0o600); err != nil {
@@ -403,5 +344,144 @@ state "done" {
 	// renderCtyValue JSON-marshals string values, so "world" becomes "\"world\"".
 	if greetingValue != `"world"` {
 		t.Fatalf("expected output greeting=%q from var-file override, got %q", `"world"`, greetingValue)
+	}
+}
+
+// writeSubworkflowParent writes a parent workflow file and a child
+// subworkflow directory next to it, then returns the parent file path.
+func writeSubworkflowParent(t *testing.T, parent, child string) string {
+	t.Helper()
+	dir := t.TempDir()
+	workflowtest.WriteDir(t, dir, "child", child+"\n")
+	return workflowtest.WriteFile(t, dir, "parent.hcl", parent+"\n")
+}
+
+// TestApply_SwitchAfterSubworkflowWrite tests that a switch node evaluates its
+// match condition against updated data written by a preceding subworkflow step
+// (regression for CRI-37).
+func TestApply_SwitchAfterSubworkflowWrite(t *testing.T) {
+	adapterBin := buildNoopAdapterBinary(t)
+	adapterDir := t.TempDir()
+	pluginPath := filepath.Join(adapterDir, "criteria-adapter-noop")
+	b, err := os.ReadFile(adapterBin)
+	if err != nil {
+		t.Fatalf("read adapter binary: %v", err)
+	}
+	if err := os.WriteFile(pluginPath, b, 0o755); err != nil {
+		t.Fatalf("write adapter binary: %v", err)
+	}
+
+	t.Setenv("CRITERIA_ADAPTERS", adapterDir)
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+
+	parentPath := writeSubworkflowParent(t, `
+workflow {
+  name = "cri37_cli_parent"
+  version = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+}
+
+data "internal" "verdict" {
+  type  = string
+  value = "initial"
+}
+
+subworkflow "child" {
+  source = "./child"
+}
+
+step "run" {
+  target = subworkflow.child
+  outcome "success" {
+    next = switch.route
+    write {
+      target = data.internal.verdict.value
+      value  = subworkflow.verdict
+    }
+  }
+  outcome "failure" {
+    next = state.fail
+  }
+}
+
+switch "route" {
+  match {
+    condition = data.internal.verdict.value == "reproduced"
+    next      = state.done
+  }
+  default {
+    next = state.fail
+  }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+state "fail" {
+  terminal = true
+  success  = false
+}
+`, `
+workflow {
+  name = "cri37_cli_child"
+  version = "0.1"
+  initial_state = "done"
+  target_state  = "done"
+}
+
+output "verdict" {
+  value = "reproduced"
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+`)
+
+	eventsFile := filepath.Join(t.TempDir(), "events.ndjson")
+	if err := runApply(context.Background(), applyOptions{workflowPath: parentPath, eventsPath: eventsFile}); err != nil {
+		t.Fatalf("runApply: %v", err)
+	}
+
+	raw, err := os.ReadFile(eventsFile)
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	lines := splitNDJSONLines(string(raw))
+
+	type runCompletedEvent struct {
+		FinalState string `json:"finalState"`
+		Success    bool   `json:"success"`
+	}
+
+	var runCompleted *runCompletedEvent
+	for _, line := range lines {
+		var evt ndjsonEnvelope
+		if err := json.Unmarshal([]byte(line), &evt); err != nil {
+			t.Fatalf("unmarshal event: %v", err)
+		}
+		switch evt.PayloadType {
+		case "RunFailed":
+			t.Fatalf("run failed: %s", string(evt.Payload))
+		case "RunCompleted":
+			var rc runCompletedEvent
+			if err := json.Unmarshal(evt.Payload, &rc); err != nil {
+				t.Fatalf("unmarshal RunCompleted: %v", err)
+			}
+			runCompleted = &rc
+		}
+	}
+
+	if runCompleted == nil {
+		t.Fatal("no RunCompleted event emitted")
+	}
+	if runCompleted.FinalState != "done" {
+		t.Errorf("finalState = %q, want \"done\"", runCompleted.FinalState)
+	}
+	if !runCompleted.Success {
+		t.Errorf("RunCompleted.success = false, want true; switch routed to failure branch due to stale data")
 	}
 }

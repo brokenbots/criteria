@@ -101,18 +101,21 @@ func TestCheck_BelowAndAbove(t *testing.T) {
 	p.covered["workflow"] = 90 // 90%
 
 	// workflow above floor, internal/cli below -> fail.
-	if !check(p, []floor{{"workflow", 85}, {"internal/cli", 75}}) {
+	if !check(p, []floor{{"workflow", 85}, {"internal/cli", 75}}, false) {
 		t.Error("expected failure when a package is below floor")
 	}
 	// both at/above floor -> pass.
-	if check(p, []floor{{"workflow", 90}, {"internal/cli", 70}}) {
+	if check(p, []floor{{"workflow", 90}, {"internal/cli", 70}}, false) {
 		t.Error("expected pass when all packages meet floor")
 	}
 }
 
 func TestCheck_MissingPackage(t *testing.T) {
-	if !check(newPkgCov(), []floor{{"internal/cli", 50}}) {
-		t.Error("expected failure when a floored package has no coverage data")
+	if !check(newPkgCov(), []floor{{"internal/cli", 50}}, false) {
+		t.Error("expected failure when a floored package has no coverage data and allowMissing=false")
+	}
+	if check(newPkgCov(), []floor{{"internal/cli", 50}}, true) {
+		t.Error("expected pass when missing packages are allowed")
 	}
 }
 

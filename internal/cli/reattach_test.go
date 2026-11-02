@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -1913,5 +1914,195 @@ func TestCheckIterationCursorValidity_NoActiveIteration(t *testing.T) {
 
 	if err := checkIterationCursorValidity(g, scope); err != nil {
 		t.Errorf("expected nil for non-iteration step; got: %v", err)
+	}
+}
+
+// captureLog is a mutex-guarded io.Writer sink capturing the slog default logger.
+type captureLog struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (c *captureLog) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.buf.Write(p)
+}
+
+func (c *captureLog) String() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.buf.String()
+}
+
+func (c *captureLog) bufContains(substr string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return strings.Contains(c.buf.String(), substr)
+}
+
+func (c *captureLog) shimListenAddrs() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var addrs []string
+	for _, line := range strings.Split(c.buf.String(), "\n") {
+		if !strings.Contains(line, "remote shim listening") {
+			continue
+		}
+		if _, after, ok := strings.Cut(line, "addr="); ok {
+			addr := after
+			if idx := strings.IndexAny(after, " \t"); idx >= 0 {
+				addr = after[:idx]
+			}
+			addrs = append(addrs, addr)
+		}
+	}
+	return addrs
+}
+
+func waitShimListenAddrs(t *testing.T, logSink *captureLog, count int, within time.Duration) []string {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	for time.Now().Before(deadline) {
+		addrs := logSink.shimListenAddrs()
+		if len(addrs) >= count {
+			return addrs[:count]
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d shim listen lines; got log:\n%s", count, logSink.String())
+	return nil
+}
+
+func sharedListenAddressCheckpoint(t *testing.T, runID string) *StepCheckpoint {
+	t.Helper()
+	declared := fmt.Sprintf("127.0.0.1:%d", freePort(t))
+	const workflowHCL = `
+workflow {
+  name          = "shared_listen_reattach"
+  version       = "0.1"
+  initial_state = "worktree"
+  target_state  = "done"
+}
+
+environment "remote" "worktree" {
+  listen_address = %q
+  insecure       = true
+}
+
+environment "remote" "primary" {
+  listen_address = %q
+  insecure       = true
+}
+
+adapter "noop" "worktree" {
+  environment = remote.worktree
+}
+
+adapter "noop" "primary" {
+  environment = remote.primary
+}
+
+step "worktree" {
+  target = adapter.noop.worktree
+  outcome "success" { next = step.primary }
+  outcome "failure" { next = step.done }
+}
+
+step "primary" {
+  target = adapter.noop.primary
+  outcome "success" { next = step.done }
+  outcome "failure" { next = step.done }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	wfFile := writeWorkflowFile(t, fmt.Sprintf(workflowHCL, declared, declared))
+	cp := &StepCheckpoint{
+		RunID:        runID,
+		Workflow:     "shared_listen_reattach",
+		WorkflowPath: wfFile,
+		CurrentStep:  "worktree",
+		Attempt:      0,
+	}
+	if err := WriteStepCheckpoint(cp); err != nil {
+		t.Fatalf("WriteStepCheckpoint: %v", err)
+	}
+	return cp
+}
+
+// TestBuildReattachTrackerAndEngine_IsolationEnabled verifies the local crash-reattach
+// engine is constructed with local shim isolation enabled (regression for CRI-293).
+func TestBuildReattachTrackerAndEngine_IsolationEnabled(t *testing.T) {
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+
+	cp := sharedListenAddressCheckpoint(t, "iso-flag")
+
+	graph, loader, _, ok := prepareReattach(context.Background(), discardLogger(), cp, localApprovalConfig{})
+	if !ok {
+		t.Fatal("prepareReattach failed")
+	}
+	defer loader.Shutdown(context.Background())
+
+	_, _, _, eng, engErr := buildReattachTrackerAndEngine(cp, discardLogger(), graph, loader, io.Discard, outputModeJSON, 1, nil)
+	if engErr != nil {
+		t.Fatalf("buildReattachTrackerAndEngine: %v", engErr)
+	}
+	iso := reflect.ValueOf(eng).Elem().FieldByName("localShimIsolation")
+	if !iso.IsValid() {
+		t.Fatal("engine has no localShimIsolation field; test needs updating")
+	}
+	if !iso.Bool() {
+		t.Fatal("buildReattachTrackerAndEngine built the local reattach engine without local shim isolation (CRI-293)")
+	}
+}
+
+// TestResumeOneLocalRun_SharedListenAddressIsolated drives local crash-resume for
+// two remote environments sharing one listen_address, verifying isolation prevents
+// port collisions (regression for CRI-293).
+func TestResumeOneLocalRun_SharedListenAddressIsolated(t *testing.T) {
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+
+	cp := sharedListenAddressCheckpoint(t, "reattach-iso")
+
+	logSink := &captureLog{}
+	prevDefault := slog.Default()
+	shimLog := slog.New(slog.NewTextHandler(logSink, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	slog.SetDefault(shimLog)
+	t.Cleanup(func() { slog.SetDefault(prevDefault) })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runDone := make(chan error, 1)
+	go func() {
+		_, runErr := resumeOneLocalRun(ctx, discardLogger(), cp, io.Discard, outputModeJSON, nil, localApprovalConfig{})
+		runDone <- runErr
+	}()
+
+	addrs := waitShimListenAddrs(t, logSink, 2, 15*time.Second)
+	if addrs[0] == addrs[1] {
+		t.Fatalf("both remote environment shims bound the same address %s; isolation must give each environment its own shim", addrs[0])
+	}
+	for _, addr := range addrs {
+		if !strings.HasPrefix(addr, "127.0.0.1:") {
+			t.Errorf("shim bound %q; want a loopback address", addr)
+		}
+	}
+	if logSink.bufContains("address already in use") {
+		t.Errorf("run log contains the CRI-293 bind-collision error:\n%s", logSink.String())
+	}
+
+	cancel()
+	select {
+	case runErr := <-runDone:
+		if runErr == nil {
+			t.Log("resumeOneLocalRun returned nil after cancellation")
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("resumeOneLocalRun did not return after cancellation")
 	}
 }

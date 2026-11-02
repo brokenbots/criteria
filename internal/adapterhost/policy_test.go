@@ -396,3 +396,106 @@ func TestCombinedPolicy_AllowToolsFirstLayer(t *testing.T) {
 		t.Fatalf("expected allow_tools denial reason, got %q", reason)
 	}
 }
+
+// TestPolicy_CompoundCommandSegmentation tests compound command permission support
+// (regression suite for KB-57c / KB-61): compound commands are segmented on unquoted
+// && ; | || newlines, and a compound is granted only when EVERY segment matches the
+// step's allowlist; single commands keep first-match-wins whole-text semantics.
+func TestPolicy_CompoundCommandSegmentation(t *testing.T) {
+	pats := make([]string, 0, 64)
+	for _, sub := range []string{"status", "diff", "log", "show", "rev-parse", "branch", "ls-remote", "remote"} {
+		pats = append(pats, "shell:git "+sub, "shell:git "+sub+" *")
+		for n := 2; n <= 7; n++ {
+			star := "*"
+			for i := 1; i < n; i++ {
+				star += "/*"
+			}
+			pats = append(pats, "shell:git "+sub+" "+star)
+		}
+	}
+	pats = append(pats,
+		"shell:ls", "shell:ls *", "shell:ls */*", "shell:ls */*/*", "shell:ls */*/*/*",
+		"shell:ls */*/*/*/*", "shell:ls */*/*/*/*/*",
+		"shell:echo", "shell:echo *", "shell:cat", "shell:cat *", "shell:cat */*", "shell:cat */*/*",
+		"shell:make build")
+	p := NewPolicy(pats)
+	cases := []struct {
+		cmd  string
+		want bool
+		note string
+	}{
+		// singles: legacy semantics byte-for-byte
+		{"git status", true, "plain read"},
+		{"git log --oneline -15", true, "single log"},
+		{"git push origin HEAD", false, "write verb single"},
+		{"make ci", false, "CI gate single"},
+		// compounds: every segment must match
+		{"git log --oneline -15 && echo \"---S---\" && git status", true, "reviewer evidence compound"},
+		{"ls -la /data/intake/KB-61/ && echo \"---\" && git diff --stat origin/main...HEAD", true, "deep-path compound"},
+		{"git status && make ci", false, "CI verb must poison the compound"},
+		{"git log --oneline -5 && make test", false, "test runner poisons"},
+		{"git diff origin/main...HEAD -- proto/x.proto && git push origin HEAD", false, "write verb poisons"},
+		{"git status && rm -rf /data", false, "destructive verb poisons"},
+		// quoting: separators inside quotes are literal text
+		{"echo \"a && b\"", true, "separator inside quotes is literal"},
+		{"git log --oneline -5; git status", true, "semicolon compound"},
+		{"git log --oneline -5 | cat", true, "pipe to allowed read"},
+		{"git log --oneline -5 | sh", false, "pipe to shell denied"},
+	}
+	for _, tc := range cases {
+		req := PermissionRequest{ID: "x", Tool: "shell", Details: map[string]string{"full_command_text": tc.cmd}}
+		allow, _ := p.Decide(req)
+		if allow != tc.want {
+			t.Errorf("%s: allow=%v want=%v\n  cmd: %s", tc.note, allow, tc.want, tc.cmd)
+		}
+	}
+}
+
+// TestPolicy_TrailingStarPrefix verifies trailing-star patterns match slash-bearing
+// fingerprint targets by prefix (regression suite for KB-57c): bare '*' is the
+// universal allow for any segment (allow_tools=["*"] steps), "shell:git log *" reaches
+// deep path args. Interior-glob patterns keep filepath.Match semantics.
+func TestPolicy_TrailingStarPrefix(t *testing.T) {
+	toolOf := func(target string) string {
+		if len(target) >= 6 && target[:6] == "shell:" {
+			return "shell"
+		}
+		if len(target) > 5 && target[:5] == "bash:" {
+			return "bash"
+		}
+		return target
+	}
+
+	cmdOf := func(target string) string {
+		for i := 0; i < len(target); i++ {
+			if target[i] == ':' {
+				return target[i+1:]
+			}
+		}
+		return target
+	}
+
+	cases := []struct {
+		patterns []string
+		target   string
+		want     bool
+		note     string
+	}{
+		{[]string{"*"}, "shell", true, "bare star matches bare tool"},
+		{[]string{"*"}, "shell:git config --global credential.https://github.com.helper", true, "bare star matches any segment"},
+		{[]string{"shell:*"}, "shell:git push origin HEAD", true, "tool-scoped star matches deep segment"},
+		{[]string{"shell:*"}, "bash:git push origin HEAD", false, "tool-scoped star must not cross tool kinds"},
+		{[]string{"shell:git log *"}, "shell:git log origin/main..HEAD -- deep/path/x.go", true, "deep path after subcommand"},
+		{[]string{"shell:make build"}, "shell:make ci", false, "literal still exact"},
+		{[]string{"*"}, "read", true, "star covers non-shell kinds"},
+		{[]string{"shell:git *st*us"}, "shell:git status", true, "interior glob falls back to filepath.Match (unchanged semantics)"},
+	}
+	for _, tc := range cases {
+		p := NewPolicy(tc.patterns)
+		req := PermissionRequest{ID: "x", Tool: toolOf(tc.target), Details: map[string]string{"full_command_text": cmdOf(tc.target)}}
+		allow, _ := p.Decide(req)
+		if allow != tc.want {
+			t.Errorf("%s: allow=%v want=%v (pattern %v vs %q)", tc.note, allow, tc.want, tc.patterns, tc.target)
+		}
+	}
+}

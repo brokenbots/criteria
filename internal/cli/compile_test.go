@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"os"
 	"path/filepath"
@@ -320,4 +321,193 @@ func TestNewValidateCmd_HappyPath(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("validate cmd: %v (stderr=%s)", err, errOut.String())
 	}
+}
+
+const outcomeDescriptionTestHCL = `
+workflow {
+  name          = "kb259_outcome_description"
+  version       = "0.1"
+  initial_state = "begin"
+  target_state  = "done"
+}
+
+adapter "noop" "default" {}
+
+step "begin" {
+  target = adapter.noop.default
+  outcome "success" {
+    next        = state.done
+    description = "the step finished cleanly; run bookkeeping may proceed"
+  }
+  outcome "failure" {
+    next        = state.failed
+    description = "the step errored; route to the failure state"
+  }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+state "failed" {
+  terminal = true
+  success  = false
+}
+`
+
+type outcomeDescriptionJSON struct {
+	Name        string `json:"name"`
+	Next        string `json:"next"`
+	Description string `json:"description"`
+}
+
+func parseStepOutcomeDescriptions(t *testing.T, doc []byte) map[string]*outcomeDescriptionJSON {
+	t.Helper()
+	var parsed struct {
+		Steps []struct {
+			Name     string                   `json:"name"`
+			Outcomes []outcomeDescriptionJSON `json:"outcomes"`
+		} `json:"steps"`
+	}
+	if err := json.Unmarshal(doc, &parsed); err != nil {
+		t.Fatalf("parse compiled json: %v\nbody: %s", err, doc)
+	}
+	got := map[string]*outcomeDescriptionJSON{}
+	for _, st := range parsed.Steps {
+		if st.Name != "begin" {
+			continue
+		}
+		for i := range st.Outcomes {
+			got[st.Outcomes[i].Name] = &st.Outcomes[i]
+		}
+	}
+	return got
+}
+
+// TestCompile_OutcomeDescriptionCompiledThrough verifies the compile-JSON document
+// carries each outcome's declared description next to its name (KB-259).
+func TestCompile_OutcomeDescriptionCompiledThrough(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "main.hcl")
+	if err := os.WriteFile(path, []byte(outcomeDescriptionTestHCL), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := compileWorkflowOutput(context.Background(), path, "", "json", nil, false, false)
+	if err != nil {
+		t.Fatalf("compile json: %v", err)
+	}
+	got := parseStepOutcomeDescriptions(t, out)
+	for name, want := range map[string]string{
+		"success": "the step finished cleanly; run bookkeeping may proceed",
+		"failure": "the step errored; route to the failure state",
+	} {
+		co, ok := got[name]
+		if !ok {
+			t.Fatalf("outcome %q missing from compiled json: %v", name, got)
+		}
+		if co.Description != want {
+			t.Errorf("outcome %q description = %q, want %q", name, co.Description, want)
+		}
+	}
+}
+
+// TestCompile_WorkflowGraphsEmitsOutcomeDescription verifies the WorkflowGraphs
+// payload's root layer body carries outcome descriptions (KB-259).
+func TestCompile_WorkflowGraphsEmitsOutcomeDescription(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "main.hcl")
+	if err := os.WriteFile(path, []byte(outcomeDescriptionTestHCL), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, graph, err := parseCompileForCli(context.Background(), path, nil, false, false)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	msg, err := buildWorkflowGraphsPayload(graph)
+	if err != nil {
+		t.Fatalf("build payload: %v", err)
+	}
+	if len(msg.Subworkflows) == 0 || msg.Subworkflows[0].Name != "root" {
+		t.Fatalf("payload layers malformed: %d entries", len(msg.Subworkflows))
+	}
+	var body struct {
+		Steps []struct {
+			Name     string                   `json:"name"`
+			Outcomes []outcomeDescriptionJSON `json:"outcomes"`
+		} `json:"steps"`
+	}
+	if err := json.Unmarshal([]byte(msg.Subworkflows[0].Body), &body); err != nil {
+		t.Fatalf("decode root layer body: %v\nbody: %s", err, msg.Subworkflows[0].Body)
+	}
+	got := map[string]string{}
+	for _, st := range body.Steps {
+		if st.Name != "begin" {
+			continue
+		}
+		for _, o := range st.Outcomes {
+			got[o.Name] = o.Description
+		}
+	}
+	for name, want := range map[string]string{
+		"success": "the step finished cleanly; run bookkeeping may proceed",
+		"failure": "the step errored; route to the failure state",
+	} {
+		if got[name] != want {
+			t.Errorf("root layer outcome %q description = %q, want %q", name, got[name], want)
+		}
+	}
+}
+
+// TestCompile_OutcomeDescriptionOmittedWhenUnset verifies workflows without declared
+// descriptions omit the key from JSON and event surfaces (KB-259).
+func TestCompile_OutcomeDescriptionOmittedWhenUnset(t *testing.T) {
+	legacy := strings.ReplaceAll(outcomeDescriptionTestHCL, "    description = \"the step errored; route to the failure state\"\n", "")
+	legacy = strings.ReplaceAll(legacy, "    description = \"the step finished cleanly; run bookkeeping may proceed\"\n", "")
+	path := filepath.Join(t.TempDir(), "main.hcl")
+	if err := os.WriteFile(path, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := compileWorkflowOutput(context.Background(), path, "", "json", nil, false, false)
+	if err != nil {
+		t.Fatalf("compile json: %v", err)
+	}
+	got := parseStepOutcomeDescriptions(t, out)
+	if len(got) != 2 {
+		t.Fatalf("expected two outcomes, got %v", got)
+	}
+	for name, co := range got {
+		if co.Description != "" {
+			t.Errorf("outcome %q carries an unexpected description %q", name, co.Description)
+		}
+	}
+
+	assertNoDescriptionKey := func(doc []byte) {
+		var docObj struct {
+			Steps []struct {
+				Outcomes []struct {
+					Name        string          `json:"name"`
+					Description json.RawMessage `json:"description"`
+				} `json:"outcomes"`
+			} `json:"steps"`
+		}
+		if err := json.Unmarshal(doc, &docObj); err != nil {
+			t.Fatalf("decode compiled json: %v\nbody: %s", err, doc)
+		}
+		for _, st := range docObj.Steps {
+			for _, o := range st.Outcomes {
+				if len(o.Description) > 0 {
+					t.Errorf("outcome %q unexpectedly carries a description key", o.Name)
+				}
+			}
+		}
+	}
+
+	assertNoDescriptionKey(out)
+	_, graph, err := parseCompileForCli(context.Background(), path, nil, false, false)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	msg, err := buildWorkflowGraphsPayload(graph)
+	if err != nil {
+		t.Fatalf("build payload: %v", err)
+	}
+	assertNoDescriptionKey([]byte(msg.Subworkflows[0].Body))
 }
