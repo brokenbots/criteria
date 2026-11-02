@@ -24,6 +24,7 @@ import (
 	sigsignature "github.com/sigstore/sigstore/pkg/signature"
 
 	"github.com/brokenbots/criteria/internal/adapter/oci"
+	"github.com/brokenbots/criteria/internal/testutil"
 )
 
 // fulcioOIDIssuer is the Fulcio X.509v3 extension OID that carries the OIDC
@@ -47,6 +48,7 @@ type mockFulcio struct {
 
 func newMockFulcio(t *testing.T) *mockFulcio {
 	t.Helper()
+	testutil.RequireLoopbackTCP(t)
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)

@@ -17,6 +17,7 @@ import (
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	"github.com/brokenbots/criteria/internal/testutil"
 	criteriav1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/workflow"
 )
@@ -27,6 +28,7 @@ import (
 // PATH — `go test` already implies it.
 func buildNoopAdapter(t *testing.T) string {
 	t.Helper()
+	testutil.RequireUnixSockets(t)
 	goBin, err := exec.LookPath("go")
 	if err != nil {
 		t.Skip("go toolchain not on PATH; cannot build the noop fixture")

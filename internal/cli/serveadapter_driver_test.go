@@ -702,6 +702,8 @@ func TestServeAdapter_WaitApprovalNodesRejectedAtServe(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.kind, func(t *testing.T) {
+			t.Setenv("CRITERIA_HOME", t.TempDir())
+			t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 			// An unreachable-but-parseable host so the gate error (not a
 			// connectivity error) is what surfaces first.
 			t.Setenv("CRITERIA_REMOTE_HOST", "127.0.0.1:59999")

@@ -2,8 +2,6 @@ package engine_test
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -12,7 +10,21 @@ import (
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/engine"
 	"github.com/brokenbots/criteria/workflow"
+	"github.com/brokenbots/criteria/workflow/workflowtest"
 )
+
+func compileHCL(t *testing.T, src string) *workflow.FSMGraph {
+	t.Helper()
+	spec, diags := workflow.Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s\nHCL:\n%s", diags.Error(), src)
+	}
+	g, diags := workflow.Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s\nHCL:\n%s", diags.Error(), src)
+	}
+	return g
+}
 
 // switchSink records branch-evaluated events (the proto event name is preserved)
 // and terminal state.
@@ -88,45 +100,19 @@ func (s *switchSink) StepEventSink(string) adapter.EventSink                    
 
 // TestSwitch_FirstMatchWins verifies that the first matching condition wins.
 func TestSwitch_FirstMatchWins(t *testing.T) {
-	src := `
-workflow {
-  name = "t"
-  version       = "0.1"
-  initial_state = "decide"
-  target_state  = "deploy"
-}
-
-variable "env" {
-  type = string
-  default = "staging"
-}
-
-switch "decide" {
-  match {
-    condition = var.env == "prod"
-    next = state.deploy
-  }
-  match {
-    condition = var.env == "staging"
-    next = state.staging_deploy
-  }
-  default {
-    next = state.skip
-  }
-}
-
-state "deploy"         { terminal = true }
-state "staging_deploy" { terminal = true }
-state "skip"           { terminal = true }
-`
-	spec, diags := workflow.Parse("t.hcl", []byte(src))
-	if diags.HasErrors() {
-		t.Fatalf("parse: %s", diags.Error())
-	}
-	g, diags := workflow.Compile(spec, nil)
-	if diags.HasErrors() {
-		t.Fatalf("compile: %s", diags.Error())
-	}
+	src := workflowtest.New().
+		WithHeader("t", "0.1", "decide", "deploy").
+		WithVariable("env", "string", `"staging"`).
+		WithSwitch("decide",
+			workflowtest.Match(`var.env == "prod"`, "state.deploy"),
+			workflowtest.Match(`var.env == "staging"`, "state.staging_deploy"),
+			workflowtest.DefaultNext("state.skip"),
+		).
+		WithState("deploy", true, nil).
+		WithState("staging_deploy", true, nil).
+		WithState("skip", true, nil).
+		Build()
+	g := compileHCL(t, src)
 	vars := workflow.SeedVarsFromGraph(g)
 
 	sink := &switchSink{}
@@ -160,45 +146,19 @@ state "skip"           { terminal = true }
 // TestSwitch_NoMatchFallsToDefault verifies that when no condition matches,
 // the default branch is taken.
 func TestSwitch_NoMatchFallsToDefault(t *testing.T) {
-	src := `
-workflow {
-  name = "t"
-  version       = "0.1"
-  initial_state = "decide"
-  target_state  = "done"
-}
-
-variable "env" {
-  type = string
-  default = "dev"
-}
-
-switch "decide" {
-  match {
-    condition = var.env == "prod"
-    next = state.deploy
-  }
-  match {
-    condition = var.env == "staging"
-    next = state.staging_deploy
-  }
-  default {
-    next = state.done
-  }
-}
-
-state "deploy"         { terminal = true }
-state "staging_deploy" { terminal = true }
-state "done"           { terminal = true }
-`
-	spec, diags := workflow.Parse("t.hcl", []byte(src))
-	if diags.HasErrors() {
-		t.Fatalf("parse: %s", diags.Error())
-	}
-	g, diags := workflow.Compile(spec, nil)
-	if diags.HasErrors() {
-		t.Fatalf("compile: %s", diags.Error())
-	}
+	src := workflowtest.New().
+		WithHeader("t", "0.1", "decide", "done").
+		WithVariable("env", "string", `"dev"`).
+		WithSwitch("decide",
+			workflowtest.Match(`var.env == "prod"`, "state.deploy"),
+			workflowtest.Match(`var.env == "staging"`, "state.staging_deploy"),
+			workflowtest.DefaultNext("state.done"),
+		).
+		WithState("deploy", true, nil).
+		WithState("staging_deploy", true, nil).
+		WithState("done", true, nil).
+		Build()
+	g := compileHCL(t, src)
 	vars := workflow.SeedVarsFromGraph(g)
 
 	sink := &switchSink{}
@@ -227,39 +187,16 @@ state "done"           { terminal = true }
 // TestSwitch_NonBoolConditionErrors verifies that a non-bool match expression
 // results in a run failure.
 func TestSwitch_NonBoolConditionErrors(t *testing.T) {
-	src := `
-workflow {
-  name = "t"
-  version       = "0.1"
-  initial_state = "decide"
-  target_state  = "done"
-}
-
-variable "env" {
-  type = string
-  default = "dev"
-}
-
-switch "decide" {
-  match {
-    condition = var.env
-    next = state.done
-  }
-  default {
-    next = state.done
-  }
-}
-
-state "done" { terminal = true }
-`
-	spec, diags := workflow.Parse("t.hcl", []byte(src))
-	if diags.HasErrors() {
-		t.Fatalf("parse: %s", diags.Error())
-	}
-	g, diags := workflow.Compile(spec, nil)
-	if diags.HasErrors() {
-		t.Fatalf("compile: %s", diags.Error())
-	}
+	src := workflowtest.New().
+		WithHeader("t", "0.1", "decide", "done").
+		WithVariable("env", "string", `"dev"`).
+		WithSwitch("decide",
+			workflowtest.Match("var.env", "state.done"),
+			workflowtest.DefaultNext("state.done"),
+		).
+		WithState("done", true, nil).
+		Build()
+	g := compileHCL(t, src)
 	vars := workflow.SeedVarsFromGraph(g)
 
 	sink := &switchSink{}
@@ -283,54 +220,22 @@ state "done" { terminal = true }
 // projection were missing or delayed, "check_tier" would fall through to its
 // default branch ("tier_fail") and the terminal assertion would catch the bug.
 func TestSwitch_OutputProjection_AppliedBeforeNext(t *testing.T) {
-	src := `
-workflow {
-  name = "t"
-  version       = "0.1"
-  initial_state = "decide"
-  target_state  = "tier_ok"
-}
-
-variable "env" {
-  type = string
-  default = "prod"
-}
-
-switch "decide" {
-  match {
-    condition  = var.env == "prod"
-    next = switch.check_tier
-    output = { tier = "production" }
-  }
-  default {
-    next = state.tier_fail
-  }
-}
-
-switch "check_tier" {
-  match {
-    condition = steps.decide.tier == "production"
-    next = state.tier_ok
-  }
-  default {
-    next = state.tier_fail
-  }
-}
-
-state "tier_ok"   { terminal = true }
-state "tier_fail" {
-  terminal = true
-  success  = false
-}
-`
-	spec, diags := workflow.Parse("t.hcl", []byte(src))
-	if diags.HasErrors() {
-		t.Fatalf("parse: %s", diags.Error())
-	}
-	g, diags := workflow.Compile(spec, nil)
-	if diags.HasErrors() {
-		t.Fatalf("compile: %s", diags.Error())
-	}
+	falseVal := false
+	src := workflowtest.New().
+		WithHeader("t", "0.1", "decide", "tier_ok").
+		WithVariable("env", "string", `"prod"`).
+		WithSwitch("decide",
+			workflowtest.MatchWithOutput(`var.env == "prod"`, "switch.check_tier", map[string]string{"tier": `"production"`}),
+			workflowtest.DefaultNext("state.tier_fail"),
+		).
+		WithSwitch("check_tier",
+			workflowtest.Match(`steps.decide.tier == "production"`, "state.tier_ok"),
+			workflowtest.DefaultNext("state.tier_fail"),
+		).
+		WithState("tier_ok", true, nil).
+		WithState("tier_fail", true, &falseVal).
+		Build()
+	g := compileHCL(t, src)
 	vars := workflow.SeedVarsFromGraph(g)
 
 	sink := &switchSink{}
@@ -363,34 +268,15 @@ state "tier_fail" {
 // in a switch condition causes the run to complete at the top level with
 // empty terminal state and success = true.
 func TestSwitch_ReturnFromCondition_BubblesToCaller(t *testing.T) {
-	src := `
-workflow {
-  name = "t"
-  version       = "0.1"
-  initial_state = "decide"
-  target_state  = "done"
-}
-
-switch "decide" {
-  match {
-    condition = true
-    next = step.return
-  }
-  default {
-    next = state.done
-  }
-}
-
-state "done" { terminal = true }
-`
-	spec, diags := workflow.Parse("t.hcl", []byte(src))
-	if diags.HasErrors() {
-		t.Fatalf("parse: %s", diags.Error())
-	}
-	g, diags := workflow.Compile(spec, nil)
-	if diags.HasErrors() {
-		t.Fatalf("compile: %s", diags.Error())
-	}
+	src := workflowtest.New().
+		WithHeader("t", "0.1", "decide", "done").
+		WithSwitch("decide",
+			workflowtest.Match("true", "step.return"),
+			workflowtest.DefaultNext("state.done"),
+		).
+		WithState("done", true, nil).
+		Build()
+	g := compileHCL(t, src)
 	vars := workflow.SeedVarsFromGraph(g)
 
 	sink := &switchSink{}
@@ -409,47 +295,19 @@ state "done" { terminal = true }
 
 // TestSwitch_EndToEnd exercises a switch choosing between two terminal states.
 func TestSwitch_EndToEnd_StepOutputSwitch(t *testing.T) {
-	src := `
-workflow {
-  name = "t"
-  version       = "0.1"
-  initial_state = "decide"
-  target_state  = "succeeded"
-}
-
-variable "result" {
-  type = string
-  default = "pass"
-}
-
-switch "decide" {
-  match {
-    condition = var.result == "pass"
-    next = state.succeeded
-  }
-  match {
-    condition = var.result == "fail"
-    next = state.failed
-  }
-  default {
-    next = state.failed
-  }
-}
-
-state "succeeded" { terminal = true }
-state "failed" {
-  terminal = true
-  success  = false
-}
-`
-	spec, diags := workflow.Parse("t.hcl", []byte(src))
-	if diags.HasErrors() {
-		t.Fatalf("parse: %s", diags.Error())
-	}
-	g, diags := workflow.Compile(spec, nil)
-	if diags.HasErrors() {
-		t.Fatalf("compile: %s", diags.Error())
-	}
+	falseVal := false
+	src := workflowtest.New().
+		WithHeader("t", "0.1", "decide", "succeeded").
+		WithVariable("result", "string", `"pass"`).
+		WithSwitch("decide",
+			workflowtest.Match(`var.result == "pass"`, "state.succeeded"),
+			workflowtest.Match(`var.result == "fail"`, "state.failed"),
+			workflowtest.DefaultNext("state.failed"),
+		).
+		WithState("succeeded", true, nil).
+		WithState("failed", true, &falseVal).
+		Build()
+	g := compileHCL(t, src)
 	vars := workflow.SeedVarsFromGraph(g)
 
 	sink := &switchSink{}
@@ -475,39 +333,16 @@ state "failed" {
 // → OnRunCompleted, with the return sentinel propagating through the engine's
 // handleReturnExit path correctly.
 func TestSwitch_EndToEnd_ReturnExitsWorkflow(t *testing.T) {
-	src := `
-workflow {
-  name = "t"
-  version       = "0.1"
-  initial_state = "gate"
-  target_state  = "done"
-}
-
-variable "early_exit" {
-  type = string
-  default = "yes"
-}
-
-switch "gate" {
-  match {
-    condition = var.early_exit == "yes"
-    next = step.return
-  }
-  default {
-    next = state.done
-  }
-}
-
-state "done" { terminal = true }
-`
-	spec, diags := workflow.Parse("t.hcl", []byte(src))
-	if diags.HasErrors() {
-		t.Fatalf("parse: %s", diags.Error())
-	}
-	g, diags := workflow.Compile(spec, nil)
-	if diags.HasErrors() {
-		t.Fatalf("compile: %s", diags.Error())
-	}
+	src := workflowtest.New().
+		WithHeader("t", "0.1", "gate", "done").
+		WithVariable("early_exit", "string", `"yes"`).
+		WithSwitch("gate",
+			workflowtest.Match(`var.early_exit == "yes"`, "step.return"),
+			workflowtest.DefaultNext("state.done"),
+		).
+		WithState("done", true, nil).
+		Build()
+	g := compileHCL(t, src)
 	vars := workflow.SeedVarsFromGraph(g)
 
 	sink := &switchSink{}
@@ -544,9 +379,7 @@ state "done" { terminal = true }
 // writeHCLFile writes content to dir/name.hcl and fails the test on error.
 func writeHCLFile(t *testing.T, dir, name, content string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name+".hcl"), []byte(content), 0o644); err != nil {
-		t.Fatalf("write %s.hcl: %v", name, err)
-	}
+	workflowtest.WriteFile(t, dir, name+".hcl", content)
 }
 
 // TestSwitch_MultiFile_BranchEvaluatedCondition is an end-to-end regression test
@@ -557,36 +390,17 @@ func TestSwitch_MultiFile_BranchEvaluatedCondition(t *testing.T) {
 	dir := t.TempDir()
 	// Keep the switch in a file that sorts after the header so it is parsed from a
 	// non-first file; the bug only reproduced in that arrangement.
-	writeHCLFile(t, dir, "01_workflow", `
-workflow {
-  name = "multi"
-  version       = "0.1"
-  initial_state = "route"
-  target_state  = "done"
-}
-
-variable "pick" {
-  type    = string
-  default = "b"
-}
-
-state "done" { terminal = true }
-`)
-	writeHCLFile(t, dir, "99_routing", `
-switch "route" {
-  match {
-    condition = var.pick == "a"
-    next      = state.done
-  }
-  match {
-    condition = var.pick == "b"
-    next      = state.done
-  }
-  default {
-    next = state.done
-  }
-}
-`)
+	writeHCLFile(t, dir, "01_workflow", workflowtest.New().
+		WithHeader("multi", "0.1", "route", "done").
+		WithVariable("pick", "string", `"b"`).
+		WithState("done", true, nil).
+		Build(),
+	)
+	writeHCLFile(t, dir, "99_routing", workflowtest.Switch("route",
+		workflowtest.Match(`var.pick == "a"`, "state.done"),
+		workflowtest.Match(`var.pick == "b"`, "state.done"),
+		workflowtest.DefaultNext("state.done"),
+	))
 
 	spec, diags := workflow.ParseDir(dir)
 	if diags.HasErrors() {
@@ -627,32 +441,16 @@ switch "route" {
 // multi-file workflow continue to omit the condition field.
 func TestSwitch_MultiFile_DefaultOmitsCondition(t *testing.T) {
 	dir := t.TempDir()
-	writeHCLFile(t, dir, "01_workflow", `
-workflow {
-  name = "multi"
-  version       = "0.1"
-  initial_state = "route"
-  target_state  = "done"
-}
-
-variable "pick" {
-  type    = string
-  default = "c"
-}
-
-state "done" { terminal = true }
-`)
-	writeHCLFile(t, dir, "99_routing", `
-switch "route" {
-  match {
-    condition = var.pick == "a"
-    next      = state.done
-  }
-  default {
-    next = state.done
-  }
-}
-`)
+	writeHCLFile(t, dir, "01_workflow", workflowtest.New().
+		WithHeader("multi", "0.1", "route", "done").
+		WithVariable("pick", "string", `"c"`).
+		WithState("done", true, nil).
+		Build(),
+	)
+	writeHCLFile(t, dir, "99_routing", workflowtest.Switch("route",
+		workflowtest.Match(`var.pick == "a"`, "state.done"),
+		workflowtest.DefaultNext("state.done"),
+	))
 
 	spec, diags := workflow.ParseDir(dir)
 	if diags.HasErrors() {

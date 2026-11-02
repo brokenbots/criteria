@@ -38,6 +38,7 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/engine"
+	"github.com/brokenbots/criteria/internal/testutil"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -704,6 +705,7 @@ func runMCPToolsCase(t *testing.T, echoBin, targetState string, caller adapterho
 // direct-target cases whose step executes the mcp adapter itself.
 func runMCPToolsGraphCase(t *testing.T, graph *workflow.FSMGraph, caller adapterhost.Handle, audit adapterhost.AuditWriter) *mcpToolsSink {
 	t.Helper()
+	testutil.RequireUnixSockets(t)
 	sink := &mcpToolsSink{}
 	realLoader := adapterhost.NewLoaderWithDiscovery(func(name string) (string, error) {
 		if name == "mcp" {
@@ -858,6 +860,7 @@ func TestMCPAdapterTools_StructuredContent(t *testing.T) {
 // server, the adapter's Info surface lists the tools discovered from
 // tools/list and declares the adapter_tools capability.
 func TestMCPAdapterTools_InfoSurfacesDiscoveredTools(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	ctx := context.Background()
 	loader := adapterhost.NewLoaderWithDiscovery(func(name string) (string, error) {
 		if name == "mcp" {

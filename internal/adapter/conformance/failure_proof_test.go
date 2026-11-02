@@ -4,10 +4,13 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/brokenbots/criteria/internal/testutil"
 )
 
 func runConformanceFailFixture(t *testing.T, fixtureTestName, requiredSubtest string) {
 	t.Helper()
+	testutil.RequireUnixSockets(t)
 	cmd := exec.Command(
 		"go",
 		"test",

@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/hashicorp/hcl/v2"
+
+	"github.com/brokenbots/criteria/workflow/workflowtest"
 )
 
 // outputSchemaFor returns a schemas map for adapter type "noop" with the given
@@ -29,113 +31,54 @@ func outputSchemaFor(fields ...string) map[string]AdapterInfo {
 //   - switch "check" whose first condition references steps.build.<field>
 //   - state targets for both arms
 func crossStepSwitchSrc(field string) string {
-	return `
-workflow {
-  name = "t"
-  version       = "0.1"
-  initial_state = "build"
-  target_state  = "done"
-}
-adapter "noop" "default" {}
-step "build" {
-  target = adapter.noop.default
-  outcome "success" { next = step.check }
-  outcome "failure" { next = step.check }
-}
-switch "check" {
-  match {
-    condition = steps.build.` + field + ` == "ok"
-    next = state.done
-  }
-  default { next = state.done }
-}
-state "done" { terminal = true }
-`
+	return workflowtest.NewStandard().
+		WithInitial("build").
+		WithStep("build", workflowtest.Next("step.check")).
+		WithSwitch("check",
+			workflowtest.Match("steps.build."+field+` == "ok"`, "state.done"),
+			workflowtest.DefaultNext("state.done"),
+		).
+		Build()
 }
 
 // crossStepSwitchCondOutputSrc returns a workflow with a switch condition arm
 // that carries an output projection referencing steps.build.<field>.
 func crossStepSwitchCondOutputSrc(field string) string {
-	return `
-workflow {
-  name = "t"
-  version       = "0.1"
-  initial_state = "build"
-  target_state  = "done"
-}
-adapter "noop" "default" {}
-step "build" {
-  target = adapter.noop.default
-  outcome "success" { next = step.check }
-  outcome "failure" { next = step.check }
-}
-switch "check" {
-  match {
-    condition  = true
-    next = state.done
-    output = { x = steps.build.` + field + ` }
-  }
-  default { next = state.done }
-}
-state "done" { terminal = true }
-`
+	return workflowtest.NewStandard().
+		WithInitial("build").
+		WithStep("build", workflowtest.Next("step.check")).
+		WithSwitch("check",
+			workflowtest.MatchWithOutput("true", "state.done", map[string]string{"x": "steps.build." + field}),
+			workflowtest.DefaultNext("state.done"),
+		).
+		Build()
 }
 
 // crossStepInputSrc returns a minimal workflow with:
 //   - step "build" (adapter noop.default)
 //   - step "run" whose input references steps.build.<field>
 func crossStepInputSrc(field string) string {
-	return `
-workflow {
-  name = "t"
-  version       = "0.1"
-  initial_state = "build"
-  target_state  = "done"
-}
-adapter "noop" "default" {}
-step "build" {
-  target = adapter.noop.default
-  outcome "success" { next = step.run }
-  outcome "failure" { next = step.run }
-}
-step "run" {
-  target = adapter.noop.default
-  input {
-    command = steps.build.` + field + `
-  }
-  outcome "success" { next = step.done }
-  outcome "failure" { next = step.done }
-}
-state "done" { terminal = true }
-`
+	return workflowtest.NewStandard().
+		WithInitial("build").
+		WithStep("build", workflowtest.Next("step.run")).
+		WithStep("run",
+			workflowtest.StepRaw("input { command = steps.build."+field+" }"),
+			workflowtest.Next("state.done"),
+		).
+		Build()
 }
 
 // crossStepOutcomeSrc returns a minimal two-step workflow where step "build"'s
 // success outcome has an output projection referencing steps.build.<field>.
 func crossStepOutcomeSrc(field string) string {
-	return `
-workflow {
-  name = "t"
-  version       = "0.1"
-  initial_state = "build"
-  target_state  = "done"
-}
-adapter "noop" "default" {}
-step "build" {
-  target = adapter.noop.default
-  outcome "success" { next = step.run }
-  outcome "failure" { next = step.run }
-}
-step "run" {
-  target = adapter.noop.default
-  outcome "success" {
-    next = step.done
-    output = { x = steps.build.` + field + ` }
-  }
-  outcome "failure" { next = step.done }
-}
-state "done" { terminal = true }
-`
+	return workflowtest.NewStandard().
+		WithInitial("build").
+		WithStep("build", workflowtest.Next("step.run")).
+		WithStep("run",
+			workflowtest.OutcomeWithOutput("success", "state.done", map[string]string{"x": "steps.build." + field}),
+			workflowtest.Outcome("failure", "state.done"),
+		).
+		Build()
 }
 
 // compileWithSchemas is a small helper to parse + compile with a schemas map.
@@ -318,24 +261,13 @@ func TestCheckCrossStepField_SwitchCondOutputUnknownField(t *testing.T) {
 // TestCheckCrossStepField_UnknownStepName verifies that a step input expression
 // referencing an unknown step name produces exactly one DiagError and returns a nil graph.
 func TestCheckCrossStepField_UnknownStepName(t *testing.T) {
-	src := `
-workflow {
-  name = "t"
-  version       = "0.1"
-  initial_state = "run"
-  target_state  = "done"
-}
-adapter "noop" "default" {}
-step "run" {
-  target = adapter.noop.default
-  input {
-    command = steps.bulid.stdout
-  }
-  outcome "success" { next = step.done }
-  outcome "failure" { next = step.done }
-}
-state "done" { terminal = true }
-`
+	src := workflowtest.NewStandard().
+		WithInitial("run").
+		WithStep("run",
+			workflowtest.StepRaw("input { command = steps.bulid.stdout }"),
+			workflowtest.Next("state.done"),
+		).
+		Build()
 	g, diags := compileWithSchemas(t, src, outputSchemaFor("stdout"))
 	if !diags.HasErrors() {
 		t.Fatalf("expected compile error, got none; diags: %v", diags)

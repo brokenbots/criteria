@@ -10,6 +10,7 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
+	"github.com/brokenbots/criteria/workflow/workflowtest"
 )
 
 // benchSink discards all engine events so it does not perturb benchmark timing.
@@ -56,37 +57,14 @@ func (benchEventSink) Adapter(string, any) {}
 // each using adapter "fake" and always succeeding.
 func buildNStepWorkflow(b *testing.B, n int) *workflow.FSMGraph {
 	b.Helper()
-	var hcl string
-	hcl += fmt.Sprintf(`workflow {
-  name = "bench_%d"
-  version       = "0.1"
-  initial_state = "step_0"
-  target_state  = "done"
-  policy {
-    max_total_steps = %d
-  }
-`, n, n+10)
-	for i := 0; i < n; i++ {
-		next := fmt.Sprintf("step_%d", i+1)
-		if i == n-1 {
-			next = "done"
-		}
-		hcl += fmt.Sprintf(`
-  step "step_%d" {
-    target = adapter.fake
-    input { prompt = "step %d" }
-    outcome "success" { next = step.%s }
-    outcome "failure" { next = step.done }
-  }
-`, i, i, next)
-	}
-	hcl += `
-  state "done" {
-    terminal = true
-    success  = true
-  }
-}
-`
+	hcl := workflowtest.Linear(n,
+		workflowtest.LinearName(fmt.Sprintf("bench_%d", n)),
+		workflowtest.LinearAdapter("fake", "default"),
+		workflowtest.LinearInput(func(i int) string {
+			return fmt.Sprintf("input { prompt = %q }", fmt.Sprintf("step %d", i))
+		}),
+	).Build()
+
 	spec, diags := workflow.Parse("bench.hcl", []byte(hcl))
 	if diags.HasErrors() {
 		b.Fatalf("parse: %s", diags.Error())
@@ -102,7 +80,8 @@ func runBenchEngine(b *testing.B, graph *workflow.FSMGraph) {
 	b.Helper()
 	loader := &fakeLoader{
 		adapters: map[string]adapterhost.Handle{
-			"fake": &fakeAdapter{name: "fake", outcome: "success"},
+			"fake":         &fakeAdapter{name: "fake", outcome: "success"},
+			"fake.default": &fakeAdapter{name: "fake", outcome: "success"},
 		},
 	}
 	sink := benchSink{}

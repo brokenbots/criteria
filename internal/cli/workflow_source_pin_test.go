@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/brokenbots/criteria/internal/testutil"
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
@@ -75,6 +76,7 @@ type pinArchiveFixture struct {
 // over an httptest server and returns its source URL and sha256 digest ref.
 func createPinArchiveFixture(t *testing.T, content string) pinArchiveFixture {
 	t.Helper()
+	testutil.RequireLoopbackTCP(t)
 	tarBody := buildTarGz(t, map[string][]byte{
 		"workflow.hcl":        []byte(content),
 		lockfile.LockfileName: []byte("schema_version = 1\n"),
@@ -369,6 +371,7 @@ func TestApply_CascadedSubworkflowPin_AbsentRefUnchanged(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestApply_TopLevelPin_Git(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	setWorkflowCacheHome(t)
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 	fx := createWorkflowGitFixture(t)
@@ -404,6 +407,7 @@ func TestApply_TopLevelPin_Git(t *testing.T) {
 // TestApply_TopLevelPin_AbsentUnchanged pins the pin-absent contract for the
 // top level: no --workflow-ref, unchanged behavior.
 func TestApply_TopLevelPin_AbsentUnchanged(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	setWorkflowCacheHome(t)
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 	fx := createWorkflowGitFixture(t)
@@ -424,6 +428,7 @@ func TestApply_TopLevelPin_AbsentUnchanged(t *testing.T) {
 // level end to end: a matching sha256 pin runs, a mismatching one fails
 // closed before execution.
 func TestApply_TopLevelPin_Archive(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	setWorkflowCacheHome(t)
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 	fx := createWorkflowArchiveFixture(t)

@@ -13,12 +13,14 @@ import (
 	"time"
 
 	"github.com/brokenbots/criteria/internal/run"
+	"github.com/brokenbots/criteria/internal/testutil"
 )
 
 // startFakeCastle serves the three castle.v1.ConsoleService procedures the
 // loopback console proxies, recording every request.
 func startFakeCastle(t *testing.T) (addr string, logs *[]string) {
 	t.Helper()
+	testutil.RequireLoopbackTCP(t)
 	logs = &[]string{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -40,6 +42,7 @@ func startFakeCastle(t *testing.T) (addr string, logs *[]string) {
 // returning status and body.
 func consolePost(t *testing.T, base, proc, reqBody string, headers map[string]string) (status int, body string) {
 	t.Helper()
+	testutil.RequireLoopbackTCP(t)
 	req, err := http.NewRequest(http.MethodPost, base+"/castle.v1.ConsoleService/"+proc, bytes.NewReader([]byte(reqBody)))
 	if err != nil {
 		t.Fatalf("build %s: %v", proc, err)

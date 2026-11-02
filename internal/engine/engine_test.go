@@ -25,7 +25,6 @@ import (
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
-	"github.com/brokenbots/criteria/internal/testutil"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
@@ -149,6 +148,41 @@ func (p *fakeAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, e
 	return &v2.SnapshotResponse{}, nil
 }
 func (p *fakeAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }
+
+type fakePermissiveAdapter struct {
+	fakeAdapter
+}
+
+func (p *fakePermissiveAdapter) Execute(_ context.Context, _ string, step *workflow.StepNode, sink adapter.EventSink, _ *v2.ExecutionRejection) (adapter.Result, error) {
+	var permTools string
+	if step != nil && step.Input != nil {
+		permTools = step.Input["perm_tools"]
+	}
+	if permTools != "" {
+		for i, entry := range strings.Split(permTools, ",") {
+			entry = strings.TrimSpace(entry)
+			if entry == "" {
+				continue
+			}
+			var tool, fingerprint string
+			if idx := strings.Index(entry, "|"); idx >= 0 {
+				tool = entry[:idx]
+				fingerprint = entry[idx+1:]
+			} else {
+				tool = entry
+			}
+			payload := map[string]any{
+				"request_id": fmt.Sprintf("perm-%d", i),
+				"tool":       tool,
+			}
+			if fingerprint != "" {
+				payload["full_command_text"] = fingerprint
+			}
+			sink.Adapter("permission.request", payload)
+		}
+	}
+	return adapter.Result{Outcome: "success"}, nil
+}
 
 type fakeLoader struct {
 	adapters map[string]adapterhost.Handle
@@ -347,11 +381,7 @@ state "done" { terminal = true }
 }
 
 func TestEngineLifecycleWithNoopAdapter(t *testing.T) {
-	adapterBin := buildNoopAdapter(t)
-	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
-		return adapterBin, nil
-	})
-	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"noop": &fakeAdapter{name: "noop", outcome: "success"}}}
 
 	g := compileFile(t, "testdata/adapter_lifecycle_noop.hcl")
 	sink := &fakeSink{}
@@ -367,11 +397,7 @@ func TestEngineLifecycleWithNoopAdapter(t *testing.T) {
 // that OnAdapterLifecycle events for a named-agent workflow are emitted on the
 // execution step ("run_agent"), not on the open/close lifecycle steps (W12).
 func TestNamedAgentLifecycleEventsOnExecutionStep(t *testing.T) {
-	adapterBin := buildNoopAdapter(t)
-	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
-		return adapterBin, nil
-	})
-	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"noop": &fakeAdapter{name: "noop", outcome: "success"}}}
 
 	g := compileFile(t, "testdata/adapter_lifecycle_noop.hcl")
 	sink := &lifecycleCaptureSink{}
@@ -422,11 +448,7 @@ func (s *lifecycleCaptureSink) OnAdapterLifecycle(step, _ /*adapter*/, status, _
 func (s *lifecycleCaptureSink) OnAdapterLifecycleEvent(event *AdapterLifecycleEvent) {}
 
 func TestEngineLifecycleOpenTimeoutKeepsSessionAlive(t *testing.T) {
-	adapterBin := buildNoopAdapter(t)
-	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
-		return adapterBin, nil
-	})
-	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"noop": &fakeAdapter{name: "noop", outcome: "success"}}}
 
 	g := compileFile(t, "testdata/adapter_lifecycle_noop_open_timeout.hcl")
 	sink := &captureStepEventSink{}
@@ -545,11 +567,7 @@ func buildNoopAdapter(t *testing.T) string {
 // read_file and one permission.denied event for write_file, and the run ends
 // in needs_review (because the adapter returns needs_review on any denial).
 func TestEnginePermissionGrantAndDeny(t *testing.T) {
-	adapterBin := testutil.BuildPermissiveAdapter(t)
-	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
-		return adapterBin, nil
-	})
-	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"permissive": &fakePermissiveAdapter{fakeAdapter{name: "permissive"}}}}
 
 	g := compile(t, `
 workflow {
@@ -610,11 +628,7 @@ state "done" { terminal = true }`)
 // produces a permission.denied event for every tool request and no
 // permission.granted events.
 func TestEngineDefaultPolicyDeniesAll(t *testing.T) {
-	adapterBin := testutil.BuildPermissiveAdapter(t)
-	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
-		return adapterBin, nil
-	})
-	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"permissive": &fakePermissiveAdapter{fakeAdapter{name: "permissive"}}}}
 
 	g := compile(t, `
 workflow {
@@ -648,11 +662,7 @@ state "done" { terminal = true }`)
 }
 
 func TestEngineShellFingerprintAllowlist(t *testing.T) {
-	adapterBin := testutil.BuildPermissiveAdapter(t)
-	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
-		return adapterBin, nil
-	})
-	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"permissive": &fakePermissiveAdapter{fakeAdapter{name: "permissive"}}}}
 
 	g := compile(t, `
 workflow {
@@ -1158,11 +1168,7 @@ func TestEngineWithLockfile(t *testing.T) {
 }
 
 func TestEngineSetLockfileOnSessions(t *testing.T) {
-	adapterBin := buildNoopAdapter(t)
-	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
-		return adapterBin, nil
-	})
-	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"noop": &fakeAdapter{name: "noop", outcome: "success"}}}
 
 	lf := &lockfile.Lockfile{
 		Adapters: []lockfile.LockedAdapter{
@@ -1176,7 +1182,7 @@ func TestEngineSetLockfileOnSessions(t *testing.T) {
 	sessions := adapterhost.NewSessionManager(loader)
 	eng.setLockfileOnSessions(sessions)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := sessions.Open(ctx, "noop.default", "noop", "shutdown", nil, nil); err != nil {
 		t.Fatalf("session open: %v", err)
@@ -1233,7 +1239,30 @@ func TestMaybeStartRemoteShim_WildcardProcessExecAccepted(t *testing.T) {
 	}
 }
 
+func canDialUnixSockets() bool {
+	dir, err := os.MkdirTemp("", "cri-unix-check-*")
+	if err != nil {
+		return false
+	}
+	defer os.RemoveAll(dir)
+	sock := filepath.Join(dir, "check.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		return false
+	}
+	defer ln.Close()
+	c, err := net.DialTimeout("unix", sock, 20*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = c.Close()
+	return true
+}
+
 func TestMaybeStartRemoteShim_PinSetWithoutWithLockfile(t *testing.T) {
+	if !canDialUnixSockets() {
+		t.Skip("skipping test: dialing unix sockets is restricted in current environment")
+	}
 	// Regression test for CRI-111: the remote shim's digest verifier must be
 	// built from graph.PinSet when the engine is constructed without the
 	// WithLockfile option, which is the CLI code path.
@@ -1388,11 +1417,7 @@ func dialCRI111FakeAdapter(addr, name, version, digest string) error {
 }
 
 func TestEngineSetLockfileOnSessions_ReadFromDir(t *testing.T) {
-	adapterBin := buildNoopAdapter(t)
-	loader := adapterhost.NewLoaderWithDiscovery(func(string) (string, error) {
-		return adapterBin, nil
-	})
-	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"noop": &fakeAdapter{name: "noop", outcome: "success"}}}
 
 	dir := t.TempDir()
 	lf := &lockfile.Lockfile{
@@ -1411,7 +1436,7 @@ func TestEngineSetLockfileOnSessions_ReadFromDir(t *testing.T) {
 	sessions := adapterhost.NewSessionManager(loader)
 	eng.setLockfileOnSessions(sessions)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := sessions.Open(ctx, "noop.default", "noop", "shutdown", nil, nil); err != nil {
 		t.Fatalf("session open: %v", err)

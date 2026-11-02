@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/brokenbots/criteria/internal/testutil"
 )
 
 // TestListInstalledIncludesFilesystemAdapters is the regression test for the
@@ -75,6 +77,7 @@ func TestListInstalled_MarksUnresponsiveAndContinues(t *testing.T) {
 
 func buildNoopFixture(t *testing.T, outPath string) {
 	t.Helper()
+	testutil.RequireUnixSockets(t)
 	repoRoot, err := filepath.Abs("../..")
 	require.NoError(t, err)
 

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
+	"github.com/brokenbots/criteria/internal/testutil"
 )
 
 func TestResolveFromManifest(t *testing.T) {
@@ -119,6 +120,7 @@ func TestAdapterEnvFiltersRemoteVars(t *testing.T) {
 // fails fast if any remote variable leaks through; with the fix, the local
 // handshake completes and Info succeeds well within the 30-second timeout.
 func TestStartAdapterFiltersRemoteEnvFromChild(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	mockBin := buildMockChildAdapter(t)
 
 	for _, name := range remoteEnvVars {

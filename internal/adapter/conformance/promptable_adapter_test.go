@@ -21,6 +21,7 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapter/conformance"
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	"github.com/brokenbots/criteria/internal/testutil"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -80,6 +81,7 @@ func TestPromptableAdapterConformance(t *testing.T) {
 // capability gate passes (supports_prompt advertised), the Prompt RPC is
 // issued, and the adapter accepts it.
 func TestPromptableAdapterPromptAccepted(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	bin := buildPromptableAdapter(t)
 	loader := adapterhost.NewLoaderWithDiscovery(func(requested string) (string, error) {
 		if requested != "promptable" {
@@ -125,6 +127,7 @@ func TestPromptableAdapterPromptAccepted(t *testing.T) {
 // gate is proven against a real adapter process whose Info carries no
 // supports_prompt.
 func TestNoopAdapterPromptUnsupported(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	bin := buildNoopAdapter(t)
 	loader := adapterhost.NewLoaderWithDiscovery(func(requested string) (string, error) {
 		if requested != "noop" {

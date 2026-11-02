@@ -179,6 +179,9 @@ func runKB153BindChain(t *testing.T, budget time.Duration, keepRedialing bool) *
 }
 
 func TestBindAfterInit_ReusesLivePhoneHomeBridge(t *testing.T) {
+	if !canDialLoopbackTCP() {
+		t.Skip("skipping test: loopback TCP dialing is restricted in current environment")
+	}
 	chain := runKB153BindChain(t, 0, true)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -220,6 +223,9 @@ func TestBindAfterInit_ReusesLivePhoneHomeBridge(t *testing.T) {
 // re-dialing pod must fail the step at the session handshake budget with the
 // CRI-137 diagnosis — never with a torn-down transport error.
 func TestBindDeadAdapter_FailsAtHandshakeBudget(t *testing.T) {
+	if !canDialLoopbackTCP() {
+		t.Skip("skipping test: loopback TCP dialing is restricted in current environment")
+	}
 	const budget = 400 * time.Millisecond
 	chain := runKB153BindChain(t, budget, false)
 

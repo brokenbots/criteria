@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/brokenbots/criteria/internal/adapter/conformance"
+	"github.com/brokenbots/criteria/internal/testutil"
 )
 
 var (
@@ -22,6 +23,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestMCPAdapterConformance(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	conformance.RunAdapter(
 		t,
 		"mcp",

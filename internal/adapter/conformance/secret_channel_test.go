@@ -21,9 +21,11 @@ import (
 	"time"
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	"github.com/brokenbots/criteria/internal/testutil"
 )
 
 func TestSecretChannel_EnvBasedConsumer(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	bin := buildSecretConsumer(t)
 	report := runSecretConsumer(t, bin, "env", map[string]string{"SECRET": "env-consumer-secret"})
 
@@ -36,6 +38,7 @@ func TestSecretChannel_EnvBasedConsumer(t *testing.T) {
 }
 
 func TestSecretChannel_StructuredPayloadConsumer(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	bin := buildSecretConsumer(t)
 	report := runSecretConsumer(t, bin, "structured", map[string]string{"SECRET": "structured-consumer-secret"})
 

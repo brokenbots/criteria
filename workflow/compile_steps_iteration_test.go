@@ -9,31 +9,13 @@ import (
 	"testing"
 
 	"github.com/hashicorp/hcl/v2"
+
+	"github.com/brokenbots/criteria/workflow/workflowtest"
 )
 
 // parallelWorkflow wraps a parallel step body in a minimal compilable workflow.
 func parallelWorkflow(stepBody string) string {
-	return `
-workflow {
-  name = "t"
-  version       = "0.1"
-  initial_state = "work"
-  target_state  = "done"
-}
-adapter "noop" "default" {}
-step "work" {
-  target   = adapter.noop.default
-  ` + stepBody + `
-}
-state "done" {
-  terminal = true
-  success  = true
-}
-state "failed" {
-  terminal = true
-  success  = false
-}
-`
+	return workflowtest.WrapStep(stepBody)
 }
 
 // TestStep_ParallelMutualExclusion_ForEach_Error verifies that combining

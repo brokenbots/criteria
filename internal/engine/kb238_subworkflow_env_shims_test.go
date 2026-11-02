@@ -300,6 +300,12 @@ type kb238RunResult struct {
 // a shell pod for the root) against the provisioned shims.
 func kb238RunShape(t *testing.T, rootHCL, variant string, servePods bool, budget time.Duration) *kb238RunResult {
 	t.Helper()
+	if servePods && !canDialLoopbackTCP() {
+		t.Skip("skipping test: loopback TCP dialing is restricted in current environment")
+	}
+	if servePods && testing.Short() {
+		t.Skip("skipping integration test with live pods in -short mode")
+	}
 	root := t.TempDir()
 	writeFile(t, root+"/main.chcl", rootHCL)
 	writeFile(t, root+"/handler/main.chcl", kb238HandlerHCL)

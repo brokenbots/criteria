@@ -12,6 +12,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/brokenbots/criteria/internal/testutil"
 )
 
 // TestRunMetadataFromOrigin_RedactsCredentials pins the record's redaction
@@ -158,6 +160,7 @@ func TestPublishRunMetadata_FailureDegradesToWarning(t *testing.T) {
 // for local sources: a run executed from a local workflow publishes no
 // provenance record because there is no workflow origin.
 func TestApply_LocalSource_NoRunMetadataRecord(t *testing.T) {
+	testutil.RequireUnixSockets(t)
 	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "workflow.hcl"), []byte(runnableWorkflowHCL), 0o644))

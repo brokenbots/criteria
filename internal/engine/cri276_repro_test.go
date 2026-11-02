@@ -420,6 +420,12 @@ func runIdleExecCycle(t *testing.T, podServerOpts []grpc.ServerOption) idleExecC
 // survives, and the second step on the stored session handle completes
 // without transport error — no pod re-dial, remote behaves as local.
 func TestRemoteSessionIdleSurvivesWithKeepalives(t *testing.T) {
+	if !canDialLoopbackTCP() {
+		t.Skip("skipping test: loopback TCP dialing is restricted in current environment")
+	}
+	if testing.Short() {
+		t.Skip("skipping slow idle middlebox test in -short mode")
+	}
 	opts := adapterhost.KeepaliveServerOptionsFor(
 		keepalive.ServerParameters{Time: time.Second, Timeout: 500 * time.Millisecond},
 		keepalive.EnforcementPolicy{MinTime: 50 * time.Millisecond, PermitWithoutStream: true},
@@ -460,6 +466,12 @@ func TestRemoteSessionIdleSurvivesWithKeepalives(t *testing.T) {
 // underlying transport death: the pod re-handshakes (accepts increase) and
 // the retry executes on the re-established bridge.
 func TestRemoteSessionIdleDiesWithoutKeepalives(t *testing.T) {
+	if !canDialLoopbackTCP() {
+		t.Skip("skipping test: loopback TCP dialing is restricted in current environment")
+	}
+	if testing.Short() {
+		t.Skip("skipping slow idle middlebox test in -short mode")
+	}
 	c := runIdleExecCycle(t, nil)
 
 	if c.firstErr != nil {

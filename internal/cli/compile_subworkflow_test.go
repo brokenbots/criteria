@@ -4,50 +4,22 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
-	"os"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/brokenbots/criteria/workflow/workflowtest"
 )
 
 // writeCallee writes a minimal callee workflow HCL to dir/name/main.hcl.
-// vars maps variable names to whether they have a default (true = has default).
 func writeCallee(t *testing.T, parent, name string, vars map[string]bool) string {
 	t.Helper()
-	dir := filepath.Join(parent, name)
-	if err := os.Mkdir(dir, 0o755); err != nil {
-		t.Fatalf("create callee dir %q: %v", dir, err)
-	}
-	var sb strings.Builder
-	sb.WriteString("workflow {\n")
-	sb.WriteString(fmt.Sprintf("  name          = %q\n", name))
-	sb.WriteString("  version       = \"1\"\n")
-	sb.WriteString("  initial_state = \"done\"\n")
-	sb.WriteString("  target_state  = \"done\"\n")
-	sb.WriteString("}\n\n")
-	for varName, hasDef := range vars {
-		if hasDef {
-			sb.WriteString(fmt.Sprintf("variable %q {\n  type    = string\n  default = \"x\"\n}\n", varName))
-		} else {
-			sb.WriteString(fmt.Sprintf("variable %q {\n  type = string\n}\n", varName))
-		}
-	}
-	sb.WriteString("state \"done\" {\n  terminal = true\n  success  = true\n}\n")
-	if err := os.WriteFile(filepath.Join(dir, "main.hcl"), []byte(sb.String()), 0o644); err != nil {
-		t.Fatalf("write main.hcl in %q: %v", dir, err)
-	}
-	return dir
+	return workflowtest.WriteCalleeDir(t, parent, name, vars)
 }
 
 // writeParent writes HCL content to dir/parent.hcl and returns the file path.
 func writeParent(t *testing.T, dir, content string) string {
 	t.Helper()
-	p := filepath.Join(dir, "parent.hcl")
-	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
-		t.Fatalf("write parent.hcl: %v", err)
-	}
-	return p
+	return workflowtest.WriteFile(t, dir, "parent.hcl", content)
 }
 
 // compileToMap compiles the workflow at path to JSON and unmarshals it into a

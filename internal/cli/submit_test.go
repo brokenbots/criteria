@@ -16,6 +16,7 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/brokenbots/criteria/internal/testutil"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
 )
@@ -108,6 +109,7 @@ func (f *fakeSubmitServerService) GetAssignmentDisposition(context.Context, *con
 
 func startSubmitFakeServer(t *testing.T, handler *fakeSubmitServerService) string {
 	t.Helper()
+	testutil.RequireLoopbackTCP(t)
 	mux := http.NewServeMux()
 	path, h := criteriav1connect.NewServerServiceHandler(handler)
 	mux.Handle(path, h)

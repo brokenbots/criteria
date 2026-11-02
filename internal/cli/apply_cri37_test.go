@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/brokenbots/criteria/workflow/workflowtest"
 )
 
 // writeSubworkflowParent writes a parent workflow file and a child
@@ -14,18 +16,8 @@ import (
 func writeSubworkflowParent(t *testing.T, parent, child string) string {
 	t.Helper()
 	dir := t.TempDir()
-	parentPath := filepath.Join(dir, "parent.hcl")
-	if err := os.WriteFile(parentPath, []byte(parent+"\n"), 0o600); err != nil {
-		t.Fatalf("write parent: %v", err)
-	}
-	childDir := filepath.Join(dir, "child")
-	if err := os.Mkdir(childDir, 0o755); err != nil {
-		t.Fatalf("create child dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(childDir, "main.hcl"), []byte(child+"\n"), 0o644); err != nil {
-		t.Fatalf("write child: %v", err)
-	}
-	return parentPath
+	workflowtest.WriteDir(t, dir, "child", child+"\n")
+	return workflowtest.WriteFile(t, dir, "parent.hcl", parent+"\n")
 }
 
 // TestApplyCRI37_SwitchAfterSubworkflowWrite is a CLI-level regression test

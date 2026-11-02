@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/brokenbots/criteria/workflow"
+	"github.com/brokenbots/criteria/workflow/workflowtest"
 )
 
 // --- Unit tests for buildAdapterColorMap ---
@@ -382,13 +383,7 @@ func compileDOTFromDir(t *testing.T, dir string) string {
 // writeSubworkflowDir creates dir/name/ containing main.hcl with hclContent.
 func writeSubworkflowDir(t *testing.T, parentDir, name, hclContent string) {
 	t.Helper()
-	sub := filepath.Join(parentDir, name)
-	if err := os.Mkdir(sub, 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", sub, err)
-	}
-	if err := os.WriteFile(filepath.Join(sub, "main.hcl"), []byte(hclContent), 0o644); err != nil {
-		t.Fatalf("write %s/main.hcl: %v", sub, err)
-	}
+	workflowtest.WriteDir(t, parentDir, name, hclContent)
 }
 
 // TestBuildAdapterColorMap_SubworkflowLocalType verifies that an adapter type that

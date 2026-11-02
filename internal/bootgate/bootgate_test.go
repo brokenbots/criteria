@@ -8,9 +8,17 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/brokenbots/criteria/internal/testutil"
 )
 
 const testProbeTimeout = 2 * time.Second
+
+func newBootgateTestServer(t *testing.T, handler http.Handler) *httptest.Server {
+	t.Helper()
+	testutil.RequireLoopbackTCP(t)
+	return httptest.NewServer(handler)
+}
 
 // lookupFromMap builds a Configure lookup over a fixed env map.
 func lookupFromMap(env map[string]string) func(string) (string, bool) {
@@ -183,7 +191,7 @@ func TestCheckAgainstLiveOperatorView(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var gotQuery string
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srv := newBootgateTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				gotQuery = r.URL.RawQuery
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(tc.status)
@@ -209,7 +217,7 @@ func TestCheckAgainstLiveOperatorView(t *testing.T) {
 
 func TestCheckOmitsAbsentIdentityParams(t *testing.T) {
 	var gotQuery string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newBootgateTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotQuery = r.URL.RawQuery
 		_, _ = w.Write([]byte(`{"phase":"Provisioning","terminal":false}`))
 	}))
@@ -225,7 +233,7 @@ func TestCheckOmitsAbsentIdentityParams(t *testing.T) {
 }
 
 func TestCheckDeletedCRIsBlocked(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newBootgateTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(`{"error":"no CriteriaRun for identity"}`))
 	}))
@@ -239,7 +247,7 @@ func TestCheckDeletedCRIsBlocked(t *testing.T) {
 }
 
 func TestCheckUnreachableViewIsUnknownNotError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	srv := newBootgateTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	closedURL := srv.URL
 	srv.Close() // nothing will listen on the port anymore
 
@@ -254,7 +262,7 @@ func TestCheckUnreachableViewIsUnknownNotError(t *testing.T) {
 }
 
 func TestCheckSlowViewTimesOutToUnknown(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newBootgateTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(100 * time.Millisecond)
 		_, _ = w.Write([]byte(`{"phase":"Provisioning","terminal":false}`))
 	}))
@@ -271,7 +279,7 @@ func TestCheckSlowViewTimesOutToUnknown(t *testing.T) {
 }
 
 func TestCheckOversizedViewPayloadIsMalformed(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newBootgateTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"phase":"%s","terminal":false}`, strings.Repeat("x", maxViewBodyBytes+1024))
 	}))
 	defer srv.Close()
@@ -287,7 +295,7 @@ func TestCheckOversizedViewPayloadIsMalformed(t *testing.T) {
 }
 
 func TestCheckOversizedPaddingAfterValidJSONIsMalformed(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newBootgateTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"phase":"Provisioning","terminal":false}%s`, strings.Repeat(" ", maxViewBodyBytes+1024))
 	}))
 	defer srv.Close()

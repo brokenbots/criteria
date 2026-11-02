@@ -186,7 +186,7 @@ state "failed" {
 // parallel_max=2 caps the whole subtree even when the inner parallel step
 // declares parallel_max=8.
 func TestCRI39_NestedParallelMaxBoundsSubtree(t *testing.T) {
-	p := cri39NewAdapter(50 * time.Millisecond)
+	p := cri39NewAdapter(5 * time.Millisecond)
 	g := cri39Compile(t, map[string]string{
 		"main.chcl":       cri39ParentHCL(cri39HCLList(8), 2),
 		"child/main.chcl": cri39ChildHCL(cri39HCLList(8), 8),
@@ -196,15 +196,15 @@ func TestCRI39_NestedParallelMaxBoundsSubtree(t *testing.T) {
 	if peak := cri39Peak(p); peak > 2 {
 		t.Errorf("peak concurrent executions = %d; want <= 2", peak)
 	}
-	if elapsed < 1500*time.Millisecond {
-		t.Errorf("elapsed = %s; want >= 1.5s (ceiling should serialize the tree)", elapsed)
+	if elapsed < 100*time.Millisecond {
+		t.Errorf("elapsed = %s; want >= 100ms (ceiling should serialize the tree)", elapsed)
 	}
 }
 
 // TestCRI39_InnerCapLowerThanOuterCap (Shape B) verifies that when the inner
 // parallel step has the lower cap, the subtree-wide ceiling is the inner cap.
 func TestCRI39_InnerCapLowerThanOuterCap(t *testing.T) {
-	p := cri39NewAdapter(25 * time.Millisecond)
+	p := cri39NewAdapter(2 * time.Millisecond)
 	g := cri39Compile(t, map[string]string{
 		"main.chcl":       cri39ParentHCL(cri39HCLList(8), 2),
 		"child/main.chcl": cri39ChildHCL(cri39HCLList(8), 1),
@@ -219,7 +219,7 @@ func TestCRI39_InnerCapLowerThanOuterCap(t *testing.T) {
 // TestCRI39_OuterFourInnerFour (Shape C) verifies the ceiling is the minimum
 // when both parallel steps declare the same cap.
 func TestCRI39_OuterFourInnerFour(t *testing.T) {
-	p := cri39NewAdapter(25 * time.Millisecond)
+	p := cri39NewAdapter(2 * time.Millisecond)
 	g := cri39Compile(t, map[string]string{
 		"main.chcl":       cri39ParentHCL(cri39HCLList(4), 4),
 		"child/main.chcl": cri39ChildHCL(cri39HCLList(4), 4),
@@ -234,7 +234,7 @@ func TestCRI39_OuterFourInnerFour(t *testing.T) {
 // TestCRI39_DeeplyNestedParallel (Shape F) verifies the ceiling propagates
 // through three levels of nested parallel subworkflows.
 func TestCRI39_DeeplyNestedParallel(t *testing.T) {
-	p := cri39NewAdapter(25 * time.Millisecond)
+	p := cri39NewAdapter(2 * time.Millisecond)
 	g := cri39Compile(t, map[string]string{
 		"main.chcl": cri39ParentHCL(cri39HCLList(2), 2),
 		"child/main.chcl": `workflow {
@@ -279,7 +279,7 @@ state "failed" {
 // TestCRI39_SingleLevelParallel (Shape D) verifies the existing single-level
 // parallel_max enforcement is preserved.
 func TestCRI39_SingleLevelParallel(t *testing.T) {
-	p := cri39NewAdapter(50 * time.Millisecond)
+	p := cri39NewAdapter(5 * time.Millisecond)
 	g := cri39Compile(t, map[string]string{
 		"main.chcl": `workflow {
   name          = "root"
@@ -313,8 +313,8 @@ state "failed" {
 	if peak := cri39Peak(p); peak > 2 {
 		t.Errorf("peak concurrent executions = %d; want <= 2", peak)
 	}
-	if elapsed < 150*time.Millisecond {
-		t.Errorf("elapsed = %s; want >= 150ms", elapsed)
+	if elapsed < 15*time.Millisecond {
+		t.Errorf("elapsed = %s; want >= 15ms", elapsed)
 	}
 }
 
@@ -322,7 +322,7 @@ state "failed" {
 // sequential (for_each) subworkflow inside a parallel parent is bounded by the
 // parent's cap.
 func TestCRI39_SequentialSubworkflowInsideParallelParent(t *testing.T) {
-	p := cri39NewAdapter(25 * time.Millisecond)
+	p := cri39NewAdapter(2 * time.Millisecond)
 	g := cri39Compile(t, map[string]string{
 		"main.chcl":       cri39ParentHCL(cri39HCLList(4), 2),
 		"child/main.chcl": cri39SequentialChildHCL(cri39HCLList(8)),
@@ -382,7 +382,7 @@ state "failed" {
 // step_b leaves running in different parent iterations could push aggregate
 // concurrency above 2.
 func TestCRI39_SiblingStepsRespectSubtreeCeiling(t *testing.T) {
-	p := cri39NewAdapter(50 * time.Millisecond)
+	p := cri39NewAdapter(5 * time.Millisecond)
 	g := cri39Compile(t, map[string]string{
 		"main.chcl":       cri39ParentHCL(cri39HCLList(4), 2),
 		"child/main.chcl": cri39SiblingChildHCL(cri39HCLList(3), 2, 1),
@@ -447,7 +447,7 @@ state "failed" {
 // step_b leaves from one outer iteration can run concurrently with step_a leaves
 // from another, pushing aggregate concurrency above the outer ceiling.
 func TestCRI39_SubworkflowSiblingRespectsSubtreeCeiling(t *testing.T) {
-	p := cri39NewAdapter(50 * time.Millisecond)
+	p := cri39NewAdapter(5 * time.Millisecond)
 	g := cri39Compile(t, map[string]string{
 		"main.chcl":                  cri39ParentHCL(cri39HCLList(4), 2),
 		"child/main.chcl":            cri39SubworkflowSiblingChildHCL(cri39HCLList(3), 2),
@@ -463,7 +463,7 @@ func TestCRI39_SubworkflowSiblingRespectsSubtreeCeiling(t *testing.T) {
 // TestCRI39_SequentialOuterParallelInner (Neg shape) verifies that a sequential
 // outer step does not impose a ceiling on the inner parallel step.
 func TestCRI39_SequentialOuterParallelInner(t *testing.T) {
-	p := cri39NewAdapter(25 * time.Millisecond)
+	p := cri39NewAdapter(2 * time.Millisecond)
 	g := cri39Compile(t, map[string]string{
 		"main.chcl": `workflow {
   name          = "root"

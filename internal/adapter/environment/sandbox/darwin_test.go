@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/zclconf/go-cty/cty"
@@ -107,7 +108,7 @@ func TestProfile_Render(t *testing.T) {
 		{
 			name: "wildcard network-outbound is unrestricted",
 			profile: Profile{
-				DefaultDeny:         true,
+				DefaultDeny:          true,
 				AllowNetworkWildcard: true,
 			},
 			want: []string{
@@ -120,7 +121,7 @@ func TestProfile_Render(t *testing.T) {
 		{
 			name: "exact network-outbound keeps remote ip filter",
 			profile: Profile{
-				DefaultDeny:      true,
+				DefaultDeny:       true,
 				AllowNetworkHosts: []string{"127.0.0.1:443"},
 			},
 			want: []string{
@@ -149,18 +150,18 @@ func TestProfile_Render(t *testing.T) {
 
 func TestFromPolicy(t *testing.T) {
 	tests := []struct {
-		name            string
-		policy          workflow.ResolvedPolicy
-		adapterBinary   string
-		wantReads       []string
-		wantWrites      []string
-		wantExec        []string
-		wantNetwork          []string
-		wantNetworkWildcard  bool
-		wantNetworkBind      bool
-		wantWarnings         int
-		wantBlockKext        bool
-		wantBlockMach        bool
+		name                string
+		policy              workflow.ResolvedPolicy
+		adapterBinary       string
+		wantReads           []string
+		wantWrites          []string
+		wantExec            []string
+		wantNetwork         []string
+		wantNetworkWildcard bool
+		wantNetworkBind     bool
+		wantWarnings        int
+		wantBlockKext       bool
+		wantBlockMach       bool
 	}{
 		{
 			name: "filesystem read and write directories",
@@ -483,8 +484,28 @@ func TestSandboxProfile_Integration(t *testing.T) {
 	}
 }
 
+var canSandboxExecOnce sync.Once
+var canSandboxExec bool
+
+func requireSandboxExec(t *testing.T) {
+	t.Helper()
+	canSandboxExecOnce.Do(func() {
+		if _, err := exec.LookPath("/usr/bin/sandbox-exec"); err != nil {
+			return
+		}
+		cmd := exec.Command("/usr/bin/sandbox-exec", "-p", "(version 1) (allow default)", "/usr/bin/true")
+		if err := cmd.Run(); err == nil {
+			canSandboxExec = true
+		}
+	})
+	if !canSandboxExec {
+		t.Skip("skipping test requiring /usr/bin/sandbox-exec; nested sandboxing not permitted")
+	}
+}
+
 func runUnderSandbox(t *testing.T, helperPath, profilePath string, args ...string) (string, error) {
 	t.Helper()
+	requireSandboxExec(t)
 	cmd := exec.Command("/usr/bin/sandbox-exec", append([]string{"-f", profilePath, helperPath}, args...)...)
 	var out bytes.Buffer
 	cmd.Stdout = &out

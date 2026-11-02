@@ -14,6 +14,8 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/ext/typeexpr"
 	"github.com/zclconf/go-cty/cty"
+
+	"github.com/brokenbots/criteria/workflow/workflowtest"
 )
 
 // outcomeSchemaSchemas is a compile-time adapter surface exercising each lane
@@ -71,23 +73,16 @@ func parseTestExprDefaults(t *testing.T, src string) *typeexpr.Defaults {
 }
 
 func typedWorkflow(stepBody string) string {
-	return `
-workflow {
-  name = "t"
-  version       = "0.1"
-  initial_state = "work"
-  target_state  = "done"
-}
-adapter "typed" "default" {}
-step "work" {
-  target = adapter.typed.default
-  ` + stepBody + `
-}
-state "done" {
-  terminal = true
-  success  = true
-}
-`
+	trueVal := true
+	return workflowtest.New().
+		WithHeader("t", "0.1", "work", "done").
+		WithAdapter("typed", "default").
+		WithStep("work",
+			workflowtest.Target("adapter.typed.default"),
+			workflowtest.StepRaw(stepBody),
+		).
+		WithState("done", true, &trueVal).
+		Build()
 }
 
 // TestOutcomeSchema_InlineCompilesToContract covers the happy path: an inline

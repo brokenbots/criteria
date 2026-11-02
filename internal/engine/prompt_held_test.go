@@ -27,6 +27,12 @@ func heldPromptFixture(t *testing.T) (
 	rt *PromptRouter, promptCh chan *pb.AgentPrompt, sink *promptInjectSink, logOut *bytes.Buffer, callLog string,
 ) {
 	t.Helper()
+	if !canDialUnixSockets() {
+		t.Skip("skipping live adapter test: dialing unix sockets is restricted in current environment")
+	}
+	if testing.Short() {
+		t.Skip("skipping live adapter test in -short mode")
+	}
 	adapterBin := buildPromptableAdapter(t)
 	callLogPath := filepath.Join(t.TempDir(), "promptable-held-calls.log")
 	t.Setenv("PROMPTABLE_CALL_LOG", callLogPath)

@@ -1,46 +1,39 @@
 package workflow
 
 import (
-	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/brokenbots/criteria/workflow/workflowtest"
 )
 
 // loopWorkflow is a minimal workflow with a back-edge on step "execute":
 // execute -> again -> execute (via the "again" outcome and the step's own
 // back-edge). Used by multiple back-edge warning tests.
 func loopWorkflowSrc(maxVisits, maxTotalSteps, warnThreshold int) string {
-	policyBlock := ""
-	if maxTotalSteps > 0 || warnThreshold >= 0 {
-		parts := ""
-		if maxTotalSteps > 0 {
-			parts += "  max_total_steps = " + strconv.Itoa(maxTotalSteps) + "\n"
-		}
-		if warnThreshold >= 0 {
-			parts += "  max_visits_warn_threshold = " + strconv.Itoa(warnThreshold) + "\n"
-		}
-		policyBlock = "  policy {\n" + parts + "  }\n"
+	b := workflowtest.New().
+		WithHeader("loop", "0.1", "execute", "done").
+		WithAdapter("fake", "default").
+		WithState("done", true, nil)
+
+	if maxTotalSteps > 0 {
+		b.WithMaxTotalSteps(maxTotalSteps)
 	}
-	maxVisitsAttr := ""
+	if warnThreshold >= 0 {
+		b.WithMaxVisitsWarnThreshold(warnThreshold)
+	}
+
+	stepOpts := []workflowtest.StepOpt{
+		workflowtest.Target("adapter.fake.default"),
+		workflowtest.Outcome("again", "step.execute"),
+		workflowtest.Outcome("success", "step.done"),
+		workflowtest.Outcome("failure", "step.done"),
+	}
 	if maxVisits != 0 {
-		maxVisitsAttr = "  max_visits = " + strconv.Itoa(maxVisits) + "\n"
+		stepOpts = append(stepOpts, workflowtest.MaxVisits(maxVisits))
 	}
-	return `
-workflow {
-  name = "loop"
-  version       = "0.1"
-  initial_state = "execute"
-  target_state  = "done"
-` + policyBlock + `}
-adapter "fake" "default" {}
-step "execute" {
-  target = adapter.fake.default
-` + maxVisitsAttr + `  outcome "again" { next = step.execute }
-  outcome "success" { next = step.done }
-  outcome "failure" { next = step.done }
-}
-state "done" { terminal = true }
-`
+	b.WithStep("execute", stepOpts...)
+	return b.Build()
 }
 
 // TestCompile_MaxVisits_Decodes verifies that max_visits = 5 on a step

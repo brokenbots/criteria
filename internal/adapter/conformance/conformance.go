@@ -15,6 +15,7 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	"github.com/brokenbots/criteria/internal/testutil"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -124,6 +125,7 @@ func Run(t *testing.T, name string, factory func() adapter.Adapter, opts Options
 // RunAdapter executes the shared adapter contract against an adapter binary.
 func RunAdapter(t *testing.T, name, binaryPath string, opts Options) {
 	t.Helper()
+	testutil.RequireUnixSockets(t)
 	if strings.TrimSpace(name) == "" {
 		t.Fatal("conformance: name is required")
 	}

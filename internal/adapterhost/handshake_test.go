@@ -9,6 +9,7 @@ import (
 	hplugin "github.com/hashicorp/go-plugin"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
+	"github.com/brokenbots/criteria/internal/testutil"
 )
 
 func TestHandshakeInfo(t *testing.T) {
@@ -59,6 +60,7 @@ func TestHandshakeInfo(t *testing.T) {
 // binary lifetime. The actual build happens in TestMain (see main_test.go).
 func buildNoopAdapter(t *testing.T) string {
 	t.Helper()
+	testutil.RequireUnixSockets(t)
 	if testNoopAdapterBin == "" {
 		t.Fatal("testNoopAdapterBin not set; ensure TestMain ran")
 	}

@@ -68,9 +68,7 @@ type "probe_response" {
   })
 }
 
-environment "shell" "prod" {
-  os = "linux"
-}
+environment "shell" "prod" {}
 
 adapter "caller" "instance" {}
 adapter "callee" "helper" {
@@ -466,9 +464,7 @@ type "probe_response" {
   })
 }
 
-environment "shell" "prod" {
-  os = "linux"
-}
+environment "shell" "prod" {}
 
 adapter "caller" "instance" {}
 adapter "callee" "helper" {
@@ -592,9 +588,7 @@ type "task_payload" {
   })
 }
 
-environment "shell" "prod" {
-  os = "linux"
-}
+environment "shell" "prod" {}
 
 adapter "caller" "instance" {}
 adapter "callee" "helper" {

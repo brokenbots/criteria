@@ -11,6 +11,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/dynamicpb"
+
+	"github.com/brokenbots/criteria/internal/testutil"
 )
 
 func TestPromptWireRequestResponseRoundTrip(t *testing.T) {
@@ -67,6 +69,7 @@ func (s *promptRecordService) Prompt(_ context.Context, req *PromptRequest) (*Pr
 // in-process gRPC server whose AdapterService gains the Prompt method via
 // PromptMethodDesc — the exact serving shape the promptable fixture uses.
 func TestPromptMethodDescOverGRPC(t *testing.T) {
+	testutil.RequireLoopbackTCP(t)
 	svc := &promptRecordService{}
 	desc := &grpc.ServiceDesc{
 		ServiceName: "criteria.v2.AdapterService",

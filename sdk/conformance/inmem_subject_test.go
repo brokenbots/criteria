@@ -8,6 +8,7 @@ package conformance_test
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -24,9 +25,26 @@ import (
 	"github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
 )
 
+func canDialLoopbackTCP() bool {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return false
+	}
+	defer ln.Close()
+	conn, err := net.DialTimeout("tcp", ln.Addr().String(), 50*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
 // TestConformance runs the full SDK conformance suite against the in-memory
 // Subject implementation, proving the contract is implementable without a server.
 func TestConformance(t *testing.T) {
+	if !canDialLoopbackTCP() {
+		t.Skip("skipping conformance suite: loopback TCP connect not permitted in sandbox")
+	}
 	conformance.Run(t, &inMemSubject{handlers: make(map[string]*inMemHandler)})
 }
 

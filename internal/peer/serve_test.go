@@ -28,7 +28,10 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
+
 	"google.golang.org/grpc/status"
+
+	"github.com/brokenbots/criteria/internal/testutil"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	criteriav1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
@@ -1286,6 +1289,7 @@ func TestServer_DialClassifiesUnixHosts(t *testing.T) {
 // (identity frame re-sent), backs off with jittered, capped delays, and
 // still resumes the supervise stream on a healthy host.
 func TestServer_RunReconnectsAfterHostBounce(t *testing.T) {
+	testutil.RequireLoopbackTCP(t)
 	f := newPeerServeFixture(t)
 	f.server.cfg.BackoffMin = 100 * time.Millisecond
 	f.server.cfg.BackoffMax = time.Second

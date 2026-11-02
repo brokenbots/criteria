@@ -23,8 +23,17 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/brokenbots/criteria/internal/testutil"
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
+
+func newArchiveTestServer(t *testing.T, handler http.Handler) *httptest.Server {
+	t.Helper()
+	testutil.RequireLoopbackTCP(t)
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+	return srv
+}
 
 // ---------------------------------------------------------------------------
 // Archive extraction (go-getter decompressors behind the pre-scan wrapper)
@@ -555,13 +564,12 @@ func TestFetchArchive_TarGz(t *testing.T) {
 
 	var fetches int
 	var mu sync.Mutex
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newArchiveTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		fetches++
 		mu.Unlock()
 		_, _ = w.Write(body)
 	}))
-	defer srv.Close()
 
 	f := newTestFetcher(t, srv.Client())
 	fullSource := srv.URL + source
@@ -594,10 +602,9 @@ func TestFetchArchive_Zip(t *testing.T) {
 	})
 	sum := sha256.Sum256(body)
 	wantDigest := "sha256:" + hex.EncodeToString(sum[:])
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newArchiveTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(body)
 	}))
-	defer srv.Close()
 
 	f := newTestFetcher(t, srv.Client())
 	fullSource := srv.URL + "/flows/rel.zip"
@@ -615,10 +622,9 @@ func TestFetchArchive_Zip(t *testing.T) {
 // TestFetchArchive_UnsupportedFormat verifies that archives with an unknown
 // suffix are rejected after download, matching the previous contract.
 func TestFetchArchive_UnsupportedFormat(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newArchiveTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("data"))
 	}))
-	defer srv.Close()
 
 	f := newTestFetcher(t, srv.Client())
 	fullSource := srv.URL + "/flows/rel.bin"
@@ -631,10 +637,9 @@ func TestFetchArchive_UnsupportedFormat(t *testing.T) {
 // TestFetchArchive_DownloadError verifies download failures surface an error
 // naming the source.
 func TestFetchArchive_DownloadError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newArchiveTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing", http.StatusNotFound)
 	}))
-	defer srv.Close()
 
 	f := newTestFetcher(t, srv.Client())
 	fullSource := srv.URL + "/flows/rel.tar.gz"
@@ -716,10 +721,9 @@ func TestFetch_ConcurrentArchive(t *testing.T) {
 	sum := sha256.Sum256(body)
 	wantDigest := "sha256:" + hex.EncodeToString(sum[:])
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newArchiveTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(body)
 	}))
-	defer srv.Close()
 
 	f := newTestFetcher(t, srv.Client())
 	fullSource := srv.URL + "/flows/rel.tar.gz"

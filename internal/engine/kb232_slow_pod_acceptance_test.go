@@ -145,6 +145,12 @@ func kb232AcceptanceLockfile() *lockfile.Lockfile {
 // step's deadline on a dead dial, with no half-window pending signal for a
 // merely slow-but-healthy pod.
 func TestKB232_SubworkflowPerScopeSessionEstablishesWithSlowPodStart(t *testing.T) {
+	if !canDialLoopbackTCP() {
+		t.Skip("skipping test: loopback TCP dialing is restricted in current environment")
+	}
+	if testing.Short() {
+		t.Skip("skipping slow acceptance test in -short mode")
+	}
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "main.chcl"), kb232SlowPodAcceptanceHCL())
 	writeFile(t, filepath.Join(root, "child", "main.chcl"), kb232SlowPodChildHCL())

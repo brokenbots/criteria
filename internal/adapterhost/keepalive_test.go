@@ -27,6 +27,8 @@ import (
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/keepalive"
+
+	"github.com/brokenbots/criteria/internal/testutil"
 )
 
 // idleClosingProxy forwards TCP between a local listener and a target,
@@ -184,6 +186,10 @@ func checkHealth(t *testing.T, conn *grpc.ClientConn) error {
 // floor with a proxy window just above it; the production policy's 1-minute
 // interval sits far above the floor and behaves identically.
 func TestKeepaliveServerPingsKeepIdleConnectionAlive(t *testing.T) {
+	testutil.RequireLoopbackTCP(t)
+	if testing.Short() {
+		t.Skip("skipping slow middlebox test in -short mode")
+	}
 	addr, accepts := startKeepaliveTestServer(t, KeepaliveServerOptionsFor(
 		keepalive.ServerParameters{Time: time.Second, Timeout: 500 * time.Millisecond},
 		keepalive.EnforcementPolicy{MinTime: 50 * time.Millisecond, PermitWithoutStream: true},
@@ -217,6 +223,10 @@ func TestKeepaliveServerPingsKeepIdleConnectionAlive(t *testing.T) {
 // second one. This proves the test above detects the failure mode the policy
 // exists to prevent.
 func TestIdleClosingMiddleboxKillsConnectionWithoutKeepalives(t *testing.T) {
+	testutil.RequireLoopbackTCP(t)
+	if testing.Short() {
+		t.Skip("skipping slow middlebox test in -short mode")
+	}
 	addr, accepts := startKeepaliveTestServer(t, nil)
 	proxy := newIdleClosingProxy(t, addr, 1500*time.Millisecond)
 	conn := dialKeepaliveTestClient(t, proxy.ln.Addr().String(), keepalive.ClientParameters{
@@ -248,6 +258,10 @@ func TestIdleClosingMiddleboxKillsConnectionWithoutKeepalives(t *testing.T) {
 // documents as disabling idleness entirely — the property these policy tests
 // rely on.
 func TestIdleTimeoutClosesTransportWhenEnabled(t *testing.T) {
+	testutil.RequireLoopbackTCP(t)
+	if testing.Short() {
+		t.Skip("skipping idle timeout test in -short mode")
+	}
 	addr, accepts := startKeepaliveTestServer(t, nil)
 	conn, err := grpc.NewClient("passthrough:///"+addr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),

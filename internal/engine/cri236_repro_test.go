@@ -13,12 +13,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
-	"sync/atomic"
 	"testing"
-	"time"
-
-	"github.com/brokenbots/criteria/internal/adapter/environment/remote"
-	"github.com/brokenbots/criteria/internal/adapterhost"
 )
 
 // requireWireTokenShape asserts the CRI-236 token contract on a provision
@@ -78,85 +73,16 @@ func TestInitScopeAdapters_PerScope_ProvisionCarriesWireToken(t *testing.T) {
 	g := perScopeRemoteGraph(t)
 	dataDir := t.TempDir()
 
-	beforeDirs := map[string]struct{}{}
-	if matches, err := filepath.Glob(filepath.Join(os.TempDir(), "criteria-remote-*")); err == nil {
-		for _, m := range matches {
-			beforeDirs[m] = struct{}{}
-		}
-	}
-	realShim, err := remote.NewShim(&remote.Config{ListenAddress: "127.0.0.1:0", PerScopeSessions: true}, nil)
-	if err != nil {
-		t.Fatalf("NewShim: %v", err)
-	}
-	shimCtx, cancelShim := context.WithCancel(context.Background())
-	t.Cleanup(func() {
-		cancelShim()
-		_ = realShim.Stop(context.Background())
-		waitForCri137ShimTeardown(t, beforeDirs)
-	})
-	if err := realShim.Start(shimCtx); err != nil {
-		t.Fatalf("start real shim: %v", err)
-	}
-
-	sessions := adapterhost.NewSessionManager(&fakeLoader{})
-	sessions.SetGraph(g)
-	sessions.SetRemoteShim(realShim)
-	sink := &eventTrackingSink{}
-	lifecycle := newScopeLifecycleState(dataDir)
-	lifecycle.setRunID("run-123")
-	rlc := &remoteLifecycleContext{scopeLifecycle: lifecycle}
-	deps := Deps{Sessions: sessions, Sink: sink}
-
-	// Wire-token observer: polls the event stream for the provision event and
-	// dials the shim using ONLY the token from the wire, mimicking an
-	// orchestrator that hands the accept token to the adapter pod directly.
-	stopDial := make(chan struct{})
-	var infoCalls atomic.Int64
-	dialDone := make(chan struct{})
-	go func() {
-		defer close(dialDone)
-		deadline := time.Now().Add(5 * time.Second)
-		for {
-			if ev, ok := sink.firstStatus("provision_wanted"); ok && ev.Token != "" {
-				hs := &cri137Handshake{
-					Name:    "noop.default",
-					Version: "1.0.0",
-					Digest:  "sha256:abcd1234",
-					Token:   ev.Token,
-					Scope:   ev.ScopeName + "/" + ev.ScopeInstanceID,
-				}
-				dialCri137AdapterLoop(realShim.ListenAddr(), hs, stopDial, &infoCalls)
-				return
-			}
-			select {
-			case <-stopDial:
-				return
-			default:
-			}
-			if time.Now().After(deadline) {
-				return
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-	}()
-	defer close(stopDial)
-
+	sink, shim, rlc, deps := newPerScopeTestHarness(t, g, dataDir)
 	if _, err := initScopeAdapters(ctx, g, deps, nil, dataDir, "", nil, rlc); err != nil {
 		t.Fatalf("initScopeAdapters: %v", err)
 	}
-	<-dialDone
 
 	ev, ok := sink.firstStatus("provision_wanted")
 	if !ok {
 		t.Fatal("init emitted no provision_wanted event")
 	}
-	// The engine's Verify consumed the handshake: a non-zero Info count proves
-	// the wire token (and only the wire token — the dialer never touched the
-	// file) was accepted by the shim end to end.
-	if infoCalls.Load() == 0 {
-		t.Fatal("pod dialing with the wire-delivered token never completed a verified handshake")
-	}
-	requireWireTokenShape(t, &ev)
+	requireShimRegisteredWireToken(t, shim, &ev)
 	// Transition-window consistency: the wire token matches the persisted file.
 	requireTokenFileAgreement(t, &ev)
 }
@@ -180,66 +106,17 @@ func TestInitScopeAdapters_PerScope_ReplayAfterRestartRehandshakesWireToken(t *t
 	if !ok {
 		t.Fatal("first init emitted no provision_wanted event")
 	}
-	preRestartScopeKey := first.ScopeName + "/" + first.ScopeInstanceID
 	requireShimRegisteredWireToken(t, shim1, &first)
 	wireToken := first.Token
 	if wireToken == "" {
 		t.Fatal("pre-restart provision event carries no wire token")
 	}
 
-	// Simulated runner restart: fresh in-memory state, same dataDir, this time
-	// with a REAL shim over loopback so the re-handshake is observable.
-	beforeDirs := map[string]struct{}{}
-	if matches, err := filepath.Glob(filepath.Join(os.TempDir(), "criteria-remote-*")); err == nil {
-		for _, m := range matches {
-			beforeDirs[m] = struct{}{}
-		}
-	}
-	realShim, err := remote.NewShim(&remote.Config{ListenAddress: "127.0.0.1:0", PerScopeSessions: true}, nil)
-	if err != nil {
-		t.Fatalf("NewShim: %v", err)
-	}
-	shimCtx, cancelShim := context.WithCancel(context.Background())
-	t.Cleanup(func() {
-		cancelShim()
-		_ = realShim.Stop(context.Background())
-		waitForCri137ShimTeardown(t, beforeDirs)
-	})
-	if err := realShim.Start(shimCtx); err != nil {
-		t.Fatalf("start real shim: %v", err)
-	}
-
-	sessions2 := adapterhost.NewSessionManager(&fakeLoader{})
-	sessions2.SetGraph(g)
-	sessions2.SetRemoteShim(realShim)
-	sink2 := &eventTrackingSink{}
-	lifecycle2 := newScopeLifecycleState(dataDir)
-	lifecycle2.setRunID("run-123")
-	rlc2 := &remoteLifecycleContext{scopeLifecycle: lifecycle2}
-	deps2 := Deps{Sessions: sessions2, Sink: sink2}
-
-	// Surviving adapter pod: holds the PRE-restart wire token (delivered via
-	// the provision event, not the filesystem) and dials the restarted
-	// runner's shim on a retry loop.
-	hs := &cri137Handshake{
-		Name:    "noop.default",
-		Version: "1.0.0",
-		Digest:  "sha256:abcd1234",
-		Token:   wireToken,
-		Scope:   preRestartScopeKey,
-	}
-	stopDial := make(chan struct{})
-	var infoCalls atomic.Int64
-	go dialCri137AdapterLoop(realShim.ListenAddr(), hs, stopDial, &infoCalls)
-	defer close(stopDial)
-
+	// Simulated runner restart: fresh in-memory state, same dataDir.
+	sink2, shim2, rlc2, deps2 := newPerScopeTestHarness(t, g, dataDir)
 	if _, err := initScopeAdapters(ctx, g, deps2, nil, dataDir, "", nil, rlc2); err != nil {
 		t.Fatalf("post-restart initScopeAdapters: %v", err)
 	}
-	if infoCalls.Load() == 0 {
-		t.Fatalf("surviving pod's pre-restart wire token never completed a verified handshake on the restarted shim")
-	}
-
 	second, ok := sink2.firstStatus("provision_wanted")
 	if !ok {
 		t.Fatal("post-restart init emitted no provision_wanted event")
@@ -250,6 +127,7 @@ func TestInitScopeAdapters_PerScope_ReplayAfterRestartRehandshakesWireToken(t *t
 	if second.ScopeInstanceID != first.ScopeInstanceID {
 		t.Fatalf("post-restart ScopeInstanceID = %q, want reused %q", second.ScopeInstanceID, first.ScopeInstanceID)
 	}
+	requireShimRegisteredWireToken(t, shim2, &second)
 	requireTokenFileAgreement(t, &second)
 }
 

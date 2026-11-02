@@ -13,6 +13,7 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapter/conformance"
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	"github.com/brokenbots/criteria/internal/testutil"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -110,6 +111,7 @@ var (
 // don't trigger N concurrent `go build` invocations.
 func buildPublicSDKFixture(t *testing.T) string {
 	t.Helper()
+	testutil.RequireUnixSockets(t)
 	buildPublicSDKOnce.Do(func() {
 		_, file, _, ok := runtime.Caller(0)
 		if !ok {

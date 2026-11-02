@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/brokenbots/criteria/workflow/lockfile"
+	"github.com/brokenbots/criteria/workflow/workflowtest"
 )
 
 // pinStubResolver is a SubWorkflowResolver stub answering each declared source
@@ -62,28 +63,22 @@ func archivePin(digest string) *lockfile.LockedWorkflowRef {
 // declares the given expected ref ("ref" attr). With inputAttrs != "" the
 // subworkflow also carries an input block, pinning that ref coexists with it.
 func parentWithPinnedSubworkflow(swName, source, ref, inputAttrs string) string {
-	attrs := fmt.Sprintf("  source = %q\n", source)
+	var opts []workflowtest.SubworkflowOpt
 	if ref != "" {
-		attrs += fmt.Sprintf("  ref    = %q\n", ref)
+		opts = append(opts, workflowtest.SubworkflowRef(ref))
 	}
 	if inputAttrs != "" {
-		attrs += "  input = {\n    " + inputAttrs + "\n  }\n"
+		opts = append(opts, workflowtest.SubworkflowInput(inputAttrs))
 	}
-	return "workflow {\n" +
-		"  name = \"pin-parent\"\n" +
-		"  version = \"1\"\n" +
-		"  initial_state = \"run_inner\"\n" +
-		"  target_state  = \"done\"\n" +
-		"}\n\n" +
-		"subworkflow \"" + swName + "\" {\n" +
-		attrs +
-		"}\n\n" +
-		"step \"run_inner\" {\n" +
-		"  target = subworkflow." + swName + "\n" +
-		"  outcome \"success\" { next = step.done }\n" +
-		"  outcome \"failure\" { next = step.done }\n" +
-		"}\n\n" +
-		"state \"done\" {\n  terminal = true\n  success  = true\n}\n"
+	return workflowtest.NewStandard().
+		WithName("pin-parent").
+		WithSubworkflow(swName, source, opts...).
+		WithInitial("run_inner").
+		WithStep("run_inner",
+			workflowtest.Target("subworkflow."+swName),
+			workflowtest.Next("step.done"),
+		).
+		Build()
 }
 
 func compileParent(t *testing.T, tmpDir, parentHCL string, resolver SubWorkflowResolver) hclDiagnostics {
@@ -103,7 +98,7 @@ func compileParent(t *testing.T, tmpDir, parentHCL string, resolver SubWorkflowR
 // ref equals the resolved pin compiles cleanly (match passes).
 func TestCompileSubworkflowPin_Match(t *testing.T) {
 	tmpDir := t.TempDir()
-	swDir := writeSubworkflowDir(t, tmpDir, "inner", minimalCalleeHCL("inner", nil))
+	swDir := workflowtest.WriteCalleeDir(t, tmpDir, "inner", nil)
 
 	diags := compileParent(t, tmpDir,
 		parentWithPinnedSubworkflow("inner_task", "https://example/flow.tar.gz", "sha256:cafe", ""),
@@ -115,7 +110,7 @@ func TestCompileSubworkflowPin_Match(t *testing.T) {
 // naming both the expected and the resolved values.
 func TestCompileSubworkflowPin_MismatchGit(t *testing.T) {
 	tmpDir := t.TempDir()
-	swDir := writeSubworkflowDir(t, tmpDir, "inner", minimalCalleeHCL("inner", nil))
+	swDir := workflowtest.WriteCalleeDir(t, tmpDir, "inner", nil)
 
 	diags := compileParent(t, tmpDir,
 		parentWithPinnedSubworkflow("inner_task", "git::example?ref=main", "1111111111111111111111111111111111111111", ""),
@@ -141,7 +136,7 @@ func TestCompileSubworkflowPin_MismatchGit(t *testing.T) {
 // mismatch, naming both values.
 func TestCompileSubworkflowPin_MismatchArchive(t *testing.T) {
 	tmpDir := t.TempDir()
-	swDir := writeSubworkflowDir(t, tmpDir, "inner", minimalCalleeHCL("inner", nil))
+	swDir := workflowtest.WriteCalleeDir(t, tmpDir, "inner", nil)
 
 	diags := compileParent(t, tmpDir,
 		parentWithPinnedSubworkflow("inner_task", "https://example/flow.tar.gz", "sha256:cafe", ""),
@@ -160,7 +155,7 @@ func TestCompileSubworkflowPin_MismatchArchive(t *testing.T) {
 // before CRI-226.
 func TestCompileSubworkflowPin_AbsentLeavesBehaviorUnchanged(t *testing.T) {
 	tmpDir := t.TempDir()
-	swDir := writeSubworkflowDir(t, tmpDir, "inner", minimalCalleeHCL("inner", nil))
+	swDir := workflowtest.WriteCalleeDir(t, tmpDir, "inner", nil)
 	parentHCL := parentWithPinnedSubworkflow("inner_task", "./inner", "", "")
 
 	// No declared ref, resolver returns a pin: unchanged success.
@@ -177,7 +172,7 @@ func TestCompileSubworkflowPin_AbsentLeavesBehaviorUnchanged(t *testing.T) {
 // cannot be verified there, so the run fails closed instead of ignoring it.
 func TestCompileSubworkflowPin_DeclaredOnLocalSource(t *testing.T) {
 	tmpDir := t.TempDir()
-	writeSubworkflowDir(t, tmpDir, "inner", minimalCalleeHCL("inner", nil))
+	workflowtest.WriteCalleeDir(t, tmpDir, "inner", nil)
 
 	diags := compileParent(t, tmpDir,
 		parentWithPinnedSubworkflow("inner_task", "./inner", "1111111111111111111111111111111111111111", ""),
@@ -195,7 +190,7 @@ func TestCompileSubworkflowPin_DeclaredOnLocalSource(t *testing.T) {
 // carrying both ref and input decodes cleanly and still enforces the pin.
 func TestCompileSubworkflowPin_WithInputBlock(t *testing.T) {
 	tmpDir := t.TempDir()
-	writeSubworkflowDir(t, tmpDir, "inner", minimalCalleeHCL("inner", map[string]bool{"greeting": true}))
+	workflowtest.WriteCalleeDir(t, tmpDir, "inner", map[string]bool{"greeting": true})
 
 	// A pinless source refuses the declared ref (fail closed) — and the ref
 	// attribute did not leak into the unknown-attribute check alongside input.
@@ -214,8 +209,8 @@ func TestCompileSubworkflowPin_WithInputBlock(t *testing.T) {
 // callee, and a matching cascade compiles.
 func TestCompileSubworkflowPin_NestedCascaded(t *testing.T) {
 	tmpDir := t.TempDir()
-	innerDir := writeSubworkflowDir(t, tmpDir, "inner", minimalCalleeHCL("inner", nil))
-	midDir := writeSubworkflowDir(t, tmpDir, "mid", parentWithPinnedSubworkflow("inner_task", "./inner", "sha256:cafe", ""))
+	innerDir := workflowtest.WriteCalleeDir(t, tmpDir, "inner", nil)
+	midDir := workflowtest.WriteDir(t, tmpDir, "mid", parentWithPinnedSubworkflow("inner_task", "./inner", "sha256:cafe", ""))
 
 	resolver := &pinStubResolver{entries: map[string]pinStubEntry{
 		"./mid":   {dir: midDir},
@@ -258,7 +253,7 @@ func TestCompileSubworkflowPin_ResolverErrorPropagates(t *testing.T) {
 // mismatch Summary or Detail, while the host and path stay identifiable.
 func TestCompileSubworkflowPin_MismatchRedactsCredentials(t *testing.T) {
 	tmpDir := t.TempDir()
-	swDir := writeSubworkflowDir(t, tmpDir, "inner", minimalCalleeHCL("inner", nil))
+	swDir := workflowtest.WriteCalleeDir(t, tmpDir, "inner", nil)
 
 	diags := compileParent(t, tmpDir,
 		parentWithPinnedSubworkflow("inner_task",
@@ -280,7 +275,7 @@ func TestCompileSubworkflowPin_MismatchRedactsCredentials(t *testing.T) {
 // no-credential guarantee for the declared-ref-on-local-source refusal path.
 func TestCompileSubworkflowPin_LocalRefusalRedactsCredentials(t *testing.T) {
 	tmpDir := t.TempDir()
-	writeSubworkflowDir(t, tmpDir, "inner", minimalCalleeHCL("inner", nil))
+	workflowtest.WriteCalleeDir(t, tmpDir, "inner", nil)
 
 	diags := compileParent(t, tmpDir,
 		parentWithPinnedSubworkflow("inner_task",
