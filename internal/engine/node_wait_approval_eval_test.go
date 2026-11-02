@@ -1,12 +1,10 @@
 package engine
 
-// Regression tests for CRI-56: approval and signal-wait nodes used to clear
-// ResumePayload/PendingSignal before validating the supplied decision/outcome,
-// so an invalid resume destroyed the retry/audit context. The nodes must
-// validate the resume input first and only consume the payload once committed
-// to their outcome; on invalid input the payload stays intact so a retry or
-// reattach re-evaluates against the same context. The documented single-outcome
-// fallback for payload-free resumes is unchanged.
+// node_wait_approval_eval_test.go — unit evaluation tests for approvalNode
+// and waitNode. Verifies that nodes validate resume inputs first and only
+// consume the resume payload once committed to an outcome; on invalid input
+// the payload remains intact so a retry or reattach can re-evaluate against
+// the same context (regression suite for CRI-56).
 
 import (
 	"context"
@@ -86,7 +84,7 @@ func testMultiOutcomeWaitNode() *waitNode {
 	}}
 }
 
-func TestCRI56_Approval_InvalidDecisionKeepsResumeContext(t *testing.T) {
+func TestApproval_InvalidDecisionKeepsResumeContext(t *testing.T) {
 	ctx := context.Background()
 	n := testApprovalNode()
 	deps := Deps{Sink: &resumeTrackingSink{}}
@@ -125,7 +123,7 @@ func TestCRI56_Approval_InvalidDecisionKeepsResumeContext(t *testing.T) {
 	}
 }
 
-func TestCRI56_Approval_ValidResumeEmitsDecisionOnceCommitted(t *testing.T) {
+func TestApproval_ValidResumeEmitsDecisionOnceCommitted(t *testing.T) {
 	ctx := context.Background()
 	n := testApprovalNode()
 	sink := &resumeTrackingSink{}
@@ -154,7 +152,7 @@ func TestCRI56_Approval_ValidResumeEmitsDecisionOnceCommitted(t *testing.T) {
 	}
 }
 
-func TestCRI56_Wait_InvalidOutcomeKeepsResumeContext(t *testing.T) {
+func TestWait_InvalidOutcomeKeepsResumeContext(t *testing.T) {
 	ctx := context.Background()
 	n := testMultiOutcomeWaitNode()
 
@@ -187,7 +185,7 @@ func TestCRI56_Wait_InvalidOutcomeKeepsResumeContext(t *testing.T) {
 	}
 }
 
-func TestCRI56_Wait_UnknownOutcomeRetrySucceeds(t *testing.T) {
+func TestWait_UnknownOutcomeRetrySucceeds(t *testing.T) {
 	ctx := context.Background()
 	n := testMultiOutcomeWaitNode()
 	sink := &resumeTrackingSink{}
@@ -222,7 +220,7 @@ func TestCRI56_Wait_UnknownOutcomeRetrySucceeds(t *testing.T) {
 	}
 }
 
-func TestCRI56_Wait_SingleOutcomeFallbackUnchanged(t *testing.T) {
+func TestWait_SingleOutcomeFallbackUnchanged(t *testing.T) {
 	ctx := context.Background()
 	n := &waitNode{node: &workflow.WaitNode{
 		Name:     "gate",

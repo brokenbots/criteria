@@ -53,6 +53,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v7
         with:
@@ -70,15 +72,34 @@ jobs:
       - name: Sync workspace
         run: go work sync
 
-      - name: Run tests (root + sdk + workflow)
+      - name: Run unit tests
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          go test -race -count=2 ./...
-          go test -race -count=2 ./internal/adapter/conformance/testdata/noop
-          (cd sdk      && go test -race -count=2 ./...)
-          (cd workflow && go test -race -count=2 ./...)
-
-      - name: Run conformance tests
-        run: make test-conformance
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base="origin/${BASE_REF}"
+            echo "Detecting affected packages against $base..."
+            pkgs=$(go run ./tools/affected-test-packages --base "$base")
+            if [ -z "$pkgs" ]; then
+              echo "No Go packages affected by changes in this pull request. Skipping unit tests."
+            else
+              echo "Running tests for affected packages:"
+              echo "$pkgs"
+              go test -race $pkgs
+            fi
+            if [ -n "$pkgs" ] && [ "$(go run ./tools/affected-test-packages --base "$base" --conformance)" = "true" ]; then
+              echo "Conformance-critical packages affected; running conformance suite."
+              make test-conformance
+            else
+              echo "SDK conformance not affected; skipping conformance suite."
+            fi
+          else
+            echo "Running full unit test suite (trunk/push)..."
+            make test
+            make test-conformance
+          fi
 
   e2e:
     name: Build & E2E
@@ -390,6 +411,8 @@ jobs:
     needs: unit-tests
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v7
         with:
@@ -408,7 +431,19 @@ jobs:
         run: go work sync
 
       - name: Enforce coverage floor
-        run: make coverage-check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base="origin/${BASE_REF}"
+            echo "Checking coverage floors for affected packages against $base..."
+            make coverage-check-affected BASE="$base"
+          else
+            echo "Enforcing full coverage floors across all packages (trunk/push)..."
+            make coverage-check
+          fi
 
   coverage-floor-ratchet-guard:
     name: Coverage floor ratchet guard

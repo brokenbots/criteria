@@ -49,10 +49,11 @@ func main() {
 	floorsPath := flag.String("floors", "tools/coverage-floors.txt", "per-package coverage floors file")
 	capture := flag.Bool("capture", false, "print floor lines for qualifying packages instead of checking")
 	minStmts := flag.Int("min-stmts", 100, "minimum statements for a package to qualify under -capture")
+	allowMissing := flag.Bool("allow-missing", false, "skip packages with no coverage data instead of failing")
 	flag.Parse()
 
 	if flag.NArg() == 0 {
-		fmt.Fprintln(os.Stderr, "usage: coverage-check [-floors FILE] [-capture] profile.out [profile2.out ...]")
+		fmt.Fprintln(os.Stderr, "usage: coverage-check [-floors FILE] [-capture] [-allow-missing] profile.out [profile2.out ...]")
 		os.Exit(2)
 	}
 
@@ -74,7 +75,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		os.Exit(2)
 	}
-	if check(pkgs, floors) {
+	if check(pkgs, floors, *allowMissing) {
 		os.Exit(1)
 	}
 }
@@ -223,12 +224,16 @@ func readFloors(file string) ([]floor, error) {
 }
 
 // check reports each package's status and returns true if any package failed.
-func check(p *pkgCov, floors []floor) bool {
+func check(p *pkgCov, floors []floor, allowMissing bool) bool {
 	failed := false
 	for _, fl := range floors {
 		pct, ok := p.pct(fl.pkg)
 		switch {
 		case !ok:
+			if allowMissing {
+				fmt.Printf("SKIP: %s has no coverage data (allowed by -allow-missing)\n", fl.pkg)
+				continue
+			}
 			fmt.Printf("FAIL: %s has no coverage data (floor %.1f%%)\n", fl.pkg, fl.minPct)
 			failed = true
 		case pct+1e-9 < fl.minPct:

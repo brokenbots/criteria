@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -91,4 +92,21 @@ func stripHCLExt(name string) string {
 		}
 	}
 	return name
+}
+
+// splitNDJSONLines splits a newline-delimited JSON string into non-empty lines.
+func splitNDJSONLines(s string) []string {
+	var out []string
+	for _, line := range strings.Split(s, "\n") {
+		if strings.TrimSpace(line) != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// ndjsonEnvelope is a generic payload envelope for criteria events in ND-JSON format.
+type ndjsonEnvelope struct {
+	PayloadType string          `json:"payload_type"`
+	Payload     json.RawMessage `json:"payload"`
 }

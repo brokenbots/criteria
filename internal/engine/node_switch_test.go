@@ -2,10 +2,14 @@ package engine_test
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/engine"
@@ -479,3 +483,250 @@ func TestSwitch_MultiFile_DefaultOmitsCondition(t *testing.T) {
 		t.Errorf("event.condition = %q, want empty string for default arm", ev.condition)
 	}
 }
+
+// compileParentWithSubworkflow writes a child subworkflow into parentDir/child
+// and parses/compiles the parent HCL located in parentDir.
+func compileParentWithSubworkflow(t *testing.T, parentHCL, parentDir string) *workflow.FSMGraph {
+	t.Helper()
+	childDir := filepath.Join(parentDir, "child")
+	if err := os.Mkdir(childDir, 0o755); err != nil {
+		t.Fatalf("create child dir: %v", err)
+	}
+	childHCL := `
+workflow {
+  name = "child"
+  version       = "0.1"
+  initial_state = "done"
+  target_state  = "done"
+}
+
+output "verdict" {
+  value = "reproduced"
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+`
+	if err := os.WriteFile(filepath.Join(childDir, "main.hcl"), []byte(childHCL), 0o644); err != nil {
+		t.Fatalf("write child main.hcl: %v", err)
+	}
+
+	spec, diags := workflow.Parse("parent.hcl", []byte(parentHCL))
+	if diags.HasErrors() {
+		t.Fatalf("parse parent: %s", diags.Error())
+	}
+	g, diags := workflow.CompileWithOpts(spec, nil, workflow.CompileOpts{
+		WorkflowDir:         parentDir,
+		SubWorkflowResolver: &workflow.LocalSubWorkflowResolver{},
+	})
+	if diags.HasErrors() {
+		t.Fatalf("compile parent: %s", diags.Error())
+	}
+	return g
+}
+
+// TestSwitch_ReadsSubworkflowStepWrite verifies that a switch node evaluates its
+// match condition against updated data written by a preceding subworkflow step (CRI-37).
+func TestSwitch_ReadsSubworkflowStepWrite(t *testing.T) {
+	parentHCL := `
+workflow {
+  name = "cri37_subworkflow"
+  version       = "0.1"
+  initial_state = "run"
+  target_state  = "done"
+}
+
+data "internal" "verdict" {
+  type  = string
+  value = "initial"
+}
+
+subworkflow "child" {
+  source = "./child"
+}
+
+step "run" {
+  target = subworkflow.child
+
+  outcome "success" {
+    next = switch.route
+    write {
+      target = data.internal.verdict.value
+      value  = subworkflow.verdict
+    }
+  }
+  outcome "failure" {
+    next = state.fail
+  }
+}
+
+switch "route" {
+  match {
+    condition = data.internal.verdict.value == "reproduced"
+    next      = state.done
+  }
+  default {
+    next = state.fail
+  }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+state "fail" {
+  terminal = true
+  success  = false
+}
+`
+	parentDir := t.TempDir()
+	g := compileParentWithSubworkflow(t, parentHCL, parentDir)
+
+	vars := workflow.SeedVarsFromGraph(g)
+	sink := &switchSink{}
+	eng := engine.New(g, adapterhost.NewLoader(), sink, engine.WithResumedVars(vars))
+	if err := eng.Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if sink.terminal != "done" {
+		t.Errorf("terminal = %q, want \"done\"; switch saw stale data and fell through", sink.terminal)
+	}
+	if !sink.terminalOK {
+		t.Errorf("terminalOK = false, want true; switch routed to failure branch")
+	}
+	if sink.failure != "" {
+		t.Errorf("unexpected run failure: %s", sink.failure)
+	}
+}
+
+// TestSwitch_ReadsAdapterStepWrite verifies that a switch node reads updated data
+// written by a preceding adapter step (CRI-37).
+func TestSwitch_ReadsAdapterStepWrite(t *testing.T) {
+	const src = `
+workflow {
+  name = "cri37_adapter"
+  version       = "0.1"
+  initial_state = "set"
+  target_state  = "done"
+}
+
+data "internal" "verdict" {
+  type  = string
+  value = "initial"
+}
+
+adapter "noop" "default" {}
+
+step "set" {
+  target = adapter.noop.default
+  outcome "success" {
+    next = switch.route
+    write {
+      target = data.internal.verdict.value
+      value  = "reproduced"
+    }
+  }
+  outcome "failure" {
+    next = state.fail
+  }
+}
+
+switch "route" {
+  match {
+    condition = data.internal.verdict.value == "reproduced"
+    next      = state.done
+  }
+  default {
+    next = state.fail
+  }
+}
+
+state "done" {
+  terminal = true
+  success  = true
+}
+state "fail" {
+  terminal = true
+  success  = false
+}
+`
+	spec, diags := workflow.Parse("t.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := workflow.Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+
+	loader := &fakeSwitchLoader{
+		adapters: map[string]adapterhost.Handle{
+			"noop":         &fakeSwitchAdapter{name: "noop", outcome: "success"},
+			"noop.default": &fakeSwitchAdapter{name: "noop", outcome: "success"},
+		},
+	}
+	vars := workflow.SeedVarsFromGraph(g)
+	sink := &switchSink{}
+	eng := engine.New(g, loader, sink, engine.WithResumedVars(vars))
+	if err := eng.Run(context.Background()); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if sink.terminal != "done" {
+		t.Errorf("terminal = %q, want \"done\"; switch saw stale data and fell through", sink.terminal)
+	}
+	if !sink.terminalOK {
+		t.Errorf("terminalOK = false, want true; switch routed to failure branch")
+	}
+	if sink.failure != "" {
+		t.Errorf("unexpected run failure: %s", sink.failure)
+	}
+}
+
+type fakeSwitchLoader struct {
+	adapters map[string]adapterhost.Handle
+}
+
+func (l *fakeSwitchLoader) Resolve(_ context.Context, name string) (adapterhost.Handle, error) {
+	if h, ok := l.adapters[name]; ok {
+		return h, nil
+	}
+	return nil, fmt.Errorf("adapter %q not found", name)
+}
+
+func (l *fakeSwitchLoader) Shutdown(_ context.Context) error {
+	return nil
+}
+
+type fakeSwitchAdapter struct {
+	name    string
+	outcome string
+}
+
+func (a *fakeSwitchAdapter) Info(context.Context) (adapterhost.Info, error) {
+	return adapterhost.Info{Name: a.name, Version: "test"}, nil
+}
+
+func (a *fakeSwitchAdapter) OpenSession(context.Context, string, map[string]string, map[string]string) error {
+	return nil
+}
+
+func (a *fakeSwitchAdapter) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, _ *v2.ExecutionRejection) (adapter.Result, error) {
+	return adapter.Result{Outcome: a.outcome}, nil
+}
+
+func (a *fakeSwitchAdapter) Permit(context.Context, string, string, bool, string) error { return nil }
+func (a *fakeSwitchAdapter) CloseSession(context.Context, string) error                 { return nil }
+func (a *fakeSwitchAdapter) Kill()                                                      {}
+func (a *fakeSwitchAdapter) Pause(context.Context, string) error                        { return nil }
+func (a *fakeSwitchAdapter) Resume(context.Context, string) error                       { return nil }
+func (a *fakeSwitchAdapter) Inspect(context.Context, string) (*v2.InspectResponse, error) {
+	return &v2.InspectResponse{}, nil
+}
+func (a *fakeSwitchAdapter) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
+	return &v2.SnapshotResponse{}, nil
+}
+func (a *fakeSwitchAdapter) Restore(context.Context, string, []byte, uint32) error { return nil }

@@ -18,7 +18,7 @@ CRITERIA_BUILD_VERSION := $(VERSION)
 endif
 
 .PHONY: help bootstrap tidy build plugins install proto proto-lint proto-check-drift \
-	test test-cover coverage-check test-conformance test-fetcher-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint lint-sh vuln-scan vulncheck deps-outdated deps-majors validate validate-docs example-plugin example-adapter-tools example-adapter-tools-copilot example-adapter-tools-claude bench docker-runtime docker-runtime-smoke ci clean
+	test test-affected test-cover test-affected-cover coverage-check coverage-check-affected test-conformance test-fetcher-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint lint-sh vuln-scan vulncheck deps-outdated deps-majors validate validate-docs example-plugin example-adapter-tools example-adapter-tools-copilot example-adapter-tools-claude bench docker-runtime docker-runtime-smoke ci clean
 
 # Default target: list available targets.
 help:
@@ -100,6 +100,17 @@ test: ## Run all unit tests
 	cd tools    && go test -race ./...
 	cd workflow && go test -race ./...
 
+BASE ?= origin/main
+
+test-affected: ## Run unit tests only for packages affected by changes against $(BASE) (default: origin/main)
+	@pkgs=$$(go run ./tools/affected-test-packages --base $(BASE)); \
+	if [ -z "$$pkgs" ]; then \
+		echo "No Go packages affected by changes against $(BASE)."; \
+	else \
+		echo "Running tests for affected packages: $$pkgs"; \
+		go test -race $$pkgs; \
+	fi
+
 test-cover: ## Run tests with race detector and coverage; outputs cover.out per module
 	go test -race -coverprofile=cover.out -covermode=atomic ./...
 	cd sdk      && go test -race -coverprofile=cover-sdk.out -covermode=atomic ./...
@@ -108,8 +119,26 @@ test-cover: ## Run tests with race detector and coverage; outputs cover.out per 
 	go tool cover -func=cover.out | grep -E "^total|internal/cli|internal/run|criteria-adapter-mcp"
 	@echo "See cover.out, cover-sdk.out, cover-workflow.out for full details."
 
+test-affected-cover: ## Run coverage only for packages affected by changes against $(BASE)
+	@pkgs=$$(go run ./tools/affected-test-packages --base $(BASE)); \
+	if [ -z "$$pkgs" ]; then \
+		echo "No Go packages affected by changes against $(BASE)."; \
+		rm -f cover-affected.out; \
+		touch cover-affected.out; \
+	else \
+		echo "Running coverage for affected packages: $$pkgs"; \
+		go test -race -coverprofile=cover-affected.out -covermode=atomic $$pkgs; \
+	fi
+
 coverage-check: test-cover ## Enforce the per-package coverage ratchet (WS44); floors in tools/coverage-floors.txt
 	go run ./tools/coverage-check -floors tools/coverage-floors.txt cover.out sdk/cover-sdk.out workflow/cover-workflow.out
+
+coverage-check-affected: test-affected-cover ## Enforce coverage ratchet for affected packages against $(BASE)
+	@if [ -s cover-affected.out ]; then \
+		go run ./tools/coverage-check -allow-missing -floors tools/coverage-floors.txt cover-affected.out; \
+	else \
+		echo "No affected coverage data to check."; \
+	fi
 
 bench: ## Run benchmarks for workflow, engine, and plugin packages (targeted; see notes)
 	go test -run='^$$' -bench=. -benchmem ./workflow/...
