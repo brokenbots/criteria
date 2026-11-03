@@ -40,11 +40,11 @@ import (
 //
 // The provider also implements adapterhost.RemoteShim, so the session
 // manager dispatch (resolveAdapterHandle / resolveAdapterForRespawn) is
-// unchanged: peer sessions are resolved through the same interface legacy
-// byte-bridge sessions (removed in PR #551) used, and dials presenting that
-// legacy shape (no role/peer identity block) are served by the provider
-// after consulting both its peer registry and the wrapped shim's
-// session registry.
+// unchanged: sessions — for frames carrying role "peer" and for the legacy
+// role-absent dial shape alike — are resolved through the same interface
+// the removed byte-bridge sessions (PR #551) were, and every accepted dial
+// is registered on this provider (the wrapped shim holds no sessions of
+// its own).
 
 const (
 	// peerDialTarget is the gRPC target handed to grpc.NewClient. It uses

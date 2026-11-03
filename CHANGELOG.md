@@ -40,7 +40,7 @@ product version). The release tag and date are finalized by the release gate.
   outranks host-side heuristics. Reconnect backoff is full-jitter
   (1s → 30s, `CRITERIA_PEER_BACKOFF_MIN/MAX`); supervision heartbeats fire
   every 30s while idle. Every `CRITERIA_REMOTE_*` variable is scrubbed from
-  the adapter child's environment.   The `remote` shim routes identity frames with `role: "peer"` to a pluggable
+  the adapter child's environment. The `remote` shim routes identity frames with `role: "peer"` to a pluggable
   peer acceptor after the unchanged
   mTLS → identity-pattern → digest → token gates — no UDS, and
   no workflow (HCL) change: peer vs the retired runner was a deployment

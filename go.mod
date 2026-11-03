@@ -2,6 +2,12 @@ module github.com/brokenbots/criteria
 
 go 1.27
 
+// go1.27.0's standard library carries GO-2026-6809/6603/6599-class findings;
+// 1.27.3 ships every fix. This also matches the image-toolchain build floors
+// (Dockerfile.peer's golang:1.27.3-bookworm builder). setup-go honors this
+// line for CI's toolchain installs.
+toolchain go1.27.3
+
 require (
 	connectrpc.com/connect v1.21.1
 	github.com/brokenbots/criteria-adapter-proto v0.8.0
