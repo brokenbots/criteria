@@ -10,17 +10,11 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
 	"testing"
 	"time"
-
-	"google.golang.org/grpc"
-
-	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 )
 
 // --- helpers ---
@@ -301,7 +295,7 @@ func TestShim_ReadHandshakeMessage_OversizeFrameRejected(t *testing.T) {
 
 func TestShim_Accept_OversizeFrameRejectedAndClosed(t *testing.T) {
 	logs := captureLogs(t)
-	shim, addr := startTestShim(t, &Config{ListenAddress: "127.0.0.1:0"})
+	_, addr := startTestShim(t, &Config{ListenAddress: "127.0.0.1:0"})
 
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
@@ -331,13 +325,6 @@ func TestShim_Accept_OversizeFrameRejectedAndClosed(t *testing.T) {
 	// scheduling when the client observes the close; poll for the line.
 	if !waitForLog(t, logs, "identity frame exceeds 16384 bytes", 2*time.Second) {
 		t.Errorf("distinct oversize log line missing, got: %s", logs.String())
-	}
-
-	shim.mu.Lock()
-	sessions := len(shim.sessions)
-	shim.mu.Unlock()
-	if sessions != 0 {
-		t.Errorf("expected no session registered after oversize rejection, got %d", sessions)
 	}
 }
 
@@ -387,24 +374,12 @@ func TestShim_PeerRole_RoutedToPeerAcceptor(t *testing.T) {
 	// registers no session (T-06's acceptor owns registration).
 	acceptor.releaseAll()
 	assertConnClosed(t, conn)
-
-	shim.mu.Lock()
-	sessions := len(shim.sessions)
-	shim.mu.Unlock()
-	if sessions != 0 {
-		t.Errorf("expected no legacy session for a peer-role dial, got %d", sessions)
-	}
-
-	shortCtx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
-	if _, err := shim.WaitForHandle(shortCtx, "noop", ""); err == nil {
-		t.Error("expected WaitForHandle to time out: a peer dial must not register a runner handle")
-	}
 }
 
 func TestShim_PeerRole_RejectedWithoutAcceptor(t *testing.T) {
 	captureLogs(t)
 	shim, addr := startTestShim(t, &Config{ListenAddress: "127.0.0.1:0"})
+	shim.SetPeerAcceptor(nil)
 
 	conn := dialRawHandshake(t, addr, &handshakeMessage{
 		Name:    "noop",
@@ -415,109 +390,26 @@ func TestShim_PeerRole_RejectedWithoutAcceptor(t *testing.T) {
 	defer conn.Close()
 
 	assertConnClosed(t, conn)
-
-	shim.mu.Lock()
-	sessions := len(shim.sessions)
-	shim.mu.Unlock()
-	if sessions != 0 {
-		t.Errorf("expected no session for rejected peer dial, got %d", sessions)
-	}
 }
 
-func TestShim_LegacyRole_StillUsesByteBridgeWithAcceptorInstalled(t *testing.T) {
+func TestShim_LegacyRole_RejectedWhenByteBridgeRetired(t *testing.T) {
 	captureLogs(t)
 	shim, addr := startTestShim(t, &Config{ListenAddress: "127.0.0.1:0"})
 
-	// An installed acceptor must not hijack role-absent dials: legacy runner
-	// pods keep working through the migration window (regression guard).
 	acceptor := newRecordingPeerAcceptor()
 	defer acceptor.releaseAll()
 	shim.SetPeerAcceptor(acceptor)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	conn := dialRawHandshake(t, addr, &handshakeMessage{
+		Name:    "noop",
+		Version: "1.0.0",
+		Digest:  "sha256:abcd1234",
+	})
+	defer conn.Close()
 
-	go func() {
-		_ = dialFakeAdapter(addr, &handshakeMessage{
-			Name:    "noop",
-			Version: "1.0.0",
-			Digest:  "sha256:abcd1234",
-		}, nil)
-	}()
-
-	handle, err := shim.WaitForHandle(ctx, "noop", "")
-	if err != nil {
-		t.Fatalf("WaitForHandle: %v", err)
-	}
-	defer handle.Kill()
-
-	info, err := handle.Info(ctx)
-	if err != nil {
-		t.Fatalf("Info: %v", err)
-	}
-	if info.Name != "noop" {
-		t.Errorf("info.Name = %q, want noop", info.Name)
-	}
-
-	// The UDS byte-bridge artifact must exist for the legacy path.
-	shim.mu.Lock()
-	sess, ok := shim.sessions["noop"]
-	shim.mu.Unlock()
-	if !ok {
-		t.Fatal("expected legacy session to be registered")
-	}
-	if sess.socketPath == "" {
-		t.Fatal("expected UDS bridge socket path on the legacy session")
-	}
-	if _, err := os.Stat(filepath.Dir(sess.socketPath)); err != nil {
-		t.Fatalf("UDS bridge socket dir missing: %v", err)
-	}
-
+	assertConnClosed(t, conn)
 	if err := acceptor.assertNotCalled(300 * time.Millisecond); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestShim_LegacyRunnerHandshakeFixture_Accepted(t *testing.T) {
-	logs := captureLogs(t)
-	shim, addr := startTestShim(t, &Config{ListenAddress: "127.0.0.1:0"})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	// The exact shape cmd/criteria-adapter-remote-runner sends today: no
-	// role, no peer block, plus the sdk_protocol_version field the host does
-	// not know — unknown fields must stay ignored.
-	go func() {
-		conn, err := net.Dial("tcp", addr)
-		if err != nil {
-			return
-		}
-		frame := `{"name":"noop","version":"1.0.0","digest":"sha256:abcd1234","sdk_protocol_version":2}` + "\n"
-		if _, err := io.WriteString(conn, frame); err != nil {
-			return
-		}
-		grpcServer := grpc.NewServer()
-		v2.RegisterAdapterServiceServer(grpcServer, &fakeAdapterServer{infoName: "noop", infoVersion: "1.0.0"})
-		// Serve dispatches the single conn to a handler goroutine and then
-		// returns io.EOF (singleConnListener's second Accept); the conn must
-		// stay open for the handler, so it is intentionally not closed here.
-		_ = grpcServer.Serve(&singleConnListener{conn: conn})
-	}()
-
-	handle, err := shim.WaitForHandle(ctx, "noop", "")
-	if err != nil {
-		t.Logf("shim logs:\n%s", logs.String())
-		t.Fatalf("WaitForHandle: %v", err)
-	}
-	defer handle.Kill()
-
-	info, err := handle.Info(ctx)
-	if err != nil {
-		t.Fatalf("Info: %v", err)
-	}
-	if info.Name != "noop" || info.Version != "1.0.0" {
-		t.Errorf("info = %q/%q, want noop/1.0.0", info.Name, info.Version)
 	}
 }
 
@@ -646,13 +538,6 @@ func TestShim_PeerRole_AuthRejectionMatrix(t *testing.T) {
 
 			if err := acceptor.assertNotCalled(300 * time.Millisecond); err != nil {
 				t.Fatalf("acceptor invoked for rejected dial: %v", err)
-			}
-
-			shim.mu.Lock()
-			sessions := len(shim.sessions)
-			shim.mu.Unlock()
-			if sessions != 0 {
-				t.Errorf("expected no session after auth rejection, got %d", sessions)
 			}
 		})
 	}

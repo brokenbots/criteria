@@ -21,7 +21,6 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -191,6 +190,16 @@ func dialFakeAdapter(addr string, hs *handshakeMessage, tlsConf *tls.Config) err
 	}
 	if err != nil {
 		return fmt.Errorf("dial shim: %w", err)
+	}
+
+	if hs.Role == "" {
+		hs.Role = handshakeRolePeer
+	}
+	if hs.Peer == nil && hs.Role == handshakeRolePeer {
+		hs.Peer = &PeerClientIdentity{
+			CriteriaVersion: "0.5.7",
+			Capabilities:    []string{"adapter.v2.full"},
+		}
 	}
 
 	hsBytes, _ := json.Marshal(hs)
@@ -550,7 +559,7 @@ func TestShim_AcceptAndCallInfo(t *testing.T) {
 	}
 }
 
-func TestShim_StopCancelsSessions(t *testing.T) {
+func TestShim_StopStopsServer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -577,36 +586,10 @@ func TestShim_StopCancelsSessions(t *testing.T) {
 		t.Fatalf("WaitForHandle: %v", err)
 	}
 
-	var canceled atomic.Bool
-	shim.mu.Lock()
-	sess, ok := shim.sessions["noop"]
-	if !ok || sess == nil {
-		t.Fatalf("expected session for noop to be registered")
-	}
-	origCancel := sess.cancel
-	sess.cancel = func() {
-		canceled.Store(true)
-		if origCancel != nil {
-			origCancel()
-		}
-	}
-	shim.mu.Unlock()
-
 	if err := shim.Stop(ctx); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
 
-	if !canceled.Load() {
-		t.Fatal("expected session cancel to run during Stop")
-	}
-
-	shim.mu.Lock()
-	if len(shim.sessions) != 0 {
-		t.Fatalf("expected sessions map to be cleared, got %d entries", len(shim.sessions))
-	}
-	shim.mu.Unlock()
-
-	// Silence unused-variable lint; Stop already closed the handle.
 	_ = handle
 }
 
@@ -688,11 +671,13 @@ func TestShim_mTLSAcceptAndReject(t *testing.T) {
 	}
 
 	go func() {
-		_ = dialFakeAdapter(addr, &handshakeMessage{
+		if err := dialFakeAdapter(addr, &handshakeMessage{
 			Name:    "noop",
 			Version: "1.0.0",
 			Digest:  "sha256:abcd1234",
-		}, goodTLS)
+		}, goodTLS); err != nil {
+			t.Logf("dialFakeAdapter goodTLS error: %v", err)
+		}
 	}()
 
 	handle, err := shim.WaitForHandle(ctx, "noop", "")
@@ -764,81 +749,6 @@ type nopSink struct{}
 func (n *nopSink) Log(stream string, chunk []byte) {}
 func (n *nopSink) Adapter(kind string, data any)   {}
 
-// TestShim_Reconnect verifies that after a connection is dropped, WaitForHandle
-// blocks until a new adapter dials in.
-func TestShim_Reconnect(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	verifier := &fixedDigestVerifier{allowed: map[string]string{"noop": "sha256:abcd1234"}}
-	shim, err := NewShim(
-		&Config{ListenAddress: "127.0.0.1:0"},
-		verifier,
-	)
-	if err != nil {
-		t.Fatalf("NewShim: %v", err)
-	}
-	if err := shim.Start(ctx); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	defer func() { _ = shim.Stop(ctx) }()
-
-	addr := shim.listener.Addr().String()
-
-	// First connection.
-	go func() {
-		_ = dialFakeAdapter(addr, &handshakeMessage{
-			Name:    "noop",
-			Version: "1.0.0",
-			Digest:  "sha256:abcd1234",
-		}, nil)
-	}()
-
-	h1, err := shim.WaitForHandle(ctx, "noop", "")
-	if err != nil {
-		t.Fatalf("first WaitForHandle: %v", err)
-	}
-
-	// Kill the first connection (simulates adapter crash / disconnect).
-	h1.Kill()
-
-	// Wait a bit for cleanup.
-	time.Sleep(200 * time.Millisecond)
-
-	// Second connection in background (simulates respawn reconnect).
-	reconnected := make(chan struct{})
-	go func() {
-		defer close(reconnected)
-		if err := dialFakeAdapter(addr, &handshakeMessage{
-			Name:    "noop",
-			Version: "2.0.0",
-			Digest:  "sha256:abcd1234",
-		}, nil); err != nil {
-			t.Errorf("dialFakeAdapter: %v", err)
-		}
-	}()
-
-	// WaitForHandle should block until the second connection arrives.
-	h2, err := shim.WaitForHandle(ctx, "noop", "")
-	if err != nil {
-		t.Fatalf("second WaitForHandle: %v", err)
-	}
-	defer h2.Kill()
-
-	info, err := h2.Info(ctx)
-	if err != nil {
-		t.Fatalf("Info after reconnect: %v", err)
-	}
-	if info.Version != "2.0.0" {
-		t.Errorf("version after reconnect = %q, want 2.0.0", info.Version)
-	}
-
-	select {
-	case <-reconnected:
-	case <-ctx.Done():
-		t.Fatal("timeout waiting for reconnection")
-	}
-}
 
 // trigger shim startup errors, and that a workflow with a remote env compiles.
 // This is a compile-time test using the workflow package.
@@ -1028,7 +938,13 @@ func TestShim_UnixSocketListen(t *testing.T) {
 		if err != nil {
 			return
 		}
-		hs := &handshakeMessage{Name: "noop", Version: "1.0.0", Digest: "sha256:abcd1234"}
+		hs := &handshakeMessage{
+			Name:    "noop",
+			Version: "1.0.0",
+			Digest:  "sha256:abcd1234",
+			Role:    handshakeRolePeer,
+			Peer:    &PeerClientIdentity{CriteriaVersion: "0.5.7"},
+		}
 		hsBytes, _ := json.Marshal(hs)
 		_, _ = conn.Write(append(hsBytes, '\n'))
 		// Serve gRPC on this single connection.

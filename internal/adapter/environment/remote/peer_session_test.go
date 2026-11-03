@@ -1229,112 +1229,6 @@ func TestPeerWaitForFreshHandleFallsBackToDefaultBudget(t *testing.T) {
 	}
 }
 
-func TestPeerWaitForFreshHandleWakesOnLegacyHandshake(t *testing.T) {
-	provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	// Mixed fleet: a role-absent reattach dial stores the session on the
-	// shim's legacy registry and must wake the provider's legacy waiter.
-	type waitOutcome struct {
-		handle adapterhost.Handle
-		err    error
-	}
-	done := make(chan waitOutcome, 1)
-	go func() {
-		handle, err := provider.WaitForFreshHandle(ctx, "noop", "", nil)
-		done <- waitOutcome{handle: handle, err: err}
-	}()
-	waitForWaiterRegistered(t, provider, "noop", "")
-
-	if err := dialFakeAdapter(addr, &handshakeMessage{Name: "noop", Version: "1.0.0", Digest: "sha256:abcd1234"}, nil); err != nil {
-		t.Fatalf("legacy dial: %v", err)
-	}
-
-	var legacy adapterhost.Handle
-	select {
-	case out := <-done:
-		if out.err != nil {
-			t.Fatalf("legacy wake: %v", out.err)
-		}
-		if out.handle == nil {
-			t.Fatal("legacy wake returned a nil handle")
-		}
-		legacy = out.handle
-		// The legacy handle comes from the shim's registry, not the provider's.
-		if _, ok := peerHandleFrom(provider, ""); ok {
-			t.Fatalf("legacy dial was misregistered as a peer session")
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("legacy handshake never woke the provider wait")
-	}
-	info, err := legacy.Info(ctx)
-	if err != nil {
-		t.Fatalf("Info over legacy handle: %v", err)
-	}
-	if info.Name != "noop" {
-		t.Fatalf("legacy Info = %q, want noop", info.Name)
-	}
-}
-
-func TestPeerWaitForFreshHandleSkipsStaleLegacySession(t *testing.T) {
-	provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
-
-	if err := dialFakeAdapter(addr, &handshakeMessage{Name: "noop", Version: "1.0.0", Digest: "sha256:abcd1234"}, nil); err != nil {
-		t.Fatalf("legacy dial: %v", err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	legacy, err := provider.WaitForFreshHandle(ctx, "noop", "", nil)
-	if err != nil {
-		t.Fatalf("legacy wait: %v", err)
-	}
-
-	// The same legacy handle as `stale` is not fresh: the wait must not
-	// return it; the caller's context bounds the wait instead.
-	waitCtx, waitCancel := context.WithTimeout(ctx, 150*time.Millisecond)
-	defer waitCancel()
-	if h, err := provider.WaitForFreshHandle(waitCtx, "noop", "", legacy); h != nil || !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("stale legacy returned h=%v err=%v, want deadline exceeded", h, err)
-	}
-}
-
-// stashedLegacyHandle satisfies adapterhost.Handle for a session a test
-// stashes directly in the shim's registry. Shim teardown only calls
-// CloseSession and Kill on stored handles, so every method is a safe no-op;
-// no test in this file invokes the rest.
-type stashedLegacyHandle struct{}
-
-func (stashedLegacyHandle) Info(context.Context) (adapterhost.Info, error) {
-	return adapterhost.Info{}, nil
-}
-
-func (stashedLegacyHandle) OpenSession(context.Context, string, map[string]string, map[string]string) error {
-	return nil
-}
-
-func (stashedLegacyHandle) Execute(_ context.Context, _ string, _ *workflow.StepNode, _ adapter.EventSink, _ *v2.ExecutionRejection) (adapter.Result, error) {
-	return adapter.Result{}, nil
-}
-
-func (stashedLegacyHandle) CloseSession(context.Context, string) error { return nil }
-
-func (stashedLegacyHandle) Kill() {}
-
-func (stashedLegacyHandle) Pause(context.Context, string) error { return nil }
-
-func (stashedLegacyHandle) Resume(context.Context, string) error { return nil }
-
-func (stashedLegacyHandle) Inspect(context.Context, string) (*v2.InspectResponse, error) {
-	return nil, nil
-}
-
-func (stashedLegacyHandle) Snapshot(context.Context, string) (*v2.SnapshotResponse, error) {
-	return nil, nil
-}
-
-func (stashedLegacyHandle) Restore(context.Context, string, []byte, uint32) error { return nil }
 
 // TestPeerWaitForFreshHandleNoLostWakeupWhenPeerDialStoresBetweenCheckAndRegister
 // pins the peer-registry half of the lost-wakeup race (T-06): a peer dial
@@ -1418,84 +1312,6 @@ func TestPeerWaitForFreshHandleNoLostWakeupWhenPeerDialStoresBetweenCheckAndRegi
 	}
 }
 
-// TestPeerWaitForFreshHandleNoLostWakeupWhenLegacyHandshakeStoresBetweenCheckAndRegister
-// pins the legacy-shim half of the lost-wakeup race (T-06): a legacy
-// handshake that stores the shim session between WaitForFreshHandle's shim
-// peek and its shim waiter registration used to drain an empty shim waiter
-// list and strand the wait until the verify-failure budget expired.
-//
-// The interleaving is forced deterministically by lock order: the waiter
-// runs its provider section, then blocks at the shim acquisition; with p.mu
-// re-held by the test, the pre-fix waiter parks at the provider append
-// before the test replays buildAndStoreHandle's registry step (store the
-// session, snapshot and drain the shim waiters) under shim.mu — so the
-// pre-fix drain snapshot is provably empty and the wait can only time out;
-// post-fix the shim waiter is registered before the drain and is woken.
-func TestPeerWaitForFreshHandleNoLostWakeupWhenLegacyHandshakeStoresBetweenCheckAndRegister(t *testing.T) {
-	provider, _ := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
-	provider.shim.verifyFailureBudget = time.Second
-	defer func() { provider.shim.verifyFailureBudget = DefaultVerifyFailureBudget }()
-
-	key := provider.key("noop", "")
-
-	type waitOutcome struct {
-		handle adapterhost.Handle
-		err    error
-	}
-	done := make(chan waitOutcome, 1)
-	go func() {
-		handle, err := provider.WaitForFreshHandle(context.Background(), "noop", "", nil)
-		done <- waitOutcome{handle: handle, err: err}
-	}()
-
-	// Stage 1: park the waiter on p.mu (its first acquisition on both
-	// structures), then let it run the provider-registry section with shim.mu
-	// held — the pre-fix structure stops between the provider peek and the
-	// provider append there.
-	provider.mu.Lock()
-	provider.shim.mu.Lock()
-	provider.mu.Unlock()
-	time.Sleep(250 * time.Millisecond)
-
-	// Stage 2: with p.mu held again, release shim.mu. The pre-fix waiter
-	// peeks the (still empty) shim registry and parks at the provider
-	// append; the post-fix waiter registers its shim waiter and parks in the
-	// select. Either way the waiter cannot reach the shim registry from
-	// here: p.mu is held until after the drain below.
-	provider.mu.Lock()
-	provider.shim.mu.Unlock()
-	time.Sleep(250 * time.Millisecond)
-
-	// Replay buildAndStoreHandle's registry step under shim.mu: store the
-	// session, snapshot the waiters, then drain them.
-	legacy := &stashedLegacyHandle{}
-	provider.shim.mu.Lock()
-	provider.shim.sessions[key] = &session{
-		handle:    legacy,
-		cancelCtx: context.Background(),
-	}
-	shimWaiters := provider.shim.waiters[key]
-	delete(provider.shim.waiters, key)
-	provider.shim.mu.Unlock()
-	for _, ch := range shimWaiters {
-		ch <- waitResult{handle: legacy}
-	}
-
-	provider.mu.Unlock()
-
-	select {
-	case out := <-done:
-		if out.err != nil {
-			t.Fatalf("waiter should have been woken by the stashed legacy session, got: %v", out.err)
-		}
-		if out.handle != legacy {
-			t.Fatalf("waiter returned a different handle than the stashed legacy session")
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("waiter was stranded until the verify-failure budget expired (lost wakeup): the legacy handshake stored the session between the check and the waiter registration")
-	}
-}
-
 func TestPeerStopWakesPendingWaiters(t *testing.T) {
 	provider, _ := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
 
@@ -1555,29 +1371,10 @@ func TestPeerListenAddrDelegatesToShim(t *testing.T) {
 	}
 }
 
-func TestPeerCloseHandleFallsBackToLegacyShim(t *testing.T) {
-	provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
-
-	if err := dialFakeAdapter(addr, &handshakeMessage{Name: "noop", Version: "1.0.0", Digest: "sha256:abcd1234"}, nil); err != nil {
-		t.Fatalf("legacy dial: %v", err)
-	}
+func TestPeerCloseHandleUnknownKeyIsNoop(t *testing.T) {
+	provider, _ := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if _, err := provider.WaitForHandle(ctx, "noop", ""); err != nil {
-		t.Fatalf("WaitForHandle over legacy session: %v", err)
-	}
-
-	// No peer session for the key: the provider delegates the teardown to
-	// the legacy shim, which cancels the bridge and drops the session.
-	if err := provider.CloseHandle(ctx, "noop", ""); err != nil {
-		t.Fatalf("CloseHandle fallback: %v", err)
-	}
-	provider.shim.mu.Lock()
-	_, stillThere := provider.shim.sessions[provider.key("noop", "")]
-	provider.shim.mu.Unlock()
-	if stillThere {
-		t.Fatal("legacy shim session survived CloseHandle")
-	}
 
 	// A close for an unknown key is a no-op, not an error.
 	if err := provider.CloseHandle(ctx, "noop", "never-dialed"); err != nil {
