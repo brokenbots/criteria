@@ -170,8 +170,9 @@ func resolveFixture(t *testing.T, env map[string]string, path string) (Config, e
 	return cfg, err
 }
 
-// TestResolve_BinaryPrecedenceMatrix covers the runner-parity resolution
-// chain: manifest → CRITERIA_ADAPTER_BINARY → PATH criteria-adapter-<name>
+// TestResolve_BinaryPrecedenceMatrix covers the peer's binary resolution
+// chain (ported from the retired runner): manifest →
+// CRITERIA_ADAPTER_BINARY → PATH criteria-adapter-<name>
 // → conventional install path → first PATH entry.
 func TestResolve_BinaryPrecedenceMatrix(t *testing.T) {
 	dir := t.TempDir()

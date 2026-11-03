@@ -58,7 +58,11 @@ jobs:
             version: ${{ github.event.inputs.copilot_version || '0.5.4' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+        # Full history: the criteria_version fallback is `git describe` of
+        # the checked-out commit, which needs the v* tags in reach.
+        with:
+          fetch-depth: 0
 
       - name: Resolve criteria version
         id: criteria_version
