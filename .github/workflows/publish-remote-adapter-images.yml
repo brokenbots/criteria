@@ -34,7 +34,7 @@ on:
         required: true
         default: '1.0.82'
       criteria_version:
-        description: 'Criteria version stamped into the engine binary (e.g. v0.5.30). Empty: git describe of the checked-out commit.'
+        description: 'Criteria version stamped into the engine binary (e.g. v0.5.30). Empty: the latest v* tag, described as vX (plain tag) or vX-N-gSHA (commits after the tag).'
         required: false
         default: ''
 
@@ -66,16 +66,29 @@ jobs:
 
       - name: Resolve criteria version
         id: criteria_version
+        # The dispatch input is delivered via env (never interpolated into a
+        # shell script) and the resolved value is pattern-checked before it is
+        # exported or handed to the Dockerfile build args.
+        env:
+          CRITERIA_VERSION_INPUT: ${{ github.event.inputs.criteria_version }}
         run: |
           set -euo pipefail
-          input='${{ github.event.inputs.criteria_version }}'
-          if [ -n "$input" ]; then
-            version="$input"
-          else
-            version="$(git describe --tags --match 'v*' --dirty --always HEAD)"
+          version="${CRITERIA_VERSION_INPUT}"
+          if [ -z "$version" ]; then
+            # Fallback: describe against the latest v* tag (vX or vX-N-gSHA).
+            # No explicit commit-ish: --dirty and a commit argument cannot be
+            # combined, and omitting it means implicit HEAD; no --always, so
+            # a checkout without any v* tag fails closed below instead of
+            # returning a bare commit hash as the stamp.
+            version="$(git describe --tags --match 'v*' --dirty 2>/dev/null || true)"
           fi
           if [ -z "$version" ]; then
             echo "::error::CRITERIA_VERSION resolved empty (no input and no v* tags in history); refusing to build a peer image with an unstamped engine."
+            exit 1
+          fi
+          pattern='^[A-Za-z0-9][A-Za-z0-9._+-]*$'
+          if [[ ! "$version" =~ $pattern ]]; then
+            echo "::error::CRITERIA_VERSION '$version' does not match $pattern; refusing to stamp it into the engine build."
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"

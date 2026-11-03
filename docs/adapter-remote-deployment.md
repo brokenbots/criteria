@@ -369,7 +369,7 @@ spec:
             secretName: greeter-adapter-tls
 ```
 
-Certificate generation — see [Certificate generation](#certificate-generation).
+The `greeter-adapter-tls` secret above carries the peer's client certificate; generate it with the [Certificate generation](#certificate-generation) steps below.
 
 ### Docker Compose (peer mode)
 
@@ -439,6 +439,87 @@ kubectl apply -f docs/examples/k8s-remote-adapter/
 # section and the [Container image](#container-image) build above.
 ```
 
+## Certificate generation
+
+#### Option A — cert-manager
+
+If your cluster runs [cert-manager](https://cert-manager.io), create an Issuer (or use a cluster-wide one) and a Certificate:
+
+```yaml
+# docs/examples/k8s-remote-adapter/cert-manager.yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: greeter-adapter-tls
+  namespace: criteria-remote
+spec:
+  secretName: greeter-adapter-tls
+  issuerRef:
+    name: criteria-ca-issuer
+    kind: ClusterIssuer
+  commonName: criteria-adapter-greeter
+  dnsNames:
+    - greeter-adapter.criteria-remote.svc.cluster.local
+  usages:
+    - client auth
+```
+
+The host must trust the CA referenced by `criteria-ca-issuer` (that bundle is the `client_ca` in the host's `mtls` block), and the peer must trust it in turn — it sends the CA as `CRITERIA_REMOTE_CA` to verify the host's server certificate. cert-manager-generated TLS secrets include the issuing CA as their `ca.crt` key, which is the key the peer mount above wires to `CRITERIA_REMOTE_CA`.
+
+#### Option B — cfssl
+
+For ad-hoc or local clusters, generate certificates with [cfssl](https://github.com/cloudflare/cfssl):
+
+```bash
+# 1. Create a CA
+cat > ca-csr.json <<EOF
+{
+  "CN": "Criteria Remote CA",
+  "key": { "algo": "ecdsa", "size": 256 },
+  "names": [{ "O": "Criteria" }]
+}
+EOF
+cfssl gencert -initca ca-csr.json | cfssljson -bare ca
+
+# 2. Create a client certificate for the adapter
+cat > adapter-csr.json <<EOF
+{
+  "CN": "criteria-adapter-greeter",
+  "key": { "algo": "ecdsa", "size": 256 },
+  "names": [{ "O": "Criteria" }]
+}
+EOF
+cfssl gencert \
+  -ca=ca.pem -ca-key=ca-key.pem \
+  -config=ca-config.json \
+  -profile=client \
+  adapter-csr.json | cfssljson -bare adapter
+
+# 3. Create a server certificate for the host listener
+cat > server-csr.json <<EOF
+{
+  "CN": "criteria-host",
+  "hosts": ["criteria.example.com", "localhost"],
+  "key": { "algo": "ecdsa", "size": 256 }
+}
+EOF
+cfssl gencert \
+  -ca=ca.pem -ca-key=ca-key.pem \
+  -config=ca-config.json \
+  -profile=server \
+  server-csr.json | cfssljson -bare server
+```
+
+Create the Kubernetes Secret manually:
+
+```bash
+kubectl create secret tls greeter-adapter-tls \
+  --cert=adapter.pem --key=adapter-key.pem \
+  -n criteria-remote
+```
+
+The host listener keeps `server.pem` and `server-key.pem` (its `mtls` `server_cert`/`server_key`) and validates the peer's client certificate against its `client_ca` bundle. The peer mounts its client certificate, key, and CA bundle from the `greeter-adapter-tls` secret and wires them to `CRITERIA_REMOTE_TLS_CERT`/`KEY`/`CA`; when preparing the secret by hand, make sure the CA bundle is present as the secret's `ca.crt` key so `CRITERIA_REMOTE_CA=/etc/criteria/certs/ca.crt` resolves.
+
 ## Troubleshooting
 
 ### Connection refused / timeout from adapter to host
@@ -464,7 +545,7 @@ kubectl apply -f docs/examples/k8s-remote-adapter/
 ### Adapter crash-loops but workflow does not resume
 
 - Verify the workflow step sets `on_crash = "respawn"`. Without this the engine treats a disconnect as a fatal step failure.
-- Check that the adapter has a reconnection loop with back-off. The SDK `ServeRemote` implementations include this by default; the peer supervisor includes it always.
+- Check that reconnection is in place. The peer supervisor owns it (full-jitter backoff, default 1s → 30s, tunable via `CRITERIA_PEER_BACKOFF_MIN`/`MAX`); role-absent SDK `ServeRemote` adapters reconnect in their own loop.
 - Ensure the adapter's Kubernetes liveness probe does not kill the pod faster than the engine's respawn timeout.
 
 ### Pod restarts but old session lingers
