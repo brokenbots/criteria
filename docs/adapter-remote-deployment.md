@@ -6,17 +6,9 @@
 
 This guide explains how to deploy a Criteria adapter that runs outside the Criteria host process and "phones home" over a TLS-backed TCP connection.
 
-There are two ways to package a remote adapter:
-
-- **Peer mode (recommended)** — the container runs the `criteria` engine
-  itself as the entrypoint (`criteria peer`). The peer supervisor launches
-  and supervises the adapter child and streams **first-class supervision
-  facts** back to the host. New deployments should use this mode.
-- **Runner mode (legacy)** — the container runs the thin
-  `criteria-adapter-remote-runner` binary, which serves the adapter's
-  contract through a byte-bridge but reports no process-lifecycle truth.
-  Supported for one minor release after peer parity; see the
-  [deprecation plan](#deprecation-plan).
+The container runs the `criteria` engine itself as the entrypoint
+(`criteria peer`). The peer supervisor launches and supervises the adapter
+child and streams **first-class supervision facts** back to the host. Deployments must use this mode.
 
 ## Concepts
 
@@ -27,7 +19,7 @@ In the remote deployment model the adapter side is the **client** and the Criter
 1. The Criteria host starts a **shim** listener on a TCP address (e.g. `0.0.0.0:7778`).
 2. The adapter-side process dials the shim, completes an optional mTLS handshake, and sends a short JSON identity frame.
 3. The shim verifies the identity against the workflow lockfile and the bearer token.
-4. In peer mode the verified connection *is* the session transport, and the host additionally opens a supervision journal on it (see [Peer mode](#peer-mode-recommended)). In runner mode the shim bridges the connection to a local Unix-domain socket instead.
+4. The verified connection *is* the session transport, and the host additionally opens a supervision journal on it (see [Peer mode](#peer-mode)).
 
 This design means:
 
@@ -78,14 +70,13 @@ If any check fails the connection is closed immediately and an error is logged.
 
 After the four gates pass, the identity frame's `role` decides the routing:
 
-- `role: "peer"` → the connection is handed to the host's **peer acceptor**
-  (peer mode; see below).
-- any other value (or no `role`) → **runner mode**: the shim creates a local
-  Unix-domain socket and bridges the connection byte-for-byte, so the host's
-  session layer talks to the adapter through the socket as if it were a local
-  subprocess.
+- `role: "peer"`, or a role-absent frame (the legacy dial shape; retained for
+  compatibility) → the connection is handed to the host's **peer acceptor**
+  (see below).
+- any other non-empty `role` → the dial is **rejected** (the retired runner
+  mode is no longer routable).
 
-## Peer mode (recommended)
+## Peer mode
 
 ### Overview
 
@@ -132,10 +123,11 @@ adapter container (pod)                                criteria host
                                     │  digest → accept/scope token          │
                                     │  (constant-time compares)             │
                                     │                                       │
-                                    │  role == "peer" ⇒ hand the verified   │
+                                    │  role "peer" (or a role-absent        │
+                                    │  legacy frame) ⇒ hand the verified    │
                                     │  connection to the peer acceptor:     │
-                                    │  NO UDS, NO byte-bridge — the         │
-                                    │  connection itself is the transport   │
+                                    │  NO UDS — the connection itself is    │
+                                    │  the transport                        │
                                     └───────────────┬───────────────────────┘
                                                     │
                                                     │ 3. host ⇄ peer gRPC on the held
@@ -171,11 +163,11 @@ The peer writes a single newline-terminated JSON line immediately after the tran
 
 | Field | Meaning |
 |-------|---------|
-| `name` / `version` / `digest` | Adapter identity. Same lockfile + token verification as runner mode. |
+| `name` / `version` / `digest` | Adapter identity. Same lockfile + token verification as the runner era. |
 | `token` | The bearer token for the shim's accept gate (or the per-scope token when `per_scope_sessions = true`). |
 | `scope` | `"scopeName/scopeInstanceID"` the peer reports on supervision events; empty in run-wide mode. |
 | `sdk_protocol_version` | Wire protocol version; `2` for the v2 adapter protocol. |
-| `role` | `"peer"` routes the dial to the peer acceptor (any other value takes the legacy runner path). |
+| `role` | `"peer"` routes the dial to the peer acceptor, as does a role-absent legacy-dial frame (retained for compatibility); any other value is rejected. |
 | `peer.criteria_version` | The peer's engine version, for host-side compatibility checks. |
 | `peer.capabilities` | `adapter.v2.full` (full v2 contract served on the connection) and `supervision.v1` (PeerService journal). Protocol evolution is negotiated with these strings, not proto churn. |
 
@@ -246,7 +238,7 @@ docker buildx build \
   -t ghcr.io/your-org/criteria-adapter-shell-peer:0.5.2 .
 ```
 
-The image builds `criteria` from this repo (so the peer and the host share one engine version) and pulls the adapter binary from its public module. It requires an explicit `CRITERIA_VERSION` (fail-closed, same policy as `Dockerfile.runtime`) because the peer handshake advertises `criteria_version`. The runtime keeps the alpine/debian package set of the legacy runner image and runs as the non-root `criteria` user (uid 10001).
+The image builds `criteria` from this repo (so the peer and the host share one engine version) and pulls the adapter binary from its public module. It requires an explicit `CRITERIA_VERSION` (fail-closed, same policy as `Dockerfile.runtime`) because the peer handshake advertises `criteria_version`. The runtime keeps the alpine/debian package set of the retired runner image and runs as the non-root `criteria` user (uid 10001).
 
 ### Peer environment variables
 
@@ -278,11 +270,10 @@ The manifests below deploy a peer-mode adapter into a Kubernetes cluster. They a
 - You have built a peer image for your adapter (see [Container image](#container-image)).
 - You have generated mTLS certificates (see [Certificate generation](#certificate-generation)).
 
-The namespace and ConfigMap manifests are shared with runner mode; the Secret carries the stream token.
+The namespace and ConfigMap manifests match the runner-era examples in shape; the Secret carries the stream token.
 
 ```yaml
-# namespace + configmap: docs/examples/k8s-remote-adapter/ (runner-mode
-# example files; identical shapes work for peer mode)
+# namespace + configmap: docs/examples/k8s-remote-adapter/
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -378,7 +369,7 @@ spec:
             secretName: greeter-adapter-tls
 ```
 
-Certificate generation is identical for both modes — see [Certificate generation](#certificate-generation).
+Certificate generation — see [Certificate generation](#certificate-generation).
 
 ### Docker Compose (peer mode)
 
@@ -438,275 +429,14 @@ The supervision journal turns "the adapter misbehaved" into concrete facts. Diag
 | Child killed by a host-issued kill | `exited` following an accepted `Control(KillChild)` with `graceful = true` and no `crash` — regardless of whether the child exited within `grace_ms` or was killed after the window | The kill is classified graceful the moment it is accepted (before the grace wait), so a control-plane kill is never recorded as a crash. Cross-check `ControlResponse.accepted` in the host logs and the requested `grace_ms`; a rejected kill (no live child) leaves no exit fact behind. |
 | Peer exits at startup, nothing listens | No events; peer log says `CRITERIA_REMOTE_HOST` missing or config unresolved | Manifest problem: `CRITERIA_REMOTE_HOST` is required, and partial TLS settings (`CRITERIA_REMOTE_TLS_CERT`/`KEY`/`CA`) are rejected — set all three or none. |
 
-## Runner mode (legacy)
-
-The runner image packages the generic remote runner binary with the requested adapter binary. At runtime the runner starts the local adapter via hashicorp/go-plugin and forwards the v2 contract to the remote host using the SDK's `ServeRemote`; the host shim bridges the connection to a local Unix-domain socket. Lifecycle RPCs (pause/resume/snapshot/restore/inspect) work in this mode too, but the host learns about adapter crashes only indirectly — there is no supervision journal.
-
-**This mode is deprecated** on the timeline documented in the [deprecation plan](#deprecation-plan). New deployments should use [peer mode](#peer-mode-recommended); the manifests below remain valid for existing deployments.
-
-### Kubernetes deployment (runner)
-
-```yaml
-# docs/examples/k8s-remote-adapter/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: greeter-adapter
-  namespace: criteria-remote
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: greeter-adapter
-  template:
-    metadata:
-      labels:
-        app: greeter-adapter
-    spec:
-      containers:
-        - name: adapter
-          image: ghcr.io/your-org/criteria-adapter-greeter:v0.1.0
-          resources:
-            requests:
-              memory: "64Mi"
-              cpu: "100m"
-            limits:
-              memory: "256Mi"
-              cpu: "500m"
-          env:
-            - name: CRITERIA_REMOTE_HOST
-              valueFrom:
-                configMapKeyRef:
-                  name: criteria-remote-config
-                  key: host
-            - name: CRITERIA_REMOTE_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: criteria-remote-secret
-                  key: token
-            - name: CRITERIA_REMOTE_TLS_CERT
-              value: "/etc/criteria/certs/tls.crt"
-            - name: CRITERIA_REMOTE_TLS_KEY
-              value: "/etc/criteria/certs/tls.key"
-            - name: CRITERIA_REMOTE_CA
-              value: "/etc/criteria/certs/ca.crt"
-          volumeMounts:
-            - name: certs
-              mountPath: /etc/criteria/certs
-              readOnly: true
-      volumes:
-        - name: certs
-          secret:
-            secretName: greeter-adapter-tls
-```
-
-### Docker Compose (runner)
-
-For local trial without a Kubernetes cluster, use Docker Compose to run both Criteria and the adapter side-by-side.
-
-```yaml
-# docs/examples/compose-remote-adapter/docker-compose.yml
-services:
-  criteria:
-    image: ghcr.io/brokenbots/criteria:latest
-    command: ["apply", "/workspace/workflow.hcl"]
-    ports:
-      - "7778:7778"
-    volumes:
-      - ./workflow.hcl:/workspace/workflow.hcl:ro
-      - ./certs:/etc/criteria/certs:ro
-    environment:
-      - CRITERIA_REMOTE_TOKEN=${CRITERIA_REMOTE_TOKEN:-smoke-token}
-    healthcheck:
-      test: ["CMD", "criteria", "version"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
-  adapter:
-    image: ghcr.io/your-org/criteria-adapter-greeter:v0.1.0
-    environment:
-      - CRITERIA_REMOTE_HOST=criteria:7778
-      - CRITERIA_REMOTE_TOKEN=${CRITERIA_REMOTE_TOKEN:-smoke-token}
-    depends_on:
-      criteria:
-        condition: service_healthy
-```
-
-Example workflow (`workflow.hcl`):
-
-```hcl
-workflow {
-  name = "compose-remote-demo"
-  version = "0.1"
-  initial_state = "run"
-  target_state  = "done"
-}
-
-environment "remote" "default" {
-  listen_address = "0.0.0.0:7778"
-  accept_token   = "smoke-token"
-}
-
-adapter "greeter" "default" {
-  environment = remote.default
-}
-
-step "run" {
-  target = adapter.greeter.default
-  input {
-    name = "world"
-  }
-  outcome "success" { next = state.done }
-}
-
-state "done" {
-  terminal = true
-  success  = true
-}
-```
-
-Run it:
-
-```bash
-cd docs/examples/compose-remote-adapter
-docker compose up --build
-```
-
-The adapter container will retry its connection every few seconds until the Criteria shim is ready.
-
-### Adapter entrypoint
-
-Your adapter binary should use the SDK's remote entrypoint. In Go this looks like:
-
-```go
-package main
-
-import (
-    "os"
-
-    "github.com/brokenbots/criteria-go-adapter-sdk/adapterhost"
-)
-
-func main() {
-    tlsConf, err := adapterhost.LoadClientTLS(
-        os.Getenv("CRITERIA_REMOTE_TLS_CERT"),
-        os.Getenv("CRITERIA_REMOTE_TLS_KEY"),
-        os.Getenv("CRITERIA_REMOTE_CA"),
-    )
-    if err != nil {
-        panic(err)
-    }
-    if err := adapterhost.ServeRemote(&myAdapter{}, &adapterhost.ServeRemoteOptions{
-        Host:        os.Getenv("CRITERIA_REMOTE_HOST"),
-        TLSConfig:   tlsConf,
-        AcceptToken: os.Getenv("CRITERIA_REMOTE_TOKEN"),
-        Identity: adapterhost.RemoteIdentity{
-            Name:    "greeter",
-            Version: "0.1.0",
-            Digest:  os.Getenv("CRITERIA_REMOTE_DIGEST"),
-        },
-        Reconnect: true,
-    }); err != nil {
-        panic(err)
-    }
-}
-```
-
-Equivalent entrypoints exist in the TypeScript (`serveRemote`) and Python
-(`serve_remote`) SDK packages. These remain **functional but deprioritized**:
-they still work against the runner path, while the peer path (recommended)
-supervises the adapter child directly and needs no in-SDK remote loop. See
-[docs/adapter-v2-migration.md](adapter-v2-migration.md).
-
-## Certificate generation
-
-#### Option A — cert-manager
-
-If your cluster runs [cert-manager](https://cert-manager.io), create an Issuer (or use a cluster-wide one) and a Certificate:
-
-```yaml
-# docs/examples/k8s-remote-adapter/cert-manager.yaml
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: greeter-adapter-tls
-  namespace: criteria-remote
-spec:
-  secretName: greeter-adapter-tls
-  issuerRef:
-    name: criteria-ca-issuer
-    kind: ClusterIssuer
-  commonName: criteria-adapter-greeter
-  dnsNames:
-    - greeter-adapter.criteria-remote.svc.cluster.local
-  usages:
-    - client auth
-```
-
-The host shim must trust the CA referenced by `criteria-ca-issuer`.
-
-#### Option B — cfssl
-
-For ad-hoc or local clusters, generate certificates with [cfssl](https://github.com/cloudflare/cfssl):
-
-```bash
-# 1. Create a CA
-cat > ca-csr.json <<EOF
-{
-  "CN": "Criteria Remote CA",
-  "key": { "algo": "ecdsa", "size": 256 },
-  "names": [{ "O": "Criteria" }]
-}
-EOF
-cfssl gencert -initca ca-csr.json | cfssljson -bare ca
-
-# 2. Create a client certificate for the adapter
-cat > adapter-csr.json <<EOF
-{
-  "CN": "criteria-adapter-greeter",
-  "key": { "algo": "ecdsa", "size": 256 },
-  "names": [{ "O": "Criteria" }]
-}
-EOF
-cfssl gencert \
-  -ca=ca.pem -ca-key=ca-key.pem \
-  -config=ca-config.json \
-  -profile=client \
-  adapter-csr.json | cfssljson -bare adapter
-
-# 3. Create a server certificate for the host shim
-cat > server-csr.json <<EOF
-{
-  "CN": "criteria-host",
-  "hosts": ["criteria.example.com", "localhost"],
-  "key": { "algo": "ecdsa", "size": 256 }
-}
-EOF
-cfssl gencert \
-  -ca=ca.pem -ca-key=ca-key.pem \
-  -config=ca-config.json \
-  -profile=server \
-  server-csr.json | cfssljson -bare server
-```
-
-Create the Kubernetes Secret manually:
-
-```bash
-kubectl create secret tls greeter-adapter-tls \
-  --cert=adapter.pem --key=adapter-key.pem \
-  -n criteria-remote
-```
-
-The host shim mounts `server.pem`, `server-key.pem`, and `ca.pem`.
-
 ### Apply the manifests
 
 ```bash
-# Runner-mode example (legacy):
+# Infra manifests (namespace, configmap, secret, cert-manager):
 kubectl apply -f docs/examples/k8s-remote-adapter/
 
-# Peer mode: apply the Deployment from the peer section above.
+# Peer mode: apply the peer Deployment from the peer-mode Kubernetes
+# section and the [Container image](#container-image) build above.
 ```
 
 ## Troubleshooting
@@ -741,21 +471,3 @@ kubectl apply -f docs/examples/k8s-remote-adapter/
 
 - The shim keeps one active session per adapter type. When a new connection arrives for the same type, the old session is closed and replaced. This is normal during rolling updates.
 - If you need multiple replicas of the same adapter type, use distinct adapter types or run them against separate Criteria host instances. With `per_scope_sessions = true`, peer-mode pods are keyed by scope instead — see the [operator pattern](#the-operator-pattern-reconcile-on-provision_wanted).
-
-## Deprecation plan
-
-The runner mode — the `criteria-adapter-remote-runner` binary plus the host shim's UDS/byte-bridge path — is **deprecated**:
-
-- **Today**: peer mode is the recommended deployment; runner mode remains fully supported and all documented manifests keep working.
-- **Runner + byte-bridge supported through one minor release after peer parity.** Runner-mode fixes are limited to crash/security issues; new remote features land in peer mode only.
-- **Then**: a removal ticket deletes the legacy path. The ticket must remove these exact symbols:
-
-| Symbol | Location | Role in the legacy path |
-|--------|----------|-------------------------|
-| `Shim.setupUDS` | `internal/adapter/environment/remote/shim.go` | Creates the shim-side Unix-domain socket for the byte-bridge. |
-| `Shim.bridgeAndDial` | `internal/adapter/environment/remote/shim.go` | Byte-copies between the phone-home connection and the UDS and dials the local endpoint. |
-| `adapterhost.LocalSocketDialer` (remote `LocalSocketDialer` path) | `internal/adapterhost/loader_reattach.go` (called from `shim.go`) | Reattach-mode dialer the bridge hands its socket to; only the remote call site goes away with runner mode. |
-| `noopAttachedRunner` | `internal/adapterhost/loader_reattach.go` | AttachedRunner placeholder used because the real runner is out of process in the remote path. |
-| Runner proxy surface (ADR-0007 names: `proxyService` / `grpcAdapterServer`) | `cmd/criteria-adapter-remote-runner/serve_remote.go` | The runner's gRPC adapter-service proxy server: the `grpc.NewServer` + `RegisterAdapterService` registration that serves the child's contract on the phone-home connection, together with its dial/handshake helpers (`serveRemoteOnce`, `dialRemote`, `sendRemoteHandshake`, `singleConnListener`). |
-
-The TypeScript and Python `ServeRemote` entrypoints remain functional but deprioritized (see [docs/adapter-v2-migration.md](adapter-v2-migration.md)); their removal is a separate SDK-side decision, not part of this engine-side plan.

@@ -1,6 +1,10 @@
 # ADR-0007 — Peer execution: criteria-to-criteria remote adapters (staged A→B)
 
-**Status:** Proposed
+**Status:** Accepted; Stage A executed. The runner + byte-bridge path this
+ADR planned to sunset was removed in PR #551 (2026-11-03): peer mode is the
+only remote mode, and role-absent legacy dial shapes are still accepted —
+served as peer sessions whose supervision degrades to host-side crash
+heuristics (see D6).
 
 **Date:** 2026-09-25
 
@@ -201,14 +205,16 @@ optional `role` field in the JSON identity frame:
 ```
 
 - `"role":"peer"` → the accept path hands the authenticated connection to a
-  pluggable `PeerAcceptor` seam (T-06 implements the real one); the
-  byte-bridge path is not taken.
-- Absent role → today's `setupUDS`/`bridgeAndDial` byte-bridge path,
-  unchanged. Both sides already tolerate unknown handshake fields, so a
-  mixed fleet (legacy runner pods + peer pods) coexists through the
-  migration window.
+  pluggable `PeerAcceptor` seam (T-06 implements the real one); as executed
+  (PR #551), every accepted dial routes to that seam.
+- Absent role → served by the same peer acceptor. The planned interim
+  byte-bridge route was removed with the runner (PR #551), so a role-absent
+  frame is accepted as its legacy dial shape and served as an ordinary peer
+  session (no PeerService supervision; the host falls back to crash
+  heuristics). Both sides already tolerate unknown handshake fields.
 - No HCL change: the environment grammar is identical; the pod entrypoint
-  changes from `criteria-adapter-remote-runner` to `criteria peer`.
+  is `criteria peer` (the `criteria-adapter-remote-runner` binary was
+  removed in PR #551).
 
 **Identity-frame hardening rides along** (review §4.1): the identity frame is
 capped at 16 KiB (reject oversize before parsing); this applies to both
@@ -231,14 +237,17 @@ any adapter language.
 
 ### D6 — Delete-after-parity and the Stage B handoff
 
-The byte-bridge internals are deprecated when peer parity is proven in
-production, removed one minor release later: `setupUDS`/`bridgeAndDial`
-(`shim.go:545/583`), the remote reattach path (`LocalSocketDialer` +
-`noopAttachedRunner` on the remote path), and the runner's
-`proxyService`/`grpcAdapterServer` duplicates (their bridge is promoted into
-`internal/adapterhost` so runner and peer share one implementation until the
-runner is retired). TS/Python ServeRemote remain functional but deprioritized
-— the peer wraps any v2 adapter regardless of language.
+The sunset was executed: PR #551 (2026-11-03) removed the runner
+(`cmd/criteria-adapter-remote-runner`), the byte-bridge internals
+(`setupUDS`/`bridgeAndDial`, `shim.go`/`handle.go`), and the remote reattach
+path (`internal/adapterhost/loader_reattach.go`, with its
+`LocalSocketDialer` + `noopAttachedRunner`). The retained phone-home server
+migrated to `internal/adapter/environment/remote/server.go` and requires
+`role=peer` explicitly: a non-empty non-peer role is rejected, and the
+role-absent legacy dial shape (TS/Python ServeRemote) is accepted and served
+as a peer session without PeerService supervision. TS/Python ServeRemote
+remain functional but deprioritized — the peer wraps any v2 adapter
+regardless of language.
 
 Stage B (execution graph) is deliberately out of scope here: child runs need
 `parent_run_id` on run creation, a typed results channel, delegated-observer
@@ -268,5 +277,7 @@ in production.
 - **Non-breaking for Stage A.** `peer.proto` is additive; `make test-conformance`
   must pass unmodified. Stage B is a breaking SDK change with its own ADR and
   major bump.
-- **Migration window:** mixed fleets supported via role negotiation; runner
-  + byte-bridge removed one minor release after peer parity is proven.
+- **Migration executed:** the runner + byte-bridge path was removed in
+  PR #551, in the same cycle that shipped peer mode; the retained
+  `shim_listen_address` wire key keeps the operator (`provision_wanted`)
+  contract stable across the cut.

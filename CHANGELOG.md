@@ -40,17 +40,19 @@ product version). The release tag and date are finalized by the release gate.
   outranks host-side heuristics. Reconnect backoff is full-jitter
   (1s → 30s, `CRITERIA_PEER_BACKOFF_MIN/MAX`); supervision heartbeats fire
   every 30s while idle. Every `CRITERIA_REMOTE_*` variable is scrubbed from
-  the adapter child's environment. The `remote` shim routes identity frames
-  with `role: "peer"` to a pluggable peer acceptor after the unchanged
-  mTLS → identity-pattern → digest → token gates — no UDS byte-bridge, and
-  no workflow (HCL) change: peer vs runner is a deployment choice negotiated
-  during the handshake. New image `images/remote-adapters/Dockerfile.peer`
+  the adapter child's environment.   The `remote` shim routes identity frames with `role: "peer"` to a pluggable
+  peer acceptor after the unchanged
+  mTLS → identity-pattern → digest → token gates — no UDS, and
+  no workflow (HCL) change: peer vs the retired runner was a deployment
+  choice negotiated during the handshake. New image
+  `images/remote-adapters/Dockerfile.peer`
   packages it (entrypoint `/usr/local/bin/criteria peer`, fail-closed
   `CRITERIA_VERSION`, non-root uid 10001); deployment guide and manifests:
   [docs/adapter-remote-deployment.md → Peer mode](docs/adapter-remote-deployment.md).
   The runner + byte-bridge path (`criteria-adapter-remote-runner`, shim
-  `setupUDS`/`bridgeAndDial`) is deprecated: supported through one minor
-  release after peer parity, then removed.
+  `setupUDS`/`bridgeAndDial`) was removed during this cycle (PR #551) — the
+  shipped terminal state is peer-only, with the role-absent legacy dial
+  shape accepted for compatibility and any other role rejected.
 
 - **Adapter state declaration in InfoResponse (CRI-201).** Adapters can now
   declare their checkpointable session-state surface in the handshake:
@@ -100,7 +102,8 @@ product version). The release tag and date are finalized by the release gate.
   never carry one. Existing consumers ignore the unknown key; a pod builder can
   now pull the pinned image directly instead of guessing from the adapter kind.
 - **SDK coordination point.** `criteria-go-adapter-sdk` is bumped to v0.5.3.
-  The in-tree remote runner now forwards `CRITERIA_REMOTE_SCOPE` in its
+  The in-tree remote runner (since removed in PR #551) forwarded
+  `CRITERIA_REMOTE_SCOPE` in its
   handshake, but the SDK's public `ServeRemote` does not yet expose a scope
   field. The standalone `criteria-adapter-shell` and `criteria-adapter-copilot`
   releases must pick up SDK v0.5.4+ (or an equivalent scope-aware SDK version)
