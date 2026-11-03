@@ -333,20 +333,14 @@ func (p *peerSessionProvider) WaitForFreshHandle(ctx context.Context, adapterNam
 	p.waiters[key] = append(p.waiters[key], peerCh)
 	p.mu.Unlock()
 
-	// Legacy mixed-fleet path: the shim resolves its registry atomically the
-	// same way, capturing the verify-failure budget under its own lock.
-	legacyHandle, legacyCh, budget := p.shim.registerFreshWaiter(key, stale)
-	if legacyHandle != nil {
-		// A live legacy session was already available, so the peer waiter
-		// registered above is dropped. Both channels are buffered, so a
-		// concurrent peer dial's wake never blocks the notifier.
-		p.removeWaiter(key, peerCh)
-		return legacyHandle, nil
-	}
+	p.shim.mu.Lock()
+	p.shim.waiters[key] = append(p.shim.waiters[key], peerCh)
+	budget := p.shim.verifyFailureBudget
+	p.shim.mu.Unlock()
 
-	return p.shim.awaitWaiter(ctx, adapterName, scope, key, peerCh, legacyCh, func() {
+	return p.shim.awaitWaiter(ctx, adapterName, scope, key, peerCh, func() {
 		p.removeWaiter(key, peerCh)
-		p.shim.removeWaiter(key, legacyCh)
+		p.shim.removeWaiter(key, peerCh)
 	}, budget)
 }
 
@@ -426,7 +420,7 @@ func (p *peerSessionProvider) CloseHandle(ctx context.Context, adapterName, scop
 		}
 		return nil
 	}
-	return p.shim.CloseHandle(ctx, adapterName, scope)
+	return nil
 }
 
 // ListenAddr delegates to the shim (the phone-home listener is shared).
@@ -434,11 +428,24 @@ func (p *peerSessionProvider) ListenAddr() string {
 	return p.shim.ListenAddr()
 }
 
-// Stop closes every peer session (ending the supervision consumers and the
-// gRPC transports), wakes pending peer waiters, and tears the shim down
-// (legacy sessions + listener + its waiters). Called by SessionManager
-// Shutdown through the RemoteShim interface.
-func (p *peerSessionProvider) Stop(ctx context.Context) error {
+// closeActiveSessions closes every active peer connection without permanently
+// stopping the provider (e.g. when the underlying listener is bounced).
+func (p *peerSessionProvider) closeActiveSessions(ctx context.Context) {
+	p.mu.Lock()
+	peers := p.peers
+	p.peers = make(map[string]*peerSession)
+	p.mu.Unlock()
+	for _, ps := range peers {
+		for _, aj := range ps.hostedJournals() {
+			ps.teardownInFlightChildRun(ctx, aj)
+		}
+		ps.close("shim stopped")
+	}
+}
+
+// stopPeers closes every peer session (ending the supervision consumers and the
+// gRPC transports) and wakes pending peer waiters. Idempotent.
+func (p *peerSessionProvider) stopPeers(ctx context.Context) {
 	p.stopOnce.Do(func() {
 		p.mu.Lock()
 		p.stopped = true
@@ -463,6 +470,14 @@ func (p *peerSessionProvider) Stop(ctx context.Context) error {
 			}
 		}
 	})
+}
+
+// Stop closes every peer session (ending the supervision consumers and the
+// gRPC transports), wakes pending peer waiters, and tears the shim down
+// (legacy sessions + listener + its waiters). Called by SessionManager
+// Shutdown through the RemoteShim interface.
+func (p *peerSessionProvider) Stop(ctx context.Context) error {
+	p.stopPeers(ctx)
 	return p.shim.Stop(ctx)
 }
 
@@ -1110,6 +1125,9 @@ func (h *peerHandle) killChild(ctx context.Context) {
 		slog.Warn("peer adapter rejected kill_child control", "adapter", h.name, "detail", resp.GetDetail())
 	}
 }
+
+// IsPhoneHomeBridge marks peerHandle as a live phone-home connection (KB-232).
+func (h *peerHandle) IsPhoneHomeBridge() {}
 
 // ProcessExited implements ProcessExitReporter from the supervision journal:
 // true once the peer delivered ProcessExited or CrashClassified for this
