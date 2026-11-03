@@ -428,11 +428,24 @@ func (p *peerSessionProvider) ListenAddr() string {
 	return p.shim.ListenAddr()
 }
 
-// Stop closes every peer session (ending the supervision consumers and the
-// gRPC transports), wakes pending peer waiters, and tears the shim down
-// (legacy sessions + listener + its waiters). Called by SessionManager
-// Shutdown through the RemoteShim interface.
-func (p *peerSessionProvider) Stop(ctx context.Context) error {
+// closeActiveSessions closes every active peer connection without permanently
+// stopping the provider (e.g. when the underlying listener is bounced).
+func (p *peerSessionProvider) closeActiveSessions(ctx context.Context) {
+	p.mu.Lock()
+	peers := p.peers
+	p.peers = make(map[string]*peerSession)
+	p.mu.Unlock()
+	for _, ps := range peers {
+		for _, aj := range ps.hostedJournals() {
+			ps.teardownInFlightChildRun(ctx, aj)
+		}
+		ps.close("shim stopped")
+	}
+}
+
+// stopPeers closes every peer session (ending the supervision consumers and the
+// gRPC transports) and wakes pending peer waiters. Idempotent.
+func (p *peerSessionProvider) stopPeers(ctx context.Context) {
 	p.stopOnce.Do(func() {
 		p.mu.Lock()
 		p.stopped = true
@@ -457,6 +470,14 @@ func (p *peerSessionProvider) Stop(ctx context.Context) error {
 			}
 		}
 	})
+}
+
+// Stop closes every peer session (ending the supervision consumers and the
+// gRPC transports), wakes pending peer waiters, and tears the shim down
+// (legacy sessions + listener + its waiters). Called by SessionManager
+// Shutdown through the RemoteShim interface.
+func (p *peerSessionProvider) Stop(ctx context.Context) error {
+	p.stopPeers(ctx)
 	return p.shim.Stop(ctx)
 }
 

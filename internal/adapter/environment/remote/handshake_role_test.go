@@ -392,7 +392,7 @@ func TestShim_PeerRole_RejectedWithoutAcceptor(t *testing.T) {
 	assertConnClosed(t, conn)
 }
 
-func TestShim_LegacyRole_RejectedWhenByteBridgeRetired(t *testing.T) {
+func TestShim_RoleAbsentDial_ReachesPeerAcceptor(t *testing.T) {
 	captureLogs(t)
 	shim, addr := startTestShim(t, &Config{ListenAddress: "127.0.0.1:0"})
 
@@ -404,6 +404,27 @@ func TestShim_LegacyRole_RejectedWhenByteBridgeRetired(t *testing.T) {
 		Name:    "noop",
 		Version: "1.0.0",
 		Digest:  "sha256:abcd1234",
+	})
+	defer conn.Close()
+
+	if !acceptor.waitCalled() {
+		t.Fatal("role-absent dial did not reach peer acceptor")
+	}
+}
+
+func TestShim_UnrecognizedRole_Rejected(t *testing.T) {
+	captureLogs(t)
+	shim, addr := startTestShim(t, &Config{ListenAddress: "127.0.0.1:0"})
+
+	acceptor := newRecordingPeerAcceptor()
+	defer acceptor.releaseAll()
+	shim.SetPeerAcceptor(acceptor)
+
+	conn := dialRawHandshake(t, addr, &handshakeMessage{
+		Name:    "noop",
+		Version: "1.0.0",
+		Digest:  "sha256:abcd1234",
+		Role:    "unsupported-role",
 	})
 	defer conn.Close()
 

@@ -421,13 +421,18 @@ func (s *Server) Stop(ctx context.Context) error {
 		}
 	}
 	s.waiters = make(map[string][]chan waitResult)
+	acceptor := s.peerAcceptor
 	s.mu.Unlock()
+
+	if p, ok := acceptor.(*peerSessionProvider); ok {
+		p.closeActiveSessions(ctx)
+	}
 
 	if lis != nil {
 		_ = lis.Close()
 	}
 
-	if cfg != nil && strings.HasPrefix(cfg.ListenAddress, "unix://") {
+	if cfg != nil && isUnixSocketAddr(cfg.ListenAddress) {
 		_ = os.Remove(strings.TrimPrefix(cfg.ListenAddress, "unix://"))
 	}
 	return nil
@@ -467,6 +472,12 @@ func (s *Server) SetPeerAcceptor(pa PeerAcceptor) {
 	s.mu.Lock()
 	s.peerAcceptor = pa
 	s.mu.Unlock()
+
+	if p, ok := pa.(*peerSessionProvider); ok {
+		p.mu.Lock()
+		p.shim = s
+		p.mu.Unlock()
+	}
 }
 
 // SetPodStateProbe sets the probe for inspecting pod phases.
@@ -599,9 +610,9 @@ func (s *Server) Accept(ctx context.Context, conn net.Conn) error {
 		return err
 	}
 
-	if hs.Role != handshakeRolePeer {
+	if hs.Role != "" && hs.Role != handshakeRolePeer {
 		_ = conn.Close()
-		return fmt.Errorf("adapter %q: legacy byte-bridge runner is retired; adapters must connect with role %q", hs.Name, handshakeRolePeer)
+		return fmt.Errorf("adapter %q: unrecognized handshake role %q", hs.Name, hs.Role)
 	}
 
 	return s.acceptPeerConn(ctx, conn, &hs)
