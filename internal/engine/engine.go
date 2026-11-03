@@ -1722,11 +1722,12 @@ func (e *Engine) startRemoteShimForEnv(ctx context.Context, envKey string, env *
 		// event instead of burning the remaining step deadline silently.
 		shim.SetScopeSessionSink(&scopeSessionEventBridge{engine: e, environmentName: env.Name})
 	}
-	// The peer transport (ADR-0007 Stage A) is served on the same phone-home
-	// listener: role=peer dials branch to the provider after the standard
-	// handshake verification; legacy runner dials keep the byte-bridge path.
-	// The session manager is handed the provider, whose RemoteShim methods
-	// resolve peer sessions first and delegate to the shim for legacy ones.
+	// The phone-home listener serves the peer transport (ADR-0007 Stage A)
+	// on the same port: every dial branches to the provider after the
+	// standard handshake verification (role=peer, or role-absent legacy-dial
+	// shape — the byte-bridge path was removed in PR #551). The session
+	// manager is handed the provider, whose RemoteShim methods resolve peer
+	// sessions first and delegate to the wrapped shim registry.
 	provider := remote.NewPeerSessionProvider(shim, cfg.PerScopeSessions)
 	provider.SetDeclaredAdapters(declaredAdaptersForEnv(envKey, e.graph))
 	shim.SetPeerAcceptor(provider)

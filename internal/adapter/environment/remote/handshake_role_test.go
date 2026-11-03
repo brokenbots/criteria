@@ -370,8 +370,8 @@ func TestShim_PeerRole_RoutedToPeerAcceptor(t *testing.T) {
 		t.Errorf("capabilities = %v, want [adapter.v2.full supervision.v1]", ident.Capabilities)
 	}
 
-	// The peer path must not take the legacy byte-bridge: the shim itself
-	// registers no session (T-06's acceptor owns registration).
+	// The shim itself registers no session: the accepted dial is handed to
+	// T-06's acceptor, which owns registration.
 	acceptor.releaseAll()
 	assertConnClosed(t, conn)
 }

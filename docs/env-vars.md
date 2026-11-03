@@ -65,9 +65,9 @@ either internal plumbing or transport-grade invariants:
 - Peer dial/teardown budgets (`internal/peer/serve.go` and `child.go`):
   dial timeout, TCP keep-alive period, shutdown budgets, child exit poll
   interval, session-close and control grace windows.
-- Deprecated runner-era transport timing
-  (`cmd/criteria-adapter-remote-runner`) and non-timing posture knobs such
-  as `CRITERIA_PEER_CHILD_KEEPALIVE` (documented by the peer supervisor
+- Runner-era transport timing that went away with the removed runner
+  (`cmd/criteria-adapter-remote-runner`, PR #551); non-timing posture knobs
+  such as `CRITERIA_PEER_CHILD_KEEPALIVE` (documented by the peer supervisor
   docs).
 
 Registering a new override: add the knob to `internal/tunables` (a

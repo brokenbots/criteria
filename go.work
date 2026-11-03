@@ -1,5 +1,11 @@
 go 1.27
 
+// go1.27.0's standard library carries GO-2026-6809/6603/6599-class findings;
+// 1.27.3 ships every fix (matches root go.mod toolchain + the
+// Dockerfile.peer builder floor). Workspace-mode commands take the toolchain
+// from here, not from root go.mod.
+toolchain go1.27.3
+
 use (
 	.
 	./sdk

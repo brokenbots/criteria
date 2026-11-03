@@ -25,8 +25,8 @@
 #       bun install && bun run build       # -> bin/criteria-adapter-claude-agent
 #       bun run build:linux-x64            # platform-targeted: bun scripts/build.ts --target=bun-linux-x64
 #       bun run binary:install             # copies the binary into the adapters dir
-#     (images/remote-adapters/Dockerfile.claude-agent builds it the same way
-#     via scripts/build.ts with an explicit --target/--outfile.)
+#     (built per the claude-agent repo's README; the bun-compiled binary is
+#     installed where the host discovers adapters, never on PATH.)
 #   • criteria-echo-mcp on PATH (built by make example-adapter-tools-claude
 #     as bin/criteria-echo-mcp): the mcp adapter spawns it as its MCP server
 #     over stdio — THIS is a PATH lookup, unlike adapter discovery.

@@ -16,17 +16,17 @@ import (
 // The bridge serializes stream sends (grpc streams are not goroutine-safe)
 // and wraps the backend Log stream with adapter protocol heartbeats.
 //
-// The same bridge serves both the remote runner
-// (cmd/criteria-adapter-remote-runner) and the criteria peer
-// (internal/peer/serve.go); previously the runner carried a private copy.
+// The same bridge serves the criteria peer (internal/peer/serve.go); the
+// phone-home runner carried a private copy until the byte-bridge path was
+// removed (PR #551).
 func NewAdapterServiceServer(impl Client) v2.AdapterServiceServer {
 	return &adapterServiceBridge{impl: impl}
 }
 
 // RegisterAdapterService registers the v2 AdapterService backed by impl on a
 // gRPC server, extending the generated ServiceDesc with the dynamically
-// encoded Prompt method (promptwire.go). This is the registration the runner
-// and the peer both use for their phone-home server.
+// encoded Prompt method (promptwire.go). This is the registration the peer
+// uses for its phone-home server.
 func RegisterAdapterService(srv *grpc.Server, impl Client) {
 	desc := AdapterServiceDescWithPrompt()
 	srv.RegisterService(desc, NewAdapterServiceServer(impl))
