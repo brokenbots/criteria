@@ -28,11 +28,11 @@ import (
 )
 
 // This file implements the host side of the peer transport (ADR-0007 Stage
-// A, T-06). An adapter running in peer mode phones home over the same mTLS
-// connection as the legacy runner, but its identity frame carries role
-// "peer": after the shim's standard verification (mTLS, identity pattern,
+// A, T-06). An adapter phone-homes over the same mTLS connection the
+// runner era used, but its identity frame carries role
+// "peer": after the standard verification (mTLS, identity pattern,
 // lockfile digest, scope token) the connection is handed to the
-// peerSessionProvider installed as the shim's PeerAcceptor. The host becomes
+// peerSessionProvider installed as the engine's PeerAcceptor. The host becomes
 // a plain gRPC CLIENT on the already-established connection — no UDS, no
 // go-plugin reattach, no second dial — and drives the adapter over the
 // adapter v2 AdapterService while the peer pushes its supervision journal
@@ -40,11 +40,11 @@ import (
 //
 // The provider also implements adapterhost.RemoteShim, so the session
 // manager dispatch (resolveAdapterHandle / resolveAdapterForRespawn) is
-// unchanged: peer sessions are resolved through the same interface the
-// legacy byte-bridge sessions use, and a mixed fleet (legacy + peer dials
-// for the same adapter type during a rolling upgrade) is supported by
-// consulting both the provider's peer registry and the wrapped shim's
-// legacy sessions.
+// unchanged: peer sessions are resolved through the same interface legacy
+// byte-bridge sessions (removed in PR #551) used, and dials presenting that
+// legacy shape (no role/peer identity block) are served by the provider
+// after consulting both its peer registry and the wrapped shim's
+// session registry.
 
 const (
 	// peerDialTarget is the gRPC target handed to grpc.NewClient. It uses
@@ -105,12 +105,13 @@ var peerSuperviseStreamDesc = &grpc.StreamDesc{
 	ServerStreams: true,
 }
 
-// peerSessionProvider receives authenticated peer-role dials from the shim
-// and implements adapterhost.RemoteShim on top of them, so a remote adapter
-// whose identity frame advertises role "peer" is served without the legacy
-// go-plugin reattach path. Legacy (role-absent) dials continue to take the
-// shim's byte-bridge path; the provider delegates every RemoteShim method to
-// the wrapped shim once its own peer registry has been consulted.
+// peerSessionProvider receives authenticated peer-role dials from the phone-
+// home server and implements adapterhost.RemoteShim on top of them, so a
+// remote adapter whose identity frame advertises role "peer" is served
+// without any go-plugin reattach path. Dials presenting the legacy shape
+// (role-absent) are served by the same provider through its peer registry —
+// the byte-bridge acceptor was removed in PR #551 — and non-peer roles are
+// rejected at the handshake.
 type peerSessionProvider struct {
 	shim             *Shim
 	perScopeSessions bool
@@ -137,7 +138,9 @@ func NewPeerSessionProvider(shim *Shim, perScopeSessions bool) *peerSessionProvi
 	}
 }
 
-// WrappedShim returns the legacy-session shim wrapped by this provider.
+// WrappedShim returns the phone-home shim (Server) this provider wraps: the
+// handshake verifier, scope-token store, and waiter plumbing that peer
+// sessions ride on.
 // startRemoteShimForEnv registers only the provider on the session manager,
 // and its callers keep no separate shim reference, so tests that exercise the
 // shim surface end to end reach it through this accessor.
@@ -187,8 +190,7 @@ func (p *peerSessionProvider) AcceptPeer(ctx context.Context, conn net.Conn, dia
 	}
 
 	// A replacement dial for the same key supersedes the previous session
-	// (mirrors the legacy shim storing the new session and tearing the old
-	// bridge down).
+	// (mirrors the legacy shim's store-then-tear precedence).
 	replaced, waiters, old := p.storeSession(key, ps)
 
 	// KB-213: drain the session waits for the conn's other hosted adapters
@@ -275,18 +277,21 @@ func (p *peerSessionProvider) peerDied(ps *peerSession) {
 	p.mu.Unlock()
 }
 
-// WaitForHandle blocks until a peer (or legacy) session for the adapter
-// definition identity (`adapterName`, "<type>.<name>" — KB-242) + scope is
-// available.
+// WaitForHandle blocks until a session for the adapter definition identity
+// (`adapterName`, "<type>.<name>" — KB-242) + scope is available.
 func (p *peerSessionProvider) WaitForHandle(ctx context.Context, adapterName, scope string) (adapterhost.Handle, error) {
 	return p.WaitForFreshHandle(ctx, adapterName, scope, nil)
 }
 
 // WaitForFreshHandle blocks until a handle that is not `stale` is available.
-// Resolution order: a live peer session in the provider's registry, then a
-// legacy session already stored on the shim (mixed fleet), then a wait
-// registered on both registries — a peer dial wakes peer waiters, a legacy
-// handshake wakes the shim's waiters. The wait is bounded by the shim's two
+// Resolution: a live session in the provider's registry — every accepted
+// dial stores here, whether its identity frame advertises role "peer" or
+// presents the legacy role-absent dial shape — then a waiter registered on
+// the provider's list and mirrored on the wrapped shim's list (the shim
+// side exists for verdict attribution and deregistration, not as a second
+// session source). A dial accepted later wakes the provider waiters and,
+// through the shared channel, unblocks the shim-side wait as well. The wait
+// is bounded by the shim's two
 // session-wait budgets (handshake + scheduling; KB-70) and shares the shim's
 // diagnosis classes (CRI-137) through its awaitWaiter loop.
 //
@@ -375,7 +380,8 @@ func (p *peerSessionProvider) UnregisterScope(scope string) {
 // CloseHandle tears down the session for the adapter type + scope: a peer
 // session closes its adapter session and issues a best-effort kill control
 // before releasing the transport (mirroring the legacy shim's teardown
-// order); otherwise the legacy shim path applies.
+// order). With no session stored — the shim itself has none; it delegates
+// closes to this provider — the call is a no-op.
 //
 // KB-213: on a multi-adapter conn only the requested adapter's child is torn
 // down, and the shared conn stays alive for the other hosted adapters — an
@@ -474,7 +480,7 @@ func (p *peerSessionProvider) stopPeers(ctx context.Context) {
 
 // Stop closes every peer session (ending the supervision consumers and the
 // gRPC transports), wakes pending peer waiters, and tears the shim down
-// (legacy sessions + listener + its waiters). Called by SessionManager
+// (listener, scope tokens, its waiters). Called by SessionManager
 // Shutdown through the RemoteShim interface.
 func (p *peerSessionProvider) Stop(ctx context.Context) error {
 	p.stopPeers(ctx)
@@ -690,7 +696,8 @@ func (ps *peerSession) journalFor(adapterName string) *adapterJournal {
 }
 
 // peerSessionOf extracts the peer session behind a host-side handle, or nil
-// for legacy (shim byte-bridge) handles. Session-level freshness checks use
+// for handles not backed by a remote peer session (in-memory or local
+// go-plugin handles). Session-level freshness checks use
 // it: a multi-adapter conn hands out several handles over one session, so
 // handle identity cannot express "the same session came back".
 // findRoutedPeerSession scans the registry (under the caller's p.mu hold)

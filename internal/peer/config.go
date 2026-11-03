@@ -235,8 +235,8 @@ func LoadConfigFromEnv() (Config, error) {
 }
 
 // Resolve validates the configuration and fills identity and binary defaults.
-// Precedence is ported from the phone-home runner
-// (cmd/criteria-adapter-remote-runner/runner.go resolve()): manifest →
+// Precedence follows the retired phone-home runner's resolve
+// (cmd/criteria-adapter-remote-runner, removed in PR #551): manifest →
 // CRITERIA_ADAPTER_BINARY → conventional install path → PATH lookup of
 // criteria-adapter-<name> → first PATH entry. Multi-adapter manifest mode
 // resolves every declared child with the same precedence per adapter
@@ -420,7 +420,9 @@ func nameFromBinary(binary string) string {
 }
 
 // firstAdapterBinary scans PATH in order and returns the first conventional
-// adapter binary that is not the remote runner itself (runner parity).
+// adapter binary that is not the retired criteria-adapter-remote-runner
+// binary. The exclusion is deliberate: leftover runner binaries from a
+// pre-#551 install must not be picked up as adapters on upgrade.
 func firstAdapterBinary() string {
 	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
 		entries, err := os.ReadDir(dir)

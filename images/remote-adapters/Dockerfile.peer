@@ -2,8 +2,7 @@
 
 # Build a peer-mode container image for a Criteria v2 adapter (ADR-0007).
 #
-# Unlike images/remote-adapters/Dockerfile (the legacy runner image), this
-# image packages the criteria engine itself. The entrypoint is
+# This image packages the criteria engine itself. The entrypoint is
 # `criteria peer`: the engine-side peer supervisor resolves and launches the
 # adapter as a local go-plugin child, serves the FULL v2 AdapterService
 # contract plus PeerService supervision (Supervise / Control) on the
@@ -112,8 +111,8 @@ COPY --from=builder /usr/local/bin/criteria /usr/local/bin/
 COPY --from=builder /go/bin/criteria-adapter-${ADAPTER_NAME} /usr/local/bin/
 
 # The peer resolves its child from CRITERIA_ADAPTER_* (same precedence as the
-# legacy runner), and every CRITERIA_REMOTE_* value is scrubbed from the
-# child's environment by the peer itself.
+# retired runner entrypoint), and every CRITERIA_REMOTE_* value is scrubbed
+# from the child's environment by the peer itself.
 ENV CRITERIA_ADAPTER_NAME=${ADAPTER_NAME} \
     CRITERIA_ADAPTER_BINARY=/usr/local/bin/criteria-adapter-${ADAPTER_NAME} \
     CRITERIA_ADAPTER_VERSION=${ADAPTER_VERSION} \

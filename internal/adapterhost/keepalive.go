@@ -27,23 +27,26 @@ import (
 //
 // Compatibility: the client cadence deliberately stays at or above grpc-go's
 // default server enforcement floor (MinTime = 5 minutes, idle pings
-// forbidden), so a pod running the SDK's own default-grpc.NewServer (e.g. an
-// adapter serving ServeRemote directly) still tolerates our pings. Pods built
-// from this repository's remote runner use the tolerant server policy below.
+// forbidden), so gRPC servers that keep grpc-go's defaults still tolerate
+// our pings. Pods built from this repository's peer image
+// (images/remote-adapters/Dockerfile.peer) adopt the tolerant server policy
+// below.
 
 const (
-	// RemoteServerPingInterval is how often the remote runner's gRPC server
-	// pings a phone-home connection, including when no RPCs are active. This
-	// is what keeps the connection warm while a session is fully idle.
+	// RemoteServerPingInterval is how often the phone-home adapter server
+	// (the criteria peer, internal/peer/serve.go) pings a phone-home
+	// connection, including when no RPCs are active. This is what keeps the
+	// connection warm while a session is fully idle.
 	RemoteServerPingInterval = time.Minute
 
 	// RemoteServerPingTimeout is how long the server waits for a keepalive
 	// acknowledgment before declaring the connection dead.
 	RemoteServerPingTimeout = 20 * time.Second
 
-	// RemoteServerMinClientPing is the fastest client ping cadence the remote
-	// runner's server tolerates before declaring too_many_pings. Well below
-	// grpc-go's default 5-minute floor so host clients may ping freely.
+	// RemoteServerMinClientPing is the fastest client ping cadence the
+	// phone-home server tolerates before declaring too_many_pings. Well
+	// below grpc-go's default 5-minute floor so host clients may ping
+	// freely.
 	RemoteServerMinClientPing = 30 * time.Second
 
 	// RemoteClientPingInterval is how often the host-side client pings after
@@ -57,8 +60,9 @@ const (
 	RemoteClientPingTimeout = 20 * time.Second
 )
 
-// RemoteKeepaliveServerOptions returns the gRPC server options for the remote
-// runner's phone-home adapter server (serve_remote). The server pings idle
+// RemoteKeepaliveServerOptions returns the gRPC server options for the
+// phone-home adapter server (the criteria peer, internal/peer/serve.go). The
+// server pings idle
 // connections every RemoteServerPingInterval even with no active streams, and
 // tolerates client pings at any cadence of RemoteServerMinClientPing or
 // slower, including when the connection carries no streams. No
@@ -89,8 +93,8 @@ func KeepaliveServerOptionsFor(params keepalive.ServerParameters, policy keepali
 }
 
 // RemoteKeepaliveDialOptions returns the gRPC dial options for host-side
-// clients of a remote adapter transport (the shim's reattach client, and any
-// other client bridged across a phone-home connection). The client idle
+// clients of a remote adapter transport (remote/peer_session.go's phone-home
+// client). The client idle
 // timeout is disabled so an idle session never closes its own transport, and
 // keepalive pings (only while streams are active, at a cadence safe against
 // grpc-go's default server enforcement) keep long-lived streams warm.

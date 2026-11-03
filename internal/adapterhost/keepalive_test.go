@@ -6,12 +6,13 @@ package adapterhost
 // grpc-go clamps client keepalive intervals to a 10s floor
 // (internal.KeepaliveMinPingTime) and server ping intervals to a 1s floor
 // (internal.KeepaliveMinServerPingTime), so ping cadence cannot be compressed
-// arbitrarily. The production liveness mechanism — the pod-side server
-// pinging idle phone-home connections — runs at its 1s-floor minimum here,
+// arbitrarily. The production liveness mechanism — the pod-side phone-home
+// server (the criteria peer) pinging idle phone-home connections — runs at
+// its 1s-floor minimum here,
 // while an idle-closing TCP proxy stands in for the NAT/conntrack middlebox
 // that silently drops connections with no traffic. The end-to-end chain
-// (shim + UDS bridge + reattach client) is exercised in
-// internal/engine/cri276_repro_test.go.
+// (phone-home server + host-side client) is exercised in
+// internal/engine/remote_session_lifecycle_test.go.
 
 import (
 	"context"

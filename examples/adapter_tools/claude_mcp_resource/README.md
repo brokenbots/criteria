@@ -39,8 +39,6 @@ for real otherwise.
   bun run build:linux-x64             # platform-targeted: bun scripts/build.ts --target=bun-linux-x64
   bun run binary:install              # copies the binary into the adapters dir
   ```
-  (The same `bun scripts/build.ts` flow builds the adapter inside
-  `images/remote-adapters/Dockerfile.claude-agent`.)
 - `criteria-echo-mcp` on `PATH` (the `make` target builds it into `bin/`
   and stages it) — the mcp adapter spawns it as its MCP server over stdio.
 

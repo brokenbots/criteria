@@ -122,7 +122,8 @@ func ClientOf(h Handle) (Client, bool) {
 // adapter subprocess over the adapter v2 gRPC contract.
 // PluginLifecycle is the slice of the go-plugin client surface that session
 // code needs: kill the plugin and observe whether its process exited. The
-// narrow type keeps the remote shim's reattach path substitutable in tests.
+// narrow type lets tests substitute lightweight fakes for a real plugin
+// client.
 type PluginLifecycle interface {
 	Kill()
 	Exited() bool
@@ -133,8 +134,8 @@ type rpcHandle struct {
 	client PluginLifecycle
 	rpc    Client
 	// cmd is the adapter's exec.Cmd, retained so Kill can signal the process
-	// group it leads. nil on paths that don't own the process (WS20 reattach,
-	// container RunnerFunc).
+	// group it leads. nil on paths that don't own the process (handles
+	// built via NewRPCHandle, container RunnerFunc).
 	cmd *exec.Cmd
 
 	mu     sync.Once
@@ -349,8 +350,9 @@ func (l *DefaultLoader) resolveWith(ctx context.Context, name string, discover D
 }
 
 // NewRPCHandle creates a Handle from an existing go-plugin client and its
-// dispensed Client interface. This is used by the remote shim (WS20) to wrap
-// a reattached adapter into a session-manager-compatible Handle.
+// dispensed Client interface. This wraps an already-running go-plugin client
+// — e.g. the adapter list inventory probe (internal/cli/adapter_list.go) and
+// engine/peer tests — into a session-manager-compatible Handle.
 func NewRPCHandle(name string, client PluginLifecycle, rpc Client) Handle {
 	rp := &rpcHandle{name: name, client: client, rpc: rpc}
 	rp.onKill = func() {}
@@ -1556,7 +1558,8 @@ func (p *rpcHandle) ProcessExited() bool {
 // The client's exit watcher reaps the subprocess (cmd.Wait) before it flips
 // its exited flag, so once [rpcHandle.ProcessExited] reports true the wait
 // status on the retained exec.Cmd is final and safe to read. Handles that
-// don't own the subprocess (WS20 reattach, container RunnerFunc) and
+// don't own the subprocess (handles built via NewRPCHandle, container
+// RunnerFunc) and
 // subprocesses not yet reaped report ok=false.
 func (p *rpcHandle) ProcessWaitStatus() (exitCode, signal int, ok bool) {
 	if p == nil || p.cmd == nil || p.cmd.ProcessState == nil {

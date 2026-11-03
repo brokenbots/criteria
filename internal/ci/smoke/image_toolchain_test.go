@@ -57,14 +57,11 @@ func goFloorsFromRepoRoot(t *testing.T) map[string][]floorSpec {
 	}
 
 	return map[string][]floorSpec{
-		// Both images run `go install criteria-adapter-<name>@v*` (Dockerfile
-		// again via the publish-remote-adapter-images copilot matrix leg), so
-		// the builders must also satisfy the copilot module floor.
+		// The peer image runs `go install criteria-adapter-<name>@v*`, and the
+		// publish-remote-adapter-images copilot matrix leg installs the copilot
+		// adapter module, so the builder must also satisfy the copilot module
+		// floor.
 		"images/remote-adapters/Dockerfile.peer": {repoFloor, {copilotModuleFloor, copilotFloorReason}},
-		"images/remote-adapters/Dockerfile":      {repoFloor, {copilotModuleFloor, copilotFloorReason}},
-		// claude-agent's builder compiles only the in-repo remote-runner and
-		// installs no external adapter module.
-		"images/remote-adapters/Dockerfile.claude-agent": {repoFloor},
 	}
 }
 
@@ -90,9 +87,10 @@ func TestRemoteAdapterImageBuilderToolchain(t *testing.T) {
 		t.Run(rel, func(t *testing.T) {
 			floors, ok := floorsByFile[rel]
 			if !ok {
-				// A new Dockerfile in this set defaults to the repo floor;
-				// extend the table when it installs adapter modules.
-				floors = floorsByFile["images/remote-adapters/Dockerfile.claude-agent"]
+				// A new Dockerfile in this set defaults to the strictest
+				// existing floor group (repo + copilot module); weaken it
+				// only when a new image installs no external adapter module.
+				floors = floorsByFile["images/remote-adapters/Dockerfile.peer"]
 			}
 			testBuilderPins(t, rel, floors)
 		})

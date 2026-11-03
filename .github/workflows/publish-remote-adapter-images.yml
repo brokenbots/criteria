@@ -1,10 +1,19 @@
 name: Publish Remote Adapter Images
 
-# Build and push multi-platform container images for the shell, copilot, and
-# claude-agent adapters packaged with the generic remote runner (ServeRemote).
+# Build and push multi-platform peer-mode container images (ADR-0007) for the
+# shell and copilot adapters. The image entrypoint is `criteria peer`: the
+# engine-side peer supervisor launches the adapter child and serves the full
+# v2 AdapterService contract plus PeerService supervision on the phone-home
+# connection. images/remote-adapters/Dockerfile.peer is the only remote
+# adapter Dockerfile in this repo since the legacy runner byte-bridge path was
+# removed (the claude-agent adapter is TypeScript and packages its own
+# container in the claude-agent repo).
 #
 # The workflow can be triggered by a tag of the form remote-adapters/v* or
-# manually, in which case the adapter versions are taken from workflow inputs.
+# manually, in which case the adapter versions come from workflow inputs.
+# CRITERIA_VERSION stamps the criteria engine binary inside the image; the
+# Dockerfile fails closed when it is empty because the peer handshake
+# advertises criteria_version.
 
 on:
   push:
@@ -24,14 +33,10 @@ on:
         description: '@github/copilot npm version for copilot image'
         required: true
         default: '1.0.82'
-      claude_agent_version:
-        description: 'Claude agent adapter version (semver without leading v)'
-        required: true
-        default: '0.5.7'
-      claude_code_version:
-        description: '@anthropic-ai/claude-code npm version for claude-agent image'
-        required: true
-        default: '2.1.268'
+      criteria_version:
+        description: 'Criteria version stamped into the engine binary (e.g. v0.5.30). Empty: git describe of the checked-out commit.'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -49,19 +54,27 @@ jobs:
         include:
           - adapter: shell
             version: ${{ github.event.inputs.shell_version || '0.5.2' }}
-            base_image: alpine:3.20
-            dockerfile: images/remote-adapters/Dockerfile
           - adapter: copilot
             version: ${{ github.event.inputs.copilot_version || '0.5.4' }}
-            base_image: node:20-alpine
-            dockerfile: images/remote-adapters/Dockerfile
-          - adapter: claude-agent
-            version: ${{ github.event.inputs.claude_agent_version || '0.5.7' }}
-            base_image: node:20-alpine
-            dockerfile: images/remote-adapters/Dockerfile.claude-agent
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Resolve criteria version
+        id: criteria_version
+        run: |
+          set -euo pipefail
+          input='${{ github.event.inputs.criteria_version }}'
+          if [ -n "$input" ]; then
+            version="$input"
+          else
+            version="$(git describe --tags --match 'v*' --dirty --always HEAD)"
+          fi
+          if [ -z "$version" ]; then
+            echo "::error::CRITERIA_VERSION resolved empty (no input and no v* tags in history); refusing to build a peer image with an unstamped engine."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -80,15 +93,14 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ${{ matrix.dockerfile }}
+          file: images/remote-adapters/Dockerfile.peer
           platforms: linux/amd64,linux/arm64
           push: true
           build-args: |
             ADAPTER_NAME=${{ matrix.adapter }}
             ADAPTER_VERSION=${{ matrix.version }}
-            BASE_IMAGE=${{ matrix.base_image }}
             COPILOT_VERSION=${{ github.event.inputs.copilot_cli_version || '1.0.82' }}
-            CLAUDE_CODE_VERSION=${{ github.event.inputs.claude_code_version || '2.1.268' }}
+            CRITERIA_VERSION=${{ steps.criteria_version.outputs.version }}
           tags: |
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/criteria-adapter-${{ matrix.adapter }}:${{ matrix.version }}
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/criteria-adapter-${{ matrix.adapter }}:latest
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/criteria-adapter-${{ matrix.adapter }}-peer:${{ matrix.version }}
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/criteria-adapter-${{ matrix.adapter }}-peer:latest

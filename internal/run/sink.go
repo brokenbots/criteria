@@ -254,15 +254,18 @@ func (s *Sink) OnAdapterLifecycle(stepName, adapterName, status, detail string) 
 // file; token_ref stays populated during the transition window.
 func (s *Sink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent) {
 	data := map[string]any{
-		"run_id":              event.RunID,
-		"scope_name":          event.ScopeName,
-		"scope_instance_id":   event.ScopeInstanceID,
-		"adapter":             event.AdapterName,
-		"adapter_type":        event.AdapterType,
-		"environment_type":    event.EnvironmentType,
-		"environment_name":    event.EnvironmentName,
-		"digest":              event.Digest,
-		"image_reference":     event.ImageReference,
+		"run_id":            event.RunID,
+		"scope_name":        event.ScopeName,
+		"scope_instance_id": event.ScopeInstanceID,
+		"adapter":           event.AdapterName,
+		"adapter_type":      event.AdapterType,
+		"environment_type":  event.EnvironmentType,
+		"environment_name":  event.EnvironmentName,
+		"digest":            event.Digest,
+		"image_reference":   event.ImageReference,
+		// "shim_listen_address" is the legacy wire key (runner era): the
+		// criteria-k8s operator parses it. Do not rename; a rename changes
+		// the deployed event contract.
 		"shim_listen_address": event.ShimListenAddress,
 		"token_ref":           event.TokenRef,
 		"accept_token":        event.Token,

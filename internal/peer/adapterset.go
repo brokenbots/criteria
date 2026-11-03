@@ -133,8 +133,10 @@ func ParseAdaptersEnv(raw string) ([]AdapterSpec, error) {
 
 // scanAdapterBinaries scans dir for conventional adapter binaries and returns
 // one spec per binary, name derived from the criteria-adapter- prefix (or the
-// file name). Non-directories other than the remote runner itself qualify,
-// matching the single-adapter PATH scan shape; the returned list is sorted by
+// file name). Non-directories other than the retired
+// criteria-adapter-remote-runner binary qualify — leftover runner binaries
+// from a pre-#551 install must not become adapters on upgrade — matching the
+// single-adapter PATH scan shape; the returned list is sorted by
 // name for deterministic child boot order.
 func scanAdapterBinaries(dir string) ([]AdapterSpec, error) {
 	entries, err := os.ReadDir(dir)
