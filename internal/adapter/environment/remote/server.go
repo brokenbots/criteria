@@ -462,22 +462,6 @@ func (s *Server) removeWaiter(key string, ch chan waitResult) {
 	}
 }
 
-func (s *Server) hasWaiters(key string) bool {
-	s.mu.Lock()
-	n := len(s.waiters[key])
-	acceptor := s.peerAcceptor
-	s.mu.Unlock()
-	if n > 0 {
-		return true
-	}
-	if p, ok := acceptor.(*peerSessionProvider); ok {
-		p.mu.Lock()
-		defer p.mu.Unlock()
-		return len(p.waiters[key]) > 0
-	}
-	return false
-}
-
 // SetPeerAcceptor sets the receiver for role="peer" connections.
 func (s *Server) SetPeerAcceptor(pa PeerAcceptor) {
 	s.mu.Lock()
@@ -857,12 +841,6 @@ func (s *Server) noteVerifyFailure(hosts []string, scope string, class identityR
 		s.rejectCount[key]++
 		s.verifyFailures[key] = &verifyFailureState{lastErr: cause.Error(), class: class}
 	}
-}
-
-func (s *Server) failureAttributionKeys(hosts []string, scope string, class identityRejectClass) []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.failureAttributionKeysLocked(hosts, scope, class)
 }
 
 func (s *Server) failureAttributionKeysLocked(hosts []string, scope string, class identityRejectClass) []string {

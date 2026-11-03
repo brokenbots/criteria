@@ -749,7 +749,6 @@ type nopSink struct{}
 func (n *nopSink) Log(stream string, chunk []byte) {}
 func (n *nopSink) Adapter(kind string, data any)   {}
 
-
 // trigger shim startup errors, and that a workflow with a remote env compiles.
 // This is a compile-time test using the workflow package.
 func TestShim_mTLSRejectBadCert(t *testing.T) {

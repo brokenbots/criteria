@@ -1229,7 +1229,6 @@ func TestPeerWaitForFreshHandleFallsBackToDefaultBudget(t *testing.T) {
 	}
 }
 
-
 // TestPeerWaitForFreshHandleNoLostWakeupWhenPeerDialStoresBetweenCheckAndRegister
 // pins the peer-registry half of the lost-wakeup race (T-06): a peer dial
 // that stores the session between WaitForFreshHandle's peek and its waiter
