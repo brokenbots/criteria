@@ -92,7 +92,7 @@ func validateStepSecretInputBinding(g *FSMGraph, step *StepNode, name string, ex
 // ValidateEnvironmentTaint checks that environment.variables and
 // environment.config expressions do not reference secret-tainted origins.
 // Secret values must travel through dedicated secret channels (adapter.secrets
-// and step.secret_input), not the generic environment (CRI-88, EC4).
+// and step.secret_input), not the generic environment.
 func ValidateEnvironmentTaint(g *FSMGraph) hcl.Diagnostics {
 	if g == nil {
 		return nil

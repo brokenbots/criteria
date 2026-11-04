@@ -64,7 +64,7 @@ func compileSingleSubworkflow(ctx context.Context, g *FSMGraph, swSpec *Subworkf
 		}}
 	}
 
-	// ADR-0005 D7 (CRI-226): enforce the operator-declared expected pin at
+	// ADR-0005 D7: enforce the operator-declared expected pin at
 	// resolve time, before the callee is parsed or any execution happens.
 	if diags := enforceSubworkflowPin(swSpec, pin); len(diags) > 0 {
 		return diags
@@ -156,7 +156,7 @@ func detectSubworkflowCycle(resolvedDir string, chain []subworkflowFrame) *hcl.D
 	return nil
 }
 
-// enforceSubworkflowPin fails closed (CRI-226) when the operator-declared
+// enforceSubworkflowPin fails closed when the operator-declared
 // expected ref/digest does not match the resolved pin of the fetched source.
 // A declared ref on a source that carries no pin — a local directory — is
 // refused: the expectation cannot be verified there, and silently ignoring a

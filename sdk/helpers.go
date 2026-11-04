@@ -13,7 +13,7 @@ import (
 // package major version (criteria.v1). A bump requires a new proto package
 // (criteria.v2) and a coordinated SDK minor release.
 //
-// Standalone-import note (KB-118): this value lives IN the sdk so the sdk
+// Standalone-import note: this value lives IN the sdk so the sdk
 // module never imports the criteria root module (whose go.mod pins
 // criteria/sdk at the workspace-only v0.0.0 placeholder — importing the root
 // from the sdk breaks every external `go mod tidy` against a released sdk

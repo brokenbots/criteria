@@ -1,6 +1,6 @@
 package workflow
 
-// compile_outcome_schema.go — outcome-level payload contracts (KB-45). An
+// compile_outcome_schema.go — outcome-level payload contracts. An
 // outcome may declare `schema` (a `type.<name>` traversal or an inline typeexpr
 // constraint), `require_comment`, and `fallback = true`. The schema resolves to
 // a cty.Type plus its optional() defaults; the same cty.Type is then projected
@@ -234,13 +234,13 @@ func rangeOrNil(expr hcl.Expression) *hcl.Range {
 }
 
 // validateOutcomeContractAttrs rejects outcome attributes on node kinds that
-// have no per-outcome payload contract (KB-45 scope: wait and approval
+// have no per-outcome payload contract (scope: wait and approval
 // outcomes are engine-mandated with no payload). Shared by the
 // simple-outcome compile paths so unsupported attributes fail loudly at
-// compile time instead of being silently ignored. Description (KB-259) is
+// compile time instead of being silently ignored. The outcome description is
 // likewise rejected: there is no CompiledOutcome on these node kinds to
 // carry it, and a silently dropped author-declared semantics is the exact
-// defect class KB-259 closes.
+// defect class this check closes.
 func validateOutcomeContractAttrs(kind, nodeName string, outcomes []OutcomeSpec) hcl.Diagnostics {
 	var diags hcl.Diagnostics
 	for _, o := range outcomes {

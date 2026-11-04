@@ -200,15 +200,14 @@ func (m *MultiSink) OnStepOutcomeUnknown(step, outcome string) {
 }
 
 // OnStepOutcomeInvalid fans the contract-validation rejection event to all
-// child sinks (KB-45).
+// child sinks.
 func (m *MultiSink) OnStepOutcomeInvalid(step, outcome string, issues []string, attempt int) {
 	for _, c := range m.children {
 		c.OnStepOutcomeInvalid(step, outcome, issues, attempt)
 	}
 }
 
-// OnCheckpointPointer fans the checkpoint-pointer event to all child sinks
-// (CRI-203).
+// OnCheckpointPointer fans the checkpoint-pointer event to all child sinks.
 func (m *MultiSink) OnCheckpointPointer(ptr *engine.CheckpointPointerEvent) {
 	for _, c := range m.children {
 		c.OnCheckpointPointer(ptr)

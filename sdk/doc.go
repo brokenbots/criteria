@@ -19,7 +19,7 @@
 //     compatibility aliases for the same types; prefer the Service* forms for
 //     new code.
 //   - [OrchestratorServiceClient] / [OrchestratorServiceHandler] — Connect
-//     interface aliases for the generated OrchestratorService stubs (CRI-133),
+//     interface aliases for the generated OrchestratorService stubs,
 //     the operator-facing run observe/reconcile API orchestrators expose.
 //     Use [NewOrchestratorServiceClient] to construct a client and
 //     [NewOrchestratorServiceHandler] to mount the handler.

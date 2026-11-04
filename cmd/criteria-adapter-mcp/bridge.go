@@ -32,7 +32,7 @@ import (
 const (
 	adapterName = "mcp"
 	// mcpClientName is this client's identity in the legacy initialize
-	// handshake and in the per-request _meta of stateless sessions (KB-158).
+	// handshake and in the per-request _meta of stateless sessions.
 	mcpClientName  = "criteria-adapter-mcp"
 	adapterVersion = "0.3.0"
 
@@ -40,16 +40,16 @@ const (
 	initTimeout = 5 * time.Second
 
 	// openTimeout bounds a whole session open: the probe-first negotiation
-	// (one server/discover probe, KB-158) plus the legacy handshake and
+	// (one server/discover probe) plus the legacy handshake and
 	// discovery budget.
 	openTimeout = mcpclient.DefaultProbeTimeout + initTimeout
 
 	// discoveryCacheTTL is the per-request cache window for the tools/list
-	// result backing discovery (CRI-171/CRI-172): a session discovered its
+	// result backing discovery: a session discovered its
 	// surface at OpenSession and refreshes it at most once per window, when
 	// an Execute misses the cached surface with a tool name. It is the
 	// default half of the freshness contract: on 2026-07-28 servers the
-	// tools/list CacheableResult hint (SEP-2549, KB-158) adapts the window
+	// tools/list CacheableResult hint (SEP-2549) adapts the window
 	// per session, clamped into the guardrails below.
 	discoveryCacheTTL = 30 * time.Second
 
@@ -79,7 +79,7 @@ const callErrorUnknownTool = "unknown_tool"
 const callErrorInputRequired = "input_required"
 
 // callErrorOutputKey is the reserved output key carrying a callee-reported
-// typed call_error code on a failure result (CRI-172).
+// typed call_error code on a failure result.
 const callErrorOutputKey = "call_error"
 
 var reservedExecuteKeys = map[string]struct{}{
@@ -91,7 +91,7 @@ var reservedExecuteKeys = map[string]struct{}{
 	"cwd":             {},
 }
 
-// sessionExec is one in-flight Execute RPC on the session (KB-155): a v2
+// sessionExec is one in-flight Execute RPC on the session: a v2
 // Execute is a per-request server-streaming RPC, so a session declaring the
 // concurrent_execute capability fans out concurrent executes and each carries
 // its own event stream. The bridge routes session-level MCP server traffic
@@ -113,27 +113,27 @@ type sessionState struct {
 	tools map[string]struct{}
 
 	// envKey is the environment fingerprint of the config that spawned this
-	// session (KB-157): the key under which the bridge keeps this
+	// session: the key under which the bridge keeps this
 	// environment's discovered tool surface. Sessions against different MCP
 	// servers carry different keys and never clobber each other's surface.
 	envKey string
 	// refreshMu single-flights tools/list re-discovery on the session
-	// (KB-157): a tool-name miss triggers at most one concurrent
+	// a tool-name miss triggers at most one concurrent
 	// re-discovery, and the TTL cache absorbs the rest of a miss stampede.
 	// It never serializes known-tool executes — the fast path doesn't take
-	// it — so the KB-155 multiplexing story is unchanged.
+	// it — so the multiplexing story is unchanged.
 	refreshMu sync.Mutex
 	// discoveryTTL is this session's per-request cache window for
-	// tools/list (KB-157). Defaults to discoveryCacheTTL; tests narrow it to
+	// tools/list. Defaults to discoveryCacheTTL; tests narrow it to
 	// 0 to force a re-discovery deterministically. A modern server's
-	// CacheableResult hint adapts it per session (KB-158, see
+	// CacheableResult hint adapts it per session (see
 	// adoptDiscoveryTTL).
 	discoveryTTL time.Duration
 	// discoveredAt is when the session last successfully obtained a
 	// tools/list surface (OpenSession or refresh). Zero until then.
 	discoveredAt time.Time
 
-	// negotiation is the session-open dialect (KB-158): probe-first
+	// negotiation is the session-open dialect: probe-first
 	// server/discover with a legacy fallback, initialize-only, or
 	// discover-only.
 	negotiation mcpclient.Negotiation
@@ -141,7 +141,7 @@ type sessionState struct {
 	// ("criteria-N"); they only need uniqueness within the session, and a
 	// prefixed name keeps them recognizable in MCP server logs.
 	execSeq atomic.Uint64
-	// exec is the per-execute registry keyed by progress token (KB-155).
+	// exec is the per-execute registry keyed by progress token.
 	exec map[string]*sessionExec
 }
 
@@ -178,7 +178,7 @@ func (s *sessionState) execWithToken(token string) (*sessionExec, bool) {
 }
 
 // soleExec returns the only in-flight execute when exactly one is registered
-// (KB-155): untokened session-level traffic can be attributed to it without
+// untokened session-level traffic can be attributed to it without
 // ambiguity — single-execute servers keep today's behavior. With zero or
 // several in-flight executes it returns false, and untokened traffic is
 // dropped: attribution must never guess across concurrent calls.
@@ -195,7 +195,7 @@ func (s *sessionState) soleExec() (*sessionExec, bool) {
 }
 
 // routeProgress routes one session-level MCP progress notification to the
-// execute that issued it (KB-155). Tokened notifications go to the execute
+// execute that issued it. Tokened notifications go to the execute
 // carrying that token; a token with no registered execute is stale (the
 // call settled) and is dropped rather than attributed. Untokened
 // notifications are attributed only when exactly one execute is in flight
@@ -228,11 +228,11 @@ type MCPBridge struct {
 	sessions map[string]*sessionState
 	// discovered holds each environment's MCP tool surface from the most
 	// recent tools/list, keyed by the environment fingerprint of the
-	// OpenSession config (KB-157, CRI-171). Concurrent sessions against
+	// OpenSession config. Concurrent sessions against
 	// different MCP servers each own their entry; a re-open of a known
 	// environment replaces only that environment's surface. Entries outlive
-	// sessions so Info can advertise the dynamic tool surface (CRI-171/
-	// CRI-172) between and after runs: tools that remain validly callable
+	// sessions so Info can advertise the dynamic tool surface
+	// between and after runs: tools that remain validly callable
 	// for a configured environment are never revoked by a session close.
 	discovered map[string]map[string]mcpclient.Tool
 
@@ -246,7 +246,7 @@ func (b *MCPBridge) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse
 		Version:   adapterVersion,
 		SourceUrl: "https://github.com/brokenbots/criteria/tree/main/cmd/criteria-adapter-mcp",
 		Platforms: []string{"linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64"},
-		// concurrent_execute (KB-155): each Execute RPC runs on its own stream
+		// concurrent_execute: each Execute RPC runs on its own stream
 		// and the session accepts several in flight; the host fans concurrent
 		// calls onto one shared session and correlates replies and decisions
 		// by request_id. Servers ignore unknown capability values, so older
@@ -261,7 +261,7 @@ func (b *MCPBridge) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse
 			"handshake": {Type: "string", Description: "Session-open negotiation with the MCP server (KB-158, MCP protocol rev 2026-07-28): probe-first (default — probe server/discover, adopting the stateless core when the server advertises it, and fall back to the legacy 2025-03-26 initialize handshake otherwise), initialize (always the legacy handshake), discover (stateless core only, no legacy fallback)."},
 		}},
 		// InputSchema stays undeclared on purpose: the mcp adapter's input
-		// surface is dynamic (CRI-172). "tool" is the routing key, enforced
+		// surface is dynamic. "tool" is the routing key, enforced
 		// by Execute, and every other key is a per-call MCP tool argument
 		// that varies with the discovered tool — a closed static schema
 		// would reject those arguments both at compile time and in the
@@ -271,8 +271,8 @@ func (b *MCPBridge) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse
 	return resp, nil
 }
 
-// infoTools renders the discovered MCP tools as InfoResponse.tools (CRI-171).
-// The per-environment surfaces aggregate deterministically (KB-157): walk
+// infoTools renders the discovered MCP tools as InfoResponse.tools.
+// The per-environment surfaces aggregate deterministically: walk
 // environments in sorted fingerprint order (map iteration is otherwise
 // random), keep the first entry per tool name on cross-environment name
 // conflicts, and emit the union sorted by tool name. Same inputs therefore
@@ -321,7 +321,7 @@ func (b *MCPBridge) infoTools() []*v2.ToolInfo {
 }
 
 // environmentKey fingerprints the OpenSession config that selects the MCP
-// server environment (KB-157): command, args, env, cwd, and any other config
+// server environment: command, args, env, cwd, and any other config
 // entries, serialized as a JSON array of [key, value] pairs over sorted keys
 // (JSON escaping makes the encoding injective, so pairs cannot collide).
 // Two configs that differ in any way select different environments and get
@@ -346,7 +346,7 @@ func (b *MCPBridge) OpenSession(ctx context.Context, req *v2.OpenSessionRequest)
 	if err != nil {
 		return nil, err
 	}
-	// KB-157: fingerprint the environment up front so discovery and any
+	// Fingerprint the environment up front so discovery and any
 	// later refresh land under the right per-environment surface.
 	state.envKey = environmentKey(req.GetConfig())
 	tools, err := initializeAndDiscover(ctx, state)
@@ -374,7 +374,7 @@ type mcpServerConfig struct {
 }
 
 // parseServerConfig validates the adapter config block: command, args CSV,
-// framing, session-open negotiation (KB-158), env pairs, and cwd.
+// framing, session-open negotiation, env pairs, and cwd.
 func parseServerConfig(cfg map[string]string) (mcpServerConfig, error) {
 	parsed := mcpServerConfig{command: strings.TrimSpace(cfg["command"])}
 	if parsed.command == "" {
@@ -436,9 +436,9 @@ func startMCPServer(cfg map[string]string) (*sessionState, error) {
 	return state, nil
 }
 
-// initializeAndDiscover negotiates the session dialect (KB-158: probe-first
+// initializeAndDiscover negotiates the session dialect (probe-first
 // server/discover with the legacy initialize fallback) and runs the tools/list
-// discovery that populates the session's dynamic tool surface (CRI-171).
+// discovery that populates the session's dynamic tool surface.
 func initializeAndDiscover(ctx context.Context, state *sessionState) ([]mcpclient.Tool, error) {
 	openCtx, cancel := context.WithTimeout(ctx, openTimeout)
 	defer cancel()
@@ -456,7 +456,7 @@ func initializeAndDiscover(ctx context.Context, state *sessionState) ([]mcpclien
 }
 
 // adoptDiscoveryTTL adapts the session's tools/list cache window from a
-// modern server's CacheableResult freshness hint (SEP-2549, KB-158). A hint
+// modern server's CacheableResult freshness hint (SEP-2549). A hint
 // of 0 (legacy server, or a modern server hinting nothing) keeps the
 // adapter-local default; hints outside the guardrails clamp into
 // [discoveryTTLFloor, discoveryTTLCeiling] so a degenerate hint can neither
@@ -477,8 +477,8 @@ func (s *sessionState) adoptDiscoveryTTL(ttlMs int64) {
 }
 
 // registerSession installs the session under its ID and records the
-// discovered tools under the session's environment fingerprint (KB-157)
-// as the adapter's dynamic tool surface (CRI-172).
+// discovered tools under the session's environment fingerprint
+// as the adapter's dynamic tool surface.
 func (b *MCPBridge) registerSession(ctx context.Context, sessionID string, state *sessionState, tools []mcpclient.Tool) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -515,12 +515,12 @@ func (s *sessionState) hasTool(name string) bool {
 }
 
 // refreshAndRecheck handles a tool-name miss against the session's cached
-// surface (KB-157): a tools/list call at OpenSession is one-shot by itself,
+// surface: a tools/list call at OpenSession is one-shot by itself,
 // but the MCP server's surface may change over the session's life, so a miss
 // triggers a re-discovery once the per-request cache window (discoveryTTL)
 // has elapsed, followed by a membership re-check. It reports whether the
 // tool exists by then; a stale-but-still-unknown name keeps the typed
-// unknown_tool signature (CRI-172).
+// unknown_tool signature.
 func (s *sessionState) refreshAndRecheck(ctx context.Context, b *MCPBridge, toolName string) bool {
 	if s.hasTool(toolName) {
 		return true
@@ -534,7 +534,7 @@ func (s *sessionState) refreshAndRecheck(ctx context.Context, b *MCPBridge, tool
 // when the per-request cache window has elapsed. The refreshMu single-flights
 // concurrent misses: the winner re-discovers and re-stamps discoveredAt, and
 // the losers see the fresh stamp under the same window and reuse the cached
-// result. A failed refresh is non-fatal by design (KB-157): the surfaces stay
+// result. A failed refresh is non-fatal by design: the surfaces stay
 // as they are and the caller falls back to the typed unknown_tool signature
 // rather than failing an otherwise-legitimate call on a discovery hiccup.
 func (s *sessionState) refreshDiscovery(ctx context.Context, b *MCPBridge) {
@@ -589,7 +589,7 @@ func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ad
 		return fmt.Errorf("mcp: config.tool is required")
 	}
 	if !s.refreshAndRecheck(ctx, b, toolName) {
-		// Typed unknown_tool (CRI-172): report a failure result carrying the
+		// Typed unknown_tool: report a failure result carrying the
 		// reserved call_error output instead of a bare error, so the
 		// adapter-tools seam delivers a typed call_error to the caller —
 		// distinguishable from a policy deny and from a callee crash.
@@ -598,7 +598,7 @@ func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ad
 
 	arguments := buildToolArguments(req.GetInput())
 
-	// KB-155: register this execute on the session's per-execute registry so
+	// Register this execute on the session's per-execute registry so
 	// session-level MCP traffic (progress) routes back to its own stream, and
 	// invoke the MCP server with a client-side progress token it can echo in
 	// notifications/progress. No session-wide serialization: the v2 Execute
@@ -629,7 +629,7 @@ func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ad
 		return fmt.Errorf("mcp: tools/call %q: %w", toolName, err)
 	}
 	if result.IsInputRequired() {
-		// SEP-2322 first pass (KB-158): an interim input_required result is
+		// SEP-2322 first pass: an interim input_required result is
 		// not a content payload — surface the typed call_error with the
 		// requested input requests before any content/outcome handling, so
 		// the caller learns the invocation needs more input instead of
@@ -654,7 +654,7 @@ func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ad
 	return sink.Send(resultEventWithOutputs(outcome, mcpOutputs(&result)))
 }
 
-// mcpOutputs maps an MCP tools/call result into adapter outputs (CRI-172):
+// mcpOutputs maps an MCP tools/call result into adapter outputs:
 // text content blocks are the primary payload, joined in server order under
 // "text", and structuredContent, when present, is passed through verbatim
 // under "structured". Other content kinds stay available via mcp.content
@@ -890,7 +890,7 @@ func resultEventWithOutputs(outcome string, outputs map[string]any) *v2.ExecuteE
 }
 
 // typedFailureEvent builds a failure result carrying a well-known call_error
-// code in the reserved "call_error" output (CRI-172).
+// code in the reserved "call_error" output.
 func typedFailureEvent(code string) *v2.ExecuteEvent {
 	return resultEventWithOutputs("failure", map[string]any{callErrorOutputKey: code})
 }

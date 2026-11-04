@@ -1,4 +1,4 @@
-// Checkpoint persistence on the WS18 local snapshot substrate (CRI-202).
+// Checkpoint persistence on the WS18 local snapshot substrate.
 //
 // The engine persists each adapter session's state blob at step boundaries
 // under <base>/runs/<runID>/snapshots/<sessionID>/<seq>.{json,bin}. A step is
@@ -86,7 +86,7 @@ type seqFiles struct {
 //   - the blob bytes do not hash to the recorded digest (truncated or
 //     corrupted blob).
 //
-// Metadata without a recorded digest (pre-CRI-202 checkpoints) is returned
+// Metadata without a recorded digest (pre-digest checkpoints) is returned
 // unverified: there is nothing to compare against, and the schema tag on the
 // metadata still gates the restore.
 func ReadLatestSnapshot(dir string) (*adapterhost.SessionSnapshot, error) {

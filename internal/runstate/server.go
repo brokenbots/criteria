@@ -24,13 +24,13 @@ type Server struct {
 	store *Store
 	// control, when non-nil, handles the POST control verbs for runs this
 	// process owns via the JSON seam (stop cancels the engine context; since
-	// CRI-255 pause and resume drive the same bus the Connect
+	// pause and resume drive the same bus the Connect
 	// LocalControlService exercises). Verbs it does not answer come back
 	// UNIMPLEMENTED. nil (serve-ui standalone) means every verb is
 	// UNIMPLEMENTED.
 	control ControlHandler
 	// localService, when non-nil, is mounted at the fixed Connect service
-	// prefix localServicePattern (CRI-255: the loopback control RPCs). The
+	// prefix localServicePattern. The
 	// owner (apply) passes the pattern reported by the generated
 	// NewLocalControlServiceHandler.
 	localService        http.Handler
@@ -39,7 +39,7 @@ type Server struct {
 	// /runview/.
 	viewer http.Handler
 	// castleConsole, when non-nil, is mounted at the fixed
-	// castle.v1.ConsoleService prefix (KB-328): the loopback console
+	// castle.v1.ConsoleService prefix: the loopback console
 	// surface. Login/Logout/ListSessions pass through to the configured
 	// castle control plane; ResolveResume stays local.
 	castleConsole http.Handler
@@ -61,7 +61,7 @@ type ControlHandler func(runID, verb string) error
 // ErrUnsupportedVerb is returned by a ControlHandler for verbs that are not
 // locally implementable (the only verb a non-owning process implements is
 // none; the JSON seam supports pause/resume/stop through the owning apply's
-// control bus — CRI-255).
+// control bus).
 var ErrUnsupportedVerb = errors.New("unsupported control verb")
 
 // ErrRunNotControlable is returned when the verb is known but the run is not
@@ -87,7 +87,7 @@ func (s *Server) WithViewer(h http.Handler) *Server {
 }
 
 // WithLocalService mounts an extra Connect service handler at pattern. The
-// local control listener (CRI-255) mounts criteria.v1.LocalControlService at
+// local control listener mounts criteria.v1.LocalControlService at
 // the generated prefix pattern so Connect/gRPC clients can reach the control
 // verbs on the same loopback port as the seam API.
 func (s *Server) WithLocalService(pattern string, h http.Handler) *Server {
@@ -97,7 +97,7 @@ func (s *Server) WithLocalService(pattern string, h http.Handler) *Server {
 }
 
 // WithCastleConsole mounts h — NewCastleConsole().Handler() — at the fixed
-// castle.v1.ConsoleService prefix (KB-328): the loopback console surface
+// castle.v1.ConsoleService prefix: the loopback console surface
 // proxying Login/Logout/ListSessions to the configured castle control plane
 // and resolving ResolveResume decisions through the locally owned control
 // wire. nil (unconfigured) leaves the console procedures answerable only as
@@ -179,7 +179,7 @@ func (s *Server) Handler() http.Handler {
 // any port) pass; everything else gets 403.
 //
 // originLoopbackOnly then rejects CORS-bearing requests whose Origin is not
-// a loopback host (CRI-255): the control verbs are a write surface, and a
+// a loopback host: the control verbs are a write surface, and a
 // browser fires cross-site POSTs without a preflight (a "simple request").
 // Browsers always attach Origin on those requests, so a non-loopback Origin
 // 403s them; non-browser clients (the CLI, curl) do not send Origin and pass.
@@ -316,7 +316,7 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 const headerTimeout = 10 * time.Second
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	w.WriteHeader(http.StatusNoContent) // 204: alive; capability probe renders controls (pause/resume/stop run through the owner's control bus, CRI-255)
+	w.WriteHeader(http.StatusNoContent) // 204: alive; capability probe renders controls (pause/resume/stop run through the owner's control bus)
 }
 
 func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
@@ -388,7 +388,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 // verbHandler implements POST /runs/{id}/resume|pause|stop. Verbs are wired
 // to the owner apply process's control bus where supported (stop cancels the
 // engine context; pause parks it at the next checkpoint boundary; resume
-// releases a boundary pause — CRI-255); everything else answers
+// releases a boundary pause); everything else answers
 // UNIMPLEMENTED.
 func (s *Server) verbHandler(verb string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

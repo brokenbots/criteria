@@ -1,12 +1,12 @@
 package workflow
 
-// compile_fold_typed.go — KB-266: compile-time type checking under value
+// compile_fold_typed.go — compile-time type checking under value
 // deferral. When FoldExpr defers an expression because it references a
 // runtime-only namespace (data.*, steps.*, step.*, each.*, while.*, path.*,
 // subworkflow.*), the deferral must not waive TYPE checking. The helpers
 // here evaluate the deferred expression a second time with every runtime
 // root bound to cty.UnknownVal(declared type) — variable/data types from the
-// graph, step output field types from the adapter schema (KB-264 default
+// graph, step output field types from the adapter schema (default
 // output type), and iteration binding types from the step's driving
 // for_each/count/parallel expression. HCL and cty semantics then type-check
 // every operation whose operand types are available; operations on truly
@@ -26,8 +26,8 @@ import (
 )
 
 // validateFoldableAttrsTyped validates all attributes in attrs like
-// validateFoldableAttrs and additionally type-checks deferred expressions
-// (KB-266): when FoldExpr defers on a runtime-only namespace reference, the
+// validateFoldableAttrs and additionally type-checks deferred expressions:
+// when FoldExpr defers on a runtime-only namespace reference, the
 // expression is re-evaluated with runtime roots bound to
 // cty.UnknownVal(declared type). Type errors surface as compile diagnostics
 // at the binding site; type-correct expressions still defer unchanged.
@@ -153,7 +153,7 @@ func dataNamespaceBinding(g *FSMGraph) cty.Value {
 }
 
 // stepsNamespaceBinding mirrors the runtime steps object: one entry per step
-// name. Non-iterating adapter steps with a declared output schema (KB-264
+// name. Non-iterating adapter steps with a declared output schema (
 // default output type) bind an object of unknown-of-declared-type fields;
 // iterating steps (whose outputs expose an indexable accumulator), subworkflow
 // targets, forward references, and steps with no declared contract bind
@@ -210,7 +210,7 @@ func stepOutputBinding(node *StepNode) cty.Value {
 }
 
 // outputSchemaBinding builds the typed object for a set of declared output
-// fields. Fields with cty.NilType (KB-264 declared-permissive) stay dynamic.
+// fields. Fields with cty.NilType (declared-permissive) stay dynamic.
 // The legacy 4-segment steps.<name>.outputs.<field> form binds a dynamic
 // "outputs" attribute: this keeps those traversals compile-clean here so the
 // dedicated field-name validators (checkStepsOutputRefs, with

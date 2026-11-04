@@ -114,7 +114,7 @@ func (s *Sink) OnStepOutcome(step, outcome string, duration time.Duration, err e
 	s.publish(p)
 }
 
-// OnStepOutcomeInvalid publishes the StepOutcomeInvalid event (KB-45): a
+// OnStepOutcomeInvalid publishes the StepOutcomeInvalid event: a
 // completed attempt was rejected by the step's outcome-contract validation
 // and re-enters the attempt loop. Issues carry the pinned evaluator's issue
 // list verbatim so downstream consumers can render them without re-deriving.
@@ -143,7 +143,7 @@ func (s *Sink) OnStepOutputCaptured(step string, outputs map[string]string) {
 }
 
 // OnRunPaused is called by the engine loop when execution pauses at a wait
-// or approval node (W05) or at a control-surface step boundary (CRI-255,
+// or approval node (W05) or at a control-surface step boundary (
 // mode "external"). Node pauses are already represented to consumers by the
 // richer WaitEntered / ApprovalRequested events; RunPaused is published only
 // for boundary pauses, the class with no other event. The paused node is
@@ -158,7 +158,7 @@ func (s *Sink) OnRunPaused(node, mode, signal string) {
 	s.pauseMu.Unlock()
 }
 
-// OnRunResumed publishes a RunResumed event (CRI-255): fired when a
+// OnRunResumed publishes a RunResumed event: fired when a
 // previously paused or interrupted run re-enters execution via RunFrom.
 func (s *Sink) OnRunResumed(node string) {
 	s.Log.Info("run resumed", "run_id", s.RunID, "node", node)
@@ -248,7 +248,7 @@ func (s *Sink) OnAdapterLifecycle(stepName, adapterName, status, detail string) 
 
 // OnAdapterLifecycleEvent publishes an adapter.lifecycle event for the
 // remote-adapter reconciler. The payload uses pb.AdapterEvent so existing
-// server consumers can read it. CRI-236: the per-scope accept token rides the
+// server consumers can read it. The per-scope accept token rides the
 // already-authenticated runner↔server channel (accept_token) so the operator
 // no longer depends on a criteria-side shared volume to read the token_ref
 // file; token_ref stays populated during the transition window.
@@ -270,7 +270,7 @@ func (s *Sink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent) {
 		"token_ref":           event.TokenRef,
 		"accept_token":        event.Token,
 	}
-	// KB-232: carry the session-wait diagnostics on the named pending event
+	// Carry the session-wait diagnostics on the named pending event
 	// so operators see dialed/rejected/waited without joining separate logs.
 	if event.Status == engine.ScopeSessionPendingStatus {
 		data["session_dials"] = event.SessionDials
@@ -314,13 +314,13 @@ func (s *Sink) OnAgentPromptInjected(step, sessionID, prompt, caller string, del
 }
 
 // OnWorkflowGraphs publishes the once-per-run WorkflowGraphs envelope at the
-// post-compile seam, before the engine starts (CRI-278).
+// post-compile seam, before the engine starts.
 func (s *Sink) OnWorkflowGraphs(ctx context.Context, msg *pb.WorkflowGraphs) {
 	s.publishWithCtx(ctx, msg)
 }
 
 // OnCheckpointPointer publishes the checkpoint.pointer envelope for a durable
-// engine-local checkpoint save (CRI-203). The pointer is advisory metadata;
+// engine-local checkpoint save. The pointer is advisory metadata;
 // the bytes stay in the engine's state home.
 func (s *Sink) OnCheckpointPointer(ptr *engine.CheckpointPointerEvent) {
 	if ptr == nil {

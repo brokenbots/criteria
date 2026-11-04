@@ -111,7 +111,7 @@ func buildFoldEvalContext(vars, locals map[string]cty.Value, workflowDir string,
 
 // FoldExprWithRuntimeBindings evaluates expr in the closure (var ∪ local ∪
 // funcs) plus explicit bindings for runtime-only namespaces. It is the
-// KB-266 type-check entry point: when a runtime-only root is bound to
+// Runtime-binding type-check entry point: when a runtime-only root is bound to
 // cty.UnknownVal(declaredType), HCL and cty semantics type-check operations
 // against the declared types even though values are unknown, while
 // type-correct operations still fold to unknown values (value deferral is

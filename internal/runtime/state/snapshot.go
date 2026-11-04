@@ -54,7 +54,7 @@ func WriteSnapshot(dir string, snap *adapterhost.SessionSnapshot) (seq int, err 
 }
 
 // ReadLatestSnapshot (the loud, digest-verifying variant) lives in
-// checkpoint.go (CRI-202).
+// checkpoint.go.
 
 // ListSnapshotSessions returns all session IDs under the run's snapshots root.
 func ListSnapshotSessions(base, runID string) ([]string, error) {

@@ -1,11 +1,11 @@
 package workflow
 
-// compile_call_edges.go — CRI-157: adapter tool-call awareness in the M3
+// compile_call_edges.go — adapter tool-call awareness in the M3
 // compiler graph pass.
 //
 // buildAdapterCallEdges records every step-level `tools` grant as:
 //   - a per-step AdapterToolRef list on the step's StepNode (runtime policy
-//     consumers, CRI-159/CRI-160), and
+//     consumers), and
 //   - a generic AdapterCallEdge in FSMGraph.AdapterCallEdges (caller adapter,
 //     callee adapter, tool name, provenance step name).
 //
@@ -30,7 +30,7 @@ import (
 // buildAdapterCallEdges populates StepNode.Tools and g.AdapterCallEdges from
 // the parse-captured tool-ref traversals (StepSpec.Tools). Entries that fail
 // the adapter.<type>.<name>.tools[.<tool>] shape are skipped: they already
-// carry a compile error from validateStepToolRefs (CRI-156 mode 1), and a
+// carry a compile error from validateStepToolRefs, and a
 // graph with errors is discarded, so no edge is built for them.
 //
 // Subworkflow-targeted steps record Tools entries (CallerIsSelf always false,
@@ -38,7 +38,7 @@ import (
 // caller adapter ref. Subworkflow-as-tool edge producers append their own
 // edges later, reusing the same structure.
 //
-// Duplicate grants within one step — already flagged by the CRI-156 mode 6
+// Duplicate grants within one step — already flagged by the
 // duplicate warning — are recorded once, in declaration order.
 func buildAdapterCallEdges(g *FSMGraph) {
 	if g == nil || g.spec == nil || len(g.stepOrder) == 0 {

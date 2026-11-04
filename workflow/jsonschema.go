@@ -1,7 +1,7 @@
 package workflow
 
 // jsonschema.go — deterministic cty-type → JSON Schema converter for outcome
-// payload contracts (KB-45). The output is the pinned conformance subset the
+// payload contracts. The output is the pinned conformance subset the
 // adapter-SDK host validator understands (see the criteria-adapter-proto
 // v0.7.0 conformance README): root type "object", properties with leaf types
 // string|number|boolean|object|array, a required-name list, optional() default

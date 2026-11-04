@@ -73,7 +73,7 @@ func Parse(filename string, src []byte) (*Spec, hcl.Diagnostics) {
 
 // checkMaxToolCallsRange reports a decode diagnostic when a declared
 // policy.max_tool_calls is < 1. An absent attribute is valid (0 = engine
-// default of 100). Placement mirrors CRI-155 (checkMaxToolDepthRange).
+// default of 100). Placement mirrors checkMaxToolDepthRange.
 func checkMaxToolCallsRange(spec *Spec, body hcl.Body) hcl.Diagnostics {
 	if spec == nil || spec.Header == nil || spec.Header.Policy == nil || body == nil {
 		return nil
@@ -150,8 +150,8 @@ func captureCriteriaVersionRange(spec *Spec, body hcl.Body) {
 // has no gohcl tag because gohcl cannot decode hcl.Traversal targets
 // directly), so the parse pass extracts it per step. Only bare traversal
 // entries are kept; anything else is silently dropped here — shape diagnostics
-// land in CRI-156, which re-walks the Remain bodies with positions (CRI-155:
-// no reference resolution, no graph changes).
+// land in the later tools-validation pass, which re-walks the Remain bodies with positions (the parse pass
+// does no reference resolution and makes no graph changes).
 func captureStepToolRefs(spec *Spec) hcl.Diagnostics {
 	if spec == nil {
 		return nil
@@ -180,7 +180,7 @@ func captureStepToolRefs(spec *Spec) hcl.Diagnostics {
 
 // decodeToolRefTraversals converts a `tools` list expression into raw
 // traversals, skipping entries that are not bare traversals (their diagnostics
-// are deferred to CRI-156). A non-list value yields nil.
+// are deferred to validateStepToolRefs). A non-list value yields nil.
 func decodeToolRefTraversals(expr hcl.Expression) []hcl.Traversal {
 	exprs, listDiags := hcl.ExprList(expr)
 	if listDiags.HasErrors() {
@@ -202,8 +202,8 @@ func decodeToolRefTraversals(expr hcl.Expression) []hcl.Traversal {
 
 // checkMaxToolDepthRange reports a decode diagnostic when a declared
 // policy.max_tool_depth is < 1. An absent attribute is valid (0 = engine
-// default of 8). CRI-155 placement decision: the >= 1 range check lands at
-// parse time as a plain decode diagnostic; CRI-157 owns graph-level wiring
+// default of 8). Placement decision: the >= 1 range check lands at
+// parse time as a plain decode diagnostic; buildAdapterCallEdges owns graph-level wiring
 // only.
 func checkMaxToolDepthRange(spec *Spec, body hcl.Body) hcl.Diagnostics {
 	if spec == nil || spec.Header == nil || spec.Header.Policy == nil || body == nil {

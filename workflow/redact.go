@@ -7,7 +7,7 @@ import "strings"
 // secrets never reach diagnostics, structured logs, or recorded provenance.
 // Workflow sources in memory and in lockfiles keep the raw form; everything
 // rendered for humans — CLI resolver errors, run metadata, compile-time
-// diagnostics — must pass through this helper first (CRI-225/CRI-226).
+// diagnostics — must pass through this helper first.
 // Sources without a "://" separator (local paths, scp-style git forms) are
 // returned unchanged.
 func RedactSource(source string) string {

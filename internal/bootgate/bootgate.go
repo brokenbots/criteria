@@ -1,15 +1,15 @@
-// Package bootgate implements the KB-234 runner boot gate: on every
+// Package bootgate implements the runner boot gate: on every
 // server-mode start (fresh or adoption), the runner resolves its operator
 // identity and consults the operator's view of its CriteriaRun before any
 // castle interaction. If the operator reports the CR terminal, or reports no
 // CR at all while this pod is still alive (deleted under the runner), the
 // boot must exit 0 without registering with castle or creating a run: a
 // start the operator will never provision for would otherwise mint a
-// pending-forever castle run (the KB-225 boot-1 orphan).
+// pending-forever castle run (a boot-1 orphan).
 //
 // The gate is a deterministic, mechanical check derived from the CR object
 // at boot time — never from castle run history — so it also covers fresh
-// starts that have no run identity to ask castle about. Rule 3 of KB-233
+// starts that have no run identity to ask castle about. Rule 3 of the orphan backstops
 // (the checkpoint/reattach path in internal/cli) remains the adoption-side
 // half of the contract; this package is its fresh-start half.
 //
@@ -71,7 +71,7 @@ const (
 	// error, unexpected status, malformed payload). The boot proceeds
 	// fail-open with a loud warning: the view failing is an availability
 	// problem, not an operator statement that the CR is dead. Residual
-	// orphans are bounded by the KB-233 backstops (rule 1 deletes runner
+	// orphans are bounded by the backstops (rule 1 deletes runner
 	// Job pods on terminal CRs; castle rule 2 reaps created-never-started
 	// runs).
 	OutcomeUnknown

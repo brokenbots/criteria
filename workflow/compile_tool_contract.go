@@ -1,11 +1,11 @@
 package workflow
 
 // compile_tool_contract.go — typed tool contracts on adapter tool blocks
-// (KB-59, MCP-probe wave 2 Gap 2: typed I/O at the adapter-tools seam).
+// (typed I/O at the adapter-tools seam).
 //
 // A tool declaration may pin the callee's request shape (`in`) and the shape
 // of the outputs surfaced to the caller (`out`) to a named type block
-// (KB-45) referenced as `type.<name>`, or to an inline typeexpr constraint.
+// referenced as `type.<name>`, or to an inline typeexpr constraint.
 // The engine then validates nested tool-call arguments against `in`
 // (internal/adapterhost/tool_call.go seam: callee_input) and successful
 // callee results against `out`, and a direct step target's input{} block is
@@ -52,7 +52,7 @@ func compileToolContract(adapterKey, toolName string, t *ToolDeclSpec, g *FSMGra
 
 	// Once a contract side is declared the body is closed vocabulary (the
 	// type-block posture); without a contract, uninterpreted body content is
-	// still decoded and ignored, byte-identical to CRI-155.
+	// still decoded and ignored.
 	if contract.HasAny() && t.Remain != nil {
 		attrs, d := t.Remain.JustAttributes()
 		diags = append(diags, d...)
@@ -113,7 +113,7 @@ func compileToolContractSide(loc, side string, expr hcl.Expression, g *FSMGraph)
 	return schemaJSON, typ, nil
 }
 
-// validateStepTypedInput applies the KB-59 typed-input contract check to a
+// validateStepTypedInput applies the typed-input contract check to a
 // direct adapter step target's input{} block, if any. It applies only to
 // dynamic (schema-less) adapters: a schema-ful adapter keeps the static
 // handshake-first posture at compile time, and the seam's declared-type
@@ -139,7 +139,7 @@ func validateStepTypedInput(g *FSMGraph, sp *StepSpec, adapterType, adapterRef s
 }
 
 // validateStepInputToolContract resolves the in-type contract that governs a
-// direct adapter step target's input{} block (KB-59). It applies only to
+// direct adapter step target's input{} block. It applies only to
 // dynamic (schema-less) adapters; returns the routed contract and whether
 // the typed check governs this step's input.
 func validateStepInputToolContract(g *FSMGraph, sp *StepSpec, adapterRef string, schemas map[string]AdapterInfo) (ToolContract, bool) {

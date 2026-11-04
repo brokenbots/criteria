@@ -59,8 +59,7 @@ type LocalNode struct {
 	Description string
 	// Tainted is true when the local's value expression references a secret
 	// variable or another tainted local. It is used by ValidateEnvironmentTaint
-	// to prevent indirect secret leakage via locals into environment channels
-	// (CRI-88, EC4).
+	// to prevent indirect secret leakage via locals into environment channels.
 	Tainted bool
 }
 
@@ -113,7 +112,7 @@ func (p *ProcessPolicy) IsWildcard() bool {
 // adapter manifest may declare. These hints are consumed by the three-rule
 // field resolver when policy_mode = "permissive". Process hints are not
 // supported: command-runtime requirements may be documented in adapter manifests
-// but never become an implicit authority grant (CRI-86).
+// but never become an implicit authority grant.
 type PolicyHints struct {
 	PolicyMode   string
 	OS           string
@@ -146,7 +145,7 @@ type EnvironmentNode struct {
 	// RawVariableExprs and RawConfigExprs preserve the original per-key HCL
 	// expressions from the environment block for post-fold taint validation.
 	// They are populated by decodeEnvironmentVariables and
-	// decodeEnvironmentConfig and are not used at runtime (CRI-88).
+	// decodeEnvironmentConfig and are not used at runtime.
 	RawVariableExprs map[string]hcl.Expression
 	RawConfigExprs   map[string]hcl.Expression
 	// PolicyMode is "permissive" (default) or "strict".
@@ -258,9 +257,9 @@ type VariableSpec struct {
 	Remain      hcl.Body       `hcl:",remain"` // captures the "default" expression
 }
 
-// TypeSpec declares a workflow-level named type block (KB-45): `type "<name>"
+// TypeSpec declares a workflow-level named type block: `type "<name>"
 // { schema = <constraint> }`, referenced as `type.<name>` from outcome schema
-// attributes and, since KB-48, from every widened consumer: data block types,
+// attributes and every widened consumer: data block types,
 // variable declarations, output projections, and subworkflow callee variable
 // types (each workflow body compiles its own type namespace).
 //
@@ -274,7 +273,7 @@ type TypeSpec struct {
 	Name string `hcl:"name,label"`
 	// Schema is the type constraint this name aliases (object({...}), list(T),
 	// optional(T, default), ...), referenced as type.<name> from outcome payload
-	// schemas and from data/variable/output type constraints (KB-48); the callee
+	// schemas and from data/variable/output type constraints; the callee
 	// forms inside subworkflow bodies use the callee's own type namespace.
 	//
 	// spec:required
@@ -317,32 +316,32 @@ type AdapterDeclSpec struct {
 	Config      *ConfigSpec    `hcl:"config,block"`
 	Secrets     *ConfigSpec    `hcl:"secrets,block"` // optional secrets block
 	// Tools lists the statically presented tools declared via tool "<name>" { }
-	// blocks on this adapter (CRI-155, parse pass only). Each entry records the
+	// blocks on this adapter (parse pass only). Each entry records the
 	// tool's name label; the block body is reserved for future use and is
 	// decoded and ignored today.
 	Tools []ToolDeclSpec `hcl:"tool,block"`
 	// DynamicTools admits a runtime-discovered tool surface alongside any
-	// static tool blocks (dynamic_tools = bool, default false). Parsed in
-	// CRI-155; consumed by CRI-156 validation (lenient static-name check) and
-	// the CRI-173 runtime-discovery path.
+	// static tool blocks (dynamic_tools = bool, default false). Parsed
+	// by the schema decode; consumed by the tools validation (lenient static-name check) and
+	// the runtime tool-discovery path.
 	DynamicTools bool `hcl:"dynamic_tools,optional"`
 }
 
 // ToolDeclSpec declares one statically presented tool on an adapter
 // declaration: tool "<name>" { }. The name label is the tool's stable name.
-// The body carries the typed tool contract (KB-59, MCP-probe Gap 2 seam):
+// The body carries the typed tool contract:
 // `in = type.<name>` pins the type the tool's input arguments must satisfy at
 // the adapter-tools seam, and `out = type.<name>` pins the type the callee's
 // surfaced outputs must satisfy. Other body content is still decoded and
-// ignored (CRI-155) so the schema stays honest without constraining future
+// ignored so the schema stays honest without constraining future
 // extensions.
 type ToolDeclSpec struct {
 	Name string `hcl:"name,label"`
-	// In/out declare the typed tool contract (KB-45 named type <name> or an
+	// In/out declare the typed tool contract (named type <name> or an
 	// inline typeexpr); each side is optional and unconstrained if absent.
 	In     hcl.Expression `hcl:"in,optional"`
 	Out    hcl.Expression `hcl:"out,optional"`
-	Remain hcl.Body       `hcl:",remain"` // reserved body; decoded and ignored (CRI-155)
+	Remain hcl.Body       `hcl:",remain"` // reserved body; decoded and ignored
 }
 
 // StepSpec describes a single step in the workflow.
@@ -373,8 +372,8 @@ type StepSpec struct {
 	// attribute, e.g. [adapter.shell.worker.tools,
 	// adapter.shell.worker.tools.git_status]. Entries are stored as raw
 	// hcl.Traversal values with no reference resolution and no graph changes
-	// (CRI-155, parse pass only); shape diagnostics (string literals instead
-	// of traversals, non-adapter roots) land in CRI-156 with positions.
+	// (parse pass only); shape diagnostics (string literals instead
+	// of traversals, non-adapter roots) land in validateStepToolRefs with positions.
 	// The attribute is not a gohcl-tagged field because gohcl cannot decode
 	// hcl.Traversal targets directly — it is captured by Remain and extracted
 	// per step by captureStepToolRefs.
@@ -459,7 +458,7 @@ type SubworkflowSpec struct {
 	Name        string         `hcl:"name,label"`
 	Source      string         `hcl:"source"`               // directory path; local or remote
 	Environment hcl.Expression `hcl:"environment,optional"` // bare traversal reference (e.g. shell.default)
-	// Ref is the operator-declared expected pin (ADR-0005 D7, CRI-226): the
+	// Ref is the operator-declared expected pin (ADR-0005 D7): the
 	// resolved ref/digest the source must resolve to — a git commit SHA for
 	// git sources or the "sha256:<digest>" content digest for archive
 	// sources. When set, resolution fails closed on mismatch, before any
@@ -518,13 +517,13 @@ type AdapterInfo struct {
 	// vocabulary checks.
 	PermissionAliases map[string]string
 	// RuntimeTools lists the tool names the adapter reported in its handshake
-	// (InfoResponse.tools, CRI-171). The compiler consults them as a tool
+	// (InfoResponse.tools). The compiler consults them as a tool
 	// source for adapters that declare neither static tool blocks nor
-	// dynamic_tools = true (CRI-173); empty when the handshake was
+	// dynamic_tools = true; empty when the handshake was
 	// unavailable or exposed no tools.
 	RuntimeTools []string
 	// State is the adapter's declared checkpointable session-state surface
-	// (InfoResponse.state, CRI-201). nil = mode none: the adapter declares
+	// (InfoResponse.state). nil = mode none: the adapter declares
 	// no checkpointable state and starts fresh on every (re)spawn — today's
 	// behavior. Unknown modes fail the handshake loudly; see
 	// StateDeclaration.Validate.
@@ -540,7 +539,7 @@ type AdapterInfo struct {
 // a custom output map instead of passing the step's full output downstream.
 // Zero or more write { target = ..., value = ... } blocks declare data writes.
 //
-// KB-45 adds the optional per-outcome payload contract attributes:
+// The optional per-outcome payload contract attributes:
 //   - "schema": either a `type.<name>` traversal into a named type block or an
 //     inline typeexpr constraint; both resolve to the same cty.Type. The
 //     schema's fields must be a subset of the adapter's declared output schema
@@ -552,26 +551,26 @@ type AdapterInfo struct {
 //     finalized result at all (distinct from the reserved "default" outcome,
 //     which maps an adapter-returned unmapped name).
 //
-// KB-259 adds the optional "description" attribute: author-stated outcome
+// The optional "description" attribute: author-stated outcome
 // semantics carried on CompiledOutcome for agent-facing rendering. It is
 // compile-validated but runtime-inert — it never alters contract validation
 // or routing.
 type OutcomeSpec struct {
 	Name string         `hcl:"name,label"`
 	Next hcl.Expression `hcl:"next"`
-	// Description documents the outcome for agent-facing rendering (KB-259):
+	// Description documents the outcome for agent-facing rendering:
 	// it feeds the copilot adapter's allowed-outcomes menu so a model chooses
 	// a verdict from the author's stated semantics instead of prompt prose.
 	// Compile-validated, runtime-inert — it never alters contract validation
 	// or routing. The menu itself renders once the adapter wire carries
-	// descriptions (adapter-proto field, paired KB-260/KB-263); the compiled
+	// descriptions (the adapter-proto field pair); the compiled
 	// artifacts here are that render's data source.
 	Description string `hcl:"description,optional"`
 	// Schema is the payload contract: type.<name> traversal or an inline
 	// typeexpr constraint; must subset the adapter's output schema. A typed
 	// schema replaces the adapter's default output type for this outcome; an
 	// outcome without one is untyped and resolves its outputs from that
-	// default (KB-264).
+	// default output type.
 	Schema hcl.Expression `hcl:"schema,optional"`
 	// RequireComment rejects a result with an empty adapter comment.
 	RequireComment bool `hcl:"require_comment,optional"`
@@ -663,15 +662,15 @@ type PolicySpec struct {
 	MaxVisitsWarnThreshold *int `hcl:"max_visits_warn_threshold,optional"`
 	// MaxToolDepth bounds the adapter-to-adapter tool-call stack depth
 	// (policy.max_tool_depth). Grammar: integer >= 1; unset (0) uses the
-	// engine default of 8. Parsed in CRI-155; graph-level wiring lands in
-	// CRI-157. The >= 1 range check is enforced here at parse time as a plain
-	// decode diagnostic by checkMaxToolDepthRange (CRI-155 placement decision:
-	// checked at parse, CRI-157 owns wiring only).
+	// engine default of 8. Parsed by the schema decode; graph-level wiring lands in
+	// buildAdapterCallEdges. The >= 1 range check is enforced here at parse time as a plain
+	// decode diagnostic by checkMaxToolDepthRange (placement decision:
+	// checked at parse, buildAdapterCallEdges owns wiring only).
 	MaxToolDepth int `hcl:"max_tool_depth,optional"`
 
 	// MaxToolCalls bounds the total adapter-to-adapter tool calls per session
-	// (policy.max_tool_calls, KB-58). Integer >= 1; unset (0) uses the
-	// engine default of 100; parse-time range check mirrors CRI-155.
+	// (policy.max_tool_calls). Integer >= 1; unset (0) uses the
+	// engine default of 100; parse-time range check mirrors checkMaxToolDepthRange.
 	// Complements max_tool_depth (count vs stack depth) so an iterative
 	// probe loop cannot run unbounded.
 	MaxToolCalls int `hcl:"max_tool_calls,optional"`
@@ -708,8 +707,8 @@ type FSMGraph struct {
 	Locals             map[string]*LocalNode           // compiled local declarations (W07)
 	Data               map[string]map[string]*DataNode // compiled data declarations; keyed by kind then name (W02)
 	DataOrder          []DataRef                       // declaration order for stable iteration (W02)
-	Types              map[string]*TypeDecl            // compiled type "name" blocks (KB-45); keyed by type name
-	TypeOrder          []string                        // declaration order for stable iteration (KB-45)
+	Types              map[string]*TypeDecl            // compiled type "name" blocks; keyed by type name
+	TypeOrder          []string                        // declaration order for stable iteration
 	Environments       map[string]*EnvironmentNode     // compiled environment declarations; keyed by "<type>.<name>"
 	DefaultEnvironment string                          // optional; set if exactly one env is declared or explicitly set on workflow header
 	Outputs            map[string]*OutputNode          // compiled output declarations (W09)
@@ -724,7 +723,7 @@ type FSMGraph struct {
 	Approvals          map[string]*ApprovalNode        // by approval node name (W05)
 	Switches           map[string]*SwitchNode          // by switch node name (W16)
 	// AdapterCallEdges records adapter-to-adapter tool-call relationships
-	// discovered during compilation (CRI-157). Edges are metadata only: they
+	// discovered during compilation. Edges are metadata only: they
 	// never feed nodeTargets, checkReachability, or FSM routing. Future edge
 	// producers (subworkflow-as-tool, external registry tools) append to the
 	// same set rather than forking the compiler.
@@ -747,12 +746,12 @@ type FSMGraph struct {
 	stepOrder []string
 	// spec is the parsed (but not yet compiled) workflow spec. It is kept private
 	// so post-compilation passes can recover original expressions for local
-	// declarations and other compile-time-only checks (CRI-88).
+	// declarations and other compile-time-only checks.
 	spec *Spec
 }
 
-// WorkflowAllowTools returns the workflow-level permissions.allow_tools list
-// (CRI-160). It is the union base every adapter step declared in this graph
+// WorkflowAllowTools returns the workflow-level permissions.allow_tools list.
+// It is the union base every adapter step declared in this graph
 // receives at compile time, and it governs adapter tool calls issued from
 // sessions bound in this graph's scope: the synthetic step that executes a
 // nested tool-call callee carries this list as its own allow_tools, so the
@@ -780,7 +779,7 @@ type VariableNode struct {
 // Used by the body input validation logic to detect unbound required vars.
 func (v *VariableNode) IsRequired() bool { return v.Default == cty.NilVal }
 
-// TypeDecl is a compiled type "name" block (KB-45): a workflow-level named
+// TypeDecl is a compiled type "name" block: a workflow-level named
 // payload type referenced as `type.<name>` from outcome schema attributes.
 // Defaults carries the block's optional() defaults so payload defaulting
 // matches what the type constraint itself declares.
@@ -798,7 +797,7 @@ type AdapterNode struct {
 	Source      string // OCI source location (empty for non-OCI adapters)
 	Environment string // optional "<env_type>.<env_name>" reference; resolved to default at scope start if not set
 	// PinnedDigest is the adapter's lockfile-resolved digest recorded at
-	// compile time (KB-253): the compiled graph is the single carrier of
+	// compile time: the compiled graph is the single carrier of
 	// what it was compiled against, so pod composition hosts every
 	// definition with its digest without re-reading the lockfile. Empty
 	// when the adapter is unpinned (non-OCI).
@@ -813,15 +812,15 @@ type AdapterNode struct {
 	// flowing into non-secret adapter config channels (D65).
 	ConfigExprs map[string]hcl.Expression
 	// StaticTools lists the tool names declared via tool "<name>" { } blocks on
-	// this adapter (CRI-159). Runtime tool-call validation checks named calls
+	// this adapter. Runtime tool-call validation checks named calls
 	// against this surface when the adapter does not admit dynamic discovery.
 	StaticTools []string
-	// DynamicTools reports whether the adapter declared dynamic_tools = true
-	// (CRI-155): its surface is extensible, so runtime tool-name validation is
-	// skipped and names resolve when the call executes (CRI-173).
+	// DynamicTools reports whether the adapter declared dynamic_tools = true;
+	// its surface is extensible, so runtime tool-name validation is
+	// skipped and names resolve when the call executes.
 	DynamicTools bool
 	// ToolContracts carries the typed contracts declared on this adapter's
-	// tool blocks (KB-59), keyed by tool name. Only tools that declared at
+	// tool blocks, keyed by tool name. Only tools that declared at
 	// least one side (in/out) have an entry.
 	ToolContracts map[string]ToolContract
 	// ToolContractOrder preserves tool-declaration order for deterministic
@@ -829,7 +828,7 @@ type AdapterNode struct {
 	ToolContractOrder []string
 }
 
-// ToolContract is the typed contract declared on one tool block (KB-59):
+// ToolContract is the typed contract declared on one tool block:
 // the in-type validates nested tool-call arguments at the adapter-tools
 // seam, the out-type validates the callee's surfaced outputs. InType/OutType
 // are the declared object types; *SchemaJSON are their deterministic
@@ -855,7 +854,7 @@ func (c *ToolContract) HasAny() bool {
 }
 
 // HasToolContracts reports whether the adapter declared any typed tool
-// contract (KB-59).
+// contract.
 func (a *AdapterNode) HasToolContracts() bool {
 	return len(a.ToolContracts) > 0
 }
@@ -897,8 +896,8 @@ type CompiledOutcome struct {
 	// HCL form: write { target = data.<kind>.<name>.value, value = output.<key> }
 	Writes []CompiledWrite
 
-	// Schema, when non-nil, is the payload type contract for this outcome
-	// (KB-45): the adapter's finalized payload must match it. Resolved once via
+	// Schema, when non-nil, is the payload type contract for this outcome:
+	// the adapter's finalized payload must match it. Resolved once via
 	// typeexpr so named `type.<name>` and inline constraint forms are
 	// indistinguishable after compilation. SchemaJSON is its deterministic
 	// JSON Schema projection carried on the wire (ExecuteRequest
@@ -910,22 +909,22 @@ type CompiledOutcome struct {
 	// by CTypeToJSONSchema at compile time. Empty when Schema is nil.
 	SchemaJSON []byte
 	// SchemaDefaults carries the typeexpr defaults of an optional(...) field
-	// with a declared default, from the same schema resolution as Schema
-	// (KB-45). The engine binds them into the adapter payload after a final
+	// with a declared default, from the same schema resolution as Schema.
+	// The engine binds them into the adapter payload after a final
 	// verdict passes the host contract validation, so output projections and
 	// steps.<step> reads see the declared defaults for omitted fields. Nil
 	// when the schema declares no defaults.
 	SchemaDefaults *typeexpr.Defaults
-	// RequireComment copies the outcome's require_comment attribute (KB-45):
+	// RequireComment copies the outcome's require_comment attribute:
 	// the host rejects a finalize with this outcome when the comment is empty.
 	// The engine treats comments as opaque metadata; adapters enforce authoring.
 	RequireComment bool
-	// Fallback copies the outcome's fallback attribute (KB-45). At most one
+	// Fallback copies the outcome's fallback attribute. At most one
 	// outcome per step may set it; it fires when the step produced no result
 	// at all (the adapter never finalized), distinct from DefaultOutcome which
 	// maps an adapter-returned unmapped outcome name.
 	Fallback bool
-	// Description copies the outcome's description attribute (KB-259):
+	// Description copies the outcome's description attribute:
 	// author-stated semantics for agent-facing rendering (the copilot
 	// adapter's allowed-outcomes menu). Compile-validated, runtime-inert.
 	Description string
@@ -976,12 +975,12 @@ type StepNode struct {
 	// AllowTools is the union of step-level and workflow-level allow_tools glob
 	// patterns. An empty slice means deny-all (default). Only valid for adapter steps.
 	AllowTools []string
-	// Tools records this step's `tools = [...]` grants as compiled references
-	// (CRI-157): one entry per tools entry, in declaration order. CallerIsSelf
+	// Tools records this step's `tools = [...]` grants as compiled references:
+	// one entry per tools entry, in declaration order. CallerIsSelf
 	// marks grants where the callee is the step's own target adapter (the
 	// adapter calls tools presented by itself); for subworkflow-targeted steps
 	// there is no caller adapter, so CallerIsSelf is always false there.
-	// Runtime policy consumers (CRI-159/CRI-160) read this list.
+	// Runtime policy consumers read this list.
 	Tools []AdapterToolRef
 	// ForEach is the raw HCL expression for step-level iteration over a list or
 	// map. Evaluated at runtime on first step entry. Mutually exclusive with Count.
@@ -1009,7 +1008,7 @@ type StepNode struct {
 	// Applies env-var injection only; does not create a new adapter session.
 	Environment string
 	// OutputSchema is the adapter's declared output schema for this step —
-	// the adapter's DEFAULT OUTPUT TYPE (KB-264): untyped outcomes resolve
+	// the adapter's DEFAULT OUTPUT TYPE: untyped outcomes resolve
 	// their output shape from it, and typed (schema-declared) outcomes are
 	// subset-validated against it at compile time. Populated during
 	// compilation when the step targets an adapter.
@@ -1086,10 +1085,10 @@ type Policy struct {
 	// MaxToolDepth bounds the adapter-to-adapter tool-call stack depth
 	// (policy.max_tool_depth, ADR-0004 §6). Unset keeps the engine default
 	// of 8 (DefaultPolicy); declared values < 1 are rejected at parse time
-	// by checkMaxToolDepthRange (CRI-155) and cannot reach this struct.
+	// by checkMaxToolDepthRange and cannot reach this struct.
 	MaxToolDepth int
 	// MaxToolCalls bounds the total adapter-to-adapter tool calls per
-	// session (policy.max_tool_calls, KB-58), enforced in the nested-call
+	// session (policy.max_tool_calls), enforced in the nested-call
 	// seam alongside MaxToolDepth. Unset keeps the engine default of 100
 	// (DefaultPolicy); declared values < 1 are rejected at parse time by
 	// checkMaxToolCallsRange and cannot reach this struct.
@@ -1110,7 +1109,7 @@ var DefaultPolicy = Policy{
 }
 
 // AdapterCallEdge records one adapter-to-adapter tool-call relationship in
-// the compiled graph (CRI-157). The structure is deliberately generic so
+// the compiled graph. The structure is deliberately generic so
 // future edge producers — subworkflow-as-tool, external registry tools —
 // can populate the same set without forking the compiler. Edges are pure
 // metadata: they must not feed nodeTargets, checkReachability, or FSM routing.
@@ -1127,7 +1126,7 @@ type AdapterCallEdge struct {
 	StepName string
 }
 
-// AdapterToolRef records one entry of a compiled step's tools list (CRI-157).
+// AdapterToolRef records one entry of a compiled step's tools list.
 // Tool is the granted tool name; empty for a bare `.tools` grant.
 type AdapterToolRef struct {
 	// CallerIsSelf marks grants where the callee is the step's own target

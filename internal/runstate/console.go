@@ -16,12 +16,12 @@ import (
 )
 
 // The loopback run-viewer exposes a castle.v1.ConsoleService surface
-// (KB-328) so the same console front-end that talks to castle's Parapet can
+// so the same console front-end that talks to castle's Parapet can
 // log a human into a criteria-local viewer. Castle is the single source of
 // truth for console login: Login, Logout, and ListSessions are a bounded
 // byte-level pass-through to the configured castle control plane, so every
 // server-side consequence — credential checks, UNAUTHENTICATED and
-// PERMISSION_DENIED semantics, session revocation on Logout (KB-325),
+// PERMISSION_DENIED semantics, session revocation on Logout,
 // ledger listing — is exactly castle's. Only login rides the proxy:
 // ResolveResume stays local, because decision delivery addresses a run this
 // process itself owns, so the loopback resolves it through the injected
@@ -41,7 +41,7 @@ import (
 // and no gRPC trailers to bridge). The local ResolveResume speaks Connect
 // unary JSON and application/proto only.
 //
-// Auth-transport assumption (load-bearing for the KB-325 revocation flow):
+// Auth-transport assumption (load-bearing for the console revocation flow):
 // castle's console session travels as a token in the procedure bodies and
 // the Authorization header. This surface drops Set-Cookie from castle's
 // responses and never forwards the caller's Cookie, so a castle that starts

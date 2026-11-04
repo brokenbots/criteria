@@ -26,7 +26,7 @@ const (
 // For local paths, the returned dir is the absolute path and pin is nil; for
 // remote sources, the resolver fetches into a cache dir and returns the
 // fetcher's pin (git SHA or archive digest) so the compiler can enforce
-// operator-declared expected pins (CRI-226).
+// operator-declared expected pins.
 type SubWorkflowResolver interface {
 	ResolveSource(ctx context.Context, callerDir, source string) (dir string, pin *lockfile.LockedWorkflowRef, err error)
 }
@@ -145,7 +145,7 @@ func CompileWithContext(ctx context.Context, spec *Spec, schemas map[string]Adap
 	// Types compile first: the type namespace is leaf-level (never reads
 	// variables, locals, or data) and its consumers — variables, data,
 	// outputs, outcome schemas — resolve `type.<name>` refs during their own
-	// passes (KB-48).
+	// passes.
 	diags = append(diags, compileTypes(g, spec)...)
 	diags = append(diags, compileVariables(g, spec)...)
 	diags = append(diags, compileLocals(g, spec, opts)...)
@@ -177,7 +177,7 @@ func runPostCompilePasses(diags hcl.Diagnostics, g *FSMGraph, spec *Spec, schema
 	// Warn after all nodes are compiled so branch/wait/approval targets are
 	// available for the back-edge walk (W07).
 	diags = append(diags, warnBackEdges(g)...)
-	// CRI-157: record adapter tool-call relationships as generic graph edges
+	// Record adapter tool-call relationships as generic graph edges
 	// (plus per-step tool lists) and warn on call-graph cycles. This pass is
 	// metadata-only: it must not affect nodeTargets, checkReachability, or FSM
 	// routing, so it runs after all steps are registered without touching
@@ -195,10 +195,10 @@ func runPostCompilePasses(diags hcl.Diagnostics, g *FSMGraph, spec *Spec, schema
 	// secret data via secret_input, input referencing secret variables, or
 	// predecessor taint propagation.
 	diags = append(diags, TaintPass(g, schemas)...)
-	// CRI-88: enforce that secret channels (adapter.secrets and
+	// Enforce that secret channels (adapter.secrets and
 	// step.secret_input) only reference declared, secret-tainted values.
 	diags = append(diags, ValidateSecretBindings(g)...)
-	// CRI-88: enforce that environment.variables and environment.config never
+	// Enforce that environment.variables and environment.config never
 	// carry secret-tainted values; they are non-secret channels.
 	diags = append(diags, ValidateEnvironmentTaint(g)...)
 	// Reserved-name checks only apply to user-authored top-level workflows.
@@ -272,13 +272,13 @@ func newFSMGraph(spec *Spec) *FSMGraph {
 		}
 		// MaxToolDepth: unset (0) keeps DefaultPolicy's engine default of 8;
 		// positive values override it. Declared values < 1 are rejected at
-		// parse time by checkMaxToolDepthRange (CRI-155) and cannot reach here.
+		// parse time by checkMaxToolDepthRange and cannot reach here.
 		if spec.Header.Policy.MaxToolDepth > 0 {
 			g.Policy.MaxToolDepth = spec.Header.Policy.MaxToolDepth
 		}
 		// MaxToolCalls: unset (0) keeps DefaultPolicy's engine default of
 		// 100; positive values override it. Declared values < 1 are rejected
-		// at parse time by checkMaxToolCallsRange (KB-58) and cannot reach
+		// at parse time by checkMaxToolCallsRange and cannot reach
 		// here. Enforced in the nested tool-call seam against the session's
 		// effective policy.
 		if spec.Header.Policy.MaxToolCalls > 0 {

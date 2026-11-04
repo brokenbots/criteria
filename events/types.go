@@ -7,7 +7,7 @@
 // cover the few cross-cutting concerns (schema version, envelope builder,
 // type discriminator, terminal-event check) that aren't generated.
 //
-// Standalone-import note (KB-118): the helpers' single source of truth lives
+// Standalone-import note: the helpers' single source of truth lives
 // IN the sdk (github.com/brokenbots/criteria/sdk root package) — this root
 // package re-exports it. The sdk must never import this module back (its
 // go.mod require of the criteria root broke every external `go mod tidy`

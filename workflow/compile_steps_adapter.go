@@ -72,7 +72,7 @@ func compileAdapterStep(g *FSMGraph, sp *StepSpec, spec *Spec, schemas map[strin
 	inputMap, inputExprs, d := decodeStepInput(g, sp, schemas, opts, adapterType)
 	diags = append(diags, d...)
 
-	// KB-59: a schema-less target adapter whose tool block declares an `in`
+	// A schema-less target adapter whose tool block declares an `in`
 	// contract for this input's tool literal gets typed input validation.
 	diags = append(diags, validateStepTypedInput(g, sp, adapterType, adapterRef, schemas)...)
 

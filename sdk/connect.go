@@ -23,7 +23,7 @@ type CriteriaServiceClient = ServiceClient
 type CriteriaServiceHandler = ServiceHandler
 
 // OrchestratorServiceClient is the Connect client interface for the
-// OrchestratorService (CRI-133): the operator-facing observation/reconcile
+// OrchestratorService: the operator-facing observation/reconcile
 // API (SubscribeRunEvents / ListActiveRuns / CancelRun) implemented by
 // orchestrators.
 type OrchestratorServiceClient = criteriav1connect.OrchestratorServiceClient

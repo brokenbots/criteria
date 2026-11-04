@@ -263,7 +263,7 @@ func (c *Client) ResumeCh() <-chan *pb.ResumeRun { return c.resumeCh }
 func (c *Client) AgentPromptCh() <-chan *pb.AgentPrompt { return c.promptCh }
 
 // PauseRunCh returns the channel carrying PauseRun control messages from the
-// server (CRI-254). The caller routes each pause to the run it addresses and
+// server. The caller routes each pause to the run it addresses and
 // drives the engine's boundary pause; pauses for unknown runs must be
 // recorded as routing failures, never silently dropped.
 func (c *Client) PauseRunCh() <-chan *pb.PauseRun { return c.pauseRunCh }

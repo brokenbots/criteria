@@ -31,7 +31,7 @@ const (
 
 // Store reads run state (run-state.json, events.ndjson, run-metadata.json)
 // under $CRITERIA_HOME/runs/<runID>/. It is read-only: nothing in this
-// package writes to the run directories (CRI-279 locked rule: no writes
+// package writes to the run directories (locked rule: no writes
 // beyond what the control verbs do).
 type Store struct {
 	// home resolves the criteria root. Overridable for tests.
@@ -326,7 +326,7 @@ func readMetaSource(dir string) string {
 //   - a terminal event (run.completed / run.failed) decides succeeded/failed,
 //     with endedAt from the events file mtime and finalState/failureReason
 //     from the event payload;
-//   - runPaused folds to paused and runResumed back to running (CRI-255);
+//   - runPaused folds to paused and runResumed back to running;
 //     neither is terminal, so the live checks below still apply;
 //   - otherwise run-state.json present and its pid alive → running (or
 //     paused when the stream folded a pause);
@@ -394,7 +394,7 @@ func applyEventToRun(run *Run, hasState bool, ev *EventEnvelope) {
 	}
 }
 
-// applyRunPausedEvent folds a CRI-255 runPaused event: a pause only
+// applyRunPausedEvent folds a runPaused event: a pause only
 // downgrades a still-live run and never resurrects a terminal one.
 func applyRunPausedEvent(run *Run, decode func(proto.Message) bool) {
 	var m pb.RunPaused
@@ -661,8 +661,8 @@ func startedAtRFC3339(st *localState) string {
 }
 
 // Scoped returns a Store restricted to a single run id: the owning apply
-// process wires its run id, so its server serves only the run it owns
-// (CRI-279 locked rule). ListRunIDs reports just that run; RunDir refuses
+// process wires its run id, so its server serves only the run it owns.
+// ListRunIDs reports just that run; RunDir refuses
 // every other id. The standalone serve-ui command uses the unscoped store.
 func (s *Store) Scoped(runID string) *Store {
 	c := *s

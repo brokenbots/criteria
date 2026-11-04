@@ -149,7 +149,7 @@ func (c *ConsoleSink) OnStepOutcome(step, outcome string, duration time.Duration
 	c.writeln(prefix + c.color("1;31", "✗") + " " + body)
 }
 
-// commentTag renders the adapter's ExecuteResult comment (KB-45) after the
+// commentTag renders the adapter's ExecuteResult comment after the
 // step-outcome line; empty comments stay invisible.
 func commentTag(comment string) string {
 	if comment == "" {
@@ -196,7 +196,7 @@ func (c *ConsoleSink) OnStepOutputCaptured(step string, outputs map[string]strin
 
 func (c *ConsoleSink) OnRunPaused(node, mode, signal string) {}
 
-// OnRunResumed is a display no-op (CRI-255): the NDJSON and state sinks carry
+// OnRunResumed is a display no-op: the NDJSON and state sinks carry
 // run.resumed; console progress is emitted per-step.
 func (c *ConsoleSink) OnRunResumed(node string) {}
 
@@ -271,7 +271,7 @@ func (c *ConsoleSink) OnAgentPromptInjected(step, sessionID, prompt, caller stri
 // OnCheckpointPointer is a no-op on the console progress view; the durable
 // checkpoint pointer is recorded in the event stream by the record sinks
 // (LocalSink / server Sink), and per-step saves would otherwise flood the
-// progress view (CRI-203).
+// progress view.
 func (c *ConsoleSink) OnCheckpointPointer(ptr *engine.CheckpointPointerEvent) {}
 
 // OnRunOutputs renders workflow outputs to the console (W09).
@@ -307,7 +307,7 @@ func (c *ConsoleSink) OnStepOutcomeUnknown(step, outcome string) {
 }
 
 // OnStepOutcomeInvalid logs the contract-validation issues that rejected a
-// completed attempt (KB-45); the standard attempt loop re-runs the step.
+// completed attempt; the standard attempt loop re-runs the step.
 func (c *ConsoleSink) OnStepOutcomeInvalid(step, outcome string, issues []string, attempt int) {
 	prefix := c.buildLinePrefix(step)
 	c.writeln(prefix + fmt.Sprintf("⚠ attempt %d rejected by outcome contract (outcome %q)", attempt, outcome))
