@@ -248,7 +248,7 @@ func validateOutcomeContractAttrs(kind, nodeName string, outcomes []OutcomeSpec)
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  fmt.Sprintf("%s %q outcome %q: schema is not supported on %s outcomes", kind, nodeName, o.Name, kind),
-				Detail:   "Per-outcome payload schemas are only available on adapter and sub-workflow step outcomes (KB-45).",
+				Detail:   "Per-outcome payload schemas are only available on adapter and sub-workflow step outcomes.",
 			})
 		}
 		if o.RequireComment {
@@ -267,7 +267,7 @@ func validateOutcomeContractAttrs(kind, nodeName string, outcomes []OutcomeSpec)
 			diags = append(diags, &hcl.Diagnostic{
 				Severity: hcl.DiagError,
 				Summary:  fmt.Sprintf("%s %q outcome %q: description is not supported on %s outcomes", kind, nodeName, o.Name, kind),
-				Detail:   "Outcome descriptions document payload-contract verdicts (KB-259) and are only available on adapter and sub-workflow step outcomes; wait and approval outcomes are engine-mandated with no compiled contract.",
+				Detail:   "Outcome descriptions document payload-contract verdicts and are only available on adapter and sub-workflow step outcomes; wait and approval outcomes are engine-mandated with no compiled contract.",
 			})
 		}
 	}

@@ -258,7 +258,7 @@ func (b *MCPBridge) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse
 			"env":       {Type: "string", Description: "Comma-separated KEY=VALUE environment variable pairs."},
 			"cwd":       {Type: "string", Description: "Working directory for the MCP server process."},
 			"framing":   {Type: "string", Description: "JSON-RPC write framing for the stdio transport: lsp (default, Content-Length headers) or ndjson (newline-delimited JSON). Reads auto-detect either framing; a server speaking only one shape rejects the other with a parse error."},
-			"handshake": {Type: "string", Description: "Session-open negotiation with the MCP server (KB-158, MCP protocol rev 2026-07-28): probe-first (default — probe server/discover, adopting the stateless core when the server advertises it, and fall back to the legacy 2025-03-26 initialize handshake otherwise), initialize (always the legacy handshake), discover (stateless core only, no legacy fallback)."},
+			"handshake": {Type: "string", Description: "Session-open negotiation with the MCP server (MCP protocol rev 2026-07-28): probe-first (default — probe server/discover, adopting the stateless core when the server advertises it, and fall back to the legacy 2025-03-26 initialize handshake otherwise), initialize (always the legacy handshake), discover (stateless core only, no legacy fallback)."},
 		}},
 		// InputSchema stays undeclared on purpose: the mcp adapter's input
 		// surface is dynamic. "tool" is the routing key, enforced
