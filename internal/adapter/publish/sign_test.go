@@ -122,6 +122,104 @@ func TestSign_KeyMode_RoundTripVerifies(t *testing.T) {
 	}
 }
 
+// TestSign_KeyMode_DigestBindingRoundTrip pins the publish↔verify digest
+// binding contract: the publisher's signature manifest verifies for the exact
+// artifact digest its payload names, and merely re-pointing the published
+// manifest's OCI subject at a different artifact cannot transplant the
+// signature there.
+func TestSign_KeyMode_DigestBindingRoundTrip(t *testing.T) {
+	root := t.TempDir()
+	l, err := oci.Open(root)
+	if err != nil {
+		t.Fatalf("open layout: %v", err)
+	}
+
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pubDER, err := x509.MarshalPKIXPublicKey(priv.Public())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(pubDER)
+	policy := signing.Policy{
+		Mode:        signing.ModeStrict,
+		TrustedKeys: []signing.KeyIdentity{{Algorithm: "ed25519", Fingerprint: hex.EncodeToString(sum[:]), RawKey: pubDER}},
+	}
+
+	manifest := func(config string) ocispec.Descriptor {
+		m := ocispec.Manifest{
+			MediaType: ocispec.MediaTypeImageManifest,
+			Config:    ocispec.Descriptor{MediaType: mediaTypeAdapterConfig, Digest: digest.FromString(config), Size: int64(len(config))},
+		}
+		data, _ := json.Marshal(m)
+		artifactDigest := digest.FromBytes(data)
+		if err := l.WriteBlob(bytes.NewReader(data), artifactDigest); err != nil {
+			t.Fatal(err)
+		}
+		return ocispec.Descriptor{MediaType: ocispec.MediaTypeImageManifest, Digest: artifactDigest, Size: int64(len(data))}
+	}
+	ref := oci.Reference{Registry: "ghcr.io", Repo: "criteria-adapters/test", Tag: "v1.0.0"}
+
+	// Publish a real signature for artifact A via the publisher builders.
+	artifactA := manifest("artifact-A")
+	payloadA := simpleSigningPayload(ref, artifactA.Digest)
+	res, err := KeySigner{Priv: priv}.Sign(payloadA)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	manifestJSON, payloadBytes := buildSignatureManifest(&artifactA, payloadA, &res)
+
+	push := func(b []byte) ocispec.Descriptor {
+		dg := digest.FromBytes(b)
+		if err := l.WriteBlob(bytes.NewReader(b), dg); err != nil {
+			t.Fatal(err)
+		}
+		return ocispec.Descriptor{MediaType: ocispec.MediaTypeImageManifest, Digest: dg, Size: int64(len(b))}
+	}
+	push(payloadBytes)
+	sigDescA := push(manifestJSON)
+
+	// Artifact B is staged up front; its signature referrer is added below.
+	artifactB := manifest("artifact-B")
+	if err := l.WriteIndex(&ocispec.Index{
+		MediaType: ocispec.MediaTypeImageIndex,
+		Manifests: []ocispec.Descriptor{artifactA, sigDescA},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Positive round-trip: publish-produced signature verifies for A.
+	if _, err := signing.Verify(context.Background(), l, artifactA.Digest, policy); err != nil {
+		t.Fatalf("digest-bound publish round-trip must verify: %v", err)
+	}
+
+	// Attack: re-point the published signature manifest's subject at a
+	// different artifact B and re-index it — exactly what mutating the
+	// writable cache layout can do. The signature bytes were produced for A's
+	// payload; verification for B must fail on the digest binding.
+	var repointed ocispec.Manifest
+	if err := json.Unmarshal(manifestJSON, &repointed); err != nil {
+		t.Fatal(err)
+	}
+	repointed.Subject.Digest = artifactB.Digest
+	repointed.Subject.Size = artifactB.Size
+	repointedData, _ := json.Marshal(repointed)
+	sigDescB := push(repointedData)
+
+	if err := l.WriteIndex(&ocispec.Index{
+		MediaType: ocispec.MediaTypeImageIndex,
+		Manifests: []ocispec.Descriptor{artifactA, artifactB, sigDescA, sigDescB},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := signing.Verify(context.Background(), l, artifactB.Digest, policy); err == nil {
+		t.Fatal("re-pointed published signature must not verify for artifact B")
+	}
+}
+
 // TestSimpleSigningPayload_BindsDigest checks the payload binds the exact
 // artifact digest and repository reference cosign expects.
 func TestSimpleSigningPayload_BindsDigest(t *testing.T) {

@@ -12,6 +12,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -146,6 +147,11 @@ type signatureRecord struct {
 //     manifestDigest.
 //  2. Embedded convention: the artifact manifest itself may contain a layer
 //     with title "signatures/cosign.sig" (legacy compat).
+//
+// Referrer manifests that carry the cosign signature annotation but have a
+// broken or missing simple-signing payload are hard errors (fail closed), not
+// skipped candidates — a layout that mutated a signature manifest in place must
+// fail verification rather than silently narrowing to the remaining records.
 func findSignatures(layout *oci.Layout, manifestDigest digest.Digest) ([]signatureRecord, error) {
 	var out []signatureRecord
 
@@ -161,9 +167,14 @@ func findSignatures(layout *oci.Layout, manifestDigest digest.Digest) ([]signatu
 		}
 
 		if m.Subject != nil && m.Subject.Digest == manifestDigest {
-			if rec, ok := recordFromManifest(layout, m, desc.Digest); ok {
-				out = append(out, rec)
+			rec, err := recordFromManifest(layout, m, desc.Digest)
+			if errors.Is(err, errNotCosignSignature) {
+				continue
 			}
+			if err != nil {
+				return nil, fmt.Errorf("signature referrer %s: %w", desc.Digest, err)
+			}
+			out = append(out, rec)
 			continue
 		}
 
@@ -202,48 +213,60 @@ func embeddedSigs(layout *oci.Layout, m *ocispec.Manifest) []signatureRecord {
 	return out
 }
 
-// recordFromManifest extracts a signatureRecord from a cosign signature
-// manifest.
-func recordFromManifest(layout *oci.Layout, m *ocispec.Manifest, manifestDigest digest.Digest) (signatureRecord, bool) {
-	rec := signatureRecord{manifestDigest: manifestDigest}
+// errNotCosignSignature marks a referrer manifest that is not a cosign
+// signature (no signature annotation): a genuine skip, not a failure.
+var errNotCosignSignature = errors.New("not a cosign signature manifest")
 
+// recordFromManifest extracts a signatureRecord from a cosign signature
+// manifest. It returns errNotCosignSignature for manifests that do not carry
+// the cosign signature annotation, and a hard error for signatures whose
+// simple-signing payload cannot be read or does not exist.
+func recordFromManifest(layout *oci.Layout, m *ocispec.Manifest, manifestDigest digest.Digest) (signatureRecord, error) {
 	anns := mergeAnnotations(m.Annotations, m.Layers)
 
+	rec := signatureRecord{manifestDigest: manifestDigest}
 	rec.signatureB64 = anns["dev.cosignproject.cosign/signature"]
 	rec.certPEM = anns["dev.sigstore.cosign/certificate"]
 	rec.chainPEM = anns["dev.sigstore.cosign/chain"]
 	rec.bundleJSON = anns["dev.sigstore.cosign/bundle"]
 
 	if rec.signatureB64 == "" {
-		return signatureRecord{}, false
+		return signatureRecord{}, errNotCosignSignature
 	}
 
-	rec.payload = readPayload(layout, m)
-	return rec, rec.payload != nil
+	payload, err := readPayload(layout, m)
+	if err != nil {
+		return signatureRecord{}, err
+	}
+	rec.payload = payload
+	return rec, nil
 }
 
-func readPayload(layout *oci.Layout, m *ocispec.Manifest) []byte {
-	for _, layer := range m.Layers {
+// readPayload reads the simple-signing payload blob from the signature
+// manifest's cosign simple-signing layer. A signature manifest without a
+// SimpleSigningMediaType layer (or with an unreadable payload blob) is broken
+// or hostile and is a hard error: the payload is the only input the signature
+// verifies over, so the old "first blob that exists" fallback — which let a
+// signature verify over arbitrary bytes — is gone.
+func readPayload(layout *oci.Layout, m *ocispec.Manifest) ([]byte, error) {
+	var payloadDesc *ocispec.Descriptor
+	for i, layer := range m.Layers {
 		if layer.MediaType == ctypes.SimpleSigningMediaType {
-			if layout.HasBlob(layer.Digest) {
-				data, err := os.ReadFile(layout.BlobPath(layer.Digest))
-				if err == nil {
-					return data
-				}
-			}
+			payloadDesc = &m.Layers[i]
 			break
 		}
 	}
-	for _, layer := range m.Layers {
-		if layout.HasBlob(layer.Digest) {
-			data, err := os.ReadFile(layout.BlobPath(layer.Digest))
-			if err == nil {
-				return data
-			}
-			break
-		}
+	if payloadDesc == nil {
+		return nil, fmt.Errorf("signature manifest has no %s payload layer", ctypes.SimpleSigningMediaType)
 	}
-	return nil
+	if !layout.HasBlob(payloadDesc.Digest) {
+		return nil, fmt.Errorf("simple-signing payload blob %s not present in layout", payloadDesc.Digest)
+	}
+	data, err := os.ReadFile(layout.BlobPath(payloadDesc.Digest))
+	if err != nil {
+		return nil, fmt.Errorf("read simple-signing payload %s: %w", payloadDesc.Digest, err)
+	}
+	return data, nil
 }
 
 func recordFromEmbedded(layout *oci.Layout, layer *ocispec.Descriptor) (signatureRecord, bool) {
@@ -273,8 +296,27 @@ func mergeAnnotations(manifestAnns map[string]string, layers []ocispec.Descripto
 	return out
 }
 
+// verifyOne verifies a single candidate signature against the artifact digest
+// under verification.
+//
+// Digest binding is enforced here before any signature check: a cosign
+// signature proves authenticity of the payload bytes it is computed over, and
+// the payload's critical.image.docker-manifest-digest field is what binds
+// those bytes to the artifact. The publisher (publish.signArtifact) always
+// writes that field, but the trust anchor — the referrer record in a local,
+// writable OCI layout — can be mutated to re-point a real signature at a
+// different artifact, so the referrer link alone is not an anchor. A payload
+// whose digest field is absent or names a different digest fails closed,
+// independent of Policy.Mode: this is payload integrity, not policy.
 func verifyOne(ctx context.Context, manifestDigest digest.Digest, rec *signatureRecord, policy *Policy) (*SignerIdentity, error) {
-	_ = manifestDigest // the signature is bound to the artifact via the OCI subject referrer
+	bound, err := simpleSigningDigest(rec.payload)
+	if err != nil {
+		return nil, fmt.Errorf("signature payload is not digest-bound: %w", err)
+	}
+	if bound != manifestDigest {
+		return nil, fmt.Errorf("signature payload is bound to %s, not the artifact under verification %s — re-attach the signature to the correct manifest or republish", bound, manifestDigest)
+	}
+
 	// Dispatch on the signature record's shape, not solely on the policy, so a
 	// mixed environment (some adapters key-signed, some keyless) verifies under a
 	// single policy: a keyless signature carries a Fulcio certificate or a
@@ -289,6 +331,32 @@ func verifyOne(ctx context.Context, manifestDigest digest.Digest, rec *signature
 		return verifyKeyless(ctx, rec, policy)
 	}
 	return verifyKeyBased(rec, policy)
+}
+
+// simpleSigningDigest extracts the artifact digest the payload binds itself to:
+// the critical.image.docker-manifest-digest field of a cosign simple-signing
+// payload. It errors when the payload is not simple-signing JSON, when the
+// field is absent, or when the field is not a well-formed OCI digest.
+func simpleSigningDigest(payload []byte) (digest.Digest, error) {
+	var doc struct {
+		Critical struct {
+			Image struct {
+				DockerManifestDigest string `json:"docker-manifest-digest"`
+			} `json:"image"`
+		} `json:"critical"`
+	}
+	if err := json.Unmarshal(payload, &doc); err != nil {
+		return "", fmt.Errorf("payload is not simple-signing JSON: missing critical.image.docker-manifest-digest")
+	}
+	raw := doc.Critical.Image.DockerManifestDigest
+	if raw == "" {
+		return "", fmt.Errorf("payload is missing the critical.image.docker-manifest-digest field")
+	}
+	d, err := digest.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("payload digest field %q is not a valid OCI digest: %w", raw, err)
+	}
+	return d, nil
 }
 
 // verifyKeyless verifies a keyless cosign signature. It requires the Sigstore
@@ -312,8 +380,9 @@ func verifyKeylessBundle(ctx context.Context, rec *signatureRecord, policy *Poli
 	if err := b.UnmarshalJSON([]byte(rec.bundleJSON)); err != nil {
 		return nil, fmt.Errorf("unmarshal bundle: %w", err)
 	}
-	// The bundle's message signature is over the simple-signing payload, which is
-	// itself bound to the artifact by the OCI subject referrer (findSignatures).
+	// The bundle's message signature is over the simple-signing payload, whose
+	// digest-binding to the artifact under verification was already enforced by
+	// verifyOne before dispatch.
 	payloadDigest := sha256.Sum256(rec.payload)
 	return verifyBundleEntity(ctx, &b, payloadDigest[:], policy)
 }
