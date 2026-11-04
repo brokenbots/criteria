@@ -14,7 +14,7 @@ import (
 
 // classifyTransportLoss reports whether an error is a transport-class
 // failure of the phone-home line a handshake ran on — the line folded
-// under a still-live adapter (KB-257). ONLY transport losses are
+// under a still-live adapter. ONLY transport losses are
 // retryable; semantic handshake failures (digest mismatch, token mismatch,
 // config/secret validation, adapter-reported errors) never retry.
 //
@@ -78,8 +78,8 @@ func verifyWaitRound(
 }
 
 // verifyTransportFailover re-establishes a phase-B verify handshake
-// against a FRESH adapter phone-home line after a transport-class loss
-// (KB-257). Each round re-waits through the shim's displacement-armed
+// against a FRESH adapter phone-home line after a transport-class loss. Each
+// round re-waits through the shim's displacement-armed
 // waiter (the pod re-dials; a peer re-dial always presents a fresh
 // handshake) and re-runs Info on the new handle, until the convergence
 // budget expires. Semantic Info failures stay fail-fast.

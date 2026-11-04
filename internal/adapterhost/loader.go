@@ -37,7 +37,7 @@ import (
 // is emitted at INFO, and CLI commands (validate/lock) stream JSON on stdout
 // while tests capture stderr into the same pipe, where that line corrupts
 // the JSON. Clean- and crash-exit diagnosability comes from ProcessExited
-// and classifySessionCrash instead (CRI-271).
+// and classifySessionCrash instead.
 // Override via CRITERIA_LOG_LEVEL=trace|debug|info|warn|error.
 func adapterClientLogger() hclog.Logger {
 	level := hclog.Warn
@@ -84,7 +84,7 @@ type Handle interface {
 	Info(ctx context.Context) (Info, error)
 	OpenSession(ctx context.Context, id string, config, secrets map[string]string) error
 	// Execute runs one step attempt. rejection, when non-nil, carries the
-	// host-rejection repair context (KB-45) for the previous attempt; the
+	// host-rejection repair context for the previous attempt; the
 	// adapter is expected to retry the step under it. The host re-validates
 	// every attempt's verdict against the step's outcome contracts, except a
 	// host-synthesized fallback (validated at synthesis).
@@ -157,14 +157,14 @@ type Info struct {
 	Version           string
 	Capabilities      []string
 	SupportedFeatures []string // NEW v2 (D76)
-	// Tools is the adapter's declared tool surface (CRI-171). Dynamic-tools
-	// adapters (mcp, CRI-172) populate it from tools/list at OpenSession;
+	// Tools is the adapter's declared tool surface. Dynamic-tools
+	// adapters (mcp) populate it from tools/list at OpenSession;
 	// empty until the adapter has discovered a surface.
 	Tools       []ToolInfo
 	AdapterInfo workflow.AdapterInfo
 }
 
-// ToolInfo describes one tool on an adapter's declared tool surface (CRI-171).
+// ToolInfo describes one tool on an adapter's declared tool surface.
 type ToolInfo struct {
 	Name           string
 	Description    string
@@ -544,7 +544,7 @@ func ExecuteViaClient(ctx context.Context, client Client, adapterName, sessionID
 		SecretInputs:    cloneConfig(step.SecretInputs),
 		AllowedOutcomes: collectAllowedOutcomes(step),
 	}
-	// KB-212: forward the declared step timeout on the wire (criteria-adapter-
+	// Forward the declared step timeout on the wire (criteria-adapter-
 	// proto v0.8.0 additive timeout_ms) so adapters stop falling back to their
 	// private default for long steps. The same guard as the engine's context
 	// ceiling (step.Timeout > 0) keeps unset and non-positive declarations
@@ -554,7 +554,7 @@ func ExecuteViaClient(ctx context.Context, client Client, adapterName, sessionID
 		req.TimeoutMs = step.Timeout.Milliseconds()
 	}
 	if contracts := outcomeContractsForStep(step); contracts != nil {
-		// KB-45: contract-bearing steps publish their outcome contracts (and
+		// Contract-bearing steps publish their outcome contracts (and
 		// the repair context for a rejected prior attempt) on the wire;
 		// legacy steps keep the v0.5-era request shape byte-identically.
 		req.AllowedOutcomes = allowedOutcomesForContracts(step)
@@ -574,15 +574,15 @@ func ExecuteViaClient(ctx context.Context, client Client, adapterName, sessionID
 
 // rescueAdapterVerdict applies the adapter's own verdict (captured
 // ExecuteResult or adapter-level outcome.finalized) when the stream did not
-// end cleanly, while the host context is still alive. KB-53: the adapter's
+// end cleanly, while the host context is still alive. The adapter's
 // verdict for the turn wins over the synthetic failure a broken stream would
 // otherwise produce; an engine- or run-initiated cancellation (step timeout /
-// teardown) keeps the existing failure semantics. KB-56: when the stream
+// teardown) keeps the existing failure semantics. When the stream
 // continued past the outcome, the finalize cut cancelled it; the rescued
 // verdict still wins and the logged cause reflects the cut rather than an
 // apparent stream failure.
 //
-// KB-57: a fully delivered ExecuteResult (the adapter sent a complete result
+// A fully delivered ExecuteResult (the adapter sent a complete result
 // event with a non-empty outcome before the stream was observed to fail)
 // survives the teardown race even when the host context is already cancelled.
 // This is the third variant of the step-outcome drop: a shell step completes
@@ -592,8 +592,8 @@ func ExecuteViaClient(ctx context.Context, client Client, adapterName, sessionID
 // the step's real outcome never reached the event stream. A result the
 // adapter submitted IS completed work; reporting it keeps every executed step
 // resolvable. A finalization-only verdict (outcome.finalized event, no
-// delivered result) still requires a live host context so the KB-56 cut and
-// the CRI-275 step-ceiling teardown semantics stay intact.
+// delivered result) still requires a live host context so the finalize cut and
+// the step-ceiling teardown semantics stay intact.
 // rescueVerdict frames a rescued attempt verdict for contract validation: a
 // delivered wire result keeps its verbatim outputs_json bytes (including an
 // undecodable payload, which a contract step must still issue under the
@@ -652,9 +652,9 @@ type executeCaptureSink struct {
 
 	// lastDecisionDenied records whether the step's LAST permission decision
 	// was a denial. It triggers the outcome override (success → needs_review)
-	// after Execute. KB-57c refinement: a deny that the model subsequently
+	// after Execute. Refinement: a deny that the model subsequently
 	// recovered from (any later granted permission) no longer poisons the
-	// verdict — the kb-61-1790827708 run finalized success after policy-
+	// verdict — a repro run finalized success after policy-
 	// correct compound denials were retried as split commands, and flagging
 	// recovered steps for human review resurrects the deny-loop as a
 	// silent-stall class. A step whose final state is still denied keeps the
@@ -680,7 +680,7 @@ type executeCaptureSink struct {
 	requests chan<- *v2.PermissionEvent
 	ctx      context.Context
 
-	// KB-53: adapter-level turn finalization. When the adapter resolves its
+	// Adapter-level turn finalization. When the adapter resolves its
 	// outcome mid-stream via an outcome.finalized adapter event (e.g. the
 	// copilot submit_outcome tool) but the Execute stream then breaks before
 	// a result event is delivered, this captures the finalized verdict so the
@@ -690,21 +690,21 @@ type executeCaptureSink struct {
 	finalizedComment string
 	finalizedPayload map[string]any
 
-	// KB-237: the last outcome-submit tool invocation on this attempt
-	// (adapterEventFinalizeTool, guard KB-42). The adapter validates the
+	// The last outcome-submit tool invocation on this attempt
+	// (adapterEventFinalizeTool). The adapter validates the
 	// comment against the outcome's require_comment contract in-turn, but
 	// neither the outcome.finalized event it forwards nor the turn-terminal
-	// cut (KB-56) is guaranteed to keep that comment on the delivered
+	// cut is guaranteed to keep that comment on the delivered
 	// verdict — the invocation arguments are the wire copy the host can
 	// still read when the verdict must be reconstructed.
 	finalizeSubmitOutcome string
 	finalizeSubmitComment string
 
-	// KB-56: a finalized outcome is turn-terminal. onTurnFinalized (when
+	// A finalized outcome is turn-terminal. onTurnFinalized (when
 	// non-nil) cancels the Execute stream the moment a verdict is recorded,
 	// so the host stops consuming the turn at the outcome instead of leaving
 	// it open while the adapter keeps streaming past its submit. The
-	// cancellation surfaces as a Canceled execErr, which the KB-53 rescue
+	// cancellation surfaces as a Canceled execErr, which the rescue
 	// resolves to the captured verdict. finalizeKilled records that this cut
 	// (not an external failure) ended the stream, for log differentiation.
 	onTurnFinalized func()
@@ -724,7 +724,7 @@ type executeCaptureSink struct {
 	resultChunkNextSeq  uint32 // expected next result chunk seq (0 = idle)
 }
 
-// resolvedOutcome applies the pinned outcome-contract validation (KB-45) to a
+// resolvedOutcome applies the pinned outcome-contract validation to a
 // resolved attempt verdict BEFORE any downstream mapping or permission
 // override, so success→needs_review cannot launder a payload the step's
 // contracts reject. Delivered verdicts are validated from their verbatim
@@ -756,7 +756,7 @@ func (s *executeCaptureSink) resolvedOutcome(step *workflow.StepNode, v *rescueV
 		// synthesized the fallback outcome. Mark the synthesis so repeated
 		// local validation (session-level re-check, respawn retry) skips it
 		// instead of validating the empty verdict against the fallback's own
-		// contract (KB-45).
+		// contract.
 		v.result = *synth
 		v.result.SynthesizedFallback = true
 	}
@@ -792,7 +792,7 @@ func executeWithFallbackStream(ctx context.Context, client Client, adapterName s
 	cancelPerm()
 	permErr := <-permDone
 
-	// KB-53/KB-56: see rescueAdapterVerdict — the rescued verdict still wins
+	// See rescueAdapterVerdict — the rescued verdict still wins
 	// after the finalize cut while the host context is alive.
 	if v, ok := rescueAdapterVerdict(captureSink, execErr, ctx, step.Name); ok {
 		return captureSink.resolvedOutcome(step, &v)
@@ -813,7 +813,7 @@ func executeWithFallbackStream(ctx context.Context, client Client, adapterName s
 }
 
 // executeCapturedVerdict resolves the post-Execute verdict from the capture
-// sink: the delivered result verbatim, the KB-45 fallback/no_result lanes for
+// sink: the delivered result verbatim, the fallback/no_result lanes for
 // a contract step that never finalized, or the stream-end error for a legacy
 // step.
 func executeCapturedVerdict(ctx context.Context, s *executeCaptureSink, step *workflow.StepNode) (adapter.Result, error) {
@@ -822,7 +822,7 @@ func executeCapturedVerdict(ctx context.Context, s *executeCaptureSink, step *wo
 			return adapter.Result{Outcome: "failure"}, ctxErr
 		}
 		if outcomeContractsForStep(step) != nil {
-			// KB-45: a contract-bearing step ended without a finalized
+			// A contract-bearing step ended without a finalized
 			// result — the evaluator engages the fallback lane (or issues
 			// the pinned no_result error) instead of the legacy stream
 			// error, feeding the engine's repair loop.
@@ -863,7 +863,7 @@ func executeWithActiveStream(ctx context.Context, client Client, step *workflow.
 		outputSchema: step.OutputSchema,
 	}
 
-	// KB-56: give the Execute stream its own cancellable layer so an adapter
+	// Give the Execute stream its own cancellable layer so an adapter
 	// outcome.finalized mid-stream can end the turn at the submitted outcome
 	// instead of letting the stream's continuation keep the turn open until a
 	// watchdog tears the session down. Cancelling this layer (not the caller's
@@ -874,7 +874,7 @@ func executeWithActiveStream(ctx context.Context, client Client, step *workflow.
 
 	execErr := client.Execute(execCtx, req, captureSink)
 
-	// KB-53/KB-56: see rescueAdapterVerdict — this is where the incident's
+	// See rescueAdapterVerdict — this is where the incident's
 	// outcome.finalized ready_for_review was dropped and the develop step
 	// resolved failure. The rescue applies only while the host context is
 	// alive so engine- or run-initiated teardown semantics stay intact.
@@ -899,7 +899,7 @@ func executeWithActiveStream(ctx context.Context, client Client, step *workflow.
 			return adapter.Result{Outcome: "failure"}, ctxErr
 		}
 		if outcomeContractsForStep(step) != nil {
-			// KB-45: a contract-bearing step ended without a finalized
+			// A contract-bearing step ended without a finalized
 			// result — the evaluator engages the fallback lane (or issues
 			// the pinned no_result error) instead of the legacy stream
 			// error, feeding the engine's repair loop.
@@ -913,14 +913,14 @@ func executeWithActiveStream(ctx context.Context, client Client, step *workflow.
 
 // adapterEventFinalizedOutcome is the adapter event kind used by adapters
 // that resolve their turn at the adapter level mid-stream (the copilot
-// submit_outcome tool, guard KB-42). The payload shape is
+// submit_outcome tool). The payload shape is
 // {"outcome": string, "reason": string(possibly redacted upstream)}, plus
-// the optional "comment" echo of a contract-mode finalize (KB-237).
+// the optional "comment" echo of a contract-mode finalize.
 const adapterEventFinalizedOutcome = "outcome.finalized"
 
 // adapterEventFinalizeTool is the outcome-submit tool whose invocation
-// precedes an outcome.finalized verdict (the copilot submit_outcome tool,
-// guard KB-42). The invocation's arguments carry {"outcome": string,
+// precedes an outcome.finalized verdict (the copilot submit_outcome tool).
+// The invocation's arguments carry {"outcome": string,
 // "comment": string(when the outcome requires one), ...}; see
 // recordFinalizeSubmit for the durability contract.
 const adapterEventFinalizeTool = "submit_outcome"
@@ -1005,7 +1005,7 @@ func (s *executeCaptureSink) emitTool(toolEvt *v2.ToolInvocation) error {
 }
 
 // recordFinalizeSubmit captures the LAST outcome-submit invocation on this
-// attempt (KB-237). The adapter checks the contract's require_comment
+// attempt. The adapter checks the contract's require_comment
 // in-turn and would have rejected a comment-less submit, and an accepted
 // finalize hard-rejects resubmission — so the last recorded arguments for
 // the finalized outcome carry exactly the comment the accepted submit used.
@@ -1033,7 +1033,7 @@ func (s *executeCaptureSink) emitResult(resultEvt *v2.ExecuteResult) error {
 		typed, err := s.decodeOutputsJSON(oj)
 		if err != nil {
 			if s.outcomeContracted() {
-				// KB-45: as on the chunked path, an undecodable payload on a
+				// As on the chunked path, an undecodable payload on a
 				// contract-bearing step is captured verbatim AND settles the
 				// verdict (done=true): the contract evaluator then issues the
 				// pinned payload_schema error. Leaving done=false instead
@@ -1088,7 +1088,7 @@ func (s *executeCaptureSink) emitChunkedResult(resultEvt *v2.ExecuteResult, chun
 	typed, err := s.decodeOutputsJSON(buf)
 	if err != nil {
 		if s.outcomeContracted() {
-			// KB-45: capture the raw payload verbatim so the contract
+			// Capture the raw payload verbatim so the contract
 			// evaluator issues the pinned payload_schema error.
 			s.result = adapter.Result{Outcome: s.resultOutcome, Comment: s.comment}
 			s.done = true
@@ -1102,7 +1102,7 @@ func (s *executeCaptureSink) emitChunkedResult(resultEvt *v2.ExecuteResult, chun
 }
 
 // outcomeContracted reports whether the step executes under outcome
-// contracts (KB-45).
+// contracts.
 func (s *executeCaptureSink) outcomeContracted() bool {
 	return s.step != nil && outcomeContractsForStep(s.step) != nil
 }
@@ -1144,7 +1144,7 @@ func (s *executeCaptureSink) decodeOutputsJSON(b []byte) (map[string]cty.Value, 
 // is handled session-scoped by permissionInterceptSink in SessionManager.Execute.
 func (s *executeCaptureSink) emitAdapterEvent(adapterEvt *v2.AdapterEvent) error {
 	if adapterEvt.GetEventKind() == adapterEventFinalizedOutcome {
-		// KB-56: a recorded verdict ends the turn even when the stream
+		// A recorded verdict ends the turn even when the stream
 		// continues past the submit. Both the continue-streaming and the
 		// continue-then-abort shapes resolve to the adapter's verdict; the
 		// remaining stream is cancelled at the cut below.
@@ -1287,13 +1287,13 @@ func (s *executeCaptureSink) recordFinalizedOutcome(payload map[string]any) bool
 	return false
 }
 
-// cutStreamAtFinalized treats the adapter-level outcome as turn-terminal
-// (KB-56): the turn is over when the outcome lands, so the remaining stream
+// cutStreamAtFinalized treats the adapter-level outcome as turn-terminal:
+// the turn is over when the outcome lands, so the remaining stream
 // (e.g. the model's wrap-up summary after the submit_outcome tool returns)
 // is cancelled instead of keeping the turn open until a watchdog tears the
 // session down and the submitted verdict is dropped. Cancelling the Execute
 // stream's own context layer ends the adapter call promptly while the host
-// context stays alive, so the KB-53 rescue resolves the step to the verdict
+// context stays alive, so the rescue resolves the step to the verdict
 // captured above.
 func (s *executeCaptureSink) cutStreamAtFinalized() {
 	if s.onTurnFinalized == nil || s.finalizeKilled {
@@ -1304,14 +1304,14 @@ func (s *executeCaptureSink) cutStreamAtFinalized() {
 }
 
 // rescueResult returns the adapter's own verdict when the Execute stream ended
-// abnormally (KB-53): a captured ExecuteResult wins; otherwise a captured
+// abnormally: a captured ExecuteResult wins; otherwise a captured
 // outcome.finalized event is synthesized into the equivalent result so the
 // workflow-level step resolves to the outcome the adapter chose (e.g.
 // ready_for_review flows on to create_pr) instead of a synthetic "failure".
 //
-// KB-237: the reconstructed verdict also carries the finalize comment.
+// The reconstructed verdict also carries the finalize comment.
 // The comment must ride the delivered result (ExecuteResult.Comment) for the
-// engine's require_comment evaluator — but the KB-56 turn cut ends the
+// engine's require_comment evaluator — but the turn cut ends the
 // stream the instant the adapter resolves its outcome, before the turn's
 // terminal result is delivered, so the synthesis reconstructs the comment
 // from what the host still holds: the outcome.finalized "comment" echo
@@ -1350,7 +1350,7 @@ func (s *executeCaptureSink) rescueResult() (adapter.Result, bool) {
 // when that invocation's outcome matches the finalized verdict (the match
 // pins the comment to the submit that became the verdict; a mismatched
 // invocation is not accepted evidence and must not satisfy require_comment).
-// The comment is never aliased from the reason (KB-237 contract: reason is
+// The comment is never aliased from the reason (the reason is
 // the step's findings; comment is the require_comment satisfaction signal).
 func (s *executeCaptureSink) finalizeComment() string {
 	if s.finalizedComment != "" {
@@ -1676,7 +1676,7 @@ func AdapterInfoFromProto(resp *v2.InfoResponse) workflow.AdapterInfo {
 	}
 }
 
-// StateDeclarationFromProto translates InfoResponse.state (CRI-201) into the
+// StateDeclarationFromProto translates InfoResponse.state into the
 // host-side declaration. Returns nil when the adapter declared no state:
 // an absent descriptor is mode none by spec (adapters without a declaration
 // behave exactly as before), and an empty mode string is indistinguishable
@@ -1694,8 +1694,8 @@ func StateDeclarationFromProto(desc *v2.StateDescriptor) *workflow.StateDeclarat
 }
 
 // runtimeToolNamesFromProto extracts the tool names carried by
-// InfoResponse.tools (CRI-171) so the compiler can check named tool refs
-// against the runtime surface (CRI-173). Returns nil for an empty list.
+// InfoResponse.tools so the compiler can check named tool refs
+// against the runtime surface. Returns nil for an empty list.
 func runtimeToolNamesFromProto(tools []*v2.ToolInfo) []string {
 	if len(tools) == 0 {
 		return nil
@@ -1707,7 +1707,7 @@ func runtimeToolNamesFromProto(tools []*v2.ToolInfo) []string {
 	return out
 }
 
-// ToolsFromProto translates InfoResponse.tools (CRI-171) into host-side
+// ToolsFromProto translates InfoResponse.tools into host-side
 // ToolInfo values.
 func ToolsFromProto(tools []*v2.ToolInfo) []ToolInfo {
 	if len(tools) == 0 {

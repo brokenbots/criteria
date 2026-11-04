@@ -26,7 +26,7 @@ type LogEventSender interface {
 // RunLogHeartbeat blocks until ctx is canceled, emitting log-stream heartbeat
 // events at the registered heartbeat cadence (tunables registry:
 // CRITERIA_HEARTBEAT_INTERVAL, default 30s). The lenient override supersedes
-// the retired test-only cadence hatch (KB-132): an unset, malformed, or
+// the retired test-only cadence hatch: an unset, malformed, or
 // non-positive value keeps the built-in default, and a short override lets
 // conformance tests prove liveness with a short stall threshold without
 // waiting the full production interval. Adapter fixture subprocesses inherit

@@ -7,7 +7,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 )
 
-// Transport liveness policy for remote adapter connections (CRI-276).
+// Transport liveness policy for remote adapter connections.
 //
 // A remote adapter session may legitimately sit idle for very long stretches
 // while other sessions work: the adapter's log stream can end early (the
@@ -17,7 +17,7 @@ import (
 // shim bridge and the phone-home connection; the pod then restarts the
 // adapter process while the engine still holds the dead handle, and the next
 // step fails with "gRPC client transport closed (adapter or shim closed the
-// connection)" — exactly the CRI-272 run 225a8c72 signature at 32-33 minutes
+// connection)" — exactly the run 225a8c72 signature at 32-33 minutes
 // of idleness.
 //
 // The policy below makes both ends of the phone-home chain behave like the

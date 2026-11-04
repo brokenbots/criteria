@@ -30,8 +30,8 @@ type pluginReattachSource interface {
 }
 
 // ProcessWaitReporter is an optional Handle capability: reporting the
-// observed OS exit status of the adapter subprocess after it has exited
-// (CRI-287). *rpcHandle implements it from the exec.Cmd wait status; test
+// observed OS exit status of the adapter subprocess after it has exited.
+// *rpcHandle implements it from the exec.Cmd wait status; test
 // fakes may implement it to feed synthetic facts into classification paths.
 type ProcessWaitReporter interface {
 	ProcessWaitStatus() (exitCode, signal int, ok bool)
@@ -53,7 +53,7 @@ func ProcessWaitStatus(p Handle) (exitCode, signal int, ok bool) {
 }
 
 // ProcessExitReporter is an optional Handle capability: reporting whether the
-// adapter subprocess backing the handle has exited (CRI-271). *rpcHandle
+// adapter subprocess backing the handle has exited. *rpcHandle
 // implements it through the go-plugin client; test fakes implement it to
 // exercise the process-exit classification without a real subprocess.
 type ProcessExitReporter interface {
@@ -61,7 +61,7 @@ type ProcessExitReporter interface {
 }
 
 // ProcessExited reports whether the go-plugin client backing the handle has
-// observed its subprocess exit (CRI-271). Handles that cannot report exit
+// observed its subprocess exit. Handles that cannot report exit
 // (built-in adapters, plain fakes) report false: no exit signal exists for
 // them, so callers must fall back to error-message heuristics.
 func ProcessExited(p Handle) bool {
@@ -74,7 +74,7 @@ func ProcessExited(p Handle) bool {
 
 // isPeerSupervised reports whether the handle's process-exit facts come
 // from peer supervision (ADR-0007): a SupervisedHandle's ProcessExited is a
-// journal fact delivered by the peer that observed the child, so the CRI-287
+// journal fact delivered by the peer that observed the child, so the
 // teardown-window carve-out (a child dying with the engine's canceled turn)
 // applies to it. Legacy-runner handles keep the conservative local rule.
 func isPeerSupervised(h Handle) bool {

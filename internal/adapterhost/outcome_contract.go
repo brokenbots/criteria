@@ -1,4 +1,4 @@
-// Outcome-contract integration (KB-45): builds the wire ExecuteRequest
+// Outcome-contract integration: builds the wire ExecuteRequest
 // outcome_contracts from compiled steps and validates adapter results
 // host-side through the shared criteria-adapter-proto evaluator, so local
 // (typed) and remote (wire) adapter results are treated identically.
@@ -18,8 +18,8 @@ import (
 	"github.com/brokenbots/criteria/workflow"
 )
 
-// OutcomeInvalidError reports a host-side contract validation rejection
-// (KB-45). The engine routes it to the standard step attempt loop: each
+// OutcomeInvalidError reports a host-side contract validation rejection.
+// The engine routes it to the standard step attempt loop: each
 // rejected attempt emits a StepOutcomeInvalid event and the next Execute
 // carries the corresponding ExecutionRejection until the retry budget is
 // exhausted.
@@ -41,7 +41,7 @@ func joinIssues(issues []string) string {
 }
 
 // outcomeContractsForStep builds the ExecuteRequest contracts from the
-// compiled step outcomes (KB-45). Named and inline schemas are
+// compiled step outcomes. Named and inline schemas are
 // indistinguishable on the wire: CompiledOutcome.SchemaJSON already carries
 // the deterministic conversion bytes. The contract list activates the
 // evaluator's contract mode, so it is built ONLY for contract-bearing steps
@@ -162,7 +162,7 @@ func evaluateLocalOutcomeContracts(step *workflow.StepNode, result adapter.Resul
 		// flagged so a repeated local validation (session-level re-check,
 		// respawn retry) recognizes the host synthesis and skips it instead of
 		// applying the fallback's own schema/require_comment to the empty
-		// payload it can never satisfy (KB-45).
+		// payload it can never satisfy.
 		synthesized := *synth
 		synthesized.SynthesizedFallback = true
 		return synthesized, nil
@@ -189,7 +189,7 @@ func wireOutcomeResult(result adapter.Result) (*v2.ExecuteResult, error) {
 // executionRejectionChain derives the ExecutionRejection carried on the next
 // Execute call after a rejected attempt: the rejected outcome, the pinned
 // issue list, and the incrementing repair attempt counter. Rejections apply
-// to local and wire adapters alike (KB-45 repair loop).
+// to local and wire adapters alike (the engine's repair loop).
 func executionRejectionChain(outcome string, issues []string, prior *v2.ExecutionRejection) *v2.ExecutionRejection {
 	if len(issues) == 0 {
 		return prior

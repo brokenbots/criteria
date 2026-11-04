@@ -273,7 +273,7 @@ type allowlistPolicy struct {
 func (p *allowlistPolicy) Decide(req PermissionRequest) (allow bool, reason string) {
 	targets := permissionMatchTargets(req)
 	bad := &badPatternTracker{}
-	// KB-57c: a compound request (2+ per-segment targets) is granted only when
+	// A compound request (2+ per-segment targets) is granted only when
 	// EVERY segment matches some allow entry — a single matching segment must
 	// never carry a compound whose other segments would be denied standalone
 	// ("git status && make ci" stays denied even though "shell:git status *"
@@ -350,7 +350,7 @@ func reqIsCompound(details map[string]string) bool {
 // matchPattern evaluates a single pattern against a target. It returns (true, reason)
 // on a match, otherwise (false, ""). Malformed patterns are recorded in bad.
 //
-// KB-57c (trailing-star prefix match): a trailing '*' is matched as a
+// Trailing-star prefix match: a trailing '*' is matched as a
 // slash-PERMISSIVE prefix — filepath.Match's '*' cannot cross '/', which
 // silently breaks intent for command fingerprints: "shell:git log *" must
 // reach "git log origin/main..HEAD -- deep/path/x.go", and bare '*' (the
@@ -450,7 +450,7 @@ func permissionMatchTargets(req PermissionRequest) []string {
 // request details so callers can allow specific subcommands like
 // "shell:git status" while denying broad "shell:*".
 //
-// KB-57c (compound permission support): compound commands (&& ; | || newlines)
+// Compound permission support: compound commands (&& ; | || newlines)
 // are ADDITIONALLY segmented, and every segment is emitted as its own
 // fingerprint target. The allowlist policy requires only ONE target to match
 // (first-match-wins), so whole-text matching alone would let
@@ -481,7 +481,7 @@ func requestFingerprints(details map[string]string) []string {
 	}
 	out = dedupeStrings(out)
 
-	// KB-57c: emit per-segment targets for compound commands. A segmented
+	// Emit per-segment targets for compound commands. A segmented
 	// result replaces the whole-text target so a compound can never ride in
 	// on one matching segment.
 	if len(out) == 0 {

@@ -1,7 +1,7 @@
 package adapterhost
 
-// KB-224 (moved from Linear CRI-292; mirrored in
-// brokenbots/criteria-adapter-copilot#31): a locally launched agent adapter
+// Ambient-home isolation (mirrored in brokenbots/criteria-adapter-copilot#31):
+// a locally launched agent adapter
 // (copilot) shares the criteria process's ambient home directory, so every
 // criteria invocation on a workstation reads the same ambient session state
 // (e.g. ~/.copilot/session-store.db). A Copilot CLI session that once resumed
@@ -62,7 +62,7 @@ import (
 // ambientHomeIsolatedAdapterTypes lists adapter types whose locally launched
 // processes must not see the criteria process's ambient home directory. The
 // set is deliberately small: only agent adapters whose out-of-process CLI
-// keeps mutable session state under $HOME are affected by KB-224.
+// keeps mutable session state under $HOME are affected.
 var ambientHomeIsolatedAdapterTypes = map[string]struct{}{
 	"copilot": {},
 }

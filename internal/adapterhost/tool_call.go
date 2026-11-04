@@ -1,8 +1,8 @@
 package adapterhost
 
-// tool_call.go — CRI-159: the M4.1 host seam for adapter tool calls
-// (ADR-0004 §8), extended in CRI-160 with real nested execution and in
-// CRI-161 with async reply correlation. A tool call arrives as a
+// tool_call.go — the M4.1 host seam for adapter tool calls
+// (ADR-0004 §8), with real nested execution and async reply
+// correlation. A tool call arrives as a
 // permission.request AdapterEvent on the Execute stream carrying
 // kind == "adapter_tool" (or a §2 target key). The seam detects those
 // payloads, gates them in a fixed order, and answers with a typed
@@ -21,13 +21,13 @@ package adapterhost
 //  4. graph validation: callee adapter declared (FSMGraph.Adapters) and a
 //     named tool present on a callee that declares a static surface;
 //  5. self-call rejection (ADR-0004 §10);
-//  6. runtime call-chain checks (CRI-162, the enforcement point for
+//  6. runtime call-chain checks (the enforcement point for
 //     policy.max_tool_depth — the compiler only warns): a nested call may
 //     not re-enter an adapter already on the caller adapter ref chain
 //     (runtime cycle detection, typed cycle_detected) and may not exceed
 //     the graph's policy.max_tool_depth (default 8, typed depth_exceeded);
 //     each rejected call is audited and the run continues;
-//  7. nested execution (CRI-160): the callee runs in its OWN session via a
+//  7. nested execution: the callee runs in its OWN session via a
 //     nested SessionManager.Execute issued under the caller's in-flight
 //     Execute. The callee session is resolved through the lazy-bind path,
 //     governed by the callee's own environment and allow_tools (the declaring
@@ -37,7 +37,7 @@ package adapterhost
 //     governs its session; the caller receives a typed failure (callee_crash)
 //     and its outcome routing is unaffected (ADR-0004 §5).
 //
-// CRI-161: gate 7 dispatches asynchronously. The gates above stay on the
+// Gate 7 dispatches asynchronously. The gates above stay on the
 // caller's Execute event loop, but the nested Execute runs on its own
 // goroutine, registered in the caller session's pending map keyed by
 // request_id (the host-side mirror of the MCP bridge's
@@ -54,7 +54,7 @@ package adapterhost
 // the sink routes them to the untouched plain flow, so workflows without tool
 // refs execute through identical code paths.
 //
-// CRI-163: a dispatched call is observable on the run's adapter event stream,
+// A dispatched call is observable on the run's adapter event stream,
 // attributed under the caller step — tool.call when the call starts (payload:
 // target, tool, depth, request_id) and tool.call_result when it settles
 // (adding outcome and duration; call_error on failure). Audit entries carry
@@ -88,14 +88,14 @@ const adapterToolsCapability = "adapter_tools"
 // detected tool calls whose target does not parse as the §2 form;
 // invalid_args extends it for call arguments that fail the callee's input
 // schema (required keys missing, unknown keys on a declared surface);
-// paused extends it for calls refused by the CRI-169 pause gate while the
+// paused extends it for calls refused by the pause gate while the
 // session's nested tool calls are being drained (ADR-0004 §11);
-// budget_exhausted extends it for calls refused by the KB-58 call-count
+// budget_exhausted extends it for calls refused by the call-count
 // budget (policy.max_tool_calls, engine-enforced at the seam alongside the
 // depth gate); invalid_response extends it for successful callee results
 // whose surfaced outputs fail the callee's declared out-type contract
-// (KB-59 — a host-computed code, never forgivable through the callee's
-// own call_error channel); input_required extends it for KB-158: an MCP
+// (a host-computed code, never forgivable through the callee's
+// own call_error channel); input_required extends it for an MCP
 // callee's interim multi-round-trip result (SEP-2322, protocol rev
 // 2026-07-28) surfaces as a typed failure so a nested caller learns the
 // invocation needs more input — the full MRTR retry round-trip is a
@@ -120,7 +120,7 @@ const (
 )
 
 // calleeReportedCallErrorCode is the reserved output key on a failure result
-// carrying a callee-reported typed call_error code (CRI-172). Only
+// carrying a callee-reported typed call_error code. Only
 // callee-meaningful registry codes are honored (see calleeReportedCallError).
 const calleeReportedCallErrorCode = "call_error"
 
@@ -214,7 +214,7 @@ func looksLikeToolCallTarget(target string) bool {
 }
 
 // toolCallRequestDetected reports whether a permission.request payload is an
-// adapter tool call (CRI-159): the payload marks itself with
+// adapter tool call: the payload marks itself with
 // kind == "adapter_tool", or carries a target key whose value parses as the
 // detection grammar. Payloads without either marker take the plain
 // permission flow, byte-identical to before the seam landed.
@@ -229,7 +229,7 @@ func toolCallRequestDetected(payload map[string]any) bool {
 }
 
 // toolGrantAllows reports whether the step's recorded tools grants
-// (workflow.StepNode.Tools, CRI-157) allow a call to the parsed target.
+// (workflow.StepNode.Tools) allow a call to the parsed target.
 // Grants are literals, not globs (ADR-0004 §4): a bare …tools grant covers
 // the instance's entire surface (both the bare and any named form), while a
 // …tools.<tool> grant covers exactly that named call.
@@ -251,11 +251,11 @@ func toolGrantAllows(refs []workflow.AdapterToolRef, calleeRef, tool string) boo
 // staticToolErrorCode validates a requested tool against the callee's
 // compiled adapter declaration. It returns a call_error code or "" when the
 // call names a resolvable tool. Dynamic adapters are extensible: the runtime
-// resolves names (CRI-173), so no name check applies. On a static surface a
+// resolves names, so no name check applies. On a static surface a
 // named call must reference a declared tool; a bare whole-surface call
 // requires the adapter to present a static surface at all. An adapter that
 // declares neither tool blocks nor dynamic_tools presents no surface, which
-// the CRI-156 compiler only flags advisory for bare refs — the runtime check
+// the compiler only flags advisory for bare refs — the runtime check
 // lives here.
 func staticToolErrorCode(node *workflow.AdapterNode, named string) string {
 	if node.DynamicTools {
@@ -308,7 +308,7 @@ func toolCallMatchedPattern(reason string) string {
 // performs the same bookkeeping as Evaluate (decision record,
 // PermissionEvent on the session stream, audit entry) so the permission
 // decision is logged identically for both request shapes. The policy is
-// explicit (KB-155): multiplexed executes on one session each decide under
+// explicit: multiplexed executes on one session each decide under
 // their own step policy instead of the session-global snapshot, which is
 // whatever setStepPolicy wrote last. A nil policy falls back to the
 // session-global snapshot for legacy callers and directly constructed sinks.
@@ -338,7 +338,7 @@ func (ps *permissionState) evaluateToolCallWithPolicy(policy PermissionPolicy, r
 	return allow, reason
 }
 
-// sendToolCallResult delivers a typed tool-call failure reply (CRI-152
+// sendToolCallResult delivers a typed tool-call failure reply (the
 // PermissionEvent.tool_call_result) on the session Permissions stream,
 // non-blocking with drop-on-backlog like sendEvent.
 func (ps *permissionState) sendToolCallResult(requestID, callError string) {
@@ -352,7 +352,7 @@ func (ps *permissionState) sendToolCallResult(requestID, callError string) {
 // session Permissions stream, non-blocking with drop-on-backlog like
 // sendEvent.
 //
-// CRI-169: unlike plain permission traffic, tool-call replies are buffered
+// Unlike plain permission traffic, tool-call replies are buffered
 // while the session is paused (active == false) — the reply is the only
 // unblock for the caller's pending correlation map, so dropping it while
 // paused would wedge the awaiting caller until resume with no way to learn
@@ -376,7 +376,7 @@ func (ps *permissionState) sendToolCallResultEvent(res *v2.ToolCallResult) {
 	default:
 		// Stream consumer is backlogged; don't block the Execute goroutine.
 	}
-	// CRI-202: the turn is complete either way (a backlog-dropped reply still
+	// The turn is complete either way (a backlog-dropped reply still
 	// completed the turn), so a per-turn adapter saves its checkpoint here.
 	// The hook is asynchronous and never blocks the reply path.
 	if ps.turnCheckpoint != nil {
@@ -461,7 +461,7 @@ func (s *permissionInterceptSink) applyToolCallPolicy(req *toolCallPayload, pars
 	return true
 }
 
-// handleToolCallRequest implements the CRI-159 host seam for an adapter tool
+// handleToolCallRequest implements the host seam for an adapter tool
 // call detected in a permission.request payload. See the file comment for the
 // gate order and the stub reply contract.
 func (s *permissionInterceptSink) handleToolCallRequest(payload map[string]any) {
@@ -492,7 +492,7 @@ func (s *permissionInterceptSink) handleToolCallRequest(payload map[string]any) 
 		return
 	}
 
-	// Gate 2.5 (CRI-169, ADR-0004 §11): the pause gate. While the session is
+	// Gate 2.5 (ADR-0004 §11): the pause gate. While the session is
 	// pausing (drain-first posture) or paused, new nested tool calls are
 	// refused with the typed `paused` call_error instead of starting; the
 	// in-flight ones are drained (or canceled) by Session.Pause. The caller
@@ -521,7 +521,7 @@ func (s *permissionInterceptSink) handleToolCallRequest(payload map[string]any) 
 		return
 	}
 
-	// Gate 7: nested execution (CRI-160/CRI-161). An otherwise-allowed call
+	// Gate 7: nested execution. An otherwise-allowed call
 	// runs the callee in its own session and replies with the callee's
 	// result. Dispatch is asynchronous so in-flight calls interleave; the
 	// typed reply is delivered on the caller's Permissions stream by the
@@ -533,7 +533,7 @@ func (s *permissionInterceptSink) handleToolCallRequest(payload map[string]any) 
 // caller's graph. A compiled graph normalizes the unset default to 8
 // (workflow.DefaultPolicy); hand-built graphs may carry 0, so the engine
 // default applies there too. Graph-less sessions (parallel iteration
-// managers) consult the borrowed parent policy (KB-58) before the default.
+// managers) consult the borrowed parent policy before the default.
 func (s *permissionInterceptSink) nestedToolCallMaxDepth() int {
 	if depth := s.effectiveToolCallPolicy().MaxToolDepth; depth > 0 {
 		return depth
@@ -542,7 +542,7 @@ func (s *permissionInterceptSink) nestedToolCallMaxDepth() int {
 }
 
 // effectiveToolCallPolicy computes the nested tool-call policy for this
-// session (KB-58): the executing graph's policy when present, else the policy
+// session: the executing graph's policy when present, else the policy
 // borrowed from the declaring parent graph (parallel-iteration managers have
 // no graph of their own), else the compiled workflow default.
 func (s *permissionInterceptSink) effectiveToolCallPolicy() workflow.Policy {
@@ -559,7 +559,7 @@ func (s *permissionInterceptSink) effectiveToolCallPolicy() workflow.Policy {
 
 // resolveCalleeDeclaration resolves the parsed callee against the session's
 // own graph when present, falling back to the session manager's adapter
-// declaration caches (KB-58): a parallel iteration manager has no graph of
+// declaration caches: a parallel iteration manager has no graph of
 // its own, but its VerifyGraph-populated caches still know every declared
 // adapter node and its declaring graph (borrowed from the parent). Returns
 // nils when the callee is declared nowhere reachable — the caller translates
@@ -577,7 +577,7 @@ func (s *permissionInterceptSink) resolveCalleeDeclaration(ref string) (*workflo
 }
 
 // toolCallNesting is the per-call nesting state threaded through nested
-// SessionManager.Execute calls (CRI-162): depth counts the nested tool-call
+// SessionManager.Execute calls: depth counts the nested tool-call
 // Executes above the current one (the caller step's own depth baseline is 0,
 // compared against policy.max_tool_depth, default 8), and chain is the
 // caller adapter refs visited on the call chain, seeded with the executing
@@ -587,14 +587,14 @@ func (s *permissionInterceptSink) resolveCalleeDeclaration(ref string) (*workflo
 type toolCallNesting struct {
 	depth int
 	chain []string
-	// issuedWhileExecAlive (KB-155) records that the nested call was
+	// issuedWhileExecAlive records that the nested call was
 	// registered while its originating Execute context was still alive. Such
 	// a call must never reach the adapter after that context dies: on a
 	// single-flight callee session the waiter races the queued sibling's
 	// release against its own cancellation, so the only deterministic
 	// outcome is abandonment before dispatch (the acquire seam abandons it
 	// as typed canceled). A call issued after the context already died —
-	// the CRI-161 no-wedge follow-up — keeps legacy behavior and runs even
+	// the no-wedge follow-up — keeps legacy behavior and runs even
 	// with a dead context. Engine-issued top-level executes carry the zero
 	// value and keep that legacy behavior too.
 	issuedWhileExecAlive bool
@@ -608,7 +608,7 @@ func (n toolCallNesting) enters(ref string) bool {
 
 // descends returns the nesting state for a call to ref: one level deeper,
 // with ref appended to a fresh chain. The chain is copied rather than
-// appended in place because CRI-161 dispatches sibling calls concurrently —
+// appended in place because sibling calls are dispatched concurrently —
 // sharing a backing array across the completing goroutines would be a data
 // hazard.
 func (n toolCallNesting) descends(ref string) toolCallNesting {
@@ -619,8 +619,8 @@ func (n toolCallNesting) descends(ref string) toolCallNesting {
 }
 
 // nestedToolCall captures a dispatched adapter tool call: everything the
-// completing goroutine needs to run the callee and deliver the typed reply
-// (CRI-161). The dispatch path copies these fields before returning to the
+// completing goroutine needs to run the callee and deliver the typed reply.
+// The dispatch path copies these fields before returning to the
 // caller's Execute event loop, which immediately moves on to the next
 // Permissions event.
 type nestedToolCall struct {
@@ -634,31 +634,31 @@ type nestedToolCall struct {
 	calleeRef  string
 	calleeStep *workflow.StepNode
 	nesting    toolCallNesting
-	// outContract is the callee's declared out-type contract for this tool
-	// (KB-59): successful results are validated against it before the typed
+	// outContract is the callee's declared out-type contract for this tool:
+	// successful results are validated against it before the typed
 	// reply is delivered. Zero value means no declared contract — behavior
 	// unchanged.
 	outContract workflow.ToolContract
 	// startedAt is the dispatch time; the tool.call_result event's duration
-	// (CRI-163) is measured from it.
+	// is measured from it.
 	startedAt time.Time
 }
 
-// Nested adapter tool-call observability event kinds (CRI-163), attributed
+// Nested adapter tool-call observability event kinds, attributed
 // under the caller step on the run's adapter event stream.
 const (
 	nestedToolCallEventKind       = "tool.call"
 	nestedToolCallResultEventKind = "tool.call_result"
 )
 
-// nestedToolCallEventPayload builds the shared CRI-163 event payload: the
+// nestedToolCallEventPayload builds the shared event payload: the
 // call target, the resolved tool name, the nested call's own depth (1 for a
 // step-level caller's first-level nested call), and the request id the typed
 // reply is correlated by.
 //
 // The target and the resolved tool echo adapter-supplied permission.request
 // values and may embed values registered in the run's redaction registry, so
-// both are masked before emission (CRI-163) — the same treatment the decision
+// both are masked before emission — the same treatment the decision
 // payloads and audit entries get. depth and request_id are host-computed.
 func (s *permissionInterceptSink) nestedToolCallEventPayload(call *nestedToolCall) map[string]any {
 	return map[string]any{
@@ -695,10 +695,10 @@ func (s *permissionInterceptSink) emitNestedToolCallResultEvent(call *nestedTool
 }
 
 // dispatchNestedToolCall dispatches an allowed adapter tool call to the callee
-// adapter in its own session (CRI-160, ADR-0004 §8) and answers the caller
+// adapter in its own session (ADR-0004 §8) and answers the caller
 // with the callee's result as the tool result.
 //
-// CRI-161: the gates stay synchronous on the caller's Execute event loop, but
+// The gates stay synchronous on the caller's Execute event loop, but
 // the callee Execute itself is dispatched asynchronously — the call is
 // registered in the caller session's pending map keyed by request_id and
 // executed on its own goroutine, so the caller's Execute keeps reading its
@@ -721,7 +721,7 @@ func (s *permissionInterceptSink) dispatchNestedToolCall(req *toolCallPayload, p
 		return
 	}
 
-	// Runtime call-chain checks (CRI-162, ADR-0004 §6). The compile-time
+	// Runtime call-chain checks (ADR-0004 §6). The compile-time
 	// cycle warning stays advisory; this is the enforcement point. Cycle
 	// gate first: it is the cheapest and most specific diagnosis — a call
 	// that re-enters an adapter already on the caller adapter ref chain
@@ -742,7 +742,7 @@ func (s *permissionInterceptSink) dispatchNestedToolCall(req *toolCallPayload, p
 		return
 	}
 
-	// Call-count budget (KB-58): policy.max_tool_calls bounds the NUMBER of
+	// Call-count budget: policy.max_tool_calls bounds the NUMBER of
 	// nested tool calls an iterative caller session may make, engine-enforced
 	// here alongside the depth gate so a probe loop cannot run unbounded.
 	// Per step-level caller session; an exhausted budget is a typed failure
@@ -754,7 +754,7 @@ func (s *permissionInterceptSink) dispatchNestedToolCall(req *toolCallPayload, p
 
 	// The callee adapter node and its declaring graph: resolved from the
 	// session's own graph first, falling back to the manager's declaration
-	// caches (KB-58 — a root-declared host-local callee survives on an
+	// caches (a root-declared host-local callee survives on an
 	// iteration manager that has no graph of its own). A nil node means the
 	// callee is declared nowhere reachable and the session lookup will
 	// decide resolvability.
@@ -765,7 +765,7 @@ func (s *permissionInterceptSink) dispatchNestedToolCall(req *toolCallPayload, p
 	// step; nil means permissive (no declared schema).
 	calleeInfo := s.mgr.cachedAdapterInfo(parsed.AdapterRef)
 
-	// The tool name resolution (KB-59) and the callee's declared typed tool
+	// The tool name resolution and the callee's declared typed tool
 	// contract for the named tool. req.args is threaded through so the
 	// resolution falls back to the args routing key on bare targets.
 	named, contract := resolveToolContract(calleeNode, parsed, req.tool, req.args)
@@ -773,7 +773,7 @@ func (s *permissionInterceptSink) dispatchNestedToolCall(req *toolCallPayload, p
 	calleeStep, inputErr := syntheticCalleeStep(parsed, calleeNode, calleeOwningGraph, calleeInfo, &contract, req.args)
 	if inputErr != nil {
 		s.mgr.releaseToolCallBudget(s.permState.sessionID)
-		// KB-59: the rejected call carries the typed issue list (declared
+		// The rejected call carries the typed issue list (declared
 		// contract violations) in the audit's deny reason, so a caller can
 		// see WHY the args failed, not just that they did.
 		s.rejectToolCallDetail(req.requestID, req.target, req.argsDigest, callErrorInvalidArgs, inputErr.Error())
@@ -784,7 +784,7 @@ func (s *permissionInterceptSink) dispatchNestedToolCall(req *toolCallPayload, p
 	// goroutine so the caller's Execute event loop stays live. Only calls
 	// that pass every gate are registered, so teardown never audits a
 	// synchronously rejected call as abandoned. See startNestedToolCall
-	// for the pause-gate interaction (CRI-169).
+	// for the pause-gate interaction.
 	call := &nestedToolCall{
 		requestID:   req.requestID,
 		target:      req.target,
@@ -800,7 +800,7 @@ func (s *permissionInterceptSink) dispatchNestedToolCall(req *toolCallPayload, p
 }
 
 // startNestedToolCall registers the gated call for reply correlation and
-// hands it to its own goroutine. CRI-169: the call runs on a derived,
+// hands it to its own goroutine. The call runs on a derived,
 // cancelable context so the pause drain can cancel non-draining calls
 // (typed `canceled` reply) without touching the caller's Execute context.
 // The registration re-checks the pause gate atomically under the permission
@@ -816,7 +816,7 @@ func (s *permissionInterceptSink) startNestedToolCall(call *nestedToolCall) {
 	if !s.permState.registerPendingToolCall(call.requestID, call.target, nestedCancel) {
 		nestedCancel()
 		// The call was dispatched after reserving its budget; give the
-		// reservation back (refused synchronously, KB-58).
+		// reservation back (refused synchronously).
 		if s.mgr != nil {
 			s.mgr.releaseToolCallBudget(s.permState.sessionID)
 		}
@@ -829,8 +829,8 @@ func (s *permissionInterceptSink) startNestedToolCall(call *nestedToolCall) {
 }
 
 // runNestedToolCall executes the nested callee and delivers the typed reply
-// on the caller's Permissions stream (CRI-161). It runs on its own goroutine;
-// its context is derived from the caller's Execute context (CRI-169 adds the
+// on the caller's Permissions stream. It runs on its own goroutine;
+// its context is derived from the caller's Execute context (plus the
 // per-call cancel used by the pause drain), so the caller's step timeout, run
 // cancellation, and a pause drain's cancelation of non-draining calls all
 // reach the callee. The reply is delivered on every path — including the
@@ -843,7 +843,7 @@ func (s *permissionInterceptSink) runNestedToolCall(nestedCtx context.Context, n
 	defer nestedCancel()
 	defer s.nested.Done()
 
-	// KB-45: nested tool calls carry no repair context — the host re-validates
+	// Nested tool calls carry no repair context — the host re-validates
 	// the callee verdict against the callee step's own outcome contracts.
 	result, execErr := s.mgr.execute(nestedCtx, call.calleeRef, call.calleeStep, s.inner, call.nesting, nil)
 
@@ -856,7 +856,7 @@ func (s *permissionInterceptSink) runNestedToolCall(nestedCtx context.Context, n
 		return
 	}
 
-	// Callee-reported typed failure (CRI-172): a failure result carrying the
+	// Callee-reported typed failure: a failure result carrying the
 	// reserved call_error output is the callee's own typed rejection — e.g.
 	// the mcp adapter refusing a tool outside its discovered tools/list
 	// surface. Deliver it as the well-known call_error reply, distinguishable
@@ -885,7 +885,7 @@ func (s *permissionInterceptSink) runNestedToolCall(nestedCtx context.Context, n
 		return
 	}
 
-	// KB-59 typed out-contract: a successful callee result is validated
+	// Declared typed out-contract: a successful callee result is validated
 	// against the tool's declared out-type before it reaches the caller —
 	// the engine validates at the boundary, on top of the runner-side caps,
 	// so a schema-choked response cannot present itself as a valid tool
@@ -952,13 +952,13 @@ func (s *permissionInterceptSink) reportNestedCallFailure(call *nestedToolCall, 
 	s.permState.sendToolCallResult(call.requestID, code)
 }
 
-// calleeReportedCallError recognizes a callee's own typed call_error
-// (CRI-172): a failure result whose outputs carry the reserved call_error key
+// calleeReportedCallError recognizes a callee's own typed call_error: a
+// failure result whose outputs carry the reserved call_error key
 // with a well-known code whose semantics belong to the callee. Only
 // callee-meaningful codes are honored — host-computed codes (unknown adapter,
 // cycle, depth, self-call, pause, cancellation, ...) stay host-computed so a
 // callee cannot forge host gate decisions. input_required is honored to
-// forward the callee's interim multi-round-trip verdict (KB-158) to the
+// forward the callee's interim multi-round-trip verdict to the
 // nested caller as a typed failure. Returns "" for any other result.
 func calleeReportedCallError(result adapter.Result) string {
 	if result.Outcome != "failure" {
@@ -987,31 +987,31 @@ func (s *permissionInterceptSink) nestedExecCtx() context.Context {
 	return s.execCtx
 }
 
-// syntheticCalleeStep builds the StepNode that executes a tool-called callee
-// (CRI-160). The step carries:
+// syntheticCalleeStep builds the StepNode that executes a tool-called
+// callee. The step carries:
 //   - the callee input keys from the call args, rendered to the wire shape
 //     (plain strings raw, structured values JSON-encoded) and validated,
-//     first against the callee's declared typed in-contract (KB-59) and
+//     first against the callee's declared typed in-contract and
 //     otherwise against the callee's declared input schema;
 //   - the callee adapter's own environment (AdapterNode.Environment, already
 //     resolved to the workflow default at compile time) — never the caller's;
 //   - the callee's own allow_tools policy: the declaring workflow's
 //     permissions.allow_tools, the same union base any step targeting the
 //     callee would receive. The caller's allow_tools gated the call itself
-//     (CRI-159 gate 3) and does not carry into the callee session;
+//     (seam gate 3) and does not carry into the callee session;
 //   - the callee's declared OutputSchema so its outputs are typed by the same
 //     decode path as normal step outputs;
 //   - no OnCrash: the callee's own adapter-level on_crash, captured at bind,
 //     governs its session.
 //
 // owningGraph is the graph that validated the callee (the caller's graph —
-// CRI-159 gate 4 restricts callees to adapters declared there), whose
+// gate 4 restricts callees to adapters declared there), whose
 // workflow-level allow_tools governs the callee session. A nil callee node
 // (nil graph, gate 4 skipped) yields a permissive step; session resolution
 // decides resolvability.
 //
-// contract is the callee's declared typed tool contract for the named tool
-// (KB-59); nil leaves every path byte-identical to the pre-KB-59 seam.
+// contract is the callee's declared typed tool contract for the named tool;
+// nil leaves every path byte-identical to the pre-contract seam.
 func syntheticCalleeStep(parsed toolCallTarget, calleeNode *workflow.AdapterNode, owningGraph *workflow.FSMGraph, calleeInfo *workflow.AdapterInfo, contract *workflow.ToolContract, args map[string]any) (*workflow.StepNode, error) {
 	input, issues, err := calleeInputFromArgs(args, calleeInfo, contract)
 	if err != nil {
@@ -1053,7 +1053,7 @@ func workflowAllowToolsForCallee(owningGraph *workflow.FSMGraph) []string {
 }
 
 // resolveToolContract names the tool-called surface and looks up the
-// callee's declared typed tool contract for it (KB-59). The fallback chain
+// callee's declared typed tool contract for it. The fallback chain
 // is: the §2 target's tool segment → the request's tool field (the same
 // resolution validateToolCallGraph applies) → args["tool"], the routing key
 // the MCP bridge carries for bare whole-surface targets
@@ -1099,8 +1099,8 @@ func toolNameArg(args map[string]any) string {
 }
 
 // validateContractInputArgs validates the raw typed call arguments against
-// the named tool's declared in-contract (KB-59): the pinned payload
-// evaluator (the same one the KB-45 outcome contracts run) checks required
+// the named tool's declared in-contract: the pinned payload
+// evaluator (the same one the outcome contracts run) checks required
 // properties for presence and type — JSON fidelity, so 12345 is a number,
 // not a string — and undeclared properties are rejected against the type's
 // attribute set. Returns the ordered issue list; nil means accepted.
@@ -1142,13 +1142,13 @@ func undeclaredArgProperties(declared map[string]cty.Type, args map[string]any) 
 // wire input map (map<string,string>, the same shape a step's input{} block
 // produces): string values pass through raw; every other JSON type is
 // encoded. The args are then validated:
-//   - KB-59: when the callee's declaration carries a typed in-contract for
+//   - When the callee's declaration carries a typed in-contract for
 //     the named tool, the raw typed arguments are validated against it —
 //     required properties present and typed, no undeclared properties —
 //     taking precedence over the callee handshake. Issues are returned as
 //     the ordered issue list (empty when accepted); this is the dynamic
 //     adapter's only real validation, since its discovered surface declares
-//     no input schema on purpose (CRI-172).
+//     no input schema on purpose.
 //   - Otherwise, when the callee declares an input schema, the args are
 //     validated against it — required keys must be present and non-empty,
 //     and on a declared surface no undeclared keys may appear (the compiler
@@ -1167,7 +1167,7 @@ func calleeInputFromArgs(args map[string]any, calleeInfo *workflow.AdapterInfo, 
 		input[key] = string(encoded)
 	}
 
-	// KB-59 typed contract: the declared type IS the schema, so the
+	// Typed contract: the declared type IS the schema, so the
 	// evaluator's JSON-fidelity posture applies — see validateContractInputArgs.
 	if issues := validateContractInputArgs(contract, args); len(issues) > 0 {
 		return nil, issues, nil
@@ -1198,7 +1198,7 @@ func calleeInputFromArgs(args map[string]any, calleeInfo *workflow.AdapterInfo, 
 	return input, nil, nil
 }
 
-// rejectNestedContractOutputs delivers the KB-59 typed out-contract
+// rejectNestedContractOutputs delivers the typed out-contract
 // rejection: an audit deny entry carrying the issue list plus the
 // `invalid_response` reply (a host-computed code: it cannot be forged
 // through the callee's call_error channel). The output never reaches the
@@ -1238,7 +1238,7 @@ func encodeToolCallOutputs(outputs map[string]cty.Value) ([]byte, error) {
 // graph (ADR-0004 §7): the callee adapter must be declared and, when it
 // presents a static surface, the referenced tool must exist. It returns a
 // call_error code or "" when validation passes; a nil graph skips validation
-// against the caller's own graph — the declaring-graph fallback (KB-58) still
+// against the caller's own graph — the declaring-graph fallback still
 // applies when the manager knows the callee.
 func (s *permissionInterceptSink) validateToolCallGraph(parsed toolCallTarget, req *toolCallPayload) string {
 	node, _ := s.resolveCalleeDeclaration(parsed.AdapterRef)
@@ -1268,7 +1268,7 @@ func (s *permissionInterceptSink) rejectToolCall(requestID, target, argsDigest, 
 }
 
 // rejectToolCallDetail is rejectToolCall with a detailed reason: the detail
-// (e.g. the typed contract issue list, KB-59) is appended to the audit's deny
+// (e.g. the typed contract issue list) is appended to the audit's deny
 // reason. The typed reply is unchanged — the caller sees the call_error code.
 func (s *permissionInterceptSink) rejectToolCallDetail(requestID, target, argsDigest, code, detail string) {
 	reason := "adapter tool call rejected: " + code
