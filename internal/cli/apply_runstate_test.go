@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -343,5 +344,66 @@ func TestServeUICmdRefusesMissingHome(t *testing.T) {
 	cmd.SetArgs([]string{"--home", filepath.Join(t.TempDir(), "empty")})
 	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "no run state directory") {
 		t.Errorf("missing home err = %v", err)
+	}
+}
+
+// TestWriteInitialRunStateWarnsOnFailure verifies the run-start state record
+// write is best-effort but never silent: when the criteria home is
+// unwritable, the failure is logged as a WARN carrying the run id and the
+// underlying error, and the run-start path continues instead of being
+// aborted or having the error silently discarded.
+func TestWriteInitialRunStateWarnsOnFailure(t *testing.T) {
+	// Point CRITERIA_HOME at a child of a regular file so every MkdirAll
+	// for the run-state path fails deterministically (ENOTDIR).
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CRITERIA_HOME", filepath.Join(blocker, "state"))
+
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, nil))
+
+	// Incomplete metadata: no workflow hash is recorded, so this write is
+	// the advisory run-start record, not the resume record.
+	writeInitialRunState(log, newLocalRunState("run-initial-warn", "warn-wf", ""))
+
+	warn := buf.String()
+	if !strings.Contains(warn, "level=WARN") {
+		t.Fatalf("expected the failed run-state write to be logged as WARN, got: %s", warn)
+	}
+	if !strings.Contains(warn, "failed to write run state record") {
+		t.Fatalf("expected the run-state write failure message, got: %s", warn)
+	}
+	if !strings.Contains(warn, "run_id=run-initial-warn") {
+		t.Fatalf("expected the run id in the WARN record, got: %s", warn)
+	}
+	if !strings.Contains(warn, "not a directory") {
+		t.Fatalf("expected the underlying error in the WARN record, got: %s", warn)
+	}
+}
+
+// TestWriteInitialRunStateQuietOnSuccess verifies the success path records
+// the state on disk (including the workflow hash) and logs nothing — the
+// healthy write must not emit noise.
+func TestWriteInitialRunStateQuietOnSuccess(t *testing.T) {
+	t.Setenv("CRITERIA_HOME", filepath.Join(t.TempDir(), "state"))
+
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	st := newLocalRunState("run-initial-ok", "ok-wf", "")
+	st.WorkflowHash = "hash-1"
+	writeInitialRunState(log, st)
+
+	if buf.String() != "" {
+		t.Errorf("no log expected on successful write, got: %s", buf.String())
+	}
+	got, err := readLocalRunState("run-initial-ok")
+	if err != nil {
+		t.Fatalf("readLocalRunState: %v", err)
+	}
+	if got.Workflow != "ok-wf" || got.WorkflowHash != "hash-1" {
+		t.Errorf("recorded state = %+v, want workflow ok-wf with hash-1", got)
 	}
 }

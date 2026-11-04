@@ -113,7 +113,7 @@ func executeFreshLocalRun(ctx context.Context, log *slog.Logger, graph *workflow
 
 	state := newLocalRunState(runID, graph.Name, "")
 	state.WorkflowHash = workflowHash
-	_ = writeLocalRunState(state)
+	writeInitialRunState(log, state)
 	// CRI-225: publish the resolved workflow origin as the run's metadata
 	// admission record; local sources (nil origin) record nothing.
 	publishRunMetadata(runID, opts.origin, log)
