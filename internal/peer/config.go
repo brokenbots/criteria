@@ -79,8 +79,6 @@ const (
 	// DefaultVersion is used when neither the manifest nor the environment
 	// declares an adapter version (runner parity).
 	DefaultVersion = "0.0.0"
-	// adapterBinaryPrefix is the conventional adapter binary basename prefix.
-	adapterBinaryPrefix = "criteria-adapter-"
 )
 
 // Config holds the peer's environment-driven connection, identity, and
@@ -335,7 +333,7 @@ func (c *Config) resolveDefaults() {
 		// adapterhost DiscoverBinary split): a definition-keyed identity
 		// ("shell.develop", KB-242) looks up its binary by the type half
 		// while the child stays keyed by the definition identity.
-		if p, err := exec.LookPath(adapterBinaryPrefix + adapterhost.DefinitionType(c.AdapterName)); err == nil {
+		if p, err := exec.LookPath(adapterhost.AdapterBinaryPrefix + adapterhost.DefinitionType(c.AdapterName)); err == nil {
 			c.AdapterBinary = p
 		}
 	}
@@ -406,15 +404,15 @@ func defaultBinaryPath(name string) string {
 	if name == "" {
 		return ""
 	}
-	return "/usr/local/bin/" + adapterBinaryPrefix + adapterhost.DefinitionType(name)
+	return "/usr/local/bin/" + adapterhost.AdapterBinaryPrefix + adapterhost.DefinitionType(name)
 }
 
 // nameFromBinary derives an adapter name from a binary path, stripping the
 // conventional prefix when present (runner parity).
 func nameFromBinary(binary string) string {
 	base := filepath.Base(binary)
-	if strings.HasPrefix(base, adapterBinaryPrefix) {
-		return strings.TrimPrefix(base, adapterBinaryPrefix)
+	if strings.HasPrefix(base, adapterhost.AdapterBinaryPrefix) {
+		return strings.TrimPrefix(base, adapterhost.AdapterBinaryPrefix)
 	}
 	return base
 }
@@ -430,7 +428,7 @@ func firstAdapterBinary() string {
 			continue
 		}
 		for _, e := range entries {
-			if strings.HasPrefix(e.Name(), adapterBinaryPrefix) && !strings.Contains(e.Name(), "remote-runner") {
+			if strings.HasPrefix(e.Name(), adapterhost.AdapterBinaryPrefix) && !strings.Contains(e.Name(), "remote-runner") {
 				return filepath.Join(dir, e.Name())
 			}
 		}

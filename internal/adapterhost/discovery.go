@@ -13,7 +13,12 @@ import (
 )
 
 const (
-	adapterBinaryPrefix = "criteria-adapter-"
+	// AdapterBinaryPrefix is the single source of truth for the conventional
+	// adapter binary basename prefix: adapter type "noop" installs as
+	// "criteria-adapter-noop" (see AdapterBinaryName). Consumers build or
+	// strip conventional binary names (peer binary resolution, CLI dev
+	// registration) and must not redeclare the string.
+	AdapterBinaryPrefix = "criteria-adapter-"
 	adaptersEnvVar      = "CRITERIA_ADAPTERS"
 )
 
@@ -76,7 +81,7 @@ func EncodeDigest(d digest.Digest) string {
 // AdapterBinaryName renders the conventional binary basename for an adapter,
 // e.g. "claude-agent" -> "criteria-adapter-claude-agent".
 func AdapterBinaryName(name string) string {
-	return adapterBinaryPrefix + name
+	return AdapterBinaryPrefix + name
 }
 
 // AdapterInstallPath returns the on-disk path where the binary for adapterType
