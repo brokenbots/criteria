@@ -108,10 +108,12 @@ func TestSupervisedCrashCandidate_ClassificationRoutesCrashOutsideWindow(t *test
 // TestSupervisedCrashCandidate_ClassificationInsideWindowRoutesTimeout is
 // the other half of the contract: with the teardown window open, the same
 // classification-backed failure is a teardown consequence — raw error, no
-// SessionCrashError, no session.crash event.
+// SessionCrashError, no session.crash event. The classification content is
+// irrelevant to the routing, so a different journal fact (the ADR-0008
+// child-run-lost taxonomy reason) exercises the seam too.
 func TestSupervisedCrashCandidate_ClassificationInsideWindowRoutesTimeout(t *testing.T) {
 	sm, sess, h := newSupervisedCrashSession()
-	h.deliver(CrashReasonProcessTerminated)
+	h.deliver(CrashReasonChildRunLost)
 	sm.StepTimeoutTeardownWindow = time.Minute
 	sm.MarkEngineStepTimeoutTeardown()
 
