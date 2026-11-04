@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/brokenbots/criteria/internal/adapterhost"
 )
 
 // devBindings holds the set of local-development adapter overrides.
@@ -58,9 +60,7 @@ func runDev(localPath, as string, out io.Writer) error {
 	key := as
 	if key == "" {
 		base := filepath.Base(localPath)
-		const prefix = "criteria-adapter-"
-		base = strings.TrimPrefix(base, prefix)
-		key = base
+		key = strings.TrimPrefix(base, adapterhost.AdapterBinaryPrefix)
 	}
 
 	if !strings.Contains(key, ".") {

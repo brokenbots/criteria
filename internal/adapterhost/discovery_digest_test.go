@@ -109,7 +109,7 @@ func writeFakeBinary(t *testing.T, root, digestEncoded, adapterType string) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	p := filepath.Join(dir, adapterBinaryPrefix+adapterType)
+	p := filepath.Join(dir, AdapterBinaryPrefix+adapterType)
 	if err := os.WriteFile(p, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}

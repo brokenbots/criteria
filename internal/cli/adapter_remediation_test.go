@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/brokenbots/criteria/internal/adapter/oci"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
@@ -83,6 +84,25 @@ func TestRunDev_DefaultAsFromBasename(t *testing.T) {
 	err := runDev(bin, "", &out)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--as must be")
+}
+
+func TestRunDev_DefaultAsTrimsSharedConventionalPrefix(t *testing.T) {
+	// The derived key is the basename minus the shared conventional prefix
+	// (adapterhost.AdapterBinaryPrefix), so a `criteria adapter dev` call with
+	// --as unset consumes exactly the naming convention adapterhost discovery
+	// and the peer build their binary names from — one convention, one
+	// definition site.
+	dir := t.TempDir()
+	base := adapterhost.AdapterBinaryPrefix + "shell.regtest"
+	bin := filepath.Join(dir, base)
+	require.NoError(t, os.WriteFile(bin, []byte("fake"), 0o755))
+
+	var out bytes.Buffer
+	require.NoError(t, runDev(bin, "", &out))
+	assert.Contains(t, out.String(), "dev: registered")
+	got, ok := findDevBinding("shell", "regtest")
+	require.True(t, ok, "expected dev binding for shell.regtest derived from basename %q", base)
+	assert.Equal(t, bin, got)
 }
 
 // --------------------------------------------------------------------------

@@ -150,7 +150,7 @@ func scanAdapterBinaries(dir string) ([]AdapterSpec, error) {
 			continue
 		}
 		base := entry.Name()
-		if !strings.HasPrefix(base, adapterBinaryPrefix) ||
+		if !strings.HasPrefix(base, adapterhost.AdapterBinaryPrefix) ||
 			strings.Contains(base, "remote-runner") {
 			continue
 		}
@@ -268,7 +268,7 @@ func locateSpecBinary(spec *AdapterSpec) error {
 	if spec.Name == "" {
 		return nil
 	}
-	if p, err := exec.LookPath(adapterBinaryPrefix + adapterhost.DefinitionType(spec.Name)); err == nil {
+	if p, err := exec.LookPath(adapterhost.AdapterBinaryPrefix + adapterhost.DefinitionType(spec.Name)); err == nil {
 		spec.Binary = p
 	}
 	if spec.Binary == "" {
