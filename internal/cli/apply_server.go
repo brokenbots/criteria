@@ -124,7 +124,7 @@ func eventsFileSink(runID string, eventsOut io.Writer) *run.LocalSink {
 }
 
 func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.Loader, client *servertrans.Client, state *localRunState, graph *workflow.FSMGraph, opts applyOptions, eventsOut io.Writer) error {
-	_ = writeLocalRunState(state)
+	writeInitialRunState(log, state)
 	defer removeLocalRunState(state.RunID)
 	defer RemoveStepCheckpoint(state.RunID)
 

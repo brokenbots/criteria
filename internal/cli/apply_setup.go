@@ -73,6 +73,26 @@ func newLocalRunState(runID, graphName, serverURL string) *localRunState {
 	}
 }
 
+// writeInitialRunState records the fresh run's local run-state record at run
+// start (both apply paths). The write is advisory at this point: the
+// crash-resume record is the StepCheckpoint the engine writes later, so a
+// failed write here degrades run metadata (runview, checkpoint-sweep
+// classification) without breaking the run. It is still logged — never
+// silently swallowed — mirroring the step-checkpoint soft-degrade policy;
+// the load-bearing run-state writes (agent recovery, serve-adapter
+// host-of-record) surface the error instead.
+func writeInitialRunState(log *slog.Logger, st *localRunState) {
+	if st == nil {
+		return
+	}
+	if err := writeLocalRunState(st); err != nil {
+		if log == nil {
+			log = slog.Default()
+		}
+		log.Warn("failed to write run state record; run metadata may be incomplete", "run_id", st.RunID, "error", err)
+	}
+}
+
 // workflowDirFromPath returns the workflow module directory for path.
 // If path is a directory it is returned as-is; if it is a file, its parent
 // directory is returned — all sibling .chcl and .hcl files form the same module.
