@@ -9,7 +9,7 @@ import (
 // terminalSuccessSink wraps an engine.Sink and records the success value of
 // the last OnRunCompleted event. The apply command uses this to map a terminal
 // failed run to a non-zero OS exit code without changing event emission or
-// console output. It also captures the last rejected approval decision (CRI-256)
+// console output. It also captures the last rejected approval decision
 // so the rejection reason can surface in the run's failure error.
 type terminalSuccessSink struct {
 	engine.Sink
@@ -52,7 +52,7 @@ func (s *terminalSuccessSink) TerminalSuccess() (finalState string, success, ok 
 }
 
 // Rejection reports the last rejected approval decision with its reason
-// (CRI-256): rejection reasons must survive from the prompt or answers file
+// intact: rejection reasons must survive from the prompt or answers file
 // into the run's failure error. ok=false when no rejected decision was
 // observed (approved or undecided).
 func (s *terminalSuccessSink) Rejection() (node, reason string, ok bool) {

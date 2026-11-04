@@ -22,7 +22,7 @@ func NewResumeCmd() *cobra.Command {
 			if runID == "" {
 				return fmt.Errorf("--run-id is required")
 			}
-			// CRI-255: a run executed by a local apply is controlled through
+			// A run executed by a local apply is controlled through
 			// its loopback control listener (discovered from the run's state
 			// dir); without the record (or with an explicit server target)
 			// the verb rides the castle server surface as before.

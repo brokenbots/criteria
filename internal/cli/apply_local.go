@@ -37,13 +37,13 @@ func runApplyLocal(
 	}
 	defer cleanup()
 
-	// CRI-202: enforce the retention janitor before this invocation starts.
+	// Enforce the retention janitor before this invocation starts.
 	// Terminal runs' checkpoints are deleted and orphans swept; live or
 	// stopped runs are exempt, so a resume identity match still finds its
 	// checkpoint state intact.
 	sweepOrphanCheckpointState(log)
 
-	// CRI-125: identify this invocation before any fresh-run work so a
+	// Identify this invocation before any fresh-run work so a
 	// restarted runner resumes (or keeps failed) the original run instead of
 	// forking a second run with a fresh run_id. A broken CLI variable input
 	// fails fast: the invocation cannot faithfully re-enter the original run
@@ -56,7 +56,7 @@ func runApplyLocal(
 	if suppressed {
 		log.Info("in-flight run for this identity resumed; not starting a second run",
 			"file", filepath.Base(opts.workflowPath))
-		// CRI-125: a resumed run's outcome error was already returned via
+		// A resumed run's outcome error was already returned via
 		// prepErr above; reaching here means the resumed run completed
 		// successfully, so the invocation must not start a second run.
 		return nil
@@ -85,8 +85,8 @@ func runApplyLocal(
 
 // executeFreshLocalRun runs a freshly-started local workflow to its terminal
 // state, persisting the local run state and step checkpoints for crash
-// recovery (CRI-125). Every local run is served by a loopback control
-// listener (CRI-255) while apply executes — the runview API plus the Connect
+// recovery. Every local run is served by a loopback control
+// listener while apply executes — the runview API plus the Connect
 // LocalControlService (PauseRun/ResumeRun/ResolveResume) — and, when the UI
 // is enabled, the embedded run-viewer is served on the same server.
 func executeFreshLocalRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, loader adapterhost.Loader, resolution *approvalResolution, jsonOut io.Writer, mode outputMode, opts applyOptions, identity localRunIdentity, workflowHash string) error {
@@ -114,7 +114,7 @@ func executeFreshLocalRun(ctx context.Context, log *slog.Logger, graph *workflow
 	state := newLocalRunState(runID, graph.Name, "")
 	state.WorkflowHash = workflowHash
 	writeInitialRunState(log, state)
-	// CRI-225: publish the resolved workflow origin as the run's metadata
+	// Publish the resolved workflow origin as the run's metadata
 	// admission record; local sources (nil origin) record nothing.
 	publishRunMetadata(runID, opts.origin, log)
 	defer removeLocalRunState(runID)
@@ -126,7 +126,7 @@ func executeFreshLocalRun(ctx context.Context, log *slog.Logger, graph *workflow
 	}
 	ctrl := newLocalRunControl(runID, graph, tracker, eng)
 
-	// CRI-255: the loopback control listener is served for every local run —
+	// The loopback control listener is served for every local run —
 	// it mounts the Connect LocalControlService (control surface) and, when
 	// the UI is enabled, the run viewer. Its stop verb cancels the engine
 	// context (the engine then emits a real terminal RunFailed event).
@@ -152,7 +152,7 @@ func executeFreshLocalRun(ctx context.Context, log *slog.Logger, graph *workflow
 func buildLocalRunSink(log *slog.Logger, runID, workflowPath, fingerprint string, jsonOut io.Writer, mode outputMode, graph *workflow.FSMGraph, getVisits func() map[string]int) (*pauseTracker, *terminalSuccessSink) {
 	checkpointFn := buildLocalCheckpointFn(log, runID, graph.Name, workflowPath, fingerprint, getVisits)
 	baseSink, local := buildLocalSink(runID, jsonOut, mode, graph.StepOrder(), checkpointFn, graph)
-	// CRI-278: emit the once-per-run WorkflowGraphs event at the post-compile
+	// Emit the once-per-run WorkflowGraphs event at the post-compile
 	// seam, before the engine starts, so it takes the next seq on the ND-JSON
 	// stream and lands at or before RunStarted.
 	emitWorkflowGraphsLocal(log, local, graph)
@@ -170,7 +170,7 @@ func buildLocalRunSink(log *slog.Logger, runID, workflowPath, fingerprint string
 
 // localRunEngineOptions returns the engine options every local `criteria
 // apply` engine construction site must include: the workflow directory, run
-// data directory, CRI-293 shim address isolation, and the CRI-202 checkpoint
+// data directory, shim address isolation, and the checkpoint
 // surface (snapshot base + run id, so adapter checkpoints persist under
 // <home>/runs/<runID>/snapshots for later restore). Server engine
 // construction sites must never include the shim isolation option: each
@@ -205,7 +205,7 @@ func newLocalEngine(runID string, graph *workflow.FSMGraph, loader adapterhost.L
 	engOpts = append(engOpts,
 		engine.WithVarOverrides(identity.mergedVars),
 		engine.WithAuditWriter(auditWriter))
-	// CRI-304: record the invocation fingerprint and let the engine adopt
+	// Record the invocation fingerprint and let the engine adopt
 	// surviving per-scope instances from prior invocations of the same run.
 	engOpts = append(engOpts, engineAdoptionOptions(dataDir, identity.fingerprint, runID)...)
 	return engine.New(graph, loader, runSink, engOpts...), nil
@@ -214,8 +214,8 @@ func newLocalEngine(runID string, graph *workflow.FSMGraph, loader adapterhost.L
 // finishFreshLocalRun handles post-engine work: resume cycles (boundary
 // pauses and approval/signal node pauses) and the terminal-success failure
 // translation. It runs for every local run: without a configured resumer the
-// control listener's bus still resolves pauses (CRI-255), and a pause with
-// no reachable surface fails the run loudly (CRI-256).
+// control listener's bus still resolves pauses, and a pause with
+// no reachable surface fails the run loudly.
 func finishFreshLocalRun(runCtx context.Context, log *slog.Logger, loader adapterhost.Loader, runSink *terminalSuccessSink, resolution *approvalResolution, runID string, opts applyOptions, ctrl *localRunControl, eng *engine.Engine) error {
 	if err := drainLocalResumeCycles(runCtx, log, loader, runSink, resolution, runID, opts, ctrl, eng); err != nil {
 		return err
@@ -224,7 +224,7 @@ func finishFreshLocalRun(runCtx context.Context, log *slog.Logger, loader adapte
 }
 
 // terminalFailureError composes the invocation error for a terminal run that
-// completed with success=false. A rejected approval decision (CRI-256) carries
+// completed with success=false. A rejected approval decision carries
 // its operator-supplied reason into the error so rejections are never silent.
 func terminalFailureError(runSink *terminalSuccessSink) error {
 	finalState, success, ok := runSink.TerminalSuccess()
@@ -241,7 +241,7 @@ func terminalFailureError(runSink *terminalSuccessSink) error {
 }
 
 // localRunIdentity carries the CLI variable inputs and the invocation
-// fingerprint (CRI-125) needed by both the crash-recovery sweep and a fresh
+// fingerprint needed by both the crash-recovery sweep and a fresh
 // local run.
 type localRunIdentity struct {
 	mergedVars  map[string]cty.Value
@@ -249,7 +249,7 @@ type localRunIdentity struct {
 }
 
 // prepareLocalRunIdentity merges the invocation's CLI variables and computes
-// the CRI-125 run identity fingerprint, then resumes any in-flight local
+// the run identity fingerprint, then resumes any in-flight local
 // runs whose checkpoint matches this identity. The boolean reports whether a
 // matching run was consumed, in which case the caller must not start a
 // second run; the error carries either a variable-source failure or the
@@ -278,7 +278,7 @@ func resumeLocalInFlightRuns(ctx context.Context, log *slog.Logger, out io.Write
 		if strings.TrimSpace(cp.ServerURL) != "" {
 			continue
 		}
-		// CRI-125: a consumed checkpoint whose fingerprint matches this
+		// A consumed checkpoint whose fingerprint matches this
 		// invocation means the original run was driven to its outcome here;
 		// the caller must not start a second run for the same identity.
 		// mergedVars only apply to fingerprint-matched checkpoints: the
@@ -300,7 +300,7 @@ func resumeLocalInFlightRuns(ctx context.Context, log *slog.Logger, out io.Write
 }
 
 // prepareReattach validates the checkpoint, builds an adapter loader, and
-// selects the pause-resolution posture from the CRI-256 inputs. On failure it
+// selects the pause-resolution posture from the approval config. On failure it
 // logs, clears the checkpoint, and returns false so the caller can skip the
 // run.
 func prepareReattach(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, approvalCfg localApprovalConfig) (*workflow.FSMGraph, adapterhost.Loader, *approvalResolution, bool) {
@@ -337,7 +337,7 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 	}
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
-	// CRI-304: the interrupted step restarts at attempt 1 with a fresh retry
+	// The interrupted step restarts at attempt 1 with a fresh retry
 	// budget. The pre-crash attempt produced no outcome, so counting it
 	// against max_step_retries made mid-step crash recovery useless for any
 	// workflow with max_step_retries <= 1. The persisted max_visits counts
@@ -355,7 +355,7 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 		RemoveStepCheckpoint(cp.RunID)
 		return false, nil
 	}
-	// CRI-255: the reattach run is served by its own control listener (the
+	// The reattach run is served by its own control listener (the
 	// crashed process's listener is gone): the fresh attachment publishes a
 	// renewed control.json for the same run id.
 	ctrl := newLocalRunControl(cp.RunID, graph, tracker, eng)
@@ -374,7 +374,7 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 	}
 	log.Info("resumed local run completed", "run_id", cp.RunID)
 	RemoveStepCheckpoint(cp.RunID)
-	// CRI-125: a resumed run that reaches a terminal success=false state must
+	// A resumed run that reaches a terminal success=false state must
 	// fail the invocation exactly like the fresh path does; otherwise the
 	// suppression branch would mask the original run's failure with exit 0.
 	return true, terminalFailureError(runSink)
@@ -384,7 +384,7 @@ func resumeOneLocalRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint
 // engine for a crash-reattach run. The checkpointFn closure captures eng so
 // that each checkpoint write includes the current visit counts (W07).
 // mergedVars, when non-empty, applies the current invocation's CLI variable
-// overrides to the resumed engine (CRI-125): local checkpoints do not persist
+// overrides to the resumed engine: local checkpoints do not persist
 // a variable scope, so without this a fingerprint-matched resumed run would
 // silently lose the caller's --var/--var-file inputs.
 func buildReattachTrackerAndEngine(cp *StepCheckpoint, log *slog.Logger, graph *workflow.FSMGraph, loader adapterhost.Loader, out io.Writer, mode outputMode, nextAttempt int, mergedVars map[string]cty.Value) (applyOptions, *pauseTracker, *terminalSuccessSink, *engine.Engine, error) {
@@ -420,11 +420,11 @@ func buildReattachTrackerAndEngine(cp *StepCheckpoint, log *slog.Logger, graph *
 	reattachOpts = append(reattachOpts,
 		engine.WithVarOverrides(mergedVars),
 		engine.WithResumedVisits(cp.Visits))
-	// CRI-293: this is a local crash-reattach engine; it binds the remote
+	// Local crash-reattach engine: it binds the remote
 	// environment shims in-process just like the fresh-run and resume-cycle
 	// engines, so it needs the same shared listen_address isolation (carried
 	// by localRunEngineOptions).
-	// CRI-304: record the checkpoint's invocation fingerprint and let the
+	// Record the checkpoint's invocation fingerprint and let the
 	// resumed engine adopt surviving per-scope instances from other prior
 	// invocations of the same run.
 	reattachOpts = append(reattachOpts, engineAdoptionOptions(dataDir, cp.Fingerprint, cp.RunID)...)

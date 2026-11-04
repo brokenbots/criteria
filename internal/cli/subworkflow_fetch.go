@@ -166,7 +166,7 @@ func (f *defaultWorkflowFetcher) publishWorkflowCacheTree(kind, source, resolved
 }
 
 // cascadeSlugDir returns the cache directory that holds the fetched tree for a
-// subworkflow source declared in callerDir (ADR-0005 D4, M4.1/CRI-227). When
+// subworkflow source declared in callerDir (ADR-0005 D4, M4.1). When
 // the caller itself is a fetched tree inside the cache — a cascaded
 // resolution, where a remote subworkflow declares further remote subworkflows
 // — the child nests under the cascade root's slug in a "subworkflows"

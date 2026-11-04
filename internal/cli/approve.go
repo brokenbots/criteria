@@ -11,7 +11,7 @@ import (
 )
 
 // NewApproveCmd delivers an approval decision or a signal outcome to a
-// paused local run over its control listener (CRI-255): the primary
+// paused local run over its control listener: the primary
 // replacement for the CRITERIA_LOCAL_APPROVAL file protocol.
 func NewApproveCmd() *cobra.Command {
 	var (

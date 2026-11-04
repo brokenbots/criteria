@@ -280,7 +280,7 @@ func (a *activeRun) promptActive(msg *pb.AgentPrompt) (matched, routed bool, act
 }
 
 // pauseActive routes an orchestrator-issued pause command to the active run's
-// pause channel (CRI-254, mirroring resumeActive/promptActive). The channel
+// pause channel (mirroring resumeActive/promptActive). The channel
 // is buffered (1) and the send is non-blocking: backpressure must not stall
 // the agent control loop. A pause that finds the slot full is not silently
 // discarded — the caller logs the typed routing failure so a raced pause is
@@ -423,9 +423,9 @@ func (l *agentLoop) handlePrompt(msg *pb.AgentPrompt) {
 }
 
 // handlePause routes an orchestrator-issued pause_run command to the active
-// run (CRI-254). A pause addressed to a non-active run never lands and is
+// run. A pause addressed to a non-active run never lands and is
 // never acked — the castle-side RunPaused ack timeout detects it — so the
-// agent-side log must carry the structured drop reason (CRI-62: no silent
+// agent-side log must carry the structured drop reason (no silent
 // control drops).
 func (l *agentLoop) handlePause(msg *pb.PauseRun) {
 	matched, routed, activeID := l.active.pauseActive(msg)
@@ -573,7 +573,7 @@ func runAgent(ctx context.Context, opts *agentOptions) error {
 // and starts the first one before the main loop begins accepting new
 // assignments.
 func recoverAgentRuns(ctx context.Context, log *slog.Logger, client *servertrans.Client, active *activeRun, opts *agentOptions) {
-	// CRI-202: enforce the retention janitor before recovery enqueues
+	// Enforce the retention janitor before recovery enqueues
 	// resumable runs. Terminal runs' checkpoints are deleted and orphans
 	// swept; running or paused runs are exempt, so their state survives the
 	// sweep and their recovery resume can restore from it.
@@ -767,7 +767,7 @@ func newRunPublisher(ctx context.Context, client *servertrans.Client, runID stri
 // step.outcome and RunCompleted events that drive the orchestrator run-row
 // transition, so it must survive a temporarily unavailable SubmitEvents
 // stream: the reconnect backoff (up to 5s between attempts) gets several
-// attempts within this window (KB-53).
+// attempts within this window.
 const terminalDrainTimeout = 30 * time.Second
 
 // reportAgentAssignmentFailed emits a terminal RunFailed event for a run that
@@ -896,7 +896,7 @@ func buildAgentRun(agentCtx, runCtx context.Context, log *slog.Logger, client *s
 	var eng *engine.Engine
 	// Agent-mode restarts are orchestrated by the server (decline/resume
 	// semantics), and the agent's workflow path is a per-pod scratch dir, so
-	// no run-identity fingerprint is persisted here (CRI-125 covers the
+	// no run-identity fingerprint is persisted here — that mechanism covers the
 	// runner/CLI path).
 	sink := buildServerSink(runCtx, publisher, client, assignment.GetRunId(), graph, workflowPath, opts.serverURL, "", log,
 		func() map[string]int {
@@ -920,7 +920,7 @@ func buildAgentRun(agentCtx, runCtx context.Context, log *slog.Logger, client *s
 		engine.WithWorkflowDir(workflowDir),
 		engine.WithAuditWriter(auditWriter),
 	}
-	// CRI-202: agent runs checkpoint adapter state under
+	// Agent runs checkpoint adapter state under
 	// <home>/runs/<runID>/snapshots so a resumed run restores adapter state
 	// from the last step boundary.
 	home, err := stateDir()
@@ -942,7 +942,7 @@ func buildAgentRun(agentCtx, runCtx context.Context, log *slog.Logger, client *s
 // When cp and reattachResp are non-nil, the engine resumes from the server's
 // reported current step and attempt instead of starting from the beginning.
 func runAndDrain(agentCtx, runCtx context.Context, log *slog.Logger, eng *engine.Engine, loader adapterhost.Loader, sink *run.Sink, runSink engine.Sink, resumeCh <-chan *pb.ResumeRun, promptCh <-chan *pb.AgentPrompt, pauseCh <-chan *pb.PauseRun, state *localRunState, graph *workflow.FSMGraph, workflowDir, runID string, publisher *servertrans.RunPublisher, cp *StepCheckpoint, reattachResp *pb.ReattachRunResponse) error {
-	// CRI-254: consume pause commands delivered to this run's pause channel
+	// Consume pause commands delivered to this run's pause channel
 	// starting BEFORE the initial engine run so a pause issued while the run
 	// is in flight lands at the next boundary (drain-first, durable
 	// checkpoint, no adapter kill). The consumer lives across every resume
@@ -982,7 +982,7 @@ func runAndDrain(agentCtx, runCtx context.Context, log *slog.Logger, eng *engine
 	// Only wait for resume cycles when the agent is not shutting down. Pending
 	// non-terminal events are still drained below so the server can ack them
 	// and the next process replays by correlation ID.
-	// KB-56: a resume-loop error must not skip the terminal drain below. The
+	// A resume-loop error must not skip the terminal drain below. The
 	// pending step.outcome / RunCompleted tail is what transitions the
 	// server-side run row out of 'running'; an early error return drops that
 	// tail (the observed stuck-'running' shape).

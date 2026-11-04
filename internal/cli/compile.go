@@ -50,14 +50,14 @@ func NewCompileCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&subworkflowRoots, "subworkflow-root", nil, "Restrict subworkflow source resolution to this root path (repeatable; empty = no restriction)")
 	cmd.Flags().BoolVar(&warnsAsErrors, "warnings-as-errors", false, "Treat warnings (e.g. an adapter whose schema could not be verified) as errors")
 	cmd.Flags().BoolVar(&allowUnsigned, "allow-unsigned", false, "Skip adapter signature verification (also via CRITERIA_ALLOW_UNSIGNED)")
-	cmd.Flags().StringVar(&workflowRef, "workflow-ref", "", "Expected ref/digest the workflow source must resolve to — a git commit SHA or sha256:<digest>; compilation fails closed on mismatch (CRI-226)")
+	cmd.Flags().StringVar(&workflowRef, "workflow-ref", "", "Expected ref/digest the workflow source must resolve to — a git commit SHA or sha256:<digest>; compilation fails closed on mismatch")
 	return cmd
 }
 
 func compileWorkflowOutput(ctx context.Context, workflowPath, workflowRef, format string, subworkflowRoots []string, warnsAsErrors, allowUnsigned bool) ([]byte, error) {
 	// ADR-0005 D1/D3: remote workflow sources materialize into the workflow
 	// cache before compilation; local paths pass through unchanged. ADR-0005
-	// D7 (CRI-226): a declared --workflow-ref pin is enforced at resolve time.
+	// D7: a declared --workflow-ref pin is enforced at resolve time.
 	resolvedPath, _, err := resolveWorkflowSource(ctx, workflowPath, workflowRef)
 	if err != nil {
 		return nil, err
@@ -111,14 +111,14 @@ type compileAdapter struct {
 	ConfigKeys []string `json:"config_keys"`
 	// Environment is the adapter's compiled environment binding,
 	// "<env_type>.<env_name>" — the pod-composition key operators compose
-	// per-environment peer manifests from (KB-253). Empty means the graph
+	// per-environment peer manifests from. Empty means the graph
 	// default environment applies.
 	Environment string `json:"environment,omitempty"`
 	// Source is the adapter's pinned OCI source ref as compiled (the
 	// lockfile-carried identity the graph was compiled against). Empty for
 	// non-OCI adapters.
 	Source string `json:"source,omitempty"`
-	// PinnedDigest is the lockfile-resolved digest at compile time (KB-253):
+	// PinnedDigest is the lockfile-resolved digest at compile time:
 	// the published graph carries exactly what it was compiled against, so
 	// operators boot peer children with per-definition digests without
 	// re-reading any lockfile. Empty when the adapter is unpinned.
@@ -136,7 +136,7 @@ type compileStep struct {
 }
 
 // compileAdapterCallEdge is one adapter-to-adapter tool-call edge in the
-// compiled JSON output (CRI-158). Tool mirrors the graph's AdapterCallEdge:
+// compiled JSON output. Tool mirrors the graph's AdapterCallEdge:
 // the granted tool name, or "*" for a bare `.tools` grant that exposes the
 // callee's whole tool surface (matching the dot rendering's marker).
 type compileAdapterCallEdge struct {
@@ -155,9 +155,9 @@ type compileSubworkflow struct {
 type compileOutcome struct {
 	Name string `json:"name"`
 	Next string `json:"next"`
-	// Description is the author-stated outcome semantics (KB-259): its
+	// Description is the author-stated outcome semantics: its
 	// consumer is the copilot adapter's allowed-outcomes menu rendering
-	// (adapter-proto wire publication pending, paired KB-260/KB-263). Empty
+	// (adapter-proto wire publication pending). Empty
 	// when unset.
 	Description string `json:"description,omitempty"`
 }
@@ -634,7 +634,7 @@ func dotCalleeToolSurfaces(edges []workflow.AdapterCallEdge) []dotCalleeSurface 
 	return out
 }
 
-// dotWriteCallEdges renders the graph's adapter tool-call edges (CRI-158):
+// dotWriteCallEdges renders the graph's adapter tool-call edges:
 // one tool-surface node per distinct callee adapter — labeled with the
 // granted tool surface ("tools: <names>", or "tools: *" for a bare `.tools`
 // grant) and filled with the callee type's palette color — then one dashed

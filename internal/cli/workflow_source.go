@@ -14,8 +14,8 @@ import (
 // WorkflowOrigin records the resolved provenance of a workflow source
 // (ADR-0005 D4/D6): where the content came from, the immutable version that
 // was resolved, and the local path it was materialized into. RunMetadata
-// provenance recording (CRI-225) consumes this record. Expected-pin
-// enforcement on ResolvedRef (CRI-226) happens in resolveWorkflowSource,
+// provenance recording consumes this record. Expected-pin
+// enforcement on ResolvedRef happens in resolveWorkflowSource,
 // before the origin is produced.
 type WorkflowOrigin struct {
 	// Kind is the source form: "git" or "archive" (the fetcher's pin kinds).
@@ -44,7 +44,7 @@ type WorkflowOrigin struct {
 // Local paths are returned unchanged with a nil origin: local behavior is
 // unchanged and local sources never enter the fetcher (ADR-0005 D3).
 //
-// expectedRef is the caller-declared expected pin (ADR-0005 D7, CRI-226):
+// expectedRef is the caller-declared expected pin (ADR-0005 D7):
 // the git commit SHA or "sha256:<digest>" the resolved source must match.
 // When set, resolution fails closed on mismatch — or on a local source,
 // where the expectation cannot be verified — before any execution. The
@@ -59,7 +59,7 @@ func resolveWorkflowSource(ctx context.Context, source, expectedRef string) (str
 		return source, nil, nil
 	}
 
-	// The git:: subtree form (CRI-227 convention) appends the in-repo
+	// The git:: subtree form appends the in-repo
 	// workflow directory to the repository URL: git::<repo>//<subdir>. The
 	// fetcher fetches the REPOSITORY (the part before //); the resolved
 	// workflow directory is the fetched tree joined with the subdir, which
@@ -94,7 +94,7 @@ func resolveWorkflowSource(ctx context.Context, source, expectedRef string) (str
 	}, nil
 }
 
-// splitGitSubtreeSuffix splits the git:: //subdir convention (CRI-227):
+// splitGitSubtreeSuffix splits the git:: //subdir convention:
 // "git::<repo>//<subdir>" into the fetchable repository source and the
 // in-repo workflow directory. Only remote forms (http/https/ssh repository
 // URLs) split; file: URLs keep verbatim behavior (their "file:///path"
@@ -166,12 +166,12 @@ func fetchedAt(dir string) time.Time {
 // redactSourceForLog masks userinfo credentials in a URL-shaped source
 // ("******host/x.tar.gz" → "https://redacted@host/x.tar.gz") so
 // secrets never reach structured logs — or the recorded RunMetadata
-// provenance, which stores this redacted form (CRI-225). WorkflowOrigin in
+// provenance, which stores this redacted form. WorkflowOrigin in
 // memory and the lockfile keep the raw source. Sources without a "://"
 // separator (local paths, scp-style git forms) are returned unchanged.
 //
 // The implementation is shared with the workflow module's compile-time
-// diagnostics (workflow.RedactSource, CRI-226 review R1) so every rendered
+// diagnostics (workflow.RedactSource) so every rendered
 // surface redacts identically.
 func redactSourceForLog(source string) string {
 	return workflow.RedactSource(source)

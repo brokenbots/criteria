@@ -99,10 +99,10 @@ func (t *pauseTracker) ClearPaused() {
 // Each time the engine pauses, the loop resolves the pause and drives a fresh
 // engine from the paused node until the run is no longer paused.
 //
-// Resolution depends on the pause mode (CRI-255, CRI-256):
+// Resolution depends on the pause mode:
 //
-//   - approval and signal-wait nodes: resolution follows the CRI-256
-//     selection — --answers file (path 2), the explicit CRITERIA_LOCAL_APPROVAL
+//   - approval and signal-wait nodes: resolution follows the
+//     selection order — --answers file (path 2), the explicit CRITERIA_LOCAL_APPROVAL
 //     resumer (stdin|file|env|auto-approve), the interactive TTY prompt
 //     (path 1, default), or control-RPC-only; the configured surface races
 //     the run's control listener (ResolveResume) with first-resolution-wins
@@ -174,8 +174,8 @@ func awaitBoundaryRelease(ctx context.Context, ctrl *localRunControl) error {
 	return fmt.Errorf("boundary pause released without resume")
 }
 
-// resolveApprovalPause resolves an approval or signal-wait pause (CRI-256's
-// two designed paths plus the out-of-band control surface), keeping the CRI-255
+// resolveApprovalPause resolves an approval or signal-wait pause (the two
+// designed paths plus the out-of-band control surface), keeping the
 // race contract: prompt and control-RPC must not race — the first resolution
 // wins and the loser is cancelled (or noted) cleanly.
 func resolveApprovalPause(ctx context.Context, log *slog.Logger, ctrl *localRunControl, resolution *approvalResolution, runID, pausedNode string) (map[string]string, error) {
@@ -321,8 +321,8 @@ func resolveLocalPause(ctx context.Context, resumer localresume.LocalResumer, ru
 }
 
 func ensureLocalModeSupported(graph *workflow.FSMGraph) error {
-	// Since CRI-255 the run's control listener is always attached to local
-	// apply, so approval and signal-wait pauses are supported without
+	// The run's control listener is always attached to local apply, so approval
+	// and signal-wait pauses are supported without
 	// CRITERIA_LOCAL_APPROVAL: resolution arrives via the ResolveResume RPC
 	// (or a configured file/env resumer). No first-class gating remains.
 	// Legacy state.Requires shapes are unsupported in local mode

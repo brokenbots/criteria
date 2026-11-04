@@ -9,11 +9,11 @@ import (
 )
 
 // fetchingSubWorkflowResolver resolves subworkflow sources for run-time
-// compilation (CRI-224/CRI-226): local sources resolve in place through
+// compilation: local sources resolve in place through
 // LocalSubWorkflowResolver (AllowedRoots preserved); remote sources are
 // fetched through the workflowFetcher into the shared cache, and the
 // fetcher's pin (git commit SHA or archive sha256 digest) is handed to the
-// compiler so operator-declared expected pins can be enforced (CRI-226).
+// compiler so operator-declared expected pins can be enforced.
 type fetchingSubWorkflowResolver struct {
 	local   *workflow.LocalSubWorkflowResolver
 	fetcher workflowFetcher

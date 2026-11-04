@@ -60,7 +60,7 @@ func resolveServerBootstrapToken(spec string) (string, error) {
 // buildServerSink constructs a run.Sink wired to the given publisher.
 // authClient provides the criteria id and token persisted in crash-recovery
 // checkpoints; it may be nil in tests that do not exercise checkpoints.
-// fingerprint is the invocation identity (CRI-125) persisted in checkpoints so
+// fingerprint is the invocation identity persisted in checkpoints so
 // a restarted runner can match them and resume instead of forking a second
 // run. getVisits, if non-nil, is called on each checkpoint to capture the
 // current per-step visit counts for crash-recovery persistence (W07).
@@ -88,7 +88,7 @@ func buildServerSink(ctx context.Context, publisher run.Publisher, authClient *s
 // primary server sink (with the live visit-count checkpoint closure), the
 // terminal-success wrapper the terminal drain inspects, and the ND-JSON
 // dual-write mirror when eventsOut is set. emitWorkflowGraphsServer runs
-// here so the once-per-run WorkflowGraphs event (CRI-278) still lands before
+// here so the once-per-run WorkflowGraphs event still lands before
 // the engine starts, on both the server stream and the dual-write mirror.
 func buildServerRunSinks(ctx context.Context, log *slog.Logger, client *servertrans.Client, state *localRunState, graph *workflow.FSMGraph, opts applyOptions, eventsOut io.Writer, fingerprint string, getVisits func() map[string]int) (*terminalSuccessSink, *run.Sink, *run.LocalSink) {
 	sink := buildServerSink(ctx, client, client, state.RunID, graph, opts.workflowPath, opts.serverURL, fingerprint, log, getVisits)
@@ -135,7 +135,7 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 
 	// Declare eng first so the checkpoint closure can capture live visit counts.
 	var eng *engine.Engine
-	// CRI-125: checkpoints written during this run carry the invocation
+	// Checkpoints written during this run carry the invocation
 	// fingerprint so a restarted runner can match and resume this run
 	// instead of forking a second one.
 	fingerprint := runIdentityFingerprint(opts.workflowPath, opts.serverURL, opts.varFiles, opts.varOverrides)
@@ -150,7 +150,7 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 	if err != nil {
 		return err
 	}
-	// CRI-254: consume orchestrator-issued pause_run commands and drive the
+	// Consume orchestrator-issued pause_run commands and drive the
 	// boundary-pause machinery (drain-first, durable checkpoint); the
 	// consumer stops once the run is terminal and is joined at run return.
 	pauseRouter := newControlPauseRouter(state.RunID, sink, log)
@@ -165,7 +165,7 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 	}
 	log.Info("run completed", "run_id", state.RunID)
 
-	// KB-56: capture, don't return on, a resume-loop failure so the terminal
+	// Capture, don't return on, a resume-loop failure so the terminal
 	// drain below still runs. The pending step.outcome / RunCompleted tail is
 	// what transitions the server-side run row out of 'running'; an early
 	// error return drops that tail (the observed stuck-'running' castle row).
@@ -189,13 +189,13 @@ func executeServerRun(ctx context.Context, log *slog.Logger, loader adapterhost.
 
 // buildServerRunEngine wires the engine for a fresh server-mode run, including
 // the run data dir so per-scope remote sessions can rotate tokens. The
-// invocation fingerprint (CRI-125) is recorded in the run data directory and
-// drives CRI-304 cross-run per-scope adoption. promptCh/ownerID wire the
+// invocation fingerprint is recorded in the run data directory and
+// drives cross-run per-scope adoption. promptCh/ownerID wire the
 // run's agent-prompt path (ADR-0006 D1/D4); a nil promptCh disables it.
 func buildServerRunEngine(graph *workflow.FSMGraph, loader adapterhost.Loader, sink engine.Sink, state *localRunState, opts applyOptions, fingerprint string, promptCh <-chan *pb.AgentPrompt, promptOwnerID string) (*engine.Engine, error) {
 	auditPath, _ := auditLogPath(state.RunID)
 	auditWriter := adapterhost.NewFileAuditWriter(auditPath)
-	// CRI-202: shared base includes the checkpoint surface (snapshot base +
+	// Shared base includes the checkpoint surface (snapshot base +
 	// run id) so adapter state persists for later restore.
 	dataDir, baseOpts, err := serverRunEngineOptions(state.RunID, opts.workflowPath)
 	if err != nil {
@@ -219,15 +219,15 @@ func buildServerRunEngine(graph *workflow.FSMGraph, loader adapterhost.Loader, s
 // the engine from the paused node, updating eng to the most recently
 // completed engine. runSink is the sink passed to every engine instance so
 // that terminal-state capture is consistent across the original run and all
-// resume cycles. The invocation fingerprint (CRI-125) is recorded in the run
+// resume cycles. The invocation fingerprint is recorded in the run
 // data directory and lets each resumed engine adopt surviving per-scope
-// instances from prior invocations of the same run (CRI-304); callers without
+// instances from prior invocations of the same run; callers without
 // a fingerprint (agent runs) pass "" and get neither marker nor adoption.
-// pauseRouter (CRI-254, nil in tests) is re-pinned to each resumed engine
+// pauseRouter (nil in tests) is re-pinned to each resumed engine
 // before RunFrom starts it, so pause latches address the engine that is
 // actually running mid-flight.
 func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost.Loader, sink *run.Sink, runSink engine.Sink, resumeCh <-chan *pb.ResumeRun, promptCh <-chan *pb.AgentPrompt, promptOwnerID string, state *localRunState, graph *workflow.FSMGraph, workflowDir string, eng *engine.Engine, fingerprint string, pauseRouter *controlPauseRouter) error {
-	// CRI-202: shared base includes the checkpoint surface (snapshot base +
+	// Shared base includes the checkpoint surface (snapshot base +
 	// run id) so the resumed engine saves restored-session state and restores
 	// adapter checkpoints from the original engine, exactly like a local
 	// resume. Without it, wireCheckpointStore and bootstrapSessionsForResume
@@ -268,12 +268,12 @@ func drainResumeCycles(ctx context.Context, log *slog.Logger, loader adapterhost
 		// ADR-0006: resumed engines stay wired to the run's prompt channel so
 		// injected prompts route to the replayed steps too.
 		resumedOpts = append(resumedOpts, engine.WithAgentPrompts(promptCh, promptOwnerID, state.RunID))
-		// CRI-304: resumed engines adopt surviving per-scope instances from
+		// Resumed engines adopt surviving per-scope instances from
 		// prior invocations of the same run instead of rotating fresh tokens
 		// that would wedge the replay behind the shim's handshake timeout.
 		resumedOpts = append(resumedOpts, adoptionOpts...)
 		resumedEng := engine.New(graph, loader, runSink, resumedOpts...)
-		// CRI-254 R3: pin the router to the resumed engine BEFORE it starts
+		// Pin the router to the resumed engine BEFORE it starts
 		// running (mirrors localRunControl.setEngine in apply_resume.go): a
 		// pause delivered while the resumed run executes must address the
 		// engine that is actually in flight, not the one whose loop exited at
@@ -304,7 +304,7 @@ func runApplyServer(ctx context.Context, opts applyOptions) error {
 		log = newApplyLogger()
 	}
 
-	// KB-234 boot gate: consult the operator's CriteriaRun view before any
+	// Boot gate: consult the operator's CriteriaRun view before any
 	// castle interaction; a terminal or deleted CR means exit 0 instead of
 	// minting a pending-forever run (see gateBootOnOperatorView).
 	blocked, err := gateBootOnOperatorView(runCtx, log)
@@ -324,7 +324,7 @@ func runApplyServer(ctx context.Context, opts applyOptions) error {
 
 	copts := applyClientOptions(opts)
 	copts.BootstrapToken = prepared.bootstrapToken
-	// CRI-125: identify this invocation so a restarted runner resumes (or
+	// Identify this invocation so a restarted runner resumes (or
 	// keeps failed) the original run instead of forking a second run with a
 	// fresh run_id against stale adapter state.
 	fingerprint := runIdentityFingerprint(opts.workflowPath, opts.serverURL, opts.varFiles, opts.varOverrides)
@@ -337,13 +337,13 @@ func runApplyServer(ctx context.Context, opts applyOptions) error {
 		log.Info("in-flight run for this identity resumed; not starting a second run",
 			"file", filepath.Base(opts.workflowPath),
 			"server", opts.serverURL)
-		// CRI-125: surface the resumed run's outcome — suppressing the second
+		// Surface the resumed run's outcome — suppressing the second
 		// run must not also mask the original run's failure with exit 0.
 		return resumeErr
 	}
 
 	state := newLocalRunState(runID, prepared.graph.Name, opts.serverURL)
-	// CRI-225: publish the resolved workflow origin for this fresh server
+	// Publish the resolved workflow origin for this fresh server
 	// run; resumed-matching invocations return above and leave the original
 	// run's record untouched. Local sources (nil origin) record nothing.
 	publishRunMetadata(runID, opts.origin, log)
@@ -398,13 +398,13 @@ func prepareServerRun(ctx context.Context, opts applyOptions, log *slog.Logger) 
 	}, nil
 }
 
-// gateBootOnOperatorView applies the KB-234 boot gate: resolve the
+// gateBootOnOperatorView applies the boot gate: resolve the
 // operator-injected identity, probe the operator's CriteriaRun view once,
 // and log the verdict. It returns blocked=true when the operator rules this
 // boot out (terminal CR, or CR deleted while this pod is still alive): the
 // caller must exit 0 without any castle interaction. It returns an error
 // when the gate is misconfigured; an unavailable view is fail-open (blocked
-// stays false) with a loud warning, bounded by the KB-233 backstops.
+// stays false) with a loud warning, bounded by the boot-gate backstops.
 func gateBootOnOperatorView(ctx context.Context, log *slog.Logger) (blocked bool, err error) {
 	gate, enabled, err := bootgate.Configure(os.LookupEnv, tunables.FromEnv().BootGateProbeTimeout)
 	if err != nil {
@@ -421,9 +421,9 @@ func gateBootOnOperatorView(ctx context.Context, log *slog.Logger) (blocked bool
 		return true, nil
 	case bootgate.OutcomeUnknown:
 		// Fail open: an unavailable view is not an operator statement that
-		// the CR is dead. The residual exposure stays bounded by KB-233
-		// rule 1 (terminal CRs delete runner Job pods) and castle rule 2
-		// (created-never-started runs are reaped).
+		// the CR is dead. The residual exposure stays bounded by the
+		// backstop rules: terminal CRs delete runner Job pods, and
+		// created-never-started runs are reaped.
 		log.Warn("runner boot gate: operator CriteriaRun view unavailable; proceeding",
 			"detail", detail, "ticket", gate.Ticket, "job", gate.Job)
 	default:
@@ -434,7 +434,7 @@ func gateBootOnOperatorView(ctx context.Context, log *slog.Logger) (blocked bool
 }
 
 // setupServerRun registers with the server and creates a fresh run, resuming
-// any in-flight checkpointed runs first (CRI-125 crash recovery). resumed
+// any in-flight checkpointed runs first (crash recovery). resumed
 // reports whether a checkpoint matching fingerprint was consumed by the
 // resume pass: the caller must then NOT create a fresh run (runID is empty in
 // that case) and must propagate resumeErr, which carries the resumed run's

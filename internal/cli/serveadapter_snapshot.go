@@ -67,7 +67,7 @@ func (e *errServeSnapshotPrecondition) Error() string {
 
 // serveAdapterSessionState holds one captured adapter-session checkpoint:
 // the adapter's opaque state blob plus the SessionSnapshot metadata it was
-// persisted with (CRI-202 tags ride inside the metadata). SessionSnapshot's
+// persisted with (version tags ride inside the metadata). SessionSnapshot's
 // AdapterState field is json:"-", so the blob travels in State and is
 // re-attached on restore.
 type serveAdapterSessionState struct {
@@ -295,7 +295,7 @@ func (c *serveAdapterClient) Restore(_ context.Context, req *criteriav2.RestoreR
 
 // applyChildRunRestore re-persists the captured adapter-session checkpoints
 // into the new child run's store and returns the engine options that restart
-// the run from the snapshot's paused node. Session state compatibility (CRI-202
+// the run from the snapshot's paused node. Session state compatibility (
 // schema/digest verification, adapter digest and host-arch checks) is enforced
 // by the engine's bootstrapSessionsForResume through sessions.Restore — this
 // path never re-implements it.

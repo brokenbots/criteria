@@ -47,8 +47,8 @@ func resolveOutputMode(flag string, stdout *os.File) (outputMode, error) {
 //
 // The file is opened for append (never O_TRUNC): every envelope carries its
 // run_id, and a runner-pod restart mid-run re-invokes criteria apply against
-// the same path, so truncating here would destroy the pre-restart events
-// (CRI-125). Consumers filter by run_id.
+// the same path, so truncating here would destroy the pre-restart events.
+// Consumers filter by run_id.
 func openNDJSONWriter(eventsPath string, mode outputMode) (io.Writer, func(), error) {
 	if strings.TrimSpace(eventsPath) != "" {
 		f, err := os.OpenFile(eventsPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
@@ -66,7 +66,7 @@ func openNDJSONWriter(eventsPath string, mode outputMode) (io.Writer, func(), er
 // openServerEventsWriter opens the ND-JSON events file for a server-mode
 // dual-write. A nil writer (with a no-op closer) is returned when no events
 // path is configured, leaving server-only behavior unchanged.
-// Like openNDJSONWriter this is append-only (CRI-125): a restarted runner
+// Like openNDJSONWriter this is append-only: a restarted runner
 // re-invokes criteria apply against the same path and must not destroy the
 // events the pre-restart generation already wrote.
 func openServerEventsWriter(eventsPath string) (io.Writer, func(), error) {
@@ -85,7 +85,7 @@ func openServerEventsWriter(eventsPath string) (io.Writer, func(), error) {
 // is concise, a ConsoleSink is added in front of stdout and the two are
 // fanned out via MultiSink. The concrete LocalSink is returned alongside the
 // composed engine.Sink so callers at the post-compile seam can emit
-// WorkflowGraphs (CRI-278) without knowing the composition.
+// WorkflowGraphs without knowing the composition.
 func buildLocalSink(runID string, jsonOut io.Writer, mode outputMode, steps []string, checkpointFn func(step string, attempt int), graph *workflow.FSMGraph) (engine.Sink, *run.LocalSink) {
 	local := &run.LocalSink{
 		RunID:        runID,

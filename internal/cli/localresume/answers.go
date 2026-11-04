@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// ModeAnswers is the internal mode backing the --answers <file> path (CRI-256):
+// ModeAnswers is the internal mode backing the --answers <file> path:
 // pre-populated, non-interactive decisions resolved at the pause point. It is
 // never selectable through CRITERIA_LOCAL_APPROVAL -- it is constructed
 // programmatically by the apply command's selection logic.
