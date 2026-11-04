@@ -85,6 +85,8 @@ func testMultiOutcomeWaitNode() *waitNode {
 }
 
 func TestApproval_InvalidDecisionKeepsResumeContext(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	n := testApprovalNode()
 	deps := Deps{Sink: &resumeTrackingSink{}}
@@ -124,6 +126,8 @@ func TestApproval_InvalidDecisionKeepsResumeContext(t *testing.T) {
 }
 
 func TestApproval_ValidResumeEmitsDecisionOnceCommitted(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	n := testApprovalNode()
 	sink := &resumeTrackingSink{}
@@ -153,6 +157,8 @@ func TestApproval_ValidResumeEmitsDecisionOnceCommitted(t *testing.T) {
 }
 
 func TestWait_InvalidOutcomeKeepsResumeContext(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	n := testMultiOutcomeWaitNode()
 
@@ -186,6 +192,8 @@ func TestWait_InvalidOutcomeKeepsResumeContext(t *testing.T) {
 }
 
 func TestWait_UnknownOutcomeRetrySucceeds(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	n := testMultiOutcomeWaitNode()
 	sink := &resumeTrackingSink{}
@@ -221,6 +229,8 @@ func TestWait_UnknownOutcomeRetrySucceeds(t *testing.T) {
 }
 
 func TestWait_SingleOutcomeFallbackUnchanged(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	n := &waitNode{node: &workflow.WaitNode{
 		Name:     "gate",

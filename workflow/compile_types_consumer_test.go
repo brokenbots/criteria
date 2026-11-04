@@ -10,15 +10,23 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/ext/typeexpr"
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/workflow/lockfile"
+)
+
+// cmpCtyType and cmpCtyValue let cmp descend into typeexpr.Defaults, whose
+// cty.Type / cty.Value leaves hold only unexported fields; Equals and
+// RawEquals are the canonical equality predicates for those kinds.
+var (
+	cmpCtyType  = cmp.Comparer(func(a, b cty.Type) bool { return a.Equals(b) })
+	cmpCtyValue = cmp.Comparer(func(a, b cty.Value) bool { return a.RawEquals(b) })
 )
 
 // compileAllConsumers parses and compiles a full workflow source with
@@ -162,8 +170,8 @@ func compareConsumerTwin(t *testing.T, inline, named *FSMGraph) {
 			}
 			return
 		}
-		if !reflect.DeepEqual(a, b) {
-			t.Fatalf("%s: twin defaults differ", what)
+		if diff := cmp.Diff(a, b, cmpCtyType, cmpCtyValue); diff != "" {
+			t.Fatalf("%s: twin defaults differ (-inline +named):\n%s", what, diff)
 		}
 	}
 

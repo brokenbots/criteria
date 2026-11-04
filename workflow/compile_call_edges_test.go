@@ -11,11 +11,12 @@ package workflow
 import (
 	"os"
 	"path/filepath"
-	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/hashicorp/hcl/v2"
 )
 
@@ -122,6 +123,7 @@ func fsmShape(g *FSMGraph) string {
 // declaration order, with the originating step as provenance. The same grants
 // must also appear on the step's Tools list.
 func TestCallEdges_BareAndNamed(t *testing.T) {
+	t.Parallel()
 	src := callEdgesSrc("",
 		`adapter "copilot" "worker" {
   tool "plan" {}
@@ -144,15 +146,15 @@ adapter "shell" "worker" {
 		{CallerAdapterRef: "copilot.worker", CalleeAdapterRef: "shell.worker", Tool: "", StepName: "start"},
 		{CallerAdapterRef: "copilot.worker", CalleeAdapterRef: "shell.worker", Tool: "git_status", StepName: "start"},
 	}
-	if !reflect.DeepEqual(g.AdapterCallEdges, wantEdges) {
-		t.Errorf("AdapterCallEdges = %+v, want %+v", g.AdapterCallEdges, wantEdges)
+	if diff := cmp.Diff(wantEdges, g.AdapterCallEdges); diff != "" {
+		t.Errorf("AdapterCallEdges mismatch (-want +got):\n%s", diff)
 	}
 	wantTools := []AdapterToolRef{
 		{CallerIsSelf: false, CalleeRef: "shell.worker", Tool: ""},
 		{CallerIsSelf: false, CalleeRef: "shell.worker", Tool: "git_status"},
 	}
-	if !reflect.DeepEqual(g.Steps["start"].Tools, wantTools) {
-		t.Errorf("StepNode.Tools = %+v, want %+v", g.Steps["start"].Tools, wantTools)
+	if diff := cmp.Diff(wantTools, g.Steps["start"].Tools); diff != "" {
+		t.Errorf("StepNode.Tools mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -161,6 +163,7 @@ adapter "shell" "worker" {
 // CallerIsSelf=true, but no cycle warning may fire — a self-call is a
 // runtime-rejected call per ADR-0004 §10, not a tool-call cycle.
 func TestCallEdges_CallerIsSelf(t *testing.T) {
+	t.Parallel()
 	src := callEdgesSrc("",
 		`adapter "mcp" "registry" {
   tool "search" {}
@@ -178,12 +181,12 @@ func TestCallEdges_CallerIsSelf(t *testing.T) {
 	wantEdges := []AdapterCallEdge{
 		{CallerAdapterRef: "mcp.registry", CalleeAdapterRef: "mcp.registry", Tool: "search", StepName: "start"},
 	}
-	if !reflect.DeepEqual(g.AdapterCallEdges, wantEdges) {
-		t.Errorf("AdapterCallEdges = %+v, want %+v", g.AdapterCallEdges, wantEdges)
+	if diff := cmp.Diff(wantEdges, g.AdapterCallEdges); diff != "" {
+		t.Errorf("AdapterCallEdges mismatch (-want +got):\n%s", diff)
 	}
 	wantTools := []AdapterToolRef{{CallerIsSelf: true, CalleeRef: "mcp.registry", Tool: "search"}}
-	if !reflect.DeepEqual(g.Steps["start"].Tools, wantTools) {
-		t.Errorf("StepNode.Tools = %+v, want %+v", g.Steps["start"].Tools, wantTools)
+	if diff := cmp.Diff(wantTools, g.Steps["start"].Tools); diff != "" {
+		t.Errorf("StepNode.Tools mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -191,6 +194,7 @@ func TestCallEdges_CallerIsSelf(t *testing.T) {
 // any tools attribute produces no edges, no per-step tool lists, and no
 // cycle warnings.
 func TestCallEdges_NoToolRefsNoEdges(t *testing.T) {
+	t.Parallel()
 	src := callEdgesSrc("",
 		`adapter "copilot" "worker" {
   tool "plan" {}
@@ -219,6 +223,7 @@ adapter "shell" "worker" {
 // TestCallEdges_IteratingStep verifies the pass covers iterating steps
 // (for_each) the same way as plain adapter steps.
 func TestCallEdges_IteratingStep(t *testing.T) {
+	t.Parallel()
 	src := callEdgesSrc("",
 		`adapter "copilot" "worker" {
   tool "plan" {}
@@ -241,8 +246,8 @@ adapter "shell" "worker" {
 	wantEdges := []AdapterCallEdge{
 		{CallerAdapterRef: "copilot.worker", CalleeAdapterRef: "shell.worker", Tool: "git_status", StepName: "start"},
 	}
-	if !reflect.DeepEqual(g.AdapterCallEdges, wantEdges) {
-		t.Errorf("AdapterCallEdges = %+v, want %+v", g.AdapterCallEdges, wantEdges)
+	if diff := cmp.Diff(wantEdges, g.AdapterCallEdges); diff != "" {
+		t.Errorf("AdapterCallEdges mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -250,6 +255,7 @@ adapter "shell" "worker" {
 // records its tools list (CallerIsSelf always false; there is no caller
 // adapter) but produces no AdapterCallEdge.
 func TestCallEdges_SubworkflowStepNoEdge(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	childDir := filepath.Join(dir, "child")
 	if err := os.MkdirAll(childDir, 0o755); err != nil {
@@ -298,8 +304,8 @@ step "run" {
 		t.Errorf("subworkflow step must produce no AdapterCallEdge, got %+v", g.AdapterCallEdges)
 	}
 	wantTools := []AdapterToolRef{{CallerIsSelf: false, CalleeRef: "mcp.registry", Tool: "search"}}
-	if !reflect.DeepEqual(g.Steps["run"].Tools, wantTools) {
-		t.Errorf("StepNode.Tools = %+v, want %+v", g.Steps["run"].Tools, wantTools)
+	if diff := cmp.Diff(wantTools, g.Steps["run"].Tools); diff != "" {
+		t.Errorf("StepNode.Tools mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -310,6 +316,7 @@ step "run" {
 // with an accurate "no handshake available" detail when no schemas were
 // supplied (standalone compile).
 func TestToolRefSubworkflowStepHandshakeSurface(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	childDir := filepath.Join(dir, "child")
 	if err := os.MkdirAll(childDir, 0o755); err != nil {
@@ -352,6 +359,7 @@ step "run" {
 	}
 
 	t.Run("reported name compiles clean", func(t *testing.T) {
+		t.Parallel()
 		spec, diags := Parse("t.hcl", []byte(src))
 		if diags.HasErrors() {
 			t.Fatalf("parse: %s", diags.Error())
@@ -363,6 +371,7 @@ step "run" {
 	})
 
 	t.Run("unreported name fails the mode 9 check", func(t *testing.T) {
+		t.Parallel()
 		spec, diags := Parse("t.hcl", []byte(src))
 		if diags.HasErrors() {
 			t.Fatalf("parse: %s", diags.Error())
@@ -378,6 +387,7 @@ step "run" {
 	})
 
 	t.Run("nil schemas fall back to the strict default with an accurate detail", func(t *testing.T) {
+		t.Parallel()
 		spec, diags := Parse("t.hcl", []byte(src))
 		if diags.HasErrors() {
 			t.Fatalf("parse: %s", diags.Error())
@@ -400,6 +410,7 @@ step "run" {
 // tool-call cycle is a compile WARNING (not an error), reported once, with the
 // call path in the summary and the runtime cap named in the detail.
 func TestCallEdges_CycleWarning(t *testing.T) {
+	t.Parallel()
 	src := callEdgesSrcNamed("s1", "",
 		`adapter "a" "one" {
   tool "x" {}
@@ -448,14 +459,15 @@ step "s2" {
 		{CallerAdapterRef: "a.one", CalleeAdapterRef: "b.two", Tool: "", StepName: "s1"},
 		{CallerAdapterRef: "b.two", CalleeAdapterRef: "a.one", Tool: "", StepName: "s2"},
 	}
-	if !reflect.DeepEqual(g.AdapterCallEdges, wantEdges) {
-		t.Errorf("AdapterCallEdges = %+v, want %+v", g.AdapterCallEdges, wantEdges)
+	if diff := cmp.Diff(wantEdges, g.AdapterCallEdges); diff != "" {
+		t.Errorf("AdapterCallEdges mismatch (-want +got):\n%s", diff)
 	}
 }
 
 // TestCallEdges_CycleThreeAdapters verifies transitive cycle detection:
 // a -> b -> c -> a closes through three hops and warns once.
 func TestCallEdges_CycleThreeAdapters(t *testing.T) {
+	t.Parallel()
 	src := callEdgesSrcNamed("s1", "",
 		`adapter "a" "one" {
   tool "x" {}
@@ -504,6 +516,7 @@ step "s3" {
 // TestCallEdges_CycleDedupePerPair verifies that two steps producing the same
 // caller/callee pair (with different tools) still yield a single cycle warning.
 func TestCallEdges_CycleDedupePerPair(t *testing.T) {
+	t.Parallel()
 	src := callEdgesSrcNamed("s1", "",
 		`adapter "a" "one" {
   tool "x" {}
@@ -549,7 +562,9 @@ step "s3" {
 // warning and no call-cycle warning, and a tool-call-cycle workflow produces
 // the call-cycle warning and no back-edge warning.
 func TestCallEdges_CycleDistinctFromBackEdgeWarnings(t *testing.T) {
-	t.Run("FSM back-edge produces no call-cycle warning", func(t *testing.T) {
+	t.Parallel()
+	t.Run("unset defaults to 8", func(t *testing.T) {
+		t.Parallel()
 		src := callEdgesSrc("policy { max_total_steps = 300 }",
 			`adapter "shell" "worker" {
   tool "git_status" {}
@@ -574,7 +589,8 @@ func TestCallEdges_CycleDistinctFromBackEdgeWarnings(t *testing.T) {
 			t.Errorf("no tools declared, got edges %+v", g.AdapterCallEdges)
 		}
 	})
-	t.Run("tool-call cycle produces no back-edge warning", func(t *testing.T) {
+	t.Run("declared value overrides", func(t *testing.T) {
+		t.Parallel()
 		src := callEdgesSrcNamed("s1", "",
 			`adapter "a" "one" {
   tool "x" {}
@@ -613,10 +629,12 @@ step "s2" {
 // unset keeps DefaultPolicy's engine default of 8, a declared positive value
 // overrides it, and declared values < 1 are parse errors that block compile.
 func TestCallEdges_PolicyMaxToolDepth(t *testing.T) {
+	t.Parallel()
 	if DefaultPolicy.MaxToolDepth != 8 {
 		t.Fatalf("DefaultPolicy.MaxToolDepth = %d, want 8", DefaultPolicy.MaxToolDepth)
 	}
-	t.Run("unset defaults to 8", func(t *testing.T) {
+	t.Run("unset defaults to 100", func(t *testing.T) {
+		t.Parallel()
 		src := callEdgesSrc("",
 			`adapter "shell" "worker" {
   tool "git_status" {}
@@ -635,6 +653,7 @@ func TestCallEdges_PolicyMaxToolDepth(t *testing.T) {
 		}
 	})
 	t.Run("declared value overrides", func(t *testing.T) {
+		t.Parallel()
 		src := callEdgesSrc("policy { max_tool_depth = 3 }",
 			`adapter "shell" "worker" {
   tool "git_status" {}
@@ -654,6 +673,7 @@ func TestCallEdges_PolicyMaxToolDepth(t *testing.T) {
 	})
 	for _, value := range []string{"0", "-1"} {
 		t.Run("rejected "+value, func(t *testing.T) {
+			t.Parallel()
 			src := callEdgesSrc("policy { max_tool_depth = "+value+" }",
 				`adapter "shell" "worker" {
   tool "git_status" {}
@@ -679,10 +699,12 @@ func TestCallEdges_PolicyMaxToolDepth(t *testing.T) {
 // positive value overrides it, and declared values < 1 are parse errors that
 // block compile.
 func TestCallEdges_PolicyMaxToolCalls(t *testing.T) {
+	t.Parallel()
 	if DefaultPolicy.MaxToolCalls != 100 {
 		t.Fatalf("DefaultPolicy.MaxToolCalls = %d, want 100", DefaultPolicy.MaxToolCalls)
 	}
-	t.Run("unset defaults to 100", func(t *testing.T) {
+	t.Run("FSM back-edge produces no call-cycle warning", func(t *testing.T) {
+		t.Parallel()
 		src := callEdgesSrc("",
 			`adapter "shell" "worker" {
   tool "git_status" {}
@@ -700,7 +722,8 @@ func TestCallEdges_PolicyMaxToolCalls(t *testing.T) {
 			t.Errorf("unset max_tool_calls = %d, want 100", g.Policy.MaxToolCalls)
 		}
 	})
-	t.Run("declared value overrides", func(t *testing.T) {
+	t.Run("tool-call cycle produces no back-edge warning", func(t *testing.T) {
+		t.Parallel()
 		src := callEdgesSrc("policy { max_tool_calls = 3 }",
 			`adapter "shell" "worker" {
   tool "git_status" {}
@@ -720,6 +743,7 @@ func TestCallEdges_PolicyMaxToolCalls(t *testing.T) {
 	})
 	for _, value := range []string{"0", "-1"} {
 		t.Run("rejected "+value, func(t *testing.T) {
+			t.Parallel()
 			src := callEdgesSrc("policy { max_tool_calls = "+value+" }",
 				`adapter "shell" "worker" {
   tool "git_status" {}
@@ -744,6 +768,7 @@ func TestCallEdges_PolicyMaxToolCalls(t *testing.T) {
 // tool refs to a workflow must not change nodeTargets, reachability, or FSM
 // transitions — only the new edge set appears.
 func TestCallEdges_ReachabilityAndRoutingUnchanged(t *testing.T) {
+	t.Parallel()
 	adapters := `adapter "a" "one" {
   tool "x" {}
 }
@@ -809,6 +834,7 @@ step "s3" {
 // tool refs but no call cycle compiles with exactly the same diagnostics as
 // the same workflow without them.
 func TestCallEdges_DiagnosticsUnchangedForAcyclicTools(t *testing.T) {
+	t.Parallel()
 	adapters := `adapter "a" "one" {
   tool "x" {}
 }
@@ -844,6 +870,7 @@ adapter "b" "two" {
 // dynamic ones. The runtime seam (internal/adapterhost) reads these fields
 // when validating callee adapters and static tools.
 func TestAdapterNode_CarriesToolSurface(t *testing.T) {
+	t.Parallel()
 	src := callEdgesSrc("",
 		`adapter "shell" "runner" {
   tool "git_status" {}
@@ -867,7 +894,7 @@ adapter "mcp" "fs" {
 	if shell == nil {
 		t.Fatal("expected adapter shell.runner in graph")
 	}
-	if want := []string{"git_status", "run"}; !reflect.DeepEqual(shell.StaticTools, want) {
+	if want := []string{"git_status", "run"}; !slices.Equal(shell.StaticTools, want) {
 		t.Errorf("StaticTools = %+v, want %+v", shell.StaticTools, want)
 	}
 	if shell.DynamicTools {
