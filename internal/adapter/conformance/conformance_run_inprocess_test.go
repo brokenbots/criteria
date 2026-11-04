@@ -90,7 +90,7 @@ func TestConformanceRun_InProcess(t *testing.T) {
 
 // TestRunStubAdapter_ForkedDescendantCancellation pins the bounded shutdown
 // of the stub's shell-out: with WaitDelay unset, a shell that forks a
-// descendant holding stdout/stderring open (e.g. a non-optimizing /bin/sh
+// descendant holding stdout/stderr open (e.g. a non-optimizing /bin/sh
 // around `sleep 5`, or a forking shim first on PATH) left Output blocked on
 // the os/exec stdio copy goroutines past the harness's 500ms cancellation
 // budget, failing the context_cancellation contract test with leaked
