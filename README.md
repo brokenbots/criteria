@@ -21,7 +21,12 @@ testbed for agentic development, security, and research workflows.
 - Steps execute through out-of-process adapters that speak a versioned gRPC
   protocol over a local socket.
 - Adapters are distributed as OCI artifacts, cosign-signed, and pinned by digest
-  in `.criteria.lock.hcl` for reproducible resolution.
+  in `.criteria.lock.hcl` for reproducible resolution. Signature verification
+  defaults to `warn` during the signing-completion transition (back to `strict`
+  once keyless verification is confirmed in CI); a `strict` posture cannot be
+  silently defeated by the `--allow-unsigned` / `CRITERIA_ALLOW_UNSIGNED`
+  override — the command refuses with a diagnostic. See
+  [docs/adapters.md](docs/adapters.md).
 - Execution is local by default; an optional, early server mode adds durability
   (see the note at the end).
 - Every run emits schema-versioned ND-JSON events.

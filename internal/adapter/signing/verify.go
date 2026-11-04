@@ -441,7 +441,7 @@ func verifyKeylessLegacy(rec *signatureRecord) (*SignerIdentity, error) {
 	}
 	return nil, fmt.Errorf("keyless signature has no transparency-log proof (Sigstore bundle); " +
 		"it cannot be verified after the signing certificate expires — re-publish with Rekor enabled, " +
-		"or use --allow-unsigned for local development")
+		"or lower the verification posture to warn for local development")
 }
 
 // verifyKeyBased verifies a signature against an explicit set of trusted
@@ -571,7 +571,7 @@ var trustedMaterialOverride root.TrustedMaterial
 // clearing that cache directory (an explicit `criteria adapter trust refresh`
 // command is future work). Air-gapped consumers cannot keyless-verify (the TUF
 // root and a was-online-at-sign Rekor entry are required); they use WS47 key
-// mode or --allow-unsigned.
+// mode, or a warn/off posture.
 //
 // The root is fetched one-shot rather than via root.NewLiveTrustedRoot: the
 // live variant spawns a background refresh goroutine that only stops when

@@ -75,7 +75,8 @@ For the full reference, see [adapters.md](adapters.md).
 
 5. **Signature verification defaults to `strict`.** If you pull adapters that are
    not yet signed, set `verification = "warn"` (or `"off"`) during the transition,
-   or pull with `--allow-unsigned`. Keep CI at `strict`.
+   or pull with `--allow-unsigned` (refused when the posture is explicit strict —
+   the override only lowers `warn`/unconfigured workflows). Keep CI at `strict`.
 
 ## For adapter authors
 

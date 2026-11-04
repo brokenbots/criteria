@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/brokenbots/criteria/internal/adapter/signing"
@@ -72,24 +73,55 @@ func TestAssertSignerMatchesPin(t *testing.T) {
 	keylessPin := &lockfile.LockedSignature{Keyless: &lockfile.LockedKeyless{Issuer: "iss", Subject: "sub"}}
 
 	tests := []struct {
-		name    string
-		signer  *signing.SignerIdentity
-		pin     *lockfile.LockedSignature
-		wantErr bool
+		name        string
+		signer      *signing.SignerIdentity
+		pin         *lockfile.LockedSignature
+		mode        signing.VerificationMode
+		wantErr     bool
+		errContains []string
 	}{
-		{name: "nil signer skips", signer: nil, pin: keyPin},
-		{name: "nil pin skips", signer: &signing.SignerIdentity{Key: &signing.KeyIdentity{Fingerprint: "fp1"}}, pin: nil},
-		{name: "key matches", signer: &signing.SignerIdentity{Key: &signing.KeyIdentity{Fingerprint: "fp1"}}, pin: keyPin},
-		{name: "key mismatch", signer: &signing.SignerIdentity{Key: &signing.KeyIdentity{Fingerprint: "other"}}, pin: keyPin, wantErr: true},
-		{name: "key signer but keyless pin", signer: &signing.SignerIdentity{Key: &signing.KeyIdentity{Fingerprint: "fp1"}}, pin: keylessPin, wantErr: true},
-		{name: "keyless matches", signer: &signing.SignerIdentity{Keyless: &signing.KeylessIdentity{Issuer: "iss", Subject: "sub"}}, pin: keylessPin},
-		{name: "keyless subject mismatch", signer: &signing.SignerIdentity{Keyless: &signing.KeylessIdentity{Issuer: "iss", Subject: "evil"}}, pin: keylessPin, wantErr: true},
+		// ModeOff (explicit off, or the unsigned override lowering warn/unset)
+		// deliberately skips verification, so a nil signer leaves the pin
+		// unasserted.
+		{name: "nil signer skips under mode off", signer: nil, pin: keyPin, mode: signing.ModeOff},
+		{
+			// A pinned signer must never be bypassed by a warn-mode failure
+			// downgraded to a proceed (signer == nil).
+			name:        "nil signer fails closed under warn",
+			signer:      nil,
+			pin:         keyPin,
+			mode:        signing.ModeWarn,
+			wantErr:     true,
+			errContains: []string{"pins a signer", "verification produced none"},
+		},
+		{
+			// Defensive: strict failures error inside signing.Verify and never
+			// reach this call with a nil signer, but the guard must hold.
+			name:    "nil signer fails closed under strict",
+			signer:  nil,
+			pin:     keyPin,
+			mode:    signing.ModeStrict,
+			wantErr: true,
+		},
+		{name: "nil pin skips", signer: &signing.SignerIdentity{Key: &signing.KeyIdentity{Fingerprint: "fp1"}}, pin: nil, mode: signing.ModeWarn},
+		{name: "key matches", signer: &signing.SignerIdentity{Key: &signing.KeyIdentity{Fingerprint: "fp1"}}, pin: keyPin, mode: signing.ModeWarn},
+		{name: "key mismatch", signer: &signing.SignerIdentity{Key: &signing.KeyIdentity{Fingerprint: "other"}}, pin: keyPin, mode: signing.ModeWarn, wantErr: true},
+		{name: "key signer but keyless pin", signer: &signing.SignerIdentity{Key: &signing.KeyIdentity{Fingerprint: "fp1"}}, pin: keylessPin, mode: signing.ModeWarn, wantErr: true},
+		{name: "keyless matches", signer: &signing.SignerIdentity{Keyless: &signing.KeylessIdentity{Issuer: "iss", Subject: "sub"}}, pin: keylessPin, mode: signing.ModeWarn},
+		{name: "keyless subject mismatch", signer: &signing.SignerIdentity{Keyless: &signing.KeylessIdentity{Issuer: "iss", Subject: "evil"}}, pin: keylessPin, mode: signing.ModeWarn, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := assertSignerMatchesPin("type.name", tt.signer, tt.pin)
+			err := assertSignerMatchesPin("type.name", tt.signer, tt.pin, tt.mode)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("err = %v, wantErr = %v", err, tt.wantErr)
+			}
+			if err != nil {
+				for _, sub := range tt.errContains {
+					if !strings.Contains(err.Error(), sub) {
+						t.Errorf("error %q does not contain %q", err.Error(), sub)
+					}
+				}
 			}
 		})
 	}

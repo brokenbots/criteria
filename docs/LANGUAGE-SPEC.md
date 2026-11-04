@@ -86,7 +86,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 | `initial_state` | string | yes | InitialState names the step or state where workflow execution begins. |
 | `target_state` | string | no | _(no description)_ |
 | `environment` | hcl.Expression | no | _(no description)_ |
-| `verification` | string | no | Verification is the workflow-level signature-verification posture for OCI adapters: off|warn|strict. Empty means the CLI transition default applies. The CLI override (--allow-unsigned / CRITERIA_ALLOW_UNSIGNED) takes precedence over this attribute. |
+| `verification` | string | no | Verification is the workflow-level signature-verification posture for OCI adapters: off|warn|strict. Empty means the CLI transition default applies. The CLI override (--allow-unsigned / CRITERIA_ALLOW_UNSIGNED) lowers a warn or unset posture; it is refused when the posture resolves to strict. |
 
 - **Nested blocks:** [`policy`](#policy---)
 

@@ -11,7 +11,9 @@ import (
 
 // allowUnsignedEnv, when truthy, forces the unsigned-override on for any
 // verification-consuming command (pull/lock/compile/apply). It is the
-// lowest-precedence way to enable the override, below the --allow-unsigned flag.
+// lowest-precedence way to enable the override, below the --allow-unsigned
+// flag. The override lowers a warn/unset posture to ModeOff; it is refused
+// when the posture resolves to strict (signing.PolicyFor fails closed).
 const allowUnsignedEnv = "CRITERIA_ALLOW_UNSIGNED"
 
 // transitionDefaultMode is the effective verification mode used when neither the
@@ -32,8 +34,10 @@ const transitionDefaultMode = signing.ModeWarn
 //  3. workflow `verification` attr (off|warn|strict)
 //  4. transition default           (transitionDefaultMode)
 //
-// The flag and env only ever *enable* the override (force ModeOff); they never
-// tighten verification. signing.PolicyFor consumes the returned context.
+// The flag and env only ever *enable* the override; they never tighten
+// verification. The override is resolved against the workflow/default posture
+// inside signing.PolicyFor: it lowers a warn/unset posture to ModeOff, and is
+// refused there when that posture is strict.
 func resolveVerification(allowUnsigned bool, workflowVerification string, trustedKeys []signing.KeyIdentity) signing.PullContext {
 	wv := strings.TrimSpace(workflowVerification)
 	if wv == "" {
@@ -93,12 +97,29 @@ func policyForPin(base *signing.Policy, pin *lockfile.LockedSignature) signing.P
 
 // assertSignerMatchesPin confirms a freshly verified signer matches the signer
 // pinned in the lockfile — the "lockfile is the trust anchor" enforcement
-// (WS47/WS48). It is a no-op when verification was skipped (signer == nil, e.g.
-// ModeOff or a ModeWarn failure) or when the lockfile entry has no pinned signer
-// (legacy lockfiles, or an artifact that was unsigned at lock time).
-func assertSignerMatchesPin(adapterKey string, signer *signing.SignerIdentity, pin *lockfile.LockedSignature) error {
-	if signer == nil || pin == nil {
+// (WS47/WS48). mode is the verification mode the signer was checked under:
+//
+//   - ModeOff deliberately skips verification, so a nil signer is expected and
+//     the pin (if any) is left unasserted; the override reaching ModeOff goes
+//     through the same skip.
+//   - In every other mode a nil signer means verification failed without
+//     aborting — the warn posture downgrades failures to a proceed. A pinned
+//     signer must not be silently bypassed that way, so the call fails closed;
+//     ModeStrict failures error inside signing.Verify and never reach this call
+//     with a nil signer.
+//
+// It is also a no-op when the lockfile entry has no pinned signer (legacy
+// lockfiles, or an artifact that was unsigned at lock time): there is then no
+// pin to enforce.
+func assertSignerMatchesPin(adapterKey string, signer *signing.SignerIdentity, pin *lockfile.LockedSignature, mode signing.VerificationMode) error {
+	if pin == nil {
 		return nil
+	}
+	if signer == nil {
+		if mode == signing.ModeOff {
+			return nil
+		}
+		return fmt.Errorf("adapter %q: the lockfile pins a signer but verification produced none under %q mode; fail closed — re-run `criteria adapter lock` if the signer change is intentional", adapterKey, mode)
 	}
 	switch {
 	case signer.Key != nil:
