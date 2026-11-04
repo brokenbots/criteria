@@ -82,6 +82,15 @@ here.
   nodes require a server-compatible orchestrator (`criteria apply --server ...`).
   Local-only execution rejects these node kinds with a clear error.
 - Keep logs structured (`slog` JSON style in entrypoints).
+- **Commit subjects**: every squash-merge commit subject must be
+  `KB-<n>: <one-line summary>` (merge tooling appends the PR number as
+  `(#N)`). Precedents: `KB-57: stop dropping delivered adapter outcomes at
+  teardown; emit real failure outcomes (#487)` and
+  `KB-57c: compound command permission support (segment + all-segments-match) (#488)`.
+  Bare `KB N (#N)` subjects are a rejected regression — the CHANGELOG and
+  history/dependency sweeps depend on descriptive subjects without opening
+  every PR. Existing history is not backfilled and shipped tags are never
+  rewritten.
 - **Timing knobs** live in `internal/tunables`: no new raw timing literals
   or ad-hoc `os.Getenv` timing reads at consumer sites — consume the typed
   `Settings` (via `tunables.FromEnv()` at configuration points) or the
