@@ -78,10 +78,10 @@ func runWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry str
 	if err != nil {
 		return "", nil, nil, err
 	}
-	// KB-257 churn kill: a subworkflow body's exit DETACHES its per-scope
+	// Churn kill: a subworkflow body's exit DETACHES its per-scope
 	// sessions (keeps the live pod connection + shim registration + session
 	// manager binding) instead of releasing them. Re-entry of the same body
-	// re-opens the SAME session through the CRI-145 skip; the run's final
+	// re-opens the SAME session through the shim's already-provisioned skip; the run's final
 	// teardown releases what the bodies detached. Releasing here was the
 	// factory of the teardown→rotate→re-dial→handshake-race class.
 	defer func() { detachBodyScopeAdapters(ctx, bodyOrder, deps, rlc) }()
@@ -99,7 +99,7 @@ func resolveBodyEntry(body *workflow.FSMGraph, bodyEntry string) (string, error)
 }
 
 func startWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry string, childVars map[string]cty.Value, workflowDir string, deps Deps, rlc *remoteLifecycleContext, scopeName string, parallelCeiling int, parallelSem chan struct{}, parallelSemCache map[parallelSemKey]chan struct{}, parallelSemMu *sync.Mutex, crashedSessions *crashedSessionRefs, ancestors []string, detached map[string]*adapterLifecycleRecord) ([]string, *RunState, error) {
-	// CRI-88: subworkflow secret origins are not independently tracked today; the
+	// Subworkflow secret origins are not independently tracked today; the
 	// child scope already carries resolved values from the parent. Passing nil
 	// means adapter session snapshots for child-scope secrets fall back to an
 	// untracked literal origin. This is acceptable for bodies that do not pause
@@ -131,13 +131,13 @@ func startWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry s
 		ParallelSem:      parallelSem,
 		ParallelSemCache: parallelSemCache,
 		ParallelSemMu:    parallelSemMu,
-		// CRI-271: the crashed-session set is shared by reference so a crash
+		// The crashed-session set is shared by reference so a crash
 		// recorded anywhere in the run is re-opened by follow-on steps
 		// wherever they execute — parallel iteration states and subworkflow
 		// bodies included.
 		CrashedSessions: crashedSessions,
 	}
-	// KB-257 re-entry reuse: hand the detached records back to a body that
+	// Re-entry reuse: hand the detached records back to a body that
 	// continues the same engagements. Re-adopting each record into this
 	// scope's lifecycle means (a) phase-A's maybeRotateRemoteScope finds
 	// the persisted instance record for the SAME scope instance via

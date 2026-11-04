@@ -6,7 +6,7 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter"
 )
 
-// default_output.go — doctrine for adapter default output types (KB-264).
+// default_output.go — doctrine for adapter default output types.
 //
 // Every adapter declares its default output type in its handshake
 // (InfoResponse.output_schema; the step's compiled outputSchema carries the
@@ -24,7 +24,7 @@ import (
 // arms) without touching shell-style adapters whose default type has no
 // reason field.
 //
-// The step-level override keeps the KB-45 formalization: an outcome `schema`
+// The step-level override keeps the outcome-contract formalization: an outcome `schema`
 // replaces the default for that outcome, and a schema the adapter cannot
 // satisfy is a compile-time rejection validated against the declared default
 // output type (workflow.validateOutcomeSchemaPayloadContract).

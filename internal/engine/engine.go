@@ -36,10 +36,10 @@ import (
 // AwaitingHumanTerminalState is the conventional name for a workflow terminal
 // state that parks a run at a human attention gate instead of declaring final
 // success. The CLI exit path treats a completion at this state specially:
-// it must be distinguishable from a restartable run failure (KB-227/CRI-323).
+// it must be distinguishable from a restartable run failure.
 const AwaitingHumanTerminalState = "awaiting_human"
 
-// ScopeSessionPendingStatus names the adapter lifecycle event emitted (KB-232)
+// ScopeSessionPendingStatus names the adapter lifecycle event emitted
 // when a per-scope adapter session wait crosses half its effective window
 // without a completed handshake, so the wait is observable instead of burning
 // the remaining deadline silently. The shim-side warning carries the same
@@ -48,11 +48,11 @@ const ScopeSessionPendingStatus = "scope_session_pending"
 
 // AdapterLifecycleEvent carries the controller-visible state needed to
 // provision or release a remote adapter pod. Raw secrets must never appear in
-// this payload with one deliberate exception (CRI-236): the per-scope accept
+// this payload with one deliberate exception: the per-scope accept
 // token rides the already-authenticated provision/accept wire so operators do
 // not need a criteria-side shared volume to read it from the token_ref file.
 // TokenRef stays populated during the transition window so file-based
-// operators keep working (removed operator-side in CRI-237).
+// operators keep working (still consumed operator-side).
 type AdapterLifecycleEvent struct {
 	RunID             string
 	ScopeName         string // empty for the root scope
@@ -60,12 +60,12 @@ type AdapterLifecycleEvent struct {
 	AdapterName       string
 	AdapterType       string // adapter implementation kind (e.g. "shell", "copilot")
 	Digest            string // lockfile-pinned digest
-	ImageReference    string // lockfile-pinned container image reference (CRI-214 M14); empty when the adapter has none
+	ImageReference    string // lockfile-pinned container image reference; empty when the adapter has none
 	ShimListenAddress string
 	TokenRef          string // path to the accept-token file; transition-window handoff
 	Token             string // wire-delivered per-scope accept token; empty for released events
-	Status            string // "provision_wanted", "released", or "scope_session_pending" (KB-232)
-	// KB-232 session-wait diagnostics, populated only for
+	Status            string // "provision_wanted", "released", or "scope_session_pending"
+	// Session-wait diagnostics, populated only for
 	// ScopeSessionPendingStatus events: the wait that crossed half its
 	// effective window without a completed handshake, the adapter identity
 	// frames observed on the shim for the scope, and the identity rejections
@@ -74,7 +74,7 @@ type AdapterLifecycleEvent struct {
 	SessionWaitSeconds int
 	SessionDials       int
 	SessionRejections  int
-	// Environment identity of the adapter session (CRI-233): the compiled
+	// Environment identity of the adapter session: the compiled
 	// environment declaration's type + name from the workflow's environment
 	// blocks. Additive fields; consumers must tolerate older events that
 	// carry neither.
@@ -83,7 +83,7 @@ type AdapterLifecycleEvent struct {
 }
 
 // CheckpointPointerEvent carries the advisory checkpoint pointer the engine
-// emits after a durable checkpoint save (CRI-203). Castle keeps only the
+// emits after a durable checkpoint save. Castle keeps only the
 // pointer; the bytes stay in the engine's state home and restore is
 // engine-local from there — never dependent on castle reachability.
 type CheckpointPointerEvent struct {
@@ -112,11 +112,11 @@ type Sink interface {
 	OnRunFailed(reason, step string)
 	OnStepEntered(step, adapterName string, attempt int)
 	// OnStepOutcome reports a step's resolved outcome. comment is the
-	// adapter's ExecuteResult.comment (KB-45), opaque adapter-produced
+	// adapter's ExecuteResult.comment, opaque adapter-produced
 	// metadata passed through to the event stream verbatim.
 	OnStepOutcome(step, outcome string, duration time.Duration, err error, comment string)
 	// OnStepOutcomeInvalid is emitted when a completed attempt's result or
-	// payload is rejected by the step's outcome-contract validation (KB-45).
+	// payload is rejected by the step's outcome-contract validation.
 	// outcome is the rejected result's outcome name (empty for a missing
 	// result), issues carries the pinned validation issue list, attempt is
 	// the one-based attempt whose result was rejected. The engine re-enters
@@ -132,11 +132,11 @@ type Sink interface {
 	// OnRunPaused is called when the engine pauses at a wait or approval node
 	// (W05). node is the node name, mode is "duration"|"signal", signal is the
 	// pending signal name (empty for duration mode). Mode "external" marks a
-	// control-surface boundary pause (CRI-255): the node is the next node to
+	// control-surface boundary pause: the node is the next node to
 	// evaluate and the pause acks only after durable checkpoints were written.
 	OnRunPaused(node, mode, signal string)
 	// OnRunResumed is emitted when a previously paused (or interrupted) run
-	// begins executing again at the named node (CRI-255). Emitted by RunFrom;
+	// begins executing again at the named node. Emitted by RunFrom;
 	// local and server resume paths share the same event shape.
 	OnRunResumed(node string)
 	// OnWaitEntered is emitted when the engine enters a wait node (W05).
@@ -202,8 +202,8 @@ type Sink interface {
 	// (ADR-0006 D5). It is never emitted at receipt and never on delivery
 	// failure; failures are recorded as structured logs instead.
 	OnAgentPromptInjected(step, sessionID, prompt, caller string, deliveredAt time.Time)
-	// OnCheckpointPointer is emitted after a durable adapter checkpoint save
-	// (CRI-203). The pointer is advisory metadata (UI visibility, inspection,
+	// OnCheckpointPointer is emitted after a durable adapter checkpoint save.
+	// The pointer is advisory metadata (UI visibility, inspection,
 	// accounting); the bytes stay engine-local and restore never depends on
 	// the consumer of this event.
 	OnCheckpointPointer(ptr *CheckpointPointerEvent)
@@ -218,7 +218,7 @@ type Engine struct {
 	sink   Sink
 	// runSink is the redaction-wrapped sink of the active run, set by Run and
 	// RunFrom. Engine.Pause emits its snapshot checkpoints' pointer events
-	// through it (CRI-203); nil until a run starts.
+	// through it; nil until a run starts.
 	runSink             Sink
 	subWorkflowResolver SubWorkflowResolver
 	branchScheduler     BranchScheduler
@@ -271,10 +271,10 @@ type Engine struct {
 	snapshotBase string
 	// WS18: runID namespaces snapshot files within snapshotBase.
 	runID string
-	// CRI-115: dataDir is the per-run data directory used for rotated remote
+	// dataDir is the per-run data directory used for rotated remote
 	// adapter accept-token files. Empty disables per-scope token rotation.
 	dataDir string
-	// CRI-169: pauseToolCallDrainTimeout is the bounded wait the drain-first
+	// pauseToolCallDrainTimeout is the bounded wait the drain-first
 	// pause posture gives in-flight nested adapter tool calls before
 	// canceling them. Zero means the SessionManager default (60s).
 	pauseToolCallDrainTimeout time.Duration
@@ -288,7 +288,7 @@ type Engine struct {
 	// progress, enabling Pause/Resume/Inspect from outside runLoop.
 	liveSessions *adapterhost.SessionManager
 	// livePrompts holds the active PromptRouter while a run is in progress.
-	// Tests read it to assert router balance directly (CRI-259); production
+	// Tests read it to assert router balance directly; production
 	// code only routes through Deps.Prompts.
 	livePrompts *PromptRouter
 	mu          sync.RWMutex
@@ -302,7 +302,7 @@ type Engine struct {
 	// tests can simulate a host with missing sandbox primitives.
 	sandboxProbeOverride func() sandbox.Capabilities
 
-	// localShimIsolation enables CRI-293 shim address isolation: when two or
+	// localShimIsolation enables shim address isolation: when two or
 	// more remote environments declare the same fixed listen_address, each
 	// environment's shim binds its own auto-chosen loopback port instead of
 	// colliding (local runs bind every shim in one process; server runs use
@@ -310,14 +310,14 @@ type Engine struct {
 	// run entrypoints via WithLocalShimIsolation.
 	localShimIsolation bool
 
-	// CRI-304: adoptableRunDirs lists prior invocations' run data directories
+	// adoptableRunDirs lists prior invocations' run data directories
 	// whose surviving per-scope adapter instances may be adopted instead of
 	// rotating fresh. The CLI populates it from persisted invocation-identity
 	// markers for replays that follow a checkpoint-consuming resume; empty
 	// leaves fresh rotation untouched.
 	adoptableRunDirs []string
 
-	// ADR-0006 (CRI-259): agentPromptCh is this run's injected-prompt channel,
+	// ADR-0006: agentPromptCh is this run's injected-prompt channel,
 	// fed by the CLI from the orchestrator's Control stream. promptOwnerID is
 	// the run owner identity used by the delivery-side caller re-check (D4).
 	// promptRunID is the run id AgentPrompt messages are addressed to; it
@@ -327,7 +327,7 @@ type Engine struct {
 	promptOwnerID string
 	promptRunID   string
 
-	// CRI-255: boundaryPause is the control-surface pause latch; runLoop
+	// boundaryPause is the control-surface pause latch; runLoop
 	// checks it at every checkpoint point (top of each loop iteration — pause
 	// points are checkpoint points) and honors it via pauseAtBoundary.
 	boundaryPause atomic.Bool
@@ -398,8 +398,8 @@ func (e *Engine) Resume(ctx context.Context) error {
 }
 
 // RequestPause asks the active run to pause at the next checkpoint point
-// (top of the next run-loop iteration — pause points are checkpoint points,
-// CRI-255). The node currently being evaluated finishes first; the engine
+// (top of the next run-loop iteration — pause points are checkpoint points).
+// The node currently being evaluated finishes first; the engine
 // then runs its full pause machinery (adapter session pause + snapshots +
 // persist) and writes the step checkpoint through the sink's OnRunPaused
 // before the returned channel closes, so a crash mid-pause reattaches from
@@ -485,7 +485,7 @@ func (e *Engine) pauseSessions(ctx context.Context) error {
 		return fmt.Errorf("snapshot: %w", err)
 	}
 	for name, snap := range snaps {
-		// CRI-203: save through the shared helper so explicit-pause saves
+		// Save through the shared helper so explicit-pause saves
 		// also emit their checkpoint pointer event.
 		if err := e.saveSessionCheckpoint(name, snap); err != nil {
 			return fmt.Errorf("persist snapshot for %q: %w", name, err)
@@ -495,7 +495,7 @@ func (e *Engine) pauseSessions(ctx context.Context) error {
 }
 
 // pauseAtBoundary lands a control-surface pause request at a run-loop
-// boundary (CRI-255). Ordering rule: durable state first — adapter session
+// boundary. Ordering rule: durable state first — adapter session
 // checkpoints here, the step checkpoint via the sink's OnRunPaused
 // (pauseTracker → PauseCheckpointFn) — then the ack. A crash at any point
 // before the ack reattaches from the checkpoint written before it.
@@ -563,7 +563,7 @@ func (e *Engine) InspectSession(ctx context.Context, name string) (*v2.InspectRe
 }
 
 // livePromptRouter returns the PromptRouter of the running run, or nil
-// outside a run. Tests use it to assert router balance directly (CRI-259);
+// outside a run. Tests use it to assert router balance directly;
 // production code routes only through Deps.Prompts.
 func (e *Engine) livePromptRouter() *PromptRouter {
 	e.mu.RLock()
@@ -589,8 +589,8 @@ func (e *Engine) clearLiveRunState() {
 
 // setLiveRunStatePtr updates e.liveRunState under pauseMu: the local control
 // surface (RequestPause / VisitCounts) reads the live pointer while the run
-// loop mutates it; without this guard the pointer is racy (KB-54/KB-56 CI
-// data race in TestApplyLocal_BoundaryPauseResumeOverLocalControlRPC).
+// loop mutates it; without this guard the pointer is racy (a data race
+// was observed in TestApplyLocal_BoundaryPauseResumeOverLocalControlRPC).
 func (e *Engine) setLiveRunStatePtr(st *RunState) {
 	e.pauseMu.Lock()
 	e.liveRunState = st
@@ -608,7 +608,7 @@ func (e *Engine) clearLiveRunStatePtr() {
 // WithLockfile value is the fallback. The merged pin set is built once at
 // compile time from every workflow directory's .criteria.lock.hcl — including
 // the fetched tree of a URL-sourced workflow, where WithLockfile is never set
-// (CRI-263) — and is the single source of truth for the run; no workflow files
+// — and is the single source of truth for the run; no workflow files
 // are read here. Every consumer of pinned digests (session manager, remote
 // shim verifier, remote lifecycle context) must resolve through this helper so
 // the paths cannot disagree.
@@ -628,7 +628,7 @@ func (e *Engine) setLockfileOnSessions(sessions *adapterhost.SessionManager) {
 
 // seedRunScope seeds variables, resolves declared secret data blocks, and
 // returns the variable scope plus the populated DataStore. This helper keeps
-// the fresh-run and resume-run setup paths identical (CRI-88).
+// the fresh-run and resume-run setup paths identical.
 func (e *Engine) seedRunScope(ctx context.Context, sink Sink, reg *secrets.Registry) (map[string]cty.Value, *DataStore, error) {
 	vars, err := e.seedRunVars(ctx, sink, reg)
 	if err != nil {
@@ -647,7 +647,7 @@ func (e *Engine) seedRunScope(ctx context.Context, sink Sink, reg *secrets.Regis
 // On failure it emits OnRunFailed and returns a wrapped error. The caller owns
 // the returned teardown order.
 func (e *Engine) initAdapters(ctx context.Context, sessions *adapterhost.SessionManager, sink Sink, vars map[string]cty.Value, failStep string) (Deps, []string, *remoteLifecycleContext, error) {
-	// CRI-115: remote environments that enable per_scope_sessions rotate the
+	// Remote environments that enable per_scope_sessions rotate the
 	// accept token per scope. Defer their adapter-info verification from
 	// VerifyGraph to initScopeAdapters so the provisioning event and token
 	// rotation happen before the shim blocks for the adapter phone-home.
@@ -665,7 +665,7 @@ func (e *Engine) initAdapters(ctx context.Context, sessions *adapterhost.Session
 	lifecycle := newScopeLifecycleState(e.dataDir)
 	lifecycle.adoptableRunDirs = e.adoptableRunDirs
 	lifecycle.setRunID(e.runID)
-	// KB-227/CRI-323: this invocation opens a fresh registry generation for
+	// This invocation opens a fresh registry generation for
 	// the data directory before any scope session can rotate tokens.
 	e.markScopeRegistryOpen()
 	rlc := &remoteLifecycleContext{
@@ -699,7 +699,7 @@ func (e *Engine) newSessionManager() *adapterhost.SessionManager {
 // Run executes the workflow until a terminal state is reached, the global
 // step limit is exceeded, or ctx is cancelled.
 //
-// CRI-304: every init failure before runLoop (workflow version gate, variable
+// Every init failure before runLoop (workflow version gate, variable
 // seeding, remote shim startup, adapter provisioning) emits OnRunFailed so
 // the control-plane run record reaches a terminal status; previously only
 // runLoop errors and initAdapters did, leaving provisioning failures
@@ -718,12 +718,12 @@ func (e *Engine) Run(ctx context.Context) error {
 	sink := NewRedactingSink(e.sink, redactionReg)
 	sessions.LifecycleSink = sink
 	sessions.SetAllowedWorkingDirRoots(e.workingDirAllowedRoots)
-	// CRI-203: the wrapped sink is the pointer-emission sink for this run's
+	// The wrapped sink is the pointer-emission sink for this run's
 	// checkpoint saves; save it for Engine.Pause's own snapshot writes.
 	e.runSink = sink
 	e.wireCheckpointStore(sessions, sink)
 
-	// CRI-304: failRunInit emits OnRunFailed for a pre-runLoop init failure;
+	// failRunInit emits OnRunFailed for a pre-runLoop init failure;
 	// initAdapters emits its own, so it is deliberately excluded.
 	failRunInit := func(err error) {
 		sink.OnRunFailed(err.Error(), "")
@@ -736,7 +736,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 
 	// Seed variables and declared secret data blocks before adapter provisioning
-	// so secret expressions can be evaluated against the run scope (WS13, CRI-88).
+	// so secret expressions can be evaluated against the run scope (WS13).
 	vars, ds, err := e.seedRunScope(ctx, sink, redactionReg)
 	if err != nil {
 		failRunInit(err)
@@ -767,11 +767,11 @@ func (e *Engine) Run(ctx context.Context) error {
 // If initialAttempt would already exceed max_step_retries, it emits
 // OnRunFailed instead of attempting the step.
 // Adapter sessions are launched through the same initialization sequence as a
-// fresh run; sessions whose adapters checkpointed (CRI-202) replay their
+// fresh run; sessions whose adapters checkpointed replay their
 // prior state from the last checkpoint during that sequence, so the workflow
 // can resume in a new process context without losing adapter state.
 //
-// CRI-304: like Run, every init failure before runLoop emits OnRunFailed so
+// Like Run, every init failure before runLoop emits OnRunFailed so
 // a resumed run's record reaches a terminal status even when provisioning or
 // shim startup fails.
 func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt int) error {
@@ -784,12 +784,12 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	sink := NewRedactingSink(e.sink, redactionReg)
 	sessions.LifecycleSink = sink
 	sessions.SetAllowedWorkingDirRoots(e.workingDirAllowedRoots)
-	// CRI-203: checkpoint saves resume from checkpoints on this path too, so
+	// Checkpoint saves resume from checkpoints on this path too, so
 	// wire the pointer emission through the wrapped sink.
 	e.runSink = sink
 	e.wireCheckpointStore(sessions, sink)
 
-	// CRI-304: failRunInit emits OnRunFailed for a pre-runLoop init failure;
+	// failRunInit emits OnRunFailed for a pre-runLoop init failure;
 	// initAdapters emits its own, so it is deliberately excluded.
 	failRunInit := func(err error) {
 		sink.OnRunFailed(err.Error(), startStep)
@@ -824,7 +824,7 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 		failRunInit(err)
 		return err
 	}
-	// CRI-255: every RunFrom entry follows a pause (boundary, approval, wait)
+	// Every RunFrom entry follows a pause (boundary, approval, wait)
 	// or an interrupted (crash/stop) execution; publish run.resumed so local
 	// and server streams share one event vocabulary for the resume boundary.
 	sink.OnRunResumed(startStep)
@@ -839,13 +839,13 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 func (e *Engine) failUnknownNode(ctx context.Context, st *RunState, err error, sink Sink) error {
 	sink.OnRunFailed(err.Error(), st.Current)
 	if ctx.Err() == nil {
-		// The failed run record is terminal (KB-227/CRI-323): the pod
+		// The failed run record is terminal: the pod
 		// fleet the scope registry served is released with it, so the
 		// registry is sealed with the failure. A canceled context is
-		// a stop — the run stays resumable (CRI-202 parity).
+		// a stop — the run stays resumable.
 		e.sealScopeRegistry("", false)
 	}
-	// CRI-202: the run failed terminally; release its checkpoints.
+	// The run failed terminally; release its checkpoints.
 	e.discardRunCheckpoints("failed")
 	return err
 }
@@ -881,7 +881,7 @@ func (e *Engine) runLoop(ctx context.Context, sessions *adapterhost.SessionManag
 
 	e.setLiveRunStatePtr(st)
 	for {
-		// CRI-255: pause points are checkpoint points. A control-surface
+		// Pause points are checkpoint points. A control-surface
 		// pause request lands here, at the top of each loop iteration —
 		// after the previous node committed to its transition, before the
 		// next node evaluates; the in-flight iteration completes first.
@@ -1244,8 +1244,8 @@ func (e *Engine) varValueFromScope(varObj cty.Value, name string, node *workflow
 
 // markScopeRegistryOpen bumps the data directory's registry-epoch marker to
 // open for this invocation: a fresh shim-registry generation starts serving,
-// so surviving rotated tokens stay adoptable (the CRI-137/CRI-304 recovery
-// paths) until a terminal completion seals the marker. Called once per
+// so surviving rotated tokens stay adoptable (the crashed-reentry and
+// checkpoint-replay recovery paths) until a terminal completion seals the marker. Called once per
 // initAdapters, before any rotation can happen. Failures are non-fatal: the
 // adoption gate only ever refuses directories whose marker is sealed.
 func (e *Engine) markScopeRegistryOpen() {
@@ -1261,7 +1261,7 @@ func (e *Engine) markScopeRegistryOpen() {
 // sealScopeRegistry seals the data directory's registry marker after the run
 // reached a terminal run-record status: the pod fleet the registry served is
 // released with the run, so successor invocations must refuse adoption of
-// these rotated tokens and rotate fresh instead (KB-227/CRI-323). Failures
+// these rotated tokens and rotate fresh instead. Failures
 // are non-fatal and logged; a sealed marker is a no-op to re-seal.
 func (e *Engine) sealScopeRegistry(finalState string, success bool) {
 	if e.dataDir == "" {
@@ -1310,7 +1310,7 @@ func (e *Engine) advanceTo(st *RunState, next string) {
 
 // handleEvalError dispatches errors from node.Evaluate. It handles ErrTerminal
 // and ErrPaused specially; all other errors are propagated as run failures.
-// CRI-271: when the run fails, the error class is logged explicitly so the
+// When the run fails, the error class is logged explicitly so the
 // engine log distinguishes an adapter session crash (a dead session, not a
 // user action) from a host-initiated run cancellation.
 func (e *Engine) handleEvalError(ctx context.Context, st *RunState, err error, sink Sink) error {
@@ -1324,7 +1324,7 @@ func (e *Engine) handleEvalError(ctx context.Context, st *RunState, err error, s
 			missing := fmt.Errorf("terminal node %q is not a state", st.Current)
 			sink.OnRunFailed(missing.Error(), st.Current)
 			if ctx.Err() == nil {
-				// A failed run record is terminal (KB-227/CRI-323); the
+				// A failed run record is terminal; the
 				// registry is sealed with it unless the context says stop.
 				e.sealScopeRegistry("", false)
 			}
@@ -1345,11 +1345,11 @@ func (e *Engine) handleEvalError(ctx context.Context, st *RunState, err error, s
 			sink.OnRunOutputs(outputs)
 		}
 		sink.OnRunCompleted(state.Name, state.Success)
-		// KB-227/CRI-323: the run reached a terminal run-record status; seal
+		// The run reached a terminal run-record status; seal
 		// the scope registry so successor invocations refuse adoption of
 		// these rotated tokens and rotate fresh instead.
 		e.sealScopeRegistry(state.Name, state.Success)
-		// CRI-202 retention: the run is terminal; release its checkpoints.
+		// Checkpoint retention: the run is terminal; release its checkpoints.
 		e.discardRunCheckpoints("terminal")
 		return nil
 	}
@@ -1364,7 +1364,7 @@ func (e *Engine) handleEvalError(ctx context.Context, st *RunState, err error, s
 		sink.OnRunPaused(st.Current, mode, st.PendingSignal)
 		return nil
 	}
-	// CRI-271: name the failure class before the generic failure event so
+	// Name the failure class before the generic failure event so
 	// operators can tell an adapter session crash (the shim connection died
 	// mid-turn) from a host-initiated cancellation (run timeout, user abort).
 	var crash *adapterhost.SessionCrashError
@@ -1375,12 +1375,12 @@ func (e *Engine) handleEvalError(ctx context.Context, st *RunState, err error, s
 		slog.Warn("run canceled", "step", st.Current, "reason", ctxErr.Error())
 	}
 	sink.OnRunFailed(err.Error(), st.Current)
-	// CRI-202 retention: a genuine failure is terminal, so the run's
+	// Checkpoint retention: a genuine failure is terminal, so the run's
 	// checkpoints are released. A canceled context is a stop (an interrupted,
 	// still-resumable run) — its checkpoints must survive so a later resume
 	// restores adapter state instead of starting fresh.
 	if ctx.Err() == nil {
-		// KB-227/CRI-323: a failed run record is terminal too, so its pod
+		// A failed run record is terminal too, so its pod
 		// fleet is released; seal the scope registry with it. A canceled
 		// context stays sealed-off-free: the run remains resumable.
 		e.sealScopeRegistry("", false)
@@ -1403,9 +1403,9 @@ func (e *Engine) handleReturnExit(st *RunState, sink Sink) {
 		}
 	}
 	sink.OnRunCompleted("", true)
-	// KB-227/CRI-323: terminal completion; seal the scope registry.
+	// Terminal completion; seal the scope registry.
 	e.sealScopeRegistry("", true)
-	// CRI-202 retention: the run is terminal; release its checkpoints.
+	// Checkpoint retention: the run is terminal; release its checkpoints.
 	e.discardRunCheckpoints("terminal")
 }
 
@@ -1452,7 +1452,7 @@ func sumVisits(v map[string]int) int {
 }
 
 // bootstrapSessionsForResume restores adapter session state from the last
-// checkpoint before the run loop starts (CRI-202). Only the resume path
+// checkpoint before the run loop starts. Only the resume path
 // (RunFrom) calls it: a fresh run has no prior state. Sessions that are
 // already open — remote per-scope adapters that phone-homed during
 // initialization — restore into the live session; every other session
@@ -1516,12 +1516,12 @@ func (e *Engine) bootstrapSessionsForResume(ctx context.Context, sessions *adapt
 // maybeStartRemoteShim checks whether the workflow references any remote
 // environments. If so, it parses each remote env config, builds a shim, and
 // starts listening for inbound adapter connections before adapter provisioning.
-// With local shim isolation enabled (CRI-293), environments whose declared
+// With local shim isolation enabled, environments whose declared
 // listen_address collides with another environment's bind their own
 // auto-chosen loopback port instead.
 //
 // The environment set covers declarations from the root graph AND every
-// compiled subworkflow body (KB-238): subworkflows re-declare the
+// compiled subworkflow body: subworkflows re-declare the
 // environments their adapters bind to, and without hosting a shim for those
 // declarations the body's session waits fall back to the legacy default
 // shim — another environment's provider — whose declared adapter set lacks
@@ -1554,7 +1554,7 @@ func (e *Engine) maybeStartRemoteShim(ctx context.Context, sessions *adapterhost
 // host a shim for: the root graph's declarations merged with those of every
 // compiled subworkflow body. Root declarations win on key conflicts so a
 // subworkflow cannot replace the operator's listen/token wiring for a shared
-// environment; between subworkflows, declaration order decides (KB-238).
+// environment; between subworkflows, declaration order decides.
 func shimEnvironmentDeclarations(g *workflow.FSMGraph) map[string]*workflow.EnvironmentNode {
 	out := make(map[string]*workflow.EnvironmentNode)
 	collectShimEnvironments(g, out)
@@ -1609,10 +1609,10 @@ func declaredAdaptersForEnv(envKey string, g *workflow.FSMGraph) []string {
 }
 
 // collectDeclaredAdapters records the adapter DEFINITION identity (the
-// "<type>.<name>" adapter-instance key, KB-242) for every adapter declared or
+// "<type>.<name>" adapter-instance key) for every adapter declared or
 // stepped into envKey. The peer provider keys its children, child-set
 // checks, and kill_child addressing by this identity; a kind-only set cannot
-// tell two same-type definitions apart (the KB-242 cross-scope kill).
+// tell two same-type definitions apart (the cross-scope kill).
 func collectDeclaredAdapters(envKey string, g *workflow.FSMGraph, set map[string]struct{}) {
 	if g == nil {
 		return
@@ -1645,7 +1645,7 @@ func collectDeclaredAdapters(envKey string, g *workflow.FSMGraph, set map[string
 const isolatedShimListenAddress = "127.0.0.1:0"
 
 // isolatedShimEnvs identifies remote environments whose declared
-// listen_address collides with another environment's (CRI-293). Only fixed
+// listen_address collides with another environment's. Only fixed
 // ports can collide: each bind on a port-0 address gets a distinct
 // OS-assigned port, and non-addressable listen values (unix socket paths)
 // keep today's bind-failure error path.
@@ -1711,13 +1711,13 @@ func (e *Engine) startRemoteShimForEnv(ctx context.Context, envKey string, env *
 		return fmt.Errorf("remote environment %q: %w", env.Name, err)
 	}
 	shim.SetPerScopeSessions(cfg.PerScopeSessions)
-	// KB-25: a digest-verified dial for a scope whose accept token is not
+	// A digest-verified dial for a scope whose accept token is not
 	// registered (the post-rotation survivor shape) is validated against the
 	// run's persisted rotated tokens and re-registered, instead of looping
 	// on accept-fail rejections. Stale-token dials never reach the registrar.
 	if cfg.PerScopeSessions {
 		shim.SetScopeRegistrar(&dialScopeRegistrar{dataDir: e.dataDir, envKey: envKey, sessions: sessions})
-		// KB-232: session waits that cross half their window without a
+		// Session waits that cross half their window without a
 		// completed handshake publish a named scope_session_pending lifecycle
 		// event instead of burning the remaining step deadline silently.
 		shim.SetScopeSessionSink(&scopeSessionEventBridge{engine: e, environmentName: env.Name})
@@ -1754,8 +1754,8 @@ type lockfileDigestVerifier struct {
 }
 
 // Verify validates a presented adapter digest against the lockfile. The
-// presented name is the adapter DEFINITION identity ("<type>.<name>",
-// KB-242): it is split back into type + name and matched against the
+// presented name is the adapter DEFINITION identity ("<type>.<name>"):
+// it is split back into type + name and matched against the
 // matching LockedAdapter so sibling definitions of one adapter type pin
 // independently. A bare (no-dot) name keeps the legacy type-only lookup —
 // first lockfile entry of that type — used by legacy single-adapter shapes.

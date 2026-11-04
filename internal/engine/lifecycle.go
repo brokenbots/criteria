@@ -46,7 +46,7 @@ type adapterLifecycleRecord struct {
 // remoteLifecycleContext carries the lockfile and per-scope provisioning state
 // that the engine needs to emit remote adapter lifecycle events. It travels
 // in RunState rather than Deps so that Deps stays small for node evaluators.
-// The detachment ledger (KB-257) holds the per-scope records a subworkflow
+// The detachment ledger holds the per-scope records a subworkflow
 // body detached at its exit: the sessions stay LIVE for re-entry, and the
 // run-final teardown releases everything still in the ledger.
 type remoteLifecycleContext struct {
@@ -79,7 +79,7 @@ type scopeLifecycleState struct {
 	dataDir string
 	runID   string
 	// adoptableRunDirs lists other runs' data directories whose surviving
-	// per-scope instances may be adopted instead of rotating fresh (CRI-304);
+	// per-scope instances may be adopted instead of rotating fresh;
 	// empty for fresh, non-resumed runs.
 	adoptableRunDirs []string
 	mu               sync.Mutex
@@ -131,7 +131,7 @@ func (ls *scopeLifecycleState) remove(adapterName string) {
 }
 
 // DetachBodyScope ends a subworkflow-body scope WITHOUT releasing its live
-// per-scope sessions (KB-257 churn kill): each per-scope record moves from
+// per-scope sessions (churn kill): each per-scope record moves from
 // this context's scope map to the context's detachment ledger with a
 // "detached" lifecycle event. The session stays bound in the session
 // manager, the shim scope token stays registered, the peer pod keeps its
@@ -219,7 +219,7 @@ func generateAcceptToken() (string, error) {
 }
 
 // writeRotatedToken writes a scope's accept token file labeled with the
-// adapter's definition identity (KB-242): one file per adapter definition,
+// adapter's definition identity: one file per adapter definition,
 // so sibling definitions of the same adapter type never share a token.
 func writeRotatedToken(dataDir, scopeName, scopeInstanceID, adapterKey, token string) (string, error) {
 	// Route through the same checked path builder as the readers so the
@@ -241,12 +241,12 @@ func writeRotatedToken(dataDir, scopeName, scopeInstanceID, adapterKey, token st
 // occupies, keyed by adapter instance within a scope. After a runner-pod
 // restart mid-run, the restarted engine reuses the same scope instance ID and
 // accept token so surviving adapter pods can re-handshake with the new
-// runner's shim instead of being rejected forever (CRI-137). The record is
+// runner's shim instead of being rejected forever. The record is
 // cleared whenever the scope is torn down, so deliberate pause/resume flows
 // still rotate fresh tokens.
 type currentScopeInstanceRecord struct {
 	ScopeInstanceID string `json:"scope_instance_id"`
-	// AdapterKey is the adapter definition identity ("<type>.<name>", KB-242)
+	// AdapterKey is the adapter definition identity ("<type>.<name>")
 	// the rotated token file is labeled with. Legacy single-adapter shapes
 	// stored the bare adapter type here; a no-dot value keeps matching such
 	// legacy files unchanged. The JSON tag predates the definition-identity
@@ -406,7 +406,7 @@ func remoteEnvConfig(g *workflow.FSMGraph, ad *workflow.AdapterNode) (*remote.Co
 
 // deferredPerScopeRemoteAdapters collects the instance IDs of every adapter in
 // g (including adapters declared in subworkflow bodies) that is bound to a
-// per-scope remote environment. CRI-269: subworkflow adapters were missed by
+// per-scope remote environment. Subworkflow adapters were missed by
 // the root-only walk, so VerifyGraph eagerly ran a local Info handshake for
 // them and binds dispatched local OCI-cache handles even though
 // initScopeAdapters had already emitted provision_wanted for the same
@@ -439,7 +439,7 @@ func deferredPerScopeRemoteAdapters(g *workflow.FSMGraph) []string {
 
 // lockedDigest returns the adapter's lockfile-pinned digest, or "" when
 // unresolvable (nil lockfile, no entry). The event stays empty — never
-// synthesized (CRI-263, fail-closed).
+// synthesized (fail-closed).
 func lockedDigest(lf *lockfile.Lockfile, adapterType, adapterName string) string {
 	if lf == nil {
 		return ""
@@ -454,7 +454,7 @@ func lockedDigest(lf *lockfile.Lockfile, adapterType, adapterName string) string
 }
 
 // lockedImageReference returns the adapter's lockfile-pinned container image
-// reference (CRI-214 M14), or "" when the lockfile entry carries no
+// reference, or "" when the lockfile entry carries no
 // container_image block. Empty is a real state (binary-only adapters), not an
 // error; the operator keeps its kind-based fallback image.
 func lockedImageReference(lf *lockfile.Lockfile, adapterType, adapterName string) string {
@@ -519,7 +519,7 @@ func maybeRotateRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, g *wor
 		return "", fmt.Errorf("initialize adapter %q: %w", instanceID, err)
 	}
 
-	// CRI-137: after a runner-pod restart mid-run, reuse the persisted scope
+	// After a runner-pod restart mid-run, reuse the persisted scope
 	// instance so surviving adapter pods can re-handshake with the restarted
 	// runner's shim instead of being rejected with a freshly rotated token
 	// forever. Any mismatch (missing token file, corrupt record, adapter type
@@ -532,7 +532,7 @@ func maybeRotateRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, g *wor
 		return scopeKey, nil
 	}
 
-	// CRI-304: after a checkpoint-consuming resume failed terminally, the next
+	// After a checkpoint-consuming resume failed terminally, the next
 	// replay starts fresh while the prior run's per-scope adapter pods are
 	// still up (they are only torn down once the run record reaches a terminal
 	// status). A fresh rotation would reject those pods' handshakes until the
@@ -555,7 +555,7 @@ func maybeRotateRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, g *wor
 // the current-instance record under the run data dir, and emits
 // provision_wanted so the adapter session gets provisioned against it.
 //
-// KB-232: the shim registration happens BEFORE the token file is written to
+// The shim registration happens BEFORE the token file is written to
 // disk. The rotated token file is what makes a scope dialable — operators
 // reconcile pods from provision_wanted and a starting pod presents the
 // token as soon as it exists — so a disk-first order left a window where a
@@ -580,7 +580,7 @@ func rotateFreshRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, envNod
 		return "", fmt.Errorf("initialize adapter %q: register scope token: %w", instanceID, err)
 	}
 	// The rotated token file is labeled with the adapter's definition
-	// identity (KB-242): two definitions of the same adapter type in one
+	// identity: two definitions of the same adapter type in one
 	// environment each get their own token file, so a per-scope scan or a
 	// peer-side child set can tell them apart.
 	tokenPath, err := writeRotatedToken(dataDir, scopeName, scopeInstanceID, instanceID, token)
@@ -687,12 +687,12 @@ func logScopeReuseFallback(scopeName, instanceID, reason string) {
 }
 
 // tryAdoptPriorRunScopeInstance adopts a surviving per-scope instance from a
-// prior invocation's run data directory (CRI-304). After a checkpoint was
+// prior invocation's run data directory. After a checkpoint was
 // consumed and a replay starts fresh, the prior run's adapter pods are
 // typically still up — the operator tears them down only once the run record
 // reaches a terminal status — and a fresh rotation would reject their
 // handshakes until the shim's verify budget expires, wedging the replay for
-// the full timeout. Reusing the prior instance through the CRI-137
+// the full timeout. Reusing the prior instance through the shim's
 // re-handshake mechanism across the run boundary lets those pods re-handshake
 // with the new run's shim immediately.
 //
@@ -710,7 +710,7 @@ func logScopeReuseFallback(scopeName, instanceID, reason string) {
 // and a non-nil error only when adoption was possible but registration with
 // the shim failed.
 
-// refuseSealedPriorRunRegistry implements the KB-227/CRI-323 adoption gate: a
+// refuseSealedPriorRunRegistry implements the sealed-registry adoption gate: a
 // prior invocation whose registry is sealed reached a terminal run-record
 // status — its adapter pod fleet was torn down with it, so its rotated tokens
 // cannot be honored by this invocation's fresh shim registry (no rows for
@@ -825,8 +825,8 @@ type scannedScopeToken struct {
 // token files left behind by a prior runner generation. Only directory names
 // that parse as UUIDs are considered instance directories ("current" holds
 // records, not instances); each must contain a non-empty <adapterKey>.token,
-// where adapterKey is the adapter definition identity ("<type>.<name>",
-// KB-242). Legacy layouts carry a bare adapter type label and simply do not
+// where adapterKey is the adapter definition identity ("<type>.<name>").
+// Legacy layouts carry a bare adapter type label and simply do not
 // match a definition-keyed scan.
 func scanScopeTokenFiles(dataDir, scopeName, adapterKey string) ([]scannedScopeToken, error) {
 	scopeDir, err := remoteTokensDir(dataDir, scopeName)
@@ -902,7 +902,7 @@ func filterUnclaimedScopeInstances(dataDir, scopeName string, candidates []scann
 
 // reusableScopeToken returns the persisted scope instance ID, token file path
 // and token when the persisted record is valid for adapterKey (the adapter
-// definition identity, KB-242) and the token file is still readable. On
+// definition identity) and the token file is still readable. On
 // failure it returns a reason naming the check that failed (missing record,
 // corrupt record, adapter mismatch, missing token file) so the fallback
 // leaves a diagnostic trail, plus ok=false meaning the caller must rotate a
@@ -917,7 +917,7 @@ func reusableScopeToken(dataDir, scopeName, instanceID, adapterKey string) (scop
 	}
 	if rec.AdapterKey != adapterKey {
 		// An adapter mismatch includes a definition change on the same type:
-		// each adapter definition has its own scope instance (KB-242), so a
+		// each adapter definition has its own scope instance, so a
 		// sibling definition's record must never be reused across instances.
 		return "", "", "", fmt.Sprintf("adapter identity changed from %q to %q", rec.AdapterKey, adapterKey), false
 	}
@@ -945,7 +945,7 @@ func reusableScopeToken(dataDir, scopeName, instanceID, adapterKey string) (scop
 // Returns the ordered slice of provisioned adapter IDs (for correct LIFO teardown)
 // and an error if any adapter failed to initialize.
 //
-// KB-232: initialization runs in two phases so a slow one adapter can never
+// Initialization runs in two phases so a slow one adapter can never
 // delay the scope registration of the others. Phase A prepares every adapter
 // (secrets, working dir, config) and rotates + registers its per-scope
 // session; phase B runs the blocking Verify handshakes. Without the split,
@@ -988,7 +988,7 @@ func stageAndRotateScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps
 	for _, instanceID := range g.AdapterOrder {
 		adapter := g.Adapters[instanceID]
 
-		// CRI-145: subworkflow bodies re-declare parent adapters for safety.
+		// Subworkflow bodies re-declare parent adapters for safety.
 		// If the parent scope already provisioned this session, skip the whole
 		// init - rotating another token here would emit a second
 		// provision_wanted (leaking a second per-scope pod) for an engagement
@@ -996,7 +996,7 @@ func stageAndRotateScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps
 		// release it.
 		//
 		// The child's declaration is intentionally not re-validated here; the skip is not accidental.
-		// Concurrency bound is evidence-based, not enforced: reuse-only keeps at most one live per-scope instance per adapter (CRI-145 test observes peak 1).
+		// Concurrency bound is evidence-based, not enforced: reuse-only keeps at most one live per-scope instance per adapter (the reuse tests observe peak 1).
 		if deps.Sessions.SessionOpen(instanceID) {
 			slog.Info("re-declared adapter already provisioned by parent scope; reusing",
 				"scope", scopeName, "adapter_instance", instanceID)
@@ -1020,7 +1020,7 @@ func stageAndRotateScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps
 			return nil, fmt.Errorf("initialize adapter %q: %w", instanceID, fvErr)
 		}
 
-		// CRI-115: when the bound remote environment enables per-scope sessions,
+		// When the bound remote environment enables per-scope sessions,
 		// rotate a fresh accept token for this scope, persist it under the run
 		// data directory, register it with the shim, and emit a provision-wanted
 		// event *before* blocking on WaitForHandle.
@@ -1160,7 +1160,7 @@ func resolveAdapterWorkingDir(g *workflow.FSMGraph, ad *workflow.AdapterNode, va
 // buildOriginRefs maps an adapter's secret expressions to the declared origins
 // of the referenced secret variables or data blocks. This keeps raw secret
 // values out of session snapshots while still allowing them to re-resolve on
-// resume (WS18, CRI-88).
+// resume (WS18).
 func buildOriginRefs(adapter *workflow.AdapterNode, secretOrigins map[string]secrets.OriginRef) (map[string]secrets.OriginRef, error) {
 	if len(adapter.Secrets) == 0 {
 		return nil, nil
@@ -1193,16 +1193,16 @@ func buildOriginRefs(adapter *workflow.AdapterNode, secretOrigins map[string]sec
 }
 
 // detachBodyScopeAdapters ends a subworkflow-body scope WITHOUT releasing its
-// live adapter sessions (KB-257 churn kill). A body exit must not destroy the
+// live adapter sessions (churn kill). A body exit must not destroy the
 // per-scope sessions a re-entry — or the run's final teardown — still uses:
 // destroying them is what forced every re-entry into a fresh rotation +
 // re-dial + fresh handshake, whose 12ms host-close races killed phase-B
-// verifies fleet-wide (KB-255). Each per-scope record is removed from this
+// verifies fleet-wide. Each per-scope record is removed from this
 // body's lifecycle map and observed with a "detached" lifecycle event; the
 // session stays bound (or verified) in the session manager, the shim scope
 // token stays registered, the pod keeps its phone-home connection, and the
 // persisted instance record stays reusable. The next body entry therefore
-// hits the CRI-145 skip ("already provisioned; reusing") and re-opens the
+// hits the already-provisioned skip ("already provisioned; reusing") and re-opens the
 // SAME scope session with zero dials; only the run's final teardown
 // (Run/RunFrom defers + SessionManager.Shutdown) releases what a body
 // detached. Errors during detach are logged and do not change the run state.
@@ -1213,7 +1213,7 @@ func detachBodyScopeAdapters(ctx context.Context, order []string, deps Deps, lif
 	}
 	if lifecycle == nil || lifecycle.scopeLifecycle == nil {
 		// No per-scope lifecycle (host-local shape): the body's verified-only
-		// records must still be RELEASED (the CRI-115 boundary contract those
+		// records must still be RELEASED (the remote-lifecycle boundary contract those
 		// tests pin) — the non-remote path stays the classic teardown.
 		tearDownScopeAdapters(ctx, order, deps, lifecycle)
 		return
@@ -1247,13 +1247,13 @@ func detachBodyScopeAdapters(ctx context.Context, order []string, deps Deps, lif
 // Always called, even if the run errored or was cancelled.
 // Uses context.WithoutCancel to ensure teardown completes even if the run context was canceled.
 // Subworkflow-body scopes must NOT tear down here: use detachBodyScopeAdapters,
-// which ends the body's scope without destroying the live sessions (KB-257).
+// which ends the body's scope without destroying the live sessions.
 //
 // drainDetachedLedger first covers the detachment ledger: records a body
 // detached that NO later body re-adopted are added back to the scope map and
 // released through a follow-up tearDownScopeAdapters invocation (deferred so
 // the owned order tears down first, LIFO with the ledger last).
-// drainDetachedLedger covers the KB-257 detachment ledger at run-final
+// drainDetachedLedger covers the detachment ledger at run-final
 // teardown: records a subworkflow body detached and NO later body re-adopted
 // are moved back onto the scope map and released via a follow-up
 // tearDownScopeAdapters invocation, deferred so the caller's owned order
@@ -1297,7 +1297,7 @@ func tearDownScopeAdapters(ctx context.Context, order []string, deps Deps, lifec
 	for i := len(order) - 1; i >= 0; i-- {
 		adapterID := order[i]
 
-		// CRI-115: emit a release event for per-scope remote adapters before
+		// Emit a release event for per-scope remote adapters before
 		// closing the session, then unregister the scope token so a torn-down
 		// pod cannot reconnect with the old token.
 		if lifecycle != nil && lifecycle.scopeLifecycle != nil {
@@ -1317,14 +1317,14 @@ func tearDownScopeAdapters(ctx context.Context, order []string, deps Deps, lifec
 				})
 				envKey := rec.envType + "." + rec.envName
 				_ = deps.Sessions.UnregisterRemoteScopeForEnv(envKey, rec.scopeKey)
-				// KB-242: the kill is addressed by the adapter DEFINITION
+				// The kill is addressed by the adapter DEFINITION
 				// identity, never the adapter type. Per-definition peer
 				// children each serve one definition; a kind-addressed kill
 				// from this scope's teardown could take down a sibling
 				// definition's child (the pair_programming_loop handshake
 				// kill-chain).
 				_ = deps.Sessions.CloseRemoteHandleForEnv(cleanupCtx, envKey, rec.adapterName, rec.scopeKey)
-				// CRI-137: tombstone the persisted scope instance so the
+				// Tombstone the persisted scope instance so the
 				// next deliberate scope entry rotates a fresh token instead
 				// of the token-file scan resurrecting the released one. The
 				// rotated token file is kept for post-run forensics.

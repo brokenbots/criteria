@@ -4,14 +4,14 @@ package engine
 //
 // A run data directory accumulates rotated per-scope accept tokens
 // (<dataDir>/remote-tokens/...). A crashed runner-pod re-entry legitimately
-// re-registers those tokens with the restarted engine's shim (CRI-137), and a
+// re-registers those tokens with the restarted engine's shim, and a
 // replay after a consumed checkpoint legitimately adopts them from prior
-// invocation directories (CRI-304) — but once an invocation reaches a
+// invocation directories — but once an invocation reaches a
 // terminal run-record status, the operator tears the prior pod fleet down and
 // the fresh shim registry serving a successor invocation has no rows for
 // those scopes. Adopting a completed invocation's tokens therefore dials
 // adapter pods with stale claims that the fresh registry rejects forever
-// (CRI-137 rejection storm; KB-227).
+// (rejection storm).
 //
 // To make the crashed-vs-completed distinction explicit, every invocation
 // that initializes scope sessions first bumps this marker with state "open"
@@ -35,7 +35,7 @@ const (
 
 	// RegistryStateOpen marks an invocation whose scope-token registry is (or
 	// was without completing) still serving; adoption from such a directory
-	// is the CRI-137/CRI-304 recovery path.
+	// is the crashed-reentry and checkpoint-replay recovery path.
 	RegistryStateOpen = "open"
 	// RegistryStateSealed marks an invocation that reached a terminal run
 	// status; its registry closed with the pod fleet it served.
@@ -68,7 +68,7 @@ func registryEpochPath(dataDir string) string {
 // readScopeRegistryEpoch returns the data directory's registry marker. ok is
 // false when no marker exists (legacy directory, or an invocation that never
 // initialized scope sessions) — such directories stay adoptable so the
-// CRI-137/CRI-304 recovery paths keep working.
+// crashed-reentry and checkpoint-replay recovery paths keep working.
 func readScopeRegistryEpoch(dataDir string) (registryEpochRecord, bool) {
 	raw, err := os.ReadFile(registryEpochPath(dataDir))
 	if err != nil {
@@ -122,7 +122,7 @@ func bumpScopeRegistryEpoch(dataDir string) (uint64, error) {
 // sealScopeRegistryEpoch seals the registry: the invocation completed at a
 // terminal run-record status, so the pod fleet the registry served is being
 // torn down and every rotated token with it. Later adoption must refuse the
-// directory and rotate fresh (KB-227). A directory with no marker is left
+// directory and rotate fresh. A directory with no marker is left
 // alone: without scope sessions there is nothing to seal or adopt.
 func sealScopeRegistryEpoch(dataDir, finalState string, success bool) error {
 	prev, ok := readScopeRegistryEpoch(dataDir)

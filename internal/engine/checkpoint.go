@@ -1,4 +1,4 @@
-// Engine-side checkpoint wiring (CRI-202): the save callback to the state
+// Engine-side checkpoint wiring: the save callback to the state
 // home, the restore pass at resume initialization, and the criteria-side
 // retention janitor for terminal runs.
 package engine
@@ -13,11 +13,11 @@ import (
 )
 
 // wireCheckpointStore creates the run's checkpoint store and wires the save
-// callback into the session manager (CRI-202). Both a snapshot base and a
+// callback into the session manager. Both a snapshot base and a
 // run id are required; without either, checkpointing stays disabled and
 // sessions skip saves. sink is the run's engine sink (already redaction-
 // wrapped by Run/RunFrom); every durable save emits its checkpoint pointer
-// through it (CRI-203) so consumers track engine-local checkpoints without
+// through it so consumers track engine-local checkpoints without
 // ever being their restore path.
 func (e *Engine) wireCheckpointStore(sessions *adapterhost.SessionManager, sink Sink) {
 	if e.snapshotBase == "" || e.runID == "" {
@@ -35,7 +35,7 @@ func (e *Engine) wireCheckpointStore(sessions *adapterhost.SessionManager, sink 
 }
 
 // saveSessionCheckpoint persists one pause-path checkpoint and emits its
-// pointer event (CRI-203). The explicit-pause save is an on-demand adapter's
+// pointer event. The explicit-pause save is an on-demand adapter's
 // only save, so its pointer joins the step/turn-boundary ones.
 func (e *Engine) saveSessionCheckpoint(name string, snap *adapterhost.SessionSnapshot) error {
 	store := state.NewCheckpointStore(e.snapshotBase, e.runID)
@@ -48,7 +48,7 @@ func (e *Engine) saveSessionCheckpoint(name string, snap *adapterhost.SessionSna
 }
 
 // emitCheckpointPointer publishes the advisory checkpoint pointer for a
-// durable save (CRI-203). Emission is fire-and-forget: the pointer is
+// durable save. Emission is fire-and-forget: the pointer is
 // advisory metadata and must never affect the save outcome. Adapter identity
 // resolves from the workflow graph (checkpoint session keys are graph adapter
 // keys "<type>.<name>"); sessions without a graph entry — e.g. directly bound
@@ -83,8 +83,8 @@ func (e *Engine) graphAdapter(sessionID string) *workflow.AdapterNode {
 	return e.graph.Adapters[sessionID]
 }
 
-// discardRunCheckpoints removes this run's adapter checkpoints (CRI-202
-// retention). The janitor is criteria-side because the control plane cannot
+// discardRunCheckpoints removes this run's adapter checkpoints (retention
+// policy). The janitor is criteria-side because the control plane cannot
 // delete criteria-owned state: the engine calls it only for terminal runs —
 // stopped/paused runs are exempt so they cannot lose their own checkpoints
 // to the retention sweep. Best-effort: a cleanup failure is logged, never

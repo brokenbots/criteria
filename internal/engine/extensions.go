@@ -64,7 +64,7 @@ func WithPendingSignal(signal string) Option {
 // resume signal. The wait/approval node validates the payload against its
 // outcomes before resolving and clears the field only once the resume input
 // is accepted; an invalid decision/outcome leaves the payload intact so the
-// resume can be retried (W05, CRI-56).
+// resume can be retried (W05).
 func WithResumePayload(payload map[string]string) Option {
 	return func(e *Engine) {
 		e.resumePayload = payload
@@ -185,7 +185,7 @@ func WithDataDir(dir string) Option {
 }
 
 // WithPauseToolCallDrainTimeout sets the bounded wait the drain-first pause
-// posture (CRI-169, ADR-0004 §11) gives in-flight nested adapter tool calls
+// posture (ADR-0004 §11) gives in-flight nested adapter tool calls
 // to settle before canceling them. Zero means the SessionManager default
 // (60s). Primarily a test hook so conformance tests can exercise the pause
 // straggler path in bounded time.
@@ -215,7 +215,7 @@ func WithSandboxProbeOverride(fn func() sandbox.Capabilities) Option {
 	}
 }
 
-// WithLocalShimIsolation enables CRI-293 shim address isolation for local
+// WithLocalShimIsolation enables shim address isolation for local
 // runs. When two or more remote environments declare the same fixed
 // listen_address, each environment's shim binds its own auto-chosen free
 // loopback port (127.0.0.1:0) and that per-environment address is published
@@ -235,7 +235,7 @@ func WithLocalShimIsolation() Option {
 
 // WithAdoptableRunDirs lists prior invocations' run data directories whose
 // surviving per-scope adapter instances may be adopted instead of rotating
-// fresh scope tokens (CRI-304). A fresh replay after a checkpoint-consuming
+// fresh scope tokens. A fresh replay after a checkpoint-consuming
 // resume would otherwise reject the prior run's still-running pods' handshakes
 // until the shim's verify budget expires, wedging the run for the full
 // timeout; adoption re-handshakes those pods with the new run's shim instead.

@@ -11,11 +11,11 @@ import (
 	"github.com/brokenbots/criteria/internal/adapterhost"
 )
 
-// dialScopeRegistrar implements remote.ScopeRegistrar (KB-25): when a shim
+// dialScopeRegistrar implements remote.ScopeRegistrar: when a shim
 // receives a digest-verified dial for a scope it has no token registered
 // for, the presented identity is validated here against the run data
 // directory's surviving rotated token files for that scope and adapter
-// definition (KB-242: identity = the "<type>.<name>" adapter-instance key)
+// definition (identity = the "<type>.<name>" adapter-instance key)
 // that matches the presented name.
 // A match is re-registered with the shim so the dialing pod's re-handshake
 // is accepted instead of looping on accept-fail rejections until an
@@ -24,7 +24,7 @@ import (
 // Only UNCLAIMED instances may be re-registered:
 // filterUnclaimedScopeInstances drops candidates referenced by a readable
 // current record, which covers both another adapter's active claim and a
-// deliberately released tombstone (CRI-115), so a torn-down pod's token can
+// deliberately released tombstone, so a torn-down pod's token can
 // never be resurrected and two adapters can never share one scope instance.
 type dialScopeRegistrar struct {
 	dataDir  string
@@ -35,7 +35,7 @@ type dialScopeRegistrar struct {
 // RegisterScopeOnDial validates a rejected dial's presented token against
 // the run's persisted rotated tokens and re-registers a match. The
 // `adapterName` is the dial's adapter definition identity (the
-// "<type>.<name>" adapter-instance key, KB-242; legacy single-adapter dials
+// "<type>.<name>" adapter-instance key; legacy single-adapter dials
 // present the bare adapter type). It returns a non-nil error when nothing
 // matches so the shim keeps the typed unregistered-scope rejection.
 func (r *dialScopeRegistrar) RegisterScopeOnDial(adapterName, scope, presentedToken string) error {
@@ -70,8 +70,8 @@ func splitScopeKey(scope string) (scopeName, instanceID string, ok bool) {
 
 // survivingScopeToken matches presentedToken (constant-time) against the
 // unclaimed rotated token files persisted for (scopeName, adapterName) —
-// adapterName being the adapter definition identity ("<type>.<name>",
-// KB-242) the token file is labeled with — and returns the token to
+// adapterName being the adapter definition identity ("<type>.<name>")
+// the token file is labeled with — and returns the token to
 // register, or an error when nothing matches.
 func survivingScopeToken(dataDir, scopeName, instanceID, adapterName, presentedToken string) (string, error) {
 	candidates, err := scanScopeTokenFiles(dataDir, scopeName, adapterName)
@@ -94,7 +94,7 @@ func survivingScopeToken(dataDir, scopeName, instanceID, adapterName, presentedT
 	return "", fmt.Errorf("no surviving token file for instance %q", instanceID)
 }
 
-// scopeSessionEventBridge implements remote.ScopeSessionSink (KB-232): it
+// scopeSessionEventBridge implements remote.ScopeSessionSink: it
 // turns the shim's half-window session-wait signals into named
 // scope_session_pending adapter lifecycle events on the run's event sink, so
 // a step waiting on a slow adapter pod is observable instead of burning the

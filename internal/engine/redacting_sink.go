@@ -50,8 +50,8 @@ func (s *RedactingSink) OnStepOutcome(step, outcome string, duration time.Durati
 	s.inner.OnStepOutcome(s.reg.Redact(step), s.reg.Redact(outcome), duration, redactedErr, s.reg.Redact(comment))
 }
 
-// OnStepOutcomeInvalid redacts the rejecting outcome name and each issue line
-// (KB-45). Issues are adapter-produced strings and may embed sensitive
+// OnStepOutcomeInvalid redacts the rejecting outcome name and each issue
+// line. Issues are adapter-produced strings and may embed sensitive
 // payload text.
 func (s *RedactingSink) OnStepOutcomeInvalid(step, outcome string, issues []string, attempt int) {
 	redacted := make([]string, len(issues))
@@ -85,7 +85,7 @@ func (s *RedactingSink) OnRunPaused(node, mode, signal string) {
 	s.inner.OnRunPaused(s.reg.Redact(node), s.reg.Redact(mode), s.reg.Redact(signal))
 }
 
-// OnRunResumed forwards run.resumed through the redactor (CRI-255).
+// OnRunResumed forwards run.resumed through the redactor.
 func (s *RedactingSink) OnRunResumed(node string) {
 	s.inner.OnRunResumed(s.reg.Redact(node))
 }
@@ -149,7 +149,7 @@ func (s *RedactingSink) OnAdapterLifecycle(stepName, adapterName, status, detail
 func (s *RedactingSink) OnAdapterLifecycleEvent(event *AdapterLifecycleEvent) {
 	// Redact all string fields before forwarding. TokenRef is a file path, not a
 	// secret, but redacting it is harmless and keeps the wrapper uniform.
-	// CRI-236: Token is forwarded verbatim — it is the engine-generated
+	// Token is forwarded verbatim — it is the engine-generated
 	// per-scope accept token riding the authenticated provision/accept wire
 	// (it is never a workflow secret, so registry redaction could only mangle
 	// the handoff, and a redacted token would desync the handshake the

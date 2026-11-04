@@ -1,14 +1,14 @@
 package engine
 
-// KB-25: a step blocked with no observable adapter progress for a bounded
+// A step blocked with no observable adapter progress for a bounded
 // window (env-tunable via the tunables registry, default 30m) fails the
 // workflow with a typed stall error instead of wedging the run until an
-// operator kills it. The CRI-287
-// step-timeout teardown window semantics are preserved: the watchdog opens
+// operator kills it. The step-timeout teardown reclassification window
+// semantics are preserved: the watchdog opens
 // the same engine-initiated teardown mark before cancelling, so transport
 // closes during the Execute unwind are routed as teardown consequences and
 // not as session crashes. Steps that declare their own timeout keep the
-// CRI-275 ceiling unchanged — the watchdog only arms for unbounded steps.
+// step-timeout ceiling unchanged — the watchdog only arms for unbounded steps.
 
 import (
 	"context"
@@ -25,7 +25,7 @@ import (
 var errStepStalled = errors.New("step stalled with no adapter progress")
 
 // StepStallError fails a run whose step made no observable adapter progress
-// for the configured stall window (KB-25).
+// for the configured stall window.
 type StepStallError struct {
 	Step   string
 	Window time.Duration
@@ -40,7 +40,7 @@ func (e *StepStallError) Unwrap() error { return errStepStalled }
 
 // stepStallWatchdog watches one running step attempt for adapter activity.
 // It fires when the step's session shows no activity for the stall window:
-// firing opens the CRI-287 teardown window and cancels the step's execution
+// firing opens the engine-initiated teardown window and cancels the step's execution
 // context so Execute unblocks. The watchdog never fires on a parent- or
 // step-context cancellation of its own — those keep their existing routing.
 type stepStallWatchdog struct {
@@ -57,17 +57,17 @@ type stepStallWatchdog struct {
 	window time.Duration
 }
 
-// startStepStallWatchdog arms the KB-25 stall watchdog for a step attempt.
+// startStepStallWatchdog arms the stall watchdog for a step attempt.
 // The second return is the context the attempt must execute under: a
 // watchdog-derived cancellation layer when armed, parent otherwise.
 //
 // A nil SessionManager, a step without an adapter target, a step-declared
-// timeout (the CRI-275 ceiling already bounds it), or a disabled window
+// timeout (the step-timeout ceiling already bounds it), or a disabled window
 // (window <= 0) all disarm the watchdog. stepStart is the attempt's start
 // time: activity observed before it belongs to earlier attempts or other
 // steps and never counts as progress for this one.
 func startStepStallWatchdog(parent context.Context, deps Deps, step *workflow.StepNode, stepStart time.Time) (*stepStallWatchdog, context.Context) {
-	// KB-25: the stall window (and its disabled posture, window == 0) come
+	// The stall window (and its disabled posture, window == 0) come
 	// from the tunables registry (CRITERIA_STEP_STALL_WINDOW).
 	window := tunables.FromEnv().StepStallWindow
 	if deps.Sessions == nil || step == nil || step.AdapterRef == "" || step.Timeout > 0 || window <= 0 {
@@ -93,7 +93,7 @@ func startStepStallWatchdog(parent context.Context, deps Deps, step *workflow.St
 			}
 			w.idle = idle
 			w.fired = true
-			// Engine-initiated teardown of a wedged step: open the CRI-287
+			// Engine-initiated teardown of a wedged step: open the
 			// reclassification window BEFORE cancelling, so transport closes
 			// during the Execute unwind are routed as teardown consequences
 			// instead of session crashes.
@@ -130,7 +130,7 @@ func (w *stepStallWatchdog) stop() (bool, time.Duration) {
 }
 
 // stallFailure builds the run-fatal typed stall error for a step whose
-// watchdog fired (KB-25). Wrapping in FatalRunError aborts the run: a wedged
+// watchdog fired. Wrapping in FatalRunError aborts the run: a wedged
 // step produces no outcome, so neither its declared outcomes nor the
 // failure/default routing can make progress either.
 func stallFailure(step *workflow.StepNode, window, idle time.Duration) error {
