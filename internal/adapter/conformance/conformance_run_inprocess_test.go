@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
@@ -38,6 +39,12 @@ func (runStubAdapter) Info() workflow.AdapterInfo { return workflow.AdapterInfo{
 func (runStubAdapter) Execute(ctx context.Context, step *workflow.StepNode, sink adapter.EventSink) (adapter.Result, error) {
 	if cmdText := step.Input["command"]; cmdText != "" && runtime.GOOS != "windows" {
 		cmd := exec.CommandContext(ctx, "sh", "-c", cmdText)
+		// CommandContext kills only the direct child (sh). When the shell
+		// forks a descendant that inherits stdout/stderr, Output would block
+		// on the stdio copy goroutines past the harness's 500ms cancellation
+		// budget; WaitDelay bounds that wait and lets Execute surface
+		// ctx.Err() as the cancellation error.
+		cmd.WaitDelay = 100 * time.Millisecond
 		out, err := cmd.Output()
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
@@ -79,6 +86,50 @@ func TestConformanceRun_InProcess(t *testing.T) {
 		AllowedOutcomes: []string{"success"},
 		Streaming:       true,
 	})
+}
+
+// TestRunStubAdapter_ForkedDescendantCancellation pins the bounded shutdown
+// of the stub's shell-out: with WaitDelay unset, a shell that forks a
+// descendant holding stdout/stderring open (e.g. a non-optimizing /bin/sh
+// around `sleep 5`, or a forking shim first on PATH) left Output blocked on
+// the os/exec stdio copy goroutines past the harness's 500ms cancellation
+// budget, failing the context_cancellation contract test with leaked
+// goroutines. The command here shells out via the default PATH shell and
+// backgrounds a child that keeps its output descriptors open while the
+// shell itself exits.
+func TestRunStubAdapter_ForkedDescendantCancellation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell backgrounding required")
+	}
+	// Snapshot before spawning anything so benign goroutines from other
+	// tests in the binary are not attributed to this test.
+	snapshot := goleak.IgnoreCurrent()
+
+	step := baseStep("forked-descendant", runStubAdapterName, map[string]string{
+		"command": "sleep 5 & printf 'forked\\n'",
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+	t.Cleanup(cancel)
+
+	done := make(chan struct{})
+	var execErr error
+	go func() {
+		_, execErr = runStubAdapter{}.Execute(ctx, step, nil)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Execute did not return within the 500ms harness budget after cancellation")
+	}
+
+	if !isCancellationLikeError(execErr) {
+		t.Fatalf("expected cancellation-like error, got: %v", execErr)
+	}
+	t.Cleanup(func() { goleak.VerifyNone(t, snapshot) })
 }
 
 // TestMatrixEngineSink_CoversAllCallbacks calls every sink callback in a
