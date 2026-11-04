@@ -54,18 +54,25 @@ func (h *canceledHandle) Execute(context.Context, string, *workflow.StepNode, ad
 	return adapter.Result{}, canceledTurnError
 }
 
-// newSupervisedCrashSession registers a session whose supervised fails every
-// Execute with the canceled-turn error, standing in for a peer conn dead
-// from the child's crash.
+// newSupervisedCrashSession registers a session whose supervised handle
+// fails every Execute with the canceled-turn error, standing in for a peer
+// conn dead from the child's crash.
 func newSupervisedCrashSession() (*SessionManager, *Session, *canceledSupervisedHandle) {
 	h := &canceledSupervisedHandle{supervisedCrashHandle: &supervisedCrashHandle{cri287Handle: &cri287Handle{name: "fake", deadAfter: 0}}}
+	sm, sess := newCrashSession(h)
+	return sm, sess, h
+}
+
+// newCrashSession registers a pre-built failing handle as the live session
+// "shell.develop".
+func newCrashSession(h Handle) (*SessionManager, *Session) {
 	sm := &SessionManager{loader: nil, sessions: map[string]*Session{}}
 	sess := &Session{Name: "shell.develop", Adapter: "shell", handle: h}
 	sm.mu.Lock()
 	sm.sessions["shell.develop"] = sess
 	sm.mu.Unlock()
 	sess.noteActivity()
-	return sm, sess, h
+	return sm, sess
 }
 
 // TestSupervisedCrashCandidate_ClassificationRoutesCrashOutsideWindow pins
@@ -157,13 +164,7 @@ func TestSupervisedCrashCandidate_PlainExitedPlaceholderNotWidened(t *testing.T)
 // error matching no heuristic signature is returned as-is — no crash
 // classification, no behavior change.
 func TestSupervisedCrashCandidate_LegacyHandleKeepsStringHeuristics(t *testing.T) {
-	h := &canceledHandle{cri287Handle: &cri287Handle{name: "fake", deadAfter: 0}}
-	sm := &SessionManager{loader: nil, sessions: map[string]*Session{}}
-	sess := &Session{Name: "shell.develop", Adapter: "shell", handle: h}
-	sm.mu.Lock()
-	sm.sessions["shell.develop"] = sess
-	sm.mu.Unlock()
-	sess.noteActivity()
+	sm, sess := newCrashSession(&canceledHandle{cri287Handle: &cri287Handle{name: "fake", deadAfter: 0}})
 
 	coll := &adapterEventCollector{}
 	_, err := sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, coll, nil)
