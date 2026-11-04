@@ -391,11 +391,9 @@ func checkIterationCursorValidity(graph *workflow.FSMGraph, variableScope string
 		return nil
 	}
 	// Verify the step named by the cursor still exists in the graph.
-	stepNode, ok := graph.Steps[top.StepName]
-	if !ok {
+	if _, ok := graph.Steps[top.StepName]; !ok {
 		return fmt.Errorf("checkpoint iterating step %q no longer exists in the workflow", top.StepName)
 	}
-	_ = stepNode // reserved for future step-kind-specific resume validation
 	return nil
 }
 
