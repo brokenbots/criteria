@@ -226,6 +226,7 @@ func compileTwinPair(t *testing.T) (inline, named *FSMGraph) {
 // NOTHING at compile time (same cty.Type, same defaults, same data/variable/
 // output/subworkflow artifacts).
 func TestNamedType_TwinEquivalence_AllConsumers(t *testing.T) {
+	t.Parallel()
 	inline, named := compileTwinPair(t)
 	compareConsumerTwin(t, inline, named)
 }
@@ -233,6 +234,7 @@ func TestNamedType_TwinEquivalence_AllConsumers(t *testing.T) {
 // TestNamedType_DataBlockResolves pins the data-block consumer: type.<name>
 // resolves to the block's compiled type and defaults land on the DataNode.
 func TestNamedType_DataBlockResolves(t *testing.T) {
+	t.Parallel()
 	dir := calleeFixture(t, calleeWorkflow)
 	src := consumerHeader + consumerPayloadTypeBlock + `
 data "internal" "cfg" {
@@ -268,6 +270,7 @@ state "done" {
 // consumers: defaults and assignability checks flow through named refs
 // identically to the inline form.
 func TestNamedType_VariableAndOutputResolve(t *testing.T) {
+	t.Parallel()
 	dir := calleeFixture(t, calleeWorkflow)
 	src := consumerHeader + consumerPayloadTypeBlock + `
 variable "deploy" {
@@ -322,6 +325,7 @@ func goldenCheck(t *testing.T, diags hcl.Diagnostics, want string) {
 // unknown type.<name> refs at each consumer, mirroring the outcome-schema
 // strictness (validateOutputExprStepOutputRefs).
 func TestNamedType_UnknownRefDiagnostics_Golden(t *testing.T) {
+	t.Parallel()
 	dir := calleeFixture(t, calleeWorkflow)
 	cases := []struct {
 		name, block, want string
@@ -366,6 +370,7 @@ state "done" {
 // step without collision, because type refs only resolve in type-constraint
 // positions and value refs only resolve in the var/local/data namespaces.
 func TestNamedType_TypesDoNotShadowValueNamespaces(t *testing.T) {
+	t.Parallel()
 	dir := calleeFixture(t, calleeWorkflow)
 	src := consumerHeader + `
 type "steps" {
@@ -426,6 +431,7 @@ func compositionDiagCheck(t *testing.T, diags hcl.Diagnostics, wantSummary, want
 // the assertion must be satisfied by the constraint diagnostic itself (any
 // value coercion is impossible).
 func TestNamedType_MisScoped_RefInsideTypeConstraint(t *testing.T) {
+	t.Parallel()
 	dir := calleeFixture(t, calleeWorkflow)
 	const composedDetail = "valid only as the whole type constraint"
 	cases := []struct {
@@ -488,6 +494,7 @@ state "done" {
 	}
 
 	t.Run("positive control: bare ref compiles clean", func(t *testing.T) {
+		t.Parallel()
 		src := consumerHeader + consumerPayloadTypeBlock + `
 data "internal" "cfg" {
   type = type.payload
@@ -507,6 +514,7 @@ state "done" {
 	})
 
 	t.Run("positive control: composed built-ins still fine", func(t *testing.T) {
+		t.Parallel()
 		src := consumerHeader + consumerPayloadTypeBlock + `
 data "internal" "cfg" {
   type  = list(number)
@@ -528,6 +536,7 @@ state "done" {
 // value: referencing it where data values are computed fails the fold with the
 // standard unknown-variable diagnostic.
 func TestNamedType_MisScoped_RefInValueExpression(t *testing.T) {
+	t.Parallel()
 	dir := calleeFixture(t, calleeWorkflow)
 	src := consumerHeader + consumerPayloadTypeBlock + `
 data "internal" "cfg" {
@@ -556,6 +565,7 @@ state "done" {
 // parent's binding type-compat check runs against the RESOLVED type (number),
 // rejecting incompatible bindings exactly like the inline twin.
 func TestNamedType_SubworkflowBindingResolvesCalleeTypes(t *testing.T) {
+	t.Parallel()
 	calleeNamed := `
 workflow {
   name          = "child"
@@ -595,6 +605,7 @@ state "done" {
 // a callee references the PARENT's type block — the callee compiles its own
 // type namespace, so the ref is an unknown workflow type there.
 func TestNamedType_ParentTypesNotVisibleInCallee(t *testing.T) {
+	t.Parallel()
 	calleeBad := `
 workflow {
   name          = "child"
@@ -634,6 +645,7 @@ state "done" {
 // variables validate identically whether the callee types them inline or via
 // named refs: the same binding compiles in both twins.
 func TestNamedType_SubworkflowTwinBindings(t *testing.T) {
+	t.Parallel()
 	calleeInline := `
 workflow {
   name          = "child"
