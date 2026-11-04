@@ -839,7 +839,7 @@ func shutdownSession(ctx context.Context, s *sessionState) error {
 
 	select {
 	case err := <-waitDone:
-		if err == nil || isSignalExit(err, syscall.SIGKILL) {
+		if err == nil || killedBySigKill(err) {
 			return nil
 		}
 		return fmt.Errorf("mcp: wait server exit: %w", err)
@@ -850,12 +850,13 @@ func shutdownSession(ctx context.Context, s *sessionState) error {
 	}
 }
 
-// isSignalExit reports whether err is the Wait error of a child process the
-// kernel force-terminated with the given signal. The check is typed
-// (*exec.ExitError with a signaled WaitStatus) rather than a match on the
-// error's text: stdlib's process-death wording ("signal: killed") is a
-// presentation detail, not contractual across Go releases.
-func isSignalExit(err error, sig syscall.Signal) bool {
+// killedBySigKill reports whether err is the Wait error of a child process
+// the kernel force-terminated with SIGKILL — the expected way a closed
+// session's MCP server dies. The check is typed (*exec.ExitError with a
+// signaled WaitStatus) rather than a match on the error's text: stdlib's
+// process-death wording ("signal: killed") is a presentation detail, not
+// contractual across Go releases.
+func killedBySigKill(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -864,7 +865,7 @@ func isSignalExit(err error, sig syscall.Signal) bool {
 		return false
 	}
 	ws, ok := exitErr.Sys().(syscall.WaitStatus)
-	return ok && ws.Signaled() && ws.Signal() == sig
+	return ok && ws.Signaled() && ws.Signal() == syscall.SIGKILL
 }
 
 func resultEvent(outcome string) *v2.ExecuteEvent {

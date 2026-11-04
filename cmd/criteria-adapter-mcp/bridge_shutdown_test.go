@@ -40,10 +40,10 @@ func waitErrorAfterSignal(t *testing.T, sig syscall.Signal) error {
 	return err
 }
 
-func TestIsSignalExitTypedDetection(t *testing.T) {
+func TestKilledBySigKillTypedDetection(t *testing.T) {
 	sigKilled := waitErrorAfterSignal(t, syscall.SIGKILL)
-	if !isSignalExit(sigKilled, syscall.SIGKILL) {
-		t.Fatalf("isSignalExit(%q, SIGKILL) = false, want true", sigKilled)
+	if !killedBySigKill(sigKilled) {
+		t.Fatalf("killedBySigKill(SIGKILL exit %q) = false, want true", sigKilled)
 	}
 
 	// Regression guard for the typed detection itself: the same signal
@@ -52,14 +52,14 @@ func TestIsSignalExitTypedDetection(t *testing.T) {
 	// the *exec.ExitError identity route survives a Go release that
 	// rewords its process-death strings.
 	hidden := textHidingError{err: sigKilled}
-	if !isSignalExit(hidden, syscall.SIGKILL) {
-		t.Fatalf("isSignalExit(text-hidden SIGKILL exit, SIGKILL) = false, want true")
+	if !killedBySigKill(hidden) {
+		t.Fatalf("killedBySigKill(text-hidden SIGKILL exit) = false, want true")
 	}
 
 	// Signal deaths other than SIGKILL are not treated as clean teardowns.
 	termErr := waitErrorAfterSignal(t, syscall.SIGTERM)
-	if isSignalExit(termErr, syscall.SIGKILL) {
-		t.Fatalf("isSignalExit(%q, SIGKILL) = true, want false", termErr)
+	if killedBySigKill(termErr) {
+		t.Fatalf("killedBySigKill(SIGTERM exit %q) = true, want false", termErr)
 	}
 
 	// A nonzero self-exit is an exit, not a signal death.
@@ -72,16 +72,16 @@ func TestIsSignalExitTypedDetection(t *testing.T) {
 	if exitErr == nil {
 		t.Fatal("expected wait error from exit-7 child")
 	}
-	if isSignalExit(exitErr, syscall.SIGKILL) {
-		t.Fatalf("isSignalExit(%q, SIGKILL) = true, want false", exitErr)
+	if killedBySigKill(exitErr) {
+		t.Fatalf("killedBySigKill(exit-status error %q) = true, want false", exitErr)
 	}
 
 	// Non-ExitError and nil inputs: never a signal death.
-	if isSignalExit(context.DeadlineExceeded, syscall.SIGKILL) {
-		t.Fatal("isSignalExit(context.DeadlineExceeded) = true, want false")
+	if killedBySigKill(context.DeadlineExceeded) {
+		t.Fatal("killedBySigKill(context.DeadlineExceeded) = true, want false")
 	}
-	if isSignalExit(nil, syscall.SIGKILL) {
-		t.Fatal("isSignalExit(nil) = true, want false")
+	if killedBySigKill(nil) {
+		t.Fatal("killedBySigKill(nil) = true, want false")
 	}
 }
 
