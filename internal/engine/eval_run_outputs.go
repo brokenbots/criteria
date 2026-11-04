@@ -1,29 +1,33 @@
 package engine
 
 import (
+	stdjson "encoding/json"
 	"fmt"
 
 	"github.com/hashicorp/hcl/v2/ext/typeexpr"
 	"github.com/zclconf/go-cty/cty"
 	"github.com/zclconf/go-cty/cty/convert"
-	"github.com/zclconf/go-cty/cty/json"
+	ctyjson "github.com/zclconf/go-cty/cty/json"
+	structpb "google.golang.org/protobuf/types/known/structpb"
 
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/workflow"
 )
 
 // evalRunOutputs evaluates each declared output expression against the final
-// run state and returns the resolved values keyed by output name in
+// run state and returns the resolved values as RunOutputs.Output messages in
 // declaration order. Returns (outputs list, error).
 //
-// Each output is a map with keys: "name", "value" (string-rendered), "declared_type".
-// If a declared type is set and the resolved value's type does not match,
-// an error is returned with the run terminating in failure.
-func evalRunOutputs(g *workflow.FSMGraph, st *RunState) ([]map[string]string, error) {
+// Each Output carries the output name, the display-only value render, the
+// declared type string, and the natively typed typed_value form. If a declared
+// type is set and the resolved value's type does not match, an error is
+// returned with the run terminating in failure.
+func evalRunOutputs(g *workflow.FSMGraph, st *RunState) ([]*pb.RunOutputs_Output, error) {
 	if len(g.Outputs) == 0 {
 		return nil, nil
 	}
 
-	result := make([]map[string]string, 0, len(g.Outputs))
+	result := make([]*pb.RunOutputs_Output, 0, len(g.Outputs))
 
 	// Build evaluation context with current run state.
 	// st.Vars carries var.*, steps.*, local.*, and each.* (when in scope);
@@ -51,7 +55,7 @@ func evalRunOutputs(g *workflow.FSMGraph, st *RunState) ([]map[string]string, er
 			val = converted
 		}
 
-		// Render the value as a JSON string for transport.
+		// Render the value as a JSON string for the display-only transport.
 		valueStr, err := renderCtyValue(val)
 		if err != nil {
 			return nil, fmt.Errorf("output %q: render failed: %w", name, err)
@@ -64,10 +68,11 @@ func evalRunOutputs(g *workflow.FSMGraph, st *RunState) ([]map[string]string, er
 			declaredTypeStr = typeexpr.TypeString(on.DeclaredType)
 		}
 
-		result = append(result, map[string]string{
-			"name":          name,
-			"value":         valueStr,
-			"declared_type": declaredTypeStr,
+		result = append(result, &pb.RunOutputs_Output{
+			Name:         name,
+			Value:        valueStr,
+			DeclaredType: declaredTypeStr,
+			TypedValue:   ctyValueToStructPb(val),
 		})
 	}
 
@@ -77,7 +82,8 @@ func evalRunOutputs(g *workflow.FSMGraph, st *RunState) ([]map[string]string, er
 // evalRunOutputsAsValues evaluates each declared output expression against the
 // final run state and returns the resolved cty.Value keyed by output name.
 // This is the internal form used by runSubworkflow to return output values to
-// the parent caller; use evalRunOutputs for the string-rendered event form.
+// the parent caller; use evalRunOutputs for the event (display + typed_value)
+// form.
 func evalRunOutputsAsValues(g *workflow.FSMGraph, st *RunState) (map[string]cty.Value, error) {
 	if len(g.Outputs) == 0 {
 		return nil, nil
@@ -105,7 +111,8 @@ func evalRunOutputsAsValues(g *workflow.FSMGraph, st *RunState) (map[string]cty.
 }
 
 // renderCtyValue converts a cty.Value to a string representation suitable for
-// transport (JSON encoding for most types, friendly string for others).
+// the display-only value field (JSON encoding for most types, friendly
+// string for others).
 func renderCtyValue(val cty.Value) (string, error) {
 	// For unknown values, use null.
 	if !val.IsKnown() {
@@ -113,9 +120,35 @@ func renderCtyValue(val cty.Value) (string, error) {
 	}
 
 	// Marshal as JSON using cty's JSON encoder.
-	jsonBytes, err := json.Marshal(val, val.Type())
+	jsonBytes, err := ctyjson.Marshal(val, val.Type())
 	if err != nil {
 		return "", err
 	}
 	return string(jsonBytes), nil
+}
+
+// ctyValueToStructPb converts a cty value to the google.protobuf.Value form
+// for RunOutputs.Output.typed_value, so typed consumers read the value's
+// structure natively instead of parsing the display render. Unknown and
+// unconvertible values render null, matching the display render's null. Cty
+// numbers lose their big.Float precision in transit (google.protobuf.Value
+// numbers are doubles); the display render preserves exactness for consumers
+// that need it.
+func ctyValueToStructPb(val cty.Value) *structpb.Value {
+	if !val.IsKnown() {
+		return structpb.NewNullValue()
+	}
+	jsonBytes, err := ctyjson.Marshal(val, val.Type())
+	if err != nil {
+		return structpb.NewNullValue()
+	}
+	var native any
+	if err := stdjson.Unmarshal(jsonBytes, &native); err != nil {
+		return structpb.NewNullValue()
+	}
+	pv, err := structpb.NewValue(native)
+	if err != nil {
+		return structpb.NewNullValue()
+	}
+	return pv
 }

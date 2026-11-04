@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/engine"
@@ -164,7 +166,7 @@ func (s *pauseSink) OnStepIterationItem(string, int, string)                    
 func (s *pauseSink) OnScopeIterCursorSet(string)                                  {}
 func (s *pauseSink) OnAdapterLifecycle(string, string, string, string)            {}
 func (s *pauseSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent)  {}
-func (s *pauseSink) OnRunOutputs([]map[string]string)                             {}
+func (s *pauseSink) OnRunOutputs([]*pb.RunOutputs_Output)                         {}
 func (s *pauseSink) OnStepOutcomeDefaulted(string, string, string)                {}
 func (s *pauseSink) OnStepOutcomeUnknown(string, string)                          {}
 func (s *pauseSink) OnStepOutcomeInvalid(string, string, []string, int)           {}

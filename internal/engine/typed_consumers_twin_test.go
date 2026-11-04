@@ -9,6 +9,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -18,6 +19,7 @@ import (
 	criteriav2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -101,10 +103,16 @@ func (s *twinRunSink) OnVariableSet(name, value, source string) {
 	s.varSets += fmt.Sprintf("%s=%s(%s);", name, value, source)
 }
 
-func (s *twinRunSink) OnRunOutputs(outputs []map[string]string) {
+func (s *twinRunSink) OnRunOutputs(outputs []*pb.RunOutputs_Output) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.runOutputs = fmt.Sprintf("%v", outputs)
+	// Record a pointer-free summary: proto message structs embed address-
+	// bearing internal state, so fmt on the message list is not stable.
+	var sb strings.Builder
+	for _, out := range outputs {
+		fmt.Fprintf(&sb, "%s=%s/%s/%v;", out.GetName(), out.GetValue(), out.GetDeclaredType(), out.GetTypedValue().AsInterface())
+	}
+	s.runOutputs = sb.String()
 }
 
 // compileTypedConsumerTwin builds one twin of the consumer workflow. withNamed

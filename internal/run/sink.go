@@ -285,19 +285,11 @@ func (s *Sink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent) {
 }
 
 // OnRunOutputs publishes a run.outputs envelope when declared outputs are evaluated (W09).
-func (s *Sink) OnRunOutputs(outputs []map[string]string) {
+func (s *Sink) OnRunOutputs(outputs []*pb.RunOutputs_Output) {
 	if len(outputs) == 0 {
 		return
 	}
-	pbOutputs := make([]*pb.RunOutputs_Output, 0, len(outputs))
-	for _, out := range outputs {
-		pbOutputs = append(pbOutputs, &pb.RunOutputs_Output{
-			Name:         out["name"],
-			Value:        out["value"],
-			DeclaredType: out["declared_type"],
-		})
-	}
-	s.publish(&pb.RunOutputs{Outputs: pbOutputs})
+	s.publish(&pb.RunOutputs{Outputs: outputs})
 }
 
 // OnAgentPromptInjected publishes the agent.prompt_injected envelope exactly

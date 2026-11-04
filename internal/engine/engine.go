@@ -186,9 +186,10 @@ type Sink interface {
 	// non-secret metadata including a token file reference, never the raw token.
 	OnAdapterLifecycleEvent(event *AdapterLifecycleEvent)
 	// OnRunOutputs is emitted when a run reaches terminal state with declared outputs (W09).
-	// outputs is a list of (name, value, declared_type) tuples in declaration order.
+	// outputs is a list of typed output tuples (name, display-only value render,
+	// declared_type, typed_value) in declaration order.
 	// This method is called before OnRunCompleted.
-	OnRunOutputs(outputs []map[string]string)
+	OnRunOutputs(outputs []*pb.RunOutputs_Output)
 	// OnStepOutcomeDefaulted is emitted when a step produces an outcome not in
 	// its declared set and the outcome "default" block is applied (W15).
 	// original is the outcome name the adapter returned; mapped is "default".
@@ -1410,21 +1411,28 @@ func (e *Engine) handleReturnExit(st *RunState, sink Sink) {
 }
 
 // formatReturnOutputs converts the ReturnOutputs cty.Value map to the
-// []map[string]string tuple format expected by OnRunOutputs.
-func formatReturnOutputs(returnOutputs map[string]cty.Value) []map[string]string {
+// []*pb.RunOutputs_Output list expected by OnRunOutputs, in name order so the
+// emitted event is deterministic regardless of map iteration order.
+func formatReturnOutputs(returnOutputs map[string]cty.Value) []*pb.RunOutputs_Output {
 	if len(returnOutputs) == 0 {
 		return nil
 	}
-	out := make([]map[string]string, 0, len(returnOutputs))
-	for name, val := range returnOutputs {
+	names := make([]string, 0, len(returnOutputs))
+	for name := range returnOutputs {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	out := make([]*pb.RunOutputs_Output, 0, len(names))
+	for _, name := range names {
+		val := returnOutputs[name]
 		rendered, err := renderCtyValue(val)
 		if err != nil {
 			rendered = fmt.Sprintf("%v", val)
 		}
-		out = append(out, map[string]string{
-			"name":          name,
-			"value":         rendered,
-			"declared_type": "",
+		out = append(out, &pb.RunOutputs_Output{
+			Name:       name,
+			Value:      rendered,
+			TypedValue: ctyValueToStructPb(val),
 		})
 	}
 	return out

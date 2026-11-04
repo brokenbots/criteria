@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/brokenbots/criteria/events"
 	"github.com/brokenbots/criteria/internal/engine"
@@ -325,5 +326,49 @@ func TestLocalSink_OnCheckpointPointer_NDJSONPinsCRI203(t *testing.T) {
 	}
 	if reparsed.GetStateSize() != 4096 || reparsed.GetStateId() != got.GetStateId() {
 		t.Errorf("emitted payload drift: %+v", &reparsed)
+	}
+}
+
+// TestLocalSink_OnRunOutputs_TypedValuePreserved pins that the ND-JSON sink
+// forwards the engine's typed output structs verbatim: the emitted
+// run.outputs envelope carries the native typed_value sibling next to the
+// display render, name, and declared type — without rebuilding the message.
+func TestLocalSink_OnRunOutputs_TypedValuePreserved(t *testing.T) {
+	var buf bytes.Buffer
+	sink := &LocalSink{RunID: "run-outputs-typed", Out: &buf}
+
+	sink.OnRunOutputs([]*pb.RunOutputs_Output{
+		{Name: "count", Value: "42", DeclaredType: "number", TypedValue: structpb.NewNumberValue(42)},
+		{Name: "name", Value: "test", TypedValue: structpb.NewStringValue("test")},
+	})
+
+	line := strings.TrimSpace(buf.String())
+	if strings.Contains(line, "\n") {
+		t.Fatalf("expected a single NDJSON envelope, got %q", line)
+	}
+	var l sinkLine
+	if err := json.Unmarshal([]byte(line), &l); err != nil {
+		t.Fatalf("invalid NDJSON line %q: %v", line, err)
+	}
+	if l.PayloadType != "run.outputs" {
+		t.Fatalf("payload type = %q, want run.outputs", l.PayloadType)
+	}
+
+	var payload pb.RunOutputs
+	if err := protojson.Unmarshal(l.Payload, &payload); err != nil {
+		t.Fatalf("invalid run.outputs payload: %v (raw: %s)", err, l.Payload)
+	}
+	outs := payload.GetOutputs()
+	if len(outs) != 2 {
+		t.Fatalf("expected 2 outputs, got %d", len(outs))
+	}
+	if outs[0].GetName() != "count" || outs[0].GetValue() != "42" || outs[0].GetDeclaredType() != "number" {
+		t.Errorf("count output field drift: %+v", outs[0])
+	}
+	if num := outs[0].GetTypedValue().GetNumberValue(); num != 42 {
+		t.Errorf("count typed_value = %v, want 42", outs[0].GetTypedValue())
+	}
+	if str := outs[1].GetTypedValue().GetStringValue(); str != "test" {
+		t.Errorf("name typed_value = %v, want \"test\"", outs[1].GetTypedValue())
 	}
 }

@@ -40,6 +40,8 @@ import (
 	"github.com/brokenbots/criteria/internal/engine"
 	"github.com/brokenbots/criteria/internal/testutil"
 	"github.com/brokenbots/criteria/workflow"
+
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 const (
@@ -331,7 +333,7 @@ func (s *mcpToolsSink) OnStepIterationItem(string, int, string)               {}
 func (s *mcpToolsSink) OnScopeIterCursorSet(string)                           {}
 func (s *mcpToolsSink) OnAdapterLifecycle(string, string, string, string)     {}
 func (s *mcpToolsSink) OnAdapterLifecycleEvent(*engine.AdapterLifecycleEvent) {}
-func (s *mcpToolsSink) OnRunOutputs([]map[string]string)                      {}
+func (s *mcpToolsSink) OnRunOutputs([]*pb.RunOutputs_Output)                  {}
 func (s *mcpToolsSink) OnStepOutcomeDefaulted(string, string, string)         {}
 func (s *mcpToolsSink) OnStepOutcomeUnknown(string, string)                   {}
 func (s *mcpToolsSink) OnStepOutcomeInvalid(string, string, []string, int)    {}

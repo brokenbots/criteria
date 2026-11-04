@@ -4,6 +4,10 @@ import (
 	"errors"
 	"time"
 
+	structpb "google.golang.org/protobuf/types/known/structpb"
+
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapter/secrets"
 )
@@ -171,16 +175,60 @@ func (s *RedactingSink) OnAdapterLifecycleEvent(event *AdapterLifecycleEvent) {
 	})
 }
 
-func (s *RedactingSink) OnRunOutputs(outputs []map[string]string) {
-	redacted := make([]map[string]string, len(outputs))
-	for i, out := range outputs {
-		m := make(map[string]string, len(out))
-		for k, v := range out {
-			m[s.reg.Redact(k)] = s.reg.Redact(v)
+// OnRunOutputs redacts the output name, display value, and declared type, and
+// walks typed_value structurally so a typed output carries the same redaction
+// guarantees as the display render.
+func (s *RedactingSink) OnRunOutputs(outputs []*pb.RunOutputs_Output) {
+	redacted := make([]*pb.RunOutputs_Output, 0, len(outputs))
+	for _, out := range outputs {
+		if out == nil {
+			continue
 		}
-		redacted[i] = m
+		redacted = append(redacted, &pb.RunOutputs_Output{
+			Name:         s.reg.Redact(out.GetName()),
+			Value:        s.reg.Redact(out.GetValue()),
+			DeclaredType: s.reg.Redact(out.GetDeclaredType()),
+			TypedValue:   s.redactStructPbValue(out.GetTypedValue()),
+		})
 	}
 	s.inner.OnRunOutputs(redacted)
+}
+
+// redactStructPbValue clones a google.protobuf.Value with redacted string
+// leaves and struct keys. Numbers, booleans, and null pass unchanged; lists
+// and structs recurse. A nil input stays nil (field unset).
+func (s *RedactingSink) redactStructPbValue(v *structpb.Value) *structpb.Value {
+	if v == nil {
+		return nil
+	}
+	switch kind := v.GetKind().(type) {
+	case *structpb.Value_StringValue:
+		return structpb.NewStringValue(s.reg.Redact(kind.StringValue))
+	case *structpb.Value_StructValue:
+		fields := make(map[string]*structpb.Value, len(kind.StructValue.GetFields()))
+		for key, item := range kind.StructValue.GetFields() {
+			fields[s.reg.Redact(key)] = s.redactStructPbValue(item)
+		}
+		return &structpb.Value{Kind: &structpb.Value_StructValue{StructValue: &structpb.Struct{Fields: fields}}}
+	case *structpb.Value_ListValue:
+		items := make([]*structpb.Value, 0, len(kind.ListValue.GetValues()))
+		for _, item := range kind.ListValue.GetValues() {
+			redacted := s.redactStructPbValue(item)
+			if redacted == nil {
+				redacted = structpb.NewNullValue()
+			}
+			items = append(items, redacted)
+		}
+		return &structpb.Value{Kind: &structpb.Value_ListValue{ListValue: &structpb.ListValue{Values: items}}}
+	case *structpb.Value_NumberValue:
+		return structpb.NewNumberValue(kind.NumberValue)
+	case *structpb.Value_BoolValue:
+		return structpb.NewBoolValue(kind.BoolValue)
+	case *structpb.Value_NullValue, nil:
+		return structpb.NewNullValue()
+	default:
+		return structpb.NewNullValue()
+	}
 }
 
 func (s *RedactingSink) OnStepOutcomeDefaulted(step, original, mapped string) {

@@ -48,6 +48,24 @@ non-breaking; any change to an exported surface requires a major-version bump.
   envelope types; readers require no changes. Orchestrator implementations that
   previously vendored the fork's proto can now delete it and re-pin this SDK.
 
+### Added — KB-141: native `typed_value` sibling on `RunOutputs.Output`
+
+- **New optional field** `RunOutputs.Output.typed_value = 4`
+  (`google.protobuf.Value`) in `proto/criteria/v1/events.proto`; generated
+  bindings in `sdk/pb/criteria/v1/events.pb.go`. The agent populates it from
+  the native cty value at emit time. Field 4 is additive — no field-number
+  reuse, no event-field shuffle, no `Subject`/`ServiceHandler` change.
+- **`value` (field 2) is redefined display-only**: it is a log/UI render and
+  no longer a machine contract; the proto comment's "consumers must parse
+  value as JSON to recover type structure" clause is deleted. Typed
+  consumers read `typed_value`; note numbers are doubles per
+  `google.protobuf.Value`, so bit-exact large integers still use `value`.
+- **Conformance**: new `RunOutputsTypedRoundTrip` case pins the typed sibling
+  (string, number, bool, null, list, object, large-integer kinds) surviving
+  SubmitEvents → ListRunEvents verbatim with a non-nil `typed_value` beside
+  every display render. Cross-repo: castle run-viewer consumes outputs; card
+  119's seam contract covers the castle-side read in the same window.
+
 ### Bump rationale
 
 Adding oneof fields 34–36 changes the event field numbers, which AGENTS.md's
@@ -60,7 +78,10 @@ regenerate protobuf bindings from the updated `.proto` files to gain the new
 service and messages; no existing reader or writer code is affected. Castle
 follows up by re-pinning this SDK, switching promotion to envelope-only, and
 deleting its criteria-sdk fork (KB-102); a later criteria PR drops the CRI-131
-first-class request/run fields.
+first-class request/run fields. KB-141's `typed_value` (field 4) rides the
+same window as the additive v0.6.0 sibling field that removes the
+string-JSON double encode — the published bindings regenerate without a
+second major bump.
 
 [v0.6.0]: https://github.com/brokenbots/criteria/releases/tag/v0.6.0
 

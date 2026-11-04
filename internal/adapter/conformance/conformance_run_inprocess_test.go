@@ -23,6 +23,7 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/engine"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -156,7 +157,7 @@ func TestMatrixEngineSink_CoversAllCallbacks(t *testing.T) {
 	s.OnScopeIterCursorSet("cursor-1")
 	s.OnAdapterLifecycle("pull", "op", "id", "detail")
 	s.OnAdapterLifecycleEvent(&engine.AdapterLifecycleEvent{})
-	s.OnRunOutputs([]map[string]string{{"k": "v"}})
+	s.OnRunOutputs([]*pb.RunOutputs_Output{{Name: "k", Value: "v"}})
 	s.OnAgentPromptInjected("step-a", "model", "prompt", "origin", time.Now())
 	s.OnCheckpointPointer(&engine.CheckpointPointerEvent{})
 

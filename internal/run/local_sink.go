@@ -204,19 +204,11 @@ func (s *LocalSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent)
 }
 
 // OnRunOutputs emits a run.outputs envelope when declared outputs are evaluated (W09).
-func (s *LocalSink) OnRunOutputs(outputs []map[string]string) {
+func (s *LocalSink) OnRunOutputs(outputs []*pb.RunOutputs_Output) {
 	if len(outputs) == 0 {
 		return
 	}
-	pbOutputs := make([]*pb.RunOutputs_Output, 0, len(outputs))
-	for _, out := range outputs {
-		pbOutputs = append(pbOutputs, &pb.RunOutputs_Output{
-			Name:         out["name"],
-			Value:        out["value"],
-			DeclaredType: out["declared_type"],
-		})
-	}
-	s.emit("run.outputs", &pb.RunOutputs{Outputs: pbOutputs})
+	s.emit("run.outputs", &pb.RunOutputs{Outputs: outputs})
 }
 
 // OnStepOutcomeDefaulted is emitted when a step returns an unknown outcome and

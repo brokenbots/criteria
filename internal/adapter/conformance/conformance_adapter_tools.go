@@ -59,9 +59,11 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
+
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/engine"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -468,7 +470,7 @@ func (s *matrixEngineSink) OnStepIterationItem(string, int, string)             
 func (s *matrixEngineSink) OnScopeIterCursorSet(string)                                  {}
 func (s *matrixEngineSink) OnAdapterLifecycle(string, string, string, string)            {}
 func (s *matrixEngineSink) OnAdapterLifecycleEvent(*engine.AdapterLifecycleEvent)        {}
-func (s *matrixEngineSink) OnRunOutputs([]map[string]string)                             {}
+func (s *matrixEngineSink) OnRunOutputs([]*pb.RunOutputs_Output)                         {}
 func (s *matrixEngineSink) OnStepOutcomeDefaulted(step, original, _ string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

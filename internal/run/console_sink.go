@@ -12,6 +12,8 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/engine"
 	"github.com/brokenbots/criteria/workflow"
@@ -276,14 +278,17 @@ func (c *ConsoleSink) OnCheckpointPointer(ptr *engine.CheckpointPointerEvent) {}
 
 // OnRunOutputs renders workflow outputs to the console (W09).
 // Outputs are rendered after the terminal state line in concise output mode.
-func (c *ConsoleSink) OnRunOutputs(outputs []map[string]string) {
+func (c *ConsoleSink) OnRunOutputs(outputs []*pb.RunOutputs_Output) {
 	if len(outputs) == 0 {
 		return
 	}
 	for _, out := range outputs {
-		name := out["name"]
-		value := out["value"]
-		typeStr := out["declared_type"]
+		if out == nil {
+			continue
+		}
+		name := out.GetName()
+		value := out.GetValue()
+		typeStr := out.GetDeclaredType()
 		if typeStr != "" {
 			c.writeln(fmt.Sprintf("  output %s (%s) = %s", name, typeStr, value))
 		} else {

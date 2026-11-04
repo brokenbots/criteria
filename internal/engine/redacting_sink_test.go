@@ -5,6 +5,10 @@ import (
 	"testing"
 	"time"
 
+	structpb "google.golang.org/protobuf/types/known/structpb"
+
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapter/secrets"
 )
@@ -38,7 +42,7 @@ type recordingSink struct {
 	onScopeIterCursorSetArg      string
 	onAdapterLifecycleArgs       []string
 	onAdapterLifecycleEventArg   *AdapterLifecycleEvent
-	onRunOutputs                 []map[string]string
+	onRunOutputs                 []*pb.RunOutputs_Output
 	onStepOutcomeDefaultedArgs   []string
 	onStepOutcomeUnknownArgs     []string
 	onAgentPromptInjected        []struct {
@@ -125,7 +129,7 @@ func (s *recordingSink) OnAdapterLifecycle(stepName, adapterName, status, detail
 func (s *recordingSink) OnAdapterLifecycleEvent(event *AdapterLifecycleEvent) {
 	s.onAdapterLifecycleEventArg = event
 }
-func (s *recordingSink) OnRunOutputs(outputs []map[string]string) {
+func (s *recordingSink) OnRunOutputs(outputs []*pb.RunOutputs_Output) {
 	s.onRunOutputs = outputs
 }
 func (s *recordingSink) OnStepOutcomeDefaulted(step, original, mapped string) {
@@ -476,9 +480,95 @@ func TestRedactingSink_OnRunOutputs(t *testing.T) {
 	reg.Register("secret123")
 	sink := NewRedactingSink(inner, reg)
 
-	sink.OnRunOutputs([]map[string]string{{"key_secret123": "val_secret123"}})
-	if len(inner.onRunOutputs) != 1 || inner.onRunOutputs[0]["key_[REDACTED]"] != "val_[REDACTED]" {
-		t.Fatalf("expected outputs redacted, got %v", inner.onRunOutputs)
+	sink.OnRunOutputs([]*pb.RunOutputs_Output{{Name: "name_secret123", Value: "val_secret123"}})
+	if len(inner.onRunOutputs) != 1 {
+		t.Fatalf("expected 1 output, got %d", len(inner.onRunOutputs))
+	}
+	if got, want := inner.onRunOutputs[0].GetName(), "name_[REDACTED]"; got != want {
+		t.Errorf("Name = %q, want %q (display fields redacted)", got, want)
+	}
+	if got, want := inner.onRunOutputs[0].GetValue(), "val_[REDACTED]"; got != want {
+		t.Errorf("Value = %q, want %q (display fields redacted)", got, want)
+	}
+}
+
+func TestRedactingSink_OnRunOutputs_TypedValue(t *testing.T) {
+	inner := &recordingSink{}
+	reg := secrets.NewRegistry()
+	reg.Register("secret123")
+	sink := NewRedactingSink(inner, reg)
+
+	sink.OnRunOutputs([]*pb.RunOutputs_Output{{
+		Name:  "out",
+		Value: `{"key_secret123":"val_secret123","n":3.5}`,
+		TypedValue: structpb.NewStructValue(&structpb.Struct{Fields: map[string]*structpb.Value{
+			"key_secret123": structpb.NewStringValue("val_secret123"),
+			"n":             structpb.NewNumberValue(3.5),
+			"flag":          structpb.NewBoolValue(false),
+			"empty":         structpb.NewNullValue(),
+			"list": structpb.NewListValue(&structpb.ListValue{Values: []*structpb.Value{
+				structpb.NewStringValue("nested_secret123"),
+				structpb.NewStringValue("clean"),
+			}}),
+			"deep": structpb.NewStructValue(&structpb.Struct{Fields: map[string]*structpb.Value{
+				"secret_secret123": structpb.NewStringValue("body_secret123"),
+			}}),
+		}}),
+	}})
+
+	if len(inner.onRunOutputs) != 1 {
+		t.Fatalf("expected 1 output, got %d", len(inner.onRunOutputs))
+	}
+	tv := inner.onRunOutputs[0].GetTypedValue()
+	if tv == nil {
+		t.Fatal("typed_value dropped by redacting sink; must forward structurally")
+	}
+	fields := tv.GetStructValue().GetFields()
+	if got, want := fields["key_[REDACTED]"], fields["key_secret123"]; got == nil && want == nil {
+		t.Fatalf("struct leaf keys: neither %q nor %q present: %v", "key_[REDACTED]", "key_secret123", fields)
+	}
+	if got, want := fields["key_[REDACTED]"].GetStringValue(), "val_[REDACTED]"; got != want {
+		t.Errorf("string leaf: got %q, want %q", got, want)
+	}
+	if got := fields["n"].GetNumberValue(); got != 3.5 {
+		t.Errorf("number leaf passthrough: got %v", got)
+	}
+	if got := fields["flag"].GetBoolValue(); got {
+		t.Errorf("bool leaf passthrough: got %v", got)
+	}
+	if _, ok := fields["empty"].GetKind().(*structpb.Value_NullValue); !ok {
+		t.Errorf("null leaf passthrough: got %v", fields["empty"])
+	}
+	list := fields["list"].GetListValue().GetValues()
+	if len(list) != 2 || list[0].GetStringValue() != "nested_[REDACTED]" || list[1].GetStringValue() != "clean" {
+		t.Errorf("list leaf redaction: got %v", fields["list"])
+	}
+	deep := fields["deep"].GetStructValue().GetFields()
+	if len(deep) != 1 || deep["secret_[REDACTED]"].GetStringValue() != "body_[REDACTED]" {
+		t.Errorf("nested struct key+leaf redaction: got %v", deep)
+	}
+}
+
+func TestRedactingSink_OnRunOutputs_TypedValueNil(t *testing.T) {
+	inner := &recordingSink{}
+	reg := secrets.NewRegistry()
+	reg.Register("secret123")
+	sink := NewRedactingSink(inner, reg)
+
+	sink.OnRunOutputs([]*pb.RunOutputs_Output{{Name: "out", Value: "1"}})
+	if got := inner.onRunOutputs[0].GetTypedValue(); got != nil {
+		t.Fatalf("nil typed_value must forward as unset, got %v", got)
+	}
+
+	// A nil element is filtered, not forwarded: downstream emitters render
+	// each output, so a forwarded nil would publish an invalid `outputs: [null]`.
+	sink.OnRunOutputs([]*pb.RunOutputs_Output{nil, {Name: "kept", Value: "1"}})
+	// recordingSink keeps only the latest call's outputs: want [kept].
+	if got := len(inner.onRunOutputs); got != 1 {
+		t.Fatalf("nil output element must be filtered, got %d forwarded outputs, want [kept] only", got)
+	}
+	if got := inner.onRunOutputs[0].GetName(); got != "kept" {
+		t.Fatalf("kept output displaced: %q", got)
 	}
 }
 

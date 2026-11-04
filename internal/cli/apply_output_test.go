@@ -293,6 +293,17 @@ state "done" {
 		t.Fatalf("expected second output name 'name', got %q", outputs[1]["name"])
 	}
 
+	// The typed sibling must ride the emitted run.outputs envelope for a real
+	// run, not only the conformance pin's hand-built envelope. protojson
+	// renders google.protobuf.Value inline as the bare JSON form, so the
+	// consumer sees native JSON (42, "test") directly under typedValue.
+	if num, ok := outputs[0]["typedValue"].(float64); !ok || num != 42 {
+		t.Fatalf("output count: typedValue = %v, want 42", outputs[0]["typedValue"])
+	}
+	if str, ok := outputs[1]["typedValue"].(string); !ok || str != "test" {
+		t.Fatalf("output name: typedValue = %v, want \"test\"", outputs[1]["typedValue"])
+	}
+
 	if outputsSeq == -1 {
 		t.Fatalf("run.outputs envelope not found in events")
 	}
