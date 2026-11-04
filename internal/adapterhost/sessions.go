@@ -2498,7 +2498,7 @@ type SessionSharedError struct {
 }
 
 func (e *SessionSharedError) Error() string {
-	return fmt.Sprintf("session %q shared by %d active lease(s); close refused until last lease releases (KB-156)", e.Session, e.Leases)
+	return fmt.Sprintf("session %q shared by %d active lease(s); close refused until last lease releases", e.Session, e.Leases)
 }
 
 // Close is intentionally idempotent: closing an unknown session is a no-op.

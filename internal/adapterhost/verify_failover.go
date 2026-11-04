@@ -63,11 +63,11 @@ func verifyWaitRound(
 	}
 	switch {
 	case errors.Is(waitErr, context.DeadlineExceeded):
-		return nil, false, fmt.Errorf("handshake budget expired after transport loss (budget %s; KB-257): %w", budget, context.DeadlineExceeded)
+		return nil, false, fmt.Errorf("handshake budget expired after transport loss (budget %s): %w", budget, context.DeadlineExceeded)
 	case errors.Is(waitErr, context.Canceled):
 		return nil, false, waitErr
 	case classifyTransportLoss(waitErr):
-		slog.Warn("fresh-line wait rejected; re-waiting (KB-257)",
+		slog.Warn("fresh-line wait rejected; re-waiting",
 			"adapter", adapterName, "scope", scope,
 			"budget_left", time.Until(deadline).String(),
 			"error", waitErr.Error())
@@ -95,13 +95,13 @@ func (m *SessionManager) verifyTransportFailover(
 			return nil, Info{}, ctxErr
 		}
 		if !time.Now().Before(deadline) {
-			return nil, Info{}, fmt.Errorf("handshake budget expired after transport loss (budget %s; KB-257): %w", budget, context.DeadlineExceeded)
+			return nil, Info{}, fmt.Errorf("handshake budget expired after transport loss (budget %s): %w", budget, context.DeadlineExceeded)
 		}
 		shim, ok := m.remoteShimForAdapter(name)
 		if !ok {
 			// Teardown advanced past this wait: convergence is no longer
 			// meaningful, so surface it instead of spinning.
-			return nil, Info{}, fmt.Errorf("no remote shim available for %q after transport loss; teardown may have begun (KB-257)", adapterName)
+			return nil, Info{}, fmt.Errorf("no remote shim available for %q after transport loss; teardown may have begun", adapterName)
 		}
 		h, retry, waitErr := verifyWaitRound(ctx, deadline, budget, name, scope, staleHandle, shim)
 		if retry {
@@ -118,7 +118,7 @@ func (m *SessionManager) verifyTransportFailover(
 		if !classifyTransportLoss(infoErr) {
 			return nil, Info{}, infoErr
 		}
-		slog.Warn("verify handshake lost its phone-home line; re-waiting for the fresh one (KB-257)",
+		slog.Warn("verify handshake lost its phone-home line; re-waiting for the fresh one",
 			"adapter", adapterName, "scope", scope,
 			"budget_left", time.Until(deadline).String(),
 			"error", infoErr.Error())

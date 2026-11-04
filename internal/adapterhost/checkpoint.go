@@ -188,7 +188,7 @@ func (m *SessionManager) checkpointAfterExecute(ctx context.Context, sess *Sessi
 func validateRestoredStateSchema(adapterName string, d *workflow.StateDeclaration, snap *SessionSnapshot) error {
 	if snap.StateSchema == "" {
 		if len(snap.AdapterState) > 0 {
-			slog.Warn("checkpoint carries no state schema tag (pre-CRI-202 layout); skipping schema verification",
+			slog.Warn("checkpoint carries no state schema tag (pre-schema-tag layout); skipping schema verification",
 				"adapter", adapterName)
 		}
 		return nil
