@@ -3077,11 +3077,15 @@ func (m *SessionManager) executeError(ctx context.Context, name string, step *wo
 	// the dead peer handle fails and classifies the crash from the
 	// journal-delivered wire fact (SupervisionCrashReason), which then
 	// reaches the crash machinery with the full wire-fact reason. The
+	// candidate predicate includes that wire fact (isSessionCrashCandidate),
+	// so a classification-backed failure routes through this carve-out
+	// inside the window (timeout) and through handleCrash outside it,
+	// regardless of the transport error text. The
 	// classifySessionCrash call in the diagnostics below feeds evidence
 	// fields only: the returned error stays the raw transport error, so the
 	// outcome is still routed as a timeout.
 	if m.engineStepTimeoutTeardownWindowOpen() &&
-		isLikelySessionCrash(sess, execErr) &&
+		isSessionCrashCandidate(sess, execErr) &&
 		!sess.closing.Load() &&
 		(!ProcessExited(sess.handle) || isPeerSupervised(sess.handle)) {
 		slog.Warn("adapter transport closed during engine-initiated step-timeout teardown; routing as timeout, not crash",
@@ -3089,7 +3093,7 @@ func (m *SessionManager) executeError(ctx context.Context, name string, step *wo
 		return result, execErr
 	}
 
-	if !isLikelySessionCrash(sess, execErr) {
+	if !isSessionCrashCandidate(sess, execErr) {
 		return result, execErr
 	}
 
@@ -3759,6 +3763,33 @@ func isLikelySessionCrash(sess *Session, err error) bool {
 		strings.Contains(msg, "broken pipe") ||
 		strings.Contains(msg, "eof") ||
 		strings.Contains(msg, "terminated")
+}
+
+// supervisionCrashCandidate reports whether the session's handle carries a
+// journal-delivered crash classification (ADR-0007, T-07): the peer watched
+// the adapter child directly and its CrashClassified.reason is consumed
+// verbatim, so a failed Execute on such a handle is a crash candidate even
+// when the transport error text matches no legacy heuristic — a real peer
+// conn produces a bare codes.Canceled "context canceled" when the child's
+// death cancels the server-side Execute handler first, a shape the string
+// signatures never see. Handles without the SupervisedHandle seam, and
+// supervised handles whose journal delivered only the plain Exited
+// placeholder (ok=false, e.g. a clean child exit), are not candidates, so
+// legacy-runner connections keep the existing routing unchanged.
+func supervisionCrashCandidate(sess *Session) bool {
+	if sess == nil {
+		return false
+	}
+	_, ok := SupervisionCrashReason(sess.handle)
+	return ok
+}
+
+// isSessionCrashCandidate is the crash-candidate predicate executeError
+// routes on: the legacy transport-text heuristics plus the authoritative
+// supervision wire fact. The wire fact is evidence, not message matching,
+// so it decides regardless of the transport error text.
+func isSessionCrashCandidate(sess *Session, execErr error) bool {
+	return isLikelySessionCrash(sess, execErr) || supervisionCrashCandidate(sess)
 }
 
 // sessionLogAdapterSink routes session-level log lines to the active step's
