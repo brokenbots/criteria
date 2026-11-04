@@ -88,7 +88,7 @@ const (
 
 	// peerAdapterRouteHeader is the gRPC metadata key the host tags each
 	// per-session adapter call with on a multi-adapter peer connection (one
-	// conn hosting N children, KB-213); the peer-side mux routes the call to
+	// conn hosting N children); the peer-side mux routes the call to
 	// the named child. The literal must stay in sync with the peer-side
 	// constant peerAdapterRouteHeader in internal/peer/serve.go: the packages
 	// cannot import each other (import-boundary lint), so the sync is by
@@ -125,7 +125,7 @@ type peerSessionProvider struct {
 
 // NewPeerSessionProvider builds the provider serving peer-mode dials for a
 // shim. perScopeSessions must match the shim's configuration: it decides the
-// session key ("adapterName" — the adapter definition identity (KB-242) —
+// session key ("adapterName" — the adapter definition identity —
 // in legacy mode, "adapterName\x00scope" with
 // per-scope isolation), which must be identical for both registries so a
 // mixed fleet keys coherently.
@@ -146,19 +146,19 @@ func NewPeerSessionProvider(shim *Shim, perScopeSessions bool) *peerSessionProvi
 // shim surface end to end reach it through this accessor.
 func (p *peerSessionProvider) WrappedShim() *Shim { return p.shim }
 
-// SetDeclaredAdapters is retained (KB-251) as a no-op intake so callers that
+// SetDeclaredAdapters is retained as a no-op intake so callers that
 // describe the environment's adapter surface (engine.go's env walk and tests
-// written against the KB-213 surface) keep compiling; the set it used to
-// install gated nothing since the coverage checks were removed. It exists
-// only until those call sites are cleaned up. It is a true no-op since
-// KB-251 removed the coverage machinery.
+// written against the multi-adapter dial surface) keep compiling; the set it
+// used to install gated nothing since the coverage checks were removed. It
+// exists only until those call sites are cleaned up. It is a true no-op
+// since the coverage machinery was removed.
 func (p *peerSessionProvider) SetDeclaredAdapters(names []string) {
-	_ = names // KB-251: inert — the declared set gates nothing.
+	_ = names // inert — the declared set gates nothing.
 }
 
 // key mirrors Shim.sessionKey (identical algorithm, evaluated from the
 // provider's own perScopeSessions snapshot). The name half is the adapter
-// definition identity (KB-242).
+// definition identity.
 func (p *peerSessionProvider) key(adapterName, scope string) string {
 	if !p.perScopeSessions || scope == "" {
 		return adapterName
@@ -171,12 +171,12 @@ func (p *peerSessionProvider) key(adapterName, scope string) string {
 // becomes the gRPC client on the pre-established connection and starts the
 // supervision consumer.
 //
-// KB-251 (arch ruling): the engine does not judge orchestration. A peer
+// The engine does not judge orchestration (arch ruling): a peer
 // dial that passed identity, digest, and token verification is accepted
 // regardless of which child set it advertises — how an orchestrator groups
 // adapter children into pods is the orchestrator's business, never the
 // engine's. A session the run needs that no peer hosts resolves as an
-// ordinary bounded session wait (the KB-70 budgets + CRI-137 attribution).
+// ordinary bounded session wait (the shim's session-wait budgets and diagnosis-class attribution).
 func (p *peerSessionProvider) AcceptPeer(ctx context.Context, conn net.Conn, dial *PeerDial) error {
 	_ = ctx // ownership of the conn is explicit; session lifetime is managed via close()
 	key := p.key(dial.AdapterType, dial.Scope)
@@ -193,7 +193,7 @@ func (p *peerSessionProvider) AcceptPeer(ctx context.Context, conn net.Conn, dia
 	// (mirrors the legacy shim's store-then-tear precedence).
 	replaced, waiters, old := p.storeSession(key, ps)
 
-	// KB-213: drain the session waits for the conn's other hosted adapters
+	// Drain the session waits for the conn's other hosted adapters
 	// too (run-wide multi-adapter conns serve every hosted adapter); each
 	// waiter receives the routed handle for its own adapter. Waiter keys
 	// follow the registry's key semantics, so in per-scope mode only the
@@ -278,7 +278,7 @@ func (p *peerSessionProvider) peerDied(ps *peerSession) {
 }
 
 // WaitForHandle blocks until a session for the adapter definition identity
-// (`adapterName`, "<type>.<name>" — KB-242) + scope is available.
+// (`adapterName`, "<type>.<name>") + scope is available.
 func (p *peerSessionProvider) WaitForHandle(ctx context.Context, adapterName, scope string) (adapterhost.Handle, error) {
 	return p.WaitForFreshHandle(ctx, adapterName, scope, nil)
 }
@@ -292,8 +292,8 @@ func (p *peerSessionProvider) WaitForHandle(ctx context.Context, adapterName, sc
 // session source). A dial accepted later wakes the provider waiters and,
 // through the shared channel, unblocks the shim-side wait as well. The wait
 // is bounded by the shim's two
-// session-wait budgets (handshake + scheduling; KB-70) and shares the shim's
-// diagnosis classes (CRI-137) through its awaitWaiter loop.
+// session-wait budgets (handshake + scheduling) and shares the shim's
+// diagnosis classes through its awaitWaiter loop.
 //
 // Each registry resolves atomically: the peek and the waiter registration
 // share one critical section — the provider's own under p.mu, the shim's via
@@ -301,10 +301,10 @@ func (p *peerSessionProvider) WaitForHandle(ctx context.Context, adapterName, sc
 // would let a handshake store the session and drain an empty waiter list in
 // between, stranding the wait until the budget expired (lost wakeup).
 func (p *peerSessionProvider) WaitForFreshHandle(ctx context.Context, adapterName, scope string, stale adapterhost.Handle) (adapterhost.Handle, error) {
-	// KB-251: no declared-set judgment at wait time either — a wait for an
+	// No declared-set judgment at wait time either — a wait for an
 	// adapter no peer hosts resolves as an ordinary bounded session wait
-	// (KB-70 budgets) instead of an instant semantic rejection; the wait
-	// knows nothing about how pods were grouped.
+	// (session-wait budgets) instead of an instant semantic rejection; the
+	// wait knows nothing about how pods were grouped.
 
 	key := p.key(adapterName, scope)
 
@@ -323,7 +323,7 @@ func (p *peerSessionProvider) WaitForFreshHandle(ctx context.Context, adapterNam
 		return ps.handle, nil
 	}
 
-	// KB-213: an exact key only exists for the conn's dial adapter. A
+	// An exact key only exists for the conn's dial adapter. A
 	// wait for a non-dial hosted adapter of a multi-adapter conn has to
 	// find the conn in the registry by its hosted set instead — including
 	// per-scope conns dialing scoped multi-adapter sets (their keys are
@@ -383,7 +383,7 @@ func (p *peerSessionProvider) UnregisterScope(scope string) {
 // order). With no session stored — the shim itself has none; it delegates
 // closes to this provider — the call is a no-op.
 //
-// KB-213: on a multi-adapter conn only the requested adapter's child is torn
+// On a multi-adapter conn only the requested adapter's child is torn
 // down, and the shared conn stays alive for the other hosted adapters — an
 // exact-key conn (the dial adapter's own close) still releases the
 // transport.
@@ -412,7 +412,7 @@ func (p *peerSessionProvider) CloseHandle(ctx context.Context, adapterName, scop
 	}
 	p.mu.Unlock()
 	if ok {
-		// KB-95/KB-96 teardown ordering (ADR-0008): tear the in-flight child
+		// Child-run teardown ordering (ADR-0008): tear the in-flight child
 		// run down BEFORE the session closes — the child host's process
 		// cleanup after the close must not kill a mid-flight run. The
 		// teardown is bounded and best-effort (cancel control, journal
@@ -460,10 +460,10 @@ func (p *peerSessionProvider) stopPeers(ctx context.Context) {
 		waiters := p.waiters
 		p.waiters = make(map[string][]chan waitResult)
 		p.mu.Unlock()
-		// KB-95/KB-96: tear down any in-flight child run before closing each
+		// Tear down any in-flight child run before closing each
 		// peer session — same ordering contract as CloseHandle on the
 		// run-shutdown teardown path. Every hosted adapter's run is torn
-		// down (KB-213): a multi-adapter conn owns several children.
+		// down: a multi-adapter conn owns several children.
 		for _, ps := range peers {
 			for _, aj := range ps.hostedJournals() {
 				ps.teardownInFlightChildRun(ctx, aj)
@@ -487,12 +487,12 @@ func (p *peerSessionProvider) Stop(ctx context.Context) error {
 	return p.shim.Stop(ctx)
 }
 
-// adapterJournal is the per-adapter supervision view of one peer connection
-// (KB-213): with several adapter children sharing one phone-home connection,
+// adapterJournal is the per-adapter supervision view of one peer connection:
+// with several adapter children sharing one phone-home connection,
 // each hosted adapter owns its own slice of the conn's journal — terminal
-// process facts, log-drain cursors, liveness, and the KB-95 child-run
+// process facts, log-drain cursors, liveness, and the child-run
 // tracker. Events are routed by the supervision event's adapter_type
-// attribution; events without attribution (pre-KB-213 peers) land on the
+// attribution; events without attribution (pre-multi-adapter peers) land on the
 // conn's dial adapter. Every field is guarded by the owning peerSession's mu.
 type adapterJournal struct {
 	// name / scope identify the track in structured logs: the adapter type
@@ -507,7 +507,7 @@ type adapterJournal struct {
 	logFlushed    map[string]uint64
 
 	// childRuns / childWatches are the parent-side child-run tracker for
-	// this adapter (KB-95): journal arm truth, plus per-run terminal
+	// this adapter: journal arm truth, plus per-run terminal
 	// waiters.
 	childRuns    map[string]*childRunRecord
 	childWatches map[string][]chan struct{}
@@ -526,7 +526,7 @@ func newAdapterJournal(name, scope string) *adapterJournal {
 // peerJournals routes one conn's supervision stream into per-adapter
 // journals and answers "does this conn host adapter X?" for session
 // dispatch. A conn hosts its dial adapter, plus every adapter a multi-child
-// dial advertised (KB-213). All methods assume the owning peerSession's mu.
+// dial advertised. All methods assume the owning peerSession's mu.
 type peerJournals struct {
 	dialAdapter string
 	dialScope   string
@@ -544,7 +544,7 @@ func newPeerJournals(dialAdapter, dialScope string) *peerJournals {
 }
 
 // trackFor returns the journal for the named adapter child (its definition
-// name, KB-242), creating it on first use so
+// name), creating it on first use so
 // late (or unattributed) events are never dropped.
 func (j *peerJournals) trackFor(adapterName string) *adapterJournal {
 	if adapterName == "" {
@@ -576,7 +576,7 @@ type peerSession struct {
 	dialed atomic.Bool
 
 	// journals routes the conn's supervision stream by adapter_type: the
-	// pre-KB-213 single-child shape (key = dial.AdapterType) is a one-entry
+	// pre-multi-adapter single-child shape (key = dial.AdapterType) is a one-entry
 	// map with byte-identical behavior.
 	journals *peerJournals
 
@@ -588,7 +588,7 @@ type peerSession struct {
 
 	// lost records conn-level loss (supervise consumer or an in-flight
 	// Execute observing the transport die) — the classification input for
-	// the workflow.v1 child-run-loss crash reason (KB-95).
+	// the workflow.v1 child-run-loss crash reason.
 	lost atomic.Bool
 
 	// teardownSettleGrace shrinks the parent's child-run settle budget for
@@ -642,7 +642,7 @@ func newPeerSession(conn net.Conn, dial *PeerDial, onDead func(ps *peerSession))
 }
 
 // hostsAdapter reports whether this conn serves the named adapter child —
-// its definition identity (KB-213/KB-242): the
+// its definition identity: the
 // dial adapter always, plus every non-dial adapter the dial's advertised
 // child set names. The dial set — not the observed journals — is the
 // authority: a conn can host an adapter that has not streamed an event yet.
@@ -663,7 +663,7 @@ func (ps *peerSession) hostsAdapter(adapterName string) bool {
 
 // handleFor returns the routed handle for one hosted adapter: the conn's
 // own handle for the dial adapter, or a fresh peerHandle whose requests
-// carry the per-adapter route header for the others (KB-213). Adapters the
+// carry the per-adapter route header for the others. Adapters the
 // conn does not host still get a handle — their requests produce the peer's
 // typed no-live-child error, which keeps misdispatch diagnosable instead of
 // silently crossing to the dial child.
@@ -688,7 +688,7 @@ func (ps *peerSession) hostedJournals() []*adapterJournal {
 }
 
 // journalFor returns the requested adapter child's journal (its definition
-// name, KB-242; created lazily).
+// name; created lazily).
 func (ps *peerSession) journalFor(adapterName string) *adapterJournal {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
@@ -702,7 +702,7 @@ func (ps *peerSession) journalFor(adapterName string) *adapterJournal {
 // handle identity cannot express "the same session came back".
 // findRoutedPeerSession scans the registry (under the caller's p.mu hold)
 // for a session of a DIFFERENT conn hosting the waited adapter (by its
-// definition name, KB-242), returning
+// definition name), returning
 // nil when the exact-key entry or scope mode excludes a hit.
 func (p *peerSessionProvider) findRoutedPeerSession(key, adapterName, scope string, stale adapterhost.Handle) *peerSession {
 	staleSession := peerSessionOf(stale)
@@ -802,7 +802,7 @@ func (ps *peerSession) superviseOnce(ctx context.Context) error {
 
 // applySupervisionEvent routes one journal event. At-least-once delivery is
 // deduped on event_seq (strictly monotonic within one peer conn). The event
-// lands on the journal of its adapter_type attribution (KB-213 multi-adapter
+// lands on the journal of its adapter_type attribution (multi-adapter
 // conns); events without attribution belong to the conn's dial adapter.
 func (ps *peerSession) applySupervisionEvent(ev *criteriav1.SupervisionEvent) {
 	ps.mu.Lock()
@@ -833,7 +833,7 @@ func (ps *peerSession) applySupervisionEvent(ev *criteriav1.SupervisionEvent) {
 	case *criteriav1.SupervisionEvent_ChildRunStarted,
 		*criteriav1.SupervisionEvent_ChildRunTerminal,
 		*criteriav1.SupervisionEvent_ChildRunTeardownPartial:
-		// KB-95/KB-96 (ADR-0008 D2): workflow.v1 child-run tracking. Arm
+		// Child-run tracking (ADR-0008 D2, workflow.v1 peers). Arm
 		// routing and the watch broadcast happen through the tracker below
 		// (the broadcast runs after this unlock).
 		terminalRunID = aj.applyChildRunArmLocked(ev)
@@ -892,7 +892,7 @@ func (ps *peerSession) lastEventSeq() uint64 {
 }
 
 // processExited reports whether the peer journal delivered a terminal
-// process event for the named adapter child (definition name, KB-242).
+// process event for the named adapter child (definition name).
 // Connection loss alone does not count: the transport may drop for reasons
 // that are not adapter deaths.
 func (ps *peerSession) processExited(adapterName string) bool {
@@ -938,7 +938,7 @@ func (ps *peerSession) control(ctx context.Context, req *criteriav1.ControlReque
 
 // died marks the conn-level session dead: drop it from the provider's
 // registry (if still current) and release the transport. The lost record is
-// the KB-95 classification input: the child-run-loss crash reason keys on it.
+// the child-run-loss classification input: the crash reason keys on it.
 func (ps *peerSession) died(cause error) {
 	ps.lost.Store(true)
 	if ps.onDead != nil {
@@ -980,7 +980,7 @@ type peerHandle struct {
 }
 
 // routedClient wraps the conn's adapterhost.Client with the per-adapter
-// route header (KB-213): on a multi-adapter conn the client-side connMux
+// route header: on a multi-adapter conn the client-side connMux
 // resolves the target child from the header. On single-child conns the mux
 // is not installed and the peer ignores unknown metadata, so the header is
 // always attached and never changes single-child behavior.
@@ -1042,7 +1042,7 @@ func (rc *routedClient) Prompt(ctx context.Context, req *adapterhost.PromptReque
 }
 
 // client returns the handle's routed adapter client: all v2 calls of this
-// handle target the handle's own adapter child (KB-213).
+// handle target the handle's own adapter child.
 func (h *peerHandle) client() adapterhost.Client {
 	return &routedClient{base: h.ps.client, route: h.name}
 }
@@ -1083,7 +1083,7 @@ func (h *peerHandle) OpenSession(ctx context.Context, id string, config, secrets
 
 // Execute streams one step through the shared host-side execute plumbing
 // (fallback permission stream, chunk reassembly, needs_review override) —
-// the exact path rpcHandle.Execute uses — with the KB-95 child-run mapping
+// the exact path rpcHandle.Execute uses — with the child-run mapping
 // layered on top (one-shot execute, crash adoption, child-run-loss
 // evidence) for workflow.v1 peers.
 func (h *peerHandle) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
@@ -1133,7 +1133,7 @@ func (h *peerHandle) killChild(ctx context.Context) {
 	}
 }
 
-// IsPhoneHomeBridge marks peerHandle as a live phone-home connection (KB-232).
+// IsPhoneHomeBridge marks peerHandle as a live phone-home connection.
 func (h *peerHandle) IsPhoneHomeBridge() {}
 
 // ProcessExited implements ProcessExitReporter from the supervision journal:
@@ -1169,7 +1169,7 @@ func (h *peerHandle) SupervisionCrashReason() (string, bool) {
 		}
 		return aj.exitReason, true
 	}
-	// KB-95 (ADR-0008): a transport loss while a child run was tracked in
+	// ADR-0008: a transport loss while a child run was tracked in
 	// flight is the crash fact for the step — the child's verdict did not
 	// land before the connection died (the classifier prefers this over the
 	// transport heuristics, without overriding the journal's own
@@ -1205,7 +1205,7 @@ func (h *peerHandle) workflowV1IdleChildRun() bool {
 
 // Pause asks the peer adapter to halt work without losing state.
 //
-// KB-96 (ADR-0008 D2): for a workflow.v1 peer with no in-flight child run
+// ADR-0008 D2: for a workflow.v1 peer with no in-flight child run
 // the pause is an idempotent ack WITHOUT a control round-trip — the child
 // has nothing to park and its settled runs already persisted their own
 // checkpoints (the child is its state's host of record), so the parent's
@@ -1330,5 +1330,5 @@ func isExpectedStreamClose(err error, extra ...codes.Code) bool {
 	return false
 }
 
-// KB-251 note: KB-213's declaredAdapters snapshot type was deleted with the
+// The declaredAdapters snapshot type was deleted with the
 // coverage gate — nothing reads it any more.

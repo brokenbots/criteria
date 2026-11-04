@@ -85,7 +85,7 @@ type waitResult struct {
 }
 
 // ErrScopeNotRegistered marks an adapter dial whose presented scope has no
-// accept token registered on this server (KB-25).
+// accept token registered on this server.
 var ErrScopeNotRegistered = errors.New("scope is not registered")
 
 // ScopeNotRegisteredError marks an unregistered-scope rejection.
@@ -1175,7 +1175,7 @@ func (s *Server) waitTimeoutError(adapterType, scope, key string, budget time.Du
 			detail += "; digest verification failed — stale or wrong adapter build? (CRI-137)"
 		case rejectChildSet:
 			// A peer whose advertised child set failed verification is
-			// mis-declared (KB-213); the message already names the offending
+			// mis-declared; the message already names the offending
 			// child so blame the declaration, not the token.
 			detail += "; peer child set failed verification (KB-213)"
 		case rejectScopeNotRegistered, rejectBadToken:

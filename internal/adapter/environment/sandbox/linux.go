@@ -113,8 +113,8 @@ type LinuxPrepared struct {
 	ProcessExec []string
 
 	// ProcessExecWildcard, when true, indicates that process.exec = ["*"]
-	// was declared and the sandbox should preserve pre-CRI-86 open behavior
-	// for adapter-child process execution.
+	// was declared and the sandbox should preserve the pre-restriction open
+	// behavior for adapter-child process execution.
 	ProcessExecWildcard bool
 
 	// SkipShimRestrictions, when true, tells the shim helper to skip
@@ -164,7 +164,7 @@ func (h Handler) Prepare(ctx PrepareContext) (LinuxPrepared, error) {
 
 	if ctx.Policy.Process != nil {
 		if ctx.Policy.Process.IsWildcard() {
-			// Reserved wildcard explicitly restores pre-CRI-86 open behavior.
+			// Reserved wildcard explicitly restores the pre-restriction open behavior.
 			prep.ProcessExecWildcard = true
 		} else if len(ctx.Policy.Process.Exec) > 0 {
 			// Linux cannot enforce a per-path exec allow-list with seccomp or

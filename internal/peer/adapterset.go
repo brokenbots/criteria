@@ -17,7 +17,7 @@ import (
 	"github.com/brokenbots/criteria/internal/adapterhost"
 )
 
-// Multi-adapter manifest parsing (KB-213). A peer container hosts ALL
+// Multi-adapter manifest parsing. A peer container hosts ALL
 // adapter children of one environment behind one phone-home substrate. The
 // adapter set is declared env-first with two mutually-exclusive sources:
 //
@@ -44,7 +44,7 @@ type AdapterSpec struct {
 
 // ScopeTokenSpec is one (scope, adapter) phone-home conn discovered in the
 // runner's remote-tokens root. Token file names are "<adapter-name>.token",
-// where the name is the minting adapter's definition identity (KB-242).
+// where the name is the minting adapter's definition identity.
 type ScopeTokenSpec struct {
 	// Scope is the scope key: "<scopeName>/<instanceID>", or "/<instanceID>"
 	// for the run's root scope (an empty workflow scope label yields a
@@ -52,7 +52,7 @@ type ScopeTokenSpec struct {
 	Scope string
 	// Adapter is the adapter name the token file is minted for — the
 	// definition identity (the "<type>.<name>" label half of
-	// "<name>.token", KB-242).
+	// "<name>.token").
 	Adapter string
 	// Token is the file's token value (whitespace-trimmed).
 	Token string
@@ -65,7 +65,7 @@ type ScopeTokenSpec struct {
 // directory scan is the fallback; per-adapter overrides refine both. An
 // empty result means the legacy single-adapter shape was declared. Every
 // entry is one hosted adapter child keyed by its adapter name, which is the
-// adapter's definition identity (KB-242): one environment may declare
+// adapter's definition identity: one environment may declare
 // several children of the same adapter type under distinct names.
 // An exact duplicate name deduplicates first-entry-wins (never a silent
 // co-host of two children under one name).
@@ -93,7 +93,7 @@ func ParseAdaptersConfig(getenv func(string) string) ([]AdapterSpec, error) {
 // ParseAdaptersEnv parses the CRITERIA_REMOTE_ADAPTERS value: a comma-separated
 // list of adapter names, each optionally "NAME=PATH" to pin the binary path.
 // Entries are trimmed; empty entries are skipped. Names are adapter
-// definition identities (KB-242) — the same adapter type may be hosted once
+// definition identities — the same adapter type may be hosted once
 // per definition name — so re-declaring one name deduplicates
 // first-entry-wins rather than erroring.
 func ParseAdaptersEnv(raw string) ([]AdapterSpec, error) {
@@ -118,7 +118,7 @@ func ParseAdaptersEnv(raw string) ([]AdapterSpec, error) {
 		}
 		if seen[name] {
 			// Keep-first dedupe: the first pinned binary wins so an
-			// over-provisioned manifest stays deterministic (KB-242).
+			// over-provisioned manifest stays deterministic.
 			continue
 		}
 		seen[name] = true
@@ -260,8 +260,8 @@ func applySpecManifestDefaults(spec *AdapterSpec) error {
 
 // locateSpecBinary finds the binary for a name-only spec: PATH lookup of
 // criteria-adapter-<name> first, then the conventional install path. Binaries
-// install and are found by TYPE (KB-246, mirroring the adapterhost
-// DiscoverBinary split): a definition-keyed child ("shell.develop", KB-242)
+// install and are found by TYPE (mirroring the adapterhost
+// DiscoverBinary split): a definition-keyed child ("shell.develop")
 // locates its binary by its type half while the child stays keyed by the
 // definition identity; defaultBinaryPath applies the same split.
 func locateSpecBinary(spec *AdapterSpec) error {
@@ -330,9 +330,9 @@ func resolveSpecDigest(spec *AdapterSpec) error {
 // scopes and "<dir>/<instanceID>/<adapterType>.token" for the run's root
 // scope (the empty scope label yields a leading slash). The "current"
 // record directories are skipped, instance directories that are not
-// UUID-named are ignored exactly like the engine's own token-file scan
-// (CRI-137), and scope instances tombstoned by a release-claim record
-// ("<uuid>.json", KB-242) are skipped: the engine unregisters their accept
+// UUID-named are ignored exactly like the engine's own token-file scan,
+// and scope instances tombstoned by a release-claim record
+// ("<uuid>.json") are skipped: the engine unregisters their accept
 // tokens at release, so re-dialing them only produces "scope not
 // registered" rejections for the peer's whole lifetime.
 // The result is sorted by (scope, adapter) for deterministic boot order.
@@ -437,7 +437,7 @@ func appendWorkflowScopeTokens(specs *[]ScopeTokenSpec, topEntry os.DirEntry, sc
 const releasedScopeClaimPrefix = "released-"
 
 // releasedScopeClaim is the tombstone record the runner writes when a scope
-// instance is deliberately released (CRI-137): the token file is kept for
+// instance is deliberately released: the token file is kept for
 // post-run forensics, so the scan must consult the claim to stop dialing.
 type releasedScopeClaim struct {
 	ScopeInstanceID string `json:"scope_instance_id"`

@@ -1,7 +1,7 @@
 package conformance
 
-// conformance_adapter_tools_agent.go — the CRI-183 adapter-tools AGENT-CALLER
-// matrix, the agent-shaped twin of the CRI-167 failure matrix in
+// conformance_adapter_tools_agent.go — the adapter-tools AGENT-CALLER
+// matrix, the agent-shaped twin of the input-keyed failure matrix in
 // conformance_adapter_tools.go.
 //
 // ADR-0004 (docs/adrs/ADR-0004-adapter-tools.md):
@@ -20,7 +20,7 @@ package conformance
 //     reply is correlated on the same stream by request_id — regardless of
 //     who inside the adapter initiated the call.
 //
-// The CRI-167 matrix holds only for the noop test double's INPUT-KEYED path
+// The failure matrix holds only for the noop test double's INPUT-KEYED path
 // (testdata/noop/toolcall.go): its bridge issues tool calls because a caller
 // step's input keys (tool_target, tool_name, tool_args) select the mode.
 // These cases are the same matrix from the other origin: the caller is an
@@ -30,10 +30,10 @@ package conformance
 // agnosticism: the host cannot tell who inside the adapter initiated the
 // call and must not need to. Only the agent-shaped variants of the matrix
 // entries are covered here — the input-keyed cases already exist in the
-// CRI-167 matrix and in the noop fixture path, and are not duplicated.
+// failure matrix and in the noop fixture path, and are not duplicated.
 //
-// Matrix (agent-caller additions; deny/unknown_tool/concurrency per CRI-167
-// and the CRI-161 engine interleave test):
+// Matrix (agent-caller additions; deny/unknown_tool/concurrency mirror the
+// input-keyed matrix and the engine interleave test):
 //
 //	Deny mid-conversation: the agent's tool call is denied by the caller's
 //	  own policy; the deny is data to the turn, which continues with a
@@ -68,7 +68,7 @@ import (
 // agentToolCallTargetOther is the undeclared tool target the agent-caller
 // cases use for a deny (the caller's policy excludes it) and for the
 // unknown_tool typed failure (the callee's static surface does not declare
-// it) — the same undeclared-tool shape the CRI-167 matrix cases use.
+// it) — the same undeclared-tool shape the failure matrix cases use.
 const agentToolCallTargetOther = "adapter.callee.default.tools.other_task"
 
 // agentToolInvocation is one tool call the simulated agent's turn handler
@@ -420,7 +420,7 @@ func assertNoToolCallInputKeys(t *testing.T, caller *agentCallerAdapter) {
 	}
 }
 
-// RunAdapterToolsAgentCallerMatrix runs the CRI-183 adapter-tools agent-caller
+// RunAdapterToolsAgentCallerMatrix runs the adapter-tools agent-caller
 // matrix: three sub-tests, one per matrix entry, each asserting the
 // agent-turn continuation invariant and the run-continuation invariant
 // through the real engine.
@@ -475,7 +475,7 @@ func agentCaseDenyMidConversation(t *testing.T) {
 }
 
 // assertAgentDenyDispatch asserts the host's view of the denied call is
-// indistinguishable from the input-keyed deny case (CRI-167): the inner
+// indistinguishable from the input-keyed deny case: the inner
 // permission.denied carries the request id and the policy reason, only the
 // follow-up call is granted and dispatched, and the denied call never
 // reaches the callee.
@@ -640,7 +640,7 @@ func assertAgentUnknownToolPolicy(t *testing.T, audit *matrixAuditCollector, cal
 // turn's handlers (one goroutine each): both are in flight together and the
 // fast call's reply overtakes the slow call's — reply order is NOT assumed
 // on the Permissions stream; correlation is by request_id (parity with the
-// CRI-161 engine interleave test). Both replies carry their own call's
+// engine interleave test). Both replies carry their own call's
 // outputs and the run continues through the agent's own outcome routing.
 func agentCaseConcurrentCalls(t *testing.T) {
 	caller := newAgentCaller(

@@ -42,7 +42,7 @@ type Config struct {
 	// once the adapter pod has started (0 → DefaultVerifyFailureBudget).
 	SessionHandshakeBudget time.Duration
 	// SessionSchedulingBudget bounds a pending remote-adapter session wait
-	// while the adapter pod has not started yet (KB-70; 0 →
+	// while the adapter pod has not started yet (0 →
 	// DefaultSchedulingBudget).
 	SessionSchedulingBudget time.Duration
 }
