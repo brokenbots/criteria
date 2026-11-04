@@ -146,8 +146,13 @@ func TestExhaustive_ProtoRoundTrip(t *testing.T) {
 // depth guards against infinite recursion in self-referential message types.
 // Well-known types (google.protobuf.*) are left at their zero value because
 // protojson handles their encoding specially and the zero form round-trips
-// correctly.
+// correctly — except google.protobuf.Value, whose zero form is invalid
+// protojson (it must carry exactly one kind); populateWellKnown pins it to a
+// deterministic string.
 func populateMessage(m protoreflect.Message, depth int) {
+	if populateWellKnown(m) {
+		return
+	}
 	if depth > 3 || isWellKnown(m.Descriptor().FullName()) {
 		return
 	}
@@ -172,13 +177,29 @@ func populateMessage(m protoreflect.Message, depth int) {
 	}
 }
 
+// populateWellKnown fills the well-known types whose zero form fails a
+// protojson marshal → unmarshal cycle: an empty google.protobuf.Value carries
+// no kind and is rejected by protojson.Unmarshal. Only such types are handled
+// here; everything else round-trips at zero.
+func populateWellKnown(m protoreflect.Message) bool {
+	if m.Descriptor().FullName() == "google.protobuf.Value" {
+		fd := m.Descriptor().Fields().ByName("string_value")
+		m.Set(fd, protoreflect.ValueOfString("x"))
+		return true
+	}
+	return false
+}
+
 // deterministicValue returns a non-zero protoreflect.Value for a single field
 // element (used for list elements and map values).
 func deterministicValue(fd protoreflect.FieldDescriptor, parent protoreflect.Message, depth int) protoreflect.Value {
 	if fd.Kind() == protoreflect.MessageKind || fd.Kind() == protoreflect.GroupKind {
 		if isWellKnown(fd.Message().FullName()) {
-			// Return the empty message; zero-value well-known types round-trip fine.
-			return parent.NewField(fd)
+			// Return a deterministic well-known form; zero-value well-known
+			// types other than Value round-trip fine.
+			sub := parent.NewField(fd).Message()
+			populateWellKnown(sub)
+			return protoreflect.ValueOfMessage(sub)
 		}
 		var sub protoreflect.Message
 		if fd.IsList() {

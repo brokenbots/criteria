@@ -69,12 +69,18 @@ func ConcreteMsg(t *testing.T, fd protoreflect.FieldDescriptor) proto.Message {
 
 // PopulateMessage sets every field of m to a deterministic non-zero value.
 // depth guards against infinite recursion in self-referential message types.
-// Well-known types (google.protobuf.*) are left at zero — their zero form
-// round-trips correctly.
+// Well-known types (google.protobuf.*) are left at their zero value because
+// protojson handles their encoding specially and the zero form round-trips
+// correctly — except google.protobuf.Value, whose zero form is invalid
+// protojson (it must carry exactly one kind); populateWellKnown pins it to a
+// deterministic string.
 //
 // Exported so Subject implementations and other test infrastructure can share
 // the same deterministic population strategy.
 func PopulateMessage(m protoreflect.Message, depth int) {
+	if populateWellKnown(m) {
+		return
+	}
 	if depth > 3 || isWellKnown(m.Descriptor().FullName()) {
 		return
 	}
@@ -115,7 +121,11 @@ func extractPayloadMsg(env *pb.Envelope) proto.Message {
 func deterministicValue(fd protoreflect.FieldDescriptor, parent protoreflect.Message, depth int) protoreflect.Value {
 	if fd.Kind() == protoreflect.MessageKind || fd.Kind() == protoreflect.GroupKind {
 		if isWellKnown(fd.Message().FullName()) {
-			return parent.NewField(fd)
+			// Return a deterministic well-known form; zero-value well-known
+			// types other than Value round-trip correctly.
+			sub := parent.NewField(fd).Message()
+			populateWellKnown(sub)
+			return protoreflect.ValueOfMessage(sub)
 		}
 		var sub protoreflect.Message
 		if fd.IsList() {
@@ -188,4 +198,17 @@ func deterministicMapKey(k protoreflect.Kind) protoreflect.MapKey {
 func isWellKnown(name protoreflect.FullName) bool {
 	s := string(name)
 	return len(s) >= 16 && s[:16] == "google.protobuf."
+}
+
+// populateWellKnown fills the well-known types whose zero form fails a
+// protojson marshal → unmarshal cycle: an empty google.protobuf.Value carries
+// no kind and is rejected by protojson.Unmarshal. Only such types are handled
+// here; everything else round-trips at zero.
+func populateWellKnown(m protoreflect.Message) bool {
+	if m.Descriptor().FullName() == "google.protobuf.Value" {
+		fd := m.Descriptor().Fields().ByName("string_value")
+		m.Set(fd, protoreflect.ValueOfString("x"))
+		return true
+	}
+	return false
 }
