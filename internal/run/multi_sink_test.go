@@ -47,7 +47,7 @@ func (r *recordingSink) OnStepIterationItem(string, int, string)                
 func (r *recordingSink) OnScopeIterCursorSet(string)                                 { r.bump() }
 func (r *recordingSink) OnAdapterLifecycle(string, string, string, string)           { r.bump() }
 func (r *recordingSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent) { r.bump() }
-func (r *recordingSink) OnRunOutputs([]*pb.RunOutputs_Output)                            { r.bump() }
+func (r *recordingSink) OnRunOutputs([]*pb.RunOutputs_Output)                        { r.bump() }
 func (r *recordingSink) OnStepOutcomeDefaulted(string, string, string)               { r.bump() }
 func (r *recordingSink) OnStepOutcomeUnknown(string, string)                         { r.bump() }
 func (r *recordingSink) OnStepOutcomeInvalid(string, string, []string, int)          { r.bump() }

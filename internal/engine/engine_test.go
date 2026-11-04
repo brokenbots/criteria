@@ -104,7 +104,7 @@ func (s *fakeSink) OnStepIterationItem(string, int, string)              {}
 func (s *fakeSink) OnScopeIterCursorSet(string)                          {}
 func (s *fakeSink) OnAdapterLifecycle(string, string, string, string)    {}
 func (s *fakeSink) OnAdapterLifecycleEvent(event *AdapterLifecycleEvent) {}
-func (s *fakeSink) OnRunOutputs([]*pb.RunOutputs_Output)                     {}
+func (s *fakeSink) OnRunOutputs([]*pb.RunOutputs_Output)                 {}
 func (s *fakeSink) OnStepOutcomeDefaulted(string, string, string)        {}
 func (s *fakeSink) OnStepOutcomeUnknown(string, string)                  {}
 func (s *fakeSink) OnStepOutcomeInvalid(string, string, []string, int)   {}
