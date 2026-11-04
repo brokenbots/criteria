@@ -83,14 +83,14 @@ func fakeRuntimeArgsFile(t *testing.T) string {
 
 // newFakeRunner builds a dockerRunner backed by the fake runtime installed by
 // installFakeRuntime.
-func newFakeRunner(t *testing.T, mode, name string) (*dockerRunner, string) {
+func newFakeRunner(t *testing.T, mode string) (dr *dockerRunner, argsFile string) {
 	t.Helper()
-	installFakeRuntime(t, mode, name)
-	argsFile := fakeRuntimeArgsFile(t)
+	installFakeRuntime(t, mode, "fake-runtime")
+	argsFile = fakeRuntimeArgsFile(t)
 
 	cmd := &exec.Cmd{Env: []string{"PLUGIN_MIN_PROTOCOL_VERSION=1"}}
 	prepared := Prepared{
-		Runtime:  name,
+		Runtime:  "fake-runtime",
 		ImageRef: manifest.ContainerImageRef{Ref: "alpine:latest"},
 	}
 
@@ -112,7 +112,7 @@ func reapRunner(t *testing.T, dr *dockerRunner) {
 }
 
 func TestDockerRunner_Lifecycle(t *testing.T) {
-	dr, argsFile := newFakeRunner(t, "run", "fake-runtime")
+	dr, argsFile := newFakeRunner(t, "run")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -158,7 +158,7 @@ func TestDockerRunner_Start_CIDTimeout(t *testing.T) {
 	// no-cid mode never writes the CID file, so Start must time out, kill the
 	// runtime process, and clean up the CID file. The Wait goroutine was never
 	// started on this path.
-	dr, _ := newFakeRunner(t, "no-cid", "fake-runtime")
+	dr, _ := newFakeRunner(t, "no-cid")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
@@ -174,7 +174,7 @@ func TestDockerRunner_Start_CIDTimeout(t *testing.T) {
 func TestDockerRunner_Start_InvalidPolicyTimeout(t *testing.T) {
 	// A policy timeout that does not parse as a duration must be ignored
 	// gracefully: Start keeps waiting on the caller's context.
-	dr, _ := newFakeRunner(t, "no-cid", "fake-runtime")
+	dr, _ := newFakeRunner(t, "no-cid")
 	dr.timeout = "not-a-duration"
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
@@ -185,7 +185,7 @@ func TestDockerRunner_Start_InvalidPolicyTimeout(t *testing.T) {
 
 func TestDockerRunner_Start_MissingRuntimeBinary(t *testing.T) {
 	// The runtime binary does not exist: cmd.Start fails immediately.
-	dr, _ := newFakeRunner(t, "run", "fake-runtime")
+	dr, _ := newFakeRunner(t, "run")
 	dr.cmd.Path = filepath.Join(t.TempDir(), "does-not-exist")
 
 	require.Error(t, dr.Start(context.Background()))
@@ -193,13 +193,13 @@ func TestDockerRunner_Start_MissingRuntimeBinary(t *testing.T) {
 
 func TestDockerRunner_Kill_BeforeStart(t *testing.T) {
 	// No process has been started and there is no CID: Kill is a no-op.
-	dr, _ := newFakeRunner(t, "run", "fake-runtime")
+	dr, _ := newFakeRunner(t, "run")
 
 	require.NoError(t, dr.Kill(context.Background()))
 }
 
 func TestDockerRunner_Kill_CancelledContext(t *testing.T) {
-	dr, _ := newFakeRunner(t, "run", "fake-runtime")
+	dr, _ := newFakeRunner(t, "run")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -209,7 +209,7 @@ func TestDockerRunner_Kill_CancelledContext(t *testing.T) {
 func TestDockerRunner_Kill_KillSubcommandFails(t *testing.T) {
 	// The runtime kill subcommand exits non-zero while the process is still
 	// alive: Kill must surface that error rather than swallowing it.
-	dr, _ := newFakeRunner(t, "kill-fail", "fake-runtime")
+	dr, _ := newFakeRunner(t, "kill-fail")
 
 	ctx := context.Background()
 	require.NoError(t, dr.Start(ctx))
@@ -223,7 +223,7 @@ func TestDockerRunner_Kill_KillSubcommandFails(t *testing.T) {
 func TestDockerRunner_Kill_AfterProcessExit(t *testing.T) {
 	// Killing an already-exited process must not fail: the
 	// os.ErrProcessDone case is tolerated.
-	dr, _ := newFakeRunner(t, "run", "fake-runtime")
+	dr, _ := newFakeRunner(t, "run")
 
 	ctx := context.Background()
 	require.NoError(t, dr.Start(ctx))
@@ -235,7 +235,7 @@ func TestDockerRunner_Kill_AfterProcessExit(t *testing.T) {
 }
 
 func TestDockerRunner_Diagnose_WithoutCID(t *testing.T) {
-	dr, _ := newFakeRunner(t, "run", "fake-runtime")
+	dr, _ := newFakeRunner(t, "run")
 	require.Equal(t, "container has not started or CID is not available", dr.Diagnose(context.Background()))
 }
 

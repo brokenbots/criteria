@@ -22,7 +22,7 @@ import (
 
 // fakeBinDir builds a directory containing the named fake executables (POSIX
 // shell snippets) and prepends it to PATH for the duration of the test.
-func fakeBinDir(t *testing.T, scripts map[string]string) string {
+func fakeBinDir(t *testing.T, scripts map[string]string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("fake PATH binaries require a POSIX shell")
@@ -34,7 +34,6 @@ func fakeBinDir(t *testing.T, scripts map[string]string) string {
 		require.NoError(t, os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0o755))
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return dir
 }
 
 // fakeBinArgsFile returns the path where fake binaries record their argv,
