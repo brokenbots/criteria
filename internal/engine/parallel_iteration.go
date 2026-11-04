@@ -25,6 +25,8 @@ import (
 
 	"github.com/zclconf/go-cty/cty"
 
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
@@ -191,7 +193,7 @@ func (s *lockedSink) OnAdapterLifecycleEvent(event *AdapterLifecycleEvent) {
 	s.Sink.OnAdapterLifecycleEvent(event)
 }
 
-func (s *lockedSink) OnRunOutputs(outputs []map[string]string) {
+func (s *lockedSink) OnRunOutputs(outputs []*pb.RunOutputs_Output) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.Sink.OnRunOutputs(outputs)

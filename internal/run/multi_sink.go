@@ -3,6 +3,8 @@ package run
 import (
 	"time"
 
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/engine"
 )
@@ -171,7 +173,7 @@ func (m *MultiSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent)
 }
 
 // OnRunOutputs fans the outputs event to all child sinks (W09).
-func (m *MultiSink) OnRunOutputs(outputs []map[string]string) {
+func (m *MultiSink) OnRunOutputs(outputs []*pb.RunOutputs_Output) {
 	for _, c := range m.children {
 		c.OnRunOutputs(outputs)
 	}

@@ -309,12 +309,15 @@ func (b *serveAdapterBridge) OnVariableSet(name, value, source string) {
 	})
 }
 
-func (b *serveAdapterBridge) OnRunOutputs(outputs []map[string]string) {
+func (b *serveAdapterBridge) OnRunOutputs(outputs []*criteriav1.RunOutputs_Output) {
 	b.Sink.OnRunOutputs(outputs)
 	projected := map[string]string{}
 	for _, o := range outputs {
-		if name := o["name"]; name != "" {
-			projected[name] = o["value"]
+		if o == nil {
+			continue
+		}
+		if name := o.GetName(); name != "" {
+			projected[name] = o.GetValue()
 		}
 	}
 	b.run.mu.Lock()
