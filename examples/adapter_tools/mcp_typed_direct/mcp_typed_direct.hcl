@@ -1,6 +1,6 @@
 # mode: standalone
-# Example: the mcp adapter as a DIRECT step target with a typed input block
-# (KB-59). The adapter is dynamic (dynamic_tools = true, no declared step
+# Example: the mcp adapter as a DIRECT step target with a typed input block.
+# The adapter is dynamic (dynamic_tools = true, no declared step
 # input schema), so the static unknown-field check has nothing to check
 # against — the declared `tool "echo"` contract is the schema: the step's
 # input keys must satisfy type.echo_request (the MCP tool name stays on the

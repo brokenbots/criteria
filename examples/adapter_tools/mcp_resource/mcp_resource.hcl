@@ -1,5 +1,5 @@
 # mode: standalone
-# Example: variant 2 — the mcp adapter consumed as a resource (CRI-172), the
+# Example: variant 2 — the mcp adapter consumed as a resource, the
 # caller tool-calling an MCP tool served by the scripted echo fixture server.
 # No network is involved: the server runs over stdio, launched by the mcp
 # adapter.
@@ -8,7 +8,7 @@
 # built by `make example-adapter-tools` as bin/criteria-echo-mcp and resolved
 # via PATH.
 #
-# KB-59: the mcp tool surface is dynamic (its tools/list is discovered at
+# The mcp tool surface is dynamic (its tools/list is discovered at
 # session open, so the adapter declares no input schema on purpose), which
 # normally leaves tool arguments unvalidated at the seam. The named types
 # here declare the echo tool's contract instead: the host validates both the

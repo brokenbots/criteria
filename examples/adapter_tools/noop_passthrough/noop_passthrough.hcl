@@ -1,6 +1,6 @@
 # mode: standalone
 # Example: variant 1 — a caller adapter tool-calls a data-ish callee in one
-# self-contained run (CRI-176, CRI-165, ADR-0004). Both roles are the in-tree
+# self-contained run (ADR-0004). Both roles are the in-tree
 # noop fixture: the caller runs its tool-call mode (the step's input names
 # the target and the tool arguments), the callee runs its outputs-passthrough
 # mode (the tool args become the callee's step input, and the outputs JSON

@@ -1,4 +1,4 @@
-# Peer-mode remote adapter demo (T-10 / KB-20).
+# Peer-mode remote adapter demo.
 #
 # Two adapter peers (shell + noop) dial the host's remote shim and execute
 # steps under per-scope sessions: each adapter instance gets its own rotated
