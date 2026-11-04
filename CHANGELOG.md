@@ -171,6 +171,18 @@ product version). The release tag and date are finalized by the release gate.
   Host-local tool-resource callees referenced through a step's `tools`
   grants (never a step target) now resolve inside parallel per-scope remote
   iterations by borrowing the parent session's verified records.
+- **Typed run outputs on the wire (KB-141).** `RunOutputs.Output` gains
+  `google.protobuf.Value typed_value` (field 4, additive), populated from the
+  native cty value at emit time so typed consumers read structure directly
+  instead of JSON-parsing the string render. The `value` field (field 2) is
+  redefined display-only (log/UI render; not a machine contract). The engine
+  sink path now carries `*pb.RunOutputs_Output` structs end to end, the
+  redacting sink redacts typed data structurally (string leaves and object
+  keys under `declared_type`, numbers/bools pass through, unknown renders
+  null), and the SDK conformance suite pins the typed round-trip
+  (`RunOutputsTypedRoundTrip`). Cross-repo: the castle run-viewer read of
+  outputs is covered by the card-119 seam contract and lands castle-side in
+  the same window.
 
 ### Breaking changes
 
