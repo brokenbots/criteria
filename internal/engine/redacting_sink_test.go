@@ -559,6 +559,17 @@ func TestRedactingSink_OnRunOutputs_TypedValueNil(t *testing.T) {
 	if got := inner.onRunOutputs[0].GetTypedValue(); got != nil {
 		t.Fatalf("nil typed_value must forward as unset, got %v", got)
 	}
+
+	// A nil element is filtered, not forwarded: downstream emitters render
+	// each output, so a forwarded nil would publish an invalid `outputs: [null]`.
+	sink.OnRunOutputs([]*pb.RunOutputs_Output{nil, {Name: "kept", Value: "1"}})
+	// recordingSink keeps only the latest call's outputs: want [kept].
+	if got := len(inner.onRunOutputs); got != 1 {
+		t.Fatalf("nil output element must be filtered, got %d forwarded outputs, want [kept] only", got)
+	}
+	if got := inner.onRunOutputs[0].GetName(); got != "kept" {
+		t.Fatalf("kept output displaced: %q", got)
+	}
 }
 
 func TestRedactingSink_OnStepOutcomeDefaulted(t *testing.T) {

@@ -177,12 +177,12 @@ product version). The release tag and date are finalized by the release gate.
   instead of JSON-parsing the string render. The `value` field (field 2) is
   redefined display-only (log/UI render; not a machine contract). The engine
   sink path now carries `*pb.RunOutputs_Output` structs end to end, the
-  redacting sink redacts typed data structurally (string leaves and object
-  keys under `declared_type`, numbers/bools pass through, unknown renders
-  null), and the SDK conformance suite pins the typed round-trip
-  (`RunOutputsTypedRoundTrip`). Cross-repo: the castle run-viewer read of
-  outputs is covered by the card-119 seam contract and lands castle-side in
-  the same window.
+  redacting sink redacts `typed_value` structurally (string leaves and object
+  keys; numbers/bools pass through; unknown renders null), plus
+  name/value/declared_type, and the SDK conformance suite pins the typed
+  round-trip (`RunOutputsTypedRoundTrip`). Cross-repo: the castle run-viewer
+  read of outputs is covered by the card-119 seam contract and lands
+  castle-side in the same window.
 
 ### Breaking changes
 

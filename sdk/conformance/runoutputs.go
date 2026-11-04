@@ -52,8 +52,10 @@ func testRunOutputsTypedRoundTrip(t *testing.T, s Subject) { //nolint:funlen // 
 			{Name: "empty", Value: "null", TypedValue: structpb.NewNullValue()},
 			{Name: "list", Value: `["a","b"]`, TypedValue: listOf},
 			{Name: "obj", Value: `{"k":"v"}`, TypedValue: objOf("k", "v")},
-			// Large integers lose precision as doubles; the display render
-			// (value) remains the bit-exact surface per the proto contract.
+			// Numbers are doubles per google.protobuf.Value: this untyped
+			// Go constant compiles to the IEEE-754 rounded 9007199254740992.
+			// The display render (value) keeps the exact integer text; the
+			// spot-check below pins the relationship.
 			{Name: "big", Value: "9007199254740993", TypedValue: structpb.NewNumberValue(9007199254740993)},
 		},
 	}
@@ -88,6 +90,21 @@ func testRunOutputsTypedRoundTrip(t *testing.T, s Subject) { //nolint:funlen // 
 	for _, out := range got.GetOutputs() {
 		if out.GetTypedValue() == nil {
 			t.Errorf("output %q: typed_value missing after round-trip", out.GetName())
+		}
+	}
+	// The large-integer kind pins the documented precision relationship: the
+	// display render carries the exact integer text while typed_value holds
+	// the double it rounds to (9007199254740993 → ...992 per IEEE-754), so
+	// bit-exact consumers read value, not typed_value.
+	for _, out := range got.GetOutputs() {
+		if out.GetName() != "big" {
+			continue
+		}
+		if out.GetValue() != "9007199254740993" {
+			t.Errorf("big value = %q, want the exact integer text", out.GetValue())
+		}
+		if num := out.GetTypedValue().GetNumberValue(); num != 9007199254740992 {
+			t.Errorf("big typed_value = %v, want the double-rounded 9007199254740992 (value keeps the exact text)", num)
 		}
 	}
 }

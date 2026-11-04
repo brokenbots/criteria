@@ -179,17 +179,17 @@ func (s *RedactingSink) OnAdapterLifecycleEvent(event *AdapterLifecycleEvent) {
 // walks typed_value structurally so a typed output carries the same redaction
 // guarantees as the display render.
 func (s *RedactingSink) OnRunOutputs(outputs []*pb.RunOutputs_Output) {
-	redacted := make([]*pb.RunOutputs_Output, len(outputs))
-	for i, out := range outputs {
+	redacted := make([]*pb.RunOutputs_Output, 0, len(outputs))
+	for _, out := range outputs {
 		if out == nil {
 			continue
 		}
-		redacted[i] = &pb.RunOutputs_Output{
+		redacted = append(redacted, &pb.RunOutputs_Output{
 			Name:         s.reg.Redact(out.GetName()),
 			Value:        s.reg.Redact(out.GetValue()),
 			DeclaredType: s.reg.Redact(out.GetDeclaredType()),
 			TypedValue:   s.redactStructPbValue(out.GetTypedValue()),
-		}
+		})
 	}
 	s.inner.OnRunOutputs(redacted)
 }

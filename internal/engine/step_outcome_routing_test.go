@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -326,6 +327,17 @@ state "done" { terminal = true }`)
 		if o.GetName() == "count" && o.GetTypedValue().GetNumberValue() != 42 {
 			t.Errorf("native typed_value for count: got %v, want 42", o.GetTypedValue())
 		}
+	}
+	// Return-path outputs must be deterministically name-ordered, not map
+	// iteration order (formatReturnOutputs sorts before emitting).
+	nameOrder := make([]string, 0, len(sink.outputs))
+	for _, o := range sink.outputs {
+		nameOrder = append(nameOrder, o.GetName())
+	}
+	sortedOrder := slices.Clone(nameOrder)
+	slices.Sort(sortedOrder)
+	if !slices.Equal(nameOrder, sortedOrder) {
+		t.Errorf("return outputs not name-sorted: %v", nameOrder)
 	}
 }
 
