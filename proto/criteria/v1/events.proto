@@ -352,17 +352,22 @@ message StepIterationItem {
 message RunOutputs {
   message Output {
     string name = 1;           // output declaration name; permanent
-    string value = 2;          // string-rendered cty value for log/UI; consumers must JSON-parse to recover type structure; permanent
+    // value is the display-only render for logs/UI; it is not a machine
+    // contract — consumers that need type-aware access read typed_value.
+    string value = 2;          // display-only render for log/UI; permanent
     string declared_type = 3;  // declared type string if set, empty otherwise; permanent
+    // typed_value carries the output value natively, so typed consumers no
+    // longer parse the display render to recover structure. Numbers are
+    // doubles per google.protobuf.Value; consumers needing bit-exact large
+    // integers use value. Unknown cty values render null, matching value.
+    google.protobuf.Value typed_value = 4;  // native typed value; permanent
   }
   repeated Output outputs = 1;  // outputs in declaration order; permanent
 
-  // Note: output values are currently stringified on the wire (via cty/json marshaling) to preserve
-  // human readability and avoid complexity at Phase 3 ship. Typed consumers must JSON-parse the
-  // value string to recover the original type structure. A future SDK upgrade may add a sibling
-  // google.protobuf.Value typed_value field if programmatic typed consumption becomes a requirement
-  // (e.g. W13 sub-workflow callers needing native type access). Until then, assume consumers will
-  // JSON-parse value and understand it may be string/number/bool/null/array/object.
+  // Note: value (field 2) and typed_value (field 4) derive from the same
+  // output value: typed_value is the native google.protobuf.Value form, value
+  // is its display render string. Typed consumers must read typed_value; the
+  // display render is not a data contract.
 }
 
 // RunMetadata — external orchestration metadata for a run (CRI-131). Emitted

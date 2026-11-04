@@ -3032,10 +3032,17 @@ func (x *RunResumed) GetNode() string {
 }
 
 type RunOutputs_Output struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                                     // output declaration name; permanent
-	Value         string                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`                                   // string-rendered cty value for log/UI; consumers must JSON-parse to recover type structure; permanent
-	DeclaredType  string                 `protobuf:"bytes,3,opt,name=declared_type,json=declaredType,proto3" json:"declared_type,omitempty"` // declared type string if set, empty otherwise; permanent
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Name  string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"` // output declaration name; permanent
+	// value is the display-only render for logs/UI; it is not a machine
+	// contract — consumers that need type-aware access read typed_value.
+	Value        string `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`                                   // display-only render for log/UI; permanent
+	DeclaredType string `protobuf:"bytes,3,opt,name=declared_type,json=declaredType,proto3" json:"declared_type,omitempty"` // declared type string if set, empty otherwise; permanent
+	// typed_value carries the output value natively, so typed consumers no
+	// longer parse the display render to recover structure. Numbers are
+	// doubles per google.protobuf.Value; consumers needing bit-exact large
+	// integers use value. Unknown cty values render null, matching value.
+	TypedValue    *structpb.Value `protobuf:"bytes,4,opt,name=typed_value,json=typedValue,proto3" json:"typed_value,omitempty"` // native typed value; permanent
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3089,6 +3096,13 @@ func (x *RunOutputs_Output) GetDeclaredType() string {
 		return x.DeclaredType
 	}
 	return ""
+}
+
+func (x *RunOutputs_Output) GetTypedValue() *structpb.Value {
+	if x != nil {
+		return x.TypedValue
+	}
+	return nil
 }
 
 var File_criteria_v1_events_proto protoreflect.FileDescriptor
@@ -3258,14 +3272,16 @@ const file_criteria_v1_events_proto_rawDesc = "" +
 	"\x11StepIterationItem\x12\x12\n" +
 	"\x04node\x18\x01 \x01(\tR\x04node\x12\x14\n" +
 	"\x05index\x18\x02 \x01(\x05R\x05index\x12\x12\n" +
-	"\x04step\x18\x03 \x01(\tR\x04step\"\x9f\x01\n" +
+	"\x04step\x18\x03 \x01(\tR\x04step\"\xd9\x01\n" +
 	"\n" +
 	"RunOutputs\x128\n" +
-	"\aoutputs\x18\x01 \x03(\v2\x1e.criteria.v1.RunOutputs.OutputR\aoutputs\x1aW\n" +
+	"\aoutputs\x18\x01 \x03(\v2\x1e.criteria.v1.RunOutputs.OutputR\aoutputs\x1a\x90\x01\n" +
 	"\x06Output\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value\x12#\n" +
-	"\rdeclared_type\x18\x03 \x01(\tR\fdeclaredType\"W\n" +
+	"\rdeclared_type\x18\x03 \x01(\tR\fdeclaredType\x127\n" +
+	"\vtyped_value\x18\x04 \x01(\v2\x16.google.protobuf.ValueR\n" +
+	"typedValue\"W\n" +
 	"\vRunMetadata\x12\x16\n" +
 	"\x06ticket\x18\x01 \x01(\tR\x06ticket\x12\x19\n" +
 	"\brepo_url\x18\x02 \x01(\tR\arepoUrl\x12\x15\n" +
@@ -3374,6 +3390,7 @@ var file_criteria_v1_events_proto_goTypes = []any{
 	(*RunOutputs_Output)(nil),               // 40: criteria.v1.RunOutputs.Output
 	(*timestamppb.Timestamp)(nil),           // 41: google.protobuf.Timestamp
 	(*structpb.Struct)(nil),                 // 42: google.protobuf.Struct
+	(*structpb.Value)(nil),                  // 43: google.protobuf.Value
 }
 var file_criteria_v1_events_proto_depIdxs = []int32{
 	41, // 0: criteria.v1.Envelope.ts:type_name -> google.protobuf.Timestamp
@@ -3419,11 +3436,12 @@ var file_criteria_v1_events_proto_depIdxs = []int32{
 	40, // 40: criteria.v1.RunOutputs.outputs:type_name -> criteria.v1.RunOutputs.Output
 	31, // 41: criteria.v1.WorkflowGraphs.subworkflows:type_name -> criteria.v1.SubworkflowGraph
 	41, // 42: criteria.v1.AgentPromptInjected.delivered_at:type_name -> google.protobuf.Timestamp
-	43, // [43:43] is the sub-list for method output_type
-	43, // [43:43] is the sub-list for method input_type
-	43, // [43:43] is the sub-list for extension type_name
-	43, // [43:43] is the sub-list for extension extendee
-	0,  // [0:43] is the sub-list for field type_name
+	43, // 43: criteria.v1.RunOutputs.Output.typed_value:type_name -> google.protobuf.Value
+	44, // [44:44] is the sub-list for method output_type
+	44, // [44:44] is the sub-list for method input_type
+	44, // [44:44] is the sub-list for extension type_name
+	44, // [44:44] is the sub-list for extension extendee
+	0,  // [0:44] is the sub-list for field type_name
 }
 
 func init() { file_criteria_v1_events_proto_init() }
