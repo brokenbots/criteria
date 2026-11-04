@@ -22,6 +22,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 
 	criteriav2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
@@ -32,7 +33,7 @@ type outcomeSink struct {
 	fakeSink
 	defaulted []struct{ step, orig, mapped string }
 	unknown   []struct{ step, outcome string }
-	outputs   []map[string]string
+	outputs   []*pb.RunOutputs_Output
 }
 
 func (s *outcomeSink) OnStepOutcomeDefaulted(step, orig, mapped string) {
@@ -49,7 +50,7 @@ func (s *outcomeSink) OnStepOutcomeInvalid(step, outcome string, issues []string
 
 func (s *outcomeSink) OnAgentPromptInjected(string, string, string, string, time.Time) {}
 
-func (s *outcomeSink) OnRunOutputs(outputs []map[string]string) {
+func (s *outcomeSink) OnRunOutputs(outputs []*pb.RunOutputs_Output) {
 	s.outputs = append(s.outputs, outputs...)
 }
 
@@ -310,7 +311,7 @@ state "done" { terminal = true }`)
 	// Verify OnRunOutputs was called with projected values and correct encoding.
 	outputMap := make(map[string]string)
 	for _, o := range sink.outputs {
-		outputMap[o["name"]] = o["value"]
+		outputMap[o.GetName()] = o.GetValue()
 	}
 	if got, want := outputMap["status"], `"from_return"`; got != want {
 		t.Errorf("output status: got %q want %q", got, want)
@@ -318,6 +319,13 @@ state "done" { terminal = true }`)
 	// count=42 is a number literal; it must be encoded as "42" (not "\"42\"").
 	if got, want := outputMap["count"], "42"; got != want {
 		t.Errorf("output count: got %q want %q (number must not be double-quoted)", got, want)
+	}
+	// The typed sibling must carry the number natively — not a string the
+	// consumer must JSON-parse.
+	for _, o := range sink.outputs {
+		if o.GetName() == "count" && o.GetTypedValue().GetNumberValue() != 42 {
+			t.Errorf("native typed_value for count: got %v, want 42", o.GetTypedValue())
+		}
 	}
 }
 
@@ -499,7 +507,7 @@ func TestStep_OutcomeOutput_SubworkflowOutputAvailable(t *testing.T) {
 	// OnRunOutputs should contain result = "\"hello\"" (JSON-encoded string).
 	outputMap := make(map[string]string)
 	for _, o := range sink.outputs {
-		outputMap[o["name"]] = o["value"]
+		outputMap[o.GetName()] = o.GetValue()
 	}
 	if got, want := outputMap["result"], `"hello"`; got != want {
 		t.Errorf("subworkflow output projection: result = %q, want %q", got, want)

@@ -23,6 +23,8 @@ import (
 	"github.com/brokenbots/criteria/internal/engine"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
+
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 // testSink captures the terminal state of a workflow run.
@@ -60,7 +62,7 @@ func (s *testSink) OnStepIterationItem(string, int, string)                     
 func (s *testSink) OnScopeIterCursorSet(string)                                   {}
 func (s *testSink) OnAdapterLifecycle(string, string, string, string)             {}
 func (s *testSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent)   {}
-func (s *testSink) OnRunOutputs([]map[string]string)                              {}
+func (s *testSink) OnRunOutputs([]*pb.RunOutputs_Output)                              {}
 func (s *testSink) OnStepOutcomeDefaulted(string, string, string)                 {}
 func (s *testSink) OnStepOutcomeUnknown(string, string)                           {}
 func (s *testSink) OnStepOutcomeInvalid(string, string, []string, int)            {}

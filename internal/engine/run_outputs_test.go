@@ -6,6 +6,9 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/zclconf/go-cty/cty"
+	structpb "google.golang.org/protobuf/types/known/structpb"
+
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 
 	"github.com/brokenbots/criteria/workflow"
 )
@@ -59,13 +62,19 @@ func TestEvalRunOutputs_Basic(t *testing.T) {
 	// The key assertion: the rendered value must equal the seeded steps.my_step.result.
 	// This proves steps.* is accessible in the eval context.
 	// renderCtyValue JSON-marshals the cty value, so a string is wrapped in quotes.
-	if outputs[0]["value"] != `"step completed successfully"` {
-		t.Fatalf("expected rendered value %q (proves steps.* traversal), got %q", `"step completed successfully"`, outputs[0]["value"])
+	if outputs[0].GetValue() != `"step completed successfully"` {
+		t.Fatalf("expected rendered value %q (proves steps.* traversal), got %q", `"step completed successfully"`, outputs[0].GetValue())
 	}
 
 	// Verify output name
-	if outputs[0]["name"] != "step_result" {
-		t.Fatalf("expected output name 'step_result', got %q", outputs[0]["name"])
+	if outputs[0].GetName() != "step_result" {
+		t.Fatalf("expected output name 'step_result', got %q", outputs[0].GetName())
+	}
+
+	// The typed sibling must carry the string natively, not as a JSON-
+	// encoded double of the display render.
+	if got := outputs[0].GetTypedValue().GetStringValue(); got != "step completed successfully" {
+		t.Fatalf("expected typed_value string %q, got %v", "step completed successfully", outputs[0].GetTypedValue())
 	}
 }
 
@@ -161,8 +170,138 @@ func TestEvalRunOutputs_TypeCoercion(t *testing.T) {
 		t.Fatalf("expected 1 output, got %d", len(outputs))
 	}
 
-	if outputs[0]["name"] != "list_output" {
-		t.Fatalf("expected output name 'list_output', got %q", outputs[0]["name"])
+	if outputs[0].GetName() != "list_output" {
+		t.Fatalf("expected output name 'list_output', got %q", outputs[0].GetName())
+	}
+}
+
+// TestEvalRunOutputs_TypedValueKinds pins the typed sibling across the cty
+// kinds: each output carries the native google.protobuf.Value form alongside
+// the display render, with lists, objects, booleans, numbers, and nulls
+// round-tripping without a consumer-side JSON parse.
+func TestEvalRunOutputs_TypedValueKinds(t *testing.T) {
+	g := &workflow.FSMGraph{
+		Outputs: make(map[string]*workflow.OutputNode),
+	}
+	st := &RunState{
+		Vars: map[string]cty.Value{
+			"steps": cty.ObjectVal(map[string]cty.Value{
+				"s": cty.ObjectVal(map[string]cty.Value{
+					"text":  cty.StringVal("hello"),
+					"count": cty.NumberIntVal(42),
+					"ratio": cty.NumberFloatVal(1.5),
+					"flag":  cty.BoolVal(true),
+					"empty": cty.NullVal(cty.String),
+					"list":  cty.TupleVal([]cty.Value{cty.StringVal("a"), cty.NumberIntVal(2)}),
+					"obj": cty.ObjectVal(map[string]cty.Value{
+						"nested": cty.StringVal("value"),
+						"deep":   cty.NumberIntVal(7),
+					}),
+				}),
+			}),
+		},
+	}
+
+	mkExpr := func(src string) hclsyntax.Expression {
+		expr, diags := hclsyntax.ParseExpression([]byte(src), "test.hcl", hcl.Pos{Line: 1, Column: 1})
+		if diags.HasErrors() {
+			t.Fatalf("parse expr %q: %v", src, diags.Error())
+		}
+		return expr
+	}
+
+	for _, tc := range []struct {
+		name string
+		expr string
+	}{
+		{"text", "steps.s.text"},
+		{"count", "steps.s.count"},
+		{"ratio", "steps.s.ratio"},
+		{"flag", "steps.s.flag"},
+		{"empty", "steps.s.empty"},
+		{"list", "steps.s.list"},
+		{"obj", "steps.s.obj"},
+	} {
+		g.Outputs[tc.name] = &workflow.OutputNode{
+			Name:  tc.name,
+			Value: mkExpr(tc.expr),
+		}
+		g.OutputOrder = append(g.OutputOrder, tc.name)
+	}
+
+	outputs, err := evalRunOutputs(g, st)
+	if err != nil {
+		t.Fatalf("evalRunOutputs failed: %v", err)
+	}
+
+	byName := make(map[string]*pb.RunOutputs_Output, len(outputs))
+	for _, out := range outputs {
+		byName[out.GetName()] = out
+	}
+
+	if got := byName["text"].GetTypedValue().GetStringValue(); got != "hello" {
+		t.Errorf("text typed_value: got %v", byName["text"].GetTypedValue())
+	}
+	if got := byName["count"].GetTypedValue().GetNumberValue(); got != 42 {
+		t.Errorf("count typed_value: got %v", byName["count"].GetTypedValue())
+	}
+	if got := byName["ratio"].GetTypedValue().GetNumberValue(); got != 1.5 {
+		t.Errorf("ratio typed_value: got %v", byName["ratio"].GetTypedValue())
+	}
+	if !byName["flag"].GetTypedValue().GetBoolValue() {
+		t.Errorf("flag typed_value: got %v", byName["flag"].GetTypedValue())
+	}
+	if _, isNull := byName["empty"].GetTypedValue().GetKind().(*structpb.Value_NullValue); !isNull {
+		t.Errorf("empty typed_value: want null, got %v", byName["empty"].GetTypedValue())
+	}
+	listVals := byName["list"].GetTypedValue().GetListValue().GetValues()
+	if len(listVals) != 2 || listVals[0].GetStringValue() != "a" || listVals[1].GetNumberValue() != 2 {
+		t.Errorf("list typed_value: got %v", byName["list"].GetTypedValue())
+	}
+	objFields := byName["obj"].GetTypedValue().GetStructValue().GetFields()
+	if objFields["nested"].GetStringValue() != "value" || objFields["deep"].GetNumberValue() != 7 {
+		t.Errorf("obj typed_value: got %v", byName["obj"].GetTypedValue())
+	}
+}
+
+// TestEvalRunOutputs_UnknownTypedValue renders null: an unknown cty value
+// cannot be marshaled, so both the display render and the typed sibling agree
+// on null.
+func TestEvalRunOutputs_UnknownTypedValue(t *testing.T) {
+	g := &workflow.FSMGraph{
+		Outputs: make(map[string]*workflow.OutputNode),
+	}
+	st := &RunState{
+		Vars: map[string]cty.Value{
+			"steps": cty.ObjectVal(map[string]cty.Value{
+				"s": cty.ObjectVal(map[string]cty.Value{
+					"val": cty.DynamicVal,
+				}),
+			}),
+		},
+	}
+	expr, diags := hclsyntax.ParseExpression([]byte(`steps.s.val`), "test.hcl", hcl.Pos{Line: 1, Column: 1})
+	if diags.HasErrors() {
+		t.Fatalf("parse expr: %v", diags.Error())
+	}
+	g.Outputs["unknown_out"] = &workflow.OutputNode{
+		Name:  "unknown_out",
+		Value: expr,
+	}
+	g.OutputOrder = append(g.OutputOrder, "unknown_out")
+
+	outputs, err := evalRunOutputs(g, st)
+	if err != nil {
+		t.Fatalf("evalRunOutputs failed: %v", err)
+	}
+	if len(outputs) != 1 {
+		t.Fatalf("expected 1 output, got %d", len(outputs))
+	}
+	if got := outputs[0].GetValue(); got != "null" {
+		t.Fatalf("expected display render \"null\", got %q", got)
+	}
+	if _, isNull := outputs[0].GetTypedValue().GetKind().(*structpb.Value_NullValue); !isNull {
+		t.Fatalf("expected typed_value null, got %v", outputs[0].GetTypedValue())
 	}
 }
 
@@ -223,12 +362,12 @@ func TestEvalRunOutputs_EvalContextAvailable(t *testing.T) {
 
 	// The key assertion: the rendered value must equal the seeded steps.build_step.version.
 	// This proves steps.* is accessible in the eval context.
-	if outputs[0]["value"] != `"v1.2.3"` {
-		t.Fatalf("expected rendered value %q (proves steps.* traversal), got %q", `"v1.2.3"`, outputs[0]["value"])
+	if outputs[0].GetValue() != `"v1.2.3"` {
+		t.Fatalf("expected rendered value %q (proves steps.* traversal), got %q", `"v1.2.3"`, outputs[0].GetValue())
 	}
 
 	// Verify output name
-	if outputs[0]["name"] != "deployed_version" {
-		t.Fatalf("expected output name 'deployed_version', got %q", outputs[0]["name"])
+	if outputs[0].GetName() != "deployed_version" {
+		t.Fatalf("expected output name 'deployed_version', got %q", outputs[0].GetName())
 	}
 }

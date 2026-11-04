@@ -15,6 +15,8 @@ import (
 	"github.com/brokenbots/criteria/internal/engine"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/workflowtest"
+
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
 func compileHCL(t *testing.T, src string) *workflow.FSMGraph {
@@ -91,7 +93,7 @@ func (s *switchSink) OnStepIterationItem(string, int, string)                   
 func (s *switchSink) OnScopeIterCursorSet(string)                                 {}
 func (s *switchSink) OnAdapterLifecycle(string, string, string, string)           {}
 func (s *switchSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent) {}
-func (s *switchSink) OnRunOutputs([]map[string]string)                            {}
+func (s *switchSink) OnRunOutputs([]*pb.RunOutputs_Output) {}
 func (s *switchSink) OnStepOutcomeDefaulted(string, string, string)               {}
 func (s *switchSink) OnStepOutcomeUnknown(string, string)                         {}
 func (s *switchSink) OnStepOutcomeInvalid(string, string, []string, int)          {}

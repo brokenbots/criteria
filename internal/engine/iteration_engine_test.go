@@ -1803,7 +1803,7 @@ func TestIter_AggregateOutcome_ReturnOutputProjection(t *testing.T) {
 
 	outputMap := make(map[string]string)
 	for _, o := range sink.outputs {
-		outputMap[o["name"]] = o["value"]
+		outputMap[o.GetName()] = o.GetValue()
 	}
 	if got, want := outputMap["done"], `"yes"`; got != want {
 		t.Errorf("aggregate return output: done = %q, want %q", got, want)

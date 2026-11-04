@@ -15,6 +15,8 @@ import (
 	ctyjson "github.com/zclconf/go-cty/cty/json"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
+
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
@@ -199,7 +201,7 @@ type loopOutputSink struct {
 	fakeSink
 	mu         sync.Mutex
 	stepOut    map[string]map[string]string
-	runOutputs []map[string]string
+	runOutputs []*pb.RunOutputs_Output
 	life       [][4]string // stepName, adapterName, status, detail
 }
 
@@ -216,7 +218,7 @@ func (s *loopOutputSink) OnStepOutputCaptured(step string, outputs map[string]st
 	s.stepOut[step] = cp
 }
 
-func (s *loopOutputSink) OnRunOutputs(outputs []map[string]string) {
+func (s *loopOutputSink) OnRunOutputs(outputs []*pb.RunOutputs_Output) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.runOutputs = append(s.runOutputs, outputs...)
@@ -380,7 +382,7 @@ func TestAdapterToolCallLoop_EngineEndToEnd(t *testing.T) {
 	}
 	gotRunOutputs := make(map[string]string, len(sink.runOutputs))
 	for _, o := range sink.runOutputs {
-		gotRunOutputs[o["name"]] = o["value"]
+		gotRunOutputs[o.GetName()] = o.GetValue()
 	}
 	for name, want := range wantRunOutputs {
 		if got := gotRunOutputs[name]; got != want {
