@@ -82,7 +82,7 @@ func NewServeAdapterCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&varOverrides, "var", nil, "bind a workflow variable as k=v (repeatable; engine-coerced like --var on apply)")
 	cmd.Flags().StringVar(&adapterName, "adapter-name", "", "override the adapter identity reported to the peer host (default: CRITERIA_ADAPTER_NAME, then the workflow name)")
 	cmd.Flags().StringVar(&adapterVers, "adapter-version", "", "override the adapter version reported to the peer host (default: CRITERIA_ADAPTER_VERSION, then the criteria build version)")
-	cmd.Flags().BoolVar(&allowUnsigned, "allow-unsigned", false, "allow compiling a workflow without a signature when signature verification is strict")
+	cmd.Flags().BoolVar(&allowUnsigned, "allow-unsigned", false, "Skip adapter signature verification (also via CRITERIA_ALLOW_UNSIGNED; refused when verification is strict)")
 	return cmd
 }
 

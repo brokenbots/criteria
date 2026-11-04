@@ -13,8 +13,11 @@ type PullContext struct {
 	// (off|warn|strict). Empty means not set.
 	WorkflowVerification string
 
-	// AllowUnsigned is true when the --allow-unsigned CLI flag is set,
-	// forcing ModeOff for this invocation only.
+	// AllowUnsigned is true when the --allow-unsigned CLI flag is set or
+	// CRITERIA_ALLOW_UNSIGNED is truthy, lowering verification to ModeOff for
+	// this invocation. It only ever lowers a warn/unset posture: when the
+	// workflow setting — or, once the unset posture resolves strict, the
+	// default — is strict, PolicyFor refuses the override instead.
 	AllowUnsigned bool
 
 	// GlobalConfigPath is the path to the global HCL config file. When empty
@@ -28,15 +31,19 @@ type PullContext struct {
 	TrustedKeys []KeyIdentity
 }
 
-// PolicyFor resolves the effective Policy for a pull operation, combining:
-//   - global config at ~/.criteria/config.hcl (trusted_issuers, etc.)
-//   - workflow-level "verification" setting (off|warn|strict)
-//   - --allow-unsigned CLI flag (forces ModeOff for this invocation only)
+// PolicyFor resolves the effective Policy for a verification-consuming
+// operation, combining:
+//   - workflow-level "verification" setting (off|warn|strict), falling back
+//     to the ModeStrict SDK default when unset
+//   - the --allow-unsigned CLI flag / CRITERIA_ALLOW_UNSIGNED env override
+//     (forces ModeOff for this invocation only)
+//
+// The override is resolved last and can only LOWER a warn/unset posture to
+// ModeOff; when the posture resolves to strict — via an explicit workflow
+// setting now, or via the unset default once the transition default flips —
+// the override is refused with an error naming the conflict. An env override
+// must never silently defeat an explicit strict trust decision.
 func PolicyFor(ctx PullContext) (Policy, error) {
-	if ctx.AllowUnsigned {
-		return Policy{Mode: ModeOff}, nil
-	}
-
 	// Start from defaults (decision D-WS48-1): trust the well-known CI OIDC
 	// issuers (DefaultTrustedIssuers, incl. GitHub Actions) and accept any
 	// subject ("*") at first lock. The *specific* identity is then pinned into
@@ -60,6 +67,19 @@ func PolicyFor(ctx PullContext) (Policy, error) {
 		default:
 			return Policy{}, fmt.Errorf("invalid workflow verification mode %q", ctx.WorkflowVerification)
 		}
+	}
+
+	// Resolution order is deliberate: the trust posture is resolved from the
+	// workflow setting (or the built-in default) BEFORE the unsigned override
+	// is considered, so the override can never silently win over an explicit
+	// strict trust decision. Warn/unset postures are lowered to ModeOff for
+	// this invocation.
+	if ctx.AllowUnsigned {
+		if policy.Mode == ModeStrict {
+			return Policy{}, fmt.Errorf(
+				"strict verification conflicts with the unsigned override (--allow-unsigned flag or CRITERIA_ALLOW_UNSIGNED env); unset it or lower the workflow verification to warn")
+		}
+		return Policy{Mode: ModeOff}, nil
 	}
 
 	// Attach the CLI-resolved trusted keys (enterprise key mode, WS47). The CLI

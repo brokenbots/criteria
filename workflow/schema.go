@@ -210,8 +210,8 @@ type WorkflowHeaderSpec struct {
 	Policy             *PolicySpec    `hcl:"policy,block"`
 	// Verification is the workflow-level signature-verification posture for OCI
 	// adapters: off|warn|strict. Empty means the CLI transition default applies.
-	// The CLI override (--allow-unsigned / CRITERIA_ALLOW_UNSIGNED) takes
-	// precedence over this attribute.
+	// The CLI override (--allow-unsigned / CRITERIA_ALLOW_UNSIGNED) lowers a
+	// warn or unset posture; it is refused when the posture resolves to strict.
 	Verification string `hcl:"verification,optional"`
 }
 

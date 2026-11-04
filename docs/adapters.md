@@ -154,7 +154,7 @@ cleared with `criteria adapter prune --unattributed-only`.
 
 | Command | Purpose |
 |---|---|
-| `criteria adapter pull <ref>` | Fetch an artifact into the cache (verifies signature). `--allow-unsigned` to skip; `--registry <alias>` for short-name resolution. |
+| `criteria adapter pull <ref>` | Fetch an artifact into the cache (verifies signature). `--allow-unsigned` to skip (refused when the posture is strict); `--registry <alias>` for short-name resolution. |
 | `criteria adapter list` | List cached (`--installed`) or workflow-referenced (`--referenced`) adapters. |
 | `criteria adapter info <name>` | Print the cached manifest and verified signer identity. |
 | `criteria adapter where <name>` | Print the on-disk binary path for this platform. |
@@ -324,6 +324,18 @@ The model is **"the lockfile is the trust anchor"**: `criteria adapter lock`
 verifies the artifact's signature and pins the signer (key fingerprint, or
 keyless issuer + subject); `pull`/`compile`/`apply` then re-verify against that
 pin on every run. A changed signer surfaces as a `SignerChanged` lockfile diff.
+What each verification mode enforces on that re-verification:
+
+- **strict** — fail-closed: a verification failure aborts the command, and the
+  verified signer must match the pin. The unsigned override
+  (`--allow-unsigned` / `CRITERIA_ALLOW_UNSIGNED`) is refused with a diagnostic
+  when the posture resolves to strict — unset the override or lower the
+  workflow to `warn` instead.
+- **warn** — a verification failure is logged and the operation proceeds; the
+  pin is asserted only when verification produced a signer. A pinned signer
+  that fails re-verification fails closed under warn too (the pin is the trust
+  anchor in every non-`off` mode).
+- **off** — verification is skipped entirely, including the pin check.
 
 - **Keyless (default in CI, public).** `criteria adapter publish --keyless`
   obtains an ephemeral key, has Fulcio certify it against the workflow's OIDC
@@ -360,11 +372,15 @@ pin on every run. A changed signer surfaces as a `SignerChanged` lockfile diff.
   verifies fully offline (no Fulcio, Rekor, or TUF).
 - **Verification posture.** The workflow-level setting
   `verification = "strict" | "warn" | "off"` controls failure handling. The CLI
-  override `--allow-unsigned` (or `CRITERIA_ALLOW_UNSIGNED=1`) skips verification
-  for a single invocation; it is available on `pull`, `lock`, `compile`, and
-  `apply` for local development and CI. Precedence: `--allow-unsigned` > env >
-  workflow `verification` > the built-in default. During the signing-completion
-  transition the effective default is `warn` (log, don't fail) so legacy/unsigned
+  override `--allow-unsigned` (or `CRITERIA_ALLOW_UNSIGNED=1`) lowers
+  verification to `off` for a single invocation; it is available on `pull`,
+  `lock`, `compile`, and `apply` for local development and CI. The override may
+  only lower a `warn` (or unset) posture: when the posture resolves to
+  `strict`, the command refuses the override with a diagnostic instead of
+  silently disabling verification (an override must never defeat an explicit
+  strict trust decision). Override-surface precedence: flag > env; both lose to
+  an explicit strict workflow setting. During the signing-completion transition
+  the effective default is `warn` (log, don't fail) so legacy/unsigned
   artifacts don't break `lock`/`apply`; it returns to `strict` once keyless
   verification is confirmed in CI.
 - **TUF / air-gapped.** Keyless verification needs the Sigstore TUF root (fetched

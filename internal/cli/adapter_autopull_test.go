@@ -77,8 +77,16 @@ func TestAutoPullPolicy(t *testing.T) {
 		spec := &workflow.Spec{Header: &workflow.WorkflowHeaderSpec{Verification: "off"}}
 		policy, err := autoPullPolicy(workflowDir, spec, true)
 		require.NoError(t, err)
-		// allowUnsigned forces ModeOff regardless of the workflow attribute.
+		// The override lowers the off posture to ModeOff for this invocation.
 		assert.Equal(t, signing.ModeOff, policy.Mode)
+	})
+
+	t.Run("strict_refuses_unsigned_override", func(t *testing.T) {
+		spec := &workflow.Spec{Header: &workflow.WorkflowHeaderSpec{Verification: "strict"}}
+		_, err := autoPullPolicy(workflowDir, spec, true)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "strict verification conflicts with")
+		assert.Contains(t, err.Error(), "CRITERIA_ALLOW_UNSIGNED")
 	})
 
 	t.Run("strict_no_keys", func(t *testing.T) {

@@ -270,10 +270,6 @@ func readAdapterManifest(layout *oci.Layout, dg digest.Digest, key string) (*man
 	return m, nil
 }
 
-// verifyAgainstPin verifies the cached artifact under a policy tightened to the
-// lockfile-pinned signer (the trust anchor), then confirms the verified signer
-// matches the pin. A nil signer (ModeOff, or a ModeWarn failure) skips the pin
-// check; see policyForPin and assertSignerMatchesPin.
 // annotateProvenance records the original reference and source URL on a cached
 // manifest so `criteria adapter list` can attribute the entry. It is a no-op
 // when the entry carries no provenance.
@@ -294,13 +290,19 @@ func annotateProvenance(layout *oci.Layout, dg digest.Digest, entry *lockfile.Lo
 	return nil
 }
 
+// verifyAgainstPin verifies the cached artifact under a policy tightened to the
+// lockfile-pinned signer (the trust anchor), then confirms the verified signer
+// matches the pin. ModeOff skips verification and, with it, the pin check; in
+// every other mode a nil signer — a warn-mode verification failure downgraded
+// to a proceed — surfaces as an error so a pinned signer is never silently
+// bypassed. See policyForPin and assertSignerMatchesPin.
 func verifyAgainstPin(ctx context.Context, key string, layout *oci.Layout, dg digest.Digest, entry *lockfile.LockedAdapter, policy *signing.Policy) error {
 	effective := policyForPin(policy, entry.Signature)
 	signer, err := signing.Verify(ctx, layout, dg, effective)
 	if err != nil {
 		return fmt.Errorf("adapter %q signature verification: %w", key, err)
 	}
-	return assertSignerMatchesPin(key, signer, entry.Signature)
+	return assertSignerMatchesPin(key, signer, entry.Signature, effective.Mode)
 }
 
 func maybePullContainerImage(ctx context.Context, key string, m *manifest.Manifest) error {

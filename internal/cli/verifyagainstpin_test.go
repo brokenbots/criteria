@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/opencontainers/go-digest"
@@ -140,5 +141,60 @@ func TestVerifyAgainstPin_AllowUnsigned_Skips(t *testing.T) {
 	}
 	if err := verifyAgainstPin(t.Context(), "shell.default", l, dg, entry, &policy); err != nil {
 		t.Fatalf("ModeOff should skip verification, got: %v", err)
+	}
+}
+
+// TestVerifyAgainstPin_WarnMode_MatchingSignerPasses proves warn does verify and
+// assert the pin when verification produces a signer: warn only downgrades
+// failures.
+func TestVerifyAgainstPin_WarnMode_MatchingSignerPasses(t *testing.T) {
+	l, dg, pubDER, fp := writeKeySignedArtifact(t)
+
+	policy := signing.Policy{
+		Mode:        signing.ModeWarn,
+		TrustedKeys: []signing.KeyIdentity{{Algorithm: "ed25519", Fingerprint: fp, RawKey: pubDER}},
+	}
+	entry := &lockfile.LockedAdapter{
+		Signature: &lockfile.LockedSignature{Key: &lockfile.LockedKey{Algorithm: "ed25519", Fingerprint: fp}},
+	}
+
+	if err := verifyAgainstPin(t.Context(), "shell.default", l, dg, entry, &policy); err != nil {
+		t.Fatalf("warn mode with a verifying pinned signer should pass: %v", err)
+	}
+}
+
+// TestVerifyAgainstPin_WarnMode_FailedVerificationOfPinnedSigner_FailsClosed is
+// the trust-anchor regression: under warn a failed verification degrades to a
+// proceed with no signer identity, and a pinned signer must not be bypassed
+// that way — the call must fail closed. (Before the enforcement existed, this
+// shape silently proceeded with an unpinned-unasserted trust anchor.)
+func TestVerifyAgainstPin_WarnMode_FailedVerificationOfPinnedSigner_FailsClosed(t *testing.T) {
+	l, dg, _, _ := writeKeySignedArtifact(t)
+
+	// A trusted key that is NOT the artifact's signer: verification fails, and
+	// under warn that degrades to a proceed with no signer.
+	otherPub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherDER, err := x509.MarshalPKIXPublicKey(otherPub)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	policy := signing.Policy{
+		Mode:        signing.ModeWarn,
+		TrustedKeys: []signing.KeyIdentity{{Algorithm: "ed25519", Fingerprint: "rotated", RawKey: otherDER}},
+	}
+	entry := &lockfile.LockedAdapter{
+		Signature: &lockfile.LockedSignature{Key: &lockfile.LockedKey{Algorithm: "ed25519", Fingerprint: "rotated"}},
+	}
+
+	err = verifyAgainstPin(t.Context(), "shell.default", l, dg, entry, &policy)
+	if err == nil {
+		t.Fatal("expected warn-mode verification failure with a pinned signer to fail closed, got nil")
+	}
+	if !strings.Contains(err.Error(), "pins a signer but verification produced none") {
+		t.Errorf("expected pin-enforcement diagnostic, got: %v", err)
 	}
 }
