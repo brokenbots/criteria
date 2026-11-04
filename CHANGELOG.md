@@ -140,6 +140,15 @@ product version). The release tag and date are finalized by the release gate.
   `pull`/`lock`/`compile`/`apply`. The effective default is `warn` during the
   signing-completion transition and returns to `strict` once keyless verification
   is confirmed in CI.
+- **Signature payload digest binding enforced.** Verification now requires the
+  simple-signing payload's `critical.image.docker-manifest-digest` to match the
+  artifact digest under verification — the referrer record in the local, writable
+  OCI layout is not a trust anchor on its own, so a real signature for digest A
+  re-attached to artifact B no longer verifies. A signature manifest carrying no
+  simple-signing payload layer is a hard error; the "first blob that exists"
+  fallback is gone. Signatures whose payload lacks the digest field stop
+  verifying; migrate by re-publishing the adapter (`criteria adapter publish`
+  writes the binding).
 - **New `criteria adapter` CLI group:** `pull`, `lock`, `list`, `info`, `where`,
   `remove`, `prune`, `dev`, `publish`. `publish` supports `--keyless`,
   `--sign-key`, and `--image` (record an already-pushed runnable container image).
