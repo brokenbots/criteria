@@ -53,7 +53,7 @@ func (r *dialScopeRegistrar) RegisterScopeOnDial(adapterName, scope, presentedTo
 	if err := r.sessions.RegisterRemoteScopeForEnv(r.envKey, scope, token); err != nil {
 		return fmt.Errorf("register surviving scope token: %w", err)
 	}
-	slog.Info("re-registered surviving scope token at dial time (KB-25)",
+	slog.Info("re-registered surviving scope token at dial time",
 		"environment", r.envKey, "scope", scope, "adapter_identity", adapterName)
 	return nil
 }
