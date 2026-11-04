@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -838,15 +839,32 @@ func shutdownSession(ctx context.Context, s *sessionState) error {
 
 	select {
 	case err := <-waitDone:
-		if err != nil && !strings.Contains(err.Error(), "signal: killed") {
-			return fmt.Errorf("mcp: wait server exit: %w", err)
+		if err == nil || isSignalExit(err, syscall.SIGKILL) {
+			return nil
 		}
-		return nil
+		return fmt.Errorf("mcp: wait server exit: %w", err)
 	case <-time.After(closeGrace):
 		_ = s.cmd.Process.Kill()
 		_ = <-waitDone
 		return nil
 	}
+}
+
+// isSignalExit reports whether err is the Wait error of a child process the
+// kernel force-terminated with the given signal. The check is typed
+// (*exec.ExitError with a signaled WaitStatus) rather than a match on the
+// error's text: stdlib's process-death wording ("signal: killed") is a
+// presentation detail, not contractual across Go releases.
+func isSignalExit(err error, sig syscall.Signal) bool {
+	if err == nil {
+		return false
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return false
+	}
+	ws, ok := exitErr.Sys().(syscall.WaitStatus)
+	return ok && ws.Signaled() && ws.Signal() == sig
 }
 
 func resultEvent(outcome string) *v2.ExecuteEvent {
