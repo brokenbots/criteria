@@ -24,6 +24,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/brokenbots/criteria/internal/cli/applytest"
@@ -397,8 +398,8 @@ func TestWorkflowGraphs_LocalFlatShapeRegression(t *testing.T) {
 	// no key re-spelling anywhere (camelCase sourcePath lives on the layer
 	// entry, not inside the body).
 	childBody := cri299ParseBody(t, childEntry)
-	if !reflect.DeepEqual(childBody, cri299BodyWithoutSubworkflows(t, compileLayers[0]["body"].(map[string]any))) {
-		t.Fatalf("child wire body differs from leaf compile-JSON body\n wire: %v\n compile: %v", childBody, compileLayers[0]["body"])
+	if diff := cmp.Diff(cri299BodyWithoutSubworkflows(t, compileLayers[0]["body"].(map[string]any)), childBody); diff != "" {
+		t.Fatalf("child wire body differs from leaf compile-JSON body (-compile +wire):\n%s", diff)
 	}
 
 	// Depth 2: grand is its own sibling entry right after child, in the same
@@ -412,8 +413,8 @@ func TestWorkflowGraphs_LocalFlatShapeRegression(t *testing.T) {
 		t.Fatalf("sibling layer sourcePath = %v, want compile source_path %v", got, compileGrandLayer["source_path"])
 	}
 	grandBody := cri299ParseBody(t, grandEntry)
-	if !reflect.DeepEqual(grandBody, compileGrandLayer["body"].(map[string]any)) {
-		t.Fatalf("grand wire body differs from compile-JSON body\n wire: %v\n compile: %v", grandBody, compileGrandLayer["body"])
+	if diff := cmp.Diff(compileGrandLayer["body"].(map[string]any), grandBody); diff != "" {
+		t.Fatalf("grand wire body differs from compile-JSON body (-compile +wire):\n%s", diff)
 	}
 }
 
