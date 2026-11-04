@@ -1,6 +1,6 @@
 // Package runstate implements the minimal run-state HTTP server that backs the
 // embedded run viewer for local (non-orchestrator) runs, delivering the read
-// half of the CRI-255 loopback seam early (CRI-279/CRI-279's read scope).
+// half of the loopback control seam.
 //
 // The seam's plain-JSON contract is defined by its consumer
 // (parapet/packages/run-viewer/src/api/localRunDataSource.ts); the shapes here
@@ -52,7 +52,7 @@ type RunsPage struct {
 
 // Agent is a stub run-agent record (the criteriaId when known). The full
 // agent surface arrives with the orchestrator-backed path; a stub is
-// contract-acceptable for the local seam (CRI-279). Labels is always present
+// contract-acceptable for the local seam. Labels is always present
 // (an empty object for the stub) — the consumer type requires it.
 type Agent struct {
 	CriteriaID string            `json:"criteriaId,omitempty"`
@@ -103,8 +103,8 @@ const (
 	StatusRunning   = "running"
 	StatusSucceeded = "succeeded"
 	StatusFailed    = "failed"
-	// StatusPaused marks a run paused at a node or control-surface boundary
-	// (CRI-255). A paused run is live, its process alive; it is not terminal
+	// StatusPaused marks a run paused at a node or control-surface boundary.
+	// A paused run is live, its process alive; it is not terminal
 	// so no endedAt is stamped and it is exempt from checkpoint sweep.
 	StatusPaused = "paused"
 	// StatusCancelled marks a run the operator (or teardown) deliberately

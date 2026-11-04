@@ -315,7 +315,7 @@ func resolveLockNode(ctx context.Context, node *lockNode, upgrade bool, out io.W
 		}
 		if child.remotePin != nil {
 			newLF.WorkflowRefs = append(newLF.WorkflowRefs, *child.remotePin)
-			// M4.2 (CRI-228, ADR-0005 D4): a fetched child ships its own pins
+			// M4.2 (ADR-0005 D4): a fetched child ships its own pins
 			// for the rest of its cascade. Propagate them into the parent's
 			// lockfile, renamed with the declaring chain, so the parent's
 			// .criteria.lock.hcl pins the whole cascade. The child's lockfile

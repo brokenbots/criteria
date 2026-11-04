@@ -20,7 +20,7 @@ import (
 // invocation: the workflow being executed, the orchestrator it targets, and
 // the variable inputs supplied on the command line.
 //
-// CRI-125: when a runner pod restarts mid-run, the restarted process must not
+// When a runner pod restarts mid-run, the restarted process must not
 // silently start a second run (with a fresh run_id) against the same
 // workflow. Crash-recovery checkpoints store this fingerprint, so a restart
 // matches it and resumes — or keeps failed — the original run instead of
@@ -34,7 +34,7 @@ import (
 //
 // It returns "" when identity cannot be computed (unreadable var file, empty
 // workflow path). "" never matches a checkpoint fingerprint, so callers fall
-// back to the pre-CRI-125 behavior (start a fresh run) rather than
+// back to the pre-fingerprint behavior (start a fresh run) rather than
 // suppressing.
 func runIdentityFingerprint(workflowPath, serverURL string, varFiles, varOverrides []string) string {
 	h := sha256.New()
@@ -86,12 +86,12 @@ func runIdentityFingerprint(workflowPath, serverURL string, varFiles, varOverrid
 }
 
 // invocationIdentityMarkerName is the file persisted in every run data
-// directory recording the fingerprint (CRI-125) of the invocation that
+// directory recording the fingerprint of the invocation that
 // constructed the run's engines.
 const invocationIdentityMarkerName = "invocation-identity.json"
 
 // invocationIdentityMarker is the on-disk shape of the per-run invocation
-// fingerprint marker (CRI-304). Fresh replays that follow a checkpoint-
+// fingerprint marker. Fresh replays that follow a checkpoint-
 // consuming resume read these markers to find prior invocations of the same
 // logical run whose surviving per-scope adapter instances can be adopted
 // instead of wedging on fresh rotations.
@@ -140,10 +140,10 @@ func readInvocationIdentityMarker(dataDir string) (invocationIdentityMarker, err
 }
 
 // adoptablePriorRunDirs lists the run data directories of prior invocations
-// of the same logical run (CRI-304): directories under <stateDir>/runs whose
+// of the same logical run: directories under <stateDir>/runs whose
 // invocation-identity marker carries the fingerprint, excluding the caller's
 // own run and any run with an in-flight crash-recovery checkpoint (those are
-// owned by the CRI-125 resume sweep and must not be adopted from). The list
+// owned by the crash-recovery resume sweep and must not be adopted from). The list
 // is ordered newest marker first so a fresh replay prefers the most recent
 // prior invocation's surviving instances. An empty fingerprint yields nil:
 // identity is unavailable, so nothing is adoptable.
@@ -172,7 +172,7 @@ func adoptablePriorRunDirs(fingerprint, excludeRunID string) ([]string, error) {
 			continue
 		}
 		// A run with a live crash-recovery checkpoint is in-flight and owned
-		// by the CRI-125 resume sweep; never adopt from it.
+		// by the crash-recovery resume sweep; never adopt from it.
 		cpPath, cpErr := checkpointFilePath(entry.Name())
 		if cpErr != nil {
 			continue
@@ -185,7 +185,7 @@ func adoptablePriorRunDirs(fingerprint, excludeRunID string) ([]string, error) {
 		if markerErr != nil || marker.Fingerprint != fingerprint {
 			continue
 		}
-		// KB-227/CRI-323: a matching invocation whose scope registry is
+		// A matching invocation whose scope registry is
 		// sealed completed at a terminal status; its rotated tokens are
 		// retired and must never be adopted. The engine-side adoption gate
 		// remains the source of truth — this keeps completed directories out
@@ -203,7 +203,7 @@ func adoptablePriorRunDirs(fingerprint, excludeRunID string) ([]string, error) {
 	return dirs, nil
 }
 
-// engineAdoptionOptions returns the CRI-304 engine options for a run engine:
+// engineAdoptionOptions returns the engine options for a run engine:
 // persist the invocation-identity marker in the run's data directory and list
 // prior invocations of the same fingerprint whose surviving per-scope adapter
 // instances are adoptable. Failures degrade to no adoption — the engine then

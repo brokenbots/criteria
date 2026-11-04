@@ -23,7 +23,7 @@ func testHeartbeats(t *testing.T, name string, loader adapterhost.Loader, opts *
 	//
 	// In-tree fixtures read the registered heartbeat override
 	// (tunables.EnvHeartbeatInterval — it superseded the retired test-only
-	// cadence hatch, KB-132) and heartbeat faster than the production 30 s
+	// cadence hatch) and heartbeat faster than the production 30 s
 	// cadence so the idle-survival test can use a short threshold without
 	// waiting 90 s. Fixture subprocesses inherit it.
 	t.Setenv(tunables.EnvHeartbeatInterval, "50ms")

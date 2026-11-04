@@ -26,11 +26,11 @@ func (n *approvalNode) Name() string { return n.node.Name }
 //     consuming the resume context, then clears ResumePayload/PendingSignal,
 //     emits ApprovalDecision, and returns the matched outcome. Unknown
 //     decision values return an error and leave ResumePayload/PendingSignal
-//     intact so a retry or reattach sees the same context (CRI-56).
+//     intact so a retry or reattach sees the same context.
 func (n *approvalNode) Evaluate(ctx context.Context, st *RunState, deps Deps) (string, error) {
 	if st.ResumePayload != nil {
 		// Resumed: orchestrator delivered a decision. Validate it before
-		// consuming the resume context (CRI-56): the payload fields are
+		// consuming the resume context: the payload fields are
 		// cleared only once the decision is known-valid and the node commits
 		// to its outcome.
 		payload := st.ResumePayload

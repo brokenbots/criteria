@@ -11,7 +11,7 @@ import (
 )
 
 // RunMetadata is the run-scoped provenance record published at admission
-// (ADR-0005 D6; the RunMetadata pattern from CRI-131): the resolved workflow
+// (ADR-0005 D6): the resolved workflow
 // origin a run executed, so provenance stays answerable after the run
 // without re-deriving it from cache state. A run resolved from a remote
 // source records one record at runs/<run_id>/run-metadata.json under the
@@ -20,7 +20,7 @@ import (
 // The record is a JSON payload only: the wire (proto) event shape is
 // unchanged. Every recorded field is credential-free: the source is stored
 // through redactSourceForLog and the cache path derives from slugForSource.
-// Expected-pin enforcement on the recorded ref is CRI-226's job.
+// Expected-pin enforcement on the recorded ref happens at resolve time.
 type RunMetadata struct {
 	// Kind is the resolved source form: "git" or "archive".
 	Kind string `json:"kind,omitempty"`

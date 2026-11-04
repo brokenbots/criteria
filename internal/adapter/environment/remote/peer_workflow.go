@@ -1,7 +1,7 @@
 package remote
 
 // peer_workflow.go — parent-side mapping of a criteria-adapter session to
-// its child run (KB-95, ADR-0008 D2). The compile side treats the
+// its child run (ADR-0008 D2). The compile side treats the
 // criteria-child adapter like any other adapter (its handshake declares
 // step input/output), so all runtime behavior lives here:
 //
@@ -16,7 +16,7 @@ package remote
 //     then waits the bounded settle budget for the terminal journal evidence
 //     before the close proceeds — a run that fails to settle is force-settled
 //     with ControlRequest.kill_child plus a structured partial-teardown warn
-//     (KB-96, ADR-0008 D2 stop semantics; there is no detach in v0.6.0).
+//     (ADR-0008 D2 stop semantics; there is no detach in v0.6.0).
 
 import (
 	"context"
@@ -55,7 +55,7 @@ const peerCancelChildRunGraceMs = 15000
 
 // peerChildRunTeardownWait is the bounded budget the parent waits for the
 // cancelled child run's terminal journal evidence before force-settling
-// (KB-96 ADR-0008 D2). It matches the child's own cancel grace
+// (ADR-0008 D2). It matches the child's own cancel grace
 // (peerCancelChildRunGraceMs): a healthy child surfaces its terminal arm
 // well inside the budget, and a wedged one is force-settled exactly at it.
 const peerChildRunTeardownWait = time.Duration(peerCancelChildRunGraceMs) * time.Millisecond
@@ -86,7 +86,7 @@ type childRunRecord struct {
 
 // childRunOutcomeForceKilled is the parent-side outcome vocabulary for a
 // run settled through the ChildRunTeardownPartial journal arm (ADR-0008
-// D2, KB-96): the parent's settle grace expired and the kill_child landed
+// D2): the parent's settle grace expired and the kill_child landed
 // before the run's own terminal ever reached the journal.
 const childRunOutcomeForceKilled = "force_killed"
 
@@ -168,7 +168,7 @@ func (aj *adapterJournal) applyChildRunArmLocked(ev *criteriav1.SupervisionEvent
 	return ""
 }
 
-// settleChildRunPartialLocked (KB-96, ADR-0008 D2): the parent's force kill
+// settleChildRunPartialLocked (ADR-0008 D2): the parent's force kill
 // landed on an in-flight run whose terminal never journaled — the partial
 // arm is the child's last run truth, so it settles the run (deterministic
 // teardown: no waiter ever hangs on a killed run). A run the tracker never
@@ -276,7 +276,7 @@ func (ps *peerSession) removeChildWatch(aj *adapterJournal, runID string, watch 
 }
 
 // teardownInFlightChildRun tears down a live child run ahead of a session
-// close (KB-96, ADR-0008 D2 stop semantics). The sequence is:
+// close (ADR-0008 D2 stop semantics). The sequence is:
 //
 //  1. the cooperative cancel control (an empty run id means "the current
 //     one" on the child's control surface, covering a run the tracker has
@@ -293,14 +293,14 @@ func (ps *peerSession) removeChildWatch(aj *adapterJournal, runID string, watch 
 // The wait is detached from the caller's context (teardown paths race
 // context cancellation by design) and stays best-effort: every failure is
 // logged and the teardown proceeds. The run and both control verbs target
-// the given adapter's journal and control surface (KB-213): on a
+// the given adapter's journal and control surface: on a
 // multi-adapter conn the cancel/kill must reach this adapter's child, not
 // the conn's dial adapter.
 func (ps *peerSession) teardownInFlightChildRun(ctx context.Context, aj *adapterJournal) {
 	if !ps.hasPeerCapability(peerWorkflowV1Capability) {
 		return
 	}
-	// KB-95 contract preserved: the cancel is issued even when the tracker
+	// Child-run contract preserved: the cancel is issued even when the tracker
 	// shows nothing (the empty run id means "the current one" child-side,
 	// covering a run the parent has not observed yet).
 	rec, inFlight := ps.childRunInFlight(aj.name)
@@ -418,7 +418,7 @@ func (ps *peerSession) waitChildRunSettle(ctx context.Context, aj *adapterJourna
 }
 
 // childRunGuardPattern extracts the run id from the child's one-run
-// re-execute guard. The KB-94 wire shape is a message-only FailedPrecondition
+// re-execute guard. The wire shape is a message-only FailedPrecondition
 // status (`child run %q is still in flight for workflow %q; ...`), so the id
 // can only travel in the message; the parse is bounded to the quoted id and
 // no other message content is trusted.
@@ -450,7 +450,7 @@ func isPeerTransportLoss(err error) bool {
 	return false
 }
 
-// executeChildRunAware is peerHandle.Execute with the KB-95 child-run
+// executeChildRunAware is peerHandle.Execute with the workflow.v1 child-run
 // mapping (ADR-0008): one-shot execute semantics and crash adoption.
 //
 //   - the happy path is unchanged: ExecuteViaClient streams the step through

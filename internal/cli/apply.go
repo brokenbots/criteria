@@ -31,24 +31,24 @@ type applyOptions struct {
 	ui                   bool         // --ui: serve the loopback run-state server + run-viewer during local apply (default true)
 	uiPort               int          // --ui-port: loopback port for the run-state server (0 = auto)
 	controlAddr          string       // --control-addr: loopback listen address for the run's control listener ("host:port"; default random loopback port)
-	castleAddr           string       // --castle-addr: castle control plane base URL the run-viewer console proxies Login/Logout/ListSessions to (KB-328, local mode)
+	castleAddr           string       // --castle-addr: castle control plane base URL the run-viewer console proxies Login/Logout/ListSessions to (local mode)
 	serverBootstrapToken string       // --server-bootstrap-token: X-Server-Bootstrap value sent on Register; "file:<path>" reads the token from a file
 	subworkflowRoots     []string     // --subworkflow-root flag (repeatable); populates AllowedRoots on LocalSubWorkflowResolver
-	workflowRef          string       // --workflow-ref: caller-declared expected pin (git SHA or sha256:<digest>); run fails closed on mismatch (CRI-226)
+	workflowRef          string       // --workflow-ref: caller-declared expected pin (git SHA or sha256:<digest>); run fails closed on mismatch
 	warnsAsErrors        bool         // --warnings-as-errors: refuse to run when an adapter schema can't be verified
 	allowUnsigned        bool         // --allow-unsigned: skip adapter signature verification (WS46)
 	stdin                io.Reader    // stdin for local-mode approval prompts; nil → os.Stdin
 	log                  *slog.Logger // nil → newApplyLogger(); injectable for tests
-	// answersPath is the --answers <file> path (CRI-256 path 2):
+	// answersPath is the --answers <file> path:
 	// pre-populated, non-interactive approval/signal decisions keyed by paused
 	// node name. Local mode only; --server rejects it.
 	answersPath string
 	// stderr is the writer for prompt-related operator notes; nil → os.Stderr.
 	stderr io.Writer
-	// tty overrides the stdin TTY probe (default-mode selection, CRI-256);
+	// tty overrides the stdin TTY probe (default-mode selection);
 	// test-only seam. nil → probe os.Stdin.
 	tty func() bool
-	// origin is the resolved remote workflow source provenance (CRI-225);
+	// origin is the resolved remote workflow source provenance;
 	// nil for local sources. Populated by runApply from resolveWorkflowSource.
 	origin *WorkflowOrigin
 }
@@ -85,12 +85,12 @@ func NewApplyCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.ui, "ui", true, "Serve the local run viewer on loopback while a local run executes (local mode)")
 	cmd.Flags().IntVar(&opts.uiPort, "ui-port", 0, "Port for the local run viewer's run-state server (0 = auto-select; loopback only)")
 	cmd.Flags().StringVar(&opts.controlAddr, "control-addr", envOrDefault("CRITERIA_CONTROL_ADDR", ""), "Listen address (host:port) for the run's control/run-state listener (empty = random loopback port; loopback only; local mode)")
-	cmd.Flags().StringVar(&opts.castleAddr, "castle-addr", envOrDefault("CRITERIA_CASTLE_ADDR", ""), "Castle control plane base URL the run-viewer's console proxies Login/Logout/ListSessions to (KB-328: castle is the single source of truth for console login; ResolveResume stays local; local mode)")
+	cmd.Flags().StringVar(&opts.castleAddr, "castle-addr", envOrDefault("CRITERIA_CASTLE_ADDR", ""), "Castle control plane base URL the run-viewer's console proxies Login/Logout/ListSessions to (castle is the single source of truth for console login; ResolveResume stays local; local mode)")
 	cmd.Flags().StringArrayVar(&opts.subworkflowRoots, "subworkflow-root", nil, "Restrict subworkflow source resolution to this root path (repeatable; empty = no restriction)")
-	cmd.Flags().StringVar(&opts.workflowRef, "workflow-ref", "", "Expected ref/digest the workflow source must resolve to — a git commit SHA or sha256:<digest>; the run fails closed on mismatch (CRI-226)")
+	cmd.Flags().StringVar(&opts.workflowRef, "workflow-ref", "", "Expected ref/digest the workflow source must resolve to — a git commit SHA or sha256:<digest>; the run fails closed on mismatch")
 	cmd.Flags().BoolVar(&opts.warnsAsErrors, "warnings-as-errors", false, "Refuse to run when a warning is raised (e.g. an adapter whose schema could not be verified)")
 	cmd.Flags().BoolVar(&opts.allowUnsigned, "allow-unsigned", false, "Skip adapter signature verification (also via CRITERIA_ALLOW_UNSIGNED)")
-	cmd.Flags().StringVar(&opts.answersPath, "answers", "", "Resolve approval and signal-wait pauses from this JSON file instead of prompting: {\"<node>\": {\"decision\": \"approved|rejected\", \"reason\": \"...\"}} or {\"<node>\": {\"outcome\": \"<declared-outcome>\"}}; runs non-interactively (local mode, CRI-256)")
+	cmd.Flags().StringVar(&opts.answersPath, "answers", "", "Resolve approval and signal-wait pauses from this JSON file instead of prompting: {\"<node>\": {\"decision\": \"approved|rejected\", \"reason\": \"...\"}} or {\"<node>\": {\"outcome\": \"<declared-outcome>\"}}; runs non-interactively (local mode)")
 	return cmd
 }
 
@@ -98,7 +98,7 @@ func runApply(ctx context.Context, opts applyOptions) error {
 	if strings.TrimSpace(opts.workflowPath) == "" {
 		return errors.New("workflow path is required")
 	}
-	// KB-328: --castle-addr is a local-mode flag. The console surfaces of a
+	// --castle-addr is a local-mode flag. The console surfaces of a
 	// server-run belong to castle's own operator console, so combining it
 	// with --server is refused. The URL is validated eagerly here, against
 	// the same contract NewCastleConsole enforces but without building a
@@ -120,8 +120,8 @@ func runApply(ctx context.Context, opts applyOptions) error {
 
 	// ADR-0005 D1/D3: remote workflow sources (git refs, http(s) archives)
 	// materialize into cache/workflows/<slug>/<version> before any run
-	// plumbing starts; local paths pass through unchanged. ADR-0005 D7
-	// (CRI-226): a declared --workflow-ref pin is enforced at resolve time,
+	// plumbing starts; local paths pass through unchanged.
+	// ADR-0005 D7: a declared --workflow-ref pin is enforced at resolve time,
 	// before any execution.
 	resolvedPath, origin, err := resolveWorkflowSource(ctx, opts.workflowPath, opts.workflowRef)
 	if err != nil {
@@ -140,7 +140,7 @@ func runApply(ctx context.Context, opts applyOptions) error {
 			"cache_path", origin.Path,
 			"fetched_at", origin.FetchedAt)
 		opts.workflowPath = resolvedPath
-		// CRI-225: thread the resolved origin to the run admission points,
+		// Thread the resolved origin to the run admission points,
 		// which publish it into the run's metadata record.
 		opts.origin = origin
 	}

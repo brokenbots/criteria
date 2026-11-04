@@ -1,5 +1,5 @@
 # mode: standalone
-# Example: per-outcome payload contracts (KB-45, outcome-contract wave 2/5).
+# Example: per-outcome payload contracts.
 #
 # This workflow demonstrates every authoring surface the engine exposes for
 # outcome contracts:

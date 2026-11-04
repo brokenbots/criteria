@@ -17,11 +17,11 @@ import (
 // criteria-adapter-copilot >= v0.5.5).
 //
 // The multi-adapter manifest variables (CRITERIA_REMOTE_ADAPTERS,
-// CRITERIA_REMOTE_ADAPTERS_DIR, CRITERIA_ADAPTER_<NAME>_*, KB-213) are
+// CRITERIA_REMOTE_ADAPTERS_DIR, CRITERIA_ADAPTER_<NAME>_*) are
 // scrubbed the same way: they describe which children the PARENT hosts and
 // must not ride into any child process. The four legacy CRITERIA_ADAPTER_*
 // names keep today's passthrough behavior; the adapter install dir
-// CRITERIA_ADAPTERS likewise passes through, matching pre-KB-213 behavior.
+// CRITERIA_ADAPTERS likewise passes through, matching pre-multi-adapter behavior.
 const remoteEnvPrefix = "CRITERIA_REMOTE_"
 
 // adapterOverrideSuffixes are the per-adapter manifest override suffixes;

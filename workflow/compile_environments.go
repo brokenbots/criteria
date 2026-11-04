@@ -191,7 +191,7 @@ func compileEnvironmentBlock(g *FSMGraph, envSpec EnvironmentSpec, opts CompileO
 	diags = append(diags, checkShellControlledSetConflicts(envSpec.Type, variables, attrs)...)
 
 	// Validate type-specific network.allow syntax early so parser/schema
-	// diagnostics cover wildcard alone and invalid combinations (CRI-89).
+	// diagnostics cover wildcard alone and invalid combinations.
 	if netObj, ok := typeSpecific["network"]; ok {
 		allow, hasAllow, err := NetworkAllowFromObject(netObj)
 		if err != nil {
@@ -375,7 +375,7 @@ func (e *EnvironmentNode) ResolveWorkingDir(vars map[string]cty.Value) (string, 
 // decodeEnvironmentVariables extracts and folds the optional "variables" attribute.
 // Must fold to cty.Map(cty.String) (every value coerced to string).
 // It also preserves the per-key expressions so a later taint pass can reject
-// secret-tainted values in the generic environment (CRI-88).
+// secret-tainted values in the generic environment.
 func decodeEnvironmentVariables(g *FSMGraph, envKey string, attrs hcl.Attributes, opts CompileOpts) (variables map[string]string, rawExprs map[string]hcl.Expression, diags hcl.Diagnostics) {
 	variables = make(map[string]string)
 	rawExprs = make(map[string]hcl.Expression)
@@ -469,7 +469,7 @@ func coerceEnvironmentVariablesToString(val cty.Value, result map[string]string,
 // decodeEnvironmentConfig extracts and folds the optional "config" attribute.
 // For v0.3.0, shape is unenforced; the config is stored as-is for Phase 4
 // consumption. It also preserves the per-key expressions for a later taint
-// pass (CRI-88).
+// pass.
 func decodeEnvironmentConfig(g *FSMGraph, envKey string, attrs hcl.Attributes, opts CompileOpts) (config map[string]cty.Value, rawExprs map[string]hcl.Expression, diags hcl.Diagnostics) {
 	config = make(map[string]cty.Value)
 	rawExprs = make(map[string]hcl.Expression)
@@ -851,7 +851,7 @@ func resolveEnvironmentPolicy(env *EnvironmentNode, hints *PolicyHints) *Resolve
 	rp.Resources = resolvePtrPolicy(mode, env.Resources, h.Resources)
 
 	// Process: environment is the sole authority. Adapter hints are never used
-	// for executable allow-listing (CRI-86).
+	// for executable allow-listing.
 	rp.Process = env.Process
 
 	// TypeSpecific: env wins, then permissive hint.

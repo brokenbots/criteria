@@ -12,7 +12,7 @@ import (
 )
 
 // pauseAckResult reports the ack outcome of one consumed pause_run command.
-// Every outcome is observable (CRI-62): the orchestrator sees either a
+// Every outcome is observable: the orchestrator sees either a
 // RunPaused event (published by the sink on landing) or a timeout that keeps
 // the latch armed for the next boundary.
 type pauseAckResult string
@@ -30,7 +30,7 @@ var pauseAckWait = pauseAckTimeout
 // pauseLandingGrace bounds the landing-race grace after a RequestPause that
 // found the run already tearing down: pauseAtBoundary checkpoints adapter
 // sessions BEFORE publishing RunPaused, so a torn read is possible and a
-// short re-check window closes it (KB-117). Never extends the latch budget:
+// short re-check window closes it. Never extends the latch budget:
 // the latch is gone either way.
 const (
 	pauseLandingGrace = 2 * time.Second
@@ -38,7 +38,7 @@ const (
 )
 
 // controlPauseRouter consumes orchestrator-issued pause_run commands for one
-// owned run (CRI-254) and drives Engine.Pause semantics at step boundaries,
+// owned run and drives Engine.Pause semantics at step boundaries,
 // mirroring the local-control (mode "external") PauseRun path: drain-first,
 // durable checkpoint, no adapter kill. Castle stays the control plane; the
 // agent owns pause execution.
@@ -144,7 +144,7 @@ func (r *controlPauseRouter) handle(ctx context.Context, msg *pb.PauseRun) pause
 				slog.String("run_id", r.runID), slog.String("node", node))
 			return pauseAckLanded
 		}
-		// Landing race (KB-117): the run may be landing RIGHT NOW —
+		// Landing race: the run may be landing RIGHT NOW —
 		// pauseAtBoundary publishes RunPaused after a session checkpoint,
 		// so PausedAt() is still empty while the run loop is inside the
 		// landing sequence and the engine's live-run state is already
@@ -203,7 +203,7 @@ func (r *controlPauseRouter) waitForPauseAck(ctx context.Context, ack <-chan str
 }
 
 // warnDrop logs a pause that will not land. The orchestrator detects the
-// missing RunPaused ack via its control-plane timeout (CRI-62).
+// missing RunPaused ack via its control-plane timeout.
 func (r *controlPauseRouter) warnDrop(msg, dropReason string) {
 	r.log.Warn(msg, slog.String("run_id", r.runID), slog.String("drop_reason", dropReason))
 }

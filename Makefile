@@ -151,8 +151,8 @@ test-flake-watch: ## Re-run previously flaky packages under -count=20 -race (not
 test-conformance: ## Run SDK conformance suite (in-memory Subject)
 	cd sdk && go test -race -run TestConformance ./conformance/...
 
-# CRI-248: canonical workflow-fetcher conformance entry point.
-test-fetcher-conformance: ## Run workflow-fetcher conformance suite (CRI-248)
+# Canonical workflow-fetcher conformance entry point.
+test-fetcher-conformance: ## Run workflow-fetcher conformance suite
 	go test -race -run TestWorkflowFetcherConformance -count=1 ./internal/cli/
 
 lint-imports: ## Enforce import-graph boundaries (see tools/import-lint/)
@@ -355,8 +355,8 @@ example-adapter-tools: build plugins ## Build and run the adapter-tools example 
 # Variant 3 needs the real agent runtime (copilot CLI + an adapter_tools-era
 # criteria-adapter-copilot + a reachable BYOK provider), so it is NOT wired
 # into `ci`: it skips with a reason when the runtime is absent or the
-# installed copilot adapter predates the CRI-178 caller capability, and runs
-# for real otherwise.
+# installed copilot adapter predates the adapter_tools caller capability, and
+# runs for real otherwise.
 #
 # Event assertions are order-independent: the tool.call_result payload is a
 # JSON map (encoding/json sorts map keys), so no grep may rely on the
@@ -388,7 +388,7 @@ example-adapter-tools-copilot: build plugins ## Build and run the copilot-agent 
 		exit 0; \
 	fi; \
 	if ! grep -aq adapter_tools "$$adapter_bin"; then \
-		echo "SKIP example-adapter-tools-copilot: installed criteria-adapter-copilot does not declare the adapter_tools capability (pre-CRI-178 caller build); reinstall a current build to run for real"; \
+		echo "SKIP example-adapter-tools-copilot: installed criteria-adapter-copilot does not declare the adapter_tools capability (pre-adapter_tools caller build); reinstall a current build to run for real"; \
 		exit 0; \
 	fi; \
 	tmpdir=$$(mktemp -d); \
@@ -419,12 +419,12 @@ example-adapter-tools-copilot: build plugins ## Build and run the copilot-agent 
 	rm -rf "$$tmpdir" "$$eventsfile" "$$log"; \
 	echo "example-adapter-tools-copilot: OK (agent tool-called the mcp resource mid-task)"
 
-# Variant 4 mirrors variant 3 for the claude-agent adapter (CRI-180): it
+# Variant 4 mirrors variant 3 for the claude-agent adapter: it
 # needs the real agent runtime (Claude Code CLI + an adapter_tools-era
 # criteria-adapter-claude-agent + Anthropic credentials), so it is NOT wired
 # into `ci`: it skips with a reason when the runtime is absent or the
-# installed claude adapter predates the CRI-178 caller capability, and runs
-# for real otherwise.
+# installed claude adapter predates the adapter_tools caller capability, and
+# runs for real otherwise.
 #
 # The adapter-roots list mirrors the engine's discovery resolution
 # (internal/dirs): $CRITERIA_ADAPTERS, $CRITERIA_HOME/adapters when
@@ -465,7 +465,7 @@ example-adapter-tools-claude: build plugins ## Build and run the claude-agent x 
 		exit 0; \
 	fi; \
 	if ! grep -aq adapter_tools "$$adapter_bin"; then \
-		echo "SKIP example-adapter-tools-claude: installed criteria-adapter-claude-agent does not declare the adapter_tools capability (pre-CRI-178 caller build); reinstall a current build to run for real"; \
+		echo "SKIP example-adapter-tools-claude: installed criteria-adapter-claude-agent does not declare the adapter_tools capability (pre-adapter_tools caller build); reinstall a current build to run for real"; \
 		exit 0; \
 	fi; \
 	tmpdir=$$(mktemp -d); \

@@ -7,7 +7,7 @@ import (
 )
 
 // toolResourceCalleeNames returns the distinct callee adapter instance ids
-// granted by any step's tools list in the body tree (KB-58), EXCLUDING the
+// granted by any step's tools list in the body tree, EXCLUDING the
 // adapters a step runs against directly: those are bound by initScopeAdapters
 // with a full per-scope session, and borrowing their verified records into a
 // fresh iteration manager would hijack the child scope's per-scope

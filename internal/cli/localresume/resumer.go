@@ -250,7 +250,7 @@ func validateOutcome(nodeName, outcome string, validOutcomes []string) error {
 // --- stdin mode ---
 
 // resolveApprovalStdin prompts interactively for an approval decision
-// (CRI-256 path 1): it shows the node name, approvers, and reason, then loops
+// (path 1): it shows the node name, approvers, and reason, then loops
 // until the operator enters a confirm or an explicit reject. Rejection offers
 // an optional reason that rides the resume payload into the failure surface.
 func (r *resumer) resolveApprovalStdin(ctx context.Context, name string, approvers []string, reason string) (map[string]string, error) {

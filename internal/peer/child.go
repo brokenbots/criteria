@@ -32,7 +32,7 @@ const defaultControlGrace = 5 * time.Second
 
 // childState is one supervised adapter child: a go-plugin subprocess hosting
 // one adapter type. Every scope session of that adapter type rides inside it
-// across the environment's phone-home connections (KB-213): the child is
+// across the environment's phone-home connections: the child is
 // keyed by adapter type, not by (scope, adapter) dial.
 type childState struct {
 	name string
@@ -189,7 +189,7 @@ func (r *peerRuntime) childClientFor(name string) (adapterhost.Client, bool) {
 // ensureChild returns a live client for one hosted adapter child, spawning
 // it on demand from its boot spec when the child process has exited but its
 // definition is still hosted. Copilot children idle-exit once their serving
-// sessions close (KB-242 canary evidence: exit_code=0 after a session
+// sessions close (canary evidence: exit_code=0 after a session
 // close), and a boot-complete per-environment manifest hosts definitions
 // whose first dial lands long after boot: exit-only semantics turned "an
 // idle period" into a permanent loss of the child. The respawn reuses the
@@ -268,9 +268,9 @@ type childSpec struct {
 
 // childSpecs resolves the boot list: the multi-adapter manifest when
 // declared, else the single legacy adapter. Manifest entries are one per
-// adapter DEFINITION (KB-242): each definition name spawns its own child
-// process even when several definitions share an adapter type (the
-// kind-deduped grammar was the KB-242 defect). With
+// adapter DEFINITION: each definition name spawns its own child
+// process even when several definitions share an adapter type (the old
+// kind-deduped grammar collapsed them into one child). With
 // CRITERIA_REMOTE_SCOPES_DIR set the hosted children still cover the
 // adapter set of the manifest (or the single legacy adapter); the scope
 // tokens arrive per (scope, adapter) at serve time.
@@ -607,9 +607,9 @@ func (r *peerRuntime) classifyUnexpectedExit(c *childState, exitCode, signal int
 // period (default 5s, host sends 3s), then kills the addressed child; the
 // watcher journals the exit fact, classified as peer-initiated via
 // killRequested. The addressed child is the one named by the request's
-// adapter_type — the host addresses it by adapter DEFINITION identity
-// (KB-242); an empty adapter_type addresses the primary child (legacy
-// single-adapter hosts, KB-213 compat). cancel_child_run (ADR-0008,
+// adapter_type — the host addresses it by adapter DEFINITION identity;
+// an empty adapter_type addresses the primary child (legacy
+// single-adapter hosts). cancel_child_run (ADR-0008,
 // workflow.v1-gated at the server) is a known arm but there is no child-run
 // substrate in the peer role: nothing to execute a run-level cancellation
 // against, so it is rejected with Accepted=false. Unsupported actions and

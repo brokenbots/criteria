@@ -1,8 +1,8 @@
-// Adapter-tools depth/cycle conformance (CRI-168): automated coverage for the
-// M6.2 runtime behaviors delivered by CRI-162, locked against ADR-0004 so a
+// Adapter-tools depth/cycle conformance: automated coverage for the
+// M6.2 runtime behaviors, locked against ADR-0004 so a
 // future refactor cannot silently drift from the ruled semantics
 // (ADR-0004 §6 Cycle policy, §7 Validation posture, §8 Wire decision). Like
-// the CRI-167 failure matrix, every scenario runs through the real engine
+// the adapter-tools failure matrix, every scenario runs through the real engine
 // against in-memory chain-hop fakes.
 //
 // Scenarios:
@@ -37,7 +37,7 @@
 // decisions"): the typed gate reject is a deny entry on the offending
 // session at its own nesting layer, every policy-evaluated call is allowed
 // at its layer, and each session's close summary counts the calls its policy
-// actually evaluated. Observability assertions lock the CRI-163 event
+// actually evaluated. Observability assertions lock the runtime event
 // contract for dispatched calls (ADR-0004 §8: the call rides the Execute
 // stream as permission.request, the result returns on the Permissions
 // stream); a typed-gate-rejected call is never dispatched, so it emits no
@@ -47,7 +47,7 @@
 // in the host runtime, not in adapters, so a per-adapter matrix suite
 // (matrix.yaml gates suites on adapter capabilities) would skip in CI
 // forever. It runs as its own always-on conformance entry point, mirroring
-// the CRI-167 matrix and the engine's adapter_tool_call_loop_test.go
+// the adapter-tools matrix and the engine's adapter_tool_call_loop_test.go
 // template.
 package conformance
 
@@ -354,7 +354,7 @@ type dispatchExpectation struct {
 	depth     int
 }
 
-// assertChainObservability asserts the CRI-163 event contract for one
+// assertChainObservability asserts the runtime event contract for one
 // depth/cycle scenario run (ADR-0004 §8: the call rides the Execute stream as
 // permission.request, the result returns on the Permissions stream):
 // exactly one permission.granted per policy-evaluated call (a typed
@@ -579,8 +579,8 @@ state "done" { terminal = true }
 `
 }
 
-// RunAdapterToolsDepthCycleConformance runs the CRI-168 M6.2 depth/cycle
-// conformance suite: three sub-tests locking the CRI-162 runtime behaviors
+// RunAdapterToolsDepthCycleConformance runs the M6.2 depth/cycle
+// conformance suite: three sub-tests locking the runtime behaviors
 // against ADR-0004 — the typed depth failure with run continuation, the
 // typed cycle failure affecting only the offending call, and the advisory
 // compile-time cycle warning.
@@ -681,7 +681,7 @@ func depthCycleCaseDepthExceeded(t *testing.T) {
 	// never reached the callee; and the chain executed where it should.
 	assertDepthExceededCallBehavior(t, caller, hopb, hopc, hopd)
 
-	// CRI-163 observability (ADR-0004 §8): all three policy-evaluated calls
+	// Runtime observability (ADR-0004 §8): all three policy-evaluated calls
 	// were granted — the depth-rejected call passed the policy gate
 	// (ADR-0004 §7) before the runtime depth gate rejected it — and only the
 	// two dispatched calls emitted tool.call / tool.call_result.

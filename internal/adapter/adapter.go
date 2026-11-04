@@ -38,9 +38,9 @@ type Result struct {
 	// Producers that decode a string wire (the remote host) coerce raw strings to
 	// these types against the step's OutputSchema via workflow.CoerceStringToCty.
 	Outputs map[string]cty.Value
-	// Comment carries the adapter's own commentary for the result (KB-45,
+	// Comment carries the adapter's own commentary for the result (the
 	// v0.7.0 ExecuteResult.comment). It is routed to the event stream
-	// verbatim, and — KB-264 — the engine materializes an adapter-declared
+	// verbatim, and the engine materializes an adapter-declared
 	// default `reason` output from it on UNTYPED outcomes (see
 	// engine.withDefaultOutputs): a default output type declaring a `reason`
 	// field (e.g. copilot) makes output.reason uniformly readable — an empty
@@ -50,7 +50,7 @@ type Result struct {
 	// comment is never projected into them.
 	Comment string
 	// SynthesizedFallback marks a result the host synthesized from a fallback
-	// outcome contract (KB-45): the attempt ended without an adapter verdict,
+	// outcome contract: the attempt ended without an adapter verdict,
 	// so the evaluator synthesized the contract's fallback outcome with no
 	// payload. The synthesis is validated at synthesis time; a repeated
 	// contract validation must skip it, because re-validating the empty

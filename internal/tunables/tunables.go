@@ -1,5 +1,5 @@
 // Package tunables is the single source of truth for the criteria engine's
-// tunable timing and budget settings (KB-172, ruling card 127): one typed
+// tunable timing and budget settings: one typed
 // Settings shape, in-package defaults, and a registry (Envvars) that maps
 // each operator-facing environment override to its knob and drives the
 // generated table in docs/env-vars.md.
@@ -41,24 +41,24 @@ const (
 	DefaultHeartbeatInterval = 30 * time.Second
 	// DefaultHeartbeatStallThreshold is how long a session log stream may
 	// idle with no chunks or heartbeats before the host treats the adapter
-	// as wedged (CRI-271).
+	// as wedged.
 	DefaultHeartbeatStallThreshold = 90 * time.Second
-	// DefaultStepTimeoutTeardownWindow is how long a CRI-287 step-timeout
+	// DefaultStepTimeoutTeardownWindow is how long an engine-initiated step-timeout
 	// teardown mark keeps reclassifying transport closes as teardown
 	// consequences instead of session crashes.
 	DefaultStepTimeoutTeardownWindow = 10 * time.Second
 	// DefaultStepStallWindow is how long an unbounded step may run with no
-	// observable adapter activity before the KB-25 watchdog tears it down.
+	// observable adapter activity before the step-stall watchdog tears it down.
 	// Zero (or a negative override) disables stall detection.
 	DefaultStepStallWindow = 30 * time.Minute
 	// DefaultAgentHeartbeatInterval is the operator CLI's run heartbeat
 	// cadence against a server-compatible orchestrator while a run is in
-	// flight (KB-53).
+	// flight.
 	DefaultAgentHeartbeatInterval = 10 * time.Second
-	// DefaultBootGateProbeTimeout bounds the KB-234 boot gate's operator
+	// DefaultBootGateProbeTimeout bounds the boot gate's operator
 	// view request at every server-mode start (fresh or adoption).
 	DefaultBootGateProbeTimeout = 5 * time.Second
-	// DefaultVerifyFailoverBudget is how long the KB-257 transport-loss
+	// DefaultVerifyFailoverBudget is how long the transport-loss
 	// convergence lane in phase-B adapter verify keeps re-waiting for a
 	// fresh adapter phone-home line: a healthy re-dial converges in
 	// seconds (first-entry evidence ~6s), so a one-minute cap converges
@@ -66,7 +66,7 @@ const (
 	// scheduling-scale window.
 	DefaultVerifyFailoverBudget = time.Minute
 	// DefaultPauseToolCallDrainWindow is the drain-first pause window
-	// (CRI-169): Session.Pause waits this long for in-flight nested tool
+	// Session.Pause waits this long for in-flight nested tool
 	// calls to settle before cancelling them.
 	DefaultPauseToolCallDrainWindow = 60 * time.Second
 	// DefaultLogMergeDelay is the log merge buffer's accumulation window
@@ -93,24 +93,24 @@ const (
 // once in Envvars.
 const (
 	// EnvHeartbeatInterval overrides DefaultHeartbeatInterval (lenient). It
-	// supersedes the retired test-only cadence hatch (KB-132); conformance
+	// supersedes the retired test-only cadence hatch; conformance
 	// tests set it (a Go duration such as "50ms") in the test process and
 	// adapter fixture subprocesses inherit it.
 	EnvHeartbeatInterval = "CRITERIA_HEARTBEAT_INTERVAL"
 	// EnvHeartbeatStallThreshold overrides DefaultHeartbeatStallThreshold
-	// (lenient; CRI-271).
+	// (lenient).
 	EnvHeartbeatStallThreshold = "CRITERIA_SESSION_HEARTBEAT_STALL"
 	// EnvStepTimeoutTeardownWindow overrides
-	// DefaultStepTimeoutTeardownWindow (lenient; CRI-287).
+	// DefaultStepTimeoutTeardownWindow (lenient).
 	EnvStepTimeoutTeardownWindow = "CRITERIA_STEP_TIMEOUT_TEARDOWN_WINDOW"
 	// EnvStepStallWindow overrides DefaultStepStallWindow (lenient, but a
-	// zero or negative value disables stall detection; KB-25).
+	// zero or negative value disables stall detection).
 	EnvStepStallWindow = "CRITERIA_STEP_STALL_WINDOW"
 	// EnvAgentHeartbeatInterval overrides DefaultAgentHeartbeatInterval
-	// (lenient; KB-53).
+	// (lenient).
 	EnvAgentHeartbeatInterval = "CRITERIA_AGENT_HEARTBEAT_INTERVAL"
 	// EnvBootGateProbeTimeout overrides DefaultBootGateProbeTimeout
-	// (lenient; KB-234).
+	// (lenient).
 	EnvBootGateProbeTimeout = "CRITERIA_BOOT_GATE_PROBE_TIMEOUT"
 	// EnvLocalApprovalFileTimeout overrides DefaultLocalApprovalFileTimeout
 	// (strict — a malformed value fails the run loudly; internal/cli
@@ -130,7 +130,7 @@ const (
 	// the `criteria serve-adapter` mode.
 	EnvServeAdapterConcurrency = "CRITERIA_SERVE_ADAPTER_CONCURRENCY"
 	// EnvVerifyFailoverBudget overrides DefaultVerifyFailoverBudget
-	// (lenient; KB-257).
+	// (lenient).
 	EnvVerifyFailoverBudget = "CRITERIA_VERIFY_FAILOVER_BUDGET"
 )
 
@@ -147,7 +147,7 @@ const (
 // Settings carries the host-applied, lenient timing knobs: unset,
 // malformed, and non-positive overrides keep the built-in default, except
 // StepStallWindow where a zero value is the "stall detection disabled"
-// posture (KB-25). Build it with New or FromEnv; a hand-made zero Settings
+// posture. Build it with New or FromEnv; a hand-made zero Settings
 // is not a contract shape (every field would read as disabled), the
 // zero-value fallback paths live in the consuming accessors.
 //
@@ -159,26 +159,26 @@ type Settings struct {
 	// transitional heartbeatutil helper, the MCP bridge, and in-tree
 	// fixture adapters).
 	HeartbeatInterval time.Duration
-	// HeartbeatStallThreshold is the CRI-271 session log-stream stall
+	// HeartbeatStallThreshold is the session log-stream stall
 	// boundary (SessionManager.HeartbeatStallThreshold).
 	HeartbeatStallThreshold time.Duration
-	// StepTimeoutTeardownWindow is the CRI-287 teardown reclassification
+	// StepTimeoutTeardownWindow is the engine-initiated teardown reclassification
 	// window (SessionManager.StepTimeoutTeardownWindow).
 	StepTimeoutTeardownWindow time.Duration
-	// StepStallWindow is the KB-25 step-stall watchdog window; 0 disables
+	// StepStallWindow is the step-stall watchdog window; 0 disables
 	// stall detection.
 	StepStallWindow time.Duration
-	// AgentHeartbeatInterval is the KB-53 operator CLI run heartbeat
+	// AgentHeartbeatInterval is the operator CLI run heartbeat
 	// cadence against a server-compatible orchestrator.
 	AgentHeartbeatInterval time.Duration
-	// BootGateProbeTimeout bounds the KB-234 boot gate's operator view
+	// BootGateProbeTimeout bounds the boot gate's operator view
 	// request at every server-mode start (fresh or adoption).
 	BootGateProbeTimeout time.Duration
 	// ServeAdapterConcurrency is the ADR-0008 shared container budget for
 	// the workflow's own step-adapter sessions while
 	// `criteria serve-adapter` serves a workflow.
 	ServeAdapterConcurrency int
-	// VerifyFailoverBudget is the KB-257 transport-loss convergence
+	// VerifyFailoverBudget is the transport-loss convergence
 	// budget (SessionManager.VerifyHandshakeFailoverBudget).
 	VerifyFailoverBudget time.Duration
 }
@@ -200,7 +200,7 @@ func Defaults() Settings {
 // New resolves Settings from the provided environment lookup. Overrides are
 // lenient: an unset, malformed, or non-positive value keeps the built-in
 // default, except CRITERIA_STEP_STALL_WINDOW where a parsed zero or negative
-// value disables stall detection (the KB-25 semantics).
+// value disables stall detection.
 func New(lookup func(string) string) Settings {
 	s := Defaults()
 	if lookup == nil {
@@ -216,7 +216,7 @@ func New(lookup func(string) string) Settings {
 		s.StepTimeoutTeardownWindow = d
 	}
 	// The stall window's zero is meaningful: "0" (or a negative value)
-	// disables stall detection, a malformed value keeps the default (KB-25).
+	// disables stall detection, a malformed value keeps the default.
 	if raw := strings.TrimSpace(lookup(EnvStepStallWindow)); raw != "" {
 		if d, err := time.ParseDuration(raw); err == nil {
 			if d < 0 {
@@ -297,21 +297,21 @@ type Envar struct {
 func Envvars() []Envar {
 	return []Envar{
 		{Name: EnvAgentHeartbeatInterval, Kind: KindDuration, Default: "10s", Doc: "Operator CLI heartbeat cadence against a server-compatible orchestrator while a run is in flight (`criteria agent`, `criteria apply --server`)."},
-		{Name: EnvBootGateProbeTimeout, Kind: KindDuration, Default: "5s", Doc: "Bounds the boot gate's operator-view request at every server-mode start (KB-234): the runner checks its CriteriaRun is still live before registering with castle."},
+		{Name: EnvBootGateProbeTimeout, Kind: KindDuration, Default: "5s", Doc: "Bounds the boot gate's operator-view request at every server-mode start: the runner checks its CriteriaRun is still live before registering with castle."},
 		{Name: EnvHeartbeatInterval, Kind: KindDuration, Default: "30s", Doc: "Adapter log-stream heartbeat cadence (the transitional heartbeatutil helper used by in-tree fixture adapters and the MCP bridge) and the peer Supervise stream idle heartbeat."},
 		{Name: EnvLocalApprovalFileTimeout, Kind: KindDuration, Default: "1h", Doc: "How long file-mode local approval waits for the operator's decision file before the pause fails. Strict override: a malformed value fails the run loudly."},
 		{Name: EnvPeerBackoffMax, Kind: KindDuration, Default: "30s", Doc: "Peer host reconnect backoff ceiling; must be >= the backoff floor. Peer-owned override: a malformed value aborts peer startup."},
 		{Name: EnvPeerBackoffMin, Kind: KindDuration, Default: "1s", Doc: "Peer host reconnect backoff floor. Peer-owned override: a malformed value aborts peer startup."},
 		{Name: EnvPeerJournalLimit, Kind: KindInt, Default: "4096", Doc: "Bounded supervision journal capacity in events. Peer-owned override: a non-positive or malformed value aborts peer startup."},
 		{Name: EnvServeAdapterConcurrency, Kind: KindInt, Default: "8", Doc: "Shared container budget for the workflow's own step-adapter sessions while `criteria serve-adapter` serves a workflow (ADR-0008)."},
-		{Name: EnvHeartbeatStallThreshold, Kind: KindDuration, Default: "90s", Doc: "How long a session log stream may idle with no chunks or heartbeats before the adapter is treated as wedged (CRI-271)."},
-		{Name: EnvStepStallWindow, Kind: KindDuration, Default: "30m", Doc: "How long an unbounded step may run with no observable adapter activity before the engine tears it down (KB-25). A zero or negative value disables stall detection."},
-		{Name: EnvStepTimeoutTeardownWindow, Kind: KindDuration, Default: "10s", Doc: "Window, opened by an engine-initiated step teardown, during which transport closes are reclassified as teardown consequences instead of session crashes (CRI-287)."},
-		{Name: EnvVerifyFailoverBudget, Kind: KindDuration, Default: "1m", Doc: "How long phase-B adapter verify re-waits for a fresh phone-home line after a transport-class loss (KB-257) before failing the adapter init with the typed budget reason."},
+		{Name: EnvHeartbeatStallThreshold, Kind: KindDuration, Default: "90s", Doc: "How long a session log stream may idle with no chunks or heartbeats before the adapter is treated as wedged."},
+		{Name: EnvStepStallWindow, Kind: KindDuration, Default: "30m", Doc: "How long an unbounded step may run with no observable adapter activity before the engine tears it down. A zero or negative value disables stall detection."},
+		{Name: EnvStepTimeoutTeardownWindow, Kind: KindDuration, Default: "10s", Doc: "Window, opened by an engine-initiated step teardown, during which transport closes are reclassified as teardown consequences instead of session crashes."},
+		{Name: EnvVerifyFailoverBudget, Kind: KindDuration, Default: "1m", Doc: "How long phase-B adapter verify re-waits for a fresh phone-home line after a transport-class loss before failing the adapter init with the typed budget reason."},
 	}
 }
 
-// RespawnLogStreamDrain derives the CRI-271 bounded wait granted to a
+// RespawnLogStreamDrain derives the bounded wait granted to a
 // server-driven log stream to drain after a respawn: a third of the stall
 // threshold clamped to [5s, 30s], so the drain stays proportional to how
 // long the stream is allowed to idle without ballooning.
@@ -326,7 +326,7 @@ func RespawnLogStreamDrain(stallThreshold time.Duration) time.Duration {
 	return third
 }
 
-// StepStallPollInterval derives the KB-25 stall watchdog's sampling
+// StepStallPollInterval derives the stall watchdog's sampling
 // cadence: a quarter of the window clamped to [10ms, 1s], so the detection
 // latency stays within a quarter of the window without polling hot on long
 // windows.
@@ -341,7 +341,7 @@ func StepStallPollInterval(window time.Duration) time.Duration {
 	return poll
 }
 
-// PauseSettleGrace derives the CRI-169 bounded settle grace the pause drain
+// PauseSettleGrace derives the bounded settle grace the pause drain
 // grants each cancelled straggler's goroutine to deliver its typed reply
 // after its pending registration is cleared: a tenth of the window clamped
 // to [100ms, 2s], so a short conformance window keeps a proportionally

@@ -278,7 +278,7 @@ func formatConsultedSources(typeName, resolvedDigest string, lockStatus *lockfil
 
 // noOutputSchemaDiag builds the distinct warning emitted when an adapter is
 // resolved but its manifest declares no output_schema, so step output fields
-// cannot be checked. Per KB-264, the output_schema doubles as the adapter's
+// cannot be checked. The output_schema doubles as the adapter's
 // default output type: an undeclared adapter leaves untyped outcomes with an
 // empty default output type ({}) — a documented fallback, not a rejection,
 // because schema-less adapters are legitimately shipped.

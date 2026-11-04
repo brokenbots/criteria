@@ -99,8 +99,8 @@ func AdapterInstallPath(adapterType, digestEncoded string) (string, error) {
 // pinned in the lockfile, prefer DiscoverBinaryAt.
 //
 // name may be a bare adapter type ("noop") or an adapter DEFINITION identity
-// ("noop.demo", KB-242); binaries on the flat install root are keyed by type,
-// so the definition half is stripped for lookup (KB-246, mirroring the #527
+// ("noop.demo"); binaries on the flat install root are keyed by type,
+// so the definition half is stripped for lookup (mirroring the #527
 // lockfileDigestVerifier split) while the definition identity stays the
 // child key.
 //
@@ -133,9 +133,9 @@ func DiscoverBinary(name string) (string, error) {
 // type coexist.
 //
 // name may be a bare adapter type ("noop") or an adapter DEFINITION identity
-// ("noop.demo", KB-242): digest-pinned children are keyed by definition, but
+// ("noop.demo"): digest-pinned children are keyed by definition, but
 // binaries under a digest directory are installed by type, so lookup strips
-// the definition half (KB-246, mirroring the #527 lockfileDigestVerifier
+// the definition half (mirroring the #527 lockfileDigestVerifier
 // split) while the definition identity stays the child key.
 func DiscoverBinaryAt(name, digestEncoded string) (string, error) {
 	name = strings.TrimSpace(name)
@@ -176,7 +176,7 @@ func IsRunnableFile(path string) bool {
 // IsValidAdapterName reports whether name is a valid adapter identity: either
 // a legacy flat (bare type) name ("noop") or an adapter DEFINITION identity
 // ("<type>.<name>" — exactly one dot separator, both halves non-empty and
-// valid, KB-242's per-definition child keying). Names are used directly as
+// valid, per-definition child keying). Names are used directly as
 // path segments, so anything that is not a segment character is rejected.
 func IsValidAdapterName(name string) bool {
 	if name == "" {
@@ -193,9 +193,9 @@ func IsValidAdapterName(name string) bool {
 
 // DefinitionType returns the adapter type half of an adapter identity: a
 // bare (legacy flat) name passes through; a definition identity
-// "<type>.<name>" (KB-242's per-definition child keying) strips the
+// "<type>.<name>" (per-definition child keying) strips the
 // definition half so binaries — installed and listed by type — are
-// discoverable under the definition-keyed child grammar (KB-246). Consumers
+// discoverable under the definition-keyed child grammar. Consumers
 // outside this package (e.g. the peer's own binary-location paths) share the
 // same split by calling it directly. Callers must only pass names already
 // validated with IsValidAdapterName.

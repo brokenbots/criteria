@@ -15,7 +15,7 @@ import (
 
 // runServeUI is the serve-ui body: standalone loopback server over the
 // whole state dir (unscoped store) plus the embedded run-viewer bundle,
-// drained on signal. castleAddr, when set, mounts the KB-328 console
+// drained on signal. castleAddr, when set, mounts the console
 // surface: Login/Logout/ListSessions proxy to that castle control plane,
 // while ResolveResume has no local run here (standalone serve-ui owns no
 // run) and answers UNIMPLEMENTED, mirroring the control verbs' standalone
@@ -59,7 +59,7 @@ func runServeUI(ctx context.Context, store *runstate.Store, host string, port in
 // NewServeUICmd starts the loopback run-state server standalone against a
 // criteria state dir: it serves the whole run list plus the embedded
 // run-viewer under /runview/. One command opens the local UI. Control verbs
-// answer UNIMPLEMENTED locally (CRI-255 adds them).
+// answer UNIMPLEMENTED locally (the server-mode listener adds them).
 func NewServeUICmd() *cobra.Command {
 	var (
 		host       string
@@ -86,7 +86,7 @@ func NewServeUICmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&host, "host", "127.0.0.1", "Loopback bind address (non-loopback binds are refused)")
 	cmd.Flags().IntVar(&port, "port", 0, "Port to bind (0 = auto-select)")
-	cmd.Flags().StringVar(&castleAddr, "castle-addr", envOrDefault("CRITERIA_CASTLE_ADDR", ""), "Castle control plane base URL the console proxies Login/Logout/ListSessions to (KB-328; login-only: ResolveResume has no local run here)")
+	cmd.Flags().StringVar(&castleAddr, "castle-addr", envOrDefault("CRITERIA_CASTLE_ADDR", ""), "Castle control plane base URL the console proxies Login/Logout/ListSessions to (login-only: ResolveResume has no local run here)")
 	cmd.Flags().StringVar(&home, "home", "", "Criteria home directory (default: CRITERIA_HOME or ~/.local/criteria)")
 	return cmd
 }

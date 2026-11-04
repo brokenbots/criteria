@@ -112,7 +112,7 @@ func compileOneAdapter(g *FSMGraph, ad *AdapterDeclSpec, schemas map[string]Adap
 }
 
 // compileAdapterToolDecls compiles an adapter's tool declarations: the
-// static tool list, duplicate-tool detection, and (KB-59) each tool's typed
+// static tool list, duplicate-tool detection, and each tool's typed
 // in/out contract. Contracts apply only to tools whose block declares a
 // named type; contract-bearing tools keep their declaration order so the
 // single-tool fallback in validateStepInputToolContract stays deterministic.

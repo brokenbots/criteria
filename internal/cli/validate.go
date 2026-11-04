@@ -40,7 +40,7 @@ func NewValidateCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&subworkflowRoots, "subworkflow-root", nil, "Restrict subworkflow source resolution to this root path (repeatable; empty = no restriction)")
 	cmd.Flags().BoolVar(&diagJSONFlag, "diag-json", false, "Emit diagnostics as structured JSON to stdout instead of human-readable text to stderr")
 	cmd.Flags().BoolVar(&warnsAsErrors, "warnings-as-errors", false, "Treat warnings (e.g. an adapter whose schema could not be verified) as errors")
-	cmd.Flags().StringVar(&workflowRef, "workflow-ref", "", "Expected ref/digest the workflow source must resolve to — a git commit SHA or sha256:<digest>; validation fails closed on mismatch (CRI-226)")
+	cmd.Flags().StringVar(&workflowRef, "workflow-ref", "", "Expected ref/digest the workflow source must resolve to — a git commit SHA or sha256:<digest>; validation fails closed on mismatch")
 	return cmd
 }
 
@@ -50,7 +50,7 @@ func validatePath(ctx context.Context, path, workflowRef string, subworkflowRoot
 	displayPath := redactSourceForLog(path)
 	// ADR-0005 D1/D3: remote workflow sources materialize into the workflow
 	// cache before validation; local paths pass through unchanged. ADR-0005
-	// D7 (CRI-226): a declared --workflow-ref pin is enforced at resolve time.
+	// D7: a declared --workflow-ref pin is enforced at resolve time.
 	resolvedPath, _, err := resolveWorkflowSource(ctx, path, workflowRef)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: error: %v\n", displayPath, err)

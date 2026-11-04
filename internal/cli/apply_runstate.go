@@ -16,7 +16,7 @@ import (
 	"github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
 )
 
-// openRunEventsFile opens (append-only, CRI-125) the run's ND-JSON events
+// openRunEventsFile opens (append-only) the run's ND-JSON events
 // file under <home>/runs/<runID>/events.ndjson. The run-state server reads
 // this file plus run-state.json; events remain on their primary sink (stdout
 // or --events-file) and are only teed here.
@@ -67,7 +67,7 @@ func startLocalRunStateServer(ctx context.Context, log *slog.Logger, runID, cont
 		svc := &localControlService{ctrl: ctrl, runID: runID}
 		pattern, h := criteriav1connect.NewLocalControlServiceHandler(svc)
 		srv.WithLocalService(pattern, h)
-		// KB-328: the console surface proxies castle's login verbs to the
+		// The console surface proxies castle's login verbs to the
 		// configured control plane and resolves ResolveResume decisions
 		// through this run's own control service — the same vocabulary the
 		// Connect control RPCs above answer.
@@ -148,8 +148,8 @@ func attachLocalRunStateServer(ctx context.Context, log *slog.Logger, runID, con
 }
 
 // resolveRunListenAddr merges --control-addr and the legacy --ui-port into
-// the single loopback listen address of the run-state/control listener: since
-// CRI-255 both surfaces ride the same socket, so an explicit --ui-port still
+// the single loopback listen address of the run-state/control listener: both
+// surfaces ride the same socket, so an explicit --ui-port still
 // pins the port when --control-addr is unset.
 func resolveRunListenAddr(opts *applyOptions) string {
 	if strings.TrimSpace(opts.controlAddr) != "" {

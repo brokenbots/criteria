@@ -57,7 +57,7 @@ type RunState struct {
 	// for engine-version compatibility diagnostics in nested subworkflows.
 	WorkflowName string
 	// RemoteLifecycle carries lockfile-pinned digest and per-scope provisioning
-	// state for remote adapter lifecycle events (CRI-115). It is nil when the
+	// state for remote adapter lifecycle events. It is nil when the
 	// engine has no remote adapters or no data directory.
 	RemoteLifecycle *remoteLifecycleContext
 	// Ancestors is the chain of parent workflow names leading to the current
@@ -89,7 +89,7 @@ type RunState struct {
 	ParallelSemMu *sync.Mutex
 
 	// CrashedSessions records adapter references whose adapter session crashed
-	// at a step (CRI-271). The default on_crash=fail policy leaves the session
+	// at a step. The default on_crash=fail policy leaves the session
 	// registered but dead: every subsequent Execute on the same reference
 	// returns the crash error again, so follow-on steps on the same reference —
 	// the run's bookkeeping, e.g. comment_handler_failed and set_review_state
@@ -111,7 +111,7 @@ type RunState struct {
 }
 
 // crashedSessionRefs records adapter references whose adapter session crashed
-// at a step (CRI-271). The zero value is ready to use and every method
+// at a step. The zero value is ready to use and every method
 // tolerates a nil receiver, so RunStates that never initialize the set behave
 // as if no session had crashed.
 type crashedSessionRefs struct {
@@ -145,7 +145,7 @@ func (s *crashedSessionRefs) contains(ref string) bool {
 	return ok
 }
 
-// forget removes a reference from the set (CRI-271). Called after a
+// forget removes a reference from the set. Called after a
 // successful re-open: the session is live again, so a later genuine crash
 // must be recorded afresh instead of finding the stale entry.
 func (s *crashedSessionRefs) forget(ref string) {

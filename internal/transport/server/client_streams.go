@@ -127,7 +127,7 @@ func controlMessageType(msg *pb.ControlMessage) string {
 }
 
 // forwardControl delivers cmd onto ch, applying backpressure when the
-// consumer has not drained the buffer (CRI-62): the send blocks until a slot
+// consumer has not drained the buffer: the send blocks until a slot
 // frees or the client shuts down, so a saturated control command can no
 // longer vanish. The only remaining drop path is a genuine shutdown race
 // (context cancelled or Close called while the send is blocked), which is
@@ -200,7 +200,7 @@ func (c *Client) controlLoop(ctx context.Context, ready chan<- error) { //nolint
 			// Dispatch: every ControlMessage oneof arm is either forwarded
 			// onto its channel or logged — nothing falls through silently
 			// (R1, ADR-0006 D1). Forwarding applies backpressure when the
-			// consumer is busy (CRI-62): a command is never discarded while
+			// consumer is busy: a command is never discarded while
 			// the stream is healthy; only a shutdown race drops it, with a
 			// structured drop_reason field for observability.
 			if rc := msg.GetRunCancel(); rc != nil {

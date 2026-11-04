@@ -91,6 +91,11 @@ here.
   history/dependency sweeps depend on descriptive subjects without opening
   every PR. Existing history is not backfilled and shipped tags are never
   rewritten.
+- **Comment hygiene**: code comments carry design facts (what the code does
+  and why), never ticket narration — ticket identities (`CRI-`/`KB-`) live in
+  durable docs (ADRs under [docs/adrs/](docs/adrs/), [CHANGELOG.md](CHANGELOG.md))
+  and in PRs, not in production comments. Do not add new ticket-ID narrations
+  to comments; state the design fact itself or cite the ADR instead.
 - **Timing knobs** live in `internal/tunables`: no new raw timing literals
   or ad-hoc `os.Getenv` timing reads at consumer sites — consume the typed
   `Settings` (via `tunables.FromEnv()` at configuration points) or the

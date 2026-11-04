@@ -48,7 +48,7 @@ func (r *LocalSubWorkflowResolver) ResolveSource(ctx context.Context, callerDir,
 	}
 
 	// Local sources carry no pin: there is no resolved ref/digest to compare
-	// against an operator-declared expected pin (CRI-226).
+	// against an operator-declared expected pin.
 	return resolvedPath, nil, nil
 }
 

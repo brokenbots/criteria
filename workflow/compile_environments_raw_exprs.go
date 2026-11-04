@@ -2,7 +2,7 @@ package workflow
 
 // compile_environments_raw_exprs.go — helpers to recover per-key HCL
 // expressions from object-literal environment attributes so that a later
-// taint pass can inspect them (CRI-88).
+// taint pass can inspect them.
 
 import (
 	"github.com/hashicorp/hcl/v2"

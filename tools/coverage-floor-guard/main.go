@@ -1,5 +1,5 @@
-// Command coverage-floor-guard prevents autonomous coverage-floor ratchet
-// relaxations (CRI-93, CRI-96). It compares two versions of the per-package
+// Command coverage-floor-guard prevents autonomous coverage-floor ratchet.
+// relaxations. It compares two versions of the per-package
 // coverage floor file and fails if any package's numeric floor decreased or
 // an existing package floor was removed, unless the caller passes --approved
 // to signal explicit human approval.

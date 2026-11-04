@@ -30,7 +30,7 @@ const (
 	exitServerUnreachable   = 3
 	exitDuplicateSubmission = 4
 	exitAuthFailure         = 5
-	// KB-227/CRI-323: a run parked at the awaiting_human gate with
+	// A run parked at the awaiting_human gate with
 	// success=false must not be conflated with a restartable run failure
 	// (generic exit 1), so it carries its own stable code.
 	exitAwaitingHuman = 6
@@ -49,7 +49,7 @@ func (e *submitError) ExitCode() int { return e.code }
 // completed at a named terminal state with success=false. A completion at
 // the awaiting_human parking state is not a run failure: it exits with the
 // stable human-attention code so runner restart policies can distinguish a
-// human gate from a restartable crash/failure (KB-227/CRI-323), and the
+// human gate from a restartable crash/failure, and the
 // structured log names the exit reason for job-level consumers.
 func terminalStateFailureError(finalState string) error {
 	if finalState == engine.AwaitingHumanTerminalState {

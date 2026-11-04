@@ -35,7 +35,7 @@ type DecisionLogEntry struct {
 	ArgsDigest string `json:"args_digest"`
 	Decision   string `json:"decision"` // "allow" | "deny" | "cancelled"
 	Reason     string `json:"reason"`
-	// Layer is the nested tool-call layer the decision was made in (CRI-163):
+	// Layer is the nested tool-call layer the decision was made in:
 	// 0 for a step-level caller's decisions, 1 for the first nested callee's
 	// own decisions, and so on. Together with SessionID it lets audit readers
 	// tell the caller's allow/deny decision apart from the callee-side
@@ -62,13 +62,13 @@ type permissionState struct {
 	active   bool
 
 	// pendingToolCalls tracks in-flight adapter tool calls by request_id for
-	// reply correlation (CRI-161). Multiple calls per caller session are
+	// reply correlation. Multiple calls per caller session are
 	// in flight concurrently, so this is a map, not a queue: replies may
 	// arrive in any order (the Permissions stream contract explicitly
 	// allows it) and each completing goroutine correlates by request_id.
 	pendingToolCalls map[string]*pendingToolCall
 
-	// toolCallPauseGate is the CRI-169 pause gate: when set, nested
+	// toolCallPauseGate is the pause gate: when set, nested
 	// adapter tool-call dispatch is refused with the typed `paused`
 	// call_error until Resume clears it. It is set by beginToolCallPause
 	// (Session.Pause drain phase) and atomically by Pause.
@@ -80,7 +80,7 @@ type permissionState struct {
 
 	// turnCheckpoint, when non-nil, runs after every tool-call reply is
 	// delivered (i.e. after a completed turn) so an adapter declaring
-	// per-turn checkpoint granularity (CRI-202) saves its state at turn
+	// per-turn checkpoint granularity saves its state at turn
 	// boundaries. Wired by the session manager at stream setup; the hook
 	// itself never blocks the reply path.
 	turnCheckpoint func()
@@ -97,7 +97,7 @@ type requestState struct {
 }
 
 // pendingToolCall is one in-flight adapter tool call registered for reply
-// correlation (CRI-161), keyed by request_id — the host-side mirror of the
+// correlation, keyed by request_id — the host-side mirror of the
 // MCP bridge's registerPendingPerm/decisionCh pending map
 // (cmd/criteria-adapter-mcp/bridge.go). The bridge's per-request channel
 // exists because the awaiting adapter goroutine blocks on it; on the host the
@@ -108,7 +108,7 @@ type pendingToolCall struct {
 	requestID  string
 	target     string
 	registered time.Time
-	// cancel aborts the call's derived context (CRI-169): the pause drain
+	// cancel aborts the call's derived context: the pause drain
 	// cancels non-draining calls so they settle with a typed `canceled`
 	// reply. Nil for legacy registrations without a derived context.
 	cancel func()
@@ -172,7 +172,7 @@ func (ps *permissionState) Evaluate(requestID, tool, argsDigest, fullCmd string)
 }
 
 // evaluateAtLayer is Evaluate with the nested tool-call layer recorded in the
-// audit entry (CRI-163): layer 0 is a step-level caller's decision, deeper
+// audit entry: layer 0 is a step-level caller's decision, deeper
 // layers are the callee-side decisions evaluated inside a nested Execute
 // under the callee's own allow_tools.
 func (ps *permissionState) evaluateAtLayer(requestID, tool, argsDigest, fullCmd string, layer int) (allow bool, reason string) {
@@ -180,7 +180,7 @@ func (ps *permissionState) evaluateAtLayer(requestID, tool, argsDigest, fullCmd 
 }
 
 // evaluateAtLayerWithPolicy is evaluateAtLayer with an explicit per-call
-// policy (KB-155): concurrent Executes on one multiplexed session each carry
+// policy: concurrent Executes on one multiplexed session each carry
 // their own step policy, so the decision must use the executing sink's
 // policy rather than the session-global snapshot — which is whatever
 // setStepPolicy wrote last. A nil policy falls back to the session-global
@@ -297,7 +297,7 @@ func (ps *permissionState) sendEvent(requestID string, allow bool, reason string
 // reply, but the registry keeps one entry per request_id for teardown
 // accounting.
 //
-// CRI-169: the second half of the pause gate lives here. A dispatch that
+// The second half of the pause gate lives here. A dispatch that
 // passed the gate in handleToolCallRequest but registers after the pause gate
 // was set is refused (returns false) — the pending set only ever shrinks once
 // the gate is set, so the Session.Pause drain takes a single snapshot. cancel
@@ -392,7 +392,7 @@ func (ps *permissionState) Stop() {
 		})
 	}
 
-	// Tool calls still in flight at close (CRI-161): audit each abandonment.
+	// Tool calls still in flight at close: audit each abandonment.
 	// No reply is sent — the caller's stream goes away with the session.
 	for _, call := range ps.drainPendingToolCalls() {
 		if ps.audit != nil {
@@ -408,7 +408,7 @@ func (ps *permissionState) Stop() {
 	}
 }
 
-// SetPauseDrainWindow stamps the pause drain window (CRI-169). Called at
+// SetPauseDrainWindow stamps the pause drain window. Called at
 // permissionState creation sites from the SessionManager's configured window.
 func (ps *permissionState) SetPauseDrainWindow(window time.Duration) {
 	ps.mu.Lock()
@@ -418,7 +418,7 @@ func (ps *permissionState) SetPauseDrainWindow(window time.Duration) {
 
 // toolCallDrainWindow returns the effective drain window for Session.Pause:
 // the SessionManager-configured value (stamped via SetPauseDrainWindow) or,
-// when unset, the CRI-169 built-in default from the tunables registry.
+// when unset, the built-in default from the tunables registry.
 func (ps *permissionState) toolCallDrainWindow() time.Duration {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
@@ -437,7 +437,7 @@ func drainSettleGrace(window time.Duration) time.Duration {
 	return tunables.PauseSettleGrace(window)
 }
 
-// beginToolCallPause sets the CRI-169 pause gate: new nested tool-call
+// beginToolCallPause sets the pause gate: new nested tool-call
 // dispatch is refused with the typed `paused` call_error (via
 // handleToolCallRequest gate and the registerPendingToolCall re-check) until
 // resumeToolCalls clears it. The stream consumer flag is untouched here —
@@ -477,7 +477,7 @@ func (ps *permissionState) snapshotPendingToolCalls() []*pendingToolCall {
 	return snapshot
 }
 
-// awaitToolCallDrain is the Session.Pause drain (CRI-169 drain-first
+// awaitToolCallDrain is the Session.Pause drain (drain-first
 // posture): it waits up to window for every pending nested tool call to
 // settle (bounded wait), cancels the stragglers, then grants them a bounded
 // settle grace to deliver their typed replies. It returns the calls still
@@ -541,7 +541,7 @@ func (ps *permissionState) awaitToolCallDrain(window time.Duration) []*pendingTo
 }
 
 // Pause cancels the stream goroutine's context. The stream is held open at the
-// adapter side; no new decisions are dispatched. The CRI-169 pause gate is
+// adapter side; no new decisions are dispatched. The pause gate is
 // set atomically on the same mutex, so no nested tool call can be registered
 // between the gate and the stream flag.
 func (ps *permissionState) Pause() {
@@ -659,25 +659,25 @@ func resolvePermissionRequestID(payload map[string]any) (string, bool) {
 // permission.request events. It delegates evaluation to the session's
 // PermissionState, emits permission.granted / permission.denied events, and
 // tracks whether any request was denied so Execute can override the outcome.
-// Adapter tool-call requests (CRI-159) are routed to the typed reply path in
+// Adapter tool-call requests are routed to the typed reply path in
 // tool_call.go; plain requests keep the untouched plain flow.
 type permissionInterceptSink struct {
 	inner     adapter.EventSink
 	permState *permissionState
 	session   *Session
-	// step is the step being executed; its recorded tools grants (CRI-157)
+	// step is the step being executed; its recorded tools grants
 	// are unioned into the effective allow set for tool-call policy. Nil for
 	// plain permission-only use (then no grant matching applies).
 	step *workflow.StepNode
 	// graph is the compiled workflow graph used for tool-call validation
 	// (callee declared, static tool surface). Nil skips graph validation.
 	graph *workflow.FSMGraph
-	// mgr is the owning SessionManager; nested adapter tool calls (CRI-160)
+	// mgr is the owning SessionManager; nested adapter tool calls
 	// resolve and execute the callee through it. Nil means nested execution
 	// is not wired (directly constructed sinks), and allowed calls fall back
 	// to the typed not_yet_supported reply.
 	mgr *SessionManager
-	// nesting is the per-call tool-call nesting state (CRI-162): the depth of
+	// nesting is the per-call tool-call nesting state: the depth of
 	// nested tool-call Executes above the Execute this sink serves (0 for a
 	// step-level Execute) plus the caller adapter ref chain, checked for
 	// runtime cycles before dispatching a nested call and compared against
@@ -687,7 +687,7 @@ type permissionInterceptSink struct {
 	// runs under it so run cancellation (timeout, user abort) reaches the
 	// callee too.
 	execCtx context.Context
-	// stepPolicy is the Execute's own step policy (KB-155): the CombinedPolicy
+	// stepPolicy is the Execute's own step policy: the CombinedPolicy
 	// built from this step's allow_tools plus the environment layer. With
 	// concurrent executes multiplexed over one session, each execute decides
 	// its permission requests under its own policy — the session-global
@@ -695,26 +695,26 @@ type permissionInterceptSink struct {
 	// another's requests. Nil (directly constructed sinks, no resolved
 	// environment layer) falls back to the session-global snapshot.
 	stepPolicy PermissionPolicy
-	// nested counts in-flight nested tool-call executes (CRI-161). They run
+	// nested counts in-flight nested tool-call executes. They run
 	// on their own goroutines so the caller's Execute event loop keeps
 	// reading its Permissions stream while calls are in flight (replies may
 	// arrive in any order). SessionManager.execute waits on it right after
 	// the adapter call returns, before reading the sink's latches.
 	nested sync.WaitGroup
-	// mu guards the nested-execution latches below: dispatch is asynchronous
-	// (CRI-161), so completing goroutines can set them while SessionManager
+	// mu guards the nested-execution latches below: dispatch is asynchronous,
+	// so completing goroutines can set them while SessionManager
 	// reads.
 	mu sync.Mutex
 	// fatalErr latches a FatalRunError raised by a nested callee Execute
-	// (callee on_crash=abort_run, CRI-160). SessionManager.execute reads it
+	// (callee on_crash=abort_run). SessionManager.execute reads it
 	// after the adapter call returns and propagates the error so the run
 	// aborts.
 	nestedFatalErr error
 	// lastDecisionDenied records whether the step's LAST permission decision
 	// was a denial. It triggers maybeOverrideOutcome (success →
-	// needs_review) after Execute. KB-57c refinement: a deny the model
+	// needs_review) after Execute. Refinement: a deny the model
 	// subsequently recovered from (any later granted permission) no longer
-	// poisons the verdict — the kb-61-1790827708 run finalized success after
+	// poisons the verdict — a repro run finalized success after
 	// policy-correct compound denials were retried as split commands, and
 	// flagging recovered steps resurrects the deny-loop as a silent-stall
 	// class. A step whose final state is still denied keeps the override:
@@ -740,7 +740,7 @@ func (s *permissionInterceptSink) nestedFatal() error {
 }
 
 // waitPending blocks until every nested tool-call dispatched by this sink has
-// settled and delivered its reply (CRI-161). Called by SessionManager.execute
+// settled and delivered its reply. Called by SessionManager.execute
 // immediately after the adapter call returns so the run observes every
 // nested outcome before the step completes.
 func (s *permissionInterceptSink) waitPending() {
@@ -752,7 +752,7 @@ func (s *permissionInterceptSink) Log(stream string, chunk []byte) {
 }
 
 // redactEventValue masks registered sensitive values out of an adapter-provided
-// payload field before it is re-emitted as an event (CRI-163). Decision
+// payload field before it is re-emitted as an event. Decision
 // payloads echo adapter-supplied strings such as tool arguments, which may
 // carry values the redaction registry has registered for this run.
 func (s *permissionInterceptSink) redactEventValue(v string) string {
@@ -805,7 +805,7 @@ func (s *permissionInterceptSink) handlePermissionRequest(data any) {
 		if idx := strings.Index(pattern, " (alias for "); idx >= 0 {
 			pattern = pattern[:idx]
 		}
-		s.lastDecisionDenied = false // a later grant clears an earlier deny (KB-57c)
+		s.lastDecisionDenied = false // a later grant clears an earlier deny
 		s.inner.Adapter("permission.granted", map[string]any{
 			"request_id": requestID,
 			"tool":       s.redactEventValue(tool),

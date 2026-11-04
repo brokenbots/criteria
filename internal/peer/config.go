@@ -56,8 +56,8 @@ const (
 	EnvRemoteScopesDir = "CRITERIA_REMOTE_SCOPES_DIR"
 	EnvLogLevel        = "CRITERIA_LOG_LEVEL"
 	EnvChildKeepAlive  = "CRITERIA_PEER_CHILD_KEEPALIVE"
-	// The timing/budget override names are owned by the tunables registry
-	// (KB-172); they are aliased here so the peer's strict parsing and tests
+	// The timing/budget override names are owned by the tunables
+	// registry; they are aliased here so the peer's strict parsing and tests
 	// keep their package-local names.
 	EnvJournalLimit = tunables.EnvPeerJournalLimit
 	EnvBackoffMin   = tunables.EnvPeerBackoffMin
@@ -65,7 +65,7 @@ const (
 )
 
 // Defaults for the peer's parsed tunables come from the shared tunables
-// registry (KB-172); the single-source constants are aliased here so the
+// registry; the single-source constants are aliased here so the
 // peer's own naming and tests keep working. ADR-0007: 4096-event journal,
 // 1s–30s reconnect backoff.
 const (
@@ -100,7 +100,7 @@ type Config struct {
 	AdapterBinary   string // EnvAdapterBinary
 	AdapterManifest string // EnvAdapterManifest
 
-	// Adapters is the multi-adapter manifest (KB-213): one spec per adapter
+	// Adapters is the multi-adapter manifest: one spec per adapter
 	// child the peer hosts, built from CRITERIA_REMOTE_ADAPTERS /
 	// CRITERIA_REMOTE_ADAPTERS_DIR with per-adapter overrides. Empty means
 	// the legacy single-adapter shape above.
@@ -271,7 +271,7 @@ func (c *Config) Resolve() error {
 }
 
 // resolveManifestChildren resolves every manifest child with the per-adapter
-// precedence (KB-213): manifest defaults, binary location, PATH validation,
+// precedence: manifest defaults, binary location, PATH validation,
 // and per-child digest pinning. A child that fails to resolve fails the whole
 // Resolve — a multi-child peer never half-boots on an undeclared child.
 func (c *Config) resolveManifestChildren() error {
@@ -329,9 +329,9 @@ func (c *Config) resolveFromManifest() error {
 // known adapter must never silently swap to an unrelated binary.
 func (c *Config) resolveDefaults() {
 	if c.AdapterBinary == "" && c.AdapterName != "" {
-		// Binaries install and live on PATH by TYPE (KB-246, mirroring the
+		// Binaries install and live on PATH by TYPE (mirroring the
 		// adapterhost DiscoverBinary split): a definition-keyed identity
-		// ("shell.develop", KB-242) looks up its binary by the type half
+		// ("shell.develop") looks up its binary by the type half
 		// while the child stays keyed by the definition identity.
 		if p, err := exec.LookPath(adapterhost.AdapterBinaryPrefix + adapterhost.DefinitionType(c.AdapterName)); err == nil {
 			c.AdapterBinary = p
@@ -396,9 +396,9 @@ func (c *Config) resolveDigestBinary() error {
 
 // defaultBinaryPath returns the conventional install path for a named adapter
 // (runner parity: k8s manifests install adapters at /usr/local/bin). Binaries
-// install by TYPE, so a definition identity ("shell.develop", KB-242) derives
+// install by TYPE, so a definition identity ("shell.develop") derives
 // its conventional path from the type half while the child stays keyed by the
-// definition identity (KB-246, mirroring the adapterhost DiscoverBinary split
+// definition identity (mirroring the adapterhost DiscoverBinary split
 // and peer locateSpecBinary).
 func defaultBinaryPath(name string) string {
 	if name == "" {

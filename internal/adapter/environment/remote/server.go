@@ -85,7 +85,7 @@ type waitResult struct {
 }
 
 // ErrScopeNotRegistered marks an adapter dial whose presented scope has no
-// accept token registered on this server (KB-25).
+// accept token registered on this server.
 var ErrScopeNotRegistered = errors.New("scope is not registered")
 
 // ScopeNotRegisteredError marks an unregistered-scope rejection.
@@ -1165,24 +1165,24 @@ func (s *Server) waitTimeoutError(adapterType, scope, key string, budget time.Du
 	delete(s.verifyFailures, key)
 	s.mu.Unlock()
 
-	detail := fmt.Sprintf("no identity handshake observed at all for scope %q; adapter Job may be complete or dead (CRI-137)", scope)
+	detail := fmt.Sprintf("no identity handshake observed at all for scope %q; adapter Job may be complete or dead", scope)
 	if st != nil {
 		detail = fmt.Sprintf("last identity rejection for scope %q: %s", scope, st.lastErr)
 		switch st.class {
 		case rejectDigest:
 			// Digest failures are their own diagnosis; do not blame the
 			// accept token for them.
-			detail += "; digest verification failed — stale or wrong adapter build? (CRI-137)"
+			detail += "; digest verification failed — stale or wrong adapter build?"
 		case rejectChildSet:
 			// A peer whose advertised child set failed verification is
-			// mis-declared (KB-213); the message already names the offending
+			// mis-declared; the message already names the offending
 			// child so blame the declaration, not the token.
-			detail += "; peer child set failed verification (KB-213)"
+			detail += "; peer child set failed verification"
 		case rejectScopeNotRegistered, rejectBadToken:
 			detail += "; stale adapter pod holding a pre-rotation accept token? (CRI-137)"
 		}
 	} else if phase, ok := s.observePod(adapterType, scope); ok && podPhaseStarted(phase) {
-		detail = fmt.Sprintf("no identity handshake observed at all for scope %q; adapter pod observed Running but never dialed this shim — adapter Job may be complete or dead (CRI-137)", scope)
+		detail = fmt.Sprintf("no identity handshake observed at all for scope %q; adapter pod observed Running but never dialed this shim — adapter Job may be complete or dead", scope)
 	}
 	return fmt.Errorf("remote adapter %q session wait for scope %q exceeded %s without a successful identity handshake: %s",
 		adapterType, scope, budget, detail)
@@ -1193,7 +1193,7 @@ func (s *Server) schedulingTimeoutError(adapterType, scope, key string, scheduli
 	delete(s.verifyFailures, key)
 	s.mu.Unlock()
 
-	detail := "no identity handshake observed at all for that scope; the adapter pod was never observed Running during the wait (KB-70)"
+	detail := "no identity handshake observed at all for that scope; the adapter pod was never observed Running during the wait"
 	if phaseKnown {
 		detail += fmt.Sprintf("; last observed pod phase: %q", phase)
 	} else {
@@ -1204,7 +1204,7 @@ func (s *Server) schedulingTimeoutError(adapterType, scope, key string, scheduli
 }
 
 func (s *Server) podTerminalError(adapterType, scope, phase string) error {
-	return fmt.Errorf("remote adapter %q session wait for scope %q failed without a successful identity handshake: adapter pod phase is %q — the adapter Job ended without dialing this shim (CRI-137)",
+	return fmt.Errorf("remote adapter %q session wait for scope %q failed without a successful identity handshake: adapter pod phase is %q — the adapter Job ended without dialing this shim",
 		adapterType, scope, phase)
 }
 

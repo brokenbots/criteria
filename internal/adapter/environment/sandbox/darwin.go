@@ -204,7 +204,7 @@ type PrepareContext struct {
 	Env           *workflow.EnvironmentNode
 	Caps          Capabilities
 	AdapterBinary string // resolved adapter plugin path; populated at prepare time
-	AdapterType   string // adapter type (e.g. "shell"); retained for call-site compatibility but no longer used for interpreter allow-listing (CRI-86)
+	AdapterType   string // adapter type (e.g. "shell"); retained for call-site compatibility but no longer used for interpreter allow-listing
 	// ValidateOnly is ignored on Darwin; present for cross-platform call-site
 	// compatibility and to keep the struct shape consistent with Linux builds.
 	ValidateOnly bool

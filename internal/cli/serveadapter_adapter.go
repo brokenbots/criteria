@@ -4,9 +4,9 @@ package cli
 // (ADR-0008 D2): sessions are the host's view of an adapter session; Execute
 // opens ONE child run process-wide and streams workflow.v1-prefixed adapter
 // events; Pause/Resume delegate to the engine's real pause machinery through
-// the same in-process control bus apply uses (localRunControl, CRI-255)
+// the same in-process control bus apply uses (localRunControl)
 // without its loopback listener. Control verbs arrive over the peer
-// phone-home Control stream (internal/peer, KB-94 U1).
+// phone-home Control stream (internal/peer).
 
 import (
 	"context"
@@ -353,8 +353,8 @@ func (c *serveAdapterClient) Execute(_ context.Context, req *criteriav2.ExecuteR
 // engine turns context cancellation into a real terminal run-failure event).
 // An empty run id targets "the current one": the child hosts at most one
 // live run per session, and the parent's teardown sends the empty id to
-// cover a child run it has not observed on its tracker yet (KB-95 wire
-// contract, KB-96 teardown evidence).
+// cover a child run it has not observed on its tracker yet — the
+// wire contract allows the empty id, and teardown must leave evidence.
 func (c *serveAdapterClient) CancelChildRun(runID string) (string, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

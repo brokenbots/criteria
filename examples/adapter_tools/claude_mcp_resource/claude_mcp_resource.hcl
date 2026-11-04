@@ -1,7 +1,7 @@
 # mode: standalone
 # Example: variant 4 — a REAL agent (the claude-agent adapter, i.e. the
 # Claude Code CLI) tool-calls the mcp adapter consumed as a resource,
-# mid-task (CRI-182; the CRI-181 twin for the Claude side). The claude
+# mid-task (the copilot sample's twin for the Claude side). The claude
 # step's policy grants the mcp adapter's tool surface, the agent calls it
 # through its adapter_tool tool while doing its normal work, and the round
 # trip comes back typed under callee.* on the claude step's outputs.
@@ -59,7 +59,7 @@ permissions {
 
 # The mcp adapter is consumed as a resource: dynamic_tools = true surfaces
 # the fixture server's tools/list (echo, structured) at runtime. This block
-# is byte-identical to the CRI-181 sample's mcp resource block: the two
+# is byte-identical to the copilot sample's mcp resource block: the two
 # real-agent samples share the fixture contract so it stays portable.
 adapter "mcp" "tools" {
   config {
@@ -117,7 +117,7 @@ state "failed" {
 }
 
 # The mcp callee's result passes through typed under callee.* keys on the
-# caller side (CRI-165 convention): the echo tool's content text lands as
+# caller side: the echo tool's content text lands as
 # callee.outputs.text, so the harness can assert the round trip.
 output "callee_outcome" {
   value = steps.call["callee.outcome"]

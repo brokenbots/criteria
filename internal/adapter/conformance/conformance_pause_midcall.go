@@ -1,6 +1,6 @@
 package conformance
 
-// conformance_pause_midcall.go — CRI-169 conformance coverage for the
+// conformance_pause_midcall.go — conformance coverage for the
 // drain-first pause posture of nested adapter tool calls (ADR-0004 §11):
 //
 //  1. pause_drains_in_flight — pausing while a nested Execute is in flight
@@ -133,7 +133,7 @@ func pauseMidCallGraph(name string) string {
 }
 
 // pauseMidCallCaseDrain covers the drain-first posture with an in-flight
-// call (CRI-169, ADR-0004 §11): the caller holds its call open inside the
+// call (ADR-0004 §11): the caller holds its call open inside the
 // callee; the pause blocks instead of returning while the call is in flight
 // (drain-first: the pause never abandons an in-flight call that can still
 // settle); the released call settles inside the drain and its typed reply is
@@ -197,7 +197,7 @@ func pauseMidCallCaseDrain(t *testing.T) {
 }
 
 // pauseMidCallCaseStraggler covers the straggler path and the pause gate
-// (CRI-169, ADR-0004 §11): with a 300ms drain window, the held call does not
+// (ADR-0004 §11): with a 300ms drain window, the held call does not
 // settle, so the drain cancels it — the callee observes the context
 // cancellation and the caller receives the typed `canceled` call_error — a
 // call issued while the gate is up is refused with the typed `paused`
@@ -331,7 +331,7 @@ func assertStragglerAuditDecisions(t *testing.T, audit *matrixAuditCollector) {
 }
 
 // pauseMidCallCaseSnapshotRestore covers snapshot/restore with no in-flight
-// call (CRI-169, ADR-0004 §11): a snapshot taken after the caller's call
+// call (ADR-0004 §11): a snapshot taken after the caller's call
 // completed (nothing in flight) round-trips through restore, and the
 // restored sessions make further calls that work.
 func pauseMidCallCaseSnapshotRestore(t *testing.T) {
@@ -421,7 +421,7 @@ func assertPostRestoreCalls(t *testing.T, callee *matrixCalleeAdapter) {
 	}
 }
 
-// RunAdapterToolsPauseMidCallConformance runs the CRI-169 pause/resume
+// RunAdapterToolsPauseMidCallConformance runs the pause/resume
 // mid-call conformance suite.
 func RunAdapterToolsPauseMidCallConformance(t *testing.T) {
 	t.Run("pause_drains_in_flight", pauseMidCallCaseDrain)

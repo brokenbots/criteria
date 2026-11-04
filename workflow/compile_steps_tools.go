@@ -1,12 +1,12 @@
 package workflow
 
-// compile_steps_tools.go — compile-time validation of step-level tool grants
-// (CRI-156). Consumes the raw traversals captured by captureStepToolRefs
-// (CRI-155) and re-walks each step's `tools` attribute with positions, so
+// compile_steps_tools.go — compile-time validation of step-level tool grants.
+// Consumes the raw traversals captured by captureStepToolRefs
+// and re-walks each step's `tools` attribute with positions, so
 // entries that are not bare traversals are diagnosed here too (the parse pass
 // silently drops them).
 //
-// The diagnostic set is one per failure mode (CRI-156):
+// The diagnostic set is one per failure mode:
 //
 //  1. resolution: every entry must be a bare traversal of the form
 //     adapter.<type>.<name>.tools[.<tool>] referencing an adapter declared in
@@ -17,7 +17,7 @@ package workflow
 //  3. dynamic_tools = true adapters are extensible: the name check is skipped
 //     and nothing is emitted (the runtime resolves names; M7 hook).
 //  4. strict default: an adapter that declares neither tool blocks nor
-//     dynamic_tools, and whose handshake (InfoResponse.tools, CRI-171) is
+//     dynamic_tools, and whose handshake (InfoResponse.tools) is
 //     unavailable to the compiler or exposes no tools, rejects named refs —
 //     callee presents no tool surface (error).
 //  5. pointless caller: a caller adapter that does not declare the
@@ -35,11 +35,11 @@ package workflow
 //     entry is NOT required for compilation and validateAllowToolsEntry is
 //     untouched by this file.
 //  9. runtime tool-surface check: on an adapter that declares neither static
-//     tool blocks nor dynamic_tools but whose handshake (InfoResponse.tools,
-//     CRI-171) reports tools, a named ref must resolve to a reported runtime
-//     tool (error, CRI-173); bare .tools refs grant the full reported surface.
+//     tool blocks nor dynamic_tools but whose handshake (InfoResponse.tools)
+//     reports tools, a named ref must resolve to a reported runtime
+//     tool (error); bare .tools refs grant the full reported surface.
 //
-// Tool-source precedence (CRI-173). For one entry the compiler consults the
+// Tool-source precedence. For one entry the compiler consults the
 // callee's tool sources in a fixed order, and the first applicable rung
 // decides:
 //
@@ -79,7 +79,7 @@ type toolSurface struct {
 	staticToolNames []string // tool "<name>" block labels, in declaration order
 	dynamic         bool     // dynamic_tools = true
 	// runtimeToolNames holds the tool names the adapter's handshake
-	// (InfoResponse.tools, CRI-171) reported, carried by the schemas map
+	// (InfoResponse.tools) reported, carried by the schemas map
 	// (AdapterInfo.RuntimeTools). nil when the handshake was unavailable to
 	// the compiler or exposed no tools.
 	runtimeToolNames []string
@@ -160,7 +160,7 @@ func buildToolSurfaces(spec *Spec, schemas map[string]AdapterInfo) map[string]to
 	return out
 }
 
-// validateStepToolRefs validates a step's `tools` attribute (CRI-156).
+// validateStepToolRefs validates a step's `tools` attribute.
 // callerType is the step's own adapter type for adapter-targeted steps and ""
 // for subworkflow-targeted steps, which have no caller adapter and therefore
 // never trip the pointless-caller warning.
@@ -336,7 +336,7 @@ func validateToolRefSurface(g *FSMGraph, sp *StepSpec, surfaces map[string]toolS
 	return validateToolRefAgainstSurface(sp, surfaces[key], key, target, named, tr)
 }
 
-// validateToolRefAgainstSurface applies the CRI-173 tool-source precedence
+// validateToolRefAgainstSurface applies the tool-source precedence
 // (first applicable rung decides) to a well-formed target:
 //
 //  1. static tool blocks — a named ref must resolve against them (mode 2);
@@ -433,7 +433,7 @@ func handshakeSurfacePhrase(surface toolSurface) string {
 	return "no adapter handshake was available to the compiler"
 }
 
-// runtimeToolRefDiag is the mode 9 error (CRI-173) for a named ref that does
+// runtimeToolRefDiag is the mode 9 error for a named ref that does
 // not match the runtime surface an adapter exposes through its handshake
 // (InfoResponse.tools, carried by AdapterInfo.RuntimeTools).
 func runtimeToolRefDiag(sp *StepSpec, key, target string, surface toolSurface, tr hcl.Traversal) *hcl.Diagnostic {

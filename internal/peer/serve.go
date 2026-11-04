@@ -1,7 +1,6 @@
 package peer
 
-// Server is the peer's phone-home gRPC server (ADR-0007 Stage A, KB-15
-// T-05). It dials the criteria host, writes the peer identity frame
+// Server is the peer's phone-home gRPC server (ADR-0007 Stage A, T-05). It dials the criteria host, writes the peer identity frame
 // (role "peer"), and serves the FULL v2 AdapterService contract plus the
 // PeerService supervision surface on the held connection. When the host
 // drops the connection the child stays alive (CRITERIA_PEER_CHILD_KEEPALIVE,
@@ -40,7 +39,7 @@ import (
 const (
 	// DefaultHeartbeatInterval is the idle interval at which an open
 	// Supervise stream emits a SupervisionHeartbeat. Single-sourced from the
-	// tunables registry (KB-172), which also owns the adapter log-stream
+	// tunables registry, which also owns the adapter log-stream
 	// heartbeat cadence.
 	DefaultHeartbeatInterval = tunables.DefaultHeartbeatInterval
 
@@ -89,9 +88,9 @@ const (
 	peerWorkflowV1Capability    = "workflow.v1"
 
 	// peerAdapterRouteHeader is the gRPC metadata header a multi-adapter
-	// host tags each session's adapter calls with (KB-213): its value is the
-	// adapter name the session belongs to — the adapter definition identity
-	// (KB-242) — and the peer's connection mux routes the call to that
+	// host tags each session's adapter calls with: its value is the
+	// adapter name the session belongs to — the adapter definition
+	// identity — and the peer's connection mux routes the call to that
 	// child. Must stay in sync with the
 	// host-side constant in internal/adapter/environment/remote
 	// (the two packages cannot import each other).
@@ -123,9 +122,9 @@ type peerIdentityFrame struct {
 	SDKProtocolVersion int                       `json:"sdk_protocol_version"`
 	Role               string                    `json:"role,omitempty"`
 	Peer               *peerIdentityCapabilities `json:"peer,omitempty"`
-	// Adapters (KB-213) names the FULL child set this peer hosts — every
+	// Adapters names the FULL child set this peer hosts — every
 	// adapter child of the environment, not just this connection's dial
-	// child; each entry names its adapter definition (KB-242). Additive and
+	// child; each entry names its adapter definition. Additive and
 	// absent for the legacy single-adapter shape; the host shim
 	// verifies each advertised child digest against its own pin (accept-time
 	// fail-closed check for a declared adapter missing from the child set).
@@ -133,7 +132,7 @@ type peerIdentityFrame struct {
 }
 
 // peerAdapterIdentity is one hosted child in the identity frame's adapters
-// list: the adapter definition name (the child's key, KB-242) plus its
+// list: the adapter definition name (the child's key) plus its
 // version and (when pinned) digest.
 type peerAdapterIdentity struct {
 	Name    string `json:"name"`
@@ -166,8 +165,7 @@ type Server struct {
 	keepaliveOpts []grpc.ServerOption
 	// dialFunc, childClient, rand, and sleep are test seams; NewServer
 	// installs production defaults. childClient resolves the served client
-	// for one hosted adapter child by its definition name (KB-213
-	// multi-adapter, KB-242 identity);
+	// for one hosted adapter child by its definition name;
 	// for the serve-adapter role the resolver ignores the name.
 	dialFunc    func(ctx context.Context, network, addr string) (net.Conn, error)
 	childClient func(name string) (adapterhost.Client, bool)
@@ -205,7 +203,7 @@ func NewServer(cfg *Config, rt *peerRuntime, log *slog.Logger) *Server {
 		cfg: cfg,
 		rt:  rt,
 		log: log,
-		// One source for the heartbeat cadence (KB-172): the registered
+		// One source for the heartbeat cadence: the registered
 		// heartbeat override applies here too, keeping the peer's Supervise
 		// idle heartbeat on the same knob as the adapter log-stream
 		// heartbeats.
@@ -241,9 +239,9 @@ func (s *Server) defaultChildClient(name string) (adapterhost.Client, bool) {
 // disabled the child is killed between attempts (legacy-runner parity: no
 // child survives a host disconnect). With CRITERIA_REMOTE_SCOPES_DIR set the
 // hosted children are reached over one connection per (scope, adapter) token
-// (scope-set dialing, KB-213): the Run loop becomes a supervisor that starts
+// (scope-set dialing): the Run loop becomes a supervisor that starts
 // and stops one connection loop per scanned token, re-scanning at the
-// heartbeat cadence so runner rotation (CRI-137/304) self-heals.
+// heartbeat cadence so runner rotation self-heals.
 func (s *Server) Run(ctx context.Context) error {
 	if s.rt != nil && s.cfg.ScopesDir != "" {
 		return s.runScopeSet(ctx)
@@ -306,7 +304,7 @@ func (s *Server) serveCountAdjust(spec *serveConnSpec) {
 
 // runScopeSet supervises one phone-home connection loop per (scope, adapter)
 // token under CRITERIA_REMOTE_SCOPES_DIR. The token set is the engine's
-// per-instance dial manifest: runner rotation (CRI-137/304) adds new
+// per-instance dial manifest: runner rotation adds new
 // instance dirs and removes dead ones, so the supervisor re-scans at the
 // heartbeat cadence and starts/stops loops to converge. A new token's loop
 // dials immediately (the engine is waiting for its adapter); a vanished
@@ -437,10 +435,10 @@ type serveConnSpec struct {
 	scope   string
 	token   string
 	// children names the adapter children served through this conn (their
-	// definition names, KB-242): exactly one
+	// definition names): exactly one
 	// entry (the dial child) in the legacy shape, or the full hosted set in
 	// the run-wide multi-adapter and per-scope scope-set shapes (session
-	// calls routed by the host's x-criteria-adapter header, KB-213). The
+	// calls routed by the host's x-criteria-adapter header). The
 	// identity frame advertises exactly this set.
 	children []string
 }
@@ -464,8 +462,7 @@ func (s *Server) connProfile() (serveConnSpec, error) {
 	return specs[0], nil
 }
 
-// connSpecs resolves the connection set for the configured peer shape
-// (KB-213):
+// connSpecs resolves the connection set for the configured peer shape:
 //   - CRITERIA_REMOTE_SCOPES_DIR set: one conn per (scope, adapter) token
 //     file scanned from the dir; the identity frame dials with that token
 //     and its adapter/scope. A scanned token for an adapter the peer does
@@ -486,8 +483,8 @@ func (s *Server) connSpecs() ([]serveConnSpec, error) {
 // connSpecsForScopes builds one per-(scope, adapter) conn spec from the
 // scope-token scan; adapters the peer does not host are refused loudly and
 // left out (their host wait types out instead of a silent miss). Every
-// per-scope conn serves and advertises the FULL hosted child set (KB-213):
-// the children are keyed by adapter definition name (KB-242), not by
+// per-scope conn serves and advertises the FULL hosted child set:
+// the children are keyed by adapter definition name, not by
 // (scope, adapter) dial — so
 // whichever conn of a scope lands first must be able to carry any of that
 // scope's adapters, and the host's routed wake (x-criteria-adapter header)
@@ -662,7 +659,7 @@ func (s *Server) serveChildSet(server *grpc.Server, spec *serveConnSpec) {
 
 // supervisionEventMatches reports whether a journaled supervision event
 // belongs to the filtered stream's adapter name — the addressed child's
-// definition identity (KB-213 multi-adapter, KB-242): an empty filter
+// definition identity: an empty filter
 // passes everything (the legacy single-child stream), a set filter passes
 // only events attributed to that child.
 func supervisionEventMatches(ev *criteriav1.SupervisionEvent, adapterName string) bool {
@@ -823,7 +820,7 @@ func (s *Server) identityFrame(spec *serveConnSpec) ([]byte, error) {
 			Capabilities:    append([]string(nil), s.capabilities...),
 		},
 	}
-	// KB-213: manifest-mode frames advertise the full hosted child set on
+	// Manifest-mode frames advertise the full hosted child set on
 	// every connection — the run-wide conn serves that set directly, and each
 	// per-scope conn muxes the same shared children so the advertised set is
 	// always honored; the legacy single-adapter frame keeps its exact legacy
@@ -963,9 +960,9 @@ func (s *Server) superviseHandler(srv interface{}, stream grpc.ServerStream) err
 // The cursor advances with each sent event, so a stream-level reset (host
 // re-opens Supervise) replays exactly the unseen suffix, once.
 //
-// adapterType (KB-213) filters the stream to one hosted child's events: a
+// adapterType filters the stream to one hosted child's events: a
 // per-session Supervise on a multi-adapter peer requests the child it
-// serves — the name carries the adapter's definition identity (KB-242) —
+// serves — the name carries the adapter's definition identity —
 // and the peer filters every journaled event by that name so N
 // children's streams stay independent. An empty filter (the legacy single
 // child and older hosts) passes every event. Heartbeats are stream-generated
@@ -1045,11 +1042,11 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 // child (closed on peer shutdown) and journals the StreamFlushed fact when
 // the child's log stream ends (ADR-0007 supervision emission points). The
 // wrapping client carries the child's adapter name so the journal and the
-// runtime's per-child session tables attribute the facts (KB-213).
+// runtime's per-child session tables attribute the facts.
 type serveChildClient struct {
 	adapterhost.Client
 	rt *peerRuntime
-	// name is the wrapped child's definition name (the child key, KB-242).
+	// name is the wrapped child's definition name (the child key).
 	name string
 	// scope is the journal attribution scope for this bridge's flushed
 	// facts: the conn's dial scope.
@@ -1083,14 +1080,13 @@ func (c *serveChildClient) Log(ctx context.Context, req *v2.LogRequest, sink ada
 }
 
 // connMux routes one multi-adapter phone-home connection's adapter calls to
-// the named child's wrapper (KB-213). The host tags each session's calls
+// the named child's wrapper. The host tags each session's calls
 // with the x-criteria-adapter metadata header; a call without that header
 // (an older host, or an RPC without a session surface) lands on the
 // connection's dial child.
 type connMux struct {
 	byName map[string]adapterhost.Client
-	// fallback is the definition name of the connection's dial child
-	// (KB-242).
+	// fallback is the definition name of the connection's dial child.
 	fallback string
 }
 

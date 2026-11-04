@@ -26,7 +26,7 @@ func compileSubworkflowStep(g *FSMGraph, sp *StepSpec, spec *Spec, subworkflowRe
 	// Subworkflow targets have no caller adapter, so the pointless-caller
 	// warning does not apply; entries are still validated for shape and
 	// resolution against this workflow's adapters, consulting the handshake
-	// tool surface when schemas were supplied (CRI-173).
+	// tool surface when schemas were supplied.
 	diags = append(diags, validateStepToolRefs(g, sp, spec, opts.Schemas, "")...)
 
 	if len(sp.AllowTools) > 0 {

@@ -1,4 +1,4 @@
-// Adapter-tools failure matrix (CRI-167): automated conformance coverage for
+// Adapter-tools failure matrix: automated conformance coverage for
 // the five failure scenarios of the adapter-tools call path (ADR-0004 §4-§8,
 // §10), exercised end-to-end through the real engine against in-memory
 // caller/callee fakes.
@@ -34,7 +34,7 @@
 //  6. capability_missing — the caller adapter never declared the
 //     adapter_tools capability: gate 1 rejects the call with a typed
 //     call_error "capability_missing" BEFORE any policy evaluation (the
-//     CRI-159 gate: no permission.granted/denied event, no policy call in
+//     pre-policy gate: no permission.granted/denied event, no policy call in
 //     the audit, single deterministic reject entry), and the run continues.
 //
 // This suite is host-side and unconditional: no in-tree conformance adapter
@@ -110,7 +110,7 @@ type matrixCallerAdapter struct {
 	capabilities []string
 	script       []matrixCall
 	outcome      string
-	// beforeCall (CRI-169) is invoked with the script index before the call
+	// beforeCall is invoked with the script index before the call
 	// is issued; a conformance case holds the caller's Execute open at a
 	// chosen point so it can pause the run mid-call. Nil-safe.
 	beforeCall func(index int)
@@ -266,14 +266,14 @@ type matrixCalleeExecution struct {
 // typed schema surface the host uses for the synthetic nested step; tasks
 // script four behaviors: "block" waits for the nested context cancellation
 // (the timeout case), "hold" waits for the case's release channel or the
-// nested context cancellation (the CRI-169 pause cases), "explode" fails the
+// nested context cancellation (the pause cases), "explode" fails the
 // Execute with a plain error (the crash case), everything else succeeds with
 // report/count outputs.
 type matrixCalleeAdapter struct {
 	mu    sync.Mutex
 	sess  map[string]struct{}
 	execs []matrixCalleeExecution
-	// holdRelease unblocks the scripted "hold" task (CRI-169); a nil
+	// holdRelease unblocks the scripted "hold" task; a nil
 	// channel makes "hold" wait for the nested context cancellation only.
 	holdRelease chan struct{}
 }
@@ -283,10 +283,10 @@ func newMatrixCallee() *matrixCalleeAdapter {
 }
 
 func (a *matrixCalleeAdapter) Info(context.Context) (adapterhost.Info, error) {
-	// KB-155: declare concurrent_execute so nested tool calls multiplex
-	// over one callee session (CRI-161 interleave and CRI-183 agent-caller
-	// concurrent-calls both rely on sibling Executes running in parallel;
-	// without it the acquireExecuteTurn gate serializes them turn-by-turn).
+	// Declare concurrent_execute so nested tool calls multiplex over one
+	// callee session (the interleave and agent-caller concurrent-calls
+	// cases rely on sibling Executes running in parallel; without it
+	// the acquireExecuteTurn gate serializes them turn-by-turn).
 	return adapterhost.Info{
 		Name:         "matrix-callee",
 		Version:      "0.0.0-matrix",
@@ -315,7 +315,7 @@ func (a *matrixCalleeAdapter) OpenSession(_ context.Context, id string, _, _ map
 func (a *matrixCalleeAdapter) Execute(ctx context.Context, sessionID string, step *workflow.StepNode, _ adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	task := step.Input["task"]
 	// Record at Execute entry so in-flight executions are observable (the
-	// CRI-169 pause cases poll for them); a canceled task updates its
+	// pause cases poll for them); a canceled task updates its
 	// recorded context error on completion.
 	exec := matrixCalleeExecution{sessionID: sessionID, stepName: step.Name, task: task}
 	a.mu.Lock()
@@ -331,7 +331,7 @@ func (a *matrixCalleeAdapter) Execute(ctx context.Context, sessionID string, ste
 		ctxErr = ctx.Err()
 		outcome = "failure"
 	case "hold":
-		// CRI-169: hold until the case releases it (drain case) or the
+		// Hold until the case releases it (drain case) or the
 		// pause drain cancels the nested context (straggler case).
 		select {
 		case <-a.holdRelease:
@@ -341,7 +341,7 @@ func (a *matrixCalleeAdapter) Execute(ctx context.Context, sessionID string, ste
 		}
 	case "slow":
 		// Delay long enough for a faster sibling call's reply to overtake
-		// this one on the permissions stream (the CRI-161 interleave
+		// this one on the permissions stream (the interleave
 		// precedent; the agent-caller matrix's concurrent-calls case).
 		time.Sleep(150 * time.Millisecond)
 	case "explode":
@@ -674,7 +674,7 @@ func compileMatrixGraph(t *testing.T, src string) *workflow.FSMGraph {
 
 // runMatrixCase drives one matrix case through the real engine. The caller
 // is accepted as a bare adapterhost.Handle so the agent-caller matrix
-// (CRI-183) can ride the same wiring with its own caller fake.
+// can ride the same wiring with its own caller fake.
 func runMatrixCase(t *testing.T, src string, caller adapterhost.Handle, callee *matrixCalleeAdapter) (*matrixEngineSink, *matrixAuditCollector) {
 	t.Helper()
 	sink := &matrixEngineSink{}
@@ -851,7 +851,7 @@ func assertCrashReplies(t *testing.T, caller *matrixCallerAdapter) {
 	}
 }
 
-// assertCalleeCrashObservability asserts the CRI-163 observability events for
+// assertCalleeCrashObservability asserts the runtime observability events for
 // the crash: both calls policy-allowed, no deny, and the call/result events
 // carrying the call and its typed failure with no outcome on the failure.
 func assertCalleeCrashObservability(t *testing.T, sink *matrixEngineSink) {
@@ -907,7 +907,7 @@ func assertCalleeTimeoutExecution(t *testing.T, callee *matrixCalleeAdapter) {
 	}
 }
 
-// RunAdapterToolsFailureMatrix runs the CRI-167 adapter-tools failure matrix:
+// RunAdapterToolsFailureMatrix runs the adapter-tools failure matrix:
 // six sub-tests, one per matrix case, each asserting the caller-visible
 // result and the run-continuation invariant through the real engine.
 func RunAdapterToolsFailureMatrix(t *testing.T) {
@@ -1160,7 +1160,7 @@ func matrixCaseCalleeTimeout(t *testing.T) {
 // handshake. Gate 1 rejects the call typed as capability_missing BEFORE any
 // policy evaluation — the step's tools grant would have allowed this call,
 // so exactly one audit entry (the deterministic reject, no allow) is the
-// CRI-159 gate's fingerprint. No permission events, no dispatch, the callee
+// pre-policy gate's fingerprint. No permission events, no dispatch, the callee
 // is never touched, and the run continues through the caller's own outcome
 // routing.
 func matrixCaseCapabilityMissing(t *testing.T) {
@@ -1181,7 +1181,7 @@ func matrixCaseCapabilityMissing(t *testing.T) {
 
 	assertTypedCallError(t, caller, "capability_missing")
 
-	// CRI-159 gate lock: the gate precedes the policy — no
+	// Pre-policy gate lock: the gate precedes the policy — no
 	// permission.granted, no permission.denied, no dispatch.
 	assertNoStepEvents(t, sink, "permission.granted")
 	assertNoStepEvents(t, sink, "permission.denied")

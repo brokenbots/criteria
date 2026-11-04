@@ -30,7 +30,7 @@ type ChildRunCanceler interface {
 	// CancelChildRun cancels the in-flight child run. A non-empty runID is
 	// matched exactly; an empty runID targets "the current one" — the parent's
 	// teardown uses it to cover a child run it has not observed on its tracker
-	// yet (KB-96 / ADR-0008 teardown evidence). It returns the matched run id
+	// yet (ADR-0008 teardown evidence). It returns the matched run id
 	// and whether a matching in-flight run was found (accepted). Cancellation
 	// is cooperative: the adapter does not block the RPC on the run settling —
 	// the Execute stream carries the result.
@@ -113,7 +113,7 @@ func (s *Server) journalFor() *EventJournal {
 const peerJournalServeAdapterType = "workflow.v1"
 
 // journalChildRunTeardownPartial journals the child's evidence for a parent
-// force kill on an in-flight child run (KB-96, ADR-0008 D2). The event goes
+// force kill on an in-flight child run (ADR-0008 D2). The event goes
 // to the session "" binding: the control plane carries no session id, and
 // the parent's tracker keys on the run id alone.
 func (s *Server) journalChildRunTeardownPartial(runID, detail string) {
@@ -137,7 +137,7 @@ func (s *Server) journalChildRunTeardownPartial(runID, detail string) {
 // nothing to act on (host-initiated teardown rides CloseSession).
 func (s *Server) controlServeAdapter(req *criteriav1.ControlRequest) *criteriav1.ControlResponse {
 	if kill := req.GetKillChild(); kill != nil {
-		// KB-96 (ADR-0008 D2): the parent's teardown settle grace expired and
+		// ADR-0008 D2: the parent's teardown settle grace expired and
 		// its KillChild landed. The child run lives inside this process, so
 		// force-kill semantics resolve to a force cancel over the engine's
 		// real stop machinery, and the journal records the partial-teardown

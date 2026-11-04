@@ -364,7 +364,7 @@ func (n *stepNode) applyOutcome(outcomeName string, rawOutputs, swOutputs map[st
 	// cty values; both the projection and the raw adapter outputs are already
 	// typed, so they are stored under steps.<name>.* with their native types.
 	//
-	// KB-45: bind the outcome schema's typeexpr defaults into the payload first
+	// Bind the outcome schema's typeexpr defaults into the payload first
 	// (schema = optional(T, default) fields), so both the projection's
 	// output.<key> reads and the stored steps.<step> object see the declared
 	// defaults for fields the adapter omitted. Apply is idempotent on complete
@@ -411,7 +411,7 @@ func (n *stepNode) applyOutcome(outcomeName string, rawOutputs, swOutputs map[st
 }
 
 // bindSchemaDefaults applies the outcome schema's typeexpr optional(T, default)
-// defaults to an adapter payload (KB-45), returning the defaulted outputs.
+// defaults to an adapter payload, returning the defaulted outputs.
 // Apply is idempotent on complete payloads, so payloads SDK adapters already
 // defaulted on the wire pass through unchanged; a non-object payload returns
 // as-is.
@@ -768,8 +768,8 @@ func isSessionCrashError(err error) bool {
 }
 
 // crashReopenEnabled reports whether the engine should re-open a crashed
-// session before follow-on steps execute on it (CRI-271). Set
-// CRITERIA_SESSION_CRASH_REOPEN=0|false|off to restore the pre-CRI-271
+// session before follow-on steps execute on it. Set
+// CRITERIA_SESSION_CRASH_REOPEN=0|false|off to restore the legacy
 // behavior: a crashed session stays dead and follow-on steps replay its
 // crash error. The value is read per call so operators (and tests) can flip
 // it between runs without restarting the process.
@@ -783,7 +783,7 @@ func crashReopenEnabled() bool {
 }
 
 // reopenCrashedSession re-opens the adapter session behind a step whose
-// session crashed at an earlier step (CRI-271). Under the default
+// session crashed at an earlier step. Under the default
 // on_crash=fail policy that session stays registered but dead, so the
 // follow-on step would replay the crash error; re-opening gives the step a
 // live session so the run's bookkeeping (comment_handler_failed,
@@ -816,14 +816,14 @@ func (n *stepNode) executeStepTimed(ctx context.Context, deps Deps, step *workfl
 	}
 
 	start := time.Now()
-	// KB-25: watch the attempt for adapter progress while Execute runs. The
+	// Watch the attempt for adapter progress while Execute runs. The
 	// watchdog only arms for unbounded adapter steps (Timeout == 0): a
-	// step-declared timeout keeps its CRI-275 ceiling semantics unchanged.
+	// step-declared timeout keeps its ceiling semantics unchanged.
 	watchdog, execCtx := startStepStallWatchdog(stepCtx, deps, step, start)
 	result, err := n.executeStep(execCtx, deps, step, rejection)
 	stalled, stallIdle := watchdog.stop()
-	// CRI-287: when the step deadline expired, this Execute was torn down by
-	// the engine (the CRI-275 step timeout). The cancellation may close
+	// When the step deadline expired, this Execute was torn down by
+	// the engine (the step-declared timeout). The cancellation may close
 	// sibling phone-home transports in the same second, so mark the session
 	// manager: those transport closes must be classified as timeout teardowns,
 	// not session crashes, and the step's declared failure/default outcome
@@ -831,7 +831,7 @@ func (n *stepNode) executeStepTimed(ctx context.Context, deps Deps, step *workfl
 	// step's Execute, which is where the misclassification used to happen.
 	// Only a step ceiling the engine actually installed may open the teardown
 	// window: when step.Timeout == 0 (stepCtx == ctx) a parent/run-context
-	// deadline or a subworkflow cancellation must not. The KB-25 stall
+	// deadline or a subworkflow cancellation must not. The stall
 	// watchdog marks the teardown itself when it fires, before cancelling its
 	// own execution-context layer, so this gate stays keyed on the
 	// step-declared timeout ceiling.
@@ -841,7 +841,7 @@ func (n *stepNode) executeStepTimed(ctx context.Context, deps Deps, step *workfl
 	if cancel != nil {
 		cancel()
 	}
-	// KB-25: a watchdog-fired teardown is reported as the typed stall error
+	// A watchdog-fired teardown is reported as the typed stall error
 	// (wrapped in FatalRunError so the run fails fast) instead of a raw
 	// context cancellation. A successful result keeps its semantics, and a
 	// parent-initiated cancellation (run teardown) always wins.
@@ -852,7 +852,7 @@ func (n *stepNode) executeStepTimed(ctx context.Context, deps Deps, step *workfl
 }
 
 // recordSessionCrash records an adapter reference whose session crashed at
-// a step (CRI-271) so follow-on steps re-open the dead session instead of
+// a step so follow-on steps re-open the dead session instead of
 // replaying its crash error. Recording is step-name-agnostic: every session
 // crash registers its adapter reference, wherever in the workflow it
 // happened.
@@ -863,8 +863,8 @@ func (n *stepNode) recordSessionCrash(st *RunState, step *workflow.StepNode, err
 	st.CrashedSessions.record(step.AdapterRef)
 }
 
-// prepareAttempt readies one loop iteration: reopens a crashed session
-// (CRI-271), counts the visit (W07), and announces the entry.
+// prepareAttempt readies one loop iteration: reopens a crashed session,
+// counts the visit (W07), and announces the entry.
 func (n *stepNode) prepareAttempt(ctx context.Context, st *RunState, deps Deps, step *workflow.StepNode, attempt int) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -878,7 +878,7 @@ func (n *stepNode) prepareAttempt(ctx context.Context, st *RunState, deps Deps, 
 }
 
 // recordContractRejection feeds a contract-rejected verdict into the attempt
-// loop (KB-45): emits the StepOutcomeInvalid event and chains the
+// loop: emits the StepOutcomeInvalid event and chains the
 // ExecutionRejection (outcome, issues, attempt) onto the next Execute.
 func recordContractRejection(deps Deps, step *workflow.StepNode, invalid *adapterhost.OutcomeInvalidError, attempt int, prev *v2.ExecutionRejection) *v2.ExecutionRejection {
 	deps.Sink.OnStepOutcomeInvalid(step.Name, invalid.Outcome, invalid.Issues, attempt)
@@ -887,7 +887,7 @@ func recordContractRejection(deps Deps, step *workflow.StepNode, invalid *adapte
 
 // declareFailedAttempt records a non-rejection attempt failure. When the step
 // declares a "failure" outcome, it resolves to that outcome immediately
-// (returned with declared=true). Otherwise — KB-57 — a failed attempt is a
+// (returned with declared=true). Otherwise a failed attempt is a
 // real step outcome even when the step declares no "failure" outcome block:
 // emitting the empty string left the consumer-side step outcome unset for
 // steps in exactly the post-develop bookkeeping shape (push_wip_checkpoint-
@@ -908,7 +908,7 @@ func (n *stepNode) declareFailedAttempt(st *RunState, deps Deps, step *workflow.
 // outcome flows through — plain steps (evaluateOnce), while iterations
 // (runWhileStep), and parallel iterations (runParallelAdapterIteration) all
 // route here, so executor-shape-agnostic post-processing belongs at its
-// return sites only (KB-264: untyped outcomes resolve the adapter's default
+// return sites only (untyped outcomes resolve the adapter's default
 // output type at each result-bearing return).
 func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps Deps, step *workflow.StepNode, startAttempt int) (adapter.Result, error) {
 	// ADR-0006: prompts held between attempts resolve when the loop ends;
@@ -924,7 +924,7 @@ func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps De
 	var rejection *v2.ExecutionRejection
 	var lastInvalid *adapterhost.OutcomeInvalidError
 	for attempt := startAttempt; attempt <= maxAttempts; attempt++ {
-		// CRI-271/W07: honor cancellation, reopen a crashed session, count
+		// W07: honor cancellation, reopen a crashed session, count
 		// the visit, and announce the entry.
 		if err := n.prepareAttempt(ctx, st, deps, step, attempt); err != nil {
 			return adapter.Result{}, err
@@ -942,7 +942,7 @@ func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps De
 			return n.withDefaultOutputs(result), nil
 		}
 
-		// KB-45: a host-rejected verdict feeds the STANDARD attempt loop (see
+		// A host-rejected verdict feeds the STANDARD attempt loop (see
 		// recordContractRejection); a non-rejection failure resets the repair
 		// context for the next attempt.
 		lastErr = err
@@ -963,11 +963,11 @@ func (n *stepNode) runStepFromAttempt(ctx context.Context, st *RunState, deps De
 		if res, declared := n.declareFailedAttempt(st, deps, step, dur, err); declared {
 			return n.withDefaultOutputs(res), nil
 		}
-		// KB-57: an undeclared failure still emits the canonical "failure"
+		// An undeclared failure still emits the canonical "failure"
 		// event (see declareFailedAttempt).
 	}
 
-	// KB-45: repair loop exhausted with a contract rejection — map to the
+	// Repair loop exhausted with a contract rejection — map to the
 	// step's declared default outcome; the returned name flows through the
 	// standard mapping so the Defaulted event and routing stay identical to
 	// an adapter that returned the default name itself.

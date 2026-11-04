@@ -72,7 +72,7 @@ func (p *builtinAdapter) Execute(ctx context.Context, sessionID string, step *wo
 	if !exists {
 		return adapter.Result{Outcome: "failure"}, fmt.Errorf("unknown session %q", sessionID)
 	}
-	// KB-45: rejection is accepted for Handle-surface symmetry; builtin
+	// Rejection is accepted for Handle-surface symmetry; builtin
 	// adapter implementations re-run the step without host-visible repair
 	// context, and the manager re-validates their verdict regardless.
 	return p.adapter.Execute(ctx, step, sink)

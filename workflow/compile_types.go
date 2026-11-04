@@ -1,6 +1,6 @@
 package workflow
 
-// compile_types.go — compile path for workflow-level type "name" blocks (KB-45).
+// compile_types.go — compile path for workflow-level type "name" blocks.
 //
 // A type block declares a named payload type in its own workflow-scoped
 // namespace, referenced as `type.<name>` from outcome "schema" attributes.
@@ -12,8 +12,8 @@ package workflow
 //
 // Slice-1: type blocks cannot reference other type blocks — the namespace is
 // leaf-level. A traversal rooted at "type" inside a schema constraint is a
-// compile error. (References from outcomes are the KB-45 wired consumer;
-// KB-48 widens the same resolution to data blocks, variables, and outputs.)
+// compile error. (References from outcomes are the wired consumer;
+// the same resolution widens to data blocks, variables, and outputs.)
 
 import (
 	"fmt"
@@ -177,7 +177,7 @@ func namedTypeRef(expr hcl.Expression) (string, bool) {
 }
 
 // resolveNamedTypeConstraint resolves a type-constraint expression authored
-// at a consumer site (KB-48). A `type.<name>` traversal resolves against the
+// at a consumer site. A `type.<name>` traversal resolves against the
 // workflow's type namespace (g.Types); the declaration-order namespace carries
 // the exact cty.Type and optional() defaults the type block compiled to, so a
 // consumer authored inline and its type-block twin produce identical graphs.

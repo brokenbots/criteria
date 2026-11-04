@@ -2,8 +2,8 @@ package workflow
 
 import "fmt"
 
-// Well-known mode values for StateDeclaration.Mode (InfoResponse.state.mode,
-// CRI-201). Values are free-form strings on the wire; unknown values must
+// Well-known mode values for StateDeclaration.Mode (InfoResponse.state.mode).
+// Values are free-form strings on the wire; unknown values must
 // fail the handshake loudly — never a silent downgrade to none.
 const (
 	// StateModeNone declares no checkpointable state: a fresh start on every
@@ -20,7 +20,7 @@ const (
 )
 
 // Well-known granularity values for StateDeclaration.Granularity
-// (InfoResponse.state.granularity, CRI-201). Unknown values are ignored for
+// (InfoResponse.state.granularity). Unknown values are ignored for
 // forward-compatibility: the engine falls back to its default save policy.
 const (
 	StateGranularityPerStep  = "per-step"
@@ -36,7 +36,7 @@ const (
 const DefaultStateMaxBytes = 400 * 1024
 
 // StateDeclaration is an adapter's declared checkpointable session-state
-// surface, translated from InfoResponse.state (CRI-201). It is engine/SDK
+// surface, translated from InfoResponse.state. It is engine/SDK
 // surface only: it carries no checkpoint semantics in any backing store —
 // blob payloads flow to the engine's store through the engine, and ref-mode
 // adapters point at their own stores. A nil StateDeclaration (the zero case)

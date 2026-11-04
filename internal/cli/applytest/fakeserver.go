@@ -515,7 +515,7 @@ func (f *Fake) ResumeRun(runID, signal string) {
 	})
 }
 
-// PauseRun sends a PauseRun control message to the agent (CRI-254: the
+// PauseRun sends a PauseRun control message to the agent (the
 // castle control-plane pause verb).
 func (f *Fake) PauseRun(runID, reason string) {
 	f.handler.sendControl(&pb.ControlMessage{
@@ -569,8 +569,8 @@ func (f *Fake) RegistrationCount() int {
 	return int(f.handler.registrationCount.Load())
 }
 
-// CreatedRunCount returns how many CreateRun calls the server has received
-// (CRI-125). A run that resumes from a checkpoint must never trigger a second
+// CreatedRunCount returns how many CreateRun calls the server has received.
+// A run that resumes from a checkpoint must never trigger a second
 // CreateRun for the same identity.
 func (f *Fake) CreatedRunCount() int {
 	return int(f.handler.createRunCount.Load())
@@ -917,7 +917,7 @@ func (h *fakeHandler) updateRunState(env *pb.Envelope) {
 		st.currentStep = we.Node
 		st.pendingSignal = we.Signal
 	case env.GetRunPaused() != nil:
-		// CRI-254: mirrors castle overseer semantics — a boundary pause flips
+		// Mirrors castle overseer semantics — a boundary pause flips
 		// the run to paused at the node the pause landed on. A wait-node pause
 		// stays distinguished by its pendingSignal.
 		rp := env.GetRunPaused()

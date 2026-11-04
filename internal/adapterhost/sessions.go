@@ -64,7 +64,7 @@ func (e *FatalRunError) Unwrap() error {
 // manager surfaced the crash as a step failure (the default on_crash=fail
 // policy, or a respawn policy whose recovery also failed). The engine
 // distinguishes it from adapter-reported functional failures via errors.As
-// (CRI-130): a session crash means the adapter process is gone and every
+// A session crash means the adapter process is gone and every
 // subsequent Execute on the same session returns the crash error again, while
 // an adapter-reported failure outcome leaves the session alive.
 type SessionCrashError struct {
@@ -95,8 +95,8 @@ type SessionManager struct {
 	sandboxProbeOverride func() sandbox.Capabilities
 
 	// ambientHomes allocates the fresh per-invocation scratch home
-	// directories KB-224 gives locally launched agent adapters (copilot); nil
-	// until NewSessionManager initializes it.
+	// directories ambient-home isolation gives locally launched agent
+	// adapters (copilot); nil until NewSessionManager initializes it.
 	ambientHomes *ambientHomeAllocator
 
 	// sandboxShimBin is the path to the binary used as the sandbox pre-exec
@@ -125,7 +125,7 @@ type SessionManager struct {
 	remoteShim RemoteShim
 
 	// remoteShimsByEnv maps environment keys ("remote.<name>") to the shim
-	// serving that specific environment (CRI-293). Local runs start one shim
+	// serving that specific environment. Local runs start one shim
 	// per remote environment, so two environments that declare the same
 	// listen_address each get their own shim. Dispatch falls back to
 	// remoteShim when an environment has no dedicated entry.
@@ -155,8 +155,8 @@ type SessionManager struct {
 	deferredRemoteAdapters map[string]struct{}
 
 	// CheckpointSave persists a session's checkpoint at step boundaries (and
-	// per-turn boundaries for adapters declaring per-turn granularity,
-	// CRI-202). The engine wires the state-home store; nil disables
+	// per-turn boundaries for adapters declaring per-turn granularity). The
+	// engine wires the state-home store; nil disables
 	// checkpointing entirely. Failures are surfaced to execute(), which
 	// aborts the run loudly: a step-outcome event is never emitted without
 	// its checkpoint.
@@ -176,7 +176,7 @@ type SessionManager struct {
 	RespawnLogStreamDrainTimeout time.Duration
 
 	// PauseToolCallDrainTimeout is the bounded wait the drain-first pause
-	// posture (CRI-169, ADR-0004 §11) gives in-flight nested adapter tool
+	// posture (ADR-0004 §11) gives in-flight nested adapter tool
 	// calls to settle before canceling them: Session.Pause sets the pause
 	// gate (no new nested calls start), waits for the in-flight calls within
 	// this window, cancels the stragglers with a typed `canceled` reply, then
@@ -185,7 +185,7 @@ type SessionManager struct {
 	// bounded time.
 	PauseToolCallDrainTimeout time.Duration
 
-	// StepTimeoutTeardownWindow is how long a CRI-287 step-timeout teardown
+	// StepTimeoutTeardownWindow is how long an engine-initiated step-timeout teardown
 	// mark keeps transport-close reclassification active: the teardown
 	// cascade closes sibling phone-home transports in the same second as the
 	// canceled Execute stream, so follow-on Executes observe the closes
@@ -196,8 +196,8 @@ type SessionManager struct {
 
 	// VerifyHandshakeFailoverBudget is how long a remote phase-B verify
 	// handshake may keep re-waiting for a fresh phone-home line after a
-	// transport-class loss before failing with the typed budget reason
-	// (KB-257). Zero applies the tunables default.
+	// transport-class loss before failing with the typed budget reason. Zero
+	// applies the tunables default.
 	VerifyHandshakeFailoverBudget time.Duration
 
 	mu       sync.Mutex
@@ -208,7 +208,7 @@ type SessionManager struct {
 	verified map[string]*verifiedRecord
 	// adapterInfos caches each adapter's declared schema surface
 	// (workflow.AdapterInfo) captured from the phase-1 Info handshake. It
-	// drives nested tool-call execution (CRI-160): the synthetic callee step's
+	// drives nested tool-call execution: the synthetic callee step's
 	// input validation and OutputSchema decode come from here, so a callee
 	// verified but never step-targeted still carries its declared types.
 	adapterInfos map[string]*workflow.AdapterInfo
@@ -217,8 +217,8 @@ type SessionManager struct {
 	// bind the same adapter and seeing ErrSessionAlreadyOpen from the winner.
 	bindMu sync.Mutex
 
-	// CRI-287: engineStepTimeoutTeardownAt records when the engine canceled a
-	// step because the CRI-275 step ceiling expired. The canceled Execute
+	// engineStepTimeoutTeardownAt records when the engine canceled a
+	// step because its step ceiling expired. The canceled Execute
 	// stream tears down sibling phone-home transports in the same second, so
 	// a transport close observed on a later Execute (fresh context) is the
 	// consequence of that cancellation, not an adapter death.
@@ -250,9 +250,8 @@ type SessionManager struct {
 	// to know whether an adapter is OCI-backed or bound to a remote environment
 	// without re-reading workflow files. The owning graph is kept so
 	// per-scope environments resolve against the declaring subworkflow body
-	// (CRI-269: the root graph's adapter map never contains subworkflow
-	// adapters).
-	// Locking contract (CRI-50): both maps are guarded by mu. VerifyGraph
+	// (the root graph's adapter map never contains subworkflow adapters).
+	// Locking contract: both maps are guarded by mu. VerifyGraph
 	// writes them via cacheGraphAdapterRef and adapter resolution reads them
 	// via adapterDeclaration/adapterDir, and nothing serializes those callers
 	// at a higher level (the borrow path already took mu for its reads, so
@@ -264,22 +263,22 @@ type SessionManager struct {
 
 	// declaredPermissiveOutputs records the adapter instances whose phase-1
 	// handshake declared NO output_schema, so their permissiveness is the
-	// adapter's own recorded act (KB-266 boot gate) instead of an
+	// adapter's own recorded act (boot gate) instead of an
 	// engine-side shapeless hole: outputs read against such an adapter take
 	// the documented empty default ({}), unchecked. Keyed by instance ID,
 	// guarded by mu. The typed-surface gate itself lives in verifyAdapterInfo;
 	// DeclaredPermissiveOutput exposes the record.
 	declaredPermissiveOutputs map[string]bool
 
-	// KB-156: tool resources this manager leases from ANOTHER manager's
+	// Tool resources this manager leases from ANOTHER manager's
 	// environment, keyed by instance ID -> the owner manager that created and
 	// owns the shared session. Nested tool calls for leased names delegate to
 	// owner.execute so every caller (root graph, parallel iterations,
 	// subworkflows) shares ONE adapter session per environment, instead of
-	// the KB-58 copy-per-iteration borrow binding a private session per
+	// the copy-per-iteration borrow binding a private session per
 	// caller. Guarded by mu.
 	leasedToolResources map[string]*SessionManager
-	// KB-156: outstanding leases OTHER managers hold against THIS manager's
+	// Outstanding leases OTHER managers hold against THIS manager's
 	// tool-resource sessions, keyed by instance ID -> lease count. While a
 	// name's count is non-zero the shared session stays alive: Close refuses
 	// to tear it down, and deferred releases (leasing scope unwind) only
@@ -288,11 +287,11 @@ type SessionManager struct {
 	toolResourceLeases map[string]int
 	// borrowedPolicy is the parent graph's policy, set by the engine on
 	// borrowed managers so the nested tool-call gates (max_tool_depth,
-	// KB-58 max_tool_calls) consult the declaring workflow's values instead
+	// max_tool_calls) consult the declaring workflow's values instead
 	// of package defaults. Guarded by mu; nil when not borrowed.
 	borrowedPolicy *workflow.Policy
 	// toolCallBudgets counts reserved nested tool calls per caller session id
-	// (KB-58 policy.max_tool_calls). Guarded by mu. Entries live as long as
+	// (policy.max_tool_calls). Guarded by mu. Entries live as long as
 	// the sessions they count for; the map is cleared at Shutdown with the
 	// rest of the session state.
 	toolCallBudgets map[string]int
@@ -328,7 +327,7 @@ func (m *SessionManager) heartbeatStallThreshold() time.Duration {
 	return tunables.DefaultHeartbeatStallThreshold
 }
 
-// stepTimeoutTeardownWindow returns the configured CRI-287 teardown window.
+// stepTimeoutTeardownWindow returns the configured step-timeout teardown window.
 func (m *SessionManager) stepTimeoutTeardownWindow() time.Duration {
 	if m.StepTimeoutTeardownWindow > 0 {
 		return m.StepTimeoutTeardownWindow
@@ -345,7 +344,7 @@ func (m *SessionManager) respawnLogStreamDrainTimeout() time.Duration {
 
 // RemoteShim is the interface the session manager uses to wait for remote
 // adapter connections. Adapter identity is the adapter's DEFINITION identity
-// (the "<type>.<name>" adapter-instance key, KB-242): engine-side waits,
+// (the "<type>.<name>" adapter-instance key): engine-side waits,
 // scope tokens, peer child addressing, and kill_child all name the
 // definition. Legacy single-adapter shapes may keep presenting the bare
 // adapter type as the identity; the identity plane is name-agnostic.
@@ -362,7 +361,7 @@ type RemoteShim interface {
 	UnregisterScope(scope string)
 	// CloseHandle closes the active session for the given adapter definition
 	// identity and scope. Only the owning scope's session is addressed: with
-	// per-definition children (KB-242) the kill lands on that definition's
+	// per-definition children, the kill lands on that definition's
 	// child, never on a sibling definition of the same adapter type.
 	CloseHandle(ctx context.Context, adapterName, scope string) error
 	// ListenAddr returns the shim's bound listen address.
@@ -384,7 +383,7 @@ type LifecycleSink interface {
 // during phase-1 handshake verification would sever the session the adapter
 // established with its accepted dial, so verifyAdapterInfo must leave it
 // running; the shim owns the bridge lifecycle, and a stale pod's displacement
-// is armed through RemoteShim.WaitForFreshHandle (KB-232).
+// is armed through RemoteShim.WaitForFreshHandle.
 type PhoneHomeBridgeHandle interface {
 	IsPhoneHomeBridge()
 }
@@ -403,10 +402,10 @@ func (m *SessionManager) SetGraph(g *workflow.FSMGraph) {
 // Legacy single-shim form, retained for tests and callers that do not
 // know their environment key (the fallback consulted by
 // RemoteShimForEnv). Production registration goes through
-// SetRemoteShimForEnv (CRI-293: one shim per remote environment).
+// SetRemoteShimForEnv (one shim per remote environment).
 // Deliberately carries no canonical Deprecated marker: the retained test
 // call sites exercise this fallback path and staticcheck SA1019 would
-// flag them (CRI-293 review).
+// flag them.
 func (m *SessionManager) SetRemoteShim(shim RemoteShim) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -414,7 +413,7 @@ func (m *SessionManager) SetRemoteShim(shim RemoteShim) {
 }
 
 // SetRemoteShimForEnv registers the shim serving a specific remote
-// environment (keyed "remote.<name>", CRI-293). The shim is also recorded as
+// environment (keyed "remote.<name>"). The shim is also recorded as
 // the default so legacy callers observe the most recently registered shim.
 func (m *SessionManager) SetRemoteShimForEnv(envKey string, shim RemoteShim) {
 	m.mu.Lock()
@@ -433,7 +432,7 @@ func (m *SessionManager) SetRemoteShimForEnv(envKey string, shim RemoteShim) {
 // does that at run end. It also copies the VerifyGraph-populated adapter caches
 // (graphAdapters, adapterDirs, deferredRemoteAdapters) so isRemoteAdapter on m
 // recognises the parent-verified adapters as remote instead of falling through
-// to a local OCI resolution (CRI-269 keeps the DECLARING graph in these caches,
+// to a local OCI resolution (the DECLARING graph is kept in these caches,
 // so subworkflow-body adapters resolve correctly).
 //
 // This is how a parallel subworkflow iteration, which gets its own
@@ -480,7 +479,7 @@ func mergeMapInto[K comparable, V any](dst, src map[K]V) map[K]V {
 }
 
 // LeaseToolResourcesFrom registers shared-session leases against src for the
-// given tool-resource names (KB-156). It replaces the KB-58
+// given tool-resource names. It replaces the
 // BorrowToolResourceSessionsFrom record copy: instead of deep-copying
 // verified records so every parallel iteration lazy-binds its own adapter
 // process and initialize handshakes, the nested tool calls for leased names
@@ -496,7 +495,7 @@ func mergeMapInto[K comparable, V any](dst, src map[K]V) map[K]V {
 // would resolve them locally anyway — as are names m already leases (the
 // lease is idempotent; a duplicate registration would leak an owner
 // refcount entry). A remote-declared tool resource leases the same way —
-// KB-160's host-of-record route: the owner hosts the environment's ONE peer
+// the host-of-record route: the owner hosts the environment's ONE peer the environment's ONE peer
 // phone-home session, so nested calls travel over the peer connection the
 // owner opened and the peer opens and serves exactly one shared session for
 // the environment. Names src cannot host (no bound session and no verified
@@ -589,7 +588,7 @@ func (m *SessionManager) leaseToolResourceLocked(src *SessionManager, name strin
 // leaseEligibleLocked reports whether name may receive a shared-session
 // lease: no live binding and no verified record of its own. Hostability —
 // including for a remote-declared tool resource, whose owner hosts the
-// environment's ONE peer phone-home session (KB-160 host-of-record route) —
+// environment's ONE peer phone-home session (host-of-record route) —
 // is decided on the owner, not here. Unresolvable declarations lease as-is
 // — when the owner cannot host the name either, the name is skipped and the
 // nested dispatch reports its typed unknown_adapter error.
@@ -603,7 +602,7 @@ func (m *SessionManager) leaseEligibleLocked(name string) bool {
 }
 
 // leaseOwner returns the manager whose shared session serves the named
-// leased tool resource, or nil when name is not leased here (KB-156).
+// leased tool resource, or nil when name is not leased here.
 func (m *SessionManager) leaseOwner(name string) *SessionManager {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -611,8 +610,8 @@ func (m *SessionManager) leaseOwner(name string) *SessionManager {
 }
 
 // snapshotToolResourceInfos gathers copies of the manager's adapter infos for
-// the given names (KB-156 lease side). AdapterInfo carries no secrets, so
-// shallow copies are safe — the KB-58 record copy (config/secrets) is gone:
+// the given names (lease side). AdapterInfo carries no secrets, so
+// shallow copies are safe — the legacy borrow's record copy (config/secrets) is gone:
 // leased names execute on the owner's session and never bind locally. The
 // manager mutex is held for the whole gather so a concurrent scope change
 // cannot split a name across states.
@@ -635,9 +634,9 @@ func (m *SessionManager) snapshotToolResourceInfos(names []string) map[string]*w
 }
 
 // acquireToolResourceLease increments the shared-session lease count for the
-// named tool resource (KB-156). It succeeds only when this manager hosts the
+// named tool resource. It succeeds only when this manager hosts the
 // resource — a bound session or a verified record. Host-local and remote-
-// declared tool resources both qualify (KB-160): a remote callee's shared
+// declared tool resources both qualify: a remote callee's shared
 // session is the environment's ONE peer phone-home session the owner opened,
 // so the nested call travels over the peer connection (host-of-record route)
 // instead of each caller binding its own copy. Thread-safe.
@@ -656,8 +655,8 @@ func (m *SessionManager) acquireToolResourceLease(name string) bool {
 	return true
 }
 
-// releaseToolResourceLease drops one outstanding shared-session lease
-// (KB-156). The session itself is NOT closed here: one caller's release must
+// releaseToolResourceLease drops one outstanding shared-session lease.
+// The session itself is NOT closed here: one caller's release must
 // never rip the environment's shared session out from under the other
 // callers. Its lifecycle is anchored to the owner's own scope teardown
 // (initScopeAdapters/tearDownScopeAdapters), and call nesting guarantees every
@@ -678,7 +677,7 @@ func (m *SessionManager) releaseToolResourceLease(name string) {
 }
 
 // ReleaseSharedToolResources drops every shared-session lease this manager
-// holds via LeaseToolResourcesFrom (KB-156). Leasing scopes (parallel
+// holds via LeaseToolResourcesFrom. Leasing scopes (parallel
 // subworkflow iterations) call it on unwind: the owning manager's lease
 // count drops per name, and at zero the owner's own scope may tear the
 // shared session down. Cached adapter infos installed for the leases are
@@ -706,7 +705,7 @@ func (m *SessionManager) ReleaseSharedToolResources() {
 }
 
 // SetBorrowedGraphPolicy records the parent graph's policy for m to consult
-// when it has no graph of its own (KB-58): the depth gate
+// when it has no graph of its own: the depth gate
 // (policy.max_tool_depth) and the call-count gate (policy.max_tool_calls)
 // must not fall back to package defaults when a per-workflow value was
 // declared. Thread-safe.
@@ -725,7 +724,7 @@ func (m *SessionManager) BorrowedGraphPolicy() *workflow.Policy {
 }
 
 // reserveToolCallBudget reserves one nested tool call for the caller session
-// against the session's policy.max_tool_calls budget (KB-58), engine-enforced
+// against the session's policy.max_tool_calls budget, engine-enforced
 // at the seam alongside the depth gate so an iterative agent loop cannot run
 // unbounded. A maxCalls of 0 or less means no cap (hand-built fixtures with
 // no budget configured); otherwise a reservation beyond the cap refuses. The
@@ -798,7 +797,7 @@ func (m *SessionManager) RemoteShimRegisteredForEnv(envKey string) bool {
 
 // remoteEnvForAdapter returns the environment key ("remote.<name>") the
 // adapter declaration is bound to, resolving against the DECLARING graph so
-// subworkflow adapters match the provisioning path (CRI-269). The second
+// subworkflow adapters match the provisioning path. The second
 // result is true only when that environment is REMOTE — callers use this to
 // route dispatch, and a local environment binding must not be taken as
 // remote (pre-refactor semantics).
@@ -862,10 +861,9 @@ func (m *SessionManager) remoteShimForAdapter(instanceID string) (RemoteShim, bo
 //
 // Legacy single-shim form; production callers must use
 // RegisterRemoteScopeForEnv so per-environment shims receive their own
-// tokens (CRI-293). Kept for tests and unknown-environment fallbacks.
+// tokens. Kept for tests and unknown-environment fallbacks.
 // Deliberately carries no canonical Deprecated marker: a retained test
-// call site exercises this fallback and staticcheck SA1019 would flag it
-// (CRI-293 review).
+// call site exercises this fallback and staticcheck SA1019 would flag it.
 func (m *SessionManager) RegisterRemoteScope(scope, token string) error {
 	m.mu.Lock()
 	shim := m.remoteShim
@@ -880,8 +878,7 @@ func (m *SessionManager) RegisterRemoteScope(scope, token string) error {
 // UnregisterRemoteScope removes a scope's accept token so the shim rejects
 // future reconnects with the old token.
 //
-// Deprecated: legacy single-shim form; use UnregisterRemoteScopeForEnv
-// (CRI-293).
+// Deprecated: legacy single-shim form; use UnregisterRemoteScopeForEnv.
 func (m *SessionManager) UnregisterRemoteScope(scope string) error {
 	m.mu.Lock()
 	shim := m.remoteShim
@@ -896,8 +893,7 @@ func (m *SessionManager) UnregisterRemoteScope(scope string) error {
 // CloseRemoteHandle closes the active remote session for the given adapter
 // type and scope. It is a no-op when no remote shim is registered.
 //
-// Deprecated: legacy single-shim form; use CloseRemoteHandleForEnv
-// (CRI-293).
+// Deprecated: legacy single-shim form; use CloseRemoteHandleForEnv.
 func (m *SessionManager) CloseRemoteHandle(ctx context.Context, adapterType, scope string) error {
 	m.mu.Lock()
 	shim := m.remoteShim
@@ -914,7 +910,7 @@ func (m *SessionManager) CloseRemoteHandle(ctx context.Context, adapterType, sco
 // Deprecated: legacy single-shim form returning only the most recently
 // registered shim's address; production publication must use
 // RemoteListenAddrForEnv so every environment receives its own shim's
-// address (CRI-293).
+// address.
 func (m *SessionManager) RemoteListenAddr() string {
 	m.mu.Lock()
 	shim := m.remoteShim
@@ -926,7 +922,7 @@ func (m *SessionManager) RemoteListenAddr() string {
 }
 
 // RegisterRemoteScopeForEnv registers a rotated accept token for the given
-// scope with the shim serving envKey (CRI-293). It returns an error when no
+// scope with the shim serving envKey. It returns an error when no
 // shim is registered for the environment.
 func (m *SessionManager) RegisterRemoteScopeForEnv(envKey, scope, token string) error {
 	m.mu.Lock()
@@ -954,7 +950,7 @@ func (m *SessionManager) UnregisterRemoteScopeForEnv(envKey, scope string) error
 
 // CloseRemoteHandleForEnv closes the active remote session for the given
 // adapter definition identity (`adapterName`, the "<type>.<name>"
-// adapter-instance key, KB-242) and scope on the shim serving envKey. With
+// adapter-instance key) and scope on the shim serving envKey. With
 // per-definition peers this kills only that definition's child; a sibling
 // definition of the same adapter type served by the same peer is untouched.
 // It is a no-op when no shim is registered for the environment.
@@ -969,7 +965,7 @@ func (m *SessionManager) CloseRemoteHandleForEnv(ctx context.Context, envKey, ad
 }
 
 // RemoteListenAddrForEnv returns the bound listen address of the shim serving
-// envKey, or "" when no shim is registered for it (CRI-293: per-environment
+// envKey, or "" when no shim is registered for it (per-environment
 // shim addresses are published to each environment's adapters).
 func (m *SessionManager) RemoteListenAddrForEnv(envKey string) string {
 	m.mu.Lock()
@@ -1075,10 +1071,10 @@ func (m *SessionManager) verifyGraphAdapter(ctx context.Context, root *workflow.
 
 	// The per-instance cache must be populated before any dispatch decision:
 	// resolveAdapterHandle consults it for subworkflow adapters, whose
-	// declarations never appear in the root graph's adapter map (CRI-269).
+	// declarations never appear in the root graph's adapter map.
 	m.cacheGraphAdapterRef(ref)
 
-	// CRI-115: remote adapters with per_scope_sessions rotate their accept token
+	// Remote adapters with per_scope_sessions rotate their accept token
 	// per scope in initScopeAdapters. Eager verification here would block before
 	// the token exists, so we defer the adapter-info handshake to scope entry.
 	if _, deferVerify := m.deferredRemoteAdapters[ref.instanceID]; !deferVerify {
@@ -1091,7 +1087,7 @@ func (m *SessionManager) verifyGraphAdapter(ctx context.Context, root *workflow.
 }
 
 func (m *SessionManager) cacheGraphAdapterRef(ref graphAdapterRef) {
-	// CRI-50: mu-guarded. VerifyGraph runs before the run loop today, but
+	// Mu-guarded. VerifyGraph runs before the run loop today, but
 	// nothing serializes a future caller against concurrent adapter
 	// resolution on the same SessionManager (sessions_graph_cache_race_test.go
 	// pins exactly that overlap under -race).
@@ -1212,7 +1208,7 @@ type Session struct {
 	logStreamAlive atomic.Bool
 	hbMonitor      adapter.HeartbeatMonitor
 
-	// CRI-271: lastEventNs records the unix-nano timestamp of the last
+	// lastEventNs records the unix-nano timestamp of the last
 	// adapter activity observed for this session (log chunk, log-stream
 	// heartbeat, or completed Execute). It powers the
 	// idle_since_last_event field in the crash diagnostics so operators can
@@ -1220,19 +1216,19 @@ type Session struct {
 	// means no activity has been recorded yet.
 	lastEventNs atomic.Int64
 
-	// CRI-271: crashed marks a session whose Execute was classified as a
+	// crashed marks a session whose Execute was classified as a
 	// session crash. Under the default on_crash=fail policy the session
 	// stays registered but dead — every Execute on it replays the crash
 	// error — so the engine consults ReopenCrashedSession before follow-on
 	// steps. Cleared by a successful respawn/re-open.
 	crashed atomic.Bool
 
-	// CRI-271: reopenMu serializes concurrent re-open attempts for this
+	// reopenMu serializes concurrent re-open attempts for this
 	// session so a parallel fan-out does not spawn several replacement
 	// processes for one crash.
 	reopenMu sync.Mutex
 
-	// KB-155: refcounted registry of the per-Execute event sinks bound to
+	// Refcounted registry of the per-Execute event sinks bound to
 	// this session. When the adapter declares the concurrent_execute
 	// capability, sibling executes fan out on the same session and nested
 	// siblings sharing a caller's sink collapse onto one entry.
@@ -1242,7 +1238,7 @@ type Session struct {
 	activeSinksMu sync.Mutex
 	activeSinks   map[adapter.EventSink]int
 
-	// KB-155: execTurns serializes executes on sessions that do not declare
+	// execTurns serializes executes on sessions that do not declare
 	// the concurrent_execute capability: a call acquires the turn before
 	// touching session-global state (step policy, sink bindings) and
 	// releases it when done. Buffered to one and pre-filled at registration;
@@ -1256,7 +1252,7 @@ type Session struct {
 	paused  bool
 	pauseMu sync.Mutex
 
-	// CRI-202: the adapter's declared checkpoint-state surface, stamped at
+	// The adapter's declared checkpoint-state surface, stamped at
 	// session registration from the phase-1 handshake (InfoResponse.state).
 	// Zero values mean the adapter declared no checkpointable state.
 	stateMode        string
@@ -1272,7 +1268,7 @@ type Session struct {
 }
 
 // pauseToolCallDrainTimeout returns the effective drain-first pause window
-// for in-flight nested tool calls (CRI-169). Zero means the built-in default
+// for in-flight nested tool calls. Zero means the built-in default
 // from the tunables registry.
 func (m *SessionManager) pauseToolCallDrainTimeout() time.Duration {
 	if m.PauseToolCallDrainTimeout <= 0 {
@@ -1281,7 +1277,7 @@ func (m *SessionManager) pauseToolCallDrainTimeout() time.Duration {
 	return m.PauseToolCallDrainTimeout
 }
 
-// verifyHandshakeFailoverBudget returns the effective KB-257 transport-loss
+// verifyHandshakeFailoverBudget returns the effective transport-loss
 // convergence budget for phase-B verify handshakes: how long a remote
 // handshake keeps re-waiting for a fresh phone-home line after a
 // transport-class loss. Zero falls back to the tunables default (lenient).
@@ -1293,7 +1289,7 @@ func (m *SessionManager) verifyHandshakeFailoverBudget() time.Duration {
 }
 
 // Pause halts work on the session without losing state. It implements the
-// drain-first pause posture (CRI-169, ADR-0004 §11): before the stream stops,
+// drain-first pause posture (ADR-0004 §11): before the stream stops,
 // the pause gate is set so no new nested tool call starts, then in-flight
 // nested tool calls drain within a bounded window; calls that do not drain
 // are canceled with a typed `canceled` reply (a wedged straggler that never
@@ -1376,7 +1372,7 @@ func (s *Session) Inspect(ctx context.Context) (*v2.InspectResponse, error) {
 	return s.handle.Inspect(ctx, s.Name)
 }
 
-// noteActivity records that the adapter showed signs of life (CRI-271).
+// noteActivity records that the adapter showed signs of life.
 // Called for log chunks, log-stream heartbeats, session open, respawn, and
 // completed Executes.
 func (s *Session) noteActivity() {
@@ -1384,7 +1380,7 @@ func (s *Session) noteActivity() {
 }
 
 // idleSinceLastEvent reports how long since the adapter's last observable
-// activity (CRI-271). The second return is false when nothing has been
+// activity. The second return is false when nothing has been
 // recorded yet, in which case no idle claim can be made.
 func (s *Session) idleSinceLastEvent() (time.Duration, bool) {
 	last := s.lastEventNs.Load()
@@ -1396,9 +1392,9 @@ func (s *Session) idleSinceLastEvent() (time.Duration, bool) {
 
 // LastSessionActivity returns the time of the named session's last observable
 // adapter activity (session open, log chunks, log-stream heartbeats,
-// respawn, completed Execute — the CRI-271 activity sources). The second
+// respawn, completed Execute — the activity sources). The second
 // return is false when the session is unknown or has recorded no activity
-// yet. Used by the engine's step stall watchdog (KB-25).
+// yet. Used by the engine's step stall watchdog.
 func (m *SessionManager) LastSessionActivity(name string) (time.Time, bool) {
 	m.mu.Lock()
 	sess, ok := m.sessions[name]
@@ -1414,8 +1410,8 @@ func (m *SessionManager) LastSessionActivity(name string) (time.Time, bool) {
 }
 
 // NewSessionManager builds a SessionManager seeding the operator-configurable
-// timing tunables from the tunables registry: the CRI-271 heartbeat stall
-// threshold (CRITERIA_SESSION_HEARTBEAT_STALL) and the CRI-287 step-timeout
+// timing tunables from the tunables registry: the heartbeat stall
+// threshold (CRITERIA_SESSION_HEARTBEAT_STALL) and the step-timeout
 // teardown window (CRITERIA_STEP_TIMEOUT_TEARDOWN_WINDOW). Overrides are
 // lenient — an unset, malformed, or non-positive value keeps the built-in
 // default.
@@ -1637,7 +1633,7 @@ func (m *SessionManager) sandboxEnvAndPolicy(instanceID string) (envNode *workfl
 }
 
 // buildCommandCustomizer composes the sandbox command customizer (if any), the
-// KB-224 ambient-home isolation customizer (if the adapter instance is
+// ambient-home isolation customizer (if the adapter instance is
 // eligible), and a working-directory customizer derived from the bound
 // environment. The environment's working_directory becomes the adapter process
 // launch cwd, which shell/copilot adapters inherit as the default directory
@@ -1653,7 +1649,7 @@ func (m *SessionManager) buildCommandCustomizer(instanceID, workingDir string) (
 		return nil, nil, err
 	}
 
-	// KB-224: only when no sandbox customizer owns the launch environment may
+	// Only when no sandbox customizer owns the launch environment may
 	// the ambient-home isolation apply; a sandbox scrubs the entire
 	// environment itself.
 	ambientCust, ambientCleanup := m.buildAmbientHomeCustomizer(instanceID)
@@ -1675,7 +1671,7 @@ func (m *SessionManager) buildCommandCustomizer(instanceID, workingDir string) (
 			// path manages the inner cwd via --chdir).
 			sandboxCust(name, cmd)
 		} else if ambientCust != nil {
-			// KB-224: agent adapters eligible for ambient-home isolation set
+			// Agent adapters eligible for ambient-home isolation set
 			// cmd.Env themselves (host env with HOME rewritten to a fresh
 			// per-invocation scratch directory).
 			ambientCust(name, cmd)
@@ -1733,7 +1729,7 @@ func (m *SessionManager) OpenWithOriginRefs(ctx context.Context, name, adapterNa
 	var caps []string
 	if info, infoErr := plug.Info(ctx); infoErr == nil {
 		caps = append([]string(nil), info.Capabilities...)
-		// CRI-202: capture the declared state surface too — the per-step
+		// Capture the declared state surface too — the per-step
 		// checkpoint save and the restore schema gate both read it.
 		m.cacheAdapterInfo(name, &info.AdapterInfo)
 	}
@@ -1784,14 +1780,14 @@ func (m *SessionManager) Verify(ctx context.Context, name, adapterName, onCrash 
 }
 
 // SessionOpen reports whether a session with the given name is already
-// bound or verified — or leased from another manager's shared session
-// (KB-156). Subworkflow bodies re-declare parent adapters for safety; the
+// bound or verified — or leased from another manager's shared session.
+// Subworkflow bodies re-declare parent adapters for safety; the
 // engine uses this to skip a second per-scope rotation (and its
 // provision_wanted emission) for an adapter the parent scope already
-// provisioned (CRI-145). A leased tool resource is served by the owner's
+// provisioned. A leased tool resource is served by the owner's
 // shared session and never opened per-caller, so it counts as open: a
 // parallel iteration that re-declares a parent tool resource skips its own
-// rotation just like the KB-58 borrow's copied records did.
+// rotation just like the legacy borrow's copied records did.
 func (m *SessionManager) SessionOpen(name string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1807,7 +1803,7 @@ func (m *SessionManager) SessionOpen(name string) bool {
 
 // SessionBound reports whether a session with the given name is bound to a
 // live adapter handle. Unlike SessionOpen it excludes verified-but-unbound
-// records: CRI-202 resume uses it to decide between replaying a checkpoint
+// records: resume uses it to decide between replaying a checkpoint
 // into an already-open session and re-launching the adapter with prior
 // state. A verified record has no handle to restore into, so its checkpoint
 // must ride the full Restore launch sequence.
@@ -1844,7 +1840,7 @@ func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterNam
 	// eagerly here so that a strict-sandbox adapter with missing primitives fails
 	// before any step executes.
 	//
-	// The resolve+Info attempt runs inside the KB-257 transport-loss
+	// The resolve+Info attempt runs inside the transport-loss
 	// convergence lane: when the phone-home line folds mid-handshake under
 	// a still-live pod (Canceled "client connection is closing",
 	// Unavailable EOF/refused — the attempt-13 signature), the lane
@@ -1864,8 +1860,8 @@ func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterNam
 		// policy), so phase-1 handshake verification leaves it running.
 		//
 		// The same protection applies to a phone-home bridge handle
-		// (PhoneHomeBridgeHandle, KB-232) — and, through the shim's handle
-		// marker, to the KB-257 failover handle that replaced the original
+		// (PhoneHomeBridgeHandle) — and, through the shim's handle
+		// marker, to the transport-loss failover handle that replaced the original
 		// mid-verify: the shim marks every session handle PhoneHomeBridge,
 		// so the guard will not Kill it either.
 		if _, supervised := plug.(SupervisedHandle); !supervised {
@@ -1908,14 +1904,14 @@ func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterNam
 		return nil, fmt.Errorf("adapter %q sandbox validation: %w", adapterName, sandboxErr)
 	}
 
-	// Cache the declared schema surface for nested tool-call execution
-	// (CRI-160). Callees verified but never step-targeted have no compiled
+	// Cache the declared schema surface for nested tool-call execution.
+	// Callees verified but never step-targeted have no compiled
 	// step to carry their schema, so the host keeps it here instead.
 	m.cacheAdapterInfo(name, &info.AdapterInfo)
 
-	// KB-266 boot gate — typed surface check. A handshake that declares no
-	// output_schema used to ship silently. Per the KB-264/269 doctrine the
-	// absence is the adapter's own declared-permissive act, not engine-side
+	// Boot gate — typed surface check. A handshake that declares no
+	// output_schema used to ship silently. The absence is the adapter's own
+	// declared-permissive act, not engine-side
 	// shapelessness: record it as such and warn by name. It is not a boot
 	// failure — the typed-init-failure arm of the gate is the unresolvable
 	// manifest (the resolve/handshake errors above), where knowledge of the
@@ -1928,7 +1924,7 @@ func (m *SessionManager) verifyAdapterInfo(ctx context.Context, name, adapterNam
 }
 
 // validateStateHandshake checks an adapter's checkpoint-state declaration
-// (InfoResponse.state, CRI-201) against the host-side contract. An unknown
+// (InfoResponse.state) against the host-side contract. An unknown
 // mode fails LOUDLY at the handshake — quietly treating it as mode none
 // would silently drop checkpointing for a stateful adapter — and blob/ref
 // require a schema version tag so a restore can reject mismatched shapes.
@@ -1943,7 +1939,7 @@ func validateStateHandshake(adapterName string, d *workflow.StateDeclaration) er
 }
 
 // recordDeclaredPermissiveOutput implements the typed-surface arm of the
-// KB-266 boot gate: an adapter whose handshake declares no output_schema is
+// Boot gate: an adapter whose handshake declares no output_schema is
 // the adapter's own declared-permissive act, so the manager records the
 // instance and warns by name the first time the declaration is observed.
 // Re-verifications (snapshot-restore relaunch) stay silent once recorded.
@@ -2013,7 +2009,7 @@ func (m *SessionManager) cachedAdapterInfo(name string) *workflow.AdapterInfo {
 
 // DeclaredState returns the checkpoint-state declaration captured for the
 // named session's adapter during its phase-1 handshake or snapshot-restore
-// relaunch (InfoResponse.state, CRI-201). nil means the adapter declared no
+// relaunch (InfoResponse.state). nil means the adapter declared no
 // state (mode none): it checkpoints nothing and starts fresh on every
 // (re)spawn. Unknown modes never reach here — they fail the handshake
 // loudly (validateStateHandshake). Thread-safe.
@@ -2056,14 +2052,14 @@ func (m *SessionManager) storeVerifiedRecord(name, adapterName, onCrash string, 
 
 // resolveAdapterHandle resolves the adapter handle for one session. Remote
 // dispatch waits under the adapter's definition identity (`name`, the
-// "<type>.<name>" adapter-instance key, KB-242): per-scope tokens, peer
+// "<type>.<name>" adapter-instance key): per-scope tokens, peer
 // children, and kill_child are all keyed by that definition, so the wait
 // must name it too — waiting by the bare adapter type here would hand back a
-// sibling definition's child (the KB-242 cross-scope kill).
+// sibling definition's child (the cross-scope kill).
 func (m *SessionManager) resolveAdapterHandle(ctx context.Context, name, adapterName, scope string, customizer func(string, *exec.Cmd)) (Handle, error) {
 	// Remote-mode dispatch: if the adapter is bound to a remote environment,
 	// wait for the adapter to phone home via the shim serving that
-	// environment (CRI-293: per-environment shims).
+	// environment (per-environment shims).
 	if shim, ok := m.remoteShimForAdapter(name); ok {
 		return shim.WaitForHandle(ctx, name, scope)
 	}
@@ -2133,9 +2129,9 @@ func (m *SessionManager) lockedAdapterFor(instanceID string) *lockfile.LockedAda
 
 // adapterDeclaration returns the adapter node for instanceID together with the
 // graph that declares it. Root-graph declarations win so a re-declared instance
-// keeps its parent binding (CRI-145); subworkflow declarations come from the
-// per-instance cache populated by VerifyGraph (CRI-269: the root graph's
-// adapter map never contains subworkflow adapters). CRI-50: the cache lookup
+// keeps its parent binding; subworkflow declarations come from the
+// per-instance cache populated by VerifyGraph (the root graph's
+// adapter map never contains subworkflow adapters). The cache lookup
 // takes mu so it cannot race VerifyGraph's cache writes.
 func (m *SessionManager) adapterDeclaration(instanceID string) (*workflow.AdapterNode, *workflow.FSMGraph) {
 	m.mu.Lock()
@@ -2158,7 +2154,7 @@ func (m *SessionManager) adapterDeclarationLocked(instanceID string) (*workflow.
 
 // withRemoteWorkingDir returns the step to hand to the adapter handle,
 // injecting the session's resolved environment working_directory as the
-// "working_directory" input for remote adapters (CRI-270) that accept the
+// "working_directory" input for remote adapters that accept the
 // key, so the key never reaches an adapter that does not honor it: an
 // adapter must declare working_directory on a non-empty input surface, or
 // (for a pre-schema binary with no declared surface) be of a type known to
@@ -2192,7 +2188,7 @@ func (m *SessionManager) withRemoteWorkingDir(sess *Session, step *workflow.Step
 
 // workingDirInputHonorers lists the adapter types known to honor the
 // engine-authored "working_directory" per-step input key even when their
-// binary declares no input surface (pre-schema releases; the CRI-270 remote
+// binary declares no input surface (pre-schema releases; the remote
 // delivery reuses the shell adapter's confinement-checked input contract).
 // Dynamic-tool adapters (e.g. mcp) are deliberately absent: they declare no
 // surface and forward every non-reserved input key onward as a tool
@@ -2221,7 +2217,7 @@ func (m *SessionManager) remoteWorkingDirAccepted(sess *Session) bool {
 // remote environment (or the declaring graph's default environment is remote).
 // The environment resolves against the DECLARING graph so subworkflow adapters
 // bound to a per-scope remote env dispatch remotely at VerifyGraph and at bind
-// time, matching the provisioning path (CRI-269).
+// time, matching the provisioning path.
 func (m *SessionManager) isRemoteAdapter(instanceID string) bool {
 	_, ok := m.remoteEnvForAdapter(instanceID)
 	return ok
@@ -2239,7 +2235,7 @@ func (m *SessionManager) isOCIAdapter(instanceID string) bool {
 
 // adapterDir returns the workflow directory associated with instanceID,
 // defaulting to the graph's root directory when no cached directory exists.
-// CRI-50: the cache lookup takes mu so it cannot race VerifyGraph's writes.
+// The cache lookup takes mu so it cannot race VerifyGraph's writes.
 func (m *SessionManager) adapterDir(instanceID string) string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -2322,7 +2318,7 @@ func (m *SessionManager) registerSession(ctx context.Context, name, adapterName,
 	declared := m.declaredStateLocked(name)
 	m.stampStateFields(sess, declared)
 	m.sessions[name] = sess
-	// KB-155: seed the serialized-execute turn (one token = one turn) and
+	// Seed the serialized-execute turn (one token = one turn) and
 	// the sink registry before the streams start delivering traffic.
 	sess.execTurns = make(chan struct{}, 1)
 	sess.execTurns <- struct{}{}
@@ -2356,7 +2352,7 @@ func (m *SessionManager) bindVerifiedRecord(ctx context.Context, rec *verifiedRe
 	var caps []string
 	if info, infoErr := plug.Info(ctx); infoErr == nil {
 		caps = append([]string(nil), info.Capabilities...)
-		// CRI-202: capture the declared state surface so per-scope sessions
+		// Capture the declared state surface so per-scope sessions
 		// phone-homed at bind time still checkpoint at step boundaries.
 		m.cacheAdapterInfo(rec.name, &info.AdapterInfo)
 	}
@@ -2380,8 +2376,8 @@ func (m *SessionManager) bindVerifiedRecord(ctx context.Context, rec *verifiedRe
 }
 
 // startPermissionStream starts the session-scoped Permissions stream if the
-// adapter supports it. An existing PermissionState is preserved (CRI-169
-// opportunistic fix, restored in WS18): on the snapshot/restore path the
+// adapter supports it. An existing PermissionState is preserved (restored
+// in WS18): on the snapshot/restore path the
 // session already carries a rehydrated permission state, and replacing it
 // here silently discarded the restored decisions. The pause drain window is
 // stamped from the manager's configured value at every creation site.
@@ -2492,7 +2488,7 @@ func (m *SessionManager) watchLogStream(sess *Session, done <-chan error, hostCa
 }
 
 // SessionSharedError reports that a session close was refused because other
-// callers still hold shared-session leases on it (KB-156): one caller's
+// callers still hold shared-session leases on it: one caller's
 // teardown must not rip the environment's shared session out from under the
 // remaining callers. The close is a no-op; the session stays open until the
 // owner scope tears it down once the last lease drops (or Shutdown wins).
@@ -2502,16 +2498,16 @@ type SessionSharedError struct {
 }
 
 func (e *SessionSharedError) Error() string {
-	return fmt.Sprintf("session %q shared by %d active lease(s); close refused until last lease releases (KB-156)", e.Session, e.Leases)
+	return fmt.Sprintf("session %q shared by %d active lease(s); close refused until last lease releases", e.Session, e.Leases)
 }
 
 // Close is intentionally idempotent: closing an unknown session is a no-op.
-// KB-156: a close for a session with outstanding shared-tool-resource leases
+// A close for a session with outstanding shared-tool-resource leases
 // is refused (SessionSharedError) and the session stays open.
 func (m *SessionManager) Close(ctx context.Context, name string) error {
 	m.mu.Lock()
 	sess, exists := m.sessions[name]
-	// KB-156: a tool-resource session shared by outstanding leases must not
+	// A tool-resource session shared by outstanding leases must not
 	// be torn down out from under its callers. Nested-call lifetimes are
 	// strictly shorter than the owner scope's, so this is only reachable via
 	// out-of-protocol callers — refuse loudly and keep the session in place.
@@ -2558,7 +2554,7 @@ func (m *SessionManager) Close(ctx context.Context, name string) error {
 // PauseAll iterates over every open session and calls Pause on each.
 // It is reentrant and idempotent: pausing an already-paused session is a no-op.
 // Every session is paused even when some fail; the returned error joins the
-// per-session failures (the KB-96 pause barrier lands only when ALL sessions
+// per-session failures (the pause barrier lands only when ALL sessions
 // acked, so the aggregate must report each one, not just the first).
 func (m *SessionManager) PauseAll(ctx context.Context) error {
 	m.mu.Lock()
@@ -2615,7 +2611,7 @@ func (m *SessionManager) wrapSink(sink adapter.EventSink) adapter.EventSink {
 }
 
 // auditWriterForSessions returns the audit writer the sessions' permission
-// states write to: m.Audit wrapped in redaction (CRI-163) when a redaction
+// states write to: m.Audit wrapped in redaction when a redaction
 // registry is configured, so sensitive values — callee outputs echoed into a
 // tool string or an adapter error message — never reach the audit log in
 // plaintext.
@@ -2639,7 +2635,7 @@ func (m *SessionManager) registerSensitiveOutputs(result adapter.Result, step *w
 }
 
 // classifySessionCrash names the likely cause of an adapter session crash so
-// engine logs answer "which session died and why" (CRI-271). The returned
+// engine logs answer "which session died and why". The returned
 // string is always one of the exported CrashReason* constants in
 // crashreason.go — the single source of truth also consumed by peer
 // supervision journal emission (peer.proto CrashClassified.reason, T-05/T-07).
@@ -2666,8 +2662,8 @@ func classifySessionCrash(sess *Session, execErr error) string {
 	switch {
 	case strings.Contains(msg, "heartbeat stall"):
 		return CrashReasonHeartbeatStall
-	// kb-53: "transport is closing" / "the client connection is closing" are
-	// the legacy go-plugin gRPC closing signatures. kb-246: the peer recreate
+	// "transport is closing" / "the client connection is closing" are
+	// the legacy go-plugin gRPC closing signatures. The peer recreate
 	// window closes the phone-home bridge mid-execute and surfaces
 	// "Canceled (connection closing)" — the bare closing text is the shared
 	// signature, including when wrapped by other stacks.
@@ -2688,7 +2684,7 @@ func classifySessionCrash(sess *Session, execErr error) string {
 }
 
 // crashDiagnostics builds the shared crash-reason fields for logs and sink
-// events (CRI-271): the named cause plus, when known, the idle window since
+// events: the named cause plus, when known, the idle window since
 // the adapter's last event — the "silent gap" between the last streamed
 // token and the teardown.
 func (s *Session) crashDiagnostics(reason string) []any {
@@ -2724,7 +2720,7 @@ func (m *SessionManager) handleCrash(ctx context.Context, name string, step *wor
 		onCrash = normalizeOnCrash(step.OnCrash)
 	}
 
-	// KB-246 defect-4: a transport-closed crash on a shim-dispatched (remote)
+	// A transport-closed crash on a shim-dispatched (remote)
 	// session is the peer-pod recreate window — the recreated pod re-dials the
 	// same session key seconds later, so instead of failing the in-flight step
 	// the session re-enters the wait through the respawn machinery (identical
@@ -2732,7 +2728,7 @@ func (m *SessionManager) handleCrash(ctx context.Context, name string, step *wor
 	// it resolves the recreated pod's fresh dial, and any failure along the
 	// way stays fail-closed via that arm's own failResult path. ctx.Err()
 	// guards run-level cancellation: a cancelled step must not re-enter.
-	// Local (in-host) sessions keep CRI-130 crash semantics. on_crash=
+	// Local (in-host) sessions keep the session-crash semantics. on_crash=
 	// abort_run is consulted first and keeps its hard-fail arm.
 	remoteRetry := false
 	if onCrash != OnCrashAbortRun && reason == CrashReasonTransportClosed && ctx.Err() == nil {
@@ -2773,7 +2769,7 @@ func (m *SessionManager) handleCrash(ctx context.Context, name string, step *wor
 // loop (via OutcomeInvalidError) instead of latching a hard run failure. The
 // host-synthesized fallback is exempt: it was validated at synthesis, and
 // re-applying the fallback's own schema/require_comment to the empty
-// synthesis is unsatisfiable by construction (KB-45).
+// synthesis is unsatisfiable by construction.
 func (m *SessionManager) retryAfterRespawn(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink, sess *Session, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 	retrySink := sink
 	if sess.mergeBuf != nil {
@@ -2852,30 +2848,30 @@ func (m *SessionManager) bindVerifiedAndLookup(ctx context.Context, name string,
 // Execute runs a step against the named adapter session, binding a
 // verified-only session lazily on first use.
 //
-// Locking contract (CRI-160, nested adapter tool calls): Execute holds no
+// Locking contract (nested adapter tool calls): Execute holds no
 // lock across the adapter call itself — bindMu is taken only inside
 // bindVerifiedAndLookup during the bind phase, and mu is taken only for short
 // map operations. A nested Execute issued under this one (a callee session
 // running while the caller's Execute is in flight) is therefore safe on a
 // DIFFERENT session: the nested call serializes on bindMu only if it must
 // bind, never while the caller holds it. Callee session != caller session is
-// guaranteed by the CRI-159 self-call rejection, so the nested call cannot
+// guaranteed by the self-call rejection, so the nested call cannot
 // re-enter the caller session's Execute.
 //
 // Ordering invariant: never block the caller session's stream while holding a
 // lock the nested Execute needs — that would deadlock the tool call. The
 // nested path (permissionInterceptSink.dispatchNestedToolCall) holds no
 // SessionManager locks while dispatching, executes the callee on its own
-// goroutine (CRI-161), and replies on the caller's Permissions stream with
+// goroutine, and replies on the caller's Permissions stream with
 // non-blocking channel sends.
 //
-// CRI-161: nested tool-call executes are asynchronous, so execute waits for
+// Nested tool-call executes are asynchronous, so execute waits for
 // them (permSink.waitPending) immediately after the adapter call returns —
 // before any sink latch is read or the sink unbound — so every nested
 // outcome (result delivery, fatal error latch, typed failure) is settled and
 // observed before the step completes.
 //
-// nesting carries the per-call tool-call nesting state (CRI-162): the number
+// nesting carries the per-call tool-call nesting state: the number
 // of nested tool-call Executes above this one (0 for a step-level Execute)
 // plus the caller adapter ref chain visited so far, seeded with the
 // executing step's own adapter ref.
@@ -2890,7 +2886,7 @@ func (m *SessionManager) Execute(ctx context.Context, name string, step *workflo
 }
 
 func (m *SessionManager) execute(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink, nesting toolCallNesting, rejection *v2.ExecutionRejection) (adapter.Result, error) {
-	// KB-156: a tool resource leased from another manager's environment
+	// A tool resource leased from another manager's environment
 	// executes through the owner's shared session — one adapter session per
 	// environment, created once by the host-of-record manager. This manager
 	// only routes the call; the owner owns the bind, the execute gating, the
@@ -2899,8 +2895,8 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 	// one-directional: delegation takes no m.mu lock into the owner (the
 	// lease map was read under m.mu before this call).
 	if owner := m.leaseOwner(name); owner != nil {
-		// Mirror a caller-side step-timeout teardown window onto the owner
-		// (CRI-287): the engine stamps the window on the manager that ran the
+		// Mirror a caller-side step-timeout teardown window onto the owner:
+		// the engine stamps the window on the manager that ran the
 		// canceled step, but a delegated execute classifies on the owner's
 		// window. Without the mirror a teardown cascade observed on the
 		// shared session would be misclassified as a crash and respawn it
@@ -2913,7 +2909,7 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 		return adapter.Result{Outcome: "failure"}, err
 	}
 
-	// CRI-270: remotely dispatched adapters never see the launch-cwd
+	// Remotely dispatched adapters never see the launch-cwd
 	// customizer, so deliver the session's resolved working_directory
 	// through the input contract (per-step input wins).
 	step = m.withRemoteWorkingDir(sess, step)
@@ -2930,7 +2926,7 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 		return m.handleCrash(ctx, name, step, sink, sess, fmt.Errorf("heartbeat stall (>%s)", m.heartbeatStallThreshold()), rejection)
 	}
 
-	// KB-155: serialize executes on sessions that never declared the
+	// Serialize executes on sessions that never declared the
 	// concurrent_execute capability. The turn is taken before any
 	// session-global state (step policy, sink bindings) is touched so a
 	// queued caller can never observe an in-flight sibling's state;
@@ -2940,19 +2936,19 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 		return adapter.Result{}, gateErr
 	}
 	defer m.releaseExecuteTurn(sess)
-	// KB-155 abandon policy: a caller whose turn arrives after its own
+	// Abandon policy: a caller whose turn arrives after its own
 	// cancellation abandons before any adapter-observable state (the defer
 	// handed the turn on) — only when the cancellation is attributable to
 	// this call: it either queued behind a sibling or was dispatched while
 	// its originating Execute context was still alive (issue-time liveness
 	// recorded by startNestedToolCall). A nested follow-up issued after the
-	// context already died keeps the CRI-161 no-wedge contract: the callee
+	// context already died keeps the no-wedge contract: the callee
 	// still runs and delivers its typed reply.
 	if ctx.Err() != nil && (queued || nesting.issuedWhileExecAlive) {
 		return adapter.Result{}, ctx.Err()
 	}
 
-	// KB-155: the execute carries its own step policy so concurrent executes
+	// The execute carries its own step policy so concurrent executes
 	// on one multiplexed session each decide under their own allow_tools +
 	// environment policy instead of a session-global last-writer snapshot.
 	// The session-global snapshot keeps its legacy role for surfaces that
@@ -2963,7 +2959,7 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 	m.bindActiveSink(sess, sink)
 	defer m.unbindActiveSink(sess, sink)
 
-	// KB-155: execute-level adapter events (mcp.progress, mcp.content, ...)
+	// Execute-level adapter events (mcp.progress, mcp.content, ...)
 	// flow straight through this execute's (already redaction-wrapped) sink
 	// so they keep their per-Execute identity. They are never diverted into
 	// the session log merge buf, whose flush routes through
@@ -2977,7 +2973,7 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 
 	result, execErr := sess.handle.Execute(ctx, name, step, permSink, rejection)
 
-	// CRI-161: nested tool calls were dispatched on their own goroutines;
+	// Nested tool calls were dispatched on their own goroutines;
 	// wait for them to settle (and deliver their replies) before reading the
 	// sink's latches or unbinding the sink. No lock is held here, so the
 	// nested goroutine's own manager interactions cannot deadlock against
@@ -2990,7 +2986,7 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 // finishExecute applies the post-execute pipeline after waitPending: verdict
 // validation, outcome override, and the success postlude.
 func (m *SessionManager) finishExecute(ctx context.Context, name string, step *workflow.StepNode, sess *Session, sink adapter.EventSink, permSink *permissionInterceptSink, result adapter.Result, execErr error) (adapter.Result, error) {
-	// KB-45: validate the verdict against the step's outcome contracts
+	// Validate the verdict against the step's outcome contracts
 	// BEFORE the permission override and any downstream mapping, so a
 	// permission-denied success cannot launder an invalid payload. Legacy
 	// (contract-less) steps pass through untouched. Only a final verdict is
@@ -3015,14 +3011,14 @@ func (m *SessionManager) finishExecute(ctx context.Context, name string, step *w
 		return m.executeError(ctx, name, step, sess, sink, result, execErr)
 	}
 
-	// A completed call proves the session transport was alive (CRI-271).
-	// It deliberately does NOT end the CRI-287 step-timeout teardown
+	// A completed call proves the session transport was alive.
+	// It deliberately does NOT end the step-timeout teardown
 	// window: a healthy sibling's success is not evidence that a
 	// torn-down sibling has been observed, so the window stays open until
 	// it expires (see the engineStepTimeoutTeardownAt comment).
 	sess.noteActivity()
 	// A nested callee Execute that crashed with on_crash=abort_run latches
-	// its fatal error on the sink (CRI-160): the callee's own crash policy
+	// its fatal error on the sink: the callee's own crash policy
 	// governs its session, so the error propagates to the engine instead
 	// of the caller's Execute reporting success.
 	if fatalErr := permSink.nestedFatal(); fatalErr != nil {
@@ -3037,9 +3033,9 @@ func (m *SessionManager) finishExecute(ctx context.Context, name string, step *w
 
 // executeError classifies a failed Execute call: expected closes (an explicit
 // Close/Shutdown or a host-canceled context) and plain step errors are
-// returned as-is; likely session crashes route to handleCrash (CRI-271).
+// returned as-is; likely session crashes route to handleCrash.
 func (m *SessionManager) executeError(ctx context.Context, name string, step *workflow.StepNode, sess *Session, sink adapter.EventSink, result adapter.Result, execErr error) (adapter.Result, error) {
-	// KB-45: a contract-rejected verdict is not a crash or transport
+	// A contract-rejected verdict is not a crash or transport
 	// failure; it is returned to the engine's attempt loop verbatim before
 	// any crash classification can consume it.
 	var invErr *OutcomeInvalidError
@@ -3056,15 +3052,15 @@ func (m *SessionManager) executeError(ctx context.Context, name string, step *wo
 		return result, execErr
 	}
 
-	// CRI-287: a transport close observed while the step-timeout teardown
+	// A transport close observed while the step-timeout teardown
 	// window is open is the consequence of the engine-initiated cancellation
 	// (the canceled Execute stream tears down sibling phone-home transports
 	// in the same second), not an adapter death. Return the error as-is so
 	// the step's declared failure/default outcome routing (the checkpoint
 	// loop) proceeds instead of the crash machinery terminating the run. The
 	// window is bound to the cascade (see the engineStepTimeoutTeardownAt
-	// comment), so crashes outside it keep the hard-failure classification
-	// (CRI-271). Deaths with positive evidence are never downgraded for
+	// comment), so crashes outside it keep the hard-failure classification.
+	// Deaths with positive evidence are never downgraded for
 	// legacy-runner handles: ProcessExited is the verifiable "adapter is
 	// dead" signal — the transport-close classification only applies while
 	// the process is still running — and a host-initiated close (closing
@@ -3101,7 +3097,7 @@ func (m *SessionManager) executeError(ctx context.Context, name string, step *wo
 }
 
 // MarkEngineStepTimeoutTeardown records that the engine canceled a step
-// because its CRI-275 step ceiling expired (CRI-287). It opens the teardown
+// because its step ceiling expired. It opens the teardown
 // window (see engineStepTimeoutTeardownAt): transport closes observed within
 // the window are classified as a timeout teardown, not a session crash, so
 // the step's declared failure/default outcome routing (the checkpoint loop)
@@ -3112,9 +3108,9 @@ func (m *SessionManager) MarkEngineStepTimeoutTeardown() {
 	m.engineStepTimeoutTeardownAt.Store(time.Now().UnixNano())
 }
 
-// mirrorStepTimeoutTeardownWindow copies src's CRI-287 step-timeout teardown
+// mirrorStepTimeoutTeardownWindow copies src's step-timeout teardown
 // window onto this manager when src's window is open and this manager's is
-// not (KB-156). Delegated tool-resource executes classify on the owner's
+// not. Delegated tool-resource executes classify on the owner's
 // window, and the engine stamps the mark on the manager that ran the
 // canceled step (a leasing child); mirroring the mark time preserves the
 // remaining window so a teardown cascade observed on the shared session
@@ -3133,7 +3129,7 @@ func (m *SessionManager) mirrorStepTimeoutTeardownWindow(src *SessionManager) {
 }
 
 // engineStepTimeoutTeardownWindowOpen reports whether a step-timeout teardown
-// mark is recorded and still inside the teardown window (CRI-287).
+// mark is recorded and still inside the teardown window.
 func (m *SessionManager) engineStepTimeoutTeardownWindowOpen() bool {
 	markedAt := m.engineStepTimeoutTeardownAt.Load()
 	if markedAt == 0 {
@@ -3142,7 +3138,7 @@ func (m *SessionManager) engineStepTimeoutTeardownWindowOpen() bool {
 	return time.Since(time.Unix(0, markedAt)) < m.stepTimeoutTeardownWindow()
 }
 
-// StepTimeoutTeardownWindowOpen reports whether the CRI-287 step-timeout
+// StepTimeoutTeardownWindowOpen reports whether the step-timeout
 // teardown window is currently open (a mark recorded within
 // StepTimeoutTeardownWindow). Exported so engine-side probes and run
 // diagnostics can observe the window without reaching into the manager.
@@ -3153,7 +3149,7 @@ func (m *SessionManager) StepTimeoutTeardownWindowOpen() bool {
 // combinedPolicyFor builds the step's CombinedPolicy (adapter allow set +
 // environment policy) without touching session-global state. It is the
 // per-Execute policy source: concurrent executes on one multiplexed session
-// each decide under their own step policy (KB-155) instead of a
+// each decide under their own step policy instead of a
 // last-writer-wins session-global snapshot. The returned policy is non-nil
 // (its allow_tools matcher denies when the step declares none — the same
 // deny-all semantics the legacy setStepPolicy path had).
@@ -3182,7 +3178,7 @@ func (m *SessionManager) combinedPolicyFor(sess *Session, step *workflow.StepNod
 // re-present path after snapshot/restore, which evaluates outside an
 // in-flight execute. Live execute decisions carry their own per-Execute
 // policies (combinedPolicyFor via the execute's permissionInterceptSink) so
-// concurrent executes attribute correctly (KB-155).
+// concurrent executes attribute correctly.
 func (m *SessionManager) setStepPolicy(sess *Session, step *workflow.StepNode) {
 	if m == nil || sess == nil || sess.PermissionState == nil {
 		return
@@ -3193,11 +3189,11 @@ func (m *SessionManager) setStepPolicy(sess *Session, step *workflow.StepNode) {
 // concurrentExecuteCapability is the well-known adapter capability (declared
 // in InfoResponse.capabilities) marking a v2 adapter that accepts multiple
 // concurrent in-flight Execute RPCs on one session and correlates replies,
-// per-call events, and decisions by request_id (KB-155). The capability
+// per-call events, and decisions by request_id. The capability
 // vocabulary is free-form — hosts ignore unknown values for forward
 // compatibility — so hosts without this card keep dispatching concurrent
 // executes on such adapters but only see per-session attribution; per-request
-// attribution is what KB-155 resolves.
+// attribution is what concurrent_execute resolves.
 const concurrentExecuteCapability = "concurrent_execute"
 
 // parallelSafeCapability is the adapter side of the long-documented engine
@@ -3205,18 +3201,18 @@ const concurrentExecuteCapability = "concurrent_execute"
 // step's iterations to Execute concurrently (internal/engine, docs/workflow).
 // The turn gate admits it alongside concurrent_execute — serializing those
 // iterations would strip the granted concurrency and deadlock barrier-style
-// adapters (review B1, KB-155).
+// adapters (review B1).
 const parallelSafeCapability = "parallel_safe"
 
 // workflowV1Capability marks an ADR-0008 criteria-as-adapter session
 // (internal/cli serve-adapter role): one child run anchors behind the
 // session, so the execute turn gate MUST NOT queue a second concurrent
-// Execute — it fails closed instead (KB-95). The child runs the same
+// Execute — it fails closed instead. The child runs the same
 // serialized policy on its side (its process-wide one-run guard is the
 // final backstop).
 const workflowV1Capability = "workflow.v1"
 
-// ErrChildRunInFlight is the typed re-Execute guard (KB-95, ADR-0008):
+// ErrChildRunInFlight is the typed re-Execute guard (ADR-0008):
 // Execute on a workflow.v1 session while its child run is still in flight
 // fails closed — the caller is never queued behind the in-flight run and no
 // second child run is ever started. The session name is actionable for the
@@ -3230,7 +3226,7 @@ func (e *ErrChildRunInFlight) Error() string {
 }
 
 // sessionSupportsConcurrentExecute reports whether the session's cached
-// capabilities declare a multiplexable execute posture (KB-155): either the
+// capabilities declare a multiplexable execute posture: either the
 // concurrent_execute capability or the engine's parallel_safe contract
 // capability. Thread-safe through HasCapability's session/verified-record
 // lookup.
@@ -3240,7 +3236,7 @@ func (m *SessionManager) sessionSupportsConcurrentExecute(sess *Session) bool {
 }
 
 // acquireExecuteTurn serializes executes on sessions that declare neither
-// parallel_safe nor concurrent_execute (KB-155): the turn is taken before
+// parallel_safe nor concurrent_execute: the turn is taken before
 // any session-global state is touched so a queued caller can never observe
 // an in-flight sibling's state; multiplexable sessions skip the gate. The
 // queued flag
@@ -3268,7 +3264,7 @@ func (m *SessionManager) acquireExecuteTurn(ctx context.Context, sess *Session) 
 		return false, nil
 	default:
 	}
-	// KB-95 (ADR-0008) re-Execute guard for workflow.v1 sessions: the turn
+	// Re-Execute guard (ADR-0008) for workflow.v1 sessions: the turn
 	// is busy, which means this session's child run is in flight. Fail
 	// closed — the guard caller is never queued and never re-runs the step
 	// against the child.
@@ -3303,7 +3299,7 @@ func (m *SessionManager) releaseExecuteTurn(sess *Session) {
 }
 
 // bindActiveSink registers a per-Execute event sink on the session's sink
-// registry (KB-155). The registry is refcounted so nested sibling executes
+// registry. The registry is refcounted so nested sibling executes
 // that share a caller sink collapse onto one entry; the unbind pairs with
 // each bind. Returns nothing; the refcount handles repeated binds.
 func (m *SessionManager) bindActiveSink(sess *Session, sink adapter.EventSink) {
@@ -3315,7 +3311,7 @@ func (m *SessionManager) bindActiveSink(sess *Session, sink adapter.EventSink) {
 	sess.activeSinks[sink]++
 }
 
-// unbindActiveSink releases one execute's reference to its sink (KB-155),
+// unbindActiveSink releases one execute's reference to its sink,
 // flushing the merge buffer first exactly as the former single-slot unbind
 // did. An execute unbinds only the binding its own start path created.
 func (m *SessionManager) unbindActiveSink(sess *Session, sink adapter.EventSink) {
@@ -3334,7 +3330,7 @@ func (m *SessionManager) unbindActiveSink(sess *Session, sink adapter.EventSink)
 }
 
 // singleActiveSink returns the bound sink when exactly one execute is in
-// flight on the session (KB-155) — the only case where session-level traffic
+// flight on the session — the only case where session-level traffic
 // can be attributed without ambiguity. Multi-execute overlaps (concurrent
 // executes on a multiplexed adapter) and idle sessions return false, and
 // callers must fall back to structured logs: attribution must never guess.
@@ -3416,7 +3412,7 @@ func (m *SessionManager) Shutdown(ctx context.Context) error {
 	errs := make([]error, 0, len(shims)+len(sessions)+1)
 	// Stop every phone-home shim first so no new adapter connections are
 	// accepted during teardown, pending handle waiters are woken with an
-	// error, and no shim accept goroutine outlives the run (CRI-293: one
+	// error, and no shim accept goroutine outlives the run (one
 	// shim per remote environment may be registered).
 	for _, shim := range shims {
 		if err := shim.Stop(ctx); err != nil {
@@ -3431,7 +3427,7 @@ func (m *SessionManager) Shutdown(ctx context.Context) error {
 			errs = append(errs, err)
 		}
 	}
-	// KB-224: drop the per-invocation ambient home scratch root last, after
+	// Drop the per-invocation ambient home scratch root last, after
 	// every adapter process that could still hold it open is gone.
 	if m.ambientHomes != nil {
 		m.ambientHomes.cleanup()
@@ -3576,7 +3572,7 @@ func (m *SessionManager) respawn(ctx context.Context, sess *Session) error {
 	sess.handle = plug
 	sess.SandboxCleanup = cleanup
 	sess.respawned = true
-	// CRI-271: a fresh process is a fresh activity baseline, and the crash
+	// A fresh process is a fresh activity baseline, and the crash
 	// classification no longer applies to the re-opened session.
 	sess.noteActivity()
 	sess.crashed.Store(false)
@@ -3590,11 +3586,11 @@ func (m *SessionManager) respawn(ctx context.Context, sess *Session) error {
 func (m *SessionManager) resolveAdapterForRespawn(ctx context.Context, sess *Session, customizer func(string, *exec.Cmd)) (Handle, error) {
 	// Remote-mode dispatch: if the adapter is bound to a remote environment,
 	// wait for the adapter to phone home via the shim serving that
-	// environment (respawn = reconnect; CRI-293: per-environment shims).
+	// environment (respawn = reconnect; per-environment shims).
 	if shim, ok := m.remoteShimForAdapter(sess.Name); ok {
 		// Exclude the just-crashed handle so we wait for the replacement
 		// connection rather than the dead session still in the shim's map.
-		// (KB-242: waits and kills name the adapter definition identity —
+		// (waits and kills name the adapter definition identity —
 		// sess.Name is the "<type>.<name>" instance key.)
 		return shim.WaitForFreshHandle(ctx, sess.Name, sess.ScopeInstanceID, sess.handle)
 	}
@@ -3706,7 +3702,7 @@ func normalizeOnCrash(v string) string {
 }
 
 // ReopenCrashedSession replaces the dead process behind a crashed adapter
-// session with a fresh one and re-opens the session in place (CRI-271).
+// session with a fresh one and re-opens the session in place.
 //
 // Under the default on_crash=fail policy a crashed session stays registered
 // but dead: every Execute on the same reference replays the crash error, so
@@ -3772,10 +3768,10 @@ type sessionLogAdapterSink struct {
 }
 
 func (s *sessionLogAdapterSink) Log(stream string, chunk []byte) {
-	// Any delivered log chunk is observable adapter activity (CRI-271); the
+	// Any delivered log chunk is observable adapter activity; the
 	// crash diagnostics report the idle window since the last one.
 	s.sess.noteActivity()
-	// KB-155: session-level traffic is attributed to the executing step sink
+	// Session-level traffic is attributed to the executing step sink
 	// only when exactly one execute holds the session; otherwise it goes to
 	// structured logs so it is never misattributed to an arbitrary sibling.
 	if sink, ok := s.sess.singleActiveSink(); ok {
@@ -3867,9 +3863,9 @@ type SessionSnapshot struct {
 	HostArch         string                       `json:"host_arch"`          // GOOS/GOARCH at snapshot
 	WorkingDir       string                       `json:"working_dir"`        // resolved environment working_directory at snapshot
 	ScopeInstanceID  string                       `json:"scope_instance_id"`  // shim scope key for remote per-scope sessions
-	// CRI-202: the adapter-declared state surface stamped at save time so a
+	// The adapter-declared state surface stamped at save time so a
 	// restore can reject a mismatched state shape instead of misinterpreting
-	// the bytes. Empty on pre-CRI-202 checkpoints; restore treats an empty
+	// the bytes. Empty on pre-schema-tag checkpoints; restore treats an empty
 	// tag as unverifiable and proceeds with a warning.
 	StateSchema string `json:"state_schema,omitempty"`
 	// StateMode records the declared mode (blob|ref) the state was saved
@@ -3899,7 +3895,7 @@ func (s *Session) Snapshot(ctx context.Context) (*SessionSnapshot, error) {
 
 // captureState captures the adapter's state, permission state, and host
 // metadata without pausing the session. Used by Snapshot (after its Pause)
-// and by the step/turn-boundary checkpoint saves (CRI-202), which run while
+// and by the step/turn-boundary checkpoint saves, which run while
 // the session is active: torn-read consistency mid-turn is the adapter's
 // declared responsibility — a per-turn declaration promises consistent
 // snapshots at turn boundaries.
@@ -3994,9 +3990,8 @@ func (m *SessionManager) openAndRestoreAdapter(ctx context.Context, name, adapte
 
 func buildRestoredSession(name, adapterName, onCrash string, config, resolvedSecrets map[string]string, originRefs map[string]secrets.OriginRef, caps []string, plug Handle, cleanup func(), permState *permissionState, workingDir, scopeInstanceID string) *Session {
 	// execTurns and activeSinks are deliberately nil here: a restored session
-	// fails open with the legacy unserialized posture (matching the restored
-	// session's pre-KB-155 behavior) until a fresh execute lifecycle binds
-	// them.
+	// fails open with the legacy unserialized posture (pre-turn-gate
+	// behavior) until a fresh execute lifecycle binds them.
 	return &Session{
 		Name:             name,
 		Adapter:          adapterName,
@@ -4092,7 +4087,7 @@ func (m *SessionManager) validateRelaunchedAdapter(ctx context.Context, plug Han
 		if err := validateStateHandshake(adapterName, info.AdapterInfo.State); err != nil {
 			return nil, nil, err
 		}
-		// CRI-202: re-check the checkpoint's stamped state schema against the
+		// Re-check the checkpoint's stamped state schema against the
 		// relaunched adapter's declaration. Mismatched or dropped state must
 		// refuse loudly — never a silent fresh start.
 		if err := validateRestoredStateSchema(adapterName, info.AdapterInfo.State, snap); err != nil {
@@ -4100,7 +4095,7 @@ func (m *SessionManager) validateRelaunchedAdapter(ctx context.Context, plug Han
 		}
 		// Re-capture the declared surface after a snapshot relaunch so a
 		// restored session keeps gating on its declared input contract
-		// (CRI-270) without a re-verify round-trip.
+		// without a re-verify round-trip.
 		m.cacheAdapterInfo(name, &info.AdapterInfo)
 		return append([]string(nil), info.Capabilities...), info.AdapterInfo.State, nil
 	}
@@ -4122,7 +4117,7 @@ func (m *SessionManager) restorePermissionState(name string, blob []byte) (*perm
 }
 
 // RestoreIntoLiveSession replays prior adapter state into an already-open
-// session (CRI-202). A remote adapter that phone-homed during initialization
+// session. A remote adapter that phone-homed during initialization
 // binds its session before the engine's checkpoint-restore pass runs, so the
 // pass must be able to restore into a live session instead of reopening one.
 // The declared state surface is re-checked against the checkpoint's schema

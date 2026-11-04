@@ -76,7 +76,7 @@ func (s *lockedSink) OnStepOutcome(step, outcome string, duration time.Duration,
 }
 
 // OnStepOutcomeInvalid serializes the contract-validation rejection event
-// (KB-45) across parallel iterations.
+// across parallel iterations.
 func (s *lockedSink) OnStepOutcomeInvalid(step, outcome string, issues []string, attempt int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -546,7 +546,7 @@ func buildParallelIterState(i, total int, item, key cty.Value, st *RunState, vis
 		// nil RemoteLifecycle and per-scope provisioning failed with "no run data
 		// directory is configured". The subworkflow iteration path derives an
 		// isolated per-iteration lifecycle from this shared one.
-		// CRI-271: the crashed-session set is shared across parallel iteration
+		// The crashed-session set is shared across parallel iteration
 		// states and subworkflow bodies (like Visits) so a crash recorded in
 		// one scope is re-opened by follow-on steps executing in any other.
 		RemoteLifecycle: st.RemoteLifecycle,
@@ -675,7 +675,7 @@ func (n *stepNode) runParallelSubworkflowIteration(ctx context.Context, st *RunS
 	iterDeps := deps
 	iterDeps.Sessions = adapterhost.NewSessionManager(deps.Loader)
 	// Audit identity is run-wide (single writer, per-run redaction registry;
-	// KB-58 budget refusals and other nested tool-call decisions inside
+	// budget refusals and other nested tool-call decisions inside
 	// parallel iterations must reach the run's audit trail).
 	iterDeps.Sessions.Audit = deps.Sessions.Audit
 	iterDeps.Sessions.RedactionRegistry = deps.Sessions.RedactionRegistry
@@ -689,7 +689,7 @@ func (n *stepNode) runParallelSubworkflowIteration(ctx context.Context, st *RunS
 	// stay owned by the parent SM, which stops them at run end.
 	iterDeps.Sessions.BorrowRemoteProvisioningFrom(deps.Sessions)
 
-	// KB-156: adapter tool-call grants to tool RESOURCE adapters (granted to a
+	// Adapter tool-call grants to tool RESOURCE adapters (granted to a
 	// caller's tools list but never run as a step target, e.g. an mcp server
 	// a claude-agent probes) resolve through the nested tool-call dispatch,
 	// which routes to the environment's SHARED session: this iteration leases
@@ -697,7 +697,7 @@ func (n *stepNode) runParallelSubworkflowIteration(ctx context.Context, st *RunS
 	// parent manager's one session for the environment — no per-iteration
 	// adapter process, no per-iteration initialize+tools/list handshake, and
 	// no per-iteration Info surface clobbering itself across concurrent
-	// branches. A remote-declared tool resource leases the same way (KB-160):
+	// branches. A remote-declared tool resource leases the same way:
 	// the owner hosts the environment's ONE peer phone-home session opened
 	// through the host-of-record parent, so every call routes over the peer
 	// connection — the peer opens and serves exactly one shared session per
@@ -716,7 +716,7 @@ func (n *stepNode) runParallelSubworkflowIteration(ctx context.Context, st *RunS
 			defer iterDeps.Sessions.ReleaseSharedToolResources()
 		}
 	}
-	// KB-58: the iteration manager has no graph of its own; carry the
+	// The iteration manager has no graph of its own; carry the
 	// declaring workflow's policy so the seam's depth and call-count gates
 	// honor the workflow-declared bounds instead of package defaults.
 	iterDeps.Sessions.SetBorrowedGraphPolicy(&n.graph.Policy)

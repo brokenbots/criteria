@@ -1,5 +1,4 @@
-// WorkflowGraphs emission at the post-compile seam (CRI-278, CRI-298,
-// CRI-299).
+// WorkflowGraphs emission at the post-compile seam.
 //
 // After compileForExecution returns, the apply path emits exactly one
 // WorkflowGraphs envelope per run — in both local and server mode — before
@@ -13,7 +12,7 @@
 // and never serialized, so no body contains another layer. Nesting is
 // expressed by the parent's subworkflow.<name> step targets plus the flat
 // entry list; consumers rebuild the tree with a plain name->layer map. The
-// layer shape is uniform at every entry (CRI-298): the same three keys with
+// layer shape is uniform at every entry: the same three keys with
 // body as a JSON string and sourcePath in the wire's camelCase. Both
 // emitters serialize the same pb.WorkflowGraphs message with the same
 // protojson codec, so the local ND-JSON payload is semantically identical to
@@ -38,7 +37,7 @@ import (
 )
 
 // workflowGraphsLayer is one subworkflow layer entry in the wire shape
-// (CRI-298/CRI-299): the same three keys at every nesting depth, with body
+// (uniform shape): the same three keys at every nesting depth, with body
 // carrying the compiled body graph as a JSON string rather than an inline
 // object, and sourcePath in the wire's camelCase.
 type workflowGraphsLayer struct {
@@ -48,13 +47,13 @@ type workflowGraphsLayer struct {
 }
 
 // workflowGraphsLayers builds the compiled subworkflow layers in the flat
-// wire shape (CRI-299): every layer at every nesting depth is a sibling
+// wire shape: every layer at every nesting depth is a sibling
 // entry in the returned slice, in document (pre) order. A layer body
 // carries ONLY that layer's own compiled graph — its subworkflows key is
 // stripped, never serialized. The slice is never nil: workflows without
 // subworkflows emit an empty (non-null) payload.
 //
-// KB-253: the ROOT layer is now the first entry, named "root" — the
+// The ROOT layer is the first entry, named "root" — the
 // operator composes per-environment peer manifests from the compiled
 // graphs, and the root module's own adapter/environment declarations are
 // part of the graph by definition (its body used to ride only the run
@@ -63,7 +62,7 @@ type workflowGraphsLayer struct {
 func workflowGraphsLayers(graph *workflow.FSMGraph) ([]workflowGraphsLayer, error) {
 	all := buildCompileJSON(graph)
 	layers := make([]workflowGraphsLayer, 0, 1+len(all.Subworkflows))
-	// KB-253 root layer: name "root", the root module's own compiled graph
+	// Root layer: name "root", the root module's own compiled graph
 	// (subworkflows stripped, same shape as every sibling entry).
 	rootBody := all
 	rootBody.Subworkflows = nil
@@ -101,7 +100,7 @@ func buildWorkflowGraphsPayload(graph *workflow.FSMGraph) (*pb.WorkflowGraphs, e
 }
 
 // workflowGraphsFlatLayers converts the compiled subworkflow tree into the
-// flat wire layer list (CRI-299), pre-order: every entry is appended as a
+// flat wire layer list, pre-order: every entry is appended as a
 // sibling before its own nested entries are walked. Termination is
 // structural — the compiled tree is finite (subworkflow cycles are rejected
 // at parse time).
@@ -123,7 +122,7 @@ func workflowGraphsFlatLayers(subs []compileSubworkflow) ([]workflowGraphsLayer,
 }
 
 // workflowGraphsLeafLayer serializes one compiled subworkflow as a flat wire
-// entry (CRI-299): the body is that layer's own compiled graph with its
+// entry: the body is that layer's own compiled graph with its
 // subworkflows key stripped — bodies are leaf data, never containers of
 // other layers. The nested entries ride the top-level repeated field as
 // their own siblings instead.
@@ -140,7 +139,7 @@ func workflowGraphsLeafLayer(sw *compileSubworkflow) (workflowGraphsLayer, error
 // emitWorkflowGraphsLocal writes the WorkflowGraphs envelope into the local
 // ND-JSON stream via the sink's shared seq sequence. The payload is the same
 // pb.WorkflowGraphs message the server stream carries, serialized with the
-// same protojson codec — semantically identical to the wire (CRI-299: the
+// same protojson codec — semantically identical to the wire (the
 // local viewer renders the flat layers array from either path; raw bytes can
 // differ only in protojson's build-randomized separator whitespace versus
 // encoding/json compaction of the envelope's raw payload). A payload build

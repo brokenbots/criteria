@@ -66,7 +66,7 @@ func (s *LocalSink) OnStepOutcome(step, outcome string, duration time.Duration, 
 	s.emit("StepOutcome", p)
 }
 
-// OnStepOutcomeInvalid emits the StepOutcomeInvalid event locally (KB-45):
+// OnStepOutcomeInvalid emits the StepOutcomeInvalid event locally:
 // a completed attempt was rejected by outcome-contract validation.
 func (s *LocalSink) OnStepOutcomeInvalid(step, outcome string, issues []string, attempt int) {
 	s.emit("StepOutcomeInvalid", &pb.StepOutcomeInvalid{Step: step, Outcome: outcome, Issues: issues, Attempt: int32(attempt)})
@@ -93,7 +93,7 @@ func (s *LocalSink) OnStepOutputCaptured(step string, outputs map[string]string)
 // OnRunPaused emits a RunPaused event. For wait/approval node pauses, the
 // richer WaitEntered / ApprovalRequested events are already emitted, so a
 // second event would duplicate the pause in ND-JSON (F-07). A boundary pause
-// (mode "external", CRI-255) has no other event — that pause class is what
+// (mode "external") has no other event — that pause class is what
 // RunPaused carries.
 func (s *LocalSink) OnRunPaused(node, mode, signal string) {
 	if mode != "external" {
@@ -102,7 +102,7 @@ func (s *LocalSink) OnRunPaused(node, mode, signal string) {
 	s.emit("RunPaused", &pb.RunPaused{Node: node, Mode: mode, Signal: signal})
 }
 
-// OnRunResumed emits a RunResumed event (CRI-255): fired when a previously
+// OnRunResumed emits a RunResumed event: fired when a previously
 // paused or interrupted run re-enters execution at a node via RunFrom.
 func (s *LocalSink) OnRunResumed(node string) {
 	s.emit("RunResumed", &pb.RunResumed{Node: node})
@@ -168,7 +168,7 @@ func (s *LocalSink) OnScopeIterCursorSet(cursorJSON string) {
 func (s *LocalSink) OnAdapterLifecycle(stepName, adapterName, status, detail string) {}
 
 // OnAdapterLifecycleEvent emits an adapter.lifecycle event for remote
-// adapter reconcilers in local/ND-JSON mode. CRI-236: the per-scope accept
+// adapter reconcilers in local/ND-JSON mode. The per-scope accept
 // token rides the wire (accept_token) alongside the transition-window
 // token_ref file path; released events carry no token.
 func (s *LocalSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent) {
@@ -189,7 +189,7 @@ func (s *LocalSink) OnAdapterLifecycleEvent(event *engine.AdapterLifecycleEvent)
 		"token_ref":           event.TokenRef,
 		"accept_token":        event.Token,
 	}
-	// KB-232: carry the session-wait diagnostics on the named pending event
+	// Carry the session-wait diagnostics on the named pending event
 	// so operators see dialed/rejected/waited without joining separate logs.
 	if event.Status == engine.ScopeSessionPendingStatus {
 		data["session_dials"] = event.SessionDials
@@ -240,15 +240,15 @@ func (s *LocalSink) OnAgentPromptInjected(step, sessionID, prompt, caller string
 }
 
 // OnWorkflowGraphs emits the once-per-run WorkflowGraphs envelope at the
-// post-compile seam (CRI-278). The payload carries the pb message (protojson
+// post-compile seam. The payload carries the pb message (protojson
 // camelCase {"subworkflows":[...]}) so that local ND-JSON streams and
-// dual-write mirrors stay proto-identical to the server stream (CRI-299).
+// dual-write mirrors stay proto-identical to the server stream.
 func (s *LocalSink) OnWorkflowGraphs(msg *pb.WorkflowGraphs) {
 	s.emit("WorkflowGraphs", msg)
 }
 
 // OnCheckpointPointer emits the checkpoint.pointer envelope for a durable
-// engine-local checkpoint save (CRI-203). The payload is the pb message so
+// engine-local checkpoint save. The payload is the pb message so
 // local ND-JSON streams and the server stream stay proto-identical.
 func (s *LocalSink) OnCheckpointPointer(ptr *engine.CheckpointPointerEvent) {
 	if ptr == nil {

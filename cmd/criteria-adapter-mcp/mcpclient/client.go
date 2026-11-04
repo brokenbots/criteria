@@ -34,7 +34,7 @@ type CallToolResult struct {
 	Content []map[string]any `json:"content"`
 	IsError bool             `json:"isError,omitempty"`
 	// StructuredContent carries the MCP structuredContent field verbatim when
-	// the server provides one (CRI-172: passthrough into adapter outputs).
+	// the server provides one (passthrough into adapter outputs).
 	StructuredContent json.RawMessage `json:"structuredContent,omitempty"`
 	// ResultType is the required 2026-07-28 discriminator on every result
 	// ("complete" | "input_required"). Legacy results omit it and MUST be
@@ -133,7 +133,7 @@ type listToolsResult struct {
 type callToolParams struct {
 	Name      string         `json:"name"`
 	Arguments map[string]any `json:"arguments,omitempty"`
-	// Meta carries the MCP `_meta` request field (KB-155): the bridge passes
+	// Meta carries the MCP `_meta` request field: the bridge passes
 	// a progressToken so the server's notifications/progress traffic can be
 	// routed back to the issuing execute when several calls are multiplexed
 	// over one session.
@@ -313,13 +313,13 @@ func (c *Client) CallTool(ctx context.Context, name string, arguments map[string
 }
 
 // CallToolTracked executes an MCP tool call carrying `_meta.progressToken`
-// (KB-155): a server that echoes progress notifications keyed by the token
+// a server that echoes progress notifications keyed by the token
 // lets the bridge route them back to the issuing execute when several calls
 // are multiplexed over one session. progressToken "" is untracked (plain
 // CallTool shape).
 func (c *Client) CallToolTracked(ctx context.Context, name string, arguments map[string]any, progressToken string) (CallToolResult, error) {
 	params := callToolParams{Name: name, Arguments: arguments}
-	// KB-155: the progress token rides the same _meta as the 2026-07-28
+	// The progress token rides the same _meta as the 2026-07-28
 	// stateless-core keys; the stateless meta is merged last so the
 	// protocolVersion/capabilities keys are always present.
 	if progressToken != "" {
@@ -378,7 +378,7 @@ func (c *Client) request(ctx context.Context, method string, params any) (json.R
 		c.pendMu.Lock()
 		delete(c.pending, id)
 		c.pendMu.Unlock()
-		// KB-155: tell the server the call was abandoned after dropping the
+		// Tell the server the call was abandoned after dropping the
 		// pending entry (deleted above). Without this, a multiplexed server never learns the
 		// caller gave up: the request stays pending on its side until the
 		// session closes, and its per-request accounting (progress tokens,
@@ -462,7 +462,7 @@ func (c *Client) handleResponse(msg *incomingEnvelope) {
 	// unambiguously the answer to it (or a global peer failure for that
 	// frame) — resolve it right away instead of leaving the caller to wedge
 	// until its timeout. With several outstanding requests the attribution
-	// is ambiguous (KB-155: never guess across concurrent calls) and the
+	// is ambiguous (never guess across concurrent calls) and the
 	// response stays dropped, as does any id-less reply with nothing
 	// pending.
 	if key == "" {

@@ -26,7 +26,7 @@ type reattachTransport interface {
 	ResumeCh() <-chan *pb.ResumeRun
 	AgentPromptCh() <-chan *pb.AgentPrompt
 	// PauseRunCh and RunCancelCh expose the control streams a recovered run
-	// must keep consuming while it runs: pause_run commands (CRI-254, which
+	// must keep consuming while it runs: pause_run commands (which
 	// must reach step boundaries exactly like on the fresh path) and
 	// run.cancel commands.
 	PauseRunCh() <-chan *pb.PauseRun
@@ -43,7 +43,7 @@ type reattachTransport interface {
 // eventsOut, when non-nil, mirrors the resumed runs' events into the ND-JSON
 // events file (server-mode dual-write).
 //
-// fingerprint is the invocation identity (CRI-125). The boolean reports
+// fingerprint is the invocation identity. The boolean reports
 // whether any checkpoint whose fingerprint matches was consumed here — driven
 // to a terminal outcome or already accounted for server-side — in which case
 // the caller must not start a second run for the same identity. outcome
@@ -266,7 +266,7 @@ func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 	if restoreErr != nil {
 		log.Warn("could not restore variable scope after pause reattach; starting with defaults", "error", restoreErr)
 	}
-	// CRI-202: the shared base carries the checkpoint surface (snapshot base
+	// The shared base carries the checkpoint surface (snapshot base
 	// + run id) so the re-entered engine saves and restores adapter state.
 	_, baseOpts, baseOptsErr := serverRunEngineOptions(cp.RunID, cp.WorkflowPath)
 	if baseOptsErr != nil {
@@ -290,7 +290,7 @@ func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		engine.WithAgentPrompts(rc.AgentPromptCh(), rc.CriteriaID(), cp.RunID),
 	}, baseOpts...)
 	eng := engine.New(graph, loader, engineSink, engOpts...)
-	// CRI-254: startRecoveryControlConsumers pins the router to the
+	// startRecoveryControlConsumers pins the router to the
 	// re-entered engine via startPauseConsume, i.e. before the RunFrom below
 	// (mirrors the fresh-run wiring in executeServerRun).
 	pauseRouter, stop := startRecoveryControlConsumers(ctx, log, rc, cp, sink, eng, cancelRun)
@@ -337,7 +337,7 @@ func serviceResumeSignals(ctx context.Context, log *slog.Logger, rc reattachTran
 		}
 		pausedNode := sink.PausedAt()
 		sink.ClearPaused()
-		// CRI-202: the shared base carries the checkpoint surface (snapshot
+		// The shared base carries the checkpoint surface (snapshot
 		// base + run id) so each resumed engine keeps persisting adapter state.
 		_, baseOpts, baseOptsErr := serverRunEngineOptions(cp.RunID, cp.WorkflowPath)
 		if baseOptsErr != nil {
@@ -403,7 +403,7 @@ func checkIterationCursorValidity(graph *workflow.FSMGraph, variableScope string
 // verbatim and a terminal success=false completion surfaces the same
 // "run completed with terminal state" error as the fresh path.
 //
-// CRI-304: the interrupted step restarts at attempt 1 with a fresh retry
+// The interrupted step restarts at attempt 1 with a fresh retry
 // budget. The pre-crash attempt produced no outcome (the runner was killed
 // mid-attempt), so counting it against max_step_retries made mid-step crash
 // recovery useless for any workflow with max_step_retries <= 1: the resumed
@@ -430,7 +430,7 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		drainAndCleanup(ctx, rc, cp)
 		return false, nil
 	}
-	// CRI-254: the router is pinned to the re-entered engine before the run
+	// The router is pinned to the re-entered engine before the run
 	// starts, mirroring the fresh-run wiring in executeServerRun. No resume
 	// cycles are serviced on this path (a crashed active run re-runs the
 	// interrupted step to completion or pause), so a single pin suffices and
@@ -457,7 +457,7 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 // tracker, the ND-JSON mirror, and the engine with restored state. A nil
 // engine means the run data dir could not be resolved (already logged); the
 // run cannot be driven from this process. The base sink is returned alongside
-// the engine so the caller can pin castle control consumers (CRI-254) to it.
+// the engine so the caller can pin castle control consumers to it.
 func buildResumedActiveEngine(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse, nextAttempt int, eventsOut io.Writer) (*engine.Engine, *terminalSuccessSink, *run.Sink) {
 	sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log, Ctx: ctx}
 	tracked := &terminalSuccessSink{Sink: sink}
@@ -480,7 +480,7 @@ func buildResumedActiveEngine(ctx context.Context, log *slog.Logger, rc reattach
 
 	auditPath, _ := auditLogPath(cp.RunID)
 	auditWriter := adapterhost.NewFileAuditWriter(auditPath)
-	// CRI-202: the shared base carries the checkpoint surface (snapshot base
+	// The shared base carries the checkpoint surface (snapshot base
 	// + run id) so the re-entered engine saves and restores adapter state.
 	_, baseOpts, baseOptsErr := serverRunEngineOptions(cp.RunID, cp.WorkflowPath)
 	if baseOptsErr != nil {

@@ -1,13 +1,13 @@
 package conformance
 
-// conformance_adapter_tools_call_edges.go — M6.4 conformance (CRI-170): the
+// conformance_adapter_tools_call_edges.go — M6.4 conformance: the
 // three invariants that govern caller→callee adapter call edges, asserted
 // against the real engine with in-memory fakes rather than documented:
 //
 //  1. callee_output_redacted — redaction survives call edges. The caller's
 //     secret input rides its freely-chosen call arguments, the callee echoes
 //     a value derived from that input back as a Sensitive-declared output
-//     (so the runtime redaction registry built by the engine, CRI-163,
+//     (so the runtime redaction registry built by the engine
 //     registers the echoed value — and only that registration can mask it,
 //     since it is not byte-identical to anything registered at run start),
 //     and the caller then embeds the echoed value in the next call's target
@@ -41,7 +41,7 @@ package conformance
 // behaviors under test live in the host runtime, not in adapters, so a
 // per-adapter matrix suite (matrix.yaml gates suites on adapter capabilities)
 // would skip in CI forever. It runs as its own always-on conformance entry
-// point, mirroring the CRI-167 matrix and the CRI-168 depth/cycle suite.
+// point, mirroring the adapter-tools matrix and the depth/cycle suite.
 import (
 	"context"
 	"encoding/json"
@@ -82,7 +82,7 @@ const (
 	callEdgesRedacted = "[REDACTED]"
 
 	// callEdgesEchoTarget is call-1's target: the callee's declared helper
-	// tool (matrixToolCallTarget, shared with the CRI-167 matrix).
+	// tool (matrixToolCallTarget, shared with the adapter-tools matrix).
 	callEdgesEchoTarget = matrixToolCallTarget
 
 	// callEdgesEchoTargetBase is the target prefix up to the bareword tool
@@ -106,7 +106,7 @@ const (
 // callEdgesSink extends the matrix engine sink with step-output capture, so
 // the redaction scenario can assert the sensitive callee output is masked on
 // the engine's step-output surface too (the engine's redacting sink masks it
-// through the runtime redaction registry, CRI-163).
+// through the runtime redaction registry).
 type callEdgesSink struct {
 	*matrixEngineSink
 
@@ -160,7 +160,7 @@ func (s *callEdgesSink) snapshotEvents() map[string][]matrixEvent {
 // inputs) rides the call arguments the caller freely chooses; after the
 // callee echoes it back, the caller embeds the echoed value in the next
 // call's target as the bareword tool label — the adapter-supplied surface
-// the host must mask in events and audit alike (CRI-163). Every other
+// the host must mask in events and audit alike. Every other
 // behavior (Permissions stream capture, typed reply correlation and
 // recording, lifecycle methods) is inherited from the matrix caller harness.
 type callEdgesEchoCaller struct {
@@ -222,7 +222,7 @@ func (a *callEdgesEchoCaller) Execute(_ context.Context, _ string, step *workflo
 		return adapter.Result{Outcome: "failure"}, errors.New("call-edges caller: call-2 did not settle")
 	}
 	// The caller re-exports the echoed callee output as its own step output
-	// (the CRI-163 leak chain): this is what puts the value on the engine's
+	// (the leak chain): this is what puts the value on the engine's
 	// step-output surface, where the redacting sink must mask it via the
 	// runtime redaction registry.
 	return adapter.Result{Outcome: "success", Outputs: map[string]cty.Value{"report": cty.StringVal(echo)}}, nil
@@ -240,7 +240,7 @@ func (a *callEdgesEchoCaller) echoed() string {
 // callee behavior with two deliberate differences — its report output echoes
 // the task argument (derived, so the surfaced value is not byte-identical to
 // anything registered at run start) and is declared Sensitive, so the echoed
-// value lands in the runtime redaction registry (CRI-163) the moment the
+// value lands in the runtime redaction registry the moment the
 // nested step's outputs render (registerSensitiveOutputs).
 type callEdgesEchoCallee struct {
 	*matrixCalleeAdapter
@@ -419,7 +419,7 @@ func runCallEdgesCase(t *testing.T, filename, src string, schemas map[string]wor
 	return sink, audit
 }
 
-// RunAdapterToolsCallEdgesConformance runs the CRI-170 M6.4 call-edges
+// RunAdapterToolsCallEdgesConformance runs the M6.4 call-edges
 // conformance suite: sub-tests locking the caller→callee invariants the
 // runtime must hold — redaction across call edges and deny-by-default
 // surviving call edges. The compile-time half (call edges are non-data-flow
@@ -433,8 +433,8 @@ func RunAdapterToolsCallEdgesConformance(t *testing.T) {
 // feeds through a call edge comes back masked wherever the host surfaces it.
 // The callee echoes a value derived from the caller's secret input as its
 // Sensitive report output — derived, so the only registration that can mask
-// it is the callee-output registration (registerSensitiveOutputs), the
-// CRI-163 path this invariant exercises. The caller then embeds the echoed
+// it is the callee-output registration (registerSensitiveOutputs) — the
+// registration path this invariant exercises. The caller then embeds the echoed
 // value in call-2's target as the bareword tool label and re-exports it as
 // its own step output. Every host surface the value touches must carry the
 // masked form: the permission.granted event payload (redactEventValue), the
@@ -494,7 +494,7 @@ func callEdgesCaseCalleeOutputRedacted(t *testing.T) {
 }
 
 // callEdgesAssertRedactionEvents asserts the redaction scenario's event
-// surface (CRI-163): exactly two policy grants and one dispatched call.
+// surface: exactly two policy grants and one dispatched call.
 // Call-2's grant is where the echoed value rides the tool label — the
 // payload must carry the masked form. A typed gate reject records no
 // permission deny and dispatches nothing.
@@ -548,7 +548,7 @@ func callEdgesAssertRedactionStepOutputs(t *testing.T, sink *callEdgesSink) {
 }
 
 // callEdgesAssertRedactionAudit asserts the redaction scenario's audit
-// surface (CRI-163): both calls' allows carry the matched glob, call-2's
+// surface: both calls' allows carry the matched glob, call-2's
 // allow and the typed-reject deny carry the masked Tool, and the caller's
 // session closes with the two policy decisions it recorded (the typed gate
 // reject contributes none).

@@ -1,4 +1,4 @@
-// Adapter checkpoint capture and save (CRI-202).
+// Adapter checkpoint capture and save.
 //
 // At every step boundary — and, for adapters declaring per-turn granularity,
 // at every completed tool-call turn — the session manager captures the
@@ -21,7 +21,7 @@ import (
 	"github.com/brokenbots/criteria/workflow"
 )
 
-// stateDigestPrefix marks the algorithm of a saved-state digest (CRI-202).
+// stateDigestPrefix marks the algorithm of a saved-state digest.
 const stateDigestPrefix = "sha256:"
 
 // turnCheckpointTimeout bounds a per-turn checkpoint save. The save runs on
@@ -79,7 +79,7 @@ func (m *SessionManager) declaredStateLocked(name string) *workflow.StateDeclara
 }
 
 // stampStateFields records the adapter's declared checkpoint-state surface on
-// a session before it is published (CRI-202).
+// a session before it is published.
 func (m *SessionManager) stampStateFields(sess *Session, d *workflow.StateDeclaration) {
 	if d == nil {
 		return
@@ -90,8 +90,8 @@ func (m *SessionManager) stampStateFields(sess *Session, d *workflow.StateDeclar
 }
 
 // wireTurnCheckpoint attaches the per-turn checkpoint hook to an open
-// session's permission state when the adapter declared per-turn granularity
-// (CRI-202). Callers invoke it with the session's bootstrap context after the
+// session's permission state when the adapter declared per-turn granularity.
+// Callers invoke it with the session's bootstrap context after the
 // permission state exists; d may be nil (no declaration).
 func (m *SessionManager) wireTurnCheckpoint(sess *Session, ctx context.Context, d *workflow.StateDeclaration) {
 	if _, perTurn := autoCheckpointsWithDecl(d); perTurn && sess.PermissionState != nil {
@@ -129,7 +129,7 @@ func (m *SessionManager) turnCheckpointFor(ctx context.Context, sess *Session) f
 // persistCheckpoint captures and saves one checkpoint for the session,
 // enforcing the adapter's declared max_bytes: a save exceeding the cap fails
 // loudly and is never truncated (a truncated transcript restores as a
-// plausible-looking broken session, CRI-201).
+// plausible-looking broken session).
 func (m *SessionManager) persistCheckpoint(ctx context.Context, sess *Session) error {
 	if m.CheckpointSave == nil {
 		return nil
@@ -178,17 +178,17 @@ func (m *SessionManager) checkpointAfterExecute(ctx context.Context, sess *Sessi
 }
 
 // validateRestoredStateSchema compares a checkpoint's stamped state schema
-// with the relaunched adapter's declared schema (CRI-202). Drift in either
+// with the relaunched adapter's declared schema. Drift in either
 // direction refuses loudly: replaying mismatched bytes would misinterpret
 // session state, and dropping a stateful checkpoint because the adapter no
 // longer declares state would be a silent fresh start. A checkpoint without
-// a schema tag (pre-CRI-202 layout) proceeds with a warning — there is no
+// a schema tag (pre-schema-tag layout) proceeds with a warning — there is no
 // tag to compare, and refusing it would strand snapshots taken by earlier
 // binaries.
 func validateRestoredStateSchema(adapterName string, d *workflow.StateDeclaration, snap *SessionSnapshot) error {
 	if snap.StateSchema == "" {
 		if len(snap.AdapterState) > 0 {
-			slog.Warn("checkpoint carries no state schema tag (pre-CRI-202 layout); skipping schema verification",
+			slog.Warn("checkpoint carries no state schema tag (pre-schema-tag layout); skipping schema verification",
 				"adapter", adapterName)
 		}
 		return nil

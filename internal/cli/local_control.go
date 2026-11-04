@@ -40,7 +40,7 @@ const pauseLandingRetryWindow = 2 * time.Second
 var errRunNotRunning = errors.New("run is not running (already terminal or paused at a node)")
 
 // localRunControl is the in-process bus between the loopback control listener
-// (CRI-255: JSON seam verbs + the Connect LocalControlService) and the apply
+// (JSON seam verbs + the Connect LocalControlService) and the apply
 // process's drain loop driving Engine.Pause/Resume semantics. apply owns the
 // listener, so the bus is the only authority for the owner run.
 //
@@ -75,7 +75,7 @@ type localRunControl struct {
 	// listenerUp reports whether the run-state/control listener attached
 	// (bind succeeded). When false, an approval pause without a configured
 	// resumer can never resolve: the drain loop fails the run loudly
-	// (CRI-256) instead of waiting forever on a dead surface.
+	// instead of waiting forever on a dead surface.
 	listenerUp bool
 }
 
@@ -298,7 +298,7 @@ func (c *localRunControl) awaitResolveResume(ctx context.Context) (map[string]st
 // pollResolveResume non-blockingly consumes a parked approval/signal decision,
 // if one is waiting. resolveApprovalPause uses it so a decision delivered
 // while the pause was landing wins the resolution race before any configured
-// resumer (CRI-256) gets the chance to answer first.
+// resumer gets the chance to answer first.
 func (c *localRunControl) pollResolveResume() (map[string]string, bool) {
 	c.mu.Lock()
 	ch := c.payloadReq
@@ -347,7 +347,7 @@ func isApprovalOrSignalNode(graph *workflow.FSMGraph, node string) bool {
 }
 
 // localControlService implements criteria.v1.LocalControlServiceHandler for
-// the local run's loopback listener (CRI-255). All methods drive the same
+// the local run's loopback listener. All methods drive the same
 // Engine.Pause/Resume semantics the castle Control stream exercises.
 type localControlService struct {
 	ctrl  *localRunControl
@@ -437,7 +437,7 @@ func (s *localControlService) ctrlResolve(signal string, payload map[string]stri
 	}
 }
 
-// ResolveConsoleResume is the KB-328 console resolver surface:
+// ResolveConsoleResume is the console resolver surface:
 // the loopback console's ResolveResume decision delivery. It answers the
 // local control vocabulary exactly like ResolveResume above — checkRun for
 // foreign run ids (a *connect.Error NotFound), then the landing-retried
@@ -608,7 +608,7 @@ func resolveControlAddr(flag string) (host string, port int, err error) {
 	return host, port, nil
 }
 
-// validateControlHostPort enforces the locked CRI-255 rule: the control
+// validateControlHostPort enforces the locked loopback rule: the control
 // listener never binds wider than loopback. Both the apply-side bind and the
 // client-side endpoint record go through it.
 func validateControlHostPort(addr string) error {

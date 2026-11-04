@@ -260,7 +260,7 @@ jobs:
   govulncheck:
     name: Vulnerability scan (govulncheck)
     runs-on: ubuntu-latest
-    # CRI-9: blocking govulncheck gate. Detects known Go vulnerabilities in
+    # Blocking govulncheck gate. Detects known Go vulnerabilities in
     # reachable code paths across all workspace modules. Failures must be
     # resolved by upgrading the affected dependency or documenting a reachable
     # false positive with a suppression.
@@ -448,7 +448,7 @@ jobs:
   coverage-floor-ratchet-guard:
     name: Coverage floor ratchet guard
     runs-on: ubuntu-latest
-    # CRI-93 / CRI-96: prevents an autonomous workflow from editing coverage
+    # Prevents an autonomous workflow from editing coverage
     # floors downward, removing an existing floor line, or merging its own PR.
     # A floor decrease or removal is allowed only when the PR carries the
     # explicit human-approval label.

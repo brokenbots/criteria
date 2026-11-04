@@ -39,7 +39,7 @@ func writeRunCheckpoint(log *slog.Logger, runID, graphName, workflowPath, server
 
 // buildLocalCheckpointFn returns a CheckpointFn that writes a fresh StepCheckpoint
 // for crash-recovery persistence during an initial local run. fingerprint is the
-// invocation identity (CRI-125) persisted so a restarted runner can match the
+// invocation identity persisted so a restarted runner can match the
 // checkpoint and resume instead of forking a second run. getVisits, if non-nil,
 // is called at each write to capture current per-step visit counts (W07). Mirrors the
 // getVisits convention used by buildServerSink.

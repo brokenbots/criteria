@@ -17,7 +17,7 @@ import (
 )
 
 // localApprovalConfig names the inputs the approval/signal resolution paths
-// (CRI-256) need: the --answers file, the prompt streams, and the TTY probe.
+// need: the --answers file, the prompt streams, and the TTY probe.
 // The fresh path takes it from the apply flags; the reattach path inherits it
 // from the re-invoking command.
 type localApprovalConfig struct {
@@ -54,7 +54,7 @@ func (c localApprovalConfig) promptStderr() io.Writer {
 }
 
 // approvalResolution is the selected resolution posture for a local run's
-// approval and signal-wait pauses (CRI-256's two designed paths plus the
+// approval and signal-wait pauses (the two designed paths plus the
 // scripted out-of-band modes):
 //
 //   - answers mode (--answers): decisions come from the pre-populated file;
@@ -62,7 +62,7 @@ func (c localApprovalConfig) promptStderr() io.Writer {
 //   - explicit env mode (CRITERIA_LOCAL_APPROVAL): stdin | file | env |
 //     auto-approve (auto-approve stays strictly opt-in with its loud warning).
 //   - context default: an interactive TTY gets the stdin prompt (path 1);
-//     otherwise the run relies on the control listener (CRI-255 headless
+//     otherwise the run relies on the control listener (headless
 //     flow) and warns loudly at the pause.
 //
 // resumer nil means control-RPC-only resolution (no pause-blocking resumer).
@@ -122,8 +122,8 @@ func selectApprovalResolution(log *slog.Logger, cfg localApprovalConfig, graph *
 		return res, nil
 	}
 	if !res.ttyOK {
-		// CRI-256 default without a TTY: the run is resolved exclusively via
-		// its control listener (CRI-255 headless flow). A pause that can never
+		// Default without a TTY: the run is resolved exclusively via
+		// its control listener (headless flow). A pause that can never
 		// resolve (listener down) fails loudly in the drain loop.
 		return res, nil
 	}

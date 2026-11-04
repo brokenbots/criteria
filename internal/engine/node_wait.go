@@ -68,8 +68,7 @@ func (n *waitNode) evaluateDuration(ctx context.Context, deps Deps) (string, err
 //     validates payload["outcome"] against the node's outcomes before
 //     consuming the resume context, then clears ResumePayload/PendingSignal,
 //     emits WaitResumed, and returns the matched target. An unknown outcome
-//     returns an error and leaves the payload intact for retry or reattach
-//     (CRI-56).
+//     returns an error and leaves the payload intact for retry or reattach.
 func (n *waitNode) evaluateSignal(st *RunState, deps Deps) (string, error) {
 	if st.ResumePayload != nil {
 		// Resumed: the orchestrator delivered the signal.

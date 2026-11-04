@@ -1,5 +1,5 @@
 # mode: standalone
-# Example: named type blocks feeding every type consumer (KB-48, wave 5/5).
+# Example: named type blocks feeding every type consumer.
 #
 # This workflow exercises every place a type constraint is accepted today,
 # all served from shared named `type` blocks:

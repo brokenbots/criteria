@@ -479,7 +479,7 @@ func renderTemplateFile(opts *FunctionOptions, raw string, varsVal cty.Value) (c
 
 	// If any template variable is unknown (e.g. a var.* with no default, or a
 	// runtime-only namespace binding during validation), the template cannot
-	// be rendered meaningfully — but KB-266 requires that deferral not waive
+	// be rendered meaningfully — but deferral must not waive
 	// TYPE checking. A placeholder render substitutes type-mirroring zero
 	// values for unknown primitive-typed variables so text/template's
 	// function-call signature checks (e.g. shellquote(string) rejecting an
@@ -504,7 +504,7 @@ func renderTemplateFile(opts *FunctionOptions, raw string, varsVal cty.Value) (c
 	return cty.StringVal(buf.String()), nil
 }
 
-// renderTemplateFileUnknown performs the KB-266 compile-time type-check
+// renderTemplateFileUnknown performs the compile-time type-check
 // render for templates with unknown variables. Unknown primitive-typed
 // values are replaced with zero-value placeholders mirroring the runtime
 // ctyToGoValue mapping (string→"", bool→false, number→int64) so Go
@@ -550,7 +550,7 @@ func renderTemplateFileUnknown(tmpl *template.Template, raw string, varsVal cty.
 }
 
 // placeholderGoValue converts a cty value to its Go placeholder equivalent
-// for the KB-266 compile-time type-check render. Known values convert exactly
+// for the compile-time type-check render. Known values convert exactly
 // like ctyToGoValue. Unknown values of primitive type return a zero-value
 // placeholder mirroring the runtime mapping; unknown non-primitive values
 // report dynamic=true, which aborts the placeholder render in favor of the

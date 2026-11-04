@@ -8,7 +8,7 @@ import (
 	"github.com/brokenbots/criteria/internal/runtime/state"
 )
 
-// sweepOrphanCheckpointState enforces the CRI-202 criteria-side retention
+// sweepOrphanCheckpointState enforces the criteria-side retention
 // janitor at startup. Adapter checkpoints live under
 // <home>/runs/<runID>/snapshots; the janitor deletes the checkpoint subtree
 // when the run is terminal (retention) and when nothing references the run
@@ -43,8 +43,8 @@ func sweepOrphanCheckpointState(log *slog.Logger) {
 	}
 }
 
-// deleteRunCheckpoints removes a run's adapter checkpoint subtree
-// (CRI-202). Best-effort: failures surface through the next startup sweep.
+// deleteRunCheckpoints removes a run's adapter checkpoint subtree.
+// Best-effort: failures surface through the next startup sweep.
 func deleteRunCheckpoints(runID string) {
 	home, err := stateDir()
 	if err != nil {

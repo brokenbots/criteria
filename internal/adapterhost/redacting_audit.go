@@ -2,7 +2,7 @@ package adapterhost
 
 import "github.com/brokenbots/criteria/internal/adapter/secrets"
 
-// redacting_audit.go — CRI-163: audit-side redaction. Nested callee Executes
+// redacting_audit.go — audit-side redaction. Nested callee Executes
 // run under the same per-run redaction registry as normal steps, and their
 // permission decisions must be masked in the audit log exactly as callee
 // outputs are masked in events: a tool string can echo arguments (full

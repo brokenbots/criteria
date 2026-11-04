@@ -1,6 +1,6 @@
 # mode: standalone
 # Example: variant 3 — a REAL agent (the copilot adapter) tool-calls the mcp
-# adapter consumed as a resource, mid-task (CRI-181). The copilot step's
+# adapter consumed as a resource, mid-task. The copilot step's
 # policy grants the mcp adapter's tool surface, the agent calls it through
 # its adapter_tool tool while doing its normal work, and the round trip
 # comes back typed under callee.* on the copilot step's outputs.
@@ -21,7 +21,7 @@
 # Requirements:
 #   • criteria-adapter-copilot installed in $CRITERIA_ADAPTERS
 #     (default ~/.local/criteria/adapters) — must be a build declaring the
-#     adapter_tools capability (CRI-178 caller)
+#     adapter_tools capability
 #   • criteria-echo-mcp on PATH (built by make example-adapter-tools-copilot
 #     as bin/criteria-echo-mcp)
 #   • copilot CLI on PATH (or pointed at via CRITERIA_COPILOT_BIN)
@@ -112,7 +112,7 @@ state "failed" {
 }
 
 # The mcp callee's result passes through typed under callee.* keys on the
-# caller side (CRI-165 convention): the echo tool's content text lands as
+# caller side: the echo tool's content text lands as
 # callee.outputs.text, so the harness can assert the round trip.
 output "callee_outcome" {
   value = steps.call["callee.outcome"]
