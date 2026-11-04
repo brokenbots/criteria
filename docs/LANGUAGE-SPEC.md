@@ -75,7 +75,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 <!-- BEGIN GENERATED:blocks -->
 ### `workflow { ... }`
 
-- **Source:** [`workflow/schema.go:192`](../workflow/schema.go#L192)
+- **Source:** [`workflow/schema.go:191`](../workflow/schema.go#L191)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -92,7 +92,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `variable "name" { ... }`
 
-- **Source:** [`workflow/schema.go:252`](../workflow/schema.go#L252)
+- **Source:** [`workflow/schema.go:251`](../workflow/schema.go#L251)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -130,25 +130,25 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `type "name" { ... }`
 
-- **Source:** [`workflow/schema.go:273`](../workflow/schema.go#L273)
+- **Source:** [`workflow/schema.go:272`](../workflow/schema.go#L272)
 - **Labels:** `name`
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
 |---|---|---|---|
-| `schema` | hcl.Expression | yes | Schema is the type constraint this name aliases (object({...}), list(T), optional(T, default), ...), referenced as type.<name> from outcome payload schemas and from data/variable/output type constraints (KB-48); the callee forms inside subworkflow bodies use the callee's own type namespace. |
+| `schema` | hcl.Expression | yes | Schema is the type constraint this name aliases (object({...}), list(T), optional(T, default), ...), referenced as type.<name> from outcome payload schemas and from data/variable/output type constraints; the callee forms inside subworkflow bodies use the callee's own type namespace. |
 
 - **Additional attributes:** rejected: a type block declares schema only
 
 ### `environment "type" "name" { ... }`
 
-- **Source:** [`workflow/schema.go:71`](../workflow/schema.go#L71)
+- **Source:** [`workflow/schema.go:70`](../workflow/schema.go#L70)
 - **Labels:** `type` `name`
 - **Additional attributes:** Captures: variables (optional, map of string env-vars), config (optional, type-specific config map).
 
 ### `output "name" { ... }`
 
-- **Source:** [`workflow/schema.go:445`](../workflow/schema.go#L445)
+- **Source:** [`workflow/schema.go:444`](../workflow/schema.go#L444)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -161,7 +161,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `adapter "type" "name" { ... }`
 
-- **Source:** [`workflow/schema.go:305`](../workflow/schema.go#L305)
+- **Source:** [`workflow/schema.go:304`](../workflow/schema.go#L304)
 - **Labels:** `type` `name`
 - **Attributes:**
 
@@ -171,13 +171,13 @@ The following block types are defined. Tables are auto-generated from [`workflow
 | `version` | string | no | Version is the semver constraint resolved at lock time: exact ("1.2.3"), caret ("^1.2"), tilde ("~1.2.0"), wildcard ("1.x"), or "latest". The lockfile pins the resolved digest for run-to-run reproducibility. |
 | `environment` | hcl.Expression | no | _(no description)_ |
 | `on_crash` | string | no | _(no description)_ |
-| `dynamic_tools` | bool | no | DynamicTools admits a runtime-discovered tool surface alongside any static tool blocks (dynamic_tools = bool, default false). Parsed in CRI-155; consumed by CRI-156 validation (lenient static-name check) and the CRI-173 runtime-discovery path. |
+| `dynamic_tools` | bool | no | DynamicTools admits a runtime-discovered tool surface alongside any static tool blocks (dynamic_tools = bool, default false). Parsed by the schema decode; consumed by the tools validation (lenient static-name check) and the runtime tool-discovery path. |
 
 - **Nested blocks:** [`config`](#config---), [`secrets`](#secrets---), [`tool`](#tool-name---)
 
 ### `subworkflow "name" { ... }`
 
-- **Source:** [`workflow/schema.go:458`](../workflow/schema.go#L458)
+- **Source:** [`workflow/schema.go:457`](../workflow/schema.go#L457)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -185,13 +185,13 @@ The following block types are defined. Tables are auto-generated from [`workflow
 |---|---|---|---|
 | `source` | string | yes | _(no description)_ |
 | `environment` | hcl.Expression | no | _(no description)_ |
-| `ref` | string | no | Ref is the operator-declared expected pin (ADR-0005 D7, CRI-226): the resolved ref/digest the source must resolve to — a git commit SHA for git sources or the "sha256:<digest>" content digest for archive sources. When set, resolution fails closed on mismatch, before any execution. Remote sources only: a declared ref on a local source is refused because it cannot be verified. |
+| `ref` | string | no | Ref is the operator-declared expected pin (ADR-0005 D7): the resolved ref/digest the source must resolve to — a git commit SHA for git sources or the "sha256:<digest>" content digest for archive sources. When set, resolution fails closed on mismatch, before any execution. Remote sources only: a declared ref on a local source is refused because it cannot be verified. |
 
 - **Additional attributes:** captures the "input" block
 
 ### `step "name" { ... }`
 
-- **Source:** [`workflow/schema.go:349`](../workflow/schema.go#L349)
+- **Source:** [`workflow/schema.go:348`](../workflow/schema.go#L348)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -208,7 +208,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `state "name" { ... }`
 
-- **Source:** [`workflow/schema.go:617`](../workflow/schema.go#L617)
+- **Source:** [`workflow/schema.go:616`](../workflow/schema.go#L616)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -221,7 +221,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `wait "name" { ... }`
 
-- **Source:** [`workflow/schema.go:600`](../workflow/schema.go#L600)
+- **Source:** [`workflow/schema.go:599`](../workflow/schema.go#L599)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -234,7 +234,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `approval "name" { ... }`
 
-- **Source:** [`workflow/schema.go:609`](../workflow/schema.go#L609)
+- **Source:** [`workflow/schema.go:608`](../workflow/schema.go#L608)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -247,13 +247,13 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `switch "name" { ... }`
 
-- **Source:** [`workflow/schema.go:628`](../workflow/schema.go#L628)
+- **Source:** [`workflow/schema.go:627`](../workflow/schema.go#L627)
 - **Labels:** `name`
 - **Nested blocks:** [`match`](#match---), [`default`](#default---)
 
 ### `permissions { ... }`
 
-- **Source:** [`workflow/schema.go:681`](../workflow/schema.go#L681)
+- **Source:** [`workflow/schema.go:680`](../workflow/schema.go#L680)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -263,7 +263,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `policy { ... }`
 
-- **Source:** [`workflow/schema.go:648`](../workflow/schema.go#L648)
+- **Source:** [`workflow/schema.go:647`](../workflow/schema.go#L647)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -271,50 +271,50 @@ The following block types are defined. Tables are auto-generated from [`workflow
 | `max_total_steps` | number | no | _(no description)_ |
 | `max_step_retries` | number | no | _(no description)_ |
 | `max_visits_warn_threshold` | number | no | MaxVisitsWarnThreshold controls when the engine emits a warning for excessive revisits while executing a workflow. |
-| `max_tool_depth` | number | no | MaxToolDepth bounds the adapter-to-adapter tool-call stack depth (policy.max_tool_depth). Grammar: integer >= 1; unset (0) uses the engine default of 8. Parsed in CRI-155; graph-level wiring lands in CRI-157. The >= 1 range check is enforced here at parse time as a plain decode diagnostic by checkMaxToolDepthRange (CRI-155 placement decision: checked at parse, CRI-157 owns wiring only). |
-| `max_tool_calls` | number | no | MaxToolCalls bounds the total adapter-to-adapter tool calls per session (policy.max_tool_calls, KB-58). Integer >= 1; unset (0) uses the engine default of 100; parse-time range check mirrors CRI-155. Complements max_tool_depth (count vs stack depth) so an iterative probe loop cannot run unbounded. |
+| `max_tool_depth` | number | no | MaxToolDepth bounds the adapter-to-adapter tool-call stack depth (policy.max_tool_depth). Grammar: integer >= 1; unset (0) uses the engine default of 8. Parsed by the schema decode; graph-level wiring lands in buildAdapterCallEdges. The >= 1 range check is enforced here at parse time as a plain decode diagnostic by checkMaxToolDepthRange (placement decision: checked at parse, buildAdapterCallEdges owns wiring only). |
+| `max_tool_calls` | number | no | MaxToolCalls bounds the total adapter-to-adapter tool calls per session (policy.max_tool_calls). Integer >= 1; unset (0) uses the engine default of 100; parse-time range check mirrors checkMaxToolDepthRange. Complements max_tool_depth (count vs stack depth) so an iterative probe loop cannot run unbounded. |
 
 
 ### `config { ... }`
 
-- **Source:** [`workflow/schema.go:288`](../workflow/schema.go#L288)
+- **Source:** [`workflow/schema.go:287`](../workflow/schema.go#L287)
 
 ### `secrets { ... }`
 
-- **Source:** [`workflow/schema.go:288`](../workflow/schema.go#L288)
+- **Source:** [`workflow/schema.go:287`](../workflow/schema.go#L287)
 
 ### `tool "name" { ... }`
 
-- **Source:** [`workflow/schema.go:339`](../workflow/schema.go#L339)
+- **Source:** [`workflow/schema.go:338`](../workflow/schema.go#L338)
 - **Labels:** `name`
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
 |---|---|---|---|
-| `in` | hcl.Expression | no | In/out declare the typed tool contract (KB-45 named type <name> or an inline typeexpr); each side is optional and unconstrained if absent. |
+| `in` | hcl.Expression | no | In/out declare the typed tool contract (named type <name> or an inline typeexpr); each side is optional and unconstrained if absent. |
 | `out` | hcl.Expression | no | _(no description)_ |
 
-- **Additional attributes:** reserved body; decoded and ignored (CRI-155)
+- **Additional attributes:** reserved body; decoded and ignored
 
 ### `input { ... }`
 
-- **Source:** [`workflow/schema.go:298`](../workflow/schema.go#L298)
+- **Source:** [`workflow/schema.go:297`](../workflow/schema.go#L297)
 
 ### `secret_input { ... }`
 
-- **Source:** [`workflow/schema.go:298`](../workflow/schema.go#L298)
+- **Source:** [`workflow/schema.go:297`](../workflow/schema.go#L297)
 
 ### `outcome "name" { ... }`
 
-- **Source:** [`workflow/schema.go:559`](../workflow/schema.go#L559)
+- **Source:** [`workflow/schema.go:558`](../workflow/schema.go#L558)
 - **Labels:** `name`
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
 |---|---|---|---|
 | `next` | hcl.Expression | yes | _(no description)_ |
-| `description` | string | no | Description documents the outcome for agent-facing rendering (KB-259): it feeds the copilot adapter's allowed-outcomes menu so a model chooses a verdict from the author's stated semantics instead of prompt prose. Compile-validated, runtime-inert — it never alters contract validation or routing. The menu itself renders once the adapter wire carries descriptions (adapter-proto field, paired KB-260/KB-263); the compiled artifacts here are that render's data source. |
-| `schema` | hcl.Expression | no | Schema is the payload contract: type.<name> traversal or an inline typeexpr constraint; must subset the adapter's output schema. A typed schema replaces the adapter's default output type for this outcome; an outcome without one is untyped and resolves its outputs from that default (KB-264). |
+| `description` | string | no | Description documents the outcome for agent-facing rendering: it feeds the copilot adapter's allowed-outcomes menu so a model chooses a verdict from the author's stated semantics instead of prompt prose. Compile-validated, runtime-inert — it never alters contract validation or routing. The menu itself renders once the adapter wire carries descriptions (the adapter-proto field pair); the compiled artifacts here are that render's data source. |
+| `schema` | hcl.Expression | no | Schema is the payload contract: type.<name> traversal or an inline typeexpr constraint; must subset the adapter's output schema. A typed schema replaces the adapter's default output type for this outcome; an outcome without one is untyped and resolves its outputs from that default output type. |
 | `require_comment` | bool | no | RequireComment rejects a result with an empty adapter comment. |
 | `fallback` | bool | no | Fallback marks the per-step outcome that fires when the adapter produced no finalized result (max one). |
 
@@ -323,17 +323,17 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `match { ... }`
 
-- **Source:** [`workflow/schema.go:637`](../workflow/schema.go#L637)
+- **Source:** [`workflow/schema.go:636`](../workflow/schema.go#L636)
 - **Additional attributes:** captures: condition (required), next (required), output (optional)
 
 ### `default { ... }`
 
-- **Source:** [`workflow/schema.go:643`](../workflow/schema.go#L643)
+- **Source:** [`workflow/schema.go:642`](../workflow/schema.go#L642)
 - **Additional attributes:** captures: next (required), output (optional)
 
 ### `write { ... }`
 
-- **Source:** [`workflow/schema.go:586`](../workflow/schema.go#L586)
+- **Source:** [`workflow/schema.go:585`](../workflow/schema.go#L585)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
