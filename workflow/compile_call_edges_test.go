@@ -563,7 +563,7 @@ step "s3" {
 // the call-cycle warning and no back-edge warning.
 func TestCallEdges_CycleDistinctFromBackEdgeWarnings(t *testing.T) {
 	t.Parallel()
-	t.Run("unset defaults to 8", func(t *testing.T) {
+	t.Run("FSM back-edge produces no call-cycle warning", func(t *testing.T) {
 		t.Parallel()
 		src := callEdgesSrc("policy { max_total_steps = 300 }",
 			`adapter "shell" "worker" {
@@ -589,7 +589,7 @@ func TestCallEdges_CycleDistinctFromBackEdgeWarnings(t *testing.T) {
 			t.Errorf("no tools declared, got edges %+v", g.AdapterCallEdges)
 		}
 	})
-	t.Run("declared value overrides", func(t *testing.T) {
+	t.Run("tool-call cycle produces no back-edge warning", func(t *testing.T) {
 		t.Parallel()
 		src := callEdgesSrcNamed("s1", "",
 			`adapter "a" "one" {
@@ -633,7 +633,7 @@ func TestCallEdges_PolicyMaxToolDepth(t *testing.T) {
 	if DefaultPolicy.MaxToolDepth != 8 {
 		t.Fatalf("DefaultPolicy.MaxToolDepth = %d, want 8", DefaultPolicy.MaxToolDepth)
 	}
-	t.Run("unset defaults to 100", func(t *testing.T) {
+	t.Run("unset defaults to 8", func(t *testing.T) {
 		t.Parallel()
 		src := callEdgesSrc("",
 			`adapter "shell" "worker" {
@@ -703,7 +703,7 @@ func TestCallEdges_PolicyMaxToolCalls(t *testing.T) {
 	if DefaultPolicy.MaxToolCalls != 100 {
 		t.Fatalf("DefaultPolicy.MaxToolCalls = %d, want 100", DefaultPolicy.MaxToolCalls)
 	}
-	t.Run("FSM back-edge produces no call-cycle warning", func(t *testing.T) {
+	t.Run("unset defaults to 100", func(t *testing.T) {
 		t.Parallel()
 		src := callEdgesSrc("",
 			`adapter "shell" "worker" {
@@ -722,7 +722,7 @@ func TestCallEdges_PolicyMaxToolCalls(t *testing.T) {
 			t.Errorf("unset max_tool_calls = %d, want 100", g.Policy.MaxToolCalls)
 		}
 	})
-	t.Run("tool-call cycle produces no back-edge warning", func(t *testing.T) {
+	t.Run("declared value overrides", func(t *testing.T) {
 		t.Parallel()
 		src := callEdgesSrc("policy { max_tool_calls = 3 }",
 			`adapter "shell" "worker" {
