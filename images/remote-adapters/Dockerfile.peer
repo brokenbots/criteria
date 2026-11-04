@@ -90,7 +90,7 @@ USER root
 
 # Base packages for every peer adapter: CA certificates for TLS back to the
 # host, plus the sandbox tools the develop/review agents invoke through
-# the shell adapter (CRI-272: git, ripgrep, jq, gh CLI, ssh, bash, procps).
+# the shell adapter (git, ripgrep, jq, gh CLI, ssh, bash, procps).
 RUN case "$(cat /etc/os-release 2>/dev/null | grep -E '^ID=' | cut -d= -f2 | tr -d '"')" in \
       alpine) apk add --no-cache ca-certificates git github-cli openssh-client bash procps findutils ripgrep jq curl ;; \
       debian) apt-get update && apt-get install -y --no-install-recommends ca-certificates git gh openssh-client bash procps findutils ripgrep jq curl && rm -rf /var/lib/apt/lists/* ;; \
