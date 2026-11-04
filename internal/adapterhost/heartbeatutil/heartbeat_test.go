@@ -65,6 +65,37 @@ func TestRunLogHeartbeatEnvCadence(t *testing.T) {
 	}
 }
 
+// TestRunLogHeartbeatRetiredHatchInert pins the KB-132 removal: the retired
+// test-only hatch name alters nothing in the production path. If the hatch
+// ever leaks back in, a "5" (milliseconds) override yields dozens of beats in
+// the observation window instead of none.
+func TestRunLogHeartbeatRetiredHatchInert(t *testing.T) {
+	t.Setenv("CRITERIA_TEST_HEARTBEAT_INTERVAL_MS", "5")
+	// Hermetic cadence source: an empty registered override keeps the
+	// built-in default, so deployment environments carrying a fast override
+	// cannot widen this test's observation window.
+	t.Setenv(tunables.EnvHeartbeatInterval, "")
+	rec := &heartbeatRecorder{}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- RunLogHeartbeat(ctx, rec) }()
+	// The built-in default cadence (30s) cannot fire inside the window; the
+	// bounded cancel is only to keep failure paths prompt.
+	time.Sleep(250 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RunLogHeartbeat on host-initiated cancel: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("RunLogHeartbeat did not return after cancellation")
+	}
+	if got := rec.count(); got != 0 {
+		t.Fatalf("retired test hatch CRITERIA_TEST_HEARTBEAT_INTERVAL_MS=5 was honored: %d beats in the 250ms window, want 0 (built-in 30s cadence)", got)
+	}
+}
+
 // TestRunLogHeartbeatDefaultCadenceSelection pins that an unset, malformed,
 // or non-positive override keeps the built-in default instead of disabling
 // or shortening the cadence.

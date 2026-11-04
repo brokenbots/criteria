@@ -25,13 +25,12 @@ type LogEventSender interface {
 
 // RunLogHeartbeat blocks until ctx is canceled, emitting log-stream heartbeat
 // events at the registered heartbeat cadence (tunables registry:
-// CRITERIA_HEARTBEAT_INTERVAL, default 30s). The lenient override replaces
-// the removed CRITERIA_TEST_HEARTBEAT_INTERVAL_MS test hatch (KB-132): an
-// unset, malformed, or non-positive value keeps the built-in default, and a
-// short override lets conformance tests prove liveness with a short stall
-// threshold without waiting the full production interval. Adapter fixture
-// subprocesses inherit the variable, so the conformance harness only sets it
-// in the test process.
+// CRITERIA_HEARTBEAT_INTERVAL, default 30s). The lenient override supersedes
+// the retired test-only cadence hatch (KB-132): an unset, malformed, or
+// non-positive value keeps the built-in default, and a short override lets
+// conformance tests prove liveness with a short stall threshold without
+// waiting the full production interval. Adapter fixture subprocesses inherit
+// the variable, so the conformance harness only sets it in the test process.
 //
 // Returning nil for host-initiated cancellation is not a contract violation.
 func RunLogHeartbeat(ctx context.Context, sender LogEventSender) error {

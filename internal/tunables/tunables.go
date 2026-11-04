@@ -93,9 +93,9 @@ const (
 // once in Envvars.
 const (
 	// EnvHeartbeatInterval overrides DefaultHeartbeatInterval (lenient). It
-	// replaces the removed CRITERIA_TEST_HEARTBEAT_INTERVAL_MS test hatch:
-	// conformance tests set it (a Go duration such as "50ms") in the test
-	// process and adapter fixture subprocesses inherit it.
+	// supersedes the retired test-only cadence hatch (KB-132); conformance
+	// tests set it (a Go duration such as "50ms") in the test process and
+	// adapter fixture subprocesses inherit it.
 	EnvHeartbeatInterval = "CRITERIA_HEARTBEAT_INTERVAL"
 	// EnvHeartbeatStallThreshold overrides DefaultHeartbeatStallThreshold
 	// (lenient; CRI-271).
