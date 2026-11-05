@@ -286,6 +286,7 @@ func (s *mcpToolsSink) OnRunFailed(reason, step string) {
 	defer s.mu.Unlock()
 	s.failure = reason + " (step " + step + ")"
 }
+func (s *mcpToolsSink) OnAuditLoss(*pb.AuditLoss) {}
 func (s *mcpToolsSink) OnStepEntered(step, _ string, _ int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

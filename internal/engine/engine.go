@@ -208,6 +208,12 @@ type Sink interface {
 	// accounting); the bytes stay engine-local and restore never depends on
 	// the consumer of this event.
 	OnCheckpointPointer(ptr *CheckpointPointerEvent)
+	// OnAuditLoss is emitted once per run, immediately before the terminal
+	// event, when the run's permission-audit file writer dropped entries:
+	// loss is accounted (count + last error) but never blocks the
+	// permission path. Emitted only when something was lost; a clean
+	// writer produces no AuditLoss event.
+	OnAuditLoss(loss *pb.AuditLoss)
 	// StepEventSink returns the per-step adapter sink (logs + adapter events).
 	StepEventSink(step string) adapter.EventSink
 }
@@ -717,6 +723,7 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	// Wrap the engine sink before any events are emitted.
 	sink := NewRedactingSink(e.sink, redactionReg)
+	sink = NewAuditLossSink(sink, e.auditWriter, e.log)
 	sessions.LifecycleSink = sink
 	sessions.SetAllowedWorkingDirRoots(e.workingDirAllowedRoots)
 	// The wrapped sink is the pointer-emission sink for this run's
@@ -783,6 +790,7 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	sessions.RedactionRegistry = redactionReg
 
 	sink := NewRedactingSink(e.sink, redactionReg)
+	sink = NewAuditLossSink(sink, e.auditWriter, e.log)
 	sessions.LifecycleSink = sink
 	sessions.SetAllowedWorkingDirRoots(e.workingDirAllowedRoots)
 	// Checkpoint saves resume from checkpoints on this path too, so

@@ -54,6 +54,7 @@ type fakeSink struct {
 	terminal    string
 	terminalOK  bool
 	failure     string
+	auditLosses []*pb.AuditLoss
 }
 
 func (s *fakeSink) OnRunStarted(string, string) {}
@@ -61,6 +62,11 @@ func (s *fakeSink) OnRunCompleted(state string, ok bool) {
 	s.mu.Lock()
 	s.terminal = state
 	s.terminalOK = ok
+	s.mu.Unlock()
+}
+func (s *fakeSink) OnAuditLoss(loss *pb.AuditLoss) {
+	s.mu.Lock()
+	s.auditLosses = append(s.auditLosses, loss)
 	s.mu.Unlock()
 }
 

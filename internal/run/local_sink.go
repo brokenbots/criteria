@@ -51,6 +51,16 @@ func (s *LocalSink) OnRunFailed(reason, step string) {
 	s.emit("RunFailed", &pb.RunFailed{Reason: reason, Step: step})
 }
 
+// OnAuditLoss emits the AuditLoss event: permission-audit entries were
+// dropped by the run's audit file writer, and the durable run record
+// carries the loss instead.
+func (s *LocalSink) OnAuditLoss(loss *pb.AuditLoss) {
+	if loss == nil {
+		return
+	}
+	s.emit("AuditLoss", loss)
+}
+
 func (s *LocalSink) OnStepEntered(step, adapterName string, attempt int) {
 	if s.CheckpointFn != nil {
 		s.CheckpointFn(step, attempt)

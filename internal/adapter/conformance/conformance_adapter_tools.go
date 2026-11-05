@@ -438,6 +438,7 @@ func (s *matrixEngineSink) OnRunFailed(reason, step string) {
 	defer s.mu.Unlock()
 	s.failure = reason + " (step " + step + ")"
 }
+func (s *matrixEngineSink) OnAuditLoss(*pb.AuditLoss) {}
 func (s *matrixEngineSink) OnStepEntered(step, _ string, _ int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -114,6 +114,8 @@ func setPayload(env *pb.Envelope, payload any) { //nolint:funlen,gocyclo // type
 		env.Payload = &pb.Envelope_RunPaused{RunPaused: p}
 	case *pb.RunResumed:
 		env.Payload = &pb.Envelope_RunResumed{RunResumed: p}
+	case *pb.AuditLoss:
+		env.Payload = &pb.Envelope_AuditLoss{AuditLoss: p}
 	default:
 		panic(fmt.Sprintf("criteria.NewEnvelope: unsupported payload type %T", payload))
 	}
@@ -196,6 +198,8 @@ func TypeString(env *Envelope) string { //nolint:funlen,gocyclo // discriminator
 		return "agent.prompt_injected"
 	case *pb.Envelope_CheckpointPointer:
 		return "checkpoint.pointer"
+	case *pb.Envelope_AuditLoss:
+		return "audit.loss"
 	default:
 		return ""
 	}

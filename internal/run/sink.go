@@ -99,6 +99,15 @@ func (s *Sink) OnRunFailed(reason, step string) {
 	s.publish(&pb.RunFailed{Reason: reason, Step: step})
 }
 
+// OnAuditLoss publishes the AuditLoss event: the run's permission-audit
+// file writer dropped entries, and the run record carries the loss.
+func (s *Sink) OnAuditLoss(loss *pb.AuditLoss) {
+	if loss == nil {
+		return
+	}
+	s.publish(loss)
+}
+
 func (s *Sink) OnStepEntered(step, adapterName string, attempt int) {
 	if s.CheckpointFn != nil {
 		s.CheckpointFn(step, attempt)

@@ -21,6 +21,7 @@ type recordingSink struct {
 	onStepEnteredArgs            []string
 	onStepOutcomeArgs            []string
 	onStepOutcomeErr             error
+	onAuditLossArgs              []*pb.AuditLoss
 	onStepTransitionArgs         []string
 	onStepResumedArgs            []string
 	onVariableSetArgs            []string
@@ -61,6 +62,10 @@ func (s *recordingSink) OnRunCompleted(finalState string, success bool) {
 }
 func (s *recordingSink) OnRunFailed(reason, step string) {
 	s.onRunFailedArgs = []string{reason, step}
+}
+
+func (s *recordingSink) OnAuditLoss(loss *pb.AuditLoss) {
+	s.onAuditLossArgs = append(s.onAuditLossArgs, loss)
 }
 func (s *recordingSink) OnStepEntered(step, adapterName string, attempt int) {
 	s.onStepEnteredArgs = []string{step, adapterName, intStr(attempt)}

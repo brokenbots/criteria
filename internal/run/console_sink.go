@@ -106,6 +106,16 @@ func (c *ConsoleSink) OnRunFailed(reason, step string) {
 	}
 }
 
+// OnAuditLoss surfaces dropped permission-audit entries in the run summary;
+// the decisions themselves already succeeded and are not replayed.
+func (c *ConsoleSink) OnAuditLoss(loss *pb.AuditLoss) {
+	if loss == nil || loss.DroppedEntries == 0 {
+		return
+	}
+	c.writeln(fmt.Sprintf("%s permission audit lost %d/%d entries (%s)",
+		c.color("1;33", "!"), loss.DroppedEntries, loss.AttemptedEntries, loss.LastError))
+}
+
 func (c *ConsoleSink) OnStepEntered(step, adapterName string, attempt int) {
 	c.mu.Lock()
 	c.stepStart[step] = time.Now()

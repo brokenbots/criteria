@@ -65,6 +65,12 @@ func (s *lockedSink) OnRunFailed(reason, step string) {
 	s.Sink.OnRunFailed(reason, step)
 }
 
+func (s *lockedSink) OnAuditLoss(loss *pb.AuditLoss) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Sink.OnAuditLoss(loss)
+}
+
 func (s *lockedSink) OnStepEntered(step, adapterName string, attempt int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

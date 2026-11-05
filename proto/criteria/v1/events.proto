@@ -120,6 +120,13 @@ message Envelope {
     // or a boundary ResumeRun control request is applied. Permanent field
     // number.
     RunResumed run_resumed = 41;
+    // AuditLoss — the agent's permission-audit file writer dropped audit
+    // entries during the run. Emitted once, immediately before the
+    // terminal event, only when something was lost; permission decisions
+    // themselves never block on audit writes, so the run record carries
+    // the loss instead. The server stores and fans out the event verbatim
+    // without interpreting the fields. Permanent field number.
+    AuditLoss audit_loss = 43;
     // WatchReady is a protocol-level sentinel sent once at the start of a
     // WatchRun server-stream, after any persisted-event replay, to flush
     // response headers so the client's WatchRun call can return. It has no
@@ -144,6 +151,21 @@ message RunCompleted {
 message RunFailed {
   string reason = 1;
   string step = 2;
+}
+
+// AuditLoss — permission-audit entries were dropped by the agent's audit
+// file writer and are therefore missing from the audit trail. Emitted once
+// per run, immediately before the terminal event, only when something was
+// lost; the permission path never blocks on audit writes, so the run
+// record carries the loss instead. The server stores and fans out the
+// event verbatim without interpreting the fields.
+message AuditLoss {
+  // Cumulative number of audit entries dropped (not written to the file).
+  int64 dropped_entries = 1;
+  // Cumulative number of audit writes attempted (dropped + written).
+  int64 attempted_entries = 2;
+  // Most recent write/setup error text ("" when the writer never failed).
+  string last_error = 3;
 }
 
 // StepEntered — the engine began executing a step.

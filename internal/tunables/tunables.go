@@ -87,6 +87,15 @@ const (
 	// DefaultPeerJournalLimit is the bounded supervision journal capacity
 	// in events (ADR-0007).
 	DefaultPeerJournalLimit = 4096
+	// DefaultFileAuditDropLogInterval is the minimum interval between
+	// per-drop error emissions in the file permission-audit writer: every
+	// drop is counted and surfaced, but sustained drop storms do not flood
+	// the log (the first drop is always logged immediately).
+	DefaultFileAuditDropLogInterval = 30 * time.Second
+	// DefaultFileAuditLossWarnThreshold is the cumulative drop count that
+	// escalates the file permission-audit writer's reporting from per-drop
+	// error logs to a single WARN.
+	DefaultFileAuditLossWarnThreshold = 5
 )
 
 // Operator-facing environment overrides. Each name is registered exactly

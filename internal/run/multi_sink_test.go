@@ -23,6 +23,7 @@ func (r *recordingSink) bump()                             { r.calls.Add(1) }
 func (r *recordingSink) OnRunStarted(string, string)       { r.bump() }
 func (r *recordingSink) OnRunCompleted(string, bool)       { r.bump() }
 func (r *recordingSink) OnRunFailed(string, string)        { r.bump() }
+func (r *recordingSink) OnAuditLoss(*pb.AuditLoss)         { r.bump() }
 func (r *recordingSink) OnStepEntered(string, string, int) { r.bump() }
 func (r *recordingSink) OnStepOutcome(_, _ string, _ time.Duration, _ error, _ string) {
 	r.bump()

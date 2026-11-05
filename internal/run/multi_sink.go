@@ -50,6 +50,12 @@ func (m *MultiSink) OnRunFailed(reason, step string) {
 	}
 }
 
+func (m *MultiSink) OnAuditLoss(loss *pb.AuditLoss) {
+	for _, c := range m.children {
+		c.OnAuditLoss(loss)
+	}
+}
+
 func (m *MultiSink) OnStepEntered(step, adapterName string, attempt int) {
 	for _, c := range m.children {
 		c.OnStepEntered(step, adapterName, attempt)

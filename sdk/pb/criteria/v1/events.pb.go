@@ -135,6 +135,7 @@ type Envelope struct {
 	//	*Envelope_StepOutcomeInvalid
 	//	*Envelope_RunPaused
 	//	*Envelope_RunResumed
+	//	*Envelope_AuditLoss
 	//	*Envelope_WatchReady
 	Payload       isEnvelope_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
@@ -510,6 +511,15 @@ func (x *Envelope) GetRunResumed() *RunResumed {
 	return nil
 }
 
+func (x *Envelope) GetAuditLoss() *AuditLoss {
+	if x != nil {
+		if x, ok := x.Payload.(*Envelope_AuditLoss); ok {
+			return x.AuditLoss
+		}
+	}
+	return nil
+}
+
 func (x *Envelope) GetWatchReady() *WatchReady {
 	if x != nil {
 		if x, ok := x.Payload.(*Envelope_WatchReady); ok {
@@ -708,6 +718,16 @@ type Envelope_RunResumed struct {
 	RunResumed *RunResumed `protobuf:"bytes,41,opt,name=run_resumed,json=runResumed,proto3,oneof"`
 }
 
+type Envelope_AuditLoss struct {
+	// AuditLoss — the agent's permission-audit file writer dropped audit
+	// entries during the run. Emitted once, immediately before the
+	// terminal event, only when something was lost; permission decisions
+	// themselves never block on audit writes, so the run record carries
+	// the loss instead. The server stores and fans out the event verbatim
+	// without interpreting the fields. Permanent field number.
+	AuditLoss *AuditLoss `protobuf:"bytes,43,opt,name=audit_loss,json=auditLoss,proto3,oneof"`
+}
+
 type Envelope_WatchReady struct {
 	// WatchReady is a protocol-level sentinel sent once at the start of a
 	// WatchRun server-stream, after any persisted-event replay, to flush
@@ -781,6 +801,8 @@ func (*Envelope_StepOutcomeInvalid) isEnvelope_Payload() {}
 func (*Envelope_RunPaused) isEnvelope_Payload() {}
 
 func (*Envelope_RunResumed) isEnvelope_Payload() {}
+
+func (*Envelope_AuditLoss) isEnvelope_Payload() {}
 
 func (*Envelope_WatchReady) isEnvelope_Payload() {}
 
@@ -943,6 +965,75 @@ func (x *RunFailed) GetStep() string {
 	return ""
 }
 
+// AuditLoss — permission-audit entries were dropped by the agent's audit
+// file writer and are therefore missing from the audit trail. Emitted once
+// per run, immediately before the terminal event, only when something was
+// lost; the permission path never blocks on audit writes, so the run
+// record carries the loss instead. The server stores and fans out the
+// event verbatim without interpreting the fields.
+type AuditLoss struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Cumulative number of audit entries dropped (not written to the file).
+	DroppedEntries int64 `protobuf:"varint,1,opt,name=dropped_entries,json=droppedEntries,proto3" json:"dropped_entries,omitempty"`
+	// Cumulative number of audit writes attempted (dropped + written).
+	AttemptedEntries int64 `protobuf:"varint,2,opt,name=attempted_entries,json=attemptedEntries,proto3" json:"attempted_entries,omitempty"`
+	// Most recent write/setup error text ("" when the writer never failed).
+	LastError     string `protobuf:"bytes,3,opt,name=last_error,json=lastError,proto3" json:"last_error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AuditLoss) Reset() {
+	*x = AuditLoss{}
+	mi := &file_criteria_v1_events_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AuditLoss) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AuditLoss) ProtoMessage() {}
+
+func (x *AuditLoss) ProtoReflect() protoreflect.Message {
+	mi := &file_criteria_v1_events_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AuditLoss.ProtoReflect.Descriptor instead.
+func (*AuditLoss) Descriptor() ([]byte, []int) {
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *AuditLoss) GetDroppedEntries() int64 {
+	if x != nil {
+		return x.DroppedEntries
+	}
+	return 0
+}
+
+func (x *AuditLoss) GetAttemptedEntries() int64 {
+	if x != nil {
+		return x.AttemptedEntries
+	}
+	return 0
+}
+
+func (x *AuditLoss) GetLastError() string {
+	if x != nil {
+		return x.LastError
+	}
+	return ""
+}
+
 // StepEntered — the engine began executing a step.
 type StepEntered struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -955,7 +1046,7 @@ type StepEntered struct {
 
 func (x *StepEntered) Reset() {
 	*x = StepEntered{}
-	mi := &file_criteria_v1_events_proto_msgTypes[4]
+	mi := &file_criteria_v1_events_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -967,7 +1058,7 @@ func (x *StepEntered) String() string {
 func (*StepEntered) ProtoMessage() {}
 
 func (x *StepEntered) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[4]
+	mi := &file_criteria_v1_events_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -980,7 +1071,7 @@ func (x *StepEntered) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StepEntered.ProtoReflect.Descriptor instead.
 func (*StepEntered) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{4}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *StepEntered) GetStep() string {
@@ -1021,7 +1112,7 @@ type StepOutcome struct {
 
 func (x *StepOutcome) Reset() {
 	*x = StepOutcome{}
-	mi := &file_criteria_v1_events_proto_msgTypes[5]
+	mi := &file_criteria_v1_events_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1033,7 +1124,7 @@ func (x *StepOutcome) String() string {
 func (*StepOutcome) ProtoMessage() {}
 
 func (x *StepOutcome) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[5]
+	mi := &file_criteria_v1_events_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1046,7 +1137,7 @@ func (x *StepOutcome) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StepOutcome.ProtoReflect.Descriptor instead.
 func (*StepOutcome) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{5}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *StepOutcome) GetStep() string {
@@ -1100,7 +1191,7 @@ type StepOutcomeInvalid struct {
 
 func (x *StepOutcomeInvalid) Reset() {
 	*x = StepOutcomeInvalid{}
-	mi := &file_criteria_v1_events_proto_msgTypes[6]
+	mi := &file_criteria_v1_events_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1112,7 +1203,7 @@ func (x *StepOutcomeInvalid) String() string {
 func (*StepOutcomeInvalid) ProtoMessage() {}
 
 func (x *StepOutcomeInvalid) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[6]
+	mi := &file_criteria_v1_events_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1125,7 +1216,7 @@ func (x *StepOutcomeInvalid) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StepOutcomeInvalid.ProtoReflect.Descriptor instead.
 func (*StepOutcomeInvalid) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{6}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *StepOutcomeInvalid) GetStep() string {
@@ -1168,7 +1259,7 @@ type StepTransition struct {
 
 func (x *StepTransition) Reset() {
 	*x = StepTransition{}
-	mi := &file_criteria_v1_events_proto_msgTypes[7]
+	mi := &file_criteria_v1_events_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1180,7 +1271,7 @@ func (x *StepTransition) String() string {
 func (*StepTransition) ProtoMessage() {}
 
 func (x *StepTransition) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[7]
+	mi := &file_criteria_v1_events_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1193,7 +1284,7 @@ func (x *StepTransition) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StepTransition.ProtoReflect.Descriptor instead.
 func (*StepTransition) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{7}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *StepTransition) GetFrom() string {
@@ -1229,7 +1320,7 @@ type StepLog struct {
 
 func (x *StepLog) Reset() {
 	*x = StepLog{}
-	mi := &file_criteria_v1_events_proto_msgTypes[8]
+	mi := &file_criteria_v1_events_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1241,7 +1332,7 @@ func (x *StepLog) String() string {
 func (*StepLog) ProtoMessage() {}
 
 func (x *StepLog) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[8]
+	mi := &file_criteria_v1_events_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1254,7 +1345,7 @@ func (x *StepLog) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StepLog.ProtoReflect.Descriptor instead.
 func (*StepLog) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{8}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *StepLog) GetStep() string {
@@ -1299,7 +1390,7 @@ type AdapterEvent struct {
 
 func (x *AdapterEvent) Reset() {
 	*x = AdapterEvent{}
-	mi := &file_criteria_v1_events_proto_msgTypes[9]
+	mi := &file_criteria_v1_events_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1311,7 +1402,7 @@ func (x *AdapterEvent) String() string {
 func (*AdapterEvent) ProtoMessage() {}
 
 func (x *AdapterEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[9]
+	mi := &file_criteria_v1_events_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1324,7 +1415,7 @@ func (x *AdapterEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AdapterEvent.ProtoReflect.Descriptor instead.
 func (*AdapterEvent) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{9}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *AdapterEvent) GetStep() string {
@@ -1365,7 +1456,7 @@ type CriteriaHeartbeat struct {
 
 func (x *CriteriaHeartbeat) Reset() {
 	*x = CriteriaHeartbeat{}
-	mi := &file_criteria_v1_events_proto_msgTypes[10]
+	mi := &file_criteria_v1_events_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1377,7 +1468,7 @@ func (x *CriteriaHeartbeat) String() string {
 func (*CriteriaHeartbeat) ProtoMessage() {}
 
 func (x *CriteriaHeartbeat) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[10]
+	mi := &file_criteria_v1_events_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1390,7 +1481,7 @@ func (x *CriteriaHeartbeat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CriteriaHeartbeat.ProtoReflect.Descriptor instead.
 func (*CriteriaHeartbeat) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{10}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *CriteriaHeartbeat) GetCriteriaId() string {
@@ -1411,7 +1502,7 @@ type CriteriaDisconnected struct {
 
 func (x *CriteriaDisconnected) Reset() {
 	*x = CriteriaDisconnected{}
-	mi := &file_criteria_v1_events_proto_msgTypes[11]
+	mi := &file_criteria_v1_events_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1423,7 +1514,7 @@ func (x *CriteriaDisconnected) String() string {
 func (*CriteriaDisconnected) ProtoMessage() {}
 
 func (x *CriteriaDisconnected) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[11]
+	mi := &file_criteria_v1_events_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1436,7 +1527,7 @@ func (x *CriteriaDisconnected) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CriteriaDisconnected.ProtoReflect.Descriptor instead.
 func (*CriteriaDisconnected) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{11}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *CriteriaDisconnected) GetCriteriaId() string {
@@ -1468,7 +1559,7 @@ type StepResumed struct {
 
 func (x *StepResumed) Reset() {
 	*x = StepResumed{}
-	mi := &file_criteria_v1_events_proto_msgTypes[12]
+	mi := &file_criteria_v1_events_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1480,7 +1571,7 @@ func (x *StepResumed) String() string {
 func (*StepResumed) ProtoMessage() {}
 
 func (x *StepResumed) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[12]
+	mi := &file_criteria_v1_events_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1493,7 +1584,7 @@ func (x *StepResumed) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StepResumed.ProtoReflect.Descriptor instead.
 func (*StepResumed) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{12}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *StepResumed) GetStep() string {
@@ -1529,7 +1620,7 @@ type WatchReady struct {
 
 func (x *WatchReady) Reset() {
 	*x = WatchReady{}
-	mi := &file_criteria_v1_events_proto_msgTypes[13]
+	mi := &file_criteria_v1_events_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1541,7 +1632,7 @@ func (x *WatchReady) String() string {
 func (*WatchReady) ProtoMessage() {}
 
 func (x *WatchReady) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[13]
+	mi := &file_criteria_v1_events_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1554,7 +1645,7 @@ func (x *WatchReady) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchReady.ProtoReflect.Descriptor instead.
 func (*WatchReady) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{13}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{14}
 }
 
 // VariableSet — emitted when a workflow variable value is established.
@@ -1571,7 +1662,7 @@ type VariableSet struct {
 
 func (x *VariableSet) Reset() {
 	*x = VariableSet{}
-	mi := &file_criteria_v1_events_proto_msgTypes[14]
+	mi := &file_criteria_v1_events_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1583,7 +1674,7 @@ func (x *VariableSet) String() string {
 func (*VariableSet) ProtoMessage() {}
 
 func (x *VariableSet) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[14]
+	mi := &file_criteria_v1_events_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1596,7 +1687,7 @@ func (x *VariableSet) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VariableSet.ProtoReflect.Descriptor instead.
 func (*VariableSet) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{14}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *VariableSet) GetName() string {
@@ -1632,7 +1723,7 @@ type StepOutputCaptured struct {
 
 func (x *StepOutputCaptured) Reset() {
 	*x = StepOutputCaptured{}
-	mi := &file_criteria_v1_events_proto_msgTypes[15]
+	mi := &file_criteria_v1_events_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1644,7 +1735,7 @@ func (x *StepOutputCaptured) String() string {
 func (*StepOutputCaptured) ProtoMessage() {}
 
 func (x *StepOutputCaptured) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[15]
+	mi := &file_criteria_v1_events_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1657,7 +1748,7 @@ func (x *StepOutputCaptured) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StepOutputCaptured.ProtoReflect.Descriptor instead.
 func (*StepOutputCaptured) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{15}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *StepOutputCaptured) GetStep() string {
@@ -1688,7 +1779,7 @@ type WaitEntered struct {
 
 func (x *WaitEntered) Reset() {
 	*x = WaitEntered{}
-	mi := &file_criteria_v1_events_proto_msgTypes[16]
+	mi := &file_criteria_v1_events_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1700,7 +1791,7 @@ func (x *WaitEntered) String() string {
 func (*WaitEntered) ProtoMessage() {}
 
 func (x *WaitEntered) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[16]
+	mi := &file_criteria_v1_events_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1713,7 +1804,7 @@ func (x *WaitEntered) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WaitEntered.ProtoReflect.Descriptor instead.
 func (*WaitEntered) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{16}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *WaitEntered) GetNode() string {
@@ -1758,7 +1849,7 @@ type WaitResumed struct {
 
 func (x *WaitResumed) Reset() {
 	*x = WaitResumed{}
-	mi := &file_criteria_v1_events_proto_msgTypes[17]
+	mi := &file_criteria_v1_events_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1770,7 +1861,7 @@ func (x *WaitResumed) String() string {
 func (*WaitResumed) ProtoMessage() {}
 
 func (x *WaitResumed) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[17]
+	mi := &file_criteria_v1_events_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1783,7 +1874,7 @@ func (x *WaitResumed) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WaitResumed.ProtoReflect.Descriptor instead.
 func (*WaitResumed) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{17}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *WaitResumed) GetNode() string {
@@ -1827,7 +1918,7 @@ type ApprovalRequested struct {
 
 func (x *ApprovalRequested) Reset() {
 	*x = ApprovalRequested{}
-	mi := &file_criteria_v1_events_proto_msgTypes[18]
+	mi := &file_criteria_v1_events_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1839,7 +1930,7 @@ func (x *ApprovalRequested) String() string {
 func (*ApprovalRequested) ProtoMessage() {}
 
 func (x *ApprovalRequested) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[18]
+	mi := &file_criteria_v1_events_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1852,7 +1943,7 @@ func (x *ApprovalRequested) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApprovalRequested.ProtoReflect.Descriptor instead.
 func (*ApprovalRequested) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{18}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ApprovalRequested) GetNode() string {
@@ -1890,7 +1981,7 @@ type ApprovalDecision struct {
 
 func (x *ApprovalDecision) Reset() {
 	*x = ApprovalDecision{}
-	mi := &file_criteria_v1_events_proto_msgTypes[19]
+	mi := &file_criteria_v1_events_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1902,7 +1993,7 @@ func (x *ApprovalDecision) String() string {
 func (*ApprovalDecision) ProtoMessage() {}
 
 func (x *ApprovalDecision) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[19]
+	mi := &file_criteria_v1_events_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1915,7 +2006,7 @@ func (x *ApprovalDecision) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApprovalDecision.ProtoReflect.Descriptor instead.
 func (*ApprovalDecision) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{19}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ApprovalDecision) GetNode() string {
@@ -1960,7 +2051,7 @@ type BranchEvaluated struct {
 
 func (x *BranchEvaluated) Reset() {
 	*x = BranchEvaluated{}
-	mi := &file_criteria_v1_events_proto_msgTypes[20]
+	mi := &file_criteria_v1_events_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1972,7 +2063,7 @@ func (x *BranchEvaluated) String() string {
 func (*BranchEvaluated) ProtoMessage() {}
 
 func (x *BranchEvaluated) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[20]
+	mi := &file_criteria_v1_events_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1985,7 +2076,7 @@ func (x *BranchEvaluated) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BranchEvaluated.ProtoReflect.Descriptor instead.
 func (*BranchEvaluated) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{20}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *BranchEvaluated) GetNode() string {
@@ -2028,7 +2119,7 @@ type ForEachEntered struct {
 
 func (x *ForEachEntered) Reset() {
 	*x = ForEachEntered{}
-	mi := &file_criteria_v1_events_proto_msgTypes[21]
+	mi := &file_criteria_v1_events_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2040,7 +2131,7 @@ func (x *ForEachEntered) String() string {
 func (*ForEachEntered) ProtoMessage() {}
 
 func (x *ForEachEntered) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[21]
+	mi := &file_criteria_v1_events_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2053,7 +2144,7 @@ func (x *ForEachEntered) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ForEachEntered.ProtoReflect.Descriptor instead.
 func (*ForEachEntered) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{21}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ForEachEntered) GetNode() string {
@@ -2085,7 +2176,7 @@ type StepIterationStarted struct {
 
 func (x *StepIterationStarted) Reset() {
 	*x = StepIterationStarted{}
-	mi := &file_criteria_v1_events_proto_msgTypes[22]
+	mi := &file_criteria_v1_events_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2097,7 +2188,7 @@ func (x *StepIterationStarted) String() string {
 func (*StepIterationStarted) ProtoMessage() {}
 
 func (x *StepIterationStarted) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[22]
+	mi := &file_criteria_v1_events_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2110,7 +2201,7 @@ func (x *StepIterationStarted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StepIterationStarted.ProtoReflect.Descriptor instead.
 func (*StepIterationStarted) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{22}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *StepIterationStarted) GetNode() string {
@@ -2155,7 +2246,7 @@ type StepIterationCompleted struct {
 
 func (x *StepIterationCompleted) Reset() {
 	*x = StepIterationCompleted{}
-	mi := &file_criteria_v1_events_proto_msgTypes[23]
+	mi := &file_criteria_v1_events_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2167,7 +2258,7 @@ func (x *StepIterationCompleted) String() string {
 func (*StepIterationCompleted) ProtoMessage() {}
 
 func (x *StepIterationCompleted) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[23]
+	mi := &file_criteria_v1_events_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2180,7 +2271,7 @@ func (x *StepIterationCompleted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StepIterationCompleted.ProtoReflect.Descriptor instead.
 func (*StepIterationCompleted) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{23}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *StepIterationCompleted) GetNode() string {
@@ -2218,7 +2309,7 @@ type ScopeIterCursorSet struct {
 
 func (x *ScopeIterCursorSet) Reset() {
 	*x = ScopeIterCursorSet{}
-	mi := &file_criteria_v1_events_proto_msgTypes[24]
+	mi := &file_criteria_v1_events_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2230,7 +2321,7 @@ func (x *ScopeIterCursorSet) String() string {
 func (*ScopeIterCursorSet) ProtoMessage() {}
 
 func (x *ScopeIterCursorSet) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[24]
+	mi := &file_criteria_v1_events_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2243,7 +2334,7 @@ func (x *ScopeIterCursorSet) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ScopeIterCursorSet.ProtoReflect.Descriptor instead.
 func (*ScopeIterCursorSet) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{24}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *ScopeIterCursorSet) GetCursorJson() string {
@@ -2267,7 +2358,7 @@ type StepIterationItem struct {
 
 func (x *StepIterationItem) Reset() {
 	*x = StepIterationItem{}
-	mi := &file_criteria_v1_events_proto_msgTypes[25]
+	mi := &file_criteria_v1_events_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2279,7 +2370,7 @@ func (x *StepIterationItem) String() string {
 func (*StepIterationItem) ProtoMessage() {}
 
 func (x *StepIterationItem) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[25]
+	mi := &file_criteria_v1_events_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2292,7 +2383,7 @@ func (x *StepIterationItem) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StepIterationItem.ProtoReflect.Descriptor instead.
 func (*StepIterationItem) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{25}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *StepIterationItem) GetNode() string {
@@ -2327,7 +2418,7 @@ type RunOutputs struct {
 
 func (x *RunOutputs) Reset() {
 	*x = RunOutputs{}
-	mi := &file_criteria_v1_events_proto_msgTypes[26]
+	mi := &file_criteria_v1_events_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2339,7 +2430,7 @@ func (x *RunOutputs) String() string {
 func (*RunOutputs) ProtoMessage() {}
 
 func (x *RunOutputs) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[26]
+	mi := &file_criteria_v1_events_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2352,7 +2443,7 @@ func (x *RunOutputs) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunOutputs.ProtoReflect.Descriptor instead.
 func (*RunOutputs) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{26}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *RunOutputs) GetOutputs() []*RunOutputs_Output {
@@ -2382,7 +2473,7 @@ type RunMetadata struct {
 
 func (x *RunMetadata) Reset() {
 	*x = RunMetadata{}
-	mi := &file_criteria_v1_events_proto_msgTypes[27]
+	mi := &file_criteria_v1_events_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2394,7 +2485,7 @@ func (x *RunMetadata) String() string {
 func (*RunMetadata) ProtoMessage() {}
 
 func (x *RunMetadata) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[27]
+	mi := &file_criteria_v1_events_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2407,7 +2498,7 @@ func (x *RunMetadata) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunMetadata.ProtoReflect.Descriptor instead.
 func (*RunMetadata) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{27}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *RunMetadata) GetTicket() string {
@@ -2452,7 +2543,7 @@ type AdapterLifecycleProvisionWanted struct {
 
 func (x *AdapterLifecycleProvisionWanted) Reset() {
 	*x = AdapterLifecycleProvisionWanted{}
-	mi := &file_criteria_v1_events_proto_msgTypes[28]
+	mi := &file_criteria_v1_events_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2464,7 +2555,7 @@ func (x *AdapterLifecycleProvisionWanted) String() string {
 func (*AdapterLifecycleProvisionWanted) ProtoMessage() {}
 
 func (x *AdapterLifecycleProvisionWanted) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[28]
+	mi := &file_criteria_v1_events_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2477,7 +2568,7 @@ func (x *AdapterLifecycleProvisionWanted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AdapterLifecycleProvisionWanted.ProtoReflect.Descriptor instead.
 func (*AdapterLifecycleProvisionWanted) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{28}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *AdapterLifecycleProvisionWanted) GetScopeInstanceId() string {
@@ -2520,7 +2611,7 @@ type AdapterLifecycleReleased struct {
 
 func (x *AdapterLifecycleReleased) Reset() {
 	*x = AdapterLifecycleReleased{}
-	mi := &file_criteria_v1_events_proto_msgTypes[29]
+	mi := &file_criteria_v1_events_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2532,7 +2623,7 @@ func (x *AdapterLifecycleReleased) String() string {
 func (*AdapterLifecycleReleased) ProtoMessage() {}
 
 func (x *AdapterLifecycleReleased) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[29]
+	mi := &file_criteria_v1_events_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2545,7 +2636,7 @@ func (x *AdapterLifecycleReleased) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AdapterLifecycleReleased.ProtoReflect.Descriptor instead.
 func (*AdapterLifecycleReleased) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{29}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *AdapterLifecycleReleased) GetScopeInstanceId() string {
@@ -2595,7 +2686,7 @@ type SubworkflowGraph struct {
 
 func (x *SubworkflowGraph) Reset() {
 	*x = SubworkflowGraph{}
-	mi := &file_criteria_v1_events_proto_msgTypes[30]
+	mi := &file_criteria_v1_events_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2607,7 +2698,7 @@ func (x *SubworkflowGraph) String() string {
 func (*SubworkflowGraph) ProtoMessage() {}
 
 func (x *SubworkflowGraph) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[30]
+	mi := &file_criteria_v1_events_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2620,7 +2711,7 @@ func (x *SubworkflowGraph) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubworkflowGraph.ProtoReflect.Descriptor instead.
 func (*SubworkflowGraph) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{30}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *SubworkflowGraph) GetName() string {
@@ -2664,7 +2755,7 @@ type WorkflowGraphs struct {
 
 func (x *WorkflowGraphs) Reset() {
 	*x = WorkflowGraphs{}
-	mi := &file_criteria_v1_events_proto_msgTypes[31]
+	mi := &file_criteria_v1_events_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2676,7 +2767,7 @@ func (x *WorkflowGraphs) String() string {
 func (*WorkflowGraphs) ProtoMessage() {}
 
 func (x *WorkflowGraphs) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[31]
+	mi := &file_criteria_v1_events_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2689,7 +2780,7 @@ func (x *WorkflowGraphs) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkflowGraphs.ProtoReflect.Descriptor instead.
 func (*WorkflowGraphs) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{31}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *WorkflowGraphs) GetSubworkflows() []*SubworkflowGraph {
@@ -2722,7 +2813,7 @@ type AgentPromptInjected struct {
 
 func (x *AgentPromptInjected) Reset() {
 	*x = AgentPromptInjected{}
-	mi := &file_criteria_v1_events_proto_msgTypes[32]
+	mi := &file_criteria_v1_events_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2734,7 +2825,7 @@ func (x *AgentPromptInjected) String() string {
 func (*AgentPromptInjected) ProtoMessage() {}
 
 func (x *AgentPromptInjected) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[32]
+	mi := &file_criteria_v1_events_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2747,7 +2838,7 @@ func (x *AgentPromptInjected) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentPromptInjected.ProtoReflect.Descriptor instead.
 func (*AgentPromptInjected) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{32}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *AgentPromptInjected) GetStep() string {
@@ -2822,7 +2913,7 @@ type CheckpointPointer struct {
 
 func (x *CheckpointPointer) Reset() {
 	*x = CheckpointPointer{}
-	mi := &file_criteria_v1_events_proto_msgTypes[33]
+	mi := &file_criteria_v1_events_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2834,7 +2925,7 @@ func (x *CheckpointPointer) String() string {
 func (*CheckpointPointer) ProtoMessage() {}
 
 func (x *CheckpointPointer) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[33]
+	mi := &file_criteria_v1_events_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2847,7 +2938,7 @@ func (x *CheckpointPointer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckpointPointer.ProtoReflect.Descriptor instead.
 func (*CheckpointPointer) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{33}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *CheckpointPointer) GetStateId() string {
@@ -2927,7 +3018,7 @@ type RunPaused struct {
 
 func (x *RunPaused) Reset() {
 	*x = RunPaused{}
-	mi := &file_criteria_v1_events_proto_msgTypes[34]
+	mi := &file_criteria_v1_events_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2939,7 +3030,7 @@ func (x *RunPaused) String() string {
 func (*RunPaused) ProtoMessage() {}
 
 func (x *RunPaused) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[34]
+	mi := &file_criteria_v1_events_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2952,7 +3043,7 @@ func (x *RunPaused) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunPaused.ProtoReflect.Descriptor instead.
 func (*RunPaused) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{34}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *RunPaused) GetNode() string {
@@ -2996,7 +3087,7 @@ type RunResumed struct {
 
 func (x *RunResumed) Reset() {
 	*x = RunResumed{}
-	mi := &file_criteria_v1_events_proto_msgTypes[35]
+	mi := &file_criteria_v1_events_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3008,7 +3099,7 @@ func (x *RunResumed) String() string {
 func (*RunResumed) ProtoMessage() {}
 
 func (x *RunResumed) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[35]
+	mi := &file_criteria_v1_events_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3021,7 +3112,7 @@ func (x *RunResumed) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunResumed.ProtoReflect.Descriptor instead.
 func (*RunResumed) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{35}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *RunResumed) GetNode() string {
@@ -3049,7 +3140,7 @@ type RunOutputs_Output struct {
 
 func (x *RunOutputs_Output) Reset() {
 	*x = RunOutputs_Output{}
-	mi := &file_criteria_v1_events_proto_msgTypes[39]
+	mi := &file_criteria_v1_events_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3061,7 +3152,7 @@ func (x *RunOutputs_Output) String() string {
 func (*RunOutputs_Output) ProtoMessage() {}
 
 func (x *RunOutputs_Output) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_events_proto_msgTypes[39]
+	mi := &file_criteria_v1_events_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3074,7 +3165,7 @@ func (x *RunOutputs_Output) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunOutputs_Output.ProtoReflect.Descriptor instead.
 func (*RunOutputs_Output) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_events_proto_rawDescGZIP(), []int{26, 0}
+	return file_criteria_v1_events_proto_rawDescGZIP(), []int{27, 0}
 }
 
 func (x *RunOutputs_Output) GetName() string {
@@ -3109,7 +3200,7 @@ var File_criteria_v1_events_proto protoreflect.FileDescriptor
 
 const file_criteria_v1_events_proto_rawDesc = "" +
 	"\n" +
-	"\x18criteria/v1/events.proto\x12\vcriteria.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x93\x15\n" +
+	"\x18criteria/v1/events.proto\x12\vcriteria.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xcc\x15\n" +
 	"\bEnvelope\x12%\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05R\rschemaVersion\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x10\n" +
@@ -3154,7 +3245,9 @@ const file_criteria_v1_events_proto_rawDesc = "" +
 	"\n" +
 	"run_paused\x18( \x01(\v2\x16.criteria.v1.RunPausedH\x00R\trunPaused\x12:\n" +
 	"\vrun_resumed\x18) \x01(\v2\x17.criteria.v1.RunResumedH\x00R\n" +
-	"runResumed\x12:\n" +
+	"runResumed\x127\n" +
+	"\n" +
+	"audit_loss\x18+ \x01(\v2\x16.criteria.v1.AuditLossH\x00R\tauditLoss\x12:\n" +
 	"\vwatch_ready\x18c \x01(\v2\x17.criteria.v1.WatchReadyH\x00R\n" +
 	"watchReadyB\t\n" +
 	"\apayload\"T\n" +
@@ -3168,7 +3261,12 @@ const file_criteria_v1_events_proto_rawDesc = "" +
 	"\asuccess\x18\x02 \x01(\bR\asuccess\"7\n" +
 	"\tRunFailed\x12\x16\n" +
 	"\x06reason\x18\x01 \x01(\tR\x06reason\x12\x12\n" +
-	"\x04step\x18\x02 \x01(\tR\x04step\"U\n" +
+	"\x04step\x18\x02 \x01(\tR\x04step\"\x80\x01\n" +
+	"\tAuditLoss\x12'\n" +
+	"\x0fdropped_entries\x18\x01 \x01(\x03R\x0edroppedEntries\x12+\n" +
+	"\x11attempted_entries\x18\x02 \x01(\x03R\x10attemptedEntries\x12\x1d\n" +
+	"\n" +
+	"last_error\x18\x03 \x01(\tR\tlastError\"U\n" +
 	"\vStepEntered\x12\x12\n" +
 	"\x04step\x18\x01 \x01(\tR\x04step\x12\x18\n" +
 	"\aadapter\x18\x02 \x01(\tR\aadapter\x12\x18\n" +
@@ -3345,103 +3443,105 @@ func file_criteria_v1_events_proto_rawDescGZIP() []byte {
 }
 
 var file_criteria_v1_events_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_criteria_v1_events_proto_msgTypes = make([]protoimpl.MessageInfo, 40)
+var file_criteria_v1_events_proto_msgTypes = make([]protoimpl.MessageInfo, 41)
 var file_criteria_v1_events_proto_goTypes = []any{
 	(LogStream)(0),                          // 0: criteria.v1.LogStream
 	(*Envelope)(nil),                        // 1: criteria.v1.Envelope
 	(*RunStarted)(nil),                      // 2: criteria.v1.RunStarted
 	(*RunCompleted)(nil),                    // 3: criteria.v1.RunCompleted
 	(*RunFailed)(nil),                       // 4: criteria.v1.RunFailed
-	(*StepEntered)(nil),                     // 5: criteria.v1.StepEntered
-	(*StepOutcome)(nil),                     // 6: criteria.v1.StepOutcome
-	(*StepOutcomeInvalid)(nil),              // 7: criteria.v1.StepOutcomeInvalid
-	(*StepTransition)(nil),                  // 8: criteria.v1.StepTransition
-	(*StepLog)(nil),                         // 9: criteria.v1.StepLog
-	(*AdapterEvent)(nil),                    // 10: criteria.v1.AdapterEvent
-	(*CriteriaHeartbeat)(nil),               // 11: criteria.v1.CriteriaHeartbeat
-	(*CriteriaDisconnected)(nil),            // 12: criteria.v1.CriteriaDisconnected
-	(*StepResumed)(nil),                     // 13: criteria.v1.StepResumed
-	(*WatchReady)(nil),                      // 14: criteria.v1.WatchReady
-	(*VariableSet)(nil),                     // 15: criteria.v1.VariableSet
-	(*StepOutputCaptured)(nil),              // 16: criteria.v1.StepOutputCaptured
-	(*WaitEntered)(nil),                     // 17: criteria.v1.WaitEntered
-	(*WaitResumed)(nil),                     // 18: criteria.v1.WaitResumed
-	(*ApprovalRequested)(nil),               // 19: criteria.v1.ApprovalRequested
-	(*ApprovalDecision)(nil),                // 20: criteria.v1.ApprovalDecision
-	(*BranchEvaluated)(nil),                 // 21: criteria.v1.BranchEvaluated
-	(*ForEachEntered)(nil),                  // 22: criteria.v1.ForEachEntered
-	(*StepIterationStarted)(nil),            // 23: criteria.v1.StepIterationStarted
-	(*StepIterationCompleted)(nil),          // 24: criteria.v1.StepIterationCompleted
-	(*ScopeIterCursorSet)(nil),              // 25: criteria.v1.ScopeIterCursorSet
-	(*StepIterationItem)(nil),               // 26: criteria.v1.StepIterationItem
-	(*RunOutputs)(nil),                      // 27: criteria.v1.RunOutputs
-	(*RunMetadata)(nil),                     // 28: criteria.v1.RunMetadata
-	(*AdapterLifecycleProvisionWanted)(nil), // 29: criteria.v1.AdapterLifecycleProvisionWanted
-	(*AdapterLifecycleReleased)(nil),        // 30: criteria.v1.AdapterLifecycleReleased
-	(*SubworkflowGraph)(nil),                // 31: criteria.v1.SubworkflowGraph
-	(*WorkflowGraphs)(nil),                  // 32: criteria.v1.WorkflowGraphs
-	(*AgentPromptInjected)(nil),             // 33: criteria.v1.AgentPromptInjected
-	(*CheckpointPointer)(nil),               // 34: criteria.v1.CheckpointPointer
-	(*RunPaused)(nil),                       // 35: criteria.v1.RunPaused
-	(*RunResumed)(nil),                      // 36: criteria.v1.RunResumed
-	nil,                                     // 37: criteria.v1.StepOutputCaptured.OutputsEntry
-	nil,                                     // 38: criteria.v1.WaitResumed.PayloadEntry
-	nil,                                     // 39: criteria.v1.ApprovalDecision.PayloadEntry
-	(*RunOutputs_Output)(nil),               // 40: criteria.v1.RunOutputs.Output
-	(*timestamppb.Timestamp)(nil),           // 41: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),                 // 42: google.protobuf.Struct
-	(*structpb.Value)(nil),                  // 43: google.protobuf.Value
+	(*AuditLoss)(nil),                       // 5: criteria.v1.AuditLoss
+	(*StepEntered)(nil),                     // 6: criteria.v1.StepEntered
+	(*StepOutcome)(nil),                     // 7: criteria.v1.StepOutcome
+	(*StepOutcomeInvalid)(nil),              // 8: criteria.v1.StepOutcomeInvalid
+	(*StepTransition)(nil),                  // 9: criteria.v1.StepTransition
+	(*StepLog)(nil),                         // 10: criteria.v1.StepLog
+	(*AdapterEvent)(nil),                    // 11: criteria.v1.AdapterEvent
+	(*CriteriaHeartbeat)(nil),               // 12: criteria.v1.CriteriaHeartbeat
+	(*CriteriaDisconnected)(nil),            // 13: criteria.v1.CriteriaDisconnected
+	(*StepResumed)(nil),                     // 14: criteria.v1.StepResumed
+	(*WatchReady)(nil),                      // 15: criteria.v1.WatchReady
+	(*VariableSet)(nil),                     // 16: criteria.v1.VariableSet
+	(*StepOutputCaptured)(nil),              // 17: criteria.v1.StepOutputCaptured
+	(*WaitEntered)(nil),                     // 18: criteria.v1.WaitEntered
+	(*WaitResumed)(nil),                     // 19: criteria.v1.WaitResumed
+	(*ApprovalRequested)(nil),               // 20: criteria.v1.ApprovalRequested
+	(*ApprovalDecision)(nil),                // 21: criteria.v1.ApprovalDecision
+	(*BranchEvaluated)(nil),                 // 22: criteria.v1.BranchEvaluated
+	(*ForEachEntered)(nil),                  // 23: criteria.v1.ForEachEntered
+	(*StepIterationStarted)(nil),            // 24: criteria.v1.StepIterationStarted
+	(*StepIterationCompleted)(nil),          // 25: criteria.v1.StepIterationCompleted
+	(*ScopeIterCursorSet)(nil),              // 26: criteria.v1.ScopeIterCursorSet
+	(*StepIterationItem)(nil),               // 27: criteria.v1.StepIterationItem
+	(*RunOutputs)(nil),                      // 28: criteria.v1.RunOutputs
+	(*RunMetadata)(nil),                     // 29: criteria.v1.RunMetadata
+	(*AdapterLifecycleProvisionWanted)(nil), // 30: criteria.v1.AdapterLifecycleProvisionWanted
+	(*AdapterLifecycleReleased)(nil),        // 31: criteria.v1.AdapterLifecycleReleased
+	(*SubworkflowGraph)(nil),                // 32: criteria.v1.SubworkflowGraph
+	(*WorkflowGraphs)(nil),                  // 33: criteria.v1.WorkflowGraphs
+	(*AgentPromptInjected)(nil),             // 34: criteria.v1.AgentPromptInjected
+	(*CheckpointPointer)(nil),               // 35: criteria.v1.CheckpointPointer
+	(*RunPaused)(nil),                       // 36: criteria.v1.RunPaused
+	(*RunResumed)(nil),                      // 37: criteria.v1.RunResumed
+	nil,                                     // 38: criteria.v1.StepOutputCaptured.OutputsEntry
+	nil,                                     // 39: criteria.v1.WaitResumed.PayloadEntry
+	nil,                                     // 40: criteria.v1.ApprovalDecision.PayloadEntry
+	(*RunOutputs_Output)(nil),               // 41: criteria.v1.RunOutputs.Output
+	(*timestamppb.Timestamp)(nil),           // 42: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),                 // 43: google.protobuf.Struct
+	(*structpb.Value)(nil),                  // 44: google.protobuf.Value
 }
 var file_criteria_v1_events_proto_depIdxs = []int32{
-	41, // 0: criteria.v1.Envelope.ts:type_name -> google.protobuf.Timestamp
+	42, // 0: criteria.v1.Envelope.ts:type_name -> google.protobuf.Timestamp
 	2,  // 1: criteria.v1.Envelope.run_started:type_name -> criteria.v1.RunStarted
 	3,  // 2: criteria.v1.Envelope.run_completed:type_name -> criteria.v1.RunCompleted
 	4,  // 3: criteria.v1.Envelope.run_failed:type_name -> criteria.v1.RunFailed
-	5,  // 4: criteria.v1.Envelope.step_entered:type_name -> criteria.v1.StepEntered
-	6,  // 5: criteria.v1.Envelope.step_outcome:type_name -> criteria.v1.StepOutcome
-	8,  // 6: criteria.v1.Envelope.step_transition:type_name -> criteria.v1.StepTransition
-	9,  // 7: criteria.v1.Envelope.step_log:type_name -> criteria.v1.StepLog
-	10, // 8: criteria.v1.Envelope.adapter_event:type_name -> criteria.v1.AdapterEvent
-	11, // 9: criteria.v1.Envelope.criteria_heartbeat:type_name -> criteria.v1.CriteriaHeartbeat
-	12, // 10: criteria.v1.Envelope.criteria_disconnected:type_name -> criteria.v1.CriteriaDisconnected
-	13, // 11: criteria.v1.Envelope.step_resumed:type_name -> criteria.v1.StepResumed
-	15, // 12: criteria.v1.Envelope.variable_set:type_name -> criteria.v1.VariableSet
-	16, // 13: criteria.v1.Envelope.step_output_captured:type_name -> criteria.v1.StepOutputCaptured
-	17, // 14: criteria.v1.Envelope.wait_entered:type_name -> criteria.v1.WaitEntered
-	18, // 15: criteria.v1.Envelope.wait_resumed:type_name -> criteria.v1.WaitResumed
-	19, // 16: criteria.v1.Envelope.approval_requested:type_name -> criteria.v1.ApprovalRequested
-	20, // 17: criteria.v1.Envelope.approval_decision:type_name -> criteria.v1.ApprovalDecision
-	21, // 18: criteria.v1.Envelope.branch_evaluated:type_name -> criteria.v1.BranchEvaluated
-	22, // 19: criteria.v1.Envelope.for_each_entered:type_name -> criteria.v1.ForEachEntered
-	23, // 20: criteria.v1.Envelope.step_iteration_started:type_name -> criteria.v1.StepIterationStarted
-	24, // 21: criteria.v1.Envelope.step_iteration_completed:type_name -> criteria.v1.StepIterationCompleted
-	25, // 22: criteria.v1.Envelope.scope_iter_cursor_set:type_name -> criteria.v1.ScopeIterCursorSet
-	26, // 23: criteria.v1.Envelope.step_iteration_item:type_name -> criteria.v1.StepIterationItem
-	27, // 24: criteria.v1.Envelope.run_outputs:type_name -> criteria.v1.RunOutputs
-	28, // 25: criteria.v1.Envelope.run_metadata:type_name -> criteria.v1.RunMetadata
-	29, // 26: criteria.v1.Envelope.adapter_lifecycle_provision_wanted:type_name -> criteria.v1.AdapterLifecycleProvisionWanted
-	30, // 27: criteria.v1.Envelope.adapter_lifecycle_released:type_name -> criteria.v1.AdapterLifecycleReleased
-	32, // 28: criteria.v1.Envelope.workflow_graphs:type_name -> criteria.v1.WorkflowGraphs
-	33, // 29: criteria.v1.Envelope.agent_prompt_injected:type_name -> criteria.v1.AgentPromptInjected
-	34, // 30: criteria.v1.Envelope.checkpoint_pointer:type_name -> criteria.v1.CheckpointPointer
-	7,  // 31: criteria.v1.Envelope.step_outcome_invalid:type_name -> criteria.v1.StepOutcomeInvalid
-	35, // 32: criteria.v1.Envelope.run_paused:type_name -> criteria.v1.RunPaused
-	36, // 33: criteria.v1.Envelope.run_resumed:type_name -> criteria.v1.RunResumed
-	14, // 34: criteria.v1.Envelope.watch_ready:type_name -> criteria.v1.WatchReady
-	0,  // 35: criteria.v1.StepLog.stream:type_name -> criteria.v1.LogStream
-	42, // 36: criteria.v1.AdapterEvent.data:type_name -> google.protobuf.Struct
-	37, // 37: criteria.v1.StepOutputCaptured.outputs:type_name -> criteria.v1.StepOutputCaptured.OutputsEntry
-	38, // 38: criteria.v1.WaitResumed.payload:type_name -> criteria.v1.WaitResumed.PayloadEntry
-	39, // 39: criteria.v1.ApprovalDecision.payload:type_name -> criteria.v1.ApprovalDecision.PayloadEntry
-	40, // 40: criteria.v1.RunOutputs.outputs:type_name -> criteria.v1.RunOutputs.Output
-	31, // 41: criteria.v1.WorkflowGraphs.subworkflows:type_name -> criteria.v1.SubworkflowGraph
-	41, // 42: criteria.v1.AgentPromptInjected.delivered_at:type_name -> google.protobuf.Timestamp
-	43, // 43: criteria.v1.RunOutputs.Output.typed_value:type_name -> google.protobuf.Value
-	44, // [44:44] is the sub-list for method output_type
-	44, // [44:44] is the sub-list for method input_type
-	44, // [44:44] is the sub-list for extension type_name
-	44, // [44:44] is the sub-list for extension extendee
-	0,  // [0:44] is the sub-list for field type_name
+	6,  // 4: criteria.v1.Envelope.step_entered:type_name -> criteria.v1.StepEntered
+	7,  // 5: criteria.v1.Envelope.step_outcome:type_name -> criteria.v1.StepOutcome
+	9,  // 6: criteria.v1.Envelope.step_transition:type_name -> criteria.v1.StepTransition
+	10, // 7: criteria.v1.Envelope.step_log:type_name -> criteria.v1.StepLog
+	11, // 8: criteria.v1.Envelope.adapter_event:type_name -> criteria.v1.AdapterEvent
+	12, // 9: criteria.v1.Envelope.criteria_heartbeat:type_name -> criteria.v1.CriteriaHeartbeat
+	13, // 10: criteria.v1.Envelope.criteria_disconnected:type_name -> criteria.v1.CriteriaDisconnected
+	14, // 11: criteria.v1.Envelope.step_resumed:type_name -> criteria.v1.StepResumed
+	16, // 12: criteria.v1.Envelope.variable_set:type_name -> criteria.v1.VariableSet
+	17, // 13: criteria.v1.Envelope.step_output_captured:type_name -> criteria.v1.StepOutputCaptured
+	18, // 14: criteria.v1.Envelope.wait_entered:type_name -> criteria.v1.WaitEntered
+	19, // 15: criteria.v1.Envelope.wait_resumed:type_name -> criteria.v1.WaitResumed
+	20, // 16: criteria.v1.Envelope.approval_requested:type_name -> criteria.v1.ApprovalRequested
+	21, // 17: criteria.v1.Envelope.approval_decision:type_name -> criteria.v1.ApprovalDecision
+	22, // 18: criteria.v1.Envelope.branch_evaluated:type_name -> criteria.v1.BranchEvaluated
+	23, // 19: criteria.v1.Envelope.for_each_entered:type_name -> criteria.v1.ForEachEntered
+	24, // 20: criteria.v1.Envelope.step_iteration_started:type_name -> criteria.v1.StepIterationStarted
+	25, // 21: criteria.v1.Envelope.step_iteration_completed:type_name -> criteria.v1.StepIterationCompleted
+	26, // 22: criteria.v1.Envelope.scope_iter_cursor_set:type_name -> criteria.v1.ScopeIterCursorSet
+	27, // 23: criteria.v1.Envelope.step_iteration_item:type_name -> criteria.v1.StepIterationItem
+	28, // 24: criteria.v1.Envelope.run_outputs:type_name -> criteria.v1.RunOutputs
+	29, // 25: criteria.v1.Envelope.run_metadata:type_name -> criteria.v1.RunMetadata
+	30, // 26: criteria.v1.Envelope.adapter_lifecycle_provision_wanted:type_name -> criteria.v1.AdapterLifecycleProvisionWanted
+	31, // 27: criteria.v1.Envelope.adapter_lifecycle_released:type_name -> criteria.v1.AdapterLifecycleReleased
+	33, // 28: criteria.v1.Envelope.workflow_graphs:type_name -> criteria.v1.WorkflowGraphs
+	34, // 29: criteria.v1.Envelope.agent_prompt_injected:type_name -> criteria.v1.AgentPromptInjected
+	35, // 30: criteria.v1.Envelope.checkpoint_pointer:type_name -> criteria.v1.CheckpointPointer
+	8,  // 31: criteria.v1.Envelope.step_outcome_invalid:type_name -> criteria.v1.StepOutcomeInvalid
+	36, // 32: criteria.v1.Envelope.run_paused:type_name -> criteria.v1.RunPaused
+	37, // 33: criteria.v1.Envelope.run_resumed:type_name -> criteria.v1.RunResumed
+	5,  // 34: criteria.v1.Envelope.audit_loss:type_name -> criteria.v1.AuditLoss
+	15, // 35: criteria.v1.Envelope.watch_ready:type_name -> criteria.v1.WatchReady
+	0,  // 36: criteria.v1.StepLog.stream:type_name -> criteria.v1.LogStream
+	43, // 37: criteria.v1.AdapterEvent.data:type_name -> google.protobuf.Struct
+	38, // 38: criteria.v1.StepOutputCaptured.outputs:type_name -> criteria.v1.StepOutputCaptured.OutputsEntry
+	39, // 39: criteria.v1.WaitResumed.payload:type_name -> criteria.v1.WaitResumed.PayloadEntry
+	40, // 40: criteria.v1.ApprovalDecision.payload:type_name -> criteria.v1.ApprovalDecision.PayloadEntry
+	41, // 41: criteria.v1.RunOutputs.outputs:type_name -> criteria.v1.RunOutputs.Output
+	32, // 42: criteria.v1.WorkflowGraphs.subworkflows:type_name -> criteria.v1.SubworkflowGraph
+	42, // 43: criteria.v1.AgentPromptInjected.delivered_at:type_name -> google.protobuf.Timestamp
+	44, // 44: criteria.v1.RunOutputs.Output.typed_value:type_name -> google.protobuf.Value
+	45, // [45:45] is the sub-list for method output_type
+	45, // [45:45] is the sub-list for method input_type
+	45, // [45:45] is the sub-list for extension type_name
+	45, // [45:45] is the sub-list for extension extendee
+	0,  // [0:45] is the sub-list for field type_name
 }
 
 func init() { file_criteria_v1_events_proto_init() }
@@ -3483,6 +3583,7 @@ func file_criteria_v1_events_proto_init() {
 		(*Envelope_StepOutcomeInvalid)(nil),
 		(*Envelope_RunPaused)(nil),
 		(*Envelope_RunResumed)(nil),
+		(*Envelope_AuditLoss)(nil),
 		(*Envelope_WatchReady)(nil),
 	}
 	type x struct{}
@@ -3491,7 +3592,7 @@ func file_criteria_v1_events_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_criteria_v1_events_proto_rawDesc), len(file_criteria_v1_events_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   40,
+			NumMessages:   41,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
