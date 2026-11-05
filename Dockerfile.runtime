@@ -28,8 +28,7 @@ FROM alpine:3.20
 
 # Adapter discovery's first root is $CRITERIA_ADAPTERS (internal/dirs); setting
 # it here makes the bundled-adapter location deterministic in-container and
-# independent of the HOME-based root resolution (whose legacy ~/.criteria
-# branch must never engage inside the image).
+# independent of the HOME-based root resolution.
 ENV CRITERIA_ADAPTERS=/home/criteria/.local/criteria/adapters
 
 RUN apk add --no-cache ca-certificates git \
