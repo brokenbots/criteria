@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -108,37 +109,44 @@ func makeAssignment(runID, workflowName, source string) *pb.WorkflowAssignment {
 	}
 }
 
-// logCapture is a slog.Handler that records log message strings so tests can
+// logCapture flags log-message text coming out of a slog handler so tests can
 // wait on agent-side lifecycle events that have no server-side observable
-// counterpart (some are only logged by the runAgent goroutine).
+// counterpart (some are only logged by the runAgent goroutine). The built-in
+// slog handlers emit exactly one Write call per record, so each write here is
+// a whole, newline-terminated record; messages are matched as plain
+// fragments of that formatted line.
 type logCapture struct {
-	mu   sync.Mutex
-	msgs []string
+	mu    sync.Mutex
+	found map[string]bool
 }
 
-func (c *logCapture) Enabled(context.Context, slog.Level) bool { return true }
+// newLogCapture returns a capture that watches for the given message
+// fragments.
+func newLogCapture(msgs ...string) *logCapture {
+	c := &logCapture{found: make(map[string]bool, len(msgs))}
+	for _, m := range msgs {
+		c.found[m] = false
+	}
+	return c
+}
 
-func (c *logCapture) Handle(_ context.Context, r slog.Record) error {
+func (c *logCapture) Write(p []byte) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.msgs = append(c.msgs, r.Message)
-	return nil
+	line := string(p)
+	for m, seen := range c.found {
+		if !seen && strings.Contains(line, m) {
+			c.found[m] = true
+		}
+	}
+	return len(p), nil
 }
 
-func (c *logCapture) WithAttrs([]slog.Attr) slog.Handler { return c }
-
-func (c *logCapture) WithGroup(string) slog.Handler { return c }
-
-// has reports whether a log message equal to msg has been recorded.
+// has reports whether the message has been recorded at least once.
 func (c *logCapture) has(msg string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for _, m := range c.msgs {
-		if m == msg {
-			return true
-		}
-	}
-	return false
+	return c.found[msg]
 }
 
 // requireStableEventCount waits up to d and fails if the count of events of
@@ -355,8 +363,10 @@ func TestAgent_Resume(t *testing.T) {
 func TestAgent_Reconnect(t *testing.T) {
 	requireNoGoroutineLeak(t)
 	fake := applytest.New(t)
-	logcap := &logCapture{}
-	cancel, errCh := startTestAgentOpts(t, fake, &agentOptions{log: slog.New(logcap)})
+	logcap := newLogCapture("agent registered and waiting for assignments")
+	cancel, errCh := startTestAgentOpts(t, fake, &agentOptions{
+		log: slog.New(slog.NewTextHandler(logcap, nil)),
+	})
 	defer cancel()
 
 	fake.WaitForCond(t, 5*time.Second, func() bool { return fake.ControlAttachCount() > 0 })
