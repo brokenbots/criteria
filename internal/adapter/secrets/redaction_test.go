@@ -2,6 +2,10 @@ package secrets
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
+	"reflect"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -170,30 +174,194 @@ func TestRedactingEventSink_Log_RedactsBytes(t *testing.T) {
 	require.Equal(t, "hello [REDACTED] world", string(inner.logs[0].chunk))
 }
 
-func TestRedactingEventSink_Adapter_PassesThrough(t *testing.T) {
-	inner := &recordingEventSink{}
+func TestRedactingEventSink_Adapter_MasksDeclaredSecrets(t *testing.T) {
 	reg := NewRegistry()
 	reg.Register("secret123")
 
+	// Nested containers: values and map keys on the masked path.
+	nested := map[string]any{
+		"plain": "visible",
+		"secret123": map[string]any{
+			"token":  "secret123",
+			"list":   []any{"safe", "secret123", 7, true, nil},
+			"nested": []string{"secret123", "ok"},
+		},
+	}
+	// map[string]string payloads straight from an adapter emit.
+	strMap := map[string]string{"task": "secret123", "note": "safe"}
+	// Raw string payload.
+	single := "prefix secret123 suffix"
+
+	assert := func(call adapterCall) {
+		require.NotContains(t, fmt.Sprintf("%v", call), "secret123")
+	}
+
+	assert(sinkCall(t, reg, "callee.started", nested))
+	assert(sinkCall(t, reg, "callee.started", strMap))
+	assert(sinkCall(t, reg, "callee.started", single))
+	assert(sinkCall(t, reg, "kind-secret123-call", "no payload secret"))
+
+	// Shape checks on the nested case.
+	call := sinkCall(t, reg, "callee.started", nested)
+	got, ok := call.data.(map[string]any)
+	require.True(t, ok, "data should be a cloned, redacted map")
+	require.Equal(t, "visible", got["plain"])
+	require.NotContains(t, got, "secret123", "keys carrying secrets are masked too")
+	// The key "secret123" is masked to "[REDACTED]" and its subtree walked.
+	inner, ok := got["[REDACTED]"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "[REDACTED]", inner["token"])
+	list, ok := inner["list"].([]any)
+	require.True(t, ok)
+	require.Equal(t, "[REDACTED]", list[1])
+	require.Equal(t, 7, list[2])
+	require.Equal(t, true, list[3])
+	require.Nil(t, list[4])
+	tags, ok := inner["nested"].([]string)
+	require.True(t, ok)
+	require.Equal(t, []string{"[REDACTED]", "ok"}, tags)
+
+	// The caller's map must not be mutated by the walk.
+	require.Contains(t, fmt.Sprintf("%v", nested), "secret123")
+
+	// The kind is masked too: kinds are free-form adapter strings.
+	kindCall := sinkCall(t, reg, "kind-secret123-call", nil)
+	require.Equal(t, "kind-[REDACTED]-call", kindCall.kind)
+	require.Nil(t, kindCall.data)
+}
+
+func sinkCall(t *testing.T, reg *Registry, kind string, data any) adapterCall {
+	t.Helper()
+	inner := &recordingEventSink{}
 	sink := &RedactingEventSink{Inner: inner, Registry: reg}
-	sink.Adapter("test", map[string]string{"key": "secret123"})
+	sink.Adapter(kind, data)
+	require.Len(t, inner.adapters, 1)
+	return inner.adapters[0]
+}
+
+func TestRedactingEventSink_Adapter_EmptyRegistryBypass(t *testing.T) {
+	inner := &recordingEventSink{}
+	sink := &RedactingEventSink{Inner: inner, Registry: NewRegistry()}
+
+	sent := map[string]any{"task": "untouched"}
+	sink.Adapter("callee.started", sent)
 
 	require.Len(t, inner.adapters, 1)
-	require.Equal(t, "test", inner.adapters[0].kind)
-	// Adapter data is passed through unchanged (structured events should be
-	// redacted at the presentation layer, not the transport layer).
-	require.Equal(t, map[string]string{"key": "secret123"}, inner.adapters[0].data)
+	require.Equal(t, "callee.started", inner.adapters[0].kind)
+	// Forwarded by reference: no conversion, no copy — pointer identity.
+	require.Equal(
+		t,
+		reflect.ValueOf(sent).Pointer(),
+		reflect.ValueOf(inner.adapters[0].data).Pointer(),
+		"empty registry must forward the payload by reference",
+	)
 }
 
 func TestRedactingEventSink_NilRegistry(t *testing.T) {
 	inner := &recordingEventSink{}
 	sink := &RedactingEventSink{Inner: inner, Registry: nil}
 
-	// Should not panic; RedactBytes with nil registry would panic if used
-	// directly, but we guard against that in practice by not constructing
-	// RedactingEventSink with a nil registry. This test documents the
-	// behaviour: it will panic on Log because Registry is nil.
-	require.Panics(t, func() {
-		sink.Log("stdout", []byte("test"))
+	// A nil registry has nothing to mask: both paths forward unchanged
+	// instead of taking the run down.
+	require.NotPanics(t, func() {
+		sink.Log("stdout", []byte("hello"))
+		sink.Adapter("callee.started", map[string]any{"k": "v"})
 	})
+	require.Len(t, inner.logs, 1)
+	require.Len(t, inner.adapters, 1)
+	require.Equal(t, map[string]any{"k": "v"}, inner.adapters[0].data)
+}
+
+func TestRedactingEventSink_Adapter_JSONFallback(t *testing.T) {
+	reg := NewRegistry()
+
+	t.Run("escapes survive byte-replace", func(t *testing.T) {
+		reg.Register("tok\"\n<>&")
+		// A struct payload rides the JSON fallback, and the secret contains
+		// characters JSON escapes — a naive byte-level replace on encoded
+		// JSON would miss it.
+		payload := struct{ Token string }{Token: "pre tok\"\n<>& post"}
+		call := sinkCall(t, reg, "callee.started", payload)
+		require.NotContains(t, fmt.Sprintf("%v", call.data), "tok\"")
+		require.Contains(t, fmt.Sprintf("%v", call.data), "[REDACTED]")
+		require.Contains(t, fmt.Sprintf("%v", call.data), "pre ")
+		require.Contains(t, fmt.Sprintf("%v", call.data), " post")
+	})
+
+	t.Run("preserves non-string scalars", func(t *testing.T) {
+		reg2 := NewRegistry()
+		reg2.Register("secret123")
+		type counters struct {
+			Name string
+			N    int
+			OK   bool
+		}
+		payload := counters{Name: "secret123", N: 42, OK: true}
+		call := sinkCall(t, reg2, "callee.started", payload)
+		got, ok := call.data.(map[string]any)
+		require.True(t, ok, "JSON-walked payload decodes to a map tree")
+		require.Equal(t, "[REDACTED]", got["Name"])
+		require.Equal(t, float64(42), got["N"])
+		require.Equal(t, true, got["OK"])
+	})
+
+	t.Run("marshal failure forwards unchanged", func(t *testing.T) {
+		reg3 := NewRegistry()
+		reg3.Register("secret123")
+		sent := fakeUnmarshalable{err: true}
+		call := sinkCall(t, reg3, "callee.started", sent)
+		require.Equal(t, "callee.started", call.kind)
+		require.Equal(t, sent, call.data)
+	})
+}
+
+// fakeUnmarshalable fails json.Marshal via its MarshalJSON method.
+type fakeUnmarshalable struct{ err bool }
+
+func (f fakeUnmarshalable) MarshalJSON() ([]byte, error) {
+	if f.err {
+		return nil, errors.New("no")
+	}
+	return []byte(`{}`), nil
+}
+
+func TestRegistry_ReplacerCacheLifecycle(t *testing.T) {
+	r := NewRegistry()
+	require.Equal(t, 0, r.Len())
+	require.Nil(t, r.replacerFor(), "empty registry must not build a replacer")
+
+	r.Register("secret123")
+	require.Equal(t, 1, r.Len())
+	require.Nil(t, r.replacer, "no replacer until first use")
+
+	require.Equal(t, "[REDACTED]", r.Redact("secret123"))
+	require.NotNil(t, r.replacerFor(), "first redaction builds the cache")
+	cached := r.replacer
+
+	// Register invalidates the cache; the next redaction picks up the new
+	// value.
+	r.Register("second")
+	require.Nil(t, r.replacer, "Register must invalidate the cached replacer")
+	require.Equal(t, "[REDACTED] and [REDACTED]", r.Redact("secret123 and second"))
+	require.NotSame(t, cached, r.replacerFor())
+}
+
+func TestRegistry_ConcurrentRegisterAndRedact(t *testing.T) {
+	// Race-detector probe: Register invalidation and replacer rebuild run
+	// concurrently with reads from redaction consumers.
+	r := NewRegistry()
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			val := fmt.Sprintf("secret%d", i)
+			r.Register(val)
+			for j := 0; j < 200; j++ {
+				out := r.Redact("x " + val + " y")
+				require.NotContains(t, out, val)
+			}
+		}(i)
+	}
+	wg.Wait()
 }
