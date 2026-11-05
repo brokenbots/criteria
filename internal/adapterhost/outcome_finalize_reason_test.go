@@ -52,9 +52,9 @@ func kb362ReasonStep(t *testing.T, extra func(*workflow.CompiledOutcome)) *workf
 	}
 }
 
-func kb362Submit(t *testing.T, outcome, reason string) *v2.ExecuteEvent {
+func kb362Submit(t *testing.T, reason string) *v2.ExecuteEvent {
 	t.Helper()
-	args := map[string]any{"outcome": outcome}
+	args := map[string]any{"outcome": "approved"}
 	if reason != "" {
 		args["reason"] = reason
 	}
@@ -91,14 +91,14 @@ func TestKB362_SubmitReasonFoldsIntoPayloadOnDeliveredResult(t *testing.T) {
 		{
 			name: "empty_payload",
 			events: []*v2.ExecuteEvent{
-				kb362Submit(t, "approved", kb362FindingsReason),
+				kb362Submit(t, kb362FindingsReason),
 				kb45ResultEvent("approved", "PR is green-complete", []byte(`{}`)),
 			},
 		},
 		{
 			name: "absent_payload_member",
 			events: []*v2.ExecuteEvent{
-				kb362Submit(t, "approved", kb362FindingsReason),
+				kb362Submit(t, kb362FindingsReason),
 				kb45ResultEvent("approved", "PR is green-complete", nil),
 			},
 		},
@@ -120,7 +120,7 @@ func TestKB362_SubmitReasonFoldsIntoPayloadOnDeliveredResult(t *testing.T) {
 // argument when both are captured for the validated outcome.
 func TestKB362_FinalizedPayloadReasonWinsOverSubmitArgs(t *testing.T) {
 	events := []*v2.ExecuteEvent{
-		kb362Submit(t, "approved", "reason from submit args"),
+		kb362Submit(t, "reason from submit args"),
 		kb237FinalizedEvent(t, map[string]any{"outcome": "approved", "reason": "reason from finalized payload"}),
 		kb45ResultEvent("approved", "green", []byte(`{}`)),
 	}
@@ -137,7 +137,7 @@ func TestKB362_FinalizedPayloadReasonWinsOverSubmitArgs(t *testing.T) {
 func TestKB362_SubmitReasonFoldsIntoRescueVerdict(t *testing.T) {
 	client := &kb45ReplayClient{
 		events: []*v2.ExecuteEvent{
-			kb362Submit(t, "approved", kb362FindingsReason),
+			kb362Submit(t, kb362FindingsReason),
 			kb237FinalizedEvent(t, map[string]any{"outcome": "approved"}),
 		},
 		execErr: context.Canceled,
@@ -179,7 +179,7 @@ func TestKB362_ReasonCaptureDoesNotFoldAcrossOutcomes(t *testing.T) {
 		}
 		client := &kb45ReplayClient{
 			events: []*v2.ExecuteEvent{
-				kb362Submit(t, "approved", kb362FindingsReason),
+				kb362Submit(t, kb362FindingsReason),
 				kb45ResultEvent("rejected", "changes requested", []byte(`{}`)),
 			},
 		}
@@ -199,7 +199,7 @@ func TestKB362_ReasonCaptureDoesNotFoldAcrossOutcomes(t *testing.T) {
 func TestKB362_ExistingPayloadReasonStaysAuthoritative(t *testing.T) {
 	client := &kb45ReplayClient{
 		events: []*v2.ExecuteEvent{
-			kb362Submit(t, "approved", kb362FindingsReason),
+			kb362Submit(t, kb362FindingsReason),
 			kb45ResultEvent("approved", "green", []byte(`{"reason": 42}`)),
 		},
 	}
@@ -226,7 +226,7 @@ func TestKB362_FoldOnlyFiresForReasonRequiringSchemas(t *testing.T) {
 		}
 		client := &kb45ReplayClient{
 			events: []*v2.ExecuteEvent{
-				kb362Submit(t, "approved", kb362FindingsReason),
+				kb362Submit(t, kb362FindingsReason),
 				kb45ResultEvent("approved", "green", []byte(`{}`)),
 			},
 		}
@@ -247,7 +247,7 @@ func TestKB362_FoldOnlyFiresForReasonRequiringSchemas(t *testing.T) {
 		}
 		client := &kb45ReplayClient{
 			events: []*v2.ExecuteEvent{
-				kb362Submit(t, "approved", kb362FindingsReason),
+				kb362Submit(t, kb362FindingsReason),
 				kb45ResultEvent("approved", "green", []byte(`{}`)),
 			},
 		}
@@ -266,7 +266,7 @@ func TestKB362_FoldOnlyFiresForReasonRequiringSchemas(t *testing.T) {
 		}
 		client := &kb45ReplayClient{
 			events: []*v2.ExecuteEvent{
-				kb362Submit(t, "approved", kb362FindingsReason),
+				kb362Submit(t, kb362FindingsReason),
 				kb45ResultEvent("approved", "green", []byte(`{}`)),
 			},
 		}
@@ -282,7 +282,7 @@ func TestKB362_FoldOnlyFiresForReasonRequiringSchemas(t *testing.T) {
 func TestKB362_UndecodableDeliveredPayloadKeepsPinnedIssue(t *testing.T) {
 	client := &kb45ReplayClient{
 		events: []*v2.ExecuteEvent{
-			kb362Submit(t, "approved", kb362FindingsReason),
+			kb362Submit(t, kb362FindingsReason),
 			kb237FinalizedEvent(t, map[string]any{"outcome": "approved", "reason": kb362FindingsReason}),
 			kb45ResultEvent("approved", "green", kb45UndecodablePayload),
 		},
@@ -302,7 +302,7 @@ func TestKB362_FoldDoesNotSatisfyRequireComment(t *testing.T) {
 	step := kb362ReasonStep(t, func(c *workflow.CompiledOutcome) { c.RequireComment = true })
 	client := &kb45ReplayClient{
 		events: []*v2.ExecuteEvent{
-			kb362Submit(t, "approved", kb362FindingsReason),
+			kb362Submit(t, kb362FindingsReason),
 			kb45ResultEvent("approved", "", []byte(`{}`)),
 		},
 	}
