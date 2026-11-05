@@ -207,6 +207,7 @@ type integrationSink struct{}
 func (s *integrationSink) OnRunStarted(workflowName, initialStep string)       {}
 func (s *integrationSink) OnRunCompleted(finalState string, success bool)      {}
 func (s *integrationSink) OnRunFailed(reason, step string)                     {}
+func (s *integrationSink) OnAuditLoss(*pb.AuditLoss)                           {}
 func (s *integrationSink) OnStepEntered(step, adapterName string, attempt int) {}
 func (s *integrationSink) OnStepOutcome(step, outcome string, dur time.Duration, err error, comment string) {
 }

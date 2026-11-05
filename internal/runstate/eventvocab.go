@@ -39,6 +39,7 @@ var payloadTypeToSeamType = map[string]string{
 	"CheckpointPointer":      "checkpointPointer",
 	"RunPaused":              "runPaused",
 	"RunResumed":             "runResumed",
+	"AuditLoss":              "auditLoss",
 }
 
 // TerminalSeamEventTypes is the seam's terminal vocabulary — the types the

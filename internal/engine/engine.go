@@ -208,6 +208,14 @@ type Sink interface {
 	// accounting); the bytes stay engine-local and restore never depends on
 	// the consumer of this event.
 	OnCheckpointPointer(ptr *CheckpointPointerEvent)
+	// OnAuditLoss is emitted once per run, after the run's lifecycle
+	// unwind (adapter teardown and session shutdown keep writing
+	// permission-audit entries, and their drops must be counted), when
+	// the run's permission-audit file writer dropped entries: loss is
+	// accounted (count + last error) but never blocks the permission
+	// path. Emitted only when something was lost; a clean writer produces
+	// no AuditLoss event.
+	OnAuditLoss(loss *pb.AuditLoss)
 	// StepEventSink returns the per-step adapter sink (logs + adapter events).
 	StepEventSink(step string) adapter.EventSink
 }
@@ -707,6 +715,11 @@ func (e *Engine) newSessionManager() *adapterhost.SessionManager {
 // non-terminal (an observed crash-replay stayed "running" forever).
 func (e *Engine) Run(ctx context.Context) error {
 	sessions := e.newSessionManager()
+	// Audit loss must be probed after the full lifecycle unwind (adapter
+	// teardown and session shutdown both keep writing permission-audit
+	// entries), so this defer is declared first and executes last.
+	var lossReportSink Sink
+	defer func() { reportAuditLoss(lossReportSink, e.auditWriter, e.logOrDefault()) }()
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
 	// Create a per-run redaction registry and wire it into the session manager
@@ -717,6 +730,7 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	// Wrap the engine sink before any events are emitted.
 	sink := NewRedactingSink(e.sink, redactionReg)
+	lossReportSink = sink
 	sessions.LifecycleSink = sink
 	sessions.SetAllowedWorkingDirRoots(e.workingDirAllowedRoots)
 	// The wrapped sink is the pointer-emission sink for this run's
@@ -777,12 +791,18 @@ func (e *Engine) Run(ctx context.Context) error {
 // shim startup fails.
 func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt int) error {
 	sessions := e.newSessionManager()
+	// Audit loss must be probed after the full lifecycle unwind (adapter
+	// teardown and session shutdown both keep writing permission-audit
+	// entries), so this defer is declared first and executes last.
+	var lossReportSink Sink
+	defer func() { reportAuditLoss(lossReportSink, e.auditWriter, e.logOrDefault()) }()
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
 	redactionReg := secrets.NewRegistry()
 	sessions.RedactionRegistry = redactionReg
 
 	sink := NewRedactingSink(e.sink, redactionReg)
+	lossReportSink = sink
 	sessions.LifecycleSink = sink
 	sessions.SetAllowedWorkingDirRoots(e.workingDirAllowedRoots)
 	// Checkpoint saves resume from checkpoints on this path too, so

@@ -119,6 +119,8 @@ func TypeString(env *pb.Envelope) string { //nolint:funlen,gocyclo // discrimina
 		return "agent.prompt_injected"
 	case *pb.Envelope_CheckpointPointer:
 		return "checkpoint.pointer"
+	case *pb.Envelope_AuditLoss:
+		return "audit.loss"
 	default:
 		return ""
 	}

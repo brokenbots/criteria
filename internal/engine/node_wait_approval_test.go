@@ -142,6 +142,7 @@ type pauseSink struct {
 func (s *pauseSink) OnRunStarted(string, string)                                {}
 func (s *pauseSink) OnRunCompleted(string, bool)                                { s.completed = true }
 func (s *pauseSink) OnRunFailed(string, string)                                 { s.failed = true }
+func (s *pauseSink) OnAuditLoss(*pb.AuditLoss)                                  {}
 func (s *pauseSink) OnStepEntered(string, string, int)                          {}
 func (s *pauseSink) OnStepOutcome(string, string, time.Duration, error, string) {}
 func (s *pauseSink) OnStepTransition(string, string, string)                    {}

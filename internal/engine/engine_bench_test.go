@@ -20,6 +20,7 @@ type benchSink struct{}
 
 func (benchSink) OnCheckpointPointer(*CheckpointPointerEvent)                   {}
 func (benchSink) OnRunStarted(string, string)                                   {}
+func (benchSink) OnAuditLoss(*pb.AuditLoss)                                     {}
 func (benchSink) OnRunCompleted(string, bool)                                   {}
 func (benchSink) OnRunFailed(string, string)                                    {}
 func (benchSink) OnRunPaused(string, string, string)                            {}

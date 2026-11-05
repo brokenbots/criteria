@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+
 	"github.com/brokenbots/criteria/internal/engine"
 )
 
@@ -217,5 +219,26 @@ func TestConsoleSink_OnAdapterLifecycleEventNoOp(t *testing.T) {
 
 	if buf.Len() != 0 {
 		t.Errorf("expected no console output, got: %q", buf.String())
+	}
+}
+
+// TestConsoleSink_AuditLossLine asserts the run summary shows dropped
+// permission-audit entries; a nil or zero-drop event renders nothing.
+func TestConsoleSink_AuditLossLine(t *testing.T) {
+	var buf bytes.Buffer
+	sink := NewConsoleSink(&buf, nil, false, nil)
+
+	sink.OnAuditLoss(&pb.AuditLoss{DroppedEntries: 2, AttemptedEntries: 5, LastError: "mkdir /audit: not a directory"})
+	out := stripANSI(buf.String())
+	if !strings.Contains(out, "! permission audit lost 2/5 entries (mkdir /audit: not a directory)") {
+		t.Errorf("missing audit-loss summary line in output:\n%s", out)
+	}
+
+	var zeroDrop bytes.Buffer
+	zeroSink := NewConsoleSink(&zeroDrop, nil, false, nil)
+	zeroSink.OnAuditLoss(nil)
+	zeroSink.OnAuditLoss(&pb.AuditLoss{})
+	if zeroDrop.Len() != 0 {
+		t.Errorf("a nil or zero-drop loss must render nothing, got:\n%s", stripANSI(zeroDrop.String()))
 	}
 }

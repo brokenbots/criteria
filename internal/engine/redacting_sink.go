@@ -42,6 +42,19 @@ func (s *RedactingSink) OnRunFailed(reason, step string) {
 	s.inner.OnRunFailed(s.reg.Redact(reason), s.reg.Redact(step))
 }
 
+// OnAuditLoss redacts the most recent audit-write error text before
+// forwarding; the loss counts carry no secret content.
+func (s *RedactingSink) OnAuditLoss(loss *pb.AuditLoss) {
+	if loss == nil {
+		return
+	}
+	s.inner.OnAuditLoss(&pb.AuditLoss{
+		DroppedEntries:   loss.DroppedEntries,
+		AttemptedEntries: loss.AttemptedEntries,
+		LastError:        s.reg.Redact(loss.LastError),
+	})
+}
+
 func (s *RedactingSink) OnStepEntered(step, adapterName string, attempt int) {
 	s.inner.OnStepEntered(s.reg.Redact(step), s.reg.Redact(adapterName), attempt)
 }
