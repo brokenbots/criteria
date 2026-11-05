@@ -26,16 +26,24 @@ RUN test -n "${CRITERIA_VERSION}" || { echo "CRITERIA_VERSION is required (e.g. 
 
 FROM alpine:3.20
 
+# Adapter discovery's first root is $CRITERIA_ADAPTERS (internal/dirs); setting
+# it here makes the bundled-adapter location deterministic in-container and
+# independent of the HOME-based root resolution (whose legacy ~/.criteria
+# branch must never engage inside the image).
+ENV CRITERIA_ADAPTERS=/home/criteria/.local/criteria/adapters
+
 RUN apk add --no-cache ca-certificates git \
     && addgroup -S -g 10001 criteria \
     && adduser -S -D -h /home/criteria -u 10001 -G criteria criteria \
-    && mkdir -p /workspace /home/criteria/.criteria/plugins \
+    && mkdir -p /workspace "${CRITERIA_ADAPTERS}" \
     && chown -R criteria:criteria /workspace /home/criteria
 
 COPY --from=build /out/bin/ /usr/local/bin/
 
-RUN cp /usr/local/bin/criteria-adapter-* /home/criteria/.criteria/plugins/ \
-    && chown criteria:criteria /home/criteria/.criteria/plugins/criteria-adapter-*
+# Bundled adapters ship flat in the adapters root discovery already points at:
+# no registry pull is needed for in-image adapter types in a fresh container.
+RUN cp /usr/local/bin/criteria-adapter-* "${CRITERIA_ADAPTERS}/" \
+    && chown criteria:criteria "${CRITERIA_ADAPTERS}"/criteria-adapter-*
 
 ENV HOME=/home/criteria
 

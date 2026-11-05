@@ -292,6 +292,9 @@ jobs:
           docker tag criteria/runtime:dev "criteria/runtime:${TAG}"
           docker tag criteria/runtime:dev "criteria/runtime:latest"
 
+      - name: Smoke bundled adapters in-container (network none)
+        run: make docker-runtime-smoke
+
       - name: Save image as tar
         run: |
           TAG="${{ github.ref_name }}"

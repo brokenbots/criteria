@@ -18,7 +18,7 @@ CRITERIA_BUILD_VERSION := $(VERSION)
 endif
 
 .PHONY: help bootstrap tidy build plugins install proto proto-lint proto-check-drift \
-	test test-affected test-cover test-affected-cover coverage-check coverage-check-affected test-conformance test-fetcher-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint lint-sh vuln-scan vulncheck deps-outdated deps-majors validate validate-docs example-plugin example-adapter-tools example-adapter-tools-copilot example-adapter-tools-claude bench docker-runtime docker-runtime-smoke ci clean
+	test test-affected test-cover test-affected-cover coverage-check coverage-check-affected test-conformance test-fetcher-conformance test-flake-watch lint-imports lint-go lint-baseline-check lint-no-todos lint lint-sh vuln-scan vulncheck deps-outdated deps-majors validate validate-docs example-adapter example-adapter-tools example-adapter-tools-copilot example-adapter-tools-claude bench docker-runtime docker-runtime-smoke ci clean
 
 # Default target: list available targets.
 help:
@@ -77,9 +77,21 @@ install: build plugins ## Install criteria to ~/.local/criteria (binary → ~/.l
 docker-runtime: ## Build the runtime Docker image (criteria/runtime:dev)
 	docker build --build-arg CRITERIA_VERSION="$(CRITERIA_BUILD_VERSION)" -t criteria/runtime:dev -f Dockerfile.runtime .
 
-docker-runtime-smoke: docker-runtime ## Run a workflow inside the runtime image
-	docker run --rm -v "$$PWD/examples:/workspace/examples:ro" \
-		criteria/runtime:dev apply /workspace/examples/hello
+docker-runtime-smoke: docker-runtime ## Smoke the runtime image: bundled adapters discovered in-container and run with no network/registry access
+	@set -eu; \
+	tmpdir="$$(mktemp -d)"; \
+	listfile="$$tmpdir/adapter-list.txt"; \
+	docker run --rm --network none criteria/runtime:dev adapter list >"$$listfile"; \
+	echo "--- in-container adapter inventory (network none) ---"; \
+	cat "$$listfile"; \
+	if ! grep -F -q "/home/criteria/.local/criteria/adapters/criteria-adapter-noop" "$$listfile"; then \
+		echo "ERROR: bundled noop adapter not discovered from the bundled adapters dir"; \
+		rm -rf "$$tmpdir"; exit 1; \
+	fi; \
+	docker run --rm --network none -v "$$PWD/examples:/workspace/examples:ro" \
+		criteria/runtime:dev apply /workspace/examples/hello; \
+	echo "docker-runtime-smoke: OK (bundled adapter discovered and executed in-container without registry access)"; \
+	rm -rf "$$tmpdir"
 
 proto: ## Regenerate Go bindings from in-tree proto files (v1 server API; adapter protocol v2 lives in the criteria-adapter-proto module)
 	buf generate --template buf.gen.yaml --path proto/criteria/v1
@@ -277,7 +289,7 @@ validate: build ## Validate all example workflow directories
 		echo "Validating $$d..."; \
 		CRITERIA_WORKFLOW_ALLOWED_PATHS="$(CURDIR)" ./bin/criteria validate "$$d" || exit 1; \
 	done
-	@for f in examples/plugins/*/*.hcl; do \
+	@for f in examples/adapters/*/*.hcl; do \
 		echo "Validating $$f..."; \
 		CRITERIA_WORKFLOW_ALLOWED_PATHS="$(CURDIR)" ./bin/criteria validate "$$f" || exit 1; \
 	done
@@ -288,14 +300,14 @@ validate-docs: ## Validate HCL fenced blocks in docs/LANGUAGE-SPEC.md
 	@go build -ldflags "-X github.com/brokenbots/criteria/workflow/version.Version=dev" -o bin/criteria-validate-docs ./cmd/criteria
 	@CRITERIA_BIN=./bin/criteria-validate-docs ./tools/validate-docs.sh
 
-example-plugin: build ## Build and run the greeter example plugin end-to-end
-	@echo "Building greeter example plugin..."
-	cd examples/plugins/greeter && GOWORK=off go build -o ../../../bin/criteria-adapter-greeter .
+example-adapter: build ## Build and run the greeter example adapter end-to-end
+	@echo "Building greeter example adapter..."
+	cd examples/adapters/greeter && GOWORK=off go build -o ../../../bin/criteria-adapter-greeter .
 	@tmpdir=$$(mktemp -d); \
 	cp bin/criteria-adapter-greeter "$$tmpdir/"; \
 	chmod +x "$$tmpdir/criteria-adapter-greeter"; \
 	eventsfile=$$(mktemp); \
-	CRITERIA_ADAPTERS="$$tmpdir" ./bin/criteria apply examples/plugins/greeter/example.hcl \
+	CRITERIA_ADAPTERS="$$tmpdir" ./bin/criteria apply examples/adapters/greeter/example.hcl \
 		--events-file "$$eventsfile" 2>&1; \
 	rc=$$?; \
 	if [ $$rc -ne 0 ]; then \
@@ -308,7 +320,7 @@ example-plugin: build ## Build and run the greeter example plugin end-to-end
 		rm -rf "$$tmpdir" "$$eventsfile"; exit 1; \
 	fi; \
 	rm -rf "$$tmpdir" "$$eventsfile"; \
-	echo "example-plugin: OK"
+	echo "example-adapter: OK"
 
 example-adapter-tools: build plugins ## Build and run the adapter-tools example end to end (both variants; self-contained, no OCI pull)
 	@echo "Building adapter-tools example fixtures..."
@@ -497,7 +509,7 @@ example-adapter-tools-claude: build plugins ## Build and run the claude-agent x 
 	rm -rf "$$tmpdir" "$$eventsfile" "$$log"; \
 	echo "example-adapter-tools-claude: OK (agent tool-called the mcp resource mid-task)"
 
-ci: build test lint validate example-plugin example-adapter-tools ## Run all CI gates (build, test, lint, validate, examples)
+ci: build test lint validate example-adapter example-adapter-tools ## Run all CI gates (build, test, lint, validate, examples)
 
 clean: ## Remove build artifacts
 	rm -rf bin conformance.test

@@ -6,7 +6,7 @@
 # Execution steps inherit the adapter-level default of "medium".
 #
 # Requirements:
-#   • criteria-adapter-copilot installed in $CRITERIA_PLUGINS or ~/.criteria/plugins/
+#   • criteria-adapter-copilot installed in $CRITERIA_ADAPTERS or ~/.local/criteria/adapters/
 #   • copilot CLI on PATH (or pointed at via CRITERIA_COPILOT_BIN)
 #   • A running Criteria-compatible orchestrator (--server flag)
 #
