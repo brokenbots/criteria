@@ -40,6 +40,39 @@ func joinIssues(issues []string) string {
 	return strings.Join(issues, "\n")
 }
 
+// compiledOutcomeFor resolves the compiled contract an outcome name validates
+// against: a declared outcome by name, else the step's default outcome when
+// it carries the same name (the evaluator validates the default under its own
+// name too). nil when the outcome declares no contract.
+func compiledOutcomeFor(step *workflow.StepNode, outcome string) *workflow.CompiledOutcome {
+	if step == nil {
+		return nil
+	}
+	if c, ok := step.Outcomes[outcome]; ok {
+		return c
+	}
+	d := step.DefaultOutcome
+	if d != nil && d.Name == outcome {
+		return d
+	}
+	return nil
+}
+
+// outcomeSchemaRequiresReason reports whether the compiled payload contract
+// for the outcome requires an in-payload "reason" member: an object schema
+// whose "reason" attribute is non-optional. This mirrors how CTypeToJSONSchema
+// derives the schema's required list, so the fold in materializeFinalizeReason
+// fires only for contracts that schema-validation rejects for a missing
+// reason. Untyped and non-object contracts never require a payload reason.
+func outcomeSchemaRequiresReason(step *workflow.StepNode, outcome string) bool {
+	compiled := compiledOutcomeFor(step, outcome)
+	if compiled == nil || compiled.Schema == nil || !compiled.Schema.IsObjectType() {
+		return false
+	}
+	schema := compiled.Schema
+	return schema.HasAttribute("reason") && !schema.AttributeOptional("reason")
+}
+
 // outcomeContractsForStep builds the ExecuteRequest contracts from the
 // compiled step outcomes. Named and inline schemas are
 // indistinguishable on the wire: CompiledOutcome.SchemaJSON already carries
