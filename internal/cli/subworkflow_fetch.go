@@ -240,7 +240,7 @@ var errUnsafeGitSource = errors.New(`repository URL and ref must not start with 
 // execution through the token's remote helper — so the source is refused
 // before any git process is invoked, independent of the host's protocol
 // policy. Callers can match with errors.Is.
-var errUnsupportedGitTransport = errors.New("only https, ssh, git, and file transports are accepted")
+var errUnsupportedGitTransport = errors.New("only git, ssh, http, https, and file transports are accepted")
 
 // allowedGitTransports is the case-insensitive set of inner transports a git
 // source handed to the fetcher may select. It mirrors the scheme set of the

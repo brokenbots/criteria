@@ -981,8 +981,11 @@ func TestFetchGit_RefusesPseudoTransport_NoGitSubprocess(t *testing.T) {
 	assert.Empty(t, stub.invocations(t), "Fetch must not spawn a git process for a pseudo-transport source")
 	assert.NoFileExists(t, stub.marker, "the payload must never run, whatever the host git policy allows")
 	// Refusals are pre-execution and total: not even the cache directory for
-	// the source is created.
-	entries, readErr := os.ReadDir(caller)
+	// the source is created under the fetcher's cache root (the fetcher
+	// materializes under cacheRoot/<slug>/, so any attempted fetch would
+	// leave entries there).
+	require.NoError(t, os.MkdirAll(f.cacheRoot, 0o755), "the cache root must be creatable before Fetch")
+	entries, readErr := os.ReadDir(f.cacheRoot)
 	require.NoError(t, readErr)
 	assert.Empty(t, entries, "no cache artifacts may be created for a refused source")
 }

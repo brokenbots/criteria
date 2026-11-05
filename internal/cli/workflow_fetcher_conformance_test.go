@@ -364,6 +364,8 @@ func TestWorkflowFetcherConformance_FailurePathParity(t *testing.T) {
 			eventsPath:   filepath.Join(t.TempDir(), "events.ndjson"),
 		})
 		require.Error(t, err, "apply must refuse a pseudo-transport git source")
+		assert.Contains(t, err.Error(), "invalid git workflow source",
+			"apply must surface the same refuse string as compile and validate")
 
 		// Pre-execution and total: identical refusal under the permissive
 		// host policy, no git subprocess, no payload marker.
