@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/opencontainers/go-digest"
+	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/internal/adapter/environment/sandbox"
 	"github.com/brokenbots/criteria/workflow"
@@ -77,6 +78,58 @@ func TestBuildSandboxCustomizer_EnvScrubIntegration(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("expected CRITERIA_SANDBOX_CONFIG_PATH env var")
+	}
+}
+
+func TestBuildSandboxCustomizer_BwrapExactAllowRefused(t *testing.T) {
+	// A bwrap-sandboxed environment declaring an exact network.allow
+	// allow-list is refused loudly regardless of policy_mode: the bwrap
+	// path bypasses the in-process shim, so landlock ConnectTCP port rules
+	// could not enforce the list. Mirrors the container/remote refusal
+	// precedent — never silently dropped.
+	//
+	// Pin PATH to a stub bwrap binary so the test is deterministic on
+	// hosts without bwrap installed.
+	stubDir := t.TempDir()
+	stub := filepath.Join(stubDir, "bwrap")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", stubDir)
+
+	sm := NewSessionManager(nil)
+	sm.sandboxProbeOverride = func() sandbox.Capabilities {
+		return sandbox.Capabilities{UserNamespaces: true, Landlock: true, Seccomp: true, Cgroupv2: true}
+	}
+	sm.graph = &workflow.FSMGraph{
+		Adapters: map[string]*workflow.AdapterNode{
+			"noop.default": {Type: "noop", Name: "default", Environment: "sandbox.default"},
+		},
+		Environments: map[string]*workflow.EnvironmentNode{
+			"sandbox.default": {
+				Type: "sandbox",
+				Name: "default",
+				TypeSpecific: map[string]cty.Value{
+					"sandbox": cty.StringVal("bwrap"),
+					"network": cty.ObjectVal(map[string]cty.Value{
+						"allow": cty.ListVal([]cty.Value{cty.StringVal("internal.svc:8080")}),
+					}),
+				},
+			},
+		},
+		ResolvedPolicies: map[string]*workflow.ResolvedPolicy{
+			"noop.default:sandbox.default": {PolicyMode: "strict", OS: "linux"},
+		},
+	}
+	customizer, cleanup, err := sm.buildSandboxCustomizer("noop.default", "")
+	if err == nil {
+		t.Fatal("expected hard error for exact network.allow on bwrap path")
+	}
+	if !strings.Contains(err.Error(), "cannot enforce an exact network.allow allow-list") {
+		t.Fatalf("refusal error lacks guidance: %v", err)
+	}
+	if customizer != nil || cleanup != nil {
+		t.Fatal("expected nil customizer and cleanup on refusal")
 	}
 }
 
