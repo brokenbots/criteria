@@ -15,6 +15,7 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapter/manifest"
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	"github.com/brokenbots/criteria/internal/envreg"
 )
 
 // Multi-adapter manifest parsing. A peer container hosts ALL
@@ -184,7 +185,7 @@ func applyAdapterSpecOverrides(getenv func(string) string, specs []AdapterSpec) 
 			}
 			return field
 		}
-		prefix := "CRITERIA_ADAPTER_" + envToken + "_"
+		prefix := envreg.CRITERIAAdapterFamily.FamilyPrefix() + envToken + "_"
 		specs[i].Binary = setIfEmpty(specs[i].Binary, strings.TrimSpace(getenv(prefix+"BINARY")))
 		specs[i].Version = setIfEmpty(specs[i].Version, strings.TrimSpace(getenv(prefix+"VERSION")))
 		specs[i].Digest = setIfEmpty(specs[i].Digest, strings.TrimSpace(getenv(prefix+"DIGEST")))

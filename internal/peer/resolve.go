@@ -2,6 +2,8 @@ package peer
 
 import (
 	"strings"
+
+	"github.com/brokenbots/criteria/internal/envreg"
 )
 
 // remoteEnvPrefix is the prefix of phone-home connection variables that must
@@ -22,7 +24,11 @@ import (
 // must not ride into any child process. The four legacy CRITERIA_ADAPTER_*
 // names keep today's passthrough behavior; the adapter install dir
 // CRITERIA_ADAPTERS likewise passes through, matching pre-multi-adapter behavior.
-const remoteEnvPrefix = "CRITERIA_REMOTE_"
+//
+// The name literals are registry-derived (CRITERIARemoteFamily /
+// CRITERIAAdapterFamily) so a registry rename cannot desynchronise this
+// scrubbing from the docs table.
+var remoteEnvPrefix = envreg.CRITERIARemoteFamily.FamilyPrefix()
 
 // adapterOverrideSuffixes are the per-adapter manifest override suffixes;
 // any CRITERIA_ADAPTER_<NAME>_<SUFFIX> other than the four legacy names is
@@ -30,10 +36,10 @@ const remoteEnvPrefix = "CRITERIA_REMOTE_"
 var adapterOverrideSuffixes = [...]string{"_BINARY", "_VERSION", "_DIGEST", "_MANIFEST"}
 
 func scrubbedPeerVar(name string) bool {
-	if name == "CRITERIA_REMOTE" || strings.HasPrefix(name, remoteEnvPrefix) {
+	if name == envreg.CRITERIARemoteFamily.Env() || strings.HasPrefix(name, remoteEnvPrefix) {
 		return true
 	}
-	if !strings.HasPrefix(name, "CRITERIA_ADAPTER_") {
+	if !strings.HasPrefix(name, envreg.CRITERIAAdapterFamily.FamilyPrefix()) {
 		return false
 	}
 	switch name {
@@ -41,7 +47,7 @@ func scrubbedPeerVar(name string) bool {
 		return false
 	}
 	for _, suffix := range adapterOverrideSuffixes {
-		if strings.HasSuffix(name, suffix) && len(name) > len("CRITERIA_ADAPTER_")+len(suffix) {
+		if strings.HasSuffix(name, suffix) && len(name) > len(envreg.CRITERIAAdapterFamily.FamilyPrefix())+len(suffix) {
 			return true
 		}
 	}

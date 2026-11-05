@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/zclconf/go-cty/cty"
+
+	"github.com/brokenbots/criteria/internal/envreg"
 )
 
 // ctyStringList extracts a slice of strings from a cty.Value that is
@@ -94,13 +96,15 @@ func validatePath(p string) error {
 // before exec-ing the real adapter.
 func scrubEnv(env []string) []string {
 	blocked := map[string]bool{
-		"SUDO_UID":                     true,
-		"SUDO_GID":                     true,
-		"SUDO_USER":                    true,
-		"SUDO_COMMAND":                 true,
-		"SUDO_EDITOR":                  true,
-		"CRITERIA_PLUGIN":              true,
-		"CRITERIA_SANDBOX_CONFIG_PATH": true,
+		"SUDO_UID":     true,
+		"SUDO_GID":     true,
+		"SUDO_USER":    true,
+		"SUDO_COMMAND": true,
+		"SUDO_EDITOR":  true,
+		// Registry-derived keys (envreg.CRITERIAPlugin, CRITERIASandboxConfigPath)
+		// so the scrub list cannot desynchronise from the handshake shim or the docs.
+		envreg.CRITERIAPlugin.Env():            true,
+		envreg.CRITERIASandboxConfigPath.Env(): true,
 	}
 	out := make([]string, 0, len(env))
 	for _, e := range env {

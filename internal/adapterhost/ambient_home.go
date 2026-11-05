@@ -56,6 +56,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/brokenbots/criteria/internal/envreg"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -70,7 +71,7 @@ var ambientHomeIsolatedAdapterTypes = map[string]struct{}{
 // ambientHomeInstanceIDEnv is the environment variable under which a scratch
 // home records which adapter instance it serves; useful for diagnostics when
 // inspecting a scratch directory after a run.
-const ambientHomeInstanceIDEnv = "CRITERIA_AMBIENT_HOME_INSTANCE"
+var ambientHomeInstanceIDEnv = envreg.CRITERIAAmbientHomeInstance.Env()
 
 // sanitizeAmbientHomeInstanceID maps an adapter instance ID to a single safe
 // path element. Instance IDs look like "copilot.main"; anything outside

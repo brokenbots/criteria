@@ -125,13 +125,16 @@ type Config struct {
 	Timeout time.Duration
 }
 
-// Configure resolves the gate configuration from an environment lookup.
+// configure resolves the gate configuration from an injected environment
+// lookup; it is the test seam. Production callers must use ConfigureFromEnv,
+// the package's only env-reading entry point, so the boot-gate names go
+// through the registry's audit point.
 // It returns enabled=false when none of the gate envs are present (gate
 // disabled: no behavior change for standalone runs), and a non-nil error
 // on partial configuration, a malformed view URL, or a non-positive probe
 // timeout — an operator that enables the gate must get a working gate or a
 // loud failure, never a silently skipped check.
-func Configure(lookup func(string) (string, bool), probeTimeout time.Duration) (Config, bool, error) {
+func configure(lookup func(string) (string, bool), probeTimeout time.Duration) (Config, bool, error) {
 	viewURL := envValue(lookup(EnvOperatorViewURL))
 	ticket := envValue(lookup(EnvRunTicket))
 	job := envValue(lookup(EnvRunJob))
@@ -155,9 +158,11 @@ func Configure(lookup func(string) (string, bool), probeTimeout time.Duration) (
 }
 
 // ConfigureFromEnv resolves the gate configuration from the process
-// environment through the registry's audit point.
+// environment through the registry's audit point. It is the package's only
+// production env-reading entry point; the injected-lookup variant is the
+// unexported configure test seam.
 func ConfigureFromEnv(probeTimeout time.Duration) (Config, bool, error) {
-	return Configure(envreg.LookupOK, probeTimeout)
+	return configure(envreg.LookupOK, probeTimeout)
 }
 
 // Check probes the operator view for this runner's identity and returns the

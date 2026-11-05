@@ -15,6 +15,8 @@ import (
 
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-plugin/runner"
+
+	"github.com/brokenbots/criteria/internal/envreg"
 )
 
 // dockerRunner implements runner.Runner for docker/podman containers.
@@ -87,7 +89,7 @@ func extractEnvVars(cmd *exec.Cmd) map[string]string {
 // isHandshakeVar returns true for known go-plugin handshake environment
 // variables that are safe to forward into the container.
 func isHandshakeVar(k string) bool {
-	return k == "CRITERIA_PLUGIN" ||
+	return k == envreg.CRITERIAPlugin.Env() ||
 		strings.HasPrefix(k, "PLUGIN_")
 }
 
