@@ -40,9 +40,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/brokenbots/criteria/workflow/workflowtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/brokenbots/criteria/workflow/workflowtest"
 )
 
 // TestWorkflowFetcherConformance is the suite's umbrella target:

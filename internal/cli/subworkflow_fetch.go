@@ -262,24 +262,32 @@ var allowedGitTransports = map[string]bool{
 // token is lower-cased: git transport selection is case-insensitive, so a
 // case variant ("EXT::", "Ext://") must not bypass the allowed-set check.
 func gitInnerTransportToken(repoURL string) (token string, namesTransport bool) {
-	for i := 0; i < len(repoURL); i++ {
-		c := repoURL[i]
-		switch {
-		case c == ':':
-			switch {
-			case i+1 < len(repoURL) && repoURL[i+1] == ':':
-				return strings.ToLower(repoURL[:i]), true // "<token>::" remote-helper syntax
-			case i+2 < len(repoURL) && repoURL[i+1] == '/' && repoURL[i+2] == '/':
-				return strings.ToLower(repoURL[:i]), true // "<scheme>://" URL syntax
-			}
-			return "", false // scp-syntax ("git@host:path"): ssh, no scheme token
-		case (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '+' || c == '-' || c == '.':
-			// scheme token character
-		default:
+	colon := strings.IndexByte(repoURL, ':')
+	if colon < 0 {
+		return "", false // no colon: relative path form, no scheme
+	}
+	first := repoURL[:colon]
+	for i := 0; i < len(first); i++ {
+		if !isTransportTokenByte(first[i]) {
 			return "", false // "@" (scp-style) or a space terminates any scheme token
 		}
 	}
-	return "", false // no colon: relative path form, no scheme
+	if len(repoURL) > colon+1 {
+		switch {
+		case repoURL[colon+1] == ':':
+			return strings.ToLower(first), true // "<token>::" remote-helper syntax
+		case len(repoURL) > colon+2 && repoURL[colon+1] == '/' && repoURL[colon+2] == '/':
+			return strings.ToLower(first), true // "<scheme>://" URL syntax
+		}
+	}
+	return "", false // single colon: scp-syntax, no scheme token
+}
+
+// isTransportTokenByte reports whether c is a byte git accepts in a transport
+// token (verified against git 2.45.4's pseudo-transport grammar); any other
+// byte ends the token and names no transport at all.
+func isTransportTokenByte(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '+' || c == '-' || c == '.'
 }
 
 // checkGitInnerTransport refuses a git repository URL whose inner transport is
