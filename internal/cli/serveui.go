@@ -87,6 +87,6 @@ func NewServeUICmd() *cobra.Command {
 	cmd.Flags().StringVar(&host, "host", "127.0.0.1", "Loopback bind address (non-loopback binds are refused)")
 	cmd.Flags().IntVar(&port, "port", 0, "Port to bind (0 = auto-select)")
 	cmd.Flags().StringVar(&castleAddr, "castle-addr", envOrDefault("CRITERIA_CASTLE_ADDR", ""), "Castle control plane base URL the console proxies Login/Logout/ListSessions to (login-only: ResolveResume has no local run here)")
-	cmd.Flags().StringVar(&home, "home", "", "Criteria home directory (default: CRITERIA_HOME or ~/.local/criteria)")
+	cmd.Flags().StringVar(&home, "home", "", "Criteria home directory (default: CRITERIA_HOME or $XDG_STATE_HOME/criteria)")
 	return cmd
 }

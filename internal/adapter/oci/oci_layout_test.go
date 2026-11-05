@@ -311,13 +311,14 @@ func TestDefaultCacheRoot_HonoursEnv(t *testing.T) {
 func TestDefaultCacheRoot_FallsBackToHome(t *testing.T) {
 	t.Setenv("CRITERIA_HOME", "")
 	t.Setenv("CRITERIA_STATE_DIR", "")
+	t.Setenv("XDG_CACHE_HOME", "")
 	t.Setenv("HOME", t.TempDir())
 
 	root, err := oci.DefaultCacheRoot()
 	require.NoError(t, err)
-	// Should end with /.local/criteria/cache/oci
-	assert.True(t, strings.HasSuffix(root, filepath.Join(".local", "criteria", "cache", "oci")),
-		"expected root ending in .local/criteria/cache/oci, got %q", root)
+	// Should end with /.cache/criteria/oci (XDG cache default)
+	assert.True(t, strings.HasSuffix(root, filepath.Join(".cache", "criteria", "cache", "oci")),
+		"expected root ending in .cache/criteria/cache/oci, got %q", root)
 }
 
 // fuzzBlob is a helper that writes n random bytes and returns digest.

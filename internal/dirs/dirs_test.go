@@ -3,6 +3,7 @@ package dirs
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -11,14 +12,50 @@ func TestHome_Default(t *testing.T) {
 	t.Setenv("HOME", tmp)
 	t.Setenv("CRITERIA_HOME", "")
 	t.Setenv("CRITERIA_STATE_DIR", "")
+	t.Setenv("XDG_STATE_HOME", "")
 
 	got, err := Home()
 	if err != nil {
 		t.Fatalf("Home() error = %v", err)
 	}
-	want := filepath.Join(tmp, defaultRoot)
+	want := filepath.Join(tmp, defaultStateRel)
 	if got != want {
 		t.Fatalf("Home() = %q, want %q", got, want)
+	}
+}
+
+func TestHome_XDG_STATE_HOME(t *testing.T) {
+	tmp := t.TempDir()
+	xdg := filepath.Join(tmp, "xdg-state")
+	t.Setenv("HOME", tmp)
+	t.Setenv("CRITERIA_HOME", "")
+	t.Setenv("CRITERIA_STATE_DIR", "")
+	t.Setenv("XDG_STATE_HOME", xdg)
+
+	got, err := Home()
+	if err != nil {
+		t.Fatalf("Home() error = %v", err)
+	}
+	want := filepath.Join(xdg, xdgAppDir)
+	if got != want {
+		t.Fatalf("Home() = %q, want %q", got, want)
+	}
+}
+
+func TestHome_XDG_STATE_HOME_NonAbsoluteIgnored(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("CRITERIA_HOME", "")
+	t.Setenv("CRITERIA_STATE_DIR", "")
+	t.Setenv("XDG_STATE_HOME", "relative/state")
+
+	got, err := Home()
+	if err != nil {
+		t.Fatalf("Home() error = %v", err)
+	}
+	want := filepath.Join(tmp, defaultStateRel)
+	if got != want {
+		t.Fatalf("Home() = %q, want %q (non-absolute XDG values must be ignored)", got, want)
 	}
 }
 
@@ -27,6 +64,7 @@ func TestHome_CRITERIA_HOME(t *testing.T) {
 	t.Setenv("HOME", tmp)
 	t.Setenv("CRITERIA_HOME", "/explicit/home")
 	t.Setenv("CRITERIA_STATE_DIR", "")
+	t.Setenv("XDG_STATE_HOME", filepath.Join(tmp, "xdg-state"))
 
 	got, err := Home()
 	if err != nil {
@@ -67,41 +105,178 @@ func TestHome_CRITERIA_HOME_WinsOverStateDir(t *testing.T) {
 	}
 }
 
-func TestHome_LegacyCriteriaSurvives(t *testing.T) {
+// TestHome_NoLegacyCriteriaAdoption pins the fail-closed default: a
+// pre-existing (or attacker-created) ~/.criteria directory is never adopted
+// as the criteria root, so it can never silently become the trust-anchor
+// location.
+func TestHome_NoLegacyCriteriaAdoption(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("CRITERIA_HOME", "")
 	t.Setenv("CRITERIA_STATE_DIR", "")
+	t.Setenv("XDG_STATE_HOME", "")
 
-	legacy := filepath.Join(tmp, legacyRootName)
-	if err := os.MkdirAll(legacy, 0o755); err != nil {
-		t.Fatalf("mkdir legacy: %v", err)
+	legacy := filepath.Join(tmp, ".criteria")
+	if err := os.MkdirAll(filepath.Join(legacy, "sub"), 0o755); err != nil {
+		t.Fatalf("mkdir legacy dir: %v", err)
 	}
 
 	got, err := Home()
 	if err != nil {
 		t.Fatalf("Home() error = %v", err)
 	}
-	if got != legacy {
-		t.Fatalf("Home() = %q, want %q", got, legacy)
+	want := filepath.Join(tmp, defaultStateRel)
+	if got != want {
+		t.Fatalf("Home() = %q, want %q (legacy ~/.criteria must not be adopted)", got, want)
 	}
 }
 
-func TestHome_CRITERIA_HOMESkipsLegacy(t *testing.T) {
+func TestConfigPath_Default(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
-	t.Setenv("CRITERIA_HOME", filepath.Join(tmp, "explicit"))
-	if err := os.MkdirAll(filepath.Join(tmp, legacyRootName), 0o755); err != nil {
-		t.Fatalf("mkdir legacy: %v", err)
+	t.Setenv("CRITERIA_HOME", "")
+	t.Setenv("CRITERIA_STATE_DIR", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+
+	got, err := ConfigPath()
+	if err != nil {
+		t.Fatalf("ConfigPath() error = %v", err)
+	}
+	want := filepath.Join(tmp, defaultConfigRel, "config.hcl")
+	if got != want {
+		t.Fatalf("ConfigPath() = %q, want %q", got, want)
 	}
 
-	got, err := Home()
+	trust, err := TrustConfigPath()
 	if err != nil {
-		t.Fatalf("Home() error = %v", err)
+		t.Fatalf("TrustConfigPath() error = %v", err)
 	}
-	want := filepath.Join(tmp, "explicit")
+	wantTrust := filepath.Join(tmp, defaultConfigRel, "trust.hcl")
+	if trust != wantTrust {
+		t.Fatalf("TrustConfigPath() = %q, want %q", trust, wantTrust)
+	}
+}
+
+func TestConfigPath_XDG_CONFIG_HOME(t *testing.T) {
+	tmp := t.TempDir()
+	xdg := filepath.Join(tmp, "xdg-config")
+	t.Setenv("HOME", tmp)
+	t.Setenv("CRITERIA_HOME", "")
+	t.Setenv("CRITERIA_STATE_DIR", "")
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+
+	got, err := ConfigPath()
+	if err != nil {
+		t.Fatalf("ConfigPath() error = %v", err)
+	}
+	want := filepath.Join(xdg, xdgAppDir, "config.hcl")
 	if got != want {
-		t.Fatalf("Home() = %q, want %q", got, want)
+		t.Fatalf("ConfigPath() = %q, want %q", got, want)
+	}
+}
+
+func TestConfigPath_AppRootWinsOverXDG(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("CRITERIA_HOME", "/explicit/home")
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "xdg-config"))
+
+	got, err := ConfigPath()
+	if err != nil {
+		t.Fatalf("ConfigPath() error = %v", err)
+	}
+	if got != filepath.Join("/explicit/home", "config.hcl") {
+		t.Fatalf("ConfigPath() = %q, want /explicit/home/config.hcl", got)
+	}
+}
+
+func TestConfigPath_CRITERIA_STATE_DIRAlias(t *testing.T) {
+	t.Setenv("CRITERIA_HOME", "")
+	t.Setenv("CRITERIA_STATE_DIR", "/legacy/state")
+
+	got, err := ConfigPath()
+	if err != nil {
+		t.Fatalf("ConfigPath() error = %v", err)
+	}
+	if got != filepath.Join("/legacy/state", "config.hcl") {
+		t.Fatalf("ConfigPath() = %q, want /legacy/state/config.hcl", got)
+	}
+}
+
+func TestConfigPath_XDG_CONFIG_HOME_NonAbsoluteIgnored(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("CRITERIA_HOME", "")
+	t.Setenv("CRITERIA_STATE_DIR", "")
+	t.Setenv("XDG_CONFIG_HOME", "relative/config")
+
+	got, err := ConfigPath()
+	if err != nil {
+		t.Fatalf("ConfigPath() error = %v", err)
+	}
+	want := filepath.Join(tmp, defaultConfigRel, "config.hcl")
+	if got != want {
+		t.Fatalf("ConfigPath() = %q, want %q", got, want)
+	}
+}
+
+func TestCacheOCI_Default(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("CRITERIA_HOME", "")
+	t.Setenv("CRITERIA_STATE_DIR", "")
+	t.Setenv("XDG_CACHE_HOME", "")
+
+	got, err := CacheOCI()
+	if err != nil {
+		t.Fatalf("CacheOCI() error = %v", err)
+	}
+	want := filepath.Join(tmp, defaultCacheRel, "cache", "oci")
+	if got != want {
+		t.Fatalf("CacheOCI() = %q, want %q", got, want)
+	}
+}
+
+func TestCacheOCI_XDG_CACHE_HOME(t *testing.T) {
+	tmp := t.TempDir()
+	xdg := filepath.Join(tmp, "xdg-cache")
+	t.Setenv("HOME", tmp)
+	t.Setenv("CRITERIA_HOME", "")
+	t.Setenv("CRITERIA_STATE_DIR", "")
+	t.Setenv("XDG_CACHE_HOME", xdg)
+
+	got, err := CacheOCI()
+	if err != nil {
+		t.Fatalf("CacheOCI() error = %v", err)
+	}
+	want := filepath.Join(xdg, xdgAppDir, "cache", "oci")
+	if got != want {
+		t.Fatalf("CacheOCI() = %q, want %q", got, want)
+	}
+}
+
+func TestCache_AppRootKeepsSingleTree(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("CRITERIA_HOME", "/explicit/home")
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(tmp, "xdg-cache"))
+
+	resolvers := []struct {
+		name string
+		fn   func() (string, error)
+	}{
+		{"CacheOCI", CacheOCI},
+		{"CacheWorkflows", CacheWorkflows},
+		{"CacheSigstore", CacheSigstore},
+	}
+	for _, r := range resolvers {
+		got, err := r.fn()
+		if err != nil {
+			t.Fatalf("%s() error = %v", r.name, err)
+		}
+		if !strings.HasPrefix(got, "/explicit/home"+string(filepath.Separator)) {
+			t.Fatalf("%s() = %q, want it rooted at /explicit/home", r.name, got)
+		}
 	}
 }
 
@@ -119,17 +294,38 @@ func TestAdaptersDir_CRITERIA_ADAPTERS(t *testing.T) {
 	}
 }
 
-func TestAdaptersDir_Default(t *testing.T) {
+func TestAdaptersDir_Default_AppRoot(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Setenv("CRITERIA_ADAPTERS", "")
 	t.Setenv("CRITERIA_HOME", "")
+	t.Setenv("CRITERIA_STATE_DIR", "/legacy/state")
 
 	got, err := AdaptersDir()
 	if err != nil {
 		t.Fatalf("AdaptersDir() error = %v", err)
 	}
-	want := filepath.Join(tmp, defaultRoot, adaptersSubdir)
+	want := filepath.Join("/legacy/state", adaptersSubdir)
+	if got != want {
+		t.Fatalf("AdaptersDir() = %q, want %q", got, want)
+	}
+}
+
+// TestAdaptersDir_Default_XDGMode pins the XDG-mode adapter default to the
+// well-known install.sh location so adapters installed without
+// CRITERIA_ADAPTERS stay discoverable after the XDG split.
+func TestAdaptersDir_Default_XDGMode(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("CRITERIA_ADAPTERS", "")
+	t.Setenv("CRITERIA_HOME", "")
+	t.Setenv("CRITERIA_STATE_DIR", "")
+
+	got, err := AdaptersDir()
+	if err != nil {
+		t.Fatalf("AdaptersDir() error = %v", err)
+	}
+	want := filepath.Join(tmp, DefaultAdaptersRootName)
 	if got != want {
 		t.Fatalf("AdaptersDir() = %q, want %q", got, want)
 	}

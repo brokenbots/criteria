@@ -6,12 +6,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/brokenbots/criteria/internal/dirs"
 )
 
 // FileProvider resolves secrets by reading files from a confined root directory.
 type FileProvider struct {
 	// Root is the base directory that all file reads are confined to.
-	// Defaults to the user's home directory if empty.
+	// Defaults to the criteria state root (dirs.Home()) if empty.
 	Root string
 }
 
@@ -24,9 +26,9 @@ func (p *FileProvider) CanResolve(ref OriginRef) bool {
 func (p *FileProvider) Resolve(_ context.Context, ref OriginRef) (string, error) {
 	root := p.Root
 	if root == "" {
-		home, err := os.UserHomeDir()
+		home, err := dirs.Home()
 		if err != nil {
-			return "", fmt.Errorf("file provider: cannot determine home dir: %w", err)
+			return "", fmt.Errorf("file provider: cannot determine criteria root: %w", err)
 		}
 		root = home
 	}
@@ -42,7 +44,7 @@ func (p *FileProvider) Resolve(_ context.Context, ref OriginRef) (string, error)
 	}
 	root, err = filepath.EvalSymlinks(root)
 	if err != nil {
-		return "", fmt.Errorf("file provider: invalid root %q: %w", p.Root, err)
+		return "", fmt.Errorf("file provider: invalid root %q: %w", root, err)
 	}
 	if !isWithinRoot(requested, root) {
 		return "", fmt.Errorf("file provider: path %q escapes root %q", ref.Ref, root)
