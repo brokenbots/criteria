@@ -69,8 +69,9 @@ here.
   surface or to event field numbers is a **breaking SDK change** and
   requires an SDK major-version bump.
 - **Adapter model**: adapters run out-of-process and are distributed as signed
-  OCI artifacts, pulled into `$CRITERIA_HOME/cache/oci` (default
-  `~/.local/criteria/cache/oci`) and pinned per workflow in `.criteria.lock.hcl`.
+  OCI artifacts, pulled into `$XDG_CACHE_HOME/criteria/cache/oci` (default
+  `~/.cache/criteria/cache/oci`; `$CRITERIA_HOME/cache/oci` when
+  `CRITERIA_HOME` is set) and pinned per workflow in `.criteria.lock.hcl`.
   The adapter wire protocol is **v2** and lives in the external
   [`criteria-adapter-proto`](https://github.com/brokenbots/criteria-adapter-proto)
   repo; the in-tree `proto/criteria/v1` is the unrelated server/run API. For
@@ -123,8 +124,9 @@ here.
 ## Common pitfalls
 
 - Copilot adapter execution requires installing `criteria-adapter-copilot`
-  into `${CRITERIA_ADAPTERS}/` (default `$CRITERIA_HOME/adapters`, i.e.
-  `~/.local/criteria/adapters`), plus the `copilot` CLI on `PATH` (or pointed
+  into `${CRITERIA_ADAPTERS}/` (default `~/.local/criteria/adapters`
+  under XDG defaults; `$CRITERIA_HOME/adapters` when `CRITERIA_HOME` is set),
+  plus the `copilot` CLI on `PATH` (or pointed
   at via `CRITERIA_COPILOT_BIN`). There is no in-binary adapter code.
 - Server run/event ordering depends on server-assigned monotonic `seq`
   per `run_id`; avoid client-side ordering assumptions.

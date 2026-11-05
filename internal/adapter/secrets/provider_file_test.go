@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/brokenbots/criteria/internal/dirs"
 )
 
 func TestFileProvider(t *testing.T) {
@@ -40,9 +42,34 @@ func TestFileProvider_StripsNewline(t *testing.T) {
 	require.Equal(t, "hello", val)
 }
 
+// TestFileProvider_DefaultRoot tests the documented default: when Root is
+// empty it resolves to the criteria state root (dirs.Home()), not the raw
+// user home. The resolution is asserted behaviorally by confining within and
+// rejecting outside that root.
 func TestFileProvider_DefaultRoot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CRITERIA_HOME", "")
+	t.Setenv("CRITERIA_STATE_DIR", "")
+	t.Setenv("XDG_STATE_HOME", "")
+
+	root, err := dirs.Home()
+	require.NoError(t, err)
+
+	require.NoError(t, os.MkdirAll(root, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "secret.txt"), []byte("state-root-secret\n"), 0o600))
+
+	// A file under $HOME but outside the criteria root must be refused.
+	require.NoError(t, os.WriteFile(filepath.Join(home, "home-secret.txt"), []byte("home secret"), 0o600))
+
 	p := &FileProvider{}
-	require.Equal(t, "", p.Root) // Root is empty but resolved to home at runtime
+	val, err := p.Resolve(t.Context(), OriginRef{Kind: "file", Ref: "secret.txt"})
+	require.NoError(t, err)
+	require.Equal(t, "state-root-secret", val)
+
+	_, err = p.Resolve(t.Context(), OriginRef{Kind: "file", Ref: filepath.Join(home, "home-secret.txt")})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "escapes root")
 }
 
 func TestFileProvider_PathConfinement(t *testing.T) {

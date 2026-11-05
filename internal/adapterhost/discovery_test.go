@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -163,7 +164,11 @@ func TestDiscoverBinaryFallsBackToHome(t *testing.T) {
 	}
 }
 
-func TestDiscoverBinaryLegacyCriteriaHomeSurvives(t *testing.T) {
+// TestDiscoverBinary_IgnoresLegacyCriteriaHome pins the fail-closed default:
+// filesystem-installed adapters under a legacy ~/.criteria/adapters directory
+// are no longer searched, so an attacker cannot resurrect the retired legacy
+// root by dropping binaries there.
+func TestDiscoverBinary_IgnoresLegacyCriteriaHome(t *testing.T) {
 	homeDir := filepath.Join(t.TempDir(), "home")
 	legacyDir := filepath.Join(homeDir, ".criteria", "adapters")
 	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
@@ -177,12 +182,18 @@ func TestDiscoverBinaryLegacyCriteriaHomeSurvives(t *testing.T) {
 	t.Setenv("CRITERIA_ADAPTERS", "")
 	t.Setenv("HOME", homeDir)
 
-	got, err := DiscoverBinary("noop")
-	if err != nil {
-		t.Fatalf("discover: %v", err)
+	path, err := DiscoverBinary("noop")
+	if err == nil {
+		t.Fatalf("legacy ~/.criteria/adapters must not be searched, but resolved %q", path)
 	}
-	if got != legacyPath {
-		t.Fatalf("path=%q want %q", got, legacyPath)
+	var notFound *ErrAdapterNotFound
+	if !errors.As(err, &notFound) {
+		t.Fatalf("expected ErrAdapterNotFound, got %T: %v", err, err)
+	}
+	for _, searched := range notFound.Searched {
+		if strings.HasPrefix(searched, legacyDir+string(filepath.Separator)) {
+			t.Fatalf("search paths include legacy dir entry %q", searched)
+		}
 	}
 }
 

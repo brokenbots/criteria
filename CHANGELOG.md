@@ -193,6 +193,26 @@ product version). The release tag and date are finalized by the release gate.
   read of outputs is covered by the card-119 seam contract and lands
   castle-side in the same window.
 
+### Directory layout (XDG base directories)
+
+Criteria no longer reads or writes a legacy `~/.criteria` directory under any
+circumstances: the existence-based adoption that turned a pre-existing (or
+attacker-created) `~/.criteria` into the trust-anchor location is deleted.
+When no app override is set, config, state, and cache root independently at
+the XDG base directories:
+
+| Category | Location (default) |
+|---|---|
+| State (runs, checkpoints, approvals, audit, remote tokens) | `$XDG_STATE_HOME/criteria` → `~/.local/state/criteria` |
+| Config (`config.hcl`, `trust.hcl` — the trust anchor) | `$XDG_CONFIG_HOME/criteria` → `~/.config/criteria` |
+| Cache (`cache/oci`, `cache/workflows`, `cache/sigstore`) | `$XDG_CACHE_HOME/criteria` → `~/.cache/criteria` |
+| Adapter binaries (filesystem discovery, `install.sh` target) | `~/.local/criteria/adapters` (unchanged) |
+
+Non-absolute XDG values are ignored per the XDG spec. `CRITERIA_HOME`
+remains the app override and keeps the whole tree (config/trust/state/cache +
+`adapters/`) rooted in a single directory, followed by the deprecated
+`CRITERIA_STATE_DIR` alias (honored only when `CRITERIA_HOME` is unset).
+
 ### Breaking changes
 
 - v1 adapters no longer load; rebuild against the v2 SDKs.
@@ -202,10 +222,21 @@ product version). The release tag and date are finalized by the release gate.
   interpolating a secret-tagged value into `config`/`input` is a compile error.
 - The in-tree `copilot` and `shell` adapters were extracted to their own repos and
   are pulled like any other adapter.
+- The legacy `~/.criteria` root is gone: it is never adopted (existence-based
+  or otherwise), never read, and never written. Data written to the old
+  location by a previous release does not migrate automatically.
 
 ### Migration
 
 See [docs/adapter-v2-migration.md](docs/adapter-v2-migration.md).
+
+For the directory-layout change: set `CRITERIA_HOME=$HOME/.local/criteria` to
+keep a single tree for state/config/cache at the pre-v0.6 default location,
+copy an existing `trust.hcl` from the old root to
+`$XDG_CONFIG_HOME/criteria/trust.hcl` when you rely on global trust anchors,
+and move (or let re-populate) `cache/` and `runs/` — nothing under the old
+`~/.criteria` layout is read anymore. Adapter binaries installed by
+`install.sh`/`make install` stay at `~/.local/criteria/adapters`.
 
 ### Variable overrides
 

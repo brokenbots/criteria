@@ -137,20 +137,21 @@ func TestLocalState_NoStateDir_IsNoOp(t *testing.T) {
 	}
 }
 
-// TestLocalState_LegacyCriteriaHomeSurvives verifies that an existing
-// ~/.criteria directory from a prior install is used in place, so run history
-// remains visible after the upgrade to CRITERIA_HOME.
-func TestLocalState_LegacyCriteriaHomeSurvives(t *testing.T) {
+// TestLocalState_NoLegacyCriteriaAdoption verifies the fail-closed default:
+// an existing ~/.criteria directory from a prior install is never adopted as
+// the criteria root, so new state is written under the resolved default root
+// and the legacy directory stays untouched.
+func TestLocalState_NoLegacyCriteriaAdoption(t *testing.T) {
 	homeDir := t.TempDir()
 	legacyRoot := filepath.Join(homeDir, ".criteria")
-	runsDir := filepath.Join(legacyRoot, "runs")
-	if err := os.MkdirAll(runsDir, 0o755); err != nil {
-		t.Fatalf("mkdir legacy runs: %v", err)
+	if err := os.MkdirAll(legacyRoot, 0o755); err != nil {
+		t.Fatalf("mkdir legacy root: %v", err)
 	}
 
 	t.Setenv("HOME", homeDir)
 	t.Setenv("CRITERIA_HOME", "")
 	t.Setenv("CRITERIA_STATE_DIR", "")
+	t.Setenv("XDG_STATE_HOME", "")
 
 	cp := &StepCheckpoint{
 		RunID:       "legacy-run",
@@ -160,9 +161,10 @@ func TestLocalState_LegacyCriteriaHomeSurvives(t *testing.T) {
 		t.Fatalf("WriteStepCheckpoint: %v", err)
 	}
 
-	// Verify the checkpoint was written under the legacy root, not a new one.
-	if _, err := os.Stat(filepath.Join(legacyRoot, "runs", "legacy-run.json")); err != nil {
-		t.Fatalf("legacy checkpoint file not found: %v", err)
+	// The checkpoint must be written under the resolved default root, and
+	// nothing may appear under the legacy ~/.criteria directory.
+	if _, err := os.Stat(filepath.Join(legacyRoot, "runs", "legacy-run.json")); !os.IsNotExist(err) {
+		t.Fatalf("legacy ~/.criteria was touched: %v", err)
 	}
 
 	checkpoints, err := ListStepCheckpoints()

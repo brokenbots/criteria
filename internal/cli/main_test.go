@@ -16,8 +16,13 @@ import (
 func TestMain(m *testing.M) {
 	// Do not inherit a CRITERIA_HOME or CRITERIA_STATE_DIR from the outer test
 	// runner; tests that need an explicit state directory set it via t.Setenv.
+	// The XDG base-directory variables are cleared too so the per-category
+	// defaults in internal/dirs stay deterministic in test environments.
 	_ = os.Unsetenv("CRITERIA_HOME")
 	_ = os.Unsetenv("CRITERIA_STATE_DIR")
+	_ = os.Unsetenv("XDG_CONFIG_HOME")
+	_ = os.Unsetenv("XDG_STATE_HOME")
+	_ = os.Unsetenv("XDG_CACHE_HOME")
 
 	// Build the noop adapter once and expose it via CRITERIA_ADAPTERS so tests
 	// that execute real workflows can discover an adapter out-of-process (shell
