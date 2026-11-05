@@ -185,7 +185,7 @@ func TestConfigPath_AppRootWinsOverXDG(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ConfigPath() error = %v", err)
 	}
-	if got != filepath.Join("/explicit/home", "config.hcl") {
+	if got != "/explicit/home/config.hcl" {
 		t.Fatalf("ConfigPath() = %q, want /explicit/home/config.hcl", got)
 	}
 }
@@ -198,7 +198,7 @@ func TestConfigPath_CRITERIA_STATE_DIRAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ConfigPath() error = %v", err)
 	}
-	if got != filepath.Join("/legacy/state", "config.hcl") {
+	if got != "/legacy/state/config.hcl" {
 		t.Fatalf("ConfigPath() = %q, want /legacy/state/config.hcl", got)
 	}
 }
@@ -305,7 +305,7 @@ func TestAdaptersDir_Default_AppRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AdaptersDir() error = %v", err)
 	}
-	want := filepath.Join("/legacy/state", adaptersSubdir)
+	want := "/legacy/state/" + adaptersSubdir
 	if got != want {
 		t.Fatalf("AdaptersDir() = %q, want %q", got, want)
 	}

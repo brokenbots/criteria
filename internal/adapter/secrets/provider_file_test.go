@@ -5,8 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/brokenbots/criteria/internal/dirs"
 	"github.com/stretchr/testify/require"
+
+	"github.com/brokenbots/criteria/internal/dirs"
 )
 
 func TestFileProvider(t *testing.T) {
