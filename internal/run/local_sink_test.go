@@ -372,3 +372,41 @@ func TestLocalSink_OnRunOutputs_TypedValuePreserved(t *testing.T) {
 		t.Errorf("name typed_value = %v, want \"test\"", outs[1].GetTypedValue())
 	}
 }
+
+// TestLocalSink_OnAuditLoss_NDJSON asserts the durable run record carries
+// the audit-loss verdict: the AuditLoss NDJSON row is stamped with the run's
+// vocabulary and proto-json body, and a nil event stays a silent no-op.
+func TestLocalSink_OnAuditLoss_NDJSON(t *testing.T) {
+	var buf bytes.Buffer
+	sink := &LocalSink{RunID: "run-local-1", Out: &buf}
+
+	sink.OnAuditLoss(&pb.AuditLoss{DroppedEntries: 2, AttemptedEntries: 5, LastError: "mkdir /audit: not a directory"})
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 NDJSON line, got %d: %q", len(lines), buf.String())
+	}
+	var line sinkLine
+	if err := json.Unmarshal([]byte(lines[0]), &line); err != nil {
+		t.Fatalf("unmarshal line: %v", err)
+	}
+	if line.Seq != 1 || line.RunID != "run-local-1" {
+		t.Errorf("stamping = seq %d run %q, want 1 and run-local-1", line.Seq, line.RunID)
+	}
+	if line.PayloadType != "AuditLoss" {
+		t.Errorf("payload_type = %q, want AuditLoss", line.PayloadType)
+	}
+	var loss pb.AuditLoss
+	if err := protojson.Unmarshal(line.Payload, &loss); err != nil {
+		t.Fatalf("protojson audit-loss body: %v", err)
+	}
+	if loss.DroppedEntries != 2 || loss.AttemptedEntries != 5 || loss.LastError != "mkdir /audit: not a directory" {
+		t.Errorf("loss body = %+v, want dropped=2 attempted=5 with the writer's error", &loss)
+	}
+
+	sink.OnAuditLoss(nil)
+	lines = strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 1 {
+		t.Errorf("a nil loss event must not append a row, got %d lines", len(lines))
+	}
+}

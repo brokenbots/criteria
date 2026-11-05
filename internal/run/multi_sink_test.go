@@ -73,15 +73,16 @@ func TestMultiSink_FansEveryEventToAllChildren(t *testing.T) {
 	sink.OnStepOutcome("s", "success", time.Millisecond, nil, "")
 	sink.OnStepTransition("s", "done", "success")
 	sink.OnRunCompleted("done", true)
+	sink.OnAuditLoss(&pb.AuditLoss{DroppedEntries: 1, AttemptedEntries: 1})
 	ss := sink.StepEventSink("s")
 	ss.Log("stdout", []byte("x"))
 	ss.Adapter("agent.message", map[string]any{"content": "y"})
 
-	if got := a.calls.Load(); got != 5 {
-		t.Errorf("child a engine calls: got %d want 5", got)
+	if got := a.calls.Load(); got != 6 {
+		t.Errorf("child a engine calls: got %d want 6", got)
 	}
-	if got := b.calls.Load(); got != 5 {
-		t.Errorf("child b engine calls: got %d want 5", got)
+	if got := b.calls.Load(); got != 6 {
+		t.Errorf("child b engine calls: got %d want 6", got)
 	}
 	if got := a.stepFan.Load(); got != 2 {
 		t.Errorf("child a step fan calls: got %d want 2", got)
@@ -162,5 +163,21 @@ func TestMultiSink_RunPausedResumedFanOut(t *testing.T) {
 	}
 	if l.PayloadType != "RunResumed" {
 		t.Errorf("line 1 type = %q, want RunResumed", l.PayloadType)
+	}
+}
+
+// TestMultiSink_OnAuditLossFansOut asserts the audit-loss event fans out to
+// every child sink so each record of the run shows the loss.
+func TestMultiSink_OnAuditLossFansOut(t *testing.T) {
+	var a, b recordingSink
+	var sink engine.Sink = NewMultiSink(&a, &b)
+
+	sink.OnAuditLoss(&pb.AuditLoss{DroppedEntries: 2, AttemptedEntries: 5})
+
+	if got := a.calls.Load(); got != 1 {
+		t.Errorf("child a calls: got %d want 1", got)
+	}
+	if got := b.calls.Load(); got != 1 {
+		t.Errorf("child b calls: got %d want 1", got)
 	}
 }
