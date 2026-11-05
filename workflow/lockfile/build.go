@@ -19,6 +19,10 @@ import (
 //   - Signature from signer (may be nil if unsigned and policy allows it)
 //   - Remote from remote (may be nil if not bound to a remote environment)
 //
+// The lockfile is the trust anchor for every later pull/apply: a keyless
+// signature lacking its OIDC issuer or subject is rejected here so an
+// un-pinnable signer never becomes "whatever the policy default allows".
+//
 // The caller (e.g. WS08) must set Type and Name on the returned value,
 // since those are workflow-scoped identifiers not present in the pull inputs.
 func BuildEntry(ref oci.Reference, dg digest.Digest, m *manifest.Manifest, signer *signing.SignerIdentity, remote *RemoteFields) (LockedAdapter, error) {
@@ -27,6 +31,17 @@ func BuildEntry(ref oci.Reference, dg digest.Digest, m *manifest.Manifest, signe
 	}
 	if dg == "" {
 		return LockedAdapter{}, fmt.Errorf("resolved digest is required")
+	}
+	if signer != nil && signer.Keyless != nil {
+		k := signer.Keyless
+		switch {
+		case k.Issuer == "" && k.Subject == "":
+			return LockedAdapter{}, fmt.Errorf("keyless signature is missing both its OIDC issuer and workflow subject; the lockfile pin must record both for the pull to be lockable")
+		case k.Issuer == "":
+			return LockedAdapter{}, fmt.Errorf("keyless signature is missing its OIDC issuer; the lockfile pin must record the issuer for the pull to be lockable")
+		case k.Subject == "":
+			return LockedAdapter{}, fmt.Errorf("keyless signature is missing its workflow subject; the lockfile pin must record the subject for the pull to be lockable")
+		}
 	}
 
 	platforms := make([]string, 0, len(m.Platforms))
