@@ -19,6 +19,8 @@ import (
 	"github.com/zclconf/go-cty/cty"
 	"github.com/zclconf/go-cty/cty/function"
 	"github.com/zclconf/go-cty/cty/function/stdlib"
+
+	"github.com/brokenbots/criteria/internal/envreg"
 )
 
 const (
@@ -98,7 +100,7 @@ func DefaultFunctionOptions(workflowDir string) *FunctionOptions {
 	cwd, _ := os.Getwd()
 	rootDir := cwd
 	maxBytes := defaultMaxBytes
-	if raw := os.Getenv("CRITERIA_FILE_FUNC_MAX_BYTES"); raw != "" {
+	if raw := envreg.CRITERIAFileFuncMaxBytes.String(); raw != "" {
 		if v, err := strconv.ParseInt(raw, 10, 64); err == nil {
 			switch {
 			case v < minMaxBytes:
@@ -112,7 +114,7 @@ func DefaultFunctionOptions(workflowDir string) *FunctionOptions {
 	}
 
 	var allowed []string
-	if raw := os.Getenv("CRITERIA_WORKFLOW_ALLOWED_PATHS"); raw != "" {
+	if raw := envreg.CRITERIAWorkflowAllowedPaths.String(); raw != "" {
 		for _, p := range filepath.SplitList(raw) {
 			if p == "" {
 				continue

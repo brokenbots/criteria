@@ -16,6 +16,7 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter/oci"
 	"github.com/brokenbots/criteria/internal/adapter/signing"
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	"github.com/brokenbots/criteria/internal/envreg"
 	"github.com/brokenbots/criteria/internal/testutil"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
@@ -654,7 +655,7 @@ func TestLockThenValidate_FullSchemaVerification(t *testing.T) {
 	// Save the real noop binary built by TestMain before overriding
 	// CRITERIA_ADAPTERS with a fresh directory. Use a unique adapter type label
 	// in the workflow so there is no by-name install to mask a missing extraction.
-	builtNoopPath := filepath.Join(os.Getenv("CRITERIA_ADAPTERS"), "criteria-adapter-noop")
+	builtNoopPath := filepath.Join(envreg.CRITERIAAdapters.String(), "criteria-adapter-noop")
 	noopBinary, err := os.ReadFile(builtNoopPath)
 	require.NoError(t, err, "read built noop adapter binary from %s", builtNoopPath)
 

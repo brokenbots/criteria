@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/brokenbots/criteria/internal/cli/localresume"
+	"github.com/brokenbots/criteria/internal/envreg"
 	"github.com/brokenbots/criteria/internal/run"
-	"github.com/brokenbots/criteria/internal/tunables"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -95,7 +95,7 @@ func selectApprovalResolution(log *slog.Logger, cfg localApprovalConfig, graph *
 		}
 		// The two designed paths are mutually exclusive per run: the answers
 		// file wins and the run stays non-interactive even on a TTY.
-		if raw := os.Getenv("CRITERIA_LOCAL_APPROVAL"); raw != "" {
+		if raw := envreg.CRITERIALocalApproval.String(); raw != "" {
 			log.Warn("local-approval: --answers overrides CRITERIA_LOCAL_APPROVAL; the env mode is ignored for this run",
 				"file", path, "env_mode", raw)
 		} else {
@@ -108,7 +108,7 @@ func selectApprovalResolution(log *slog.Logger, cfg localApprovalConfig, graph *
 		res.opts = opts
 		return res, nil
 	}
-	if raw := os.Getenv("CRITERIA_LOCAL_APPROVAL"); raw != "" {
+	if raw := envreg.CRITERIALocalApproval.String(); raw != "" {
 		opts, err := localResumerOptions(log, cfg)
 		if err != nil {
 			return res, err
@@ -150,10 +150,10 @@ func localResumerOptions(log *slog.Logger, cfg localApprovalConfig) (localresume
 		DecisionPathFn: ApprovalDecisionPath,
 		RequestPathFn:  ApprovalRequestPath,
 	}
-	if rawTimeout := os.Getenv(tunables.EnvLocalApprovalFileTimeout); rawTimeout != "" {
+	if rawTimeout := envreg.CRITERIALocalApprovalFileTimeout.String(); rawTimeout != "" {
 		d, err := time.ParseDuration(rawTimeout)
 		if err != nil {
-			return opts, fmt.Errorf("invalid %s=%q: %w", tunables.EnvLocalApprovalFileTimeout, rawTimeout, err)
+			return opts, fmt.Errorf("invalid %s=%q: %w", envreg.CRITERIALocalApprovalFileTimeout.Env(), rawTimeout, err)
 		}
 		opts.FileTimeout = d
 	}

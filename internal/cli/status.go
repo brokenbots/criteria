@@ -6,6 +6,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 
+	"github.com/brokenbots/criteria/internal/envreg"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
 )
@@ -20,10 +21,10 @@ type serverClientFlags struct {
 }
 
 func (f *serverClientFlags) bind(cmd *cobra.Command) {
-	cmd.Flags().StringVar(&f.URL, "server", envOrDefault("CRITERIA_SERVER_URL", "http://localhost:8080"), "Server base URL (or CRITERIA_SERVER_URL)")
-	cmd.Flags().StringVar(&f.CAFile, "tls-ca", envOrDefault("CRITERIA_TLS_CA", ""), "PEM CA bundle for server TLS verification (or CRITERIA_TLS_CA)")
-	cmd.Flags().StringVar(&f.CertFile, "tls-cert", envOrDefault("CRITERIA_TLS_CERT", ""), "PEM client certificate for mTLS (or CRITERIA_TLS_CERT)")
-	cmd.Flags().StringVar(&f.KeyFile, "tls-key", envOrDefault("CRITERIA_TLS_KEY", ""), "PEM client key for mTLS (or CRITERIA_TLS_KEY)")
+	cmd.Flags().StringVar(&f.URL, "server", envreg.CRITERIAServerURL.StringOr("http://localhost:8080"), "Server base URL (or CRITERIA_SERVER_URL)")
+	cmd.Flags().StringVar(&f.CAFile, "tls-ca", envreg.CRITERIATLSCA.StringOr(""), "PEM CA bundle for server TLS verification (or CRITERIA_TLS_CA)")
+	cmd.Flags().StringVar(&f.CertFile, "tls-cert", envreg.CRITERIATLSCert.StringOr(""), "PEM client certificate for mTLS (or CRITERIA_TLS_CERT)")
+	cmd.Flags().StringVar(&f.KeyFile, "tls-key", envreg.CRITERIATLSKey.StringOr(""), "PEM client key for mTLS (or CRITERIA_TLS_KEY)")
 }
 
 func (f *serverClientFlags) client() (criteriav1connect.ServerServiceClient, error) {

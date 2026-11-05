@@ -17,6 +17,7 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/engine"
+	"github.com/brokenbots/criteria/internal/envreg"
 	"github.com/brokenbots/criteria/internal/run"
 	servertrans "github.com/brokenbots/criteria/internal/transport/server"
 	"github.com/brokenbots/criteria/internal/tunables"
@@ -64,14 +65,14 @@ processing later assignments without restarting.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.serverURL, "server", envOrDefault("CRITERIA_SERVER_URL", ""), "server base URL (required for agent mode)")
-	cmd.Flags().StringVar(&opts.name, "name", envOrDefault("CRITERIA_NAME", ""), "Agent name (defaults to hostname)")
-	cmd.Flags().StringVar(&opts.version, "version", envOrDefault("CRITERIA_AGENT_VERSION", ""), "Agent version reported during registration (defaults to binary version)")
-	cmd.Flags().StringVar(&opts.codec, "server-codec", envOrDefault("CRITERIA_SERVER_CODEC", "proto"), "Connect codec: proto or json")
-	cmd.Flags().StringVar(&opts.tlsMode, "server-tls", envOrDefault("CRITERIA_SERVER_TLS", ""), "TLS mode: disable|tls|mtls")
-	cmd.Flags().StringVar(&opts.tlsCA, "tls-ca", envOrDefault("CRITERIA_TLS_CA", ""), "Path to CA bundle PEM")
-	cmd.Flags().StringVar(&opts.tlsCert, "tls-cert", envOrDefault("CRITERIA_TLS_CERT", ""), "Path to client cert PEM")
-	cmd.Flags().StringVar(&opts.tlsKey, "tls-key", envOrDefault("CRITERIA_TLS_KEY", ""), "Path to client key PEM")
+	cmd.Flags().StringVar(&opts.serverURL, "server", envreg.CRITERIAServerURL.StringOr(""), "server base URL (required for agent mode)")
+	cmd.Flags().StringVar(&opts.name, "name", envreg.CRITERIAName.StringOr(""), "Agent name (defaults to hostname)")
+	cmd.Flags().StringVar(&opts.version, "version", envreg.CRITERIAAgentVersion.StringOr(""), "Agent version reported during registration (defaults to binary version)")
+	cmd.Flags().StringVar(&opts.codec, "server-codec", envreg.CRITERIAServerCodec.StringOr("proto"), "Connect codec: proto or json")
+	cmd.Flags().StringVar(&opts.tlsMode, "server-tls", envreg.CRITERIAServerTLS.StringOr(""), "TLS mode: disable|tls|mtls")
+	cmd.Flags().StringVar(&opts.tlsCA, "tls-ca", envreg.CRITERIATLSCA.StringOr(""), "Path to CA bundle PEM")
+	cmd.Flags().StringVar(&opts.tlsCert, "tls-cert", envreg.CRITERIATLSCert.StringOr(""), "Path to client cert PEM")
+	cmd.Flags().StringVar(&opts.tlsKey, "tls-key", envreg.CRITERIATLSKey.StringOr(""), "Path to client key PEM")
 	cmd.Flags().StringArrayVar(&opts.varOverrides, "var", nil, "Override a workflow variable: key=value (repeatable)")
 	cmd.Flags().StringArrayVar(&opts.varFiles, "var-file", nil, "Load variable overrides from a .chcl, .hcl, or .json file (repeatable; --var takes precedence)")
 	cmd.Flags().StringArrayVar(&opts.subworkflowRoots, "subworkflow-root", nil, "Restrict subworkflow source resolution to this root path (repeatable; empty = no restriction)")

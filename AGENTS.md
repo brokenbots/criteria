@@ -53,8 +53,12 @@ here.
   [sdk/conformance/inmem_subject_test.go](sdk/conformance/inmem_subject_test.go).
 - Host-side adapter loader, OCI cache, signing, manifest, environments: [internal/adapter/](internal/adapter/)
 - Tunable timing/budget settings: [internal/tunables/](internal/tunables/) —
-  one typed `Settings` + defaults + the registry of operator-facing env
-  overrides; the generated table lives in [docs/env-vars.md](docs/env-vars.md).
+  one typed `Settings` + defaults; the generated table lives in
+  [docs/env-vars.md](docs/env-vars.md).
+- CRITERIA_* environment variables: [internal/envreg/](internal/envreg/) —
+  the single registry owning every env name, kind, default, consumer, and
+  doc line; the generated table in [docs/env-vars.md](docs/env-vars.md)
+  drift-checks against it.
 - In-tree adapters: [cmd/criteria-adapter-mcp/](cmd/criteria-adapter-mcp/)
   (copilot, shell, and noop were extracted to their own repos)
 
@@ -97,11 +101,16 @@ here.
   durable docs (ADRs under [docs/adrs/](docs/adrs/), [CHANGELOG.md](CHANGELOG.md))
   and in PRs, not in production comments. Do not add new ticket-ID narrations
   to comments; state the design fact itself or cite the ADR instead.
+- **CRITERIA_* environment variables** register in `internal/envreg`: no
+  raw `os.Getenv`/`os.LookupEnv` of a CRITERIA_* name outside the registry
+  package — consume the typed accessors (`envreg.CRITERIAHome.String()`) or
+  `envreg.Lookup` for data-driven names, and add the row to the registry so
+  [docs/env-vars.md](docs/env-vars.md) stays current.
 - **Timing knobs** live in `internal/tunables`: no new raw timing literals
-  or ad-hoc `os.Getenv` timing reads at consumer sites — consume the typed
+  at consumer sites — consume the typed
   `Settings` (via `tunables.FromEnv()` at configuration points) or the
-  exported `Default*` constants, and register any operator-facing override
-  in the registry so [docs/env-vars.md](docs/env-vars.md) stays current.
+  exported `Default*` constants; their env names register in
+  `internal/envreg` per the rule above.
 - Preserve existing adapter boundaries (`internal/adapter`,
   `internal/adapters/*`, `internal/plugin`). Do not import `sdk/` from
   `internal/` — `sdk/pb/...` is the only permitted reach into the SDK

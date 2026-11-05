@@ -25,6 +25,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/brokenbots/criteria/internal/envreg"
 )
 
 const (
@@ -55,10 +57,10 @@ const (
 // configured: $CRITERIA_HOME, or the deprecated $CRITERIA_STATE_DIR alias
 // when $CRITERIA_HOME is unset.
 func appRoot() (string, bool) {
-	if v := strings.TrimSpace(os.Getenv("CRITERIA_HOME")); v != "" {
+	if v := strings.TrimSpace(envreg.CRITERIAHome.String()); v != "" {
 		return v, true
 	}
-	if v := strings.TrimSpace(os.Getenv("CRITERIA_STATE_DIR")); v != "" {
+	if v := strings.TrimSpace(envreg.CRITERIAStateDir.String()); v != "" {
 		return v, true
 	}
 	return "", false
@@ -99,7 +101,7 @@ func Home() (string, error) {
 // appRoot()/adapters when an app root is set, or $HOME/.local/criteria/adapters
 // (the install.sh target) when criteria runs at its XDG defaults.
 func AdaptersDir() (string, error) {
-	if v := strings.TrimSpace(os.Getenv("CRITERIA_ADAPTERS")); v != "" {
+	if v := strings.TrimSpace(envreg.CRITERIAAdapters.String()); v != "" {
 		return v, nil
 	}
 	return DefaultAdaptersDir()

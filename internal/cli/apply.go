@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/brokenbots/criteria/internal/envreg"
 	"github.com/brokenbots/criteria/internal/runstate"
 )
 
@@ -70,22 +71,22 @@ func NewApplyCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.serverURL, "server", envOrDefault("CRITERIA_SERVER_URL", ""), "server base URL (optional for local mode)")
+	cmd.Flags().StringVar(&opts.serverURL, "server", envreg.CRITERIAServerURL.StringOr(""), "server base URL (optional for local mode)")
 	cmd.Flags().StringVar(&opts.eventsPath, "events-file", "", "Write ND-JSON events to this path (local mode: primary event stream; server mode: also mirrored from the server stream)")
-	cmd.Flags().StringVar(&opts.name, "name", envOrDefault("CRITERIA_NAME", ""), "Agent name (server mode, defaults to hostname)")
-	cmd.Flags().StringVar(&opts.serverBootstrapToken, "server-bootstrap-token", envOrDefault("CRITERIA_SERVER_BOOTSTRAP_TOKEN", ""), "Token sent as the X-Server-Bootstrap header on Register in server mode (\"file:<path>\" reads it from a mounted secret file; also via CRITERIA_SERVER_BOOTSTRAP_TOKEN)")
-	cmd.Flags().StringVar(&opts.codec, "server-codec", envOrDefault("CRITERIA_SERVER_CODEC", "proto"), "Connect codec: proto or json")
-	cmd.Flags().StringVar(&opts.tlsMode, "server-tls", envOrDefault("CRITERIA_SERVER_TLS", ""), "TLS mode: disable|tls|mtls")
-	cmd.Flags().StringVar(&opts.tlsCA, "tls-ca", envOrDefault("CRITERIA_TLS_CA", ""), "Path to CA bundle PEM")
-	cmd.Flags().StringVar(&opts.tlsCert, "tls-cert", envOrDefault("CRITERIA_TLS_CERT", ""), "Path to client cert PEM")
-	cmd.Flags().StringVar(&opts.tlsKey, "tls-key", envOrDefault("CRITERIA_TLS_KEY", ""), "Path to client key PEM")
+	cmd.Flags().StringVar(&opts.name, "name", envreg.CRITERIAName.StringOr(""), "Agent name (server mode, defaults to hostname)")
+	cmd.Flags().StringVar(&opts.serverBootstrapToken, "server-bootstrap-token", envreg.CRITERIAServerBootstrapToken.StringOr(""), "Token sent as the X-Server-Bootstrap header on Register in server mode (\"file:<path>\" reads it from a mounted secret file; also via CRITERIA_SERVER_BOOTSTRAP_TOKEN)")
+	cmd.Flags().StringVar(&opts.codec, "server-codec", envreg.CRITERIAServerCodec.StringOr("proto"), "Connect codec: proto or json")
+	cmd.Flags().StringVar(&opts.tlsMode, "server-tls", envreg.CRITERIAServerTLS.StringOr(""), "TLS mode: disable|tls|mtls")
+	cmd.Flags().StringVar(&opts.tlsCA, "tls-ca", envreg.CRITERIATLSCA.StringOr(""), "Path to CA bundle PEM")
+	cmd.Flags().StringVar(&opts.tlsCert, "tls-cert", envreg.CRITERIATLSCert.StringOr(""), "Path to client cert PEM")
+	cmd.Flags().StringVar(&opts.tlsKey, "tls-key", envreg.CRITERIATLSKey.StringOr(""), "Path to client key PEM")
 	cmd.Flags().StringArrayVar(&opts.varOverrides, "var", nil, "Override a workflow variable: key=value (repeatable)")
 	cmd.Flags().StringArrayVar(&opts.varFiles, "var-file", nil, "Load variable overrides from a .chcl, .hcl, or .json file (repeatable; --var takes precedence)")
-	cmd.Flags().StringVar(&opts.output, "output", envOrDefault("CRITERIA_OUTPUT", "auto"), "Standalone output format: auto|concise|json (auto: concise on TTY, json when piped)")
+	cmd.Flags().StringVar(&opts.output, "output", envreg.CRITERIAOutput.StringOr("auto"), "Standalone output format: auto|concise|json (auto: concise on TTY, json when piped)")
 	cmd.Flags().BoolVar(&opts.ui, "ui", true, "Serve the local run viewer on loopback while a local run executes (local mode)")
 	cmd.Flags().IntVar(&opts.uiPort, "ui-port", 0, "Port for the local run viewer's run-state server (0 = auto-select; loopback only)")
-	cmd.Flags().StringVar(&opts.controlAddr, "control-addr", envOrDefault("CRITERIA_CONTROL_ADDR", ""), "Listen address (host:port) for the run's control/run-state listener (empty = random loopback port; loopback only; local mode)")
-	cmd.Flags().StringVar(&opts.castleAddr, "castle-addr", envOrDefault("CRITERIA_CASTLE_ADDR", ""), "Castle control plane base URL the run-viewer's console proxies Login/Logout/ListSessions to (castle is the single source of truth for console login; ResolveResume stays local; local mode)")
+	cmd.Flags().StringVar(&opts.controlAddr, "control-addr", envreg.CRITERIAControlAddr.StringOr(""), "Listen address (host:port) for the run's control/run-state listener (empty = random loopback port; loopback only; local mode)")
+	cmd.Flags().StringVar(&opts.castleAddr, "castle-addr", envreg.CRITERIACastleAddr.StringOr(""), "Castle control plane base URL the run-viewer's console proxies Login/Logout/ListSessions to (castle is the single source of truth for console login; ResolveResume stays local; local mode)")
 	cmd.Flags().StringArrayVar(&opts.subworkflowRoots, "subworkflow-root", nil, "Restrict subworkflow source resolution to this root path (repeatable; empty = no restriction)")
 	cmd.Flags().StringVar(&opts.workflowRef, "workflow-ref", "", "Expected ref/digest the workflow source must resolve to — a git commit SHA or sha256:<digest>; the run fails closed on mismatch")
 	cmd.Flags().BoolVar(&opts.warnsAsErrors, "warnings-as-errors", false, "Refuse to run when a warning is raised (e.g. an adapter whose schema could not be verified)")

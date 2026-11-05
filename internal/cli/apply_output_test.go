@@ -152,18 +152,6 @@ func TestBuildLocalSink_JSONModeReturnsLocalSink(t *testing.T) {
 	}
 }
 
-func TestEnvOrDefault(t *testing.T) {
-	const key = "CRITERIA_TEST_ENV_OR_DEFAULT_XYZ"
-	t.Setenv(key, "from-env")
-	if got := envOrDefault(key, "fallback"); got != "from-env" {
-		t.Fatalf("got %q want from-env", got)
-	}
-	t.Setenv(key, "")
-	if got := envOrDefault(key, "fallback"); got != "fallback" {
-		t.Fatalf("got %q want fallback", got)
-	}
-}
-
 func TestParseVarOverrides(t *testing.T) {
 	tests := []struct {
 		name  string

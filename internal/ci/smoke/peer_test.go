@@ -15,6 +15,7 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/engine"
+	"github.com/brokenbots/criteria/internal/envreg"
 )
 
 // fixtureAdapterName is the adapter definition identity the smoke noop
@@ -30,7 +31,7 @@ const fixtureAdapterName = "noop.demo"
 //
 // Gated by CRITERIA_PEER_E2E=1.
 func TestPeerSmoke_HappyPath(t *testing.T) {
-	if os.Getenv("CRITERIA_PEER_E2E") != "1" {
+	if envreg.CRITERIAPeerE2E.String() != "1" {
 		t.Skip("set CRITERIA_PEER_E2E=1 to run peer smoke tests")
 	}
 
@@ -108,7 +109,7 @@ state "done" {
 //
 // Gated by CRITERIA_PEER_E2E=1.
 func TestPeerSmoke_CrashRecovery(t *testing.T) {
-	if os.Getenv("CRITERIA_PEER_E2E") != "1" {
+	if envreg.CRITERIAPeerE2E.String() != "1" {
 		t.Skip("set CRITERIA_PEER_E2E=1 to run peer smoke tests")
 	}
 

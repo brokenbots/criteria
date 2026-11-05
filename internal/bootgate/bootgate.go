@@ -29,24 +29,26 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
+
+	"github.com/brokenbots/criteria/internal/envreg"
 )
 
-// Environment variables the orchestrator injects into a runner Job. All three
+// EnvOperatorViewURL, EnvRunTicket, and EnvRunJob alias the registry rows for
+// the identity triple the orchestrator injects into a runner Job; all three
 // unset means the gate is disabled (standalone/local mode and legacy
 // orchestrators); a partial set is a loud configuration error, because an
 // operator that injects identity but no view URL (or the reverse) has a
 // broken gate deployment that must not silently degrade to no gate.
-const (
+var (
 	// EnvOperatorViewURL is the base URL of the operator view endpoint that
 	// reports this runner's CriteriaRun phase.
-	EnvOperatorViewURL = "CRITERIA_OPERATOR_VIEW_URL"
+	EnvOperatorViewURL = envreg.CRITERIAOperatorViewURL.Env()
 	// EnvRunTicket is the ticket identity of the CR this runner serves.
-	EnvRunTicket = "CRITERIA_RUN_TICKET"
+	EnvRunTicket = envreg.CRITERIARunTicket.Env()
 	// EnvRunJob is the runner Job name the operator created for the CR.
-	EnvRunJob = "CRITERIA_RUN_JOB"
+	EnvRunJob = envreg.CRITERIARunJob.Env()
 )
 
 // maxViewBodyBytes bounds the operator view payload. The document is a tiny
@@ -153,9 +155,9 @@ func Configure(lookup func(string) (string, bool), probeTimeout time.Duration) (
 }
 
 // ConfigureFromEnv resolves the gate configuration from the process
-// environment.
+// environment through the registry's audit point.
 func ConfigureFromEnv(probeTimeout time.Duration) (Config, bool, error) {
-	return Configure(os.LookupEnv, probeTimeout)
+	return Configure(envreg.LookupOK, probeTimeout)
 }
 
 // Check probes the operator view for this runner's identity and returns the

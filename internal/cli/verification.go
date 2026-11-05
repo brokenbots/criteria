@@ -3,10 +3,10 @@ package cli
 import (
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 
 	"github.com/brokenbots/criteria/internal/adapter/signing"
+	"github.com/brokenbots/criteria/internal/envreg"
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
@@ -15,7 +15,7 @@ import (
 // lowest-precedence way to enable the override, below the --allow-unsigned
 // flag. The override lowers a warn/unset posture to ModeOff; it is refused
 // when the posture resolves to strict (signing.PolicyFor fails closed).
-const allowUnsignedEnv = "CRITERIA_ALLOW_UNSIGNED"
+var allowUnsignedEnv = envreg.CRITERIAAllowUnsigned.Env()
 
 // transitionDefaultMode is the effective verification mode used when neither the
 // unsigned-override nor an explicit workflow `verification` attribute is set.
@@ -185,7 +185,7 @@ func assertSignerMatchesPin(adapterKey string, signer *signing.SignerIdentity, p
 // envAllowUnsigned reports whether CRITERIA_ALLOW_UNSIGNED is set to a truthy
 // value.
 func envAllowUnsigned() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(allowUnsignedEnv))) {
+	switch strings.ToLower(strings.TrimSpace(envreg.CRITERIAAllowUnsigned.String())) {
 	case "1", "true", "yes", "on":
 		return true
 	default:

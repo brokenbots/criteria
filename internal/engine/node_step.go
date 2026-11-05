@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"time"
 
@@ -20,6 +19,7 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapter/secrets"
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	"github.com/brokenbots/criteria/internal/envreg"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -774,7 +774,7 @@ func isSessionCrashError(err error) bool {
 // crash error. The value is read per call so operators (and tests) can flip
 // it between runs without restarting the process.
 func crashReopenEnabled() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("CRITERIA_SESSION_CRASH_REOPEN"))) {
+	switch strings.ToLower(strings.TrimSpace(envreg.CRITERIASessionCrashReopen.String())) {
 	case "0", "false", "off":
 		return false
 	default:

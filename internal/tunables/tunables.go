@@ -1,6 +1,6 @@
 // Package tunables is the single source of truth for the criteria engine's
 // tunable timing and budget settings: one typed
-// Settings shape, in-package defaults, and a registry (Envvars) that maps
+// Settings shape, in-package defaults, and typed accessors that map
 // each operator-facing environment override to its knob and drives the
 // generated table in docs/env-vars.md.
 //
@@ -25,10 +25,11 @@
 package tunables
 
 import (
-	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/brokenbots/criteria/internal/envreg"
 )
 
 // Built-in defaults. Each is the single source for its knob; consumer
@@ -98,60 +99,52 @@ const (
 	DefaultFileAuditLossWarnThreshold = 5
 )
 
-// Operator-facing environment overrides. Each name is registered exactly
-// once in Envvars.
-const (
-	// EnvHeartbeatInterval overrides DefaultHeartbeatInterval (lenient). It
-	// supersedes the retired test-only cadence hatch; conformance
-	// tests set it (a Go duration such as "50ms") in the test process and
-	// adapter fixture subprocesses inherit it.
-	EnvHeartbeatInterval = "CRITERIA_HEARTBEAT_INTERVAL"
+// Operator-facing override names, aliased from the central CRITERIA_*
+// registry: internal/envreg owns every name, default, consumer, and doc
+// row (docs/env-vars.md is generated from it), while tunables keeps the
+// typed lenient resolution. Consumers may keep using these aliases; a
+// t.Setenv in tests works either way.
+var (
+	// EnvHeartbeatInterval overrides DefaultHeartbeatInterval (lenient).
+	EnvHeartbeatInterval = envreg.CRITERIAHeartbeatInterval.Env()
 	// EnvHeartbeatStallThreshold overrides DefaultHeartbeatStallThreshold
 	// (lenient).
-	EnvHeartbeatStallThreshold = "CRITERIA_SESSION_HEARTBEAT_STALL"
+	EnvHeartbeatStallThreshold = envreg.CRITERIASessionHeartbeatStall.Env()
 	// EnvStepTimeoutTeardownWindow overrides
 	// DefaultStepTimeoutTeardownWindow (lenient).
-	EnvStepTimeoutTeardownWindow = "CRITERIA_STEP_TIMEOUT_TEARDOWN_WINDOW"
+	EnvStepTimeoutTeardownWindow = envreg.CRITERIAStepTimeoutTeardownWindow.Env()
 	// EnvStepStallWindow overrides DefaultStepStallWindow (lenient, but a
 	// zero or negative value disables stall detection).
-	EnvStepStallWindow = "CRITERIA_STEP_STALL_WINDOW"
+	EnvStepStallWindow = envreg.CRITERIAStepStallWindow.Env()
 	// EnvAgentHeartbeatInterval overrides DefaultAgentHeartbeatInterval
 	// (lenient).
-	EnvAgentHeartbeatInterval = "CRITERIA_AGENT_HEARTBEAT_INTERVAL"
+	EnvAgentHeartbeatInterval = envreg.CRITERIAAgentHeartbeatInterval.Env()
 	// EnvBootGateProbeTimeout overrides DefaultBootGateProbeTimeout
 	// (lenient).
-	EnvBootGateProbeTimeout = "CRITERIA_BOOT_GATE_PROBE_TIMEOUT"
+	EnvBootGateProbeTimeout = envreg.CRITERIABootGateProbeTimeout.Env()
 	// EnvLocalApprovalFileTimeout overrides DefaultLocalApprovalFileTimeout
 	// (strict — a malformed value fails the run loudly; internal/cli
 	// localResumerOptions owns the strict parsing).
-	EnvLocalApprovalFileTimeout = "CRITERIA_LOCAL_APPROVAL_FILE_TIMEOUT"
+	EnvLocalApprovalFileTimeout = envreg.CRITERIALocalApprovalFileTimeout.Env()
 	// EnvPeerBackoffMin overrides DefaultPeerBackoffMin (strict — a
 	// malformed value aborts peer startup; ADR-0007).
-	EnvPeerBackoffMin = "CRITERIA_PEER_BACKOFF_MIN"
+	EnvPeerBackoffMin = envreg.CRITERIAPeerBackoffMin.Env()
 	// EnvPeerBackoffMax overrides DefaultPeerBackoffMax (strict; ADR-0007).
-	EnvPeerBackoffMax = "CRITERIA_PEER_BACKOFF_MAX"
+	EnvPeerBackoffMax = envreg.CRITERIAPeerBackoffMax.Env()
 	// EnvPeerJournalLimit overrides DefaultPeerJournalLimit (strict
 	// positive integer; ADR-0007).
-	EnvPeerJournalLimit = "CRITERIA_PEER_JOURNAL_LIMIT"
+	EnvPeerJournalLimit = envreg.CRITERIAPeerJournalLimit.Env()
 	// EnvServeAdapterConcurrency overrides DefaultServeAdapterConcurrency
-	// (lenient positive integer; ADR-0008). It caps the shared container
-	// budget for the workflow's own step-adapter sessions while serving
-	// the `criteria serve-adapter` mode.
-	EnvServeAdapterConcurrency = "CRITERIA_SERVE_ADAPTER_CONCURRENCY"
+	// (lenient positive integer; ADR-0008).
+	EnvServeAdapterConcurrency = envreg.CRITERIAServeAdapterConcurrency.Env()
 	// EnvVerifyFailoverBudget overrides DefaultVerifyFailoverBudget
 	// (lenient).
-	EnvVerifyFailoverBudget = "CRITERIA_VERIFY_FAILOVER_BUDGET"
+	EnvVerifyFailoverBudget = envreg.CRITERIAVerifyFailoverBudget.Env()
 )
 
 // DefaultServeAdapterConcurrency is the built-in shared container budget for
 // the workflow's own step-adapter sessions in serve-adapter mode (ADR-0008).
 const DefaultServeAdapterConcurrency = 8
-
-// Registry value kinds (Envar.Kind).
-const (
-	KindDuration = "duration"
-	KindInt      = "int"
-)
 
 // Settings carries the host-applied, lenient timing knobs: unset,
 // malformed, and non-positive overrides keep the built-in default, except
@@ -249,9 +242,10 @@ func New(lookup func(string) string) Settings {
 	return s
 }
 
-// FromEnv resolves Settings from the process environment.
+// FromEnv resolves Settings from the process environment through the
+// registry's audit point.
 func FromEnv() Settings {
-	return New(os.Getenv)
+	return New(envreg.Lookup)
 }
 
 // resolvePositiveDuration parses one lenient duration override. An empty,
@@ -280,44 +274,6 @@ func resolvePositiveInt(raw string) (int, bool) {
 		return 0, false
 	}
 	return n, true
-}
-
-// Envar is one registry row: an operator-facing environment override for a
-// tunable. Envvars is the single source for the generated table in
-// docs/env-vars.md (a test drift-checks that the doc's marked block matches
-// the rendered rows) and it pins that every override name is unique.
-type Envar struct {
-	// Name is the environment variable, e.g. CRITERIA_SESSION_HEARTBEAT_STALL.
-	Name string
-	// Kind is KindDuration or KindInt, matching the parsed value shape.
-	Kind string
-	// Default is the built-in default, rendered for the docs table.
-	Default string
-	// Doc is the one-line table description of what the knob tunes.
-	Doc string
-}
-
-// Envvars returns the registered operator-facing timing and budget
-// overrides, sorted by variable name. Host knobs are applied leniently via
-// Settings; the strict rows are applied by their owning parsers
-// (peer/config.go for the CRITERIA_PEER_* rows, internal/cli for the
-// local-approval timeout: malformed values abort instead of silently
-// defaulting).
-func Envvars() []Envar {
-	return []Envar{
-		{Name: EnvAgentHeartbeatInterval, Kind: KindDuration, Default: "10s", Doc: "Operator CLI heartbeat cadence against a server-compatible orchestrator while a run is in flight (`criteria agent`, `criteria apply --server`)."},
-		{Name: EnvBootGateProbeTimeout, Kind: KindDuration, Default: "5s", Doc: "Bounds the boot gate's operator-view request at every server-mode start: the runner checks its CriteriaRun is still live before registering with castle."},
-		{Name: EnvHeartbeatInterval, Kind: KindDuration, Default: "30s", Doc: "Adapter log-stream heartbeat cadence (the transitional heartbeatutil helper used by in-tree fixture adapters and the MCP bridge) and the peer Supervise stream idle heartbeat."},
-		{Name: EnvLocalApprovalFileTimeout, Kind: KindDuration, Default: "1h", Doc: "How long file-mode local approval waits for the operator's decision file before the pause fails. Strict override: a malformed value fails the run loudly."},
-		{Name: EnvPeerBackoffMax, Kind: KindDuration, Default: "30s", Doc: "Peer host reconnect backoff ceiling; must be >= the backoff floor. Peer-owned override: a malformed value aborts peer startup."},
-		{Name: EnvPeerBackoffMin, Kind: KindDuration, Default: "1s", Doc: "Peer host reconnect backoff floor. Peer-owned override: a malformed value aborts peer startup."},
-		{Name: EnvPeerJournalLimit, Kind: KindInt, Default: "4096", Doc: "Bounded supervision journal capacity in events. Peer-owned override: a non-positive or malformed value aborts peer startup."},
-		{Name: EnvServeAdapterConcurrency, Kind: KindInt, Default: "8", Doc: "Shared container budget for the workflow's own step-adapter sessions while `criteria serve-adapter` serves a workflow (ADR-0008)."},
-		{Name: EnvHeartbeatStallThreshold, Kind: KindDuration, Default: "90s", Doc: "How long a session log stream may idle with no chunks or heartbeats before the adapter is treated as wedged."},
-		{Name: EnvStepStallWindow, Kind: KindDuration, Default: "30m", Doc: "How long an unbounded step may run with no observable adapter activity before the engine tears it down. A zero or negative value disables stall detection."},
-		{Name: EnvStepTimeoutTeardownWindow, Kind: KindDuration, Default: "10s", Doc: "Window, opened by an engine-initiated step teardown, during which transport closes are reclassified as teardown consequences instead of session crashes."},
-		{Name: EnvVerifyFailoverBudget, Kind: KindDuration, Default: "1m", Doc: "How long phase-B adapter verify re-waits for a fresh phone-home line after a transport-class loss before failing the adapter init with the typed budget reason."},
-	}
 }
 
 // RespawnLogStreamDrain derives the bounded wait granted to a

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/brokenbots/criteria/internal/cli/localresume"
+	"github.com/brokenbots/criteria/internal/envreg"
 	"github.com/brokenbots/criteria/internal/run"
 )
 
@@ -291,7 +292,7 @@ func TestApplyLocal_PromptLosesToControlRPC(t *testing.T) {
 	wf := filepath.Join("testdata", "local_approval_simple")
 	opts := answersApplyOpts(wf, "", true, stdinR, &stderrBuf, nil)
 	errCh := runApplyAsync(&opts)
-	stateDir := os.Getenv("CRITERIA_STATE_DIR")
+	stateDir := envreg.CRITERIAStateDir.String()
 	addr := waitForControlEndpoint(t, stateDir)
 	runID := singleRunID(t, stateDir)
 
