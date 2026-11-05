@@ -29,6 +29,16 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/util"
 )
 
+// defaultPolicy returns a well-formed keyless policy (the PolicyFor default
+// shape) suitable for tests that exercise behavior beyond policy validation.
+func defaultPolicy(mode VerificationMode) Policy {
+	return Policy{
+		Mode:            mode,
+		TrustedIssuers:  append([]string(nil), DefaultTrustedIssuers...),
+		SubjectPatterns: []string{"*"},
+	}
+}
+
 func TestVerify_ModeOff(t *testing.T) {
 	l, err := oci.Open(t.TempDir())
 	if err != nil {
@@ -50,7 +60,7 @@ func TestVerify_ModeStrict_NoSignatures(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = Verify(t.Context(), l, "sha256:0000000000000000000000000000000000000000000000000000000000000000", Policy{Mode: ModeStrict})
+	_, err = Verify(t.Context(), l, "sha256:0000000000000000000000000000000000000000000000000000000000000000", defaultPolicy(ModeStrict))
 	if err == nil {
 		t.Fatal("expected error for strict mode with no signatures")
 	}
@@ -67,7 +77,7 @@ func TestVerify_ModeWarn_NoSignatures(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
 	defer slog.SetDefault(oldLog)
 
-	id, err := Verify(t.Context(), l, "sha256:0000000000000000000000000000000000000000000000000000000000000000", Policy{Mode: ModeWarn})
+	id, err := Verify(t.Context(), l, "sha256:0000000000000000000000000000000000000000000000000000000000000000", defaultPolicy(ModeWarn))
 	if err != nil {
 		t.Fatalf("Warn mode should not return error: %v", err)
 	}
@@ -307,19 +317,188 @@ func TestMatchGlob(t *testing.T) {
 		want   bool
 	}{
 		{"*", "anything", true},
-		{"", "anything", true},
+		{"", "anything", false},
+		{"", "", false},
 		{"prefix*", "prefix_suffix", true},
 		{"*suffix", "prefix_suffix", true},
 		{"exact", "exact", true},
 		{"exact", "other", false},
 		{"prefix*", "other", false},
 		{"*suffix", "other", false},
+		// Star in the middle: glob semantics, not a literal (path.Match
+		// family; '*' also crosses '/' so URL subjects keep their shape).
+		{"https://repo-*-prod.example", "https://repo-123-prod.example", true},
+		{"https://repo-*-prod.example", "https://repo-123-staging.example", false},
+		{"https://github.com/org/*", "https://github.com/org/repo/deep/path", true},
+		{"https://github.com/org/*", "https://github.com/other/repo", false},
+		{"a*b*c", "a-x-b-y-c", true},
+		{"a*b*c", "a-x-b-y-b-c", true},
+		{"a*b*c", "a-x-b-c-d", false},
+		{"*prod*", "repo-prod-v1", true},
+		{"*PROD*", "repo-prod-v1", false},
+		{"re?o", "repo", true},
+		{"re?o", "rexxo", false},
+		// path.Match metacharacters beyond * and ? stay literal here.
+		{"[abc]", "[abc]", true},
+		{"re[a]o", "repo", false},
+		{"pre*fix", "premid*dlefix", true},
+		{"pre*fix", "prexfix", true},
 	}
 	for _, c := range cases {
-		got := matchGlob(c.pat, c.s)
+		got := globMatch(c.pat, c.s)
 		if got != c.want {
-			t.Errorf("matchGlob(%q, %q) = %v, want %v", c.pat, c.s, got, c.want)
+			t.Errorf("globMatch(%q, %q) = %v, want %v", c.pat, c.s, got, c.want)
 		}
+	}
+}
+
+func TestValidateKeylessPolicy(t *testing.T) {
+	valid := func() Policy {
+		return Policy{
+			Mode:            ModeStrict,
+			TrustedIssuers:  []string{DefaultTrustedIssuers[0]},
+			SubjectPatterns: []string{"*"},
+		}
+	}
+
+	t.Run("default-shaped policy is valid", func(t *testing.T) {
+		p := valid()
+		if err := p.Validate(); err != nil {
+			t.Fatalf("Validate: %v", err)
+		}
+	})
+
+	t.Run("empty subject pattern entry rejected", func(t *testing.T) {
+		p := valid()
+		p.SubjectPatterns = []string{"https://github.com/brokenbots/*", ""}
+		err := p.Validate()
+		if err == nil {
+			t.Fatal("expected error for empty subject pattern")
+		}
+		if !strings.Contains(err.Error(), "empty subject pattern") {
+			t.Fatalf("expected 'empty subject pattern' diagnostic, got: %v", err)
+		}
+	})
+
+	t.Run("empty trusted issuer entry rejected", func(t *testing.T) {
+		p := valid()
+		p.TrustedIssuers = []string{"", "https://token.actions.githubusercontent.com"}
+		err := p.Validate()
+		if err == nil {
+			t.Fatal("expected error for empty trusted issuer")
+		}
+	})
+
+	t.Run("no trusted issuers rejected", func(t *testing.T) {
+		p := valid()
+		p.TrustedIssuers = nil
+		err := p.Validate()
+		if err == nil {
+			t.Fatal("expected error for missing trusted issuers")
+		}
+	})
+
+	t.Run("no subject patterns rejected", func(t *testing.T) {
+		p := valid()
+		p.SubjectPatterns = nil
+		err := p.Validate()
+		if err == nil {
+			t.Fatal("expected error for missing subject patterns")
+		}
+	})
+
+	t.Run("key mode does not require issuer surface", func(t *testing.T) {
+		p := Policy{
+			Mode:        ModeStrict,
+			TrustedKeys: []KeyIdentity{{Algorithm: "ed25519", Fingerprint: "deadbeef"}},
+		}
+		if err := p.Validate(); err != nil {
+			t.Fatalf("Validate: %v", err)
+		}
+	})
+
+	t.Run("warn mode validated like enforce", func(t *testing.T) {
+		p := valid()
+		p.Mode = ModeWarn
+		p.SubjectPatterns = []string{" "}
+		if err := p.Validate(); err == nil {
+			t.Fatal("expected error for whitespace-only subject pattern in warn mode")
+		}
+	})
+
+	t.Run("mode off skips identity surface checks", func(t *testing.T) {
+		p := valid()
+		p.Mode = ModeOff
+		p.TrustedIssuers = nil
+		p.SubjectPatterns = nil
+		if err := p.Validate(); err != nil {
+			t.Fatalf("Validate: %v", err)
+		}
+	})
+}
+
+// TestIdentityFromCert_EmptySubjectPatternInert asserts the fail-closed
+// matcher invariant: an empty pattern entry matches nothing — it can never
+// act as an allow-all — so a policy that relies on one cannot accept a
+// subject the real patterns don't cover. Policy.Validate rejects the shape
+// outright at build/verify time.
+func TestIdentityFromCert_EmptySubjectPatternInert(t *testing.T) {
+	cert := makeTestCert(t, "https://token.actions.githubusercontent.com", "https://github.com/other/repo")
+
+	policy := Policy{
+		TrustedIssuers:  []string{"https://token.actions.githubusercontent.com"},
+		SubjectPatterns: []string{"", "https://github.com/brokenbots/*"},
+	}
+	if _, err := identityFromCert(cert, &policy); err == nil {
+		t.Fatal("expected identityFromCert to reject: empty entry matches nothing, remaining pattern does not cover subject")
+	}
+
+	// Policy.Validate is the loud gate for the same shape.
+	if err := policy.Validate(); err == nil {
+		t.Fatal("expected Validate to reject empty subject pattern entry")
+	}
+
+	// And Verify surfaces the malformed shape with a diagnostic before any
+	// signature is examined.
+	l, err := oci.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, verr := Verify(t.Context(), l, "sha256:0000000000000000000000000000000000000000000000000000000000000000", policy); verr == nil || !strings.Contains(verr.Error(), "invalid verification policy") {
+		t.Fatalf("expected Verify to fail on invalid policy, got: %v", verr)
+	}
+}
+
+func TestIdentityFromCert_IssuerWildcard(t *testing.T) {
+	cert := makeTestCert(t, "https://token.actions.githubusercontent.com", "https://github.com/brokenbots/criteria")
+
+	policy := Policy{
+		TrustedIssuers:  []string{WildcardIssuer},
+		SubjectPatterns: []string{"*"},
+	}
+
+	id, err := identityFromCert(cert, &policy)
+	if err != nil {
+		t.Fatalf("identityFromCert with wildcard issuer: %v", err)
+	}
+	if id.Keyless == nil {
+		t.Fatal("expected keyless identity")
+	}
+	if id.Keyless.Issuer != "https://token.actions.githubusercontent.com" {
+		t.Fatalf("issuer = %q, want the certificate issuer", id.Keyless.Issuer)
+	}
+}
+
+func TestIdentityFromCert_NoSubjectPatternsFailsClosed(t *testing.T) {
+	cert := makeTestCert(t, "https://token.actions.githubusercontent.com", "https://github.com/brokenbots/criteria")
+
+	policy := Policy{
+		TrustedIssuers: []string{"https://token.actions.githubusercontent.com"},
+	}
+
+	_, err := identityFromCert(cert, &policy)
+	if err == nil {
+		t.Fatal("expected error: policy without subject patterns must reject, not allow-all")
 	}
 }
 

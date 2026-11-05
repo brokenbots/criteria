@@ -194,6 +194,17 @@ func stubPuller(t *testing.T, srv *httptest.Server) (*oci.Puller, *oci.Layout, o
 	return &oci.Puller{Layout: layout, PlainHTTP: true}, layout, ref
 }
 
+// VerifyWithDefaultIssuers runs strict signing.Verify with the default
+// keyless surface so tests that exercise signature discovery (not policy
+// shape) get a well-formed policy.
+func VerifyWithDefaultIssuers(ctx context.Context, layout *oci.Layout, dg digest.Digest) (*signing.SignerIdentity, error) {
+	return signing.Verify(ctx, layout, dg, signing.Policy{
+		Mode:            signing.ModeStrict,
+		TrustedIssuers:  signing.DefaultTrustedIssuers,
+		SubjectPatterns: []string{"*"},
+	})
+}
+
 // TestPullWithAnnotations_ReferrerDiscoveryFailureIsLoggedAndStrictVerifyFailsClosed
 // drives the strict-verification path with an injected referrer-copy failure
 // (CRI-51): when the registry's Referrers API fails, the pull itself must stay
@@ -227,7 +238,7 @@ func TestPullWithAnnotations_ReferrerDiscoveryFailureIsLoggedAndStrictVerifyFail
 		}
 	}
 
-	_, err = signing.Verify(context.Background(), layout, dg, signing.Policy{Mode: signing.ModeStrict})
+	_, err = VerifyWithDefaultIssuers(context.Background(), layout, dg)
 	if err == nil {
 		t.Fatal("strict verification must fail closed when the local referrer cache is incomplete")
 	}
@@ -266,7 +277,7 @@ func TestPullWithAnnotations_ReferrerBlobCopyFailureIsLogged(t *testing.T) {
 		}
 	}
 
-	if _, err := signing.Verify(context.Background(), layout, dg, signing.Policy{Mode: signing.ModeStrict}); err == nil {
+	if _, err := VerifyWithDefaultIssuers(context.Background(), layout, dg); err == nil {
 		t.Fatal("strict verification must fail closed when the referrer copy failed mid-copy")
 	}
 }
