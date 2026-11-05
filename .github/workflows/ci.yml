@@ -136,8 +136,8 @@ jobs:
       - name: Validate example workflows
         run: make validate
 
-      - name: Run example plugin end-to-end
-        run: make example-plugin
+      - name: Run example adapter end-to-end
+        run: make example-adapter
 
       - name: Run adapter tools example end-to-end
         run: make example-adapter-tools
@@ -379,6 +379,9 @@ jobs:
 
       - name: Build runtime container image
         run: make docker-runtime
+
+      - name: Smoke bundled adapters in-container (network none)
+        run: make docker-runtime-smoke
 
       - name: Save runtime image as tar
         run: |

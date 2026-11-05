@@ -24,8 +24,8 @@ docker run --rm \
 Notes:
 
 - The container only has host filesystem access through mounted volumes.
-- Plugins are baked into `/home/criteria/.criteria/adapters/`.
-- To use custom plugins, build a derived image that adds binaries under `/home/criteria/.criteria/adapters/`.
+- Adapters are baked into `/home/criteria/.local/criteria/adapters/`, and the image sets `CRITERIA_ADAPTERS` to that path, so in-container adapter discovery resolves the bundled binaries directly (no registry pull).
+- To use custom adapters, build a derived image that adds binaries under `/home/criteria/.local/criteria/adapters/` (the directory `$CRITERIA_ADAPTERS` points at).
 
 ## Known limitations
 

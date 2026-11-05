@@ -15,13 +15,22 @@ product version). The release tag and date are finalized by the release gate.
 
 - Add one-line POSIX shell installer (`install.sh`) served from the default
   branch; downloads signed release tarballs and installs `criteria` plus
-  bundled adapters to `~/.criteria`.
+  bundled adapters to `~/.local/criteria` (binary → `bin/`, adapters →
+  `adapters/`).
 - Release binaries are stamped with the exact release tag; a new
   `version-stamp-gate` release job fails the release if any shipped binary
   embeds a `-dirty` describe string or an empty version. Developer builds keep
   the git-describe stamp; the runtime image build fails closed without an
   explicit `CRITERIA_VERSION` (v0.5.24–v0.5.29 shipped `-dirty`-stamped
   binaries, which the `criteria_version` gate rejects).
+- The `criteria/runtime` image now bundles adapter binaries where discovery
+  looks: `~/.local/criteria/adapters/` with `CRITERIA_ADAPTERS` set in the
+  image env, and no `~/.criteria` directory is created (which previously
+  tripped the legacy root-adoption branch), so in-container runs use the
+  bundled adapters instead of re-pulling from the registry. The image smoke
+  (`docker-runtime-smoke`, wired into the RC/release image jobs) asserts
+  in-container discovery and execution of the bundled noop adapter with no
+  registry access; `examples/plugins/` moved to `examples/adapters/`.
 
 ### Adapter system rewrite
 

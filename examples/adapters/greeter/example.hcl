@@ -1,6 +1,6 @@
 # mode: standalone
-# Example: greeter adapter — demonstrates a minimal third-party plugin.
-# Run with: CRITERIA_PLUGINS=<dir-with-criteria-adapter-greeter> criteria apply example.hcl
+# Example: greeter adapter — a minimal third-party adapter example.
+# Run with: CRITERIA_ADAPTERS=<dir-with-criteria-adapter-greeter> criteria apply example.hcl
 workflow {
   name = "greeter_example"
   version       = "0.1"

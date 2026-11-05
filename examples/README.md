@@ -2,7 +2,7 @@
 
 Standalone workflows validated by `make validate`. Adapters referenced by
 `source` are pulled and pinned on `criteria adapter lock`; the in-tree `noop`
-fixture and the `plugins/greeter` adapter run without a registry.
+fixture and the `adapters/greeter` adapter run without a registry.
 
 Run one with:
 
@@ -17,7 +17,7 @@ criteria apply examples/<name>/<file>.hcl
 | [`subworkflow/parent.hcl`](subworkflow/parent.hcl) | A parent workflow invoking a sub-workflow via `target = subworkflow.<name>` (multi-file). |
 | [`build_and_test/build_and_test.hcl`](build_and_test/build_and_test.hcl) | Linear shell build → test pipeline with a retry policy. |
 | [`copilot_planning_then_execution/`](copilot_planning_then_execution/copilot_planning_then_execution.hcl) | Two-phase agent workflow (plan, then execute) using the `copilot` adapter. |
-| [`plugins/greeter/`](plugins/greeter/) | A minimal adapter implementation plus a workflow that runs it (`make example-plugin`). |
+| [`adapters/greeter/`](adapters/greeter/) | A minimal adapter implementation plus a workflow that runs it (`make example-adapter`). |
 | [`adapter_tools/`](adapter_tools/) | A caller adapter tool-calling a callee mid-step: variant 1 through the noop fixture's outputs passthrough, variant 2 through the mcp adapter as a resource, variants 3–4 with a real agent as the caller (copilot and claude-agent; `make example-adapter-tools`, `make example-adapter-tools-copilot`, `make example-adapter-tools-claude`). |
 | [`llm-pack/`](llm-pack/) | Prompt-pack patterns surfaced by `criteria spec --with-patterns`. |
 | [`peer-remote/`](peer-remote/) | Remote adapters dialed in by peer containers: per-scope sessions, routed failure and `on_crash = "respawn"` crash recovery, and the kill -9 crash-fidelity demo (`docker compose up`, see [peer-remote/README.md](peer-remote/README.md)). |

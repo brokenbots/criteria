@@ -121,8 +121,8 @@ jobs:
         run: ./bin/criteria apply examples/hello --events-file /tmp/events.ndjson
       - name: Validate example workflows
         run: make validate
-      - name: Example plugin end-to-end
-        run: make example-plugin
+      - name: Example adapter end-to-end
+        run: make example-adapter
 
   gate-remote:
     name: Gate 3 — remote transport e2e
@@ -291,6 +291,9 @@ jobs:
           make docker-runtime CRITERIA_BUILD_VERSION="$TAG"
           docker tag criteria/runtime:dev "criteria/runtime:${TAG}"
           docker tag criteria/runtime:dev "criteria/runtime:latest"
+
+      - name: Smoke bundled adapters in-container (network none)
+        run: make docker-runtime-smoke
 
       - name: Save image as tar
         run: |

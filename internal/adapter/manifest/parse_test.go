@@ -19,7 +19,7 @@ func TestParseFile_RoundTrip(t *testing.T) {
 	assert.Equal(t, "example-adapter", m.Name)
 	assert.Equal(t, "1.2.3", m.Version)
 	assert.Equal(t, "A canonical example adapter.yaml used for testing and documentation.", m.Description)
-	assert.Equal(t, "https://github.com/brokenbots/criteria/tree/main/examples/plugins/greeter", m.SourceURL)
+	assert.Equal(t, "https://github.com/brokenbots/criteria/tree/main/examples/adapters/greeter", m.SourceURL)
 	assert.Equal(t, []string{"parallel_safe", "pause", "resume"}, m.Capabilities)
 	assert.Equal(t, []manifest.Platform{
 		{OS: "linux", Arch: "amd64"},
