@@ -1574,6 +1574,11 @@ func (m *SessionManager) buildSandboxCustomizer(instanceID, workingDir string) (
 	}
 	prep, err := sandbox.Handler{}.Prepare(ctx)
 	if err != nil {
+		// Release whatever partial resources Prepare created (e.g. a
+		// transient cgroup directory) before callers see the failure; the
+		// returned cleanup is dropped on both the permissive degrade and
+		// this error return.
+		_ = prep.Cleanup()
 		if rp.PolicyMode == "strict" {
 			return nil, nil, fmt.Errorf("sandbox strict mode: %w", err)
 		}
@@ -1582,7 +1587,10 @@ func (m *SessionManager) buildSandboxCustomizer(instanceID, workingDir string) (
 	}
 
 	shimBin, skipRestrictions := m.selectShimBin()
-	customizer, cleanup = makeSandboxCustomizer(&prep, envNode, workingDir, shimBin, skipRestrictions)
+	customizer, cleanup, customizerErr := makeSandboxCustomizer(&prep, envNode, workingDir, shimBin, skipRestrictions)
+	if customizerErr != nil {
+		return nil, nil, customizerErr
+	}
 	return customizer, cleanup, nil
 }
 
@@ -2256,17 +2264,26 @@ func (m *SessionManager) adapterDir(instanceID string) string {
 // the pre-exec shim; when empty the current process image (os.Args[0]) is
 // used, which is how the production criteria CLI acts as its own shim.
 // When skipRestrictions is true the test-only helper relaxations are
-// applied (SkipShimRestrictions=true and namespaces cleared).
-func makeSandboxCustomizer(prep *sandbox.LinuxPrepared, envNode *workflow.EnvironmentNode, workingDir, shimBin string, skipRestrictions bool) (customizer func(name string, cmd *exec.Cmd), cleanup func()) {
+// applied (SkipShimRestrictions=true and namespaces cleared). A non-nil
+// error means the launch is refused (e.g. an exact network.allow list on
+// the bubblewrap path); the refusal is unconditional regardless of
+// policy_mode so a declared policy is never silently dropped, and transient
+// prepare resources are released before returning.
+func makeSandboxCustomizer(prep *sandbox.LinuxPrepared, envNode *workflow.EnvironmentNode, workingDir, shimBin string, skipRestrictions bool) (customizer func(name string, cmd *exec.Cmd), cleanup func(), err error) {
 	cleanup = func() { _ = prep.Cleanup() }
-	if bwrapCmd := sandbox.MaybeUseBubblewrap(prep, envNode, workingDir); bwrapCmd != nil {
+	bwrapCmd, bwrapErr := sandbox.MaybeUseBubblewrap(prep, envNode, workingDir)
+	if bwrapErr != nil {
+		_ = prep.Cleanup()
+		return nil, nil, bwrapErr
+	}
+	if bwrapCmd != nil {
 		return func(_ string, cmd *exec.Cmd) {
 			cmd.Path = bwrapCmd.Path
 			cmd.Args = bwrapCmd.Args
 			cmd.Env = bwrapCmd.Env
 			cmd.Dir = bwrapCmd.Dir
 			cmd.SysProcAttr = nil
-		}, cleanup
+		}, cleanup, nil
 	}
 	return func(_ string, cmd *exec.Cmd) {
 		// The real adapter path is already on cmd.Path at this point (set by
@@ -2285,7 +2302,7 @@ func makeSandboxCustomizer(prep *sandbox.LinuxPrepared, envNode *workflow.Enviro
 		if skipRestrictions {
 			finalizeLinuxShimCmd(cmd, shimBin)
 		}
-	}, cleanup
+	}, cleanup, nil
 }
 
 func (m *SessionManager) registerSession(ctx context.Context, name, adapterName, onCrash string, config, secrets map[string]string, originRefs map[string]secrets.OriginRef, caps []string, plug Handle, cleanup func(), workingDir, scopeInstanceID string) error {

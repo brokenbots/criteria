@@ -55,9 +55,9 @@ func (prep *LinuxPrepared) ApplyToCmd(cmd *exec.Cmd, criteriaBin string) error {
 	return errors.New("sandbox environments are not supported on this OS")
 }
 
-// MaybeUseBubblewrap always returns nil on non-Linux.
-func MaybeUseBubblewrap(_ *LinuxPrepared, _ *workflow.EnvironmentNode, _ string) *exec.Cmd {
-	return nil
+// MaybeUseBubblewrap always returns (nil, nil) on non-Linux.
+func MaybeUseBubblewrap(_ *LinuxPrepared, _ *workflow.EnvironmentNode, _ string) (*exec.Cmd, error) {
+	return nil, nil
 }
 
 // ShimConfig is unused on non-Linux.

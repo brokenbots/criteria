@@ -82,17 +82,25 @@ func validatePath(p string) error {
 
 // scrubEnv removes sensitive or privilege-escalating variables from the
 // environment slice. Safe for use on both Linux and Darwin. It drops a fixed
-// set of privilege-escalation variables (SUDO_*, CRITERIA_PLUGIN) and any
-// variable whose name looks like it carries a secret (see looksLikeSecret), so
-// the sandboxed adapter does not inherit host credentials it was not granted.
+// set of privilege-escalation variables (SUDO_*, CRITERIA_PLUGIN, the sandbox
+// shim config pointer CRITERIA_SANDBOX_CONFIG_PATH) and any variable whose
+// name looks like it carries a secret (see looksLikeSecret), so the sandboxed
+// adapter does not inherit host credentials it was not granted.
+//
+// CRITERIA_SANDBOX_CONFIG_PATH is scrubbed so an adapter never inherits a
+// pointer to its own sandbox config; the value must stay alive only for the
+// shim exec itself, which is arranged at each consumer: ApplyToCmd appends
+// the fresh shim value after scrubbing, and shim.runShim unsets the variable
+// before exec-ing the real adapter.
 func scrubEnv(env []string) []string {
 	blocked := map[string]bool{
-		"SUDO_UID":        true,
-		"SUDO_GID":        true,
-		"SUDO_USER":       true,
-		"SUDO_COMMAND":    true,
-		"SUDO_EDITOR":     true,
-		"CRITERIA_PLUGIN": true,
+		"SUDO_UID":                    true,
+		"SUDO_GID":                    true,
+		"SUDO_USER":                   true,
+		"SUDO_COMMAND":                true,
+		"SUDO_EDITOR":                 true,
+		"CRITERIA_PLUGIN":             true,
+		"CRITERIA_SANDBOX_CONFIG_PATH": true,
 	}
 	out := make([]string, 0, len(env))
 	for _, e := range env {

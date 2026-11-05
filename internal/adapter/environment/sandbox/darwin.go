@@ -367,9 +367,9 @@ func sanitizePathEnv(env []string) []string {
 	return env
 }
 
-// MaybeUseBubblewrap always returns nil on Darwin.
-func MaybeUseBubblewrap(_ *LinuxPrepared, _ *workflow.EnvironmentNode, _ string) *exec.Cmd {
-	return nil
+// MaybeUseBubblewrap always returns (nil, nil) on Darwin.
+func MaybeUseBubblewrap(_ *LinuxPrepared, _ *workflow.EnvironmentNode, _ string) (*exec.Cmd, error) {
+	return nil, nil
 }
 
 // ApplyEnv is a no-op on Darwin (no shim config to apply).

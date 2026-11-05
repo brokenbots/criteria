@@ -145,7 +145,10 @@ func TestMakeSandboxCustomizer_BwrapNotOptedIn(t *testing.T) {
 		TargetPath:  "/usr/bin/true",
 	}
 	env := &workflow.EnvironmentNode{Type: "sandbox", Name: "default"}
-	customizer, cleanup := makeSandboxCustomizer(prep, env, "", "", false)
+	customizer, cleanup, err := makeSandboxCustomizer(prep, env, "", "", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if customizer == nil {
 		t.Fatal("expected non-nil customizer")
 	}
@@ -173,7 +176,10 @@ func TestMakeSandboxCustomizer_ShimCallsApplyToCmd(t *testing.T) {
 		AllowNetwork: true,
 	}
 	env := &workflow.EnvironmentNode{Type: "sandbox", Name: "default"}
-	customizer, cleanup := makeSandboxCustomizer(prep, env, "", "", false)
+	customizer, cleanup, err := makeSandboxCustomizer(prep, env, "", "", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if customizer == nil {
 		t.Fatal("expected non-nil customizer")
 	}

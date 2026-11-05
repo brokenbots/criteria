@@ -1763,8 +1763,8 @@ func TestMaybeUseBubblewrap(t *testing.T) {
 	}
 	prep := &LinuxPrepared{TargetPath: "/usr/bin/true"}
 
-	// If bwrap is not on PATH, MaybeUseBubblewrap returns nil.
-	cmd := MaybeUseBubblewrap(prep, env, "")
+	// If bwrap is not on PATH, MaybeUseBubblewrap returns (nil, nil).
+	cmd, _ := MaybeUseBubblewrap(prep, env, "")
 	if cmd != nil {
 		// bwrap may be present in CI; validate the command structure.
 		if !strings.Contains(cmd.Path, "bwrap") {
@@ -1784,13 +1784,13 @@ func TestMaybeUseBubblewrap(t *testing.T) {
 
 	// Without opt-in: returns nil.
 	envNoOpt := &workflow.EnvironmentNode{Type: "sandbox"}
-	if c := MaybeUseBubblewrap(prep, envNoOpt, ""); c != nil {
-		t.Fatal("expected nil when not opted in")
+	if c, err := MaybeUseBubblewrap(prep, envNoOpt, ""); c != nil || err != nil {
+		t.Fatalf("expected (nil, nil) when not opted in, got (%v, %v)", c, err)
 	}
 
 	// Wrong type: returns nil.
 	envWrong := &workflow.EnvironmentNode{Type: "docker"}
-	if c := MaybeUseBubblewrap(prep, envWrong, ""); c != nil {
-		t.Fatal("expected nil for non-sandbox type")
+	if c, err := MaybeUseBubblewrap(prep, envWrong, ""); c != nil || err != nil {
+		t.Fatalf("expected (nil, nil) for non-sandbox type, got (%v, %v)", c, err)
 	}
 }
