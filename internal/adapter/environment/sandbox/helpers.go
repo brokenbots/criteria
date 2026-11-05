@@ -94,12 +94,12 @@ func validatePath(p string) error {
 // before exec-ing the real adapter.
 func scrubEnv(env []string) []string {
 	blocked := map[string]bool{
-		"SUDO_UID":                    true,
-		"SUDO_GID":                    true,
-		"SUDO_USER":                   true,
-		"SUDO_COMMAND":                true,
-		"SUDO_EDITOR":                 true,
-		"CRITERIA_PLUGIN":             true,
+		"SUDO_UID":                     true,
+		"SUDO_GID":                     true,
+		"SUDO_USER":                    true,
+		"SUDO_COMMAND":                 true,
+		"SUDO_EDITOR":                  true,
+		"CRITERIA_PLUGIN":              true,
 		"CRITERIA_SANDBOX_CONFIG_PATH": true,
 	}
 	out := make([]string, 0, len(env))

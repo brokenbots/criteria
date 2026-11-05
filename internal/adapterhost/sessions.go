@@ -1538,23 +1538,9 @@ func (m *SessionManager) buildSandboxCustomizer(instanceID, workingDir string) (
 	// inside ApplyToCmd). For lockfile-pinned (OCI) adapters this must use the
 	// digest-addressed install path; flat discovery only sees dev/test binaries
 	// placed directly in the adapter root.
-	var adapterBinary, adapterType string
-	if m.graph != nil {
-		if adapterNode, ok := m.graph.Adapters[instanceID]; ok {
-			adapterType = adapterNode.Type
-			path, discoverErr := m.resolveAdapterBinaryForInstance(instanceID, adapterNode.Type)
-			if discoverErr == nil {
-				adapterBinary = path
-			} else {
-				var notFound *ErrAdapterNotFound
-				if !errors.As(discoverErr, &notFound) {
-					return nil, nil, fmt.Errorf("discover adapter binary: %w", discoverErr)
-				}
-				// Built-in adapter or missing plugin: leave adapterBinary empty.
-				// For built-ins the customizer is never invoked; for missing
-				// plugins ResolveWithCustomizer will fail later anyway.
-			}
-		}
+	adapterBinary, adapterType, err := m.resolveSandboxBinary(instanceID)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	caps := sandbox.Probe()
@@ -1592,6 +1578,30 @@ func (m *SessionManager) buildSandboxCustomizer(instanceID, workingDir string) (
 		return nil, nil, customizerErr
 	}
 	return customizer, cleanup, nil
+}
+
+// resolveSandboxBinary returns the adapter install path and type for the
+// instance, for pre-allowlisting at prepare time. A missing plugin binary is
+// not an error: built-in adapters never invoke the customizer and missing
+// plugins fail later at Resolve, so only unexpected discovery failures
+// propagate.
+func (m *SessionManager) resolveSandboxBinary(instanceID string) (binary, adapterType string, err error) {
+	if m.graph == nil {
+		return "", "", nil
+	}
+	adapterNode, ok := m.graph.Adapters[instanceID]
+	if !ok {
+		return "", "", nil
+	}
+	path, discoverErr := m.resolveAdapterBinaryForInstance(instanceID, adapterNode.Type)
+	if discoverErr == nil {
+		return path, adapterNode.Type, nil
+	}
+	var notFound *ErrAdapterNotFound
+	if errors.As(discoverErr, &notFound) {
+		return "", adapterNode.Type, nil
+	}
+	return "", adapterNode.Type, fmt.Errorf("discover adapter binary: %w", discoverErr)
 }
 
 // selectShimBin returns the shim binary path and whether the test-only helper

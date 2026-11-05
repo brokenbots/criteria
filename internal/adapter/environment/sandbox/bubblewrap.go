@@ -28,7 +28,9 @@ func MaybeUseBubblewrap(prep *LinuxPrepared, env *workflow.EnvironmentNode, work
 	}
 	bwrapPath, err := exec.LookPath("bwrap")
 	if err != nil {
-		return nil, nil
+		// bwrap is not installed: the soft alternative is not applicable and
+		// the in-process shim path handles the launch instead.
+		return nil, nil //nolint:nilerr // intentional fallback, not a swallowed error
 	}
 
 	netArgs, err := bwrapNetworkArgs(env)
