@@ -179,6 +179,16 @@ func (p *peerSessionProvider) key(adapterName, scope string) string {
 // ordinary bounded session wait (the shim's session-wait budgets and diagnosis-class attribution).
 func (p *peerSessionProvider) AcceptPeer(ctx context.Context, conn net.Conn, dial *PeerDial) error {
 	_ = ctx // ownership of the conn is explicit; session lifetime is managed via close()
+	// A dial that lands after the provider stopped cannot be stored: the
+	// registry was already drained and the stop already ran, so its
+	// transport would never be closed again. Reject the dial and release
+	// the conn (storeSession is the authoritative stopped re-check for
+	// the race between this check and the registry store).
+	if p.stoppedNow() {
+		_ = conn.Close()
+		return errors.New("remote shim stopped")
+	}
+
 	key := p.key(dial.AdapterType, dial.Scope)
 
 	hosted := hostedAdapters(dial)
@@ -191,7 +201,11 @@ func (p *peerSessionProvider) AcceptPeer(ctx context.Context, conn net.Conn, dia
 
 	// A replacement dial for the same key supersedes the previous session
 	// (mirrors the legacy shim's store-then-tear precedence).
-	replaced, waiters, old := p.storeSession(key, ps)
+	stored, replaced, waiters, old := p.storeSession(key, ps)
+	if !stored {
+		ps.close("remote shim stopped before dial accepted")
+		return errors.New("remote shim stopped")
+	}
 
 	// Drain the session waits for the conn's other hosted adapters
 	// too (run-wide multi-adapter conns serve every hosted adapter); each
@@ -226,18 +240,33 @@ type routedWake struct {
 	handle *peerHandle
 }
 
+// stoppedNow snapshots the provider's stopped flag. Once stopPeers has run,
+// any later dial must be rejected with its transport closed instead of
+// stored: a session stored after the drain sits outside the registry with
+// no closer (each ClientConn keeps its balancer/resolver/pubsub serializer
+// goroutines until cc.Close).
+func (p *peerSessionProvider) stoppedNow() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.stopped
+}
+
 // storeSession swaps the session into the registry under one p.mu hold,
 // snapshotting (and removing) the dial adapter's pending waiters for the
-// same critical section AcceptPeer documents. The boolean reports whether a
-// previous session was replaced.
-func (p *peerSessionProvider) storeSession(key string, ps *peerSession) (replaced bool, waiters []chan waitResult, old *peerSession) {
+// same critical section AcceptPeer documents. The first boolean reports
+// whether the session was stored (false when the provider already stopped);
+// the second reports whether a previous session was replaced.
+func (p *peerSessionProvider) storeSession(key string, ps *peerSession) (stored, replaced bool, waiters []chan waitResult, old *peerSession) {
 	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.stopped {
+		return false, false, nil, nil
+	}
 	old, replaced = p.peers[key]
 	p.peers[key] = ps
 	waiters = p.waiters[key]
 	delete(p.waiters, key)
-	p.mu.Unlock()
-	return replaced, waiters, old
+	return true, replaced, waiters, old
 }
 
 // collectRoutedWaiters drains the pending waits of the conn's OTHER hosted
