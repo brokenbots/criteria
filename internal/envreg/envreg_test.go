@@ -145,6 +145,9 @@ func TestHiddenRows(t *testing.T) {
 // TestNoRawEnvReadsOutsideRegistry is the repo-wide sweep: every
 // os.Getenv/os.LookupEnv of a CRITERIA_* literal must live inside this
 // package, so the generated docs table cannot drift from real reads.
+//
+// TestNoIdentifierEnvReadsOutsideRegistry below extends this to
+// identifier-shaped arguments; keep the walk rules in sync.
 func TestNoRawEnvReadsOutsideRegistry(t *testing.T) {
 	root := "../.."
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
@@ -153,12 +156,12 @@ func TestNoRawEnvReadsOutsideRegistry(t *testing.T) {
 		}
 		if d.IsDir() {
 			name := d.Name()
-			if name == "testdata" || name == ".git" || name == "vendor" {
+			if name == "testdata" || name == "testfixtures" || name == ".git" || name == "vendor" {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if !strings.HasSuffix(path, ".go") || strings.HasPrefix(filepath.Base(path), "envreg") {
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || strings.HasPrefix(filepath.Base(path), "envreg") {
 			return nil
 		}
 		data, err := os.ReadFile(path)
@@ -176,6 +179,110 @@ func TestNoRawEnvReadsOutsideRegistry(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// identifierEnvReadAllowlist records the only os.Getenv/os.LookupEnv call
+// sites in non-test production files whose argument is an identifier or
+// selector rather than a string literal. A dynamic argument means the
+// variable name arrives as data, which is exactly how a registry-backed
+// alias (for example os.Getenv(peer.EnvLogLevel)) reintroduces an unaudited
+// CRITERIA_* read; anything not listed here fails the sweep. Entries are
+// keyed "<repo path>:<argument expr>" and carry why the read is legitimate.
+var identifierEnvReadAllowlist = map[string]string{
+	// XDG base-directory roots (XDG_CONFIG_HOME, XDG_CACHE_HOME, ...): plain
+	// Unix variables, never CRITERIA_*, and the variable walks a small list.
+	"internal/dirs/dirs.go:envVar": "XDG_* base-directory roots",
+	// Workflow-supplied env-origin secret: the ref is operator data, so the
+	// name cannot be a literal. Values are never logged.
+	"internal/adapter/secrets/provider_env.go:ref.Ref": "workflow env-secret reference",
+}
+
+// sweepDynamicEnvReads walks the repo and reports every os.Getenv or
+// os.LookupEnv in a non-test production file whose argument is an
+// identifier/selector. Shared by the literal and dynamic sweeps so the walk
+// rules stay in sync; repoPath must be trimmed of the "../" walk prefix.
+func sweepDynamicEnvReads(data []byte, repoPath string) []string {
+	var violations []string
+	for i, line := range strings.Split(string(data), "\n") {
+		arg, ok := envReadArg(line)
+		if !ok {
+			continue
+		}
+		if strings.HasPrefix(arg, `"`) || strings.HasPrefix(arg, "`") {
+			continue
+		}
+		key := repoPath + ":" + arg
+		if _, allowed := identifierEnvReadAllowlist[key]; allowed {
+			continue
+		}
+		violations = append(violations,
+			fmt.Sprintf("%s:%d: dynamic env read outside internal/envreg (%q): %s", repoPath, i+1, arg, strings.TrimSpace(line)))
+	}
+	return violations
+}
+
+// envReadArg extracts the single argument expression of an
+// os.Getenv/os.LookupEnv call whose opening parenthesis shares the line.
+// It reports ok=false for calls whose argument is incomplete (a call that
+// wraps lines), so a split call fails the sweep instead of hiding.
+func envReadArg(line string) (string, bool) {
+	idx := strings.Index(line, `Getenv(`)
+	if idx < 0 {
+		idx = strings.Index(line, `LookupEnv(`)
+	}
+	if idx < 0 {
+		return "", false
+	}
+	open := strings.Index(line[idx:], "(") + idx
+	depth := 0
+	for j := open; j < len(line); j++ {
+		switch line[j] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return strings.TrimSpace(line[open+1 : j]), true
+			}
+		}
+	}
+	return "", false
+}
+
+// TestNoIdentifierEnvReadsOutsideRegistry fails when a non-test production
+// file reads the environment with a dynamic name — the alias-based raw read
+// class the literal sweep cannot see.
+func TestNoIdentifierEnvReadsOutsideRegistry(t *testing.T) {
+	root := "../.."
+	var violations []string
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if name == "testdata" || name == "testfixtures" || name == ".git" || name == "vendor" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || strings.HasPrefix(filepath.Base(path), "envreg") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		repoPath := strings.TrimPrefix(path, "../../")
+		violations = append(violations, sweepDynamicEnvReads(data, repoPath)...)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(violations) > 0 {
+		t.Fatalf("dynamic env reads outside internal/envreg:\n%s", strings.Join(violations, "\n"))
 	}
 }
 

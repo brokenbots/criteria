@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/brokenbots/criteria/internal/envreg"
 	"github.com/brokenbots/criteria/internal/peer"
 )
 
@@ -77,6 +78,13 @@ func peerLogLevel(log *slog.Logger, raw string) slog.Level {
 	}
 }
 
+// cliLogLevel resolves the shared CRITERIA_LOG_LEVEL knob for the peer and
+// serve-adapter entrypoints through the envreg registry, warning via probe
+// on unknown values; one site owns the resolution so the two cannot drift.
+func cliLogLevel(probe *slog.Logger) slog.Level {
+	return peerLogLevel(probe, envreg.CRITERIALogLevel.String())
+}
+
 func NewPeerCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "peer",
@@ -93,7 +101,7 @@ func NewPeerCmd() *cobra.Command {
 func runPeer(parent context.Context) error {
 	// Structured slog JSON logging, repo convention. The level comes from
 	// CRITERIA_LOG_LEVEL; unknown values warn and fall back to info.
-	level := peerLogLevel(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})), os.Getenv(peer.EnvLogLevel))
+	level := cliLogLevel(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level})).With("component", "peer")
 	slog.SetDefault(log)
 

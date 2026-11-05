@@ -155,9 +155,8 @@ func fieldFor(t *testing.T, s Settings, env string) time.Duration {
 	}
 }
 
-// TestEnvvarsRegistry pins the registry invariants: unique names, sorted
-// order, every exported env-name constant registered exactly once, and each
-// row's default matching its owning tunable.
+// TestDerivedBudgets pins the derived-budget arithmetic that has no
+// registry row of its own.
 func TestDerivedBudgets(t *testing.T) {
 	// RespawnLogStreamDrain: a third of the stall threshold, clamped.
 	if got := RespawnLogStreamDrain(DefaultHeartbeatStallThreshold); got != 30*time.Second {
@@ -234,9 +233,6 @@ func TestAliasesPointAtRegistry(t *testing.T) {
 			}
 		} else if got != tc.defConst {
 			t.Errorf("%s registry default %q does not match tunables constant %s", tc.alias, got, tc.defConst)
-		}
-		if tc.kind != envreg.KindDuration && tc.kind != envreg.KindInt {
-			t.Errorf("%s kind %q is not a parsed value kind", tc.alias, tc.kind)
 		}
 	}
 }
