@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -105,6 +106,39 @@ func makeAssignment(runID, workflowName, source string) *pb.WorkflowAssignment {
 		WorkflowName:   workflowName,
 		WorkflowSource: source,
 	}
+}
+
+// logCapture is a slog.Handler that records log message strings so tests can
+// wait on agent-side lifecycle events that have no server-side observable
+// counterpart (some are only logged by the runAgent goroutine).
+type logCapture struct {
+	mu   sync.Mutex
+	msgs []string
+}
+
+func (c *logCapture) Enabled(context.Context, slog.Level) bool { return true }
+
+func (c *logCapture) Handle(_ context.Context, r slog.Record) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.msgs = append(c.msgs, r.Message)
+	return nil
+}
+
+func (c *logCapture) WithAttrs([]slog.Attr) slog.Handler { return c }
+
+func (c *logCapture) WithGroup(string) slog.Handler { return c }
+
+// has reports whether a log message equal to msg has been recorded.
+func (c *logCapture) has(msg string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, m := range c.msgs {
+		if m == msg {
+			return true
+		}
+	}
+	return false
 }
 
 // requireStableEventCount waits up to d and fails if the count of events of
@@ -321,19 +355,35 @@ func TestAgent_Resume(t *testing.T) {
 func TestAgent_Reconnect(t *testing.T) {
 	requireNoGoroutineLeak(t)
 	fake := applytest.New(t)
-	cancel, errCh := startTestAgent(t, fake)
+	logcap := &logCapture{}
+	cancel, errCh := startTestAgentOpts(t, fake, &agentOptions{log: slog.New(logcap)})
 	defer cancel()
 
 	fake.WaitForCond(t, 5*time.Second, func() bool { return fake.ControlAttachCount() > 0 })
 	require.Equal(t, 1, fake.RegistrationCount(), "agent should register exactly once on startup")
 
+	// Gate on the agent's first attach completing on the client side before
+	// tearing down the connection. DropControl closes only the TCP transport;
+	// if it lands between the fake sending ControlReady and the agent receiving
+	// it, the initial control stream dies before runAgent's ready handshake
+	// completes and setupAgentClient exits with "control stream closed before
+	// ready" instead of reconnecting: the agent is then gone and no reconnect
+	// can ever satisfy the check below. The fake's server-side counters cannot
+	// distinguish that window, so gate on the ready log instead.
+	fake.WaitForCond(t, 15*time.Second, func() bool {
+		return logcap.has("agent registered and waiting for assignments")
+	})
+
 	fake.DropControl()
-	fake.WaitForCond(t, 10*time.Second, func() bool { return fake.ControlAttachCount() >= 2 })
+	// The reconnect bound is generous: under -race plus coverage on a loaded
+	// runner the EOF detect, 500ms min backoff, and redial can all slip, but a
+	// healthy reconnect lands far below this ceiling.
+	fake.WaitForCond(t, 30*time.Second, func() bool { return fake.ControlAttachCount() >= 2 })
 	require.Equal(t, 1, fake.RegistrationCount(), "agent must not re-register after reconnect")
 
 	runID := uuid.NewString()
 	fake.QueueAssignment(makeAssignment(runID, "two_step", twoStepWorkflow))
-	fake.WaitForCond(t, 10*time.Second, func() bool { return runHasEventOfType(fake, runID, "RunCompleted") })
+	fake.WaitForCond(t, 30*time.Second, func() bool { return runHasEventOfType(fake, runID, "RunCompleted") })
 
 	cancel()
 	waitAgent(t, errCh)
@@ -412,9 +462,11 @@ func TestAgent_CompileFailure_DuplicateTerminalEventAfterReconnect(t *testing.T)
 
 	// Force a transport-level reconnect and wait for the control stream to
 	// reattach. The publisher's replay/dedup must not produce a second RunFailed
-	// for the same run id.
+	// for the same run id. The attach bound mirrors TestAgent_Reconnect: the
+	// reconnect is healthy but can slip under -race plus coverage on a loaded
+	// runner.
 	fake.DropControl()
-	fake.WaitForCond(t, 10*time.Second, func() bool { return fake.ControlAttachCount() >= 2 })
+	fake.WaitForCond(t, 30*time.Second, func() bool { return fake.ControlAttachCount() >= 2 })
 
 	require.Equal(t, 1, runEventCountOfType(fake, runID, "RunFailed"), "reconnect must not duplicate RunFailed")
 
