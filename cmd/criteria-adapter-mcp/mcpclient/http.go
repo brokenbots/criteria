@@ -482,24 +482,17 @@ func parseSSEEvents(r io.Reader, fn func(data []byte) error) error {
 		data = nil
 		return fn(payload)
 	}
-	for done := false; !done; {
-		line, err := reader.ReadString('\n')
-		if err != nil && line == "" {
-			// stream ended between lines
-			break
-		}
-		line = strings.TrimSuffix(line, "\n")
-		line = strings.TrimSuffix(line, "\r")
-		switch {
-		case line == "":
-			// blank line: dispatch the composed event
+	var line []byte
+	processLine := func() error {
+		switch lineStr := string(line); {
+		case lineStr == "":
 			if err := flush(); err != nil {
 				return err
 			}
-		case strings.HasPrefix(line, ":"):
+		case strings.HasPrefix(lineStr, ":"):
 			// comment
 		default:
-			name, value, _ := strings.Cut(line, ":")
+			name, value, _ := strings.Cut(lineStr, ":")
 			value = strings.TrimPrefix(value, " ")
 			switch name {
 			case "data":
@@ -510,8 +503,34 @@ func parseSSEEvents(r io.Reader, fn func(data []byte) error) error {
 				// unknown fields ignored
 			}
 		}
-		if err != nil {
+		line = line[:0]
+		return nil
+	}
+	for done := false; !done; {
+		b, err := reader.ReadByte()
+		switch {
+		case err != nil:
 			done = true
+			// Flush a trailing unterminated line.
+			if len(line) > 0 {
+				if processErr := processLine(); processErr != nil {
+					return processErr
+				}
+			}
+		case b == '\n':
+			if processErr := processLine(); processErr != nil {
+				return processErr
+			}
+		case b == '\r':
+			// CRLF: consume the LF that completes the break.
+			if next, peekErr := reader.Peek(1); peekErr == nil && next[0] == '\n' {
+				_, _ = reader.Discard(1)
+			}
+			if processErr := processLine(); processErr != nil {
+				return processErr
+			}
+		default:
+			line = append(line, b)
 		}
 	}
 	return flush()

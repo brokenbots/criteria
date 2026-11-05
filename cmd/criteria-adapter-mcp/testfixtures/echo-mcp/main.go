@@ -64,7 +64,8 @@ var inFlight, maxInFlight atomic.Int64
 //     legacy 2025-03-26 dialect byte-identical.
 //   - MCP_TTL_MS: stamp ttlMs on tools/list and server/discover results
 //     (modern mode only).
-//   - MCP_METHODLOG: appends "method=<method>" per request in modern mode.
+//   - MCP_METHODLOG: appends "method=<method>" per request in any dialect
+//     (legacy handshakes and probes included).
 //   - MCP_MRTR=1: adds the "mrtr" tool (modern mode only) answering a
 //     SEP-2322 input_required result with one sampling/createMessage
 //     input request.
@@ -172,8 +173,12 @@ func dispatchFrame(payload []byte) {
 		// null id could collide with an in-flight correlated request.
 		return
 	}
-	if modernMode {
+	if methodLog != "" {
+		// Every request logs, both dialects: assertions must see initialize
+		// probes and legacy handshakes too, not just modern traffic.
 		appendLog(methodLog, "method="+req.Method)
+	}
+	if modernMode {
 		if !metaVersionOK(req) {
 			_ = writeRawResponse(unsupportedVersionError(req.ID))
 			return
