@@ -338,9 +338,13 @@ func TestDefaultStack_VaultEnvMount(t *testing.T) {
 func TestVaultProvider_Resolve_BadRef(t *testing.T) {
 	t.Setenv("VAULT_ADDR", "https://vault.example.invalid")
 	p := VaultProvider{}
-	_, err := p.Resolve(context.Background(), OriginRef{Kind: "vault", Ref: "myapp"})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "must be path#field")
+	// "no-field", empty, and refs whose path trims to nothing (e.g. "/#f")
+	// are all rejected as malformed before any CLI invocation.
+	for _, ref := range []string{"myapp", "myapp#", "", "/myapp#", "/#f", "#f"} {
+		_, err := p.Resolve(context.Background(), OriginRef{Kind: "vault", Ref: ref})
+		require.Error(t, err, "ref %q must be rejected", ref)
+		require.Contains(t, err.Error(), "must be path#field")
+	}
 }
 
 func TestVaultProvider_Resolve_CommandFailure(t *testing.T) {

@@ -60,12 +60,18 @@ func (vp VaultProvider) CanResolve(ref OriginRef) bool {
 // data path within M, so "app/data/tokens#f" resolves to M/data/app/data/
 // tokens instead of being misrouted to a foreign mount. A ref naming a
 // different mount (e.g. "other/data/x") stays inside M for the same reason;
-// to use a non-default KV mount, configure Mount.
+// to use a non-default KV mount, configure it with a secrets-policy mount
+// or the EnvVaultMount environment variable. Refs with stray leading or
+// trailing separators are trimmed before resolution.
 func (vp VaultProvider) Resolve(ctx context.Context, ref OriginRef) (string, error) {
 	slog.Debug("vault provider resolving secret", "ref", ref.Ref)
 
 	path, field, ok := strings.Cut(ref.Ref, "#")
-	if !ok || field == "" {
+	// Stray separators around the path must not survive into the KV v2
+	// path; trimming here also makes a separator-only path ("/#f") take the
+	// malformed-ref rejection below.
+	path = strings.Trim(path, "/")
+	if !ok || field == "" || path == "" {
 		return "", fmt.Errorf("vault provider: ref %q must be path#field", ref.Ref)
 	}
 
@@ -100,8 +106,13 @@ func (vp VaultProvider) mount() string {
 
 // kvPath normalizes a mount-relative secret path to the full KV v2 path the
 // vault CLI expects ("<mount>/data/<secret path>"). A leading configured-
-// mount prefix is recognized only at a path-component boundary.
+// mount prefix is recognized only at a path-component boundary, and stray
+// leading/trailing separators are trimmed so a hand-built ref like
+// "/myapp#f" cannot double into "<mount>//data" forms. (An empty path after
+// trimming is impossible through Resolve, which rejects it first; the pure
+// function still degrades to "<mount>/data/".)
 func kvPath(mount, path string) string {
+	path = strings.Trim(path, "/")
 	switch {
 	case strings.HasPrefix(path, mount+"/data/"):
 		return path

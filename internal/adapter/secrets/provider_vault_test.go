@@ -34,6 +34,14 @@ func TestVaultProvider_kvPath(t *testing.T) {
 		{"foreign_mount_stays_confined", "secret", "other/data/x", "secret/data/other/data/x"},
 		{"leading_data_marker", "secret", "data/myapp", "secret/data/data/myapp"},
 		{"custom_mount_bare", "kv-prod", "myapp", "kv-prod/data/myapp"},
+		{"leading_separator_normalized", "secret", "/myapp", "secret/data/myapp"},
+		{"trailing_separator_normalized", "secret", "myapp/", "secret/data/myapp"},
+		// The mount name itself is an ordinary root-level secret path inside
+		// the mount; nothing special-cases it.
+		{"bare_mount_name_is_data_path", "secret", "secret", "secret/data/secret"},
+		// Direct Resolve calls reject this earlier via the empty-path guard;
+		// the pure function degrades to the mount data root.
+		{"empty_path_degrades", "secret", "", "secret/data/"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			require.Equal(t, tt.want, kvPath(tt.mount, tt.path))
