@@ -167,6 +167,9 @@ func TestCompileEnvironments_SecretsPolicyMountEdgeCases(t *testing.T) {
 			if env.Secrets == nil {
 				t.Fatal("expected secrets policy to decode")
 			}
+			if env.Secrets.Provider != "vault" {
+				t.Errorf("expected provider 'vault', got %q", env.Secrets.Provider)
+			}
 			if env.Secrets.Mount != tt.wantPath {
 				t.Errorf("expected mount %q, got %q", tt.wantPath, env.Secrets.Mount)
 			}
