@@ -121,8 +121,8 @@ jobs:
         run: ./bin/criteria apply examples/hello --events-file /tmp/events.ndjson
       - name: Validate example workflows
         run: make validate
-      - name: Example plugin end-to-end
-        run: make example-plugin
+      - name: Example adapter end-to-end
+        run: make example-adapter
 
   gate-remote:
     name: Gate 3 — remote transport e2e
