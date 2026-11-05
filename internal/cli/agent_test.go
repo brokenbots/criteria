@@ -3,8 +3,10 @@ package cli
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -105,6 +107,46 @@ func makeAssignment(runID, workflowName, source string) *pb.WorkflowAssignment {
 		WorkflowName:   workflowName,
 		WorkflowSource: source,
 	}
+}
+
+// logCapture flags log-message text coming out of a slog handler so tests can
+// wait on agent-side lifecycle events that have no server-side observable
+// counterpart (some are only logged by the runAgent goroutine). The built-in
+// slog handlers emit exactly one Write call per record, so each write here is
+// a whole, newline-terminated record; messages are matched as plain
+// fragments of that formatted line.
+type logCapture struct {
+	mu    sync.Mutex
+	found map[string]bool
+}
+
+// newLogCapture returns a capture that watches for the given message
+// fragments.
+func newLogCapture(msgs ...string) *logCapture {
+	c := &logCapture{found: make(map[string]bool, len(msgs))}
+	for _, m := range msgs {
+		c.found[m] = false
+	}
+	return c
+}
+
+func (c *logCapture) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	line := string(p)
+	for m, seen := range c.found {
+		if !seen && strings.Contains(line, m) {
+			c.found[m] = true
+		}
+	}
+	return len(p), nil
+}
+
+// has reports whether the message has been recorded at least once.
+func (c *logCapture) has(msg string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.found[msg]
 }
 
 // requireStableEventCount waits up to d and fails if the count of events of
@@ -321,19 +363,37 @@ func TestAgent_Resume(t *testing.T) {
 func TestAgent_Reconnect(t *testing.T) {
 	requireNoGoroutineLeak(t)
 	fake := applytest.New(t)
-	cancel, errCh := startTestAgent(t, fake)
+	logcap := newLogCapture("agent registered and waiting for assignments")
+	cancel, errCh := startTestAgentOpts(t, fake, &agentOptions{
+		log: slog.New(slog.NewTextHandler(logcap, nil)),
+	})
 	defer cancel()
 
 	fake.WaitForCond(t, 5*time.Second, func() bool { return fake.ControlAttachCount() > 0 })
 	require.Equal(t, 1, fake.RegistrationCount(), "agent should register exactly once on startup")
 
+	// Gate on the agent's first attach completing on the client side before
+	// tearing down the connection. DropControl closes only the TCP transport;
+	// if it lands between the fake sending ControlReady and the agent receiving
+	// it, the initial control stream dies before runAgent's ready handshake
+	// completes and setupAgentClient exits with "control stream closed before
+	// ready" instead of reconnecting: the agent is then gone and no reconnect
+	// can ever satisfy the check below. The fake's server-side counters cannot
+	// distinguish that window, so gate on the ready log instead.
+	fake.WaitForCond(t, 15*time.Second, func() bool {
+		return logcap.has("agent registered and waiting for assignments")
+	})
+
 	fake.DropControl()
-	fake.WaitForCond(t, 10*time.Second, func() bool { return fake.ControlAttachCount() >= 2 })
+	// The reconnect bound is generous: under -race plus coverage on a loaded
+	// runner the EOF detect, 500ms min backoff, and redial can all slip, but a
+	// healthy reconnect lands far below this ceiling.
+	fake.WaitForCond(t, 30*time.Second, func() bool { return fake.ControlAttachCount() >= 2 })
 	require.Equal(t, 1, fake.RegistrationCount(), "agent must not re-register after reconnect")
 
 	runID := uuid.NewString()
 	fake.QueueAssignment(makeAssignment(runID, "two_step", twoStepWorkflow))
-	fake.WaitForCond(t, 10*time.Second, func() bool { return runHasEventOfType(fake, runID, "RunCompleted") })
+	fake.WaitForCond(t, 30*time.Second, func() bool { return runHasEventOfType(fake, runID, "RunCompleted") })
 
 	cancel()
 	waitAgent(t, errCh)
@@ -412,9 +472,11 @@ func TestAgent_CompileFailure_DuplicateTerminalEventAfterReconnect(t *testing.T)
 
 	// Force a transport-level reconnect and wait for the control stream to
 	// reattach. The publisher's replay/dedup must not produce a second RunFailed
-	// for the same run id.
+	// for the same run id. The attach bound mirrors TestAgent_Reconnect: the
+	// reconnect is healthy but can slip under -race plus coverage on a loaded
+	// runner.
 	fake.DropControl()
-	fake.WaitForCond(t, 10*time.Second, func() bool { return fake.ControlAttachCount() >= 2 })
+	fake.WaitForCond(t, 30*time.Second, func() bool { return fake.ControlAttachCount() >= 2 })
 
 	require.Equal(t, 1, runEventCountOfType(fake, runID, "RunFailed"), "reconnect must not duplicate RunFailed")
 
