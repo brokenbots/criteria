@@ -73,6 +73,107 @@ func TestCompileEnvironments_Single(t *testing.T) {
 	}
 }
 
+func TestCompileEnvironments_SecretsPolicyMount(t *testing.T) {
+	// The `mount` attribute must decode into SecretsPolicy.Mount so a custom
+	// KV mount is reachable from HCL. sandbox environments carry secrets
+	// policies (shell environments do not).
+	src := environmentWorkflow(`
+  environment "sandbox" "default" {
+    secrets = {
+      provider = "vault"
+      mount    = "kv-prod"
+      fallback = ["env"]
+    }
+  }
+`, "")
+	spec, diags := Parse("test.hcl", []byte(src))
+	if diags.HasErrors() {
+		t.Fatalf("parse: %s", diags.Error())
+	}
+	g, diags := Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile: %s", diags.Error())
+	}
+
+	env, ok := g.Environments["sandbox.default"]
+	if !ok {
+		t.Fatal("environment sandbox.default not found in graph")
+	}
+	if env.Secrets == nil {
+		t.Fatal("expected secrets policy to decode")
+	}
+	if env.Secrets.Provider != "vault" {
+		t.Errorf("expected provider 'vault', got %q", env.Secrets.Provider)
+	}
+	if env.Secrets.Mount != "kv-prod" {
+		t.Errorf("expected mount 'kv-prod', got %q", env.Secrets.Mount)
+	}
+	if len(env.Secrets.Fallback) != 1 || env.Secrets.Fallback[0] != "env" {
+		t.Errorf("expected fallback [env], got %v", env.Secrets.Fallback)
+	}
+}
+
+func TestCompileEnvironments_SecretsPolicyMountEdgeCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		secrets  string
+		wantErr  string
+		wantPath string
+	}{
+		{
+			name:     "mount_omitted_defaults_to_empty",
+			secrets:  `secrets = { provider = "vault" }`,
+			wantPath: "",
+		},
+		{
+			name:    "mount_wrong_type_rejected",
+			secrets: `secrets = { provider = "vault", mount = 42 }`,
+			wantErr: "secrets mount must be a string",
+		},
+		{
+			name:    "mount_null_rejected",
+			secrets: `secrets = { provider = "vault", mount = null }`,
+			wantErr: "secrets mount must be a string",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			src := environmentWorkflow(`
+  environment "sandbox" "default" {
+    `+tt.secrets+`
+  }
+`, "")
+			spec, diags := Parse("test.hcl", []byte(src))
+			if diags.HasErrors() {
+				t.Fatalf("parse: %s", diags.Error())
+			}
+			g, diags := Compile(spec, nil)
+			if tt.wantErr != "" {
+				if !diags.HasErrors() {
+					t.Fatalf("expected error containing %q, got none", tt.wantErr)
+				}
+				if !strings.Contains(diags.Error(), tt.wantErr) {
+					t.Fatalf("expected error containing %q, got: %s", tt.wantErr, diags.Error())
+				}
+				return
+			}
+			if diags.HasErrors() {
+				t.Fatalf("compile: %s", diags.Error())
+			}
+			env, ok := g.Environments["sandbox.default"]
+			if !ok {
+				t.Fatal("environment sandbox.default not found in graph")
+			}
+			if env.Secrets == nil {
+				t.Fatal("expected secrets policy to decode")
+			}
+			if env.Secrets.Mount != tt.wantPath {
+				t.Errorf("expected mount %q, got %q", tt.wantPath, env.Secrets.Mount)
+			}
+		})
+	}
+}
+
 func TestCompileEnvironments_DuplicateTypeAndName(t *testing.T) {
 	// Duplicate <type>.<name> should error.
 	src := environmentWorkflow(`
@@ -1243,7 +1344,7 @@ func secretsPolicyEqual(a, b *SecretsPolicy) bool {
 	if a == nil || b == nil {
 		return false
 	}
-	return a.Provider == b.Provider
+	return a.Provider == b.Provider && a.Mount == b.Mount
 }
 
 func resourcesPolicyEqual(a, b *ResourcesPolicy) bool {

@@ -18,6 +18,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/brokenbots/criteria/workflow"
 )
 
 // fakeBinDir builds a directory containing the named fake executables (POSIX
@@ -202,6 +204,135 @@ func TestVaultProvider_Resolve_CustomMount(t *testing.T) {
 			require.Contains(t, string(args), " "+tt.wantVFS)
 		})
 	}
+}
+
+// fakeVaultRecorder builds the fake PATH setup used by the construction-path
+// tests: a fabricated vault CLI that records its argv and prints a fixed
+// value, so assertions run against the exact KV v2 path the stack configured
+// provider was handed.
+func fakeVaultRecorder(t *testing.T) string {
+	argsFile := fakeBinArgsFile(t)
+	fakeBinDir(t, map[string]string{
+		"vault": `printf '%s\n' "$*" > "$CRITERIA_FAKE_BIN_ARGS"; echo vaulted-value`,
+	})
+	t.Setenv("VAULT_ADDR", "https://vault.example.invalid")
+	return argsFile
+}
+
+// TestStackFromEnvironment_VaultPolicyMount exercises the real construction
+// path for a custom KV mount: a secrets policy naming the vault provider with
+// Mount=kv-prod flows through StackFromEnvironment into VaultProvider, so the
+// fabricated vault CLI must receive the custom mount's KV v2 path rather than
+// the default mount's.
+func TestStackFromEnvironment_VaultPolicyMount(t *testing.T) {
+	argsFile := fakeVaultRecorder(t)
+
+	envNode := &workflow.EnvironmentNode{
+		Secrets: &workflow.SecretsPolicy{
+			Provider: "vault",
+			Mount:    "kv-prod",
+		},
+	}
+	stack, err := StackFromEnvironment(envNode)
+	require.NoError(t, err)
+
+	val, err := stack.Resolve(context.Background(), OriginRef{Kind: "vault", Ref: "myapp#api_key"})
+	require.NoError(t, err)
+	require.Equal(t, "vaulted-value", val)
+
+	args, err := os.ReadFile(argsFile)
+	require.NoError(t, err)
+	argv := string(args)
+	require.Contains(t, argv, "kv-prod/data/myapp")
+	require.NotContains(t, argv, "secret/data/")
+}
+
+// TestStackFromEnvironment_VaultMountInFallback asserts the mount reaches the
+// vault provider even when it only appears in the policy's fallback list.
+func TestStackFromEnvironment_VaultMountInFallback(t *testing.T) {
+	argsFile := fakeVaultRecorder(t)
+
+	envNode := &workflow.EnvironmentNode{
+		Secrets: &workflow.SecretsPolicy{
+			Provider: "env",
+			Mount:    "kv-prod",
+			Fallback: []string{"vault"},
+		},
+	}
+	stack, err := StackFromEnvironment(envNode)
+	require.NoError(t, err)
+
+	val, err := stack.Resolve(context.Background(), OriginRef{Kind: "vault", Ref: "myapp#api_key"})
+	require.NoError(t, err)
+	require.Equal(t, "vaulted-value", val)
+
+	args, err := os.ReadFile(argsFile)
+	require.NoError(t, err)
+	require.Contains(t, string(args), "kv-prod/data/myapp")
+}
+
+// TestStackFromEnvironment_VaultEnvMount covers the CRITERIA_VAULT_MOUNT
+// operator knob reaching StackFromEnvironment when the policy names vault
+// without configuring a mount itself.
+func TestStackFromEnvironment_VaultEnvMount(t *testing.T) {
+	argsFile := fakeVaultRecorder(t)
+	t.Setenv(EnvVaultMount, "kv-prod")
+
+	envNode := &workflow.EnvironmentNode{
+		Secrets: &workflow.SecretsPolicy{Provider: "vault"},
+	}
+	stack, err := StackFromEnvironment(envNode)
+	require.NoError(t, err)
+
+	val, err := stack.Resolve(context.Background(), OriginRef{Kind: "vault", Ref: "myapp#api_key"})
+	require.NoError(t, err)
+	require.Equal(t, "vaulted-value", val)
+
+	args, err := os.ReadFile(argsFile)
+	require.NoError(t, err)
+	require.Contains(t, string(args), "kv-prod/data/myapp")
+}
+
+// TestStackFromEnvironment_VaultPolicyMountOverridesEnv pins the precedence:
+// a workflow-level mount beats the CRITERIA_VAULT_MOUNT operator knob.
+func TestStackFromEnvironment_VaultPolicyMountOverridesEnv(t *testing.T) {
+	argsFile := fakeVaultRecorder(t)
+	t.Setenv(EnvVaultMount, "kv-stage")
+
+	envNode := &workflow.EnvironmentNode{
+		Secrets: &workflow.SecretsPolicy{
+			Provider: "vault",
+			Mount:    "kv-prod",
+		},
+	}
+	stack, err := StackFromEnvironment(envNode)
+	require.NoError(t, err)
+
+	_, err = stack.Resolve(context.Background(), OriginRef{Kind: "vault", Ref: "myapp#api_key"})
+	require.NoError(t, err)
+
+	args, err := os.ReadFile(argsFile)
+	require.NoError(t, err)
+	argv := string(args)
+	require.Contains(t, argv, "kv-prod/data/myapp")
+	require.NotContains(t, argv, "kv-stage")
+}
+
+// TestDefaultStack_VaultEnvMount covers the same operator knob applied by
+// DefaultStack, whose vault entry has no workflow-level policy to consult.
+func TestDefaultStack_VaultEnvMount(t *testing.T) {
+	argsFile := fakeVaultRecorder(t)
+	t.Setenv(EnvVaultMount, "kv-prod")
+
+	val, err := DefaultStack().Resolve(context.Background(), OriginRef{Kind: "vault", Ref: "myapp#api_key"})
+	require.NoError(t, err)
+	require.Equal(t, "vaulted-value", val)
+
+	args, err := os.ReadFile(argsFile)
+	require.NoError(t, err)
+	argv := string(args)
+	require.Contains(t, argv, "kv-prod/data/myapp")
+	require.NotContains(t, argv, "secret/data/")
 }
 
 func TestVaultProvider_Resolve_BadRef(t *testing.T) {

@@ -19,15 +19,30 @@ import (
 // uses exec.CommandContext so cancellation and timeouts are respected.
 type VaultProvider struct {
 	// Mount is the KV v2 mount every resolved ref is confined to.
-	// Empty selects DefaultVaultMount ("secret"); a custom KV mount (e.g.
-	// "kv-prod") is configured here — refs are never sent to a different
-	// mount than the configured one.
+	// Empty selects DefaultVaultMount ("secret"). Custom KV mounts are
+	// configured from a secrets policy (workflow SecretsPolicy.Mount, set
+	// via `secrets { mount = ... }`) or, in its absence, the EnvVaultMount
+	// environment variable — refs are never sent to a different mount than
+	// the configured one.
 	Mount string
 }
 
 // DefaultVaultMount is the KV v2 mount VaultProvider resolves refs against
 // when Mount is empty.
 const DefaultVaultMount = "secret"
+
+// EnvVaultMount is the operator-facing environment knob that selects the KV
+// v2 mount for vault providers built by DefaultStack and
+// StackFromEnvironment (e.g. CRITERIA_VAULT_MOUNT=kv-prod). It applies only
+// when the workflow's secrets policy does not configure a Mount itself;
+// policy-level configuration wins.
+const EnvVaultMount = "CRITERIA_VAULT_MOUNT"
+
+// vaultMountFromEnv reads the EnvVaultMount operator knob. Empty means "no
+// operator override", which VaultProvider resolves to DefaultVaultMount.
+func vaultMountFromEnv() string {
+	return strings.TrimSpace(os.Getenv(EnvVaultMount))
+}
 
 func (vp VaultProvider) Name() string { return "vault" }
 
