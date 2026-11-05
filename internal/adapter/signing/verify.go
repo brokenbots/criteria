@@ -572,8 +572,7 @@ var trustedMaterialOverride root.TrustedMaterial
 // TUF root policy (decision D-WS48-TUF): the root is fetched via TUF and cached
 // under the criteria home at cache/sigstore/; once
 // cached, verification reuses it for reproducibility. Refresh happens by
-// clearing that cache directory (an explicit `criteria adapter trust refresh`
-// command is future work). Air-gapped consumers cannot keyless-verify (the TUF
+// clearing that cache directory. Air-gapped consumers cannot keyless-verify (the TUF
 // root and a was-online-at-sign Rekor entry are required); they use WS47 key
 // mode, or a warn/off posture.
 //
@@ -581,8 +580,8 @@ var trustedMaterialOverride root.TrustedMaterial
 // live variant spawns a background refresh goroutine that only stops when
 // opts.Context is cancelled, and criteria never owns such a context — every
 // keyless verification would leak a goroutine for the process lifetime. The
-// documented refresh path is the explicit cache-clearing command above, not an
-// automatic 24h refresher.
+// documented refresh path is clearing that cache directory (see
+// docs/adapters.md), not an automatic 24h refresher.
 func trustedMaterial(_ context.Context) (root.TrustedMaterial, error) {
 	if trustedMaterialOverride != nil {
 		return trustedMaterialOverride, nil

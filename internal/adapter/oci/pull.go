@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -283,10 +284,24 @@ func (p *Puller) annotateIndex(desc *ocispec.Descriptor, extra map[string]string
 // IsLocalhost reports whether host (which may include a :port suffix) refers
 // to the local machine. When true, the puller (and the publisher) default to
 // PlainHTTP so that local test registries work without an explicit flag.
+// IPv6 loopback literals are handled explicitly — bare ("::1") and bracketed
+// ("[::1]", with or without a trailing port) — so the port strip must be
+// bracket-aware: a byte-indexed last-colon cut truncates "::1" to ":" and
+// never matches.
 func IsLocalhost(host string) bool {
-	host = strings.ToLower(host)
-	if idx := strings.LastIndex(host, ":"); idx != -1 {
-		host = host[:idx]
+	// Bracket-aware port strip: net.SplitHostPort parses "[::1]:5000" into
+	// host "::1". Forms without a host:port shape — bare IPv6 ("::1" has too
+	// many colons for a host:port address), "[::1]", "localhost" — fail the
+	// split and pass through unchanged.
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
 	}
-	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+	if len(host) > 2 && strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = host[1 : len(host)-1]
+	}
+	host = strings.ToLower(host)
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return host == "localhost"
 }
