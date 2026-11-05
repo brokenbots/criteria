@@ -1,12 +1,23 @@
 package cli
 
 import (
+	"log/slog"
 	"strings"
 	"testing"
 
 	"github.com/brokenbots/criteria/internal/adapter/signing"
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
+
+// pinTestLogger swaps the default logger for a sink capturing everything
+// policyForPin emits, restoring the previous logger on cleanup.
+func pinTestLogger(t *testing.T) *captureLog {
+	logSink := &captureLog{}
+	prevDefault := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logSink, nil)))
+	t.Cleanup(func() { slog.SetDefault(prevDefault) })
+	return logSink
+}
 
 func TestPolicyForPin_KeyRestrictsToPinnedFingerprint(t *testing.T) {
 	base := signing.Policy{
@@ -51,12 +62,11 @@ func TestPolicyForPin_KeyNoMatchFailsClosed(t *testing.T) {
 	}
 }
 
-// TestPolicyForPin_KeyNoMatchKeylessPolicyFailsClosed covers the tightened
+// TestPolicyForPin_KeyNoMatchLandsOnValidKeylessPolicy covers the tightened
 // cross-branch: a key pin with no configured match leaves a policy that is
-// keyless-shaped, so the keyless identity surface (issuers + patterns) must be
-// present and valid or the narrowed policy fails validation — the "verify
-// enforces the trust anchor" promise must not degrade into a malformed policy.
-func TestPolicyForPin_KeyNoMatchKeylessPolicyFailsClosed(t *testing.T) {
+// keyless-shaped, and — because the base carries a valid keyless identity
+// surface — the narrowed policy still validates cleanly.
+func TestPolicyForPin_KeyNoMatchLandsOnValidKeylessPolicy(t *testing.T) {
 	base := signing.Policy{
 		Mode:            signing.ModeStrict,
 		TrustedIssuers:  append([]string(nil), signing.DefaultTrustedIssuers...),
@@ -71,6 +81,35 @@ func TestPolicyForPin_KeyNoMatchKeylessPolicyFailsClosed(t *testing.T) {
 	}
 	if err := got.Validate(); err != nil {
 		t.Fatalf("narrowed keyless-shaped policy invalid: %v", err)
+	}
+}
+
+// TestPolicyForPin_KeyNoMatchOnKeyOnlyBaseLeavesKeylessShape documents the
+// narrowing/validation split: over a key-mode-only base (no keyless issuer or
+// subject configured), a no-match key pin leaves a keyless-shaped policy whose
+// identity surface is empty. policyForPin narrows but does not validate the key
+// branch; the malformed surface is enforced by Verify's policy gate
+// (signing.Validate is called at every verification and at policy build), so
+// the artifact can never verify with it.
+func TestPolicyForPin_KeyNoMatchOnKeyOnlyBaseLeavesKeylessShape(t *testing.T) {
+	base := signing.Policy{
+		Mode:        signing.ModeStrict,
+		TrustedKeys: []signing.KeyIdentity{{Fingerprint: "aaa", RawKey: []byte("a")}},
+	}
+	pin := &lockfile.LockedSignature{Key: &lockfile.LockedKey{Fingerprint: "zzz"}}
+
+	got, err := policyForPin(&base, pin)
+	if err != nil {
+		t.Fatalf("policyForPin: %v", err)
+	}
+	if !got.IsKeyless() {
+		t.Fatalf("expected policy to be keyless-shaped, got %+v", got)
+	}
+	if len(got.TrustedIssuers) != 0 || len(got.SubjectPatterns) != 0 {
+		t.Fatalf("expected empty keyless identity surface, got issuers=%v patterns=%v", got.TrustedIssuers, got.SubjectPatterns)
+	}
+	if err := got.Validate(); err == nil {
+		t.Error("expected invalid keyless-shaped policy; Verify's policy gate is the enforcement point for this shape")
 	}
 }
 
@@ -125,8 +164,10 @@ func TestPolicyForPin_KeylessPinRequiresIssuerAndSubject(t *testing.T) {
 }
 
 // TestPolicyForPin_WildcardIssuerAllowedWithWarning asserts the explicit
-// wildcard-issuer pin path: accepted (loud, deliberate relaxation), warns, and
-// narrows the issuer surface to the wildcard (never to the base defaults).
+// wildcard-issuer pin path: accepted (loud, deliberate relaxation), narrowed
+// to the wildcard (never to the base defaults), and emitting the loud warning
+// with the pinned identity and the concrete-issuer hint — and nothing about
+// the subject, which is concrete here.
 func TestPolicyForPin_WildcardIssuerAllowedWithWarning(t *testing.T) {
 	base := signing.Policy{Mode: signing.ModeStrict, SubjectPatterns: []string{"*"}}
 	pin := &lockfile.LockedSignature{Keyless: &lockfile.LockedKeyless{
@@ -134,6 +175,7 @@ func TestPolicyForPin_WildcardIssuerAllowedWithWarning(t *testing.T) {
 		Subject: "https://github.com/acme/repo/*",
 	}}
 
+	logSink := pinTestLogger(t)
 	got, err := policyForPin(&base, pin)
 	if err != nil {
 		t.Fatalf("wildcard issuer pin must be allowed, got: %v", err)
@@ -143,6 +185,77 @@ func TestPolicyForPin_WildcardIssuerAllowedWithWarning(t *testing.T) {
 	}
 	if len(got.SubjectPatterns) != 1 || got.SubjectPatterns[0] != "https://github.com/acme/repo/*" {
 		t.Fatalf("subject surface = %+v, want the pinned glob", got.SubjectPatterns)
+	}
+	log := logSink.String()
+	if !strings.Contains(log, "lockfile keyless pin trusts ANY OIDC issuer") {
+		t.Errorf("expected a loud wildcard-issuer warning, log:\n%s", log)
+	}
+	if !strings.Contains(log, "pinned_issuer=*") {
+		t.Errorf("warning must name the wildcard pinned issuer, log:\n%s", log)
+	}
+	if !strings.Contains(log, "prefer a concrete issuer URL") {
+		t.Errorf("warning must carry the concrete-issuer hint, log:\n%s", log)
+	}
+	if strings.Contains(log, "trusts any workflow subject") {
+		t.Errorf("warning must stay specific: no subject warning when only the issuer is wildcard, log:\n%s", log)
+	}
+}
+
+// TestPolicyForPin_WildcardSubjectAllowedWithWarning mirrors the wildcard
+// issuer case for the subject side: accepted, narrowed to the wildcard, and
+// warned with the repo-scoped-glob hint — and no issuer warning when the
+// issuer itself is concrete.
+func TestPolicyForPin_WildcardSubjectAllowedWithWarning(t *testing.T) {
+	base := signing.Policy{Mode: signing.ModeStrict}
+	pin := &lockfile.LockedSignature{Keyless: &lockfile.LockedKeyless{
+		Issuer:  "https://token.actions.githubusercontent.com",
+		Subject: signing.WildcardIssuer,
+	}}
+
+	logSink := pinTestLogger(t)
+	got, err := policyForPin(&base, pin)
+	if err != nil {
+		t.Fatalf("wildcard subject pin must be allowed, got: %v", err)
+	}
+	if len(got.TrustedIssuers) != 1 || got.TrustedIssuers[0] != "https://token.actions.githubusercontent.com" {
+		t.Fatalf("issuer surface = %+v, want the pinned issuer", got.TrustedIssuers)
+	}
+	if len(got.SubjectPatterns) != 1 || got.SubjectPatterns[0] != signing.WildcardIssuer {
+		t.Fatalf("subject surface = %+v, want the wildcard", got.SubjectPatterns)
+	}
+	log := logSink.String()
+	if !strings.Contains(log, "lockfile keyless pin trusts any workflow subject") {
+		t.Errorf("expected a loud wildcard-subject warning, log:\n%s", log)
+	}
+	if !strings.Contains(log, "names the adapter's repo") {
+		t.Errorf("warning must carry the repo-scoped-glob hint, log:\n%s", log)
+	}
+	if strings.Contains(log, "trusts ANY OIDC issuer") {
+		t.Errorf("warning must stay specific: no issuer warning when only the subject is wildcard, log:\n%s", log)
+	}
+}
+
+// TestPolicyForPin_ConcretePinEmitsNoWildcardWarning pins the warning to the
+// wildcard relaxation only: a fully concrete keyless pin emits neither
+// wildcard warning, so the loudness cannot drift into every-day noise.
+func TestPolicyForPin_ConcretePinEmitsNoWildcardWarning(t *testing.T) {
+	base := signing.Policy{Mode: signing.ModeStrict}
+	pin := &lockfile.LockedSignature{Keyless: &lockfile.LockedKeyless{
+		Issuer:  "https://token.actions.githubusercontent.com",
+		Subject: "https://github.com/acme/repo/*",
+	}}
+
+	logSink := pinTestLogger(t)
+	got, err := policyForPin(&base, pin)
+	if err != nil {
+		t.Fatalf("policyForPin: %v", err)
+	}
+	if len(got.TrustedIssuers) != 1 || got.TrustedIssuers[0] != pin.Keyless.Issuer {
+		t.Fatalf("issuer surface = %+v, want the pinned issuer", got.TrustedIssuers)
+	}
+	log := logSink.String()
+	if strings.Contains(log, "trusts ANY OIDC issuer") || strings.Contains(log, "trusts any workflow subject") {
+		t.Errorf("concrete pin must not warn, log:\n%s", log)
 	}
 }
 

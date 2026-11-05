@@ -339,7 +339,10 @@ What each verification mode enforces on that re-verification:
 - **warn** — a verification failure is logged and the operation proceeds; the
   pin is asserted only when verification produced a signer. A pinned signer
   that fails re-verification fails closed under warn too (the pin is the trust
-  anchor in every non-`off` mode).
+  anchor in every non-`off` mode). Policy-shape validation runs before mode
+  handling, so a malformed policy (an empty pattern entry, a keyless pin
+  without a recorded issuer/subject) is a hard error in every mode, `warn`
+  included.
 - **off** — verification is skipped entirely, including the pin check.
 
 - **Keyless (default in CI, public).** `criteria adapter publish --keyless`

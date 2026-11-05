@@ -44,6 +44,11 @@ func SubjectMatches(pattern, subject string) bool {
 // classic greedy '*' scan with single-position backtracking. An empty pattern
 // matches nothing — Validate rejects empty entries, so callers that reach
 // here with one fail closed instead of allow-all.
+//
+// The matcher operates on bytes, not runes: '?' consumes exactly one byte, so
+// a multi-byte rune in the subject would need one '?' per byte. Subjects and
+// issuers are ASCII OIDC URLs in practice, and the byte-wise behavior can only
+// over-restrict matches (reject, never widen trust), so it fails closed.
 func globMatch(pattern, s string) bool {
 	if pattern == "" {
 		return false
