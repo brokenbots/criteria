@@ -103,19 +103,15 @@ func policyForPin(base *signing.Policy, pin *lockfile.LockedSignature) (signing.
 				"pinned_issuer", pinIssuer,
 				"pinned_subject", pinSubject,
 				"hint", "prefer a concrete issuer URL (e.g. "+signing.DefaultTrustedIssuers[0]+"); a wildcard issuer accepts signatures from every Sigstore-flavored CI")
-			p.TrustedIssuers = []string{pinIssuer}
-		} else {
-			p.TrustedIssuers = []string{pinIssuer}
 		}
 		if pinSubject == signing.WildcardIssuer {
 			slog.Warn("lockfile keyless pin trusts any workflow subject",
 				"pinned_issuer", pinIssuer,
 				"pinned_subject", pinSubject,
 				"hint", "prefer a subject glob that names the adapter's repo (e.g. \"https://github.com/org/repo/*\")")
-			p.SubjectPatterns = []string{pinSubject}
-		} else {
-			p.SubjectPatterns = []string{pinSubject}
 		}
+		p.TrustedIssuers = []string{pinIssuer}
+		p.SubjectPatterns = []string{pinSubject}
 		if err := p.Validate(); err != nil {
 			return signing.Policy{}, fmt.Errorf("pinned verification policy: %w", err)
 		}
