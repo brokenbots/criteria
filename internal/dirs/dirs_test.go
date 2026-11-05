@@ -220,6 +220,74 @@ func TestConfigPath_XDG_CONFIG_HOME_NonAbsoluteIgnored(t *testing.T) {
 	}
 }
 
+func TestSecretsDir_Default(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("CRITERIA_HOME", "")
+	t.Setenv("CRITERIA_STATE_DIR", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+
+	got, err := SecretsDir()
+	if err != nil {
+		t.Fatalf("SecretsDir() error = %v", err)
+	}
+	want := filepath.Join(tmp, defaultConfigRel, secretsSubdir)
+	if got != want {
+		t.Fatalf("SecretsDir() = %q, want %q", got, want)
+	}
+}
+
+func TestSecretsDir_XDG_CONFIG_HOME(t *testing.T) {
+	tmp := t.TempDir()
+	xdg := filepath.Join(tmp, "xdg-config")
+	t.Setenv("HOME", tmp)
+	t.Setenv("CRITERIA_HOME", "")
+	t.Setenv("CRITERIA_STATE_DIR", "")
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+
+	got, err := SecretsDir()
+	if err != nil {
+		t.Fatalf("SecretsDir() error = %v", err)
+	}
+	want := filepath.Join(xdg, xdgAppDir, secretsSubdir)
+	if got != want {
+		t.Fatalf("SecretsDir() = %q, want %q", got, want)
+	}
+}
+
+func TestSecretsDir_NonAbsoluteXDGIgnored(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("CRITERIA_HOME", "")
+	t.Setenv("CRITERIA_STATE_DIR", "")
+	t.Setenv("XDG_CONFIG_HOME", "relative/config")
+
+	got, err := SecretsDir()
+	if err != nil {
+		t.Fatalf("SecretsDir() error = %v", err)
+	}
+	want := filepath.Join(tmp, defaultConfigRel, secretsSubdir)
+	if got != want {
+		t.Fatalf("SecretsDir() = %q, want %q (non-absolute XDG values must be ignored)", got, want)
+	}
+}
+
+func TestSecretsDir_AppRootKeepsSingleTree(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("CRITERIA_HOME", "/explicit/home")
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "xdg-config"))
+
+	got, err := SecretsDir()
+	if err != nil {
+		t.Fatalf("SecretsDir() error = %v", err)
+	}
+	want := "/explicit/home/" + secretsSubdir
+	if got != want {
+		t.Fatalf("SecretsDir() = %q, want %q", got, want)
+	}
+}
+
 func TestCacheOCI_Default(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)

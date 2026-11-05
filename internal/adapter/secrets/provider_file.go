@@ -10,10 +10,21 @@ import (
 	"github.com/brokenbots/criteria/internal/dirs"
 )
 
-// FileProvider resolves secrets by reading files from a confined root directory.
+// FileProvider resolves secrets by reading files from a confined root
+// directory. Every reference — absolute, relative, or reached through a
+// symlink — is normalized, evaluated on both sides, and refused unless it
+// stays contained within Root at a path-component boundary.
+//
+// When Root is empty the provider is confined to dirs.SecretsDir(): the
+// dedicated secrets directory under the resolved config root
+// ($CRITERIA_HOME/secrets when an app root is set, otherwise
+// $XDG_CONFIG_HOME/criteria/secrets, default ~/.config/criteria/secrets).
+// Home-wide defaults are intentionally not used. The default root is not
+// created on demand: a missing directory fails closed (invalid root) until
+// it is provisioned or an explicit Root is configured.
 type FileProvider struct {
 	// Root is the base directory that all file reads are confined to.
-	// Defaults to the criteria state root (dirs.Home()) if empty.
+	// Empty selects dirs.SecretsDir().
 	Root string
 }
 
@@ -26,11 +37,11 @@ func (p *FileProvider) CanResolve(ref OriginRef) bool {
 func (p *FileProvider) Resolve(_ context.Context, ref OriginRef) (string, error) {
 	root := p.Root
 	if root == "" {
-		home, err := dirs.Home()
+		secretsDir, err := dirs.SecretsDir()
 		if err != nil {
-			return "", fmt.Errorf("file provider: cannot determine criteria root: %w", err)
+			return "", fmt.Errorf("file provider: cannot determine default secrets root: %w", err)
 		}
-		root = home
+		root = secretsDir
 	}
 
 	// Normalize and confine the requested path to Root.

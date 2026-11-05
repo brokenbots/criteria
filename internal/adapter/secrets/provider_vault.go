@@ -17,24 +17,61 @@ import (
 // Future work (tracked): migrate to github.com/hashicorp/vault/api for
 // richer error handling and connection pooling. The current shell-out
 // uses exec.CommandContext so cancellation and timeouts are respected.
-type VaultProvider struct{}
+type VaultProvider struct {
+	// Mount is the KV v2 mount every resolved ref is confined to.
+	// Empty selects DefaultVaultMount ("secret"). Custom KV mounts are
+	// configured from a secrets policy (workflow SecretsPolicy.Mount, set
+	// via `secrets { mount = ... }`) or, in its absence, the EnvVaultMount
+	// environment variable — refs are never sent to a different mount than
+	// the configured one.
+	Mount string
+}
 
-func (VaultProvider) Name() string { return "vault" }
+// DefaultVaultMount is the KV v2 mount VaultProvider resolves refs against
+// when Mount is empty.
+const DefaultVaultMount = "secret"
 
-func (VaultProvider) CanResolve(ref OriginRef) bool {
+// EnvVaultMount is the operator-facing environment knob that selects the KV
+// v2 mount for vault providers built by DefaultStack and
+// StackFromEnvironment (e.g. CRITERIA_VAULT_MOUNT=kv-prod). It applies only
+// when the workflow's secrets policy does not configure a Mount itself;
+// policy-level configuration wins.
+const EnvVaultMount = "CRITERIA_VAULT_MOUNT"
+
+// vaultMountFromEnv reads the EnvVaultMount operator knob. Empty means "no
+// operator override", which VaultProvider resolves to DefaultVaultMount.
+func vaultMountFromEnv() string {
+	return strings.TrimSpace(os.Getenv(EnvVaultMount))
+}
+
+func (vp VaultProvider) Name() string { return "vault" }
+
+func (vp VaultProvider) CanResolve(ref OriginRef) bool {
 	return ref.Kind == "vault"
 }
 
-// Resolve interprets ref.Ref as a Vault KV v2 path.
-// Supported forms:
-//   - "secret/data/myapp#api_key"  → read secret/myapp, field api_key
-//   - "secret/myapp#api_key"     → same, data/ prefix is optional
-//   - "myapp#api_key"            → path myapp, field api_key
-func (VaultProvider) Resolve(ctx context.Context, ref OriginRef) (string, error) {
+// Resolve interprets ref.Ref as a Vault KV v2 path in the configured mount.
+// With M = the mount (Mount, default "secret"), supported forms:
+//   - "D#field"          → secret data path D within M (resolved as M/data/D)
+//   - "M/D#field"        → same, mount given without the KV v2 data marker
+//   - "M/data/D#field"   → used as-is (full KV v2 path)
+//
+// Any other shape — including paths containing "/data/" mid-string — is a
+// data path within M, so "app/data/tokens#f" resolves to M/data/app/data/
+// tokens instead of being misrouted to a foreign mount. A ref naming a
+// different mount (e.g. "other/data/x") stays inside M for the same reason;
+// to use a non-default KV mount, configure it with a secrets-policy mount
+// or the EnvVaultMount environment variable. Refs with stray leading or
+// trailing separators are trimmed before resolution.
+func (vp VaultProvider) Resolve(ctx context.Context, ref OriginRef) (string, error) {
 	slog.Debug("vault provider resolving secret", "ref", ref.Ref)
 
 	path, field, ok := strings.Cut(ref.Ref, "#")
-	if !ok || field == "" {
+	// Stray separators around the path must not survive into the KV v2
+	// path; trimming here also makes a separator-only path ("/#f") take the
+	// malformed-ref rejection below.
+	path = strings.Trim(path, "/")
+	if !ok || field == "" || path == "" {
 		return "", fmt.Errorf("vault provider: ref %q must be path#field", ref.Ref)
 	}
 
@@ -43,11 +80,8 @@ func (VaultProvider) Resolve(ctx context.Context, ref OriginRef) (string, error)
 		return "", fmt.Errorf("vault provider: VAULT_ADDR is not set")
 	}
 
-	// Normalize path for KV v2.
-	if !strings.Contains(path, "/data/") {
-		path = "secret/data/" + path
-	}
-
+	mount := vp.mount()
+	path = kvPath(mount, path)
 	cmd := exec.CommandContext(ctx, "vault", "kv", "get", "-format=json", "-field="+field, path)
 	out, err := cmd.Output()
 	if err != nil {
@@ -57,4 +91,34 @@ func (VaultProvider) Resolve(ctx context.Context, ref OriginRef) (string, error)
 	val := strings.TrimRight(string(out), "\r\n")
 	slog.Debug("vault provider resolved secret", "ref", ref.Ref, "path", path, "field", field)
 	return val, nil
+}
+
+// mount returns the effective KV v2 mount: the configured Mount, or
+// DefaultVaultMount when unset. Stray separators are trimmed so a trailing
+// slash in the configuration cannot double into the KV v2 path.
+func (vp VaultProvider) mount() string {
+	mount := strings.Trim(vp.Mount, "/")
+	if mount == "" {
+		return DefaultVaultMount
+	}
+	return mount
+}
+
+// kvPath normalizes a mount-relative secret path to the full KV v2 path the
+// vault CLI expects ("<mount>/data/<secret path>"). A leading configured-
+// mount prefix is recognized only at a path-component boundary, and stray
+// leading/trailing separators are trimmed so a hand-built ref like
+// "/myapp#f" cannot double into "<mount>//data" forms. (An empty path after
+// trimming is impossible through Resolve, which rejects it first; the pure
+// function still degrades to "<mount>/data/".)
+func kvPath(mount, path string) string {
+	path = strings.Trim(path, "/")
+	switch {
+	case strings.HasPrefix(path, mount+"/data/"):
+		return path
+	case strings.HasPrefix(path, mount+"/"):
+		return mount + "/data/" + strings.TrimPrefix(path, mount+"/")
+	default:
+		return mount + "/data/" + path
+	}
 }

@@ -42,34 +42,71 @@ func TestFileProvider_StripsNewline(t *testing.T) {
 	require.Equal(t, "hello", val)
 }
 
-// TestFileProvider_DefaultRoot tests the documented default: when Root is
-// empty it resolves to the criteria state root (dirs.Home()), not the raw
-// user home. The resolution is asserted behaviorally by confining within and
-// rejecting outside that root.
+// TestFileProvider_DefaultRoot pins the narrowed fail-closed default: with
+// Root unset the provider is confined to dirs.SecretsDir(), not the config
+// root, not the state root, and not the user's home — sibling files outside
+// the secrets directory are refused.
 func TestFileProvider_DefaultRoot(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("CRITERIA_HOME", "")
 	t.Setenv("CRITERIA_STATE_DIR", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("XDG_STATE_HOME", "")
 
-	root, err := dirs.Home()
+	root, err := dirs.SecretsDir()
 	require.NoError(t, err)
 
+	// A secret inside the default root is resolvable via a relative ref.
 	require.NoError(t, os.MkdirAll(root, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "secret.txt"), []byte("state-root-secret\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "secret.txt"), []byte("secrets-dir-secret\n"), 0o600))
 
-	// A file under $HOME but outside the criteria root must be refused.
+	// Files in the config root itself and anywhere in $HOME are outside the
+	// confinement and must be refused.
+	configRoot := filepath.Dir(root)
+	require.NoError(t, os.WriteFile(filepath.Join(configRoot, "config-note.txt"), []byte("config secret"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(home, "home-secret.txt"), []byte("home secret"), 0o600))
 
 	p := &FileProvider{}
 	val, err := p.Resolve(t.Context(), OriginRef{Kind: "file", Ref: "secret.txt"})
 	require.NoError(t, err)
-	require.Equal(t, "state-root-secret", val)
+	require.Equal(t, "secrets-dir-secret", val)
+
+	_, err = p.Resolve(t.Context(), OriginRef{Kind: "file", Ref: filepath.Join(configRoot, "config-note.txt")})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "escapes root")
 
 	_, err = p.Resolve(t.Context(), OriginRef{Kind: "file", Ref: filepath.Join(home, "home-secret.txt")})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "escapes root")
+}
+
+// TestFileProvider_DefaultRoot_MissingRootFailsClosed pins fail-closed
+// operation on the default root: the secrets directory is never created on
+// demand, so an unprovisioned default root resolves nothing (no silent
+// widening of confinement, no implicit read from a broader directory).
+func TestFileProvider_DefaultRoot_MissingRootFailsClosed(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CRITERIA_HOME", "")
+	t.Setenv("CRITERIA_STATE_DIR", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
+
+	// An existing file outside the (missing) default root must not leak reads:
+	// the unresolvable root blocks boundary evaluation entirely.
+	outside := filepath.Join(home, "home-secret.txt")
+	require.NoError(t, os.WriteFile(outside, []byte("home secret"), 0o600))
+
+	p := &FileProvider{}
+
+	_, err := p.Resolve(t.Context(), OriginRef{Kind: "file", Ref: "secret.txt"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid path")
+
+	val, err := p.Resolve(t.Context(), OriginRef{Kind: "file", Ref: outside})
+	require.Error(t, err)
+	require.Empty(t, val)
 }
 
 func TestFileProvider_PathConfinement(t *testing.T) {

@@ -762,6 +762,18 @@ serialization.
   allowed only as origins for declared secret variables or data blocks, never
   directly inside `adapter.secrets` or `secret_input`.
 
+  Two providers are confined by default. The `file` provider resolves refs
+  strictly inside a secrets root — `$CRITERIA_HOME/secrets` when
+  `CRITERIA_HOME` is set, otherwise `$XDG_CONFIG_HOME/criteria/secrets`
+  (default `~/.config/criteria/secrets`) — so a ref (or symlink target)
+  escaping that root is refused, and the root is never created on demand.
+  The `vault` provider resolves refs only inside a single KV v2 mount
+  (`secret` by default): refs are treated as mount-relative secret paths,
+  never re-mounted mid-path. A custom KV mount is configured from the
+  secrets policy — `secrets { provider = "vault", mount = "kv-prod" }` — or
+  via `CRITERIA_VAULT_MOUNT` for stacks with no workflow-level policy; the
+  policy mount wins when both are set.
+
 - **Taint propagation.** Once a value is secret, every value derived from it is
   too. The compiler refuses to interpolate a tainted value into `config`,
   `input`, a log/template string, or any non-secret destination, with a hint to
@@ -789,7 +801,7 @@ environment "container" "prod" {
   policy_mode = "strict"
   runtime     = "docker"
   network  { allow = ["*"] }
-  secrets  { provider = "vault:secret/anthropic" }
+  secrets  { provider = "vault", mount = "kv-prod" }
   resources { cpu = "2", memory = "1Gi", timeout = "5m" }
 }
 
@@ -826,10 +838,11 @@ Each policy field resolves per session:
 Fields: `policy_mode` (`permissive` default / `strict`), `sandbox`
 (`strict`/`permissive`/`off`), `filesystem { read, write }`,
 `network { allow }` (host:port list or `"*"`), `secrets { provider,
-allow }`, `resources { cpu, memory, timeout }`, `os` (compile-time host gate),
-and type-specific extras such as `runtime` for `container`. Compatibility between
-an adapter and an environment type is checked at compile time only when the
-adapter declares a `compatible_environments` constraint.
+mount, fallback }`, `resources { cpu, memory, timeout }`, `os` (compile-time
+host gate), and type-specific extras such as `runtime` for `container`.
+Compatibility between an adapter and an environment type is checked at
+compile time only when the adapter declares a `compatible_environments`
+constraint.
 
 `network { allow }` semantics:
 

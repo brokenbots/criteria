@@ -8,6 +8,17 @@ import (
 	"github.com/brokenbots/criteria/workflow"
 )
 
+// vaultMountForPolicy selects the KV v2 mount for vault providers built from
+// a secrets policy: the policy-configured mount wins; operators without a
+// workflow-level mount can set EnvVaultMount. Empty defers to
+// VaultProvider's DefaultVaultMount.
+func vaultMountForPolicy(policy *workflow.SecretsPolicy) string {
+	if policy != nil && policy.Mount != "" {
+		return policy.Mount
+	}
+	return vaultMountFromEnv()
+}
+
 // Stack holds an ordered list of providers. Resolve walks the list and
 // returns the first successfully resolved value.
 type Stack struct {
@@ -45,7 +56,7 @@ func StackFromEnvironment(env *workflow.EnvironmentNode) (*Stack, error) {
 		"env":      EnvProvider{},
 		"file":     &FileProvider{},
 		"keychain": &KeychainProvider{Fallbacks: []Provider{EnvProvider{}, &FileProvider{}}},
-		"vault":    VaultProvider{},
+		"vault":    VaultProvider{Mount: vaultMountForPolicy(policy)},
 		"sops":     SOPSProvider{},
 	}
 
@@ -81,13 +92,15 @@ func StackFromEnvironment(env *workflow.EnvironmentNode) (*Stack, error) {
 }
 
 // DefaultStack returns a stack containing all built-in providers in a
-// deterministic order (env → file → keychain → sops → vault).
+// deterministic order (env → file → keychain → sops → vault). The vault
+// entry honours the EnvVaultMount operator knob; there is no workflow-level
+// policy in this construction path.
 func DefaultStack() *Stack {
 	return &Stack{providers: []Provider{
 		EnvProvider{},
 		&FileProvider{},
 		&KeychainProvider{Fallbacks: []Provider{EnvProvider{}, &FileProvider{}}},
 		SOPSProvider{},
-		VaultProvider{},
+		VaultProvider{Mount: vaultMountFromEnv()},
 	}}
 }

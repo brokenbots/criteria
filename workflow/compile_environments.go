@@ -539,7 +539,7 @@ func decodeSecretsPolicy(attr *hcl.Attribute) (*SecretsPolicy, hcl.Diagnostics) 
 	if !val.Type().IsObjectType() && !val.Type().IsMapType() {
 		diags = append(diags, &hcl.Diagnostic{
 			Severity: hcl.DiagError,
-			Summary:  "secrets must be an object with provider and optional fallback",
+			Summary:  "secrets must be an object with provider, optional mount, and optional fallback",
 			Subject:  attr.Expr.Range().Ptr(),
 		})
 		return nil, diags
@@ -550,6 +550,9 @@ func decodeSecretsPolicy(attr *hcl.Attribute) (*SecretsPolicy, hcl.Diagnostics) 
 
 	if pv, ok := m["provider"]; ok {
 		sp.Provider, diags = decodeSecretsProvider(pv, diags, attr)
+	}
+	if mv, ok := m["mount"]; ok {
+		sp.Mount, diags = decodeSecretsMount(mv, diags, attr)
 	}
 	if fv, ok := m["fallback"]; ok {
 		sp.Fallback, diags = decodeSecretsFallback(fv, diags, attr)
@@ -565,6 +568,18 @@ func decodeSecretsProvider(pv cty.Value, diags hcl.Diagnostics, attr *hcl.Attrib
 	diags = append(diags, &hcl.Diagnostic{
 		Severity: hcl.DiagError,
 		Summary:  "secrets provider must be a string",
+		Subject:  attr.Expr.Range().Ptr(),
+	})
+	return "", diags
+}
+
+func decodeSecretsMount(mv cty.Value, diags hcl.Diagnostics, attr *hcl.Attribute) (string, hcl.Diagnostics) {
+	if mv.Type() == cty.String && mv.IsKnown() && !mv.IsNull() {
+		return mv.AsString(), diags
+	}
+	diags = append(diags, &hcl.Diagnostic{
+		Severity: hcl.DiagError,
+		Summary:  "secrets mount must be a string",
 		Subject:  attr.Expr.Range().Ptr(),
 	})
 	return "", diags

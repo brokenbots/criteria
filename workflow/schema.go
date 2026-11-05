@@ -82,7 +82,13 @@ type NetworkPolicy struct{ AllowEgress bool }
 
 // SecretsPolicy controls secret resolution for an environment.
 type SecretsPolicy struct {
-	Provider string   `json:"provider"`
+	Provider string `json:"provider"`
+	// Mount is the Vault KV v2 mount used by the vault provider when it is
+	// part of this policy's stack (primary or fallback). Empty selects the
+	// provider's default mount. See internal/adapter/secrets.VaultProvider,
+	// which also honours the CRITERIA_VAULT_MOUNT environment override when
+	// no workflow-level mount is configured.
+	Mount    string   `json:"mount,omitempty"`
 	Fallback []string `json:"fallback,omitempty"`
 }
 
