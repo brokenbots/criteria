@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/opencontainers/go-digest"
+	"github.com/zclconf/go-cty/cty"
 
 	"github.com/brokenbots/criteria/internal/adapter/environment/sandbox"
 	"github.com/brokenbots/criteria/workflow"
@@ -77,6 +78,73 @@ func TestBuildSandboxCustomizer_EnvScrubIntegration(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("expected CRITERIA_SANDBOX_CONFIG_PATH env var")
+	}
+}
+
+func TestBuildSandboxCustomizer_BwrapExactAllowRefused(t *testing.T) {
+	// A bwrap-sandboxed environment declaring an exact network.allow
+	// allow-list is refused loudly regardless of policy_mode: the bwrap
+	// path bypasses the in-process shim, so landlock ConnectTCP port rules
+	// could not enforce the list. Mirrors the container/remote refusal
+	// precedent — never silently dropped.
+	//
+	// The permissive cases matter because permissive is the default and is
+	// exactly the mode a faulty implementation could route the refusal
+	// through as a silent degrade.
+	//
+	// Pin PATH to a stub bwrap binary so the test is deterministic on
+	// hosts without bwrap installed.
+	stubDir := t.TempDir()
+	stub := filepath.Join(stubDir, "bwrap")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", stubDir)
+
+	for _, tc := range []struct {
+		name       string
+		policyMode string
+	}{
+		{"strict", "strict"},
+		{"permissive", "permissive"},
+		{"default empty mode", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sm := NewSessionManager(nil)
+			sm.sandboxProbeOverride = func() sandbox.Capabilities {
+				return sandbox.Capabilities{UserNamespaces: true, Landlock: true, Seccomp: true, Cgroupv2: true}
+			}
+			sm.graph = &workflow.FSMGraph{
+				Adapters: map[string]*workflow.AdapterNode{
+					"noop.default": {Type: "noop", Name: "default", Environment: "sandbox.default"},
+				},
+				Environments: map[string]*workflow.EnvironmentNode{
+					"sandbox.default": {
+						Type: "sandbox",
+						Name: "default",
+						TypeSpecific: map[string]cty.Value{
+							"sandbox": cty.StringVal("bwrap"),
+							"network": cty.ObjectVal(map[string]cty.Value{
+								"allow": cty.ListVal([]cty.Value{cty.StringVal("internal.svc:8080")}),
+							}),
+						},
+					},
+				},
+				ResolvedPolicies: map[string]*workflow.ResolvedPolicy{
+					"noop.default:sandbox.default": {PolicyMode: tc.policyMode, OS: "linux"},
+				},
+			}
+			customizer, cleanup, err := sm.buildSandboxCustomizer("noop.default", "")
+			if err == nil {
+				t.Fatalf("expected hard error for exact network.allow on bwrap path with policy_mode=%q", tc.policyMode)
+			}
+			if !strings.Contains(err.Error(), "cannot enforce an exact network.allow allow-list") {
+				t.Fatalf("refusal error lacks guidance (policy_mode=%q): %v", tc.policyMode, err)
+			}
+			if customizer != nil || cleanup != nil {
+				t.Fatalf("expected nil customizer and cleanup on refusal (policy_mode=%q)", tc.policyMode)
+			}
+		})
 	}
 }
 
@@ -145,7 +213,10 @@ func TestMakeSandboxCustomizer_BwrapNotOptedIn(t *testing.T) {
 		TargetPath:  "/usr/bin/true",
 	}
 	env := &workflow.EnvironmentNode{Type: "sandbox", Name: "default"}
-	customizer, cleanup := makeSandboxCustomizer(prep, env, "", "", false)
+	customizer, cleanup, err := makeSandboxCustomizer(prep, env, "", "", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if customizer == nil {
 		t.Fatal("expected non-nil customizer")
 	}
@@ -173,7 +244,10 @@ func TestMakeSandboxCustomizer_ShimCallsApplyToCmd(t *testing.T) {
 		AllowNetwork: true,
 	}
 	env := &workflow.EnvironmentNode{Type: "sandbox", Name: "default"}
-	customizer, cleanup := makeSandboxCustomizer(prep, env, "", "", false)
+	customizer, cleanup, err := makeSandboxCustomizer(prep, env, "", "", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if customizer == nil {
 		t.Fatal("expected non-nil customizer")
 	}

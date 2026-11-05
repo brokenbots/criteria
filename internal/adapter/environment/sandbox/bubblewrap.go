@@ -18,14 +18,24 @@ import (
 // bwrap is on PATH and the environment opts in
 // (environment.sandbox = "bwrap"), this returns a command wrapper
 // that exec's `bwrap` with the appropriate args, replacing the in-process
-// namespace setup. Returns nil if not applicable.
-func MaybeUseBubblewrap(prep *LinuxPrepared, env *workflow.EnvironmentNode, workingDir string) *exec.Cmd {
+// namespace setup. Returns (nil, nil) if not applicable. A non-nil error
+// means the launch is refused: the environment declared a policy this
+// path cannot enforce (it bypasses the in-process shim and with it the
+// landlock ConnectTCP port rules), so it is never silently dropped.
+func MaybeUseBubblewrap(prep *LinuxPrepared, env *workflow.EnvironmentNode, workingDir string) (*exec.Cmd, error) {
 	if env == nil || !isBubblewrapOptIn(env) {
-		return nil
+		return nil, nil
 	}
 	bwrapPath, err := exec.LookPath("bwrap")
 	if err != nil {
-		return nil
+		// bwrap is not installed: the soft alternative is not applicable and
+		// the in-process shim path handles the launch instead.
+		return nil, nil //nolint:nilerr // intentional fallback, not a swallowed error
+	}
+
+	netArgs, err := bwrapNetworkArgs(env)
+	if err != nil {
+		return nil, err
 	}
 
 	args := []string{"bwrap"}
@@ -33,7 +43,7 @@ func MaybeUseBubblewrap(prep *LinuxPrepared, env *workflow.EnvironmentNode, work
 	// Unshare all namespaces and map current user to root inside.
 	args = append(args, "--unshare-all", "--uid", "0", "--gid", "0")
 	args = append(args, bwrapFilesystemArgs(env)...)
-	args = append(args, bwrapNetworkArgs(env)...)
+	args = append(args, netArgs...)
 	args = append(args, "--tmpfs", "/tmp")
 	args = append(args, bwrapResourceArgs(prep, env)...)
 	// Honor the resolved working_directory as the sandboxed process cwd. The
@@ -52,7 +62,7 @@ func MaybeUseBubblewrap(prep *LinuxPrepared, env *workflow.EnvironmentNode, work
 
 	cmd := exec.Command(bwrapPath, args[1:]...)
 	cmd.Env = scrubEnv(os.Environ())
-	return cmd
+	return cmd, nil
 }
 
 func isBubblewrapOptIn(env *workflow.EnvironmentNode) bool {
@@ -79,12 +89,32 @@ func bwrapFilesystemArgs(env *workflow.EnvironmentNode) []string {
 	return args
 }
 
-func bwrapNetworkArgs(env *workflow.EnvironmentNode) []string {
-	netAllow := pathListFromObject(getObject(env.TypeSpecific, "network"), "allow")
-	if len(netAllow) == 0 {
-		return []string{"--unshare-net"}
+// bwrapNetworkArgs translates the environment's network policy into bwrap
+// arguments. An absent or empty allow list denies egress; the reserved "*"
+// wildcard opts in to unrestricted egress by sharing the network namespace
+// (undoing the network half of --unshare-all). Exact host:port lists cannot
+// be enforced by bwrap — the in-process shim that maps them to landlock
+// ConnectTCP port rules is bypassed on this path — so the launch refuses
+// loudly instead of silently dropping the declared policy.
+func bwrapNetworkArgs(env *workflow.EnvironmentNode) ([]string, error) {
+	allow, _, err := workflow.NetworkAllowFromObject(getObject(env.TypeSpecific, "network"))
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	class, err := workflow.ClassifyNetworkAllow(allow)
+	if err != nil {
+		return nil, err
+	}
+	switch class {
+	case workflow.NetworkAllowWildcard:
+		return []string{"--share-net"}, nil
+	case workflow.NetworkAllowExact:
+		return nil, fmt.Errorf(
+			"bubblewrap environment cannot enforce an exact network.allow allow-list; " +
+				"use network.allow = [\"*\"] to explicitly allow unrestricted egress, or omit the block to deny egress")
+	default:
+		return []string{"--unshare-net"}, nil
+	}
 }
 
 func bwrapResourceArgs(prep *LinuxPrepared, env *workflow.EnvironmentNode) []string {

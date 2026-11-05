@@ -1524,9 +1524,12 @@ func (m *SessionManager) resolveAdapterBinaryForInstance(instanceID, adapterType
 // configuration to an exec.Cmd, or nil if the adapter is not bound to a
 // sandbox environment. The second return value is a cleanup function
 // that removes transient resources (e.g. cgroup directories); it may be
-// nil. The third return value is an error that is only non-nil when the
-// sandbox policy is strict and a required primitive is unavailable; in
-// that case the caller must abort the session before Resolve.
+// nil. The third return value is non-nil when the launch is refused: the
+// sandbox policy is strict and a required primitive is unavailable, or the
+// environment declared a policy the launch path cannot enforce (e.g. an
+// exact network.allow list on the bubblewrap path) — the refusal is
+// unconditional regardless of policy_mode. Either way the caller must
+// abort the session before Resolve.
 func (m *SessionManager) buildSandboxCustomizer(instanceID, workingDir string) (customizer func(name string, cmd *exec.Cmd), cleanup func(), err error) {
 	envNode, rp, ok := m.sandboxEnvAndPolicy(instanceID)
 	if !ok {
@@ -1538,23 +1541,9 @@ func (m *SessionManager) buildSandboxCustomizer(instanceID, workingDir string) (
 	// inside ApplyToCmd). For lockfile-pinned (OCI) adapters this must use the
 	// digest-addressed install path; flat discovery only sees dev/test binaries
 	// placed directly in the adapter root.
-	var adapterBinary, adapterType string
-	if m.graph != nil {
-		if adapterNode, ok := m.graph.Adapters[instanceID]; ok {
-			adapterType = adapterNode.Type
-			path, discoverErr := m.resolveAdapterBinaryForInstance(instanceID, adapterNode.Type)
-			if discoverErr == nil {
-				adapterBinary = path
-			} else {
-				var notFound *ErrAdapterNotFound
-				if !errors.As(discoverErr, &notFound) {
-					return nil, nil, fmt.Errorf("discover adapter binary: %w", discoverErr)
-				}
-				// Built-in adapter or missing plugin: leave adapterBinary empty.
-				// For built-ins the customizer is never invoked; for missing
-				// plugins ResolveWithCustomizer will fail later anyway.
-			}
-		}
+	adapterBinary, adapterType, err := m.resolveSandboxBinary(instanceID)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	caps := sandbox.Probe()
@@ -1574,6 +1563,9 @@ func (m *SessionManager) buildSandboxCustomizer(instanceID, workingDir string) (
 	}
 	prep, err := sandbox.Handler{}.Prepare(ctx)
 	if err != nil {
+		// Prepare returns a zero value on every error path, so there is
+		// nothing to clean up here; any resource it staged (e.g. a cgroup
+		// directory) is discarded inside Prepare itself.
 		if rp.PolicyMode == "strict" {
 			return nil, nil, fmt.Errorf("sandbox strict mode: %w", err)
 		}
@@ -1582,8 +1574,35 @@ func (m *SessionManager) buildSandboxCustomizer(instanceID, workingDir string) (
 	}
 
 	shimBin, skipRestrictions := m.selectShimBin()
-	customizer, cleanup = makeSandboxCustomizer(&prep, envNode, workingDir, shimBin, skipRestrictions)
+	customizer, cleanup, customizerErr := makeSandboxCustomizer(&prep, envNode, workingDir, shimBin, skipRestrictions)
+	if customizerErr != nil {
+		return nil, nil, customizerErr
+	}
 	return customizer, cleanup, nil
+}
+
+// resolveSandboxBinary returns the adapter install path and type for the
+// instance, for pre-allowlisting at prepare time. A missing plugin binary is
+// not an error: built-in adapters never invoke the customizer and missing
+// plugins fail later at Resolve, so only unexpected discovery failures
+// propagate.
+func (m *SessionManager) resolveSandboxBinary(instanceID string) (binary, adapterType string, err error) {
+	if m.graph == nil {
+		return "", "", nil
+	}
+	adapterNode, ok := m.graph.Adapters[instanceID]
+	if !ok {
+		return "", "", nil
+	}
+	path, discoverErr := m.resolveAdapterBinaryForInstance(instanceID, adapterNode.Type)
+	if discoverErr == nil {
+		return path, adapterNode.Type, nil
+	}
+	var notFound *ErrAdapterNotFound
+	if errors.As(discoverErr, &notFound) {
+		return "", adapterNode.Type, nil
+	}
+	return "", adapterNode.Type, fmt.Errorf("discover adapter binary: %w", discoverErr)
 }
 
 // selectShimBin returns the shim binary path and whether the test-only helper
@@ -2256,17 +2275,26 @@ func (m *SessionManager) adapterDir(instanceID string) string {
 // the pre-exec shim; when empty the current process image (os.Args[0]) is
 // used, which is how the production criteria CLI acts as its own shim.
 // When skipRestrictions is true the test-only helper relaxations are
-// applied (SkipShimRestrictions=true and namespaces cleared).
-func makeSandboxCustomizer(prep *sandbox.LinuxPrepared, envNode *workflow.EnvironmentNode, workingDir, shimBin string, skipRestrictions bool) (customizer func(name string, cmd *exec.Cmd), cleanup func()) {
+// applied (SkipShimRestrictions=true and namespaces cleared). A non-nil
+// error means the launch is refused (e.g. an exact network.allow list on
+// the bubblewrap path); the refusal is unconditional regardless of
+// policy_mode so a declared policy is never silently dropped, and transient
+// prepare resources are released before returning.
+func makeSandboxCustomizer(prep *sandbox.LinuxPrepared, envNode *workflow.EnvironmentNode, workingDir, shimBin string, skipRestrictions bool) (customizer func(name string, cmd *exec.Cmd), cleanup func(), err error) {
 	cleanup = func() { _ = prep.Cleanup() }
-	if bwrapCmd := sandbox.MaybeUseBubblewrap(prep, envNode, workingDir); bwrapCmd != nil {
+	bwrapCmd, bwrapErr := sandbox.MaybeUseBubblewrap(prep, envNode, workingDir)
+	if bwrapErr != nil {
+		_ = prep.Cleanup()
+		return nil, nil, bwrapErr
+	}
+	if bwrapCmd != nil {
 		return func(_ string, cmd *exec.Cmd) {
 			cmd.Path = bwrapCmd.Path
 			cmd.Args = bwrapCmd.Args
 			cmd.Env = bwrapCmd.Env
 			cmd.Dir = bwrapCmd.Dir
 			cmd.SysProcAttr = nil
-		}, cleanup
+		}, cleanup, nil
 	}
 	return func(_ string, cmd *exec.Cmd) {
 		// The real adapter path is already on cmd.Path at this point (set by
@@ -2285,7 +2313,7 @@ func makeSandboxCustomizer(prep *sandbox.LinuxPrepared, envNode *workflow.Enviro
 		if skipRestrictions {
 			finalizeLinuxShimCmd(cmd, shimBin)
 		}
-	}, cleanup
+	}, cleanup, nil
 }
 
 func (m *SessionManager) registerSession(ctx context.Context, name, adapterName, onCrash string, config, secrets map[string]string, originRefs map[string]secrets.OriginRef, caps []string, plug Handle, cleanup func(), workingDir, scopeInstanceID string) error {

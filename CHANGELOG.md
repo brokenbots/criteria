@@ -34,6 +34,17 @@ product version). The release tag and date are finalized by the release gate.
 
 ### Adapter system rewrite
 
+- **Sandbox network policy: enforced or refused, never silently dropped.** The
+  bubblewrap soft alternative now refuses a launch loudly when the environment
+  declares an exact `network { allow }` host:port list — the bwrap path
+  replaces the in-process shim, so landlock port rules cannot enforce those
+  lists there; this mirrors the existing `container`/`remote` refusal. On the
+  bwrap path `allow = ["*"]` shares the network namespace and an absent/empty
+  block keeps the launch network-isolated (`--unshare-net`). The sandbox
+  config pointer `CRITERIA_SANDBOX_CONFIG_PATH` is now scrubbed from the
+  adapter child's environment (the shim exec itself still receives the fresh
+  path; the re-exec'd adapter does not).
+
 ### Engine / remote adapters
 
 - **Peer mode for remote adapters (ADR-0007 Stage A).** New `criteria peer`

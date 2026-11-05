@@ -855,6 +855,12 @@ constraint.
     rules; unresolved declared hosts fail closed in strict mode.
   - **Linux:** mapped to allowed TCP ports via landlock (host-level
     restriction is not available).
+  - **Linux, bubblewrap path:** the bubblewrap soft alternative bypasses the
+    in-process shim, so landlock port rules cannot apply there. An exact
+    host:port list on that path is refused loudly at launch (regardless of
+    `policy_mode`): use `allow = ["*"]` to declare unrestricted egress intent,
+    or omit the block to keep egress denied. Note the bwrap opt-in itself is
+    not yet authorable from HCL (see the per-OS note below).
 - Exact host:port lists are rejected for `container` and `remote` environments
   because those backends cannot enforce per-endpoint egress; use `allow = ["*"]`
   to declare unrestricted egress intent, or omit the block to deny egress.
@@ -873,6 +879,16 @@ Windows is not a supported host; run Criteria under WSL2. When a sandbox
 primitive is unavailable (e.g. an older kernel without landlock), the host logs
 which protections were skipped and continues — unless `sandbox = "strict"`, which
 fails closed.
+
+The bubblewrap soft alternative replaces the in-process shim entirely
+(including its landlock and seccomp set-up), so it cannot enforce exact
+`network { allow }` lists and refuses the launch loudly when one is declared.
+With `allow = ["*"]` it shares the network namespace; without the block it
+stays fully network-isolated. The bubblewrap integration itself remains
+**Untested** against a real bwrap install. The `sandbox = "bwrap"` opt-in is
+not yet authorable from HCL — the compiler rejects a `sandbox` attribute on
+sandbox environments — so this behavior applies to the latent,
+programmatic-construction path until the opt-in lands (tracked under task 356).
 
 ## Remote execution
 
