@@ -45,6 +45,7 @@ const (
 	defaultCacheRel  = ".cache/criteria"
 
 	adaptersSubdir = "adapters"
+	secretsSubdir  = "secrets"
 
 	configBase = "config.hcl"
 	trustBase  = "trust.hcl"
@@ -185,4 +186,16 @@ func configRoot() (string, error) {
 		return root, nil
 	}
 	return xdgRoot("XDG_CONFIG_HOME", defaultConfigRel)
+}
+
+// SecretsDir returns the default confinement root for the secrets file
+// provider: the directory file-based secret references resolve inside.
+// It is appRoot()/secrets when an app root is set, otherwise
+// $XDG_CONFIG_HOME/criteria/secrets (default ~/.config/criteria/secrets).
+func SecretsDir() (string, error) {
+	base, err := configRoot()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, secretsSubdir), nil
 }
