@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/goleak"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
@@ -21,8 +22,6 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
-
-	"go.uber.org/goleak"
 
 	criteriav1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 
@@ -1365,20 +1364,21 @@ func TestPeerWaitAfterStopRejected(t *testing.T) {
 	}
 }
 
-// peerConnClosed reports whether the fake-adapter side of a pipe conn sees
+// peerConnClosed waits until the fake-adapter side of a pipe conn observes
 // the host side closed (the host holds the other end; closing it unblocks
-// the peer read with an error). Fails the test if nothing arrives.
-func peerConnClosed(t *testing.T, pc net.Conn) {
-	t.Helper()
+// the peer read with an error). It returns an error naming the conn when
+// the close was not observed, so callers can aggregate across conns.
+func peerConnClosed(index int, pc net.Conn) error {
 	closed := make(chan error, 1)
 	go func() { _, err := pc.Read(make([]byte, 1)); closed <- err }()
 	select {
 	case err := <-closed:
 		if err == nil {
-			t.Errorf("peer conn not closed (read succeeded)")
+			return fmt.Errorf("conn[%d] not closed (peer read succeeded)", index)
 		}
+		return nil
 	case <-time.After(10 * time.Second):
-		t.Errorf("peer conn not closed within 10s")
+		return fmt.Errorf("conn[%d] not closed within 10s", index)
 	}
 }
 
@@ -1414,39 +1414,46 @@ func TestAcceptPeerAfterStopRejectsAndClosesConn(t *testing.T) {
 	if registered != 0 {
 		t.Fatalf("registry holds %d sessions after stopped AcceptPeer, want 0", registered)
 	}
-	peerConnClosed(t, peer)
+	if err := peerConnClosed(0, peer); err != nil {
+		t.Errorf("%v", err)
+	}
 	goleak.VerifyNone(t)
 }
 
-// TestAcceptPeerRacingStopAlwaysClosesConn drives the stop-vs-accept race:
-// every conn ends closed either way — stored sessions are drained by
-// stopPeers, late dials are rejected by the storeSession stopped check. An
-// abandoned path here is the leak signature goleak caught in CI.
+// TestAcceptPeerRacingStopAlwaysClosesConn drives the stop-vs-accept race.
+// Each interleaving has a legal contract outcome, so no AcceptPeer error
+// result is asserted (no timing or scheduling assumption): a dial that wins
+// storeSession before the stop drain returns nil and its stored session is
+// closed by the drain; a dial the stopped guard sees first is rejected with
+// its conn closed. The test asserts only the invariants that hold for every
+// interleaving: the registry is empty after Stop and every host-side conn
+// is observed closed from the peer end. A second wave spawned only after
+// Stop returned must deterministically return the stopped rejection. An
+// abandoned conn under any interleaving is the leak signature goleak
+// caught in CI.
 func TestAcceptPeerRacingStopAlwaysClosesConn(t *testing.T) {
 	provider, _ := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
 
-	const dials = 32
-	conns := make([]net.Conn, dials)
-	peers := make([]net.Conn, dials)
-	errs := make([]error, dials)
-	for i := range conns {
-		conns[i], peers[i] = net.Pipe()
+	dial := func(conn net.Conn) error {
+		return provider.AcceptPeer(context.Background(), conn, &PeerDial{
+			AdapterType: "noop",
+			Digest:      "sha256:abcd1234",
+		})
 	}
-	defer func() {
-		for _, pc := range peers {
-			_ = pc.Close()
-		}
-	}()
 
-	var wg sync.WaitGroup
-	for i := 0; i < dials; i++ {
-		wg.Add(1)
+	// Wave 1: unsynchronized dials racing Stop.
+	const raceDials = 32
+	raceConns := make([]net.Conn, raceDials)
+	racePeers := make([]net.Conn, raceDials)
+	for i := range raceConns {
+		raceConns[i], racePeers[i] = net.Pipe()
+	}
+	var raceWG sync.WaitGroup
+	for i := 0; i < raceDials; i++ {
+		raceWG.Add(1)
 		go func(i int) {
-			defer wg.Done()
-			errs[i] = provider.AcceptPeer(context.Background(), conns[i], &PeerDial{
-				AdapterType: "noop",
-				Digest:      "sha256:abcd1234",
-			})
+			defer raceWG.Done()
+			_ = dial(raceConns[i])
 		}(i)
 	}
 
@@ -1455,7 +1462,7 @@ func TestAcceptPeerRacingStopAlwaysClosesConn(t *testing.T) {
 	if err := provider.Stop(stopCtx); err != nil {
 		t.Fatalf("provider Stop: %v", err)
 	}
-	wg.Wait()
+	raceWG.Wait()
 
 	provider.mu.Lock()
 	registered := len(provider.peers)
@@ -1463,20 +1470,82 @@ func TestAcceptPeerRacingStopAlwaysClosesConn(t *testing.T) {
 	if registered != 0 {
 		t.Fatalf("registry holds %d sessions after stop, want 0", registered)
 	}
-	for i := 0; i < dials; i++ {
-		if errs[i] == nil {
-			t.Fatalf("AcceptPeer[%d] racing stop: nil error", i)
+
+	// Wave 2: spawned only after Stop returned, and stopped=true is set
+	// before Stop returns, so every dial must be rejected with the stopped
+	// sentinel and its conn closed.
+	const postDials = 8
+	postConns := make([]net.Conn, postDials)
+	postPeers := make([]net.Conn, postDials)
+	postErrs := make([]error, postDials)
+	var postWG sync.WaitGroup
+	for i := 0; i < postDials; i++ {
+		postConns[i], postPeers[i] = net.Pipe()
+		postWG.Add(1)
+		go func(i int) {
+			defer postWG.Done()
+			postErrs[i] = dial(postConns[i])
+		}(i)
+	}
+	postWG.Wait()
+	for i, err := range postErrs {
+		if err == nil || !strings.Contains(err.Error(), "remote shim stopped") {
+			t.Errorf("post-stop AcceptPeer[%d] err = %v, want remote shim stopped", i, err)
 		}
 	}
-	// The host side of every conn must be closed by now: stored sessions
-	// were closed by the stop, rejected dials by the accept guard.
-	for i, pc := range peers {
-		peerConnClosed(t, pc)
-		if t.Failed() {
-			t.Fatalf("conn[%d] not closed", i)
+
+	// Every host side must be closed by now: wave-1 stored sessions were
+	// closed by the stop drain, rejected dials by the accept guard.
+	allPeers := append(append([]net.Conn{}, racePeers...), postPeers...)
+	defer func() {
+		for _, pc := range allPeers {
+			_ = pc.Close()
 		}
+	}()
+	var notClosed []error
+	for i, pc := range allPeers {
+		if err := peerConnClosed(i, pc); err != nil {
+			notClosed = append(notClosed, err)
+		}
+	}
+	if len(notClosed) > 0 {
+		t.Fatalf("%d/%d conns not closed: %v", len(notClosed), len(allPeers), errors.Join(notClosed...))
 	}
 	goleak.VerifyNone(t)
+}
+
+// TestStoreSessionAfterStopStoresNothing pins the authoritative half of the
+// accept-vs-stop contract: the stopped check lives inside storeSession's
+// same p.mu critical section as the registry store, so a dial that passed
+// the AcceptPeer pre-check but lands its registry store after the stop
+// drain is refused here — deterministically and on the direct method —
+// instead of being orphaned outside the registry with an open ClientConn
+// (the goleak leak signature). A bare session is enough: storeSession only
+// manages the registry entry, and close-on-reject behavior is covered by
+// the AcceptPeer-level tests.
+func TestStoreSessionAfterStopStoresNothing(t *testing.T) {
+	provider, _ := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
+
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer stopCancel()
+	if err := provider.Stop(stopCtx); err != nil {
+		t.Fatalf("provider Stop: %v", err)
+	}
+
+	key := provider.key("noop", "")
+	stored, replaced, waiters, old := provider.storeSession(key, &peerSession{})
+	if stored {
+		t.Fatalf("storeSession after stop stored the session")
+	}
+	if replaced || waiters != nil || old != nil {
+		t.Fatalf("storeSession after stop returned replaced=%v waiters=%v old=%v, want all zero", replaced, waiters, old)
+	}
+	provider.mu.Lock()
+	_, present := provider.peers[key]
+	provider.mu.Unlock()
+	if present {
+		t.Fatalf("registry holds a session after a stopped store")
+	}
 }
 
 func TestPeerListenAddrDelegatesToShim(t *testing.T) {

@@ -521,11 +521,11 @@ func runIdleChain(t *testing.T, podServerOpts []grpc.ServerOption) *idleChain {
 	pod := &cri276PodServer{name: "noop.default", version: "1.0.0"}
 	accepted := &atomic.Int64{}
 	go podHomeLoop(proxy.addr(), hs, stopDial, podDone, accepted, pod, podServerOpts)
-	// Registration order = teardown order (t.Cleanup runs LIFO): stop the
-	// dial loop first, shut the sessions down second. Shutting down while
-	// the pod is still dialing leaves a mid-handshake dial racing the
-	// provider stop (the provider now rejects-and-closes those, so this
-	// ordering just keeps teardown quiet and deterministic).
+	// t.Cleanup runs LIFO, so the sessions shutdown (registered first)
+	// runs after the dial loop's cleanup has stopped the pod: teardown
+	// never has a mid-handshake dial racing the provider stop. The
+	// provider also rejects-and-closes dials that land post-stop, so this
+	// ordering just keeps teardown quiet and deterministic.
 	t.Cleanup(func() {
 		_ = sessions.Shutdown(context.Background())
 	})

@@ -360,14 +360,17 @@ func runKB153BindChain(t *testing.T, budget time.Duration, keepRedialing bool) *
 		}
 	}
 	go podHomeLoop(realShim.ListenAddr(), hs, stopDial, podDone, accepted, pod, nil)
+	// Same teardown order as runIdleChain: t.Cleanup runs LIFO, so the
+	// manager shuts down after the pod's cleanup has stopped dialing — no
+	// mid-handshake dial races the provider stop. The provider also
+	// rejects-and-closes dials that land post-stop, so no peer conn
+	// outlives the test either way (goleak).
+	t.Cleanup(func() {
+		_ = sessions.Shutdown(context.Background())
+	})
 	t.Cleanup(func() {
 		stopDialing()
 		<-podDone
-	})
-	// Shut the manager down first (LIFO): it closes bound sessions through
-	// the still-live shim, so no handle outlives the test (goleak).
-	t.Cleanup(func() {
-		_ = sessions.Shutdown(context.Background())
 	})
 
 	if err := <-initDone; err != nil {
