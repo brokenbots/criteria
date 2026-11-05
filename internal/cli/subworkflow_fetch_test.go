@@ -766,3 +766,272 @@ func TestFetch_ConcurrentArchive(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, leftovers, "temp fetch dirs must be cleaned up")
 }
+
+// ---------------------------------------------------------------------------
+// git inner-transport refusal (pseudo-transport / remote-helper forms)
+// ---------------------------------------------------------------------------
+
+// execGitStub is a hostile `git` executable placed first on PATH for the
+// duration of a test: it records its argv and runs the payload handed to it
+// (the `touch` command), modeling what git-remote-ext does to a pseudo-
+// transport repository URL once the host's git policy re-enables the
+// transport. It exits 0 so every caller treats its output as ordinary git
+// output; the observable contract is the log file, the marker file, or both.
+type execGitStub struct {
+	dir    string // holding dir of the `git` stub on PATH
+	log    string // one argv element per invocation, one invocation per line
+	marker string // created on every invocation (the "payload" the helper runs)
+}
+
+// installExecGitStub prepends a hostile git stub to PATH and points
+// GIT_CONFIG_GLOBAL at a permissive protocol policy (protocol.<token>.allow =
+// always for the helper transports), mirroring the host state under which
+// forwarding a pseudo-transport URL executes its payload. It returns the stub
+// so a test can first demonstrate the harness would detect execution (see
+// execGitStub.proveWiring) and then assert refusal against a clean slate.
+func installExecGitStub(t *testing.T) *execGitStub {
+	t.Helper()
+	root := t.TempDir()
+	stub := execGitStub{
+		dir:    root,
+		log:    filepath.Join(root, "git-argv.log"),
+		marker: filepath.Join(root, "ext-payload-marker"),
+	}
+	script := "#!/bin/sh\n" +
+		"for arg; do printf '%s\\n' \"$arg\" >> " + fmt.Sprintf("%q", stub.log) + "; done\n" +
+		"touch " + fmt.Sprintf("%q", stub.marker) + "\n" +
+		"if [ \"$1\" = \"ls-remote\" ]; then\n" +
+		"\tprintf '%s\\trefs/heads/main\\n' " + stubFakeSHA + "\n" +
+		"fi\n" +
+		"exit 0\n"
+	require.NoError(t, os.WriteFile(filepath.Join(stub.dir, "git"), []byte(script), 0o755))
+	config := filepath.Join(root, "gitconfig")
+	require.NoError(t, os.WriteFile(config, []byte(
+		"[protocol \"ext\"]\n\tallow = always\n[protocol \"s3\"]\n\tallow = always\n"), 0o600))
+	t.Setenv("PATH", stub.dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GIT_CONFIG_GLOBAL", config)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	return &stub
+}
+
+// proveWiring drives the stub with the invocation the fetcher would make for
+// a pseudo-transport source and asserts the payload runs under the permissive
+// policy, so the test's later zero-invocation / no-marker assertions can never
+// pass vacuously. The harness is then reset for the assertions under test.
+func (s *execGitStub) proveWiring(t *testing.T, payload string) {
+	t.Helper()
+	out, err := exec.Command(filepath.Join(s.dir, "git"), "ls-remote", "--", "ext::"+payload, "HEAD").CombinedOutput()
+	require.NoError(t, err, "stub git must be invocable: %s", out)
+	assert.FileExists(t, s.marker, "stub must create the marker when invoked (matching the E2E-A probe)")
+	assert.NotEmpty(t, s.invocations(t), "stub must record its argv when invoked")
+	os.Remove(s.marker)
+	os.Remove(s.log)
+}
+
+// invocations returns the number of git processes the stub has served.
+func (s *execGitStub) invocations(t *testing.T) []string {
+	t.Helper()
+	data, err := os.ReadFile(s.log)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	require.NoError(t, err)
+	var lines []string
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+// stubFakeSHA is the ls-remote response the stub reports so the pre-fix
+// funnel (ls-remote "succeeds", then the go-getter clone runs) reaches both
+// fetch entry paths, mirroring the E2E-A probe where the permissive host
+// policy lets resolution succeed and the helper executes on both.
+const stubFakeSHA = "a4f8c0ddeadbeef0000000000000000000000000"
+
+// TestSplitGitSource_RefusesPseudoTransport is the unit regression for the
+// remote-helper command-execution class: a git source whose repository URL
+// selects an inner transport outside the documented set (a "<token>::"
+// remote-helper pseudo-transport such as "ext::", or an unknown
+// "<scheme>://" form) is forwarded verbatim to git by the fetcher, and the
+// ext helper executes the payload locally whenever the host's git policy
+// re-enables the transport. splitGitSource must refuse every such shape —
+// with and without "?ref=", with the subtree suffix, in every spelling case —
+// before building any git command.
+func TestSplitGitSource_RefusesPseudoTransport(t *testing.T) {
+	cases := []struct {
+		name   string
+		source string
+	}{
+		{"report-literal-ext-sh-c", "git::ext::sh -c 'touch /tmp/x' HEAD"},
+		{"ext-touch", "git::ext::touch /tmp/x"},
+		{"ext-ssh-proxycommand", "git::ext::ssh -oProxyCommand='touch /tmp/x' host"},
+		{"ext-empty-payload", "git::ext::"},
+		{"ext-slash-suffix", "git::ext://tmp/x"},
+		{"ext-with-ref", "git::ext::touch /tmp/x?ref=main"},
+		{"ext-with-subtree-suffix", "git::ext::touch /tmp/x//sub"},
+		{"s3", "git::s3::x"},
+		{"s3-with-ref", "git::s3::x?ref=main"},
+		{"s3-with-subtree-suffix", "git::s3::x//sub"},
+		{"git-plus-ssh-scheme", "git::git+ssh://host.example/org/repo.git?ref=main"},
+		{"ext-uppercase", "git::EXT::x"},
+		{"ext-mixedcase", "git::Ext://tmp/x"},
+		{"s3-uppercase", "git::S3::x"},
+		{"git-plus-ssh-uppercase", "git::GIT+SSH://host.example/org/repo.git"},
+		{"exe", "git::exe::x"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repoURL, ref, err := splitGitSource(tc.source)
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid git workflow source", "refusals go through the invalid-source channel (uniform across apply/validate/compile)")
+			assert.Contains(t, err.Error(), "unsupported git inner transport", "the transport outside the documented set must be named")
+			assert.NotErrorIs(t, err, errUnsafeGitSource)
+			assert.Contains(t, err.Error(), "invalid git workflow source", "refusals go through the invalid-source channel (uniform across apply/validate/compile)")
+			assert.Contains(t, err.Error(), "unsupported git inner transport")
+			assert.Contains(t, err.Error(), tc.source, "the refusal must quote the original source string")
+			assert.Empty(t, repoURL, "a refused source must not yield a repository URL")
+			assert.Empty(t, ref, "a refused source must not yield a ref")
+		})
+	}
+}
+
+// TestSplitGitSource_PreservesDocumentedForms pins that the transport refusal
+// leaves every documented accepted form untouched: the https/ssh/scp-style/
+// file forms, the subtree suffix, "?ref="?branch=?tag=" extraction, archive
+// http(s) shapes routed to the git fetcher, uppercase spellings of allowed
+// transports, the non-git::-prefixed forms, and the precedence of the
+// leading-dash option guard over the transport check.
+func TestSplitGitSource_PreservesDocumentedForms(t *testing.T) {
+	cases := []struct {
+		name       string
+		source     string
+		wantURL    string
+		wantRef    string
+		wantUnsafe bool
+	}{
+		{"https-with-ref", "git::https://git.example.com/org/repo.git?ref=main", "https://git.example.com/org/repo.git", "main", false},
+		{"https-no-ref", "git::https://git.example.com/org/repo.git", "https://git.example.com/org/repo.git", "HEAD", false},
+		{"https-uppercase-scheme", "git::HTTPS://git.example.com/org/repo.git", "HTTPS://git.example.com/org/repo.git", "HEAD", false},
+		{"https-subtree-with-ref", "git::https://git.example.com/org/repo.git//sub?ref=main", "https://git.example.com/org/repo.git//sub", "main", false},
+		{"https-archive", "git::https://git.example.com/flow.tar.gz", "https://git.example.com/flow.tar.gz", "HEAD", false},
+		{"http", "git::http://git.example.com/org/repo.git", "http://git.example.com/org/repo.git", "HEAD", false},
+		{"ssh-with-ref", "git::ssh://git@git.example.com/org/repo.git?ref=v1", "ssh://git@git.example.com/org/repo.git", "v1", false},
+		{"git-scheme", "git::git://git.example.com/org/repo.git", "git://git.example.com/org/repo.git", "HEAD", false},
+		{"file-with-ref", "git::file:///abs/dir/repo.git?ref=v1", "file:///abs/dir/repo.git", "v1", false},
+		{"scp-style-with-prefix", "git::git@git.example.com:org/repo.git?ref=main", "git@git.example.com:org/repo.git", "main", false},
+		{"scp-style-plain-host", "git::scp-host.example:org/repo.git", "scp-host.example:org/repo.git", "HEAD", false},
+		{"branch-key", "git::https://git.example.com/org/repo.git?branch=feat", "https://git.example.com/org/repo.git", "feat", false},
+		{"tag-key", "git::https://git.example.com/org/repo.git?tag=v2", "https://git.example.com/org/repo.git", "v2", false},
+		// A two-colon prefix whose leading token holds a charset character
+		// git does not accept in a transport token (here "_", proven against
+		// git 2.45.4 where it falls back to scp-syntax ssh handling) names no
+		// transport and keeps the passthrough behavior.
+		{"token-charset-scp-fallback", "git::scm_x::x", "scm_x::x", "HEAD", false},
+		{"no-prefix-https", "https://git.example.com/org/repo.git?ref=main", "https://git.example.com/org/repo.git", "main", false},
+		{"no-prefix-git", "git://git.example.com/org/repo.git", "git://git.example.com/org/repo.git", "HEAD", false},
+		{"no-prefix-ssh", "ssh://git@git.example.com/org/repo.git?ref=main", "ssh://git@git.example.com/org/repo.git", "main", false},
+		{"no-prefix-file", "file:///abs/dir/repo.git", "file:///abs/dir/repo.git", "HEAD", false},
+		{"scp-style-no-prefix", "git@git.example.com:org/repo.git?ref=main", "git@git.example.com:org/repo.git", "main", false},
+		{"repo-dash-precedence", "git::--upload-pack=touch /tmp/x?ref=main", "", "", true},
+		{"ref-dash-precedence", "git::ssh://git@git.example.com/org/repo.git?ref=-x", "", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repoURL, ref, err := splitGitSource(tc.source)
+			if tc.wantUnsafe {
+				require.Error(t, err)
+				assert.ErrorIs(t, err, errUnsafeGitSource, "the leading-dash guard keeps precedence over the transport check")
+				assert.NotContains(t, err.Error(), "unsupported git inner transport")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantURL, repoURL)
+			assert.Equal(t, tc.wantRef, ref)
+		})
+	}
+}
+
+// TestFetchGit_RefusesPseudoTransport_NoGitSubprocess is the fetch-level
+// regression: Fetch on "git::ext::touch <marker>" under a permissive host git
+// policy and a hostile `git` stub on PATH must return the invalid-source
+// error without invoking git at all (zero stub invocations, no marker), so
+// safety never depends on the host's protocol.* configuration. The stub is
+// first driven directly to prove the harness detects execution.
+func TestFetchGit_RefusesPseudoTransport_NoGitSubprocess(t *testing.T) {
+	stub := installExecGitStub(t)
+	payload := "touch " + stub.marker
+	source := "git::ext::" + payload
+	f := newTestFetcher(t, http.DefaultClient)
+	caller := t.TempDir()
+
+	stub.proveWiring(t, payload)
+
+	dir, locked, err := f.Fetch(context.Background(), caller, source)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid git workflow source")
+	assert.Contains(t, err.Error(), "unsupported git inner transport")
+	assert.Contains(t, err.Error(), source, "the refusal must name the original source string")
+	assert.Empty(t, dir)
+	assert.Nil(t, locked)
+	assert.Empty(t, stub.invocations(t), "Fetch must not spawn a git process for a pseudo-transport source")
+	assert.NoFileExists(t, stub.marker, "the payload must never run, whatever the host git policy allows")
+	// Refusals are pre-execution and total: not even the cache directory for
+	// the source is created under the fetcher's cache root (the fetcher
+	// materializes under cacheRoot/<slug>/, so any attempted fetch would
+	// leave entries there).
+	require.NoError(t, os.MkdirAll(f.cacheRoot, 0o755), "the cache root must be creatable before Fetch")
+	entries, readErr := os.ReadDir(f.cacheRoot)
+	require.NoError(t, readErr)
+	assert.Empty(t, entries, "no cache artifacts may be created for a refused source")
+}
+
+// TestMaterializeGitTree_RefusesPseudoTransport is the getter-path regression:
+// materializeGitTree is the go-getter entry fed with a repository URL that has
+// already passed ref resolution, so the transport check is repeated at its
+// entry. Handed the split ext pseudo-transport URL directly (the shape the
+// go-getter client forwards to `git remote add origin -- <url>`, which runs
+// the helper), it must refuse without spawning git.
+func TestMaterializeGitTree_RefusesPseudoTransport(t *testing.T) {
+	stub := installExecGitStub(t)
+	repoURL := "ext::touch " + stub.marker
+	source := "git::" + repoURL
+	f := newTestFetcher(t, http.DefaultClient)
+	repoDir := filepath.Join(f.cacheRoot, slugForSource(repoURL))
+	require.NoError(t, os.MkdirAll(repoDir, 0o755))
+
+	stub.proveWiring(t, "touch "+stub.marker)
+
+	dir, locked, err := f.materializeGitTree(context.Background(), source, repoURL, stubFakeSHA, repoDir)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid git workflow source")
+	assert.Contains(t, err.Error(), "unsupported git inner transport")
+	assert.Empty(t, dir)
+	assert.Nil(t, locked)
+	assert.Empty(t, stub.invocations(t), "the getter path must not spawn a git process for a pseudo-transport source")
+	assert.NoFileExists(t, stub.marker, "the payload must never run through the go-getter entry path")
+}
+
+// TestResolveWorkflowSource_RefusesGitPseudoTransport is the resolver-level
+// regression: the nested and cascaded subworkflow resolutions reach the fetch
+// through the same entry, so resolution must surface the same refusal (no
+// origin, no tree) and never execute the payload.
+func TestResolveWorkflowSource_RefusesGitPseudoTransport(t *testing.T) {
+	setWorkflowCacheHome(t)
+	sentinel := filepath.Join(t.TempDir(), "pwned")
+	source := "git::ext::touch " + sentinel
+
+	dir, origin, err := resolveWorkflowSource(context.Background(), source, "")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid git workflow source")
+	assert.Contains(t, err.Error(), "unsupported git inner transport")
+	assert.Empty(t, dir)
+	assert.Nil(t, origin)
+	assert.NoFileExists(t, sentinel, "the payload must never run")
+}

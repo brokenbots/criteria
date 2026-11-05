@@ -231,6 +231,76 @@ func looksLikeGitURL(source string) bool {
 // match with errors.Is.
 var errUnsafeGitSource = errors.New(`repository URL and ref must not start with "-"`)
 
+// errUnsupportedGitTransport marks a git workflow source whose inner transport
+// is outside the set enumerated by docs/workflow.md ("Rejection contract"):
+// either the "<token>::" pseudo-transport syntax (e.g. "ext::", "s3::") or a
+// "<scheme>://" syntax with an unknown scheme. The pseudo-transport form is
+// forwarded verbatim to git and, whenever the host's git configuration
+// re-enables that transport (protocol.<token>.allow), turns into local command
+// execution through the token's remote helper — so the source is refused
+// before any git process is invoked, independent of the host's protocol
+// policy. Callers can match with errors.Is.
+var errUnsupportedGitTransport = errors.New("only git, ssh, http, https, and file transports are accepted")
+
+// allowedGitTransports is the case-insensitive set of inner transports a git
+// source handed to the fetcher may select. It mirrors the scheme set of the
+// docs/workflow.md rejection contract; scp-style forms (no scheme token)
+// carry no transport string and stay outside this map.
+var allowedGitTransports = map[string]bool{
+	"git":   true,
+	"ssh":   true,
+	"http":  true,
+	"https": true,
+	"file":  true,
+}
+
+// gitInnerTransportToken reports the inner transport token a git repository
+// URL selects and whether the URL names a transport at all: a "<token>::"
+// pseudo-transport prefix (git's remote-helper syntax) or a "<scheme>://"
+// URL prefix names a transport; anything else (scp-style "git@host:path",
+// bare "host:repo") selects git's built-in scp-syntax ssh transport. The
+// token is lower-cased: git transport selection is case-insensitive, so a
+// case variant ("EXT::", "Ext://") must not bypass the allowed-set check.
+func gitInnerTransportToken(repoURL string) (token string, namesTransport bool) {
+	colon := strings.IndexByte(repoURL, ':')
+	if colon < 0 {
+		return "", false // no colon: relative path form, no scheme
+	}
+	first := repoURL[:colon]
+	for i := 0; i < len(first); i++ {
+		if !isTransportTokenByte(first[i]) {
+			return "", false // "@" (scp-style) or a space terminates any scheme token
+		}
+	}
+	if len(repoURL) > colon+1 {
+		switch {
+		case repoURL[colon+1] == ':':
+			return strings.ToLower(first), true // "<token>::" remote-helper syntax
+		case len(repoURL) > colon+2 && repoURL[colon+1] == '/' && repoURL[colon+2] == '/':
+			return strings.ToLower(first), true // "<scheme>://" URL syntax
+		}
+	}
+	return "", false // single colon: scp-syntax, no scheme token
+}
+
+// isTransportTokenByte reports whether c is a byte git accepts in a transport
+// token (verified against git 2.45.4's pseudo-transport grammar); any other
+// byte ends the token and names no transport at all.
+func isTransportTokenByte(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '+' || c == '-' || c == '.'
+}
+
+// checkGitInnerTransport refuses a git repository URL whose inner transport is
+// not in the documented allowed set. errUnsupportedGitTransport documents why
+// the pseudo-transport form must be refused outright.
+func checkGitInnerTransport(repoURL string) error {
+	token, namesTransport := gitInnerTransportToken(repoURL)
+	if namesTransport && !allowedGitTransports[token] {
+		return fmt.Errorf("unsupported git inner transport %q: %w", token, errUnsupportedGitTransport)
+	}
+	return nil
+}
+
 func (f *defaultWorkflowFetcher) fetchGit(ctx context.Context, callerDir, source string) (string, *lockfile.LockedWorkflowRef, error) {
 	repoURL, ref, err := splitGitSource(source)
 	if err != nil {
@@ -278,6 +348,13 @@ func resolveGitRef(ctx context.Context, repoURL, ref string) (string, error) {
 // the clone path for a fresh destination, and its update path cannot resolve a
 // raw commit SHA.
 func (f *defaultWorkflowFetcher) materializeGitTree(ctx context.Context, source, repoURL, resolvedRef, repoDir string) (string, *lockfile.LockedWorkflowRef, error) {
+	// The go-getter client is the second fetch entry path for repoURL: the
+	// transport check is repeated here so the getter layer itself never
+	// hands a pseudo-transport URL to git even when reached directly.
+	if err := checkGitInnerTransport(repoURL); err != nil {
+		return "", nil, fmt.Errorf("invalid git workflow source %q: %w", redactSourceForLog(source), err)
+	}
+
 	treeDir := filepath.Join(repoDir, resolvedRef)
 	tmpDir, err := os.MkdirTemp(repoDir, "clone-")
 	if err != nil {
@@ -309,15 +386,15 @@ func (f *defaultWorkflowFetcher) materializeGitTree(ctx context.Context, source,
 }
 
 func splitGitSource(source string) (repoURL, ref string, err error) {
-	source = strings.TrimPrefix(source, "git::")
+	rest := strings.TrimPrefix(source, "git::")
 
 	var q url.Values
-	if idx := strings.Index(source, "?"); idx != -1 {
-		q, err = url.ParseQuery(source[idx+1:])
+	if idx := strings.Index(rest, "?"); idx != -1 {
+		q, err = url.ParseQuery(rest[idx+1:])
 		if err != nil {
 			return "", "", fmt.Errorf("parse git source query %q: %w", redactSourceForLog(source), err)
 		}
-		repoURL = source[:idx]
+		repoURL = rest[:idx]
 		for _, key := range []string{"ref", "branch", "tag"} {
 			if q.Has(key) {
 				ref = q.Get(key)
@@ -328,7 +405,7 @@ func splitGitSource(source string) (repoURL, ref string, err error) {
 			ref = "HEAD"
 		}
 	} else {
-		repoURL, ref = source, "HEAD"
+		repoURL, ref = rest, "HEAD"
 	}
 
 	// Both the ls-remote here and the go-getter clone downstream receive
@@ -338,6 +415,16 @@ func splitGitSource(source string) (repoURL, ref string, err error) {
 	// the shell.
 	if strings.HasPrefix(repoURL, "-") || strings.HasPrefix(ref, "-") {
 		return "", "", fmt.Errorf("invalid git workflow source %q: %w", redactSourceForLog(source), errUnsafeGitSource)
+	}
+
+	// The inner transport git selects for repoURL must be one of the
+	// documented forms: a "<token>::" pseudo-transport (git's remote-helper
+	// syntax, e.g. "ext::") is forwarded verbatim to git and executes locally
+	// when the host re-enables that transport, so transport selection happens
+	// here, before the first git subprocess on either fetch path (the
+	// ls-remote above reaches repoURL through this same split).
+	if err := checkGitInnerTransport(repoURL); err != nil {
+		return "", "", fmt.Errorf("invalid git workflow source %q: %w", redactSourceForLog(source), err)
 	}
 
 	return repoURL, ref, nil
