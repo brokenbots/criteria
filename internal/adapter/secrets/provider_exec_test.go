@@ -134,6 +134,76 @@ func TestVaultProvider_Resolve_PathWithDataURL(t *testing.T) {
 	require.NotContains(t, string(args), "secret/data/secret/data")
 }
 
+func TestVaultProvider_Resolve_MountPrefixedPath(t *testing.T) {
+	argsFile := fakeBinArgsFile(t)
+	fakeBinDir(t, map[string]string{
+		"vault": `printf '%s\n' "$*" > "$CRITERIA_FAKE_BIN_ARGS"; echo vaulted-value`,
+	})
+	t.Setenv("VAULT_ADDR", "https://vault.example.invalid")
+
+	// The mount-prefixed form resolves like the bare form: the configured
+	// mount is not duplicated as a secret-path component.
+	p := VaultProvider{}
+	_, err := p.Resolve(context.Background(), OriginRef{Kind: "vault", Ref: "secret/myapp#api_key"})
+	require.NoError(t, err)
+
+	args, err := os.ReadFile(argsFile)
+	require.NoError(t, err)
+	require.Contains(t, string(args), " secret/data/myapp")
+	require.NotContains(t, string(args), "secret/data/secret/myapp")
+}
+
+// TestVaultProvider_Resolve_PathWithDataMidSegment is the regression test
+// for the former contains-"/data/" heuristic: a secret path that merely
+// CONTAINS "/data/" mid-string must still be prefixed with the configured
+// mount and KV data marker instead of being passed through bare (where the
+// vault CLI would treat the first segment as a foreign mount).
+func TestVaultProvider_Resolve_PathWithDataMidSegment(t *testing.T) {
+	argsFile := fakeBinArgsFile(t)
+	fakeBinDir(t, map[string]string{
+		"vault": `printf '%s\n' "$*" > "$CRITERIA_FAKE_BIN_ARGS"; echo vaulted-value`,
+	})
+	t.Setenv("VAULT_ADDR", "https://vault.example.invalid")
+
+	p := VaultProvider{}
+	_, err := p.Resolve(context.Background(), OriginRef{Kind: "vault", Ref: "app/data/tokens#api_key"})
+	require.NoError(t, err)
+
+	args, err := os.ReadFile(argsFile)
+	require.NoError(t, err)
+	require.Contains(t, string(args), " secret/data/app/data/tokens")
+}
+
+func TestVaultProvider_Resolve_CustomMount(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		ref     string
+		wantVFS string // full KV v2 path handed to the vault CLI
+	}{
+		{"bare", "myapp#api_key", "kv-prod/data/myapp"},
+		{"mount_prefixed", "kv-prod/myapp#api_key", "kv-prod/data/myapp"},
+		{"full_kv_v2_path", "kv-prod/data/myapp#api_key", "kv-prod/data/myapp"},
+		{"foreign_mount_name_stays_confined", "secret/data/myapp#api_key", "kv-prod/data/secret/data/myapp"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			argsFile := fakeBinArgsFile(t)
+			fakeBinDir(t, map[string]string{
+				"vault": `printf '%s\n' "$*" > "$CRITERIA_FAKE_BIN_ARGS"; echo vaulted-value`,
+			})
+			t.Setenv("VAULT_ADDR", "https://vault.example.invalid")
+
+			p := VaultProvider{Mount: "kv-prod"}
+			val, err := p.Resolve(context.Background(), OriginRef{Kind: "vault", Ref: tt.ref})
+			require.NoError(t, err)
+			require.Equal(t, "vaulted-value", val)
+
+			args, err := os.ReadFile(argsFile)
+			require.NoError(t, err)
+			require.Contains(t, string(args), " "+tt.wantVFS)
+		})
+	}
+}
+
 func TestVaultProvider_Resolve_BadRef(t *testing.T) {
 	t.Setenv("VAULT_ADDR", "https://vault.example.invalid")
 	p := VaultProvider{}
