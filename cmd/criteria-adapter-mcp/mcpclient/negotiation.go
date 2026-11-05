@@ -235,6 +235,18 @@ func (c *Client) connectProbed(ctx context.Context, mode Negotiation) error {
 		return c.legacyFallback(ctx, mode, err)
 	}
 
+	// The lsp-framed probe leaves an unterminated partial line behind on
+	// newline-based peers: their wire frames are newline-terminated, so the
+	// probe's payload cannot be parsed until the next write lands and it
+	// glues with it. Terminate the partial line with one newline character
+	// before the second probe: the line reader parses the abandoned probe's
+	// payload as its own line (its late reply carries the probe's request id
+	// and binds to no pending call, so it is dropped) and the ndjson probe
+	// follows as its own clean line. Header-framed peers skip the stray
+	// newline harmlessly — and this path only runs after they failed to
+	// show a parsed probe reply.
+	c.stdio().writeResyncNewline()
+
 	other := FramingNDJSON
 	if c.stdio().currentFraming() == FramingNDJSON {
 		other = FramingLSP

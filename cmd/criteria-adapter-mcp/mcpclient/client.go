@@ -639,6 +639,19 @@ func (c *Client) isClosed() bool {
 	}
 }
 
+// writeResyncNewline terminates an unterminated partial line that a
+// header-framed probe leaves behind on newline-based peers: newline-based
+// wire frames must end in "\n", so a Content-Length frame's payload stays
+// unparsed there until the next write glues with it. Writing a bare newline
+// (not a framed request) lets a line reader parse the abandoned probe's
+// payload as its own line and puts the following write on a clean line
+// boundary; its late reply binds to the abandoned request id and drops.
+func (t *stdioTransport) writeResyncNewline() {
+	t.writeMu.Lock()
+	defer t.writeMu.Unlock()
+	_, _ = t.writer.Write([]byte("\n"))
+}
+
 // stdio returns the stdio transport of this client, or nil when the client
 // speaks the http dialect.
 func (c *Client) stdio() *stdioTransport {
