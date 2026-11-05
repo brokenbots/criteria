@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -66,12 +67,17 @@ func resolveSigningPolicy(allowUnsigned bool, workflowVerification string, trust
 //     the configured keys). If no configured key matches, no key remains and a
 //     key-signed artifact fails closed under strict.
 //   - keyless pin: TrustedIssuers/SubjectPatterns are narrowed to the pinned
-//     issuer/subject so only that identity verifies.
+//     issuer/subject so only that identity verifies. A keyless pin must record
+//     an issuer: the lockfile deferring the trust decision to whatever the
+//     first lock accepted is exactly the "anyone's CI can sign what I lock
+//     first" trap, so an empty issuer (or subject) is an error — re-lock to
+//     record the real identity. The explicit "*" wildcard issuer is allowed
+//     but warned loudly.
 //
 // base is returned unchanged when nothing is pinned.
-func policyForPin(base *signing.Policy, pin *lockfile.LockedSignature) signing.Policy {
+func policyForPin(base *signing.Policy, pin *lockfile.LockedSignature) (signing.Policy, error) {
 	if pin == nil {
-		return *base
+		return *base, nil
 	}
 	p := *base
 	switch {
@@ -84,15 +90,44 @@ func policyForPin(base *signing.Policy, pin *lockfile.LockedSignature) signing.P
 		}
 		p.TrustedKeys = kept
 	case pin.Keyless != nil:
-		p.TrustedKeys = nil
-		if pin.Keyless.Issuer != "" {
-			p.TrustedIssuers = []string{pin.Keyless.Issuer}
+		pinIssuer := strings.TrimSpace(pin.Keyless.Issuer)
+		pinSubject := strings.TrimSpace(pin.Keyless.Subject)
+		if pinIssuer == "" || pinSubject == "" {
+			return signing.Policy{}, fmt.Errorf(
+				"keyless pin is missing its recorded %s (issuer %q, subject %q); a keyless pin must carry both, or verification would defer the trust decision to the policy defaults — re-run `criteria adapter lock` to record the signer identity",
+				missingPinField(pinIssuer, pinSubject), pin.Keyless.Issuer, pin.Keyless.Subject)
 		}
-		if pin.Keyless.Subject != "" {
-			p.SubjectPatterns = []string{pin.Keyless.Subject}
+		p.TrustedKeys = nil
+		if pinIssuer == signing.WildcardIssuer {
+			slog.Warn("lockfile keyless pin trusts ANY OIDC issuer",
+				"pinned_issuer", pinIssuer,
+				"pinned_subject", pinSubject,
+				"hint", "prefer a concrete issuer URL (e.g. "+signing.DefaultTrustedIssuers[0]+"); a wildcard issuer accepts signatures from every Sigstore-flavored CI")
+		}
+		if pinSubject == signing.WildcardIssuer {
+			slog.Warn("lockfile keyless pin trusts any workflow subject",
+				"pinned_issuer", pinIssuer,
+				"pinned_subject", pinSubject,
+				"hint", "prefer a subject glob that names the adapter's repo (e.g. \"https://github.com/org/repo/*\")")
+		}
+		p.TrustedIssuers = []string{pinIssuer}
+		p.SubjectPatterns = []string{pinSubject}
+		if err := p.Validate(); err != nil {
+			return signing.Policy{}, fmt.Errorf("pinned verification policy: %w", err)
 		}
 	}
-	return p
+	return p, nil
+}
+
+func missingPinField(issuer, subject string) string {
+	switch {
+	case issuer == "" && subject == "":
+		return "issuer and subject"
+	case issuer == "":
+		return "issuer"
+	default:
+		return "subject"
+	}
 }
 
 // assertSignerMatchesPin confirms a freshly verified signer matches the signer
@@ -133,7 +168,13 @@ func assertSignerMatchesPin(adapterKey string, signer *signing.SignerIdentity, p
 		if pin.Keyless == nil {
 			return fmt.Errorf("adapter %q: artifact is keyless-signed but lockfile pins a key signer; re-run `criteria adapter lock`", adapterKey)
 		}
-		if signer.Keyless.Issuer != pin.Keyless.Issuer || signer.Keyless.Subject != pin.Keyless.Subject {
+		// Pattern-aware like the verification itself: a wildcard-issuer or
+		// wildcard-subject pin matches any issuer/subject, exact pin values
+		// compare literally. Both sides must accept; a mismatch is the
+		// signer-change signal the re-lock hint covers.
+		issuerOK := signing.IssuerMatches(pin.Keyless.Issuer, signer.Keyless.Issuer)
+		subjectOK := signing.SubjectMatches(pin.Keyless.Subject, signer.Keyless.Subject)
+		if !issuerOK || !subjectOK {
 			return fmt.Errorf("adapter %q: signer identity %s/%s does not match pinned %s/%s; re-run `criteria adapter lock` if the signer changed intentionally",
 				adapterKey, signer.Keyless.Issuer, signer.Keyless.Subject, pin.Keyless.Issuer, pin.Keyless.Subject)
 		}

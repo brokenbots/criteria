@@ -138,3 +138,44 @@ func TestBuildEntry_SliceIsolation(t *testing.T) {
 
 	assert.Equal(t, []string{"linux/amd64"}, a.Platforms)
 }
+
+// TestBuildEntry_KeylessPinRequiresIdentity asserts the first-lock tightening:
+// a keyless signer without its OIDC issuer or workflow subject cannot become a
+// lockfile entry — the lock is the trust anchor and a bare keyless pin would
+// defer verification to the policy defaults ("anyone's CI can sign what I
+// lock first").
+func TestBuildEntry_KeylessPinRequiresIdentity(t *testing.T) {
+	ref := oci.Reference{Registry: "ghcr.io", Repo: "criteria-adapters/noop", Tag: "latest"}
+	dg := digest.Digest("sha256:d")
+	m := &manifest.Manifest{SourceURL: "https://github.com/criteria-adapters/noop", SDKProtocolVersion: 2}
+
+	cases := []struct {
+		name    string
+		issuer  string
+		subject string
+		wantErr string
+	}{
+		{name: "empty issuer", issuer: "", subject: "subj", wantErr: "OIDC issuer"},
+		{name: "empty subject", issuer: "https://token.actions.githubusercontent.com", subject: "", wantErr: "subject"},
+		{name: "both empty", issuer: "", subject: "", wantErr: "issuer and workflow subject"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			signer := &signing.SignerIdentity{Keyless: &signing.KeylessIdentity{Issuer: c.issuer, Subject: c.subject}}
+			_, err := lockfile.BuildEntry(ref, dg, m, signer, nil)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), c.wantErr)
+		})
+	}
+
+	// A fully recorded keyless identity still builds.
+	signer := &signing.SignerIdentity{Keyless: &signing.KeylessIdentity{
+		Issuer:  "https://token.actions.githubusercontent.com",
+		Subject: "subs",
+	}}
+	a, err := lockfile.BuildEntry(ref, dg, m, signer, nil)
+	require.NoError(t, err)
+	require.NotNil(t, a.Signature)
+	require.NotNil(t, a.Signature.Keyless)
+	assert.Equal(t, "subs", a.Signature.Keyless.Subject)
+}

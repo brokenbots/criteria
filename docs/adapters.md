@@ -324,6 +324,11 @@ The model is **"the lockfile is the trust anchor"**: `criteria adapter lock`
 verifies the artifact's signature and pins the signer (key fingerprint, or
 keyless issuer + subject); `pull`/`compile`/`apply` then re-verify against that
 pin on every run. A changed signer surfaces as a `SignerChanged` lockfile diff.
+**The first lock is the trust decision**: until a pin exists, the verifier
+accepts any signature from the well-known CI issuers, so the *first* signer to
+sign an artifact you lock is the one the lockfile will enforce from then on —
+lock adapters you trust, from a ref you control (for example your own registry
+mirror), and treat an unexpected `signer changed` diff as a supply-chain signal.
 What each verification mode enforces on that re-verification:
 
 - **strict** — fail-closed: a verification failure aborts the command, and the
@@ -334,7 +339,10 @@ What each verification mode enforces on that re-verification:
 - **warn** — a verification failure is logged and the operation proceeds; the
   pin is asserted only when verification produced a signer. A pinned signer
   that fails re-verification fails closed under warn too (the pin is the trust
-  anchor in every non-`off` mode).
+  anchor in every non-`off` mode). Policy-shape validation runs before mode
+  handling, so a malformed policy (an empty pattern entry, a keyless pin
+  without a recorded issuer/subject) is a hard error in every mode, `warn`
+  included.
 - **off** — verification is skipped entirely, including the pin check.
 
 - **Keyless (default in CI, public).** `criteria adapter publish --keyless`
@@ -346,9 +354,33 @@ What each verification mode enforces on that re-verification:
   the log timestamp, not at verification time. Token resolution order:
   `--identity-token`, then `SIGSTORE_ID_TOKEN`, then the ambient GitHub Actions
   provider. Override the log with `--rekor-url` (default the public Sigstore
-  Rekor). By default any subject from a well-known CI OIDC issuer (e.g. GitHub
-  Actions) is accepted at first lock and then pinned, so **an adapter signed by
-  its own repo's CI verifies with no per-consumer configuration**.
+  Rekor).
+- **First-lock trust (keyless) — read this before you lock.** The first
+  `criteria adapter lock` of a keyless adapter is a trust decision, and the
+  lockfile records it as one: the verifier accepts a signature from any of the
+  well-known CI OIDC issuers (GitHub Actions, Google, GitLab) and any workflow
+  subject in that issuer's token, then **pins the exact signing issuer + subject
+  into the lockfile** so every later `pull`/`compile`/`apply` enforces that
+  identity. From the second verification onward an adapter signed by a
+  *different* repo's CI is rejected — only the recorded identity is trusted.
+  Policy shapes are validated fail-closed: an empty issuer or subject pattern
+  entry is a hard error at lock/verify (never a silent allow-all), middle-star
+  patterns are real globs (`https://github.com/org/*` reaches any depth), and a
+  keyless pin without a recorded issuer/subject refuses to verify — re-run
+  `criteria adapter lock` to record the identity. If you want to accept the
+  wildcard deliberately, pin issuer `"*"` (loudly warned at verification) and a
+  repo-scoped subject glob:
+
+  ```hcl
+  # .criteria.lock.hcl (excerpt) — a deliberately relaxed keyless pin:
+  # any GitHub-Actions signer from acme's repo may re-sign this adapter.
+  signature {
+    keyless {
+      issuer  = "*"                                        # any OIDC issuer (warned)
+      subject = "https://github.com/acme/workflow-adapters/*" # repo-scoped glob
+    }
+  }
+  ```
 - **Explicit key (enterprise, offline).** `--sign-key <pem>` signs with an
   Ed25519 key; the lockfile records the key fingerprint. Consumers declare which
   public keys they trust in a **trust config** — a global file under

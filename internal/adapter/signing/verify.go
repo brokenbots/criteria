@@ -17,7 +17,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/brokenbots/criteria/internal/adapter/oci"
@@ -91,6 +90,14 @@ func (p *Policy) IsKeyless() bool {
 func Verify(ctx context.Context, layout *oci.Layout, manifestDigest digest.Digest, policy Policy) (*SignerIdentity, error) {
 	if policy.Mode == ModeOff {
 		return nil, nil
+	}
+
+	// Fail closed on a malformed identity surface (empty issuer or subject
+	// pattern entries): trust-shape errors surface here with a diagnostic at
+	// every verification — lock, pull, apply — instead of loosening matching
+	// silently.
+	if err := policy.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid verification policy: %w", err)
 	}
 
 	sigs, err := findSignatures(layout, manifestDigest)
@@ -513,22 +520,32 @@ func identityFromCert(cert *x509.Certificate, policy *Policy) (*SignerIdentity, 
 	issuer := summary.Issuer
 	subject := summary.SubjectAlternativeName
 
-	if len(policy.TrustedIssuers) > 0 {
-		found := false
-		for _, iss := range policy.TrustedIssuers {
-			if iss == issuer {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return nil, fmt.Errorf("issuer %q not in trusted issuers", issuer)
+	// Fail closed on empty identity lists: a policy with no trusted issuers or
+	// no subject patterns permits NO keyless identity — it must never
+	// silently mean "accept anything from anyone". Built policies always
+	// carry at least one entry on each side (PolicyFor defaults, pin
+	// narrowing); a hand-built policy without them errors here with a
+	// diagnostic instead of widening trust.
+	if len(policy.TrustedIssuers) == 0 {
+		return nil, fmt.Errorf("keyless policy has no trusted issuers; configure at least one issuer (e.g. %s) or the explicit %q wildcard", DefaultTrustedIssuers[0], WildcardIssuer)
+	}
+	found := false
+	for _, iss := range policy.TrustedIssuers {
+		if IssuerMatches(iss, issuer) {
+			found = true
+			break
 		}
 	}
+	if !found {
+		return nil, fmt.Errorf("issuer %q not in trusted issuers", issuer)
+	}
 
-	matched := len(policy.SubjectPatterns) == 0
+	if len(policy.SubjectPatterns) == 0 {
+		return nil, fmt.Errorf("keyless policy has no subject patterns; configure at least one glob (the %q pattern deliberately allows any subject)", WildcardIssuer)
+	}
+	matched := false
 	for _, pat := range policy.SubjectPatterns {
-		if matchGlob(pat, subject) {
+		if SubjectMatches(pat, subject) {
 			matched = true
 			break
 		}
@@ -543,19 +560,6 @@ func identityFromCert(cert *x509.Certificate, policy *Policy) (*SignerIdentity, 
 			Subject: subject,
 		},
 	}, nil
-}
-
-func matchGlob(pattern, s string) bool {
-	if pattern == "*" || pattern == "" {
-		return true
-	}
-	if strings.HasPrefix(pattern, "*") {
-		return strings.HasSuffix(s, strings.TrimPrefix(pattern, "*"))
-	}
-	if strings.HasSuffix(pattern, "*") {
-		return strings.HasPrefix(s, strings.TrimSuffix(pattern, "*"))
-	}
-	return pattern == s
 }
 
 // trustedMaterialOverride is set by integration tests to inject a mock

@@ -297,7 +297,10 @@ func annotateProvenance(layout *oci.Layout, dg digest.Digest, entry *lockfile.Lo
 // to a proceed — surfaces as an error so a pinned signer is never silently
 // bypassed. See policyForPin and assertSignerMatchesPin.
 func verifyAgainstPin(ctx context.Context, key string, layout *oci.Layout, dg digest.Digest, entry *lockfile.LockedAdapter, policy *signing.Policy) error {
-	effective := policyForPin(policy, entry.Signature)
+	effective, err := policyForPin(policy, entry.Signature)
+	if err != nil {
+		return fmt.Errorf("adapter %q lockfile pin: %w", key, err)
+	}
 	signer, err := signing.Verify(ctx, layout, dg, effective)
 	if err != nil {
 		return fmt.Errorf("adapter %q signature verification: %w", key, err)
