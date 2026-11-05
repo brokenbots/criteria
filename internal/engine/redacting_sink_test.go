@@ -52,6 +52,7 @@ type recordingSink struct {
 	}
 	onCheckpointPointers []*CheckpointPointerEvent
 	stepEventSinkStep    string
+	eventSink            *fakeEventSink
 }
 
 func (s *recordingSink) OnRunStarted(workflowName, initialStep string) {
@@ -159,13 +160,23 @@ func (s *recordingSink) OnCheckpointPointer(ptr *CheckpointPointerEvent) {
 }
 func (s *recordingSink) StepEventSink(step string) adapter.EventSink {
 	s.stepEventSinkStep = step
-	return &fakeEventSink{}
+	s.eventSink = &fakeEventSink{}
+	return s.eventSink
 }
 
-type fakeEventSink struct{}
+// fakeEventSink captures the events reaching it; it doubles as the discard
+// stand-in for tests that only build the sink.
+type fakeEventSink struct {
+	kinds []string
+	datas []any
+	logs  [][]byte
+}
 
-func (f *fakeEventSink) Log(stream string, chunk []byte) {}
-func (f *fakeEventSink) Adapter(kind string, data any)   {}
+func (f *fakeEventSink) Log(stream string, chunk []byte) { f.logs = append(f.logs, chunk) }
+func (f *fakeEventSink) Adapter(kind string, data any) {
+	f.kinds = append(f.kinds, kind)
+	f.datas = append(f.datas, data)
+}
 
 func boolStr(b bool) string {
 	if b {
@@ -612,6 +623,57 @@ func TestRedactingSink_StepEventSink(t *testing.T) {
 	if inner.stepEventSinkStep != "step_secret123" {
 		t.Fatalf("expected inner.StepEventSink called with raw step, got %s", inner.stepEventSinkStep)
 	}
+}
+
+// TestRedactingSink_StepEventSink_EventRoundTrip exercises the engine-side
+// step-event surface end to end: events emitted on the sink the engine hands
+// to adapters must arrive at the underlying sink with declared secrets
+// masked, and with the raw payload preserved when nothing is declared.
+func TestRedactingSink_StepEventSink_EventRoundTrip(t *testing.T) {
+	t.Run("declared secret masked", func(t *testing.T) {
+		inner := &recordingSink{}
+		reg := secrets.NewRegistry()
+		reg.Register("secret123")
+		sink := NewRedactingSink(inner, reg)
+
+		es := sink.StepEventSink("step_secret123")
+		es.Adapter("task-secret123-started", map[string]any{"task": "secret123", "exit": 0})
+		es.Log("stdout", []byte("chunk secret123 tail"))
+
+		fs := inner.eventSink
+		if fs == nil || len(fs.kinds) != 1 || len(fs.datas) != 1 {
+			t.Fatalf("expected one adapter event captured, got kinds=%v", fs)
+		}
+		if fs.kinds[0] != "task-[REDACTED]-started" {
+			t.Errorf("kind: got %q, want task-[REDACTED]-started", fs.kinds[0])
+		}
+		payload := fs.datas[0].(map[string]any)
+		if payload["task"] != "[REDACTED]" {
+			t.Errorf("task: got %v, want [REDACTED]", payload["task"])
+		}
+		if payload["exit"] != 0 {
+			t.Errorf("non-secret scalar must survive, got %v (%T)", payload["exit"], payload["exit"])
+		}
+		if string(fs.logs[0]) != "chunk [REDACTED] tail" {
+			t.Errorf("log chunk: got %q", fs.logs[0])
+		}
+	})
+
+	t.Run("empty registry forwards raw payload", func(t *testing.T) {
+		inner := &recordingSink{}
+		sink := NewRedactingSink(inner, secrets.NewRegistry())
+
+		sink.StepEventSink("demo").Adapter("callee.started", map[string]any{"task": "raw-value"})
+
+		fs := inner.eventSink
+		if len(fs.datas) != 1 {
+			t.Fatalf("expected one adapter event, got %d", len(fs.datas))
+		}
+		payload := fs.datas[0].(map[string]any)
+		if payload["task"] != "raw-value" {
+			t.Errorf("task: got %v, want untouched raw-value", payload["task"])
+		}
+	})
 }
 
 func TestRedactingSink_OnCheckpointPointer(t *testing.T) {

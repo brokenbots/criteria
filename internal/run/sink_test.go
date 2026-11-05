@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/brokenbots/criteria/internal/adapter/secrets"
 	"github.com/brokenbots/criteria/internal/engine"
 	servertrans "github.com/brokenbots/criteria/internal/transport/server"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
@@ -661,4 +663,60 @@ func decodeSinkPayloadTypes(t *testing.T, ndjson string) []string {
 		out = append(out, l.PayloadType)
 	}
 	return out
+}
+
+// TestSink_StepEventSink_MasksDeclaredSecretsInEnvelope is the envelope-level
+// round trip: engine.NewRedactingSink wraps the run sink exactly as the
+// engine wires it, an adapter event carrying a declared secret is emitted on
+// the step event sink, and the published AdapterEvent struct must carry the
+// mask, not the value. With nothing declared, the raw value reaches the
+// struct unchanged (the zero-cost bypass keeps payloads untouched).
+func TestSink_StepEventSink_MasksDeclaredSecretsInEnvelope(t *testing.T) {
+	publishOne := func(t *testing.T, reg *secrets.Registry) *pb.AdapterEvent {
+		t.Helper()
+		fp := &fakePublisher{}
+		s := &Sink{RunID: "test-run-1", Client: fp, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+		// Wrap the raw run sink the same way the engine does, then emit as
+		// an adapter would on the step event surface.
+		engine.NewRedactingSink(s, reg).StepEventSink("demo").Adapter(
+			"task-secret123-started",
+			map[string]any{"task": "secret123", "ok": true},
+		)
+
+		if len(fp.published) != 1 {
+			t.Fatalf("expected 1 published envelope, got %d", len(fp.published))
+		}
+		ae := fp.published[0].GetAdapterEvent()
+		if ae == nil {
+			t.Fatalf("payload is %T, want *pb.AdapterEvent", fp.published[0].Payload)
+		}
+		return ae
+	}
+
+	t.Run("declared secret masked", func(t *testing.T) {
+		reg := secrets.NewRegistry()
+		reg.Register("secret123")
+		ae := publishOne(t, reg)
+
+		data := ae.GetData().AsMap()
+		if got := data["task"]; got != "[REDACTED]" {
+			t.Errorf("task: got %v, want [REDACTED]", got)
+		}
+		if got, ok := data["ok"].(bool); !ok || !got {
+			t.Errorf("non-secret bool must survive untouched, got %v (%T)", data["ok"], data["ok"])
+		}
+		if strings.Contains(fmt.Sprintf("%v", data), "secret123") {
+			t.Errorf("published struct must not carry the raw secret: %v", data)
+		}
+	})
+
+	t.Run("empty registry forwards raw value", func(t *testing.T) {
+		ae := publishOne(t, secrets.NewRegistry())
+
+		data := ae.GetData().AsMap()
+		if got := data["task"]; got != "secret123" {
+			t.Errorf("task: got %v, want raw secret123 (no declared secrets)", got)
+		}
+	})
 }
