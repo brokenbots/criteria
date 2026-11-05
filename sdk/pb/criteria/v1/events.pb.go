@@ -720,11 +720,13 @@ type Envelope_RunResumed struct {
 
 type Envelope_AuditLoss struct {
 	// AuditLoss — the agent's permission-audit file writer dropped audit
-	// entries during the run. Emitted once, immediately before the
-	// terminal event, only when something was lost; permission decisions
-	// themselves never block on audit writes, so the run record carries
-	// the loss instead. The server stores and fans out the event verbatim
-	// without interpreting the fields. Permanent field number.
+	// entries during the run. Emitted once, after the run's lifecycle
+	// unwind (adapter teardown and session shutdown keep writing
+	// permission-audit entries, and their drops must be counted), only
+	// when something was lost; permission decisions themselves never
+	// block on audit writes, so the run record carries the loss instead.
+	// The server stores and fans out the event verbatim without
+	// interpreting the fields. Permanent field number.
 	AuditLoss *AuditLoss `protobuf:"bytes,43,opt,name=audit_loss,json=auditLoss,proto3,oneof"`
 }
 
@@ -967,10 +969,10 @@ func (x *RunFailed) GetStep() string {
 
 // AuditLoss — permission-audit entries were dropped by the agent's audit
 // file writer and are therefore missing from the audit trail. Emitted once
-// per run, immediately before the terminal event, only when something was
-// lost; the permission path never blocks on audit writes, so the run
-// record carries the loss instead. The server stores and fans out the
-// event verbatim without interpreting the fields.
+// per run, after the run's lifecycle unwind so teardown-phase drops are
+// counted, only when something was lost; the permission path never blocks
+// on audit writes, so the run record carries the loss instead. The server
+// stores and fans out the event verbatim without interpreting the fields.
 type AuditLoss struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Cumulative number of audit entries dropped (not written to the file).
