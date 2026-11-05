@@ -88,6 +88,10 @@ func TestBuildSandboxCustomizer_BwrapExactAllowRefused(t *testing.T) {
 	// could not enforce the list. Mirrors the container/remote refusal
 	// precedent — never silently dropped.
 	//
+	// The permissive cases matter because permissive is the default and is
+	// exactly the mode a faulty implementation could route the refusal
+	// through as a silent degrade.
+	//
 	// Pin PATH to a stub bwrap binary so the test is deterministic on
 	// hosts without bwrap installed.
 	stubDir := t.TempDir()
@@ -97,39 +101,50 @@ func TestBuildSandboxCustomizer_BwrapExactAllowRefused(t *testing.T) {
 	}
 	t.Setenv("PATH", stubDir)
 
-	sm := NewSessionManager(nil)
-	sm.sandboxProbeOverride = func() sandbox.Capabilities {
-		return sandbox.Capabilities{UserNamespaces: true, Landlock: true, Seccomp: true, Cgroupv2: true}
-	}
-	sm.graph = &workflow.FSMGraph{
-		Adapters: map[string]*workflow.AdapterNode{
-			"noop.default": {Type: "noop", Name: "default", Environment: "sandbox.default"},
-		},
-		Environments: map[string]*workflow.EnvironmentNode{
-			"sandbox.default": {
-				Type: "sandbox",
-				Name: "default",
-				TypeSpecific: map[string]cty.Value{
-					"sandbox": cty.StringVal("bwrap"),
-					"network": cty.ObjectVal(map[string]cty.Value{
-						"allow": cty.ListVal([]cty.Value{cty.StringVal("internal.svc:8080")}),
-					}),
+	for _, tc := range []struct {
+		name       string
+		policyMode string
+	}{
+		{"strict", "strict"},
+		{"permissive", "permissive"},
+		{"default empty mode", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sm := NewSessionManager(nil)
+			sm.sandboxProbeOverride = func() sandbox.Capabilities {
+				return sandbox.Capabilities{UserNamespaces: true, Landlock: true, Seccomp: true, Cgroupv2: true}
+			}
+			sm.graph = &workflow.FSMGraph{
+				Adapters: map[string]*workflow.AdapterNode{
+					"noop.default": {Type: "noop", Name: "default", Environment: "sandbox.default"},
 				},
-			},
-		},
-		ResolvedPolicies: map[string]*workflow.ResolvedPolicy{
-			"noop.default:sandbox.default": {PolicyMode: "strict", OS: "linux"},
-		},
-	}
-	customizer, cleanup, err := sm.buildSandboxCustomizer("noop.default", "")
-	if err == nil {
-		t.Fatal("expected hard error for exact network.allow on bwrap path")
-	}
-	if !strings.Contains(err.Error(), "cannot enforce an exact network.allow allow-list") {
-		t.Fatalf("refusal error lacks guidance: %v", err)
-	}
-	if customizer != nil || cleanup != nil {
-		t.Fatal("expected nil customizer and cleanup on refusal")
+				Environments: map[string]*workflow.EnvironmentNode{
+					"sandbox.default": {
+						Type: "sandbox",
+						Name: "default",
+						TypeSpecific: map[string]cty.Value{
+							"sandbox": cty.StringVal("bwrap"),
+							"network": cty.ObjectVal(map[string]cty.Value{
+								"allow": cty.ListVal([]cty.Value{cty.StringVal("internal.svc:8080")}),
+							}),
+						},
+					},
+				},
+				ResolvedPolicies: map[string]*workflow.ResolvedPolicy{
+					"noop.default:sandbox.default": {PolicyMode: tc.policyMode, OS: "linux"},
+				},
+			}
+			customizer, cleanup, err := sm.buildSandboxCustomizer("noop.default", "")
+			if err == nil {
+				t.Fatalf("expected hard error for exact network.allow on bwrap path with policy_mode=%q", tc.policyMode)
+			}
+			if !strings.Contains(err.Error(), "cannot enforce an exact network.allow allow-list") {
+				t.Fatalf("refusal error lacks guidance (policy_mode=%q): %v", tc.policyMode, err)
+			}
+			if customizer != nil || cleanup != nil {
+				t.Fatalf("expected nil customizer and cleanup on refusal (policy_mode=%q)", tc.policyMode)
+			}
+		})
 	}
 }
 

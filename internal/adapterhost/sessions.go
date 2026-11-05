@@ -1524,9 +1524,12 @@ func (m *SessionManager) resolveAdapterBinaryForInstance(instanceID, adapterType
 // configuration to an exec.Cmd, or nil if the adapter is not bound to a
 // sandbox environment. The second return value is a cleanup function
 // that removes transient resources (e.g. cgroup directories); it may be
-// nil. The third return value is an error that is only non-nil when the
-// sandbox policy is strict and a required primitive is unavailable; in
-// that case the caller must abort the session before Resolve.
+// nil. The third return value is non-nil when the launch is refused: the
+// sandbox policy is strict and a required primitive is unavailable, or the
+// environment declared a policy the launch path cannot enforce (e.g. an
+// exact network.allow list on the bubblewrap path) — the refusal is
+// unconditional regardless of policy_mode. Either way the caller must
+// abort the session before Resolve.
 func (m *SessionManager) buildSandboxCustomizer(instanceID, workingDir string) (customizer func(name string, cmd *exec.Cmd), cleanup func(), err error) {
 	envNode, rp, ok := m.sandboxEnvAndPolicy(instanceID)
 	if !ok {
@@ -1560,11 +1563,9 @@ func (m *SessionManager) buildSandboxCustomizer(instanceID, workingDir string) (
 	}
 	prep, err := sandbox.Handler{}.Prepare(ctx)
 	if err != nil {
-		// Release whatever partial resources Prepare created (e.g. a
-		// transient cgroup directory) before callers see the failure; the
-		// returned cleanup is dropped on both the permissive degrade and
-		// this error return.
-		_ = prep.Cleanup()
+		// Prepare returns a zero value on every error path, so there is
+		// nothing to clean up here; any resource it staged (e.g. a cgroup
+		// directory) is discarded inside Prepare itself.
 		if rp.PolicyMode == "strict" {
 			return nil, nil, fmt.Errorf("sandbox strict mode: %w", err)
 		}

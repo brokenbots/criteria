@@ -859,7 +859,8 @@ constraint.
     in-process shim, so landlock port rules cannot apply there. An exact
     host:port list on that path is refused loudly at launch (regardless of
     `policy_mode`): use `allow = ["*"]` to declare unrestricted egress intent,
-    or omit the block to keep egress denied.
+    or omit the block to keep egress denied. Note the bwrap opt-in itself is
+    not yet authorable from HCL (see the per-OS note below).
 - Exact host:port lists are rejected for `container` and `remote` environments
   because those backends cannot enforce per-endpoint egress; use `allow = ["*"]`
   to declare unrestricted egress intent, or omit the block to deny egress.
@@ -884,7 +885,10 @@ The bubblewrap soft alternative replaces the in-process shim entirely
 `network { allow }` lists and refuses the launch loudly when one is declared.
 With `allow = ["*"]` it shares the network namespace; without the block it
 stays fully network-isolated. The bubblewrap integration itself remains
-**Untested** against a real bwrap install.
+**Untested** against a real bwrap install. The `sandbox = "bwrap"` opt-in is
+not yet authorable from HCL — the compiler rejects a `sandbox` attribute on
+sandbox environments — so this behavior applies to the latent,
+programmatic-construction path until the opt-in lands (tracked under task 356).
 
 ## Remote execution
 
