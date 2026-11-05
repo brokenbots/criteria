@@ -384,12 +384,13 @@ What each verification mode enforces on that re-verification:
 - **Explicit key (enterprise, offline).** `--sign-key <pem>` signs with an
   Ed25519 key; the lockfile records the key fingerprint. Consumers declare which
   public keys they trust in a **trust config** — a global file under
-  `$CRITERIA_HOME/trust.hcl` (default `~/.local/criteria/trust.hcl`;
-  `CRITERIA_STATE_DIR` is a deprecated alias) and/or a `trust.hcl` beside the
+  `$XDG_CONFIG_HOME/criteria/trust.hcl` (default `~/.config/criteria/trust.hcl`
+  when `CRITERIA_HOME` is unset; `CRITERIA_HOME` and `XDG_CONFIG_HOME`
+  override) and/or a `trust.hcl` beside the
   workflow (their union is used), or ad-hoc `--trusted-key <pem>` on `pull`/`lock`:
 
   ```hcl
-  # ~/.local/criteria/trust.hcl
+  # ~/.config/criteria/trust.hcl
   trusted_key {
     key = <<-EOT
     -----BEGIN PUBLIC KEY-----
@@ -416,8 +417,9 @@ What each verification mode enforces on that re-verification:
   artifacts don't break `lock`/`apply`; it returns to `strict` once keyless
   verification is confirmed in CI.
 - **TUF / air-gapped.** Keyless verification needs the Sigstore TUF root (fetched
-  via TUF and cached at `$CRITERIA_HOME/cache/sigstore/`, default
-  `~/.local/criteria/cache/sigstore/`; clear that directory to refresh) and a
+  via TUF and cached at `$XDG_CACHE_HOME/criteria/cache/sigstore/`, default
+  `~/.cache/criteria/cache/sigstore/` (`CRITERIA_HOME`
+  overrides); clear that directory to refresh) and a
   Rekor entry created while online at signing time. Fully air-gapped consumers
   use explicit-key mode or `--allow-unsigned`.
 
@@ -646,7 +648,7 @@ The host gates the call in a fixed order before anything runs:
 Every gate decision is audited — one audit entry per decision, attributed to
 the call's own nesting layer, at
 `$CRITERIA_HOME/runs/<run-id>/audit.log` (default
-`~/.local/criteria/runs/<run-id>/audit.log`) — so caller-layer and
+`~/.local/state/criteria/runs/<run-id>/audit.log`) — so caller-layer and
 callee-side decisions are separately distinguishable.
 
 What the callee sees: its **own session**, resolved through the ordinary
@@ -949,7 +951,7 @@ heartbeats, and it must remain open for the entire lifetime of the session:
   and then against the resolved environment filesystem and network policy.
   Each layer produces a distinguishable denial reason and one audit entry per
   decision at `$CRITERIA_HOME/runs/<run-id>/audit.log` (default
-  `~/.local/criteria/runs/<run-id>/audit.log`).
+  `~/.local/state/criteria/runs/<run-id>/audit.log`).
 - **Adapter tool calls.** An adapter-to-adapter tool call is a gated
   permission request plus a nested session (see
   [Adapter tools](#adapter-tools)); the call is secured per layer:

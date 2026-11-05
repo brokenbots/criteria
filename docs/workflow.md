@@ -538,7 +538,8 @@ By default, `approval` and `wait { signal }` nodes require an orchestrator (`--s
 - **Request file** (operator writes): `$CRITERIA_HOME/runs/<run_id>/approval-<node>.json`
 - **Decision record** (written after consumption): `$CRITERIA_HOME/runs/<run_id>/approvals/<node>.json`
 
-`$CRITERIA_HOME` defaults to `~/.local/criteria`. `$CRITERIA_STATE_DIR` is a
+`$CRITERIA_HOME` defaults to `$XDG_STATE_HOME/criteria`
+(`~/.local/state/criteria`). `$CRITERIA_STATE_DIR` is a
 deprecated alias that is still honored when set and `CRITERIA_HOME` is not.
 
 ### Reattach safety
@@ -571,7 +572,7 @@ CRITERIA_LOCAL_APPROVAL=env CRITERIA_APPROVAL_SHIP_TO_PROD=approved criteria app
 
 # Operator writes decision out-of-band (file mode)
 CRITERIA_LOCAL_APPROVAL=file criteria apply workflow.hcl &
-echo '{"decision":"approved"}' > ~/.local/criteria/runs/<run_id>/approval-ship_to_prod.json
+echo '{"decision":"approved"}' > ~/.local/state/criteria/runs/<run_id>/approval-ship_to_prod.json
 ```
 
 ---
@@ -1673,7 +1674,7 @@ See [`proto/criteria/v1/`](../proto/criteria/v1/) for proto definitions and even
 
 - Duration-based waits work.
 - Signal-based waits and approval nodes require `CRITERIA_LOCAL_APPROVAL` (see **Local-mode approval and signal wait**) or `--server`.
-- Local runs write step checkpoints and persisted approval/signal decisions under `$CRITERIA_HOME` (default `~/.local/criteria`; `$CRITERIA_STATE_DIR` is a deprecated alias when `CRITERIA_HOME` is not set) so a restarted run can reuse captured decisions without re-prompting. For full crash recovery and distributed persistence, use `--server`.
+- Local runs write step checkpoints and persisted approval/signal decisions under `$CRITERIA_HOME` (default `$XDG_STATE_HOME/criteria`, i.e. `~/.local/state/criteria`; `$CRITERIA_STATE_DIR` is a deprecated alias when `CRITERIA_HOME` is not set) so a restarted run can reuse captured decisions without re-prompting. For full crash recovery and distributed persistence, use `--server`.
 
 For examples demonstrating each command, see:
 - Linear shell pipeline: [examples/build_and_test/build_and_test.hcl](../examples/build_and_test/build_and_test.hcl)
@@ -2044,7 +2045,9 @@ its lockfile entry (cascaded pins, CRI-228); a local subworkflow delegates
 resolution and skips the fetcher.
 
 **Cache semantics.** Fetched trees land under
-`$CRITERIA_HOME/cache/workflows/<slug>/<version>` (`<slug>` derived from
+`$CRITERIA_HOME/cache/workflows/<slug>/<version>` when `CRITERIA_HOME` is
+set, otherwise `$XDG_CACHE_HOME/criteria/cache/workflows/<slug>/<version>`
+(`<slug>` derived from
 the credential-redacted source; `<version>` the resolved SHA or digest).
 Resolution is locked per slug: concurrent fetches converge on one version
 directory with complete contents and no leftover temporary directories —

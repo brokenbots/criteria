@@ -180,8 +180,10 @@ Reference: [docs/adapters.md](docs/adapters.md).
 
 ## Run data directory
 
-Each run owns a data directory under `$CRITERIA_HOME` (defaults to
-`~/.local/criteria`; `CRITERIA_STATE_DIR` is a deprecated alias):
+Each run owns a data directory under `$CRITERIA_HOME`. Without an explicit
+override the state root defaults to `$XDG_STATE_HOME/criteria`
+(`~/.local/state/criteria` on Linux); `CRITERIA_STATE_DIR` is a deprecated
+alias honored when `CRITERIA_HOME` is unset:
 
 ```
 $CRITERIA_HOME/runs/<run_id>/
