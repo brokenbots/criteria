@@ -27,7 +27,7 @@ func (r *fakeAuditLossReporter) Write(e *adapterhost.DecisionLogEntry) {
 }
 
 // AuditLoss implements AuditLossReporter.
-func (r *fakeAuditLossReporter) AuditLoss() (int64, int64, string) {
+func (r *fakeAuditLossReporter) AuditLoss() (dropped, attempted int64, lastError string) {
 	return r.dropped, r.attempted, r.lastError
 }
 

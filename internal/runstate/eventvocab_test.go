@@ -18,7 +18,7 @@ func TestSeamEventType_TableIsLowerCamel(t *testing.T) {
 		if got := seamEventType(payloadType); got != seamType {
 			t.Errorf("seamEventType(%q) = %q, want the registered %q", payloadType, got, seamType)
 		}
-		if len(seamType) == 0 || seamType[0] > 'z' || seamType[0] < 'a' {
+		if seamType == "" || seamType[0] > 'z' || seamType[0] < 'a' {
 			t.Errorf("seam type %q for %q must be lowerCamelCase", seamType, payloadType)
 		}
 	}

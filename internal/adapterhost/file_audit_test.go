@@ -12,7 +12,7 @@ import (
 
 // captureLogger returns a slog.Logger plus a func collecting
 // level-prefixed rendered records written through it.
-func captureLogger() (*slog.Logger, func() []string) {
+func captureLogger() (logger *slog.Logger, records func() []string) {
 	var mu sync.Mutex
 	var recs []string
 	h := slog.NewTextHandler(&writerFn{fn: func(b []byte) {
