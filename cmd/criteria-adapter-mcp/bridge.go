@@ -621,7 +621,7 @@ func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ad
 		return sink.Send(resultEvent("failure"))
 	}
 
-	result, err := s.client.CallToolTracked(ctx, toolName, arguments, exec.token)
+	result, err := s.client.CallToolTracked(ctx, toolName, arguments, exec.token, nil)
 	if err != nil {
 		// Transport and protocol failures propagate: the host maps the
 		// callee's failure to typed callee_crash, and a deadline to

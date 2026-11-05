@@ -170,7 +170,7 @@ func TestClientCancelSendsCancelledNotification(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := client.CallToolTracked(ctx, "echo", map[string]any{"message": "abandoned"}, "criteria-1")
+		_, err := client.CallToolTracked(ctx, "echo", map[string]any{"message": "abandoned"}, "criteria-1", nil)
 		errCh <- err
 	}()
 

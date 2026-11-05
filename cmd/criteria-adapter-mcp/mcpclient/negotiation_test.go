@@ -221,7 +221,7 @@ func TestConnectProbeFirstAdoptsStatelessCore(t *testing.T) {
 
 	// tools/call on a stateless session carries the request _meta and merges
 	// the KB-155 progress token into it.
-	res, err := client.CallToolTracked(ctx, "echo", map[string]any{"message": "hi"}, "tok-1")
+	res, err := client.CallToolTracked(ctx, "echo", map[string]any{"message": "hi"}, "tok-1", nil)
 	if err != nil {
 		t.Fatalf("CallToolTracked: %v", err)
 	}
@@ -575,7 +575,7 @@ func TestNullIDErrorResolvesSolePendingRequest(t *testing.T) {
 	}()
 
 	start := time.Now()
-	_, err := client.request(context.Background(), "probe/test", nil)
+	_, err := client.request(context.Background(), "probe/test", nil, nil)
 	elapsed := time.Since(start)
 	if err == nil {
 		t.Fatal("the id-less error did not fail the sole outstanding request")
@@ -592,7 +592,7 @@ func TestNullIDErrorResolvesSolePendingRequest(t *testing.T) {
 	// after the id-less resolution.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := client.request(ctx, "probe/second", nil); err != nil {
+	if _, err := client.request(ctx, "probe/second", nil, nil); err != nil {
 		t.Fatalf("subsequent id-bearing request failed: %v", err)
 	}
 }

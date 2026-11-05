@@ -16,6 +16,41 @@ import (
 
 const jsonRPCVersion = "2.0"
 
+// wireRequest describes one outgoing JSON-RPC envelope as a transport
+// needs it: the encoded envelope, its method and id (id "" marks a
+// notification, which gets no response), and per-request HTTP headers
+// (http transport only; a stdio send with headers is invalid).
+type wireRequest struct {
+	envelope []byte
+	method   string
+	id       string
+	headers  map[string]string
+}
+
+// transport abstracts the wire between this client and an MCP server. The
+// stdio dialect (framed pipes) and the Streamable HTTP dialect (POST +
+// SSE response streams, the 2026-07-28 revision) both implement it; the
+// JSON-RPC dispatch machinery is shared (request/pending/dispatch).
+type transport interface {
+	// send delivers one encoded JSON-RPC envelope. For a request (id != "")
+	// send returns once the response has been routed into the client's
+	// pending dispatcher or the send has failed: a stdio transport reads
+	// the response on the background read loop, an http transport drains
+	// the POST response stream synchronously before returning.
+	send(ctx context.Context, req wireRequest) error
+	// close tears the transport down (pipe writer, response streams,
+	// background listeners). Failing pending calls lives in
+	// closeWithError, which calls this exactly once.
+	close() error
+}
+
+// errBatchedTraffic reports batched JSON-RPC traffic from a peer: MCP
+// transports never batch (one envelope per message in both directions), so
+// a batch on the receive side is a protocol violation. The session closes
+// on it, failing every pending call deterministically with this message
+// under the implementation-defined session-close code (-32000).
+var errBatchedTraffic = errors.New("mcpclient: batched JSON-RPC traffic received (MCP peers never batch)")
+
 // Notification is a server-initiated JSON-RPC notification.
 type Notification struct {
 	Method string
@@ -156,13 +191,22 @@ type incomingEnvelope struct {
 	Error   *RPCError       `json:"error,omitempty"`
 }
 
-// Client is a minimal JSON-RPC stdio client for MCP servers.
+// Client is a minimal JSON-RPC client for MCP servers, speaking the stdio
+// dialect (framed pipes, via New/NewWithFraming) or the Streamable HTTP
+// dialect (via NewHTTPClient).
 type Client struct {
-	reader *bufio.Reader
-	writer io.WriteCloser
-	// framing selects the write-side frame encoding; reads always
-	// auto-detect per frame.
+	tr transport
+
+	// framing selects the write-side frame encoding of the stdio
+	// transport; reads always auto-detect per frame. Only the stdio
+	// framing probe (Connect, framingNegotiable) re-points it while the
+	// session is still probe-only.
 	framing Framing
+	// framingNegotiable records that no framing was pinned in config: the
+	// framing probe in Connect may try both stdio framings to find which
+	// one the peer parses (see negotiation.go). An explicitly pinned
+	// framing never flips.
+	framingNegotiable bool
 
 	notify func(Notification)
 
@@ -176,7 +220,6 @@ type Client struct {
 	clientName    string
 	clientVersion string
 
-	writeMu sync.Mutex
 	pendMu  sync.Mutex
 	pending map[string]chan rpcResponse
 
@@ -200,14 +243,14 @@ func NewWithFraming(reader io.Reader, writer io.WriteCloser, framing Framing, on
 		framing = FramingLSP
 	}
 	c := &Client{
-		reader:  bufio.NewReader(reader),
-		writer:  writer,
 		framing: framing,
 		notify:  onNotification,
 		pending: map[string]chan rpcResponse{},
 		closed:  make(chan struct{}),
 	}
-	go c.readLoop()
+	t := &stdioTransport{owner: c, reader: bufio.NewReader(reader), writer: writer}
+	c.tr = t
+	go t.readLoop(c)
 	return c
 }
 
@@ -238,7 +281,7 @@ func (c *Client) initializeLegacy(ctx context.Context) error {
 			Version: c.clientVersion,
 		},
 	}
-	if _, err := c.request(ctx, "initialize", params); err != nil {
+	if _, err := c.request(ctx, "initialize", params, nil); err != nil {
 		return err
 	}
 	c.protocolVersion = ProtocolVersion20250326
@@ -284,7 +327,7 @@ func (c *Client) ListToolsDetailed(ctx context.Context) (ToolsList, error) {
 	if meta := c.requestMeta(); meta != nil {
 		params = map[string]any{"_meta": meta}
 	}
-	raw, err := c.request(ctx, "tools/list", params)
+	raw, err := c.request(ctx, "tools/list", params, nil)
 	if err != nil {
 		return ToolsList{}, err
 	}
@@ -309,15 +352,17 @@ func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
 
 // CallTool executes a single MCP tool call.
 func (c *Client) CallTool(ctx context.Context, name string, arguments map[string]any) (CallToolResult, error) {
-	return c.CallToolTracked(ctx, name, arguments, "")
+	return c.CallToolTracked(ctx, name, arguments, "", nil)
 }
 
 // CallToolTracked executes an MCP tool call carrying `_meta.progressToken`
 // a server that echoes progress notifications keyed by the token
 // lets the bridge route them back to the issuing execute when several calls
 // are multiplexed over one session. progressToken "" is untracked (plain
-// CallTool shape).
-func (c *Client) CallToolTracked(ctx context.Context, name string, arguments map[string]any, progressToken string) (CallToolResult, error) {
+// CallTool shape). extraHeaders carries per-request HTTP headers on the
+// http transport (the bridge's x-mcp-header tool parameters); the stdio
+// transport rejects any.
+func (c *Client) CallToolTracked(ctx context.Context, name string, arguments map[string]any, progressToken string, extraHeaders map[string]string) (CallToolResult, error) {
 	params := callToolParams{Name: name, Arguments: arguments}
 	// The progress token rides the same _meta as the 2026-07-28
 	// stateless-core keys; the stateless meta is merged last so the
@@ -334,7 +379,7 @@ func (c *Client) CallToolTracked(ctx context.Context, name string, arguments map
 			}
 		}
 	}
-	raw, err := c.request(ctx, "tools/call", params)
+	raw, err := c.request(ctx, "tools/call", params, extraHeaders)
 	if err != nil {
 		return CallToolResult{}, err
 	}
@@ -345,13 +390,43 @@ func (c *Client) CallToolTracked(ctx context.Context, name string, arguments map
 	return out, nil
 }
 
-// Notification sends a JSON-RPC notification.
+// Notification sends a JSON-RPC notification. On a stateless session the
+// notification params carry the same per-message _meta as requests: the
+// stateless core has no handshake that would have carried the keys, so
+// they ride every client-to-server message.
 func (c *Client) Notification(ctx context.Context, method string, params any) error {
+	if c.stateless {
+		params = withStatelessMeta(params, c.requestMeta())
+	}
 	req := requestEnvelope{JSONRPC: jsonRPCVersion, Method: method, Params: params}
-	return c.send(ctx, req)
+	return c.send(ctx, method, "", nil, req)
 }
 
-func (c *Client) request(ctx context.Context, method string, params any) (json.RawMessage, error) {
+// withStatelessMeta merges the stateless-core _meta into a notification's
+// params, which may be any JSON value; non-object params (and nil) degrade
+// to an object carrying only the _meta keys.
+func withStatelessMeta(params any, meta map[string]any) any {
+	if meta == nil {
+		return params
+	}
+	if obj, ok := params.(map[string]any); ok {
+		merged := make(map[string]any, len(obj)+len(meta))
+		for k, v := range obj {
+			merged[k] = v
+		}
+		for k, v := range meta {
+			merged[k] = v
+		}
+		return merged
+	}
+	out := make(map[string]any, len(meta))
+	for k, v := range meta {
+		out[k] = v
+	}
+	return out
+}
+
+func (c *Client) request(ctx context.Context, method string, params any, headers map[string]string) (json.RawMessage, error) {
 	id := strconv.FormatUint(atomic.AddUint64(&c.nextID, 1), 10)
 	ch := make(chan rpcResponse, 1)
 
@@ -366,7 +441,7 @@ func (c *Client) request(ctx context.Context, method string, params any) (json.R
 	c.pendMu.Unlock()
 
 	req := requestEnvelope{JSONRPC: jsonRPCVersion, ID: id, Method: method, Params: params}
-	if err := c.send(ctx, req); err != nil {
+	if err := c.send(ctx, method, id, headers, req); err != nil {
 		c.pendMu.Lock()
 		delete(c.pending, id)
 		c.pendMu.Unlock()
@@ -399,7 +474,12 @@ func (c *Client) request(ctx context.Context, method string, params any) (json.R
 	}
 }
 
-func (c *Client) send(ctx context.Context, v any) error {
+// send encodes one JSON-RPC envelope and hands it to the transport. A send
+// failure is fatal to the session on stdio (the shared pipe state is
+// unreadable from here on) and per-request on http (each POST stands
+// alone); a batch violation reported by the transport's inbound dispatch
+// closes the session itself via closeWithError.
+func (c *Client) send(ctx context.Context, method string, id string, headers map[string]string, v any) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -413,34 +493,146 @@ func (c *Client) send(ctx context.Context, v any) error {
 		return fmt.Errorf("mcpclient: marshal request: %w", err)
 	}
 
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
-	if err := c.writeOut(payload); err != nil {
-		c.closeWithError(err)
+	if err := c.tr.send(ctx, wireRequest{envelope: payload, method: method, id: id, headers: headers}); err != nil {
+		if _, isStdio := c.tr.(*stdioTransport); isStdio {
+			c.closeWithError(err)
+			return err
+		}
 		return err
 	}
 	return nil
 }
 
-func (c *Client) readLoop() {
+// stdioTransport is the framed-pipe transport dialect: one background read
+// loop auto-detects framing per frame; writes go out in the owner client's
+// write framing. Send failures are fatal to the session (the shared pipe
+// state is unreadable from here on). The read loop is the only reader of
+// the pipe; closing the writer is what unblocks it downstream — close()
+// must return without waiting on the loop.
+type stdioTransport struct {
+	owner   *Client
+	reader  *bufio.Reader
+	writeMu sync.Mutex
+	writer  io.WriteCloser
+}
+
+// replaceFraming swaps the write framing (the framing probe re-points it
+// between probes) under the write lock so writeOut never reads mid-flip.
+func (t *stdioTransport) replaceFraming(f Framing) {
+	t.writeMu.Lock()
+	defer t.writeMu.Unlock()
+	t.owner.framing = f
+}
+
+// currentFraming returns the write framing under the write lock.
+func (t *stdioTransport) currentFraming() Framing {
+	t.writeMu.Lock()
+	defer t.writeMu.Unlock()
+	return t.owner.framing
+}
+
+func (t *stdioTransport) send(_ context.Context, req wireRequest) error {
+	if len(req.headers) > 0 {
+		return errors.New("mcpclient: per-request HTTP headers are not valid on the stdio transport")
+	}
+	t.writeMu.Lock()
+	defer t.writeMu.Unlock()
+	if err := t.writeOut(req.envelope); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (t *stdioTransport) close() error {
+	return t.writer.Close()
+}
+
+// readLoop decodes inbound frames until the stream breaks, dispatching
+// them through the shared envelope pipeline. Frame read failures (EOF,
+// truncation) close the session. The loop exits after close() because the
+// writer close is the downstream unblock of the pending read.
+func (t *stdioTransport) readLoop(c *Client) {
 	for {
-		payload, err := readFrame(c.reader)
+		payload, err := readFrame(t.reader)
 		if err != nil {
 			c.closeWithError(err)
 			return
 		}
-		var msg incomingEnvelope
-		if err := json.Unmarshal(payload, &msg); err != nil {
-			continue
-		}
-		if msg.Method != "" {
-			c.handleNotification(msg.Method, msg.Params)
-			continue
-		}
-		if len(msg.ID) > 0 {
-			c.handleResponse(&msg)
+		c.dispatchInbound(payload)
+		if c.isClosed() {
+			return
 		}
 	}
+}
+
+// selectClosed reports whether the client has been closed, so the read loop
+// stops after closeWithError without racing fresh pipe reads.
+func selectClosed(c *Client) bool {
+	select {
+	case <-c.closed:
+		return true
+	default:
+		return false
+	}
+}
+
+// dispatchInbound parses one inbound JSON-RPC envelope and routes it:
+// server-to-client frames go to the notification callback, responses to the
+// pending-call dispatcher. Envelopes that do not parse are dropped (the
+// historical stdio posture for stray peer noise). A batch payload is a
+// protocol violation on MCP transports and closes the session (see
+// errBatchedTraffic). Shared by the stdio read loop and the http
+// transport's response and subscription readers.
+func (c *Client) dispatchInbound(payload []byte) error {
+	if len(payload) > 0 && payload[0] == '[' {
+		c.closeWithError(errBatchedTraffic)
+		return errBatchedTraffic
+	}
+	var msg incomingEnvelope
+	if err := json.Unmarshal(payload, &msg); err != nil {
+		return nil
+	}
+	if msg.Method != "" {
+		c.handleNotification(msg.Method, msg.Params)
+		return nil
+	}
+	if len(msg.ID) > 0 {
+		c.handleResponse(&msg)
+	}
+	return nil
+}
+
+// hasPending reports whether an id still has an unsettled pending call;
+// the http transport uses it to stop reading a response stream once the
+// call's own response arrived.
+func (c *Client) hasPending(id string) bool {
+	c.pendMu.Lock()
+	defer c.pendMu.Unlock()
+	_, ok := c.pending[id]
+	return ok
+}
+
+// isClosed reports whether the session already closed.
+func (c *Client) isClosed() bool {
+	select {
+	case <-c.closed:
+		return true
+	default:
+		return false
+	}
+}
+
+// stdio returns the stdio transport of this client, or nil when the client
+// speaks the http dialect.
+func (c *Client) stdio() *stdioTransport {
+	t, _ := c.tr.(*stdioTransport)
+	return t
+}
+
+// isHTTP reports whether this client speaks the Streamable HTTP dialect.
+func (c *Client) isHTTP() bool {
+	_, ok := c.tr.(*httpTransport)
+	return ok
 }
 
 func (c *Client) handleNotification(method string, raw json.RawMessage) {
@@ -498,7 +690,7 @@ func (c *Client) closeWithError(err error) {
 	}
 	c.closeOnce.Do(func() {
 		close(c.closed)
-		_ = c.writer.Close()
+		_ = c.tr.close()
 
 		c.pendMu.Lock()
 		deferred := make([]chan rpcResponse, 0, len(c.pending))
@@ -538,18 +730,19 @@ func normalizeID(raw json.RawMessage) string {
 	return trimmed
 }
 
-// writeOut writes one frame in the client's write framing. The default is
-// Content-Length header framing (FramingLSP); FramingNDJSON writes a single
-// line terminated by "\n". Reads are framing-agnostic either way.
-func (c *Client) writeOut(payload []byte) error {
-	if c.framing == FramingNDJSON {
+// writeOut writes one frame in the stdio transport's write framing. The
+// default is Content-Length header framing (FramingLSP); FramingNDJSON
+// writes a single line terminated by "\n". Reads are framing-agnostic
+// either way.
+func (t *stdioTransport) writeOut(payload []byte) error {
+	if t.owner.framing == FramingNDJSON {
 		line := append(bytes.Clone(payload), '\n')
-		if _, err := c.writer.Write(line); err != nil {
+		if _, err := t.writer.Write(line); err != nil {
 			return fmt.Errorf("mcpclient: write ndjson frame: %w", err)
 		}
 		return nil
 	}
-	return writeFrame(c.writer, payload)
+	return writeFrame(t.writer, payload)
 }
 
 // writeFrame writes one Content-Length header frame (the historical dialect
