@@ -700,6 +700,15 @@ type executeCaptureSink struct {
 	finalizeSubmitOutcome string
 	finalizeSubmitComment string
 
+	// finalizeSubmitReason is the top-level reason the validator/model
+	// carried on the outcome-submit invocation for the finalize submit
+	// tool. The submit tool and the SDK tool schema document reason as a
+	// top-level field, while the compiled outcome contract validates the
+	// finalized payload, so the host aligns the two at validation time
+	// (materializeFinalizeReason) instead of leaving the documented submit
+	// shape unrechable for payload contracts that require reason.
+	finalizeSubmitReason string
+
 	// A finalized outcome is turn-terminal. onTurnFinalized (when
 	// non-nil) cancels the Execute stream the moment a verdict is recorded,
 	// so the host stops consuming the turn at the outcome instead of leaving
@@ -731,7 +740,12 @@ type executeCaptureSink struct {
 // outputs_json bytes; finalize-synthesized and typed verdicts serialize
 // through wireOutcomeResult. The needs_review override applies only after
 // validation. Legacy (contract-less) steps pass through untouched.
+//
+// materializeFinalizeReason runs at the funnel head: a documented top-level
+// finalize reason is folded into the payload ahead of validation so the
+// verdict's own outputs stay untouched unless the fold fires.
 func (s *executeCaptureSink) resolvedOutcome(step *workflow.StepNode, v *rescueVerdict) (adapter.Result, error) {
+	s.materializeFinalizeReason(step, v)
 	var results []*v2.ExecuteResult
 	switch {
 	case v.delivered:
@@ -1016,8 +1030,10 @@ func (s *executeCaptureSink) recordFinalizeSubmit(args map[string]any) {
 	}
 	if outcome, ok := args["outcome"].(string); ok && outcome != "" {
 		comment, _ := args["comment"].(string)
+		reason, _ := args["reason"].(string)
 		s.finalizeSubmitOutcome = outcome
 		s.finalizeSubmitComment = comment
+		s.finalizeSubmitReason = reason
 	}
 }
 
@@ -1360,6 +1376,97 @@ func (s *executeCaptureSink) finalizeComment() string {
 		return s.finalizeSubmitComment
 	}
 	return ""
+}
+
+// finalizeReason resolves the top-level reason the finalize submit carried for
+// the validated outcome: the outcome.finalized payload's durable reason slot,
+// else the outcome-submit invocation argument — each only when its capture's
+// outcome matches the validated verdict (the same outcome-match guard the
+// comment graft pins). It is never aliased from the require_comment comment.
+func (s *executeCaptureSink) finalizeReason(outcome string) string {
+	name := strings.TrimSpace(outcome)
+	if name == "" {
+		return ""
+	}
+	if strings.TrimSpace(s.finalizedOutcome) == name {
+		if reason, ok := s.finalizedPayload["reason"].(string); ok && strings.TrimSpace(reason) != "" {
+			return reason
+		}
+	}
+	if s.finalizeSubmitOutcome != "" && strings.TrimSpace(s.finalizeSubmitOutcome) == name {
+		return s.finalizeSubmitReason
+	}
+	return ""
+}
+
+// materializeFinalizeReason aligns the agent-facing submit contract with the
+// outcome payload contract at validation time. The submit tool schema
+// documents reason as a top-level field of the invoke, while the compiled
+// outcome contract validates the finalized payload, so an invoke that names
+// reason top-level must not fail a contract whose schema requires an
+// in-payload reason member. When the validated outcome's contract requires a
+// non-optional "reason" attribute and the captured finalize carries a reason,
+// it is materialized into the payload: the verdict's typed outputs are folded
+// (every present member and the captured outputs stay untouched) and, for a
+// delivered verdict, the validation bytes are folded to match. Refusals keep
+// fail-visible behavior: no matching finalize capture, a payload that already
+// carries the member (the model's own value stays authoritative), an
+// undecodable delivered payload (its verbatim payload_schema issue is pinned),
+// and the require_comment comment lane is never consulted.
+func (s *executeCaptureSink) materializeFinalizeReason(step *workflow.StepNode, v *rescueVerdict) {
+	outcome := strings.TrimSpace(v.result.Outcome)
+	if outcome == "" || !outcomeSchemaRequiresReason(step, outcome) {
+		return
+	}
+	reason := s.finalizeReason(outcome)
+	if reason == "" {
+		return
+	}
+	payload, err := s.finalizeFoldedOutputs(v)
+	if err != nil {
+		return
+	}
+	if payload == nil {
+		// An absent delivered payload folds like the evaluator's
+		// empty-object semantics: only the required member is added.
+		payload = map[string]cty.Value{}
+	}
+	if _, present := payload["reason"]; present {
+		return
+	}
+	folded := make(map[string]cty.Value, len(payload)+1)
+	for key, val := range payload {
+		folded[key] = val
+	}
+	folded["reason"] = cty.StringVal(reason)
+	wire, wireErr := wireOutcomeResult(adapter.Result{Outputs: folded})
+	if wireErr != nil {
+		return
+	}
+	v.result.Outputs = folded
+	if v.delivered {
+		v.rawJSON = wire.GetOutputsJson()
+	}
+}
+
+// finalizeFoldedOutputs resolves the payload the reason fold folds into: the
+// verdict's decoded typed outputs; for a delivered verdict whose raw bytes
+// never decoded at capture, a re-decode distinguishes an absent payload
+// (empty-object semantics, foldable) from an undecodable one (the pinned
+// verbatim issue must survive — refused). A captured empty object decodes to
+// nothing and is foldable.
+func (s *executeCaptureSink) finalizeFoldedOutputs(v *rescueVerdict) (map[string]cty.Value, error) {
+	if len(v.result.Outputs) > 0 {
+		return v.result.Outputs, nil
+	}
+	if v.delivered && len(v.rawJSON) > 0 {
+		typed, err := s.decodeOutputsJSON(v.rawJSON)
+		if err != nil {
+			return nil, fmt.Errorf("delivered payload is not a JSON object: %w", err)
+		}
+		return typed, nil
+	}
+	return nil, nil
 }
 
 // applyNeedsReviewOverride applies the denied-permission override (any denied
