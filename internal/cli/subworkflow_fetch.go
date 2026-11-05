@@ -378,15 +378,15 @@ func (f *defaultWorkflowFetcher) materializeGitTree(ctx context.Context, source,
 }
 
 func splitGitSource(source string) (repoURL, ref string, err error) {
-	source = strings.TrimPrefix(source, "git::")
+	rest := strings.TrimPrefix(source, "git::")
 
 	var q url.Values
-	if idx := strings.Index(source, "?"); idx != -1 {
-		q, err = url.ParseQuery(source[idx+1:])
+	if idx := strings.Index(rest, "?"); idx != -1 {
+		q, err = url.ParseQuery(rest[idx+1:])
 		if err != nil {
 			return "", "", fmt.Errorf("parse git source query %q: %w", redactSourceForLog(source), err)
 		}
-		repoURL = source[:idx]
+		repoURL = rest[:idx]
 		for _, key := range []string{"ref", "branch", "tag"} {
 			if q.Has(key) {
 				ref = q.Get(key)
@@ -397,7 +397,7 @@ func splitGitSource(source string) (repoURL, ref string, err error) {
 			ref = "HEAD"
 		}
 	} else {
-		repoURL, ref = source, "HEAD"
+		repoURL, ref = rest, "HEAD"
 	}
 
 	// Both the ls-remote here and the go-getter clone downstream receive
