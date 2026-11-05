@@ -39,7 +39,7 @@ func TestMCPBridgeInfoSchemaAdvertisesFraming(t *testing.T) {
 }
 
 func TestStartMCPServerRejectsUnknownFraming(t *testing.T) {
-	_, err := startMCPServer(map[string]string{"command": testEchoBin, "framing": "websocket"})
+	_, _, err := startMCPServer(map[string]string{"command": testEchoBin, "framing": "websocket"})
 	if err == nil {
 		t.Fatal("startMCPServer with unknown framing succeeded, want error")
 	}

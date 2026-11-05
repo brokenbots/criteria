@@ -215,8 +215,8 @@ func (t *httpTransport) send(ctx context.Context, req wireRequest) error {
 	// config/param boundary; the transport re-runs the same checks so a
 	// smuggled reserved or malformed name fails the call, never the HTTP
 	// exchange.
-	for name, value := range req.headers {
-		if _, err := NewHeaderEntry(name, value); err != nil {
+	for _, h := range req.headers {
+		if _, err := NewHeaderEntry(h.Name, h.Value); err != nil {
 			return fmt.Errorf("mcpclient: per-request header: %w", err)
 		}
 	}
@@ -369,8 +369,8 @@ func (t *httpTransport) newRequest(ctx context.Context, req wireRequest, accept 
 	for _, h := range t.headers {
 		httpReq.Header[h.Name] = []string{h.Value}
 	}
-	for name, value := range req.headers {
-		httpReq.Header[name] = []string{value}
+	for _, h := range req.headers {
+		httpReq.Header[h.Name] = []string{h.Value}
 	}
 	return httpReq, nil
 }

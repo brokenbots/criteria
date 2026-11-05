@@ -24,7 +24,7 @@ type wireRequest struct {
 	envelope []byte
 	method   string
 	id       string
-	headers  map[string]string
+	headers  []HeaderEntry
 }
 
 // transport abstracts the wire between this client and an MCP server. The
@@ -254,6 +254,23 @@ func NewWithFraming(reader io.Reader, writer io.WriteCloser, framing Framing, on
 	return c
 }
 
+// Transport reports which dialect the client speaks: TransportStdio for a
+// framed process pipe, TransportHTTP for a Streamable HTTP endpoint.
+func (c *Client) Transport() Transport {
+	if c.isHTTP() {
+		return TransportHTTP
+	}
+	return TransportStdio
+}
+
+// EnableFramingNegotiation marks the stdio session's write framing as
+// unpinned: Connect may probe both stdio framings to find the one the peer
+// parses. Must be called before Connect; an explicitly pinned framing never
+// flips.
+func (c *Client) EnableFramingNegotiation() {
+	c.framingNegotiable = true
+}
+
 // Close closes the write side and unblocks pending requests.
 func (c *Client) Close() {
 	c.closeWithError(io.EOF)
@@ -362,7 +379,7 @@ func (c *Client) CallTool(ctx context.Context, name string, arguments map[string
 // CallTool shape). extraHeaders carries per-request HTTP headers on the
 // http transport (the bridge's x-mcp-header tool parameters); the stdio
 // transport rejects any.
-func (c *Client) CallToolTracked(ctx context.Context, name string, arguments map[string]any, progressToken string, extraHeaders map[string]string) (CallToolResult, error) {
+func (c *Client) CallToolTracked(ctx context.Context, name string, arguments map[string]any, progressToken string, extraHeaders []HeaderEntry) (CallToolResult, error) {
 	params := callToolParams{Name: name, Arguments: arguments}
 	// The progress token rides the same _meta as the 2026-07-28
 	// stateless-core keys; the stateless meta is merged last so the
@@ -426,7 +443,7 @@ func withStatelessMeta(params any, meta map[string]any) any {
 	return out
 }
 
-func (c *Client) request(ctx context.Context, method string, params any, headers map[string]string) (json.RawMessage, error) {
+func (c *Client) request(ctx context.Context, method string, params any, headers []HeaderEntry) (json.RawMessage, error) {
 	id := strconv.FormatUint(atomic.AddUint64(&c.nextID, 1), 10)
 	ch := make(chan rpcResponse, 1)
 
@@ -479,7 +496,7 @@ func (c *Client) request(ctx context.Context, method string, params any, headers
 // unreadable from here on) and per-request on http (each POST stands
 // alone); a batch violation reported by the transport's inbound dispatch
 // closes the session itself via closeWithError.
-func (c *Client) send(ctx context.Context, method string, id string, headers map[string]string, v any) error {
+func (c *Client) send(ctx context.Context, method string, id string, headers []HeaderEntry, v any) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()

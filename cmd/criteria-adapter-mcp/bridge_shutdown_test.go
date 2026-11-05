@@ -86,7 +86,7 @@ func TestKilledBySigKillTypedDetection(t *testing.T) {
 }
 
 func TestShutdownSessionToleratesSigKilledServer(t *testing.T) {
-	state, err := startMCPServer(map[string]string{"command": "sleep", "args": "60"})
+	_, state, err := startMCPServer(map[string]string{"command": "sleep", "args": "60"})
 	if err != nil {
 		t.Fatalf("start server: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestShutdownSessionToleratesSigKilledServer(t *testing.T) {
 }
 
 func TestShutdownSessionSurfacesRealExitFailure(t *testing.T) {
-	state, err := startMCPServer(map[string]string{"command": "sh", "args": "-c,exit 17"})
+	_, state, err := startMCPServer(map[string]string{"command": "sh", "args": "-c,exit 17"})
 	if err != nil {
 		t.Fatalf("start server: %v", err)
 	}

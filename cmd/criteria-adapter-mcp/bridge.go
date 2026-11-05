@@ -253,12 +253,16 @@ func (b *MCPBridge) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse
 		// hosts keep the one-execute-at-a-time posture.
 		Capabilities: []string{"single_shot", "permission_gating", "adapter_tools", "concurrent_execute"},
 		ConfigSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
-			"command":   {Required: true, Type: "string", Description: "MCP server binary to launch."},
+			"command":   {Required: true, Type: "string", Description: "MCP server binary to launch; stdio transport only."},
 			"args":      {Type: "string", Description: "Comma-separated argument list for the server binary."},
 			"env":       {Type: "string", Description: "Comma-separated KEY=VALUE environment variable pairs."},
 			"cwd":       {Type: "string", Description: "Working directory for the MCP server process."},
-			"framing":   {Type: "string", Description: "JSON-RPC write framing for the stdio transport: lsp (default, Content-Length headers) or ndjson (newline-delimited JSON). Reads auto-detect either framing; a server speaking only one shape rejects the other with a parse error."},
-			"handshake": {Type: "string", Description: "Session-open negotiation with the MCP server (MCP protocol rev 2026-07-28): probe-first (default — probe server/discover, adopting the stateless core when the server advertises it, and fall back to the legacy 2025-03-26 initialize handshake otherwise), initialize (always the legacy handshake), discover (stateless core only, no legacy fallback)."},
+			"transport": {Type: "string", Description: "Wire dialect to the MCP server: stdio (default — process servers over framed pipes, configured by command/args/env/cwd/framing) or http (Streamable HTTP of MCP rev 2026-07-28, configured by url/headers/timeout, stateless core, POSTs with SSE response streams, no session id)."},
+			"url":       {Type: "string", Description: "Streamable HTTP MCP endpoint URL; http transport only."},
+			"headers":   {Type: "string", Description: "Comma-separated \"Name: Value\" custom HTTP headers (quote entries containing commas) applied to every Streamable HTTP request; headers under transport control (Accept, Content-Type, Content-Length, Host, Mcp-Method, Mcp-Name, Mcp-Protocol-Version, Mcp-Session-Id, Last-Event-ID) are rejected. http transport only."},
+			"timeout":   {Type: "string", Description: "Per-request Streamable HTTP timeout bound (Go duration, e.g. 5s) for request and notification POSTs, never the long-lived subscriptions/listen stream; http transport only."},
+			"framing":   {Type: "string", Description: "JSON-RPC write framing for the stdio transport: lsp (default, Content-Length headers) or ndjson (newline-delimited JSON); when unspecified the framing probe settles which framing the server parses. Reads auto-detect either framing; a server speaking only one shape rejects the other with a parse error."},
+			"handshake": {Type: "string", Description: "Session-open negotiation with the MCP server (MCP protocol rev 2026-07-28): probe-first (default — probe server/discover, adopting the stateless core when the server advertises it, and fall back to the legacy 2025-03-26 initialize handshake otherwise), initialize (always the legacy handshake), discover (stateless core only, no legacy fallback). The initialize handshake is not valid with transport=http (Streamable HTTP speaks the stateless core only)."},
 		}},
 		// InputSchema stays undeclared on purpose: the mcp adapter's input
 		// surface is dynamic. "tool" is the routing key, enforced
@@ -342,14 +346,14 @@ func environmentKey(cfg map[string]string) string {
 }
 
 func (b *MCPBridge) OpenSession(ctx context.Context, req *v2.OpenSessionRequest) (*v2.OpenSessionResponse, error) {
-	state, err := startMCPServer(req.GetConfig())
+	parsed, state, err := startMCPServer(req.GetConfig())
 	if err != nil {
 		return nil, err
 	}
 	// Fingerprint the environment up front so discovery and any
 	// later refresh land under the right per-environment surface.
 	state.envKey = environmentKey(req.GetConfig())
-	tools, err := initializeAndDiscover(ctx, state)
+	tools, err := initializeAndDiscover(ctx, parsed, state)
 	if err != nil {
 		_ = shutdownSession(ctx, state)
 		return nil, err
@@ -360,49 +364,155 @@ func (b *MCPBridge) OpenSession(ctx context.Context, req *v2.OpenSessionRequest)
 	return &v2.OpenSessionResponse{}, nil
 }
 
-// startMCPServer parses the adapter config, launches the MCP server process
-// over a stdio transport, and wires the progress-notification forwarder.
+// startMCPServer parses the adapter config, launches the configured server
+// (a process over the stdio transport, or an endpoint over the Streamable
+// HTTP transport), and wires the progress-notification forwarder. The
+// parsed config is returned alongside the state: the whole session-open
+// budget composes from it.
+func startMCPServer(cfg map[string]string) (mcpServerConfig, *sessionState, error) {
+	parsed, err := parseServerConfig(cfg)
+	if err != nil {
+		return parsed, nil, err
+	}
+	if parsed.transport == mcpclient.TransportHTTP {
+		return parsed, openHTTPSession(parsed), nil
+	}
+	state, err := startStdioSession(parsed)
+	return parsed, state, err
+}
+
 // mcpServerConfig is the parsed adapter config block for one MCP server
-// process.
+// session: a process (stdio) or an endpoint (http).
 type mcpServerConfig struct {
 	command     string
 	args        []string
 	framing     mcpclient.Framing
+	framingSet  bool
 	negotiation mcpclient.Negotiation
 	envPairs    []string
 	cwd         string
+
+	// Streamable HTTP knobs (transport=http only).
+	transport mcpclient.Transport
+	endpoint  string
+	headers   []mcpclient.HeaderEntry
+	timeout   time.Duration
 }
 
-// parseServerConfig validates the adapter config block: command, args CSV,
-// framing, session-open negotiation, env pairs, and cwd.
+// parseServerConfig validates the adapter config block and its
+// transport-specific knobs: stdio (command, args CSV, framing, env pairs,
+// cwd, rejecting http knobs) or http (url, headers CSV, timeout, rejecting
+// stdio knobs).
 func parseServerConfig(cfg map[string]string) (mcpServerConfig, error) {
-	parsed := mcpServerConfig{command: strings.TrimSpace(cfg["command"])}
-	if parsed.command == "" {
-		return parsed, fmt.Errorf("mcp: config.command is required")
-	}
+	var parsed mcpServerConfig
 	var err error
-	if parsed.args, err = parseCSVList(cfg["args"]); err != nil {
-		return parsed, fmt.Errorf("mcp: parse args: %w", err)
-	}
-	if parsed.framing, err = mcpclient.ParseFraming(cfg["framing"]); err != nil {
-		return parsed, fmt.Errorf("mcp: parse framing: %w", err)
+	if parsed.transport, err = mcpclient.ParseTransport(cfg["transport"]); err != nil {
+		return parsed, fmt.Errorf("mcp: parse transport: %w", err)
 	}
 	if parsed.negotiation, err = mcpclient.ParseNegotiation(cfg["handshake"]); err != nil {
 		return parsed, fmt.Errorf("mcp: parse handshake: %w", err)
 	}
-	if parsed.envPairs, err = parseEnvPairs(cfg["env"]); err != nil {
-		return parsed, fmt.Errorf("mcp: parse env: %w", err)
+	if parsed.transport == mcpclient.TransportHTTP {
+		err = parsed.parseHTTPKnobs(cfg)
+	} else {
+		err = parsed.parseStdioKnobs(cfg)
 	}
-	parsed.cwd = strings.TrimSpace(cfg["cwd"])
+	if err != nil {
+		return parsed, err
+	}
 	return parsed, nil
 }
 
-func startMCPServer(cfg map[string]string) (*sessionState, error) {
-	parsed, err := parseServerConfig(cfg)
+// parseStdioKnobs validates the process-server config block: the command is
+// required, framing left unspecified keeps the framing probe negotiable,
+// and Streamable HTTP knobs are config errors.
+func (c *mcpServerConfig) parseStdioKnobs(cfg map[string]string) error {
+	c.command = strings.TrimSpace(cfg["command"])
+	if c.command == "" {
+		return fmt.Errorf("mcp: config.command is required")
+	}
+	var err error
+	if c.args, err = parseCSVList(cfg["args"]); err != nil {
+		return fmt.Errorf("mcp: parse args: %w", err)
+	}
+	if strings.TrimSpace(cfg["framing"]) == "" {
+		// Unspecified framing: the framing probe settles which of the two
+		// stdio framings the server parses (see mcpclient.Connect).
+		c.framing = mcpclient.FramingLSP
+	} else {
+		c.framingSet = true
+		if c.framing, err = mcpclient.ParseFraming(cfg["framing"]); err != nil {
+			return fmt.Errorf("mcp: parse framing: %w", err)
+		}
+	}
+	if c.envPairs, err = parseEnvPairs(cfg["env"]); err != nil {
+		return fmt.Errorf("mcp: parse env: %w", err)
+	}
+	c.cwd = strings.TrimSpace(cfg["cwd"])
+	for _, knob := range []string{"url", "headers", "timeout"} {
+		if strings.TrimSpace(cfg[knob]) != "" {
+			return fmt.Errorf("mcp: config.%s is only valid with transport=http", knob)
+		}
+	}
+	return nil
+}
+
+// parseHTTPKnobs validates the Streamable HTTP config block: the endpoint
+// is required, process-server knobs and the legacy initialize handshake are
+// config errors.
+func (c *mcpServerConfig) parseHTTPKnobs(cfg map[string]string) error {
+	c.endpoint = strings.TrimSpace(cfg["url"])
+	if c.endpoint == "" {
+		return fmt.Errorf("mcp: config.url is required with transport=http")
+	}
+	if c.negotiation == mcpclient.NegotiationInitialize {
+		return fmt.Errorf("mcp: handshake=%q is not valid with transport=http (the initialize handshake is removed on Streamable HTTP)", c.negotiation)
+	}
+	for _, knob := range []string{"command", "args", "env", "cwd", "framing"} {
+		if strings.TrimSpace(cfg[knob]) != "" {
+			return fmt.Errorf("mcp: config.%s is only valid with transport=stdio", knob)
+		}
+	}
+	var err error
+	if c.headers, err = parseHeaderList(cfg["headers"]); err != nil {
+		return fmt.Errorf("mcp: parse headers: %w", err)
+	}
+	if raw := strings.TrimSpace(cfg["timeout"]); raw != "" {
+		if c.timeout, err = time.ParseDuration(raw); err != nil {
+			return fmt.Errorf("mcp: parse timeout: %w", err)
+		}
+		if c.timeout <= 0 {
+			return fmt.Errorf("mcp: config.timeout must be positive, got %s", c.timeout)
+		}
+	}
+	return nil
+}
+
+// parseHeaderList parses the headers knob's comma-separated "Name: Value"
+// list. CSV quoting (parseCSVList) carries values that contain commas; each
+// entry validates the mcpclient header rules (token name, no control
+// bytes, no transport-controlled name).
+func parseHeaderList(raw string) ([]mcpclient.HeaderEntry, error) {
+	vals, err := parseCSVList(raw)
 	if err != nil {
 		return nil, err
 	}
+	out := make([]mcpclient.HeaderEntry, 0, len(vals))
+	for _, v := range vals {
+		name, value, found := strings.Cut(v, ":")
+		if !found {
+			return nil, fmt.Errorf("invalid header %q (want \"Name: Value\")", v)
+		}
+		entry, err := mcpclient.NewHeaderEntry(strings.TrimSpace(name), strings.TrimSpace(value))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, entry)
+	}
+	return out, nil
+}
 
+func startStdioSession(parsed mcpServerConfig) (*sessionState, error) {
 	cmd := exec.Command(parsed.command, parsed.args...)
 	if parsed.cwd != "" {
 		cmd.Dir = parsed.cwd
@@ -427,20 +537,45 @@ func startMCPServer(cfg map[string]string) (*sessionState, error) {
 	}
 
 	state := &sessionState{cmd: cmd, stdin: stdin, stderr: stderr, tools: map[string]struct{}{}, discoveryTTL: discoveryCacheTTL, negotiation: parsed.negotiation}
-	state.client = mcpclient.NewWithFraming(stdout, stdin, parsed.framing, func(n mcpclient.Notification) {
+	client := mcpclient.NewWithFraming(stdout, stdin, parsed.framing, notifyFn(state))
+	if !parsed.framingSet {
+		client.EnableFramingNegotiation()
+	}
+	state.client = client
+	return state, nil
+}
+
+// openHTTPSession opens a Streamable HTTP session: no process and no pipe
+// state — every exchange is a POST — with the single subscriptions/listen
+// stream opted in for server-to-client notifications.
+func openHTTPSession(parsed mcpServerConfig) *sessionState {
+	state := &sessionState{tools: map[string]struct{}{}, discoveryTTL: discoveryCacheTTL, negotiation: parsed.negotiation}
+	state.client = mcpclient.NewHTTPClient(mcpclient.HTTPConfig{
+		Endpoint:       parsed.endpoint,
+		Headers:        parsed.headers,
+		RequestTimeout: parsed.timeout,
+		Listen:         true,
+	}, notifyFn(state))
+	return state
+}
+
+// notifyFn forwards MCP notifications/progress from any dialect to the
+// per-execute sinks routed by progress token.
+func notifyFn(state *sessionState) func(mcpclient.Notification) {
+	return func(n mcpclient.Notification) {
 		if n.Method != "notifications/progress" {
 			return
 		}
 		state.routeProgress(n)
-	})
-	return state, nil
+	}
 }
 
 // initializeAndDiscover negotiates the session dialect (probe-first
-// server/discover with the legacy initialize fallback) and runs the tools/list
-// discovery that populates the session's dynamic tool surface.
-func initializeAndDiscover(ctx context.Context, state *sessionState) ([]mcpclient.Tool, error) {
-	openCtx, cancel := context.WithTimeout(ctx, openTimeout)
+// server/discover with the legacy initialize fallback on stdio, a terminal
+// probe on http) and runs the tools/list discovery that populates the
+// session's dynamic tool surface.
+func initializeAndDiscover(ctx context.Context, parsed mcpServerConfig, state *sessionState) ([]mcpclient.Tool, error) {
+	openCtx, cancel := context.WithTimeout(ctx, parsed.openBudget())
 	defer cancel()
 	if err := state.client.Connect(openCtx, state.negotiation, mcpClientName, adapterVersion); err != nil {
 		return nil, fmt.Errorf("mcp: open: %w", err)
@@ -453,6 +588,22 @@ func initializeAndDiscover(ctx context.Context, state *sessionState) ([]mcpclien
 	state.adoptDiscoveryTTL(page.TTLms)
 	state.discoveredAt = time.Now()
 	return page.Tools, nil
+}
+
+// openBudget composes the whole session-open budget from the configured
+// negotiation: the legacy initialize handshake has no probe (initTimeout
+// only), every probe-first/discover open burns one probe per framing the
+// ladder may need (two when the stdio framing was left unspecified) plus
+// the legacy handshake initTimeout for the stdio fallback.
+func (c mcpServerConfig) openBudget() time.Duration {
+	if c.negotiation == mcpclient.NegotiationInitialize {
+		return initTimeout
+	}
+	probes := 1
+	if c.transport == mcpclient.TransportStdio && !c.framingSet {
+		probes = 2
+	}
+	return time.Duration(probes)*mcpclient.DefaultProbeTimeout + initTimeout
 }
 
 // adoptDiscoveryTTL adapts the session's tools/list cache window from a
@@ -596,7 +747,17 @@ func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ad
 		return sink.Send(typedFailureEvent(callErrorUnknownTool))
 	}
 
-	arguments := buildToolArguments(req.GetInput())
+	arguments, callHeaders, err := extractHeaderParams(req.GetInput())
+	if err != nil {
+		return err
+	}
+	if len(callHeaders) > 0 && s.client.Transport() != mcpclient.TransportHTTP {
+		// The x-mcp-header seam is Streamable HTTP surface: a stdio MCP
+		// server cannot consume per-request headers, and forwarding the
+		// prefixed keys as tool arguments would leak transport control
+		// into tool semantics.
+		return fmt.Errorf("mcp: x-mcp-header parameters are not valid with transport=stdio")
+	}
 
 	// Register this execute on the session's per-execute registry so
 	// session-level MCP traffic (progress) routes back to its own stream, and
@@ -621,7 +782,7 @@ func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ad
 		return sink.Send(resultEvent("failure"))
 	}
 
-	result, err := s.client.CallToolTracked(ctx, toolName, arguments, exec.token, nil)
+	result, err := s.client.CallToolTracked(ctx, toolName, arguments, exec.token, callHeaders)
 	if err != nil {
 		// Transport and protocol failures propagate: the host maps the
 		// callee's failure to typed callee_crash, and a deadline to
@@ -693,6 +854,50 @@ func buildToolArguments(input map[string]string) map[string]any {
 		args[k] = v
 	}
 	return args
+}
+
+// headerParamPrefix marks per-call Execute input parameters that carry
+// custom HTTP headers for a Streamable HTTP MCP server (x-mcp-header-<name>).
+const headerParamPrefix = "x-mcp-header-"
+
+// extractHeaderParams splits the Execute input into tool arguments and
+// per-call HTTP headers. Parameters named x-mcp-header-<name> become headers
+// on the Streamable HTTP tools/call request and are consumed — never
+// forwarded to the MCP server as arguments, in either dialect. Header
+// entries are produced in sorted parameter-key order so the same input
+// always yields the same header order.
+func extractHeaderParams(input map[string]string) (map[string]any, []mcpclient.HeaderEntry, error) {
+	var headers []mcpclient.HeaderEntry
+	headerKeys := make(map[string]struct{}, len(input))
+	for k, v := range input {
+		if len(k) <= len(headerParamPrefix) || !strings.EqualFold(k[:len(headerParamPrefix)], headerParamPrefix) {
+			continue
+		}
+		headerKeys[k] = struct{}{}
+		if strings.TrimSpace(v) == "" {
+			return nil, nil, fmt.Errorf("mcp: %s requires a non-empty header value", k)
+		}
+		entry, err := mcpclient.NewHeaderEntry(strings.TrimSpace(k[len(headerParamPrefix):]), strings.TrimSpace(v))
+		if err != nil {
+			return nil, nil, fmt.Errorf("mcp: %s: %w", k, err)
+		}
+		headers = append(headers, entry)
+	}
+	if len(headers) == 0 {
+		return buildToolArguments(input), nil, nil
+	}
+	args := make(map[string]any, len(input)-len(headerKeys))
+	for k, v := range input {
+		if _, isHeader := headerKeys[k]; isHeader {
+			continue
+		}
+		if _, reserved := reservedExecuteKeys[k]; reserved {
+			continue
+		}
+		args[k] = v
+	}
+	sort.Slice(headers, func(i, j int) bool { return headers[i].Name < headers[j].Name })
+	return args, headers, nil
 }
 
 // awaitPermission emits a permission.request event for toolName and blocks
@@ -830,6 +1035,12 @@ func shutdownSession(ctx context.Context, s *sessionState) error {
 		_ = s.client.Notification(context.WithoutCancel(ctx), "notifications/cancelled", map[string]any{"reason": "session_close"})
 	}
 	s.client.Close()
+	if s.cmd == nil {
+		// Streamable HTTP session: no process and no pipes to tear
+		// down — client.Close already cancelled the listen stream and
+		// every in-flight request context.
+		return nil
+	}
 	_ = s.stdin.Close()
 
 	waitDone := make(chan error, 1)
