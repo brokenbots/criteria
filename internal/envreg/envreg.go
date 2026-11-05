@@ -11,9 +11,17 @@
 // Consumers keep their own value parsing so the strict/lenient override
 // posture stays at the site that owns the failure mode.
 //
-// The registry deliberately carries no runner-era phone-home variables
-// (that era was retired with the runner); a repo-wide sweep test in this
-// package fails if a raw CRITERIA_* read appears outside this package.
+// The rows cover every live CRITERIA_* read in this repo, including the
+// CRITERIA_REMOTE_* phone-home connection names internal/peer reads and
+// shares with the orchestrator's k8s manifests; no runner-era transport
+// variable (the retired runner's own names) is present. A repo-wide sweep
+// test in this package fails when a non-test production file outside the
+// package reads the environment with a CRITERIA_* string literal, with a
+// dynamic (identifier-shaped) name, or hands os.Getenv/os.LookupEnv to a
+// callee as a function value; testdata is scanned too, with one documented
+// exclusion (the standalone remote-smoke fixture module cannot import
+// internal packages). The sweep's scope is also stated for operators in
+// docs/env-vars.md.
 package envreg
 
 import (

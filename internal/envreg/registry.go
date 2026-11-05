@@ -54,6 +54,9 @@ var registry = []*Var{
 	// --- Hidden test-harness gates (registered so reads stay audited).
 	&CRITERIARemoteE2E, &CRITERIAPeerE2E, &CRITERIAContainerTests,
 	&CRITERIAConformanceAdapter, &CRITERIAConformanceAdapterName, &CRITERIARemoteStepStartedFile,
+
+	// --- Hidden maintainer hooks.
+	&CRITERIARegenDocs,
 }
 
 // CRITERIA_HOME / CRITERIA_STATE_DIR / CRITERIA_ADAPTERS.
@@ -95,7 +98,7 @@ var (
 // Adapter hosting, discovery, logging, and the boot gate.
 var (
 	CRITERIALogLevel             = Var{name: "CRITERIA_LOG_LEVEL", kind: KindEnum, scope: "internal/adapterhost loader, internal/cli peer and serve-adapter", doc: "The hclog level for adapter host logs: TRACE, DEBUG, INFO, WARN, or ERROR (WARN by default when unset); also selects the slog level for criteria peer and criteria serve-adapter (INFO when unset)."}
-	CRITERIAAmbientHomeInstance  = Var{name: "CRITERIA_AMBIENT_HOME_INSTANCE", kind: KindString, scope: "internal/adapterhost ambient home", doc: "The instance discriminator that gives an ambient-home adapter host its own home snapshot instead of sharing the process-wide one."}
+	CRITERIAAmbientHomeInstance  = Var{name: "CRITERIA_AMBIENT_HOME_INSTANCE", kind: KindString, scope: "internal/adapterhost ambient home", doc: "Diagnostic marker written into an ambient-home adapter host's scratch home recording which adapter instance it serves; used when inspecting a scratch directory after a run."}
 	CRITERIABootGateProbeTimeout = Var{name: "CRITERIA_BOOT_GATE_PROBE_TIMEOUT", kind: KindDuration, def: "5s", scope: "internal/bootgate, internal/tunables", doc: "Bounds the boot gate's operator-view request at every server-mode start: the process checks its CriteriaRun is still live before registering with castle."}
 	CRITERIAOperatorViewURL      = Var{name: "CRITERIA_OPERATOR_VIEW_URL", kind: KindString, scope: "internal/bootgate", doc: "The operator-view URL the orchestrator injects so a server-mode run can verify its CriteriaRun is still active; set together with CRITERIA_RUN_TICKET and CRITERIA_RUN_JOB, whose absence disables the boot gate."}
 	CRITERIARunTicket            = Var{name: "CRITERIA_RUN_TICKET", kind: KindString, scope: "internal/bootgate", doc: "The CriteriaRun ticket the orchestrator injects for boot-gate liveness checks; the gate is disabled when this, CRITERIA_OPERATOR_VIEW_URL, and CRITERIA_RUN_JOB are all unset."}
@@ -172,4 +175,5 @@ var (
 	CRITERIAConformanceAdapter     = Var{name: "CRITERIA_CONFORMANCE_ADAPTER", kind: KindString, hidden: true, scope: "internal/adapter/conformance (test gate)", doc: "Selects an out-of-process adapter binary for the conformance suite instead of the in-memory reference."}
 	CRITERIAConformanceAdapterName = Var{name: "CRITERIA_CONFORMANCE_ADAPTER_NAME", kind: KindString, hidden: true, scope: "internal/adapter/conformance (test gate)", doc: "The name recorded for the out-of-process conformance adapter."}
 	CRITERIARemoteStepStartedFile  = Var{name: "CRITERIA_REMOTE_STEP_STARTED_FILE", kind: KindString, hidden: true, scope: "internal/ci/smoke fixture (test gate)", doc: "The file the remote-smoke fixture adapter touches when it processes the first step, used as the smoke test's readiness marker."}
+	CRITERIARegenDocs              = Var{name: "CRITERIA_REGEN_DOCS", kind: KindBool, hidden: true, scope: "internal/envreg (maintainer hook)", doc: "Regenerates the docs/env-vars.md AUTO block from the registry when set to 1; a maintainer hook, not an operator knob."}
 )

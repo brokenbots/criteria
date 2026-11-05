@@ -25,7 +25,7 @@ Values are Go durations (`30s`, `5m`, `1500ms`) unless noted otherwise.
 | `CRITERIA_AGENT_HEARTBEAT_INTERVAL` | duration | 10s | internal/tunables (lenient) | The operator CLI heartbeat cadence against a server-compatible orchestrator while a run is in flight (`criteria agent`, `criteria apply --server`). |
 | `CRITERIA_AGENT_VERSION` | string | (unset) | internal/cli agent | The agent version reported during registration (defaults to the binary version). |
 | `CRITERIA_ALLOW_UNSIGNED` | bool | (unset) | internal/cli verification | When truthy (1/true/yes/on), skips adapter signature verification, overriding the --allow-unsigned=false default posture. |
-| `CRITERIA_AMBIENT_HOME_INSTANCE` | string | (unset) | internal/adapterhost ambient home | The instance discriminator that gives an ambient-home adapter host its own home snapshot instead of sharing the process-wide one. |
+| `CRITERIA_AMBIENT_HOME_INSTANCE` | string | (unset) | internal/adapterhost ambient home | Diagnostic marker written into an ambient-home adapter host's scratch home recording which adapter instance it serves; used when inspecting a scratch directory after a run. |
 | `CRITERIA_APPROVAL` | enum | (unset) | internal/cli localresume (CRITERIA_LOCAL_APPROVAL=env) | Per-node approval decision family: CRITERIA_APPROVAL_<NODE> resolves a paused approval node to approved or rejected without prompting, with NODE uppercased and dots/hyphens as underscores. |
 | `CRITERIA_BOOT_GATE_PROBE_TIMEOUT` | duration | 5s | internal/bootgate, internal/tunables | Bounds the boot gate's operator-view request at every server-mode start: the process checks its CriteriaRun is still live before registering with castle. |
 | `CRITERIA_CASTLE_ADDR` | string | (unset) | internal/cli apply/serveui | The castle control plane base URL the run-viewer's console proxies Login/Logout/ListSessions to (castle is the single source of truth for console login). |
@@ -126,3 +126,15 @@ registry sweep test. Then regenerate the generated block in this file with
 `CRITERIA_REGEN_DOCS=1 go test ./internal/envreg -run TestRenderDocTable` —
 the drift test in `internal/envreg` will point the way if the table goes
 stale.
+## Sweep scope
+
+The registry sweep enforces, in every non-test production Go file
+(including testdata files): reads of a `CRITERIA_*` name written as a
+string literal, reads whose name arrives as an identifier or selector
+(the alias class), `os.Getenv`/`os.LookupEnv` passed as a function value,
+and files that fail to parse. It tolerates exactly one documented
+testdata exclusion — `internal/ci/smoke/testdata/criteria-adapter-remote-smoke/main.go`
+(a standalone fixture module that cannot import `internal/envreg`; its
+names are the peer-host-set `CRITERIA_REMOTE_*`/`CRITERIA_ADAPTER_NAME`
+manifest names) — and the identifier allowlist entries in
+`internal/envreg/envreg_test.go`, each carrying its rationale.
