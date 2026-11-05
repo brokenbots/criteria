@@ -2015,6 +2015,11 @@ expected pin cannot be verified against a local tree).
 | `git::file:///abs/path/repo.git?ref=<v>` | local bare repo (conformance/testing) |
 | `<any git form>//<subdir>` | subtree convention (CRI-227): the part before `//` is the fetched repository; `<subdir>` is the workflow directory inside it and must exist with `.chcl`/`.hcl` files (fail closed). Not applied to `file://` forms. |
 
+Pseudo-transport inner transports are not git checkout sources: a source
+that, after the `git::` prefix, carries a `<token>::` transport outside the
+set above (e.g. `git::ext::<helper-invocation>`) or an unknown `<scheme>://`
+URL is refused with `invalid git workflow source` before git is invoked.
+
 `?ref=v`: a branch (HEAD at resolve time, cached under the resolved SHA), a
 tag, or a full 40-hex SHA (the cache key — a SHA-pinned source whose cache
 entry exists performs **no** git operation). `?ref=force-<branch>` forces a
@@ -2031,10 +2036,17 @@ in every log line, cache path (the `cache/workflows/<slug>` slug derives
 from the credential-free source), error surface, and run metadata.
 
 **Rejection contract.** Schemes outside git/ssh/http(s)/file are refused
-(`unsupported workflow source scheme`). Archive entries whose members
-escape the extract root (`..`, absolute paths) are refused. Option-like
-sources are refused. All failure surfaces are uniform across `apply`,
-`validate`, and `compile` (pinned by the CRI-248 conformance suite).
+(`unsupported workflow source scheme`). Pseudo-transport git sources are
+refused: after the `git::` prefix, a `<token>::` inner transport whose
+token is not one of `git`, `ssh`, `http`, `https`, or `file`
+(case-insensitive) is refused with `invalid git workflow source` naming
+`unsupported git inner transport`; `git::ext::...` is the canonical
+instance, and the failure is pre-execution — no git process is invoked for
+a refused source, regardless of the host's `protocol.*` git configuration.
+Archive entries whose members escape the extract root (`..`, absolute
+paths) are refused. Option-like sources are refused. All failure surfaces
+are uniform across `apply`, `validate`, and `compile` (pinned by the
+CRI-248 conformance suite).
 
 **Expected pin (`--workflow-ref` / the subworkflow `ref` schema attribute).**
 An operator-declared expected immutable ref: a git commit SHA for git

@@ -40,6 +40,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/brokenbots/criteria/workflow/workflowtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -116,6 +117,29 @@ func TestWorkflowFetcherConformance(t *testing.T) {
 		assert.Contains(t, err.Error(), "expected-pin mismatch")
 		requireSourceFileContains(t, "workflow_source_pin_test.go", "ExpectedPin_LocalSourceRefused")
 		requireSourceFileContains(t, "workflow_source_pin_test.go", "CascadedSubworkflowPin")
+	})
+
+	t.Run("GroupGitPseudoTransportRefusal", func(t *testing.T) {
+		// Hard-couple the suite to the refusal matrices for the
+		// remote-helper command-execution class and to the normative
+		// grammar: if the refusal tests move or the documented contract
+		// drifts from the implementation's error strings, this entry
+		// fails and the gap is visible at the conformance target.
+		requireSourceFileContains(t, "subworkflow_fetch_test.go", "TestSplitGitSource_RefusesPseudoTransport")
+		requireSourceFileContains(t, "subworkflow_fetch_test.go", "TestSplitGitSource_PreservesDocumentedForms")
+		requireSourceFileContains(t, "subworkflow_fetch_test.go", "TestFetchGit_RefusesPseudoTransport_NoGitSubprocess")
+		requireSourceFileContains(t, "subworkflow_fetch_test.go", "TestMaterializeGitTree_RefusesPseudoTransport")
+		requireSourceFileContains(t, "../../docs/workflow.md", "git::ext::")
+		requireSourceFileContains(t, "../../docs/workflow.md", "invalid git workflow source")
+		requireSourceFileContains(t, "../../docs/workflow.md", "unsupported git inner transport")
+		// Representative refusal through the resolver directly: no
+		// origin, no materialized tree, and the error carries both
+		// strings the normative grammar names.
+		setWorkflowCacheHome(t)
+		_, _, err := resolveWorkflowSource(context.Background(), "git::ext::conformance-refusal-probe", "")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid git workflow source")
+		assert.Contains(t, err.Error(), "unsupported git inner transport")
 	})
 }
 
@@ -312,6 +336,39 @@ func TestWorkflowFetcherConformance_FailurePathParity(t *testing.T) {
 		assert.False(t, ok, "validate must enforce the expected pin; out: %s", out)
 		assert.Contains(t, out, "expected-pin mismatch")
 	})
+
+	t.Run("GitPseudoTransportRefusal_AllThreeFail", func(t *testing.T) {
+		setWorkflowCacheHome(t)
+		t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+		// A hostile git stub on PATH with a permissive protocol policy
+		// must be demonstrated to execute its payload first, so the
+		// later zero-invocation assertions can never pass vacuously.
+		stub := installExecGitStub(t)
+		stub.proveWiring(t, "criteria-parity-payload")
+		source := "git::ext::criteria-parity-payload"
+
+		_, err := compileWorkflowOutput(context.Background(), source, "", "json", nil, false, false)
+		require.Error(t, err, "compile must refuse a pseudo-transport git source")
+		assert.Contains(t, err.Error(), "invalid git workflow source")
+
+		var ok bool
+		out := captureOutput(t, func() {
+			ok = validatePath(context.Background(), source, "", nil, false, false)
+		})
+		assert.False(t, ok, "validate must refuse a pseudo-transport git source; out: %s", out)
+		assert.Contains(t, out, "invalid git workflow source")
+
+		err = runApply(context.Background(), applyOptions{
+			workflowPath: source,
+			eventsPath:   filepath.Join(t.TempDir(), "events.ndjson"),
+		})
+		require.Error(t, err, "apply must refuse a pseudo-transport git source")
+
+		// Pre-execution and total: identical refusal under the permissive
+		// host policy, no git subprocess, no payload marker.
+		assert.Empty(t, stub.invocations(t), "no git process may be spawned for a refused source")
+		assert.NoFileExists(t, stub.marker)
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -443,4 +500,65 @@ func requireSourceFileContains(t *testing.T, name, needle string) {
 	b, err := os.ReadFile(name)
 	require.NoError(t, err, "consolidated coverage file %s must exist", name)
 	assert.Contains(t, string(b), needle, "%s must still cover %q", name, needle)
+}
+
+// probeValidate runs `criteria validate <source>` as a real OS process
+// against a fresh cache/state home. It inherits the calling process's env
+// (probeEnv strips only CRITERIA_*/CGO_*), so when installExecGitStub has
+// armed the hostile stub PATH and permissive global git config, the probe
+// runs under exactly the host state under which forwarding would execute.
+func probeValidate(t *testing.T, bin, cacheHome, source string) probeResult {
+	t.Helper()
+	cmd := exec.Command(bin, "validate", source)
+	cmd.Dir = "."
+	cmd.Env = probeEnv(cacheHome)
+	out, err := cmd.CombinedOutput()
+	code := 0
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			code = ee.ExitCode()
+		} else {
+			t.Fatalf("probe could not start: %v (output: %s)", err, out)
+		}
+	}
+	return probeResult{ExitCode: code, Combined: string(out), CacheHome: cacheHome}
+}
+
+// TestGitPseudoTransportRefusal_ThroughBinary drives the freshly built
+// production binary end-to-end (the report's E2E-A/E2E-D routes) under a
+// hostile git stub with a permissive `protocol.ext.allow = always` config:
+// the same invocation that executed the payload pre-fix must now exit
+// nonzero refusing the source, with zero git processes spawned and no
+// payload marker — through both the top-level source argument and the
+// nested subworkflow source inside a parent workflow.
+func TestGitPseudoTransportRefusal_ThroughBinary(t *testing.T) {
+	if testing.Short() {
+		t.Skip("cross-process binary probes are skipped in short mode")
+	}
+	bin := buildCriteriaBinary(t)
+	stub := installExecGitStub(t)
+	stub.proveWiring(t, "criteria-e2e-payload")
+	cacheHome := t.TempDir()
+
+	// (a) top-level invocation: `criteria validate git::ext::...`
+	res := probeValidate(t, bin, cacheHome, "git::ext::criteria-e2e-payload")
+	require.NotZero(t, res.ExitCode, "validate must exit nonzero; output: %s", res.Combined)
+	assert.Contains(t, res.Combined, "invalid git workflow source")
+	assert.Contains(t, res.Combined, "git::ext::criteria-e2e-payload")
+	assert.Empty(t, stub.invocations(t), "validate must not spawn git for a refused source")
+	assert.NoFileExists(t, stub.marker, "no helper payload may run for a refused source")
+
+	// (b) nested subworkflow source: `criteria validate parent.hcl` where
+	// the parent declares subworkflow { source = "git::ext::..." }.
+	parentHCL := workflowtest.NewStandard().
+		WithSubworkflow("child", "git::ext::criteria-e2e-payload").
+		Build()
+	parentPath := filepath.Join(t.TempDir(), "parent.hcl")
+	require.NoError(t, os.WriteFile(parentPath, []byte(parentHCL), 0o644))
+	res = probeValidate(t, bin, cacheHome, parentPath)
+	require.NotZero(t, res.ExitCode, "validate must exit nonzero; output: %s", res.Combined)
+	assert.Contains(t, res.Combined, "invalid git workflow source")
+	assert.Empty(t, stub.invocations(t), "nested resolution must not spawn git either")
+	assert.NoFileExists(t, stub.marker, "no helper payload may run for a refused nested source")
 }
