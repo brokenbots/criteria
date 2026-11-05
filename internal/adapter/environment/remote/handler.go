@@ -57,33 +57,14 @@ func (h *RemoteHandler) Type() string { return "remote" }
 // SupportedOSes returns nil (all OSes supported for remote).
 func (h *RemoteHandler) SupportedOSes() []string { return nil }
 
-// ValidateFields checks accepted attributes at compile time.
-// Blocks (mtls, network, filesystem, resources) are tolerated here because
-// they are handled separately by ParseConfig at runtime. mtls may also appear
-// as a boolean attribute (mtls = true).
+// ValidateFields checks accepted attributes at compile time. It delegates to
+// workflow.ValidateRemoteEnvFields, which is the single definition of the
+// remote attribute grammar (workflow.RemoteEnvAcceptedAttrs) shared with the
+// compile-side handler; blocks (mtls, network, filesystem, resources) are
+// tolerated there because they are handled separately by ParseConfig at
+// runtime. mtls may also appear as a boolean attribute (mtls = true).
 func (h *RemoteHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
-	attrs, diags := workflow.BodyJustAttributesToleratingBlocks(body, workflow.HandlerAllowedBlocks(h.Type()))
-	for name := range attrs {
-		switch name {
-		case "variables", "policy_mode", "os", "working_directory",
-			"listen_address", "mtls", "accept_token", "accept_digest_from", "insecure",
-			"process", "per_scope_sessions",
-			"tls_handshake_deadline", "identity_handshake_deadline":
-			// accepted; process.exec is validated at compile time and enforced at
-			// runtime: exact allow-lists are rejected because remote isolation
-			// cannot enforce per-path exec restrictions, while the reserved "*"
-			// wildcard preserves the default-open behavior explicitly.
-		default:
-			rng := attrs[name].Range
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("remote environment: unknown attribute %q", name),
-				Detail:   "remote environments accept variables, policy_mode, os, working_directory, listen_address, mtls, accept_token, accept_digest_from, insecure, process, per_scope_sessions, tls_handshake_deadline, and identity_handshake_deadline.",
-				Subject:  &rng,
-			})
-		}
-	}
-	return diags
+	return workflow.ValidateRemoteEnvFields(body)
 }
 
 // IsolationKind returns workflow.EnvIsolationRemote.

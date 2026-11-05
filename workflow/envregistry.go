@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"slices"
+	"strings"
 
 	"github.com/hashicorp/hcl/v2"
 )
@@ -185,6 +187,65 @@ func (h *builtinContainerHandler) ValidateFields(body hcl.Body) hcl.Diagnostics 
 // remoteHandlerInstance is the compile-time remote skeleton handler.
 var remoteHandlerInstance = &builtinRemoteHandler{}
 
+// RemoteEnvAcceptedAttrs returns the accepted-attribute list for remote
+// environment blocks. This is the single definition of the remote grammar:
+// both the compile-time builtinRemoteHandler and the runtime-side host
+// handler (internal/adapter/environment/remote.RemoteHandler) validate
+// against it via ValidateRemoteEnvFields, so a new remote attribute must be
+// added here and nowhere else.
+func RemoteEnvAcceptedAttrs() []string {
+	return []string{
+		"variables", "policy_mode", "os", "working_directory",
+		"listen_address", "mtls", "accept_token", "accept_digest_from", "insecure",
+		"process", "per_scope_sessions", "config",
+		"tls_handshake_deadline", "identity_handshake_deadline",
+	}
+}
+
+// ValidateRemoteEnvFields validates a remote environment body against
+// RemoteEnvAcceptedAttrs, tolerating the remote allowed-block set. It is the
+// shared validation consumed by both remote handler implementations so the
+// remote grammar keeps exactly one definition.
+func ValidateRemoteEnvFields(body hcl.Body) hcl.Diagnostics {
+	// Remote environments allow mtls, network, filesystem, and resources
+	// blocks; tolerate them while validating attributes. Only mtls is
+	// actively parsed at this time. mtls may also appear as a boolean
+	// attribute (mtls = true) for simple on/off configuration.
+	attrs, diags := BodyJustAttributesToleratingBlocks(body, HandlerAllowedBlocks("remote"))
+	accepted := RemoteEnvAcceptedAttrs()
+	for name := range attrs {
+		if slices.Contains(accepted, name) {
+			continue
+		}
+		rng := attrs[name].Range
+		diags = append(diags, &hcl.Diagnostic{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("remote environment: unknown attribute %q", name),
+			Detail:   remoteEnvAcceptedDetail(),
+			Subject:  &rng,
+		})
+	}
+	return diags
+}
+
+// remoteEnvAcceptedDetail derives the human-readable accepted-attribute
+// sentence from RemoteEnvAcceptedAttrs so the wording and list cannot drift.
+func remoteEnvAcceptedDetail() string {
+	return "remote environments accept " + humanJoin(RemoteEnvAcceptedAttrs()) + "."
+}
+
+// humanJoin renders names as an Oxford-comma list ("a, b, and c").
+func humanJoin(names []string) string {
+	switch len(names) {
+	case 0:
+		return ""
+	case 1:
+		return names[0]
+	default:
+		return strings.Join(names[:len(names)-1], ", ") + ", and " + names[len(names)-1]
+	}
+}
+
 type builtinRemoteHandler struct{}
 
 func (h *builtinRemoteHandler) Type() string                                { return "remote" }
@@ -193,32 +254,7 @@ func (h *builtinRemoteHandler) IsolationKind() EnvIsolationKind             { re
 func (h *builtinRemoteHandler) Prepare(_ context.Context, _ hcl.Body) error { return nil }
 
 func (h *builtinRemoteHandler) ValidateFields(body hcl.Body) hcl.Diagnostics {
-	// Remote environments allow mtls, network, filesystem, and resources
-	// blocks; tolerate them while validating attributes. Only mtls is
-	// actively parsed at this time. mtls may also appear as a boolean
-	// attribute (mtls = true) for simple on/off configuration.
-	attrs, diags := BodyJustAttributesToleratingBlocks(body, HandlerAllowedBlocks(h.Type()))
-	for name := range attrs {
-		switch name {
-		case "variables", "policy_mode", "os", "working_directory",
-			"listen_address", "mtls", "accept_token", "accept_digest_from", "insecure", "config",
-			"process", "per_scope_sessions",
-			"tls_handshake_deadline", "identity_handshake_deadline":
-			// accepted; process.exec is validated at compile time and enforced at
-			// runtime: exact allow-lists are rejected because remote isolation
-			// cannot enforce per-path exec restrictions, while the reserved "*"
-			// wildcard preserves the default-open behavior explicitly.
-		default:
-			rng := attrs[name].Range
-			diags = append(diags, &hcl.Diagnostic{
-				Severity: hcl.DiagError,
-				Summary:  fmt.Sprintf("remote environment: unknown attribute %q", name),
-				Detail:   "remote environments accept variables, policy_mode, os, working_directory, listen_address, mtls, accept_token, accept_digest_from, insecure, process, per_scope_sessions, config, tls_handshake_deadline, and identity_handshake_deadline.",
-				Subject:  &rng,
-			})
-		}
-	}
-	return diags
+	return ValidateRemoteEnvFields(body)
 }
 
 // builtinEnvRegistry returns the built-in default registry instance.
