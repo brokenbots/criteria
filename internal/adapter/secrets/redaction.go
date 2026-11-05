@@ -188,29 +188,10 @@ func (s *RedactingEventSink) redactData(data any) any {
 		return nil
 	case string:
 		return s.Registry.Redact(v)
-	case map[string]any:
-		out := make(map[string]any, len(v))
-		for k, item := range v {
-			out[s.Registry.Redact(k)] = s.redactData(item)
-		}
-		return out
-	case []any:
-		out := make([]any, len(v))
-		for i, item := range v {
-			out[i] = s.redactData(item)
-		}
-		return out
-	case map[string]string:
-		out := make(map[string]string, len(v))
-		for k, item := range v {
-			out[s.Registry.Redact(k)] = s.Registry.Redact(item)
-		}
-		return out
-	case []string:
-		out := make([]string, len(v))
-		for i, item := range v {
-			out[i] = s.Registry.Redact(item)
-		}
+	case map[string]any, []any, map[string]string, []string:
+		// redactContainer re-switches on the dynamic type; every type in
+		// this case is always handled there.
+		out, _ := s.redactContainer(data)
 		return out
 	default:
 		// Numeric/boolean scalars cannot hold a secret; passing them
@@ -224,6 +205,57 @@ func (s *RedactingEventSink) redactData(data any) any {
 			return data
 		}
 		return s.redactViaJSON(data)
+	}
+}
+
+// redactContainer clones the four container shapes the JSON conversion
+// handles natively, masking keys and string values as it goes. handled is
+// false only when data is none of those types (an unreachable case from
+// redactData, kept explicit for the tests' direct calls).
+//
+// Typed-nil containers must stay nil: the run-side conversion encodes them
+// as JSON null, and the masked path must publish the same shape the
+// unchanged path does.
+func (s *RedactingEventSink) redactContainer(data any) (any, bool) {
+	switch v := data.(type) {
+	case map[string]any:
+		if v == nil {
+			return nil, true
+		}
+		out := make(map[string]any, len(v))
+		for k, item := range v {
+			out[s.Registry.Redact(k)] = s.redactData(item)
+		}
+		return out, true
+	case []any:
+		if v == nil {
+			return nil, true
+		}
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = s.redactData(item)
+		}
+		return out, true
+	case map[string]string:
+		if v == nil {
+			return nil, true
+		}
+		out := make(map[string]string, len(v))
+		for k, item := range v {
+			out[s.Registry.Redact(k)] = s.Registry.Redact(item)
+		}
+		return out, true
+	case []string:
+		if v == nil {
+			return nil, true
+		}
+		out := make([]string, len(v))
+		for i, item := range v {
+			out[i] = s.Registry.Redact(item)
+		}
+		return out, true
+	default:
+		return nil, false
 	}
 }
 

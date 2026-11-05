@@ -50,12 +50,12 @@ func BenchmarkRedactingEventSink_Adapter(b *testing.B) {
 			for _, k := range payloadKeys[:8] {
 				r.Register(k)
 			}
-		}},
+		}, hitKey: "secret-0000"},
 		{name: "registry-1024", fill: func(r *Registry) {
 			for i := 0; i < 1024; i++ {
 				r.Register(fmt.Sprintf("secret-%04d", i))
 			}
-		}},
+		}, hitKey: "secret-0500"},
 	}
 
 	for _, size := range sizes {

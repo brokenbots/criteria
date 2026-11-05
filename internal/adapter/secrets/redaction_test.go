@@ -201,6 +201,22 @@ func TestRedactingEventSink_Adapter_MasksDeclaredSecrets(t *testing.T) {
 	assert(sinkCall(t, reg, "callee.started", single))
 	assert(sinkCall(t, reg, "kind-secret123-call", "no payload secret"))
 
+	t.Run("nil and empty containers keep their shape", func(t *testing.T) {
+		var nilMap map[string]any
+		var nilSlice []any
+		require.Nil(t, sinkCall(t, reg, "k", nilMap).data)
+		require.Nil(t, sinkCall(t, reg, "k", nilSlice).data)
+		require.Nil(t, sinkCall(t, reg, "k", nil).data)
+
+		// Non-nil empties must stay non-nil ({} and [] as before, not null).
+		emptyMap, ok := sinkCall(t, reg, "k", map[string]any{}).data.(map[string]any)
+		require.True(t, ok)
+		require.Len(t, emptyMap, 0)
+		emptySlice, ok := sinkCall(t, reg, "k", []any{}).data.([]any)
+		require.True(t, ok)
+		require.Len(t, emptySlice, 0)
+	})
+
 	// Shape checks on the nested case.
 	call := sinkCall(t, reg, "callee.started", nested)
 	got, ok := call.data.(map[string]any)
