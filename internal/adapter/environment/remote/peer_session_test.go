@@ -22,6 +22,8 @@ import (
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 
+	"go.uber.org/goleak"
+
 	criteriav1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 
 	"github.com/brokenbots/criteria/internal/adapter"
@@ -1361,6 +1363,120 @@ func TestPeerWaitAfterStopRejected(t *testing.T) {
 	if _, err := provider.WaitForHandle(ctx, "noop", ""); err == nil || !strings.Contains(err.Error(), "remote shim stopped") {
 		t.Fatalf("post-stop wait err = %v, want remote shim stopped", err)
 	}
+}
+
+// peerConnClosed reports whether the fake-adapter side of a pipe conn sees
+// the host side closed (the host holds the other end; closing it unblocks
+// the peer read with an error). Fails the test if nothing arrives.
+func peerConnClosed(t *testing.T, pc net.Conn) {
+	t.Helper()
+	closed := make(chan error, 1)
+	go func() { _, err := pc.Read(make([]byte, 1)); closed <- err }()
+	select {
+	case err := <-closed:
+		if err == nil {
+			t.Errorf("peer conn not closed (read succeeded)")
+		}
+	case <-time.After(10 * time.Second):
+		t.Errorf("peer conn not closed within 10s")
+	}
+}
+
+// TestAcceptPeerAfterStopRejectsAndClosesConn pins the teardown contract the
+// goleak gate depends on: a dial that lands after the provider stopped is
+// rejected AND its phone-home conn is closed. Storing it would leave the
+// session outside the registry with no closer — the ClientConn's serializer
+// goroutines survive to suite teardown and redden the engine goleak gate.
+func TestAcceptPeerAfterStopRejectsAndClosesConn(t *testing.T) {
+	provider, _ := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
+
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer stopCancel()
+	if err := provider.Stop(stopCtx); err != nil {
+		t.Fatalf("provider Stop: %v", err)
+	}
+
+	conn, peer := net.Pipe()
+	defer peer.Close()
+	err := provider.AcceptPeer(context.Background(), conn, &PeerDial{
+		AdapterType: "noop",
+		Digest:      "sha256:abcd1234",
+	})
+	if err == nil {
+		t.Fatalf("AcceptPeer after stop: nil error, want remote shim stopped rejection")
+	}
+	if !strings.Contains(err.Error(), "remote shim stopped") {
+		t.Fatalf("AcceptPeer after stop err = %v, want remote shim stopped", err)
+	}
+	provider.mu.Lock()
+	registered := len(provider.peers)
+	provider.mu.Unlock()
+	if registered != 0 {
+		t.Fatalf("registry holds %d sessions after stopped AcceptPeer, want 0", registered)
+	}
+	peerConnClosed(t, peer)
+	goleak.VerifyNone(t)
+}
+
+// TestAcceptPeerRacingStopAlwaysClosesConn drives the stop-vs-accept race:
+// every conn ends closed either way — stored sessions are drained by
+// stopPeers, late dials are rejected by the storeSession stopped check. An
+// abandoned path here is the leak signature goleak caught in CI.
+func TestAcceptPeerRacingStopAlwaysClosesConn(t *testing.T) {
+	provider, _ := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
+
+	const dials = 32
+	conns := make([]net.Conn, dials)
+	peers := make([]net.Conn, dials)
+	errs := make([]error, dials)
+	for i := range conns {
+		conns[i], peers[i] = net.Pipe()
+	}
+	defer func() {
+		for _, pc := range peers {
+			_ = pc.Close()
+		}
+	}()
+
+	var wg sync.WaitGroup
+	for i := 0; i < dials; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = provider.AcceptPeer(context.Background(), conns[i], &PeerDial{
+				AdapterType: "noop",
+				Digest:      "sha256:abcd1234",
+			})
+		}(i)
+	}
+
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer stopCancel()
+	if err := provider.Stop(stopCtx); err != nil {
+		t.Fatalf("provider Stop: %v", err)
+	}
+	wg.Wait()
+
+	provider.mu.Lock()
+	registered := len(provider.peers)
+	provider.mu.Unlock()
+	if registered != 0 {
+		t.Fatalf("registry holds %d sessions after stop, want 0", registered)
+	}
+	for i := 0; i < dials; i++ {
+		if errs[i] == nil {
+			t.Fatalf("AcceptPeer[%d] racing stop: nil error", i)
+		}
+	}
+	// The host side of every conn must be closed by now: stored sessions
+	// were closed by the stop, rejected dials by the accept guard.
+	for i, pc := range peers {
+		peerConnClosed(t, pc)
+		if t.Failed() {
+			t.Fatalf("conn[%d] not closed", i)
+		}
+	}
+	goleak.VerifyNone(t)
 }
 
 func TestPeerListenAddrDelegatesToShim(t *testing.T) {
