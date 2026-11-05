@@ -62,7 +62,7 @@ func (s *switchSink) OnRunFailed(reason, _ string) {
 	s.failure = reason
 	s.mu.Unlock()
 }
-func (s *switchSink) OnAuditLoss(*pb.AuditLoss) {}
+func (s *switchSink) OnAuditLoss(*pb.AuditLoss)                                     {}
 func (s *switchSink) OnStepEntered(string, string, int)                             {}
 func (s *switchSink) OnStepOutcome(_, _ string, _ time.Duration, _ error, _ string) {}
 func (s *switchSink) OnStepTransition(string, string, string)                       {}

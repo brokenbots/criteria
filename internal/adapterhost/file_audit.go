@@ -36,6 +36,11 @@ type FileAuditWriter struct {
 	lastErr         error
 	lastErrLoggedAt time.Time
 	warnedThreshold bool
+
+	// lossReported flips once the writer's cumulative loss has been
+	// surfaced in a run record; atomic so concurrent wrappers cannot
+	// both claim it.
+	lossReported atomic.Bool
 }
 
 // NewFileAuditWriter creates a writer that will append to the given path.
@@ -82,6 +87,12 @@ func (w *FileAuditWriter) AuditLoss() (dropped, attempted int64, lastError strin
 	lastError = errText(w.lastErr)
 	w.mu.Unlock()
 	return dropped, attempted, lastError
+}
+
+// MarkLossReported atomically claims the writer's loss for one surfacing;
+// true exactly when the caller flips it. AuditLossReporter implementation.
+func (w *FileAuditWriter) MarkLossReported() bool {
+	return w.lossReported.CompareAndSwap(false, true)
 }
 
 // ensureOpen lazily creates the parent directory and opens the audit file

@@ -713,6 +713,11 @@ func (e *Engine) newSessionManager() *adapterhost.SessionManager {
 // non-terminal (an observed crash-replay stayed "running" forever).
 func (e *Engine) Run(ctx context.Context) error {
 	sessions := e.newSessionManager()
+	// Audit loss must be probed after the full lifecycle unwind (adapter
+	// teardown and session shutdown both keep writing permission-audit
+	// entries), so this defer is declared first and executes last.
+	var lossReportSink Sink
+	defer func() { reportAuditLoss(lossReportSink, e.auditWriter, e.logOrDefault()) }()
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
 	// Create a per-run redaction registry and wire it into the session manager
@@ -723,7 +728,7 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	// Wrap the engine sink before any events are emitted.
 	sink := NewRedactingSink(e.sink, redactionReg)
-	sink = NewAuditLossSink(sink, e.auditWriter, e.log)
+	lossReportSink = sink
 	sessions.LifecycleSink = sink
 	sessions.SetAllowedWorkingDirRoots(e.workingDirAllowedRoots)
 	// The wrapped sink is the pointer-emission sink for this run's
@@ -784,13 +789,18 @@ func (e *Engine) Run(ctx context.Context) error {
 // shim startup fails.
 func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt int) error {
 	sessions := e.newSessionManager()
+	// Audit loss must be probed after the full lifecycle unwind (adapter
+	// teardown and session shutdown both keep writing permission-audit
+	// entries), so this defer is declared first and executes last.
+	var lossReportSink Sink
+	defer func() { reportAuditLoss(lossReportSink, e.auditWriter, e.logOrDefault()) }()
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
 	redactionReg := secrets.NewRegistry()
 	sessions.RedactionRegistry = redactionReg
 
 	sink := NewRedactingSink(e.sink, redactionReg)
-	sink = NewAuditLossSink(sink, e.auditWriter, e.log)
+	lossReportSink = sink
 	sessions.LifecycleSink = sink
 	sessions.SetAllowedWorkingDirRoots(e.workingDirAllowedRoots)
 	// Checkpoint saves resume from checkpoints on this path too, so
