@@ -38,8 +38,10 @@ var registry = []*Var{
 	// --- internal/peer: legacy per-adapter manifest variables (also read by adapters).
 	&CRITERIAAdapterName, &CRITERIAAdapterVersion, &CRITERIAAdapterBinary, &CRITERIAAdapterManifest,
 
-	// --- internal/adapter: vault-backed secrets, sandbox shim, go-plugin protocol.
-	&CRITERIAVaultMount, &CRITERIASandboxConfigPath, &CRITERIAPlugin,
+	// --- internal/adapter: vault-backed secrets and the file secret provider,
+	// the sandbox shim, and the go-plugin protocol.
+	&CRITERIAVaultMount, &CRITERIASecretVars, &CRITERIASecretFileRoots,
+	&CRITERIASandboxConfigPath, &CRITERIAPlugin,
 
 	// --- internal/tunables-consumed timing and budget knobs. Lenient rows are
 	// resolved via tunables.Settings; strict rows are parsed by their owning
@@ -50,6 +52,8 @@ var registry = []*Var{
 
 	// --- Hidden prefix families: names an operator-facing row cannot enumerate.
 	&CRITERIARemoteFamily, &CRITERIAAdapterFamily,
+	&CRITERIAPeerFamily, &CRITERIAPeerBackoffFamily, &CRITERIARemoteTLSFamily,
+	&CRITERIATestFamily,
 
 	// --- Hidden test-harness gates (registered so reads stay audited).
 	&CRITERIARemoteE2E, &CRITERIAPeerE2E, &CRITERIAContainerTests,
@@ -143,6 +147,8 @@ var (
 // Secrets, sandbox shim, and go-plugin protocol scrubbing.
 var (
 	CRITERIAVaultMount        = Var{name: "CRITERIA_VAULT_MOUNT", kind: KindString, scope: "internal/adapter secrets (vault provider)", doc: "The vault mount path that overrides the manifest-declared mount for the vault secret provider."}
+	CRITERIASecretVars        = Var{name: "CRITERIA_SECRET_VARS", kind: KindString, scope: "internal/adapter secrets (run environment)", doc: "The workflow object's secret names that the run environment declares for the run; the declared secret list and the declared secret file roots derive from the same workflow secret entries."}
+	CRITERIASecretFileRoots   = Var{name: "CRITERIA_SECRET_FILE_ROOTS", kind: KindString, scope: "internal/adapter secrets file provider", doc: "Newline-separated absolute paths the run environment declares as secret sources for the file secret provider; declared roots are appended after the default secrets directory and duplicate or non-absolute entries are dropped."}
 	CRITERIASandboxConfigPath = Var{name: "CRITERIA_SANDBOX_CONFIG_PATH", kind: KindString, scope: "internal/adapter/environment/sandbox (engine-set)", doc: "The path of the sandbox config handed to the sandbox shim child process; set by the engine and scrubbed from adapter environments."}
 	CRITERIAPlugin            = Var{name: "CRITERIA_PLUGIN", kind: KindString, hidden: true, scope: "internal/adapterhost handshake (go-plugin protocol)", doc: "The go-plugin magic-cookie handshake name; scrubbed from child environments and matched by the sandbox shim."}
 )
@@ -165,6 +171,11 @@ var (
 var (
 	CRITERIARemoteFamily  = Var{name: "CRITERIA_REMOTE", kind: KindString, prefix: true, hidden: true, scope: "internal/peer scrubbing", doc: "Phone-home connection family: the bare name and every CRITERIA_REMOTE_* member are scrubbed from child adapter environments (members above are the operator-facing subset the peer reads); the bare CRITERIA_REMOTE name is Env()-addressable from this same row."}
 	CRITERIAAdapterFamily = Var{name: "CRITERIA_ADAPTER", kind: KindString, prefix: true, hidden: true, scope: "internal/peer scrubbing", doc: "Multi-adapter family: CRITERIA_ADAPTER_<NAME>_{BINARY,VERSION,DIGEST,MANIFEST} overrides are scrubbed from child environments; the four legacy CRITERIA_ADAPTER_* rows pass through."}
+
+	CRITERIAPeerFamily        = Var{name: "CRITERIA_PEER", kind: KindString, prefix: true, hidden: true, scope: "internal/peer", doc: "Peer supervision family: CRITERIA_PEER_* names cover the child keep-alive, the reconnect backoff bounds, and the supervision journal capacity."}
+	CRITERIAPeerBackoffFamily = Var{name: "CRITERIA_PEER_BACKOFF", kind: KindString, prefix: true, hidden: true, scope: "internal/peer", doc: "Peer reconnect backoff family: CRITERIA_PEER_BACKOFF_* names bound the peer host reconnect delay, with the floor and ceiling registered as CRITERIA_PEER_BACKOFF_MIN and CRITERIA_PEER_BACKOFF_MAX."}
+	CRITERIARemoteTLSFamily   = Var{name: "CRITERIA_REMOTE_TLS", kind: KindString, prefix: true, hidden: true, scope: "internal/peer", doc: "Remote mTLS family: CRITERIA_REMOTE_TLS_* names carry the client certificate, client key, and CA bundle the peer uses against the remote endpoint."}
+	CRITERIATestFamily        = Var{name: "CRITERIA_TEST", kind: KindString, prefix: true, hidden: true, scope: "internal/ci (test gates)", doc: "Test-gate family: CRITERIA_TEST_* names enable opt-in test harnesses; no production timing knob lives in this namespace."}
 )
 
 // Hidden test-harness gates (registered so reads stay audited).
