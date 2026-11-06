@@ -96,9 +96,16 @@ type ckptRecorder struct {
 	saves   []SessionSnapshot
 	err     error
 	gotName []string
+
+	// hold, when non-nil, blocks each save until the channel is closed so a
+	// test can widen the in-flight save window deterministically.
+	hold chan struct{}
 }
 
 func (r *ckptRecorder) save(name string, snap *SessionSnapshot) error {
+	if r.hold != nil {
+		<-r.hold
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.err != nil {
@@ -303,18 +310,33 @@ func TestTurnCheckpoint_FiresOnTurnBoundaryAndSerializesSaves(t *testing.T) {
 	h := &ckptHandle{decl: &workflow.StateDeclaration{
 		Mode: workflow.StateModeBlob, Schema: "harness.v1", Granularity: workflow.StateGranularityPerTurn,
 	}}
-	rec := &ckptRecorder{}
+	// Hold the save open while the hooks race. Coalescing is only guaranteed
+	// while a save is in flight, and a save this small would otherwise finish
+	// between two hooks on a loaded scheduler (observed all three saves
+	// landing on CI). Holding the window makes exactly-one deterministic in
+	// both directions.
+	rec := &ckptRecorder{hold: make(chan struct{})}
 	_, sess := openStatefulSession(t, h, rec)
 
 	if sess.PermissionState == nil || sess.PermissionState.turnCheckpoint == nil {
 		t.Fatalf("per-turn adapter must carry a turn checkpoint hook (PermissionState=%v)", sess.PermissionState)
 	}
 
+	var wg sync.WaitGroup
 	for i := 0; i < 3; i++ {
-		sess.PermissionState.turnCheckpoint()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sess.PermissionState.turnCheckpoint()
+		}()
 	}
+	wg.Wait()
+
+	// Exactly one hook may own the in-flight save; the racing hooks must be
+	// dropped, not queued behind it.
+	close(rec.hold)
 	deadline := time.Now().Add(2 * time.Second)
-	for rec.count() == 0 && time.Now().Before(deadline) {
+	for rec.count() != 1 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	if rec.count() != 1 {
