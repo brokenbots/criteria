@@ -11,6 +11,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -62,19 +63,8 @@ func handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req, reply, kind := routeEnvelope(body)
-
-	// Header conformance is checked per message: the method header must
-	// equal the body's method (header/body desync is a 400), and the name
-	// header must be present (session identity, not authentication).
-	// Unparseable bodies keep the spec's -32700 path.
-	if req.Method != "" {
-		if r.Header.Get("Mcp-Method") != req.Method {
-			http.Error(w, "Mcp-Method header must match the body method", http.StatusBadRequest)
-			return
-		}
-	}
-	if r.Header.Get("Mcp-Name") == "" {
-		http.Error(w, "Mcp-Name header required", http.StatusBadRequest)
+	if err := enforceMessageHeaders(r, req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -85,43 +75,75 @@ func handleHTTPRequest(w http.ResponseWriter, r *http.Request) {
 		kind = envKindReply
 		reply = styledID(envelope(req.ID, "result", map[string]any{}))
 	}
+	serveEnvelope(w, req, reply, kind)
+}
 
+// enforceMessageHeaders checks per-message header conformance: the method
+// header must equal the body's method (header/body desync is a 400), and
+// the name header must be present (session identity, not authentication).
+// Unparseable bodies keep the spec's -32700 path.
+func enforceMessageHeaders(r *http.Request, req request) error {
+	if req.Method != "" && r.Header.Get("Mcp-Method") != req.Method {
+		return errors.New("Mcp-Method header must match the body method")
+	}
+	if r.Header.Get("Mcp-Name") == "" {
+		return errors.New("Mcp-Name header required")
+	}
+	return nil
+}
+
+// serveEnvelope serves one routed message per kind: notifications get 202,
+// the batch knob wraps the reply in a one-element array, tools/call serves
+// per-call (break-once fault, progress-ahead SSE), everything else is a
+// plain reply.
+func serveEnvelope(w http.ResponseWriter, req request, reply map[string]any, kind int) {
 	switch kind {
 	case envKindNotification:
 		w.WriteHeader(http.StatusAccepted)
 	case envKindBatch:
-		serveMu.Lock()
-		defer serveMu.Unlock()
-		payload, marshalErr := json.Marshal([]map[string]any{styledID(reply)})
-		if marshalErr != nil {
-			http.Error(w, "unencodable reply", http.StatusInternalServerError)
-			return
-		}
-		if httpSSE == sseOn {
-			writeSSEFrames(w, [][]byte{payload})
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(payload)
+		serveBatch(w, styledID(reply))
 	case envKindToolCall:
-		logToolCall(req)
-		if httpSSE == sseBreakOnce && breakOnceServed.CompareAndSwap(false, true) {
-			serveMu.Lock()
-			defer serveMu.Unlock()
-			writeSSEBreak(w, req)
-			return
-		}
-		resp := handleToolCall(req)
-		if modernMode {
-			if m, ok := resp.Result.(map[string]any); ok {
-				stampModern(m)
-			}
-		}
-		env := styledID(envelopeFromCall(req, resp))
-		writeReplyHTTP(w, req, env)
+		serveToolCall(w, req)
 	default:
 		writeReplyHTTP(w, req, styledID(reply))
 	}
+}
+
+// serveBatch writes the batch_once reply: a one-element array as JSON, or
+// as an SSE event under the SSE knob.
+func serveBatch(w http.ResponseWriter, reply map[string]any) {
+	serveMu.Lock()
+	defer serveMu.Unlock()
+	payload, marshalErr := json.Marshal([]map[string]any{reply})
+	if marshalErr != nil {
+		http.Error(w, "unencodable reply", http.StatusInternalServerError)
+		return
+	}
+	if httpSSE == sseOn {
+		writeSSEFrames(w, [][]byte{payload})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(payload)
+}
+
+// serveToolCall serves one tools/call: the break-once fault drops the
+// stream mid-transfer on the first call, later calls answer normally.
+func serveToolCall(w http.ResponseWriter, req request) {
+	logToolCall(req)
+	if httpSSE == sseBreakOnce && breakOnceServed.CompareAndSwap(false, true) {
+		serveMu.Lock()
+		defer serveMu.Unlock()
+		writeSSEBreak(w, req)
+		return
+	}
+	resp := handleToolCall(req)
+	if modernMode {
+		if m, ok := resp.Result.(map[string]any); ok {
+			stampModern(m)
+		}
+	}
+	writeReplyHTTP(w, req, styledID(envelopeFromCall(req, resp)))
 }
 
 // writeReplyHTTP writes one reply envelope as application/json, or as an
@@ -155,11 +177,6 @@ func envelopeFromCall(req request, resp response) map[string]any {
 		return map[string]any{"jsonrpc": "2.0", "id": req.ID, "error": resp.Error}
 	}
 	return map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": resp.Result}
-}
-
-// envelopeNoID encodes a notification envelope (no id field is present).
-func envelopeNoID(method string, params map[string]any) map[string]any {
-	return map[string]any{"jsonrpc": "2.0", "method": method, "params": params}
 }
 
 // writeSSEFrames writes pre-encoded payloads as text/event-stream data

@@ -39,11 +39,6 @@ const (
 	closeGrace  = 5 * time.Second
 	initTimeout = 5 * time.Second
 
-	// openTimeout bounds a whole session open: the probe-first negotiation
-	// (one server/discover probe) plus the legacy handshake and
-	// discovery budget.
-	openTimeout = mcpclient.DefaultProbeTimeout + initTimeout
-
 	// discoveryCacheTTL is the per-request cache window for the tools/list
 	// result backing discovery: a session discovered its
 	// surface at OpenSession and refreshes it at most once per window, when
@@ -353,7 +348,7 @@ func (b *MCPBridge) OpenSession(ctx context.Context, req *v2.OpenSessionRequest)
 	// Fingerprint the environment up front so discovery and any
 	// later refresh land under the right per-environment surface.
 	state.envKey = environmentKey(req.GetConfig())
-	tools, err := initializeAndDiscover(ctx, parsed, state)
+	tools, err := initializeAndDiscover(ctx, &parsed, state)
 	if err != nil {
 		_ = shutdownSession(ctx, state)
 		return nil, err
@@ -375,9 +370,10 @@ func startMCPServer(cfg map[string]string) (mcpServerConfig, *sessionState, erro
 		return parsed, nil, err
 	}
 	if parsed.transport == mcpclient.TransportHTTP {
-		return parsed, openHTTPSession(parsed), nil
+		state := openHTTPSession(&parsed)
+		return parsed, state, nil
 	}
-	state, err := startStdioSession(parsed)
+	state, err := startStdioSession(&parsed)
 	return parsed, state, err
 }
 
@@ -512,7 +508,7 @@ func parseHeaderList(raw string) ([]mcpclient.HeaderEntry, error) {
 	return out, nil
 }
 
-func startStdioSession(parsed mcpServerConfig) (*sessionState, error) {
+func startStdioSession(parsed *mcpServerConfig) (*sessionState, error) {
 	cmd := exec.Command(parsed.command, parsed.args...)
 	if parsed.cwd != "" {
 		cmd.Dir = parsed.cwd
@@ -548,7 +544,7 @@ func startStdioSession(parsed mcpServerConfig) (*sessionState, error) {
 // openHTTPSession opens a Streamable HTTP session: no process and no pipe
 // state — every exchange is a POST — with the single subscriptions/listen
 // stream opted in for server-to-client notifications.
-func openHTTPSession(parsed mcpServerConfig) *sessionState {
+func openHTTPSession(parsed *mcpServerConfig) *sessionState {
 	state := &sessionState{tools: map[string]struct{}{}, discoveryTTL: discoveryCacheTTL, negotiation: parsed.negotiation}
 	state.client = mcpclient.NewHTTPClient(mcpclient.HTTPConfig{
 		Endpoint:       parsed.endpoint,
@@ -574,7 +570,7 @@ func notifyFn(state *sessionState) func(mcpclient.Notification) {
 // server/discover with the legacy initialize fallback on stdio, a terminal
 // probe on http) and runs the tools/list discovery that populates the
 // session's dynamic tool surface.
-func initializeAndDiscover(ctx context.Context, parsed mcpServerConfig, state *sessionState) ([]mcpclient.Tool, error) {
+func initializeAndDiscover(ctx context.Context, parsed *mcpServerConfig, state *sessionState) ([]mcpclient.Tool, error) {
 	openCtx, cancel := context.WithTimeout(ctx, parsed.openBudget())
 	defer cancel()
 	if err := state.client.Connect(openCtx, state.negotiation, mcpClientName, adapterVersion); err != nil {
@@ -595,7 +591,7 @@ func initializeAndDiscover(ctx context.Context, parsed mcpServerConfig, state *s
 // only), every probe-first/discover open burns one probe per framing the
 // ladder may need (two when the stdio framing was left unspecified) plus
 // the legacy handshake initTimeout for the stdio fallback.
-func (c mcpServerConfig) openBudget() time.Duration {
+func (c *mcpServerConfig) openBudget() time.Duration {
 	if c.negotiation == mcpclient.NegotiationInitialize {
 		return initTimeout
 	}
@@ -751,12 +747,8 @@ func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ad
 	if err != nil {
 		return err
 	}
-	if len(callHeaders) > 0 && s.client.Transport() != mcpclient.TransportHTTP {
-		// The x-mcp-header seam is Streamable HTTP surface: a stdio MCP
-		// server cannot consume per-request headers, and forwarding the
-		// prefixed keys as tool arguments would leak transport control
-		// into tool semantics.
-		return fmt.Errorf("mcp: x-mcp-header parameters are not valid with transport=stdio")
+	if err := validateCallHeaders(s, callHeaders); err != nil {
+		return err
 	}
 
 	// Register this execute on the session's per-execute registry so
@@ -798,21 +790,42 @@ func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ad
 		// (retrying with inputResponses) is a follow-up card.
 		return sink.Send(typedFailureEventWithDetail(callErrorInputRequired, inputRequestsOutputs(&result)))
 	}
+	return deliverCallResult(sink, req, &result)
+}
 
+// deliverCallResult streams the result content as adapter events and closes
+// the execute with the outcome result event.
+func deliverCallResult(sink adapterhost.ExecuteEventSender, req *v2.ExecuteRequest, result *mcpclient.CallToolResult) error {
 	for _, item := range result.Content {
 		if err := sink.Send(adapterEvent("mcp.content", item)); err != nil {
 			return err
 		}
 	}
+	return sink.Send(resultEventWithOutputs(executeOutcome(req, result), mcpOutputs(result)))
+}
 
-	outcome := "success"
-	if configured := strings.TrimSpace(req.GetInput()["success_outcome"]); configured != "" {
-		outcome = configured
-	}
+// executeOutcome maps the tool result and the caller's config to the
+// outcome event name: IsError wins, a configured success_outcome is the
+// next word, "success" is the default.
+func executeOutcome(req *v2.ExecuteRequest, result *mcpclient.CallToolResult) string {
 	if result.IsError {
-		outcome = "failure"
+		return "failure"
 	}
-	return sink.Send(resultEventWithOutputs(outcome, mcpOutputs(&result)))
+	if configured := strings.TrimSpace(req.GetInput()["success_outcome"]); configured != "" {
+		return configured
+	}
+	return "success"
+}
+
+// validateCallHeaders gates the x-mcp-header seam to the Streamable HTTP
+// transport: a stdio MCP server cannot consume per-request headers, and
+// forwarding the prefixed keys as tool arguments would leak transport
+// control into tool semantics.
+func validateCallHeaders(s *sessionState, callHeaders []mcpclient.HeaderEntry) error {
+	if len(callHeaders) > 0 && s.client.Transport() != mcpclient.TransportHTTP {
+		return fmt.Errorf("mcp: x-mcp-header parameters are not valid with transport=stdio")
+	}
+	return nil
 }
 
 // mcpOutputs maps an MCP tools/call result into adapter outputs:

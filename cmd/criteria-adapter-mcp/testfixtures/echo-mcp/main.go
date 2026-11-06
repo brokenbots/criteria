@@ -259,18 +259,8 @@ func routeEnvelope(payload []byte) (req request, reply map[string]any, kind int)
 		return req, styledID(shaped), kind
 	}
 	if modernMode {
-		if !metaVersionOK(req) {
-			return req, unsupportedVersionError(req.ID), envKindReply
-		}
-		if req.Method == "server/discover" {
-			reply = envelope(req.ID, "result", discoverResult())
-			handshakeServed.Store(true)
-			return req, styledID(reply), envKindReply
-		}
-		if req.Method == "initialize" {
-			// The initialize handshake was removed by the stateless core.
-			handshakeServed.Store(true)
-			return req, specErrorResponse(req.ID, -32601, "method not found: initialize was removed in "+protocolRevision20260728), envKindReply
+		if reply, handled := routeModern(req); handled {
+			return req, reply, envKindReply
 		}
 	}
 	switch req.Method {
@@ -318,6 +308,27 @@ func routeEnvelope(payload []byte) (req request, reply map[string]any, kind int)
 	default:
 		return req, styledID(envelope(req.ID, "error", map[string]any{"code": -32601, "message": "method not found"})), envKindReply
 	}
+}
+
+// routeModern applies the stateless-core revision rules on top of the
+// shared routing: the strict _meta protocol version gate, the server/discover
+// probe (which completes the fixture's handshake state server-side), and the
+// removed initialize handshake. handled is false when the request still
+// needs the legacy switch.
+func routeModern(req request) (reply map[string]any, handled bool) {
+	if !metaVersionOK(req) {
+		return unsupportedVersionError(req.ID), true
+	}
+	switch req.Method {
+	case "server/discover":
+		handshakeServed.Store(true)
+		return styledID(envelope(req.ID, "result", discoverResult())), true
+	case "initialize":
+		// The initialize handshake was removed by the stateless core.
+		handshakeServed.Store(true)
+		return specErrorResponse(req.ID, -32601, "method not found: initialize was removed in "+protocolRevision20260728), true
+	}
+	return nil, false
 }
 
 // envelope builds a reply with the id always present (JSON-RPC responses to

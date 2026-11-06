@@ -214,7 +214,7 @@ func TestConnectFramingLadderAdoptsNDJSONModern(t *testing.T) {
 	client, rec := startLinePeerFakeServer(t, func(method string, params map[string]any) handlerResult {
 		switch method {
 		case "server/discover":
-			return handlerResult{result: modernDiscoverResult("echo", "1.0.0", 5000)}
+			return handlerResult{result: modernDiscoverResult("1.0.0", 5000)}
 		case "tools/list":
 			return echoCallResult(ResultTypeComplete)
 		case "tools/call":

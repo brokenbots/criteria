@@ -37,7 +37,7 @@ type transport interface {
 	// pending dispatcher or the send has failed: a stdio transport reads
 	// the response on the background read loop, an http transport drains
 	// the POST response stream synchronously before returning.
-	send(ctx context.Context, req wireRequest) error
+	send(ctx context.Context, req *wireRequest) error
 	// close tears the transport down (pipe writer, response streams,
 	// background listeners). Failing pending calls lives in
 	// closeWithError, which calls this exactly once.
@@ -496,7 +496,7 @@ func (c *Client) request(ctx context.Context, method string, params any, headers
 // unreadable from here on) and per-request on http (each POST stands
 // alone); a batch violation reported by the transport's inbound dispatch
 // closes the session itself via closeWithError.
-func (c *Client) send(ctx context.Context, method string, id string, headers []HeaderEntry, v any) error {
+func (c *Client) send(ctx context.Context, method, id string, headers []HeaderEntry, v any) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -510,7 +510,7 @@ func (c *Client) send(ctx context.Context, method string, id string, headers []H
 		return fmt.Errorf("mcpclient: marshal request: %w", err)
 	}
 
-	if err := c.tr.send(ctx, wireRequest{envelope: payload, method: method, id: id, headers: headers}); err != nil {
+	if err := c.tr.send(ctx, &wireRequest{envelope: payload, method: method, id: id, headers: headers}); err != nil {
 		if _, isStdio := c.tr.(*stdioTransport); isStdio {
 			c.closeWithError(err)
 			return err
@@ -548,7 +548,7 @@ func (t *stdioTransport) currentFraming() Framing {
 	return t.owner.framing
 }
 
-func (t *stdioTransport) send(_ context.Context, req wireRequest) error {
+func (t *stdioTransport) send(_ context.Context, req *wireRequest) error {
 	if len(req.headers) > 0 {
 		return errors.New("mcpclient: per-request HTTP headers are not valid on the stdio transport")
 	}
@@ -575,21 +575,14 @@ func (t *stdioTransport) readLoop(c *Client) {
 			c.closeWithError(err)
 			return
 		}
-		c.dispatchInbound(payload)
+		// Inbound dispatch folds every actionable outcome into session
+		// state itself (batch traffic closes the session; unparseable
+		// noise is dropped), so the read loop has nothing to do with the
+		// return value.
+		_ = c.dispatchInbound(payload)
 		if c.isClosed() {
 			return
 		}
-	}
-}
-
-// selectClosed reports whether the client has been closed, so the read loop
-// stops after closeWithError without racing fresh pipe reads.
-func selectClosed(c *Client) bool {
-	select {
-	case <-c.closed:
-		return true
-	default:
-		return false
 	}
 }
 
@@ -606,15 +599,22 @@ func (c *Client) dispatchInbound(payload []byte) error {
 		return errBatchedTraffic
 	}
 	var msg incomingEnvelope
-	if err := json.Unmarshal(payload, &msg); err != nil {
-		return nil
+	if err := json.Unmarshal(payload, &msg); err == nil {
+		return c.routeInbound(&msg)
 	}
+	// Unparseable inbound noise: dropped without touching pending calls or
+	// the session (the historical stdio posture for stray peer bytes).
+	return nil
+}
+
+// routeInbound sends one parsed inbound envelope to its handler.
+func (c *Client) routeInbound(msg *incomingEnvelope) error {
 	if msg.Method != "" {
 		c.handleNotification(msg.Method, msg.Params)
 		return nil
 	}
 	if len(msg.ID) > 0 {
-		c.handleResponse(&msg)
+		c.handleResponse(msg)
 	}
 	return nil
 }

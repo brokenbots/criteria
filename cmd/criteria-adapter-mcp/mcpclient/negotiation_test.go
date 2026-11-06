@@ -113,8 +113,9 @@ func startFakeServer(t *testing.T, handler func(method string, params map[string
 	return client, rec
 }
 
-// modernDiscoverResult is a spec-shaped server/discover result.
-func modernDiscoverResult(name, version string, ttlMs int64) map[string]any {
+// modernDiscoverResult is a spec-shaped server/discover result; the fixture
+// server always presents itself as "echo".
+func modernDiscoverResult(version string, ttlMs int64) map[string]any {
 	return map[string]any{
 		"resultType":        "complete",
 		"supportedVersions": []string{ProtocolVersion20260728},
@@ -123,7 +124,7 @@ func modernDiscoverResult(name, version string, ttlMs int64) map[string]any {
 		"ttlMs":             ttlMs,
 		"cacheScope":        "public",
 		"_meta": map[string]any{
-			MetaServerInfo: map[string]any{"name": name, "version": version},
+			MetaServerInfo: map[string]any{"name": "echo", "version": version},
 		},
 	}
 }
@@ -177,7 +178,7 @@ func TestConnectProbeFirstAdoptsStatelessCore(t *testing.T) {
 	client, rec := startFakeServer(t, func(method string, params map[string]any) handlerResult {
 		switch method {
 		case "server/discover":
-			return handlerResult{result: modernDiscoverResult("echo", "1.0.0", 5000)}
+			return handlerResult{result: modernDiscoverResult("1.0.0", 5000)}
 		case "tools/list", "tools/call":
 			return echoCallResult(ResultTypeComplete)
 		default:
@@ -387,7 +388,7 @@ func TestConnectInitializeModeSkipsProbe(t *testing.T) {
 
 func TestDiscoverParsesResultAndDoesNotMutateSession(t *testing.T) {
 	client, _ := startFakeServer(t, func(method string, params map[string]any) handlerResult {
-		return handlerResult{result: modernDiscoverResult("echo", "2.0.0", 4200)}
+		return handlerResult{result: modernDiscoverResult("2.0.0", 4200)}
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -420,7 +421,7 @@ func TestCallToolResultTypes(t *testing.T) {
 	client, _ := startFakeServer(t, func(method string, params map[string]any) handlerResult {
 		switch method {
 		case "server/discover":
-			return handlerResult{result: modernDiscoverResult("echo", "1.0.0", 0)}
+			return handlerResult{result: modernDiscoverResult("1.0.0", 0)}
 		case "tools/call":
 			if len(params) > 0 {
 				if args, ok := params["arguments"].(map[string]any); ok && args["kind"] == "mrtr" {

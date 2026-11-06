@@ -210,7 +210,7 @@ const (
 // response-scoped and stops being read once its own response arrived.
 var errResponseSettled = errors.New("mcpclient: response settled")
 
-func (t *httpTransport) send(ctx context.Context, req wireRequest) error {
+func (t *httpTransport) send(ctx context.Context, req *wireRequest) error {
 	// Defense in depth: the bridge validates per-request entries at the
 	// config/param boundary; the transport re-runs the same checks so a
 	// smuggled reserved or malformed name fails the call, never the HTTP
@@ -234,7 +234,7 @@ func (t *httpTransport) send(ctx context.Context, req wireRequest) error {
 // server-side resumability): the caller re-issues it as a new request with
 // a new request id, and the failure is per-call — the session keeps
 // working.
-func (t *httpTransport) postRequest(ctx context.Context, req wireRequest) error {
+func (t *httpTransport) postRequest(ctx context.Context, req *wireRequest) error {
 	reqCtx, cancel := t.bounded(ctx)
 	if cancel != nil {
 		defer cancel()
@@ -247,12 +247,16 @@ func (t *httpTransport) postRequest(ctx context.Context, req wireRequest) error 
 	if err != nil {
 		return fmt.Errorf("mcpclient: POST %s: %w", req.method, err)
 	}
+	defer httpResp.Body.Close()
 	if httpResp.StatusCode < 200 || httpResp.StatusCode > 299 {
-		drainAndClose(httpResp.Body)
+		drainResponse(httpResp.Body)
 		return fmt.Errorf("mcpclient: POST %s: unexpected status %d", req.method, httpResp.StatusCode)
 	}
 	pumpErr := t.pumpResponse(req, httpResp.Header.Get("Content-Type"), io.LimitReader(httpResp.Body, maxHTTPResponseBytes))
-	drainAndClose(httpResp.Body)
+	// The SSE pump may stop reading early (the call's own response ends
+	// the response-scoped stream): drain the remainder so the pooled
+	// connection returns to the pool promptly.
+	drainResponse(httpResp.Body)
 	if pumpErr != nil {
 		return pumpErr
 	}
@@ -268,7 +272,7 @@ func (t *httpTransport) postRequest(ctx context.Context, req wireRequest) error 
 // pumpResponse dispatches one successful response body: JSON is a single
 // envelope; SSE events are envelopes streamed as they arrive; anything else
 // is a per-call content-type failure.
-func (t *httpTransport) pumpResponse(req wireRequest, contentType string, body io.Reader) error {
+func (t *httpTransport) pumpResponse(req *wireRequest, contentType string, body io.Reader) error {
 	mediaType := contentType
 	if i := strings.Index(contentType, ";"); i >= 0 {
 		mediaType = contentType[:i]
@@ -313,7 +317,7 @@ func (t *httpTransport) pumpSSE(body io.Reader, callID string) error {
 
 // postNotification delivers a notification POST; any 2xx settles it and
 // the body is ignored (notifications have no response).
-func (t *httpTransport) postNotification(ctx context.Context, req wireRequest) error {
+func (t *httpTransport) postNotification(ctx context.Context, req *wireRequest) error {
 	reqCtx, cancel := t.bounded(ctx)
 	if cancel != nil {
 		defer cancel()
@@ -326,11 +330,11 @@ func (t *httpTransport) postNotification(ctx context.Context, req wireRequest) e
 	if err != nil {
 		return fmt.Errorf("mcpclient: POST %s: %w", req.method, err)
 	}
-	defer drainAndClose(httpResp.Body)
+	defer httpResp.Body.Close()
 	if httpResp.StatusCode < 200 || httpResp.StatusCode > 299 {
 		return fmt.Errorf("mcpclient: POST %s: unexpected status %d", req.method, httpResp.StatusCode)
 	}
-	_, _ = io.Copy(io.Discard, io.LimitReader(httpResp.Body, maxDrainBytes))
+	drainResponse(httpResp.Body)
 	return nil
 }
 
@@ -350,7 +354,7 @@ func (t *httpTransport) bounded(ctx context.Context) (context.Context, context.C
 // the config's custom headers, then per-request headers (x-mcp-header
 // parameters win on collision). Header map assignment preserves caller
 // case; Header.Set would canonicalize it away.
-func (t *httpTransport) newRequest(ctx context.Context, req wireRequest, accept []string) (*http.Request, error) {
+func (t *httpTransport) newRequest(ctx context.Context, req *wireRequest, accept []string) (*http.Request, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, t.endpoint, bytes.NewReader(req.envelope))
 	if err != nil {
 		return nil, fmt.Errorf("mcpclient: build %s request: %w", req.method, err)
@@ -401,7 +405,7 @@ func (t *httpTransport) listenLoop(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		_ = t.listenOnce(ctx, attempt)
+		_ = t.listenOnce(ctx)
 		if attempt < listenAttempts {
 			select {
 			case <-ctx.Done():
@@ -416,14 +420,14 @@ func (t *httpTransport) listenLoop(ctx context.Context) {
 // to the shared inbound dispatcher. The subscribe POST itself may answer
 // with a result envelope (unknown id: dropped) or hold the stream open as
 // SSE for the session's lifetime.
-func (t *httpTransport) listenOnce(ctx context.Context, attempt int) error {
+func (t *httpTransport) listenOnce(ctx context.Context) error {
 	c := t.owner
 	id := fmt.Sprintf("listen-%d", t.listenIDs.Add(1))
 	payload, err := json.Marshal(requestEnvelope{JSONRPC: jsonRPCVersion, ID: id, Method: ListenMethod})
 	if err != nil {
 		return err
 	}
-	httpReq, err := t.newRequest(ctx, wireRequest{envelope: payload, method: ListenMethod, id: id}, []string{"application/json", "text/event-stream"})
+	httpReq, err := t.newRequest(ctx, &wireRequest{envelope: payload, method: ListenMethod, id: id}, []string{"application/json", "text/event-stream"})
 	if err != nil {
 		return err
 	}
@@ -431,7 +435,7 @@ func (t *httpTransport) listenOnce(ctx context.Context, attempt int) error {
 	if err != nil {
 		return fmt.Errorf("mcpclient: subscriptions/listen: %w", err)
 	}
-	defer drainAndClose(httpResp.Body)
+	defer httpResp.Body.Close()
 	if httpResp.StatusCode < 200 || httpResp.StatusCode > 299 {
 		return fmt.Errorf("mcpclient: subscriptions/listen: unexpected status %d", httpResp.StatusCode)
 	}
@@ -452,86 +456,100 @@ func (t *httpTransport) close() error {
 	return nil
 }
 
-// drainAndClose closes a response body after reading up to maxDrainBytes,
-// so keep-alive connections return to the pool promptly.
-func drainAndClose(body io.ReadCloser) {
-	if body == nil {
-		return
-	}
+// drainResponse reads a response body up to maxDrainBytes so keep-alive
+// connections return to the pool promptly; the caller owns closing it.
+func drainResponse(body io.Reader) {
 	_, _ = io.Copy(io.Discard, io.LimitReader(body, maxDrainBytes))
-	_ = body.Close()
 }
 
 // parseSSEEvents decodes an SSE stream, invoking fn once per event with
-// non-empty data. Lines are terminated by \r\n, \n, or \r; ":" starts a
-// comment; a field value strips exactly one leading space; a blank line
-// flushes the composed event (multi-line data joined with "\n");
-// event/id/retry fields are parsed and dropped — the 2026-07-28 revision
-// removed server-side stream resumability, so no event ids are tracked;
-// unknown fields are ignored. fn errors abort the stream. EOF flushes a
-// trailing unterminated event, mirroring servers that close a stream right
-// after composing its final event.
+// non-empty data; framing rules live in sseDecoder.
 func parseSSEEvents(r io.Reader, fn func(data []byte) error) error {
-	reader := bufio.NewReader(r)
-	var data []string
-	flush := func() error {
-		if len(data) == 0 {
-			return nil
-		}
-		payload := []byte(strings.Join(data, "\n"))
-		data = nil
-		return fn(payload)
-	}
+	return (&sseDecoder{}).read(bufio.NewReader(r), fn)
+}
+
+// sseDecoder composes one SSE stream's events: it accumulates each event's
+// data field values and hands the composed payload to fn.
+type sseDecoder struct {
+	data []string
+}
+
+// read runs the byte-level line scan: \r\n, \n, or \r terminated lines.
+// EOF flushes a trailing unterminated event, mirroring servers that close
+// a stream right after composing its final event. fn errors abort the
+// stream.
+func (d *sseDecoder) read(reader *bufio.Reader, fn func(data []byte) error) error {
 	var line []byte
-	processLine := func() error {
-		switch lineStr := string(line); {
-		case lineStr == "":
-			if err := flush(); err != nil {
-				return err
-			}
-		case strings.HasPrefix(lineStr, ":"):
-			// comment
-		default:
-			name, value, _ := strings.Cut(lineStr, ":")
-			value = strings.TrimPrefix(value, " ")
-			switch name {
-			case "data":
-				data = append(data, value)
-			case "event", "id", "retry":
-				// parsed and dropped: no resumability, event kinds unused
-			default:
-				// unknown fields ignored
-			}
-		}
+	advance := func() error {
+		err := d.processLine(line, fn)
 		line = line[:0]
-		return nil
+		return err
 	}
-	for done := false; !done; {
-		b, err := reader.ReadByte()
+	for {
+		b, brk := reader.ReadByte()
 		switch {
-		case err != nil:
-			done = true
-			// Flush a trailing unterminated line.
-			if len(line) > 0 {
-				if processErr := processLine(); processErr != nil {
-					return processErr
+		case brk != nil:
+			return d.finish(line, fn)
+		case b == '\n' || b == '\r':
+			if b == '\r' {
+				// CRLF: consume the LF that completes the break.
+				if next, peekErr := reader.Peek(1); peekErr == nil && next[0] == '\n' {
+					_, _ = reader.Discard(1)
 				}
 			}
-		case b == '\n':
-			if processErr := processLine(); processErr != nil {
-				return processErr
-			}
-		case b == '\r':
-			// CRLF: consume the LF that completes the break.
-			if next, peekErr := reader.Peek(1); peekErr == nil && next[0] == '\n' {
-				_, _ = reader.Discard(1)
-			}
-			if processErr := processLine(); processErr != nil {
+			if processErr := advance(); processErr != nil {
 				return processErr
 			}
 		default:
 			line = append(line, b)
 		}
 	}
-	return flush()
+}
+
+// finish flushes a trailing unterminated line (if one is pending) and then
+// the composed event, on stream end.
+func (d *sseDecoder) finish(line []byte, fn func(data []byte) error) error {
+	if len(line) > 0 {
+		if err := d.processLine(line, fn); err != nil {
+			return err
+		}
+	}
+	return d.flush(fn)
+}
+
+// processLine applies one SSE line to the decoder: a blank line flushes the
+// composed event (multi-line data joined with "\n"), ":" starts a comment,
+// a field value strips exactly one leading space, and event/id/retry fields
+// are parsed and dropped — the 2026-07-28 revision removed server-side
+// stream resumability, so no event ids are tracked. Unknown fields are
+// ignored.
+func (d *sseDecoder) processLine(line []byte, fn func(data []byte) error) error {
+	lineStr := string(line)
+	if lineStr == "" {
+		return d.flush(fn)
+	}
+	if strings.HasPrefix(lineStr, ":") {
+		return nil
+	}
+	name, value, _ := strings.Cut(lineStr, ":")
+	value = strings.TrimPrefix(value, " ")
+	switch name {
+	case "data":
+		d.data = append(d.data, value)
+	case "event", "id", "retry":
+		// no resumability, event kinds unused
+	default:
+		// unknown fields ignored
+	}
+	return nil
+}
+
+// flush hands fn the composed event, if one is pending.
+func (d *sseDecoder) flush(fn func(data []byte) error) error {
+	if len(d.data) == 0 {
+		return nil
+	}
+	payload := []byte(strings.Join(d.data, "\n"))
+	d.data = nil
+	return fn(payload)
 }

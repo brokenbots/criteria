@@ -197,7 +197,7 @@ func (f *httpFake) reply(w http.ResponseWriter, id json.RawMessage, resultJSON s
 func (f *httpFake) replyError(w http.ResponseWriter, id json.RawMessage, errRPC *RPCError) {
 	errBody := map[string]any{"code": errRPC.Code, "message": errRPC.Message}
 	if len(errRPC.Data) > 0 {
-		errBody["data"] = json.RawMessage(errRPC.Data)
+		errBody["data"] = errRPC.Data
 	}
 	env, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "error": errBody})
 	w.Header().Set("Content-Type", "application/json")
