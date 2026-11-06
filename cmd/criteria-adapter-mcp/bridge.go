@@ -73,6 +73,16 @@ const callErrorUnknownTool = "unknown_tool"
 // inputResponses retry round-trip is a follow-up card.
 const callErrorInputRequired = "input_required"
 
+// callErrorInvalidHeader is the well-known typed call_error code (ADR-0004
+// §8 registry) reported when an Execute input violates the x-mcp-header
+// parameter contract: a bare x-mcp-header- prefix key, an invalid header
+// token, a transport-controlled or Mcp-Param-* name, a value with line
+// breaks, or header parameters on a transport=stdio session. A
+// caller-supplied input that fails the callee's header contract is an
+// input-contract violation, not a callee crash — the host honors it as a
+// callee-reported typed call_error like unknown_tool.
+const callErrorInvalidHeader = "invalid_header"
+
 // callErrorOutputKey is the reserved output key carrying a callee-reported
 // typed call_error code on a failure result.
 const callErrorOutputKey = "call_error"
@@ -745,12 +755,16 @@ func (b *MCPBridge) Execute(ctx context.Context, req *v2.ExecuteRequest, sink ad
 		return sink.Send(typedFailureEvent(callErrorUnknownTool))
 	}
 
+	// Typed invalid_header: a caller-supplied header parameter that fails
+	// the x-mcp-header contract is an input-contract violation, not a
+	// callee crash — report the reserved call_error output (with the
+	// validation message, values never included) instead of a bare error.
 	arguments, callHeaders, err := extractHeaderParams(req.GetInput())
 	if err != nil {
-		return err
+		return sink.Send(typedFailureEventWithDetail(callErrorInvalidHeader, map[string]any{"message": err.Error()}))
 	}
 	if err := validateCallHeaders(s, callHeaders); err != nil {
-		return err
+		return sink.Send(typedFailureEventWithDetail(callErrorInvalidHeader, map[string]any{"message": err.Error()}))
 	}
 
 	// Register this execute on the session's per-execute registry so
@@ -1048,8 +1062,10 @@ func shutdownSession(ctx context.Context, s *sessionState) error {
 	// Best-effort parity with the former in-flight sink check: ask any
 	// in-flight execute (unaddressed without a per-execute request id here)
 	// to stop via a session-level cancellation notification with no request
-	// id. Per-call cancels are handled by CallToolTracked.
-	if s.hasExec() {
+	// id. Per-call cancels are handled by CallToolTracked. On Streamable
+	// HTTP the SSE stream close is the cancellation signal — the revision
+	// defines no notifications/cancelled on this transport — so stdio only.
+	if s.hasExec() && s.client.Transport() != mcpclient.TransportHTTP {
 		_ = s.client.Notification(context.WithoutCancel(ctx), "notifications/cancelled", map[string]any{"reason": "session_close"})
 	}
 	s.client.Close()

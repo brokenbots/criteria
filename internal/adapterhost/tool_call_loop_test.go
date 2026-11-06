@@ -656,13 +656,14 @@ func TestCalleeReportedCallError_UnknownValue(t *testing.T) {
 }
 
 // TestCalleeReportedCallError_HonoredCodes pins the callee-meaningful
-// whitelist: unknown_tool, capability_missing, not_yet_supported and — since
-// KB-158 — input_required (the MCP callee's interim multi-round-trip verdict,
-// SEP-2322) surface as typed codes to the nested caller, while
-// host-computed codes, unknown spellings, success outcomes, and missing keys
-// stay unrecognized so a hostile callee cannot forge host gate decisions.
+// whitelist: unknown_tool, capability_missing, not_yet_supported, input_required
+// (the MCP callee's interim multi-round-trip verdict, SEP-2322) and
+// invalid_header (the MCP callee's x-mcp-header input-contract violation)
+// surface as typed codes to the nested caller, while host-computed codes,
+// unknown spellings, success outcomes, and missing keys stay unrecognized so
+// a hostile callee cannot forge host gate decisions.
 func TestCalleeReportedCallError_HonoredCodes(t *testing.T) {
-	for _, code := range []string{callErrorUnknownTool, callErrorCapabilityMissing, callErrorNotYetSupported, callErrorInputRequired} {
+	for _, code := range []string{callErrorUnknownTool, callErrorCapabilityMissing, callErrorNotYetSupported, callErrorInputRequired, callErrorInvalidHeader} {
 		got := calleeReportedCallError(adapter.Result{
 			Outcome: "failure",
 			Outputs: map[string]cty.Value{calleeReportedCallErrorCode: cty.StringVal(code)},

@@ -578,8 +578,7 @@ func (c *Client) request(ctx context.Context, method string, params any, headers
 		// abandoned call's response stream close is the cancellation signal
 		// (no server-side resumability), and a notifications/cancelled POST
 		// after the stream is gone cancels nothing — the revision does not
-		// define one for this transport. stdio keeps sending it. Best-effort
-		// over a detached context because the caller's context is already done.
+		// define one for this transport. stdio keeps sending it.
 		if c.Transport() != TransportHTTP {
 			_ = c.Notification(context.WithoutCancel(ctx), "notifications/cancelled", map[string]any{
 				"requestId": id,

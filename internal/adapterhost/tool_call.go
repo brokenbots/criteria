@@ -117,6 +117,10 @@ const (
 	callErrorBudgetExhausted   = "budget_exhausted"
 	callErrorInvalidResponse   = "invalid_response"
 	callErrorInputRequired     = "input_required"
+	// callErrorInvalidHeader is callee-reported only (the mcp adapter's
+	// x-mcp-header input contract) and never host-computed: it lives with
+	// the registry for the callee-reported honor list.
+	callErrorInvalidHeader = "invalid_header"
 )
 
 // calleeReportedCallErrorCode is the reserved output key on a failure result
@@ -959,7 +963,10 @@ func (s *permissionInterceptSink) reportNestedCallFailure(call *nestedToolCall, 
 // cycle, depth, self-call, pause, cancellation, ...) stay host-computed so a
 // callee cannot forge host gate decisions. input_required is honored to
 // forward the callee's interim multi-round-trip verdict to the
-// nested caller as a typed failure. Returns "" for any other result.
+// nested caller as a typed failure; invalid_header is honored for an MCP
+// callee's x-mcp-header input-contract violation (the caller's header
+// parameters failed the callee's header contract). Returns "" for any other
+// result.
 func calleeReportedCallError(result adapter.Result) string {
 	if result.Outcome != "failure" {
 		return ""
@@ -970,7 +977,7 @@ func calleeReportedCallError(result adapter.Result) string {
 	}
 	code := strings.TrimSpace(raw.AsString())
 	switch code {
-	case callErrorUnknownTool, callErrorCapabilityMissing, callErrorNotYetSupported, callErrorInputRequired:
+	case callErrorUnknownTool, callErrorCapabilityMissing, callErrorNotYetSupported, callErrorInputRequired, callErrorInvalidHeader:
 		return code
 	default:
 		return ""

@@ -585,7 +585,8 @@ func TestHTTPConformance_ConfigMatrix(t *testing.T) {
 func TestHTTPConformance_StdioExecuteRejectsHeaderParams(t *testing.T) {
 	// The x-mcp-header seam is Streamable HTTP surface: a stdio session
 	// rejects header parameters instead of leaking transport control into
-	// tool semantics or silently dropping the intent.
+	// tool semantics or silently dropping the intent. The rejection is the
+	// typed invalid_header failure, not a bare execute error.
 	b := kb158OpenConfig(t, "http-conf-stdio-headers", map[string]string{
 		"command": testEchoBin,
 		"env":     "MCP_PROTOCOL=2026-07-28",
@@ -595,15 +596,18 @@ func TestHTTPConformance_StdioExecuteRejectsHeaderParams(t *testing.T) {
 		SessionId: "http-conf-stdio-headers",
 		Input:     map[string]string{"tool": "echo", "message": "hi", "x-mcp-header-X-Trace": "tok-1"},
 	}, sender)
-	if err == nil || !strings.Contains(err.Error(), "transport=stdio") {
-		t.Fatalf("Execute with x-mcp-header on stdio = %v, want the transport rejection", err)
+	if err != nil {
+		t.Fatalf("Execute with x-mcp-header on stdio = %v, want the typed failure event with nil error", err)
 	}
+	assertTypedCallError(t, sender, callErrorInvalidHeader, "transport=stdio")
 }
 
 func TestHTTPConformance_EmptyHeaderNameRejected(t *testing.T) {
 	// A parameter named exactly the x-mcp-header- prefix names no header:
 	// forwarded as a tool argument it would leak transport control into
-	// tool semantics, contradicting the never-forwarded seam contract.
+	// tool semantics, contradicting the never-forwarded seam contract. The
+	// rejection is the typed invalid_header failure, not a bare execute
+	// error.
 	fake := &mcpHTTPFake{}
 	ts := httptest.NewServer(fake)
 	t.Cleanup(ts.Close)
@@ -614,7 +618,39 @@ func TestHTTPConformance_EmptyHeaderNameRejected(t *testing.T) {
 		SessionId: "http-conf-empty-header",
 		Input:     map[string]string{"tool": "echo", "message": "hi", "x-mcp-header-": "v"},
 	}, sender)
-	if err == nil || !strings.Contains(err.Error(), "requires a non-empty header name") {
-		t.Fatalf("Execute with a bare x-mcp-header- key = %v, want the empty-name rejection", err)
+	if err != nil {
+		t.Fatalf("Execute with a bare x-mcp-header- key = %v, want the typed failure event with nil error", err)
+	}
+	assertTypedCallError(t, sender, callErrorInvalidHeader, "requires a non-empty header name")
+}
+
+// assertTypedCallError pins the typed invalid_header failure shape: the
+// execute stream answered a failure result carrying the reserved call_error
+// output with the expected code and a "message" detail (the validation
+// message, never a header value).
+func assertTypedCallError(t *testing.T, sender *permittingEventSender, wantCode, wantMessagePart string) {
+	t.Helper()
+	var failure *v2.ExecuteEvent
+	for _, ev := range sender.all() {
+		if res := ev.GetResult(); res != nil && res.GetOutcome() == "failure" {
+			failure = ev
+		}
+	}
+	if failure == nil {
+		t.Fatalf("no failure result on the execute stream, want a typed %s failure", wantCode)
+	}
+	var outputs map[string]any
+	if raw := failure.GetResult().GetOutputsJson(); len(raw) > 0 {
+		if err := json.Unmarshal(raw, &outputs); err != nil {
+			t.Fatalf("failure outputs_json = %q is not an object", raw)
+		}
+	}
+	code, ok := outputs[callErrorOutputKey]
+	if !ok || code != wantCode {
+		t.Fatalf("failure outputs = %v, want call_error=%s", outputs, wantCode)
+	}
+	message, _ := outputs["message"].(string)
+	if wantMessagePart != "" && !strings.Contains(message, wantMessagePart) {
+		t.Fatalf("failure message = %q, want it to contain %q", message, wantMessagePart)
 	}
 }
