@@ -156,11 +156,11 @@ func validateMessageHeaders(r *http.Request, req request) string {
 }
 
 // validateParamHeaders checks the x-mcp-header mirror set for one
-// tools/call against the argument values at the annotated path: every
+// tools/call against the annotated parameter's own instance value: every
 // required Mcp-Param-* must be present, decoded, and matching; a mirror
-// outside the declared name set is rejected (the annotation's name table
-// is closed by additionalProperties: false). Without the annotation knob
-// the declared set is empty, so any Mcp-Param-* mirror is rejected.
+// outside the declared name set is rejected (the schema declares exactly
+// the X-Trace mirror). Without the annotation knob the declared set is
+// empty, so any Mcp-Param-* mirror is rejected.
 func validateParamHeaders(r *http.Request, req request) string {
 	declared := toolParamNames()
 	args, _ := req.Params["arguments"].(map[string]any)
@@ -179,7 +179,7 @@ func validateParamHeaders(r *http.Request, req request) string {
 		}
 		seen[name] = canonical
 	}
-	if headerSchemaKind == headerSchemaNone {
+	if !headerSchemaEnabled {
 		return ""
 	}
 	for name := range declared {
@@ -204,28 +204,24 @@ func validateParamHeaders(r *http.Request, req request) string {
 }
 
 // toolParamNames is the fixture's annotated-tool mirror declaration when
-// MCP_HDR_SCHEMA is set: either spelling annotates a mirror whose required
-// X-Trace member (a string) resolves to Mcp-Param-X-Trace.
+// MCP_HDR_SCHEMA is set: the spec-shaped annotation declares one mirror,
+// Mcp-Param-X-Trace, carrying the instance value of arguments.trace.
 func toolParamNames() map[string]string {
-	if headerSchemaKind == headerSchemaNone {
+	if !headerSchemaEnabled {
 		return nil
 	}
 	return map[string]string{"X-Trace": "string"}
 }
 
-// toolParamValue renders the argument value at the annotated path the way
-// the mirrored header encodes it (bools as true/false, JSON numbers as
-// shortest round-trip floats, strings verbatim): the server compares the
-// decoded header against this form. The annotated path follows the knob's
-// spelling — the "trace" marker property or the property NAMED x-mcp-header.
+// toolParamValue renders the annotated parameter's own value the way the
+// mirrored header encodes it (strings verbatim, bools as true/false, JSON
+// numbers as exact decimals — json.Number preserving raw precision): the
+// server compares the decoded header against this form. The annotated path
+// is the fixture's `trace` property.
 func toolParamValue(name string, args map[string]any) (headerValue, note string) {
-	annotated, _ := args[toolParamPath()].(map[string]any)
-	if annotated == nil {
-		return "", "argument carries no annotated object to mirror"
-	}
-	value, ok := annotated[name]
+	value, ok := args["trace"]
 	if !ok || value == nil {
-		return "", "mirror header " + name + " has no argument value"
+		return "", "argument carries no trace value to mirror"
 	}
 	switch v := value.(type) {
 	case string:
@@ -233,20 +229,12 @@ func toolParamValue(name string, args map[string]any) (headerValue, note string)
 	case bool:
 		return fmt.Sprintf("%v", v), ""
 	case float64:
-		return strconv.FormatFloat(v, 'g', -1, 64), ""
+		return strconv.FormatFloat(v, 'f', -1, 64), ""
 	case json.Number:
 		return v.String(), ""
 	default:
 		return "", "mirror header " + name + " argument is not a primitive"
 	}
-}
-
-// toolParamPath is the arguments path holding the annotated object.
-func toolParamPath() string {
-	if headerSchemaKind == headerSchemaProperty {
-		return "x-mcp-header"
-	}
-	return "trace"
 }
 
 // serveEnvelope serves one routed message per kind: notifications get 202,

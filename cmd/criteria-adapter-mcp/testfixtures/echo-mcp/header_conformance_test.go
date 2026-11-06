@@ -135,13 +135,12 @@ func TestHTTPHeaderValidation_NonNameBearingMethods(t *testing.T) {
 		t.Fatalf("tools/list without a name rejected: %d %s", status, body)
 	}
 }
-
 func TestHTTPHeaderValidation_ParamMirrors(t *testing.T) {
 	// The annotation knob drives both the advertised schema and the
 	// validation table; restore it for sibling tests.
-	saved := headerSchemaKind
-	headerSchemaKind = headerSchemaMarker
-	t.Cleanup(func() { headerSchemaKind = saved })
+	saved := headerSchemaEnabled
+	headerSchemaEnabled = true
+	t.Cleanup(func() { headerSchemaEnabled = saved })
 
 	srv := newHeaderTestServer(t)
 	post := func(headers map[string]string, arguments string) (int, string) {
@@ -153,24 +152,36 @@ func TestHTTPHeaderValidation_ParamMirrors(t *testing.T) {
 		return postEnvelope(t, srv, payload, set)
 	}
 
-	// The required mirror, matching the argument value, passes.
-	if status, body := post(map[string]string{"Mcp-Param-X-Trace": "v1"}, `{"trace":{"X-Trace":"v1"}}`); status >= 400 {
+	// The required mirror matching the annotated value passes (string
+	// verbatim), as do the boolean and integer value shapes.
+	if status, body := post(map[string]string{"Mcp-Param-X-Trace": "v1"}, `{"trace":"v1"}`); status >= 400 {
 		t.Fatalf("mirrored call rejected: %d %s", status, body)
 	}
+	if status, body := post(map[string]string{"Mcp-Param-X-Trace": "true"}, `{"trace":true}`); status >= 400 {
+		t.Fatalf("boolean-shaped mirrored call rejected: %d %s", status, body)
+	}
+	if status, body := post(map[string]string{"Mcp-Param-X-Trace": "7"}, `{"trace":7}`); status >= 400 {
+		t.Fatalf("integer-shaped mirrored call rejected: %d %s", status, body)
+	}
 
-	// A value mismatching the argument is a violation.
-	status, body := post(map[string]string{"Mcp-Param-X-Trace": "other"}, `{"trace":{"X-Trace":"v1"}}`)
+	// A value mismatching the argument is a violation: string, boolean, and
+	// integer shapes alike.
+	status, body := post(map[string]string{"Mcp-Param-X-Trace": "other"}, `{"trace":"v1"}`)
+	assertViolation(t, status, body)
+	status, body = post(map[string]string{"Mcp-Param-X-Trace": "false"}, `{"trace":true}`)
+	assertViolation(t, status, body)
+	status, body = post(map[string]string{"Mcp-Param-X-Trace": "8"}, `{"trace":7}`)
 	assertViolation(t, status, body)
 
 	// A missing required mirror is a violation.
-	status, body = post(nil, `{"trace":{"X-Trace":"v1"}}`)
+	status, body = post(nil, `{"trace":"v1"}`)
 	assertViolation(t, status, body)
 
 	// A mirror outside the declared set is a violation.
-	status, body = post(map[string]string{"Mcp-Param-X-Trace": "v1", "Mcp-Param-X-Other": "x"}, `{"trace":{"X-Trace":"v1"}}`)
+	status, body = post(map[string]string{"Mcp-Param-X-Trace": "v1", "Mcp-Param-X-Other": "x"}, `{"trace":"v1"}`)
 	assertViolation(t, status, body)
 
-	// A mirror whose argument is absent is a violation.
+	// A mirror with no argument value at the annotated path is a violation.
 	status, body = post(map[string]string{"Mcp-Param-X-Trace": "v1"}, `{}`)
 	assertViolation(t, status, body)
 
@@ -181,74 +192,27 @@ func TestHTTPHeaderValidation_ParamMirrors(t *testing.T) {
 	if got := mcpclient.DecodeHeaderValue(sentinel); got != value {
 		t.Fatalf("sentinel decode = %q, want %q", got, value)
 	}
-	if status, body := post(map[string]string{"Mcp-Param-X-Trace": sentinel}, fmt.Sprintf(`{"trace":{"X-Trace":%q}}`, value)); status >= 400 {
+	if status, body := post(map[string]string{"Mcp-Param-X-Trace": sentinel}, fmt.Sprintf(`{"trace":%q}`, value)); status >= 400 {
 		t.Fatalf("sentinel-mirrored call rejected: %d %s", status, body)
 	}
 
 	// With the annotation knob off the declared set is empty: any mirror
 	// is rejected.
-	headerSchemaKind = headerSchemaNone
-	status, body = post(map[string]string{"Mcp-Param-X-Trace": "v1"}, `{"trace":{"X-Trace":"v1"}}`)
+	headerSchemaEnabled = false
+	status, body = post(map[string]string{"Mcp-Param-X-Trace": "v1"}, `{"trace":"v1"}`)
 	assertViolation(t, status, body)
-}
-
-func TestHTTPHeaderValidation_ParamMirrors_PropertyShape(t *testing.T) {
-	// The property-name spelling: the arguments object carries a property
-	// NAMED x-mcp-header whose value table the mirror set reads from; the
-	// same Server Validation rules answer with the same vectors.
-	saved := headerSchemaKind
-	headerSchemaKind = headerSchemaProperty
-	t.Cleanup(func() { headerSchemaKind = saved })
-
-	srv := newHeaderTestServer(t)
-	post := func(headers map[string]string, arguments string) (int, string) {
-		payload := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":%s}}`, arguments)
-		set := map[string]string{"Mcp-Method": "tools/call", "Mcp-Name": "echo"}
-		for name, value := range headers {
-			set[name] = value
-		}
-		return postEnvelope(t, srv, payload, set)
-	}
-
-	// The required mirror matches the value at the property-named path.
-	if status, body := post(map[string]string{"Mcp-Param-X-Trace": "v1"}, `{"x-mcp-header":{"X-Trace":"v1"}}`); status >= 400 {
-		t.Fatalf("property-shape mirrored call rejected: %d %s", status, body)
-	}
-
-	// Mismatch against the property-named value.
-	status, body := post(map[string]string{"Mcp-Param-X-Trace": "other"}, `{"x-mcp-header":{"X-Trace":"v1"}}`)
-	assertViolation(t, status, body)
-
-	// Missing required mirror.
-	status, body = post(nil, `{"x-mcp-header":{"X-Trace":"v1"}}`)
-	assertViolation(t, status, body)
-
-	// Mirror outside the declared name set.
-	status, body = post(map[string]string{"Mcp-Param-X-Trace": "v1", "Mcp-Param-X-Other": "x"}, `{"x-mcp-header":{"X-Trace":"v1"}}`)
-	assertViolation(t, status, body)
-
-	// Mirror with no argument value at the property-named path.
-	status, body = post(map[string]string{"Mcp-Param-X-Trace": "v1"}, `{}`)
-	assertViolation(t, status, body)
-
-	// A non-header-safe value rides the Base64 sentinel and still matches.
-	value := "caf\u00e9"
-	sentinel := "=?base64?" + base64.StdEncoding.EncodeToString([]byte(value)) + "?="
-	if status, body := post(map[string]string{"Mcp-Param-X-Trace": sentinel}, fmt.Sprintf(`{"x-mcp-header":{"X-Trace":%q}}`, value)); status >= 400 {
-		t.Fatalf("property-shape sentinel-mirrored call rejected: %d %s", status, body)
-	}
 }
 
 func TestHTTPHeaderValidation_HeaderDesyncOnAnnotatedTool(t *testing.T) {
-	saved := headerSchemaKind
-	headerSchemaKind = headerSchemaMarker
-	t.Cleanup(func() { headerSchemaKind = saved })
+	saved := headerSchemaEnabled
+	headerSchemaEnabled = true
+	t.Cleanup(func() { headerSchemaEnabled = saved })
 	srv := newHeaderTestServer(t)
 
 	// The method/value desync keeps the -32020 answer with the annotated
 	// tool too (no plaintext-400 path).
 	status, body := postEnvelope(t, srv,
-		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{"trace":{"X-Trace":"v1"}}}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{"trace":"v1"}}}`,
 		map[string]string{"Mcp-Method": "tools/call", "Mcp-Name": "criteria-adapter-mcp"})
 	assertViolation(t, status, body)
 }
