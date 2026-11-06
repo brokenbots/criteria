@@ -248,7 +248,7 @@ func (b *MCPBridge) Info(_ context.Context, _ *v2.InfoRequest) (*v2.InfoResponse
 		// hosts keep the one-execute-at-a-time posture.
 		Capabilities: []string{"single_shot", "permission_gating", "adapter_tools", "concurrent_execute"},
 		ConfigSchema: &v2.AdapterSchemaProto{Fields: map[string]*v2.ConfigFieldProto{
-			"command":   {Required: true, Type: "string", Description: "MCP server binary to launch; stdio transport only."},
+			"command":   {Type: "string", Description: "MCP server binary to launch; required with transport=stdio, rejected with transport=http (not unconditionally required: the per-transport rule is enforced by parseServerConfig)."},
 			"args":      {Type: "string", Description: "Comma-separated argument list for the server binary."},
 			"env":       {Type: "string", Description: "Comma-separated KEY=VALUE environment variable pairs."},
 			"cwd":       {Type: "string", Description: "Working directory for the MCP server process."},
@@ -883,8 +883,11 @@ func extractHeaderParams(input map[string]string) (map[string]any, []mcpclient.H
 	var headers []mcpclient.HeaderEntry
 	headerKeys := make(map[string]struct{}, len(input))
 	for k, v := range input {
-		if len(k) <= len(headerParamPrefix) || !strings.EqualFold(k[:len(headerParamPrefix)], headerParamPrefix) {
+		if len(k) < len(headerParamPrefix) || !strings.EqualFold(k[:len(headerParamPrefix)], headerParamPrefix) {
 			continue
+		}
+		if len(k) == len(headerParamPrefix) {
+			return nil, nil, fmt.Errorf("mcp: x-mcp-header- requires a non-empty header name")
 		}
 		headerKeys[k] = struct{}{}
 		if strings.TrimSpace(v) == "" {

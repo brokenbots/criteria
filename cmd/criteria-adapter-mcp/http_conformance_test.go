@@ -577,3 +577,22 @@ func TestHTTPConformance_StdioExecuteRejectsHeaderParams(t *testing.T) {
 		t.Fatalf("Execute with x-mcp-header on stdio = %v, want the transport rejection", err)
 	}
 }
+
+func TestHTTPConformance_EmptyHeaderNameRejected(t *testing.T) {
+	// A parameter named exactly the x-mcp-header- prefix names no header:
+	// forwarded as a tool argument it would leak transport control into
+	// tool semantics, contradicting the never-forwarded seam contract.
+	fake := &mcpHTTPFake{}
+	ts := httptest.NewServer(fake)
+	t.Cleanup(ts.Close)
+
+	b := openHTTPConformanceSession(t, "http-conf-empty-header", map[string]string{"transport": "http", "url": ts.URL})
+	sender := &permittingEventSender{bridge: b}
+	err := b.Execute(context.Background(), &v2.ExecuteRequest{
+		SessionId: "http-conf-empty-header",
+		Input:     map[string]string{"tool": "echo", "message": "hi", "x-mcp-header-": "v"},
+	}, sender)
+	if err == nil || !strings.Contains(err.Error(), "requires a non-empty header name") {
+		t.Fatalf("Execute with a bare x-mcp-header- key = %v, want the empty-name rejection", err)
+	}
+}
