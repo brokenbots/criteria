@@ -841,8 +841,8 @@ Each policy field resolves per session:
 3. **`policy_mode = "strict"`** → unset fields default to deny-all; adapter hints
    are never trusted as defaults. This is the zero-trust/enterprise opt-in.
 
-Fields: `policy_mode` (`permissive` default / `strict`), `sandbox`
-(`strict`/`permissive`/`off`), `filesystem { read, write }`,
+Fields: `policy_mode` (`permissive` default / `strict`),
+`filesystem { read, write }`,
 `network { allow }` (host:port list or `"*"`), `secrets { provider,
 mount, fallback }`, `resources { cpu, memory, timeout }`, `os` (compile-time
 host gate), and type-specific extras such as `runtime` for `container`.
@@ -883,8 +883,8 @@ constraint.
 
 Windows is not a supported host; run Criteria under WSL2. When a sandbox
 primitive is unavailable (e.g. an older kernel without landlock), the host logs
-which protections were skipped and continues — unless `sandbox = "strict"`, which
-fails closed.
+which protections were skipped and continues — unless `policy_mode = "strict"`,
+which fails closed.
 
 The bubblewrap soft alternative replaces the in-process shim entirely
 (including its landlock and seccomp set-up), so it cannot enforce exact
@@ -975,7 +975,7 @@ heartbeats, and it must remain open for the entire lifetime of the session:
 - **Sandbox primitives.** Per-OS isolation as in the matrix above: Linux
   namespaces + landlock + seccomp (pure-Go, no cgo); macOS `sandbox-exec`;
   container mode as the cross-platform escape hatch. Capability degradation is
-  logged and fails closed only under `sandbox = "strict"`.
+  logged and fails closed only under `policy_mode = "strict"`.
 - **Redaction registry.** Every tainted value — adapter-declared secrets,
   secret-tagged variables, and `sensitive: true` outputs — is registered and
   masked across all host log surfaces before display or persistence. Secrets are
@@ -1029,7 +1029,7 @@ heartbeats, and it must remain open for the entire lifetime of the session:
 | Signature verification failed at pull | The artifact is unsigned or the signer is outside the trust policy. Fix the publisher's signing, adjust the trust policy, or (dev only) `--allow-unsigned` / `verification = "warn"`. |
 | Compile error: *value `var.x` is marked secret* | A tainted value was used in `config`/`input`/a string. Bind it via `adapter.X.secrets { … }` or `step.X.secret_input { … }`. |
 | Adapter's child process can't see a secret | Secrets aren't in the process env by design. Pass them explicitly via the SDK's `secrets.spawnEnv([...])` helper. |
-| Sandbox protections "skipped" in logs | A primitive is unavailable on this host/kernel. Acceptable under `permissive`; set `sandbox = "strict"` to fail closed instead. |
+| Sandbox protections "skipped" in logs | A primitive is unavailable on this host/kernel. Acceptable under `permissive`; set `policy_mode = "strict"` to fail closed instead. |
 
 For upgrading an existing project from v0.3, see
 [adapter-v2-migration.md](adapter-v2-migration.md).
