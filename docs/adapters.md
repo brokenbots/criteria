@@ -288,6 +288,21 @@ compile-time). An adapter that declares no `output_schema` leaves untyped
 outcomes with an empty default (`{}`); compilation warns, and
 `output.<key>` reads against it are unchecked until you declare the schema.
 
+#### Submit-shape reconciliation on typed outcomes
+
+The agent-facing `submit_outcome` tool schema documents `reason` (and
+`comment`) as top-level invoke parameters, while a typed outcome's schema may
+require those names inside the payload. One reconcile rule applies at every
+validation site, so the agent never has to know which site judges it: when
+the matched outcome contract requires a payload member the submit named
+top-level, the fold materializes the top-level value into the payload ahead
+of validation — the agent's own value stays authoritative, an empty value is
+never fabricated (empty-required stays rejected), and undeclared members
+stay refused. The fold lives in the copilot adapter's in-turn finalize check
+(`checkContractFinalize`) and in the host finalize funnel
+(`materializeFinalizeReason`); both must keep the rule in lockstep in any
+future change.
+
 The bundled `criteria-adapter-mcp` adapter intentionally does not declare a
 default output type: like its input surface (undeclared by design,
 CRI-172), its result shape is dynamic — tool-result shaped and varying with
