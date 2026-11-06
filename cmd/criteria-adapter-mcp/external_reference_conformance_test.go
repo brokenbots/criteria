@@ -70,7 +70,7 @@ func (e refEnvelope) hasError() (code float64, ok bool) {
 
 // refIDEqual compares a wire id against the sent id across the JSON number
 // (float64) and string spellings.
-func refIDEqual(want any, got any) bool {
+func refIDEqual(want, got any) bool {
 	switch w := want.(type) {
 	case string:
 		g, _ := got.(string)
@@ -336,13 +336,15 @@ type referenceStdio struct {
 	stderr  bytes.Buffer
 }
 
-func startReferenceStdio(t *testing.T, cmdline string) (*referenceStdio, func()) {
+// startReferenceStdio spawns a stdio reference server and hands back the
+// raw line-dialect leg plus its teardown closer.
+func startReferenceStdio(t *testing.T, cmdline string) (leg *referenceStdio, closeServer func()) {
 	t.Helper()
 	fields := strings.Fields(cmdline)
 	if len(fields) == 0 {
 		t.Fatalf("%s is empty", envRefStdioCmd)
 	}
-	leg := &referenceStdio{cmdline: cmdline, lines: make(chan refEnvelope, 64)}
+	leg = &referenceStdio{cmdline: cmdline, lines: make(chan refEnvelope, 64)}
 	leg.proc = exec.Command(fields[0], fields[1:]...)
 	leg.proc.Stderr = &leg.stderr
 	in, err := leg.proc.StdinPipe()
@@ -507,7 +509,7 @@ func TestExternalReferenceConformance_HTTP(t *testing.T) {
 	t.Run("parse_error_32700", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), refProbeTimeout)
 		defer cancel()
-		status, envelopes, err := leg.rawPost(ctx, "{corrupt", nil)
+		status, envelopes, err := leg.rawPost(ctx, "{corrupt")
 		if err != nil {
 			t.Fatalf("corrupt POST: %v", err)
 		}
@@ -533,7 +535,7 @@ func TestExternalReferenceConformance_HTTP(t *testing.T) {
 			{"jsonrpc": "2.0", "id": 21, "method": "tools/list"},
 			{"jsonrpc": "2.0", "id": "22", "method": "tools/list"},
 		}
-		status, envelopes, err := leg.rawPost(ctx, string(mustJSON(t, batch)), nil)
+		status, envelopes, err := leg.rawPost(ctx, string(mustJSON(t, batch)))
 		if err != nil {
 			t.Fatalf("batch POST: %v", err)
 		}
@@ -593,10 +595,14 @@ func (h *referenceHTTP) standardHeaders(method string) map[string]string {
 	return hdrs
 }
 
-func (h *referenceHTTP) post(ctx context.Context, body string, override map[string]string) (*http.Response, string, error) {
+// post issues one exchange and returns the flattened response facets
+// (status, content type, body text); the body is closed here so callers
+// never hold a *http.Response. The Mcp-Session-Id response header is
+// captured for replay on later POSTs.
+func (h *referenceHTTP) post(ctx context.Context, body string, override map[string]string) (status int, contentType, text string, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.endpoint, strings.NewReader(body))
 	if err != nil {
-		return nil, "", err
+		return 0, "", "", err
 	}
 	for k, v := range h.standardHeaders("") {
 		req.Header.Set(k, v)
@@ -610,17 +616,17 @@ func (h *referenceHTTP) post(ctx context.Context, body string, override map[stri
 	}
 	resp, err := h.client.Do(req)
 	if err != nil {
-		return nil, "", err
+		return 0, "", "", err
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxHTTPTestBody))
 	if err != nil {
-		return resp, "", err
+		return 0, "", "", err
 	}
 	if sid := resp.Header.Get("Mcp-Session-Id"); sid != "" {
 		h.session = sid
 	}
-	return resp, string(raw), nil
+	return resp.StatusCode, resp.Header.Get("Content-Type"), string(raw), nil
 }
 
 // parseRefWire splits one HTTP response body into JSON-RPC envelopes: a
@@ -658,23 +664,23 @@ func parseRefWire(contentType, body string) ([]refEnvelope, error) {
 
 // rawPost issues one already-encoded POST and reports the status plus every
 // JSON-RPC envelope parsed off the wire.
-func (h *referenceHTTP) rawPost(ctx context.Context, body string, override map[string]string) (int, []refEnvelope, error) {
-	resp, text, err := h.post(ctx, body, override)
+func (h *referenceHTTP) rawPost(ctx context.Context, body string) (int, []refEnvelope, error) {
+	status, contentType, text, err := h.post(ctx, body, nil)
 	if err != nil {
 		return 0, nil, err
 	}
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		env, perr := parseRefWire(resp.Header.Get("Content-Type"), text)
+	if status < 200 || status > 299 {
+		env, perr := parseRefWire(contentType, text)
 		if perr == nil && len(env) == 1 {
-			return resp.StatusCode, env, nil
+			return status, env, nil
 		}
-		return resp.StatusCode, nil, fmt.Errorf("unexpected status %d: %.200s", resp.StatusCode, text)
+		return status, nil, fmt.Errorf("unexpected status %d: %.200s", status, text)
 	}
-	envelopes, err := parseRefWire(resp.Header.Get("Content-Type"), text)
+	envelopes, err := parseRefWire(contentType, text)
 	if err != nil {
-		return resp.StatusCode, nil, err
+		return status, nil, err
 	}
-	return resp.StatusCode, envelopes, nil
+	return status, envelopes, nil
 }
 
 func (h *referenceHTTP) call(ctx context.Context, id any, method string, params map[string]any) (refEnvelope, error) {
@@ -684,7 +690,7 @@ func (h *referenceHTTP) call(ctx context.Context, id any, method string, params 
 	}
 	cctx, cancel := context.WithTimeout(ctx, refProbeTimeout)
 	defer cancel()
-	status, envelopes, err := h.rawPost(cctx, string(raw), nil)
+	status, envelopes, err := h.rawPost(cctx, string(raw))
 	if err != nil {
 		return nil, fmt.Errorf("POST %s: %w", method, err)
 	}
@@ -706,7 +712,7 @@ func (h *referenceHTTP) notify(ctx context.Context, method string, params map[st
 	}
 	cctx, cancel := context.WithTimeout(ctx, refProbeTimeout)
 	defer cancel()
-	status, envelopes, err := h.rawPost(cctx, string(raw), nil)
+	status, envelopes, err := h.rawPost(cctx, string(raw))
 	if err != nil {
 		return fmt.Errorf("POST %s: %w", method, err)
 	}
@@ -727,24 +733,25 @@ func mustJSON(t *testing.T, v any) []byte {
 }
 
 // exceptCall makes one call while overriding headers (the Accept
-// single-value vector) and returns the raw status plus the wire error code.
-func (h *referenceHTTP) exceptCall(ctx context.Context, id int, method string, override map[string]string) (string, int, float64, error) {
-	raw, err := json.Marshal(callJSON(id, method, nil))
-	if err != nil {
-		return "", 0, 0, err
+// single-value vector) and returns the body text, status, and the last
+// wire error code parsed off the response.
+func (h *referenceHTTP) exceptCall(ctx context.Context, id int, method string, override map[string]string) (bodyText string, statusCode int, errCode float64, err error) {
+	raw, merr := json.Marshal(callJSON(id, method, nil))
+	if merr != nil {
+		return "", 0, 0, merr
 	}
 	cctx, cancel := context.WithTimeout(ctx, refProbeTimeout)
 	defer cancel()
-	body, text, err := h.post(cctx, string(raw), override)
-	if err != nil {
-		return "", 0, 0, err
+	status, contentType, text, postErr := h.post(cctx, string(raw), override)
+	if postErr != nil {
+		return "", 0, 0, postErr
 	}
-	envs, perr := parseRefWire(body.Header.Get("Content-Type"), text)
-	code := float64(0)
+	responseErr := float64(0)
+	envs, perr := parseRefWire(contentType, text)
 	if perr == nil && len(envs) > 0 {
-		code, _ = envs[len(envs)-1].hasError()
+		responseErr, _ = envs[len(envs)-1].hasError()
 	}
-	return text, body.StatusCode, code, nil
+	return text, status, responseErr, nil
 }
 
 // initHTTPSession performs the initialize exchange that establishes the
@@ -753,20 +760,23 @@ func (h *referenceHTTP) exceptCall(ctx context.Context, id int, method string, o
 func (h *referenceHTTP) initialize(ctx context.Context) error {
 	cctx, cancel := context.WithTimeout(ctx, refProbeTimeout)
 	defer cancel()
-	body, text, err := h.post(cctx, `{"jsonrpc":"2.0","id":"init","method":"initialize","params":{"protocolVersion":"`+
+	status, ct, text, err := h.post(cctx, `{"jsonrpc":"2.0","id":"init","method":"initialize","params":{"protocolVersion":"`+
 		refProtocolVersion+`","capabilities":{},"clientInfo":{"name":"criteria-conformance","version":"1"}}}`, map[string]string{"Mcp-Method": "initialize"})
 	if err != nil {
 		return fmt.Errorf("initialize POST: %w", err)
 	}
-	if body.StatusCode < 200 || body.StatusCode > 299 {
-		return fmt.Errorf("initialize status %d: %.200s", body.StatusCode, text)
+	if status < 200 || status > 299 {
+		return fmt.Errorf("initialize status %d: %.200s", status, text)
 	}
 	if h.session == "" {
-		return fmt.Errorf("initialize response carried no Mcp-Session-Id (status %d, ct=%s)", body.StatusCode, body.Header.Get("Content-Type"))
+		return fmt.Errorf("initialize response carried no Mcp-Session-Id (status %d, ct=%s)", status, ct)
 	}
-	envs, err := parseRefWire(body.Header.Get("Content-Type"), text)
-	if err != nil || len(envs) == 0 {
-		return fmt.Errorf("initialize reply unparseable: %v (%.200s)", err, text)
+	envs, err := parseRefWire(ct, text)
+	if err != nil {
+		return fmt.Errorf("initialize reply unparseable: %w (%.200s)", err, text)
+	}
+	if len(envs) == 0 {
+		return fmt.Errorf("initialize reply carried no envelope: %.200s", text)
 	}
 	if _, hasErr := envs[0].hasError(); hasErr {
 		return fmt.Errorf("initialize rejected: %v (server may not speak %s)", envs[0]["error"], refProtocolVersion)
