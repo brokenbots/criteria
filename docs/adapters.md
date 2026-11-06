@@ -781,15 +781,24 @@ no `notifications/cancelled` POST is sent (stdio keeps sending it).
 ### Mcp-Param headers from the tool's schema
 
 Beyond the caller-supplied seam, the protocol-level parameter mechanism is
-schema-driven: a tool's `inputSchema` may carry an `x-mcp-header`
-annotation on a statically reachable property (a plain `properties` chain
-from the schema root, with primitive-typed values and statically known
-names). On `tools/call`, the argument value at each annotated property is
-mirrored as an `Mcp-Param-{Name}` header on the POST, using the same
-header-safe/Base64-sentinel encoding as `Mcp-Name`. Arguments absent from
-the call are simply not emitted (the server's own "required `Mcp-Param-*`
-missing" rule governs that). A tool whose annotation fails validation — a
-non-token name, a non-primitive value type, a non-reachable path, a
+schema-driven: a tool's `inputSchema` may annotate a statically reachable
+property (a plain `properties` chain from the schema root, with
+primitive-typed values and statically known names) as a header mirror in
+either spelling. The marker spelling carries an `x-mcp-header` key inside
+the annotated property's schema, its value the (empty) marker; the
+property-name spelling declares a property *named* `x-mcp-header`
+itself, its schema being the header-name table (an object with
+`additionalProperties: false` or none, whose `properties` hold the
+header names with primitive member schemas). Both spellings resolve the
+same way and may be combined on one schema; resolving each and finding the
+same header name twice (case-insensitively) makes the tool invalid. On
+`tools/call`, the argument value at each annotated property is mirrored as
+an `Mcp-Param-{Name}` header on the POST, using the same
+header-safe/Base64-sentinel encoding as `Mcp-Name`; the annotated value
+itself stays in the call body. Arguments absent from the call are simply
+not emitted (the server's own "required `Mcp-Param-*` missing" rule
+governs that). A tool whose annotation fails validation — a non-token
+name, a non-primitive name-table member, a non-reachable path, a
 case-insensitive name collision — is invalid and is dropped from the
 advertised tool surface. `Mcp-Param-*` is a reserved namespace: custom
 headers may not forge it, and the protocol-mandated values win over any
