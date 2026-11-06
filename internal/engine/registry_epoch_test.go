@@ -57,17 +57,17 @@ func TestScopeRegistryEpoch_MarkerLifecycle(t *testing.T) {
 		t.Fatalf("second bump epoch = %d, want 2", epoch)
 	}
 
-	// The invocation completes at the awaiting_human gate (the KB-227
-	// incident shape): seal with the named terminal state and success bit.
-	if err := sealScopeRegistryEpoch(dir, AwaitingHumanTerminalState, false); err != nil {
+	// The invocation completes at a workflow-declared human-assistance
+	// terminal: seal with the named terminal state and success bit.
+	if err := sealScopeRegistryEpoch(dir, "need_assistance", false); err != nil {
 		t.Fatalf("seal: %v", err)
 	}
 	rec = mustMarker(t, dir)
 	if rec.State != RegistryStateSealed || rec.RegistryEpoch != 2 {
 		t.Errorf("marker after seal = %+v, want sealed with epoch preserved (2)", rec)
 	}
-	if rec.FinalState != AwaitingHumanTerminalState || rec.Success == nil || *rec.Success {
-		t.Errorf("sealed marker final_state/success = %q/%v, want awaiting_human/false", rec.FinalState, rec.Success)
+	if rec.FinalState != "need_assistance" || rec.Success == nil || *rec.Success {
+		t.Errorf("sealed marker final_state/success = %q/%v, want need_assistance/false", rec.FinalState, rec.Success)
 	}
 	if !PriorRunRegistrySealed(dir) {
 		t.Error("sealed marker must be reported sealed")
@@ -77,7 +77,7 @@ func TestScopeRegistryEpoch_MarkerLifecycle(t *testing.T) {
 	if err := sealScopeRegistryEpoch(dir, "other", true); err != nil {
 		t.Fatalf("re-seal: %v", err)
 	}
-	if rec = mustMarker(t, dir); rec.FinalState != AwaitingHumanTerminalState || rec.Success == nil || *rec.Success {
+	if rec = mustMarker(t, dir); rec.FinalState != "need_assistance" || rec.Success == nil || *rec.Success {
 		t.Errorf("re-seal mutated the sealed marker: %+v", rec)
 	}
 
@@ -359,8 +359,8 @@ state "done" {
 
 // TestInitScopeAdapters_PerScope_AdoptionRefusesSealedPriorRegistry_KB227 is
 // the regression test for the incident: process 2 crash-resumed by ADOPTING
-// process 1's rotated scope tokens after process 1 completed at
-// awaiting_human. The fresh shim registry had no rows for those scopes, so
+// process 1's rotated scope tokens after process 1 completed at a
+// workflow-declared human-assistance terminal. The fresh shim registry had no rows for those scopes, so
 // every recreated pod dialed with stale claims and looped on scope-not-
 // registered until the verify budget expired, restarting the cycle. Now the
 // completed invocation seals its registry, and adopting a sealed prior
@@ -373,7 +373,7 @@ func TestInitScopeAdapters_PerScope_AdoptionRefusesSealedPriorRegistry_KB227(t *
 	ownDir := t.TempDir()
 
 	// Prior invocation: opens its registry epoch, rotates an instance, and
-	// completes at the awaiting_human gate, which seals the registry.
+	// completes at the need_assistance gate, which seals the registry.
 	if _, err := bumpScopeRegistryEpoch(priorDir); err != nil {
 		t.Fatalf("prior bump: %v", err)
 	}
@@ -390,7 +390,7 @@ func TestInitScopeAdapters_PerScope_AdoptionRefusesSealedPriorRegistry_KB227(t *
 		t.Fatalf("read prior token: %v", err)
 	}
 	priorToken := string(priorTokenRaw)
-	if err := sealScopeRegistryEpoch(priorDir, AwaitingHumanTerminalState, false); err != nil {
+	if err := sealScopeRegistryEpoch(priorDir, "need_assistance", false); err != nil {
 		t.Fatalf("seal prior registry: %v", err)
 	}
 	if !PriorRunRegistrySealed(priorDir) {

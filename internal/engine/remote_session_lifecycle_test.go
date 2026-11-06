@@ -56,11 +56,11 @@ workflow {
   name = "cri271"
   version = "0.1"
   initial_state = "develop"
-  target_state  = "awaiting_human"
+  target_state  = "need_assistance"
 }
 step "develop" {
   target = adapter.fake
-  outcome "success" { next = state.awaiting_human }
+  outcome "success" { next = state.need_assistance }
   outcome "failure" { next = step.comment_handler_failed }
 }
 step "comment_handler_failed" {
@@ -70,10 +70,10 @@ step "comment_handler_failed" {
 }
 step "set_review_state" {
   target = adapter.fake
-  outcome "success" { next = state.awaiting_human }
-  outcome "error" { next = state.awaiting_human }
+  outcome "success" { next = state.need_assistance }
+  outcome "error" { next = state.need_assistance }
 }
-state "awaiting_human" {
+state "need_assistance" {
   terminal = true
   success  = true
 }`
@@ -177,8 +177,8 @@ func TestRemoteSession_FunctionalCrashReopensSessionForBookkeeping(t *testing.T)
 	if err := NewTestEngine(g, cri271NewLoader(p), sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if sink.terminal != "awaiting_human" || !sink.terminalOK {
-		t.Errorf("terminal state %q success=%v; want awaiting_human/true", sink.terminal, sink.terminalOK)
+	if sink.terminal != "need_assistance" || !sink.terminalOK {
+		t.Errorf("terminal state %q success=%v; want need_assistance/true", sink.terminal, sink.terminalOK)
 	}
 
 	opens, executes := p.callLog()

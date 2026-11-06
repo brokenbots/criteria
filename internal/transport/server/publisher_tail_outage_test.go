@@ -44,7 +44,7 @@ func TestRunPublisher_KB53_TailDeliveredAfterInitialStreamOutage(t *testing.T) {
 
 	// The run finished while the stream was down: the terminal envelope is
 	// published before the publisher's loop has any healthy stream.
-	completed := events.NewEnvelope("run-1", &pb.RunCompleted{FinalState: "awaiting_human", Success: true})
+	completed := events.NewEnvelope("run-1", &pb.RunCompleted{FinalState: "need_assistance", Success: true})
 	p.Publish(ctx, completed)
 	p.Start(ctx)
 
@@ -65,7 +65,7 @@ func TestRunPublisher_KB53_TailDeliveredAfterInitialStreamOutage(t *testing.T) {
 	}
 	if rc := persisted[0].GetRunCompleted(); rc == nil {
 		t.Fatalf("persisted payload = %v; want RunCompleted", persisted[0].Payload)
-	} else if rc.FinalState != "awaiting_human" || !rc.Success {
-		t.Errorf("RunCompleted = %+v; want awaiting_human/success", rc)
+	} else if rc.FinalState != "need_assistance" || !rc.Success {
+		t.Errorf("RunCompleted = %+v; want need_assistance/success", rc)
 	}
 }

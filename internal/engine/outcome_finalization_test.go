@@ -28,7 +28,7 @@ import (
 // -----------------------------------------------------------------------------
 
 var kb53Workflow = workflowtest.New().
-	WithHeader("kb53", "0.1", "develop", "awaiting_human").
+	WithHeader("kb53", "0.1", "develop", "need_assistance").
 	WithAdapter("copilot", "default").
 	WithAdapter("pipeline", "default").
 	WithStep("develop",
@@ -49,15 +49,15 @@ var kb53Workflow = workflowtest.New().
 	).
 	WithStep("set_review_state",
 		workflowtest.Target("adapter.pipeline.default"),
-		workflowtest.Outcome("success", "state.awaiting_human"),
-		workflowtest.Outcome("error", "state.awaiting_human"),
+		workflowtest.Outcome("success", "state.need_assistance"),
+		workflowtest.Outcome("error", "state.need_assistance"),
 	).
 	WithStep("comment_handler_failed",
 		workflowtest.Target("adapter.pipeline.default"),
-		workflowtest.Outcome("success", "state.awaiting_human"),
-		workflowtest.Outcome("error", "state.awaiting_human"),
+		workflowtest.Outcome("success", "state.need_assistance"),
+		workflowtest.Outcome("error", "state.need_assistance"),
 	).
-	WithState("awaiting_human", true, nil).
+	WithState("need_assistance", true, nil).
 	Build()
 
 type finalizedTestSink struct {
@@ -191,8 +191,8 @@ func TestKB53_FinalizedAdapterOutcomeProducesWorkflowLevelStepOutcome(t *testing
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if sink.terminal != "awaiting_human" || !sink.terminalOK {
-		t.Errorf("terminal state %q success=%v; want awaiting_human/true", sink.terminal, sink.terminalOK)
+	if sink.terminal != "need_assistance" || !sink.terminalOK {
+		t.Errorf("terminal state %q success=%v; want need_assistance/true", sink.terminal, sink.terminalOK)
 	}
 
 	outcomes, transitions, events := sink.snapshot()
@@ -202,8 +202,8 @@ func TestKB53_FinalizedAdapterOutcomeProducesWorkflowLevelStepOutcome(t *testing
 		t.Fatalf("step outcomes = %v; want develop=ready_for_review", outcomes)
 	}
 
-	// The workflow transitions through the post-develop pipeline to awaiting_human
-	for _, wantEdge := range []string{"develop->create_pr", "create_pr->reviewer_loop", "reviewer_loop->set_review_state", "set_review_state->awaiting_human"} {
+	// The workflow transitions through the post-develop pipeline to need_assistance
+	for _, wantEdge := range []string{"develop->create_pr", "create_pr->reviewer_loop", "reviewer_loop->set_review_state", "set_review_state->need_assistance"} {
 		if !slices.Contains(transitions, wantEdge) {
 			t.Errorf("transitions = %v; want edge %q", transitions, wantEdge)
 		}
@@ -235,14 +235,14 @@ func TestKB53_CopilotSessionLossAfterFinalizeStillYieldsOutcome(t *testing.T) {
 	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if sink.terminal != "awaiting_human" || !sink.terminalOK {
-		t.Errorf("terminal state %q success=%v; want awaiting_human/true", sink.terminal, sink.terminalOK)
+	if sink.terminal != "need_assistance" || !sink.terminalOK {
+		t.Errorf("terminal state %q success=%v; want need_assistance/true", sink.terminal, sink.terminalOK)
 	}
 	outcomes, transitions, events := sink.snapshot()
 	if !slices.Contains(outcomes, "develop=ready_for_review") {
 		t.Fatalf("step outcomes = %v; want develop=ready_for_review despite the session loss", outcomes)
 	}
-	for _, wantEdge := range []string{"develop->create_pr", "create_pr->reviewer_loop", "reviewer_loop->set_review_state", "set_review_state->awaiting_human"} {
+	for _, wantEdge := range []string{"develop->create_pr", "create_pr->reviewer_loop", "reviewer_loop->set_review_state", "set_review_state->need_assistance"} {
 		if !slices.Contains(transitions, wantEdge) {
 			t.Errorf("transitions = %v; want edge %q", transitions, wantEdge)
 		}
@@ -320,8 +320,8 @@ func TestKB56_OutcomeMidStreamContinuedStreamingResolvesDevelopAndRunsNextStep(t
 	if err := NewTestEngine(g, loader, sink).Run(ctx); err != nil {
 		t.Fatalf("run: %v (the submitted verdict must end the turn; the streaming tail must not mask it)", err)
 	}
-	if sink.terminal != "awaiting_human" || !sink.terminalOK {
-		t.Errorf("terminal state %q success=%v; want awaiting_human/true", sink.terminal, sink.terminalOK)
+	if sink.terminal != "need_assistance" || !sink.terminalOK {
+		t.Errorf("terminal state %q success=%v; want need_assistance/true", sink.terminal, sink.terminalOK)
 	}
 
 	outcomes, transitions, events := sink.snapshot()
@@ -340,7 +340,7 @@ func TestKB56_OutcomeMidStreamContinuedStreamingResolvesDevelopAndRunsNextStep(t
 	for _, tr := range transitions {
 		joined += tr + " "
 	}
-	for _, wantEdge := range []string{"develop->create_pr", "create_pr->reviewer_loop", "reviewer_loop->set_review_state", "set_review_state->awaiting_human"} {
+	for _, wantEdge := range []string{"develop->create_pr", "create_pr->reviewer_loop", "reviewer_loop->set_review_state", "set_review_state->need_assistance"} {
 		if !contains(joined, wantEdge) {
 			t.Errorf("transitions %v; want edge %q", transitions, wantEdge)
 		}
@@ -549,7 +549,7 @@ workflow {
   name          = "kb237"
   version       = "0.1"
   initial_state = "develop"
-  target_state  = "awaiting_human"
+  target_state  = "need_assistance"
 
   policy { max_step_retries = 2 }
 }
@@ -564,7 +564,7 @@ step "develop" {
     next            = step.create_pr
   }
   outcome "checkpoint" { next = step.push_checkpoint }
-  outcome "failure"    { next = state.awaiting_human }
+  outcome "failure"    { next = state.need_assistance }
   outcome "default"    { next = step.push_checkpoint }
 }
 step "push_checkpoint" {
@@ -575,10 +575,10 @@ step "push_checkpoint" {
 }
 step "create_pr" {
   target = adapter.pipeline.default
-  outcome "success" { next = state.awaiting_human }
-  outcome "error" { next = state.awaiting_human }
+  outcome "success" { next = state.need_assistance }
+  outcome "error" { next = state.need_assistance }
 }
-state "awaiting_human" {
+state "need_assistance" {
   terminal = true
   success  = true
 }`
@@ -633,7 +633,7 @@ func TestKB237_NoOpResumeFinalizesReadyForReviewWithoutCheckpoint(t *testing.T) 
 	err := NewTestEngine(g, kb237Loader(kb237Comment), sink).Run(context.Background())
 
 	require.NoError(t, err, "the accepted submit's comment must satisfy require_comment on the first visit")
-	require.Equal(t, "awaiting_human", sink.terminal)
+	require.Equal(t, "need_assistance", sink.terminal)
 	require.True(t, sink.terminalOK)
 
 	require.Empty(t, sink.invalid, "stepOutcomeInvalid must never fire for a comment-bearing submit")
@@ -716,7 +716,7 @@ workflow {
   name          = "kb237-nodefault"
   version       = "0.1"
   initial_state = "develop"
-  target_state  = "awaiting_human"
+  target_state  = "need_assistance"
 
   policy { max_step_retries = 1 }
 }
@@ -725,11 +725,11 @@ step "develop" {
   target = adapter.copilot.default
   outcome "ready_for_review" {
     require_comment = true
-    next            = state.awaiting_human
+    next            = state.need_assistance
   }
-  outcome "error" { next = state.awaiting_human }
+  outcome "error" { next = state.need_assistance }
 }
-state "awaiting_human" {
+state "need_assistance" {
   terminal = true
   success  = true
 }`)
@@ -768,7 +768,7 @@ func TestKB237_ContinueStreamingShapeResolvesWithComment(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Empty(t, sink.invalid)
-	require.Equal(t, "awaiting_human", sink.terminal)
+	require.Equal(t, "need_assistance", sink.terminal)
 	require.True(t, sink.terminalOK)
 	entered := 0
 	for _, s := range sink.stepsRun {

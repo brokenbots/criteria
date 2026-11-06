@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,8 +16,6 @@ import (
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
 	"github.com/brokenbots/criteria/workflow"
-
-	"github.com/brokenbots/criteria/internal/engine"
 )
 
 // Stable non-zero exit codes returned by `criteria submit` and `criteria
@@ -30,10 +27,6 @@ const (
 	exitServerUnreachable   = 3
 	exitDuplicateSubmission = 4
 	exitAuthFailure         = 5
-	// A run parked at the awaiting_human gate with
-	// success=false must not be conflated with a restartable run failure
-	// (generic exit 1), so it carries its own stable code.
-	exitAwaitingHuman = 6
 )
 
 // submitError is a tagged error carrying a stable OS exit code.
@@ -46,20 +39,13 @@ func (e *submitError) Error() string { return e.msg }
 func (e *submitError) ExitCode() int { return e.code }
 
 // terminalStateFailureError composes the invocation error for a run that
-// completed at a named terminal state with success=false. A completion at
-// the awaiting_human parking state is not a run failure: it exits with the
-// stable human-attention code so runner restart policies can distinguish a
-// human gate from a restartable crash/failure, and the
-// structured log names the exit reason for job-level consumers.
+// completed at a named terminal state with success=false. A completion at a
+// workflow-declared human-assistance terminal is not a restartable run
+// failure, but it needs no job-level exit-code channel to say so: the parked
+// run is already surfaced as a Failed completion-record phase and the restart
+// decision rides the recorded phase, so every failed terminal exits through
+// the same generic path.
 func terminalStateFailureError(finalState string) error {
-	if finalState == engine.AwaitingHumanTerminalState {
-		slog.Info("run parked at awaiting_human gate; using stable human-attention exit code",
-			"engine_exit_reason", engine.AwaitingHumanTerminalState, "final_state", finalState)
-		return &submitError{
-			msg:  fmt.Sprintf("run completed with terminal state %q (success=false)", finalState),
-			code: exitAwaitingHuman,
-		}
-	}
 	return fmt.Errorf("run completed with terminal state %q (success=false)", finalState)
 }
 
