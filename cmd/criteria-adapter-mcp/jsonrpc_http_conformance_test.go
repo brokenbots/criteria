@@ -14,12 +14,14 @@ package main
 //     the client's string request id (normalize both sides), and a null-id
 //     parse-error reply binds to the sole outstanding request instead of
 //     wedging the caller.
-//   - Reference server: the echo fixture runs in Streamable HTTP mode as a
+//   - Echo fixture: the echo fixture runs in Streamable HTTP mode as a
 //     real subprocess — discover/tools-list discovery, an echoes round
 //     trip over an SSE-delivered result with a progress event, and the
 //     SEP-2575 no-resumability posture (a broken response stream loses the
 //     in-flight call; the re-issued call is a brand-new request that the
-//     unbroken session answers).
+//     unbroken session answers). It is an in-tree fixture authored with
+//     this client, not an external reference server — the non-fixture leg
+//     lives in external_reference_conformance_test.go.
 
 import (
 	"bufio"
@@ -198,14 +200,17 @@ func startEchoHTTPFixture(t *testing.T, extraEnv ...string) string {
 	return ""
 }
 
-// TestJSONRPCHTTPConformance_ReferenceServer exercises the conformance
-// surface end to end against the real reference MCP server (the echo
-// fixture, not the in-process fake) in Streamable HTTP mode: discovery
+// TestJSONRPCHTTPConformance_ReferenceFixture exercises the conformance
+// surface end to end against the in-tree echo fixture (a real subprocess,
+// distinct from the in-process fake) in Streamable HTTP mode: discovery
 // over the same envelope core as stdio, an SSE-delivered result with a
 // progress event, and the SEP-2575 behavior for a response stream that
 // breaks mid-call — the in-flight call fails and the re-issued call is an
-// ordinary new request on the unbroken session.
-func TestJSONRPCHTTPConformance_ReferenceServer(t *testing.T) {
+// ordinary new request on the unbroken session. Vectors against a
+// non-fixture reference MCP server are opt-in:
+// external_reference_conformance_test.go runs them via
+// MCP_REFERENCE_HTTP_URL / MCP_REFERENCE_STDIO_CMD when set.
+func TestJSONRPCHTTPConformance_ReferenceFixture(t *testing.T) {
 	t.Run("sse_progress_and_result", func(t *testing.T) {
 		url := startEchoHTTPFixture(t, "MCP_HTTP_SSE=1")
 		sid := "http-ref-sse"
