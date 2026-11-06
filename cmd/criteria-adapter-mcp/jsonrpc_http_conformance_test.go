@@ -300,23 +300,26 @@ func TestJSONRPCHTTPConformance_ReferenceFixture(t *testing.T) {
 // fixture spawned in the property-name spelling (MCP_HDR_SCHEMA=property):
 // a hand-rolled raw-wire leg shares mcpclient.StandardHeaders with the
 // transport, so the mirror set — and its -32020 failure band — is observed
-// exactly as a conformant client presents it.
-func TestJSONRPCHTTPConformance_HeaderParamMirrorPropertyShape(t *testing.T) {
+// TestJSONRPCHTTPConformance_HeaderParamMirrorSpecShape runs the
+// x-mcp-header Server Validation vectors on the wire against the real echo
+// fixture spawned with the annotation on (MCP_HDR_SCHEMA=1): a hand-rolled
+// raw-wire leg shares mcpclient.StandardHeaders with the transport, so the
+// mirror set — and its -32020 failure band — is observed exactly as a
+// conformant client presents it.
+func TestJSONRPCHTTPConformance_HeaderParamMirrorSpecShape(t *testing.T) {
 	// The Streamable HTTP fixture always serves the stateless core
 	// (MCP_HTTP_LISTEN fixes the revision), so every raw request carries
 	// the per-request _meta protocol version.
 	metaParam := `"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}`
-	url := startEchoHTTPFixture(t, "MCP_HDR_SCHEMA=property")
+	url := startEchoHTTPFixture(t, "MCP_HDR_SCHEMA=1")
 	leg, err := newReferenceHTTP(t, url)
 	if err != nil {
 		t.Fatalf("raw wired leg: %v", err)
 	}
 
-	// tools/list advertises the property-name shape: a property NAMED
-	// x-mcp-header at the top of the arguments, its schema the header-name
-	// table — and no marker spelling anywhere on the schema. The HTTP
-	// fixture serves the stateless core, so every raw request carries the
-	// per-request _meta protocol version.
+	// tools/list advertises the spec shape: a trace property whose schema
+	// is {"type":"string","x-mcp-header":"X-Trace"} — and no other
+	// spelling anywhere on the schema.
 	{
 		ctx, cancel := context.WithTimeout(context.Background(), refProbeTimeout)
 		defer cancel()
@@ -353,12 +356,12 @@ func TestJSONRPCHTTPConformance_HeaderParamMirrorPropertyShape(t *testing.T) {
 		if !sawEcho {
 			t.Fatalf("tools/list carries no echo tool: %s", text)
 		}
-		table, ok := props["x-mcp-header"]
-		if !ok || table["type"] != "object" || table["additionalProperties"] != false {
-			t.Fatalf("echo inputSchema properties = %v, want a property NAMED x-mcp-header carrying the header-name table", props)
+		annotated, ok := props["trace"]
+		if !ok || annotated["type"] != "string" || annotated["x-mcp-header"] != "X-Trace" {
+			t.Fatalf("echo inputSchema properties = %v, want a trace property annotated {\"type\":\"string\",\"x-mcp-header\":\"X-Trace\"}", props)
 		}
-		if _, hasMarker := props["trace"]; hasMarker {
-			t.Fatalf("the property mode must not advertise the marker spelling: %v", props)
+		if _, hasTable := props["x-mcp-header"]; hasTable {
+			t.Fatalf("the spec shape must not advertise a property NAMED x-mcp-header: %v", props)
 		}
 	}
 
@@ -393,27 +396,32 @@ func TestJSONRPCHTTPConformance_HeaderParamMirrorPropertyShape(t *testing.T) {
 		}
 	}
 
-	// The required mirror, matching the argument value at the
-	// property-named path, is accepted on the wire (200, the result
-	// envelope answers the tools/call id).
-	if status, text := call(t, map[string]string{"Mcp-Param-X-Trace": "v1"}, `{"x-mcp-header":{"X-Trace":"v1"}}`); status != http.StatusOK {
+	// The required mirror, matching the argument value at the annotated
+	// path, is accepted on the wire (200, the result envelope answers the
+	// tools/call id) — string, boolean, and integer shapes alike.
+	if status, text := call(t, map[string]string{"Mcp-Param-X-Trace": "v1"}, `{"trace":"v1"}`); status != http.StatusOK {
 		t.Fatalf("mirrored call status = %d body=%s, want 200", status, text)
+	}
+	if status, text := call(t, map[string]string{"Mcp-Param-X-Trace": "true"}, `{"trace":true}`); status != http.StatusOK {
+		t.Fatalf("boolean-shaped mirrored call status = %d body=%s, want 200", status, text)
+	}
+	if status, text := call(t, map[string]string{"Mcp-Param-X-Trace": "7"}, `{"trace":7}`); status != http.StatusOK {
+		t.Fatalf("integer-shaped mirrored call status = %d body=%s, want 200", status, text)
 	}
 
 	// A mirror mismatching the argument value is a violation.
-	status, text := call(t, map[string]string{"Mcp-Param-X-Trace": "other"}, `{"x-mcp-header":{"X-Trace":"v1"}}`)
+	status, text := call(t, map[string]string{"Mcp-Param-X-Trace": "other"}, `{"trace":"v1"}`)
 	assertViolation(t, status, text)
 
 	// A missing required mirror is a violation.
-	status, text = call(t, nil, `{"x-mcp-header":{"X-Trace":"v1"}}`)
+	status, text = call(t, nil, `{"trace":"v1"}`)
 	assertViolation(t, status, text)
 
 	// A mirror outside the declared name set is a violation.
-	status, text = call(t, map[string]string{"Mcp-Param-X-Trace": "v1", "Mcp-Param-X-Other": "x"}, `{"x-mcp-header":{"X-Trace":"v1"}}`)
+	status, text = call(t, map[string]string{"Mcp-Param-X-Trace": "v1", "Mcp-Param-X-Other": "x"}, `{"trace":"v1"}`)
 	assertViolation(t, status, text)
 
-	// A mirror with no argument value at the property-named path is a
-	// violation.
+	// A mirror with no argument value at the annotated path is a violation.
 	status, text = call(t, map[string]string{"Mcp-Param-X-Trace": "v1"}, `{}`)
 	assertViolation(t, status, text)
 }

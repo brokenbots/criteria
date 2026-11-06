@@ -71,8 +71,11 @@ func (f *mcpHTTPFake) record(method string, r *http.Request, body string) {
 	sub := map[string][]string{}
 	for name, vals := range r.Header {
 		key := strings.ToLower(name)
-		switch key {
-		case "mcp-method", "mcp-name", "mcp-protocol-version", "content-type", "accept", "x-tenant", "x-trace", "mcp-param-x-trace":
+		switch {
+		case key == "mcp-method", key == "mcp-name", key == "mcp-protocol-version",
+			key == "content-type", key == "accept", key == "x-tenant", key == "x-trace":
+			sub[key] = vals
+		case strings.HasPrefix(key, "mcp-param-"):
 			sub[key] = vals
 		}
 	}
@@ -641,23 +644,26 @@ func TestHTTPConformance_EmptyHeaderNameRejected(t *testing.T) {
 // dropped, and the bridge's flat-string arguments can never resolve the
 // annotation (its value is a string, not the annotated object), so no
 // Mcp-Param-* mirror rides the call and the argument itself stays in the
-// body.
-func TestHTTPConformance_PropertyAnnotatedSurfaceAndFlatArgs(t *testing.T) {
+// TestHTTPConformance_SpecAnnotatedSurfaceAndMirror pins the bridge
+// behavior against a spec-shaped annotated surface: the validly annotated
+// tool is advertised by Info while the invalidly annotated one is dropped,
+// and the mirror rides the bridge's own flat-string argument — one
+// Mcp-Param-<Name> header per annotated property present in the arguments,
+// the argument itself staying in the call body.
+func TestHTTPConformance_SpecAnnotatedSurfaceAndMirror(t *testing.T) {
 	fake := &mcpHTTPFake{toolsListJSON: `{"resultType":"complete","ttlMs":30000,"tools":[` +
 		`{"name":"mirror","description":"header mirror",` +
-		`"inputSchema":{"type":"object","properties":{"x-mcp-header":{"type":"object","additionalProperties":false` +
-		`,"properties":{"X-Trace":{"type":"string"}}}}}},` +
+		`"inputSchema":{"type":"object","properties":{"region":{"type":"string","x-mcp-header":"Region"}}}},` +
 		`{"name":"broken","description":"invalid annotation",` +
-		`"inputSchema":{"type":"object","properties":{"x-mcp-header":{"type":"object","additionalProperties":true` +
-		`,"properties":{"X-Trace":{"type":"string"}}}}}}]}`}
+		`"inputSchema":{"type":"object","properties":{"count":{"type":"number","x-mcp-header":"Region"}}}}]}`}
 	ts := httptest.NewServer(fake)
 	t.Cleanup(ts.Close)
 
-	b := openHTTPConformanceSession(t, "http-conf-prop", map[string]string{"transport": "http", "url": ts.URL})
+	b := openHTTPConformanceSession(t, "http-conf-mirror", map[string]string{"transport": "http", "url": ts.URL})
 
 	// Surface: the validly annotated tool advertised, the invalidly
-	// annotated one dropped (a tool with an invalid annotation is omitted
-	// from the tools/list surface; the rest of the list stays).
+	// annotated one dropped (an annotation whose declared type is not
+	// permitted invalidates the tool; the rest of the list stays).
 	info, err := b.Info(context.Background(), &v2.InfoRequest{})
 	if err != nil {
 		t.Fatalf("Info: %v", err)
@@ -670,22 +676,25 @@ func TestHTTPConformance_PropertyAnnotatedSurfaceAndFlatArgs(t *testing.T) {
 		t.Fatalf("Info tools = %v, want [mirror] (the invalidly annotated tool dropped)", names)
 	}
 
-	// The bridge's input is flat map[string]string, so the annotation's
-	// object shape cannot be spoken: a flat x-mcp-header value is an
-	// ordinary tool argument — mirrored from nothing, retained in the body.
+	// The mirror reads the bridge's flat argument at the annotated
+	// property: one Mcp-Param-Region carrying the instance value, the
+	// argument itself retained in the body.
 	sender := &permittingEventSender{bridge: b}
 	if err := b.Execute(context.Background(), &v2.ExecuteRequest{
-		SessionId: "http-conf-prop",
-		Input:     map[string]string{"tool": "mirror", "message": "hi", "x-mcp-header": "flat"},
+		SessionId: "http-conf-mirror",
+		Input:     map[string]string{"tool": "mirror", "message": "hi", "region": "us-west-1"},
 	}, sender); err != nil {
-		t.Fatalf("Execute(mirror, flat x-mcp-header): %v", err)
+		t.Fatalf("Execute(mirror, region=us-west-1): %v", err)
 	}
 	calls := fake.headers(t, "tools/call")
 	if len(calls) != 1 {
 		t.Fatalf("tools/call POSTs = %d, want 1", len(calls))
 	}
+	if got := calls[0]["mcp-param-region"]; len(got) != 1 || got[0] != "us-west-1" {
+		t.Fatalf("Mcp-Param-Region = %q, want [us-west-1]: %+v", got, calls[0])
+	}
 	if _, emitted := calls[0]["mcp-param-x-trace"]; emitted {
-		t.Fatalf("a flat x-mcp-header argument must emit no Mcp-Param-* mirror: %+v", calls[0])
+		t.Fatalf("no Mcp-Param-* outside the declared set may ride the call: %+v", calls[0])
 	}
 	bodies := fake.bodies(t, "tools/call")
 	var body struct {
@@ -696,8 +705,25 @@ func TestHTTPConformance_PropertyAnnotatedSurfaceAndFlatArgs(t *testing.T) {
 	if err := json.Unmarshal([]byte(bodies[len(bodies)-1]), &body); err != nil {
 		t.Fatalf("decode tools/call body: %v", err)
 	}
-	if body.Params.Arguments["x-mcp-header"] != "flat" {
-		t.Fatalf("the flat argument must stay in the body, arguments = %+v", body.Params.Arguments)
+	if body.Params.Arguments["region"] != "us-west-1" {
+		t.Fatalf("the mirrored argument must stay in the body, arguments = %+v", body.Params.Arguments)
+	}
+
+	// An absent annotated argument mirrors nothing: the call goes out with
+	// no Mcp-Param-* and the rest of the arguments untouched.
+	sender = &permittingEventSender{bridge: b}
+	if err := b.Execute(context.Background(), &v2.ExecuteRequest{
+		SessionId: "http-conf-mirror",
+		Input:     map[string]string{"tool": "mirror", "message": "hi"},
+	}, sender); err != nil {
+		t.Fatalf("Execute(mirror, no region): %v", err)
+	}
+	calls = fake.headers(t, "tools/call")
+	if len(calls) != 2 {
+		t.Fatalf("tools/call POSTs = %d, want 2", len(calls))
+	}
+	if _, emitted := calls[1]["mcp-param-region"]; emitted {
+		t.Fatalf("an absent annotated argument must emit no Mcp-Param-*: %+v", calls[1])
 	}
 }
 
