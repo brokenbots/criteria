@@ -409,6 +409,65 @@ func TestJSONRPCConformance_ErrorCodeBand(t *testing.T) {
 	}
 }
 
+// TestJSONRPCConformance_BatchReceiveClosesSession pins the receive-side
+// batch posture against the real stdio fixture: MCP peers never batch (one
+// envelope per message in both directions), so a batched reply is a
+// protocol violation — the in-flight call fails with the typed batch error
+// and the session is closed for further executes.
+func TestJSONRPCConformance_BatchReceiveClosesSession(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	bridge := bridgeEnvSession(t, ctx, "batch-stdio-1", "MCP_REPLY_MODE=batch_once", "ndjson")
+	sid := "batch-stdio-1"
+
+	sender := &permittingEventSender{bridge: bridge}
+	first := bridge.Execute(context.Background(), &v2.ExecuteRequest{
+		SessionId: sid,
+		Input:     map[string]string{"tool": "echo", "message": "hi"},
+	}, sender)
+	if first == nil || !strings.Contains(first.Error(), "batched") {
+		t.Fatalf("stdio execute over a batched reply = %v, want the batch violation", first)
+	}
+	var rpcErr *mcpclient.RPCError
+	if !errors.As(first, &rpcErr) || rpcErr.Code != -32000 {
+		t.Fatalf("batched reply error not typed -32000 *mcpclient.RPCError: %v (%T)", first, first)
+	}
+	second := bridge.Execute(context.Background(), &v2.ExecuteRequest{
+		SessionId: sid,
+		Input:     map[string]string{"tool": "echo", "message": "hi"},
+	}, sender)
+	if second == nil {
+		t.Fatal("executes after the batch violation must fail (session closed)")
+	}
+}
+
+// TestJSONRPCConformance_NullIDAttribution pins the null-id reply vector
+// over stdio: a parse-error-shaped reply carries id null, which binds to no
+// pending call by id — the client attributes it to the sole outstanding
+// request (never guessing across concurrent calls) and surfaces the error
+// verbatim, and the session survives.
+func TestJSONRPCConformance_NullIDAttribution(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	bridge := bridgeEnvSession(t, ctx, "nullid-stdio-1", "MCP_REPLY_MODE=nullid_once", "ndjson")
+	sid := "nullid-stdio-1"
+
+	// The bend targets the first post-handshake tools/call, so the opening
+	// echo IS the bent call: the -32600 null-id error surfaces verbatim.
+	_, err := callTool(bridge, sid, "echo", map[string]string{"message": "bent"})
+	var rpcErr *mcpclient.RPCError
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("null-id reply error not typed *mcpclient.RPCError: %v (%T)", err, err)
+	}
+	if rpcErr.Code != -32600 || rpcErr.Message != "null-id reply mode" {
+		t.Errorf("null-id reply = %d/%q, want -32600/\"null-id reply mode\"", rpcErr.Code, rpcErr.Message)
+	}
+	// The session survived the global failure shape: later calls work.
+	if _, err := callTool(bridge, sid, "echo", map[string]string{"message": "after"}); err != nil {
+		t.Errorf("echo after null-id reply: %v", err)
+	}
+}
+
 // TestJSONRPCConformance_MismatchedFramingFailsOpen proves both mismatched
 // client/fixture framing pairs fail the session open deterministically inside
 // a bounded context instead of hanging the caller.

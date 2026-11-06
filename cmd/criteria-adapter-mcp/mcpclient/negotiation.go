@@ -54,6 +54,10 @@ const (
 	ErrorCodeUnsupportedProtocolVersion = -32022
 )
 
+// JSON-RPC parse error (-32700): the peer could not parse the envelope. It
+// is the signal the framing probe keys on (framingUncertain).
+const jsonRPCParseErrorCode = -32700
+
 // DefaultProbeTimeout bounds one server/discover probe. It is a session-open
 // budget, not a call budget: healthy peers of either era answer the probe
 // promptly (modern servers with a DiscoverResult, legacy ones with "unknown
@@ -140,7 +144,7 @@ type discoverResultEnvelope struct {
 	} `json:"_meta"`
 }
 
-// Connect opens the session per the negotiated dialect.
+// Connect opens the session per the negotiated dialect and transport.
 //
 // probe-first (the default) implements the stdio backward-compat procedure
 // of the 2026-07-28 spec: issue a server/discover probe; a DiscoverResult
@@ -151,7 +155,9 @@ type discoverResultEnvelope struct {
 // version, so negotiation fails deterministically (do NOT fall back to the
 // initialize handshake); any other probe error or probe timeout marks a
 // legacy peer and the session falls back to the initialize handshake (the
-// fallback is deliberately not keyed to one error code).
+// fallback is deliberately not keyed to one error code). When no framing
+// was pinned on the stdio transport, the probe ladder also settles which
+// stdio framing the peer parses (see connectProbed).
 //
 // initialize always speaks the legacy handshake. discover speaks the
 // stateless core only: a failed probe is terminal.
@@ -161,27 +167,165 @@ type discoverResultEnvelope struct {
 func (c *Client) Connect(ctx context.Context, mode Negotiation, clientName, clientVersion string) error {
 	c.clientName = clientName
 	c.clientVersion = clientVersion
-	if mode == NegotiationInitialize {
-		return c.initializeLegacy(ctx)
+	if c.isHTTP() {
+		return c.connectHTTP(ctx, mode)
 	}
+	switch mode {
+	case NegotiationInitialize:
+		// No probe in the pinned initialize mode: initialize is the legacy
+		// escape hatch and the configured framing is authoritative there.
+		return c.initializeLegacy(ctx)
+	case NegotiationProbeFirst, NegotiationDiscover:
+		return c.connectProbed(ctx, mode)
+	default:
+		return fmt.Errorf("mcpclient: unknown negotiation %q", mode)
+	}
+}
 
-	probeCtx, cancel := context.WithTimeout(ctx, DefaultProbeTimeout)
-	defer cancel()
-	result, err := c.Discover(probeCtx, ProtocolVersion20260728)
+// connectProbed implements the probe-first/discover open over stdio. The
+// first server/discover probe runs in the configured write framing; when
+// the framing was not pinned in config and that probe cannot show what the
+// peer parses (a parse-error reply or a transport failure), a second probe
+// runs in the other framing. The framing in which any parseable reply
+// arrives is the peer's dialect and wins for the session; an
+// unsupported-protocol-version reply is deterministic in every case.
+//
+// Fallback (probe-first) runs the legacy initialize handshake afterwards in
+// the established framing; discover has no fallback and fails terminally.
+func (c *Client) connectProbed(ctx context.Context, mode Negotiation) error {
+	result, err := c.probeOnce(ctx, c.stdio().currentFraming())
 	if err == nil {
 		return c.adoptDiscoverResult(result)
 	}
 	if IsUnsupportedProtocolVersion(err) {
-		supported := UnsupportedVersions(err)
-		if len(supported) == 0 {
-			supported = []string{"(unspecified)"}
-		}
-		return fmt.Errorf("mcpclient: no mutually supported protocol version: server advertises [%s] but this client speaks only %s: %w", strings.Join(supported, ", "), ProtocolVersion20260728, err)
+		return unsupportedVersionFailure(err)
 	}
+	// A reply the peer parsed (any other JSON-RPC error) already proves the
+	// configured framing; only uncertain outcomes — parse-error replies
+	// (-32700) and transport failures — re-probe in the other framing.
+	if !c.framingNegotiable || !framingUncertain(err) || c.isClosed() {
+		return c.legacyFallback(ctx, mode, err)
+	}
+
+	// The lsp-framed probe leaves an unterminated partial line behind on
+	// newline-based peers: their wire frames are newline-terminated, so the
+	// probe's payload cannot be parsed until the next write lands and it
+	// glues with it. Terminate the partial line with one newline character
+	// before the second probe: the line reader parses the abandoned probe's
+	// payload as its own line (its late reply carries the probe's request id
+	// and binds to no pending call, so it is dropped) and the ndjson probe
+	// follows as its own clean line. Header-framed peers skip the stray
+	// newline harmlessly — and this path only runs after they failed to
+	// show a parsed probe reply.
+	c.stdio().writeResyncNewline()
+
+	other := FramingNDJSON
+	if c.stdio().currentFraming() == FramingNDJSON {
+		other = FramingLSP
+	}
+	result, probeErr := c.probeOnce(ctx, other)
+	if probeErr == nil {
+		c.stdio().replaceFraming(other)
+		return c.adoptDiscoverResult(result)
+	}
+	if IsUnsupportedProtocolVersion(probeErr) {
+		return unsupportedVersionFailure(probeErr)
+	}
+	if parsedProbeError(probeErr) {
+		// The other framing elicited a parseable reply: the peer's dialect
+		// is proven — including legacy peers that only reply when the
+		// envelope parses.
+		c.stdio().replaceFraming(other)
+	}
+	// Without framing evidence either way, the historic LSP default stands
+	// and the fallback rules follow the second probe's error.
+	return c.legacyFallback(ctx, mode, probeErr)
+}
+
+// legacyFallback applies the fallback rules after the framing probe ladder:
+// discover has no legacy fallback and fails terminally, probe-first falls
+// back to the legacy initialize handshake in the established framing.
+func (c *Client) legacyFallback(ctx context.Context, mode Negotiation, probeErr error) error {
 	if mode == NegotiationDiscover {
-		return fmt.Errorf("mcpclient: server/discover probe failed and legacy fallback is disabled (negotiation %q): %w", mode, err)
+		return fmt.Errorf("mcpclient: server/discover probe failed and legacy fallback is disabled (negotiation %q): %w", mode, probeErr)
 	}
 	return c.initializeLegacy(ctx)
+}
+
+// probeOnce issues one server/discover probe in the given write framing
+// without disturbing the session's framing state; the framing probe
+// re-points it only after a probe proves the dialect. Bounded by the
+// probe timeout.
+func (c *Client) probeOnce(ctx context.Context, framing Framing) (*DiscoverResult, error) {
+	t := c.stdio()
+	previous := t.currentFraming()
+	t.replaceFraming(framing)
+	defer t.replaceFraming(previous)
+	probeCtx, cancel := context.WithTimeout(ctx, DefaultProbeTimeout)
+	defer cancel()
+	return c.Discover(probeCtx, ProtocolVersion20260728)
+}
+
+// unsupportedVersionFailure renders the deterministic no-mutual-version
+// failure: the peer answered a probe and rejected the requested protocol
+// version, so negotiation cannot proceed in any framing or dialect.
+func unsupportedVersionFailure(err error) error {
+	supported := UnsupportedVersions(err)
+	if len(supported) == 0 {
+		supported = []string{"(unspecified)"}
+	}
+	return fmt.Errorf("mcpclient: no mutually supported protocol version: server advertises [%s] but this client speaks only %s: %w",
+		strings.Join(supported, ", "), ProtocolVersion20260728, err)
+}
+
+// framingUncertain reports whether a probe error leaves the peer's framing
+// undetermined: a parse-error reply (-32700) proves the peer could not read
+// the framed envelope, and a transport failure (timeout, EOF) proves
+// nothing at all. Any other reply is a parsed response and establishes the
+// framing it arrived in.
+func framingUncertain(err error) bool {
+	var rpcErr *RPCError
+	if errors.As(err, &rpcErr) {
+		return rpcErr.Code == jsonRPCParseErrorCode
+	}
+	return true
+}
+
+// parsedProbeError reports whether err is a parseable JSON-RPC reply — an
+// RPC error from a peer that read the envelope cleanly.
+func parsedProbeError(err error) bool {
+	var rpcErr *RPCError
+	return errors.As(err, &rpcErr)
+}
+
+// connectHTTP implements negotiation on the Streamable HTTP transport. The
+// stateless core has no initialize handshake: negotiation is a single
+// server/discover probe (bounded by the probe timeout), and a failed probe
+// is terminal — an HTTP endpoint that does not advertise the stateless
+// core is not speakable over HTTP (a legacy fallback would retry the
+// removed initialize handshake). The subscriptions/listen stream opens
+// after adoption when the session opted in, best effort: a failed listen
+// open defers to the session (requests keep working; notifications stop).
+func (c *Client) connectHTTP(ctx context.Context, mode Negotiation) error {
+	if mode == NegotiationInitialize {
+		return errors.New("mcpclient: the initialize handshake is not valid on the http transport (the stateless core replaces it)")
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, DefaultProbeTimeout)
+	defer cancel()
+	result, err := c.Discover(probeCtx, ProtocolVersion20260728)
+	if err != nil {
+		if IsUnsupportedProtocolVersion(err) {
+			return unsupportedVersionFailure(err)
+		}
+		return fmt.Errorf("mcpclient: server/discover probe failed (terminal on Streamable HTTP, negotiation %q): %w", mode, err)
+	}
+	if err := c.adoptDiscoverResult(result); err != nil {
+		return err
+	}
+	if t, ok := c.tr.(*httpTransport); ok {
+		t.startListenStream(ctx)
+	}
+	return nil
 }
 
 // adoptDiscoverResult moves the session onto the stateless core. A modern
@@ -218,7 +362,7 @@ func (c *Client) Discover(ctx context.Context, preferredVersion string) (*Discov
 	if c.clientName != "" {
 		meta[MetaClientInfo] = clientInfo{Name: c.clientName, Version: c.clientVersion}
 	}
-	raw, err := c.request(ctx, "server/discover", map[string]any{"_meta": meta})
+	raw, err := c.request(ctx, "server/discover", map[string]any{"_meta": meta}, nil, nil, preferredVersion)
 	if err != nil {
 		return nil, err
 	}

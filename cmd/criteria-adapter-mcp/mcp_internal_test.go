@@ -150,7 +150,10 @@ func TestMCPBridge_Info(t *testing.T) {
 		t.Fatal("platforms is empty")
 	}
 
-	// ConfigSchema must have "command" as required field.
+	// ConfigSchema: "command" is per-transport (required with
+	// transport=stdio, rejected with transport=http) so it must not be
+	// advertised as unconditionally required — a consumer honoring
+	// Required would reject every http config as missing it.
 	cfg := resp.GetConfigSchema()
 	if cfg == nil {
 		t.Fatal("config_schema is nil")
@@ -159,8 +162,11 @@ func TestMCPBridge_Info(t *testing.T) {
 	if !ok {
 		t.Fatal("config_schema missing 'command' field")
 	}
-	if !commandField.GetRequired() {
-		t.Fatal("config_schema.command must be required")
+	if commandField.GetRequired() {
+		t.Fatal("config_schema.command must not be unconditionally required (transport=http rejects command)")
+	}
+	if !strings.Contains(commandField.GetDescription(), "required with transport=stdio") {
+		t.Fatalf("config_schema.command description = %q, want the per-transport rule", commandField.GetDescription())
 	}
 
 	// CRI-172: the input surface is dynamic — no static InputSchema is

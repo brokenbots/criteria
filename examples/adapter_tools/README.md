@@ -14,6 +14,7 @@ with a reason where that is absent.
 | [`mcp_resource/mcp_resource.hcl`](mcp_resource/mcp_resource.hcl) | 2 | The mcp adapter as a resource, driven by the scripted echo MCP fixture server over stdio (CRI-172). |
 | [`copilot_mcp_resource/copilot_mcp_resource.hcl`](copilot_mcp_resource/copilot_mcp_resource.hcl) | 3 | The mcp adapter as a resource, tool-called by a real copilot agent mid-task (CRI-181) — see [its README](copilot_mcp_resource/README.md). |
 | [`claude_mcp_resource/claude_mcp_resource.hcl`](claude_mcp_resource/claude_mcp_resource.hcl) | 4 | The mcp adapter as a resource, tool-called by a real Claude Code agent mid-task (CRI-182; shares variant 3's byte-identical mcp resource block) — see [its README](claude_mcp_resource/README.md). |
+| [`mcp_http_streamed/mcp_http_streamed.hcl`](mcp_http_streamed/mcp_http_streamed.hcl) | 5 | The mcp adapter as a direct step target over the Streamable HTTP transport, driven by the same echo fixture serving the stateless core on 127.0.0.1:48844. |
 
 ## How a caller tool-call works
 

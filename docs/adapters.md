@@ -717,6 +717,144 @@ surface that as the typed `host_unsupported` failure. Unknown
 that never declare `adapter_tools` never initiate calls, so old adapters are
 unaffected.
 
+## The MCP adapter
+
+The bundled `criteria-adapter-mcp` adapter speaks to an MCP server and maps
+the server's tool surface onto the adapter-tools contract. It supports the
+two client transports of the 2026-07-28 MCP revision:
+
+- **stdio** (default) — the server is a process (`command`, optional
+  `args`/`env`/`cwd`) over a framed pipe. JSON-RPC write framing is
+  `lsp` (Content-Length headers) or `ndjson` (newline-delimited, the
+  published MCP stdio dialect). When `framing` is unspecified the adapter
+  probe settles which framing the server parses; reads auto-detect either
+  shape. Session-open negotiation is `probe-first` by default: a
+  `server/discover` probe adopts the stateless core when the server
+  advertises it and falls back to the legacy `initialize` handshake
+  otherwise (`handshake = "discover"` / `"initialize"` force either side).
+- **`transport = "http"`** — Streamable HTTP per the 2026-07-28
+  revision, configured by `url`, `headers`, and `timeout`. Streamable
+  HTTP serves the stateless core only, so the legacy `initialize`
+  handshake is not valid on this transport: discovery is a single
+  `server/discover` probe and its failure fails the session open.
+
+### Streamable HTTP wire contract
+
+Every adapter-to-server exchange is one POST of a single JSON-RPC 2.0
+envelope to the configured `url`. The request carries the transport's
+standard headers — `Mcp-Method` (the method of the envelope),
+`Mcp-Protocol-Version` on every POST (the probe announces the requested
+version before any adoption, so the header never goes out empty), and
+`Mcp-Name` only for a name-bearing method, carrying the request's own
+identity: `params.name` for `tools/call` and `prompts/get`, `params.uri`
+for `resources/read` — nameless methods (`server/discover`, `tools/list`,
+notifications) send no `Mcp-Name`. Values outside the header-safe set
+(printable US-ASCII without leading/trailing whitespace) are encoded with
+the Base64 sentinel `=?base64?<base64>?=`. The header value and the body's
+`_meta[io.modelcontextprotocol/protocolVersion]` come from one source, so
+they cannot diverge. The client's own identity is not a header: it rides
+the body as `_meta[io.modelcontextprotocol/clientInfo]`. Plus
+`Content-Type`/`Accept` under transport control and any custom headers.
+
+The server answers with one response envelope as `application/json`, or
+with an SSE stream (`text/event-stream`) when it wants to push
+interleaved traffic: server-to-client notifications (e.g.
+`notifications/progress`) are routed to the call in flight on the same
+stream, and the call's own result envelope settles the stream. One
+in-flight `Execute` at a time is the supported posture for SSE streams.
+
+The `url` is used as configured — the transport sends no TLS policy of its
+own. A plain `http://` endpoint travels in cleartext, headers and bodies
+included (credential-bearing custom headers ride those requests), so point
+`url` at an `https://` endpoint or a private-network hop whenever the
+headers or payloads carry anything sensitive.
+
+No session machinery and no resumability: the revision removed the
+session-id attachment and Last-Event-ID rehydration (SEP-2567,
+SEP-2575). A response stream that breaks mid-call fails that call
+deterministically — there is no client-side resumability state to lose or
+restore — and the session stays usable: a re-issued call is a
+brand-new request answered like any other. Cancellation on this transport
+is transport-native: the SSE stream close is the cancellation signal, so
+no `notifications/cancelled` POST is sent (stdio keeps sending it).
+
+### Mcp-Param headers from the tool's schema
+
+Beyond the caller-supplied seam, the protocol-level parameter mechanism is
+schema-driven: a tool's `inputSchema` may annotate a statically reachable
+property (a plain `properties` chain from the schema root) with an
+`x-mcp-header` JSON string naming the header that mirrors that property's
+own instance value. For example, a `region` property whose schema is
+`{"type":"string","x-mcp-header":"Region"}` mirrors
+`arguments.region = us-west1` as `Mcp-Param-Region: us-west1` on the
+`tools/call` POST, with `arguments.region` itself staying in the body.
+On the wire the mirrored value is encoded like `Mcp-Name` (header-safe
+values verbatim, the Base64 sentinel for values outside that set).
+
+The constraints: the annotation value must be a non-empty HTTP token
+name (1*tchar, no CR/LF or control characters); header names are unique
+case-insensitively across the whole schema; the annotated property's
+declared type must be `string`, `boolean`, or `integer` (`number` is not
+mirrored, and integers must fit within ±(2^53-1) — an out-of-bound
+integer refuses the call before any request is sent, with the error naming
+the parameter path); the annotation must sit on a plain `properties`
+chain — one at the schema root, or under `oneOf`/`anyOf`/`allOf`/
+`patternProperties`/`additionalProperties`/`items`, or inside the
+annotated property's own value schema, is unreachable and invalid. A tool
+whose annotation fails validation is invalid and is dropped from the
+advertised tool surface (the rest of the list stays). An argument absent
+from the call emits no header (the server's own "required `Mcp-Param-*`
+missing" rule governs that). `Mcp-Param-*` is a reserved namespace:
+custom headers may not forge it, and the protocol-mandated values win
+over any caller-supplied entry.
+
+The `x-mcp-header` tool-params seam below is a separate, additive adapter
+feature for caller-supplied headers; only the schema annotation produces
+protocol-mandated `Mcp-Param-*` headers.
+
+### Custom headers on MCP tool calls
+
+Per-request custom headers ride the `x-mcp-header` tool-params seam: a
+tool call may carry `Name: Value` entries, validated by the same rules as
+the adapter's `headers` config (valid HTTP token name, no line breaks or
+control characters in the value, and transport-controlled header names —
+`Accept`, `Content-Type`, `Content-Length`, `Host`, `Mcp-Method`,
+`Mcp-Name`, `Mcp-Protocol-Version`, `Mcp-Session-Id`, `Last-Event-ID`,
+`Mcp-Param-*` — rejected). Per-call entries win over config-level
+`headers` on a name collision (but never over a protocol-mandated
+`Mcp-Param-*` mirror) and are stripped from the tool arguments before the
+call runs. A caller-supplied header that fails validation surfaces as the
+typed `invalid_header` failure, not a bare execute error.
+
+For a runnable example over the HTTP transport, see
+[`examples/adapter_tools/mcp_http_streamed`](../examples/adapter_tools/mcp_http_streamed/mcp_http_streamed.hcl);
+the stdio transport's example is
+[`examples/adapter_tools/mcp_typed_direct`](../examples/adapter_tools/mcp_typed_direct/mcp_typed_direct.hcl).
+
+### JSON-RPC conformance
+
+Both transports carry a JSON-RPC 2.0 conformance suite (error-code band,
+batch posture, id handling). The hermetic legs run against the in-tree
+echo fixture; the non-fixture legs against a real reference MCP server
+are opt-in so the default suite stays deterministic — set either env and
+run `go test ./cmd/criteria-adapter-mcp/ -run TestExternalReferenceConformance`:
+
+- `MCP_REFERENCE_STDIO_CMD` — a stdio server command line speaking
+  newline-delimited JSON (e.g.
+  `node .../@modelcontextprotocol/server-everything/dist/index.js stdio`);
+  drives the ndjson wire vectors and the adapter pipeline end to end
+  (probe-first open, discovery, a tool call).
+- `MCP_REFERENCE_HTTP_URL` — a Streamable HTTP endpoint (e.g.
+  `http://127.0.0.1:3001/mcp` for server-everything's `streamableHttp`
+  mode); drives the wire vectors (initialize/session capture, dual-Accept
+  rule, parse-error and batch postures) and pins the bridge's terminal
+  discover-probe failure against a server that only speaks the legacy
+  handshake.
+
+`MCP_REFERENCE_TOOL` / `MCP_REFERENCE_TOOL_ARGS` optionally add a
+`tools/call` vector. Both legs are verified against
+`@modelcontextprotocol/server-everything`.
+
 ## Secrets
 
 Adapters declare the secrets they need in their manifest; the host resolves and

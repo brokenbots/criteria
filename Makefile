@@ -272,6 +272,7 @@ validate: build ## Validate all example workflow directories
 		examples/build_and_test examples/copilot_planning_then_execution \
 		examples/adapter_tools/noop_passthrough examples/adapter_tools/mcp_resource \
 		examples/adapter_tools/mcp_typed_direct \
+		examples/adapter_tools/mcp_http_streamed \
 		examples/adapter_tools/copilot_mcp_resource \
 		examples/adapter_tools/claude_mcp_resource \
 		examples/outcome_contracts \
