@@ -430,6 +430,7 @@ jobs:
   update-homebrew-tap:
     name: Update Homebrew tap
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: release
     if: "!contains(github.ref_name, '-')"
     steps:

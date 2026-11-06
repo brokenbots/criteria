@@ -154,6 +154,7 @@ jobs:
   homebrew-tap-script:
     name: Homebrew tap update script
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
