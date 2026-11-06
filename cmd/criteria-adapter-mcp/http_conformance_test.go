@@ -33,16 +33,17 @@ import (
 // snapshot, and the raw body; routing follows the recorded method. The
 // tools/call behavior is switched per test through callMode.
 type mcpHTTPFake struct {
-	mu           sync.Mutex
-	seenMcp      map[string][]string              // method -> Mcp-* header snapshots
-	seenHdrs     map[string][]map[string][]string // method -> per-call header snapshots
-	seenBodies   map[string][]string              // method -> raw bodies
-	callMode     int                              // tools/call behavior (toolsCallNormal default)
-	callCount    int
-	faultCode    int    // 0=off; tools/call answered with this error code (normal + SSE modes)
-	idStyle      string // "number": integer reply ids re-encoded as JSON numbers
-	nullIDReply  bool   // one-shot: the first tools/call is answered -32600 with a literal null id
-	nullIDServed bool   // nullIDReply consumed
+	mu            sync.Mutex
+	seenMcp       map[string][]string              // method -> Mcp-* header snapshots
+	seenHdrs      map[string][]map[string][]string // method -> per-call header snapshots
+	seenBodies    map[string][]string              // method -> raw bodies
+	callMode      int                              // tools/call behavior (toolsCallNormal default)
+	callCount     int
+	faultCode     int    // 0=off; tools/call answered with this error code (normal + SSE modes)
+	idStyle       string // "number": integer reply ids re-encoded as JSON numbers
+	nullIDReply   bool   // one-shot: the first tools/call is answered -32600 with a literal null id
+	nullIDServed  bool   // nullIDReply consumed
+	toolsListJSON string // tools/list answer override (the default serves the flat echo surface)
 }
 
 const (
@@ -54,6 +55,10 @@ const (
 )
 
 const fakeHTTPDiscoverResult = `{"resultType":"complete","supportedVersions":["2026-07-28"],"capabilities":{"tools":{}},"ttlMs":30000,"cacheScope":"session"}`
+
+// fakeHTTPToolsListResult is the fake's default tool surface: a flat echo
+// tool with the schemaless input schema.
+const fakeHTTPToolsListResult = `{"resultType":"complete","ttlMs":30000,"tools":[{"name":"echo","description":"echo input","inputSchema":{"type":"object"}}]}`
 
 func (f *mcpHTTPFake) record(method string, r *http.Request, body string) {
 	f.mu.Lock()
@@ -67,7 +72,7 @@ func (f *mcpHTTPFake) record(method string, r *http.Request, body string) {
 	for name, vals := range r.Header {
 		key := strings.ToLower(name)
 		switch key {
-		case "mcp-method", "mcp-name", "mcp-protocol-version", "content-type", "accept", "x-tenant", "x-trace":
+		case "mcp-method", "mcp-name", "mcp-protocol-version", "content-type", "accept", "x-tenant", "x-trace", "mcp-param-x-trace":
 			sub[key] = vals
 		}
 	}
@@ -123,7 +128,13 @@ func (f *mcpHTTPFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "server/discover":
 		f.reply(w, env.ID, fakeHTTPDiscoverResult)
 	case "tools/list":
-		f.reply(w, env.ID, `{"resultType":"complete","ttlMs":30000,"tools":[{"name":"echo","description":"echo input","inputSchema":{"type":"object"}}]}`)
+		f.mu.Lock()
+		list := f.toolsListJSON
+		f.mu.Unlock()
+		if list == "" {
+			list = fakeHTTPToolsListResult
+		}
+		f.reply(w, env.ID, list)
 	case "tools/call":
 		f.mu.Lock()
 		f.callCount++
@@ -622,6 +633,72 @@ func TestHTTPConformance_EmptyHeaderNameRejected(t *testing.T) {
 		t.Fatalf("Execute with a bare x-mcp-header- key = %v, want the typed failure event with nil error", err)
 	}
 	assertTypedCallError(t, sender, callErrorInvalidHeader, "requires a non-empty header name")
+}
+
+// TestHTTPConformance_PropertyAnnotatedSurfaceAndFlatArgs pins the bridge
+// behavior against a property-name-annotated surface: the validly
+// annotated tool is advertised by Info while the invalidly annotated one is
+// dropped, and the bridge's flat-string arguments can never resolve the
+// annotation (its value is a string, not the annotated object), so no
+// Mcp-Param-* mirror rides the call and the argument itself stays in the
+// body.
+func TestHTTPConformance_PropertyAnnotatedSurfaceAndFlatArgs(t *testing.T) {
+	fake := &mcpHTTPFake{toolsListJSON: `{"resultType":"complete","ttlMs":30000,"tools":[` +
+		`{"name":"mirror","description":"header mirror",` +
+		`"inputSchema":{"type":"object","properties":{"x-mcp-header":{"type":"object","additionalProperties":false` +
+		`,"properties":{"X-Trace":{"type":"string"}}}}}},` +
+		`{"name":"broken","description":"invalid annotation",` +
+		`"inputSchema":{"type":"object","properties":{"x-mcp-header":{"type":"object","additionalProperties":true` +
+		`,"properties":{"X-Trace":{"type":"string"}}}}}}]}`}
+	ts := httptest.NewServer(fake)
+	t.Cleanup(ts.Close)
+
+	b := openHTTPConformanceSession(t, "http-conf-prop", map[string]string{"transport": "http", "url": ts.URL})
+
+	// Surface: the validly annotated tool advertised, the invalidly
+	// annotated one dropped (a tool with an invalid annotation is omitted
+	// from the tools/list surface; the rest of the list stays).
+	info, err := b.Info(context.Background(), &v2.InfoRequest{})
+	if err != nil {
+		t.Fatalf("Info: %v", err)
+	}
+	names := make([]string, 0, len(info.GetTools()))
+	for _, tool := range info.GetTools() {
+		names = append(names, tool.GetName())
+	}
+	if len(names) != 1 || names[0] != "mirror" {
+		t.Fatalf("Info tools = %v, want [mirror] (the invalidly annotated tool dropped)", names)
+	}
+
+	// The bridge's input is flat map[string]string, so the annotation's
+	// object shape cannot be spoken: a flat x-mcp-header value is an
+	// ordinary tool argument — mirrored from nothing, retained in the body.
+	sender := &permittingEventSender{bridge: b}
+	if err := b.Execute(context.Background(), &v2.ExecuteRequest{
+		SessionId: "http-conf-prop",
+		Input:     map[string]string{"tool": "mirror", "message": "hi", "x-mcp-header": "flat"},
+	}, sender); err != nil {
+		t.Fatalf("Execute(mirror, flat x-mcp-header): %v", err)
+	}
+	calls := fake.headers(t, "tools/call")
+	if len(calls) != 1 {
+		t.Fatalf("tools/call POSTs = %d, want 1", len(calls))
+	}
+	if _, emitted := calls[0]["mcp-param-x-trace"]; emitted {
+		t.Fatalf("a flat x-mcp-header argument must emit no Mcp-Param-* mirror: %+v", calls[0])
+	}
+	bodies := fake.bodies(t, "tools/call")
+	var body struct {
+		Params struct {
+			Arguments map[string]any `json:"arguments"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal([]byte(bodies[len(bodies)-1]), &body); err != nil {
+		t.Fatalf("decode tools/call body: %v", err)
+	}
+	if body.Params.Arguments["x-mcp-header"] != "flat" {
+		t.Fatalf("the flat argument must stay in the body, arguments = %+v", body.Params.Arguments)
+	}
 }
 
 // assertTypedCallError pins the typed invalid_header failure shape: the

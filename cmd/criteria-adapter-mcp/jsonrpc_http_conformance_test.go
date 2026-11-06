@@ -14,6 +14,10 @@ package main
 //     the client's string request id (normalize both sides), and a null-id
 //     parse-error reply binds to the sole outstanding request instead of
 //     wedging the caller.
+//   - Header-param mirrors: the x-mcp-header property-name shape is
+//     exercised on the wire against the real fixture — the advertisement,
+//     the accepted mirror, and the -32020 failure band (mismatched,
+//     undeclared, valueless).
 //   - Echo fixture: the echo fixture runs in Streamable HTTP mode as a
 //     real subprocess — discover/tools-list discovery, an echoes round
 //     trip over an SSE-delivered result with a progress event, and the
@@ -26,8 +30,10 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -287,4 +293,127 @@ func TestJSONRPCHTTPConformance_ReferenceFixture(t *testing.T) {
 			t.Fatalf("re-issued terminal event = %s, want success result", describeEvents(sender.all()))
 		}
 	})
+}
+
+// TestJSONRPCHTTPConformance_HeaderParamMirrorPropertyShape runs the
+// x-mcp-header Server Validation vectors on the wire against the real echo
+// fixture spawned in the property-name spelling (MCP_HDR_SCHEMA=property):
+// a hand-rolled raw-wire leg shares mcpclient.StandardHeaders with the
+// transport, so the mirror set — and its -32020 failure band — is observed
+// exactly as a conformant client presents it.
+func TestJSONRPCHTTPConformance_HeaderParamMirrorPropertyShape(t *testing.T) {
+	// The Streamable HTTP fixture always serves the stateless core
+	// (MCP_HTTP_LISTEN fixes the revision), so every raw request carries
+	// the per-request _meta protocol version.
+	metaParam := `"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}`
+	url := startEchoHTTPFixture(t, "MCP_HDR_SCHEMA=property")
+	leg, err := newReferenceHTTP(t, url)
+	if err != nil {
+		t.Fatalf("raw wired leg: %v", err)
+	}
+
+	// tools/list advertises the property-name shape: a property NAMED
+	// x-mcp-header at the top of the arguments, its schema the header-name
+	// table — and no marker spelling anywhere on the schema. The HTTP
+	// fixture serves the stateless core, so every raw request carries the
+	// per-request _meta protocol version.
+	{
+		ctx, cancel := context.WithTimeout(context.Background(), refProbeTimeout)
+		defer cancel()
+		body := fmt.Sprintf(
+			`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{%s}}`, metaParam)
+		status, _, text, err := leg.post(ctx, body, "tools/list", "", nil)
+		if err != nil {
+			t.Fatalf("tools/list POST: %v", err)
+		}
+		if status != http.StatusOK {
+			t.Fatalf("tools/list status = %d body=%s", status, text)
+		}
+		var listing struct {
+			Result struct {
+				Tools []struct {
+					Name        string `json:"name"`
+					InputSchema struct {
+						Properties map[string]map[string]any `json:"properties"`
+					} `json:"inputSchema"`
+				} `json:"tools"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal([]byte(text), &listing); err != nil {
+			t.Fatalf("decode tools/list: %v (%s)", err, text)
+		}
+		var props map[string]map[string]any
+		sawEcho := false
+		for _, tool := range listing.Result.Tools {
+			if tool.Name == "echo" {
+				sawEcho = true
+				props = tool.InputSchema.Properties
+			}
+		}
+		if !sawEcho {
+			t.Fatalf("tools/list carries no echo tool: %s", text)
+		}
+		table, ok := props["x-mcp-header"]
+		if !ok || table["type"] != "object" || table["additionalProperties"] != false {
+			t.Fatalf("echo inputSchema properties = %v, want a property NAMED x-mcp-header carrying the header-name table", props)
+		}
+		if _, hasMarker := props["trace"]; hasMarker {
+			t.Fatalf("the property mode must not advertise the marker spelling: %v", props)
+		}
+	}
+
+	call := func(t *testing.T, override map[string]string, arguments string) (int, string) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), refProbeTimeout)
+		defer cancel()
+		body := fmt.Sprintf(
+			`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"echo","arguments":%s,%s}}`,
+			arguments, metaParam)
+		status, _, text, err := leg.post(ctx, body, "tools/call", "echo", override)
+		if err != nil {
+			t.Fatalf("tools/call POST: %v", err)
+		}
+		return status, text
+	}
+	assertViolation := func(t *testing.T, status int, text string) {
+		t.Helper()
+		if status != http.StatusBadRequest {
+			t.Fatalf("status = %d, body %s, want 400", status, text)
+		}
+		var envelope struct {
+			Error struct {
+				Code int `json:"code"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(text), &envelope); err != nil {
+			t.Fatalf("body %s not a JSON-RPC envelope: %v", text, err)
+		}
+		if envelope.Error.Code != -32020 {
+			t.Fatalf("error code = %d, want -32020 (body %s)", envelope.Error.Code, text)
+		}
+	}
+
+	// The required mirror, matching the argument value at the
+	// property-named path, is accepted on the wire (200, the result
+	// envelope answers the tools/call id).
+	if status, text := call(t, map[string]string{"Mcp-Param-X-Trace": "v1"}, `{"x-mcp-header":{"X-Trace":"v1"}}`); status != http.StatusOK {
+		t.Fatalf("mirrored call status = %d body=%s, want 200", status, text)
+	}
+
+	// A mirror mismatching the argument value is a violation.
+	status, text := call(t, map[string]string{"Mcp-Param-X-Trace": "other"}, `{"x-mcp-header":{"X-Trace":"v1"}}`)
+	assertViolation(t, status, text)
+
+	// A missing required mirror is a violation.
+	status, text = call(t, nil, `{"x-mcp-header":{"X-Trace":"v1"}}`)
+	assertViolation(t, status, text)
+
+	// A mirror outside the declared name set is a violation.
+	status, text = call(t, map[string]string{"Mcp-Param-X-Trace": "v1", "Mcp-Param-X-Other": "x"}, `{"x-mcp-header":{"X-Trace":"v1"}}`)
+	assertViolation(t, status, text)
+
+	// A mirror with no argument value at the property-named path is a
+	// violation.
+	status, text = call(t, map[string]string{"Mcp-Param-X-Trace": "v1"}, `{}`)
+	assertViolation(t, status, text)
 }
