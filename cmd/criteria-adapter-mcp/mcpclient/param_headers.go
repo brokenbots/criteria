@@ -271,9 +271,10 @@ func lowerASCII(s string) string {
 	return string(out)
 }
 
-// toolParamHeaderPrefix is the transport-controlled header namespace
+// ParamHeaderPrefix is the transport-controlled header namespace
 // protocol-mandated mirrors ride.
-const toolParamHeaderPrefix = "Mcp-Param-"
+// The fixture's Server Validation shares the namespace so both ends agree.
+const ParamHeaderPrefix = "Mcp-Param-"
 
 // headerEntry renders one mirrored HTTP header: the member of the value at
 // the annotated path whose key is the header name, encoded with the
@@ -305,7 +306,7 @@ func (b toolParamHeader) headerEntry(arguments map[string]any) (HeaderEntry, boo
 	if !ok {
 		return HeaderEntry{}, false
 	}
-	name := toolParamHeaderPrefix + b.header
+	name := ParamHeaderPrefix + b.header
 	switch v := raw.(type) {
 	case nil:
 		return HeaderEntry{}, false

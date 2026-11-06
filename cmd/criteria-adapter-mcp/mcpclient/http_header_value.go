@@ -49,12 +49,12 @@ func encodeHeaderValue(s string) string {
 	return headerValueBase64SentinelPrefix + base64.StdEncoding.EncodeToString([]byte(s)) + headerValueBase64SentinelSuffix
 }
 
-// decodeHeaderValue inverts encodeHeaderValue, restoring the original
+// DecodeHeaderValue inverts EncodeHeaderValue, restoring the original
 // value from the Base64 sentinel. A verbatim value and a malformed
 // sentinel round-trip to themselves so a peer that does not understand the
 // sentinel still sees what was sent. Decoding is used by servers (and
 // tests) that mirror a header value back against the request body.
-func decodeHeaderValue(s string) string {
+func DecodeHeaderValue(s string) string {
 	if len(s) < len(headerValueBase64SentinelPrefix)+len(headerValueBase64SentinelSuffix) ||
 		s[:len(headerValueBase64SentinelPrefix)] != headerValueBase64SentinelPrefix ||
 		s[len(s)-len(headerValueBase64SentinelSuffix):] != headerValueBase64SentinelSuffix {

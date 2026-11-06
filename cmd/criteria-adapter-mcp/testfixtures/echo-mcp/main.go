@@ -21,6 +21,28 @@ type request struct {
 	Params  map[string]any `json:"params,omitempty"`
 }
 
+// annotatedInputSchema is the echo tool's inputSchema when MCP_HDR_SCHEMA is
+// set: the trace property carries the x-mcp-header annotation whose value
+// table declares the required X-Trace mirror (a string) with statically
+// known names, per the Streamable HTTP revision. The HTTP Server Validation
+// mirrors its own declaration off this schema.
+func annotatedInputSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"trace": map[string]any{
+				"type":                 "object",
+				"x-mcp-header":         map[string]any{},
+				"additionalProperties": false,
+				"required":             []any{"X-Trace"},
+				"properties": map[string]any{
+					"X-Trace": map[string]any{"type": "string"},
+				},
+			},
+		},
+	}
+}
+
 type response struct {
 	JSONRPC string `json:"jsonrpc"`
 	ID      any    `json:"id,omitempty"`
@@ -54,6 +76,10 @@ var inFlight, maxInFlight atomic.Int64
 //     bound "http=<addr>" line (single-server-process proof).
 //   - MCP_CALLLOG: appends "call=<name> msg=<message>" per tools/call that
 //     actually reached the fixture (denied/unknown calls never appear).
+//   - MCP_HDR_SCHEMA=1: the echo tool's inputSchema carries the
+//     x-mcp-header annotation (trace property mirroring the required
+//     X-Trace header to Mcp-Param-X-Trace); the HTTP face validates the
+//     mirror set on every tools/call per the Server Validation rules.
 //   - MCP_REPLY_MODE=garbage_once: writes one garbage frame ahead of the
 //     first real reply; framed-robust clients skip it.
 //   - MCP_PROTOCOL=2026-07-28: speak the stateless core of the 2026-07-28
@@ -104,6 +130,10 @@ var (
 	httpListen  = os.Getenv("MCP_HTTP_LISTEN")
 	httpSSE     = os.Getenv("MCP_HTTP_SSE")
 	idNumbered  = strings.EqualFold(os.Getenv("MCP_ID_STYLE"), "number")
+	// headerSchemaMode answers MCP_HDR_SCHEMA: the echo tool's inputSchema
+	// carries the x-mcp-header annotation and the HTTP face validates its
+	// required Mcp-Param-* mirrors per the Server Validation rules.
+	headerSchemaMode = strings.EqualFold(os.Getenv("MCP_HDR_SCHEMA"), "1")
 
 	// mode flags derived from MCP_REPLY_MODE ("" leaves replies untouched).
 	replyBatchOnce  = strings.EqualFold(os.Getenv("MCP_REPLY_MODE"), "batch_once")
@@ -276,7 +306,7 @@ func routeEnvelope(payload []byte) (req request, reply map[string]any, kind int)
 			"tools": []map[string]any{{
 				"name":        "echo",
 				"description": "Echoes the argument map as text",
-				"inputSchema": map[string]any{"type": "object"},
+				"inputSchema": echoInputSchema(),
 			}, {
 				"name":        "structured",
 				"description": "Returns text content plus a structuredContent payload",
@@ -504,6 +534,15 @@ func progressParams(req request) map[string]any {
 	params["criteria_inflight"] = inFlight.Load()
 	params["criteria_overlap"] = maxInFlight.Load()
 	return params
+}
+
+// echoInputSchema is the echo tool's advertised input schema: plain when
+// the annotation knob is off, the x-mcp-header mirror table when on.
+func echoInputSchema() map[string]any {
+	if headerSchemaMode {
+		return annotatedInputSchema()
+	}
+	return map[string]any{"type": "object"}
 }
 
 // handleToolCall answers a tools/call request. echo returns the argument map

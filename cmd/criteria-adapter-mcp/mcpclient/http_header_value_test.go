@@ -29,8 +29,8 @@ func TestEncodeHeaderValue(t *testing.T) {
 			if got != tc.want {
 				t.Fatalf("encodeHeaderValue(%q) = %q want %q", tc.in, got, tc.want)
 			}
-			if back := decodeHeaderValue(got); back != tc.in {
-				t.Fatalf("decodeHeaderValue(encode(%q)) = %q want the original", tc.in, back)
+			if back := DecodeHeaderValue(got); back != tc.in {
+				t.Fatalf("DecodeHeaderValue(encode(%q)) = %q want the original", tc.in, back)
 			}
 		})
 	}
@@ -50,8 +50,8 @@ func TestDecodeHeaderValue(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := decodeHeaderValue(tc.in); got != tc.want {
-				t.Fatalf("decodeHeaderValue(%q) = %q want %q", tc.in, got, tc.want)
+			if got := DecodeHeaderValue(tc.in); got != tc.want {
+				t.Fatalf("DecodeHeaderValue(%q) = %q want %q", tc.in, got, tc.want)
 			}
 		})
 	}
