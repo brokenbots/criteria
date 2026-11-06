@@ -8,6 +8,8 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+
+	"github.com/brokenbots/criteria/internal/envreg"
 )
 
 func NewRunCmd() *cobra.Command {
@@ -57,13 +59,13 @@ func NewRunCmd() *cobra.Command {
 }
 
 func addRunFlags(cmd *cobra.Command, workflowPath, serverURL, name, codec, tlsMode, tlsCA, tlsCert, tlsKey *string, varFiles *[]string) {
-	cmd.Flags().StringVar(workflowPath, "workflow", envOrDefault("CRITERIA_WORKFLOW", ""), "Path to workflow .chcl or .hcl file (or CRITERIA_WORKFLOW)")
+	cmd.Flags().StringVar(workflowPath, "workflow", envreg.CRITERIAWorkflow.StringOr(""), "Path to workflow .chcl or .hcl file (or CRITERIA_WORKFLOW)")
 	cmd.Flags().StringArrayVar(varFiles, "var-file", nil, "Load variable overrides from a .chcl, .hcl, or .json file (repeatable)")
-	cmd.Flags().StringVar(serverURL, "server", envOrDefault("CRITERIA_SERVER_URL", "http://localhost:8080"), "Server base URL (or CRITERIA_SERVER_URL)")
-	cmd.Flags().StringVar(name, "name", envOrDefault("CRITERIA_NAME", ""), "Agent name (defaults to hostname, or CRITERIA_NAME)")
-	cmd.Flags().StringVar(codec, "server-codec", envOrDefault("CRITERIA_SERVER_CODEC", "proto"), "Connect codec: 'proto' (default) or 'json' (or CRITERIA_SERVER_CODEC)")
-	cmd.Flags().StringVar(tlsMode, "server-tls", envOrDefault("CRITERIA_SERVER_TLS", ""), "TLS mode: 'disable' | 'tls' | 'mtls'. Defaults to 'disable' for http:// and 'tls' for https:// (or CRITERIA_SERVER_TLS)")
-	cmd.Flags().StringVar(tlsCA, "tls-ca", envOrDefault("CRITERIA_TLS_CA", ""), "Path to CA bundle PEM (or CRITERIA_TLS_CA)")
-	cmd.Flags().StringVar(tlsCert, "tls-cert", envOrDefault("CRITERIA_TLS_CERT", ""), "Path to client cert PEM for mTLS (or CRITERIA_TLS_CERT)")
-	cmd.Flags().StringVar(tlsKey, "tls-key", envOrDefault("CRITERIA_TLS_KEY", ""), "Path to client key PEM for mTLS (or CRITERIA_TLS_KEY)")
+	cmd.Flags().StringVar(serverURL, "server", envreg.CRITERIAServerURL.StringOr("http://localhost:8080"), "Server base URL (or CRITERIA_SERVER_URL)")
+	cmd.Flags().StringVar(name, "name", envreg.CRITERIAName.StringOr(""), "Agent name (defaults to hostname, or CRITERIA_NAME)")
+	cmd.Flags().StringVar(codec, "server-codec", envreg.CRITERIAServerCodec.StringOr("proto"), "Connect codec: 'proto' (default) or 'json' (or CRITERIA_SERVER_CODEC)")
+	cmd.Flags().StringVar(tlsMode, "server-tls", envreg.CRITERIAServerTLS.StringOr(""), "TLS mode: 'disable' | 'tls' | 'mtls'. Defaults to 'disable' for http:// and 'tls' for https:// (or CRITERIA_SERVER_TLS)")
+	cmd.Flags().StringVar(tlsCA, "tls-ca", envreg.CRITERIATLSCA.StringOr(""), "Path to CA bundle PEM (or CRITERIA_TLS_CA)")
+	cmd.Flags().StringVar(tlsCert, "tls-cert", envreg.CRITERIATLSCert.StringOr(""), "Path to client cert PEM for mTLS (or CRITERIA_TLS_CERT)")
+	cmd.Flags().StringVar(tlsKey, "tls-key", envreg.CRITERIATLSKey.StringOr(""), "Path to client key PEM for mTLS (or CRITERIA_TLS_KEY)")
 }

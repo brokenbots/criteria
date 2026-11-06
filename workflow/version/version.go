@@ -13,11 +13,12 @@ package version
 
 import (
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 
 	"github.com/blang/semver"
+
+	"github.com/brokenbots/criteria/internal/envreg"
 )
 
 // Version is the Criteria engine version embedded by the release build
@@ -25,7 +26,7 @@ import (
 // identifier.
 var Version = "dev"
 
-const overrideEnv = "CRITERIA_OVERRIDE_VERSION"
+var overrideEnv = envreg.CRITERIAOverrideVersion.Env()
 
 // OverrideEnv returns the name of the environment variable that can supply an
 // explicit semantic version for development builds whose embedded Version is
@@ -68,7 +69,7 @@ type Info struct {
 // raw embedded value.
 func Current() Info {
 	raw := Version
-	override := os.Getenv(overrideEnv)
+	override := envreg.CRITERIAOverrideVersion.String()
 
 	// Release builds win: an explicit, parseable embedded version cannot be
 	// overridden by the environment.

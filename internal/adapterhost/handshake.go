@@ -1,10 +1,17 @@
 package adapterhost
 
-import hplugin "github.com/hashicorp/go-plugin"
+import (
+	hplugin "github.com/hashicorp/go-plugin"
 
-const (
-	// MagicCookieKey gates adapter startup to criteria-owned subprocesses.
-	MagicCookieKey = "CRITERIA_PLUGIN"
+	"github.com/brokenbots/criteria/internal/envreg"
+)
+
+var (
+	// MagicCookieKey gates adapter startup to criteria-owned subprocesses;
+	// the name comes from the registry row CRITERIAPlugin (CRITERIA_PLUGIN),
+	// so the handshake, the child-environment scrubbing, and the docs table
+	// all share one literal.
+	MagicCookieKey = envreg.CRITERIAPlugin.Env()
 	// MagicCookieValue is a fixed UUIDv4 used for criteria adapter handshakes.
 	// These constants must stay in sync with sdk/adapterhost.MagicCookieValue.
 	// Drift is caught at integration level by TestHandshakeInfo, which builds a

@@ -10,17 +10,18 @@ import (
 	"github.com/opencontainers/go-digest"
 
 	"github.com/brokenbots/criteria/internal/dirs"
+	"github.com/brokenbots/criteria/internal/envreg"
 )
 
-const (
-	// AdapterBinaryPrefix is the single source of truth for the conventional
-	// adapter binary basename prefix: adapter type "noop" installs as
-	// "criteria-adapter-noop" (see AdapterBinaryName). Consumers build or
-	// strip conventional binary names (peer binary resolution, CLI dev
-	// registration) and must not redeclare the string.
-	AdapterBinaryPrefix = "criteria-adapter-"
-	adaptersEnvVar      = "CRITERIA_ADAPTERS"
-)
+// AdapterBinaryPrefix is the single source of truth for the conventional
+// adapter binary basename prefix: adapter type "noop" installs as
+// "criteria-adapter-noop" (see AdapterBinaryName). Consumers build or
+// strip conventional binary names (peer binary resolution, CLI dev
+// registration) and must not redeclare the string.
+const AdapterBinaryPrefix = "criteria-adapter-"
+
+// adaptersEnvVar aliases the registry row for CRITERIA_ADAPTERS.
+var adaptersEnvVar = envreg.CRITERIAAdapters.Env()
 
 var ErrInvalidAdapterName = errors.New("invalid adapter name")
 
@@ -52,7 +53,7 @@ func adaptersRoots() []string {
 // It is exported so diagnostics can report the paths that were consulted.
 func AdaptersRoots() []string {
 	roots := make([]string, 0, 2)
-	if envDir := strings.TrimSpace(os.Getenv(adaptersEnvVar)); envDir != "" {
+	if envDir := strings.TrimSpace(envreg.CRITERIAAdapters.String()); envDir != "" {
 		roots = append(roots, envDir)
 	}
 	defaultDir, err := dirs.DefaultAdaptersDir()

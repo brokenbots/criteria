@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/brokenbots/criteria/internal/engine"
+	"github.com/brokenbots/criteria/internal/envreg"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
 	"github.com/brokenbots/criteria/workflow"
@@ -577,7 +578,7 @@ func controlSurfaceOverridden(cmd *cobra.Command) bool {
 	if cmd.Flags().Changed("server") {
 		return true
 	}
-	return os.Getenv("CRITERIA_SERVER_URL") != ""
+	return envreg.CRITERIAServerURL.String() != ""
 }
 
 // resolveControlAddr parses --control-addr ("host:port"). The empty flag

@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/brokenbots/criteria/internal/envreg"
 )
 
 // VaultProvider resolves secrets from HashiCorp Vault KV v2.
@@ -36,12 +38,12 @@ const DefaultVaultMount = "secret"
 // StackFromEnvironment (e.g. CRITERIA_VAULT_MOUNT=kv-prod). It applies only
 // when the workflow's secrets policy does not configure a Mount itself;
 // policy-level configuration wins.
-const EnvVaultMount = "CRITERIA_VAULT_MOUNT"
+var EnvVaultMount = envreg.CRITERIAVaultMount.Env()
 
 // vaultMountFromEnv reads the EnvVaultMount operator knob. Empty means "no
 // operator override", which VaultProvider resolves to DefaultVaultMount.
 func vaultMountFromEnv() string {
-	return strings.TrimSpace(os.Getenv(EnvVaultMount))
+	return strings.TrimSpace(envreg.CRITERIAVaultMount.String())
 }
 
 func (vp VaultProvider) Name() string { return "vault" }

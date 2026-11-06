@@ -406,7 +406,7 @@ func prepareServerRun(ctx context.Context, opts applyOptions, log *slog.Logger) 
 // when the gate is misconfigured; an unavailable view is fail-open (blocked
 // stays false) with a loud warning, bounded by the boot-gate backstops.
 func gateBootOnOperatorView(ctx context.Context, log *slog.Logger) (blocked bool, err error) {
-	gate, enabled, err := bootgate.Configure(os.LookupEnv, tunables.FromEnv().BootGateProbeTimeout)
+	gate, enabled, err := bootgate.ConfigureFromEnv(tunables.FromEnv().BootGateProbeTimeout)
 	if err != nil {
 		return false, err
 	}

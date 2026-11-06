@@ -26,24 +26,27 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapter/manifest"
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	"github.com/brokenbots/criteria/internal/envreg"
 	"github.com/brokenbots/criteria/internal/tunables"
 )
 
-// Environment variables consumed by the peer. The CRITERIA_REMOTE_* block is
-// shared with the phone-home runner so k8s manifests keep working; the
-// CRITERIA_PEER_* block is peer-specific.
-const (
-	EnvRemoteHost      = "CRITERIA_REMOTE_HOST"
-	EnvRemoteToken     = "CRITERIA_REMOTE_TOKEN"
-	EnvRemoteScope     = "CRITERIA_REMOTE_SCOPE"
-	EnvRemoteDigest    = "CRITERIA_REMOTE_DIGEST"
-	EnvRemoteTLSCert   = "CRITERIA_REMOTE_TLS_CERT"
-	EnvRemoteTLSKey    = "CRITERIA_REMOTE_TLS_KEY"
-	EnvRemoteCA        = "CRITERIA_REMOTE_CA"
-	EnvAdapterName     = "CRITERIA_ADAPTER_NAME"
-	EnvAdapterVersion  = "CRITERIA_ADAPTER_VERSION"
-	EnvAdapterBinary   = "CRITERIA_ADAPTER_BINARY"
-	EnvAdapterManifest = "CRITERIA_ADAPTER_MANIFEST"
+// Environment variables consumed by the peer. Names register in the central
+// CRITERIA_* registry (internal/envreg; docs/env-vars.md) and are aliased
+// here so the peer's parsing and tests keep their package-local names. The
+// CRITERIA_REMOTE_* block is shared with the retired phone-home runner's
+// k8s manifests; the CRITERIA_* adapter block is peer-specific.
+var (
+	EnvRemoteHost      = envreg.CRITERIARemoteHost.Env()
+	EnvRemoteToken     = envreg.CRITERIARemoteToken.Env()
+	EnvRemoteScope     = envreg.CRITERIARemoteScope.Env()
+	EnvRemoteDigest    = envreg.CRITERIARemoteDigest.Env()
+	EnvRemoteTLSCert   = envreg.CRITERIARemoteTLSCert.Env()
+	EnvRemoteTLSKey    = envreg.CRITERIARemoteTLSKey.Env()
+	EnvRemoteCA        = envreg.CRITERIARemoteCA.Env()
+	EnvAdapterName     = envreg.CRITERIAAdapterName.Env()
+	EnvAdapterVersion  = envreg.CRITERIAAdapterVersion.Env()
+	EnvAdapterBinary   = envreg.CRITERIAAdapterBinary.Env()
+	EnvAdapterManifest = envreg.CRITERIAAdapterManifest.Env()
 	// The peer's pod-level adapter manifest deliberately lives under the
 	// CRITERIA_REMOTE_* family, NOT CRITERIA_ADAPTERS: that pre-existing name
 	// is the adapter install DIRECTORY consumed by adapterhost discovery
@@ -51,11 +54,11 @@ const (
 	// adapter list would collapse two different variables into one value.
 	// Under the remote prefix the manifest is also scrubbed from child
 	// environments automatically (see resolve.go ChildEnv).
-	EnvAdapters        = "CRITERIA_REMOTE_ADAPTERS"
-	EnvAdaptersDir     = "CRITERIA_REMOTE_ADAPTERS_DIR"
-	EnvRemoteScopesDir = "CRITERIA_REMOTE_SCOPES_DIR"
-	EnvLogLevel        = "CRITERIA_LOG_LEVEL"
-	EnvChildKeepAlive  = "CRITERIA_PEER_CHILD_KEEPALIVE"
+	EnvAdapters        = envreg.CRITERIARemoteAdapters.Env()
+	EnvAdaptersDir     = envreg.CRITERIARemoteAdaptersDir.Env()
+	EnvRemoteScopesDir = envreg.CRITERIARemoteScopesDir.Env()
+	EnvLogLevel        = envreg.CRITERIALogLevel.Env()
+	EnvChildKeepAlive  = envreg.CRITERIAPeerChildKeepalive.Env()
 	// The timing/budget override names are owned by the tunables
 	// registry; they are aliased here so the peer's strict parsing and tests
 	// keep their package-local names.
@@ -229,7 +232,7 @@ func parseBackoff(getenv func(string) string, name string, def time.Duration) (t
 // LoadConfigFromEnv reads the peer configuration from the process
 // environment.
 func LoadConfigFromEnv() (Config, error) {
-	return LoadConfig(os.Getenv)
+	return LoadConfig(envreg.Lookup)
 }
 
 // Resolve validates the configuration and fills identity and binary defaults.

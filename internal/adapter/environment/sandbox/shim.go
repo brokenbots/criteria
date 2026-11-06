@@ -13,9 +13,11 @@ import (
 	"github.com/landlock-lsm/go-landlock/landlock"
 	ll "github.com/landlock-lsm/go-landlock/landlock/syscall"
 	"golang.org/x/sys/unix"
+
+	"github.com/brokenbots/criteria/internal/envreg"
 )
 
-const shimEnvVar = "CRITERIA_SANDBOX_CONFIG_PATH"
+var shimEnvVar = envreg.CRITERIASandboxConfigPath.Env()
 
 // ShimConfig is the JSON-serialised data passed from the parent process
 // to the shim child via a temp file pointed to by shimEnvVar.
@@ -35,7 +37,7 @@ type ShimConfig struct {
 // restrictions and re-execs the target binary. It returns true when the
 // shim was executed so the caller can exit early.
 func RunIfEnv() (ran bool, err error) {
-	path := os.Getenv(shimEnvVar)
+	path := envreg.CRITERIASandboxConfigPath.String()
 	if path == "" {
 		return false, nil
 	}
@@ -48,7 +50,7 @@ func RunIfEnv() (ran bool, err error) {
 // config file is removed before returning so the caller can continue
 // safely. It returns nil when the env var is absent.
 func ApplyEnv() error {
-	path := os.Getenv(shimEnvVar)
+	path := envreg.CRITERIASandboxConfigPath.String()
 	if path == "" {
 		return nil
 	}

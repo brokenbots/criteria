@@ -24,6 +24,7 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/engine"
+	"github.com/brokenbots/criteria/internal/envreg"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
@@ -226,7 +227,7 @@ func TestPeerExample_CompletesThroughIsolationGate(t *testing.T) {
 //
 // Gated by CRITERIA_PEER_E2E=1.
 func TestPeerSmoke_PerScopeMultiAdapter(t *testing.T) {
-	if os.Getenv("CRITERIA_PEER_E2E") != "1" {
+	if envreg.CRITERIAPeerE2E.String() != "1" {
 		t.Skip("set CRITERIA_PEER_E2E=1 to run peer smoke tests")
 	}
 
@@ -342,7 +343,7 @@ func TestPeerSmoke_PerScopeMultiAdapter(t *testing.T) {
 //
 // Gated by CRITERIA_PEER_E2E=1.
 func TestPeerSmoke_PerScopeChildSetServes(t *testing.T) {
-	if os.Getenv("CRITERIA_PEER_E2E") != "1" {
+	if envreg.CRITERIAPeerE2E.String() != "1" {
 		t.Skip("set CRITERIA_PEER_E2E=1 to run peer smoke tests")
 	}
 
@@ -432,7 +433,7 @@ func TestPeerSmoke_PerScopeChildSetServes(t *testing.T) {
 //
 // Gated by CRITERIA_PEER_E2E=1.
 func TestPeerSmoke_AdapterChildCrashFidelity(t *testing.T) {
-	if os.Getenv("CRITERIA_PEER_E2E") != "1" {
+	if envreg.CRITERIAPeerE2E.String() != "1" {
 		t.Skip("set CRITERIA_PEER_E2E=1 to run peer smoke tests")
 	}
 	if runtime.GOOS != "linux" {

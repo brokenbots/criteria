@@ -11,15 +11,6 @@ import (
 	ctyjson "github.com/zclconf/go-cty/cty/json"
 )
 
-// envOrDefault resolves configuration with precedence env -> default.
-// Cobra flags can then override this default value.
-func envOrDefault(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
 // parseVarOverrides converts a slice of "key=value" strings (from --var flags)
 // into cty.Values. Values are kept as raw strings here; the engine applies the
 // declared variable type later so that string variables receive the exact text

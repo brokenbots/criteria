@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/brokenbots/criteria/internal/dirs"
+	"github.com/brokenbots/criteria/internal/envreg"
 	"github.com/brokenbots/criteria/internal/tunables"
 )
 
@@ -485,8 +486,9 @@ func (r *resumer) requestPath(runID, nodeName string) (string, error) {
 // --- env mode ---
 
 func (r *resumer) resolveApprovalEnv(name string) (map[string]string, error) {
-	envKey := "CRITERIA_APPROVAL_" + nodeNameToEnvSuffix(name)
-	val := os.Getenv(envKey)
+	suffix := nodeNameToEnvSuffix(name)
+	envKey := envreg.CRITERIAApproval.SuffixName(suffix)
+	val := envreg.CRITERIAApproval.LookupSuffix(suffix)
 	switch val {
 	case "approved", "rejected":
 		return map[string]string{"decision": val}, nil
@@ -498,8 +500,9 @@ func (r *resumer) resolveApprovalEnv(name string) (map[string]string, error) {
 }
 
 func (r *resumer) resolveSignalEnv(nodeName string) (map[string]string, error) {
-	envKey := "CRITERIA_SIGNAL_" + nodeNameToEnvSuffix(nodeName)
-	val := os.Getenv(envKey)
+	suffix := nodeNameToEnvSuffix(nodeName)
+	envKey := envreg.CRITERIASignal.SuffixName(suffix)
+	val := envreg.CRITERIASignal.LookupSuffix(suffix)
 	if val == "" {
 		return nil, fmt.Errorf("signal wait %q: env mode requires %s=<outcome> (variable is unset)", nodeName, envKey)
 	}

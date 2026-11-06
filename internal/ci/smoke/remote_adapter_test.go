@@ -24,6 +24,7 @@ import (
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
 
+	"github.com/brokenbots/criteria/internal/envreg"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
@@ -83,7 +84,7 @@ func (noopEventSink) Adapter(string, any) {}
 //
 // Gated by CRITERIA_REMOTE_E2E=1.
 func TestRemoteAdapter_HappyPath(t *testing.T) {
-	if os.Getenv("CRITERIA_REMOTE_E2E") != "1" {
+	if envreg.CRITERIARemoteE2E.String() != "1" {
 		t.Skip("set CRITERIA_REMOTE_E2E=1 to run remote adapter smoke tests")
 	}
 
@@ -159,7 +160,7 @@ state "done" {
 //
 // Gated by CRITERIA_REMOTE_E2E=1.
 func TestRemoteAdapter_CrashRecovery(t *testing.T) {
-	if os.Getenv("CRITERIA_REMOTE_E2E") != "1" {
+	if envreg.CRITERIARemoteE2E.String() != "1" {
 		t.Skip("set CRITERIA_REMOTE_E2E=1 to run remote adapter smoke tests")
 	}
 
@@ -573,7 +574,7 @@ func waitForPodLog(t *testing.T, namespace, labelSelector, substring string, tim
 }
 
 func TestRemoteAdapter_K8sHappyPath(t *testing.T) {
-	if os.Getenv("CRITERIA_REMOTE_E2E") != "1" {
+	if envreg.CRITERIARemoteE2E.String() != "1" {
 		t.Skip("set CRITERIA_REMOTE_E2E=1 to run remote adapter smoke tests")
 	}
 	requireTools(t, "kind", "kubectl", "docker", "go")
@@ -725,7 +726,7 @@ spec:
 }
 
 func TestRemoteAdapter_K8sCrashRecovery(t *testing.T) {
-	if os.Getenv("CRITERIA_REMOTE_E2E") != "1" {
+	if envreg.CRITERIARemoteE2E.String() != "1" {
 		t.Skip("set CRITERIA_REMOTE_E2E=1 to run remote adapter smoke tests")
 	}
 	requireTools(t, "kind", "kubectl", "docker", "go")

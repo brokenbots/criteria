@@ -29,7 +29,7 @@ func lookupFromMap(env map[string]string) func(string) (string, bool) {
 }
 
 func TestConfigureDisabledWhenAllEnvsUnset(t *testing.T) {
-	cfg, enabled, err := Configure(lookupFromMap(nil), testProbeTimeout)
+	cfg, enabled, err := configure(lookupFromMap(nil), testProbeTimeout)
 	if err != nil {
 		t.Fatalf("Configure: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestConfigureDisabledWhenEnvsWhitespaceOnly(t *testing.T) {
 		EnvRunTicket:       "\t",
 		EnvRunJob:          " ",
 	}
-	cfg, enabled, err := Configure(lookupFromMap(env), testProbeTimeout)
+	cfg, enabled, err := configure(lookupFromMap(env), testProbeTimeout)
 	if err != nil {
 		t.Fatalf("Configure: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestConfigureIdentityValuesTrimmed(t *testing.T) {
 		EnvRunTicket:       " kb-234 ",
 		EnvRunJob:          "criteria-runner-job",
 	}
-	cfg, enabled, err := Configure(lookupFromMap(env), testProbeTimeout)
+	cfg, enabled, err := configure(lookupFromMap(env), testProbeTimeout)
 	if err != nil {
 		t.Fatalf("Configure: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestConfigurePartialConfigIsLoudError(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, enabled, err := Configure(lookupFromMap(tc.env), testProbeTimeout)
+			_, enabled, err := configure(lookupFromMap(tc.env), testProbeTimeout)
 			if err == nil {
 				t.Fatal("partial gate configuration must fail loudly")
 			}
@@ -112,13 +112,13 @@ func TestConfigurePartialConfigIsLoudError(t *testing.T) {
 }
 
 func TestConfigureMalformedViewURLAndTimeout(t *testing.T) {
-	if _, _, err := Configure(lookupFromMap(map[string]string{
+	if _, _, err := configure(lookupFromMap(map[string]string{
 		EnvOperatorViewURL: "http://view.test",
 		EnvRunTicket:       "kb-234",
 	}), -1); err == nil {
 		t.Error("non-positive probe timeout must fail loudly")
 	}
-	if _, _, err := Configure(lookupFromMap(map[string]string{
+	if _, _, err := configure(lookupFromMap(map[string]string{
 		EnvOperatorViewURL: "://no-scheme.test",
 		EnvRunTicket:       "kb-234",
 	}), testProbeTimeout); err == nil {

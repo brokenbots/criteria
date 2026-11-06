@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/brokenbots/criteria/internal/dirs"
+	"github.com/brokenbots/criteria/internal/envreg"
 )
 
 // FileProvider resolves secrets by reading files from a confined set of
@@ -19,7 +20,7 @@ import (
 //
 //  1. An explicit Root set in the struct wins — the provider is confined to
 //     that single directory (back-compat shape; tests and future callers).
-//  2. Otherwise SecretsRootsFromEnv() parses $CRITERIA_SECRET_FILE_ROOTS
+//  2. Otherwise secretFileRoots() parses $CRITERIA_SECRET_FILE_ROOTS
 //     (newline-separated absolute paths the run environment explicitly
 //     declares as secret sources — each CSI/SPC secret mount the job
 //     template stamps), ordered after the default secrets directory.
@@ -66,7 +67,7 @@ func secretFileRoots(explicit string) []string {
 		roots = append(roots, path)
 	}
 	add(mustSecretsDir())
-	for _, r := range strings.Split(os.Getenv("CRITERIA_SECRET_FILE_ROOTS"), "\n") {
+	for _, r := range strings.Split(envreg.CRITERIASecretFileRoots.String(), "\n") {
 		add(r)
 	}
 	return roots

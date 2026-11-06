@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
 
+	"github.com/brokenbots/criteria/internal/envreg"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
 )
@@ -69,7 +70,7 @@ func NewWatchCmd() *cobra.Command {
 
 	opts.serverClientFlags.bind(cmd)
 	cmd.Flags().StringVar(&opts.runID, "run-id", "", "Run ID to watch")
-	cmd.Flags().StringVar(&opts.output, "output", envOrDefault("CRITERIA_OUTPUT", "auto"), "Output format: auto|concise|json")
+	cmd.Flags().StringVar(&opts.output, "output", envreg.CRITERIAOutput.StringOr("auto"), "Output format: auto|concise|json")
 	return cmd
 }
 

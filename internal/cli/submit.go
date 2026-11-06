@@ -16,6 +16,8 @@ import (
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/sdk/pb/criteria/v1/criteriav1connect"
 	"github.com/brokenbots/criteria/workflow"
+
+	"github.com/brokenbots/criteria/internal/envreg"
 )
 
 // Stable non-zero exit codes returned by `criteria submit` and `criteria
@@ -78,7 +80,7 @@ func NewSubmitCmd() *cobra.Command {
 	cmd.Flags().StringToStringVar(&opts.labels, "label", nil, "Assignment label passed to the server (repeatable: key=value)")
 	cmd.Flags().StringVar(&opts.idempotencyKey, "idempotency-key", "", "Opaque caller-provided idempotency key")
 	cmd.Flags().BoolVar(&opts.watch, "watch", false, "Watch the submitted run until it reaches a terminal state")
-	cmd.Flags().StringVar(&opts.output, "output", envOrDefault("CRITERIA_OUTPUT", "auto"), "Output format for --watch: auto|concise|json")
+	cmd.Flags().StringVar(&opts.output, "output", envreg.CRITERIAOutput.StringOr("auto"), "Output format for --watch: auto|concise|json")
 	return cmd
 }
 

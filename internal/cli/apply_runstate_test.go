@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/brokenbots/criteria/internal/envreg"
 	"github.com/brokenbots/criteria/internal/runstate"
 	"github.com/brokenbots/criteria/internal/testutil"
 )
@@ -78,7 +79,7 @@ func TestOpenRunEventsFile(t *testing.T) {
 	closeFn2()
 	closeFn()
 
-	path := filepath.Join(os.Getenv("CRITERIA_HOME"), "runs", runID, "events.ndjson")
+	path := filepath.Join(envreg.CRITERIAHome.String(), "runs", runID, "events.ndjson")
 	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
@@ -126,7 +127,7 @@ func TestStartLocalRunStateServer(t *testing.T) {
 	if err := writeLocalRunState(st); err != nil {
 		t.Fatal(err)
 	}
-	f, err := os.OpenFile(filepath.Join(os.Getenv("CRITERIA_HOME"), "runs", runID, "events.ndjson"), os.O_WRONLY|os.O_APPEND, 0o600)
+	f, err := os.OpenFile(filepath.Join(envreg.CRITERIAHome.String(), "runs", runID, "events.ndjson"), os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +163,7 @@ func TestStartLocalRunStateServer(t *testing.T) {
 	}
 
 	// Other run ids are refused even when data exists on disk.
-	other := filepath.Join(os.Getenv("CRITERIA_HOME"), "runs", "other-run")
+	other := filepath.Join(envreg.CRITERIAHome.String(), "runs", "other-run")
 	if err := os.MkdirAll(other, 0o700); err != nil {
 		t.Fatal(err)
 	}

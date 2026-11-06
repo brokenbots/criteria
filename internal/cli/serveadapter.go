@@ -98,7 +98,7 @@ type serveAdapterOptions struct {
 
 func runServeAdapter(parent context.Context, opts *serveAdapterOptions) error {
 	probe := newJSONStderrLogger(slog.LevelInfo, "serve-adapter")
-	log := newJSONStderrLogger(peerLogLevel(probe, os.Getenv(peer.EnvLogLevel)), "serve-adapter")
+	log := newJSONStderrLogger(cliLogLevel(probe), "serve-adapter")
 	slog.SetDefault(log)
 
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)

@@ -8,18 +8,18 @@ package conformance_test
 // each other-language SDK owns its own conformance against the proto package.
 
 import (
-	"os"
 	"testing"
 
 	"github.com/brokenbots/criteria/internal/adapter/conformance"
+	"github.com/brokenbots/criteria/internal/envreg"
 )
 
 func TestExternalAdapterConformance(t *testing.T) {
-	bin := os.Getenv("CRITERIA_CONFORMANCE_ADAPTER")
+	bin := envreg.CRITERIAConformanceAdapter.String()
 	if bin == "" {
 		t.Skip("CRITERIA_CONFORMANCE_ADAPTER not set")
 	}
-	name := os.Getenv("CRITERIA_CONFORMANCE_ADAPTER_NAME")
+	name := envreg.CRITERIAConformanceAdapterName.String()
 	if name == "" {
 		name = "conformance-target"
 	}

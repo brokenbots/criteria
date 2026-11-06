@@ -26,6 +26,7 @@ import (
 
 	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
 	"github.com/brokenbots/criteria/internal/adapter"
+	"github.com/brokenbots/criteria/internal/envreg"
 	"github.com/brokenbots/criteria/internal/log"
 	"github.com/brokenbots/criteria/workflow"
 )
@@ -41,7 +42,7 @@ import (
 // Override via CRITERIA_LOG_LEVEL=trace|debug|info|warn|error.
 func adapterClientLogger() hclog.Logger {
 	level := hclog.Warn
-	if v := strings.TrimSpace(os.Getenv("CRITERIA_LOG_LEVEL")); v != "" {
+	if v := strings.TrimSpace(envreg.CRITERIALogLevel.String()); v != "" {
 		if parsed := hclog.LevelFromString(v); parsed != hclog.NoLevel {
 			level = parsed
 		}

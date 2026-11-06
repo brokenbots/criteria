@@ -2,7 +2,6 @@ package container
 
 import (
 	"context"
-	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -12,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/brokenbots/criteria/internal/adapter/manifest"
+	"github.com/brokenbots/criteria/internal/envreg"
 )
 
 func TestNewDockerRunner_CommandArgs(t *testing.T) {
@@ -104,7 +104,7 @@ func TestDockerRunner_Diagnose_NoCID(t *testing.T) {
 }
 
 func TestDockerRunner_Integration(t *testing.T) {
-	if os.Getenv("CRITERIA_CONTAINER_TESTS") != "1" {
+	if envreg.CRITERIAContainerTests.String() != "1" {
 		t.Skip("set CRITERIA_CONTAINER_TESTS=1 to run container integration tests")
 	}
 
