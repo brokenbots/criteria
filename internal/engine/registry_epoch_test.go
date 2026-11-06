@@ -360,7 +360,8 @@ state "done" {
 // TestInitScopeAdapters_PerScope_AdoptionRefusesSealedPriorRegistry_KB227 is
 // the regression test for the incident: process 2 crash-resumed by ADOPTING
 // process 1's rotated scope tokens after process 1 completed at a
-// workflow-declared human-assistance terminal. The fresh shim registry had no rows for those scopes, so
+// workflow-declared human-assistance terminal. The fresh shim registry
+// had no rows for those scopes, so
 // every recreated pod dialed with stale claims and looped on scope-not-
 // registered until the verify budget expired, restarting the cycle. Now the
 // completed invocation seals its registry, and adopting a sealed prior
