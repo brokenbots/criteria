@@ -50,7 +50,8 @@ var inFlight, maxInFlight atomic.Int64
 //   - MCP_FAIL_CODE: fault tool's JSON-RPC error code (default -32020). The
 //     fault tool answers tools/call with a JSON-RPC error response — not an
 //     isError result — so clients can assert exact error-code boundaries.
-//   - MCP_PIDLOG: appends "pid=<pid>" at startup (single-server-process proof).
+//   - MCP_PIDLOG: appends "pid=<pid>" at startup and, in HTTP mode, the
+//     bound "http=<addr>" line (single-server-process proof).
 //   - MCP_CALLLOG: appends "call=<name> msg=<message>" per tools/call that
 //     actually reached the fixture (denied/unknown calls never appear).
 //   - MCP_REPLY_MODE=garbage_once: writes one garbage frame ahead of the
@@ -69,6 +70,27 @@ var inFlight, maxInFlight atomic.Int64
 //   - MCP_MRTR=1: adds the "mrtr" tool (modern mode only) answering a
 //     SEP-2322 input_required result with one sampling/createMessage
 //     input request.
+//   - MCP_HTTP_LISTEN=<host:port>: serve the same JSON-RPC core over the
+//     Streamable HTTP transport instead of the stdio streams (POST-only
+//     endpoint, standard Mcp-Method/Mcp-Name headers required per message,
+//     discovery probe + stateless core, subscriptions/listen accepted).
+//     The pidlog line "http=<addr>" reports the bound address (use port 0
+//     for an ephemeral port). The stdio streams are not served in this mode.
+//   - MCP_HTTP_SSE=1: answer every request with text/event-stream (one
+//     progress notification event for tools/call, then the reply envelope).
+//     MCP_HTTP_SSE=break_once streams the first tools/call progress event
+//     and drops the connection before the reply (client-side no-resumability
+//     semantics: the in-flight request is lost without tearing the session).
+//   - MCP_ID_STYLE=number: post-handshake reply envelopes carry a JSON
+//     number id (the request id re-encoded as a number) so clients prove
+//     numeric-id normalization. String ids are echoed verbatim otherwise.
+//   - MCP_REPLY_MODE=nullid_once: the first post-handshake tools/call is
+//     answered with the spec's global-failure shape — a -32600 error with a
+//     literal null id — to exercise client id attribution (a null-id reply
+//     binds to the sole outstanding request, which must then stay
+//     addressable). MCP_REPLY_MODE=batch_once: the first post-handshake
+//     tools/call is answered with a JSON-RPC batch array — a client receive
+//     violation the bridge must close the session on.
 var (
 	ndjsonMode  = strings.EqualFold(os.Getenv("MCP_FRAMING"), "ndjson")
 	faultCode   = parseFaultCode(os.Getenv("MCP_FAIL_CODE"))
@@ -79,6 +101,19 @@ var (
 	ttlMs       = parseTTLms(os.Getenv("MCP_TTL_MS"))
 	methodLog   = os.Getenv("MCP_METHODLOG")
 	mrtrTool    = modernMode && strings.EqualFold(os.Getenv("MCP_MRTR"), "1")
+	httpListen  = os.Getenv("MCP_HTTP_LISTEN")
+	httpSSE     = os.Getenv("MCP_HTTP_SSE")
+	idNumbered  = strings.EqualFold(os.Getenv("MCP_ID_STYLE"), "number")
+
+	// mode flags derived from MCP_REPLY_MODE ("" leaves replies untouched).
+	replyBatchOnce  = strings.EqualFold(os.Getenv("MCP_REPLY_MODE"), "batch_once")
+	replyNullidOnce = strings.EqualFold(os.Getenv("MCP_REPLY_MODE"), "nullid_once")
+
+	// handshakeServed flips once the session's discovery/initialize
+	// handshake has been answered; the reply-shaping knobs bend the first
+	// post-handshake reply so probes never receive a shaped envelope.
+	handshakeServed atomic.Bool
+	shapedOnce      atomic.Bool
 )
 
 // protocolRevision20260728 is the stateless-core revision the fixture can
@@ -129,6 +164,10 @@ func appendLog(path, line string) {
 
 func main() {
 	appendLog(pidLogFile, fmt.Sprintf("pid=%d", os.Getpid()))
+	if httpListen != "" {
+		serveHTTPMode()
+		return
+	}
 	if garbageOnce {
 		// One garbage frame ahead of the first real reply: ndjson mode emits
 		// a raw non-JSON line; header mode emits a well-formed frame whose
@@ -152,54 +191,97 @@ func serve(r io.Reader) {
 }
 
 func dispatchFrame(payload []byte) {
-	var req request
+	req, reply, kind := routeEnvelope(payload)
+	switch kind {
+	case envKindNotification:
+		return
+	case envKindToolCall:
+		dispatchToolCall(req)
+	case envKindBatch:
+		// A batch array is one frame like any other payload; the receiving
+		// client (never this fixture) treats it as framed receive traffic.
+		payload, err := json.Marshal([]map[string]any{reply})
+		if err == nil {
+			_ = writeFixtureFrame(payload)
+		}
+	default:
+		_ = writeRawResponse(reply)
+	}
+}
+
+// Envelope kinds routeEnvelope reports for one parsed inbound message.
+const (
+	envKindReply        = iota // reply carries the answer envelope
+	envKindToolCall            // the request is a tools/call for per-transport serving
+	envKindNotification        // a request notification: answered by no envelope
+	envKindBatch               // the reply is a batch array (reply-mode knob)
+)
+
+// routeEnvelope is the JSON-RPC 2.0 routing core shared by both transports:
+// it parses one inbound message, applies the revision rules (strict _meta
+// protocol version in the stateless core, removed initialize handshake) and
+// the reply-shaping knobs, and classifies the message. Transports own reply
+// serving (stdio writes frames, optionally from its own goroutine for
+// tools/call; http answers on the request goroutine and streams SSE).
+func routeEnvelope(payload []byte) (req request, reply map[string]any, kind int) {
 	if err := json.Unmarshal(payload, &req); err != nil {
 		// Spec-conformant parse handling: an unparseable payload gets a
 		// -32700 error response with a null id instead of silence, so a
 		// framing-mismatched peer fails deterministically.
-		_ = writeRawResponse(specErrorResponse(nil, -32700, "parse error"))
-		return
+		return req, specErrorResponse(nil, -32700, "parse error"), envKindReply
 	}
 	if req.Method == "" {
 		// Valid JSON that is not a request: -32600, id preserved when
 		// present, null otherwise.
-		_ = writeRawResponse(specErrorResponse(req.ID, -32600, "invalid request"))
-		return
+		return req, specErrorResponse(req.ID, -32600, "invalid request"), envKindReply
 	}
 	if strings.HasPrefix(req.Method, "notifications/") {
 		// Notifications are best-effort and never answered: per-request
 		// work is not preempted, the call settles and its late response is
 		// dropped by the bridge-side pending map. A -32601 reply with a
 		// null id could collide with an in-flight correlated request.
-		return
+		return req, nil, envKindNotification
 	}
 	if methodLog != "" {
 		// Every request logs, both dialects: assertions must see initialize
 		// probes and legacy handshakes too, not just modern traffic.
 		appendLog(methodLog, "method="+req.Method)
 	}
+	if methodLog != "" {
+		// Every request logs, both dialects: assertions must see initialize
+		// probes and legacy handshakes too, not just modern traffic.
+		appendLog(methodLog, "method="+req.Method)
+	}
+	if shaped := shapeFirstReply(req); shaped != nil {
+		kind := envKindReply
+		if replyBatchOnce {
+			kind = envKindBatch
+		}
+		return req, styledID(shaped), kind
+	}
 	if modernMode {
 		if !metaVersionOK(req) {
-			_ = writeRawResponse(unsupportedVersionError(req.ID))
-			return
+			return req, unsupportedVersionError(req.ID), envKindReply
 		}
-		switch req.Method {
-		case "server/discover":
-			_ = writeResponse(response{JSONRPC: "2.0", ID: req.ID, Result: discoverResult()})
-			return
-		case "initialize":
+		if req.Method == "server/discover" {
+			reply = envelope(req.ID, "result", discoverResult())
+			handshakeServed.Store(true)
+			return req, styledID(reply), envKindReply
+		}
+		if req.Method == "initialize" {
 			// The initialize handshake was removed by the stateless core.
-			_ = writeRawResponse(specErrorResponse(req.ID, -32601, "method not found: initialize was removed in "+protocolRevision20260728))
-			return
+			handshakeServed.Store(true)
+			return req, specErrorResponse(req.ID, -32601, "method not found: initialize was removed in "+protocolRevision20260728), envKindReply
 		}
 	}
 	switch req.Method {
 	case "initialize":
-		_ = writeResponse(response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
+		handshakeServed.Store(true)
+		return req, envelope(req.ID, "result", map[string]any{
 			"protocolVersion": "2025-03-26",
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      map[string]any{"name": "echo-mcp", "version": "0.2.0"},
-		}})
+		}), envKindReply
 	case "tools/list":
 		list := map[string]any{
 			"tools": []map[string]any{{
@@ -231,12 +313,53 @@ func dispatchFrame(payload []byte) {
 				list["cacheScope"] = "session"
 			}
 		}
-		_ = writeResponse(response{JSONRPC: "2.0", ID: req.ID, Result: list})
+		return req, styledID(envelope(req.ID, "result", list)), envKindReply
 	case "tools/call":
-		dispatchToolCall(req)
+		return req, nil, envKindToolCall
 	default:
-		_ = writeResponse(response{JSONRPC: "2.0", ID: req.ID, Error: map[string]any{"code": -32601, "message": "method not found"}})
+		return req, styledID(envelope(req.ID, "error", map[string]any{"code": -32601, "message": "method not found"})), envKindReply
 	}
+}
+
+// envelope builds a reply with the id always present (JSON-RPC responses to
+// requests carry the id; a nil id marshals as the spec's literal null).
+func envelope(id any, key string, val any) map[string]any {
+	return map[string]any{"jsonrpc": "2.0", "id": id, key: val}
+}
+
+// styledID re-encodes reply ids under MCP_ID_STYLE=number: a string id that
+// parses as an integer is re-encoded as a JSON number, exercising client
+// numeric-id normalization. Request ids arrive either way; string ids are
+// echoed verbatim otherwise (id preservation).
+func styledID(reply map[string]any) map[string]any {
+	if idNumbered {
+		if s, ok := reply["id"].(string); ok {
+			if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+				reply["id"] = n
+			}
+		}
+	}
+	return reply
+}
+
+// shapeFirstReply bends the first post-handshake tools/call under the
+// reply-mode knobs (both transports): batch_once answers it with a batch
+// array (a client receive violation), nullid_once with a null-id -32600
+// global error (client id attribution). nil means the reply is untouched.
+func shapeFirstReply(req request) map[string]any {
+	if !handshakeServed.Load() {
+		return nil
+	}
+	if req.Method != "tools/call" || replyBatchOnce == replyNullidOnce {
+		return nil
+	}
+	if !shapedOnce.CompareAndSwap(false, true) {
+		return nil
+	}
+	if replyBatchOnce {
+		return envelope(req.ID, "result", map[string]any{})
+	}
+	return specErrorResponse(nil, -32600, "null-id reply mode")
 }
 
 // metaVersionOK enforces the stateless-core rule that every request carries
@@ -355,6 +478,14 @@ func logToolCall(req request) {
 // caller's `_meta.progressToken` when the request carried one (KB-155) and
 // stamping the concurrency markers.
 func writeProgress(req request) {
+	_ = writeNotification("notifications/progress", progressParams(req))
+}
+
+// progressParams builds the notifications/progress payload for one
+// tools/call: the caller's token when present plus the stdio concurrency
+// markers. The Streamable HTTP transport reuses it for its SSE progress
+// events.
+func progressParams(req request) map[string]any {
 	meta, _ := req.Params["_meta"].(map[string]any)
 	params := map[string]any{"progress": 1, "total": 1}
 	if token, _ := meta["progressToken"].(string); token != "" {
@@ -362,7 +493,7 @@ func writeProgress(req request) {
 	}
 	params["criteria_inflight"] = inFlight.Load()
 	params["criteria_overlap"] = maxInFlight.Load()
-	_ = writeNotification("notifications/progress", params)
+	return params
 }
 
 // handleToolCall answers a tools/call request. echo returns the argument map
