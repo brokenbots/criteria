@@ -160,8 +160,8 @@ func TestFileProvider_TrustedRootEntriesDedupedAndWhitespaceIgnored(t *testing.T
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CRITERIA_SECRET_FILE_ROOTS", "\n  \n"+mount+"\n"+mount+"\n")
 
-	roots, err := secretFileRoots("")
-	require.NoError(t, err)
+	roots := secretFileRoots("")
+	require.NotNil(t, roots)
 	count := 0
 	for _, r := range roots {
 		if r == mount {

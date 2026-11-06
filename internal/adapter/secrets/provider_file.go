@@ -51,9 +51,9 @@ func (p *FileProvider) CanResolve(ref OriginRef) bool {
 // entries are dropped; the default root is deduplicated after the declared
 // set too (an operator may deliberately redeclare it, which must not double
 // the list).
-func secretFileRoots(explicit string) ([]string, error) {
+func secretFileRoots(explicit string) []string {
 	if explicit != "" {
-		return []string{explicit}, nil
+		return []string{explicit}
 	}
 	roots := []string{}
 	seen := map[string]bool{}
@@ -69,7 +69,7 @@ func secretFileRoots(explicit string) ([]string, error) {
 	for _, r := range strings.Split(os.Getenv("CRITERIA_SECRET_FILE_ROOTS"), "\n") {
 		add(r)
 	}
-	return roots, nil
+	return roots
 }
 
 func mustSecretsDir() string {
@@ -81,10 +81,7 @@ func mustSecretsDir() string {
 }
 
 func (p *FileProvider) Resolve(_ context.Context, ref OriginRef) (string, error) {
-	roots, err := secretFileRoots(p.Root)
-	if err != nil {
-		return "", err
-	}
+	roots := secretFileRoots(p.Root)
 
 	requested := filepath.Clean(ref.Ref)
 	if !filepath.IsAbs(requested) {
@@ -97,9 +94,9 @@ func (p *FileProvider) Resolve(_ context.Context, ref OriginRef) (string, error)
 		requested = filepath.Join(roots[0], requested)
 	}
 
-	requested, err = filepath.EvalSymlinks(requested)
-	if err != nil {
-		return "", fmt.Errorf("file provider: invalid path %q: %w", ref.Ref, err)
+	requested, evalErr := filepath.EvalSymlinks(requested)
+	if evalErr != nil {
+		return "", fmt.Errorf("file provider: invalid path %q: %w", ref.Ref, evalErr)
 	}
 
 	// Containment against the FIRST root that contains the resolved path.
