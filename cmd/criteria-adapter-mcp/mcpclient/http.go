@@ -160,7 +160,13 @@ func NewHTTPClient(cfg HTTPConfig, onNotification func(Notification)) *Client {
 		headers:        cfg.Headers,
 		requestTimeout: cfg.RequestTimeout,
 		listen:         cfg.Listen,
-		client:         &http.Client{},
+		client: &http.Client{
+			// A redirect response is an MCP error surface, not a follow
+			// instruction: ErrUseLastResponse keeps the 3xx as the POST
+			// response instead of replaying the request (custom and
+			// x-mcp-header values included) against another host.
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
 	}
 	return c
 }

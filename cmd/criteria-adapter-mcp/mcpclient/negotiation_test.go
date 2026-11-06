@@ -51,10 +51,12 @@ func (s *recordServer) lastParams(t *testing.T, method string) map[string]any {
 	return nil
 }
 
-// handlerResult is what a fake server answers per request.
+// handlerResult is what a fake server answers per request; silent answers
+// nothing at all (the request still dispatches through the fake dialect).
 type handlerResult struct {
 	result any
 	err    *RPCError
+	silent bool
 }
 
 // startFakeServer serves one client over in-process pipes, answering each

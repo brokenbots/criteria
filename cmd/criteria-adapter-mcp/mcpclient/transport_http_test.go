@@ -358,6 +358,31 @@ func TestNewHeaderEntryValidation(t *testing.T) {
 	}
 }
 
+func TestHTTPTransportRefusesRedirects(t *testing.T) {
+	// A 3xx is an MCP error surface, not a follow instruction: replaying
+	// the POST cross-host would forward custom header values to another
+	// server and turn the POST into a GET, so the client keeps the 3xx as
+	// the final response and the caller sees the status error.
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("the redirect target must never receive a replayed request")
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	t.Cleanup(target.Close)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusFound)
+	}))
+	t.Cleanup(ts.Close)
+
+	client := NewHTTPClient(HTTPConfig{Endpoint: ts.URL, Listen: false}, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := client.Connect(ctx, NegotiationDiscover, "criteria-test", "v1")
+	if err == nil || !strings.Contains(err.Error(), "unexpected status 302") {
+		t.Fatalf("Connect over a redirecting endpoint = %v, want the 302 kept as the final response", err)
+	}
+}
+
 func TestHTTPTransportRequestShape(t *testing.T) {
 	client, fake := newHTTPFakeClient(t, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

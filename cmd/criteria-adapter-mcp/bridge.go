@@ -590,7 +590,9 @@ func initializeAndDiscover(ctx context.Context, parsed *mcpServerConfig, state *
 // negotiation: the legacy initialize handshake has no probe (initTimeout
 // only), every probe-first/discover open burns one probe per framing the
 // ladder may need (two when the stdio framing was left unspecified) plus
-// the legacy handshake initTimeout for the stdio fallback.
+// the legacy handshake initTimeout for the stdio fallback. Streamable HTTP
+// has no legacy fallback, so its single-probe total is a strict
+// over-approximation kept for budget uniformity.
 func (c *mcpServerConfig) openBudget() time.Duration {
 	if c.negotiation == mcpclient.NegotiationInitialize {
 		return initTimeout

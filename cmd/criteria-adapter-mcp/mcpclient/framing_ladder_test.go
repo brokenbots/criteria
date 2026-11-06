@@ -78,6 +78,9 @@ func startLinePeerFakeServer(t *testing.T, handler func(method string, params ma
 			params := map[string]any{}
 			_ = json.Unmarshal(paramsRaw, &params)
 			ans := handler(method, params)
+			if ans.silent {
+				continue
+			}
 			if ans.err != nil {
 				errPayload := map[string]any{"code": ans.err.Code, "message": ans.err.Message}
 				if len(ans.err.Data) > 0 {
@@ -144,6 +147,9 @@ func startStrictHeaderPeerFakeServer(t *testing.T, handler func(method string, p
 			params := map[string]any{}
 			_ = json.Unmarshal(paramsRaw, &params)
 			ans := handler(method, params)
+			if ans.silent {
+				continue
+			}
 			if ans.err != nil {
 				errPayload := map[string]any{"code": ans.err.Code, "message": ans.err.Message}
 				if len(ans.err.Data) > 0 {
@@ -380,4 +386,216 @@ func countOf(list []string, want string) int {
 		}
 	}
 	return n
+}
+
+// startTolerantHeaderPeerFakeServer serves one client over in-process pipes
+// reading with the client's own auto-detecting frame reader semantics
+// (readFrame): stray blank lines and unframed junk between frames are
+// skipped and Content-Length headers still parse — the shape of
+// header-framed peers that tolerate resync bytes between frames. A handler
+// returning handlerResult{silent:true} answers nothing (the request still
+// dispatches through the reader).
+func startTolerantHeaderPeerFakeServer(t *testing.T, handler func(method string, params map[string]any) handlerResult) (*Client, *recordServer) {
+	t.Helper()
+	serverRead, clientWrite := io.Pipe()
+	clientRead, serverWrite := io.Pipe()
+
+	rec := &recordServer{}
+	client := NewWithFraming(clientRead, clientWrite, FramingLSP, nil)
+	client.EnableFramingNegotiation()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer serverWrite.Close()
+		reader := bufio.NewReader(serverRead)
+		for {
+			payload, err := readFrame(reader)
+			if err != nil {
+				return
+			}
+			var req map[string]any
+			if json.Unmarshal(payload, &req) != nil {
+				_ = writeJSON(serverWrite, map[string]any{"jsonrpc": "2.0", "id": nil, "error": map[string]any{"code": -32700, "message": "parse error"}})
+				continue
+			}
+			method, _ := req["method"].(string)
+			if strings.HasPrefix(method, "notifications/") {
+				continue
+			}
+			id, _ := req["id"].(string)
+			paramsRaw, _ := json.Marshal(req["params"])
+			if method != "" {
+				rec.record(method, paramsRaw)
+			}
+			params := map[string]any{}
+			_ = json.Unmarshal(paramsRaw, &params)
+			ans := handler(method, params)
+			if ans.silent {
+				continue
+			}
+			if ans.err != nil {
+				errPayload := map[string]any{"code": ans.err.Code, "message": ans.err.Message}
+				if len(ans.err.Data) > 0 {
+					errPayload["data"] = ans.err.Data
+				}
+				_ = writeJSON(serverWrite, map[string]any{"jsonrpc": "2.0", "id": id, "error": errPayload})
+				continue
+			}
+			_ = writeJSON(serverWrite, map[string]any{"jsonrpc": "2.0", "id": id, "result": ans.result})
+		}
+	}()
+
+	t.Cleanup(func() {
+		client.Close()
+		clientWrite.Close()
+		clientRead.Close()
+		serverWrite.Close()
+		serverRead.Close()
+		<-done
+	})
+	return client, rec
+}
+
+// startStrictLSPPeerFakeServer is the strict header-framed fixture pinned to
+// LSP writes with probe negotiation enabled: the exact peer that reaches
+// writeResyncNewline after an uncertain first probe.
+func startStrictLSPPeerFakeServer(t *testing.T, handler func(method string, params map[string]any) handlerResult) (*Client, *recordServer) {
+	t.Helper()
+	serverRead, clientWrite := io.Pipe()
+	clientRead, serverWrite := io.Pipe()
+
+	rec := &recordServer{}
+	client := NewWithFraming(clientRead, clientWrite, FramingLSP, nil)
+	client.EnableFramingNegotiation()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer serverWrite.Close()
+		reader := bufio.NewReader(serverRead)
+		for {
+			payload, err := readStrictHeaderFrame(reader)
+			if err != nil {
+				return
+			}
+			var req map[string]any
+			if json.Unmarshal(payload, &req) != nil {
+				_ = writeJSON(serverWrite, map[string]any{"jsonrpc": "2.0", "id": nil, "error": map[string]any{"code": -32700, "message": "parse error"}})
+				continue
+			}
+			method, _ := req["method"].(string)
+			if strings.HasPrefix(method, "notifications/") {
+				continue
+			}
+			id, _ := req["id"].(string)
+			paramsRaw, _ := json.Marshal(req["params"])
+			if method != "" {
+				rec.record(method, paramsRaw)
+			}
+			params := map[string]any{}
+			_ = json.Unmarshal(paramsRaw, &params)
+			ans := handler(method, params)
+			if ans.silent {
+				continue
+			}
+			if ans.err != nil {
+				errPayload := map[string]any{"code": ans.err.Code, "message": ans.err.Message}
+				if len(ans.err.Data) > 0 {
+					errPayload["data"] = ans.err.Data
+				}
+				_ = writeJSON(serverWrite, map[string]any{"jsonrpc": "2.0", "id": id, "error": errPayload})
+				continue
+			}
+			_ = writeJSON(serverWrite, map[string]any{"jsonrpc": "2.0", "id": id, "result": ans.result})
+		}
+	}()
+
+	t.Cleanup(func() {
+		client.Close()
+		clientWrite.Close()
+		clientRead.Close()
+		serverWrite.Close()
+		serverRead.Close()
+		<-done
+	})
+	return client, rec
+}
+
+func TestConnectFramingLadderResyncOnSilentHeaderPeer(t *testing.T) {
+	// Uncertain first probe against a header-framed peer: the lsp-framed
+	// probe dispatched but the legacy peer stayed silent (no parseable
+	// reply), so the ladder's resync newline lands between frames. A
+	// header peer that skips stray bytes between frames still parses the
+	// framing of everything that follows — the unframed ndjson probe rides
+	// through as its own line, and the legacy initialize handshake settles
+	// the session over lsp; the resync bytes never corrupt the header
+	// framing.
+	client, rec := startTolerantHeaderPeerFakeServer(t, func(method string, params map[string]any) handlerResult {
+		switch method {
+		case "server/discover":
+			// A silent legacy peer: framed requests arrive but no
+			// parseable reply ever comes back to the probes.
+			return handlerResult{silent: true}
+		case "initialize":
+			return handlerResult{result: map[string]any{"protocolVersion": ProtocolVersion20250326}}
+		case "tools/call":
+			return handlerResult{result: map[string]any{"content": []map[string]any{{"type": "text", "text": "ok"}}}}
+		default:
+			return unknownMethodError()
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := client.Connect(ctx, NegotiationProbeFirst, "criteria-test", "v1"); err != nil {
+		t.Fatalf("Connect after the resync newline = %v, want the legacy lsp fallback", err)
+	}
+	if got := client.stdio().currentFraming(); got != FramingLSP {
+		t.Fatalf("session write framing = %q, want lsp after the header peer", got)
+	}
+	if client.stateless || client.protocolVersion != ProtocolVersion20250326 {
+		t.Fatalf("fallback must stay legacy: stateless=%v version=%q", client.stateless, client.protocolVersion)
+	}
+
+	methods := rec.snapshotMethods()
+	// The lsp probe dispatched and was never answered; the resync newline
+	// plus the unframed ndjson probe still read as a valid request on a
+	// dual-dialect reader (also silent here); only the lsp initialize
+	// handshake settles the session.
+	if n := countOf(methods, "server/discover"); n != 2 {
+		t.Fatalf("server/discover dispatched %d times, want both probes on the dual-dialect peer", n)
+	}
+	if n := countOf(methods, "initialize"); n != 1 {
+		t.Fatalf("initialize dispatched %d times, want exactly the lsp handshake", n)
+	}
+	if _, err := client.CallTool(ctx, "echo", map[string]any{"message": "hi"}); err != nil {
+		t.Fatalf("CallTool over legacy+lsp: %v", err)
+	}
+}
+
+func TestConnectFramingLadderSilentStrictLSPPeerFailsCleanly(t *testing.T) {
+	// The resync path only runs when the first probe left the framing
+	// undetermined. A strict header peer that reached it (silent to the
+	// lsp probe) fails the open deterministically — its reader treats the
+	// stray newline as a framing failure, so neither probe nor initialize
+	// ever parses — instead of half-connecting or hanging.
+	client, rec := startStrictLSPPeerFakeServer(t, func(method string, params map[string]any) handlerResult {
+		if method == "server/discover" {
+			return handlerResult{silent: true}
+		}
+		return handlerResult{result: map[string]any{"protocolVersion": ProtocolVersion20250326}}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := client.Connect(ctx, NegotiationProbeFirst, "criteria-test", "v1"); err == nil {
+		t.Fatal("Connect against a silent strict lsp peer must fail cleanly")
+	}
+	if got := client.stdio().currentFraming(); got != FramingLSP {
+		t.Fatalf("a failed probe ladder must leave the lsp default standing (now %q)", got)
+	}
+	if n := countOf(rec.snapshotMethods(), "server/discover"); n > 2 {
+		t.Fatalf("server/discover dispatched %d times, want at most the uncertain lsp probe and its re-probe", n)
+	}
 }
