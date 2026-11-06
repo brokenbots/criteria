@@ -557,6 +557,32 @@ func TestCompileEnvironments_InvalidPolicyMode(t *testing.T) {
 	}
 }
 
+// TestCompileEnvironments_SandboxAttributeRejected pins the environment
+// grammar: no `sandbox` attribute exists on any environment block. The
+// fail-closed opt-in is `policy_mode = "strict"`; authoring a `sandbox`
+// attribute must be rejected as an unknown attribute on every environment
+// type.
+func TestCompileEnvironments_SandboxAttributeRejected(t *testing.T) {
+	for _, envType := range []string{"shell", "sandbox", "container", "remote"} {
+		t.Run(envType, func(t *testing.T) {
+			src := environmentWorkflow(
+				"environment \""+envType+"\" \"bad\" {\n    sandbox = \"strict\"\n  }\n", "")
+			spec, diags := Parse("test.hcl", []byte(src))
+			if diags.HasErrors() {
+				t.Fatalf("parse: %s", diags.Error())
+			}
+			_, diags = Compile(spec, nil)
+			if !diags.HasErrors() {
+				t.Fatalf("expected compile error for %s environment sandbox attribute", envType)
+			}
+			want := envType + " environment: unknown attribute \"sandbox\""
+			if !strings.Contains(diags.Error(), want) {
+				t.Errorf("expected error containing %q, got: %s", want, diags.Error())
+			}
+		})
+	}
+}
+
 func TestCompileEnvironments_ProcessExec(t *testing.T) {
 	src := environmentWorkflow(`
   environment "sandbox" "proc_env" {
