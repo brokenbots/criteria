@@ -782,27 +782,31 @@ no `notifications/cancelled` POST is sent (stdio keeps sending it).
 
 Beyond the caller-supplied seam, the protocol-level parameter mechanism is
 schema-driven: a tool's `inputSchema` may annotate a statically reachable
-property (a plain `properties` chain from the schema root, with
-primitive-typed values and statically known names) as a header mirror in
-either spelling. The marker spelling carries an `x-mcp-header` key inside
-the annotated property's schema, its value the (empty) marker; the
-property-name spelling declares a property *named* `x-mcp-header`
-itself, its schema being the header-name table (an object with
-`additionalProperties: false` or none, whose `properties` hold the
-header names with primitive member schemas). Both spellings resolve the
-same way and may be combined on one schema; resolving each and finding the
-same header name twice (case-insensitively) makes the tool invalid. On
-`tools/call`, the argument value at each annotated property is mirrored as
-an `Mcp-Param-{Name}` header on the POST, using the same
-header-safe/Base64-sentinel encoding as `Mcp-Name`; the annotated value
-itself stays in the call body. Arguments absent from the call are simply
-not emitted (the server's own "required `Mcp-Param-*` missing" rule
-governs that). A tool whose annotation fails validation — a non-token
-name, a non-primitive name-table member, a non-reachable path, a
-case-insensitive name collision — is invalid and is dropped from the
-advertised tool surface. `Mcp-Param-*` is a reserved namespace: custom
-headers may not forge it, and the protocol-mandated values win over any
-caller-supplied entry.
+property (a plain `properties` chain from the schema root) with an
+`x-mcp-header` JSON string naming the header that mirrors that property's
+own instance value. For example, a `region` property whose schema is
+`{"type":"string","x-mcp-header":"Region"}` mirrors
+`arguments.region = us-west1` as `Mcp-Param-Region: us-west1` on the
+`tools/call` POST, with `arguments.region` itself staying in the body.
+On the wire the mirrored value is encoded like `Mcp-Name` (header-safe
+values verbatim, the Base64 sentinel for values outside that set).
+
+The constraints: the annotation value must be a non-empty HTTP token
+name (1*tchar, no CR/LF or control characters); header names are unique
+case-insensitively across the whole schema; the annotated property's
+declared type must be `string`, `boolean`, or `integer` (`number` is not
+mirrored, and integers must fit within ±(2^53-1) — an out-of-bound
+integer refuses the call before any request is sent, with the error naming
+the parameter path); the annotation must sit on a plain `properties`
+chain — one at the schema root, or under `oneOf`/`anyOf`/`allOf`/
+`patternProperties`/`additionalProperties`/`items`, or inside the
+annotated property's own value schema, is unreachable and invalid. A tool
+whose annotation fails validation is invalid and is dropped from the
+advertised tool surface (the rest of the list stays). An argument absent
+from the call emits no header (the server's own "required `Mcp-Param-*`
+missing" rule governs that). `Mcp-Param-*` is a reserved namespace:
+custom headers may not forge it, and the protocol-mandated values win
+over any caller-supplied entry.
 
 The `x-mcp-header` tool-params seam below is a separate, additive adapter
 feature for caller-supplied headers; only the schema annotation produces
