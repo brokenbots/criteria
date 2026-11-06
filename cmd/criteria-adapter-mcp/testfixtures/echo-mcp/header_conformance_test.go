@@ -139,9 +139,9 @@ func TestHTTPHeaderValidation_NonNameBearingMethods(t *testing.T) {
 func TestHTTPHeaderValidation_ParamMirrors(t *testing.T) {
 	// The annotation knob drives both the advertised schema and the
 	// validation table; restore it for sibling tests.
-	saved := headerSchemaMode
-	headerSchemaMode = true
-	t.Cleanup(func() { headerSchemaMode = saved })
+	saved := headerSchemaKind
+	headerSchemaKind = headerSchemaMarker
+	t.Cleanup(func() { headerSchemaKind = saved })
 
 	srv := newHeaderTestServer(t)
 	post := func(headers map[string]string, arguments string) (int, string) {
@@ -187,15 +187,62 @@ func TestHTTPHeaderValidation_ParamMirrors(t *testing.T) {
 
 	// With the annotation knob off the declared set is empty: any mirror
 	// is rejected.
-	headerSchemaMode = false
+	headerSchemaKind = headerSchemaNone
 	status, body = post(map[string]string{"Mcp-Param-X-Trace": "v1"}, `{"trace":{"X-Trace":"v1"}}`)
 	assertViolation(t, status, body)
 }
 
+func TestHTTPHeaderValidation_ParamMirrors_PropertyShape(t *testing.T) {
+	// The property-name spelling: the arguments object carries a property
+	// NAMED x-mcp-header whose value table the mirror set reads from; the
+	// same Server Validation rules answer with the same vectors.
+	saved := headerSchemaKind
+	headerSchemaKind = headerSchemaProperty
+	t.Cleanup(func() { headerSchemaKind = saved })
+
+	srv := newHeaderTestServer(t)
+	post := func(headers map[string]string, arguments string) (int, string) {
+		payload := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":%s}}`, arguments)
+		set := map[string]string{"Mcp-Method": "tools/call", "Mcp-Name": "echo"}
+		for name, value := range headers {
+			set[name] = value
+		}
+		return postEnvelope(t, srv, payload, set)
+	}
+
+	// The required mirror matches the value at the property-named path.
+	if status, body := post(map[string]string{"Mcp-Param-X-Trace": "v1"}, `{"x-mcp-header":{"X-Trace":"v1"}}`); status >= 400 {
+		t.Fatalf("property-shape mirrored call rejected: %d %s", status, body)
+	}
+
+	// Mismatch against the property-named value.
+	status, body := post(map[string]string{"Mcp-Param-X-Trace": "other"}, `{"x-mcp-header":{"X-Trace":"v1"}}`)
+	assertViolation(t, status, body)
+
+	// Missing required mirror.
+	status, body = post(nil, `{"x-mcp-header":{"X-Trace":"v1"}}`)
+	assertViolation(t, status, body)
+
+	// Mirror outside the declared name set.
+	status, body = post(map[string]string{"Mcp-Param-X-Trace": "v1", "Mcp-Param-X-Other": "x"}, `{"x-mcp-header":{"X-Trace":"v1"}}`)
+	assertViolation(t, status, body)
+
+	// Mirror with no argument value at the property-named path.
+	status, body = post(map[string]string{"Mcp-Param-X-Trace": "v1"}, `{}`)
+	assertViolation(t, status, body)
+
+	// A non-header-safe value rides the Base64 sentinel and still matches.
+	value := "caf\u00e9"
+	sentinel := "=?base64?" + base64.StdEncoding.EncodeToString([]byte(value)) + "?="
+	if status, body := post(map[string]string{"Mcp-Param-X-Trace": sentinel}, fmt.Sprintf(`{"x-mcp-header":{"X-Trace":%q}}`, value)); status >= 400 {
+		t.Fatalf("property-shape sentinel-mirrored call rejected: %d %s", status, body)
+	}
+}
+
 func TestHTTPHeaderValidation_HeaderDesyncOnAnnotatedTool(t *testing.T) {
-	saved := headerSchemaMode
-	headerSchemaMode = true
-	t.Cleanup(func() { headerSchemaMode = saved })
+	saved := headerSchemaKind
+	headerSchemaKind = headerSchemaMarker
+	t.Cleanup(func() { headerSchemaKind = saved })
 	srv := newHeaderTestServer(t)
 
 	// The method/value desync keeps the -32020 answer with the annotated

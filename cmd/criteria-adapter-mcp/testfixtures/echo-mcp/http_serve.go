@@ -179,7 +179,7 @@ func validateParamHeaders(r *http.Request, req request) string {
 		}
 		seen[name] = canonical
 	}
-	if !headerSchemaMode {
+	if headerSchemaKind == headerSchemaNone {
 		return ""
 	}
 	for name := range declared {
@@ -204,10 +204,10 @@ func validateParamHeaders(r *http.Request, req request) string {
 }
 
 // toolParamNames is the fixture's annotated-tool mirror declaration when
-// MCP_HDR_SCHEMA is set: the trace argument property is annotated, whose
-// required X-Trace member (a string) mirrors to Mcp-Param-X-Trace.
+// MCP_HDR_SCHEMA is set: either spelling annotates a mirror whose required
+// X-Trace member (a string) resolves to Mcp-Param-X-Trace.
 func toolParamNames() map[string]string {
-	if !headerSchemaMode {
+	if headerSchemaKind == headerSchemaNone {
 		return nil
 	}
 	return map[string]string{"X-Trace": "string"}
@@ -216,13 +216,14 @@ func toolParamNames() map[string]string {
 // toolParamValue renders the argument value at the annotated path the way
 // the mirrored header encodes it (bools as true/false, JSON numbers as
 // shortest round-trip floats, strings verbatim): the server compares the
-// decoded header against this form.
+// decoded header against this form. The annotated path follows the knob's
+// spelling — the "trace" marker property or the property NAMED x-mcp-header.
 func toolParamValue(name string, args map[string]any) (headerValue, note string) {
-	trace, _ := args["trace"].(map[string]any)
-	if trace == nil {
-		return "", "argument carries no trace object to mirror"
+	annotated, _ := args[toolParamPath()].(map[string]any)
+	if annotated == nil {
+		return "", "argument carries no annotated object to mirror"
 	}
-	value, ok := trace[name]
+	value, ok := annotated[name]
 	if !ok || value == nil {
 		return "", "mirror header " + name + " has no argument value"
 	}
@@ -238,6 +239,14 @@ func toolParamValue(name string, args map[string]any) (headerValue, note string)
 	default:
 		return "", "mirror header " + name + " argument is not a primitive"
 	}
+}
+
+// toolParamPath is the arguments path holding the annotated object.
+func toolParamPath() string {
+	if headerSchemaKind == headerSchemaProperty {
+		return "x-mcp-header"
+	}
+	return "trace"
 }
 
 // serveEnvelope serves one routed message per kind: notifications get 202,

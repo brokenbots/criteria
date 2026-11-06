@@ -21,18 +21,63 @@ type request struct {
 	Params  map[string]any `json:"params,omitempty"`
 }
 
+// headerSchemaKind selects the spelling of the echo tool's x-mcp-header
+// annotation: none, the marker key inside the annotated property, or the
+// property-name spelling (a property NAMED x-mcp-header whose schema is the
+// header-name table).
+const (
+	headerSchemaNone     = ""
+	headerSchemaMarker   = "marker"
+	headerSchemaProperty = "property"
+)
+
+func parseHeaderSchemaKind(v string) string {
+	switch {
+	case v == "":
+		return headerSchemaNone
+	case strings.EqualFold(v, "1"), strings.EqualFold(v, "marker"):
+		return headerSchemaMarker
+	case strings.EqualFold(v, "property"):
+		return headerSchemaProperty
+	}
+	return headerSchemaNone
+}
+
 // annotatedInputSchema is the echo tool's inputSchema when MCP_HDR_SCHEMA is
-// set: the trace property carries the x-mcp-header annotation whose value
-// table declares the required X-Trace mirror (a string) with statically
-// known names, per the Streamable HTTP revision. The HTTP Server Validation
-// mirrors its own declaration off this schema.
-func annotatedInputSchema() map[string]any {
+// set: in the marker spelling the trace property carries the x-mcp-header
+// annotation whose value table declares the required X-Trace mirror (a
+// string) with statically known names; in the property-name spelling a
+// property NAMED x-mcp-header carries the header-name table itself. The
+// HTTP Server Validation mirrors its own declaration off this schema.
+func annotatedInputSchema(kind string) map[string]any {
+	if kind == headerSchemaProperty {
+		return propertyHeaderSchema()
+	}
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"trace": map[string]any{
 				"type":                 "object",
 				"x-mcp-header":         map[string]any{},
+				"additionalProperties": false,
+				"required":             []any{"X-Trace"},
+				"properties": map[string]any{
+					"X-Trace": map[string]any{"type": "string"},
+				},
+			},
+		},
+	}
+}
+
+// propertyHeaderSchema is the marker-less spelling: a property NAMED
+// x-mcp-header at the top of the arguments, its schema the header-name
+// table (the required X-Trace mirror, statically known names).
+func propertyHeaderSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"x-mcp-header": map[string]any{
+				"type":                 "object",
 				"additionalProperties": false,
 				"required":             []any{"X-Trace"},
 				"properties": map[string]any{
@@ -76,10 +121,13 @@ var inFlight, maxInFlight atomic.Int64
 //     bound "http=<addr>" line (single-server-process proof).
 //   - MCP_CALLLOG: appends "call=<name> msg=<message>" per tools/call that
 //     actually reached the fixture (denied/unknown calls never appear).
-//   - MCP_HDR_SCHEMA=1: the echo tool's inputSchema carries the
-//     x-mcp-header annotation (trace property mirroring the required
-//     X-Trace header to Mcp-Param-X-Trace); the HTTP face validates the
-//     mirror set on every tools/call per the Server Validation rules.
+//   - MCP_HDR_SCHEMA: the echo tool's inputSchema carries the x-mcp-header
+//     annotation (trace property mirroring the required X-Trace header to
+//     Mcp-Param-X-Trace); the HTTP face validates the mirror set on every
+//     tools/call per the Server Validation rules. "1"/"marker" declares the
+//     marker spelling (an x-mcp-header key inside the trace schema);
+//     "property" declares the property-name spelling (a property NAMED
+//     x-mcp-header whose schema is the header-name table).
 //   - MCP_REPLY_MODE=garbage_once: writes one garbage frame ahead of the
 //     first real reply; framed-robust clients skip it.
 //   - MCP_PROTOCOL=2026-07-28: speak the stateless core of the 2026-07-28
@@ -130,10 +178,11 @@ var (
 	httpListen  = os.Getenv("MCP_HTTP_LISTEN")
 	httpSSE     = os.Getenv("MCP_HTTP_SSE")
 	idNumbered  = strings.EqualFold(os.Getenv("MCP_ID_STYLE"), "number")
-	// headerSchemaMode answers MCP_HDR_SCHEMA: the echo tool's inputSchema
-	// carries the x-mcp-header annotation and the HTTP face validates its
-	// required Mcp-Param-* mirrors per the Server Validation rules.
-	headerSchemaMode = strings.EqualFold(os.Getenv("MCP_HDR_SCHEMA"), "1")
+	// headerSchemaKind answers MCP_HDR_SCHEMA: the echo tool's inputSchema
+	// carries the x-mcp-header annotation in the selected spelling and the
+	// HTTP face validates its required Mcp-Param-* mirrors per the Server
+	// Validation rules.
+	headerSchemaKind = parseHeaderSchemaKind(os.Getenv("MCP_HDR_SCHEMA"))
 
 	// mode flags derived from MCP_REPLY_MODE ("" leaves replies untouched).
 	replyBatchOnce  = strings.EqualFold(os.Getenv("MCP_REPLY_MODE"), "batch_once")
@@ -539,8 +588,8 @@ func progressParams(req request) map[string]any {
 // echoInputSchema is the echo tool's advertised input schema: plain when
 // the annotation knob is off, the x-mcp-header mirror table when on.
 func echoInputSchema() map[string]any {
-	if headerSchemaMode {
-		return annotatedInputSchema()
+	if headerSchemaKind != headerSchemaNone {
+		return annotatedInputSchema(headerSchemaKind)
 	}
 	return map[string]any{"type": "object"}
 }
