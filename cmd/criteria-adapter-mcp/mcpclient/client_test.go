@@ -552,12 +552,8 @@ func TestStdioClientRefusesAnnotatedToolParamMirrors(t *testing.T) {
 									"type": "object",
 									"properties": map[string]any{
 										"trace": map[string]any{
-											"type":         "object",
-											"x-mcp-header": map[string]any{},
-											"required":     []any{"X-Trace"},
-											"properties": map[string]any{
-												"X-Trace": map[string]any{"type": "string"},
-											},
+											"type":         "string",
+											"x-mcp-header": "X-Trace",
 										},
 									},
 								},
@@ -581,7 +577,7 @@ func TestStdioClientRefusesAnnotatedToolParamMirrors(t *testing.T) {
 		t.Fatalf("ListToolsDetailed: %v", err)
 	}
 	_, err := client.CallToolTracked(ctx, "echo", map[string]any{
-		"trace": map[string]any{"X-Trace": "v"},
+		"trace": "v",
 	}, "", nil)
 	if err == nil || !strings.Contains(err.Error(), "http-transport-only") {
 		t.Fatalf("CallToolTracked err = %v, want the http-only mirror refusal", err)
@@ -590,6 +586,78 @@ func TestStdioClientRefusesAnnotatedToolParamMirrors(t *testing.T) {
 	case <-sawToolsCall:
 		t.Fatal("tools/call reached the stdio peer despite the refusal")
 	case <-time.After(200 * time.Millisecond):
+	}
+	clientWrite.Close() // let the read loop hit EOF and the peer goroutine exit
+	<-serverDone
+}
+
+func TestStdioTransportSpecAnnotatedToolStaysOnSurface(t *testing.T) {
+	// A spec-shaped annotated tool (a string x-mcp-header annotation on the
+	// annotated parameter) resolves validly, so it stays on the advertised
+	// tools/list surface on the stdio transport too; only genuinely invalid
+	// tools are dropped.
+	serverRead, clientWrite := io.Pipe()
+	clientRead, serverWrite := io.Pipe()
+	defer clientWrite.Close()
+	defer clientRead.Close()
+
+	client := New(clientRead, clientWrite, func(n Notification) {})
+	defer client.Close()
+
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		defer serverWrite.Close()
+		defer serverRead.Close()
+		reader := bufio.NewReader(serverRead)
+		for {
+			payload, err := readFrame(reader)
+			if err != nil {
+				return
+			}
+			var req map[string]any
+			if err := json.Unmarshal(payload, &req); err != nil {
+				return
+			}
+			switch req["method"].(string) {
+			case "initialize":
+				_ = writeJSON(serverWrite, map[string]any{"jsonrpc": "2.0", "id": req["id"], "result": map[string]any{"protocolVersion": "2025-03-26"}})
+			case "tools/list":
+				_ = writeJSON(serverWrite, map[string]any{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result": map[string]any{
+						"tools": []any{
+							map[string]any{
+								"name": "locate",
+								"inputSchema": map[string]any{
+									"type": "object",
+									"properties": map[string]any{
+										"region": map[string]any{
+											"type":         "string",
+											"x-mcp-header": "Region",
+										},
+									},
+								},
+							},
+						},
+					},
+				})
+			}
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Initialize(ctx, "test", "0.0.1"); err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+	list, err := client.ListToolsDetailed(ctx)
+	if err != nil {
+		t.Fatalf("ListToolsDetailed: %v", err)
+	}
+	if len(list.Tools) != 1 || list.Tools[0].Name != "locate" {
+		t.Fatalf("surface = %+v, want the spec-shaped annotated tool retained", list.Tools)
 	}
 	clientWrite.Close() // let the read loop hit EOF and the peer goroutine exit
 	<-serverDone

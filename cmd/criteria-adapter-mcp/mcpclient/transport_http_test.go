@@ -19,6 +19,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -910,14 +911,22 @@ func TestStdioTransportRejectsPerCallHeaders(t *testing.T) {
 
 const annotatedToolListJSON = `{"tools":` +
 	`[{"name":"echo","inputSchema":{"type":"object","properties":{` +
-	`"trace":{"type":"object","x-mcp-header":{},"additionalProperties":false,` +
-	`"required":["X-Trace"],"properties":{"X-Trace":{"type":"string"}}}}}}]}`
+	`"region":{"type":"string","x-mcp-header":"X-Region"},` +
+	`"flag":{"type":"boolean","x-mcp-header":"X-Flag"},` +
+	`"count":{"type":"integer","x-mcp-header":"X-Count"}}}}]}`
+
+// The revision's own example: a `region` property whose schema is
+// {"type":"string","x-mcp-header":"Region"}.
+const revisionExampleToolListJSON = `{"tools":` +
+	`[{"name":"locate","inputSchema":{"type":"object","properties":{` +
+	`"region":{"type":"string","x-mcp-header":"Region"}}}}]}`
 
 func TestHTTPTransportParamHeadersMirroredOnCall(t *testing.T) {
-	// The tool's x-mcp-header schema annotation binds the X-Trace header to
-	// the trace argument property: the transport mirrors it as
-	// Mcp-Param-X-Trace on the tools/call POST, with the caller carrying no
-	// explicit header.
+	// The tool's x-mcp-header schema strings bind each annotated
+	// parameter's own value: the transport mirrors arguments.region,
+	// arguments.flag and arguments.count as Mcp-Param-* on the tools/call
+	// POST, with the caller carrying no explicit header and the values
+	// staying in the body.
 	client, fake := newHTTPFakeClient(t, func(fake *httpFake, cfg *HTTPConfig) {
 		fake.toolsListJSON = annotatedToolListJSON
 	})
@@ -935,102 +944,9 @@ func TestHTTPTransportParamHeadersMirroredOnCall(t *testing.T) {
 	}
 
 	if _, err := client.CallToolTracked(ctx, "echo", map[string]any{
-		"trace": map[string]any{"X-Trace": "present"},
-	}, "", nil); err != nil {
-		t.Fatalf("CallToolTracked: %v", err)
-	}
-	recs := fake.captured()
-	var call headerBody
-	found := false
-	for _, rec := range recs {
-		if rec.method == "tools/call" {
-			call = rec
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("no tools/call captured; requests: %v", fake.methods())
-	}
-	if got := call.headers.Get("Mcp-Param-X-Trace"); got != "present" {
-		t.Fatalf("Mcp-Param-X-Trace = %q, want %q", got, "present")
-	}
-	if got := call.headers.Values("Mcp-Param-X-Trace"); len(got) != 1 {
-		t.Fatalf("Mcp-Param-X-Trace emitted %d times, want exactly one", len(got))
-	}
-
-	// A member absent from the arguments is not emitted: the server's own
-	// required-Mcp-Param-* rule governs missing mirrors.
-	if _, err := client.CallToolTracked(ctx, "echo", map[string]any{}, "", nil); err != nil {
-		t.Fatalf("CallToolTracked (absent member): %v", err)
-	}
-	last := fake.lastRequestHeaders()
-	if vals := last.Values("Mcp-Param-X-Trace"); len(vals) != 0 {
-		t.Fatalf("absent member emitted Mcp-Param-X-Trace %v, want none", vals)
-	}
-}
-
-func TestHTTPTransportInvalidAnnotatedToolDroppedFromSurface(t *testing.T) {
-	// A tool whose annotation is not statically resolvable has no
-	// mirrorable path: it is dropped from the advertised surface while the
-	// rest of the list stays.
-	const list = `{"tools":[` +
-		`{"name":"broken","inputSchema":{"type":"object","properties":{` +
-		`"trace":{"type":"object","oneOf":[{"type":"object","x-mcp-header":{},` +
-		`"properties":{"X-T":{"type":"string"}}}]}}}},` +
-		`{"name":"echo"}]}`
-	client, fake := newHTTPFakeClient(t, func(fake *httpFake, cfg *HTTPConfig) {
-		fake.toolsListJSON = list
-	})
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := client.Connect(ctx, NegotiationDiscover, "criteria-test", "0.1.0"); err != nil {
-		t.Fatalf("Connect: %v", err)
-	}
-	listing, err := client.ListToolsDetailed(ctx)
-	if err != nil {
-		t.Fatalf("ListToolsDetailed: %v", err)
-	}
-	names := make([]string, 0, len(listing.Tools))
-	for _, tool := range listing.Tools {
-		names = append(names, tool.Name)
-	}
-	if len(names) != 1 || names[0] != "echo" {
-		t.Fatalf("surface = %v, want [echo] (the invalidly annotated tool dropped)", names)
-	}
-	if fake.sawMethod("tools/call") {
-		t.Fatalf("unexpected tools/call during surface validation")
-	}
-}
-
-const propertyNamedToolListJSON = `{"tools":` +
-	`[{"name":"echo","inputSchema":{"type":"object","properties":{` +
-	`"x-mcp-header":{"type":"object","additionalProperties":false,` +
-	`"required":["X-Trace"],"properties":{"X-Trace":{"type":"string"}}}}}}]}`
-
-func TestHTTPTransportParamHeadersMirroredFromPropertySchema(t *testing.T) {
-	// The property-name spelling: a property NAMED x-mcp-header is itself
-	// the annotation, its schema the header-name table. The transport
-	// mirrors the argument value's members into Mcp-Param-{Name} while the
-	// annotated value stays in the call body.
-	client, fake := newHTTPFakeClient(t, func(fake *httpFake, cfg *HTTPConfig) {
-		fake.toolsListJSON = propertyNamedToolListJSON
-	})
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := client.Connect(ctx, NegotiationDiscover, "criteria-test", "0.1.0"); err != nil {
-		t.Fatalf("Connect: %v", err)
-	}
-	list, err := client.ListToolsDetailed(ctx)
-	if err != nil {
-		t.Fatalf("ListToolsDetailed: %v", err)
-	}
-	if len(list.Tools) != 1 || list.Tools[0].Name != "echo" {
-		t.Fatalf("ListToolsDetailed = %+v, want the advertised echo tool", list.Tools)
-	}
-
-	if _, err := client.CallToolTracked(ctx, "echo", map[string]any{
-		"x-mcp-header": map[string]any{"X-Trace": "present"},
+		"region": "present",
+		"flag":   true,
+		"count":  float64(7),
 	}, "", nil); err != nil {
 		t.Fatalf("CallToolTracked: %v", err)
 	}
@@ -1046,13 +962,19 @@ func TestHTTPTransportParamHeadersMirroredFromPropertySchema(t *testing.T) {
 	if !found {
 		t.Fatalf("no tools/call captured; requests: %v", fake.methods())
 	}
-	if got := call.headers.Get("Mcp-Param-X-Trace"); got != "present" {
-		t.Fatalf("Mcp-Param-X-Trace = %q, want %q", got, "present")
+	for name, want := range map[string]string{
+		"Mcp-Param-X-Region": "present",
+		"Mcp-Param-X-Flag":   "true",
+		"Mcp-Param-X-Count":  "7",
+	} {
+		if got := call.headers.Get(name); got != want {
+			t.Fatalf("%s = %q, want %q", name, got, want)
+		}
+		if vals := call.headers.Values(name); len(vals) != 1 {
+			t.Fatalf("%s emitted %d times, want exactly one", name, len(vals))
+		}
 	}
-	if got := call.headers.Values("Mcp-Param-X-Trace"); len(got) != 1 {
-		t.Fatalf("Mcp-Param-X-Trace emitted %d times, want exactly one", len(got))
-	}
-	// The annotated value stays in the body.
+	// The mirrored values stay in the call body.
 	var params struct {
 		Params struct {
 			Arguments map[string]any `json:"arguments"`
@@ -1061,33 +983,84 @@ func TestHTTPTransportParamHeadersMirroredFromPropertySchema(t *testing.T) {
 	if err := json.Unmarshal(call.body, &params); err != nil {
 		t.Fatalf("tools/call body %s unparseable: %v", call.body, err)
 	}
-	arg, ok := params.Params.Arguments["x-mcp-header"].(map[string]any)
-	if !ok || arg["X-Trace"] != "present" {
-		t.Fatalf("body arguments = %v, want the annotated object retained", params.Params.Arguments)
+	if params.Params.Arguments["region"] != "present" {
+		t.Fatalf("body arguments = %v, want arguments.region retained", params.Params.Arguments)
 	}
 
-	// A member value outside the header-safe set rides the Base64
-	// sentinel on the wire.
+	// A value absent from the arguments is not emitted: the server's own
+	// required-Mcp-Param-* rule governs missing mirrors.
+	if _, err := client.CallToolTracked(ctx, "echo", map[string]any{}, "", nil); err != nil {
+		t.Fatalf("CallToolTracked (absent value): %v", err)
+	}
+	if vals := fake.lastRequestHeaders().Values("Mcp-Param-X-Region"); len(vals) != 0 {
+		t.Fatalf("absent value emitted Mcp-Param-X-Region %v, want none", vals)
+	}
+
+	// A value outside the header-safe set rides the Base64 sentinel.
 	if _, err := client.CallToolTracked(ctx, "echo", map[string]any{
-		"x-mcp-header": map[string]any{"X-Trace": "caf\u00e9"},
+		"region": "caf\u00e9",
 	}, "", nil); err != nil {
-		t.Fatalf("CallToolTracked (unsafe member): %v", err)
+		t.Fatalf("CallToolTracked (unsafe value): %v", err)
 	}
 	sentinel := "=?base64?" + base64.StdEncoding.EncodeToString([]byte("caf\u00e9")) + "?="
-	if got := fake.lastRequestHeaders().Get("Mcp-Param-X-Trace"); got != sentinel {
+	if got := fake.lastRequestHeaders().Get("Mcp-Param-X-Region"); got != sentinel {
 		t.Fatalf("unsafe mirror = %q, want the sentinel %q", got, sentinel)
 	}
 }
 
+func TestHTTPTransportParamMirroredRevisionExample(t *testing.T) {
+	// The revision's own example: a `region` property whose schema is
+	// {"type":"string","x-mcp-header":"Region"}, called with
+	// region = us-west1, yields exactly one Mcp-Param-Region carrying
+	// us-west1 while the body still carries arguments.region.
+	client, fake := newHTTPFakeClient(t, func(fake *httpFake, cfg *HTTPConfig) {
+		fake.toolsListJSON = revisionExampleToolListJSON
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Connect(ctx, NegotiationDiscover, "criteria-test", "0.1.0"); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	list, err := client.ListToolsDetailed(ctx)
+	if err != nil {
+		t.Fatalf("ListToolsDetailed: %v", err)
+	}
+	if len(list.Tools) != 1 || list.Tools[0].Name != "locate" {
+		t.Fatalf("ListToolsDetailed = %+v, want the advertised locate tool", list.Tools)
+	}
+	if _, err := client.CallToolTracked(ctx, "locate", map[string]any{
+		"region": "us-west1",
+	}, "", nil); err != nil {
+		t.Fatalf("CallToolTracked: %v", err)
+	}
+	if vals := fake.lastRequestHeaders().Values("Mcp-Param-Region"); len(vals) != 1 || vals[0] != "us-west1" {
+		t.Fatalf("Mcp-Param-Region = %v, want exactly [us-west1]", vals)
+	}
+	var params struct {
+		Params struct {
+			Arguments map[string]any `json:"arguments"`
+		} `json:"params"`
+	}
+	for _, rec := range fake.captured() {
+		if rec.method != "tools/call" {
+			continue
+		}
+		if err := json.Unmarshal(rec.body, &params); err != nil {
+			t.Fatalf("tools/call body %s unparseable: %v", rec.body, err)
+		}
+	}
+	if params.Params.Arguments["region"] != "us-west1" {
+		t.Fatalf("body arguments = %v, want arguments.region retained", params.Params.Arguments)
+	}
+}
+
 func TestHTTPTransportParamHeadersMirroredFromNestedPropertySchema(t *testing.T) {
-	// The annotation-named property on a nested plain chain: the binding
-	// path is the chain to the property, mirrored from the arguments at
-	// that path.
+	// An annotated parameter on a nested plain chain: the mirror rides the
+	// value at the chain's own path.
 	const list = `{"tools":` +
 		`[{"name":"echo","inputSchema":{"type":"object","properties":{` +
 		`"meta":{"type":"object","properties":{` +
-		`"x-mcp-header":{"type":"object","additionalProperties":false,` +
-		`"properties":{"X-Trace-ID":{"type":"string"}}}}}}}}]` + "}"
+		`"region":{"type":"string","x-mcp-header":"X-Trace-ID"}}}}}}]` + "}"
 	client, fake := newHTTPFakeClient(t, func(fake *httpFake, cfg *HTTPConfig) {
 		fake.toolsListJSON = list
 	})
@@ -1101,26 +1074,25 @@ func TestHTTPTransportParamHeadersMirroredFromNestedPropertySchema(t *testing.T)
 		t.Fatalf("ListToolsDetailed: %v", err)
 	}
 	if _, err := client.CallToolTracked(ctx, "echo", map[string]any{
-		"meta": map[string]any{"x-mcp-header": map[string]any{"X-Trace-ID": "abc"}},
+		"meta": map[string]any{"region": "abc"},
 	}, "", nil); err != nil {
 		t.Fatalf("CallToolTracked: %v", err)
 	}
 	if got := fake.lastRequestHeaders().Get("Mcp-Param-X-Trace-ID"); got != "abc" {
 		t.Fatalf("Mcp-Param-X-Trace-ID = %q, want %q", got, "abc")
 	}
-	if got := fake.lastRequestHeaders().Get("Mcp-Param-X-Trace"); got != "" {
-		t.Fatalf("mirror from the wrong table member: Mcp-Param-X-Trace = %q", got)
+	if got := fake.lastRequestHeaders().Get("Mcp-Param-X-Region"); got != "" {
+		t.Fatalf("mirror from an unannotated path: Mcp-Param-X-Region = %q", got)
 	}
 }
 
-func TestHTTPTransportInvalidPropertyAnnotatedToolDroppedFromSurface(t *testing.T) {
-	// The property-name spelling obeys the same validity rules: a tool
-	// whose annotation-named property leaves the name set open is invalid
-	// and dropped from the advertised surface while the rest stays.
+func TestHTTPTransportInvalidAnnotatedToolDroppedFromSurface(t *testing.T) {
+	// A tool whose annotation is not statically resolvable has no
+	// mirrorable path: it is dropped from the advertised surface while the
+	// rest of the list stays.
 	const list = `{"tools":[` +
 		`{"name":"broken","inputSchema":{"type":"object","properties":{` +
-		`"x-mcp-header":{"type":"object","additionalProperties":true,` +
-		`"properties":{"X-T":{"type":"string"}}}}}},` +
+		`"trace":{"type":"object","oneOf":[{"type":"string","x-mcp-header":"X-T"}]}}}},` +
 		`{"name":"echo"}]}`
 	client, fake := newHTTPFakeClient(t, func(fake *httpFake, cfg *HTTPConfig) {
 		fake.toolsListJSON = list
@@ -1143,5 +1115,87 @@ func TestHTTPTransportInvalidPropertyAnnotatedToolDroppedFromSurface(t *testing.
 	}
 	if fake.sawMethod("tools/call") {
 		t.Fatalf("unexpected tools/call during surface validation")
+	}
+}
+
+func TestHTTPTransportInvalidTypedAnnotatedToolDroppedFromSurface(t *testing.T) {
+	// An annotated property whose declared type is not permitted (number),
+	// or whose annotation name is not an HTTP token, makes the tool
+	// invalid: it is dropped from the advertised surface while the rest
+	// stays.
+	const list = `{"tools":[` +
+		`{"name":"numeric","inputSchema":{"type":"object","properties":{` +
+		`"trace":{"type":"number","x-mcp-header":"X-Trace"}}}},` +
+		`{"name":"badname","inputSchema":{"type":"object","properties":{` +
+		`"trace":{"type":"string","x-mcp-header":"X Trace"}}}},` +
+		`{"name":"echo"}]}`
+	client, fake := newHTTPFakeClient(t, func(fake *httpFake, cfg *HTTPConfig) {
+		fake.toolsListJSON = list
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Connect(ctx, NegotiationDiscover, "criteria-test", "0.1.0"); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	listing, err := client.ListToolsDetailed(ctx)
+	if err != nil {
+		t.Fatalf("ListToolsDetailed: %v", err)
+	}
+	names := make([]string, 0, len(listing.Tools))
+	for _, tool := range listing.Tools {
+		names = append(names, tool.Name)
+	}
+	if len(names) != 1 || names[0] != "echo" {
+		t.Fatalf("surface = %v, want [echo] (the invalidly annotated tools dropped)", names)
+	}
+	if fake.sawMethod("tools/call") {
+		t.Fatalf("unexpected tools/call during surface validation")
+	}
+}
+
+func TestHTTPTransportParamBoundRefusedBeforePost(t *testing.T) {
+	// An integer argument outside the ±(2^53-1) mirrored bound refuses the
+	// call before the POST: no tools/call request is sent, the error names
+	// the parameter path and never the value, and a follow-up in-bound
+	// call still works.
+	const list = `{"tools":` +
+		`[{"name":"echo","inputSchema":{"type":"object","properties":{` +
+		`"count":{"type":"integer","x-mcp-header":"X-Count"}}}}]}`
+	client, fake := newHTTPFakeClient(t, func(fake *httpFake, cfg *HTTPConfig) {
+		fake.toolsListJSON = list
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Connect(ctx, NegotiationDiscover, "criteria-test", "0.1.0"); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	if _, err := client.ListToolsDetailed(ctx); err != nil {
+		t.Fatalf("ListToolsDetailed: %v", err)
+	}
+	_, err := client.CallToolTracked(ctx, "echo", map[string]any{
+		"count": float64(9007199254740993),
+	}, "", nil)
+	var bound *ParamBoundError
+	if !errors.As(err, &bound) {
+		t.Fatalf("err = %v (%T), want *ParamBoundError", err, err)
+	}
+	if !reflect.DeepEqual(bound.Path, []string{"count"}) {
+		t.Fatalf("ParamBoundError.Path = %v, want [count]", bound.Path)
+	}
+	if msg := bound.Error(); strings.Contains(msg, "9007199254740992") ||
+		strings.Contains(msg, "9007199254740993") {
+		t.Fatalf("error message %q must never carry the value", msg)
+	}
+	if fake.sawMethod("tools/call") {
+		t.Fatalf("tools/call reached the wire despite the bound refusal")
+	}
+
+	if _, err := client.CallToolTracked(ctx, "echo", map[string]any{
+		"count": float64(7),
+	}, "", nil); err != nil {
+		t.Fatalf("in-bound CallToolTracked: %v", err)
+	}
+	if got := fake.lastRequestHeaders().Get("Mcp-Param-X-Count"); got != "7" {
+		t.Fatalf("Mcp-Param-X-Count = %q, want %q", got, "7")
 	}
 }

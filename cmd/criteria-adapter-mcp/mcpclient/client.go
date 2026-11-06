@@ -408,7 +408,8 @@ func (c *Client) ListToolsDetailed(ctx context.Context) (ToolsList, error) {
 // annotation rules and returns the conformant surface with the resolved
 // Mcp-Param-* bindings per tool name. A tool whose annotation cannot be
 // resolved statically — an annotation outside a plain properties chain, a
-// non-token or colliding header name, a non-primitive value type — has no
+// non-token or colliding header name, a non-permitted declared type
+// (string/boolean/integer only; number is not mirrored) — has no
 // mirrorable path, and a mirror the transport cannot honor is dropped from
 // the surface rather than partially honored: calls to it would carry a
 // required-header set the server cannot rely on.
@@ -490,7 +491,13 @@ func (c *Client) CallToolTracked(ctx context.Context, name string, arguments map
 		if c.Transport() != TransportHTTP {
 			return CallToolResult{}, fmt.Errorf("mcpclient: tool %q mirrors Mcp-Param-* headers from its x-mcp-header schema annotation; mirror headers are http-transport-only (stdio carries no custom headers)", name)
 		}
-		paramHeaders = mirrorToolParamHeaders(bindings, arguments)
+		var err error
+		if paramHeaders, err = mirrorToolParamHeaders(bindings, arguments); err != nil {
+			// An out-of-bound mirrored integer refuses the call before the
+			// POST is sent; the error names the parameter path, never the
+			// value.
+			return CallToolResult{}, err
+		}
 	}
 	raw, err := c.request(ctx, "tools/call", params, extraHeaders, paramHeaders, "")
 	if err != nil {

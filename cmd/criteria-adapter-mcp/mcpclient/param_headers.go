@@ -2,45 +2,50 @@ package mcpclient
 
 import (
 	"encoding/json"
+	"fmt"
+	"math"
 	"strconv"
+	"strings"
 )
 
-// The x-mcp-header schema annotation: a tool inputSchema may mirror one
-// property's value members into Mcp-Param-{Name} headers on the tools/call
-// POST. Two spellings declare it
-//   - marker: a property carries the marker key beside its value schema;
-//     the annotated schema's own properties are the header names;
-//   - property name: a property named x-mcp-header is itself the
-//     annotation; its schema is the header-name table.
-//
-// In both spellings the table's properties are the header names, each typed
-// primitive, with statically known names (additionalProperties false or
-// absent). The transport emits one Mcp-Param-{Name} header per entry,
-// mirroring the value at the annotated property path; the annotated value
+// The x-mcp-header schema annotation: a tool inputSchema may mirror a
+// parameter's own value into an Mcp-Param-{Name} header on the tools/call
+// POST. The annotation is a JSON string named x-mcp-header inside the
+// annotated property's schema, its value the header name: a `region`
+// property whose schema is {"type":"string","x-mcp-header":"Region"}
+// mirrors arguments.region as Mcp-Param-Region on the call, and the value
 // itself stays in the call body.
 const paramHeaderAnnotation = "x-mcp-header"
 
-// jsonSchemaType is the JSON-Schema primitive set a mirrored header value
-// may be declared as.
+// maxMirroredInteger is the largest mirrored magnitude (2^53-1). JSON
+// numbers decode as float64 and integers beyond ±(2^53-1) no longer
+// round-trip exactly, so a mirrored header carrying one would be lossy; a
+// call whose mirrored integer exceeds the bound is refused before the POST
+// with a ParamBoundError naming the offending parameter path.
+const maxMirroredInteger = int64(9007199254740991)
+
+// jsonSchemaType is the JSON-Schema primitive set a mirrored parameter may
+// be declared as.
 type jsonSchemaType string
 
 const (
 	schemaTypeString  jsonSchemaType = "string"
-	schemaTypeNumber  jsonSchemaType = "number"
 	schemaTypeInteger jsonSchemaType = "integer"
 	schemaTypeBoolean jsonSchemaType = "boolean"
 )
 
-// isPrimitiveSchemaType reports whether t is one of the four primitive
-// JSON-Schema types a mirrored header value may be declared as.
+// isPrimitiveSchemaType reports whether t is one of the permitted mirrored
+// types. A number-typed parameter is not permitted: rendering arbitrary
+// JSON numbers as header values is outside the mirror's defined shape.
 func isPrimitiveSchemaType(t jsonSchemaType) bool {
-	return t == schemaTypeString || t == schemaTypeNumber ||
-		t == schemaTypeInteger || t == schemaTypeBoolean
+	return t == schemaTypeString || t == schemaTypeInteger ||
+		t == schemaTypeBoolean
 }
 
 // toolParamHeader is one resolved x-mcp-header binding for a tool: the
-// statically reachable property path the annotation sits on and the header
-// name it mirrors the value's member into.
+// plain properties path to the annotated parameter and the header name the
+// annotation's string value declares. The parameter's own value mirrors as
+// Mcp-Param-{header}.
 type toolParamHeader struct {
 	path   []string
 	header string
@@ -49,17 +54,20 @@ type toolParamHeader struct {
 // resolveToolParamHeaders resolves a tool's inputSchema into Mcp-Param-*
 // bindings (nil, true when the schema carries no annotations).
 //
-// An annotation of either spelling is honored only on a plain properties
-// chain from the schema root; the annotated table must be an object whose
-// properties are the header names, each typed primitive, with statically
-// known names (additionalProperties false or absent). A tool is invalid
-// (false) when an annotation sits outside that chain (inside
-// oneOf/anyOf/allOf, patternProperties/additionalProperties, "items", or
-// at the schema root — the plain chain is the only walkable path, so an
-// annotation the mirror cannot resolve statically has no mirrorable path
-// and the tool is rejected rather than partially honored), when a header
-// name is not a valid HTTP token, when a value schema's type is not
-// primitive, or when two names collide case-insensitively.
+// An annotation is honored only on a plain properties chain from the schema
+// root: the annotated property declares a permitted mirrored type
+// (string/boolean/integer — number is not mirror-permitted) and a header
+// name that is a non-empty HTTP token, unique case-insensitively across
+// all annotations in the schema. A tool is invalid (false) when an
+// annotation sits outside that chain — at the schema root, under
+// oneOf/anyOf/allOf, patternProperties/additionalProperties or "items", any
+// other non-properties key, or deeper inside an annotated property's own
+// value schema (the plain chain ends at the annotated property, so such an
+// annotation has no statically reachable mirror path and the tool is
+// rejected rather than partially honored) — when an annotation value is
+// not a JSON string, when a name is not a valid HTTP token, when the
+// annotated property's declared type is not permitted, or when two names
+// collide case-insensitively.
 func resolveToolParamHeaders(schema json.RawMessage) ([]toolParamHeader, bool) {
 	if len(schema) == 0 {
 		return nil, true
@@ -77,28 +85,8 @@ func resolveToolParamHeaders(schema json.RawMessage) ([]toolParamHeader, bool) {
 		return nil, false
 	}
 
-	props, ok := root["properties"].(map[string]any)
-	if !ok {
-		// No plain chain to walk; an annotation in any other root key is
-		// still unreachable and still rejected.
-		for key, child := range root {
-			if key == "properties" {
-				continue
-			}
-			if carriesForeignAnnotation(child) {
-				return nil, false
-			}
-		}
-		return nil, true
-	}
-
-	var (
-		bindings []toolParamHeader
-		seen     = map[string]struct{}{}
-	)
-	if !walkProperties(nil, props, &bindings, seen) {
-		return nil, false
-	}
+	// An annotation in any non-properties root key is unreachable and
+	// rejected; the plain chain below the properties table is walked next.
 	for key, child := range root {
 		if key == "properties" {
 			continue
@@ -107,21 +95,25 @@ func resolveToolParamHeaders(schema json.RawMessage) ([]toolParamHeader, bool) {
 			return nil, false
 		}
 	}
+	var (
+		bindings []toolParamHeader
+		seen     = map[string]struct{}{}
+	)
+	if props, ok := root["properties"].(map[string]any); ok {
+		if !walkProperties(nil, props, &bindings, seen) {
+			return nil, false
+		}
+	}
 	return bindings, true
 }
 
 // walkProperties resolves the annotation on each property of a plain
 // properties table, per walkChain. A property with a non-map schema is not
-// a resolvable node; under the annotation's own name (the property-name
-// spelling gone malformed) that makes the tool invalid, elsewhere it is
-// simply not a schema node.
+// a schema node and carries no annotation key.
 func walkProperties(path []string, props map[string]any, out *[]toolParamHeader, seen map[string]struct{}) bool {
 	for name, prop := range props {
 		node, ok := prop.(map[string]any)
 		if !ok {
-			if name == paramHeaderAnnotation {
-				return false
-			}
 			continue
 		}
 		child := make([]string, 0, len(path)+1)
@@ -135,46 +127,44 @@ func walkProperties(path []string, props map[string]any, out *[]toolParamHeader,
 }
 
 // walkChain descends one plain properties chain, resolving the annotation
-// on each chain node in either spelling: a node carrying the marker key,
-// or a node whose property name is the annotation (its schema IS the
-// header-name table). An annotated node's table fully describes the
-// mirrored value, so its subtree ends the chain; unannotated nodes
-// continue it through their own properties. The bool result is tool
-// validity.
+// on each chain node: an annotated node's string value declares the header
+// name its own value mirrors into, so its subtree ends the chain;
+// unannotated nodes continue it through their own properties. The bool
+// result is tool validity.
 func walkChain(path []string, node map[string]any, out *[]toolParamHeader, seen map[string]struct{}) bool {
 	if _, has := node[paramHeaderAnnotation]; has {
-		return walkAnnotatedNode(path, node, out, seen)
-	}
-	if len(path) > 0 && path[len(path)-1] == paramHeaderAnnotation {
 		return walkAnnotatedNode(path, node, out, seen)
 	}
 	return walkUnannotatedNode(path, node, out, seen)
 }
 
-// walkAnnotatedNode records the annotated node's toolParamHeader bindings
-// and validates that no hidden annotation survives inside the annotated
-// node's value schemas. Its subtree ends the plain chain, so only the
-// header-name children are scanned.
+// walkAnnotatedNode records the annotated node's toolParamHeader binding:
+// the annotation's JSON string is the header name the node's own value
+// mirrors into, the node's declared type must be a permitted mirrored
+// type, and the name must be unique case-insensitively across the schema's
+// annotations. No annotation may hide inside the annotated node's value
+// schema: its subtree ends the plain chain, so a deeper annotation is
+// unreachable and invalidates the tool.
 func walkAnnotatedNode(path []string, node map[string]any, out *[]toolParamHeader, seen map[string]struct{}) bool {
-	names, ok := annotatedHeaderNames(node)
+	header, ok := node[paramHeaderAnnotation].(string)
 	if !ok {
 		return false
 	}
-	props, _ := node["properties"].(map[string]any)
-	for _, header := range names {
-		if !isTokenHeaderName(header) {
-			return false
-		}
-		key := lowerASCII(header)
-		if _, dup := seen[key]; dup {
-			return false
-		}
-		seen[key] = struct{}{}
-		*out = append(*out, toolParamHeader{path: path, header: header})
-		// A foreign annotation may not hide inside a header's value
-		// schema: the annotated node ends the plain chain, so an annotation
-		// deeper inside any member is unreachable.
-		if probe, _ := props[header].(map[string]any); probe != nil && carriesForeignAnnotation(probe) {
+	if !isTokenHeaderName(header) {
+		return false
+	}
+	typ, has := node["type"].(string)
+	if !has || !isPrimitiveSchemaType(jsonSchemaType(typ)) {
+		return false
+	}
+	key := lowerASCII(header)
+	if _, dup := seen[key]; dup {
+		return false
+	}
+	seen[key] = struct{}{}
+	*out = append(*out, toolParamHeader{path: append([]string(nil), path...), header: header})
+	for _, child := range node {
+		if carriesForeignAnnotation(child) {
 			return false
 		}
 	}
@@ -202,10 +192,9 @@ func walkUnannotatedNode(path []string, node map[string]any, out *[]toolParamHea
 	return walkProperties(path, props, out, seen)
 }
 
-// carriesForeignAnnotation reports whether an x-mcp-header annotation of
-// either spelling exists anywhere inside node outside the plain properties
-// chain: the marker key inside any schema map, or a property whose name is
-// the annotation inside any properties table. The chain walk resolves the
+// carriesForeignAnnotation reports whether an x-mcp-header annotation
+// exists anywhere inside node outside the plain properties chain: the
+// annotation key inside any schema map. The chain walk resolves the
 // reachable annotations, so every annotation this scan finds sits outside
 // the chain and invalidates the tool.
 func carriesForeignAnnotation(node any) bool {
@@ -214,27 +203,19 @@ func carriesForeignAnnotation(node any) bool {
 		if _, ok := v[paramHeaderAnnotation]; ok {
 			return true
 		}
-		if props, ok := v["properties"].(map[string]any); ok {
-			if _, ok := props[paramHeaderAnnotation]; ok {
-				return true
-			}
-		}
 		for _, child := range v {
 			if carriesForeignAnnotation(child) {
 				return true
 			}
 		}
-		return false
 	case []any:
 		for _, child := range v {
 			if carriesForeignAnnotation(child) {
 				return true
 			}
 		}
-		return false
-	default:
-		return false
 	}
+	return false
 }
 
 // isTokenHeaderName reports whether a mirrored header name is a valid HTTP
@@ -249,50 +230,6 @@ func isTokenHeaderName(name string) bool {
 		}
 	}
 	return true
-}
-
-// annotatedHeaderNames validates an x-mcp-header-annotated schema node
-// (either spelling) and reports whether the annotated table is a usable
-// mirror table: an object whose properties are the header names, each
-// typed primitive, with statically known names (additionalProperties false
-// or absent; present and not — true, or a schema — leaves the value's
-// names open and rejects the tool). A table whose shape or member schemas
-// do not conform yields no names and invalidates the tool.
-func annotatedHeaderNames(node map[string]any) ([]string, bool) {
-	typ, ok := node["type"].(string)
-	if !ok || typ != "object" {
-		return nil, false
-	}
-	switch addl := node["additionalProperties"].(type) {
-	case nil:
-	case bool:
-		if addl {
-			return nil, false
-		}
-	default:
-		return nil, false
-	}
-	props, ok := node["properties"].(map[string]any)
-	if !ok || len(props) == 0 {
-		return nil, false
-	}
-	names := make([]string, 0, len(props))
-	for header, valueSchema := range props {
-		schemaObj, ok := valueSchema.(map[string]any)
-		if !ok {
-			return nil, false
-		}
-		typRaw, has := schemaObj["type"]
-		if !has {
-			return nil, false
-		}
-		typName, isString := typRaw.(string)
-		if !isString || !isPrimitiveSchemaType(jsonSchemaType(typName)) {
-			return nil, false
-		}
-		names = append(names, header)
-	}
-	return names, true
 }
 
 // lowerASCII lowercases only ASCII letters: header names are US-ASCII
@@ -313,59 +250,81 @@ func lowerASCII(s string) string {
 // The fixture's Server Validation shares the namespace so both ends agree.
 const ParamHeaderPrefix = "Mcp-Param-"
 
-// headerEntry renders one mirrored HTTP header: the member of the value at
-// the annotated path whose key is the header name, encoded with the
-// standard header-value rules (the Base64 sentinel covers values outside
-// the header-safe set). A string is carried verbatim; a boolean is
-// "true"/"false"; a number is shortest round-trip formatted. A member
-// missing from the value, null, or non-primitive (the argument shape
-// violated the declared schema) is not emitted — the server's own
-// required-Mcp-Param-* rule governs that.
-func (b toolParamHeader) headerEntry(arguments map[string]any) (HeaderEntry, bool) {
-	var value any
-	current := any(arguments)
+// ParamBoundError reports a mirrored integer argument outside the
+// ±(2^53-1) mirrored bound (maxMirroredInteger): rendering such a value as
+// a header would be lossy, so the mirror is not emitted and the call is
+// refused before the POST. Path names the offending parameter; the value
+// never appears in the message.
+type ParamBoundError struct {
+	Path []string
+}
+
+func (e *ParamBoundError) Error() string {
+	return fmt.Sprintf("mcpclient: mirrored parameter path %s carries an integer argument outside the ±%d (2^53-1) mirrored bound; the mirror would be lossy so the call is refused",
+		paramPathString(e.Path), maxMirroredInteger)
+}
+
+// paramPathString renders a binding path for error messages.
+func paramPathString(path []string) string {
+	return strings.Join(path, ".")
+}
+
+// headerEntry renders the mirrored HTTP header for one annotated
+// parameter: the parameter's own value at its binding path, encoded with
+// the standard header-value rules (the Base64 sentinel covers values
+// outside the header-safe set). A string is carried verbatim; a boolean is
+// "true"/"false"; a JSON number that is an integer renders exactly within
+// the ±(2^53-1) bound — outside it the call is refused with a
+// ParamBoundError, and a non-integer number is not a permitted mirrored
+// value. A path absent from the arguments, null, or a non-primitive
+// runtime value (the argument shape violated the declared schema) is not
+// emitted — the server's own required-Mcp-Param-* rule governs that.
+func (b toolParamHeader) headerEntry(arguments map[string]any) (HeaderEntry, bool, error) {
+	var value any = arguments
 	for _, key := range b.path {
-		obj, ok := current.(map[string]any)
+		obj, ok := value.(map[string]any)
 		if !ok {
-			return HeaderEntry{}, false
+			return HeaderEntry{}, false, nil
 		}
 		value, ok = obj[key]
 		if !ok {
-			return HeaderEntry{}, false
+			return HeaderEntry{}, false, nil
 		}
-		current = value
-	}
-	members, ok := value.(map[string]any)
-	if !ok {
-		return HeaderEntry{}, false
-	}
-	raw, ok := members[b.header]
-	if !ok {
-		return HeaderEntry{}, false
 	}
 	name := ParamHeaderPrefix + b.header
-	switch v := raw.(type) {
+	switch v := value.(type) {
 	case nil:
-		return HeaderEntry{}, false
+		return HeaderEntry{}, false, nil
 	case string:
-		return HeaderEntry{Name: name, Value: encodeHeaderValue(v)}, true
+		return HeaderEntry{Name: name, Value: encodeHeaderValue(v)}, true, nil
 	case bool:
-		return HeaderEntry{Name: name, Value: strconv.FormatBool(v)}, true
+		return HeaderEntry{Name: name, Value: strconv.FormatBool(v)}, true, nil
 	case float64:
-		return HeaderEntry{Name: name, Value: strconv.FormatFloat(v, 'g', -1, 64)}, true
+		if math.Trunc(v) != v {
+			return HeaderEntry{}, false, nil
+		}
+		if v > float64(maxMirroredInteger) || v < -float64(maxMirroredInteger) {
+			return HeaderEntry{}, false, &ParamBoundError{Path: append([]string(nil), b.path...)}
+		}
+		return HeaderEntry{Name: name, Value: strconv.FormatFloat(v, 'f', -1, 64)}, true, nil
 	default:
-		return HeaderEntry{}, false
+		return HeaderEntry{}, false, nil
 	}
 }
 
 // mirrorToolParamHeaders renders one Mcp-Param-{Name} header per annotated
-// path present in the call arguments, in binding order.
-func mirrorToolParamHeaders(bindings []toolParamHeader, arguments map[string]any) []HeaderEntry {
+// path present in the call arguments, in binding order. An out-of-bound
+// mirrored integer stops the call before anything is sent.
+func mirrorToolParamHeaders(bindings []toolParamHeader, arguments map[string]any) ([]HeaderEntry, error) {
 	var entries []HeaderEntry
 	for _, binding := range bindings {
-		if entry, ok := binding.headerEntry(arguments); ok {
+		entry, ok, err := binding.headerEntry(arguments)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
 			entries = append(entries, entry)
 		}
 	}
-	return entries
+	return entries, nil
 }
