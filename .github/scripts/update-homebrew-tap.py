@@ -14,49 +14,101 @@ import http.client
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 from pathlib import Path
 
 REPO = "brokenbots/criteria"
 
+# Transient-download budget: downloads are retried for real upstream outages
+# (upstream 504s have made this check fail), but the budget is bounded so a
+# stalled or broken upstream can never hang a job indefinitely.
+#
+# backoff_seconds must hold at least DOWNLOAD_MAX_ATTEMPTS entries (the loop
+# indexes by attempt - 1); its total sleep is ~3 minutes. The wall-clock
+# deadline is the binding ceiling: control always returns from download()
+# within it plus one request timeout.
+DOWNLOAD_MAX_ATTEMPTS = 10
+DOWNLOAD_BACKOFF_SECONDS = [1, 2, 4, 8, 16, 30, 30, 30, 30, 30]
+DOWNLOAD_SLEEP_CAP_SECONDS = 30
+DOWNLOAD_DEADLINE_SECONDS = 300
+DOWNLOAD_REQUEST_TIMEOUT_SECONDS = 30
+
 
 def error(msg: str) -> None:
-    print(f"ERROR: {msg}", file=sys.stderr)
+    print(f"ERROR: {msg}", file=sys.stderr, flush=True)
     sys.exit(1)
 
 
 def download(tag: str, name: str, dest: Path) -> None:
     url = f"https://github.com/{REPO}/releases/download/{tag}/{name}"
-    print(f"Downloading {url} ...")
+    print(f"Downloading {url} ...", flush=True)
 
     version = tag.lstrip("v")
+    started = time.monotonic()
+    deadline = started + DOWNLOAD_DEADLINE_SECONDS
     req = urllib.request.Request(
         url,
         headers={"User-Agent": f"criteria-ci-update-homebrew-tap/{version}"},
     )
 
-    max_attempts = 5
-    backoff_seconds = [1, 2, 4, 8, 16]
-
-    for attempt in range(1, max_attempts + 1):
+    # last_error carries the most recent attempt's failure so every budget
+    # exhaustion path can re-raise a real cause and exit non-zero.
+    last_error = None
+    for attempt in range(1, DOWNLOAD_MAX_ATTEMPTS + 1):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            if last_error is not None:
+                raise last_error
+            raise TimeoutError(
+                f"{name} not downloaded within the "
+                f"{DOWNLOAD_DEADLINE_SECONDS}s overall deadline"
+            )
+        # urllib's timeout= is a per-read socket timeout; clamping it to the
+        # remaining deadline keeps one hung request from eating the budget.
+        attempt_timeout = max(1, min(DOWNLOAD_REQUEST_TIMEOUT_SECONDS, int(remaining)))
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=attempt_timeout) as resp:
                 if resp.status >= 400:
                     raise urllib.error.HTTPError(
                         url, resp.status, resp.reason, resp.headers, None
                     )
-                with open(dest, "wb") as f:
-                    shutil.copyfileobj(resp, f, length=65536)
+                # Copy through a temp file and move into place only after the
+                # copy completed, so dest is never a truncated download.
+                fd, tmp_name = tempfile.mkstemp(prefix=name + ".", dir=str(dest.parent))
+                try:
+                    with os.fdopen(fd, "wb") as f:
+                        shutil.copyfileobj(resp, f, length=65536)
+                    os.replace(tmp_name, dest)
+                except Exception:
+                    try:
+                        os.unlink(tmp_name)
+                    except OSError:
+                        pass
+                    raise
             return
         except urllib.error.HTTPError as e:
-            if 500 <= e.code < 600 and attempt < max_attempts:
-                delay = backoff_seconds[attempt - 1]
+            last_error = e
+            if 500 <= e.code < 600 and attempt < DOWNLOAD_MAX_ATTEMPTS:
+                delay = min(DOWNLOAD_BACKOFF_SECONDS[attempt - 1], DOWNLOAD_SLEEP_CAP_SECONDS)
+                remaining = deadline - time.monotonic()
+                if remaining <= delay:
+                    print(
+                        f"Overall download deadline exceeded before retry after "
+                        f"server error {e.code} on {name} "
+                        f"({time.monotonic() - started:.1f}s elapsed); {attempt} attempt(s) spent",
+                        flush=True,
+                    )
+                    raise last_error
                 print(
                     f"Server error {e.code} downloading {name}, "
-                    f"attempt {attempt}/{max_attempts}; retrying in {delay}s ..."
+                    f"attempt {attempt}/{DOWNLOAD_MAX_ATTEMPTS}; "
+                    f"retrying in {delay}s ... ({time.monotonic() - started:.1f}s elapsed)",
+                    flush=True,
                 )
                 time.sleep(delay)
                 continue
@@ -66,12 +118,26 @@ def download(tag: str, name: str, dest: Path) -> None:
             ConnectionResetError,
             ConnectionRefusedError,
             http.client.RemoteDisconnected,
+            TimeoutError,
+            socket.timeout,
         ) as e:
-            if attempt < max_attempts:
-                delay = backoff_seconds[attempt - 1]
+            last_error = e
+            if attempt < DOWNLOAD_MAX_ATTEMPTS:
+                delay = min(DOWNLOAD_BACKOFF_SECONDS[attempt - 1], DOWNLOAD_SLEEP_CAP_SECONDS)
+                remaining = deadline - time.monotonic()
+                if remaining <= delay:
+                    print(
+                        f"Overall download deadline exceeded before retry after "
+                        f"transient error on {name} "
+                        f"({time.monotonic() - started:.1f}s elapsed); {attempt} attempt(s) spent",
+                        flush=True,
+                    )
+                    raise last_error
                 print(
                     f"Transient error downloading {name}, "
-                    f"attempt {attempt}/{max_attempts}; retrying in {delay}s ... ({e})"
+                    f"attempt {attempt}/{DOWNLOAD_MAX_ATTEMPTS}; "
+                    f"retrying in {delay}s ... ({time.monotonic() - started:.1f}s elapsed) ({e})",
+                    flush=True,
                 )
                 time.sleep(delay)
                 continue
