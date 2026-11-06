@@ -19,7 +19,9 @@ const jsonRPCVersion = "2.0"
 // wireRequest describes one outgoing JSON-RPC envelope as a transport
 // needs it: the encoded envelope, its method and id (id "" marks a
 // notification, which gets no response), per-request HTTP headers (http
-// transport only; a stdio send with headers is invalid), the request's
+// transport only; a stdio send with headers is invalid), protocol-mandated
+// Mcp-Param-* mirror headers from an annotated tool (http transport only;
+// applied last so they win over caller-supplied headers), the request's
 // name — the tool name / prompt name / resource uri of a name-bearing
 // method, the Mcp-Name header source — and the protocol version the POST
 // announces (the Mcp-Protocol-Version header source; empty is invalid on
@@ -29,6 +31,7 @@ type wireRequest struct {
 	method          string
 	id              string
 	headers         []HeaderEntry
+	paramHeaders    []HeaderEntry
 	name            string
 	protocolVersion string
 }
@@ -257,6 +260,13 @@ type Client struct {
 	pendMu  sync.Mutex
 	pending map[string]chan rpcResponse
 
+	// toolParamMu guards toolParams: the Mcp-Param-* mirror bindings
+	// resolved from listed tools' x-mcp-header schema annotations, keyed
+	// by tool name. ListToolsDetailed rebuilds them; CallToolTracked
+	// consults them per call (bindings are http-transport-only).
+	toolParamMu sync.Mutex
+	toolParams  map[string][]toolParamHeader
+
 	closed    chan struct{}
 	closeOnce sync.Once
 
@@ -332,7 +342,7 @@ func (c *Client) initializeLegacy(ctx context.Context) error {
 			Version: c.clientVersion,
 		},
 	}
-	if _, err := c.request(ctx, "initialize", params, nil, ""); err != nil {
+	if _, err := c.request(ctx, "initialize", params, nil, nil, ""); err != nil {
 		return err
 	}
 	c.protocolVersion = ProtocolVersion20250326
@@ -378,7 +388,7 @@ func (c *Client) ListToolsDetailed(ctx context.Context) (ToolsList, error) {
 	if meta := c.requestMeta(); meta != nil {
 		params = map[string]any{"_meta": meta}
 	}
-	raw, err := c.request(ctx, "tools/list", params, nil, "")
+	raw, err := c.request(ctx, "tools/list", params, nil, nil, "")
 	if err != nil {
 		return ToolsList{}, err
 	}
@@ -389,7 +399,48 @@ func (c *Client) ListToolsDetailed(ctx context.Context) (ToolsList, error) {
 	if out.ResultType == ResultTypeInputRequired {
 		return ToolsList{}, fmt.Errorf("mcpclient: tools/list returned resultType %q (SEP-2322); discovery is not a multi-round-trip call", out.ResultType)
 	}
-	return ToolsList{Tools: out.Tools, TTLms: out.TTLms, CacheScope: out.CacheScope}, nil
+	kept, bindings := c.retainConformantTools(out.Tools)
+	c.setToolParams(bindings)
+	return ToolsList{Tools: kept, TTLms: out.TTLms, CacheScope: out.CacheScope}, nil
+}
+
+// retainConformantTools validates listed tools against the x-mcp-header
+// annotation rules and returns the conformant surface with the resolved
+// Mcp-Param-* bindings per tool name. A tool whose annotation cannot be
+// resolved statically — an annotation outside a plain properties chain, a
+// non-token or colliding header name, a non-primitive value type — has no
+// mirrorable path, and a mirror the transport cannot honor is dropped from
+// the surface rather than partially honored: calls to it would carry a
+// required-header set the server cannot rely on.
+func (c *Client) retainConformantTools(tools []Tool) ([]Tool, map[string][]toolParamHeader) {
+	kept := make([]Tool, 0, len(tools))
+	bindings := map[string][]toolParamHeader{}
+	for _, tool := range tools {
+		headers, ok := resolveToolParamHeaders(tool.InputSchema)
+		if !ok {
+			continue
+		}
+		kept = append(kept, tool)
+		if len(headers) > 0 {
+			bindings[tool.Name] = headers
+		}
+	}
+	return kept, bindings
+}
+
+// setToolParams installs the mirror bindings resolved from the latest
+// tools/list.
+func (c *Client) setToolParams(bindings map[string][]toolParamHeader) {
+	c.toolParamMu.Lock()
+	defer c.toolParamMu.Unlock()
+	c.toolParams = bindings
+}
+
+// toolParamsFor returns the mirror bindings recorded for a tool name.
+func (c *Client) toolParamsFor(name string) []toolParamHeader {
+	c.toolParamMu.Lock()
+	defer c.toolParamMu.Unlock()
+	return c.toolParams[name]
 }
 
 // ListTools fetches tool metadata from the MCP server.
@@ -430,7 +481,18 @@ func (c *Client) CallToolTracked(ctx context.Context, name string, arguments map
 			}
 		}
 	}
-	raw, err := c.request(ctx, "tools/call", params, extraHeaders, "")
+	// Protocol-mandated mirrors (x-mcp-header schema annotations) are
+	// http-only: the stdio dialect carries no custom headers, so an
+	// annotated tool called over stdio would drop its required header set
+	// server-side — the call is refused client-side instead.
+	var paramHeaders []HeaderEntry
+	if bindings := c.toolParamsFor(name); len(bindings) > 0 {
+		if c.Transport() != TransportHTTP {
+			return CallToolResult{}, fmt.Errorf("mcpclient: tool %q mirrors Mcp-Param-* headers from its x-mcp-header schema annotation; mirror headers are http-transport-only (stdio carries no custom headers)", name)
+		}
+		paramHeaders = mirrorToolParamHeaders(bindings, arguments)
+	}
+	raw, err := c.request(ctx, "tools/call", params, extraHeaders, paramHeaders, "")
 	if err != nil {
 		return CallToolResult{}, err
 	}
@@ -450,7 +512,7 @@ func (c *Client) Notification(ctx context.Context, method string, params any) er
 		params = withStatelessMeta(params, c.requestMeta())
 	}
 	req := requestEnvelope{JSONRPC: jsonRPCVersion, Method: method, Params: params}
-	return c.send(ctx, method, "", nil, req, "")
+	return c.send(ctx, method, "", nil, nil, req, "")
 }
 
 // withStatelessMeta merges the stateless-core _meta into a notification's
@@ -477,7 +539,7 @@ func withStatelessMeta(params any, meta map[string]any) any {
 	return out
 }
 
-func (c *Client) request(ctx context.Context, method string, params any, headers []HeaderEntry, announceVersion string) (json.RawMessage, error) {
+func (c *Client) request(ctx context.Context, method string, params any, headers, paramHeaders []HeaderEntry, announceVersion string) (json.RawMessage, error) {
 	id := strconv.FormatUint(atomic.AddUint64(&c.nextID, 1), 10)
 	ch := make(chan rpcResponse, 1)
 
@@ -492,7 +554,7 @@ func (c *Client) request(ctx context.Context, method string, params any, headers
 	c.pendMu.Unlock()
 
 	req := requestEnvelope{JSONRPC: jsonRPCVersion, ID: id, Method: method, Params: params}
-	if err := c.send(ctx, method, id, headers, req, announceVersion); err != nil {
+	if err := c.send(ctx, method, id, headers, paramHeaders, req, announceVersion); err != nil {
 		c.pendMu.Lock()
 		delete(c.pending, id)
 		c.pendMu.Unlock()
@@ -542,7 +604,7 @@ func (c *Client) request(ctx context.Context, method string, params any, headers
 // announces pre-adoption); without one the negotiated version is announced.
 // The request name (Mcp-Name) and the announced version are stamped here so
 // the header set and the request body share one source.
-func (c *Client) send(ctx context.Context, method, id string, headers []HeaderEntry, v any, announceVersion string) error {
+func (c *Client) send(ctx context.Context, method, id string, headers, paramHeaders []HeaderEntry, v any, announceVersion string) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -564,7 +626,7 @@ func (c *Client) send(ctx context.Context, method, id string, headers []HeaderEn
 		announceVersion = c.protocolVersion
 	}
 
-	if err := c.tr.send(ctx, &wireRequest{envelope: payload, method: method, id: id, headers: headers, name: name, protocolVersion: announceVersion}); err != nil {
+	if err := c.tr.send(ctx, &wireRequest{envelope: payload, method: method, id: id, headers: headers, paramHeaders: paramHeaders, name: name, protocolVersion: announceVersion}); err != nil {
 		if _, isStdio := c.tr.(*stdioTransport); isStdio {
 			c.closeWithError(err)
 			return err

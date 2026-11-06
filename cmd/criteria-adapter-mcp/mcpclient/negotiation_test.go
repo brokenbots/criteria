@@ -578,7 +578,7 @@ func TestNullIDErrorResolvesSolePendingRequest(t *testing.T) {
 	}()
 
 	start := time.Now()
-	_, err := client.request(context.Background(), "probe/test", nil, nil, "")
+	_, err := client.request(context.Background(), "probe/test", nil, nil, nil, "")
 	elapsed := time.Since(start)
 	if err == nil {
 		t.Fatal("the id-less error did not fail the sole outstanding request")
@@ -595,7 +595,7 @@ func TestNullIDErrorResolvesSolePendingRequest(t *testing.T) {
 	// after the id-less resolution.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := client.request(ctx, "probe/second", nil, nil, ""); err != nil {
+	if _, err := client.request(ctx, "probe/second", nil, nil, nil, ""); err != nil {
 		t.Fatalf("subsequent id-bearing request failed: %v", err)
 	}
 }

@@ -393,13 +393,15 @@ func (t *httpTransport) bounded(ctx context.Context) (context.Context, context.C
 // headers (StandardHeaders: Content-Type, both Accept media types,
 // Mcp-Method, Mcp-Protocol-Version on every POST, Mcp-Name only when the
 // request names a tool/prompt/resource), then the config's custom headers,
-// then per-request headers (x-mcp-header parameters win on collision).
-// Header map assignment preserves caller case; Header.Set would
-// canonicalize it away. A pre-Connect POST is rejected instead of sent:
-// without the negotiated version the mandatory Mcp-Protocol-Version header
-// has no value, and no request may go out with the header and body _meta
-// diverging (the announced version is the negotiated one, or the version
-// the discover probe requests).
+// then per-request headers (x-mcp-header parameters win on collision), and
+// last the protocol-mandated Mcp-Param-* mirrors from an annotated tool's
+// schema (mirrors win over caller-supplied headers; the latter can never
+// carry the mcp-param- namespace). Header map assignment preserves caller
+// case; Header.Set would canonicalize it away. A pre-Connect POST is
+// rejected instead of sent: without the negotiated version the mandatory
+// Mcp-Protocol-Version header has no value, and no request may go out with
+// the header and body _meta diverging (the announced version is the
+// negotiated one, or the version the discover probe requests).
 func (t *httpTransport) newRequest(ctx context.Context, req *wireRequest) (*http.Request, error) {
 	if req.protocolVersion == "" {
 		return nil, errors.New("mcpclient: POST before Connect carries no negotiated protocol version (Mcp-Protocol-Version)")
@@ -415,6 +417,9 @@ func (t *httpTransport) newRequest(ctx context.Context, req *wireRequest) (*http
 		httpReq.Header[h.Name] = []string{h.Value}
 	}
 	for _, h := range req.headers {
+		httpReq.Header[h.Name] = []string{h.Value}
+	}
+	for _, h := range req.paramHeaders {
 		httpReq.Header[h.Name] = []string{h.Value}
 	}
 	return httpReq, nil
