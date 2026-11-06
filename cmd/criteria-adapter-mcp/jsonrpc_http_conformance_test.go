@@ -14,10 +14,11 @@ package main
 //     the client's string request id (normalize both sides), and a null-id
 //     parse-error reply binds to the sole outstanding request instead of
 //     wedging the caller.
-//   - Header-param mirrors: the x-mcp-header property-name shape is
-//     exercised on the wire against the real fixture — the advertisement,
-//     the accepted mirror, and the -32020 failure band (mismatched,
-//     undeclared, valueless).
+//   - Header-param mirrors: the spec-shaped x-mcp-header annotation is
+//     exercised on the wire against the real fixture (MCP_HDR_SCHEMA=1)
+//     — the advertisement of a `trace` property carrying the mirror, the
+//     accepted mirrors on arguments.trace, and the -32020 failure band
+//     (mismatched, undeclared, valueless).
 //   - Echo fixture: the echo fixture runs in Streamable HTTP mode as a
 //     real subprocess — discover/tools-list discovery, an echoes round
 //     trip over an SSE-delivered result with a progress event, and the
@@ -295,11 +296,6 @@ func TestJSONRPCHTTPConformance_ReferenceFixture(t *testing.T) {
 	})
 }
 
-// TestJSONRPCHTTPConformance_HeaderParamMirrorPropertyShape runs the
-// x-mcp-header Server Validation vectors on the wire against the real echo
-// fixture spawned in the property-name spelling (MCP_HDR_SCHEMA=property):
-// a hand-rolled raw-wire leg shares mcpclient.StandardHeaders with the
-// transport, so the mirror set — and its -32020 failure band — is observed
 // TestJSONRPCHTTPConformance_HeaderParamMirrorSpecShape runs the
 // x-mcp-header Server Validation vectors on the wire against the real echo
 // fixture spawned with the annotation on (MCP_HDR_SCHEMA=1): a hand-rolled

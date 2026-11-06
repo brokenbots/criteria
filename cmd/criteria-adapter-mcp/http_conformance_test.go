@@ -638,12 +638,6 @@ func TestHTTPConformance_EmptyHeaderNameRejected(t *testing.T) {
 	assertTypedCallError(t, sender, callErrorInvalidHeader, "requires a non-empty header name")
 }
 
-// TestHTTPConformance_PropertyAnnotatedSurfaceAndFlatArgs pins the bridge
-// behavior against a property-name-annotated surface: the validly
-// annotated tool is advertised by Info while the invalidly annotated one is
-// dropped, and the bridge's flat-string arguments can never resolve the
-// annotation (its value is a string, not the annotated object), so no
-// Mcp-Param-* mirror rides the call and the argument itself stays in the
 // TestHTTPConformance_SpecAnnotatedSurfaceAndMirror pins the bridge
 // behavior against a spec-shaped annotated surface: the validly annotated
 // tool is advertised by Info while the invalidly annotated one is dropped,
