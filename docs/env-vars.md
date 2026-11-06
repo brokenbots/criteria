@@ -134,9 +134,32 @@ The registry sweep enforces, in every non-test production Go file
 (including testdata files): reads of a `CRITERIA_*` name written as a
 string literal, reads whose name arrives as an identifier or selector
 (the alias class), `os.Getenv`/`os.LookupEnv` passed as a function value,
-and files that fail to parse. It tolerates exactly one documented
-testdata exclusion — `internal/ci/smoke/testdata/criteria-adapter-remote-smoke/main.go`
-(a standalone fixture module that cannot import `internal/envreg`; its
-names are the peer-host-set `CRITERIA_REMOTE_*`/`CRITERIA_ADAPTER_NAME`
-manifest names) — and the identifier allowlist entries in
-`internal/envreg/envreg_test.go`, each carrying its rationale.
+and files that fail to parse. The scanned tree is the whole workspace;
+its only non-source skips are `.git` and `vendor`, and the registry
+package itself (`internal/envreg/`) is exempt because it owns the audit
+point. All other tolerated reads are enumerated below, exactly as the
+package's sweep tables declare them, and pinned against this section by
+`TestSweepExclusionsAreDocumented`.
+
+- Excluded file
+  `internal/ci/smoke/testdata/criteria-adapter-remote-smoke/main.go`:
+  a standalone fixture module (own `go.mod`/`go.sum`, built with
+  `GOWORK=off`) that cannot import `internal/envreg`; its raw reads are
+  the peer-host-set `CRITERIA_REMOTE_*`/`CRITERIA_ADAPTER_NAME` manifest
+  names this same registry documents.
+- Allowlisted identifier reads (name arrives as data, not a
+  `CRITERIA_*` literal):
+  - `internal/dirs/dirs.go:envVar` — `XDG_*` base-directory roots: plain
+    Unix variables over a small fixed list.
+  - `internal/adapter/secrets/provider_env.go:ref.Ref` — the
+    workflow-supplied env-origin secret reference; operator data, never
+    a `CRITERIA_*` name.
+  - `internal/adapter/conformance/testdata/promptable/main.go:callLogEnv` —
+    test-fixture call-log path, not a `CRITERIA_*` name.
+  - `cmd/criteria-adapter-mcp/testfixtures/shift-mcp/main.go:name` —
+    test-fixture `MCP_*` test-knob name passed as an argument, never a
+    `CRITERIA_*` name.
+
+No exclusion without a stated reason here is in force; any new exclusion
+must be added to the package's tables with its rationale and then to this
+section.

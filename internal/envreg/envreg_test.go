@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -167,8 +168,16 @@ func TestHiddenRows(t *testing.T) {
 //     the callee performs the read away from any argument analysis.
 //
 // A file that does not parse is reported loudly instead of being skipped.
-// The only exceptions live in envReadExcludedFiles and
-// identifierEnvReadAllowlist, each carrying its rationale.
+// The scanned tree is the whole workspace: the walker skips only non-source
+// trees (.git, vendor) and the registry package itself (internal/envreg/,
+// the audit point whose own files implement Lookup/String — the package
+// exemption matches by path so any envreg*.go-named file outside the
+// package stays scanned), and testdata directories are scanned like any
+// other directory. Every tolerated read lives in envReadExcludedFiles (per
+// file) or identifierEnvReadAllowlist (per call site), each carrying its
+// rationale, and TestSweepExclusionsAreDocumented pins both tables to the
+// sweep-scope statement in docs/env-vars.md so the documented guarantee
+// cannot overstate the walker.
 
 // envReadViolation is one sweep finding.
 type envReadViolation struct {
@@ -204,6 +213,10 @@ var identifierEnvReadAllowlist = map[string]string{
 	// Test-fixture call-log path (constant PROMPTABLE_CALL_LOG): not a
 	// CRITERIA_* name and out of the registry's scope.
 	"internal/adapter/conformance/testdata/promptable/main.go:callLogEnv": "fixture call-log path, not CRITERIA_*",
+	// MCP test fixture binary (cmd/criteria-adapter-mcp's testfixtures
+	// tree): reads MCP_* test-knob names the harness selects at runtime,
+	// so the name arrives as an argument; never a CRITERIA_* name.
+	"cmd/criteria-adapter-mcp/testfixtures/shift-mcp/main.go:name": "test-fixture MCP_* knob name passed as an argument",
 }
 
 // osImportName returns the local name the file binds the os import to (a
@@ -322,16 +335,22 @@ func envReadSweep(t *testing.T) []envReadViolation {
 		}
 		if d.IsDir() {
 			switch d.Name() {
-			case ".git", "vendor", "testfixtures":
+			case ".git", "vendor":
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") ||
-			strings.HasPrefix(filepath.Base(path), "envreg") {
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
 		repoPath := strings.TrimPrefix(path, "../../")
+		// The registry package itself is exempt: it owns the audit point and
+		// its files read the environment to implement Lookup/String. The
+		// exemption matches by package path, not by file name, so files
+		// named envreg*.go elsewhere in the workspace are still scanned.
+		if strings.HasPrefix(repoPath, "internal/envreg/") {
+			return nil
+		}
 		if _, excluded := envReadExcludedFiles[repoPath]; excluded {
 			return nil
 		}
@@ -377,6 +396,50 @@ func TestNoIdentifierEnvReadsOutsideRegistry(t *testing.T) {
 	if len(hits) > 0 {
 		t.Fatalf("dynamic env reads outside internal/envreg:\n%s", strings.Join(hits, "\n"))
 	}
+}
+
+// TestSweepExclusionsAreDocumented ties the sweep's exclusion tables to
+// the sweep-scope statement in docs/env-vars.md: every excluded file and
+// every allowlisted identifier read must be stated in the operator-facing
+// doc, so the documented guarantee can neither overstate nor understate
+// the walker. Adding a table entry without updating the docs — or any new
+// undocumented exclusion — fails this test.
+func TestSweepExclusionsAreDocumented(t *testing.T) {
+	raw, err := os.ReadFile("../../docs/env-vars.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(raw)
+	const scopeHeader = "## Sweep scope"
+	start := strings.Index(doc, scopeHeader)
+	if start < 0 {
+		t.Fatalf("docs/env-vars.md lost its %s section", scopeHeader)
+	}
+	scope := doc[start:]
+	for _, key := range sortedKeys(envReadExcludedFiles) {
+		if !strings.Contains(scope, key) {
+			t.Errorf("envReadExcludedFiles entry %s is not stated in docs/env-vars.md %s", key, scopeHeader)
+		}
+	}
+	for _, key := range sortedKeys(identifierEnvReadAllowlist) {
+		if !strings.Contains(scope, key) {
+			t.Errorf("identifierEnvReadAllowlist entry %s is not stated in docs/env-vars.md %s", key, scopeHeader)
+		}
+	}
+	if !strings.Contains(scope, "internal/envreg/") {
+		t.Errorf("docs/env-vars.md %s must name the exempt registry package itself", scopeHeader)
+	}
+}
+
+// sortedKeys renders one map's keys in sorted order so error output is
+// deterministic.
+func sortedKeys(m map[string]string) []string {
+	ks := make([]string, 0, len(m))
+	for k := range m {
+		ks = append(ks, k)
+	}
+	sort.Strings(ks)
+	return ks
 }
 
 // TestGeneratedDocsMatchRegistry drift-checks the AUTO:ENVREG block in
