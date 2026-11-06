@@ -742,10 +742,19 @@ two client transports of the 2026-07-28 MCP revision:
 
 Every adapter-to-server exchange is one POST of a single JSON-RPC 2.0
 envelope to the configured `url`. The request carries the transport's
-standard headers — `Mcp-Method` (the method of the envelope), `Mcp-Name`
-(the client name; here `criteria-adapter-mcp`), `Mcp-Protocol-Version`
-once the revision is adopted — plus `Content-Type`/`Accept` under
-transport control, and any custom headers.
+standard headers — `Mcp-Method` (the method of the envelope),
+`Mcp-Protocol-Version` on every POST (the probe announces the requested
+version before any adoption, so the header never goes out empty), and
+`Mcp-Name` only for a name-bearing method, carrying the request's own
+identity: `params.name` for `tools/call` and `prompts/get`, `params.uri`
+for `resources/read` — nameless methods (`server/discover`, `tools/list`,
+notifications) send no `Mcp-Name`. Values outside the header-safe set
+(printable US-ASCII without leading/trailing whitespace) are encoded with
+the Base64 sentinel `=?base64?<base64>?=`. The header value and the body's
+`_meta[io.modelcontextprotocol/protocolVersion]` come from one source, so
+they cannot diverge. The client's own identity is not a header: it rides
+the body as `_meta[io.modelcontextprotocol/clientInfo]`. Plus
+`Content-Type`/`Accept` under transport control and any custom headers.
 
 The server answers with one response envelope as `application/json`, or
 with an SSE stream (`text/event-stream`) when it wants to push
@@ -765,7 +774,30 @@ session-id attachment and Last-Event-ID rehydration (SEP-2567,
 SEP-2575). A response stream that breaks mid-call fails that call
 deterministically — there is no client-side resumability state to lose or
 restore — and the session stays usable: a re-issued call is a
-brand-new request answered like any other.
+brand-new request answered like any other. Cancellation on this transport
+is transport-native: the SSE stream close is the cancellation signal, so
+no `notifications/cancelled` POST is sent (stdio keeps sending it).
+
+### Mcp-Param headers from the tool's schema
+
+Beyond the caller-supplied seam, the protocol-level parameter mechanism is
+schema-driven: a tool's `inputSchema` may carry an `x-mcp-header`
+annotation on a statically reachable property (a plain `properties` chain
+from the schema root, with primitive-typed values and statically known
+names). On `tools/call`, the argument value at each annotated property is
+mirrored as an `Mcp-Param-{Name}` header on the POST, using the same
+header-safe/Base64-sentinel encoding as `Mcp-Name`. Arguments absent from
+the call are simply not emitted (the server's own "required `Mcp-Param-*`
+missing" rule governs that). A tool whose annotation fails validation — a
+non-token name, a non-primitive value type, a non-reachable path, a
+case-insensitive name collision — is invalid and is dropped from the
+advertised tool surface. `Mcp-Param-*` is a reserved namespace: custom
+headers may not forge it, and the protocol-mandated values win over any
+caller-supplied entry.
+
+The `x-mcp-header` tool-params seam below is a separate, additive adapter
+feature for caller-supplied headers; only the schema annotation produces
+protocol-mandated `Mcp-Param-*` headers.
 
 ### Custom headers on MCP tool calls
 
@@ -774,9 +806,12 @@ tool call may carry `Name: Value` entries, validated by the same rules as
 the adapter's `headers` config (valid HTTP token name, no line breaks or
 control characters in the value, and transport-controlled header names —
 `Accept`, `Content-Type`, `Content-Length`, `Host`, `Mcp-Method`,
-`Mcp-Name`, `Mcp-Protocol-Version`, `Mcp-Session-Id`, `Last-Event-ID` —
-rejected). Per-call entries win over config-level `headers` on a name
-collision and are stripped from the tool arguments before the call runs.
+`Mcp-Name`, `Mcp-Protocol-Version`, `Mcp-Session-Id`, `Last-Event-ID`,
+`Mcp-Param-*` — rejected). Per-call entries win over config-level
+`headers` on a name collision (but never over a protocol-mandated
+`Mcp-Param-*` mirror) and are stripped from the tool arguments before the
+call runs. A caller-supplied header that fails validation surfaces as the
+typed `invalid_header` failure, not a bare execute error.
 
 For a runnable example over the HTTP transport, see
 [`examples/adapter_tools/mcp_http_streamed`](../examples/adapter_tools/mcp_http_streamed/mcp_http_streamed.hcl);

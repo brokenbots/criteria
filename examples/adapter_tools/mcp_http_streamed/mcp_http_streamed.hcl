@@ -1,11 +1,15 @@
 # mode: standalone
 # Example: the mcp adapter against an HTTP-transport (Streamable HTTP) MCP
 # server. The adapter POSTs one JSON-RPC 2.0 envelope per exchange to the
-# configured URL with the transport's standard Mcp-Method / Mcp-Name headers,
-# accepts application/json responses and SSE response streams (progress
-# notifications route to the call in flight), and carries no session or
-# resumability state — a broken response stream loses the in-flight call and
-# a re-issued call is a brand-new request.
+# configured URL with the transport's standard headers — Mcp-Method (the
+# envelope's method), Mcp-Protocol-Version on every POST, and Mcp-Name only
+# for name-bearing methods (tools/call / prompts/get carry the tool or
+# prompt name, resources/read the URI) — accepts application/json responses
+# and SSE response streams (progress notifications route to the call in
+# flight), cancels by closing the response stream (no notifications/cancelled
+# on this transport), and carries no session or resumability state — a broken
+# response stream loses the in-flight call and a re-issued call is a
+# brand-new request.
 #
 # The echo fixture binary (cmd/criteria-adapter-mcp/testfixtures/echo-mcp) is
 # built by `make example-adapter-tools` as bin/criteria-echo-mcp; in HTTP mode
