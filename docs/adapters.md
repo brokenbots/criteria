@@ -754,6 +754,12 @@ interleaved traffic: server-to-client notifications (e.g.
 stream, and the call's own result envelope settles the stream. One
 in-flight `Execute` at a time is the supported posture for SSE streams.
 
+The `url` is used as configured — the transport sends no TLS policy of its
+own. A plain `http://` endpoint travels in cleartext, headers and bodies
+included (credential-bearing custom headers ride those requests), so point
+`url` at an `https://` endpoint or a private-network hop whenever the
+headers or payloads carry anything sensitive.
+
 No session machinery and no resumability: the revision removed the
 session-id attachment and Last-Event-ID rehydration (SEP-2567,
 SEP-2575). A response stream that breaks mid-call fails that call
@@ -776,6 +782,30 @@ For a runnable example over the HTTP transport, see
 [`examples/adapter_tools/mcp_http_streamed`](../examples/adapter_tools/mcp_http_streamed/mcp_http_streamed.hcl);
 the stdio transport's example is
 [`examples/adapter_tools/mcp_typed_direct`](../examples/adapter_tools/mcp_typed_direct/mcp_typed_direct.hcl).
+
+### JSON-RPC conformance
+
+Both transports carry a JSON-RPC 2.0 conformance suite (error-code band,
+batch posture, id handling). The hermetic legs run against the in-tree
+echo fixture; the non-fixture legs against a real reference MCP server
+are opt-in so the default suite stays deterministic — set either env and
+run `go test ./cmd/criteria-adapter-mcp/ -run TestExternalReferenceConformance`:
+
+- `MCP_REFERENCE_STDIO_CMD` — a stdio server command line speaking
+  newline-delimited JSON (e.g.
+  `node .../@modelcontextprotocol/server-everything/dist/index.js stdio`);
+  drives the ndjson wire vectors and the adapter pipeline end to end
+  (probe-first open, discovery, a tool call).
+- `MCP_REFERENCE_HTTP_URL` — a Streamable HTTP endpoint (e.g.
+  `http://127.0.0.1:3001/mcp` for server-everything's `streamableHttp`
+  mode); drives the wire vectors (initialize/session capture, dual-Accept
+  rule, parse-error and batch postures) and pins the bridge's terminal
+  discover-probe failure against a server that only speaks the legacy
+  handshake.
+
+`MCP_REFERENCE_TOOL` / `MCP_REFERENCE_TOOL_ARGS` optionally add a
+`tools/call` vector. Both legs are verified against
+`@modelcontextprotocol/server-everything`.
 
 ## Secrets
 
