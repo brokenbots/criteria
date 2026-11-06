@@ -412,9 +412,9 @@ func (c *Client) ListToolsDetailed(ctx context.Context) (ToolsList, error) {
 // mirrorable path, and a mirror the transport cannot honor is dropped from
 // the surface rather than partially honored: calls to it would carry a
 // required-header set the server cannot rely on.
-func (c *Client) retainConformantTools(tools []Tool) ([]Tool, map[string][]toolParamHeader) {
-	kept := make([]Tool, 0, len(tools))
-	bindings := map[string][]toolParamHeader{}
+func (c *Client) retainConformantTools(tools []Tool) (kept []Tool, bindings map[string][]toolParamHeader) {
+	kept = make([]Tool, 0, len(tools))
+	bindings = map[string][]toolParamHeader{}
 	for _, tool := range tools {
 		headers, ok := resolveToolParamHeaders(tool.InputSchema)
 		if !ok {

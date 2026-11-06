@@ -31,7 +31,7 @@ func newHeaderTestServer(t *testing.T) *httptest.Server {
 
 // postEnvelope POSTs one envelope body with the given headers and returns
 // the status and body the fixture answered.
-func postEnvelope(t *testing.T, srv *httptest.Server, payload string, headers map[string]string) (int, string) {
+func postEnvelope(t *testing.T, srv *httptest.Server, payload string, headers map[string]string) (status int, body string) {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, srv.URL, strings.NewReader(payload))
 	if err != nil {
@@ -46,11 +46,12 @@ func postEnvelope(t *testing.T, srv *httptest.Server, payload string, headers ma
 		t.Fatalf("POST: %v", err)
 	}
 	defer resp.Body.Close()
-	body, readErr := io.ReadAll(resp.Body)
+	raw, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
 		t.Fatalf("read reply: %v", readErr)
 	}
-	return resp.StatusCode, string(body)
+	respBody := string(raw)
+	return resp.StatusCode, respBody
 }
 
 // assertViolation pins the Server Validation failure shape: a 400 whose

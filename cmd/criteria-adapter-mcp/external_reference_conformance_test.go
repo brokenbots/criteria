@@ -842,7 +842,7 @@ func TestExternalReferenceConformance_HTTPTransport(t *testing.T) {
 	// (legacy initialize-era servers answer unknown-method rejections) —
 	// skip naming that mismatch; unreachable endpoints are a harness
 	// configuration failure and stay fatal.
-	speaks, reason, err := referenceHTTPStatelessDialect(t, url)
+	speaks, reason, err := referenceHTTPStatelessDialect(url)
 	if err != nil {
 		t.Fatalf("stateless dialect probe %s: %v", url, err)
 	}
@@ -959,7 +959,7 @@ func TestExternalReferenceConformance_HTTPTransport(t *testing.T) {
 // mismatch when the endpoint rejects the probe (unknown-method rejections,
 // bare method errors, session-required postures); an error result means the
 // endpoint was unreachable — a harness problem, not a dialect mismatch.
-func referenceHTTPStatelessDialect(t *testing.T, endpoint string) (speaks bool, reason string, err error) {
+func referenceHTTPStatelessDialect(endpoint string) (speaks bool, reason string, err error) {
 	// The probe body mirrors the transport's own Discover shape: the
 	// announced version rides params._meta (MetaProtocolVersion) alongside
 	// the Mcp-Protocol-Version header — a dialect probe built the same way

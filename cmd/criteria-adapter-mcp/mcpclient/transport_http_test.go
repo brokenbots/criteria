@@ -79,16 +79,6 @@ func (f *httpFake) record(r *http.Request, method string, body []byte) {
 	f.bodies = append(f.bodies, append([]byte(nil), body...))
 }
 
-// headersOf returns the headers of the i-th captured request.
-func (f *httpFake) headersOf(i int) http.Header {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if i >= len(f.allHeaders) {
-		return nil
-	}
-	return f.allHeaders[i].Clone()
-}
-
 // headerBody pairs one captured request's wire shape: its method (as read
 // from the envelope), its raw body and its headers.
 type headerBody struct {
@@ -1000,7 +990,7 @@ func TestHTTPTransportInvalidAnnotatedToolDroppedFromSurface(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListToolsDetailed: %v", err)
 	}
-	var names []string
+	names := make([]string, 0, len(listing.Tools))
 	for _, tool := range listing.Tools {
 		names = append(names, tool.Name)
 	}

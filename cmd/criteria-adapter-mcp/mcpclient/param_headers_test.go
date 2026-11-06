@@ -6,12 +6,6 @@ import (
 	"testing"
 )
 
-// paramHeaderEntry is the test-facing view of one mirrored header.
-type paramHeaderEntry struct {
-	name  string
-	value string
-}
-
 func TestResolveToolParamHeaders(t *testing.T) {
 	annotatedEcho := `{
 		"type": "object",

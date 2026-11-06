@@ -217,7 +217,7 @@ func toolParamNames() map[string]string {
 // the mirrored header encodes it (bools as true/false, JSON numbers as
 // shortest round-trip floats, strings verbatim): the server compares the
 // decoded header against this form.
-func toolParamValue(name string, args map[string]any) (string, string) {
+func toolParamValue(name string, args map[string]any) (headerValue, note string) {
 	trace, _ := args["trace"].(map[string]any)
 	if trace == nil {
 		return "", "argument carries no trace object to mirror"

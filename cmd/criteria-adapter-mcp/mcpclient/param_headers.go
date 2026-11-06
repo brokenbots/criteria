@@ -107,36 +107,50 @@ func resolveToolParamHeaders(schema json.RawMessage) ([]toolParamHeader, bool) {
 // properties. The bool result is tool validity.
 func walkChain(path []string, node map[string]any, out *[]toolParamHeader, seen map[string]struct{}) bool {
 	if _, has := node[paramHeaderAnnotation]; has {
-		names, ok := annotatedHeaderNames(node)
-		if !ok {
+		return walkAnnotatedNode(path, node, out, seen)
+	}
+	return walkUnannotatedNode(path, node, out, seen)
+}
+
+// walkAnnotatedNode records the annotated node's toolParamHeader bindings
+// and validates that no hidden annotation survives inside the annotated
+// node's value schemas. Its subtree ends the plain chain, so only the
+// header-name children are scanned.
+func walkAnnotatedNode(path []string, node map[string]any, out *[]toolParamHeader, seen map[string]struct{}) bool {
+	names, ok := annotatedHeaderNames(node)
+	if !ok {
+		return false
+	}
+	for _, header := range names {
+		if !isTokenHeaderName(header) {
 			return false
 		}
-		for _, header := range names {
-			if !isTokenHeaderName(header) {
-				return false
-			}
-			key := lowerASCII(header)
-			if _, dup := seen[key]; dup {
-				return false
-			}
-			seen[key] = struct{}{}
-			*out = append(*out, toolParamHeader{path: path, header: header})
+		key := lowerASCII(header)
+		if _, dup := seen[key]; dup {
+			return false
 		}
-		// A foreign annotation may not hide inside a header's value
-		// schema. The annotated node itself ends the plain chain, so only
-		// its children are scanned; the node's own annotation is skipped.
-		props, _ := node["properties"].(map[string]any)
-		for _, header := range names {
-			probe, _ := props[header].(map[string]any)
-			if probe != nil && carriesForeignAnnotationSkip(probe, paramHeaderAnnotation) {
-				return false
-			}
-		}
-		return true
+		seen[key] = struct{}{}
+		*out = append(*out, toolParamHeader{path: path, header: header})
 	}
-	// Unannotated node: any annotation reachable from its non-properties
-	// keys (oneOf/anyOf/allOf, pattern/additional subtrees, "items", and
-	// the rest) is outside the plain chain and invalidates the tool.
+	// A foreign annotation may not hide inside a header's value schema.
+	// The annotated node itself ends the plain chain, so only its children
+	// are scanned; the node's own annotation is skipped.
+	props, _ := node["properties"].(map[string]any)
+	for _, header := range names {
+		probe, _ := props[header].(map[string]any)
+		if probe != nil && carriesForeignAnnotationSkip(probe, paramHeaderAnnotation) {
+			return false
+		}
+	}
+	return true
+}
+
+// walkUnannotatedNode validates and continues the plain chain below an
+// unannotated node: any annotation reachable from its non-properties keys
+// (oneOf/anyOf/allOf, pattern/additional subtrees, "items", and the rest)
+// is outside the plain chain and invalidates the tool; annotations inside
+// the plain properties chain are resolved by the recursing walk.
+func walkUnannotatedNode(path []string, node map[string]any, out *[]toolParamHeader, seen map[string]struct{}) bool {
 	for key, child := range node {
 		if key == "properties" {
 			continue
