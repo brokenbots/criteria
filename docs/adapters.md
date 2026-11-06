@@ -763,10 +763,16 @@ serialization.
   directly inside `adapter.secrets` or `secret_input`.
 
   Two providers are confined by default. The `file` provider resolves refs
-  strictly inside a secrets root — `$CRITERIA_HOME/secrets` when
-  `CRITERIA_HOME` is set, otherwise `$XDG_CONFIG_HOME/criteria/secrets`
-  (default `~/.config/criteria/secrets`) — so a ref (or symlink target)
-  escaping that root is refused, and the root is never created on demand.
+  strictly inside its secret roots — the default root
+  (`$CRITERIA_HOME/secrets`, else `$XDG_CONFIG_HOME/criteria/secrets`,
+  default `~/.config/criteria/secrets`), plus the additional absolute roots
+  the run environment declares via `CRITERIA_SECRET_FILE_ROOTS`
+  (newline-separated; the operator stamps it from the same declared-secret
+  mounts it derives the file origins themselves from, so the two lists
+  cannot drift). Every ref (or symlink target) must sit inside ONE of the
+  roots at a path-component boundary, and no root is created on demand —
+  an unprovisioned root simply refuses reads that would need it (fails
+  closed without widening containment).
   The `vault` provider resolves refs only inside a single KV v2 mount
   (`secret` by default): refs are treated as mount-relative secret paths,
   never re-mounted mid-path. A custom KV mount is configured from the
