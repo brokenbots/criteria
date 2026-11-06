@@ -717,6 +717,66 @@ surface that as the typed `host_unsupported` failure. Unknown
 that never declare `adapter_tools` never initiate calls, so old adapters are
 unaffected.
 
+## The MCP adapter
+
+The bundled `criteria-adapter-mcp` adapter speaks to an MCP server and maps
+the server's tool surface onto the adapter-tools contract. It supports the
+two client transports of the 2026-07-28 MCP revision:
+
+- **stdio** (default) — the server is a process (`command`, optional
+  `args`/`env`/`cwd`) over a framed pipe. JSON-RPC write framing is
+  `lsp` (Content-Length headers) or `ndjson` (newline-delimited, the
+  published MCP stdio dialect). When `framing` is unspecified the adapter
+  probe settles which framing the server parses; reads auto-detect either
+  shape. Session-open negotiation is `probe-first` by default: a
+  `server/discover` probe adopts the stateless core when the server
+  advertises it and falls back to the legacy `initialize` handshake
+  otherwise (`handshake = "discover"` / `"initialize"` force either side).
+- **`transport = "http"`** — Streamable HTTP per the 2026-07-28
+  revision, configured by `url`, `headers`, and `timeout`. Streamable
+  HTTP serves the stateless core only, so the legacy `initialize`
+  handshake is not valid on this transport: discovery is a single
+  `server/discover` probe and its failure fails the session open.
+
+### Streamable HTTP wire contract
+
+Every adapter-to-server exchange is one POST of a single JSON-RPC 2.0
+envelope to the configured `url`. The request carries the transport's
+standard headers — `Mcp-Method` (the method of the envelope), `Mcp-Name`
+(the client name; here `criteria-adapter-mcp`), `Mcp-Protocol-Version`
+once the revision is adopted — plus `Content-Type`/`Accept` under
+transport control, and any custom headers.
+
+The server answers with one response envelope as `application/json`, or
+with an SSE stream (`text/event-stream`) when it wants to push
+interleaved traffic: server-to-client notifications (e.g.
+`notifications/progress`) are routed to the call in flight on the same
+stream, and the call's own result envelope settles the stream. One
+in-flight `Execute` at a time is the supported posture for SSE streams.
+
+No session machinery and no resumability: the revision removed the
+session-id attachment and Last-Event-ID rehydration (SEP-2567,
+SEP-2575). A response stream that breaks mid-call fails that call
+deterministically — there is no client-side resumability state to lose or
+restore — and the session stays usable: a re-issued call is a
+brand-new request answered like any other.
+
+### Custom headers on MCP tool calls
+
+Per-request custom headers ride the `x-mcp-header` tool-params seam: a
+tool call may carry `Name: Value` entries, validated by the same rules as
+the adapter's `headers` config (valid HTTP token name, no line breaks or
+control characters in the value, and transport-controlled header names —
+`Accept`, `Content-Type`, `Content-Length`, `Host`, `Mcp-Method`,
+`Mcp-Name`, `Mcp-Protocol-Version`, `Mcp-Session-Id`, `Last-Event-ID` —
+rejected). Per-call entries win over config-level `headers` on a name
+collision and are stripped from the tool arguments before the call runs.
+
+For a runnable example over the HTTP transport, see
+[`examples/adapter_tools/mcp_http_streamed`](../examples/adapter_tools/mcp_http_streamed/mcp_http_streamed.hcl);
+the stdio transport's example is
+[`examples/adapter_tools/mcp_typed_direct`](../examples/adapter_tools/mcp_typed_direct/mcp_typed_direct.hcl).
+
 ## Secrets
 
 Adapters declare the secrets they need in their manifest; the host resolves and
