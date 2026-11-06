@@ -33,12 +33,6 @@ import (
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
 
-// AwaitingHumanTerminalState is the conventional name for a workflow terminal
-// state that parks a run at a human attention gate instead of declaring final
-// success. The CLI exit path treats a completion at this state specially:
-// it must be distinguishable from a restartable run failure.
-const AwaitingHumanTerminalState = "awaiting_human"
-
 // ScopeSessionPendingStatus names the adapter lifecycle event emitted
 // when a per-scope adapter session wait crosses half its effective window
 // without a completed handshake, so the wait is observable instead of burning

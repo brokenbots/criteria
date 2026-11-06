@@ -1045,7 +1045,7 @@ workflow {
   name = "linear_intake_cri130"
   version = "0.1"
   initial_state = "run_handler"
-  target_state  = "awaiting_human"
+  target_state  = "need_assistance"
 }
 step "run_handler" {
   target = adapter.fake
@@ -1059,11 +1059,11 @@ step "comment_handler_failed" {
 }
 step "set_review_state" {
   target = adapter.fake
-  outcome "success" { next = state.awaiting_human }
+  outcome "success" { next = state.need_assistance }
   outcome "failure" { next = state.failed }
 }
 state "handler_complete" { terminal = true }
-state "awaiting_human" { terminal = true }
+state "need_assistance" { terminal = true }
 state "failed" {
   terminal = true
   success  = false
