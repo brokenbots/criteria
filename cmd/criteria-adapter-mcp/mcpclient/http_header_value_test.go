@@ -1,6 +1,9 @@
 package mcpclient
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Header-value encoding: the header-safe set is printable US-ASCII with no
 // edge whitespace; everything else travels in the Base64 sentinel, and
@@ -76,5 +79,63 @@ func TestIsHeaderValueSafe(t *testing.T) {
 		if got := isHeaderValueSafe(tc.in); got != tc.want {
 			t.Fatalf("isHeaderValueSafe(%q) = %v want %v", tc.in, got, tc.want)
 		}
+	}
+}
+
+// StandardHeaders pins the transport-controlled header set: Content-Type
+// and the dual-media Accept on every POST, Mcp-Method only when the body
+// has a method (it must equal the body method), Mcp-Name only for a
+// name-bearing method (Base64 sentinel over the value), and the announced
+// protocol version.
+func TestStandardHeaders(t *testing.T) {
+	names := func(hdrs []HeaderEntry) string {
+		out := make([]string, 0, len(hdrs))
+		for _, h := range hdrs {
+			out = append(out, h.Name)
+		}
+		return strings.Join(out, ",")
+	}
+	values := func(hdrs []HeaderEntry, name string) string {
+		for _, h := range hdrs {
+			if h.Name == name {
+				return h.Value
+			}
+		}
+		return "<absent>"
+	}
+
+	// A method-bearing POST carries the full set, method header first.
+	hdrs := StandardHeaders("tools/call", "echo", ProtocolVersion20260728)
+	if got, want := names(hdrs), "Content-Type,Accept,Mcp-Method,Mcp-Name,Mcp-Protocol-Version"; got != want {
+		t.Fatalf("header names = %s, want %s", got, want)
+	}
+	for _, tc := range [][2]string{
+		{"Content-Type", "application/json"},
+		{"Accept", "application/json, text/event-stream"},
+		{"Mcp-Method", "tools/call"},
+		{"Mcp-Name", "echo"},
+		{"Mcp-Protocol-Version", ProtocolVersion20260728},
+	} {
+		if got := values(hdrs, tc[0]); got != tc[1] {
+			t.Fatalf("%s = %q, want %q", tc[0], got, tc[1])
+		}
+	}
+
+	// A method-free POST (a wire probe with no single body method) carries
+	// no Mcp-Method; a name-free, version-free POST carries neither
+	// Mcp-Name nor Mcp-Protocol-Version.
+	hdrs = StandardHeaders("", "", "")
+	if got, want := names(hdrs), "Content-Type,Accept"; got != want {
+		t.Fatalf("method-free header names = %s, want %s", got, want)
+	}
+
+	// The name-bearing rule keys on the name argument, not the method.
+	hdrs = StandardHeaders("resources/read", "memory://a b", "")
+	if got := values(hdrs, "Mcp-Name"); got != "memory://a b" {
+		t.Fatalf("Mcp-Name = %q, want the verbatim safe value", got)
+	}
+	hdrs = StandardHeaders("tools/list", "", "")
+	if got := values(hdrs, "Mcp-Name"); got != "<absent>" {
+		t.Fatalf("name-free method still carries Mcp-Name: %q", got)
 	}
 }

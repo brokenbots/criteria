@@ -517,7 +517,9 @@ func TestExternalReferenceConformance_HTTP(t *testing.T) {
 	t.Run("parse_error_32700", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), refProbeTimeout)
 		defer cancel()
-		status, envelopes, err := leg.rawPost(ctx, "{corrupt", "")
+		// A corrupt body has no method for the leg to declare, so the POST
+		// carries no Mcp-Method (the builder's empty-method rule).
+		status, envelopes, err := leg.rawPost(ctx, "{corrupt", "", "")
 		if err != nil {
 			t.Fatalf("corrupt POST: %v", err)
 		}
@@ -543,7 +545,9 @@ func TestExternalReferenceConformance_HTTP(t *testing.T) {
 			{"jsonrpc": "2.0", "id": 21, "method": "tools/list"},
 			{"jsonrpc": "2.0", "id": "22", "method": "tools/list"},
 		}
-		status, envelopes, err := leg.rawPost(ctx, string(mustJSON(t, batch)), "")
+		// A batch carries no single body method, so the POST carries no
+		// Mcp-Method (the builder's empty-method rule).
+		status, envelopes, err := leg.rawPost(ctx, string(mustJSON(t, batch)), "", "")
 		if err != nil {
 			t.Fatalf("batch POST: %v", err)
 		}
@@ -570,6 +574,7 @@ func TestExternalReferenceConformance_HTTP(t *testing.T) {
 // referenceHTTP is the raw Streamable HTTP leg: one POST per envelope, the
 // standard headers on every call, session id replay after initialize.
 type referenceHTTP struct {
+	t        *testing.T
 	endpoint string
 	client   *http.Client
 	session  string
@@ -580,18 +585,20 @@ func newReferenceHTTP(t *testing.T, endpoint string) (*referenceHTTP, error) {
 	if !strings.Contains(endpoint, "://") {
 		return nil, fmt.Errorf("%s must be a URL (got %q)", envRefHTTPURL, endpoint)
 	}
-	return &referenceHTTP{endpoint: endpoint, client: &http.Client{
+	return &referenceHTTP{t: t, endpoint: endpoint, client: &http.Client{
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}}, nil
 }
 
 // standardHeaders renders the transport-controlled header set every POST
 // carries, built from mcpclient.StandardHeaders so this hand-rolled wire
-// leg shares the transport's header source and cannot diverge from it: Mcp-Method on
-// every POST, Mcp-Name only for a name-bearing method (carrying the
-// request's params.name/params.uri), Mcp-Protocol-Version announcing the
-// dialect the leg speaks (the reference server's 2025-06-18). Per-call
-// overrides (session replay, the Accept single-value vector) ride on top.
+// leg shares the transport's header source and cannot diverge from it:
+// Mcp-Method carrying the body method (omitted when the body has no single
+// method, e.g. the corrupt-body vector), Mcp-Name only for a name-bearing
+// method (carrying the request's params.name/params.uri),
+// Mcp-Protocol-Version announcing the dialect the leg speaks (the
+// reference server's 2025-06-18). Per-call overrides (session replay, the
+// Accept single-value vector) ride on top.
 func (h *referenceHTTP) standardHeaders(method, name string) map[string]string {
 	hdrs := map[string]string{}
 	for _, entry := range mcpclient.StandardHeaders(method, name, refProtocolVersion) {
@@ -602,16 +609,23 @@ func (h *referenceHTTP) standardHeaders(method, name string) map[string]string {
 
 // post issues one exchange and returns the flattened response facets
 // (status, content type, body text); the body is closed here so callers
-// never hold a *http.Response. name carries the request's params.name/
-// params.uri for name-bearing methods (shared Mcp-Name rule); the
-// Mcp-Session-Id response header is captured for replay on later POSTs.
-func (h *referenceHTTP) post(ctx context.Context, body, name string, override map[string]string) (status int, contentType, text string, err error) {
+// never hold a *http.Response. method is the request's body method — the
+// leg asserts every POST carries a Mcp-Method equal to it (empty only when
+// the body has no single method) — and name carries params.name/params.uri
+// for name-bearing methods (shared Mcp-Name rule); the Mcp-Session-Id
+// response header is captured for replay on later POSTs.
+func (h *referenceHTTP) post(ctx context.Context, body, method, name string, override map[string]string) (status int, contentType, text string, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.endpoint, strings.NewReader(body))
 	if err != nil {
 		return 0, "", "", err
 	}
-	for k, v := range h.standardHeaders("", name) {
+	for k, v := range h.standardHeaders(method, name) {
 		req.Header.Set(k, v)
+	}
+	if got := req.Header.Get("Mcp-Method"); got != method {
+		// The leg's Mcp-Method must equal the body method: an empty or
+		// diverging value would fork this wire leg from the transport.
+		h.t.Errorf("raw-wire POST %q carries Mcp-Method %q, want the body method %q", method, got, method)
 	}
 	if h.session != "" {
 		req.Header.Set("Mcp-Session-Id", h.session)
@@ -671,11 +685,11 @@ func parseRefWire(contentType, body string) ([]refEnvelope, error) {
 	return nil, fmt.Errorf("unparseable reference response (content-type %s): %.200s", contentType, body)
 }
 
-// rawPost issues one already-encoded POST (name = request name/uri, "" on
-// name-free methods) and reports the status plus every JSON-RPC envelope
-// parsed off the wire.
-func (h *referenceHTTP) rawPost(ctx context.Context, body, name string) (int, []refEnvelope, error) {
-	status, contentType, text, err := h.post(ctx, body, name, nil)
+// rawPost issues one already-encoded POST: method is the body method ("" on
+// bodies with no single method — the corrupt-vector and batch vectors) and
+// name is the request name/uri ("" on name-free methods).
+func (h *referenceHTTP) rawPost(ctx context.Context, body, method, name string) (int, []refEnvelope, error) {
+	status, contentType, text, err := h.post(ctx, body, method, name, nil)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -700,7 +714,7 @@ func (h *referenceHTTP) call(ctx context.Context, id any, method string, params 
 	}
 	cctx, cancel := context.WithTimeout(ctx, refProbeTimeout)
 	defer cancel()
-	status, envelopes, err := h.rawPost(cctx, string(raw), paramNameFromParams(params))
+	status, envelopes, err := h.rawPost(cctx, string(raw), method, paramNameFromParams(params))
 	if err != nil {
 		return nil, fmt.Errorf("POST %s: %w", method, err)
 	}
@@ -722,7 +736,7 @@ func (h *referenceHTTP) notify(ctx context.Context, method string, params map[st
 	}
 	cctx, cancel := context.WithTimeout(ctx, refProbeTimeout)
 	defer cancel()
-	status, envelopes, err := h.rawPost(cctx, string(raw), "")
+	status, envelopes, err := h.rawPost(cctx, string(raw), method, "")
 	if err != nil {
 		return fmt.Errorf("POST %s: %w", method, err)
 	}
@@ -752,7 +766,7 @@ func (h *referenceHTTP) exceptCall(ctx context.Context, id int, method string, o
 	}
 	cctx, cancel := context.WithTimeout(ctx, refProbeTimeout)
 	defer cancel()
-	status, contentType, text, postErr := h.post(cctx, string(raw), "", override)
+	status, contentType, text, postErr := h.post(cctx, string(raw), method, "", override)
 	if postErr != nil {
 		return "", 0, 0, postErr
 	}
@@ -771,7 +785,7 @@ func (h *referenceHTTP) initialize(ctx context.Context) error {
 	cctx, cancel := context.WithTimeout(ctx, refProbeTimeout)
 	defer cancel()
 	status, ct, text, err := h.post(cctx, `{"jsonrpc":"2.0","id":"init","method":"initialize","params":{"protocolVersion":"`+
-		refProtocolVersion+`","capabilities":{},"clientInfo":{"name":"criteria-conformance","version":"1"}}}`, "", map[string]string{"Mcp-Method": "initialize"})
+		refProtocolVersion+`","capabilities":{},"clientInfo":{"name":"criteria-conformance","version":"1"}}}`, "initialize", "", nil)
 	if err != nil {
 		return fmt.Errorf("initialize POST: %w", err)
 	}

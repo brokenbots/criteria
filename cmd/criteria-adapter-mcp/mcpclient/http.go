@@ -59,17 +59,21 @@ type HeaderEntry struct {
 // per-request route/method headers Mcp-Method and Mcp-Protocol-Version
 // (version on every POST, including the server/discover probe — the
 // announced value is the negotiated one, or the version the probe
-// requests); and Mcp-Name only for a name-bearing method, carrying the
-// request's params.name/params.uri — never the client identity. A value
-// outside the header-safe set travels in the Base64 sentinel. Exported so
-// drivers that pin the transport's wire shape by hand (external reference
-// conformance legs) build from the same source as the transport and cannot
-// diverge.
+// requests; Mcp-Method only when the method is non-empty — the body
+// method it must equal — so a POST without a method, e.g. a wire probe
+// with no single body method, carries no header); and Mcp-Name only for a
+// name-bearing method, carrying the request's params.name/params.uri —
+// never the client identity. A value outside the header-safe set travels
+// in the Base64 sentinel. Exported so drivers that pin the transport's
+// wire shape by hand (external reference conformance legs) build from the
+// same source as the transport and cannot diverge.
 func StandardHeaders(method, name, protocolVersion string) []HeaderEntry {
 	headers := []HeaderEntry{
 		{Name: "Content-Type", Value: "application/json"},
 		{Name: "Accept", Value: "application/json, text/event-stream"},
-		{Name: "Mcp-Method", Value: method},
+	}
+	if method != "" {
+		headers = append(headers, HeaderEntry{Name: "Mcp-Method", Value: method})
 	}
 	if name != "" {
 		headers = append(headers, HeaderEntry{Name: "Mcp-Name", Value: encodeHeaderValue(name)})
