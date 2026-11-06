@@ -165,6 +165,10 @@ func appendLog(path, line string) {
 func main() {
 	appendLog(pidLogFile, fmt.Sprintf("pid=%d", os.Getpid()))
 	if httpListen != "" {
+		// Streamable HTTP serves the stateless-core transport, so the
+		// revision is fixed by the mode itself — the stdio MCP_PROTOCOL
+		// knob does not apply.
+		modernMode = true
 		serveHTTPMode()
 		return
 	}
@@ -241,11 +245,6 @@ func routeEnvelope(payload []byte) (req request, reply map[string]any, kind int)
 		// dropped by the bridge-side pending map. A -32601 reply with a
 		// null id could collide with an in-flight correlated request.
 		return req, nil, envKindNotification
-	}
-	if methodLog != "" {
-		// Every request logs, both dialects: assertions must see initialize
-		// probes and legacy handshakes too, not just modern traffic.
-		appendLog(methodLog, "method="+req.Method)
 	}
 	if methodLog != "" {
 		// Every request logs, both dialects: assertions must see initialize

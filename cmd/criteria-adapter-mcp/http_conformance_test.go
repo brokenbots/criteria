@@ -33,12 +33,16 @@ import (
 // snapshot, and the raw body; routing follows the recorded method. The
 // tools/call behavior is switched per test through callMode.
 type mcpHTTPFake struct {
-	mu         sync.Mutex
-	seenMcp    map[string][]string              // method -> Mcp-* header snapshots
-	seenHdrs   map[string][]map[string][]string // method -> per-call header snapshots
-	seenBodies map[string][]string              // method -> raw bodies
-	callMode   int                              // tools/call behavior (toolsCallNormal default)
-	callCount  int
+	mu           sync.Mutex
+	seenMcp      map[string][]string              // method -> Mcp-* header snapshots
+	seenHdrs     map[string][]map[string][]string // method -> per-call header snapshots
+	seenBodies   map[string][]string              // method -> raw bodies
+	callMode     int                              // tools/call behavior (toolsCallNormal default)
+	callCount    int
+	faultCode    int    // 0=off; tools/call answered with this error code (normal + SSE modes)
+	idStyle      string // "number": integer reply ids re-encoded as JSON numbers
+	nullIDReply  bool   // one-shot: the first tools/call is answered -32600 with a literal null id
+	nullIDServed bool   // nullIDReply consumed
 }
 
 const (
@@ -125,7 +129,28 @@ func (f *mcpHTTPFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.callCount++
 		mode := f.callMode
 		call := f.callCount
+		fault := f.faultCode
+		nullShot := f.nullIDReply && !f.nullIDServed
 		f.mu.Unlock()
+		if nullShot {
+			f.mu.Lock()
+			f.nullIDServed = true
+			f.mu.Unlock()
+			f.replyError(w, json.RawMessage("null"), map[string]any{"code": -32600, "message": "null-id reply mode"})
+			return
+		}
+		// Knob faults bend the normal/SSE/batch reply shapes only; the
+		// transport-level modes (500, broken stream) keep their behavior.
+		if fault != 0 {
+			switch mode {
+			case toolsCallNormal:
+				f.replyError(w, env.ID, map[string]any{"code": fault, "message": fmt.Sprintf("spec band error: %d", fault)})
+				return
+			case toolsCallSSE:
+				f.replySSEError(w, env.ID, map[string]any{"code": fault, "message": fmt.Sprintf("spec band error: %d", fault)})
+				return
+			}
+		}
 		switch mode {
 		case toolsCallNormal:
 			f.reply(w, env.ID, `{"resultType":"complete","content":[{"type":"text","text":"echoed hi"}]}`)
@@ -154,15 +179,28 @@ func (f *mcpHTTPFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// idFor re-encodes reply ids per idStyle: "number" emits integer ids as
+// JSON numbers, exercising the client's numeric-id normalization end to
+// end; every other style passes the id through unchanged.
+func (f *mcpHTTPFake) idFor(id json.RawMessage) any {
+	if f.idStyle == "number" {
+		var n int64
+		if err := json.Unmarshal(id, &n); err == nil {
+			return n
+		}
+	}
+	return rawOrNull(id)
+}
+
 func (f *mcpHTTPFake) reply(w http.ResponseWriter, id json.RawMessage, resultJSON string) {
-	env := map[string]any{"jsonrpc": "2.0", "id": rawOrNull(id), "result": json.RawMessage(resultJSON)}
+	env := map[string]any{"jsonrpc": "2.0", "id": f.idFor(id), "result": json.RawMessage(resultJSON)}
 	raw, _ := json.Marshal(env)
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(raw)
 }
 
 func (f *mcpHTTPFake) replyError(w http.ResponseWriter, id json.RawMessage, errBody map[string]any) {
-	env := map[string]any{"jsonrpc": "2.0", "id": rawOrNull(id), "error": errBody}
+	env := map[string]any{"jsonrpc": "2.0", "id": f.idFor(id), "error": errBody}
 	raw, _ := json.Marshal(env)
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(raw)
@@ -179,8 +217,21 @@ func (f *mcpHTTPFake) replySSE(w http.ResponseWriter, id json.RawMessage) {
 	if flusher != nil {
 		flusher.Flush()
 	}
-	complete, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": rawOrNull(id), "result": json.RawMessage(`{"resultType":"complete","content":[{"type":"text","text":"streamed"}]}`)})
+	complete, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": f.idFor(id), "result": json.RawMessage(`{"resultType":"complete","content":[{"type":"text","text":"streamed"}]}`)})
 	fmt.Fprintf(w, "data: %s\n\n", complete)
+	if flusher != nil {
+		flusher.Flush()
+	}
+}
+
+// replySSEError delivers an error envelope over the event stream: SSE
+// frames carry the same full JSON-RPC envelope language as the JSON leg,
+// errors included.
+func (f *mcpHTTPFake) replySSEError(w http.ResponseWriter, id json.RawMessage, errBody map[string]any) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	flusher, _ := w.(http.Flusher)
+	raw, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": f.idFor(id), "error": errBody})
+	fmt.Fprintf(w, "data: %s\n\n", raw)
 	if flusher != nil {
 		flusher.Flush()
 	}
