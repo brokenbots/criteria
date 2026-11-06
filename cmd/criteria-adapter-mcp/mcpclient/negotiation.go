@@ -54,34 +54,6 @@ const (
 	ErrorCodeUnsupportedProtocolVersion = -32022
 )
 
-// JSON-RPC error-code allocation boundaries for MCP tools/resources. The
-// 2026-07-28 revision allocates -32002 to Invalid params, so a
-// resource-not-found now reports -32602 like every other invalid-params
-// condition; -32002 was the pre-alignment spelling earlier revisions
-// shipped. Callers that must classify a "resource not found" outcome from
-// any peer accept both through IsResourceNotFound.
-const (
-	// ErrorCodeResourceNotFound is the aligned resource-not-found code
-	// (invalid params) for the 2026-07-28 MCP error-code allocation.
-	ErrorCodeResourceNotFound = -32602
-	// ErrorCodeResourceNotFoundLegacy is the pre-alignment
-	// resource-not-found code (-32002) that earlier revisions and unaligned
-	// peers still report.
-	ErrorCodeResourceNotFoundLegacy = -32002
-)
-
-// IsResourceNotFound reports whether err is a resource-not-found MCP error
-// under either spelling of the code: -32602 (aligned, 2026-07-28) or
-// -32002 (pre-alignment). Unaligned legacy peers keep reporting -32002, so
-// classification accepts both.
-func IsResourceNotFound(err error) bool {
-	var rpcErr *RPCError
-	if !errors.As(err, &rpcErr) {
-		return false
-	}
-	return rpcErr.Code == ErrorCodeResourceNotFound || rpcErr.Code == ErrorCodeResourceNotFoundLegacy
-}
-
 // JSON-RPC parse error (-32700): the peer could not parse the envelope. It
 // is the signal the framing probe keys on (framingUncertain).
 const jsonRPCParseErrorCode = -32700

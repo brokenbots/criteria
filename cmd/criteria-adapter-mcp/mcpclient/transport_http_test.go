@@ -7,7 +7,7 @@ package mcpclient
 // the batched envelope as a session-killing protocol violation, the POST
 // notification shape, request-timeout scoping (requests bounded, listen
 // not), the subscriptions/listen lifecycle, the SSE parser's line shapes,
-// header validation, and the resource-not-found code alignment.
+// and header validation.
 
 import (
 	"bufio"
@@ -355,18 +355,6 @@ func TestNewHeaderEntryValidation(t *testing.T) {
 				t.Errorf("err = %v want mention %q", err, tc.want)
 			}
 		})
-	}
-}
-
-func TestIsResourceNotFoundBothSpellings(t *testing.T) {
-	for _, code := range []int{ErrorCodeResourceNotFound, ErrorCodeResourceNotFoundLegacy} {
-		err := &RPCError{Code: code, Message: "not found"}
-		if !IsResourceNotFound(err) {
-			t.Errorf("code %d: IsResourceNotFound = false, want true", code)
-		}
-	}
-	if IsResourceNotFound(&RPCError{Code: -32000, Message: "other"}) {
-		t.Error("code -32000: IsResourceNotFound = true, want false")
 	}
 }
 
