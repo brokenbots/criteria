@@ -77,7 +77,7 @@ func (f *mcpHTTPFake) record(method string, r *http.Request, body string) {
 }
 
 // firstOf returns the first value of an optional recorded header ("" when
-// absent) — pre-adoption POSTs carry no Mcp-Protocol-Version.
+// absent) — non-name-bearing POSTs carry no Mcp-Name.
 func firstOf(sub map[string][]string, key string) string {
 	if len(sub[key]) == 0 {
 		return ""
@@ -314,18 +314,40 @@ func TestHTTPConformance_OpenSessionDiscoverAndExecuteWithHeaders(t *testing.T) 
 	}
 
 	// discovery POSTs carried the MCP transport headers and the config header.
-	// The discovery probe POST predates protocol adoption and must not carry
-	// Mcp-Protocol-Version; tools/list runs post-adoption and must carry it.
+	// The probe carries the announced protocol version (equal to its body
+	// _meta) and no Mcp-Name — only name-bearing methods carry one; the
+	// client identity rides the body _meta[clientInfo].
 	probeHdrs := fake.headers(t, "server/discover")
-	if len(probeHdrs) != 1 || probeHdrs[0]["mcp-method"][0] != "server/discover" || probeHdrs[0]["mcp-name"][0] != "criteria-adapter-mcp" {
+	if len(probeHdrs) != 1 || probeHdrs[0]["mcp-method"][0] != "server/discover" {
 		t.Fatalf("server/discover probe transport headers = %+v", probeHdrs)
 	}
-	if _, ok := probeHdrs[0]["mcp-protocol-version"]; ok {
-		t.Fatalf("pre-adoption POST must not carry Mcp-Protocol-Version: %+v", probeHdrs[0])
+	if _, ok := probeHdrs[0]["mcp-name"]; ok {
+		t.Fatalf("server/discover must not carry Mcp-Name: %+v", probeHdrs[0])
+	}
+	if got := probeHdrs[0]["mcp-protocol-version"][0]; got != "2026-07-28" {
+		t.Fatalf("the probe announces the requested protocol version, Mcp-Protocol-Version = %q", got)
+	}
+	probeBody := fake.bodies(t, "server/discover")[0]
+	var probeEnv struct {
+		Params struct {
+			Meta map[string]json.RawMessage `json:"_meta"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal([]byte(probeBody), &probeEnv); err != nil {
+		t.Fatalf("decode server/discover body: %v", err)
+	}
+	if got := probeEnv.Params.Meta["io.modelcontextprotocol/protocolVersion"]; string(got) != `"2026-07-28"` {
+		t.Fatalf("probe body _meta protocolVersion = %s, want the announced version in the Mcp-Protocol-Version header", got)
+	}
+	if len(probeEnv.Params.Meta["io.modelcontextprotocol/clientInfo"]) == 0 {
+		t.Fatalf("the probe carries the client identity in _meta[clientInfo]: %s", probeBody)
 	}
 	listHdrs := fake.headers(t, "tools/list")
-	if len(listHdrs) != 1 || listHdrs[0]["mcp-method"][0] != "tools/list" || listHdrs[0]["mcp-name"][0] != "criteria-adapter-mcp" {
+	if len(listHdrs) != 1 || listHdrs[0]["mcp-method"][0] != "tools/list" {
 		t.Fatalf("tools/list transport headers = %+v", listHdrs)
+	}
+	if _, ok := listHdrs[0]["mcp-name"]; ok {
+		t.Fatalf("tools/list must not carry Mcp-Name: %+v", listHdrs[0])
 	}
 	if got := listHdrs[0]["x-tenant"][0]; got != "acme" {
 		t.Fatalf("tools/list config header X-Tenant = %q, want acme", got)
@@ -355,7 +377,7 @@ func TestHTTPConformance_OpenSessionDiscoverAndExecuteWithHeaders(t *testing.T) 
 		t.Fatalf("tools/call POSTs = %d, want 1", len(calls))
 	}
 	hdr := calls[0]
-	if hdr["mcp-method"][0] != "tools/call" || hdr["mcp-name"][0] != "criteria-adapter-mcp" || hdr["mcp-protocol-version"][0] != "2026-07-28" {
+	if hdr["mcp-method"][0] != "tools/call" || hdr["mcp-name"][0] != "echo" || hdr["mcp-protocol-version"][0] != "2026-07-28" {
 		t.Fatalf("tools/call transport headers = %+v", hdr)
 	}
 	if got := hdr["x-tenant"][0]; got != "tenant2" {

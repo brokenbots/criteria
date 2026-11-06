@@ -34,6 +34,8 @@ type httpFake struct {
 
 	// lastHeaders is the last request's header map.
 	lastHeaders http.Header
+	// allHeaders is the header map of every request, in arrival order.
+	allHeaders []http.Header
 	// gotMethods is every request's method ("BATCH" for framed arrays,
 	// "BYPASS:<method>" for non-POST traffic), in arrival order.
 	gotMethods []string
@@ -69,8 +71,38 @@ func (f *httpFake) record(r *http.Request, method string, body []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.lastHeaders = r.Header.Clone()
+	f.allHeaders = append(f.allHeaders, r.Header.Clone())
 	f.gotMethods = append(f.gotMethods, method)
 	f.bodies = append(f.bodies, append([]byte(nil), body...))
+}
+
+// headersOf returns the headers of the i-th captured request.
+func (f *httpFake) headersOf(i int) http.Header {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if i >= len(f.allHeaders) {
+		return nil
+	}
+	return f.allHeaders[i].Clone()
+}
+
+// headerBody pairs one captured request's wire shape: its method (as read
+// from the envelope), its raw body and its headers.
+type headerBody struct {
+	method  string
+	body    []byte
+	headers http.Header
+}
+
+// captured returns every captured request's wire shape in arrival order.
+func (f *httpFake) captured() []headerBody {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]headerBody, len(f.gotMethods))
+	for i := range f.gotMethods {
+		out[i] = headerBody{method: f.gotMethods[i], body: append([]byte(nil), f.bodies[i]...), headers: f.allHeaders[i].Clone()}
+	}
+	return out
 }
 
 func (f *httpFake) requestCount() int {
@@ -408,12 +440,15 @@ func TestHTTPTransportRequestShape(t *testing.T) {
 		t.Fatal("no requests captured")
 	}
 
+	// Last request = tools/call: the standard headers carry the tool name
+	// (the request's params.name) in Mcp-Name — never the client identity —
+	// and the negotiated protocol version.
 	callHeaders := fake.lastRequestHeaders() // last request = tools/call
 	for name, want := range map[string]string{
 		"Content-Type":         "application/json",
 		"Accept":               "application/json, text/event-stream",
 		"Mcp-Method":           "tools/call",
-		"Mcp-Name":             "criteria",
+		"Mcp-Name":             "echo",
 		"Mcp-Protocol-Version": ProtocolVersion20260728,
 		"X-Trace-Id":           "abc",
 	} {
@@ -431,11 +466,171 @@ func TestHTTPTransportRequestShape(t *testing.T) {
 	}
 }
 
-func TestHTTPTransportCallBeforeConnectLacksIdentity(t *testing.T) {
-	client, _ := newHTTPFakeClient(t, nil)
+// capturedMetaProtocolVersion extracts _meta[MetaProtocolVersion] from a
+// captured request body when the body carries it.
+func capturedMetaProtocolVersion(t *testing.T, body []byte) (string, bool) {
+	t.Helper()
+	var env struct {
+		Params struct {
+			Meta map[string]json.RawMessage `json:"_meta"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		t.Fatalf("decode captured body %q: %v", body, err)
+	}
+	raw, ok := env.Params.Meta[MetaProtocolVersion]
+	if !ok {
+		return "", false
+	}
+	var version string
+	if err := json.Unmarshal(raw, &version); err != nil {
+		t.Fatalf("decode captured _meta protocolVersion %q: %v", raw, err)
+	}
+	return version, true
+}
+
+func TestHTTPTransportHeaderInvariantsOnEveryPost(t *testing.T) {
+	// One POST, one header posture, every time: Mcp-Protocol-Version from
+	// the announced/negotiated version — present on every POST including
+	// the server/discover probe, and equal to the body's _meta version so
+	// header and body cannot diverge; Accept with both media types;
+	// Mcp-Name only on name-bearing methods, carrying the request's
+	// params.name (the tool name), never the client identity.
+	client, fake := newHTTPFakeClient(t, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := client.Connect(ctx, NegotiationDiscover, "criteria", "0.1.0"); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	if _, err := client.ListTools(ctx); err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	if _, err := client.CallToolTracked(ctx, "echo", map[string]any{"message": "hi"}, "t1", nil); err != nil {
+		t.Fatalf("CallToolTracked: %v", err)
+	}
+	if err := client.Notification(ctx, "notifications/initialized", nil); err != nil {
+		t.Fatalf("Notification: %v", err)
+	}
+
+	reached := map[string]int{}
+	for i, rec := range fake.captured() {
+		reached[rec.method]++
+		if got := rec.headers.Get("Accept"); got != "application/json, text/event-stream" {
+			t.Fatalf("POST %d (%s) Accept = %q, want both media types", i, rec.method, got)
+		}
+		version := rec.headers.Get("Mcp-Protocol-Version")
+		if version != ProtocolVersion20260728 {
+			t.Fatalf("POST %d (%s) Mcp-Protocol-Version = %q, want %q on every POST (probe included)", i, rec.method, version, ProtocolVersion20260728)
+		}
+		if bodyVersion, ok := capturedMetaProtocolVersion(t, rec.body); ok && bodyVersion != version {
+			t.Fatalf("POST %d (%s) header version %q != body _meta version %q", i, rec.method, version, bodyVersion)
+		}
+		if rec.method == "tools/call" {
+			if got := rec.headers.Get("Mcp-Name"); got != "echo" {
+				t.Fatalf("POST %d (tools/call) Mcp-Name = %q, want the tool name %q", i, got, "echo")
+			}
+			continue
+		}
+		if got := rec.headers.Get("Mcp-Name"); got != "" {
+			t.Fatalf("POST %d (%s) carried Mcp-Name %q; a non-name-bearing method must omit it", i, rec.method, got)
+		}
+	}
+	for _, method := range []string{"server/discover", "tools/list", "tools/call", "notifications/initialized"} {
+		if reached[method] == 0 {
+			t.Fatalf("no POST captured for %s; the invariant sweep never exercised it", method)
+		}
+	}
+}
+
+func TestHTTPTransportUnsafeToolNameSentinelHeader(t *testing.T) {
+	// A tool name outside the header-safe set travels in the Base64
+	// sentinel in Mcp-Name while the body keeps the raw name: the header
+	// encoding never alters the request itself.
+	client, fake := newHTTPFakeClient(t, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := client.Connect(ctx, NegotiationDiscover, "criteria-test", "0.1.0"); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	if _, err := client.CallToolTracked(ctx, "a\tb", map[string]any{"message": "hi"}, "t1", nil); err != nil {
+		t.Fatalf("CallToolTracked: %v", err)
+	}
+	recs := fake.captured()
+	var call headerBody
+	found := false
+	for _, rec := range recs {
+		if rec.method == "tools/call" {
+			call = rec
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("no tools/call POST captured: %v", fake.methods())
+	}
+	if got := call.headers.Get("Mcp-Name"); got != "=?base64?YQli?=" {
+		t.Fatalf("Mcp-Name = %q, want the Base64 sentinel of the unsafe name", got)
+	}
+	var body struct {
+		Params struct {
+			Name string `json:"name"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal(call.body, &body); err != nil {
+		t.Fatalf("decode tools/call body: %v", err)
+	}
+	if body.Params.Name != "a\tb" {
+		t.Fatalf("body params.name = %q, want the raw unencoded tool name", body.Params.Name)
+	}
+}
+
+func TestHTTPTransportPreConnectRequestRejected(t *testing.T) {
+	// A call before Connect has no negotiated protocol version, and the
+	// mandatory Mcp-Protocol-Version header and the body _meta must share
+	// one source (the announced version) — so the transport rejects the
+	// pre-Connect POST instead of sending a request whose headers say
+	// nothing about the dialect. The client identity is not the gate: it
+	// rides _meta[clientInfo] and must not gate any request.
+	client, fake := newHTTPFakeClient(t, nil)
 	_, err := client.CallTool(context.Background(), "echo", nil)
-	if err == nil || !strings.Contains(err.Error(), "client identity") {
-		t.Fatalf("pre-Connect CallTool err = %v, want missing-client-identity error", err)
+	if err == nil || !strings.Contains(err.Error(), "no negotiated protocol version") {
+		t.Fatalf("pre-Connect CallTool err = %v, want the negotiated-version rejection", err)
+	}
+	if got := fake.requestCount(); got != 0 {
+		t.Fatalf("a pre-Connect call issued %d POSTs, want none", got)
+	}
+	if name := fake.lastRequestHeaders().Get("Mcp-Name"); name == "criteria" {
+		t.Fatalf("a pre-Connect POST carried the client identity as Mcp-Name")
+	}
+}
+
+func TestHTTPTransportCancelSendsNoCancelledNotification(t *testing.T) {
+	// On Streamable HTTP the abandoned call's response stream close is the
+	// cancellation signal; the revision expects no notifications/cancelled
+	// after it. The client must not follow a cancelled http call with a
+	// notifications/cancelled POST (stdio keeps sending one).
+	client, fake := newHTTPFakeClient(t, func(fake *httpFake, cfg *HTTPConfig) {
+		fake.sleepPerCall = 300 * time.Millisecond
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := client.Connect(ctx, NegotiationDiscover, "criteria-test", "0.1.0"); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	callCtx, callCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer callCancel()
+	if _, err := client.CallTool(callCtx, "echo", nil); err == nil {
+		t.Fatal("the abandoned call must fail with its context error")
+	}
+	time.Sleep(100 * time.Millisecond)
+	if fake.sawMethod("notifications/cancelled") {
+		t.Fatalf("a cancelled http call POSTed notifications/cancelled: %v", fake.methods())
+	}
+	if !fake.sawMethod("tools/call") {
+		t.Fatalf("the call never reached the peer: %v", fake.methods())
 	}
 }
 

@@ -362,7 +362,7 @@ func (c *Client) Discover(ctx context.Context, preferredVersion string) (*Discov
 	if c.clientName != "" {
 		meta[MetaClientInfo] = clientInfo{Name: c.clientName, Version: c.clientVersion}
 	}
-	raw, err := c.request(ctx, "server/discover", map[string]any{"_meta": meta}, nil)
+	raw, err := c.request(ctx, "server/discover", map[string]any{"_meta": meta}, nil, preferredVersion)
 	if err != nil {
 		return nil, err
 	}

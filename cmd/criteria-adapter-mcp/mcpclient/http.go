@@ -53,13 +53,42 @@ type HeaderEntry struct {
 	Value string
 }
 
+// StandardHeaders builds the transport-controlled header set every
+// Streamable HTTP POST carries per the 2026-07-28 revision: Content-Type;
+// Accept with both media types (requests may answer either way); the
+// per-request route/method headers Mcp-Method and Mcp-Protocol-Version
+// (version on every POST, including the server/discover probe — the
+// announced value is the negotiated one, or the version the probe
+// requests); and Mcp-Name only for a name-bearing method, carrying the
+// request's params.name/params.uri — never the client identity. A value
+// outside the header-safe set travels in the Base64 sentinel. Exported so
+// drivers that pin the transport's wire shape by hand (external reference
+// conformance legs) build from the same source as the transport and cannot
+// diverge.
+func StandardHeaders(method, name, protocolVersion string) []HeaderEntry {
+	headers := []HeaderEntry{
+		{Name: "Content-Type", Value: "application/json"},
+		{Name: "Accept", Value: "application/json, text/event-stream"},
+		{Name: "Mcp-Method", Value: method},
+	}
+	if name != "" {
+		headers = append(headers, HeaderEntry{Name: "Mcp-Name", Value: encodeHeaderValue(name)})
+	}
+	if protocolVersion != "" {
+		headers = append(headers, HeaderEntry{Name: "Mcp-Protocol-Version", Value: protocolVersion})
+	}
+	return headers
+}
+
 // NewHeaderEntry validates and returns one custom header: the name must be
 // a non-empty HTTP token (RFC 9110 tchar) and the value must carry no line
 // breaks or control characters. Names under transport control
 // (Content-Type, Content-Length, Host, Accept, Mcp-Method, Mcp-Name,
-// Mcp-Session-Id, Mcp-Protocol-Version, Last-Event-ID) are rejected — the
-// transport owns them, and accepting them would let a caller smuggle
-// session, routing, or framing state.
+// Mcp-Session-Id, Mcp-Protocol-Version, Last-Event-ID) and the whole
+// Mcp-Param-* namespace are rejected — the transport owns them
+// (Mcp-Param-* is emitted only from an annotated tool's schema, and
+// protocol-mandated values must not be forgeable), and accepting them
+// would let a caller smuggle session, routing, or framing state.
 func NewHeaderEntry(name, value string) (HeaderEntry, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -109,7 +138,8 @@ func isForbiddenHeaderByte(r rune) bool {
 // reservedHTTPHeaderNames are header names the transport sets itself,
 // matched case-insensitively: transport-protocol headers (Mcp-*) and the
 // framing/routing headers a custom value would corrupt or smuggle state
-// through.
+// through. isReservedHeaderName additionally reserves the whole
+// Mcp-Param-* namespace (protocol-mandated parameter mirroring).
 var reservedHTTPHeaderNames = map[string]struct{}{
 	"accept":               {},
 	"content-type":         {},
@@ -123,7 +153,11 @@ var reservedHTTPHeaderNames = map[string]struct{}{
 }
 
 func isReservedHeaderName(name string) bool {
-	_, ok := reservedHTTPHeaderNames[strings.ToLower(name)]
+	lower := strings.ToLower(name)
+	if strings.HasPrefix(lower, "mcp-param-") {
+		return true
+	}
+	_, ok := reservedHTTPHeaderNames[lower]
 	return ok
 }
 
@@ -245,7 +279,7 @@ func (t *httpTransport) postRequest(ctx context.Context, req *wireRequest) error
 	if cancel != nil {
 		defer cancel()
 	}
-	httpReq, err := t.newRequest(reqCtx, req, []string{"application/json", "text/event-stream"})
+	httpReq, err := t.newRequest(reqCtx, req)
 	if err != nil {
 		return err
 	}
@@ -328,7 +362,7 @@ func (t *httpTransport) postNotification(ctx context.Context, req *wireRequest) 
 	if cancel != nil {
 		defer cancel()
 	}
-	httpReq, err := t.newRequest(reqCtx, req, []string{"application/json"})
+	httpReq, err := t.newRequest(reqCtx, req)
 	if err != nil {
 		return err
 	}
@@ -355,26 +389,27 @@ func (t *httpTransport) bounded(ctx context.Context) (context.Context, context.C
 }
 
 // newRequest builds the POST one JSON-RPC envelope needs per the
-// 2026-07-28 Streamable HTTP rules: transport-controlled headers first
-// (Content-Type, Accept, Mcp-Method, Mcp-Name, Mcp-Protocol-Version), then
-// the config's custom headers, then per-request headers (x-mcp-header
-// parameters win on collision). Header map assignment preserves caller
-// case; Header.Set would canonicalize it away.
-func (t *httpTransport) newRequest(ctx context.Context, req *wireRequest, accept []string) (*http.Request, error) {
+// 2026-07-28 Streamable HTTP rules: the transport-controlled standard
+// headers (StandardHeaders: Content-Type, both Accept media types,
+// Mcp-Method, Mcp-Protocol-Version on every POST, Mcp-Name only when the
+// request names a tool/prompt/resource), then the config's custom headers,
+// then per-request headers (x-mcp-header parameters win on collision).
+// Header map assignment preserves caller case; Header.Set would
+// canonicalize it away. A pre-Connect POST is rejected instead of sent:
+// without the negotiated version the mandatory Mcp-Protocol-Version header
+// has no value, and no request may go out with the header and body _meta
+// diverging (the announced version is the negotiated one, or the version
+// the discover probe requests).
+func (t *httpTransport) newRequest(ctx context.Context, req *wireRequest) (*http.Request, error) {
+	if req.protocolVersion == "" {
+		return nil, errors.New("mcpclient: POST before Connect carries no negotiated protocol version (Mcp-Protocol-Version)")
+	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, t.endpoint, bytes.NewReader(req.envelope))
 	if err != nil {
 		return nil, fmt.Errorf("mcpclient: build %s request: %w", req.method, err)
 	}
-	httpReq.Header["Content-Type"] = []string{"application/json"}
-	httpReq.Header["Accept"] = []string{strings.Join(accept, ", ")}
-	httpReq.Header["Mcp-Method"] = []string{req.method}
-	if name := t.owner.clientName; name != "" {
-		httpReq.Header["Mcp-Name"] = []string{name}
-	} else {
-		return nil, errors.New("mcpclient: request before Connect carries no client identity (Mcp-Name)")
-	}
-	if t.owner.protocolVersion != "" {
-		httpReq.Header["Mcp-Protocol-Version"] = []string{t.owner.protocolVersion}
+	for _, h := range StandardHeaders(req.method, req.name, req.protocolVersion) {
+		httpReq.Header[h.Name] = []string{h.Value}
 	}
 	for _, h := range t.headers {
 		httpReq.Header[h.Name] = []string{h.Value}
@@ -433,7 +468,7 @@ func (t *httpTransport) listenOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	httpReq, err := t.newRequest(ctx, &wireRequest{envelope: payload, method: ListenMethod, id: id}, []string{"application/json", "text/event-stream"})
+	httpReq, err := t.newRequest(ctx, &wireRequest{envelope: payload, method: ListenMethod, id: id, protocolVersion: c.protocolVersion})
 	if err != nil {
 		return err
 	}

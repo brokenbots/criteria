@@ -18,13 +18,47 @@ const jsonRPCVersion = "2.0"
 
 // wireRequest describes one outgoing JSON-RPC envelope as a transport
 // needs it: the encoded envelope, its method and id (id "" marks a
-// notification, which gets no response), and per-request HTTP headers
-// (http transport only; a stdio send with headers is invalid).
+// notification, which gets no response), per-request HTTP headers (http
+// transport only; a stdio send with headers is invalid), the request's
+// name — the tool name / prompt name / resource uri of a name-bearing
+// method, the Mcp-Name header source — and the protocol version the POST
+// announces (the Mcp-Protocol-Version header source; empty is invalid on
+// http).
 type wireRequest struct {
-	envelope []byte
-	method   string
-	id       string
-	headers  []HeaderEntry
+	envelope        []byte
+	method          string
+	id              string
+	headers         []HeaderEntry
+	name            string
+	protocolVersion string
+}
+
+// wireRequestName derives the request name a method carries in its
+// Mcp-Name header per the 2026-07-28 revision: the tool name for
+// tools/call (read off the typed params struct), the prompt name for
+// prompts/get, the resource uri for resources/read. Every other method —
+// server/discover, tools/list, notifications, subscriptions/listen —
+// carries no request name, and the header is omitted. The client's own
+// identity never gates a request and never rides this header; it is the
+// _meta[clientInfo] of each exchange.
+func wireRequestName(method string, params any) string {
+	switch method {
+	case "tools/call":
+		if p, ok := params.(callToolParams); ok {
+			return p.Name
+		}
+	case "prompts/get":
+		if p, ok := params.(map[string]any); ok {
+			name, _ := p["name"].(string)
+			return name
+		}
+	case "resources/read":
+		if p, ok := params.(map[string]any); ok {
+			uri, _ := p["uri"].(string)
+			return uri
+		}
+	}
+	return ""
 }
 
 // transport abstracts the wire between this client and an MCP server. The
@@ -298,7 +332,7 @@ func (c *Client) initializeLegacy(ctx context.Context) error {
 			Version: c.clientVersion,
 		},
 	}
-	if _, err := c.request(ctx, "initialize", params, nil); err != nil {
+	if _, err := c.request(ctx, "initialize", params, nil, ""); err != nil {
 		return err
 	}
 	c.protocolVersion = ProtocolVersion20250326
@@ -344,7 +378,7 @@ func (c *Client) ListToolsDetailed(ctx context.Context) (ToolsList, error) {
 	if meta := c.requestMeta(); meta != nil {
 		params = map[string]any{"_meta": meta}
 	}
-	raw, err := c.request(ctx, "tools/list", params, nil)
+	raw, err := c.request(ctx, "tools/list", params, nil, "")
 	if err != nil {
 		return ToolsList{}, err
 	}
@@ -396,7 +430,7 @@ func (c *Client) CallToolTracked(ctx context.Context, name string, arguments map
 			}
 		}
 	}
-	raw, err := c.request(ctx, "tools/call", params, extraHeaders)
+	raw, err := c.request(ctx, "tools/call", params, extraHeaders, "")
 	if err != nil {
 		return CallToolResult{}, err
 	}
@@ -416,7 +450,7 @@ func (c *Client) Notification(ctx context.Context, method string, params any) er
 		params = withStatelessMeta(params, c.requestMeta())
 	}
 	req := requestEnvelope{JSONRPC: jsonRPCVersion, Method: method, Params: params}
-	return c.send(ctx, method, "", nil, req)
+	return c.send(ctx, method, "", nil, req, "")
 }
 
 // withStatelessMeta merges the stateless-core _meta into a notification's
@@ -443,7 +477,7 @@ func withStatelessMeta(params any, meta map[string]any) any {
 	return out
 }
 
-func (c *Client) request(ctx context.Context, method string, params any, headers []HeaderEntry) (json.RawMessage, error) {
+func (c *Client) request(ctx context.Context, method string, params any, headers []HeaderEntry, announceVersion string) (json.RawMessage, error) {
 	id := strconv.FormatUint(atomic.AddUint64(&c.nextID, 1), 10)
 	ch := make(chan rpcResponse, 1)
 
@@ -458,7 +492,7 @@ func (c *Client) request(ctx context.Context, method string, params any, headers
 	c.pendMu.Unlock()
 
 	req := requestEnvelope{JSONRPC: jsonRPCVersion, ID: id, Method: method, Params: params}
-	if err := c.send(ctx, method, id, headers, req); err != nil {
+	if err := c.send(ctx, method, id, headers, req, announceVersion); err != nil {
 		c.pendMu.Lock()
 		delete(c.pending, id)
 		c.pendMu.Unlock()
@@ -478,10 +512,18 @@ func (c *Client) request(ctx context.Context, method string, params any, headers
 		// the client-internal JSON-RPC id — distinct from any progress token
 		// — per the MCP notifications/cancelled shape. Best-effort over a
 		// detached context because the caller's context is already done.
-		_ = c.Notification(context.WithoutCancel(ctx), "notifications/cancelled", map[string]any{
-			"requestId": id,
-			"reason":    ctx.Err().Error(),
-		})
+		// On Streamable HTTP the notification POST is omitted: there the
+		// abandoned call's response stream close is the cancellation signal
+		// (no server-side resumability), and a notifications/cancelled POST
+		// after the stream is gone cancels nothing — the revision does not
+		// define one for this transport. stdio keeps sending it. Best-effort
+		// over a detached context because the caller's context is already done.
+		if c.Transport() != TransportHTTP {
+			_ = c.Notification(context.WithoutCancel(ctx), "notifications/cancelled", map[string]any{
+				"requestId": id,
+				"reason":    ctx.Err().Error(),
+			})
+		}
 		return nil, ctx.Err()
 	case resp := <-ch:
 		if resp.Error != nil {
@@ -495,8 +537,12 @@ func (c *Client) request(ctx context.Context, method string, params any, headers
 // failure is fatal to the session on stdio (the shared pipe state is
 // unreadable from here on) and per-request on http (each POST stands
 // alone); a batch violation reported by the transport's inbound dispatch
-// closes the session itself via closeWithError.
-func (c *Client) send(ctx context.Context, method, id string, headers []HeaderEntry, v any) error {
+// closes the session itself via closeWithError. announceVersion carries an
+// explicit protocol-version announcement (only the server/discover probe
+// announces pre-adoption); without one the negotiated version is announced.
+// The request name (Mcp-Name) and the announced version are stamped here so
+// the header set and the request body share one source.
+func (c *Client) send(ctx context.Context, method, id string, headers []HeaderEntry, v any, announceVersion string) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -510,7 +556,15 @@ func (c *Client) send(ctx context.Context, method, id string, headers []HeaderEn
 		return fmt.Errorf("mcpclient: marshal request: %w", err)
 	}
 
-	if err := c.tr.send(ctx, &wireRequest{envelope: payload, method: method, id: id, headers: headers}); err != nil {
+	var name string
+	if env, ok := v.(requestEnvelope); ok {
+		name = wireRequestName(method, env.Params)
+	}
+	if announceVersion == "" {
+		announceVersion = c.protocolVersion
+	}
+
+	if err := c.tr.send(ctx, &wireRequest{envelope: payload, method: method, id: id, headers: headers, name: name, protocolVersion: announceVersion}); err != nil {
 		if _, isStdio := c.tr.(*stdioTransport); isStdio {
 			c.closeWithError(err)
 			return err
