@@ -116,9 +116,94 @@ func TestResolveToolParamHeaders(t *testing.T) {
 			wantValid: false,
 		},
 		{
+			name: "property-name annotation top-level",
+			schema: `{"type":"object","properties":{
+				"x-mcp-header":{"type":"object","additionalProperties":false,
+				"properties":{"X-Trace":{"type":"string"}}}}}`,
+			wantBinds: []toolParamHeader{{path: []string{"x-mcp-header"}, header: "X-Trace"}},
+			wantValid: true,
+		},
+		{
+			name: "property-name annotation nested chain",
+			schema: `{"type":"object","properties":{"meta":{"type":"object","properties":{
+				"x-mcp-header":{"type":"object","additionalProperties":false,
+				"properties":{"X-Trace-ID":{"type":"string"}}}}}}}`,
+			wantBinds: []toolParamHeader{{path: []string{"meta", "x-mcp-header"}, header: "X-Trace-ID"}},
+			wantValid: true,
+		},
+		{
+			name: "marker and property-name spellings resolve and merge",
+			schema: `{"type":"object","properties":{
+				"trace":{"type":"object","x-mcp-header":{},"additionalProperties":false,
+				"properties":{"X-Trace-A":{"type":"string"}}},
+				"x-mcp-header":{"type":"object","additionalProperties":false,
+				"properties":{"X-Trace-B":{"type":"string"}}}}}`,
+			wantCount: 2,
+			wantValid: true,
+		},
+		{
+			name: "both spellings colliding case-insensitively",
+			schema: `{"type":"object","properties":{
+				"trace":{"type":"object","x-mcp-header":{},"additionalProperties":false,
+				"properties":{"X-Trace":{"type":"string"}}},
+				"x-mcp-header":{"type":"object","additionalProperties":false,
+				"properties":{"x-trace":{"type":"string"}}}}}`,
+			wantValid: false,
+		},
+		{
+			name:      "property-name annotation not object-typed",
+			schema:    `{"type":"object","properties":{"x-mcp-header":{"type":"string"}}}`,
+			wantValid: false,
+		},
+		{
+			name:      "property-name annotation with a non-map schema",
+			schema:    `{"type":"object","properties":{"x-mcp-header":5}}`,
+			wantValid: false,
+		},
+		{
+			name: "property-name annotation with open additionalProperties",
+			schema: `{"type":"object","properties":{
+				"x-mcp-header":{"type":"object","additionalProperties":true,
+				"properties":{"X-Trace":{"type":"string"}}}}}`,
+			wantValid: false,
+		},
+		{
+			name: "property-name annotation behind oneOf is foreign",
+			schema: `{"type":"object","properties":{"trace":{"type":"object","oneOf":[
+				{"type":"object","properties":{
+					"x-mcp-header":{"type":"object","properties":{"X-T":{"type":"string"}}}}}]}}}`,
+			wantValid: false,
+		},
+		{
+			name: "hidden marker inside a header member is rejected",
+			schema: `{"type":"object","properties":{"trace":{"type":"object","x-mcp-header":{},
+				"properties":{"X-T":{"type":"string","x-mcp-header":{}}}}}}`,
+			wantValid: false,
+		},
+		{
+			name: "hidden property-name annotation inside a header member is rejected",
+			schema: `{"type":"object","properties":{"trace":{"type":"object","x-mcp-header":{},
+				"properties":{"X-T":{"type":"string","properties":{
+					"x-mcp-header":{"type":"object","properties":{"X-N":{"type":"string"}}}}}}}}}`,
+			wantValid: false,
+		},
+		{
+			name: "hidden property-name annotation behind patternProperties is foreign",
+			schema: `{"type":"object","properties":{"trace":{"type":"object","patternProperties":{
+				"^x$":{"type":"object","properties":{
+					"x-mcp-header":{"type":"object","properties":{"X-T":{"type":"string"}}}}}}}}}`,
+			wantValid: false,
+		},
+		{
 			name:       "unannotated schema has no bindings",
 			schema:     `{"type":"object","properties":{"trace":{"type":"string"}},"required":["trace"]}`,
 			wantValid:  true,
+			wantNoBind: true,
+		},
+		{
+			name:       "annotation in a non-properties root key with no properties table",
+			schema:     `{"type":"object","oneOf":[{"type":"object","properties":{"x-mcp-header":{"type":"object"}}}]}`,
+			wantValid:  false,
 			wantNoBind: true,
 		},
 		{
@@ -213,5 +298,54 @@ func TestMirrorToolParamHeaders(t *testing.T) {
 	})
 	if len(absent) != 0 {
 		t.Fatalf("violated-shape arguments mirrored %v, want none", absent)
+	}
+}
+
+// TestMirrorToolParamHeaders_PropertySpelling mirrors the property-name
+// spelling the same way: the annotated path is the plain properties chain
+// to the annotation-named property, and the annotated value itself stays
+// in the body (only its members ride the Mcp-Param-* headers).
+func TestMirrorToolParamHeaders_PropertySpelling(t *testing.T) {
+	bindings, valid := resolveToolParamHeaders(json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"meta": {
+				"type": "object",
+				"properties": {
+					"x-mcp-header": {
+						"type": "object",
+						"additionalProperties": false,
+						"properties": {"X-Trace-ID": {"type": "string"},
+							"X-Safe": {"type": "string"}}
+					}
+				}
+			}
+		}
+	}`))
+	if !valid || len(bindings) != 2 {
+		t.Fatalf("bindings = %v (valid=%v), want 2 (valid)", bindings, valid)
+	}
+	headers := map[string]string{}
+	for _, b := range bindings {
+		if b.path[0] != "meta" || b.path[1] != "x-mcp-header" {
+			t.Fatalf("binding path = %v, want the chain to the annotation-named property", b.path)
+		}
+	}
+	arguments := map[string]any{
+		"meta": map[string]any{
+			// The annotated value stays in the body and is mirrored here.
+			"x-mcp-header": map[string]any{"X-Trace-ID": "caf\u00e9"},
+		},
+	}
+	for _, entry := range mirrorToolParamHeaders(bindings, arguments) {
+		headers[entry.Name] = entry.Value
+	}
+	want := map[string]string{
+		// café rides the Base64 sentinel; the absent X-Safe member is not
+		// emitted (the server's required rule governs that).
+		"Mcp-Param-X-Trace-ID": "=?base64?Y2Fmw6k=?=",
+	}
+	if !reflect.DeepEqual(headers, want) {
+		t.Fatalf("mirrored = %v, want %v", headers, want)
 	}
 }

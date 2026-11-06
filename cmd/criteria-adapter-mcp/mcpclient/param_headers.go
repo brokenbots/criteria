@@ -5,13 +5,19 @@ import (
 	"strconv"
 )
 
-// The x-mcp-header schema annotation: an inputSchema property may carry
-// the marker beside its value schema; the schema's own properties are then
-// the header names to mirror that value's members into on the tools/call
-// POST, each typed primitive, with statically known names
-// (additionalProperties false or absent). The transport emits one
-// Mcp-Param-{Name} header per entry, mirroring the value at the annotated
-// property path.
+// The x-mcp-header schema annotation: a tool inputSchema may mirror one
+// property's value members into Mcp-Param-{Name} headers on the tools/call
+// POST. Two spellings declare it
+//   - marker: a property carries the marker key beside its value schema;
+//     the annotated schema's own properties are the header names;
+//   - property name: a property named x-mcp-header is itself the
+//     annotation; its schema is the header-name table.
+//
+// In both spellings the table's properties are the header names, each typed
+// primitive, with statically known names (additionalProperties false or
+// absent). The transport emits one Mcp-Param-{Name} header per entry,
+// mirroring the value at the annotated property path; the annotated value
+// itself stays in the call body.
 const paramHeaderAnnotation = "x-mcp-header"
 
 // jsonSchemaType is the JSON-Schema primitive set a mirrored header value
@@ -43,8 +49,8 @@ type toolParamHeader struct {
 // resolveToolParamHeaders resolves a tool's inputSchema into Mcp-Param-*
 // bindings (nil, true when the schema carries no annotations).
 //
-// An annotation is honored only on a plain properties chain from the
-// schema root; the annotated value schema must be an object whose
+// An annotation of either spelling is honored only on a plain properties
+// chain from the schema root; the annotated table must be an object whose
 // properties are the header names, each typed primitive, with statically
 // known names (additionalProperties false or absent). A tool is invalid
 // (false) when an annotation sits outside that chain (inside
@@ -73,6 +79,16 @@ func resolveToolParamHeaders(schema json.RawMessage) ([]toolParamHeader, bool) {
 
 	props, ok := root["properties"].(map[string]any)
 	if !ok {
+		// No plain chain to walk; an annotation in any other root key is
+		// still unreachable and still rejected.
+		for key, child := range root {
+			if key == "properties" {
+				continue
+			}
+			if carriesForeignAnnotation(child) {
+				return nil, false
+			}
+		}
 		return nil, true
 	}
 
@@ -80,14 +96,8 @@ func resolveToolParamHeaders(schema json.RawMessage) ([]toolParamHeader, bool) {
 		bindings []toolParamHeader
 		seen     = map[string]struct{}{}
 	)
-	for name, prop := range props {
-		propObj, ok := prop.(map[string]any)
-		if !ok {
-			continue
-		}
-		if !walkChain([]string{name}, propObj, &bindings, seen) {
-			return nil, false
-		}
+	if !walkProperties(nil, props, &bindings, seen) {
+		return nil, false
 	}
 	for key, child := range root {
 		if key == "properties" {
@@ -100,13 +110,42 @@ func resolveToolParamHeaders(schema json.RawMessage) ([]toolParamHeader, bool) {
 	return bindings, true
 }
 
+// walkProperties resolves the annotation on each property of a plain
+// properties table, per walkChain. A property with a non-map schema is not
+// a resolvable node; under the annotation's own name (the property-name
+// spelling gone malformed) that makes the tool invalid, elsewhere it is
+// simply not a schema node.
+func walkProperties(path []string, props map[string]any, out *[]toolParamHeader, seen map[string]struct{}) bool {
+	for name, prop := range props {
+		node, ok := prop.(map[string]any)
+		if !ok {
+			if name == paramHeaderAnnotation {
+				return false
+			}
+			continue
+		}
+		child := make([]string, 0, len(path)+1)
+		child = append(child, path...)
+		child = append(child, name)
+		if !walkChain(child, node, out, seen) {
+			return false
+		}
+	}
+	return true
+}
+
 // walkChain descends one plain properties chain, resolving the annotation
-// on each chain node. An annotated node's schema fully describes the
-// mirrored value (an object whose properties are the header names), so its
-// subtree ends the chain; unannotated nodes continue it through their own
-// properties. The bool result is tool validity.
+// on each chain node in either spelling: a node carrying the marker key,
+// or a node whose property name is the annotation (its schema IS the
+// header-name table). An annotated node's table fully describes the
+// mirrored value, so its subtree ends the chain; unannotated nodes
+// continue it through their own properties. The bool result is tool
+// validity.
 func walkChain(path []string, node map[string]any, out *[]toolParamHeader, seen map[string]struct{}) bool {
 	if _, has := node[paramHeaderAnnotation]; has {
+		return walkAnnotatedNode(path, node, out, seen)
+	}
+	if len(path) > 0 && path[len(path)-1] == paramHeaderAnnotation {
 		return walkAnnotatedNode(path, node, out, seen)
 	}
 	return walkUnannotatedNode(path, node, out, seen)
@@ -121,6 +160,7 @@ func walkAnnotatedNode(path []string, node map[string]any, out *[]toolParamHeade
 	if !ok {
 		return false
 	}
+	props, _ := node["properties"].(map[string]any)
 	for _, header := range names {
 		if !isTokenHeaderName(header) {
 			return false
@@ -131,14 +171,10 @@ func walkAnnotatedNode(path []string, node map[string]any, out *[]toolParamHeade
 		}
 		seen[key] = struct{}{}
 		*out = append(*out, toolParamHeader{path: path, header: header})
-	}
-	// A foreign annotation may not hide inside a header's value schema.
-	// The annotated node itself ends the plain chain, so only its children
-	// are scanned; the node's own annotation is skipped.
-	props, _ := node["properties"].(map[string]any)
-	for _, header := range names {
-		probe, _ := props[header].(map[string]any)
-		if probe != nil && carriesForeignAnnotationSkip(probe, paramHeaderAnnotation) {
+		// A foreign annotation may not hide inside a header's value
+		// schema: the annotated node ends the plain chain, so an annotation
+		// deeper inside any member is unreachable.
+		if probe, _ := props[header].(map[string]any); probe != nil && carriesForeignAnnotation(probe) {
 			return false
 		}
 	}
@@ -163,45 +199,35 @@ func walkUnannotatedNode(path []string, node map[string]any, out *[]toolParamHea
 	if !ok {
 		return true
 	}
-	for name, prop := range props {
-		propObj, ok := prop.(map[string]any)
-		if !ok {
-			continue
-		}
-		if !walkChain(append(append([]string{}, path...), name), propObj, out, seen) {
-			return false
-		}
-	}
-	return true
+	return walkProperties(path, props, out, seen)
 }
 
-// carriesForeignAnnotation reports whether an x-mcp-header annotation
-// exists anywhere inside node: the plain properties chain is resolved by
-// the chain walk, so every annotation this scan finds sits outside it.
+// carriesForeignAnnotation reports whether an x-mcp-header annotation of
+// either spelling exists anywhere inside node outside the plain properties
+// chain: the marker key inside any schema map, or a property whose name is
+// the annotation inside any properties table. The chain walk resolves the
+// reachable annotations, so every annotation this scan finds sits outside
+// the chain and invalidates the tool.
 func carriesForeignAnnotation(node any) bool {
-	return carriesForeignAnnotationSkip(node, "")
-}
-
-// carriesForeignAnnotationSkip is carriesForeignAnnotation ignoring one
-// key at every level — callers use it to skip the annotation they carry.
-func carriesForeignAnnotationSkip(node any, skip string) bool {
 	switch v := node.(type) {
 	case map[string]any:
-		if _, ok := v[paramHeaderAnnotation]; ok && paramHeaderAnnotation != skip {
+		if _, ok := v[paramHeaderAnnotation]; ok {
 			return true
 		}
-		for key, child := range v {
-			if key == skip {
-				continue
+		if props, ok := v["properties"].(map[string]any); ok {
+			if _, ok := props[paramHeaderAnnotation]; ok {
+				return true
 			}
-			if carriesForeignAnnotationSkip(child, skip) {
+		}
+		for _, child := range v {
+			if carriesForeignAnnotation(child) {
 				return true
 			}
 		}
 		return false
 	case []any:
 		for _, child := range v {
-			if carriesForeignAnnotationSkip(child, skip) {
+			if carriesForeignAnnotation(child) {
 				return true
 			}
 		}
@@ -225,16 +251,13 @@ func isTokenHeaderName(name string) bool {
 	return true
 }
 
-// annotatedHeaderNames validates an x-mcp-header-annotated schema node and
-// reports whether the annotated value schema is a usable mirror table: an
-// object whose properties are the header names, each typed primitive, with
-// statically known names (additionalProperties false or absent; present
-// and not — true, or a schema — leaves the value's names open and rejects
-// the tool).
-// annotatedHeaderNames lists the header names of an annotated node whose
-// value schemas are primitive-typed. A node whose shape or value schemas
-// do not conform yields no names: a non-primitive header value (including
-// a missing type, or a non-object value schema) invalidates the tool.
+// annotatedHeaderNames validates an x-mcp-header-annotated schema node
+// (either spelling) and reports whether the annotated table is a usable
+// mirror table: an object whose properties are the header names, each
+// typed primitive, with statically known names (additionalProperties false
+// or absent; present and not — true, or a schema — leaves the value's
+// names open and rejects the tool). A table whose shape or member schemas
+// do not conform yields no names and invalidates the tool.
 func annotatedHeaderNames(node map[string]any) ([]string, bool) {
 	typ, ok := node["type"].(string)
 	if !ok || typ != "object" {
