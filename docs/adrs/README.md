@@ -20,7 +20,7 @@ final.
 | [ADR-0005](ADR-0005-workflow-source-model.md) | Workflow source model, fetch/cache, and provenance | Accepted |
 | [ADR-0006](ADR-0006-sendprompt-injection.md) | SendPrompt: mid-turn agent message injection; redirect deferred | Accepted |
 | [ADR-0007](ADR-0007-peer-execution.md) | Peer execution: criteria-to-criteria remote adapters (staged A→B) | Proposed |
-| [ADR-0014](ADR-0014-environment-host-of-record.md) | The environment as host-of-record: one session/ownership seam | Accepted |
+| [ADR-0014](ADR-0014-environment-host-of-record.md) | The environment as host-of-record: one session/ownership seam | Proposed |
 
 > **Pending — no record yet.** [ADR-0013] (decision adapter: System One
 > decision-model calls with a strict question contract and fail-closed step
