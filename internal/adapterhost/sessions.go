@@ -23,6 +23,7 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapter/environment/sandbox"
 	"github.com/brokenbots/criteria/internal/adapter/secrets"
+	"github.com/brokenbots/criteria/internal/envhost"
 	"github.com/brokenbots/criteria/internal/log"
 	"github.com/brokenbots/criteria/internal/tunables"
 	"github.com/brokenbots/criteria/workflow"
@@ -141,6 +142,16 @@ type SessionManager struct {
 	// parent: Shutdown must not Stop them, or one finished iteration would tear
 	// down the listener the sibling iterations and the root run still use.
 	remoteShimsBorrowed bool
+
+	// envHostsByEnv holds the envhost.Host bound to an environment key
+	// ("remote.<name>") — the ADR-0014 D1 seam layer. Remote dispatch and
+	// scope bookkeeping resolve their environment's host here; an
+	// environment without an explicit binding falls back to a shim
+	// adapter over the registered shim (envHostForEnvLocked), which keeps
+	// RemoteShim-only registrations (tests, legacy default) working
+	// identically. Every entry shadows the same verbs its shim performed
+	// pre-carve, so behavior is unchanged.
+	envHostsByEnv map[string]envhost.Host
 
 	// LifecycleSink receives adapter provisioning events. When a verified-only
 	// adapter is promoted to a bound session, "opened" is emitted through this
@@ -414,7 +425,10 @@ func (m *SessionManager) SetRemoteShim(shim RemoteShim) {
 
 // SetRemoteShimForEnv registers the shim serving a specific remote
 // environment (keyed "remote.<name>"). The shim is also recorded as
-// the default so legacy callers observe the most recently registered shim.
+// the default so legacy callers observe the most recently registered shim,
+// and the environment's seam host (ADR-0014) is the shim adapter so
+// RemoteShim-only registrations dispatch identically. The engine binds the
+// environment's production host (remote.NewHost) right after this call.
 func (m *SessionManager) SetRemoteShimForEnv(envKey string, shim RemoteShim) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -423,6 +437,7 @@ func (m *SessionManager) SetRemoteShimForEnv(envKey string, shim RemoteShim) {
 	}
 	m.remoteShimsByEnv[envKey] = shim
 	m.remoteShim = shim
+	m.setEnvHostForEnvLocked(envKey, shimHost{shim: shim})
 }
 
 // BorrowRemoteProvisioningFrom copies src's remote-provisioning state into m
@@ -448,6 +463,7 @@ func (m *SessionManager) BorrowRemoteProvisioningFrom(src *SessionManager) {
 	src.mu.Lock()
 	def := src.remoteShim
 	byEnv := maps.Clone(src.remoteShimsByEnv)
+	envHosts := maps.Clone(src.envHostsByEnv)
 	graphAdapters := maps.Clone(src.graphAdapters)
 	adapterDirs := maps.Clone(src.adapterDirs)
 	deferred := maps.Clone(src.deferredRemoteAdapters)
@@ -460,6 +476,7 @@ func (m *SessionManager) BorrowRemoteProvisioningFrom(src *SessionManager) {
 		m.remoteShimsByEnv = mergeMapInto(m.remoteShimsByEnv, byEnv)
 		m.remoteShimsBorrowed = true
 	}
+	m.envHostsByEnv = mergeMapInto(m.envHostsByEnv, envHosts)
 	m.graphAdapters = mergeMapInto(m.graphAdapters, graphAdapters)
 	m.adapterDirs = mergeMapInto(m.adapterDirs, adapterDirs)
 	m.deferredRemoteAdapters = mergeMapInto(m.deferredRemoteAdapters, deferred)
@@ -866,13 +883,17 @@ func (m *SessionManager) remoteShimForAdapter(instanceID string) (RemoteShim, bo
 // call site exercises this fallback and staticcheck SA1019 would flag it.
 func (m *SessionManager) RegisterRemoteScope(scope, token string) error {
 	m.mu.Lock()
-	shim := m.remoteShim
+	host := m.envHostDefaultLocked()
 	m.mu.Unlock()
-	if shim == nil {
+	if host == nil {
 		return errors.New("no remote shim registered")
 	}
-	shim.RegisterScope(scope, token)
-	return nil
+	_, err := host.Control(context.Background(), envhost.ControlRequest{
+		Scope: scopeRefForKey(scope),
+		Kind:  envhost.ControlRegisterScope,
+		Token: token,
+	})
+	return err
 }
 
 // UnregisterRemoteScope removes a scope's accept token so the shim rejects
@@ -881,13 +902,16 @@ func (m *SessionManager) RegisterRemoteScope(scope, token string) error {
 // Deprecated: legacy single-shim form; use UnregisterRemoteScopeForEnv.
 func (m *SessionManager) UnregisterRemoteScope(scope string) error {
 	m.mu.Lock()
-	shim := m.remoteShim
+	host := m.envHostDefaultLocked()
 	m.mu.Unlock()
-	if shim == nil {
+	if host == nil {
 		return errors.New("no remote shim registered")
 	}
-	shim.UnregisterScope(scope)
-	return nil
+	_, err := host.Control(context.Background(), envhost.ControlRequest{
+		Scope: scopeRefForKey(scope),
+		Kind:  envhost.ControlUnregisterScope,
+	})
+	return err
 }
 
 // CloseRemoteHandle closes the active remote session for the given adapter
@@ -896,12 +920,17 @@ func (m *SessionManager) UnregisterRemoteScope(scope string) error {
 // Deprecated: legacy single-shim form; use CloseRemoteHandleForEnv.
 func (m *SessionManager) CloseRemoteHandle(ctx context.Context, adapterType, scope string) error {
 	m.mu.Lock()
-	shim := m.remoteShim
+	host := m.envHostDefaultLocked()
 	m.mu.Unlock()
-	if shim == nil {
+	if host == nil {
 		return nil
 	}
-	return shim.CloseHandle(ctx, adapterType, scope)
+	_, err := host.Control(ctx, envhost.ControlRequest{
+		Scope:   scopeRefForKey(scope),
+		Adapter: adapterType,
+		Kind:    envhost.ControlCloseHandle,
+	})
+	return err
 }
 
 // RemoteListenAddr returns the shim's bound listen address, or "" when no
@@ -913,68 +942,92 @@ func (m *SessionManager) CloseRemoteHandle(ctx context.Context, adapterType, sco
 // address.
 func (m *SessionManager) RemoteListenAddr() string {
 	m.mu.Lock()
-	shim := m.remoteShim
+	host := m.envHostDefaultLocked()
 	m.mu.Unlock()
-	if shim == nil {
+	if host == nil {
 		return ""
 	}
-	return shim.ListenAddr()
+	resp, err := host.Control(context.Background(), envhost.ControlRequest{
+		Kind: envhost.ControlListenAddress,
+	})
+	if err != nil {
+		return ""
+	}
+	return resp.Address
 }
 
 // RegisterRemoteScopeForEnv registers a rotated accept token for the given
-// scope with the shim serving envKey. It returns an error when no
-// shim is registered for the environment.
+// scope with the host serving envKey. It returns an error when no
+// host is registered for the environment.
 func (m *SessionManager) RegisterRemoteScopeForEnv(envKey, scope, token string) error {
 	m.mu.Lock()
-	shim := m.remoteShimForEnvLocked(envKey)
+	host := m.envHostForEnvLocked(envKey)
 	m.mu.Unlock()
-	if shim == nil {
+	if host == nil {
 		return errors.New("no remote shim registered")
 	}
-	shim.RegisterScope(scope, token)
-	return nil
+	_, err := host.Control(context.Background(), envhost.ControlRequest{
+		Scope: scopeRefForKey(scope),
+		Kind:  envhost.ControlRegisterScope,
+		Token: token,
+	})
+	return err
 }
 
-// UnregisterRemoteScopeForEnv removes a scope's accept token from the shim
+// UnregisterRemoteScopeForEnv removes a scope's accept token from the host
 // serving envKey so it rejects future reconnects with the old token.
 func (m *SessionManager) UnregisterRemoteScopeForEnv(envKey, scope string) error {
 	m.mu.Lock()
-	shim := m.remoteShimForEnvLocked(envKey)
+	host := m.envHostForEnvLocked(envKey)
 	m.mu.Unlock()
-	if shim == nil {
+	if host == nil {
 		return errors.New("no remote shim registered")
 	}
-	shim.UnregisterScope(scope)
-	return nil
+	_, err := host.Control(context.Background(), envhost.ControlRequest{
+		Scope: scopeRefForKey(scope),
+		Kind:  envhost.ControlUnregisterScope,
+	})
+	return err
 }
 
 // CloseRemoteHandleForEnv closes the active remote session for the given
 // adapter definition identity (`adapterName`, the "<type>.<name>"
-// adapter-instance key) and scope on the shim serving envKey. With
+// adapter-instance key) and scope on the host serving envKey. With
 // per-definition peers this kills only that definition's child; a sibling
 // definition of the same adapter type served by the same peer is untouched.
-// It is a no-op when no shim is registered for the environment.
+// It is a no-op when no host is registered for the environment.
 func (m *SessionManager) CloseRemoteHandleForEnv(ctx context.Context, envKey, adapterName, scope string) error {
 	m.mu.Lock()
-	shim := m.remoteShimForEnvLocked(envKey)
+	host := m.envHostForEnvLocked(envKey)
 	m.mu.Unlock()
-	if shim == nil {
+	if host == nil {
 		return nil
 	}
-	return shim.CloseHandle(ctx, adapterName, scope)
+	_, err := host.Control(ctx, envhost.ControlRequest{
+		Scope:   scopeRefForKey(scope),
+		Adapter: adapterName,
+		Kind:    envhost.ControlCloseHandle,
+	})
+	return err
 }
 
-// RemoteListenAddrForEnv returns the bound listen address of the shim serving
-// envKey, or "" when no shim is registered for it (per-environment
-// shim addresses are published to each environment's adapters).
+// RemoteListenAddrForEnv returns the bound listen address of the host serving
+// envKey, or "" when no host is registered for it (per-environment
+// addresses are published to each environment's adapters).
 func (m *SessionManager) RemoteListenAddrForEnv(envKey string) string {
 	m.mu.Lock()
-	shim := m.remoteShimForEnvLocked(envKey)
+	host := m.envHostForEnvLocked(envKey)
 	m.mu.Unlock()
-	if shim == nil {
+	if host == nil {
 		return ""
 	}
-	return shim.ListenAddr()
+	resp, err := host.Control(context.Background(), envhost.ControlRequest{
+		Kind: envhost.ControlListenAddress,
+	})
+	if err != nil {
+		return ""
+	}
+	return resp.Address
 }
 
 // SetLockfile provides the parsed lockfile so the session manager can
@@ -2079,8 +2132,8 @@ func (m *SessionManager) resolveAdapterHandle(ctx context.Context, name, adapter
 	// Remote-mode dispatch: if the adapter is bound to a remote environment,
 	// wait for the adapter to phone home via the shim serving that
 	// environment (per-environment shims).
-	if shim, ok := m.remoteShimForAdapter(name); ok {
-		return shim.WaitForHandle(ctx, name, scope)
+	if host, ok := m.envHostForAdapter(name); ok {
+		return ensureHostHandle(ctx, host, name, scope)
 	}
 
 	if dl, ok := m.loader.(*DefaultLoader); ok {
@@ -2760,7 +2813,7 @@ func (m *SessionManager) handleCrash(ctx context.Context, name string, step *wor
 	// abort_run is consulted first and keeps its hard-fail arm.
 	remoteRetry := false
 	if onCrash != OnCrashAbortRun && reason == CrashReasonTransportClosed && ctx.Err() == nil {
-		_, remoteRetry = m.remoteShimForAdapter(sess.Name)
+		_, remoteRetry = m.envHostForAdapter(sess.Name)
 	}
 
 	switch {
@@ -3619,12 +3672,12 @@ func (m *SessionManager) resolveAdapterForRespawn(ctx context.Context, sess *Ses
 	// Remote-mode dispatch: if the adapter is bound to a remote environment,
 	// wait for the adapter to phone home via the shim serving that
 	// environment (respawn = reconnect; per-environment shims).
-	if shim, ok := m.remoteShimForAdapter(sess.Name); ok {
+	if host, ok := m.envHostForAdapter(sess.Name); ok {
 		// Exclude the just-crashed handle so we wait for the replacement
 		// connection rather than the dead session still in the shim's map.
 		// (waits and kills name the adapter definition identity —
 		// sess.Name is the "<type>.<name>" instance key.)
-		return shim.WaitForFreshHandle(ctx, sess.Name, sess.ScopeInstanceID, sess.handle)
+		return freshHostHandle(ctx, host, sess.Name, sess.ScopeInstanceID, sess.handle)
 	}
 
 	if dl, ok := m.loader.(*DefaultLoader); ok {
