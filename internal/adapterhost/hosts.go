@@ -239,13 +239,33 @@ func (m *SessionManager) envHostBoundForEnv(envKey string) (envhost.Host, bool) 
 // containerEnvHostForAdapter returns the bound envhost.Host serving the
 // container environment the adapter declaration resolves to. ok is false
 // when the adapter is not container-bound or its environment has no bound
-// supervisor host — the caller then keeps its pre-carve dispatch.
+// supervisor host — the caller then keeps its pre-carve dispatch. A
+// shimHost bound under a container key (a stray shim registration; the
+// container lane has no shim substrate) is refused here: only an explicit
+// SetContainerEnvHost bind dispatches container handles.
 func (m *SessionManager) containerEnvHostForAdapter(name string) (envhost.Host, bool) {
 	envKey, container := m.containerEnvForAdapter(name)
 	if !container {
 		return nil, false
 	}
-	return m.envHostBoundForEnv(envKey)
+	return m.containerEnvHostForEnvKey(envKey)
+}
+
+// containerEnvHostForEnvKey is the bind lookup for one container
+// environment key. A shimHost bound under a container key (a stray shim
+// registration; the container lane has no shim substrate) is refused:
+// only an explicit SetContainerEnvHost bind dispatches container handles.
+//
+// m.mu must NOT be held.
+func (m *SessionManager) containerEnvHostForEnvKey(envKey string) (envhost.Host, bool) {
+	host, ok := m.envHostBoundForEnv(envKey)
+	if !ok {
+		return nil, false
+	}
+	if _, isShim := host.(shimHost); isShim {
+		return nil, false
+	}
+	return host, true
 }
 
 // EnvHostStopper is the ownership contract for supervisor hosts this
@@ -292,7 +312,7 @@ func (m *SessionManager) envHostForAdapter(name string) (envhost.Host, bool) {
 		if !container {
 			return nil, false
 		}
-		return m.envHostBoundForEnv(envKey)
+		return m.containerEnvHostForEnvKey(envKey)
 	}
 	m.mu.Lock()
 	host := m.envHostForEnvLocked(envKey)
