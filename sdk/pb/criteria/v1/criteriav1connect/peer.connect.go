@@ -9,7 +9,8 @@
 // Evolution discipline (additive-only):
 //   - Field numbers in this file are permanent once assigned. Never reuse,
 //     renumber, or re-type an existing field; only ever append.
-//   - The next free `kind` oneof arm in SupervisionEvent is field 14. Do NOT
+//   - The next free `kind` oneof arm in SupervisionEvent is field 15
+//     (field 14 = SessionLedger). Do NOT
 //     `reserved` forward numbers — reserve only genuinely abandoned ones.
 //   - Stage B run-graph events ride THIS journal: extend SupervisionEvent
 //     with new arms; do not fork a second supervision stream or file.
@@ -25,9 +26,22 @@
 //     frame (ADR-0007 D4 role/capability machinery): a peer whose identity
 //     frame does not advertise `workflow.v1` must reject
 //     Control(CancelChildRun) with a typed unimplemented error.
-//   - ADR-0008 D2 (KB-96) added ChildRunTeardownPartial = arm 13 in
+//   - ADR-0008 D2 added ChildRunTeardownPartial = arm 13 in
 //     SupervisionEvent.kind: the child's journal evidence for a force
 //     kill_child on an in-flight (unsettled) child run.
+//   - ADR-0014 M6 added the peer session-control arms: SessionLedger = arm
+//     14 in SupervisionEvent.kind, and the ControlRequest arms OpenSession
+//     = 6, CloseSession = 7, RespawnChild = 8, IdleReap = 9 (the next free
+//     ControlRequest FIELD is 10; arms share the message's field-number
+//     space and are append-only). Session-ledger control is first-class:
+//     open/close per (adapter_type, scope) are verbs on this wire, not
+//     Execute side-effects, with peer-side respawn (declared policy grace)
+//     and idle-reap (declared window) policy riding the same control
+//     channel. All four arms are gated on the capability string
+//     `session.v1` negotiated in the identity frame (ADR-0007 D4): a peer
+//     whose identity frame does not advertise `session.v1` must reject
+//     Control carrying any of them with a typed unimplemented error.
+//     SessionLedger.event vocabulary: opened|closed|adopted|detached.
 //
 // Delivery semantics:
 //   - At-least-once delivery. Consumers dedup on (peer conn identity,

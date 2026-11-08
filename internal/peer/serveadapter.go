@@ -61,7 +61,12 @@ func NewServeAdapterServer(cfg *Config, impl adapterhost.Client, journal *EventJ
 		log:                 log,
 		heartbeat:           tunables.FromEnv().HeartbeatInterval,
 		capabilities:        defaultPeerCapabilities(),
-		exitSignal:          make(chan struct{}),
+		// Same ledger the parent constructor wires: the session-control
+		// verbs journal from the server in BOTH roles, and this role
+		// advertises session.v1 too — a nil table here would panic Control
+		// OpenSession/CloseSession (the constructor-literal drift class).
+		ledger:     newScopeLedger(),
+		exitSignal: make(chan struct{}),
 	}
 	s.dialFunc = s.dial
 	s.childClient = func(string) (adapterhost.Client, bool) { return impl, true }
@@ -134,7 +139,12 @@ func (s *Server) journalChildRunTeardownPartial(runID, detail string) {
 // controlServeAdapter answers Control verbs when there is no child runtime:
 // a child run lives inside this process, so CancelChildRun routes to the
 // optional canceler and KillChild — which targets a spawned process — has
-// nothing to act on (host-initiated teardown rides CloseSession).
+// nothing to act on (host-initiated teardown rides CloseSession). The
+// same is true of respawn_child and idle_reap: they address a spawned
+// child, so in this role they answer the honest accepted=false runtime
+// rejection at the fallback even though the identity frame advertises
+// session.v1 (the capability gate passed; the arm simply has no subject
+// here). The session-ledger verbs instead serve the served adapter.
 func (s *Server) controlServeAdapter(req *criteriav1.ControlRequest) *criteriav1.ControlResponse {
 	if kill := req.GetKillChild(); kill != nil {
 		// ADR-0008 D2: the parent's teardown settle grace expired and

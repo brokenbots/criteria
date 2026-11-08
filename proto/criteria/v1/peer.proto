@@ -9,7 +9,8 @@
 // Evolution discipline (additive-only):
 //   - Field numbers in this file are permanent once assigned. Never reuse,
 //     renumber, or re-type an existing field; only ever append.
-//   - The next free `kind` oneof arm in SupervisionEvent is field 14. Do NOT
+//   - The next free `kind` oneof arm in SupervisionEvent is field 15
+//     (field 14 = SessionLedger). Do NOT
 //     `reserved` forward numbers — reserve only genuinely abandoned ones.
 //   - Stage B run-graph events ride THIS journal: extend SupervisionEvent
 //     with new arms; do not fork a second supervision stream or file.
@@ -25,9 +26,22 @@
 //     frame (ADR-0007 D4 role/capability machinery): a peer whose identity
 //     frame does not advertise `workflow.v1` must reject
 //     Control(CancelChildRun) with a typed unimplemented error.
-//   - ADR-0008 D2 (KB-96) added ChildRunTeardownPartial = arm 13 in
+//   - ADR-0008 D2 added ChildRunTeardownPartial = arm 13 in
 //     SupervisionEvent.kind: the child's journal evidence for a force
 //     kill_child on an in-flight (unsettled) child run.
+//   - ADR-0014 M6 added the peer session-control arms: SessionLedger = arm
+//     14 in SupervisionEvent.kind, and the ControlRequest arms OpenSession
+//     = 6, CloseSession = 7, RespawnChild = 8, IdleReap = 9 (the next free
+//     ControlRequest FIELD is 10; arms share the message's field-number
+//     space and are append-only). Session-ledger control is first-class:
+//     open/close per (adapter_type, scope) are verbs on this wire, not
+//     Execute side-effects, with peer-side respawn (declared policy grace)
+//     and idle-reap (declared window) policy riding the same control
+//     channel. All four arms are gated on the capability string
+//     `session.v1` negotiated in the identity frame (ADR-0007 D4): a peer
+//     whose identity frame does not advertise `session.v1` must reject
+//     Control carrying any of them with a typed unimplemented error.
+//     SessionLedger.event vocabulary: opened|closed|adopted|detached.
 //
 // Delivery semantics:
 //   - At-least-once delivery. Consumers dedup on (peer conn identity,
@@ -105,6 +119,11 @@ message SupervisionEvent {
     // kill_child landed on an in-flight child run — the run's terminal never
     // journaled, so the force-kill IS the child's last run truth.
     ChildRunTeardownPartial child_run_teardown_partial = 13; // run_id, detail
+    // ADR-0014 M6 (session.v1-gated): the ledger truth for a session
+    // lifecycle under (adapter_type, scope). The session id rides the
+    // event envelope's session_id; event vocabulary: opened|closed|
+    // adopted|detached (see SessionLedger).
+    SessionLedger session_ledger = 14; // event, reason
   }
 }
 
@@ -203,6 +222,21 @@ message ControlRequest {
     // 2-4 by adapter_type/scope/grace_ms; arms share the field-number
     // space and are append-only).
     CancelChildRun cancel_child_run = 5;
+    // ADR-0014 M6 session-control arms (session.v1-gated; same typed
+    // unimplemented contract as cancel_child_run). OpenSession/CloseSession
+    // are the (adapter_type, scope) session-ledger verbs: the peer journals
+    // the ledger fact and tracks the session, or rejects with an honest
+    // ControlResponse. RespawnChild replaces the addressed child with a
+    // fresh generation from its preserved boot spec (host-commanded
+    // displacement or dead-child re-spawn, with the declared policy grace
+    // before a live child is force-killed). IdleReap declares the
+    // keepalive/idle window the peer-side reap policy applies for the
+    // addressed child; the peer records the policy as-is (no host timer
+    // constants — the declaration rides the tunables registry's semantics).
+    OpenSession open_session = 6;
+    CloseSession close_session = 7;
+    RespawnChild respawn_child = 8;
+    IdleReap idle_reap = 9;
   }
   // Process-level subject the control applies to.
   string adapter_type = 2;
@@ -221,6 +255,69 @@ message CancelChildRun {
   string run_id = 1;
   // Grace period before the run is force-cancelled.
   uint32 grace_ms = 2;
+}
+
+// SessionLedger is the peer-attested ledger fact for one session lifecycle
+// (ADR-0014 M6, session.v1-gated). The session id, adapter_type, and scope
+// ride the SupervisionEvent envelope; this payload carries the ledger verb
+// and its reason. `event` uses the engagement-ledger vocabulary shared with
+// the host's environment-host ledger semantics:
+//   - opened: the scope provisioned a fresh engagement.
+//   - closed: the engagement was released (teardown).
+//   - adopted: an engagement (fresh or previously detached) was re-adopted
+//     by a scope re-entry instead of being re-provisioned.
+//   - detached: the engagement outlives the scope that released it (detach
+//     fate) so a sibling or re-entering scope can adopt it later.
+message SessionLedger {
+  // Ledger verb: one of opened|closed|adopted|detached.
+  string event = 1;
+  // Free-form close/detach reason (empty for opened/adopted).
+  string reason = 2;
+}
+
+// OpenSession declares a scope's session engagement on (adapter_type,
+// scope) so the peer journals and tracks it as ledger truth. A session the
+// peer already journals re-adopts (event "adopted"); a fresh one journals
+// "opened".
+message OpenSession {
+  // Adapter-side session id (opaque to the wire).
+  string session_id = 1;
+}
+
+// CloseSession releases or detaches a journalled session. With detach the
+// engagement outlives the closing scope (event "detached", tracking kept so
+// a later re-entry re-adopts); without it the engagement is released (event
+// "closed", tracking dropped).
+message CloseSession {
+  // Adapter-side session id being closed.
+  string session_id = 1;
+  // Free-form reason for the close/detach (ledgered verbatim).
+  string reason = 2;
+  // Detach the engagement instead of releasing it.
+  bool detach = 3;
+}
+
+// RespawnChild replaces the addressed child with a fresh generation spawned
+// verbatim from its preserved boot spec (same binary, same digest pin, no
+// re-resolution). A dead child respawns immediately; a live child is
+// displaced with the declared policy grace (policy_grace_ms) before it is
+// peer-initiated force-killed and its exit facts settle. The host-commanded
+// respawn overrides the serve-path crash no-respawn gate — it is the
+// host's recovery decision.
+message RespawnChild {
+  // Grace the displaced live child receives before it is force-killed;
+  // 0 forces immediately.
+  uint32 policy_grace_ms = 1;
+}
+
+// IdleReap declares the idle window the peer-side reap policy applies for
+// the addressed child: after after_ms of engagement-less idle the child may
+// be reaped. The declaration is recorded policy (returned via
+// ControlResponse.detail), not an immediate action; after_ms = 0 withdraws
+// the declared window.
+message IdleReap {
+  // Idle window (ms) after which the child may be reaped; 0 withdraws.
+  uint64 after_ms = 1;
 }
 
 message ControlResponse {

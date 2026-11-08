@@ -9,7 +9,8 @@
 // Evolution discipline (additive-only):
 //   - Field numbers in this file are permanent once assigned. Never reuse,
 //     renumber, or re-type an existing field; only ever append.
-//   - The next free `kind` oneof arm in SupervisionEvent is field 14. Do NOT
+//   - The next free `kind` oneof arm in SupervisionEvent is field 15
+//     (field 14 = SessionLedger). Do NOT
 //     `reserved` forward numbers — reserve only genuinely abandoned ones.
 //   - Stage B run-graph events ride THIS journal: extend SupervisionEvent
 //     with new arms; do not fork a second supervision stream or file.
@@ -25,9 +26,22 @@
 //     frame (ADR-0007 D4 role/capability machinery): a peer whose identity
 //     frame does not advertise `workflow.v1` must reject
 //     Control(CancelChildRun) with a typed unimplemented error.
-//   - ADR-0008 D2 (KB-96) added ChildRunTeardownPartial = arm 13 in
+//   - ADR-0008 D2 added ChildRunTeardownPartial = arm 13 in
 //     SupervisionEvent.kind: the child's journal evidence for a force
 //     kill_child on an in-flight (unsettled) child run.
+//   - ADR-0014 M6 added the peer session-control arms: SessionLedger = arm
+//     14 in SupervisionEvent.kind, and the ControlRequest arms OpenSession
+//     = 6, CloseSession = 7, RespawnChild = 8, IdleReap = 9 (the next free
+//     ControlRequest FIELD is 10; arms share the message's field-number
+//     space and are append-only). Session-ledger control is first-class:
+//     open/close per (adapter_type, scope) are verbs on this wire, not
+//     Execute side-effects, with peer-side respawn (declared policy grace)
+//     and idle-reap (declared window) policy riding the same control
+//     channel. All four arms are gated on the capability string
+//     `session.v1` negotiated in the identity frame (ADR-0007 D4): a peer
+//     whose identity frame does not advertise `session.v1` must reject
+//     Control carrying any of them with a typed unimplemented error.
+//     SessionLedger.event vocabulary: opened|closed|adopted|detached.
 //
 // Delivery semantics:
 //   - At-least-once delivery. Consumers dedup on (peer conn identity,
@@ -158,6 +172,7 @@ type SupervisionEvent struct {
 	//	*SupervisionEvent_ChildRunStarted
 	//	*SupervisionEvent_ChildRunTerminal
 	//	*SupervisionEvent_ChildRunTeardownPartial
+	//	*SupervisionEvent_SessionLedger
 	Kind          isSupervisionEvent_Kind `protobuf_oneof:"kind"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -307,6 +322,15 @@ func (x *SupervisionEvent) GetChildRunTeardownPartial() *ChildRunTeardownPartial
 	return nil
 }
 
+func (x *SupervisionEvent) GetSessionLedger() *SessionLedger {
+	if x != nil {
+		if x, ok := x.Kind.(*SupervisionEvent_SessionLedger); ok {
+			return x.SessionLedger
+		}
+	}
+	return nil
+}
+
 type isSupervisionEvent_Kind interface {
 	isSupervisionEvent_Kind()
 }
@@ -348,6 +372,14 @@ type SupervisionEvent_ChildRunTeardownPartial struct {
 	ChildRunTeardownPartial *ChildRunTeardownPartial `protobuf:"bytes,13,opt,name=child_run_teardown_partial,json=childRunTeardownPartial,proto3,oneof"` // run_id, detail
 }
 
+type SupervisionEvent_SessionLedger struct {
+	// ADR-0014 M6 (session.v1-gated): the ledger truth for a session
+	// lifecycle under (adapter_type, scope). The session id rides the
+	// event envelope's session_id; event vocabulary: opened|closed|
+	// adopted|detached (see SessionLedger).
+	SessionLedger *SessionLedger `protobuf:"bytes,14,opt,name=session_ledger,json=sessionLedger,proto3,oneof"` // event, reason
+}
+
 func (*SupervisionEvent_Spawned) isSupervisionEvent_Kind() {}
 
 func (*SupervisionEvent_Exited) isSupervisionEvent_Kind() {}
@@ -363,6 +395,8 @@ func (*SupervisionEvent_ChildRunStarted) isSupervisionEvent_Kind() {}
 func (*SupervisionEvent_ChildRunTerminal) isSupervisionEvent_Kind() {}
 
 func (*SupervisionEvent_ChildRunTeardownPartial) isSupervisionEvent_Kind() {}
+
+func (*SupervisionEvent_SessionLedger) isSupervisionEvent_Kind() {}
 
 type ProcessSpawned struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -866,6 +900,10 @@ type ControlRequest struct {
 	//
 	//	*ControlRequest_KillChild
 	//	*ControlRequest_CancelChildRun
+	//	*ControlRequest_OpenSession
+	//	*ControlRequest_CloseSession
+	//	*ControlRequest_RespawnChild
+	//	*ControlRequest_IdleReap
 	Kind isControlRequest_Kind `protobuf_oneof:"kind"`
 	// Process-level subject the control applies to.
 	AdapterType string `protobuf:"bytes,2,opt,name=adapter_type,json=adapterType,proto3" json:"adapter_type,omitempty"`
@@ -932,6 +970,42 @@ func (x *ControlRequest) GetCancelChildRun() *CancelChildRun {
 	return nil
 }
 
+func (x *ControlRequest) GetOpenSession() *OpenSession {
+	if x != nil {
+		if x, ok := x.Kind.(*ControlRequest_OpenSession); ok {
+			return x.OpenSession
+		}
+	}
+	return nil
+}
+
+func (x *ControlRequest) GetCloseSession() *CloseSession {
+	if x != nil {
+		if x, ok := x.Kind.(*ControlRequest_CloseSession); ok {
+			return x.CloseSession
+		}
+	}
+	return nil
+}
+
+func (x *ControlRequest) GetRespawnChild() *RespawnChild {
+	if x != nil {
+		if x, ok := x.Kind.(*ControlRequest_RespawnChild); ok {
+			return x.RespawnChild
+		}
+	}
+	return nil
+}
+
+func (x *ControlRequest) GetIdleReap() *IdleReap {
+	if x != nil {
+		if x, ok := x.Kind.(*ControlRequest_IdleReap); ok {
+			return x.IdleReap
+		}
+	}
+	return nil
+}
+
 func (x *ControlRequest) GetAdapterType() string {
 	if x != nil {
 		return x.AdapterType
@@ -971,9 +1045,44 @@ type ControlRequest_CancelChildRun struct {
 	CancelChildRun *CancelChildRun `protobuf:"bytes,5,opt,name=cancel_child_run,json=cancelChildRun,proto3,oneof"`
 }
 
+type ControlRequest_OpenSession struct {
+	// ADR-0014 M6 session-control arms (session.v1-gated; same typed
+	// unimplemented contract as cancel_child_run). OpenSession/CloseSession
+	// are the (adapter_type, scope) session-ledger verbs: the peer journals
+	// the ledger fact and tracks the session, or rejects with an honest
+	// ControlResponse. RespawnChild replaces the addressed child with a
+	// fresh generation from its preserved boot spec (host-commanded
+	// displacement or dead-child re-spawn, with the declared policy grace
+	// before a live child is force-killed). IdleReap declares the
+	// keepalive/idle window the peer-side reap policy applies for the
+	// addressed child; the peer records the policy as-is (no host timer
+	// constants — the declaration rides the tunables registry's semantics).
+	OpenSession *OpenSession `protobuf:"bytes,6,opt,name=open_session,json=openSession,proto3,oneof"`
+}
+
+type ControlRequest_CloseSession struct {
+	CloseSession *CloseSession `protobuf:"bytes,7,opt,name=close_session,json=closeSession,proto3,oneof"`
+}
+
+type ControlRequest_RespawnChild struct {
+	RespawnChild *RespawnChild `protobuf:"bytes,8,opt,name=respawn_child,json=respawnChild,proto3,oneof"`
+}
+
+type ControlRequest_IdleReap struct {
+	IdleReap *IdleReap `protobuf:"bytes,9,opt,name=idle_reap,json=idleReap,proto3,oneof"`
+}
+
 func (*ControlRequest_KillChild) isControlRequest_Kind() {}
 
 func (*ControlRequest_CancelChildRun) isControlRequest_Kind() {}
+
+func (*ControlRequest_OpenSession) isControlRequest_Kind() {}
+
+func (*ControlRequest_CloseSession) isControlRequest_Kind() {}
+
+func (*ControlRequest_RespawnChild) isControlRequest_Kind() {}
+
+func (*ControlRequest_IdleReap) isControlRequest_Kind() {}
 
 // CancelChildRun cancels one criteria run under the peer (ADR-0008
 // run control). run_id is the child run's criteria run id; grace_ms is the
@@ -1033,6 +1142,290 @@ func (x *CancelChildRun) GetGraceMs() uint32 {
 	return 0
 }
 
+// SessionLedger is the peer-attested ledger fact for one session lifecycle
+// (ADR-0014 M6, session.v1-gated). The session id, adapter_type, and scope
+// ride the SupervisionEvent envelope; this payload carries the ledger verb
+// and its reason. `event` uses the engagement-ledger vocabulary shared with
+// the host's environment-host ledger semantics:
+//   - opened: the scope provisioned a fresh engagement.
+//   - closed: the engagement was released (teardown).
+//   - adopted: an engagement (fresh or previously detached) was re-adopted
+//     by a scope re-entry instead of being re-provisioned.
+//   - detached: the engagement outlives the scope that released it (detach
+//     fate) so a sibling or re-entering scope can adopt it later.
+type SessionLedger struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Ledger verb: one of opened|closed|adopted|detached.
+	Event string `protobuf:"bytes,1,opt,name=event,proto3" json:"event,omitempty"`
+	// Free-form close/detach reason (empty for opened/adopted).
+	Reason        string `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SessionLedger) Reset() {
+	*x = SessionLedger{}
+	mi := &file_criteria_v1_peer_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SessionLedger) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SessionLedger) ProtoMessage() {}
+
+func (x *SessionLedger) ProtoReflect() protoreflect.Message {
+	mi := &file_criteria_v1_peer_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SessionLedger.ProtoReflect.Descriptor instead.
+func (*SessionLedger) Descriptor() ([]byte, []int) {
+	return file_criteria_v1_peer_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *SessionLedger) GetEvent() string {
+	if x != nil {
+		return x.Event
+	}
+	return ""
+}
+
+func (x *SessionLedger) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+// OpenSession declares a scope's session engagement on (adapter_type,
+// scope) so the peer journals and tracks it as ledger truth. A session the
+// peer already journals re-adopts (event "adopted"); a fresh one journals
+// "opened".
+type OpenSession struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Adapter-side session id (opaque to the wire).
+	SessionId     string `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OpenSession) Reset() {
+	*x = OpenSession{}
+	mi := &file_criteria_v1_peer_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OpenSession) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OpenSession) ProtoMessage() {}
+
+func (x *OpenSession) ProtoReflect() protoreflect.Message {
+	mi := &file_criteria_v1_peer_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OpenSession.ProtoReflect.Descriptor instead.
+func (*OpenSession) Descriptor() ([]byte, []int) {
+	return file_criteria_v1_peer_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *OpenSession) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+// CloseSession releases or detaches a journalled session. With detach the
+// engagement outlives the closing scope (event "detached", tracking kept so
+// a later re-entry re-adopts); without it the engagement is released (event
+// "closed", tracking dropped).
+type CloseSession struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Adapter-side session id being closed.
+	SessionId string `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	// Free-form reason for the close/detach (ledgered verbatim).
+	Reason string `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	// Detach the engagement instead of releasing it.
+	Detach        bool `protobuf:"varint,3,opt,name=detach,proto3" json:"detach,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CloseSession) Reset() {
+	*x = CloseSession{}
+	mi := &file_criteria_v1_peer_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CloseSession) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CloseSession) ProtoMessage() {}
+
+func (x *CloseSession) ProtoReflect() protoreflect.Message {
+	mi := &file_criteria_v1_peer_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CloseSession.ProtoReflect.Descriptor instead.
+func (*CloseSession) Descriptor() ([]byte, []int) {
+	return file_criteria_v1_peer_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *CloseSession) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *CloseSession) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *CloseSession) GetDetach() bool {
+	if x != nil {
+		return x.Detach
+	}
+	return false
+}
+
+// RespawnChild replaces the addressed child with a fresh generation spawned
+// verbatim from its preserved boot spec (same binary, same digest pin, no
+// re-resolution). A dead child respawns immediately; a live child is
+// displaced with the declared policy grace (policy_grace_ms) before it is
+// peer-initiated force-killed and its exit facts settle. The host-commanded
+// respawn overrides the serve-path crash no-respawn gate — it is the
+// host's recovery decision.
+type RespawnChild struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Grace the displaced live child receives before it is force-killed;
+	// 0 forces immediately.
+	PolicyGraceMs uint32 `protobuf:"varint,1,opt,name=policy_grace_ms,json=policyGraceMs,proto3" json:"policy_grace_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RespawnChild) Reset() {
+	*x = RespawnChild{}
+	mi := &file_criteria_v1_peer_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RespawnChild) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RespawnChild) ProtoMessage() {}
+
+func (x *RespawnChild) ProtoReflect() protoreflect.Message {
+	mi := &file_criteria_v1_peer_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RespawnChild.ProtoReflect.Descriptor instead.
+func (*RespawnChild) Descriptor() ([]byte, []int) {
+	return file_criteria_v1_peer_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *RespawnChild) GetPolicyGraceMs() uint32 {
+	if x != nil {
+		return x.PolicyGraceMs
+	}
+	return 0
+}
+
+// IdleReap declares the idle window the peer-side reap policy applies for
+// the addressed child: after after_ms of engagement-less idle the child may
+// be reaped. The declaration is recorded policy (returned via
+// ControlResponse.detail), not an immediate action; after_ms = 0 withdraws
+// the declared window.
+type IdleReap struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Idle window (ms) after which the child may be reaped; 0 withdraws.
+	AfterMs       uint64 `protobuf:"varint,1,opt,name=after_ms,json=afterMs,proto3" json:"after_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *IdleReap) Reset() {
+	*x = IdleReap{}
+	mi := &file_criteria_v1_peer_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IdleReap) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IdleReap) ProtoMessage() {}
+
+func (x *IdleReap) ProtoReflect() protoreflect.Message {
+	mi := &file_criteria_v1_peer_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IdleReap.ProtoReflect.Descriptor instead.
+func (*IdleReap) Descriptor() ([]byte, []int) {
+	return file_criteria_v1_peer_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *IdleReap) GetAfterMs() uint64 {
+	if x != nil {
+		return x.AfterMs
+	}
+	return 0
+}
+
 type ControlResponse struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	Accepted bool                   `protobuf:"varint,1,opt,name=accepted,proto3" json:"accepted,omitempty"`
@@ -1044,7 +1437,7 @@ type ControlResponse struct {
 
 func (x *ControlResponse) Reset() {
 	*x = ControlResponse{}
-	mi := &file_criteria_v1_peer_proto_msgTypes[12]
+	mi := &file_criteria_v1_peer_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1056,7 +1449,7 @@ func (x *ControlResponse) String() string {
 func (*ControlResponse) ProtoMessage() {}
 
 func (x *ControlResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_peer_proto_msgTypes[12]
+	mi := &file_criteria_v1_peer_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1069,7 +1462,7 @@ func (x *ControlResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ControlResponse.ProtoReflect.Descriptor instead.
 func (*ControlResponse) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_peer_proto_rawDescGZIP(), []int{12}
+	return file_criteria_v1_peer_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *ControlResponse) GetAccepted() bool {
@@ -1094,7 +1487,7 @@ type KillChild struct {
 
 func (x *KillChild) Reset() {
 	*x = KillChild{}
-	mi := &file_criteria_v1_peer_proto_msgTypes[13]
+	mi := &file_criteria_v1_peer_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1106,7 +1499,7 @@ func (x *KillChild) String() string {
 func (*KillChild) ProtoMessage() {}
 
 func (x *KillChild) ProtoReflect() protoreflect.Message {
-	mi := &file_criteria_v1_peer_proto_msgTypes[13]
+	mi := &file_criteria_v1_peer_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1119,7 +1512,7 @@ func (x *KillChild) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KillChild.ProtoReflect.Descriptor instead.
 func (*KillChild) Descriptor() ([]byte, []int) {
-	return file_criteria_v1_peer_proto_rawDescGZIP(), []int{13}
+	return file_criteria_v1_peer_proto_rawDescGZIP(), []int{18}
 }
 
 var File_criteria_v1_peer_proto protoreflect.FileDescriptor
@@ -1129,7 +1522,7 @@ const file_criteria_v1_peer_proto_rawDesc = "" +
 	"\x16criteria/v1/peer.proto\x12\vcriteria.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"_\n" +
 	"\x12SupervisionRequest\x12&\n" +
 	"\x0fsince_event_seq\x18\x01 \x01(\x04R\rsinceEventSeq\x12!\n" +
-	"\fadapter_type\x18\x02 \x01(\tR\vadapterType\"\xdb\x05\n" +
+	"\fadapter_type\x18\x02 \x01(\tR\vadapterType\"\xa0\x06\n" +
 	"\x10SupervisionEvent\x12\x1b\n" +
 	"\tevent_seq\x18\x01 \x01(\x04R\beventSeq\x12*\n" +
 	"\x02at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\x12!\n" +
@@ -1145,7 +1538,8 @@ const file_criteria_v1_peer_proto_rawDesc = "" +
 	" \x01(\v2!.criteria.v1.SupervisionHeartbeatH\x00R\theartbeat\x12J\n" +
 	"\x11child_run_started\x18\v \x01(\v2\x1c.criteria.v1.ChildRunStartedH\x00R\x0fchildRunStarted\x12M\n" +
 	"\x12child_run_terminal\x18\f \x01(\v2\x1d.criteria.v1.ChildRunTerminalH\x00R\x10childRunTerminal\x12c\n" +
-	"\x1achild_run_teardown_partial\x18\r \x01(\v2$.criteria.v1.ChildRunTeardownPartialH\x00R\x17childRunTeardownPartialB\x06\n" +
+	"\x1achild_run_teardown_partial\x18\r \x01(\v2$.criteria.v1.ChildRunTeardownPartialH\x00R\x17childRunTeardownPartial\x12C\n" +
+	"\x0esession_ledger\x18\x0e \x01(\v2\x1a.criteria.v1.SessionLedgerH\x00R\rsessionLedgerB\x06\n" +
 	"\x04kind\"l\n" +
 	"\x0eProcessSpawned\x12\x16\n" +
 	"\x06binary\x18\x01 \x01(\tR\x06binary\x12\x16\n" +
@@ -1175,18 +1569,37 @@ const file_criteria_v1_peer_proto_rawDesc = "" +
 	"\x0eoutputs_digest\x18\x03 \x01(\tR\routputsDigest\"H\n" +
 	"\x17ChildRunTeardownPartial\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x16\n" +
-	"\x06detail\x18\x02 \x01(\tR\x06detail\"\xee\x01\n" +
+	"\x06detail\x18\x02 \x01(\tR\x06detail\"\xe7\x03\n" +
 	"\x0eControlRequest\x127\n" +
 	"\n" +
 	"kill_child\x18\x01 \x01(\v2\x16.criteria.v1.KillChildH\x00R\tkillChild\x12G\n" +
-	"\x10cancel_child_run\x18\x05 \x01(\v2\x1b.criteria.v1.CancelChildRunH\x00R\x0ecancelChildRun\x12!\n" +
+	"\x10cancel_child_run\x18\x05 \x01(\v2\x1b.criteria.v1.CancelChildRunH\x00R\x0ecancelChildRun\x12=\n" +
+	"\fopen_session\x18\x06 \x01(\v2\x18.criteria.v1.OpenSessionH\x00R\vopenSession\x12@\n" +
+	"\rclose_session\x18\a \x01(\v2\x19.criteria.v1.CloseSessionH\x00R\fcloseSession\x12@\n" +
+	"\rrespawn_child\x18\b \x01(\v2\x19.criteria.v1.RespawnChildH\x00R\frespawnChild\x124\n" +
+	"\tidle_reap\x18\t \x01(\v2\x15.criteria.v1.IdleReapH\x00R\bidleReap\x12!\n" +
 	"\fadapter_type\x18\x02 \x01(\tR\vadapterType\x12\x14\n" +
 	"\x05scope\x18\x03 \x01(\tR\x05scope\x12\x19\n" +
 	"\bgrace_ms\x18\x04 \x01(\rR\agraceMsB\x06\n" +
 	"\x04kind\"B\n" +
 	"\x0eCancelChildRun\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x19\n" +
-	"\bgrace_ms\x18\x02 \x01(\rR\agraceMs\"E\n" +
+	"\bgrace_ms\x18\x02 \x01(\rR\agraceMs\"=\n" +
+	"\rSessionLedger\x12\x14\n" +
+	"\x05event\x18\x01 \x01(\tR\x05event\x12\x16\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\",\n" +
+	"\vOpenSession\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\"]\n" +
+	"\fCloseSession\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x16\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\x12\x16\n" +
+	"\x06detach\x18\x03 \x01(\bR\x06detach\"6\n" +
+	"\fRespawnChild\x12&\n" +
+	"\x0fpolicy_grace_ms\x18\x01 \x01(\rR\rpolicyGraceMs\"%\n" +
+	"\bIdleReap\x12\x19\n" +
+	"\bafter_ms\x18\x01 \x01(\x04R\aafterMs\"E\n" +
 	"\x0fControlResponse\x12\x1a\n" +
 	"\baccepted\x18\x01 \x01(\bR\baccepted\x12\x16\n" +
 	"\x06detail\x18\x02 \x01(\tR\x06detail\"\v\n" +
@@ -1207,7 +1620,7 @@ func file_criteria_v1_peer_proto_rawDescGZIP() []byte {
 	return file_criteria_v1_peer_proto_rawDescData
 }
 
-var file_criteria_v1_peer_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_criteria_v1_peer_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_criteria_v1_peer_proto_goTypes = []any{
 	(*SupervisionRequest)(nil),      // 0: criteria.v1.SupervisionRequest
 	(*SupervisionEvent)(nil),        // 1: criteria.v1.SupervisionEvent
@@ -1221,12 +1634,17 @@ var file_criteria_v1_peer_proto_goTypes = []any{
 	(*ChildRunTeardownPartial)(nil), // 9: criteria.v1.ChildRunTeardownPartial
 	(*ControlRequest)(nil),          // 10: criteria.v1.ControlRequest
 	(*CancelChildRun)(nil),          // 11: criteria.v1.CancelChildRun
-	(*ControlResponse)(nil),         // 12: criteria.v1.ControlResponse
-	(*KillChild)(nil),               // 13: criteria.v1.KillChild
-	(*timestamppb.Timestamp)(nil),   // 14: google.protobuf.Timestamp
+	(*SessionLedger)(nil),           // 12: criteria.v1.SessionLedger
+	(*OpenSession)(nil),             // 13: criteria.v1.OpenSession
+	(*CloseSession)(nil),            // 14: criteria.v1.CloseSession
+	(*RespawnChild)(nil),            // 15: criteria.v1.RespawnChild
+	(*IdleReap)(nil),                // 16: criteria.v1.IdleReap
+	(*ControlResponse)(nil),         // 17: criteria.v1.ControlResponse
+	(*KillChild)(nil),               // 18: criteria.v1.KillChild
+	(*timestamppb.Timestamp)(nil),   // 19: google.protobuf.Timestamp
 }
 var file_criteria_v1_peer_proto_depIdxs = []int32{
-	14, // 0: criteria.v1.SupervisionEvent.at:type_name -> google.protobuf.Timestamp
+	19, // 0: criteria.v1.SupervisionEvent.at:type_name -> google.protobuf.Timestamp
 	2,  // 1: criteria.v1.SupervisionEvent.spawned:type_name -> criteria.v1.ProcessSpawned
 	3,  // 2: criteria.v1.SupervisionEvent.exited:type_name -> criteria.v1.ProcessExited
 	4,  // 3: criteria.v1.SupervisionEvent.crash:type_name -> criteria.v1.CrashClassified
@@ -1235,17 +1653,22 @@ var file_criteria_v1_peer_proto_depIdxs = []int32{
 	7,  // 6: criteria.v1.SupervisionEvent.child_run_started:type_name -> criteria.v1.ChildRunStarted
 	8,  // 7: criteria.v1.SupervisionEvent.child_run_terminal:type_name -> criteria.v1.ChildRunTerminal
 	9,  // 8: criteria.v1.SupervisionEvent.child_run_teardown_partial:type_name -> criteria.v1.ChildRunTeardownPartial
-	13, // 9: criteria.v1.ControlRequest.kill_child:type_name -> criteria.v1.KillChild
-	11, // 10: criteria.v1.ControlRequest.cancel_child_run:type_name -> criteria.v1.CancelChildRun
-	0,  // 11: criteria.v1.PeerService.Supervise:input_type -> criteria.v1.SupervisionRequest
-	10, // 12: criteria.v1.PeerService.Control:input_type -> criteria.v1.ControlRequest
-	1,  // 13: criteria.v1.PeerService.Supervise:output_type -> criteria.v1.SupervisionEvent
-	12, // 14: criteria.v1.PeerService.Control:output_type -> criteria.v1.ControlResponse
-	13, // [13:15] is the sub-list for method output_type
-	11, // [11:13] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	12, // 9: criteria.v1.SupervisionEvent.session_ledger:type_name -> criteria.v1.SessionLedger
+	18, // 10: criteria.v1.ControlRequest.kill_child:type_name -> criteria.v1.KillChild
+	11, // 11: criteria.v1.ControlRequest.cancel_child_run:type_name -> criteria.v1.CancelChildRun
+	13, // 12: criteria.v1.ControlRequest.open_session:type_name -> criteria.v1.OpenSession
+	14, // 13: criteria.v1.ControlRequest.close_session:type_name -> criteria.v1.CloseSession
+	15, // 14: criteria.v1.ControlRequest.respawn_child:type_name -> criteria.v1.RespawnChild
+	16, // 15: criteria.v1.ControlRequest.idle_reap:type_name -> criteria.v1.IdleReap
+	0,  // 16: criteria.v1.PeerService.Supervise:input_type -> criteria.v1.SupervisionRequest
+	10, // 17: criteria.v1.PeerService.Control:input_type -> criteria.v1.ControlRequest
+	1,  // 18: criteria.v1.PeerService.Supervise:output_type -> criteria.v1.SupervisionEvent
+	17, // 19: criteria.v1.PeerService.Control:output_type -> criteria.v1.ControlResponse
+	18, // [18:20] is the sub-list for method output_type
+	16, // [16:18] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_criteria_v1_peer_proto_init() }
@@ -1262,10 +1685,15 @@ func file_criteria_v1_peer_proto_init() {
 		(*SupervisionEvent_ChildRunStarted)(nil),
 		(*SupervisionEvent_ChildRunTerminal)(nil),
 		(*SupervisionEvent_ChildRunTeardownPartial)(nil),
+		(*SupervisionEvent_SessionLedger)(nil),
 	}
 	file_criteria_v1_peer_proto_msgTypes[10].OneofWrappers = []any{
 		(*ControlRequest_KillChild)(nil),
 		(*ControlRequest_CancelChildRun)(nil),
+		(*ControlRequest_OpenSession)(nil),
+		(*ControlRequest_CloseSession)(nil),
+		(*ControlRequest_RespawnChild)(nil),
+		(*ControlRequest_IdleReap)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -1273,7 +1701,7 @@ func file_criteria_v1_peer_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_criteria_v1_peer_proto_rawDesc), len(file_criteria_v1_peer_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   14,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
