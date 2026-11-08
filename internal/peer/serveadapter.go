@@ -61,7 +61,12 @@ func NewServeAdapterServer(cfg *Config, impl adapterhost.Client, journal *EventJ
 		log:                 log,
 		heartbeat:           tunables.FromEnv().HeartbeatInterval,
 		capabilities:        defaultPeerCapabilities(),
-		exitSignal:          make(chan struct{}),
+		// Same ledger the parent constructor wires: the session-control
+		// verbs journal from the server in BOTH roles, and this role
+		// advertises session.v1 too — a nil table here would panic Control
+		// OpenSession/CloseSession (the constructor-literal drift class).
+		ledger:     newScopeLedger(),
+		exitSignal: make(chan struct{}),
 	}
 	s.dialFunc = s.dial
 	s.childClient = func(string) (adapterhost.Client, bool) { return impl, true }

@@ -172,23 +172,36 @@ func TestServer_ControlSessionLedgerLifecycle(t *testing.T) {
 
 // TestServer_ControlSessionLedgerServeAdapterRole checks the ledger in the
 // serve-adapter role (rt == nil): the served workflow adapter is the only
-// attribution subject, and the journal is the caller-supplied one.
+// attribution subject, the journal is the caller-supplied one (nil
+// defaulting exercised), and both verbs answer through the production
+// NewServeAdapterServer constructor path.
 func TestServer_ControlSessionLedgerServeAdapterRole(t *testing.T) {
 	f := newPeerServeFixture(t)
-	server := NewServer(&f.cfg, nil, captureLogger(&bytes.Buffer{}))
-	server.serveAdapterJournal = NewEventJournal(32)
+	server := NewServeAdapterServer(&f.cfg, f.child, nil, captureLogger(&bytes.Buffer{}))
 
-	if resp, err := server.Control(f.ctx, &criteriav1.ControlRequest{
+	resp, err := server.Control(f.ctx, &criteriav1.ControlRequest{
 		Scope: "sc",
 		Kind:  &criteriav1.ControlRequest_OpenSession{OpenSession: &criteriav1.OpenSession{SessionId: "sx"}},
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("open in serve-adapter role: %v", err)
 	} else if !resp.GetAccepted() || !strings.Contains(resp.GetDetail(), "opened") {
 		t.Fatalf("open in serve-adapter role: want accepted opened, got %+v", resp)
 	}
+	resp, err = server.Control(f.ctx, &criteriav1.ControlRequest{
+		Scope: "sc",
+		Kind:  &criteriav1.ControlRequest_CloseSession{CloseSession: &criteriav1.CloseSession{SessionId: "sx"}},
+	})
+	if err != nil {
+		t.Fatalf("close in serve-adapter role: %v", err)
+	}
+	if !resp.GetAccepted() || !strings.Contains(resp.GetDetail(), "closed") {
+		t.Fatalf("close in serve-adapter role: want accepted closed, got %+v", resp)
+	}
 	// The serve-adapter role hosts only its served adapter.
-	resp, err := server.Control(f.ctx, &criteriav1.ControlRequest{
+	resp, err = server.Control(f.ctx, &criteriav1.ControlRequest{
 		AdapterType: "other",
+		Scope:       "sc",
 		Kind:        &criteriav1.ControlRequest_CloseSession{CloseSession: &criteriav1.CloseSession{SessionId: "sx"}},
 	})
 	if err != nil {
@@ -197,18 +210,24 @@ func TestServer_ControlSessionLedgerServeAdapterRole(t *testing.T) {
 	if resp.GetAccepted() || !strings.Contains(resp.GetDetail(), "serve-adapter hosts only") {
 		t.Fatalf("mismatched adapter close: want rejected, got %+v", resp)
 	}
-	// The ledger fact was journaled on the caller-supplied journal.
-	var opened int
+	// The ledger facts were journaled on the serve-adapter journal with the
+	// served adapter as attribution.
+	var opened, closed int
 	for _, ev := range server.serveAdapterJournal.Replay(0) {
-		if led := ev.GetSessionLedger(); led != nil && led.GetEvent() == SessionLedgerOpened {
+		if led := ev.GetSessionLedger(); led != nil {
 			if ev.GetAdapterType() != "fakex" {
 				t.Errorf("serve-adapter ledger attribution = %q, want the served adapter", ev.GetAdapterType())
 			}
-			opened++
+			switch led.GetEvent() {
+			case SessionLedgerOpened:
+				opened++
+			case SessionLedgerClosed:
+				closed++
+			}
 		}
 	}
-	if opened != 1 {
-		t.Fatalf("serve-adapter journal opened facts = %d, want 1", opened)
+	if opened != 1 || closed != 1 {
+		t.Fatalf("serve-adapter journal opened/closed facts = %d/%d, want 1/1", opened, closed)
 	}
 }
 
