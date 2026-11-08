@@ -735,19 +735,10 @@ func (e *Engine) Run(ctx context.Context) error {
 
 	// Create a per-run redaction registry and wire it into the session manager
 	// and the engine sink so all secret values are masked before display or
-	// persistence.
-	redactionReg := secrets.NewRegistry()
-	sessions.RedactionRegistry = redactionReg
-
-	// Wrap the engine sink before any events are emitted.
-	sink := NewRedactingSink(e.sink, redactionReg)
+	// persistence. prepareRunSink owns the wiring so the fresh-run and
+	// resume-run setup paths stay identical.
+	sink, redactionReg := e.prepareRunSink(sessions)
 	lossReportSink = sink
-	sessions.LifecycleSink = sink
-	sessions.SetAllowedWorkingDirRoots(e.workingDirAllowedRoots)
-	// The wrapped sink is the pointer-emission sink for this run's
-	// checkpoint saves; save it for Engine.Pause's own snapshot writes.
-	e.runSink = sink
-	e.wireCheckpointStore(sessions, sink)
 
 	// failRunInit emits OnRunFailed for a pre-runLoop init failure;
 	// initAdapters emits its own, so it is deliberately excluded.

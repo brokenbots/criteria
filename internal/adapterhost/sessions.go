@@ -3369,44 +3369,12 @@ func (m *SessionManager) Shutdown(ctx context.Context) error {
 // takeForShutdown atomically collects every shim this SessionManager owns
 // (the legacy default slot plus the shims its bound hosts surface via
 // HostShimSource), every owned supervisor host, and snapshots+clears the
-// sessions and verification records under the lock. Duplicates (a shim
-// aliased by the default slot and contributed by its host) are kept because
-// RemoteShim implementations cannot be assumed comparable and Shim.Stop is
-// idempotent, so a second Stop is a no-op.
+// sessions and verification records under the lock.
 func (m *SessionManager) takeForShutdown() ([]RemoteShim, []envhost.Host, []*Session) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	shims := make([]RemoteShim, 0, len(m.envHostsByEnv)+1)
-	// Shared hosts are owned by a parent SM (ShareEnvHostsFrom); this SM
-	// only serves scopes on them, so it must not stop them nor the shims
-	// they surface here — doing so would tear down the supervisor the
-	// parent run and sibling parallel iterations still depend on.
-	if !m.envHostsShared {
-		if m.remoteShim != nil {
-			shims = append(shims, m.remoteShim)
-		}
-		for _, host := range m.envHostsByEnv {
-			if host == nil {
-				continue
-			}
-			if src, ok := host.(HostShimSource); ok {
-				if shim := src.Shim(); shim != nil {
-					shims = append(shims, shim)
-				}
-			}
-		}
-	}
-	// Supervisor hosts follow the same ownership rule: a shared host is
-	// the parent's to stop (its children outlive this iteration); an
-	// owned host is this run's lever over its children.
-	hosts := make([]envhost.Host, 0, len(m.envHostsByEnv))
-	if !m.envHostsShared {
-		for _, host := range m.envHostsByEnv {
-			if host != nil {
-				hosts = append(hosts, host)
-			}
-		}
-	}
+	shims := m.ownedShimsForShutdown()
+	hosts := m.ownedEnvHostsForShutdown()
 	sessions := make([]*Session, 0, len(m.sessions))
 	for name, sess := range m.sessions {
 		sessions = append(sessions, sess)
@@ -3416,6 +3384,54 @@ func (m *SessionManager) takeForShutdown() ([]RemoteShim, []envhost.Host, []*Ses
 		delete(m.verified, name)
 	}
 	return shims, hosts, sessions
+}
+
+// ownedShimsForShutdown collects the phone-home shims this SessionManager
+// owns: the legacy default slot plus the shims its bound hosts surface via
+// HostShimSource. Shared hosts are owned by a parent SM (ShareEnvHostsFrom);
+// this SM only serves scopes on them, so it must not stop them nor the shims
+// they surface here — doing so would tear down the supervisor the parent run
+// and sibling parallel iterations still depend on. Duplicates (a shim aliased
+// by the default slot and contributed by its host) are kept because
+// RemoteShim implementations cannot be assumed comparable and Shim.Stop is
+// idempotent, so a second Stop is a no-op. Callers must hold m.mu.
+func (m *SessionManager) ownedShimsForShutdown() []RemoteShim {
+	if m.envHostsShared {
+		return nil
+	}
+	shims := make([]RemoteShim, 0, len(m.envHostsByEnv)+1)
+	if m.remoteShim != nil {
+		shims = append(shims, m.remoteShim)
+	}
+	for _, host := range m.envHostsByEnv {
+		if host == nil {
+			continue
+		}
+		if src, ok := host.(HostShimSource); ok {
+			if shim := src.Shim(); shim != nil {
+				shims = append(shims, shim)
+			}
+		}
+	}
+	return shims
+}
+
+// ownedEnvHostsForShutdown collects the supervisor hosts this SessionManager
+// owns. Supervisor hosts follow the same ownership rule as the shims: a
+// shared host is the parent's to stop (its children outlive this iteration);
+// an owned host is this run's lever over its children. Callers must hold
+// m.mu.
+func (m *SessionManager) ownedEnvHostsForShutdown() []envhost.Host {
+	if m.envHostsShared {
+		return nil
+	}
+	hosts := make([]envhost.Host, 0, len(m.envHostsByEnv))
+	for _, host := range m.envHostsByEnv {
+		if host != nil {
+			hosts = append(hosts, host)
+		}
+	}
+	return hosts
 }
 
 // closeSession marks a session closing, cancels its log stream, tears down
