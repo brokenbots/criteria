@@ -556,11 +556,10 @@ func (s *permissionInterceptSink) effectiveToolCallPolicy() workflow.Policy {
 }
 
 // resolveCalleeDeclaration resolves the parsed callee against the session's
-// own graph when present, falling back to the session manager's graph walk:
-// a parallel iteration manager has no graph of its own, so only its
-// borrowed policy knows the declaring workflow's tool-call bounds — adapter
-// declaration itself is resolved against whatever graph the manager holds.
-// Returns nils when the callee is declared nowhere reachable — the caller
+// executing graph when present, falling back to the session manager's graph
+// walk: a manager without an executing graph (hand-built sessions) still
+// resolves its declaring workflow's adapters through the walk. Returns
+// nils when the callee is declared nowhere reachable — the caller
 // translates that to unknown_adapter where a declared callee is required.
 func (s *permissionInterceptSink) resolveCalleeDeclaration(ref string) (*workflow.AdapterNode, *workflow.FSMGraph) {
 	if s.graph != nil {

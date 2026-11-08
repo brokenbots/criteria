@@ -461,7 +461,8 @@ func remoteEnvConfig(g *workflow.FSMGraph, ad *workflow.AdapterNode) (*remote.Co
 	return cfg, env, true
 }
 
-// unresolvable (nil lockfile, no entry). The event stays empty — never
+// lockedDigest returns the adapter's pinned digest, or "" when the digest
+// is unresolvable (nil lockfile, no entry). The event stays empty — never
 // synthesized (fail-closed).
 func lockedDigest(lf *lockfile.Lockfile, adapterType, adapterName string) string {
 	if lf == nil {
