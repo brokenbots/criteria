@@ -11,12 +11,18 @@ package peer
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	criteriav1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
+
+// maxIdleReapAfterMs is the largest after_ms that converts to a
+// non-negative time.Duration nanosecond value; anything larger overflows
+// and would masquerade as a withdrawal.
+const maxIdleReapAfterMs = math.MaxInt64 / int64(time.Millisecond)
 
 // scopeLedger tracks the session engagements the session-control verbs
 // carry: ledger truth per (adapter type, scope, session id) triple, held on
@@ -27,6 +33,14 @@ import (
 // across journal append and table mutation, so concurrent controls of one
 // session land one ledger story (two racing opens of a fresh session
 // journal opened-then-adopted, not opened-twice).
+//
+// The table grows with distinct session ids the host controls — one entry
+// per tracked engagement, bounded in practice by the host's own session
+// id cardinality. Release (non-detach close) is the only shrink path;
+// detachment intentionally holds its entry so a later re-entry re-adopts.
+// Eviction of abandoned engagements is deferred until the consumer
+// milestone that defines a session lifetime (a cap here would evict
+// tracked entries and invent adoption semantics the host never declared).
 type scopeLedger struct {
 	mu sync.Mutex
 	// sessions is the tracked-engagement table.
@@ -144,8 +158,6 @@ func (s *Server) closeLedgerSession(adapterType, scope string, closeReq *criteri
 		// Detach fate: the engagement outlives the closing scope so a
 		// sibling or re-entering scope can adopt it; tracking stays.
 		verb = SessionLedgerDetached
-	} else {
-		delete(l.sessions, key)
 	}
 	ev := &criteriav1.SupervisionEvent_SessionLedger{SessionLedger: &criteriav1.SessionLedger{
 		Event:  verb,
@@ -154,6 +166,12 @@ func (s *Server) closeLedgerSession(adapterType, scope string, closeReq *criteri
 	if _, err := s.journalFor().Append(ev, adapter, scope, closeReq.GetSessionId()); err != nil {
 		s.log.Error("session ledger append", "event", verb, "error", err)
 		return &criteriav1.ControlResponse{Accepted: false, Detail: fmt.Sprintf("session %q ledger append: %v", closeReq.GetSessionId(), err)}
+	}
+	// Release drops tracking only after the fact is journaled (mirroring
+	// the open order of append-then-track), so a failed append leaves the
+	// engagement retryable. Detach keeps tracking either way.
+	if verb == SessionLedgerClosed {
+		delete(l.sessions, key)
 	}
 	return &criteriav1.ControlResponse{Accepted: true, Detail: fmt.Sprintf("session %q %s", closeReq.GetSessionId(), verb)}
 }
@@ -330,6 +348,15 @@ func (r *peerRuntime) controlIdleReap(req *criteriav1.ControlRequest, idle *crit
 			return &criteriav1.ControlResponse{Accepted: false, Detail: "no live adapter child"}
 		}
 		return &criteriav1.ControlResponse{Accepted: false, Detail: fmt.Sprintf("no adapter child %q", name)}
+	}
+	// after_ms above the representable duration range would wrap into a
+	// negative window and masquerade as a withdrawal — reject on declare
+	// instead of silently treating absurd values as policy.
+	if afterMs := idle.GetAfterMs(); afterMs > uint64(maxIdleReapAfterMs) {
+		return &criteriav1.ControlResponse{
+			Accepted: false,
+			Detail:   fmt.Sprintf("idle reap after_ms %d exceeds %d", afterMs, uint64(maxIdleReapAfterMs)),
+		}
 	}
 	window := time.Duration(idle.GetAfterMs()) * time.Millisecond
 	r.mu.Lock()

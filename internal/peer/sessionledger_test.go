@@ -349,33 +349,35 @@ func TestServer_ControlRespawnChildLiveGrace(t *testing.T) {
 	if newPid := f.liveChildPID(t); newPid == oldPid || newPid <= 0 {
 		t.Fatalf("child pid after displacement = %d (was %d): no displacement", newPid, oldPid)
 	}
-	// Ordering + graceful accounting: the stale generation's Exited fact is
-	// journaled graceful (peer-initiated displacement, no crash fact) and
-	// precedes the successor spawn.
-	var exitedSeq, spawnSeq uint64
+	// Ordering + graceful accounting, positional: exactly two spawned facts
+	// (boot + displacement) and exactly one exited fact (the stale
+	// generation), with the exit journaled graceful and strictly between
+	// the two spawn facts.
+	var spawnedSeqs, exitedSeqs []uint64
 	var crashFacts int
 	for _, ev := range f.runtime.Journal().Replay(0) {
+		if ev.GetSpawned() != nil {
+			spawnedSeqs = append(spawnedSeqs, ev.GetEventSeq())
+		}
 		if ev.GetExited() != nil {
-			exitedSeq = ev.GetEventSeq()
+			exitedSeqs = append(exitedSeqs, ev.GetEventSeq())
 			if !ev.GetExited().GetGraceful() {
 				t.Errorf("displaced generation exit not graceful: %+v", ev.GetExited())
 			}
-		}
-		if ev.GetSpawned() != nil && ev.GetEventSeq() < 2 {
-			continue // the boot spawn precedes any exit fact by definition
-		}
-		if ev.GetSpawned() != nil {
-			spawnSeq = ev.GetEventSeq()
 		}
 		if ev.GetCrash() != nil {
 			crashFacts++
 		}
 	}
-	if exitedSeq == 0 || spawnSeq == 0 {
-		t.Fatalf("missing facts: exited seq %d, respawn spawn seq %d", exitedSeq, spawnSeq)
+	if len(spawnedSeqs) != 2 {
+		t.Fatalf("spawned fact count = %d (seqs %v), want exactly boot + displacement", len(spawnedSeqs), spawnedSeqs)
 	}
-	if exitedSeq > spawnSeq {
-		t.Errorf("stale-exit fact (seq %d) journaled after successor spawn (seq %d)", exitedSeq, spawnSeq)
+	if len(exitedSeqs) != 1 {
+		t.Fatalf("exited fact count = %d (seqs %v), want exactly the displaced generation", len(exitedSeqs), exitedSeqs)
+	}
+	if !(spawnedSeqs[0] < exitedSeqs[0] && exitedSeqs[0] < spawnedSeqs[1]) {
+		t.Errorf("stale exit (seq %d) not journaled between boot spawn (%d) and successor spawn (%d)",
+			exitedSeqs[0], spawnedSeqs[0], spawnedSeqs[1])
 	}
 	if crashFacts != 0 {
 		t.Errorf("peer-displaced death journal produced %d crash fact(s)", crashFacts)
@@ -485,6 +487,54 @@ func TestServer_ControlIdleReapDeclaredWindow(t *testing.T) {
 		if ev.GetSessionLedger() != nil {
 			t.Errorf("idle_reap declaration journal produced a ledger fact: %+v", ev)
 		}
+	}
+}
+
+// TestServer_ControlIdleReapAfterMsOverflow pins the declare-side bound:
+// an after_ms beyond the representable time.Duration range is rejected
+// instead of wrapping into a negative window and masquerading as a
+// withdrawal.
+func TestServer_ControlIdleReapAfterMsOverflow(t *testing.T) {
+	f := newPeerServeFixture(t)
+	f.rt.mu.Lock()
+	f.rt.children["fakex"] = &childState{name: "fakex"}
+	f.rt.mu.Unlock()
+
+	for _, tc := range []struct {
+		name    string
+		afterMs uint64
+	}{
+		{"just past the bound", uint64(maxIdleReapAfterMs) + 1},
+		{"wraps int64", 1 << 63},
+	} {
+		resp, err := f.server.Control(f.ctx, &criteriav1.ControlRequest{
+			AdapterType: "fakex",
+			Kind:        &criteriav1.ControlRequest_IdleReap{IdleReap: &criteriav1.IdleReap{AfterMs: tc.afterMs}},
+		})
+		if err != nil {
+			t.Fatalf("idle_reap %s: %v", tc.name, err)
+		}
+		if resp.GetAccepted() || !strings.Contains(resp.GetDetail(), "exceeds") {
+			t.Fatalf("idle_reap %s: want rejected with the bound, got %+v", tc.name, resp)
+		}
+		if _, ok := f.rt.idleReapWindow("fakex"); ok {
+			t.Fatalf("idle_reap %s: rejected declare left a policy behind", tc.name)
+		}
+	}
+
+	// The boundary value itself is representable and declares cleanly.
+	resp, err := f.server.Control(f.ctx, &criteriav1.ControlRequest{
+		AdapterType: "fakex",
+		Kind:        &criteriav1.ControlRequest_IdleReap{IdleReap: &criteriav1.IdleReap{AfterMs: uint64(maxIdleReapAfterMs)}},
+	})
+	if err != nil {
+		t.Fatalf("idle_reap boundary declare: %v", err)
+	}
+	if !resp.GetAccepted() || !strings.Contains(resp.GetDetail(), "declared") {
+		t.Fatalf("idle_reap boundary declare: want accepted declared, got %+v", resp)
+	}
+	if window, ok := f.rt.idleReapWindow("fakex"); !ok || window <= 0 {
+		t.Fatalf("boundary window = %v (ok=%v), want positive", window, ok)
 	}
 }
 
