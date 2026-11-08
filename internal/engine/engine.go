@@ -1851,15 +1851,15 @@ func (e *Engine) maybeStartContainerEnvHosts(sessions *adapterhost.SessionManage
 // the binding only anchors the seam queries, with the degenerate host's
 // arms (refuse/no-op/empty journal) never exercised by dispatch.
 func (e *Engine) maybeStartDegenerateEnvHosts(sessions *adapterhost.SessionManager) error {
-		if e.graph == nil {
-			return nil
-		}
-		for _, kind := range []string{"shell", "sandbox"} {
-			for _, key := range slices.Sorted(maps.Keys(collectEnvironmentDeclarations(e.graph, kind))) {
-				sessions.SetEnvHostForEnv(key, adapterhost.DegenerateHost())
-			}
-		}
+	if e.graph == nil {
 		return nil
+	}
+	for _, kind := range []string{"shell", "sandbox"} {
+		for _, key := range slices.Sorted(maps.Keys(collectEnvironmentDeclarations(e.graph, kind))) {
+			sessions.SetEnvHostForEnv(key, adapterhost.DegenerateHost())
+		}
+	}
+	return nil
 }
 
 // containerChildKeepAlive resolves CRITERIA_PEER_CHILD_KEEPALIVE for a
