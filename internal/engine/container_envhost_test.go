@@ -5,8 +5,8 @@ package engine
 // (internal/peer's InProcessHost) instead of the local docker/podman
 // dispatch, and a container session's crash classification for a killed
 // child comes from that supervisor's journal — the process-exited family —
-// never from transport-string matching. The remote binding (KB-376) keeps
-// its own pins in envhost_binding_test.go/remote_env_dispatch_test.go.
+// never from transport-string matching. The remote binding's own pins stay
+// in envhost_binding_test.go/remote_env_dispatch_test.go.
 
 import (
 	"context"
