@@ -693,6 +693,24 @@ func (e *Engine) initAdapters(ctx context.Context, sessions *adapterhost.Session
 	return deps, scopeOrder, rlc, nil
 }
 
+// prepareRunSink wires the run's redacting lifecycle sink into the session
+// manager: the registry must be the same instance the sink uses, because
+// seeding the run scope registers redaction entries against it. Shared by
+// both run entrypoints.
+func (e *Engine) prepareRunSink(sessions *adapterhost.SessionManager) (Sink, *secrets.Registry) {
+	redactionReg := secrets.NewRegistry()
+	sessions.RedactionRegistry = redactionReg
+
+	sink := NewRedactingSink(e.sink, redactionReg)
+	sessions.LifecycleSink = sink
+	sessions.SetAllowedWorkingDirRoots(e.workingDirAllowedRoots)
+	e.runSink = sink
+	// Checkpoint saves resume from checkpoints on this path too, so
+	// wire the pointer emission through the wrapped sink.
+	e.wireCheckpointStore(sessions, sink)
+	return sink, redactionReg
+}
+
 // newSessionManager builds the run's adapter session manager with the
 // engine-level wiring (graph, audit, pause drain, sandbox probe override,
 // lockfile) shared by every entrypoint into the run loop.
@@ -807,17 +825,8 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	defer func() { reportAuditLoss(lossReportSink, e.auditWriter, e.logOrDefault()) }()
 	defer func() { _ = sessions.Shutdown(context.WithoutCancel(ctx)) }()
 
-	redactionReg := secrets.NewRegistry()
-	sessions.RedactionRegistry = redactionReg
-
-	sink := NewRedactingSink(e.sink, redactionReg)
+	sink, redactionReg := e.prepareRunSink(sessions)
 	lossReportSink = sink
-	sessions.LifecycleSink = sink
-	sessions.SetAllowedWorkingDirRoots(e.workingDirAllowedRoots)
-	// Checkpoint saves resume from checkpoints on this path too, so
-	// wire the pointer emission through the wrapped sink.
-	e.runSink = sink
-	e.wireCheckpointStore(sessions, sink)
 
 	// failRunInit emits OnRunFailed for a pre-runLoop init failure;
 	// initAdapters emits its own, so it is deliberately excluded.

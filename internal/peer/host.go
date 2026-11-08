@@ -634,20 +634,7 @@ func (h *InProcessHost) freshenHandle(ctx context.Context, scope envhost.ScopeRe
 		return h.bindHandle(scope, defName, handle), nil
 	}
 	if alive {
-		// Displace the stale child: peer-initiated so the exit is recorded
-		// as graceful (no crash fact), then spawn fresh once the death
-		// settled. The flag write and the handle capture ride rt.mu — the
-		// exit watcher reads peerInitiated under the same lock when it
-		// records the displacement's exit fact.
-		rt.mu.Lock()
-		c.peerInitiated = true
-		handle := c.handle
-		stillAlive := !adapterhost.ProcessExited(handle)
-		rt.mu.Unlock()
-		if stillAlive {
-			handle.Kill()
-		}
-		if err := h.waitChildExit(c, defName); err != nil {
+		if err := h.displaceStaleChild(c, defName); err != nil {
 			return nil, err
 		}
 	}
@@ -656,6 +643,24 @@ func (h *InProcessHost) freshenHandle(ctx context.Context, scope envhost.ScopeRe
 		return nil, fmt.Errorf("adapter %q: fresh child spawn failed", defName)
 	}
 	return h.bindHandle(scope, defName, fresh.handle), nil
+}
+
+// displaceStaleChild kills a still-live stale child peer-initiated and
+// waits for its exit fact. Peer-initiated so the exit is recorded as
+// graceful (no crash fact). The flag write and the handle capture ride
+// rt.mu — the exit watcher reads peerInitiated under the same lock when it
+// records the displacement's exit fact.
+func (h *InProcessHost) displaceStaleChild(c *childState, defName string) error {
+	rt := h.rt
+	rt.mu.Lock()
+	c.peerInitiated = true
+	handle := c.handle
+	stillAlive := !adapterhost.ProcessExited(handle)
+	rt.mu.Unlock()
+	if stillAlive {
+		handle.Kill()
+	}
+	return h.waitChildExit(c, defName)
 }
 
 // waitChildExit blocks until the child's exit fact is journaled or the
@@ -719,33 +724,35 @@ func (h *InProcessHost) SupervisionCrashReason(defName string, inner adapterhost
 	if !current {
 		return "", false
 	}
-	pid, ok := adapterhost.ProcessPID(inner)
-	events := rt.journal.Replay(0)
+	crashReason := journalCrashReason(rt.journal.Replay(0), defName)
+	if crashReason == "" {
+		return "", false
+	}
+	return crashReason, true
+}
+
+// journalCrashReason walks the journal newest-to-oldest and returns the
+// newest CrashClassified reason within defName's current generation: the
+// walk stops at the definition's Spawned marker, so facts older than the
+// current child's generation never leak into the classification.
+func journalCrashReason(events []*criteriav1.SupervisionEvent, defName string) string {
 	crashReason := ""
 	for i := len(events) - 1; i >= 0; i-- {
 		ev := events[i]
 		if ev.GetAdapterType() != defName {
 			continue
 		}
-		if kind, isSpawned := ev.Kind.(*criteriav1.SupervisionEvent_Spawned); isSpawned {
-			spawnedPID := int(kind.Spawned.GetPid())
-			// The generation marker: stop when it belongs to a different
-			// child process. When either side carries no pid (the journal
-			// ring dropped the marker, or the handle reports none) the
-			// retained newest facts stand for this child.
-			if spawnedPID != 0 && ok && spawnedPID != pid {
-				break
-			}
+		if _, isSpawned := ev.Kind.(*criteriav1.SupervisionEvent_Spawned); isSpawned {
+			// The generation marker: the walk ends here regardless of the
+			// marker's pid — older generations' facts must not classify
+			// this child.
 			break
 		}
 		if kind, isCrash := ev.Kind.(*criteriav1.SupervisionEvent_Crash); isCrash && crashReason == "" {
 			crashReason = kind.Crash.GetReason()
 		}
 	}
-	if crashReason == "" {
-		return "", false
-	}
-	return crashReason, true
+	return crashReason
 }
 
 // supervisedHostHandle is the envhost.Handles entry: the session manager's
