@@ -125,7 +125,7 @@ func TestSessions_RemoteEnvHostForAdapterBoundsRetryArm(t *testing.T) {
 		}
 		m := NewSessionManager(kb246Loader{})
 		m.SetGraph(graph)
-		m.SetRemoteShimForEnv("remote.ops", stubShim{})
+		m.SetEnvHostForEnv("remote.ops", NewShimHost(stubShim{}))
 
 		if host, ok := m.remoteEnvHostForAdapter("remote.shimmed"); !ok {
 			t.Fatal("remoteEnvHostForAdapter lost the remote adapter with a served host")

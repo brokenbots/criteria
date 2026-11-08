@@ -536,8 +536,8 @@ func (s *permissionInterceptSink) handleToolCallRequest(payload map[string]any) 
 // nestedToolCallMaxDepth returns the effective policy.max_tool_depth for the
 // caller's graph. A compiled graph normalizes the unset default to 8
 // (workflow.DefaultPolicy); hand-built graphs may carry 0, so the engine
-// default applies there too. Graph-less sessions (parallel iteration
-// managers) consult the borrowed parent policy before the default.
+// default applies there too. Graph-less callers fall back to the compiled
+// workflow default.
 func (s *permissionInterceptSink) nestedToolCallMaxDepth() int {
 	if depth := s.effectiveToolCallPolicy().MaxToolDepth; depth > 0 {
 		return depth
@@ -546,28 +546,21 @@ func (s *permissionInterceptSink) nestedToolCallMaxDepth() int {
 }
 
 // effectiveToolCallPolicy computes the nested tool-call policy for this
-// session: the executing graph's policy when present, else the policy
-// borrowed from the declaring parent graph (parallel-iteration managers have
-// no graph of their own), else the compiled workflow default.
+// session: the executing graph's policy when present, else the compiled
+// workflow default.
 func (s *permissionInterceptSink) effectiveToolCallPolicy() workflow.Policy {
 	if s.graph != nil {
 		return s.graph.Policy
-	}
-	if s.mgr != nil {
-		if p := s.mgr.BorrowedGraphPolicy(); p != nil {
-			return *p
-		}
 	}
 	return workflow.DefaultPolicy
 }
 
 // resolveCalleeDeclaration resolves the parsed callee against the session's
-// own graph when present, falling back to the session manager's adapter
-// declaration caches: a parallel iteration manager has no graph of
-// its own, but its VerifyGraph-populated caches still know every declared
-// adapter node and its declaring graph (borrowed from the parent). Returns
-// nils when the callee is declared nowhere reachable — the caller translates
-// that to unknown_adapter where a declared callee is required.
+// executing graph when present, falling back to the session manager's graph
+// walk: a manager without an executing graph (hand-built sessions) still
+// resolves its declaring workflow's adapters through the walk. Returns
+// nils when the callee is declared nowhere reachable — the caller
+// translates that to unknown_adapter where a declared callee is required.
 func (s *permissionInterceptSink) resolveCalleeDeclaration(ref string) (*workflow.AdapterNode, *workflow.FSMGraph) {
 	if s.graph != nil {
 		if node, ok := s.graph.Adapters[ref]; ok {

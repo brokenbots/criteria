@@ -125,24 +125,6 @@ type SessionManager struct {
 	// It provides phone-home adapter handles instead of local binaries.
 	remoteShim RemoteShim
 
-	// remoteShimsByEnv maps environment keys ("remote.<name>") to the shim
-	// serving that specific environment. Local runs start one shim
-	// per remote environment, so two environments that declare the same
-	// listen_address each get their own shim. Dispatch falls back to
-	// remoteShim when an environment has no dedicated entry.
-	remoteShimsByEnv map[string]RemoteShim
-
-	// remoteShimsBorrowed is set when this SessionManager's remote shims were
-	// borrowed from a parent SM (BorrowRemoteProvisioningFrom) rather than started by
-	// it. A parallel subworkflow iteration receives its own SessionManager for
-	// local session isolation, but the remote shim is a single phone-home
-	// listener per environment that multiplexes every scope, so the iteration
-	// must share the parent's shim instead of starting its own (which would
-	// collide on the fixed listen_address). Borrowed shims are owned by the
-	// parent: Shutdown must not Stop them, or one finished iteration would tear
-	// down the listener the sibling iterations and the root run still use.
-	remoteShimsBorrowed bool
-
 	// envHostsByEnv holds the envhost.Host bound to an environment key
 	// ("remote.<name>") — the ADR-0014 D1 seam layer. Remote dispatch and
 	// scope bookkeeping resolve their environment's host here; an
@@ -153,25 +135,21 @@ type SessionManager struct {
 	// pre-carve, so behavior is unchanged.
 	envHostsByEnv map[string]envhost.Host
 
-	// envHostsBorrowed is set when this SessionManager's bound envhost
-	// hosts were borrowed from a parent SM (BorrowRemoteProvisioningFrom).
-	// Parallel subworkflow iterations share the parent's supervisor hosts
-	// exactly like its shims: the hosts own long-lived child processes the
-	// sibling iterations must keep using, so the borrower must not
-	// StopEnvHost them at its own shutdown — the owning parent does.
-	envHostsBorrowed bool
+	// envHostsShared marks envHostsByEnv as borrowed from the parent
+	// SessionManager (ShareEnvHostsFrom). A parallel subworkflow iteration
+	// receives its own SessionManager for local session isolation, but the
+	// environment's host of record is a single object that multiplexes
+	// every scope, so the iteration must share the parent's host instead
+	// of binding its own. Shared hosts are owned by the parent: Shutdown
+	// must neither stop the host nor collect its shim, or one finished
+	// iteration would tear down the supervisor the sibling iterations and
+	// the root run still use.
+	envHostsShared bool
 
 	// LifecycleSink receives adapter provisioning events. When a verified-only
 	// adapter is promoted to a bound session, "opened" is emitted through this
 	// sink so lifecycle observers see the event at the correct phase-2 moment.
 	LifecycleSink LifecycleSink
-
-	// deferredRemoteAdapters identifies remote adapters whose eager
-	// VerifyGraph handshake should be skipped. This is used when a remote
-	// environment enables per_scope_sessions so the per-scope token rotation and
-	// provisioning event happen in initScopeAdapters, not during graph
-	// verification.
-	deferredRemoteAdapters map[string]struct{}
 
 	// CheckpointSave persists a session's checkpoint at step boundaries (and
 	// per-turn boundaries for adapters declaring per-turn granularity). The
@@ -264,22 +242,6 @@ type SessionManager struct {
 	// no additional root checks; paths containing ".." are always rejected.
 	allowedRoots []string
 
-	// graphAdapters caches every adapter node in the compiled graph tree, keyed
-	// by instance ID. It is populated by VerifyGraph and used at resolution time
-	// to know whether an adapter is OCI-backed or bound to a remote environment
-	// without re-reading workflow files. The owning graph is kept so
-	// per-scope environments resolve against the declaring subworkflow body
-	// (the root graph's adapter map never contains subworkflow adapters).
-	// Locking contract: both maps are guarded by mu. VerifyGraph
-	// writes them via cacheGraphAdapterRef and adapter resolution reads them
-	// via adapterDeclaration/adapterDir, and nothing serializes those callers
-	// at a higher level (the borrow path already took mu for its reads, so
-	// mu-guarding the rest adds no deadlock risk). Every access takes mu.
-	graphAdapters map[string]graphAdapterRef
-	// adapterDirs records the workflow directory each adapter was declared in,
-	// keyed by instance ID. Populated by VerifyGraph.
-	adapterDirs map[string]string
-
 	// declaredPermissiveOutputs records the adapter instances whose phase-1
 	// handshake declared NO output_schema, so their permissiveness is the
 	// adapter's own recorded act (boot gate) instead of an
@@ -304,11 +266,6 @@ type SessionManager struct {
 	// decrement. The owner scope anchors the session's real teardown. Guarded
 	// by mu.
 	toolResourceLeases map[string]int
-	// borrowedPolicy is the parent graph's policy, set by the engine on
-	// borrowed managers so the nested tool-call gates (max_tool_depth,
-	// max_tool_calls) consult the declaring workflow's values instead
-	// of package defaults. Guarded by mu; nil when not borrowed.
-	borrowedPolicy *workflow.Policy
 	// toolCallBudgets counts reserved nested tool calls per caller session id
 	// (policy.max_tool_calls). Guarded by mu. Entries live as long as
 	// the sessions they count for; the map is cleared at Shutdown with the
@@ -420,8 +377,7 @@ func (m *SessionManager) SetGraph(g *workflow.FSMGraph) {
 //
 // Legacy single-shim form, retained for tests and callers that do not
 // know their environment key (the fallback consulted by
-// RemoteShimForEnv). Production registration goes through
-// SetRemoteShimForEnv (one shim per remote environment).
+// RemoteShimForEnv when an environment has no bound host of record).
 // Deliberately carries no canonical Deprecated marker: the retained test
 // call sites exercise this fallback path and staticcheck SA1019 would
 // flag them.
@@ -429,68 +385,6 @@ func (m *SessionManager) SetRemoteShim(shim RemoteShim) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.remoteShim = shim
-}
-
-// SetRemoteShimForEnv registers the shim serving a specific remote
-// environment (keyed "remote.<name>"). The shim is also recorded as
-// the default so legacy callers observe the most recently registered shim,
-// and the environment's seam host (ADR-0014) is the shim adapter so
-// RemoteShim-only registrations dispatch identically. The engine binds the
-// environment's production host (remote.NewHost) right after this call.
-func (m *SessionManager) SetRemoteShimForEnv(envKey string, shim RemoteShim) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.remoteShimsByEnv == nil {
-		m.remoteShimsByEnv = make(map[string]RemoteShim)
-	}
-	m.remoteShimsByEnv[envKey] = shim
-	m.remoteShim = shim
-	m.setEnvHostForEnvLocked(envKey, shimHost{shim: shim})
-}
-
-// BorrowRemoteProvisioningFrom copies src's remote-provisioning state into m
-// WITHOUT taking ownership of the shims. m then serves and registers scopes on
-// the same shared shims (one phone-home listener per environment, multiplexed
-// across callers), but m.Shutdown will not Stop them — the owning parent SM
-// does that at run end. It also copies the VerifyGraph-populated adapter caches
-// (graphAdapters, adapterDirs, deferredRemoteAdapters) so isRemoteAdapter on m
-// recognises the parent-verified adapters as remote instead of falling through
-// to a local OCI resolution (the DECLARING graph is kept in these caches,
-// so subworkflow-body adapters resolve correctly).
-//
-// This is how a parallel subworkflow iteration, which gets its own
-// SessionManager for local session isolation, still reaches the remote
-// environment: without the shims, provisioning fails with "no remote shim
-// registered"; without the caches, the adapter is dispatched locally and not
-// found. Each iteration still rotates a DISTINCT scope, so scope isolation and
-// per-scope provisioning events are preserved.
-func (m *SessionManager) BorrowRemoteProvisioningFrom(src *SessionManager) {
-	if src == nil || src == m {
-		return
-	}
-	src.mu.Lock()
-	def := src.remoteShim
-	byEnv := maps.Clone(src.remoteShimsByEnv)
-	envHosts := maps.Clone(src.envHostsByEnv)
-	graphAdapters := maps.Clone(src.graphAdapters)
-	adapterDirs := maps.Clone(src.adapterDirs)
-	deferred := maps.Clone(src.deferredRemoteAdapters)
-	src.mu.Unlock()
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if def != nil || len(byEnv) > 0 {
-		m.remoteShim = def
-		m.remoteShimsByEnv = mergeMapInto(m.remoteShimsByEnv, byEnv)
-		m.remoteShimsBorrowed = true
-	}
-	if len(envHosts) > 0 {
-		m.envHostsByEnv = mergeMapInto(m.envHostsByEnv, envHosts)
-		m.envHostsBorrowed = true
-	}
-	m.graphAdapters = mergeMapInto(m.graphAdapters, graphAdapters)
-	m.adapterDirs = mergeMapInto(m.adapterDirs, adapterDirs)
-	m.deferredRemoteAdapters = mergeMapInto(m.deferredRemoteAdapters, deferred)
 }
 
 // mergeMapInto copies every entry of src into dst and returns dst, allocating
@@ -732,25 +626,6 @@ func (m *SessionManager) ReleaseSharedToolResources() {
 	}
 }
 
-// SetBorrowedGraphPolicy records the parent graph's policy for m to consult
-// when it has no graph of its own: the depth gate
-// (policy.max_tool_depth) and the call-count gate (policy.max_tool_calls)
-// must not fall back to package defaults when a per-workflow value was
-// declared. Thread-safe.
-func (m *SessionManager) SetBorrowedGraphPolicy(p *workflow.Policy) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.borrowedPolicy = p
-}
-
-// BorrowedGraphPolicy returns the parent graph policy recorded via
-// SetBorrowedGraphPolicy, or nil when none was borrowed.
-func (m *SessionManager) BorrowedGraphPolicy() *workflow.Policy {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.borrowedPolicy
-}
-
 // reserveToolCallBudget reserves one nested tool call for the caller session
 // against the session's policy.max_tool_calls budget, engine-enforced
 // at the seam alongside the depth gate so an iterative agent loop cannot run
@@ -797,37 +672,49 @@ func (m *SessionManager) RemoteShim() RemoteShim {
 	return m.remoteShim
 }
 
-// RemoteShimForEnv returns the shim registered for the given environment key,
-// falling back to the default shim. Returns nil when neither is registered.
+// RemoteShimForEnv returns the shim serving the given environment key
+// through that environment's bound host of record (HostShimSource),
+// falling back to the legacy default shim. Returns nil when neither is
+// registered.
 func (m *SessionManager) RemoteShimForEnv(envKey string) RemoteShim {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.remoteShimForEnvLocked(envKey)
 }
 
+// remoteShimForEnvLocked mirrors RemoteShimForEnv for mu-held callers: a
+// bound host serves its shim through HostShimSource; the legacy default
+// slot fills every key without a bound host.
 func (m *SessionManager) remoteShimForEnvLocked(envKey string) RemoteShim {
-	if shim, ok := m.remoteShimsByEnv[envKey]; ok {
-		return shim
+	if host, _ := m.envHostsByEnv[envKey]; host != nil {
+		if src, ok := host.(HostShimSource); ok {
+			return src.Shim()
+		}
 	}
 	return m.remoteShim
 }
 
-// RemoteShimRegisteredForEnv reports whether a shim has been registered for
-// exactly this environment key. Unlike RemoteShimForEnv it never falls back
-// to the legacy default shim, so callers can tell whether the environment
-// has its own hosted shim.
+// RemoteShimRegisteredForEnv reports whether the environment's bound host
+// of record surfaces a shim (HostShimSource), i.e. the environment has its
+// own hosted shim. Unlike RemoteShimForEnv it never falls back to the
+// legacy default shim, so callers can tell whether the environment has
+// its own hosted shim.
 func (m *SessionManager) RemoteShimRegisteredForEnv(envKey string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, ok := m.remoteShimsByEnv[envKey]
-	return ok
+	return m.remoteShimRegisteredForEnvLocked(envKey)
 }
 
-// EnvHostRegisteredForEnv reports whether a dedicated envhost.Host binding
-// has been registered for exactly this environment key. Like
-// RemoteShimRegisteredForEnv it never falls back — an environment whose
-// remote dispatch resolves through the shimHost adapter (shim-only
-// registration) reports false.
+// remoteShimRegisteredForEnvLocked is the mu-held core of
+// RemoteShimRegisteredForEnv.
+func (m *SessionManager) remoteShimRegisteredForEnvLocked(envKey string) bool {
+	host, _ := m.envHostsByEnv[envKey]
+	if src, ok := host.(HostShimSource); ok {
+		return src.Shim() != nil
+	}
+	return false
+}
+
 // EnvHostRegisteredForEnv reports whether envKey resolves to a dedicated
 // envhost.Host — one whose verbs are not the shimHost fallback seeded
 // from the shim map. It is the query mirror of SetEnvHostForEnv: tests
@@ -891,11 +778,10 @@ func declaredAdapterEnvironmentIsRemote(adapterNode *workflow.AdapterNode, graph
 // RegisterRemoteScope registers a rotated accept token for the given scope
 // with the remote shim. It returns an error when no remote shim is registered.
 //
-// Legacy single-shim form; production callers must use
-// RegisterRemoteScopeForEnv so per-environment shims receive their own
-// tokens. Kept for tests and unknown-environment fallbacks.
-// Deliberately carries no canonical Deprecated marker: a retained test
-// call site exercises this fallback and staticcheck SA1019 would flag it.
+// Legacy single-shim form, retained for tests and
+// unknown-environment fallbacks. Deliberately carries no canonical
+// Deprecated marker: a retained test call site exercises this fallback
+// and staticcheck SA1019 would flag it.
 func (m *SessionManager) RegisterRemoteScope(scope, token string) error {
 	m.mu.Lock()
 	host := m.envHostDefaultLocked()
@@ -914,7 +800,7 @@ func (m *SessionManager) RegisterRemoteScope(scope, token string) error {
 // UnregisterRemoteScope removes a scope's accept token so the shim rejects
 // future reconnects with the old token.
 //
-// Deprecated: legacy single-shim form; use UnregisterRemoteScopeForEnv.
+// Deprecated: legacy single-shim form.
 func (m *SessionManager) UnregisterRemoteScope(scope string) error {
 	m.mu.Lock()
 	host := m.envHostDefaultLocked()
@@ -932,7 +818,7 @@ func (m *SessionManager) UnregisterRemoteScope(scope string) error {
 // CloseRemoteHandle closes the active remote session for the given adapter
 // type and scope. It is a no-op when no remote shim is registered.
 //
-// Deprecated: legacy single-shim form; use CloseRemoteHandleForEnv.
+// Deprecated: legacy single-shim form.
 func (m *SessionManager) CloseRemoteHandle(ctx context.Context, adapterType, scope string) error {
 	m.mu.Lock()
 	host := m.envHostDefaultLocked()
@@ -951,10 +837,8 @@ func (m *SessionManager) CloseRemoteHandle(ctx context.Context, adapterType, sco
 // RemoteListenAddr returns the shim's bound listen address, or "" when no
 // remote shim is registered.
 //
-// Deprecated: legacy single-shim form returning only the most recently
-// registered shim's address; production publication must use
-// RemoteListenAddrForEnv so every environment receives its own shim's
-// address.
+// Most recently registered shim only; production publication resolves the
+// environment's bound host so every environment receives its own address.
 func (m *SessionManager) RemoteListenAddr() string {
 	m.mu.Lock()
 	host := m.envHostDefaultLocked()
@@ -963,80 +847,6 @@ func (m *SessionManager) RemoteListenAddr() string {
 		return ""
 	}
 	resp, err := host.Control(context.Background(), &envhost.ControlRequest{
-		Kind: envhost.ControlListenAddress,
-	})
-	if err != nil {
-		return ""
-	}
-	return resp.Address
-}
-
-// RegisterRemoteScopeForEnv registers a rotated accept token for the given
-// scope with the host serving envKey. It returns an error when no
-// host is registered for the environment.
-func (m *SessionManager) RegisterRemoteScopeForEnv(ctx context.Context, envKey, scope, token string) error {
-	m.mu.Lock()
-	host := m.envHostForEnvLocked(envKey)
-	m.mu.Unlock()
-	if host == nil {
-		return errors.New("no remote shim registered")
-	}
-	_, err := host.Control(ctx, &envhost.ControlRequest{
-		Scope: scopeRefForKey(scope),
-		Kind:  envhost.ControlRegisterScope,
-		Token: token,
-	})
-	return err
-}
-
-// UnregisterRemoteScopeForEnv removes a scope's accept token from the host
-// serving envKey so it rejects future reconnects with the old token.
-func (m *SessionManager) UnregisterRemoteScopeForEnv(ctx context.Context, envKey, scope string) error {
-	m.mu.Lock()
-	host := m.envHostForEnvLocked(envKey)
-	m.mu.Unlock()
-	if host == nil {
-		return errors.New("no remote shim registered")
-	}
-	_, err := host.Control(ctx, &envhost.ControlRequest{
-		Scope: scopeRefForKey(scope),
-		Kind:  envhost.ControlUnregisterScope,
-	})
-	return err
-}
-
-// CloseRemoteHandleForEnv closes the active remote session for the given
-// adapter definition identity (`adapterName`, the "<type>.<name>"
-// adapter-instance key) and scope on the host serving envKey. With
-// per-definition peers this kills only that definition's child; a sibling
-// definition of the same adapter type served by the same peer is untouched.
-// It is a no-op when no host is registered for the environment.
-func (m *SessionManager) CloseRemoteHandleForEnv(ctx context.Context, envKey, adapterName, scope string) error {
-	m.mu.Lock()
-	host := m.envHostForEnvLocked(envKey)
-	m.mu.Unlock()
-	if host == nil {
-		return nil
-	}
-	_, err := host.Control(ctx, &envhost.ControlRequest{
-		Scope:   scopeRefForKey(scope),
-		Adapter: adapterName,
-		Kind:    envhost.ControlCloseHandle,
-	})
-	return err
-}
-
-// RemoteListenAddrForEnv returns the bound listen address of the host serving
-// envKey, or "" when no host is registered for it (per-environment
-// addresses are published to each environment's adapters).
-func (m *SessionManager) RemoteListenAddrForEnv(ctx context.Context, envKey string) string {
-	m.mu.Lock()
-	host := m.envHostForEnvLocked(envKey)
-	m.mu.Unlock()
-	if host == nil {
-		return ""
-	}
-	resp, err := host.Control(ctx, &envhost.ControlRequest{
 		Kind: envhost.ControlListenAddress,
 	})
 	if err != nil {
@@ -1137,15 +947,13 @@ func (m *SessionManager) verifyGraphAdapter(ctx context.Context, root *workflow.
 		return err
 	}
 
-	// The per-instance cache must be populated before any dispatch decision:
-	// resolveAdapterHandle consults it for subworkflow adapters, whose
-	// declarations never appear in the root graph's adapter map.
-	m.cacheGraphAdapterRef(ref)
-
-	// Remote adapters with per_scope_sessions rotate their accept token
-	// per scope in initScopeAdapters. Eager verification here would block before
-	// the token exists, so we defer the adapter-info handshake to scope entry.
-	if _, deferVerify := m.deferredRemoteAdapters[ref.instanceID]; !deferVerify {
+	// Remote environments with per_scope_sessions rotate their accept token
+	// per scope in initScopeAdapters. Eager verification here would block
+	// before the token exists, so the adapter-info handshake is deferred to
+	// scope entry: the declaring environment's bound host of record carries
+	// the deferral capability (envhost.VerifyDeferrer); every other shape
+	// verifies eagerly.
+	if !m.defersVerifyForAdapter(ref) {
 		if _, err := m.verifyAdapterInfo(ctx, ref.instanceID, ref.node.Type, "", "", config, secretMap); err != nil {
 			return fmt.Errorf("verify adapter %q in %q: %w; run 'criteria adapter lock %s'", ref.instanceID, ref.graph.WorkflowDir, err, ref.graph.WorkflowDir)
 		}
@@ -1154,25 +962,30 @@ func (m *SessionManager) verifyGraphAdapter(ctx context.Context, root *workflow.
 	return nil
 }
 
-func (m *SessionManager) cacheGraphAdapterRef(ref graphAdapterRef) {
-	// Mu-guarded. VerifyGraph runs before the run loop today, but
-	// nothing serializes a future caller against concurrent adapter
-	// resolution on the same SessionManager (sessions_graph_cache_race_test.go
-	// pins exactly that overlap under -race).
+// defersVerifyForAdapter reports whether ref's declaring environment runs a
+// binding that defers the blocking adapter-info verify to scope entry.
+// Per-scope remote environments bound through the host seam defer
+// (envhost.VerifyDeferrer); every other shape verifies eagerly at
+// VerifyGraph.
+func (m *SessionManager) defersVerifyForAdapter(ref graphAdapterRef) bool {
+	envKey, ok := declaredAdapterEnvironmentKey(ref.node, ref.graph)
+	if !ok {
+		return false
+	}
+	envNode, ok := ref.graph.Environments[envKey]
+	if !ok || envNode.Type != "remote" {
+		return false
+	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.graphAdapters == nil {
-		m.graphAdapters = make(map[string]graphAdapterRef)
+	host := m.envHostForEnvLocked(envKey)
+	m.mu.Unlock()
+	if host == nil {
+		return false
 	}
-	if _, ok := m.graphAdapters[ref.instanceID]; !ok {
-		m.graphAdapters[ref.instanceID] = ref
+	if d, ok := host.(envhost.VerifyDeferrer); ok {
+		return d.DefersVerify()
 	}
-	if m.adapterDirs == nil {
-		m.adapterDirs = make(map[string]string)
-	}
-	if _, ok := m.adapterDirs[ref.instanceID]; !ok {
-		m.adapterDirs[ref.instanceID] = ref.graph.WorkflowDir
-	}
+	return false
 }
 
 // verifyGraphSecrets evaluates an adapter's secret expressions for VerifyGraph,
@@ -1493,19 +1306,6 @@ func NewSessionManager(loader Loader) *SessionManager {
 		HeartbeatStallThreshold:       t.HeartbeatStallThreshold,
 		StepTimeoutTeardownWindow:     t.StepTimeoutTeardownWindow,
 		VerifyHandshakeFailoverBudget: t.VerifyFailoverBudget,
-	}
-}
-
-// SetDeferredRemoteAdapters marks the given remote adapter instance IDs as ones
-// whose adapter-info handshake should be skipped during VerifyGraph. This is
-// required for remote environments that enable per_scope_sessions, where the
-// per-scope accept token is not available until initScopeAdapters.
-func (m *SessionManager) SetDeferredRemoteAdapters(instanceIDs []string) {
-	if m.deferredRemoteAdapters == nil {
-		m.deferredRemoteAdapters = make(map[string]struct{}, len(instanceIDs))
-	}
-	for _, id := range instanceIDs {
-		m.deferredRemoteAdapters[id] = struct{}{}
 	}
 }
 
@@ -2216,25 +2016,34 @@ func (m *SessionManager) lockedAdapterFor(instanceID string) *lockfile.LockedAda
 
 // adapterDeclaration returns the adapter node for instanceID together with the
 // graph that declares it. Root-graph declarations win so a re-declared instance
-// keeps its parent binding; subworkflow declarations come from the
-// per-instance cache populated by VerifyGraph (the root graph's
-// adapter map never contains subworkflow adapters). The cache lookup
-// takes mu so it cannot race VerifyGraph's cache writes.
+// keeps its parent binding; subworkflow declarations resolve by walking the
+// graph tree (the root graph's adapter map never contains subworkflow
+// adapters). There is no per-instance cache to consult or populate, so the
+// walk is lock-free on the immutable trees and can never race a VerifyGraph
+// cache write.
 func (m *SessionManager) adapterDeclaration(instanceID string) (*workflow.AdapterNode, *workflow.FSMGraph) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.adapterDeclarationLocked(instanceID)
+	g := m.graph
+	m.mu.Unlock()
+	return adapterDeclarationInTree(g, instanceID)
 }
 
-// adapterDeclarationLocked is the mu-held core of adapterDeclaration.
-func (m *SessionManager) adapterDeclarationLocked(instanceID string) (*workflow.AdapterNode, *workflow.FSMGraph) {
-	if m.graph != nil {
-		if node, ok := m.graph.Adapters[instanceID]; ok {
-			return node, m.graph
-		}
+// adapterDeclarationInTree resolves an instanceID against a compiled graph
+// tree: the graph's own adapter map first, then each subworkflow body in
+// declaration order. The first hit wins, mirroring collectGraphAdapters'
+// parent-before-child ordering (a root declaration shadows a re-declaration
+// in a sub body).
+func adapterDeclarationInTree(g *workflow.FSMGraph, instanceID string) (*workflow.AdapterNode, *workflow.FSMGraph) {
+	if g == nil {
+		return nil, nil
 	}
-	if ref, ok := m.graphAdapters[instanceID]; ok && ref.node != nil && ref.graph != nil {
-		return ref.node, ref.graph
+	if node, ok := g.Adapters[instanceID]; ok {
+		return node, g
+	}
+	for _, name := range g.SubworkflowOrder {
+		if node, decl := adapterDeclarationInTree(g.Subworkflows[name].Body, instanceID); decl != nil {
+			return node, decl
+		}
 	}
 	return nil, nil
 }
@@ -2321,18 +2130,18 @@ func (m *SessionManager) isOCIAdapter(instanceID string) bool {
 }
 
 // adapterDir returns the workflow directory associated with instanceID,
-// defaulting to the graph's root directory when no cached directory exists.
-// The cache lookup takes mu so it cannot race VerifyGraph's writes.
+// defaulting to the graph's root directory when the declaration is unknown.
+// The walk is lock-free on the immutable graph tree; only m.graph itself is
+// read under mu.
 func (m *SessionManager) adapterDir(instanceID string) string {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.adapterDirs != nil {
-		if dir, ok := m.adapterDirs[instanceID]; ok {
-			return dir
-		}
+	g := m.graph
+	m.mu.Unlock()
+	if _, graph := adapterDeclarationInTree(g, instanceID); graph != nil {
+		return graph.WorkflowDir
 	}
-	if m.graph != nil {
-		return m.graph.WorkflowDir
+	if g != nil {
+		return g.WorkflowDir
 	}
 	return ""
 }
@@ -3535,7 +3344,7 @@ func (m *SessionManager) Shutdown(ctx context.Context) error {
 	// Stop every owned supervisor host before closing sessions: a container
 	// host's kill is what terminates its children, so stopping first means
 	// session close sees process-death facts instead of racing live
-	// children. (Borrowed hosts were never collected.)
+	// children. (Shared hosts were never collected.)
 	for _, host := range hosts {
 		if stopper, ok := host.(EnvHostStopper); ok {
 			stopper.StopEnvHost(ctx)
@@ -3557,39 +3366,15 @@ func (m *SessionManager) Shutdown(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// takeForShutdown atomically collects every registered remote shim, every
-// non-borrowed supervisor host, and snapshots+clears the sessions and
-// verification records under the lock. The default shim usually aliases
-// one environment's shim; duplicates are kept because RemoteShim
-// implementations cannot be assumed comparable and Shim.Stop is
-// idempotent, so a second Stop is a no-op.
+// takeForShutdown atomically collects every shim this SessionManager owns
+// (the legacy default slot plus the shims its bound hosts surface via
+// HostShimSource), every owned supervisor host, and snapshots+clears the
+// sessions and verification records under the lock.
 func (m *SessionManager) takeForShutdown() ([]RemoteShim, []envhost.Host, []*Session) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	shims := make([]RemoteShim, 0, len(m.remoteShimsByEnv)+1)
-	// Borrowed shims are owned by a parent SM (BorrowRemoteProvisioningFrom); this SM
-	// only serves scopes on them, so it must not Stop them here — doing so would
-	// tear down the shared phone-home listener the parent run and sibling
-	// parallel iterations still depend on.
-	if !m.remoteShimsBorrowed {
-		if m.remoteShim != nil {
-			shims = append(shims, m.remoteShim)
-		}
-		for _, s := range m.remoteShimsByEnv {
-			shims = append(shims, s)
-		}
-	}
-	// Supervisor hosts follow the same ownership rule: a borrowed host is
-	// the parent's to stop (its children outlive this iteration); an
-	// owned host is this run's lever over its container children.
-	hosts := make([]envhost.Host, 0, len(m.envHostsByEnv))
-	if !m.envHostsBorrowed {
-		for _, host := range m.envHostsByEnv {
-			if host != nil {
-				hosts = append(hosts, host)
-			}
-		}
-	}
+	shims := m.ownedShimsForShutdown()
+	hosts := m.ownedEnvHostsForShutdown()
 	sessions := make([]*Session, 0, len(m.sessions))
 	for name, sess := range m.sessions {
 		sessions = append(sessions, sess)
@@ -3599,6 +3384,54 @@ func (m *SessionManager) takeForShutdown() ([]RemoteShim, []envhost.Host, []*Ses
 		delete(m.verified, name)
 	}
 	return shims, hosts, sessions
+}
+
+// ownedShimsForShutdown collects the phone-home shims this SessionManager
+// owns: the legacy default slot plus the shims its bound hosts surface via
+// HostShimSource. Shared hosts are owned by a parent SM (ShareEnvHostsFrom);
+// this SM only serves scopes on them, so it must not stop them nor the shims
+// they surface here — doing so would tear down the supervisor the parent run
+// and sibling parallel iterations still depend on. Duplicates (a shim aliased
+// by the default slot and contributed by its host) are kept because
+// RemoteShim implementations cannot be assumed comparable and Shim.Stop is
+// idempotent, so a second Stop is a no-op. Callers must hold m.mu.
+func (m *SessionManager) ownedShimsForShutdown() []RemoteShim {
+	if m.envHostsShared {
+		return nil
+	}
+	shims := make([]RemoteShim, 0, len(m.envHostsByEnv)+1)
+	if m.remoteShim != nil {
+		shims = append(shims, m.remoteShim)
+	}
+	for _, host := range m.envHostsByEnv {
+		if host == nil {
+			continue
+		}
+		if src, ok := host.(HostShimSource); ok {
+			if shim := src.Shim(); shim != nil {
+				shims = append(shims, shim)
+			}
+		}
+	}
+	return shims
+}
+
+// ownedEnvHostsForShutdown collects the supervisor hosts this SessionManager
+// owns. Supervisor hosts follow the same ownership rule as the shims: a
+// shared host is the parent's to stop (its children outlive this iteration);
+// an owned host is this run's lever over its children. Callers must hold
+// m.mu.
+func (m *SessionManager) ownedEnvHostsForShutdown() []envhost.Host {
+	if m.envHostsShared {
+		return nil
+	}
+	hosts := make([]envhost.Host, 0, len(m.envHostsByEnv))
+	for _, host := range m.envHostsByEnv {
+		if host != nil {
+			hosts = append(hosts, host)
+		}
+	}
+	return hosts
 }
 
 // closeSession marks a session closing, cancels its log stream, tears down

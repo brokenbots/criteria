@@ -170,14 +170,15 @@ func TestEngine_CRI269_SubworkflowPerScopeRemoteAdapterIsDeferredAndRemote(t *te
 	sessions := adapterhost.NewSessionManager(loader)
 	sessions.SetGraph(g)
 	shim := newFakeRemoteShim(&fakeRemoteHandle{})
-	sessions.SetRemoteShim(shim)
+	shim.perScope = true // the body's remote.prod declares per_scope_sessions
+	bindRemoteEnvHosts(sessions, g, shim)
 	t.Cleanup(func() { _ = sessions.Shutdown(context.Background()) })
 
 	deps, rootOrder, rlc, err := eng.initAdapters(ctx, sessions, sink, nil, "")
 	if err != nil {
 		t.Fatalf("initAdapters: %v", err)
 	}
-	defer tearDownScopeAdapters(ctx, rootOrder, deps, rlc)
+	defer tearDownScopeAdapters(ctx, "", rootOrder, deps, rlc)
 
 	if n := loader.resolutionCount(); n != 0 {
 		t.Fatalf("VerifyGraph resolved an adapter binary locally %d time(s); the subworkflow per-scope remote adapter must be deferred at VerifyGraph (CRI-269)", n)
@@ -191,7 +192,7 @@ func TestEngine_CRI269_SubworkflowPerScopeRemoteAdapterIsDeferredAndRemote(t *te
 	if err != nil {
 		t.Fatalf("initScopeAdapters (subworkflow scope): %v", err)
 	}
-	defer tearDownScopeAdapters(ctx, bodyOrder, deps, rlc)
+	defer tearDownScopeAdapters(ctx, scopeName, bodyOrder, deps, rlc)
 
 	event, ok := sink.firstStatus("provision_wanted")
 	if !ok {
@@ -357,7 +358,7 @@ func TestEngine_CRI270_RemoteAdapterReceivesEnvironmentWorkingDir(t *testing.T) 
 	}}
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
-	sessions.SetRemoteShim(newFakeRemoteShim(handle))
+	bindRemoteEnvHosts(sessions, g, newFakeRemoteShim(handle))
 	initCRI270Scope(t, g, sessions, "noop.default")
 
 	work := g.Steps["work"]
@@ -402,7 +403,7 @@ func TestEngine_CRI270_RemoteWithoutWorkingDirInjectsNothing(t *testing.T) {
 	handle := &recordingHandle{}
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
-	sessions.SetRemoteShim(newFakeRemoteShim(handle))
+	bindRemoteEnvHosts(sessions, g, newFakeRemoteShim(handle))
 	initCRI270Scope(t, g, sessions, "noop.default")
 
 	work := g.Steps["start"]
@@ -521,7 +522,7 @@ func TestEngine_CRI270_InjectionGatedOnDeclaredInputSchema(t *testing.T) {
 	}}
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
-	sessions.SetRemoteShim(newFakeRemoteShim(handle))
+	bindRemoteEnvHosts(sessions, g, newFakeRemoteShim(handle))
 	initCRI270Scope(t, g, sessions, "noop.default")
 
 	work := g.Steps["work"]
@@ -559,7 +560,7 @@ func TestEngine_CRI270_InjectionOnDeclaredWorkingDirKey(t *testing.T) {
 	}}
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
-	sessions.SetRemoteShim(newFakeRemoteShim(handle))
+	bindRemoteEnvHosts(sessions, g, newFakeRemoteShim(handle))
 	initCRI270Scope(t, g, sessions, "noop.default")
 
 	work := g.Steps["work"]
@@ -627,7 +628,7 @@ func TestEngine_CRI270_UndeclaredSurfaceGetsNoInjection(t *testing.T) {
 	handle := &recordingHandle{}
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
-	sessions.SetRemoteShim(newFakeRemoteShim(handle))
+	bindRemoteEnvHosts(sessions, g, newFakeRemoteShim(handle))
 	initCRI270Scope(t, g, sessions, "mcp.default")
 
 	work := g.Steps["work"]
@@ -660,7 +661,7 @@ func TestEngine_CRI270_ShellTypeWithoutDeclaredSurfaceStillInjects(t *testing.T)
 	handle := &recordingHandle{}
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
-	sessions.SetRemoteShim(newFakeRemoteShim(handle))
+	bindRemoteEnvHosts(sessions, g, newFakeRemoteShim(handle))
 	initCRI270Scope(t, g, sessions, "shell.default")
 
 	work := g.Steps["work"]
@@ -698,7 +699,7 @@ func TestEngine_CRI270_RestoredRemoteSessionStillInjectsDeclaredKey(t *testing.T
 	}}
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
-	sessions.SetRemoteShim(newFakeRemoteShim(handle))
+	bindRemoteEnvHosts(sessions, g, newFakeRemoteShim(handle))
 	t.Cleanup(func() { _ = sessions.Shutdown(context.Background()) })
 
 	snap := &adapterhost.SessionSnapshot{

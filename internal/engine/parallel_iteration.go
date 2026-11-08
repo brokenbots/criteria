@@ -552,8 +552,9 @@ func buildParallelIterState(i, total int, item, key cty.Value, st *RunState, vis
 		// child adapters are bound to a per_scope_sessions remote environment can
 		// rotate and provision per-scope. Without this the iteration state had a
 		// nil RemoteLifecycle and per-scope provisioning failed with "no run data
-		// directory is configured". The subworkflow iteration path derives an
-		// isolated per-iteration lifecycle from this shared one.
+		// directory is configured". The state is SHARED across iterations: its
+		// record map is keyed "<scopeName>/<adapterName>", keeping each
+		// iteration's records apart.
 		// The crashed-session set is shared across parallel iteration
 		// states and subworkflow bodies (like Visits) so a crash recorded in
 		// one scope is re-opened by follow-on steps executing in any other.
@@ -688,14 +689,14 @@ func (n *stepNode) runParallelSubworkflowIteration(ctx context.Context, st *RunS
 	iterDeps.Sessions.Audit = deps.Sessions.Audit
 	iterDeps.Sessions.RedactionRegistry = deps.Sessions.RedactionRegistry
 	// The fresh SM isolates LOCAL adapter sessions, but a remote environment's
-	// phone-home shim is a single listener per environment (fixed
-	// listen_address) that multiplexes every scope, and isRemoteAdapter consults
-	// the VerifyGraph-populated adapter caches. Borrow both from the parent so
-	// this iteration's per-scope provisioning registers on the shared listener
-	// (instead of "no remote shim registered") and the child adapter is
-	// recognised as remote (instead of a local "adapter not found"). The shims
-	// stay owned by the parent SM, which stops them at run end.
-	iterDeps.Sessions.BorrowRemoteProvisioningFrom(deps.Sessions)
+	// phone-home host is a single binding per environment (fixed
+	// listen_address) that multiplexes every scope. Sharing the parent's env
+	// Hosts means this iteration's per-scope provisioning registers on the
+	// SAME host with its own scope keys (N token sets against one env host —
+	// the operator contract is byte-identical) instead of "no remote shim
+	// registered". Nothing is copied: the Hosts stay owned by the parent SM,
+	// and shared Hosts are excluded from every child's Shutdown collection.
+	iterDeps.Sessions.ShareEnvHostsFrom(deps.Sessions)
 
 	// Adapter tool-call grants to tool RESOURCE adapters (granted to a
 	// caller's tools list but never run as a step target, e.g. an mcp server
@@ -724,19 +725,20 @@ func (n *stepNode) runParallelSubworkflowIteration(ctx context.Context, st *RunS
 			defer iterDeps.Sessions.ReleaseSharedToolResources()
 		}
 	}
-	// The iteration manager has no graph of its own; carry the
-	// declaring workflow's policy so the seam's depth and call-count gates
-	// honor the workflow-declared bounds instead of package defaults.
-	iterDeps.Sessions.SetBorrowedGraphPolicy(&n.graph.Policy)
+	// The iteration manager carries the executing graph so adapter/tool-call
+	// resolution (callee declarations, env policy, container builds — every
+	// m.graph consumer) resolves against the declaring workflow like any other
+	// manager; the graph pointer is immutable and shared, so nothing is copied.
+	iterDeps.Sessions.SetGraph(n.graph)
 
-	// Give this iteration its own per-scope lifecycle (isolated record map,
-	// shared run data dir) so concurrent iterations of the same subworkflow
-	// provision independent scopes without clobbering each other's records. st
-	// is this goroutine's own per-iteration RunState (buildParallelIterState),
-	// so mutating it here is safe.
-	if st.RemoteLifecycle != nil {
-		st.RemoteLifecycle = st.RemoteLifecycle.deriveForParallelIteration()
-	}
+	// Parallel iterations share the parent's remoteLifecycleContext as-is:
+	// its record map is keyed "<scopeName>/<adapterName>", so concurrent
+	// iterations of the same subworkflow keep independent provisioning
+	// records while they share the run data directory (each rotated token
+	// keyed by its own unique scopeInstanceID) and the run-final detachment
+	// ledger (whose keys carry each iteration's unique scope key). The
+	// per-iteration scope keys still come from iterScope below — that is
+	// what isolates the sessions, not the lifecycle context.
 
 	// Each parallel iteration must run under a DISTINCT scope name: the scope
 	// name is a token-directory component, and per-scope provisioning persists a

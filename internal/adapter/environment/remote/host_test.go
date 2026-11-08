@@ -11,7 +11,9 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/envhost"
 )
 
@@ -177,5 +179,63 @@ func TestHostEnv_JournalUnavailable(t *testing.T) {
 	}
 	if entries != nil {
 		t.Errorf("journal entries = %v, want nil", entries)
+	}
+}
+
+func TestHostEnv_OptionsWireServerAndShimCapabilities(t *testing.T) {
+	shim, err := NewShim(nil, &fixedDigestVerifier{allowed: map[string]string{}})
+	if err != nil {
+		t.Fatalf("NewShim: %v", err)
+	}
+	shim.SetPerScopeSessions(true)
+	prov := NewPeerSessionProvider(shim, true)
+	shim.SetPeerAcceptor(prov)
+
+	var wired recordingRegistrar
+	pending := &recordingPendingSink{}
+	host := NewHost(shim, prov, WithScopeRegistrar(&wired), WithScopeSessionSink(pending))
+
+	if shim.scopeRegistrar != ScopeRegistrar(&wired) {
+		t.Error("WithScopeRegistrar did not install the dial-time registrar on the bound server")
+	}
+	if shim.pendingSink != ScopeSessionSink(pending) {
+		t.Error("WithScopeSessionSink did not install the pending-wait sink on the bound server")
+	}
+	// The host surfaces the shim slot's value: the peer provider the engine
+	// handed in, so every shim-slot query resolves as pre-carve.
+	if got := host.(interface{ Shim() adapterhost.RemoteShim }).Shim(); got != adapterhost.RemoteShim(prov) {
+		t.Errorf("bound host's shim slot = %T, want the peer provider (%T)", got, prov)
+	}
+	// DefersVerify follows the environment's per-scope isolation flag: this
+	// is the engine's verify-deferral gate, host-bound.
+	if !host.(interface{ DefersVerify() bool }).DefersVerify() {
+		t.Error("bound host DefersVerify() = false, want true for the per-scope environment")
+	}
+}
+
+type recordingPendingSink struct {
+	events []*ScopeSessionPending
+}
+
+func (s *recordingPendingSink) OnScopeSessionPending(p *ScopeSessionPending) {
+	s.events = append(s.events, p)
+}
+
+// PerScopeSignalsFlowThroughWiredSink asserts the installed sink actually
+// receives the server's pending signal (the wiring is live, not stored
+// dead).
+func TestHostEnv_PerScopeSignalsFlowThroughWiredSink(t *testing.T) {
+	shim, err := NewShim(nil, &fixedDigestVerifier{allowed: map[string]string{}})
+	if err != nil {
+		t.Fatalf("NewShim: %v", err)
+	}
+	prov := NewPeerSessionProvider(shim, true)
+	shim.SetPeerAcceptor(prov)
+	pending := &recordingPendingSink{}
+	_ = NewHost(shim, prov, WithScopeSessionSink(pending))
+
+	shim.emitScopeSessionPending("noop", "alpha/uuid-1", "noop/alpha/uuid-1", time.Second, 3*time.Second)
+	if len(pending.events) != 1 || pending.events[0].Scope != "alpha/uuid-1" {
+		t.Errorf("pending signals = %+v, want one signal for scope alpha/uuid-1", pending.events)
 	}
 }

@@ -171,7 +171,7 @@ func newKB246RemoteSession(t *testing.T, onCrash string) (*SessionManager, *kb24
 
 	sm := NewSessionManager(kb246Loader{})
 	sm.SetGraph(kb246Graph())
-	sm.SetRemoteShimForEnv("remote.fleet", shim)
+	sm.SetEnvHostForEnv("remote.fleet", NewShimHost(shim))
 
 	sess := &Session{Name: "shell.develop", Adapter: "shell", handle: stale, ScopeInstanceID: "run-1", OnCrash: onCrash}
 	sm.mu.Lock()
@@ -273,7 +273,7 @@ func TestSessions_KB246_TransportClosedReentryFailureStaysFailClosed(t *testing.
 func TestSessions_KB246_TransportClosedLocalSessionStillFails(t *testing.T) {
 	sm := NewSessionManager(kb246Loader{})
 	shim := &kb246Shim{}
-	sm.SetRemoteShimForEnv("remote.fleet", shim)
+	sm.SetEnvHostForEnv("remote.fleet", NewShimHost(shim))
 
 	stale := newKB246Handle("stale", true, "")
 	sess := &Session{Name: "shell.local", Adapter: "shell", handle: stale}

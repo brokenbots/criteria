@@ -1266,6 +1266,11 @@ type fakeRemoteShim struct {
 	// stored. The KB-232 ordering tests sample on-disk state at
 	// registration time to pin register-before-token-file-visible order.
 	onRegister func(scope, token string)
+	// perScope, when true, makes the shim claim per-scope sessions so a
+	// host binding built on it defers VerifyGraph's adapter-info handshake
+	// to scope entry — the host contract stands in for the deleted
+	// deferred-adapter bookkeeping.
+	perScope bool
 }
 
 func newFakeRemoteShim(h adapterhost.Handle) *fakeRemoteShim {
@@ -1279,6 +1284,15 @@ func newFakeRemoteShim(h adapterhost.Handle) *fakeRemoteShim {
 // onRegister, when set, runs inside RegisterScope after the token is stored.
 // The KB-232 ordering tests sample on-disk state at registration time to pin
 // the register-before-token-file-visible order.
+// PerScopeSessions is the structural capability the envhost shimHost
+// discovers: when true, host bindings built on this shim defer the
+// VerifyGraph adapter-info handshake to scope entry.
+func (f *fakeRemoteShim) PerScopeSessions() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.perScope
+}
+
 func (f *fakeRemoteShim) record(call string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -1424,6 +1438,17 @@ func (s *eventTrackingSink) stepOutcomes() []string {
 
 // perScopeRemoteGraph returns a compiled workflow with a remote environment that
 // has per_scope_sessions enabled and a single noop adapter bound to it.
+// bindRemoteEnvHosts binds every remote environment the graph declares
+// (root and subworkflow bodies included) to the shim as its host of
+// record — the test-side equivalent of the engine's per-environment host
+// binding, so engine-lane tests exercise the same resolution production
+// uses.
+func bindRemoteEnvHosts(sessions *adapterhost.SessionManager, g *workflow.FSMGraph, shim adapterhost.RemoteShim) {
+	for key := range shimEnvironmentDeclarations(g) {
+		sessions.SetEnvHostForEnv(key, adapterhost.NewShimHost(shim))
+	}
+}
+
 func perScopeRemoteGraph(t *testing.T) *workflow.FSMGraph {
 	t.Helper()
 	return compile(t, `
@@ -1463,7 +1488,7 @@ func TestInitScopeAdapters_PerScope_EmitsProvisionWanted(t *testing.T) {
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
 	shim := newFakeRemoteShim(&fakeRemoteHandle{})
-	sessions.SetRemoteShim(shim)
+	bindRemoteEnvHosts(sessions, g, shim)
 
 	lifecycle := newScopeLifecycleState(dataDir)
 	lifecycle.setRunID("run-123")
@@ -1638,14 +1663,14 @@ state "done" {
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
 	shim := newFakeRemoteShim(&fakeRemoteHandle{})
-	sessions.SetRemoteShim(shim)
+	bindRemoteEnvHosts(sessions, g, shim)
 	sink := &eventTrackingSink{}
 
 	deps, order, rlc, err := eng.initAdapters(ctx, sessions, sink, nil, "")
 	if err != nil {
 		t.Fatalf("initAdapters: %v", err)
 	}
-	defer tearDownScopeAdapters(ctx, order, deps, rlc)
+	defer tearDownScopeAdapters(ctx, "", order, deps, rlc)
 
 	event, ok := sink.firstStatus("provision_wanted")
 	if !ok {
@@ -1724,7 +1749,7 @@ state "done" {
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
 	shim := newFakeRemoteShim(&fakeRemoteHandle{})
-	sessions.SetRemoteShim(shim)
+	bindRemoteEnvHosts(sessions, g, shim)
 
 	lifecycle := newScopeLifecycleState(t.TempDir())
 	lifecycle.setRunID("run-214")
@@ -1737,7 +1762,7 @@ state "done" {
 		t.Fatalf("initScopeAdapters: %v", err)
 	}
 
-	tearDownScopeAdapters(ctx, order, deps, rlc)
+	tearDownScopeAdapters(ctx, "", order, deps, rlc)
 
 	provision, ok := sink.firstStatus("provision_wanted")
 	if !ok {
@@ -1770,14 +1795,14 @@ func TestInitAdapters_PerScope_ProvisionWantedImageReferenceStaysEmptyWithoutPin
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
 	shim := newFakeRemoteShim(&fakeRemoteHandle{})
-	sessions.SetRemoteShim(shim)
+	bindRemoteEnvHosts(sessions, g, shim)
 	sink := &eventTrackingSink{}
 
 	deps, order, rlc, err := eng.initAdapters(ctx, sessions, sink, nil, "")
 	if err != nil {
 		t.Fatalf("initAdapters: %v", err)
 	}
-	defer tearDownScopeAdapters(ctx, order, deps, rlc)
+	defer tearDownScopeAdapters(ctx, "", order, deps, rlc)
 
 	event, ok := sink.firstStatus("provision_wanted")
 	if !ok {
@@ -1869,14 +1894,14 @@ state "done" {
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
 	shim := newFakeRemoteShim(&fakeRemoteHandle{})
-	sessions.SetRemoteShim(shim)
+	bindRemoteEnvHosts(sessions, g, shim)
 	sink := &eventTrackingSink{}
 
 	deps, order, rlc, err := eng.initAdapters(ctx, sessions, sink, nil, "")
 	if err != nil {
 		t.Fatalf("initAdapters: %v", err)
 	}
-	defer tearDownScopeAdapters(ctx, order, deps, rlc)
+	defer tearDownScopeAdapters(ctx, "", order, deps, rlc)
 
 	// The handoff under test: the lifecycle context must carry the same
 	// effective pin set the session manager already got.
@@ -1910,14 +1935,14 @@ func TestInitAdapters_PerScope_ProvisionWantedDigestStaysEmptyWithoutPins(t *tes
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
 	shim := newFakeRemoteShim(&fakeRemoteHandle{})
-	sessions.SetRemoteShim(shim)
+	bindRemoteEnvHosts(sessions, g, shim)
 	sink := &eventTrackingSink{}
 
 	deps, order, rlc, err := eng.initAdapters(ctx, sessions, sink, nil, "")
 	if err != nil {
 		t.Fatalf("initAdapters: %v", err)
 	}
-	defer tearDownScopeAdapters(ctx, order, deps, rlc)
+	defer tearDownScopeAdapters(ctx, "", order, deps, rlc)
 
 	if rlc.lockfile != nil {
 		t.Fatalf("rlc.lockfile = %+v, want nil (no pins resolvable)", rlc.lockfile)
@@ -1939,7 +1964,7 @@ func TestTearDownScopeAdapters_PerScope_EmitsReleased(t *testing.T) {
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
 	shim := newFakeRemoteShim(&fakeRemoteHandle{})
-	sessions.SetRemoteShim(shim)
+	bindRemoteEnvHosts(sessions, g, shim)
 
 	lifecycle := newScopeLifecycleState(dataDir)
 	lifecycle.setRunID("run-123")
@@ -1952,7 +1977,7 @@ func TestTearDownScopeAdapters_PerScope_EmitsReleased(t *testing.T) {
 		t.Fatalf("initScopeAdapters: %v", err)
 	}
 
-	tearDownScopeAdapters(ctx, order, deps, rlc)
+	tearDownScopeAdapters(ctx, "", order, deps, rlc)
 
 	if !sink.hasStatus("released") {
 		t.Fatalf("expected released event, got %v", sink.provisionEvents)
@@ -2052,7 +2077,7 @@ state "done" {
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
 	shim := newFakeRemoteShim(&fakeRemoteHandle{})
-	sessions.SetRemoteShim(shim)
+	bindRemoteEnvHosts(sessions, g, shim)
 
 	lifecycle := newScopeLifecycleState(dataDir)
 	lifecycle.setRunID("run-env-identity")
@@ -2092,7 +2117,7 @@ state "done" {
 		}
 	}
 
-	tearDownScopeAdapters(ctx, order, deps, rlc)
+	tearDownScopeAdapters(ctx, "", order, deps, rlc)
 
 	released := map[string]AdapterLifecycleEvent{}
 	for _, ev := range sink.provisionEvents {
@@ -2158,7 +2183,7 @@ state "done" {
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
 	shim := newFakeRemoteShim(&fakeRemoteHandle{})
-	sessions.SetRemoteShim(shim)
+	bindRemoteEnvHosts(sessions, g, shim)
 
 	lifecycle := newScopeLifecycleState(dataDir)
 	lifecycle.setRunID("run-123")
@@ -2187,7 +2212,7 @@ state "done" {
 		t.Fatalf("provision_wanted adapter_type: got %v, want shell→intake, copilot→planner", provisioned)
 	}
 
-	tearDownScopeAdapters(ctx, order, deps, rlc)
+	tearDownScopeAdapters(ctx, "", order, deps, rlc)
 	released := map[string]string{}
 	for _, ev := range sink.provisionEvents {
 		if ev.Status == "released" {
@@ -2242,7 +2267,7 @@ state "done" {
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
 	shim := newFakeRemoteShim(&fakeRemoteHandle{})
-	sessions.SetRemoteShim(shim)
+	bindRemoteEnvHosts(sessions, g, shim)
 
 	lifecycle := newScopeLifecycleState(dataDir)
 	lifecycle.setRunID("run-legacy")
@@ -2336,8 +2361,8 @@ state "done" {
 	prodShim.listenAddr = "127.0.0.1:40001"
 	stagingShim := newFakeRemoteShim(&fakeRemoteHandle{})
 	stagingShim.listenAddr = "127.0.0.1:40002"
-	sessions.SetRemoteShimForEnv("remote.prod", prodShim)
-	sessions.SetRemoteShimForEnv("remote.staging", stagingShim)
+	sessions.SetEnvHostForEnv("remote.prod", adapterhost.NewShimHost(prodShim))
+	sessions.SetEnvHostForEnv("remote.staging", adapterhost.NewShimHost(stagingShim))
 
 	lifecycle := newScopeLifecycleState(dataDir)
 	lifecycle.setRunID("run-cri293")

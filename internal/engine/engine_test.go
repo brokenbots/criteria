@@ -1323,9 +1323,10 @@ insecure = true
 	}
 
 	// The session manager holds the peer-session provider (ADR-0007 Stage
-	// A), which implements RemoteShim and delegates legacy runner sessions
-	// to the shim it wraps; the assertions exercise the dispatch surface.
-	remoteShim := sessions.RemoteShim()
+	// A) through the environment's bound host of record, which implements
+	// RemoteShim and delegates legacy runner sessions to the shim it wraps;
+	// the assertions exercise the dispatch surface.
+	remoteShim := sessions.RemoteShimForEnv("remote.dev")
 	if remoteShim == nil {
 		t.Fatalf("remote shim is nil, want a RemoteShim")
 	}

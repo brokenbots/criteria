@@ -84,7 +84,7 @@ func runWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry str
 	// re-opens the SAME session through the shim's already-provisioned skip; the run's final
 	// teardown releases what the bodies detached. Releasing here was the
 	// factory of the teardown→rotate→re-dial→handshake-race class.
-	defer func() { detachBodyScopeAdapters(ctx, bodyOrder, deps, rlc) }()
+	defer func() { detachBodyScopeAdapters(ctx, scopeName, bodyOrder, deps, rlc) }()
 
 	return runWorkflowBodyLoop(ctx, body, childSt, deps)
 }
@@ -146,10 +146,11 @@ func startWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry s
 	// the record (keeping the engagement alive) instead of releasing it.
 	// A nil/empty detached map is a body whose scope owns fresh sessions
 	// (first entry, or a body re-declaring a PARENT adapter — the parent's
-	// records never enter the detachment ledger).
+	// records never enter the detachment ledger — and sibling bodies'
+	// records have their own scope names).
 	if rlc != nil && len(detached) > 0 {
-		for id := range detached {
-			if rec := detached[id]; rec != nil && rec.adapterName == id {
+		for _, rec := range detached {
+			if rec != nil && rec.scopeName == scopeName {
 				rlc.adoptDetached(rec)
 			}
 		}

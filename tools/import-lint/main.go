@@ -11,6 +11,10 @@
 //     internal/*/testfixtures/ paths (standalone adapter binaries that must use
 //     the public surface to prove external authors need no internal/ reach-through).
 //  3. No file in workflow/ may import github.com/brokenbots/criteria/internal/.
+//  4. No file in internal/adapterhost/ may import
+//     github.com/brokenbots/criteria/internal/adapter/environment/remote:
+//     the environment host-of-record seam (ADR-0014) consumes envhost.Host
+//     exclusively, so adapterhost must stay free of remote shim types.
 //
 // Usage:
 //
@@ -60,6 +64,11 @@ var rules = []rule{
 		filePrefix: "workflow/",
 		forbidden:  "github.com/brokenbots/criteria/internal/",
 		message:    "workflow/ must not import internal/",
+	},
+	{
+		filePrefix: "internal/adapterhost/",
+		forbidden:  "github.com/brokenbots/criteria/internal/adapter/environment/remote",
+		message:    "adapterhost must not import remote shim types (ADR-0014); it consumes the envhost.Host seam only",
 	},
 }
 

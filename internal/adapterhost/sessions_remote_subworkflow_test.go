@@ -207,9 +207,11 @@ func writeTestFile(t *testing.T, path, content string) {
 }
 
 // TestSessions_CRI269_SubworkflowDeferredRemoteAdapter pins the deferred path:
-// VerifyGraph must not handshake the subworkflow adapter locally, the cache
-// must record the declaring body graph, and isRemoteAdapter must resolve the
-// environment against that body graph. The local adapter stays local.
+// VerifyGraph must not handshake the subworkflow adapter locally when the
+// declaring environment's host of record carries the DefersVerify capability,
+// and the declaration must resolve through the walk against the subworkflow
+// body (isRemoteAdapter resolves the environment against that body graph).
+// The local adapter stays local.
 func TestSessions_CRI269_SubworkflowDeferredRemoteAdapter(t *testing.T) {
 	ctx := context.Background()
 	g, body := compileCRI269SessionsGraph(t, true)
@@ -221,15 +223,12 @@ func TestSessions_CRI269_SubworkflowDeferredRemoteAdapter(t *testing.T) {
 	m.SetGraph(g)
 	shim := &cri269Shim{}
 	m.SetRemoteShim(shim)
-	m.SetDeferredRemoteAdapters([]string{developer})
+	m.SetEnvHostForEnv("remote.prod", &seamSpyHost{defersVerify: true})
 
 	if err := m.VerifyGraph(ctx, g, nil); err != nil {
 		t.Fatalf("VerifyGraph: %v", err)
 	}
 
-	if _, ok := m.deferredRemoteAdapters[developer]; !ok {
-		t.Fatalf("deferredRemoteAdapters must contain subworkflow instance %q", developer)
-	}
 	if n := loader.resolutionsOf("noop"); n != 0 {
 		t.Fatalf("VerifyGraph resolved the remote subworkflow adapter locally %d time(s); a deferred adapter must not be handshaken at VerifyGraph (CRI-269)", n)
 	}
@@ -237,19 +236,16 @@ func TestSessions_CRI269_SubworkflowDeferredRemoteAdapter(t *testing.T) {
 		t.Fatalf("VerifyGraph ran %d remote handshake(s) for the deferred adapter; the per-scope token is not rotated until scope entry", n)
 	}
 
-	ref, ok := m.graphAdapters[developer]
-	if !ok {
-		t.Fatalf("graph adapter cache must contain %q after VerifyGraph", developer)
+	node, decl := m.adapterDeclaration(developer)
+	if node == nil || decl != body {
+		t.Fatalf("adapterDeclaration(%q) = (%v, %v), want the subworkflow body's declaration", developer, node, decl)
 	}
-	if ref.graph != body {
-		t.Fatalf("cached graph for %q must be the subworkflow body, got %v", developer, ref.graph)
-	}
-	if ref.node != body.Adapters[developer] {
-		t.Fatalf("cached node for %q must be the body's adapter node", developer)
+	if node != body.Adapters[developer] {
+		t.Fatalf("declared node for %q must be the body's adapter node", developer)
 	}
 
 	if !m.isRemoteAdapter(developer) {
-		t.Fatalf("isRemoteAdapter(%q) = false, want true via the cached subworkflow declaration (CRI-269)", developer)
+		t.Fatalf("isRemoteAdapter(%q) = false, want true via the subworkflow declaration (CRI-269)", developer)
 	}
 	if m.isRemoteAdapter(local) {
 		t.Fatalf("isRemoteAdapter(%q) = true, want false: an adapter not bound to a remote env stays local", local)
@@ -288,6 +284,6 @@ func TestSessions_CRI269_EagerVerifyOfRemoteSubworkflowAdapter(t *testing.T) {
 		t.Fatalf("eager VerifyGraph handshake resolved the remote subworkflow adapter locally %d time(s) (CRI-269)", n)
 	}
 	if !m.isRemoteAdapter(developer) {
-		t.Fatalf("isRemoteAdapter(%q) = false, want true via the cached subworkflow declaration (CRI-269)", developer)
+		t.Fatalf("isRemoteAdapter(%q) = false, want true via the subworkflow declaration (CRI-269)", developer)
 	}
 }

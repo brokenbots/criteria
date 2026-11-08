@@ -173,6 +173,44 @@ import _ "github.com/brokenbots/criteria/sdk" // import-lint:allow needed for bo
 	}
 }
 
+// TestAdapterhostImportsRemoteEnv_Forbidden checks that adapterhost is barred
+// from importing the remote shim package (ADR-0014 M4): the seam consumes
+// envhost.Host only.
+func TestAdapterhostImportsRemoteEnv_Forbidden(t *testing.T) {
+	root := tempRepoWith(t, map[string]string{
+		"internal/adapterhost/foo.go": `package foo
+import _ "github.com/brokenbots/criteria/internal/adapter/environment/remote"
+`,
+	})
+	vs, err := lint(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vs) != 1 {
+		t.Fatalf("expected 1 violation for remote import from adapterhost/, got %d: %+v", len(vs), vs)
+	}
+	if !strings.Contains(vs[0].message, "adapterhost") {
+		t.Errorf("unexpected message: %s", vs[0].message)
+	}
+}
+
+// TestAdapterhostImportsEnvhost_Clean checks that adapterhost may import the
+// envhost seam package.
+func TestAdapterhostImportsEnvhost_Clean(t *testing.T) {
+	root := tempRepoWith(t, map[string]string{
+		"internal/adapterhost/foo.go": `package foo
+import _ "github.com/brokenbots/criteria/internal/envhost"
+`,
+	})
+	vs, err := lint(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vs) != 0 {
+		t.Fatalf("expected no violations for envhost import from adapterhost/, got %d: %+v", len(vs), vs)
+	}
+}
+
 // TestNonGoFilesSkipped checks that non-.go files are not parsed.
 func TestNonGoFilesSkipped(t *testing.T) {
 	root := tempRepoWith(t, map[string]string{

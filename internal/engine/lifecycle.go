@@ -22,6 +22,7 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter/environment/remote"
 	"github.com/brokenbots/criteria/internal/adapter/secrets"
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	"github.com/brokenbots/criteria/internal/envhost"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
 )
@@ -56,24 +57,6 @@ type remoteLifecycleContext struct {
 	detached       map[string]*adapterLifecycleRecord
 }
 
-// deriveForParallelIteration returns a per-iteration remoteLifecycleContext for
-// a parallel subworkflow iteration. It shares the lockfile and the persistent
-// run data directory (via scopeLifecycle.deriveSibling) so per-scope token
-// rotation and provisioning still resolve the run dir, but gives the iteration
-// its own scope-record map so concurrent iterations of the same subworkflow do
-// not clobber one another's provisioning records. Returns nil for a nil
-// receiver (no remote environment in play).
-func (rlc *remoteLifecycleContext) deriveForParallelIteration() *remoteLifecycleContext {
-	if rlc == nil {
-		return nil
-	}
-	child := &remoteLifecycleContext{lockfile: rlc.lockfile}
-	if rlc.scopeLifecycle != nil {
-		child.scopeLifecycle = rlc.scopeLifecycle.deriveSibling()
-	}
-	return child
-}
-
 // scopeLifecycleState tracks per-scope remote-adapter provisioning metadata.
 type scopeLifecycleState struct {
 	dataDir string
@@ -86,6 +69,17 @@ type scopeLifecycleState struct {
 	records          map[string]*adapterLifecycleRecord
 }
 
+// adapterScopeKey composes the per-scope record map key as
+// "<scopeName>/<adapterName>". Parallel subworkflow iterations share ONE
+// scopeLifecycleState (they reference the same environment host of
+// record with their own scope keys), and iterations of the same
+// subworkflow provision the same adapter name — so adapter name alone is
+// no longer unique; the scope name half keeps each iteration's record
+// apart.
+func adapterScopeKey(scopeName, adapterName string) string {
+	return scopeName + "/" + adapterName
+}
+
 func newScopeLifecycleState(dataDir string) *scopeLifecycleState {
 	return &scopeLifecycleState{
 		dataDir: dataDir,
@@ -93,41 +87,22 @@ func newScopeLifecycleState(dataDir string) *scopeLifecycleState {
 	}
 }
 
-// deriveSibling returns a new scopeLifecycleState that shares the persistent
-// run data directory, run id, and adoptable dirs with ls but has its own
-// (empty) per-scope record map. Concurrent parallel subworkflow iterations of
-// the same subworkflow provision the same adapter name, so a shared,
-// adapter-name-keyed record map would let one iteration's provisioning record
-// clobber another's and corrupt teardown. Sharing dataDir keeps every
-// iteration's rotated scope tokens under one run directory (each keyed by its
-// own unique scopeInstanceID), so nothing on disk collides.
-func (ls *scopeLifecycleState) deriveSibling() *scopeLifecycleState {
-	ls.mu.Lock()
-	defer ls.mu.Unlock()
-	return &scopeLifecycleState{
-		dataDir:          ls.dataDir,
-		runID:            ls.runID,
-		adoptableRunDirs: ls.adoptableRunDirs,
-		records:          make(map[string]*adapterLifecycleRecord),
-	}
-}
-
 func (ls *scopeLifecycleState) add(rec *adapterLifecycleRecord) {
 	ls.mu.Lock()
 	defer ls.mu.Unlock()
-	ls.records[rec.adapterName] = rec
+	ls.records[adapterScopeKey(rec.scopeName, rec.adapterName)] = rec
 }
 
-func (ls *scopeLifecycleState) get(adapterName string) *adapterLifecycleRecord {
+func (ls *scopeLifecycleState) get(scopeName, adapterName string) *adapterLifecycleRecord {
 	ls.mu.Lock()
 	defer ls.mu.Unlock()
-	return ls.records[adapterName]
+	return ls.records[adapterScopeKey(scopeName, adapterName)]
 }
 
-func (ls *scopeLifecycleState) remove(adapterName string) {
+func (ls *scopeLifecycleState) remove(scopeName, adapterName string) {
 	ls.mu.Lock()
 	defer ls.mu.Unlock()
-	delete(ls.records, adapterName)
+	delete(ls.records, adapterScopeKey(scopeName, adapterName))
 }
 
 // DetachBodyScope ends a subworkflow-body scope WITHOUT releasing its live
@@ -137,13 +112,13 @@ func (ls *scopeLifecycleState) remove(adapterName string) {
 // manager, the shim scope token stays registered, the peer pod keeps its
 // phone-home connection, and the persisted instance record stays reusable.
 // Returns the detached records for the re-entry handback path.
-func (rlc *remoteLifecycleContext) DetachBodyScope(order []string, deps Deps) map[string]*adapterLifecycleRecord {
+func (rlc *remoteLifecycleContext) DetachBodyScope(scopeName string, order []string, deps Deps) map[string]*adapterLifecycleRecord {
 	rlc.detachMu.Lock()
 	defer rlc.detachMu.Unlock()
 	detached := make(map[string]*adapterLifecycleRecord, len(order))
 	for i := len(order) - 1; i >= 0; i-- {
 		adapterID := order[i]
-		rec := rlc.scopeLifecycle.get(adapterID)
+		rec := rlc.scopeLifecycle.get(scopeName, adapterID)
 		if rec == nil || !rec.perScope {
 			continue
 		}
@@ -160,11 +135,17 @@ func (rlc *remoteLifecycleContext) DetachBodyScope(order []string, deps Deps) ma
 			EnvironmentType:   rec.envType,
 			EnvironmentName:   rec.envName,
 		})
-		rlc.scopeLifecycle.remove(adapterID)
-		detached[adapterID] = rec
+		rlc.scopeLifecycle.remove(scopeName, adapterID)
+		detached[rec.scopeKey] = rec
 	}
-	if len(detached) > 0 {
-		rlc.detached = detached
+	// Upsert, not replace: parallel iterations share this context, so a
+	// second body's detachment must not erase the first body's pending
+	// records (the ledger is the run-final release source).
+	for k, rec := range detached {
+		if rlc.detached == nil {
+			rlc.detached = make(map[string]*adapterLifecycleRecord, len(detached))
+		}
+		rlc.detached[k] = rec
 	}
 	return detached
 }
@@ -181,7 +162,7 @@ func (rlc *remoteLifecycleContext) adoptDetached(rec *adapterLifecycleRecord) {
 	defer rlc.detachMu.Unlock()
 	rlc.scopeLifecycle.add(rec)
 	if rlc.detached != nil {
-		delete(rlc.detached, rec.adapterName)
+		delete(rlc.detached, rec.scopeKey)
 	}
 }
 
@@ -388,6 +369,82 @@ func environmentKey(envNode *workflow.EnvironmentNode) string {
 	return envNode.Type + "." + envNode.Name
 }
 
+// scopeRefForKey mirrors adapterhost's fold of a phone-home scope key into a
+// ScopeRef: parseable keys round-trip; any other shape (none exists in
+// production) carries the key verbatim so the ref renders byte-identically.
+func scopeRefForKey(key string) envhost.ScopeRef {
+	ref, ok := envhost.ParseScopeRef(key)
+	if !ok || ref.Key() != key {
+		return envhost.ScopeRef{Scope: key}
+	}
+	return ref
+}
+
+// registerScopeToken registers a rotated accept token for scopeKey with the
+// host of record serving envKey. The token lands exactly where the pre-host
+// scope-registration knob sent it; the vocabulary (scope key, token) belongs
+// to the engine, the mapping to the SessionManager.
+func registerScopeToken(ctx context.Context, deps Deps, envKey, scopeKey, token string) error {
+	host, ok := deps.Sessions.EnvHost(envKey)
+	if !ok || host == nil {
+		return errors.New("no remote shim registered")
+	}
+	_, err := host.Control(ctx, &envhost.ControlRequest{
+		Scope: scopeRefForKey(scopeKey),
+		Kind:  envhost.ControlRegisterScope,
+		Token: token,
+	})
+	return err
+}
+
+// unregisterScopeToken withdraws scopeKey's accept token so an old token is
+// rejected on reconnect.
+func unregisterScopeToken(ctx context.Context, deps Deps, envKey, scopeKey string) error {
+	host, ok := deps.Sessions.EnvHost(envKey)
+	if !ok || host == nil {
+		return errors.New("no remote shim registered")
+	}
+	_, err := host.Control(ctx, &envhost.ControlRequest{
+		Scope: scopeRefForKey(scopeKey),
+		Kind:  envhost.ControlUnregisterScope,
+	})
+	return err
+}
+
+// closeScopeHandle closes the live session for the definition `adapterName`
+// (<type>.<name>) in scopeKey on the host serving envKey. With
+// per-definition peers this kills only that definition's child; a sibling
+// definition of the same adapter type served by the same peer is untouched.
+// It is a no-op when no host is registered for the environment.
+func closeScopeHandle(ctx context.Context, deps Deps, envKey, adapterName, scopeKey string) error {
+	host, ok := deps.Sessions.EnvHost(envKey)
+	if !ok || host == nil {
+		return nil
+	}
+	_, err := host.Control(ctx, &envhost.ControlRequest{
+		Scope:   scopeRefForKey(scopeKey),
+		Adapter: adapterName,
+		Kind:    envhost.ControlCloseHandle,
+	})
+	return err
+}
+
+// hostListenAddress returns the bound listen address of the host of record
+// serving envKey, or "" when there is none.
+func hostListenAddress(ctx context.Context, deps Deps, envKey string) string {
+	host, ok := deps.Sessions.EnvHost(envKey)
+	if !ok || host == nil {
+		return ""
+	}
+	resp, err := host.Control(ctx, &envhost.ControlRequest{
+		Kind: envhost.ControlListenAddress,
+	})
+	if err != nil {
+		return ""
+	}
+	return resp.Address
+}
+
 func remoteEnvConfig(g *workflow.FSMGraph, ad *workflow.AdapterNode) (*remote.Config, *workflow.EnvironmentNode, bool) {
 	envKey := ad.Environment
 	if envKey == "" {
@@ -404,41 +461,8 @@ func remoteEnvConfig(g *workflow.FSMGraph, ad *workflow.AdapterNode) (*remote.Co
 	return cfg, env, true
 }
 
-// deferredPerScopeRemoteAdapters collects the instance IDs of every adapter in
-// g (including adapters declared in subworkflow bodies) that is bound to a
-// per-scope remote environment. Subworkflow adapters were missed by
-// the root-only walk, so VerifyGraph eagerly ran a local Info handshake for
-// them and binds dispatched local OCI-cache handles even though
-// initScopeAdapters had already emitted provision_wanted for the same
-// adapters. Environments resolve against the declaring graph, so the walk
-// recurses into each subworkflow body exactly like collectGraphAdapters.
-func deferredPerScopeRemoteAdapters(g *workflow.FSMGraph) []string {
-	if g == nil {
-		return nil
-	}
-	var deferred []string
-	for _, id := range g.AdapterOrder {
-		node := g.Adapters[id]
-		if node == nil {
-			continue
-		}
-		cfg, _, ok := remoteEnvConfig(g, node)
-		if ok && cfg.PerScopeSessions {
-			deferred = append(deferred, id)
-		}
-	}
-	for _, name := range g.SubworkflowOrder {
-		sub := g.Subworkflows[name]
-		if sub == nil || sub.Body == nil {
-			continue
-		}
-		deferred = append(deferred, deferredPerScopeRemoteAdapters(sub.Body)...)
-	}
-	return deferred
-}
-
-// lockedDigest returns the adapter's lockfile-pinned digest, or "" when
-// unresolvable (nil lockfile, no entry). The event stays empty — never
+// lockedDigest returns the adapter's pinned digest, or "" when the digest
+// is unresolvable (nil lockfile, no entry). The event stays empty — never
 // synthesized (fail-closed).
 func lockedDigest(lf *lockfile.Lockfile, adapterType, adapterName string) string {
 	if lf == nil {
@@ -473,7 +497,7 @@ func lockedImageReference(lf *lockfile.Lockfile, adapterType, adapterName string
 func emitProvisionWanted(ctx context.Context, deps Deps, lifecycle *remoteLifecycleContext, scopeName, scopeInstanceID, scopeKey, instanceID string, adapter *workflow.AdapterNode, envNode *workflow.EnvironmentNode, tokenPath, token string) {
 	digest := lockedDigest(lifecycle.lockfile, adapter.Type, adapter.Name)
 	imageRef := lockedImageReference(lifecycle.lockfile, adapter.Type, adapter.Name)
-	listenAddr := deps.Sessions.RemoteListenAddrForEnv(ctx, environmentKey(envNode))
+	listenAddr := hostListenAddress(ctx, deps, environmentKey(envNode))
 	deps.Sink.OnAdapterLifecycleEvent(&AdapterLifecycleEvent{
 		RunID:             lifecycle.scopeLifecycle.runID,
 		ScopeName:         scopeName,
@@ -575,7 +599,7 @@ func rotateFreshRemoteScope(ctx context.Context, deps Deps, lifecycle *remoteLif
 	// Register before the token becomes scanner-visible. On any later
 	// failure the registration is rolled back so the shim is never left
 	// holding a token no pod carries.
-	if err := deps.Sessions.RegisterRemoteScopeForEnv(ctx, environmentKey(envNode), scopeKey, token); err != nil {
+	if err := registerScopeToken(ctx, deps, environmentKey(envNode), scopeKey, token); err != nil {
 		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
 		return "", fmt.Errorf("initialize adapter %q: register scope token: %w", instanceID, err)
 	}
@@ -585,7 +609,7 @@ func rotateFreshRemoteScope(ctx context.Context, deps Deps, lifecycle *remoteLif
 	// peer-side child set can tell them apart.
 	tokenPath, err := writeRotatedToken(dataDir, scopeName, scopeInstanceID, instanceID, token)
 	if err != nil {
-		_ = deps.Sessions.UnregisterRemoteScopeForEnv(ctx, environmentKey(envNode), scopeKey)
+		_ = unregisterScopeToken(ctx, deps, environmentKey(envNode), scopeKey)
 		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
 		return "", fmt.Errorf("initialize adapter %q: write accept token: %w", instanceID, err)
 	}
@@ -593,7 +617,7 @@ func rotateFreshRemoteScope(ctx context.Context, deps Deps, lifecycle *remoteLif
 		ScopeInstanceID: scopeInstanceID,
 		AdapterKey:      instanceID,
 	}); err != nil {
-		_ = deps.Sessions.UnregisterRemoteScopeForEnv(ctx, environmentKey(envNode), scopeKey)
+		_ = unregisterScopeToken(ctx, deps, environmentKey(envNode), scopeKey)
 		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
 		return "", fmt.Errorf("initialize adapter %q: persist scope instance: %w", instanceID, err)
 	}
@@ -617,7 +641,7 @@ func tryReuseScopeInstance(ctx context.Context, deps Deps, lifecycle *remoteLife
 	scopeInstanceID, tokenPath, token, reason, ok := reusableScopeToken(dataDir, scopeName, instanceID, instanceID)
 	if ok {
 		scopeKey = scopeName + "/" + scopeInstanceID
-		if rerr := deps.Sessions.RegisterRemoteScopeForEnv(ctx, environmentKey(envNode), scopeKey, token); rerr != nil {
+		if rerr := registerScopeToken(ctx, deps, environmentKey(envNode), scopeKey, token); rerr != nil {
 			deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", rerr.Error())
 			return "", false, fmt.Errorf("initialize adapter %q: register scope token: %w", instanceID, rerr)
 		}
@@ -652,7 +676,7 @@ func tryReuseScopeInstance(ctx context.Context, deps Deps, lifecycle *remoteLife
 		return "", false, nil
 	}
 	scopeKey = scopeName + "/" + chosen.instanceID
-	if rerr := deps.Sessions.RegisterRemoteScopeForEnv(ctx, environmentKey(envNode), scopeKey, chosen.token); rerr != nil {
+	if rerr := registerScopeToken(ctx, deps, environmentKey(envNode), scopeKey, chosen.token); rerr != nil {
 		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", rerr.Error())
 		return "", false, fmt.Errorf("initialize adapter %q: register scope token: %w", instanceID, rerr)
 	}
@@ -660,7 +684,7 @@ func tryReuseScopeInstance(ctx context.Context, deps Deps, lifecycle *remoteLife
 	// runner's pods remain valid across the restart, not just the one this
 	// adapter reuses.
 	for _, cand := range candidates[1:] {
-		if rerr := deps.Sessions.RegisterRemoteScopeForEnv(ctx, environmentKey(envNode), scopeName+"/"+cand.instanceID, cand.token); rerr != nil {
+		if rerr := registerScopeToken(ctx, deps, environmentKey(envNode), scopeName+"/"+cand.instanceID, cand.token); rerr != nil {
 			slog.Warn("registering surviving scope token failed; the matching pod may fail its handshake",
 				"scope", scopeName, "scope_instance", cand.instanceID, "error", rerr.Error())
 		}
@@ -774,14 +798,14 @@ func tryAdoptPriorRunScopeInstance(ctx context.Context, deps Deps, lifecycle *re
 		// cannot double-adopt an instance that is already bound to this run.
 		releaseScopeInstance(priorDir, scopeName, instanceID, chosen.instanceID, instanceID)
 		scopeKey = scopeName + "/" + chosen.instanceID
-		if rerr := deps.Sessions.RegisterRemoteScopeForEnv(ctx, environmentKey(envNode), scopeKey, chosen.token); rerr != nil {
+		if rerr := registerScopeToken(ctx, deps, environmentKey(envNode), scopeKey, chosen.token); rerr != nil {
 			deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", rerr.Error())
 			return "", false, fmt.Errorf("initialize adapter %q: register adopted scope token: %w", instanceID, rerr)
 		}
 		// Register every other surviving token too so all of the prior run's
 		// pods remain valid for re-handshake, not just the adopted one.
 		for _, cand := range candidates[1:] {
-			if rerr := deps.Sessions.RegisterRemoteScopeForEnv(ctx, environmentKey(envNode), scopeName+"/"+cand.instanceID, cand.token); rerr != nil {
+			if rerr := registerScopeToken(ctx, deps, environmentKey(envNode), scopeName+"/"+cand.instanceID, cand.token); rerr != nil {
 				slog.Warn("registering surviving prior-run scope token failed; the matching pod may fail its handshake",
 					"scope", scopeName, "scope_instance", cand.instanceID, "error", rerr.Error())
 			}
@@ -1206,7 +1230,7 @@ func buildOriginRefs(adapter *workflow.AdapterNode, secretOrigins map[string]sec
 // SAME scope session with zero dials; only the run's final teardown
 // (Run/RunFrom defers + SessionManager.Shutdown) releases what a body
 // detached. Errors during detach are logged and do not change the run state.
-func detachBodyScopeAdapters(ctx context.Context, order []string, deps Deps, lifecycle *remoteLifecycleContext) {
+func detachBodyScopeAdapters(ctx context.Context, scopeName string, order []string, deps Deps, lifecycle *remoteLifecycleContext) {
 	_ = ctx
 	if len(order) == 0 {
 		return
@@ -1215,12 +1239,12 @@ func detachBodyScopeAdapters(ctx context.Context, order []string, deps Deps, lif
 		// No per-scope lifecycle (host-local shape): the body's verified-only
 		// records must still be RELEASED (the remote-lifecycle boundary contract those
 		// tests pin) — the non-remote path stays the classic teardown.
-		tearDownScopeAdapters(ctx, order, deps, lifecycle)
+		tearDownScopeAdapters(ctx, "", order, deps, lifecycle)
 		return
 	}
 	for i := len(order) - 1; i >= 0; i-- {
 		adapterID := order[i]
-		rec := lifecycle.scopeLifecycle.get(adapterID)
+		rec := lifecycle.scopeLifecycle.get(scopeName, adapterID)
 		if rec == nil || !rec.perScope {
 			continue
 		}
@@ -1237,7 +1261,7 @@ func detachBodyScopeAdapters(ctx context.Context, order []string, deps Deps, lif
 			EnvironmentType:   rec.envType,
 			EnvironmentName:   rec.envName,
 		})
-		lifecycle.scopeLifecycle.remove(adapterID)
+		lifecycle.scopeLifecycle.remove(scopeName, adapterID)
 	}
 }
 
@@ -1249,15 +1273,11 @@ func detachBodyScopeAdapters(ctx context.Context, order []string, deps Deps, lif
 // Subworkflow-body scopes must NOT tear down here: use detachBodyScopeAdapters,
 // which ends the body's scope without destroying the live sessions.
 //
-// drainDetachedLedger first covers the detachment ledger: records a body
-// detached that NO later body re-adopted are added back to the scope map and
-// released through a follow-up tearDownScopeAdapters invocation (deferred so
-// the owned order tears down first, LIFO with the ledger last).
 // drainDetachedLedger covers the detachment ledger at run-final
 // teardown: records a subworkflow body detached and NO later body re-adopted
 // are moved back onto the scope map and released via a follow-up
-// tearDownScopeAdapters invocation, deferred so the caller's owned order
-// (which releases LIFO first) completes before the ledger releases.
+// tearDownScopeAdapters invocation per scope, after the caller's owned order
+// (which releases LIFO) completes.
 func drainDetachedLedger(ctx context.Context, deps Deps, lifecycle *remoteLifecycleContext) {
 	if lifecycle == nil {
 		return
@@ -1269,21 +1289,27 @@ func drainDetachedLedger(ctx context.Context, deps Deps, lifecycle *remoteLifecy
 	if len(remaining) == 0 {
 		return
 	}
-	runFinalOrder := make([]string, 0, len(remaining))
-	for id, rec := range remaining {
-		runFinalOrder = append(runFinalOrder, id)
+	// Group the ledger records by owning scope name: parallel iterations
+	// share the ledger but tear down with their own scope keys, so each
+	// scope releases LIFO through its own tearDownScopeAdapters invocation.
+	byScope := make(map[string][]string, len(remaining))
+	for _, rec := range remaining {
 		lifecycle.scopeLifecycle.add(rec)
+		byScope[rec.scopeName] = append(byScope[rec.scopeName], rec.adapterName)
 	}
-	sort.Strings(runFinalOrder)
-	// A direct call, not a defer: at run-final teardown the caller has
-	// nothing after drainDetachedLedger except the loop over the owned
-	// order, so releasing the ledger synchronously here keeps the LIFO
-	// read (owned order first via the caller's loop, ledger last via this
-	// call) without a defer placed just before return (gocritic).
-	tearDownScopeAdapters(ctx, runFinalOrder, deps, lifecycle)
+	names := make([]string, 0, len(byScope))
+	for name := range byScope {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		order := byScope[name]
+		sort.Strings(order)
+		tearDownScopeAdapters(ctx, name, order, deps, lifecycle)
+	}
 }
 
-func tearDownScopeAdapters(ctx context.Context, order []string, deps Deps, lifecycle *remoteLifecycleContext) {
+func tearDownScopeAdapters(ctx context.Context, scopeName string, order []string, deps Deps, lifecycle *remoteLifecycleContext) {
 	drainDetachedLedger(ctx, deps, lifecycle)
 	if len(order) == 0 {
 		return
@@ -1301,7 +1327,7 @@ func tearDownScopeAdapters(ctx context.Context, order []string, deps Deps, lifec
 		// closing the session, then unregister the scope token so a torn-down
 		// pod cannot reconnect with the old token.
 		if lifecycle != nil && lifecycle.scopeLifecycle != nil {
-			if rec := lifecycle.scopeLifecycle.get(adapterID); rec != nil && rec.perScope {
+			if rec := lifecycle.scopeLifecycle.get(scopeName, adapterID); rec != nil && rec.perScope {
 				deps.Sink.OnAdapterLifecycleEvent(&AdapterLifecycleEvent{
 					RunID:             rec.runID,
 					ScopeName:         rec.scopeName,
@@ -1316,20 +1342,20 @@ func tearDownScopeAdapters(ctx context.Context, order []string, deps Deps, lifec
 					EnvironmentName:   rec.envName,
 				})
 				envKey := rec.envType + "." + rec.envName
-				_ = deps.Sessions.UnregisterRemoteScopeForEnv(ctx, envKey, rec.scopeKey)
+				_ = unregisterScopeToken(ctx, deps, envKey, rec.scopeKey)
 				// The kill is addressed by the adapter DEFINITION
 				// identity, never the adapter type. Per-definition peer
 				// children each serve one definition; a kind-addressed kill
 				// from this scope's teardown could take down a sibling
 				// definition's child (the pair_programming_loop handshake
 				// kill-chain).
-				_ = deps.Sessions.CloseRemoteHandleForEnv(cleanupCtx, envKey, rec.adapterName, rec.scopeKey)
+				_ = closeScopeHandle(cleanupCtx, deps, envKey, rec.adapterName, rec.scopeKey)
 				// Tombstone the persisted scope instance so the
 				// next deliberate scope entry rotates a fresh token instead
 				// of the token-file scan resurrecting the released one. The
 				// rotated token file is kept for post-run forensics.
 				releaseScopeInstance(lifecycle.scopeLifecycle.dataDir, rec.scopeName, rec.adapterName, rec.scopeInstanceID, rec.adapterName)
-				lifecycle.scopeLifecycle.remove(adapterID)
+				lifecycle.scopeLifecycle.remove(scopeName, adapterID)
 			}
 		}
 
