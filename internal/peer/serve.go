@@ -82,10 +82,14 @@ const (
 	// ChildRunStarted/ChildRunTerminal supervision) are gated on the
 	// workflow.v1 capability string: a peer whose identity frame does not
 	// advertise it must reject Control(CancelChildRun) with a typed
-	// unimplemented error (see proto/criteria/v1/peer.proto header).
+	// unimplemented error (see proto/criteria/v1/peer.proto header). The
+	// ADR-0014 M6 session-control arms (OpenSession/CloseSession ledger
+	// verbs, RespawnChild displacement, IdleReap declaration) carry the
+	// same contract on the session.v1 capability string.
 	peerAdapterV2FullCapability = "adapter.v2.full"
 	peerSupervisionV1Capability = "supervision.v1"
 	peerWorkflowV1Capability    = "workflow.v1"
+	peerSessionV1Capability     = "session.v1"
 
 	// peerAdapterRouteHeader is the gRPC metadata header a multi-adapter
 	// host tags each session's adapter calls with: its value is the
@@ -177,6 +181,14 @@ type Server struct {
 	// is gated on it. Tests may narrow the list to simulate an older peer.
 	capabilities []string
 
+	// ledger tracks the (adapter_type, scope, session id) engagements the
+	// session-control verbs carry (ADR-0014 M6): open/adopt/close/detach
+	// semantics are peer-attested against this table, with the journal
+	// carrying the fact sequence. Lives on the server — not the child
+	// runtime — because the ledger is journal-side truth in both roles
+	// (child runtime and serve adapter).
+	ledger *scopeLedger
+
 	// serve-adapter child role (ADR-0008): when the criteria process serves
 	// a workflow as the adapter itself, it is built without a child runtime;
 	// the in-process adapter registers directly on the phone-home server,
@@ -211,6 +223,9 @@ func NewServer(cfg *Config, rt *peerRuntime, log *slog.Logger) *Server {
 		// Negotiated capability set advertised in the peer identity frame
 		// (ADR-0007 D4); Control arms gated on workflow.v1 inspect this.
 		capabilities: defaultPeerCapabilities(),
+		// The (adapter_type, scope, session id) scope ledger the
+		// session-control verbs journal against (ADR-0014 M6).
+		ledger: newScopeLedger(),
 	}
 	s.dialFunc = s.dial
 	s.childClient = s.defaultChildClient
@@ -847,10 +862,10 @@ func (s *Server) identityFrame(spec *serveConnSpec) ([]byte, error) {
 
 // defaultPeerCapabilities is the capability set a production peer
 // advertises in its identity frame (ADR-0007 D4): the full v2 adapter
-// bridge, the PeerService supervision surface, and the ADR-0008 child-run
-// arms (workflow.v1).
+// bridge, the PeerService supervision surface, the ADR-0008 child-run arms
+// (workflow.v1), and the ADR-0014 M6 session-control arms (session.v1).
 func defaultPeerCapabilities() []string {
-	return []string{peerAdapterV2FullCapability, peerSupervisionV1Capability, peerWorkflowV1Capability}
+	return []string{peerAdapterV2FullCapability, peerSupervisionV1Capability, peerWorkflowV1Capability, peerSessionV1Capability}
 }
 
 // negotiated reports whether the capability string was announced in this
@@ -923,19 +938,39 @@ func (s *Server) controlHandler(srv interface{}, ctx context.Context, dec func(i
 	})
 }
 
+// sessionControlArm reports whether the request carries one of the
+// ADR-0014 M6 session-control arms (session.v1-gated): the session-ledger
+// verbs, the host-commanded respawn, or the idle-reap declaration.
+func sessionControlArm(req *criteriav1.ControlRequest) bool {
+	return req.GetOpenSession() != nil || req.GetCloseSession() != nil ||
+		req.GetRespawnChild() != nil || req.GetIdleReap() != nil
+}
+
 // Control implements PeerService.Control: host-initiated child control,
-// delegated to the runtime. CancelChildRun (ADR-0008) is capability-gated:
-// when the negotiated capability set (this peer's identity frame) does not
-// carry workflow.v1 the request fails with a typed unimplemented error
-// instead of the accepted/detail shape — an old peer would have decoded the
-// unknown arm into unknown fields and answered an indistinguishable
-// accepted=false, so the gRPC status is the only way a caller can tell a
-// protocol-level gap from a runtime rejection.
+// delegated to the runtime. CancelChildRun (ADR-0008) and the ADR-0014 M6
+// session-control arms are capability-gated: when the negotiated capability
+// set (this peer's identity frame) does not carry workflow.v1 /
+// session.v1 respectively, the request fails with a typed unimplemented
+// error instead of the accepted/detail shape — an old peer would have
+// decoded the unknown arm into unknown fields and answered an
+// indistinguishable accepted=false, so the gRPC status is the only way a
+// caller can tell a protocol-level gap from a runtime rejection. The
+// session-ledger verbs (OpenSession/CloseSession) serve from the server -
+// owned ledger in BOTH roles (journal-side truth, not child state);
+// respawn/idle-reap belong to the child runtime.
 func (s *Server) Control(ctx context.Context, req *criteriav1.ControlRequest) (*criteriav1.ControlResponse, error) {
 	if req.GetCancelChildRun() != nil && !s.negotiated(peerWorkflowV1Capability) {
 		return nil, status.Errorf(codes.Unimplemented,
 			"peer did not negotiate %q: CancelChildRun unavailable",
 			peerWorkflowV1Capability)
+	}
+	if sessionControlArm(req) && !s.negotiated(peerSessionV1Capability) {
+		return nil, status.Errorf(codes.Unimplemented,
+			"peer did not negotiate %q: session control arms unavailable",
+			peerSessionV1Capability)
+	}
+	if req.GetOpenSession() != nil || req.GetCloseSession() != nil {
+		return s.controlSessionLedger(req), nil
 	}
 	if s.rt == nil {
 		// Serve-adapter role: control verbs that target a spawned child

@@ -15,6 +15,29 @@ import (
 // &criteriav1.SupervisionEvent_Spawned{Spawned: &criteriav1.ProcessSpawned{…}}).
 type EventKind any
 
+// Session-ledger verbs (ADR-0014 M6): the engagement-ledger vocabulary the
+// SessionLedger supervision arm carries (see proto/criteria/v1/peer.proto
+// SessionLedger for the wire description; envhost's scope ledger holds the
+// host-side semantics). The journal validates against this closed set so
+// ledger truth stays parseable across peer generations.
+const (
+	SessionLedgerOpened   = "opened"
+	SessionLedgerClosed   = "closed"
+	SessionLedgerAdopted  = "adopted"
+	SessionLedgerDetached = "detached"
+)
+
+// sessionLedgerEventValid reports whether event names one of the four
+// session-ledger verbs.
+func sessionLedgerEventValid(event string) bool {
+	switch event {
+	case SessionLedgerOpened, SessionLedgerClosed, SessionLedgerAdopted, SessionLedgerDetached:
+		return true
+	default:
+		return false
+	}
+}
+
 // EventJournal is the peer's bounded in-process supervision journal
 // (ADR-0007 Stage A). Sequence numbers are global, monotonic, and gapless per
 // peer process; the ring evicts the oldest events beyond the configured
@@ -109,6 +132,11 @@ func newSupervisionEvent(kind EventKind, seq uint64, adapterType, scope, session
 	case *criteriav1.SupervisionEvent_ChildRunTeardownPartial:
 		if k.ChildRunTeardownPartial.GetRunId() == "" {
 			return nil, fmt.Errorf("child run teardown partial without a run_id")
+		}
+		ev.Kind = k
+	case *criteriav1.SupervisionEvent_SessionLedger:
+		if !sessionLedgerEventValid(k.SessionLedger.GetEvent()) {
+			return nil, fmt.Errorf("session ledger with event %q outside the opened|closed|adopted|detached vocabulary", k.SessionLedger.GetEvent())
 		}
 		ev.Kind = k
 	default:

@@ -101,6 +101,11 @@ type peerRuntime struct {
 	// bootSpec preserves each child's resolved boot spec so ensureChild can
 	// respawn an exited child verbatim (no re-resolution, same digest pin).
 	bootSpec map[string]childSpec
+	// idleReapPolicy records the Control IdleReap declarations per child
+	// name (ADR-0014 M6): the keepalive/idle window reap consumers apply for
+	// that child. Keyed by name, the policy survives respawns. A missing
+	// entry (or a zero window) means no declared policy.
+	idleReapPolicy map[string]time.Duration
 	// respawnMu serializes respawns per definition name.
 	respawnMu sync.Map
 	// exitPoll is the process-exit poll interval (tunable in tests).
@@ -119,17 +124,18 @@ func NewRuntime(cfg *Config, log *slog.Logger) *peerRuntime {
 		log = slog.Default()
 	}
 	return &peerRuntime{
-		cfg:           cfg,
-		log:           log,
-		loader:        adapterhost.NewLoader(),
-		journal:       NewEventJournal(cfg.JournalLimit),
-		children:      map[string]*childState{},
-		bootSpec:      map[string]childSpec{},
-		serveCounts:   map[string]int{},
-		shutdownGrace: defaultControlGrace,
-		exitPoll:      defaultExitPollInterval,
-		stopWatch:     make(chan struct{}),
-		watchDone:     make(chan struct{}),
+		cfg:            cfg,
+		log:            log,
+		loader:         adapterhost.NewLoader(),
+		journal:        NewEventJournal(cfg.JournalLimit),
+		children:       map[string]*childState{},
+		bootSpec:       map[string]childSpec{},
+		idleReapPolicy: map[string]time.Duration{},
+		serveCounts:    map[string]int{},
+		shutdownGrace:  defaultControlGrace,
+		exitPoll:       defaultExitPollInterval,
+		stopWatch:      make(chan struct{}),
+		watchDone:      make(chan struct{}),
 	}
 }
 
@@ -666,6 +672,25 @@ func (r *peerRuntime) classifyUnexpectedExit(c *childState, exitCode, signal int
 	}
 }
 
+// hostedChildName resolves the child name the Control verbs address: the
+// child named in the request, or the primary child for legacy (empty)
+// addressing. It reads the child table without touching process state.
+// ok=false when the peer hosts nothing the request matches.
+func (r *peerRuntime) hostedChildName(name string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if name == "" {
+		if p := r.primaryChildLocked(); p != nil {
+			return p.name, true
+		}
+		return "", false
+	}
+	if c := r.children[name]; c != nil {
+		return name, true
+	}
+	return "", false
+}
+
 // Control executes a host-initiated control action (the PeerService.Control
 // RPC). kill_child acknowledges immediately, waits out the requested grace
 // period (default 5s, host sends 3s), then kills the addressed child; the
@@ -676,10 +701,14 @@ func (r *peerRuntime) classifyUnexpectedExit(c *childState, exitCode, signal int
 // single-adapter hosts). cancel_child_run (ADR-0008,
 // workflow.v1-gated at the server) is a known arm but there is no child-run
 // substrate in the peer role: nothing to execute a run-level cancellation
-// against, so it is rejected with Accepted=false. Unsupported actions and
-// dead-or-absent children are rejected with Accepted=false.
+// against, so it is rejected with Accepted=false. The ADR-0014 M6
+// session-control arms (RespawnChild, IdleReap — session.v1-gated at the
+// server) execute here (the ledger verbs OpenSession/CloseSession are
+// answered at the server, before the runtime is reached). Unsupported
+// actions and dead-or-absent children are rejected with Accepted=false.
 func (r *peerRuntime) Control(ctx context.Context, req *criteriav1.ControlRequest) *criteriav1.ControlResponse {
-	if req.GetKillChild() == nil && req.GetCancelChildRun() == nil {
+	if req.GetKillChild() == nil && req.GetCancelChildRun() == nil &&
+		req.GetRespawnChild() == nil && req.GetIdleReap() == nil {
 		return &criteriav1.ControlResponse{Accepted: false, Detail: "unsupported control action"}
 	}
 	if cancel := req.GetCancelChildRun(); cancel != nil {
@@ -687,6 +716,12 @@ func (r *peerRuntime) Control(ctx context.Context, req *criteriav1.ControlReques
 			Accepted: false,
 			Detail:   fmt.Sprintf("no child run %q in this peer", cancel.GetRunId()),
 		}
+	}
+	if respawn := req.GetRespawnChild(); respawn != nil {
+		return r.controlRespawnChild(ctx, req, respawn)
+	}
+	if idle := req.GetIdleReap(); idle != nil {
+		return r.controlIdleReap(req, idle)
 	}
 	name := req.GetAdapterType()
 	r.mu.Lock()
