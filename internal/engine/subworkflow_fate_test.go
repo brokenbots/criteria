@@ -226,10 +226,14 @@ state "done" {
 	return g
 }
 
+// fateTestAdapterName is the adapter instance every fate-test graph
+// declares and every lifecycle assertion keys on.
+const fateTestAdapterName = "noop.default"
+
 // countStatusSuffixes counts the sink's string-form lifecycle lines ending
 // in ":<adapter>:<status>" ("<scope>:<adapter>:<status>" overall).
-func countStatusSuffixes(sink *eventTrackingSink, adapter, status string) int {
-	suffix := ":" + adapter + ":" + status
+func countStatusSuffixes(sink *eventTrackingSink, status string) int {
+	suffix := ":" + fateTestAdapterName + ":" + status
 	n := 0
 	for _, line := range sink.lifecycleStatusesLog() {
 		if strings.HasSuffix(line, suffix) {
@@ -243,8 +247,9 @@ func countStatusSuffixes(sink *eventTrackingSink, adapter, status string) int {
 // status (provision_wanted / detached / released).
 func countFateEvents(sink *eventTrackingSink, status string) int {
 	n := 0
-	for _, ev := range sink.provisionEventsLog() {
-		if ev.Status == status {
+	events := sink.provisionEventsLog()
+	for i := range events {
+		if events[i].Status == status {
 			n++
 		}
 	}
@@ -417,7 +422,7 @@ func TestDeclaredFreshReentry_ConcurrentSiblingFailsLoud(t *testing.T) {
 	if !deps.Sessions.SessionOpen("noop.default") {
 		t.Error("sibling session closed by the conflicting re-entry; the running body would lose its session")
 	}
-	if got := countStatusSuffixes(sink, "noop.default", "init_failed"); got == 0 {
+	if got := countStatusSuffixes(sink, "init_failed"); got == 0 {
 		t.Error("no init_failed event emitted for the unresolvable declared-fate re-entry")
 	}
 }
@@ -465,10 +470,10 @@ func TestSubworkflowFate_LocalMode_ReleasesAndReprovisions(t *testing.T) {
 	if !deps.Sessions.SessionOpen("noop.default") {
 		t.Error("no live session after the body's fresh provisioning; the body cannot run its steps")
 	}
-	if got := countStatusSuffixes(sink, "noop.default", "verified"); got != 2 {
+	if got := countStatusSuffixes(sink, "verified"); got != 2 {
 		t.Errorf("verified sessions after body entry = %d, want 2 (the parent conversation, then the body's own)", got)
 	}
-	if got := countStatusSuffixes(sink, "noop.default", "closed"); got != 1 {
+	if got := countStatusSuffixes(sink, "closed"); got != 1 {
 		t.Errorf("closed events after body entry = %d, want 1 (the inherited session the hook released)", got)
 	}
 
@@ -489,7 +494,7 @@ func TestSubworkflowFate_LocalMode_ReleasesAndReprovisions(t *testing.T) {
 	}
 	exitBodyScopeAdapters(ctx, body, "body_1", bodyOrder2, deps, nil)
 
-	if verified, closed := countStatusSuffixes(sink, "noop.default", "verified"), countStatusSuffixes(sink, "noop.default", "closed"); verified != 3 || closed != 3 {
+	if verified, closed := countStatusSuffixes(sink, "verified"), countStatusSuffixes(sink, "closed"); verified != 3 || closed != 3 {
 		t.Errorf("local-mode events = (verified %d, closed %d), want (3, 3): three conversations, each released at its boundary", verified, closed)
 	}
 
@@ -535,7 +540,7 @@ func TestSubworkflowFate_LocalMode_UndeclaredKeepsDetach(t *testing.T) {
 	if !deps.Sessions.SessionOpen("noop.default") {
 		t.Error("undeclared body exit closed the shared session; the churn-kill detach path must keep it open")
 	}
-	if got := countStatusSuffixes(sink, "noop.default", "closed"); got != 0 {
+	if got := countStatusSuffixes(sink, "closed"); got != 0 {
 		t.Errorf("closed events after an undeclared body exit = %d, want 0", got)
 	}
 	_ = rootOrder

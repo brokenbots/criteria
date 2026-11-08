@@ -13,34 +13,36 @@ import (
 	"github.com/brokenbots/criteria/workflow/workflowtest"
 )
 
-// continuationCalleeHCL builds a callee workflow HCL declaring the given
-// adapter (with the given continuation) plus a terminal state.
-func continuationCalleeHCL(name, adapterType, adapterInstance, continuation string) string {
+// continuationCalleeHCL builds a callee workflow HCL declaring the noop
+// adapter instance (with the given continuation) plus a terminal state; the
+// callee graph is named "inner".
+func continuationCalleeHCL(adapterInstance, continuation string) string {
 	b := workflowtest.New().
-		WithHeader(name, "1", "done", "done").
+		WithHeader("inner", "1", "done", "done").
 		WithState("done", true, boolPtr(true))
 	if continuation == "" {
-		b.WithAdapter(adapterType, adapterInstance)
+		b.WithAdapter("noop", adapterInstance)
 	} else {
-		b.WithAdapterFate(adapterType, adapterInstance, continuation)
+		b.WithAdapterFate("noop", adapterInstance, continuation)
 	}
 	return b.Build()
 }
 
 func boolPtr(b bool) *bool { return &b }
 
-// continuationParentHCL builds a parent workflow HCL declaring subworkflow
-// swName (source) plus its own adapter and terminal state.
-func continuationParentHCL(adapterType, adapterInstance, continuation, swName, source string) string {
+// continuationParentHCL builds a parent workflow HCL declaring its own noop
+// adapter instance (with the given continuation) plus the "inner_task"
+// subworkflow, sourced at ./inner, and a terminal state.
+func continuationParentHCL(adapterInstance, continuation string) string {
 	b := workflowtest.New().
 		WithHeader("parent", "1", "done", "done").
 		WithState("done", true, boolPtr(true))
 	if continuation == "" {
-		b.WithAdapter(adapterType, adapterInstance)
+		b.WithAdapter("noop", adapterInstance)
 	} else {
-		b.WithAdapterFate(adapterType, adapterInstance, continuation)
+		b.WithAdapterFate("noop", adapterInstance, continuation)
 	}
-	b.WithSubworkflow(swName, source)
+	b.WithSubworkflow("inner_task", "./inner")
 	return b.Build()
 }
 
@@ -159,8 +161,8 @@ func TestCompileContinuation_ReentryValidation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tmpDir := t.TempDir()
-			calleeDir := writeSubworkflowDir(t, tmpDir, "inner", continuationCalleeHCL("inner", "noop", "default", tc.calleeCont))
-			parentHCL := continuationParentHCL("noop", "default", tc.parentCont, "inner_task", "./inner")
+			calleeDir := writeSubworkflowDir(t, tmpDir, "inner", continuationCalleeHCL("default", tc.calleeCont))
+			parentHCL := continuationParentHCL("default", tc.parentCont)
 			graph, compileDiags := compileWithAdapters(t, parentHCL, tmpDir)
 			if tc.wantSummary != "" {
 				requireExactErrorSummary(t, compileDiags, tc.wantSummary)
@@ -187,8 +189,8 @@ func TestCompileContinuation_ReentryValidation(t *testing.T) {
 // boundary (the fate policy is declaration-gated, not defaulted).
 func TestCompileContinuation_CalleeOnlyInstanceUnconstrained(t *testing.T) {
 	tmpDir := t.TempDir()
-	writeSubworkflowDir(t, tmpDir, "inner", continuationCalleeHCL("inner", "noop", "only_there", ""))
-	parentHCL := continuationParentHCL("noop", "default", "", "inner_task", "./inner")
+	writeSubworkflowDir(t, tmpDir, "inner", continuationCalleeHCL("only_there", ""))
+	parentHCL := continuationParentHCL("default", "")
 	graph, diags := compileWithAdapters(t, parentHCL, tmpDir)
 	if diags.HasErrors() {
 		t.Fatalf("expected no errors, got %s", diags.Error())
@@ -204,8 +206,8 @@ func TestCompileContinuation_CalleeOnlyInstanceUnconstrained(t *testing.T) {
 // a different name than the callee's does not trigger the rule.
 func TestCompileContinuation_UnknownParentAdapterNotOverlapping(t *testing.T) {
 	tmpDir := t.TempDir()
-	writeSubworkflowDir(t, tmpDir, "inner", continuationCalleeHCL("inner", "noop", "callee_instance", ""))
-	parentHCL := continuationParentHCL("noop", "parent_instance", "reuse", "inner_task", "./inner")
+	writeSubworkflowDir(t, tmpDir, "inner", continuationCalleeHCL("callee_instance", ""))
+	parentHCL := continuationParentHCL("parent_instance", "reuse")
 	if _, diags := compileWithAdapters(t, parentHCL, tmpDir); diags.HasErrors() {
 		t.Fatalf("expected no errors, got %s", diags.Error())
 	}
@@ -216,8 +218,8 @@ func TestCompileContinuation_UnknownParentAdapterNotOverlapping(t *testing.T) {
 // declaration is honored, not re-validated into an error).
 func TestCompileContinuation_DeclaredFateNoOverlapNotRequired(t *testing.T) {
 	tmpDir := t.TempDir()
-	writeSubworkflowDir(t, tmpDir, "inner", continuationCalleeHCL("inner", "noop", "callee_instance", ""))
-	parentHCL := continuationParentHCL("noop", "default", "fresh", "inner_task", "./inner")
+	writeSubworkflowDir(t, tmpDir, "inner", continuationCalleeHCL("callee_instance", ""))
+	parentHCL := continuationParentHCL("default", "fresh")
 	graph, diags := compileWithAdapters(t, parentHCL, tmpDir)
 	if diags.HasErrors() {
 		t.Fatalf("expected no errors, got %s", diags.Error())

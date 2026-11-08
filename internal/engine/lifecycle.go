@@ -1432,42 +1432,9 @@ func releaseScopeAdapters(ctx context.Context, scopeName string, order []string,
 // re-entry fails loud rather than racing a sibling.
 func releaseForeignScopeSessionsForFresh(ctx context.Context, deps Deps, lifecycle *remoteLifecycleContext, scopeName, instanceID string) error {
 	if lifecycle != nil {
-		var conflict *adapterLifecycleRecord
 		lifecycle.detachMu.Lock()
-		// The ledger: a prior body detached this instance's record and its
-		// session is live. The fresh re-entry abandons the handback; taking
-		// the record out of the ledger also removes it from the run-final
-		// drain, and startWorkflowBody's pre-entry snapshots are rejected by
-		// adoptDetached's membership check when they reach the adoption loop.
-		for key, rec := range lifecycle.detached {
-			if rec == nil || rec.adapterName != instanceID {
-				continue
-			}
-			slog.Info("declared-fresh re-entry releases a detached engagement",
-				"scope", scopeName, "adapter_instance", instanceID, "record_scope", rec.scopeName)
-			releaseScopeRecord(context.WithoutCancel(ctx), deps, lifecycle, rec)
-			delete(lifecycle.detached, key)
-		}
-		// Live records: the root scope's ("" scope) record is an ancestor
-		// provisioning a fresh re-entry may consume; a record under another
-		// body scope belongs to a concurrent sibling and is a conflict.
-		if lifecycle.scopeLifecycle != nil {
-			lifecycle.scopeLifecycle.mu.Lock()
-			for key, rec := range lifecycle.scopeLifecycle.records {
-				if rec == nil || rec.adapterName != instanceID || !rec.perScope || rec.scopeName == scopeName {
-					continue
-				}
-				if rec.scopeName != "" {
-					conflict = rec
-					continue
-				}
-				slog.Info("declared-fresh re-entry releases the inherited root-scope engagement",
-					"scope", scopeName, "adapter_instance", instanceID)
-				releaseScopeRecord(context.WithoutCancel(ctx), deps, lifecycle, rec)
-				delete(lifecycle.scopeLifecycle.records, key)
-			}
-			lifecycle.scopeLifecycle.mu.Unlock()
-		}
+		releaseDetachedLedgerForFresh(ctx, deps, lifecycle, scopeName, instanceID)
+		conflict := releaseLiveScopeRecordsForFresh(ctx, deps, lifecycle, scopeName, instanceID)
 		lifecycle.detachMu.Unlock()
 		if conflict != nil {
 			return fmt.Errorf("adapter %q declares continuation = \"fresh\" but body scope %q still holds its live session; a concurrently running body's engagement cannot be released for this re-entry", instanceID, conflict.scopeName)
@@ -1488,4 +1455,52 @@ func releaseForeignScopeSessionsForFresh(ctx context.Context, deps Deps, lifecyc
 	slog.Info("declared-fresh re-entry released an inherited session",
 		"scope", scopeName, "adapter_instance", instanceID)
 	return nil
+}
+
+// releaseDetachedLedgerForFresh abandons the ledger's handback for the
+// fresh-declared instance: a prior body detached this instance's record and
+// its session is live, so the fresh re-entry releases the record instead of
+// re-adopting it. Taking the record out of the ledger also removes it from
+// the run-final drain, and startWorkflowBody's pre-entry snapshots are
+// rejected by adoptDetached's membership check when they reach the adoption
+// loop. The caller must hold lifecycle.detachMu.
+func releaseDetachedLedgerForFresh(ctx context.Context, deps Deps, lifecycle *remoteLifecycleContext, scopeName, instanceID string) {
+	for key, rec := range lifecycle.detached {
+		if rec == nil || rec.adapterName != instanceID {
+			continue
+		}
+		slog.Info("declared-fresh re-entry releases a detached engagement",
+			"scope", scopeName, "adapter_instance", instanceID, "record_scope", rec.scopeName)
+		releaseScopeRecord(context.WithoutCancel(ctx), deps, lifecycle, rec)
+		delete(lifecycle.detached, key)
+	}
+}
+
+// releaseLiveScopeRecordsForFresh releases the live root-scope ("") record
+// the ancestor provisioned, which a fresh re-entry may consume. A record
+// under another body scope belongs to a concurrent sibling and is returned
+// as the conflict instead of being released — the caller fails loud before
+// closing the session. The caller must hold lifecycle.detachMu; this helper
+// takes and releases lifecycle.scopeLifecycle.mu.
+func releaseLiveScopeRecordsForFresh(ctx context.Context, deps Deps, lifecycle *remoteLifecycleContext, scopeName, instanceID string) *adapterLifecycleRecord {
+	var conflict *adapterLifecycleRecord
+	if lifecycle.scopeLifecycle == nil {
+		return conflict
+	}
+	lifecycle.scopeLifecycle.mu.Lock()
+	defer lifecycle.scopeLifecycle.mu.Unlock()
+	for key, rec := range lifecycle.scopeLifecycle.records {
+		if rec == nil || rec.adapterName != instanceID || !rec.perScope || rec.scopeName == scopeName {
+			continue
+		}
+		if rec.scopeName != "" {
+			conflict = rec
+			continue
+		}
+		slog.Info("declared-fresh re-entry releases the inherited root-scope engagement",
+			"scope", scopeName, "adapter_instance", instanceID)
+		releaseScopeRecord(context.WithoutCancel(ctx), deps, lifecycle, rec)
+		delete(lifecycle.scopeLifecycle.records, key)
+	}
+	return conflict
 }

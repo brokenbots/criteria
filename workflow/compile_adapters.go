@@ -67,52 +67,86 @@ func compileOneAdapter(g *FSMGraph, ad *AdapterDeclSpec, schemas map[string]Adap
 		return append(diags, d...)
 	}
 
-	effectiveOnCrash, d := resolveAdapterOnCrash(key, ad.OnCrash)
+	resolved, d := resolveAdapterDecl(g, ad, schemas, key, typeName, configEvalCtx)
+	diags = append(diags, d...)
+
+	g.Adapters[key] = resolved.node(typeName, instanceName, ad.Source)
+	g.Adapters[key].DynamicTools = ad.DynamicTools
+	g.Adapters[key].PinnedDigest = lockedAdapterDigest(g.PinSet, typeName, instanceName)
+	// Track adapter declaration order for stable iteration
+	g.AdapterOrder = append(g.AdapterOrder, key)
+	return diags
+}
+
+// resolvedAdapterDecl carries the per-facet resolution of one adapter
+// declaration: every declared attribute validated against the graph, the
+// schemas, and the pin set, ready for registration.
+type resolvedAdapterDecl struct {
+	onCrash           string
+	env               string
+	continuation      string
+	config            map[string]string
+	configExprs       map[string]hcl.Expression
+	secrets           map[string]hcl.Expression
+	staticTools       []string
+	toolContracts     map[string]ToolContract
+	toolContractOrder []string
+}
+
+// resolveAdapterDecl runs every facet resolver for one adapter declaration
+// in declaration order and applies the resolved cache policy.
+func resolveAdapterDecl(g *FSMGraph, ad *AdapterDeclSpec, schemas map[string]AdapterInfo, key, typeName string, configEvalCtx *hcl.EvalContext) (*resolvedAdapterDecl, hcl.Diagnostics) {
+	var diags hcl.Diagnostics
+	var resolved resolvedAdapterDecl
+	var d hcl.Diagnostics
+
+	resolved.onCrash, d = resolveAdapterOnCrash(key, ad.OnCrash)
 	diags = append(diags, d...)
 
 	envKey, d := resolveEnvironmentExpr(ad.Environment, fmt.Sprintf("adapter %q", key))
 	diags = append(diags, d...)
-	effectiveEnv, d := resolveAdapterEnv(g, key, envKey)
+	resolved.env, d = resolveAdapterEnv(g, key, envKey)
 	diags = append(diags, d...)
 
-	continuation, d := resolveAdapterContinuation(key, ad.Continuation)
+	resolved.continuation, d = resolveAdapterContinuation(key, ad.Continuation)
 	diags = append(diags, d...)
 
-	adapterConfig, configExprs, d := resolveAdapterConfig(key, ad, schemas, typeName, configEvalCtx)
+	resolved.config, resolved.configExprs, d = resolveAdapterConfig(key, ad, schemas, typeName, configEvalCtx)
 	diags = append(diags, d...)
 
-	secrets, d := resolveAdapterSecrets(key, ad)
+	resolved.secrets, d = resolveAdapterSecrets(key, ad)
 	diags = append(diags, d...)
 
 	if info, ok := adapterInfo(schemas, typeName); ok {
-		diags = append(diags, checkAdapterEnvCompatibility(key, &info, effectiveEnv)...)
-		diags = append(diags, checkWorkflowCapabilityHostability(key, &info, effectiveEnv)...)
+		diags = append(diags, checkAdapterEnvCompatibility(key, &info, resolved.env)...)
+		diags = append(diags, checkWorkflowCapabilityHostability(key, &info, resolved.env)...)
 	}
 
-	cacheResolvedPolicy(g, key, effectiveEnv, typeName, schemas)
+	cacheResolvedPolicy(g, key, resolved.env, typeName, schemas)
 
-	staticTools, toolContracts, toolContractOrder, d := compileAdapterToolDecls(key, ad.Tools, g)
+	resolved.staticTools, resolved.toolContracts, resolved.toolContractOrder, d = compileAdapterToolDecls(key, ad.Tools, g)
 	diags = append(diags, d...)
 
-	g.Adapters[key] = &AdapterNode{
+	return &resolved, diags
+}
+
+// node assembles the resolved declaration into the graph's adapter record;
+// dynamic_tools and the pinned digest are stamped on by the caller.
+func (r *resolvedAdapterDecl) node(typeName, instanceName, source string) *AdapterNode {
+	return &AdapterNode{
 		Type:              typeName,
 		Name:              instanceName,
-		Source:            ad.Source,
-		Environment:       effectiveEnv,
-		OnCrash:           effectiveOnCrash,
-		Continuation:      continuation,
-		Config:            adapterConfig,
-		ConfigExprs:       configExprs,
-		Secrets:           secrets,
-		StaticTools:       staticTools,
-		DynamicTools:      ad.DynamicTools,
-		ToolContracts:     toolContracts,
-		ToolContractOrder: toolContractOrder,
-		PinnedDigest:      lockedAdapterDigest(g.PinSet, typeName, instanceName),
+		Source:            source,
+		Environment:       r.env,
+		OnCrash:           r.onCrash,
+		Continuation:      r.continuation,
+		Config:            r.config,
+		ConfigExprs:       r.configExprs,
+		Secrets:           r.secrets,
+		StaticTools:       r.staticTools,
+		ToolContracts:     r.toolContracts,
+		ToolContractOrder: r.toolContractOrder,
 	}
-	// Track adapter declaration order for stable iteration
-	g.AdapterOrder = append(g.AdapterOrder, key)
-	return diags
 }
 
 // compileAdapterToolDecls compiles an adapter's tool declarations: the
