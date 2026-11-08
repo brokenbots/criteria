@@ -128,6 +128,10 @@ var (
 	// errForeignHandleIdentity reports a handle the session layer cannot
 	// dispatch against.
 	errForeignHandleIdentity = errors.New("adapterhost: envhost handle is not this session layer's handle identity")
+	// errDegenerateDispatch refuses engagement through the degenerate
+	// in-process host: shell/sandbox sessions dispatch through the local
+	// loader, never through the seam's host gate.
+	errDegenerateDispatch = errors.New("adapterhost: degenerate in-process host does not dispatch adapter sessions")
 )
 
 // scopeRefForKey folds a phone-home scope key into a ScopeRef. Parseable
@@ -337,9 +341,9 @@ func (m *SessionManager) containerEnvHostForEnvKey(envKey string) (envhost.Host,
 // EnvHostStopper is the ownership contract for supervisor hosts this
 // SessionManager bound through SetEnvHostForEnv and owns at teardown: the
 // manager that bound the host stops it at shutdown, so a container host's
-// children are never left running past the run. Borrowed hosts
-// (BorrowRemoteProvisioningFrom shares the parent's hosts with parallel
-// iterations) are owned by the parent and are not stopped by a borrower.
+// children are never left running past the run. Shared hosts
+// (ShareEnvHostsFrom shares the parent's hosts with parallel iterations)
+// are owned by the parent and are not stopped by a borrower.
 type EnvHostStopper interface {
 	StopEnvHost(ctx context.Context)
 }
@@ -349,6 +353,54 @@ type EnvHostStopper interface {
 // reaches the seam through the same verbs. Tests and local-mode callers
 // use it to route a single shim through the host seam unchanged.
 func NewShimHost(shim RemoteShim) envhost.Host { return shimHost{shim: shim} }
+
+// DegenerateHost is the in-process host of record for the isolation kinds
+// whose adapters run in-process (shell, sandbox). Binding it keeps exactly
+// one host of record per environment under the seam; the dispatch gate
+// stays isolation-kind-gated (remote/container only), so shell/sandbox
+// sessions keep their pre-carve local dispatch — the loader and the real
+// go-plugin parent are their supervisor — and the degenerate host owns no
+// dispatch arm: Ensure refuses, handle closes and token registration are
+// no-ops, the listener is unset, and the supervision journal reports the
+// same unavailable shape every host without a journal publishes.
+func DegenerateHost() envhost.Host { return degenerateHost{} }
+
+type degenerateHost struct{}
+
+// Ensure refuses: a degenerate host has nothing to engage — shell/sandbox
+// sessions never route through the seam's dispatch gate.
+func (degenerateHost) Ensure(context.Context, envhost.ScopeRef, []envhost.Definition) (envhost.Handles, error) {
+	return nil, errDegenerateDispatch
+}
+
+// Release is a no-op: the degenerate host armed nothing that a release
+// would withdraw (engagement liveness lives in the go-plugin parent).
+func (degenerateHost) Release(context.Context, envhost.ScopeRef, envhost.FatePolicy) error {
+	return nil
+}
+
+// Journal reports the unavailable journal: an in-process shell/sandbox
+// session's supervision truth is the go-plugin parent's, not a journal.
+func (degenerateHost) Journal(envhost.ScopeRef, string) envhost.JournalReader {
+	return shimJournalUnavailable{}
+}
+
+// Control reports the degenerate ground truth on every arm: token
+// registration and handle close arm nothing in-process, the listener is
+// unset, and ensure-fresh-handle refuses like Ensure. An unknown arm is
+// refused like every other host.
+func (degenerateHost) Control(_ context.Context, req *envhost.ControlRequest) (envhost.ControlResponse, error) {
+	switch req.Kind {
+	case envhost.ControlRegisterScope, envhost.ControlUnregisterScope, envhost.ControlCloseHandle:
+		return envhost.ControlResponse{}, nil
+	case envhost.ControlListenAddress:
+		return envhost.ControlResponse{}, nil
+	case envhost.ControlEnsureFreshHandle:
+		return envhost.ControlResponse{}, errDegenerateDispatch
+	default:
+		return envhost.ControlResponse{}, errUnknownControlArm
+	}
+}
 
 // SetContainerEnvHost binds the in-process supervisor host serving a
 // container environment (host of record for the seam, keyed "container.<name>").
@@ -411,14 +463,11 @@ func (m *SessionManager) remoteEnvHostForAdapter(name string) (envhost.Host, boo
 	return host, true
 }
 
-// SetEnvHostForEnv binds the envhost.Host serving a specific remote
-// environment (keyed "remote.<name>"). Production wiring builds the bound
-// host over the environment's shim (remote.NewHost) and pins it after
-// SetRemoteShimForEnv registers the shim; the bound host then serves every
-// seam verb for that environment while the shim stays registered for the
-// query surfaces (RemoteShimForEnv, WrappedShim access). A later
-// SetRemoteShimForEnv for the same key re-shadows the binding with a
-// shimHost — the latest registration wins, matching the shim map.
+// SetEnvHostForEnv binds the envhost.Host of record for an environment,
+// keyed "<type>.<name>". Production wiring builds the bound host over the
+// environment's shim (remote.NewHost, container in-process supervisor,
+// degenerate in-process host for shell/sandbox) and pins it in the
+// engine's binders. A nil host binds nothing.
 func (m *SessionManager) SetEnvHostForEnv(envKey string, host envhost.Host) {
 	if host == nil {
 		return

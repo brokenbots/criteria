@@ -781,6 +781,12 @@ func (e *Engine) Run(ctx context.Context) error {
 		failRunInit(err)
 		return err
 	}
+	// ADR-0014 M4: bind the degenerate in-process host of record for the
+	// shell/sandbox environments (dispatch stays local — kind-gated).
+	if err := e.maybeStartDegenerateEnvHosts(sessions); err != nil {
+		failRunInit(err)
+		return err
+	}
 
 	deps, scopeOrder, rlc, err := e.initAdapters(ctx, sessions, sink, vars, "")
 	if err != nil {
@@ -845,6 +851,12 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	// ADR-0014 M3: bind container environments' in-process supervisor hosts
 	// alongside the remote shims, before adapter provisioning.
 	if err := e.maybeStartContainerEnvHosts(sessions); err != nil {
+		failRunInit(err)
+		return err
+	}
+	// ADR-0014 M4: bind the degenerate in-process host of record for the
+	// shell/sandbox environments (dispatch stays local — kind-gated).
+	if err := e.maybeStartDegenerateEnvHosts(sessions); err != nil {
 		failRunInit(err)
 		return err
 	}
@@ -1830,6 +1842,24 @@ func (e *Engine) maybeStartContainerEnvHosts(sessions *adapterhost.SessionManage
 		sessions.SetContainerEnvHost(key, host)
 	}
 	return nil
+}
+
+// maybeStartDegenerateEnvHosts binds the degenerate in-process host of
+// record for every shell/sandbox environment (ADR-0014 M4 convergence: one
+// host of record per environment kind). Dispatch stays isolation-kind
+// gated — shell/sandbox sessions keep the local loader/go-plugin path — so
+// the binding only anchors the seam queries, with the degenerate host's
+// arms (refuse/no-op/empty journal) never exercised by dispatch.
+func (e *Engine) maybeStartDegenerateEnvHosts(sessions *adapterhost.SessionManager) error {
+		if e.graph == nil {
+			return nil
+		}
+		for _, kind := range []string{"shell", "sandbox"} {
+			for _, key := range slices.Sorted(maps.Keys(collectEnvironmentDeclarations(e.graph, kind))) {
+				sessions.SetEnvHostForEnv(key, adapterhost.DegenerateHost())
+			}
+		}
+		return nil
 }
 
 // containerChildKeepAlive resolves CRITERIA_PEER_CHILD_KEEPALIVE for a
