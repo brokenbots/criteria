@@ -787,7 +787,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 	// ADR-0014 M3: bind container environments' in-process supervisor hosts
 	// alongside the remote shims, before adapter provisioning.
-	if err := e.maybeStartContainerEnvHosts(ctx, sessions); err != nil {
+	if err := e.maybeStartContainerEnvHosts(sessions); err != nil {
 		failRunInit(err)
 		return err
 	}
@@ -854,7 +854,7 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	}
 	// ADR-0014 M3: bind container environments' in-process supervisor hosts
 	// alongside the remote shims, before adapter provisioning.
-	if err := e.maybeStartContainerEnvHosts(ctx, sessions); err != nil {
+	if err := e.maybeStartContainerEnvHosts(sessions); err != nil {
 		failRunInit(err)
 		return err
 	}
@@ -1820,7 +1820,7 @@ func containerEnvironmentDeclarations(g *workflow.FSMGraph) map[string]*workflow
 // under the envhost seam keyed "container.<name>" — the isolation-kind
 // counterpart of maybeStartRemoteShim, kept parallel until the M4 rename
 // folds the two bind paths.
-func (e *Engine) maybeStartContainerEnvHosts(ctx context.Context, sessions *adapterhost.SessionManager) error {
+func (e *Engine) maybeStartContainerEnvHosts(sessions *adapterhost.SessionManager) error {
 	if e.graph == nil {
 		return nil
 	}

@@ -21,13 +21,14 @@ import (
 	"testing"
 	"time"
 
+	hclog "github.com/hashicorp/go-hclog"
+	"github.com/hashicorp/go-plugin/runner"
+
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/envhost"
 	"github.com/brokenbots/criteria/internal/testutil"
 	"github.com/brokenbots/criteria/workflow"
-	hclog "github.com/hashicorp/go-hclog"
-	"github.com/hashicorp/go-plugin/runner"
 )
 
 // execCmdRunner is a minimal runner.Runner implementation that delegates to an
@@ -87,11 +88,11 @@ func (r *execCmdRunner) Stdout() io.ReadCloser             { return r.stdout }
 func (r *execCmdRunner) Stderr() io.ReadCloser             { return r.stderr }
 func (r *execCmdRunner) Diagnose(_ context.Context) string { return "" }
 
-func (r *execCmdRunner) PluginToHost(pluginNet, pluginAddr string) (string, string, error) {
+func (r *execCmdRunner) PluginToHost(pluginNet, pluginAddr string) (hostNet string, hostAddr string, err error) {
 	return pluginNet, pluginAddr, nil
 }
 
-func (r *execCmdRunner) HostToPlugin(hostNet, hostAddr string) (string, string, error) {
+func (r *execCmdRunner) HostToPlugin(hostNet, hostAddr string) (pluginNet string, pluginAddr string, err error) {
 	return hostNet, hostAddr, nil
 }
 
@@ -194,22 +195,26 @@ func testHost(t *testing.T, keepAlive bool, booted func()) (*InProcessHost, *run
 	return h, ledger, buf
 }
 
-// ensureOnce is the root-shape Ensure helper: one definition, live wrapper
-// returned.
-func ensureOnce(t *testing.T, h *InProcessHost, scope envhost.ScopeRef, defName string, debug func() string) *supervisedHostHandle {
+// noopSandboxDefName is the definition identity every host test boots: the
+// fake container-run adapter resolves it from the noop conformance fixture.
+const noopSandboxDefName = "noop.sandbox"
+
+// ensureOnce is the root-shape Ensure helper: the noop.sandbox definition,
+// live wrapper returned.
+func ensureOnce(t *testing.T, h *InProcessHost, scope envhost.ScopeRef, debug func() string) *supervisedHostHandle {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	handles, err := h.Ensure(ctx, scope, []envhost.Definition{{Name: defName, Type: "noop"}})
+	handles, err := h.Ensure(ctx, scope, []envhost.Definition{{Name: noopSandboxDefName, Type: "noop"}})
 	if err != nil {
 		if debug != nil {
 			t.Fatalf("Ensure: %v\nsupervisor log:\n%s", err, debug())
 		}
 		t.Fatalf("Ensure: %v", err)
 	}
-	w, ok := handles[defName]
+	w, ok := handles[noopSandboxDefName]
 	if !ok || w == nil {
-		t.Fatalf("Ensure did not settle a handle for %q", defName)
+		t.Fatalf("Ensure did not settle a handle for %q", noopSandboxDefName)
 	}
 	wh, ok := w.(*supervisedHostHandle)
 	if !ok {
@@ -236,11 +241,11 @@ func waitPIDDead(t *testing.T, pid int) {
 // waitJournalKind polls the host journal until the given kind shows up the
 // requested number of times for the definition, deadline-bounded so watcher
 // timing is deterministic from the test's point of view.
-func waitJournalKind(t *testing.T, h *InProcessHost, scope envhost.ScopeRef, adapterName string, kind envhost.JournalKind, minCount int) []envhost.JournalEntry {
+func waitJournalKind(t *testing.T, h *InProcessHost, scope envhost.ScopeRef, kind envhost.JournalKind, minCount int) []envhost.JournalEntry {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		entries, err := h.Journal(scope, adapterName).Entries(context.Background())
+		entries, err := h.Journal(scope, noopSandboxDefName).Entries(context.Background())
 		if err != nil {
 			t.Fatalf("journal entries: %v", err)
 		}
@@ -287,7 +292,7 @@ func TestInProcessHost_EnsureSpawnJournalsAndKeepaliveHoldsChild(t *testing.T) {
 	})
 
 	scope := envhost.ScopeRef{Scope: "run", Instance: "inst-a"}
-	w := ensureOnce(t, h, scope, "noop.sandbox", logBuf.String)
+	w := ensureOnce(t, h, scope, logBuf.String)
 	if ledger.count() != 1 || ledger.pid(0) <= 0 {
 		t.Fatalf("child spawn ledger = %d pids, first %d", ledger.count(), safeAt(ledger, 0))
 	}
@@ -322,7 +327,7 @@ func TestInProcessHost_EnsureSpawnJournalsAndKeepaliveHoldsChild(t *testing.T) {
 
 	// Re-Ensure re-adopts the same child: no second spawn, no re-resolution
 	// of the boot contract.
-	w2 := ensureOnce(t, h, scope, "noop.sandbox", logBuf.String)
+	w2 := ensureOnce(t, h, scope, logBuf.String)
 	if ledger.count() != 1 || booted != 1 {
 		t.Fatalf("re-Ensure re-spawned (%d pids, %d boot resolutions); want re-adoption and first-wins boot", ledger.count(), booted)
 	}
@@ -338,7 +343,7 @@ func TestInProcessHost_EnsureSpawnJournalsAndKeepaliveHoldsChild(t *testing.T) {
 		{Scope: "run", Instance: "inst-B"},
 		{},
 	} {
-		entries, err := h.Journal(q, "noop.sandbox").Entries(ctx)
+		entries, err := h.Journal(q, noopSandboxDefName).Entries(ctx)
 		if err != nil {
 			t.Fatalf("journal query %+v: %v", q, err)
 		}
@@ -346,7 +351,7 @@ func TestInProcessHost_EnsureSpawnJournalsAndKeepaliveHoldsChild(t *testing.T) {
 		if len(spawned) != 1 {
 			t.Fatalf("journal query %+v: %d spawned entries, want 1: %+v", q, len(spawned), entries)
 		}
-		if spawned[0].Adapter != "noop.sandbox" {
+		if spawned[0].Adapter != noopSandboxDefName {
 			t.Errorf("spawn entry adapter = %q", spawned[0].Adapter)
 		}
 		if !strings.Contains(spawned[0].Detail, "sha256:abcd1234") ||
@@ -372,7 +377,7 @@ func TestInProcessHost_FreshHandleDisplacesLiveStaleChild(t *testing.T) {
 	})
 
 	scope := envhost.ScopeRef{Scope: "run", Instance: "inst-a"}
-	w := ensureOnce(t, h, scope, "noop.sandbox", logBuf.String)
+	w := ensureOnce(t, h, scope, logBuf.String)
 
 	// EnsureFreshHandle naming the CURRENT live handle: the displacement
 	// arm, not the already-crashed path the other fresh-handle test drives.
@@ -380,7 +385,7 @@ func TestInProcessHost_FreshHandleDisplacesLiveStaleChild(t *testing.T) {
 	defer cancel()
 	resp, err := h.Control(ctx, &envhost.ControlRequest{
 		Scope:   scope,
-		Adapter: "noop.sandbox",
+		Adapter: noopSandboxDefName,
 		Kind:    envhost.ControlEnsureFreshHandle,
 		Stale:   w,
 	})
@@ -402,7 +407,7 @@ func TestInProcessHost_FreshHandleDisplacesLiveStaleChild(t *testing.T) {
 	if ledger.pid(1) == ledger.pid(0) {
 		t.Fatalf("displacement reused pid %d; want a fresh process", ledger.pid(1))
 	}
-	entries := waitJournalKind(t, h, scope, "noop.sandbox", envhost.JournalSpawned, 2)
+	entries := waitJournalKind(t, h, scope, envhost.JournalSpawned, 2)
 	spawned := journalKindsOf(entries, envhost.JournalSpawned)
 	if len(spawned) != 2 {
 		t.Fatalf("journal holds %d spawned entries, want 2: %+v", len(spawned), entries)
@@ -462,7 +467,7 @@ func TestInProcessHost_SignalKillMidExecuteClassifiesFromJournal(t *testing.T) {
 	})
 
 	scope := envhost.ScopeRef{Scope: "run", Instance: "inst-a"}
-	w := ensureOnce(t, h, scope, "noop.sandbox", logBuf.String)
+	w := ensureOnce(t, h, scope, logBuf.String)
 	pid := ledger.pid(0)
 
 	execCtx, execCancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -511,7 +516,7 @@ func TestInProcessHost_SignalKillMidExecuteClassifiesFromJournal(t *testing.T) {
 
 	// The journal is readable with the full supervision truth: spawn, the
 	// non-graceful signal exit, and the crash classification.
-	entries := waitJournalKind(t, h, scope, "noop.sandbox", envhost.JournalCrashClassified, 1)
+	entries := waitJournalKind(t, h, scope, envhost.JournalCrashClassified, 1)
 	spawned := journalKindsOf(entries, envhost.JournalSpawned)
 	exited := journalKindsOf(entries, envhost.JournalExited)
 	if len(spawned) != 1 || len(exited) != 1 {
@@ -537,7 +542,7 @@ func TestInProcessHost_SignalKillMidExecuteClassifiesFromJournal(t *testing.T) {
 	// recovery through the fresh-handle arm.
 	ensureCtx, ensureCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer ensureCancel()
-	if _, err := h.Ensure(ensureCtx, scope, []envhost.Definition{{Name: "noop.sandbox", Type: "noop"}}); err == nil {
+	if _, err := h.Ensure(ensureCtx, scope, []envhost.Definition{{Name: noopSandboxDefName, Type: "noop"}}); err == nil {
 		t.Fatal("Ensure after a signal-crashed child succeeded, want the hard no-respawn error")
 	}
 
@@ -546,7 +551,7 @@ func TestInProcessHost_SignalKillMidExecuteClassifiesFromJournal(t *testing.T) {
 	// (same runner lane, pinned identities).
 	resp, err := h.Control(execCtx, &envhost.ControlRequest{
 		Scope:   scope,
-		Adapter: "noop.sandbox",
+		Adapter: noopSandboxDefName,
 		Kind:    envhost.ControlEnsureFreshHandle,
 		Stale:   w,
 	})
@@ -569,7 +574,7 @@ func TestInProcessHost_SignalKillMidExecuteClassifiesFromJournal(t *testing.T) {
 	if ledger.count() != 2 || ledger.pid(1) == pid {
 		t.Fatalf("spawn ledger = %d pids (%d, %d), want two distinct generations", ledger.count(), safeAt(ledger, 0), safeAt(ledger, 1))
 	}
-	waitJournalKind(t, h, scope, "noop.sandbox", envhost.JournalSpawned, 2)
+	waitJournalKind(t, h, scope, envhost.JournalSpawned, 2)
 
 	// The fresh handle is usable: close its session engagement cleanly.
 	if err := fresh.OpenSession(execCtx, "sess-after", nil, nil); err != nil {
@@ -594,7 +599,7 @@ func TestInProcessHost_KeepAliveFalseIdleKillsAndRespawns(t *testing.T) {
 	})
 
 	scope := envhost.ScopeRef{Scope: "iter", Instance: "inst-a"}
-	w := ensureOnce(t, h, scope, "noop.sandbox", logBuf.String)
+	w := ensureOnce(t, h, scope, logBuf.String)
 	pid1 := ledger.pid(0)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -609,7 +614,7 @@ func TestInProcessHost_KeepAliveFalseIdleKillsAndRespawns(t *testing.T) {
 
 	// The idle kill is intentional: a graceful Exited fact, NO crash
 	// classification, no crash reason served by the wrapper.
-	entries := waitJournalKind(t, h, scope, "noop.sandbox", envhost.JournalExited, 1)
+	entries := waitJournalKind(t, h, scope, envhost.JournalExited, 1)
 	for _, e := range journalKindsOf(entries, envhost.JournalCrashClassified) {
 		t.Errorf("idle-kill journaled a crash classification: %v", e)
 	}
@@ -622,7 +627,7 @@ func TestInProcessHost_KeepAliveFalseIdleKillsAndRespawns(t *testing.T) {
 	}
 
 	// The next Ensure respawns from the boot spec: a new, distinct child.
-	w2 := ensureOnce(t, h, scope, "noop.sandbox", logBuf.String)
+	w2 := ensureOnce(t, h, scope, logBuf.String)
 	if ledger.count() != 2 {
 		t.Fatalf("spawn ledger = %d pids, want two generations", ledger.count())
 	}
@@ -636,7 +641,7 @@ func TestInProcessHost_KeepAliveFalseIdleKillsAndRespawns(t *testing.T) {
 	if reason, ok := w2.SupervisionCrashReason(); ok {
 		t.Fatalf("respawned child crash reason = (%q, true), want none", reason)
 	}
-	waitJournalKind(t, h, scope, "noop.sandbox", envhost.JournalSpawned, 2)
+	waitJournalKind(t, h, scope, envhost.JournalSpawned, 2)
 }
 
 // TestInProcessHost_ControlNoListener pins the contract pins that need no

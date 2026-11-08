@@ -24,14 +24,15 @@ import (
 	"testing"
 	"time"
 
+	hclog "github.com/hashicorp/go-hclog"
+	"github.com/hashicorp/go-plugin/runner"
+
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/envhost"
 	"github.com/brokenbots/criteria/internal/peer"
 	"github.com/brokenbots/criteria/internal/testutil"
 	"github.com/brokenbots/criteria/workflow"
-	hclog "github.com/hashicorp/go-hclog"
-	"github.com/hashicorp/go-plugin/runner"
 )
 
 // containerSupervisionWorkflow compiles the container-lane workflow the
@@ -175,11 +176,11 @@ func (r *containerExecCmdRunner) Stdout() io.ReadCloser             { return r.s
 func (r *containerExecCmdRunner) Stderr() io.ReadCloser             { return r.stderr }
 func (r *containerExecCmdRunner) Diagnose(_ context.Context) string { return "" }
 
-func (r *containerExecCmdRunner) PluginToHost(pluginNet, pluginAddr string) (string, string, error) {
+func (r *containerExecCmdRunner) PluginToHost(pluginNet, pluginAddr string) (hostNet string, hostAddr string, err error) {
 	return pluginNet, pluginAddr, nil
 }
 
-func (r *containerExecCmdRunner) HostToPlugin(hostNet, hostAddr string) (string, string, error) {
+func (r *containerExecCmdRunner) HostToPlugin(hostNet, hostAddr string) (pluginNet string, pluginAddr string, err error) {
 	return hostNet, hostAddr, nil
 }
 
@@ -300,7 +301,7 @@ func TestMaybeStartContainerEnvHosts_BindsSupervisorHosts(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := eng.maybeStartContainerEnvHosts(ctx, sessions); err != nil {
+	if err := eng.maybeStartContainerEnvHosts(sessions); err != nil {
 		t.Fatalf("maybeStartContainerEnvHosts: %v", err)
 	}
 	t.Cleanup(func() {

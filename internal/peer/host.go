@@ -37,10 +37,11 @@ import (
 	"sync"
 	"time"
 
-	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
-	criteriav1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	hclog "github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-plugin/runner"
+
+	v2 "github.com/brokenbots/criteria-adapter-proto/criteria/v2"
+	criteriav1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/envhost"
@@ -881,7 +882,7 @@ func (w *supervisedHostHandle) ProcessWaitStatus() (exitCode, signal int, ok boo
 
 // StartLogStream delegates the per-session log stream to the live child so
 // container sessions keep their log streaming after being wrapped.
-func (w *supervisedHostHandle) StartLogStream(ctx context.Context, sessionID string, sink adapterhost.LogEventSink) (func(), <-chan error, error) {
+func (w *supervisedHostHandle) StartLogStream(ctx context.Context, sessionID string, sink adapterhost.LogEventSink) (stop func(), errCh <-chan error, err error) {
 	starter, ok := w.Handle.(adapterhost.LogStreamStarter)
 	if !ok {
 		return nil, nil, fmt.Errorf("adapter %q: child handle does not stream logs", w.defName)
