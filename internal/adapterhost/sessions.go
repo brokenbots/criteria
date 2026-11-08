@@ -812,6 +812,18 @@ func (m *SessionManager) RemoteShimRegisteredForEnv(envKey string) bool {
 	return ok
 }
 
+// EnvHostRegisteredForEnv reports whether a dedicated envhost.Host binding
+// has been registered for exactly this environment key. Like
+// RemoteShimRegisteredForEnv it never falls back — an environment whose
+// remote dispatch resolves through the shimHost adapter (shim-only
+// registration) reports false.
+func (m *SessionManager) EnvHostRegisteredForEnv(envKey string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.envHostsByEnv[envKey]
+	return ok
+}
+
 // remoteEnvForAdapter returns the environment key ("remote.<name>") the
 // adapter declaration is bound to, resolving against the DECLARING graph so
 // subworkflow adapters match the provisioning path. The second
@@ -854,23 +866,6 @@ func declaredAdapterEnvironmentIsRemote(adapterNode *workflow.AdapterNode, graph
 	}
 	envNode, ok := graph.Environments[envKey]
 	return ok && envNode.Type == "remote"
-}
-
-// remoteShimForAdapter returns the shim serving the remote environment the
-// adapter is bound to. The second return is false when the adapter is not
-// remote or no shim is registered for it.
-func (m *SessionManager) remoteShimForAdapter(instanceID string) (RemoteShim, bool) {
-	envKey, remote := m.remoteEnvForAdapter(instanceID)
-	if !remote {
-		return nil, false
-	}
-	m.mu.Lock()
-	shim := m.remoteShimForEnvLocked(envKey)
-	m.mu.Unlock()
-	if shim == nil {
-		return nil, false
-	}
-	return shim, true
 }
 
 // RegisterRemoteScope registers a rotated accept token for the given scope
@@ -2133,7 +2128,7 @@ func (m *SessionManager) resolveAdapterHandle(ctx context.Context, name, adapter
 	// wait for the adapter to phone home via the shim serving that
 	// environment (per-environment shims).
 	if host, ok := m.envHostForAdapter(name); ok {
-		return ensureHostHandle(ctx, host, name, scope)
+		return ensureHostHandle(ctx, host, name, adapterName, scope)
 	}
 
 	if dl, ok := m.loader.(*DefaultLoader); ok {
