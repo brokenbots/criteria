@@ -15,15 +15,16 @@ import (
 // every verb's call chain byte-identical to the pre-carve shim knobs: the
 // control arms and the ensure path delegate through the provider exactly
 // where the session manager's knobs delegated to the shim (the provider
-// holds the server), so events, error shapes, and bookkeeping are
-// unchanged.
+// holds the server), and the listen-address arm reads the server directly —
+// the same server the provider forwards to, so the address is identical.
+// Events, error shapes, and bookkeeping are unchanged.
 type hostEnv struct {
 	// srv is the phone-home server serving this environment. It stays
 	// pinned on the binding because the host of record IS the environment's
 	// server — scope tokens, listen address, and identity verification all
-	// live there — even though the stage-1 verbs reach it through the
-	// provider (the provider forwards to it under the same ordering the
-	// pre-carve knobs relied on).
+	// live there. The listen-address arm reads it directly; the remaining
+	// verbs reach it through the provider (which forwards to this same
+	// server) under the ordering the pre-carve knobs relied on.
 	srv  *Server
 	prov *peerSessionProvider
 }
@@ -92,7 +93,10 @@ func (h *hostEnv) Control(ctx context.Context, req envhost.ControlRequest) (envh
 	case envhost.ControlCloseHandle:
 		return envhost.ControlResponse{}, h.prov.CloseHandle(ctx, req.Adapter, key)
 	case envhost.ControlListenAddress:
-		return envhost.ControlResponse{Address: h.prov.ListenAddr()}, nil
+		// Read straight off this environment's server: identical to the
+		// pre-carve shim.ListenAddr() read the knob performed (the
+		// provider delegates its own ListenAddr to this shim).
+		return envhost.ControlResponse{Address: h.srv.ListenAddr()}, nil
 	case envhost.ControlEnsureFreshHandle:
 		var stale adapterhost.Handle
 		if req.Stale != nil {

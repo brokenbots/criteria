@@ -17,10 +17,13 @@
 // Import boundary (enforced from M4 onward): the host seam sits BELOW the
 // adapter session layer and ABOVE the environment bindings —
 // internal/adapterhost may depend on this package, but the seam must never
-// import adapter session-layer types, and in particular must never import
-// the remote environment package's session/shim plumbing once the remote
-// environment owns this seam end to end. The carve records the rule here;
-// a later milestone wires it into make lint-imports.
+// import adapter session-layer types. Card KB-377's rule, to enforce
+// verbatim at M4: "adapterhost must not import remote shim types" — i.e.
+// internal/adapterhost (the consuming session layer) must not import the
+// remote environment package's session/shim plumbing
+// (internal/adapter/environment/remote) once the remote environment owns
+// this seam end to end. The carve records the rule here; a later milestone
+// wires it into make lint-imports.
 package envhost
 
 import (
