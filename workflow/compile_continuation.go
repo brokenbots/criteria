@@ -1,11 +1,13 @@
 package workflow
 
 // compile_continuation.go — the session-fate (continuation) compile rules of
-// ADR-0014 D3: every adapter instance's session fate at subworkflow
-// boundaries is either declared (continuation = "reuse" | "fresh") or
-// defaults to fresh, and adapter instances whose re-declaration makes the
-// subworkflow re-entry shape explicit (declared by BOTH a parent graph and
-// its callee) must agree on one declared fate.
+// ADR-0014 D3: adapter instances declare their session fate at subworkflow
+// boundaries (continuation = "reuse" | "fresh"), and adapter instances whose
+// re-declaration makes the subworkflow re-entry shape explicit (declared by
+// BOTH a parent graph and its callee) must agree on one declared fate. An
+// undeclared re-entry pair is a hard validation error — fail-loud replaces
+// any default at the boundary; instances with no re-entry keep KB-257's
+// detach-at-body-exit semantics unless they themselves declare fresh.
 
 import (
 	"fmt"
@@ -16,20 +18,12 @@ const (
 	continuationReuse = "reuse"
 	continuationFresh = "fresh"
 
-	// ContinuationFresh is the effective fate when an adapter instance leaves
-	// continuation undeclared: at a subworkflow body exit the instance's
-	// session is released, so a re-entry opens a new conversation.
+	// ContinuationFresh is the enforced fate for an adapter instance whose
+	// graphs declare continuation = "fresh": the session is released
+	// (close + unregister + tombstone) at the subworkflow body exit, so the
+	// next re-entry opens a new conversation.
 	ContinuationFresh = continuationFresh
 )
-
-// EffectiveContinuation resolves an adapter's declared continuation to the
-// enforced fate: an empty declaration defaults to fresh.
-func EffectiveContinuation(declared string) string {
-	if declared == "" {
-		return ContinuationFresh
-	}
-	return declared
-}
 
 // validateContinuation enforces the re-entry graph rule: an adapter instance
 // declared by BOTH a parent graph and a subworkflow body it invokes must

@@ -12,7 +12,9 @@ type "count" {
   schema = number
 }
 
-adapter "noop" "default" {}
+adapter "noop" "default" {
+  continuation = "reuse"
+}
 
 variable "count" {
   type = type.count

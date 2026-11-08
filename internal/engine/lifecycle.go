@@ -1311,6 +1311,17 @@ func drainDetachedLedger(ctx context.Context, deps Deps, lifecycle *remoteLifecy
 
 func tearDownScopeAdapters(ctx context.Context, scopeName string, order []string, deps Deps, lifecycle *remoteLifecycleContext) {
 	drainDetachedLedger(ctx, deps, lifecycle)
+	releaseScopeAdapters(ctx, scopeName, order, deps, lifecycle)
+}
+
+// releaseScopeAdapters is the close+unregister+tombstone half of
+// tearDownScopeAdapters, WITHOUT the detachment-ledger drain. A subworkflow
+// body's exit uses it to release a single declared-fresh instance
+// (ADR-0014 D3) without touching records other bodies detached — draining
+// the ledger here would release foreign engagements while their owning
+// bodies are still live. Errors during release are logged via the adapter
+// lifecycle sink but do not change the run's terminal state.
+func releaseScopeAdapters(ctx context.Context, scopeName string, order []string, deps Deps, lifecycle *remoteLifecycleContext) {
 	if len(order) == 0 {
 		return
 	}

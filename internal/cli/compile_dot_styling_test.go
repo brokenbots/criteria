@@ -403,6 +403,7 @@ workflow {
 }
 adapter "noop" "default" {
   config { }
+  continuation = "reuse"
 }
 step "do_shell" {
   target = adapter.noop.default
@@ -423,7 +424,9 @@ workflow {
   initial_state = "delegate"
   target_state  = "done"
 }
-adapter "noop" "default" {}
+adapter "noop" "default" {
+  continuation = "reuse"
+}
 step "delegate" {
   target = subworkflow.inner
   outcome "success" { next = step.done }

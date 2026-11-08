@@ -182,7 +182,9 @@ func TestCompileContinuation_ReentryValidation(t *testing.T) {
 
 // TestCompileContinuation_CalleeOnlyInstanceUnconstrained pins that an
 // adapter instance declared only by the callee (no parent re-declaration)
-// needs no continuation declaration: the engine default (fresh) applies.
+// needs no continuation declaration: an undeclared instance keeps KB-257's
+// detach-at-body-exit semantics, and only a DECLARED fresh releases at the
+// boundary (the fate policy is declaration-gated, not defaulted).
 func TestCompileContinuation_CalleeOnlyInstanceUnconstrained(t *testing.T) {
 	tmpDir := t.TempDir()
 	writeSubworkflowDir(t, tmpDir, "inner", continuationCalleeHCL("inner", "noop", "only_there", ""))
@@ -192,11 +194,8 @@ func TestCompileContinuation_CalleeOnlyInstanceUnconstrained(t *testing.T) {
 		t.Fatalf("expected no errors, got %s", diags.Error())
 	}
 	callee := graph.Subworkflows["inner_task"].Body
-	if callee.Adapters["noop.only_there"].Continuation != "" {
-		t.Error("callee-only instance should stay undeclared")
-	}
-	if got := EffectiveContinuation(callee.Adapters["noop.only_there"].Continuation); got != ContinuationFresh {
-		t.Errorf("effective fate = %q, want fresh (default)", got)
+	if got := callee.Adapters["noop.only_there"].Continuation; got != "" {
+		t.Errorf("callee-only instance continuation = %q, want undeclared", got)
 	}
 }
 
