@@ -75,6 +75,9 @@ func compileOneAdapter(g *FSMGraph, ad *AdapterDeclSpec, schemas map[string]Adap
 	effectiveEnv, d := resolveAdapterEnv(g, key, envKey)
 	diags = append(diags, d...)
 
+	continuation, d := resolveAdapterContinuation(key, ad.Continuation, ad)
+	diags = append(diags, d...)
+
 	adapterConfig, configExprs, d := resolveAdapterConfig(key, ad, schemas, typeName, configEvalCtx)
 	diags = append(diags, d...)
 
@@ -97,6 +100,7 @@ func compileOneAdapter(g *FSMGraph, ad *AdapterDeclSpec, schemas map[string]Adap
 		Source:            ad.Source,
 		Environment:       effectiveEnv,
 		OnCrash:           effectiveOnCrash,
+		Continuation:      continuation,
 		Config:            adapterConfig,
 		ConfigExprs:       configExprs,
 		Secrets:           secrets,

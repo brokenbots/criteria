@@ -319,7 +319,16 @@ type AdapterDeclSpec struct {
 	Version     string         `hcl:"version,optional"`
 	Environment hcl.Expression `hcl:"environment,optional"` // bare traversal reference (e.g. shell.default)
 	OnCrash     string         `hcl:"on_crash,optional"`
-	Config      *ConfigSpec    `hcl:"config,block"`
+	// Continuation declares the adapter instance's session fate at
+	// subworkflow boundaries: "fresh" closes, unregisters, and tombstones the
+	// per-scope session at body exit so a re-entry opens a new conversation;
+	// "reuse" detaches it — the session and its conversation survive for the
+	// next re-entry (and the run-final teardown releases it). Undeclared
+	// defaults to "fresh". Required (non-empty, and equal on both sides) for
+	// adapter instances re-declared by both a subworkflow and its parent
+	// graph, whose re-declaration makes the re-entry shape explicit.
+	Continuation string     `hcl:"continuation,optional"`
+	Config       *ConfigSpec `hcl:"config,block"`
 	Secrets     *ConfigSpec    `hcl:"secrets,block"` // optional secrets block
 	// Tools lists the statically presented tools declared via tool "<name>" { }
 	// blocks on this adapter (parse pass only). Each entry records the
@@ -808,7 +817,15 @@ type AdapterNode struct {
 	// definition with its digest without re-reading the lockfile. Empty
 	// when the adapter is unpinned (non-OCI).
 	PinnedDigest string
-	OnCrash      string            // "fail" (default) or "continue"
+	// Continuation is the declared session-fate for this instance at
+	// subworkflow boundaries: "reuse" keeps the session (and its
+	// conversation) alive across body exits via the detach ledger, "fresh"
+	// releases it at body exit so re-entry opens a new conversation. Empty
+	// means undeclared; the engine enforces the default (fresh) for
+	// callee-owned instances and the compiler requires a declaration for
+	// re-entry graphs (see validateReentryContinuation).
+	Continuation     string            // "reuse", "fresh", or "" (undeclared)
+	OnCrash          string            // "fail" (default) or "continue"
 	Config       map[string]string // compile-folded config from adapter.config { }
 	// Secrets holds raw HCL expressions from the adapter-level `secrets { }` block.
 	// These are treated as taint sources.
