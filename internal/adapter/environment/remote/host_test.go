@@ -27,6 +27,9 @@ func newHostEnvHarness(t *testing.T, perScope bool) (envhost.Host, *Server, *pee
 	if err != nil {
 		t.Fatalf("NewShim: %v", err)
 	}
+	// The acceptor contract requires the shim and the provider snapshots to
+	// agree; configure the shim side so perScope actually means per-scope.
+	shim.SetPerScopeSessions(perScope)
 	prov := NewPeerSessionProvider(shim, perScope)
 	shim.SetPeerAcceptor(prov)
 	return NewHost(shim, prov), shim, prov
