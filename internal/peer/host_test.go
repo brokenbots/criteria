@@ -88,11 +88,11 @@ func (r *execCmdRunner) Stdout() io.ReadCloser             { return r.stdout }
 func (r *execCmdRunner) Stderr() io.ReadCloser             { return r.stderr }
 func (r *execCmdRunner) Diagnose(_ context.Context) string { return "" }
 
-func (r *execCmdRunner) PluginToHost(pluginNet, pluginAddr string) (hostNet string, hostAddr string, err error) {
+func (r *execCmdRunner) PluginToHost(pluginNet, pluginAddr string) (hostNet, hostAddr string, err error) {
 	return pluginNet, pluginAddr, nil
 }
 
-func (r *execCmdRunner) HostToPlugin(hostNet, hostAddr string) (pluginNet string, pluginAddr string, err error) {
+func (r *execCmdRunner) HostToPlugin(hostNet, hostAddr string) (pluginNet, pluginAddr string, err error) {
 	return hostNet, hostAddr, nil
 }
 

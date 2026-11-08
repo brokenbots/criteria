@@ -176,11 +176,11 @@ func (r *containerExecCmdRunner) Stdout() io.ReadCloser             { return r.s
 func (r *containerExecCmdRunner) Stderr() io.ReadCloser             { return r.stderr }
 func (r *containerExecCmdRunner) Diagnose(_ context.Context) string { return "" }
 
-func (r *containerExecCmdRunner) PluginToHost(pluginNet, pluginAddr string) (hostNet string, hostAddr string, err error) {
+func (r *containerExecCmdRunner) PluginToHost(pluginNet, pluginAddr string) (hostNet, hostAddr string, err error) {
 	return pluginNet, pluginAddr, nil
 }
 
-func (r *containerExecCmdRunner) HostToPlugin(hostNet, hostAddr string) (pluginNet string, pluginAddr string, err error) {
+func (r *containerExecCmdRunner) HostToPlugin(hostNet, hostAddr string) (pluginNet, pluginAddr string, err error) {
 	return hostNet, hostAddr, nil
 }
 
@@ -299,8 +299,6 @@ func TestMaybeStartContainerEnvHosts_BindsSupervisorHosts(t *testing.T) {
 	eng := New(g, nil, &fakeSink{})
 	sessions := adapterhost.NewSessionManager(nil)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 	if err := eng.maybeStartContainerEnvHosts(sessions); err != nil {
 		t.Fatalf("maybeStartContainerEnvHosts: %v", err)
 	}
