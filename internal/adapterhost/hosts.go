@@ -201,6 +201,64 @@ func (m *SessionManager) envHostDefaultLocked() envhost.Host {
 	return m.envHostForEnvLocked("")
 }
 
+// containerEnvForAdapter returns the environment key ("container.<name>")
+// the adapter declaration is bound to when that environment is a CONTAINER
+// environment — the isolation-kind-keyed resolution the container bind
+// path dispatches on (the seam's container counterpart of
+// remoteEnvForAdapter, which stays remote-only).
+func (m *SessionManager) containerEnvForAdapter(instanceID string) (string, bool) {
+	adapterNode, graph := m.adapterDeclaration(instanceID)
+	if adapterNode == nil || graph == nil {
+		return "", false
+	}
+	envKey, ok := declaredAdapterEnvironmentKey(adapterNode, graph)
+	if !ok {
+		return "", false
+	}
+	envNode, ok := graph.Environments[envKey]
+	if !ok || envNode.Type != "container" {
+		return "", false
+	}
+	return envKey, true
+}
+
+// envHostBoundForEnv returns the dedicated envhost.Host bound to envKey,
+// WITHOUT the shimHost fold (the container dispatch lane has no shim
+// substrate to fold: an unbound container environment keeps the pre-carve
+// BuildContainerRunner dispatch).
+func (m *SessionManager) envHostBoundForEnv(envKey string) (envhost.Host, bool) {
+	m.mu.Lock()
+	host, ok := m.envHostsByEnv[envKey]
+	m.mu.Unlock()
+	if !ok || host == nil {
+		return nil, false
+	}
+	return host, true
+}
+
+// containerEnvHostForAdapter returns the bound envhost.Host serving the
+// container environment the adapter declaration resolves to. ok is false
+// when the adapter is not container-bound or its environment has no bound
+// supervisor host — the caller then keeps its pre-carve dispatch.
+func (m *SessionManager) containerEnvHostForAdapter(name string) (envhost.Host, bool) {
+	envKey, container := m.containerEnvForAdapter(name)
+	if !container {
+		return nil, false
+	}
+	return m.envHostBoundForEnv(envKey)
+}
+
+// EnvHostStopper is the ownership contract for supervisor hosts this
+// SessionManager bound through SetEnvHostForEnv and owns at teardown: the
+// manager that bound the host stops it at shutdown, so a container host's
+// children are never left running past the run. Borrowed hosts
+// (BorrowRemoteProvisioningFrom shares the parent's hosts with parallel
+// iterations) are owned by the parent and are not stopped by a borrower.
+type EnvHostStopper interface {
+	StopEnvHost(ctx context.Context)
+}
+
+
 // envHostForAdapter returns the host serving the remote environment the
 // adapter declaration is bound to — the exact resolution the dispatch
 // branch used pre-carve (declared graph -> environment key -> per-env shim
