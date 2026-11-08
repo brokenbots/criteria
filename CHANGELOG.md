@@ -203,6 +203,22 @@ product version). The release tag and date are finalized by the release gate.
   round-trip (`RunOutputsTypedRoundTrip`). Cross-repo: the castle run-viewer
   read of outputs is covered by the card-119 seam contract and lands
   castle-side in the same window.
+- **Session fate at subworkflow re-entry (ADR-0014 D3, KB-382).** Adapter
+  instances take a new instance-level attribute `continuation = "reuse" |
+  "fresh"`: `"fresh"` releases the per-scope session at every subworkflow body
+  exit (close + unregister + tombstone, that instance only — the KB-257
+  detach path keeps serving everything else), so a callee re-entry opens a
+  new conversation instead of silently inheriting the parent's
+  conversation; `"reuse"` is byte-identical to today's detach behavior. The
+  compile pass additionally enforces the re-entry rule: any adapter instance
+  declared in both a parent graph and its callee subworkflow must declare the
+  same `continuation` on both sides — undeclared or conflicting re-entry
+  declarations are a hard validation error instead of a silent fate choice.
+  Values outside `"reuse"`/`"fresh"` are rejected at compile. Per ADR-0014
+  D3's 2026-11-08 ruling (recorded in the ADR), a future per-call config
+  change forces a fresh session and per-call config on a `reuse` instance is
+  a compile error, retiring the r2/r3-style never-opened-instance workaround
+  by construction.
 
 ### Directory layout (XDG base directories)
 

@@ -172,6 +172,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 | `environment` | hcl.Expression | no | _(no description)_ |
 | `on_crash` | string | no | _(no description)_ |
 | `dynamic_tools` | bool | no | DynamicTools admits a runtime-discovered tool surface alongside any static tool blocks (dynamic_tools = bool, default false). Parsed by the schema decode; consumed by the tools validation (lenient static-name check) and the runtime tool-discovery path. |
+| `continuation` | string | no | Session fate for this adapter instance at subworkflow boundaries: `"fresh"` releases the per-scope session at the body exit (close + unregister + tombstone) so the next re-entry opens a new conversation; `"reuse"` detaches it, and the session and its conversation survive to the next re-entry. Values outside `"reuse"`/`"fresh"` are rejected at compile. When a parent graph and its callee both declare the same instance, both sides must declare one agreeing fate — an undeclared or conflicting re-entry declaration is a hard compile error (ADR-0014 D3). |
 
 - **Nested blocks:** [`config`](#config---), [`secrets`](#secrets---), [`tool`](#tool-name---)
 

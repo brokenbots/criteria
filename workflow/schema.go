@@ -324,9 +324,11 @@ type AdapterDeclSpec struct {
 	// per-scope session at body exit so a re-entry opens a new conversation;
 	// "reuse" detaches it — the session and its conversation survive for the
 	// next re-entry (and the run-final teardown releases it). Undeclared
-	// defaults to "fresh". Required (non-empty, and equal on both sides) for
-	// adapter instances re-declared by both a subworkflow and its parent
-	// graph, whose re-declaration makes the re-entry shape explicit.
+	// instances are unconstrained when no scope re-entry touches them (the
+	// engine keeps the KB-257 detach path), but an adapter instance
+	// re-declared by both a parent and a callee graph must declare the same
+	// fate on both sides: undeclared or conflicting re-entry declarations are
+	// a hard compile error (validateContinuation).
 	Continuation string     `hcl:"continuation,optional"`
 	Config       *ConfigSpec `hcl:"config,block"`
 	Secrets     *ConfigSpec    `hcl:"secrets,block"` // optional secrets block
@@ -819,11 +821,11 @@ type AdapterNode struct {
 	PinnedDigest string
 	// Continuation is the declared session-fate for this instance at
 	// subworkflow boundaries: "reuse" keeps the session (and its
-	// conversation) alive across body exits via the detach ledger, "fresh"
+	// conversation) alive across body exits via the detach path, "fresh"
 	// releases it at body exit so re-entry opens a new conversation. Empty
-	// means undeclared; the engine enforces the default (fresh) for
-	// callee-owned instances and the compiler requires a declaration for
-	// re-entry graphs (see validateReentryContinuation).
+	// means undeclared: unconstrained when no re-entry touches the instance,
+	// but a hard compile error when a parent and callee graph re-declare it
+	// without an agreeing fate (see validateContinuation).
 	Continuation     string            // "reuse", "fresh", or "" (undeclared)
 	OnCrash          string            // "fail" (default) or "continue"
 	Config       map[string]string // compile-folded config from adapter.config { }
