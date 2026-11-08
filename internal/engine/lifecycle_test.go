@@ -1645,7 +1645,7 @@ state "done" {
 	if err != nil {
 		t.Fatalf("initAdapters: %v", err)
 	}
-	defer tearDownScopeAdapters(ctx, order, deps, rlc)
+	defer tearDownScopeAdapters(ctx, "", order, deps, rlc)
 
 	event, ok := sink.firstStatus("provision_wanted")
 	if !ok {
@@ -1737,7 +1737,7 @@ state "done" {
 		t.Fatalf("initScopeAdapters: %v", err)
 	}
 
-	tearDownScopeAdapters(ctx, order, deps, rlc)
+	tearDownScopeAdapters(ctx, "", order, deps, rlc)
 
 	provision, ok := sink.firstStatus("provision_wanted")
 	if !ok {
@@ -1777,7 +1777,7 @@ func TestInitAdapters_PerScope_ProvisionWantedImageReferenceStaysEmptyWithoutPin
 	if err != nil {
 		t.Fatalf("initAdapters: %v", err)
 	}
-	defer tearDownScopeAdapters(ctx, order, deps, rlc)
+	defer tearDownScopeAdapters(ctx, "", order, deps, rlc)
 
 	event, ok := sink.firstStatus("provision_wanted")
 	if !ok {
@@ -1876,7 +1876,7 @@ state "done" {
 	if err != nil {
 		t.Fatalf("initAdapters: %v", err)
 	}
-	defer tearDownScopeAdapters(ctx, order, deps, rlc)
+	defer tearDownScopeAdapters(ctx, "", order, deps, rlc)
 
 	// The handoff under test: the lifecycle context must carry the same
 	// effective pin set the session manager already got.
@@ -1917,7 +1917,7 @@ func TestInitAdapters_PerScope_ProvisionWantedDigestStaysEmptyWithoutPins(t *tes
 	if err != nil {
 		t.Fatalf("initAdapters: %v", err)
 	}
-	defer tearDownScopeAdapters(ctx, order, deps, rlc)
+	defer tearDownScopeAdapters(ctx, "", order, deps, rlc)
 
 	if rlc.lockfile != nil {
 		t.Fatalf("rlc.lockfile = %+v, want nil (no pins resolvable)", rlc.lockfile)
@@ -1952,7 +1952,7 @@ func TestTearDownScopeAdapters_PerScope_EmitsReleased(t *testing.T) {
 		t.Fatalf("initScopeAdapters: %v", err)
 	}
 
-	tearDownScopeAdapters(ctx, order, deps, rlc)
+	tearDownScopeAdapters(ctx, "", order, deps, rlc)
 
 	if !sink.hasStatus("released") {
 		t.Fatalf("expected released event, got %v", sink.provisionEvents)
@@ -2092,7 +2092,7 @@ state "done" {
 		}
 	}
 
-	tearDownScopeAdapters(ctx, order, deps, rlc)
+	tearDownScopeAdapters(ctx, "", order, deps, rlc)
 
 	released := map[string]AdapterLifecycleEvent{}
 	for _, ev := range sink.provisionEvents {
@@ -2187,7 +2187,7 @@ state "done" {
 		t.Fatalf("provision_wanted adapter_type: got %v, want shell→intake, copilot→planner", provisioned)
 	}
 
-	tearDownScopeAdapters(ctx, order, deps, rlc)
+	tearDownScopeAdapters(ctx, "", order, deps, rlc)
 	released := map[string]string{}
 	for _, ev := range sink.provisionEvents {
 		if ev.Status == "released" {
@@ -2336,8 +2336,8 @@ state "done" {
 	prodShim.listenAddr = "127.0.0.1:40001"
 	stagingShim := newFakeRemoteShim(&fakeRemoteHandle{})
 	stagingShim.listenAddr = "127.0.0.1:40002"
-	sessions.SetRemoteShimForEnv("remote.prod", prodShim)
-	sessions.SetRemoteShimForEnv("remote.staging", stagingShim)
+	sessions.SetEnvHostForEnv("remote.prod", adapterhost.NewShimHost(prodShim))
+	sessions.SetEnvHostForEnv("remote.staging", adapterhost.NewShimHost(stagingShim))
 
 	lifecycle := newScopeLifecycleState(dataDir)
 	lifecycle.setRunID("run-cri293")

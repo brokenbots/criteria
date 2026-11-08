@@ -177,7 +177,7 @@ func TestEngine_CRI269_SubworkflowPerScopeRemoteAdapterIsDeferredAndRemote(t *te
 	if err != nil {
 		t.Fatalf("initAdapters: %v", err)
 	}
-	defer tearDownScopeAdapters(ctx, rootOrder, deps, rlc)
+	defer tearDownScopeAdapters(ctx, "", rootOrder, deps, rlc)
 
 	if n := loader.resolutionCount(); n != 0 {
 		t.Fatalf("VerifyGraph resolved an adapter binary locally %d time(s); the subworkflow per-scope remote adapter must be deferred at VerifyGraph (CRI-269)", n)
@@ -191,7 +191,7 @@ func TestEngine_CRI269_SubworkflowPerScopeRemoteAdapterIsDeferredAndRemote(t *te
 	if err != nil {
 		t.Fatalf("initScopeAdapters (subworkflow scope): %v", err)
 	}
-	defer tearDownScopeAdapters(ctx, bodyOrder, deps, rlc)
+	defer tearDownScopeAdapters(ctx, scopeName, bodyOrder, deps, rlc)
 
 	event, ok := sink.firstStatus("provision_wanted")
 	if !ok {

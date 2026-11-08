@@ -342,7 +342,7 @@ func TestInitScopeAdapters_PerScope_FreshRotationAfterRelease(t *testing.T) {
 		t.Fatal("first init emitted no provision_wanted event")
 	}
 
-	tearDownScopeAdapters(ctx, order, deps1, rlc1)
+	tearDownScopeAdapters(ctx, "", order, deps1, rlc1)
 	if _, err := os.Stat(filepath.Join(dataDir, "remote-tokens", "current", "noop.default.json")); !os.IsNotExist(err) {
 		t.Fatalf("live record still present after release: %v", err)
 	}
@@ -1088,12 +1088,12 @@ func TestScopeInstance_GuardSkipsChildRedeclaredAdapter(t *testing.T) {
 		t.Fatalf("child scope wrote token material under remote-tokens/engage: %v", err)
 	}
 
-	tearDownScopeAdapters(ctx, childOrder, deps, rlc)
+	tearDownScopeAdapters(ctx, "engage", childOrder, deps, rlc)
 	_, releases := cri145LifecycleStats(sink)
 	if len(releases) != 0 {
 		t.Fatalf("child teardown emitted %d released events, want 0", len(releases))
 	}
-	tearDownScopeAdapters(ctx, parentOrder, deps, rlc)
+	tearDownScopeAdapters(ctx, "", parentOrder, deps, rlc)
 	provisions, releases = cri145LifecycleStats(sink)
 	if len(provisions) != 1 {
 		t.Fatalf("stream has %d provision_wanted events, want 1", len(provisions))
@@ -1215,7 +1215,7 @@ func TestTearDownScopeAdapters_PerScope_ReleasedEventCarriesNoToken(t *testing.T
 	if err != nil {
 		t.Fatalf("initScopeAdapters: %v", err)
 	}
-	tearDownScopeAdapters(ctx, order, deps, rlc)
+	tearDownScopeAdapters(ctx, "", order, deps, rlc)
 
 	var released *AdapterLifecycleEvent
 	for i := range sink.provisionEvents {
@@ -1433,7 +1433,7 @@ func TestInitScopeAdapters_PerScope_AdoptionTeardownReleasesOwnCopy(t *testing.T
 		t.Fatal("replay init emitted no provision_wanted event")
 	}
 
-	tearDownScopeAdapters(ctx, ownOrder, ownDeps, ownRLC)
+	tearDownScopeAdapters(ctx, "", ownOrder, ownDeps, ownRLC)
 	replayEvent, ok := ownSink.firstStatus("released")
 	if !ok {
 		t.Fatal("replay teardown emitted no released event")

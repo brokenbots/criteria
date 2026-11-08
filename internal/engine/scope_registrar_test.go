@@ -92,7 +92,7 @@ func TestDialScopeRegistrar_RecoversUnregisteredScopeDial(t *testing.T) {
 	shim := newFakeRemoteShim(&fakeRemoteHandle{})
 	envKey := "remote.env"
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
-	sessions.SetRemoteShimForEnv(envKey, shim)
+	sessions.SetEnvHostForEnv(envKey, adapterhost.NewShimHost(shim))
 	consults := &registrarConsultCounter{}
 	consults.next = &dialScopeRegistrar{dataDir: dataDir, envKey: envKey, sessions: sessions}
 
@@ -138,7 +138,7 @@ func TestDialScopeRegistrar_DeclinesReleasedInstanceEndToEnd(t *testing.T) {
 	shim := newFakeRemoteShim(&fakeRemoteHandle{})
 	envKey := "remote.env"
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
-	sessions.SetRemoteShimForEnv(envKey, shim)
+	sessions.SetEnvHostForEnv(envKey, adapterhost.NewShimHost(shim))
 	registrar := &dialScopeRegistrar{dataDir: dataDir, envKey: envKey, sessions: sessions}
 
 	err := registrar.RegisterScopeOnDial("noop", scope, token)

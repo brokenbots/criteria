@@ -1279,7 +1279,7 @@ func TestRemoteSession_ReentryReusesDetachedSession(t *testing.T) {
 	scopeOne := first.ScopeInstanceID
 	scopeKeyOne := first.ScopeName + "/" + scopeOne
 
-	detached := rlc.DetachBodyScope(order1, deps)
+	detached := rlc.DetachBodyScope("entry_one", order1, deps)
 	if len(detached) != 1 {
 		t.Fatalf("entry_one detach moved %d records, want 1", len(detached))
 	}
@@ -1300,19 +1300,10 @@ func TestRemoteSession_ReentryReusesDetachedSession(t *testing.T) {
 		t.Errorf("scope %q token unregistered after body exit; the detached session's shim registration must survive (the pod keeps dialing with it)", scopeKeyOne)
 	}
 
-	tearDownScopeAdapters(ctx, nil, deps, rlc)
-	rlc.detachMu.Lock()
-	remaining := rlc.detached
-	rlc.detached = nil
-	rlc.detachMu.Unlock()
-	flushOrder := make([]string, 0, len(remaining))
-	for id, rec := range remaining {
-		flushOrder = append(flushOrder, id)
-		rlc.scopeLifecycle.add(rec)
-	}
-	if len(flushOrder) > 0 {
-		tearDownScopeAdapters(ctx, flushOrder, deps, rlc)
-	}
+	// Run-final teardown drains the detachment ledger: the detached
+	// body-one records move back onto the scope map and release through
+	// their own scope LIFO.
+	tearDownScopeAdapters(ctx, "", nil, deps, rlc)
 
 	provisions, detaches, releases := 0, 0, 0
 	seen := make([]string, 0, 8)
