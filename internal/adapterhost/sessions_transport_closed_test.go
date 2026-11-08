@@ -323,7 +323,7 @@ func TestSessions_KB246_ClassifyConnectionClosing(t *testing.T) {
 	h := &kb246Handle{name: "fake"}
 	sess := &Session{Name: "shell.develop", Adapter: "shell", handle: h}
 
-	if got := classifySessionCrash(sess, kb246FleetErr); got != CrashReasonTransportClosed {
+	if got := classifySessionCrash(context.Background(), sess, kb246FleetErr); got != CrashReasonTransportClosed {
 		t.Errorf("classifySessionCrash(%v) = %q, want %q", kb246FleetErr, got, CrashReasonTransportClosed)
 	}
 }

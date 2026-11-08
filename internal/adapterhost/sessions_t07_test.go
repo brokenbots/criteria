@@ -62,32 +62,32 @@ func TestClassifySessionCrash_SupervisionWireFactPriority(t *testing.T) {
 	t.Run("delivered reason is used verbatim", func(t *testing.T) {
 		_, _, h := newSupervisedSession()
 		h.deliver(CrashReasonProcessTerminated)
-		if got := classifySessionCrash(&Session{handle: h}, cri287TransportErr); got != CrashReasonProcessTerminated {
+		if got := classifySessionCrash(context.Background(), &Session{handle: h}, cri287TransportErr); got != CrashReasonProcessTerminated {
 			t.Errorf("crash reason = %q, want the wire fact verbatim %q", got, CrashReasonProcessTerminated)
 		}
 	})
 	t.Run("no classification falls through to ProcessExited", func(t *testing.T) {
 		h := &supervisedCrashHandle{cri287Handle: &cri287Handle{name: "fake", deadAfter: 0}}
 		h.exited.Store(true)
-		if got := classifySessionCrash(&Session{handle: h}, cri287TransportErr); got != CrashReasonProcessExitedEarly {
+		if got := classifySessionCrash(context.Background(), &Session{handle: h}, cri287TransportErr); got != CrashReasonProcessExitedEarly {
 			t.Errorf("crash reason = %q, want %q", got, CrashReasonProcessExitedEarly)
 		}
 	})
 	t.Run("no classification and no exit falls back to heuristics", func(t *testing.T) {
 		_, _, h := newSupervisedSession()
-		if got := classifySessionCrash(&Session{handle: h}, cri287TransportErr); got != CrashReasonTransportClosed {
+		if got := classifySessionCrash(context.Background(), &Session{handle: h}, cri287TransportErr); got != CrashReasonTransportClosed {
 			t.Errorf("crash reason = %q, want the heuristic %q", got, CrashReasonTransportClosed)
 		}
 	})
 	t.Run("legacy handle without the seam is unchanged", func(t *testing.T) {
 		h := &cri287Handle{name: "fake", deadAfter: 0}
 		h.exited.Store(true)
-		if got := classifySessionCrash(&Session{handle: h}, nil); got != CrashReasonProcessExitedEarly {
+		if got := classifySessionCrash(context.Background(), &Session{handle: h}, nil); got != CrashReasonProcessExitedEarly {
 			t.Errorf("crash reason = %q, want %q", got, CrashReasonProcessExitedEarly)
 		}
 	})
 	t.Run("nil session and nil error stay unknown", func(t *testing.T) {
-		if got := classifySessionCrash(nil, nil); got != CrashReasonUnknown {
+		if got := classifySessionCrash(context.Background(), nil, nil); got != CrashReasonUnknown {
 			t.Errorf("crash reason = %q, want %q", got, CrashReasonUnknown)
 		}
 	})
@@ -115,14 +115,14 @@ func TestClassifySessionCrash_MalformedSupervisedReason(t *testing.T) {
 	t.Run("empty delivered reason falls through to ProcessExited", func(t *testing.T) {
 		h := &malformedSupervisedHandle{cri287Handle: &cri287Handle{name: "fake", deadAfter: 0}}
 		h.exited.Store(true)
-		if got := classifySessionCrash(&Session{handle: h}, cri287TransportErr); got != CrashReasonProcessExitedEarly {
+		if got := classifySessionCrash(context.Background(), &Session{handle: h}, cri287TransportErr); got != CrashReasonProcessExitedEarly {
 			t.Errorf("crash reason = %q, want %q (an empty wire fact is not a classification)", got, CrashReasonProcessExitedEarly)
 		}
 	})
 	t.Run("non-taxonomy delivered reason falls through to ProcessExited", func(t *testing.T) {
 		h := &malformedSupervisedHandle{cri287Handle: &cri287Handle{name: "fake", deadAfter: 0}, reason: "universe restarted"}
 		h.exited.Store(true)
-		if got := classifySessionCrash(&Session{handle: h}, cri287TransportErr); got != CrashReasonProcessExitedEarly {
+		if got := classifySessionCrash(context.Background(), &Session{handle: h}, cri287TransportErr); got != CrashReasonProcessExitedEarly {
 			t.Errorf("crash reason = %q, want %q (a non-taxonomy wire fact must not leak into the classification vocabulary)", got, CrashReasonProcessExitedEarly)
 		}
 	})

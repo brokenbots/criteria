@@ -413,7 +413,7 @@ func (h *InProcessHost) Release(ctx context.Context, scope envhost.ScopeRef, pol
 	}
 	for _, w := range h.scopeWrappers(scope.Key()) {
 		for _, id := range h.wrapperSessionIDs(scope.Key(), w.defName) {
-			closeCtx, cancel := context.WithTimeout(context.Background(), closeSessionTimeout)
+			closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), closeSessionTimeout)
 			err := w.Handle.CloseSession(closeCtx, id)
 			cancel()
 			if err != nil {
@@ -542,7 +542,7 @@ func (h *InProcessHost) Control(ctx context.Context, req *envhost.ControlRequest
 	case envhost.ControlUnregisterScope:
 		return envhost.ControlResponse{}, nil
 	case envhost.ControlCloseHandle:
-		h.closeDefSessions(req.Scope.Key(), req.Adapter)
+		h.closeDefSessions(ctx, req.Scope.Key(), req.Adapter)
 		return envhost.ControlResponse{}, nil
 	case envhost.ControlListenAddress:
 		return envhost.ControlResponse{}, fmt.Errorf("%w: request from scope %q", errHostNoListen, req.Scope.Key())
@@ -560,13 +560,13 @@ func (h *InProcessHost) Control(ctx context.Context, req *envhost.ControlRequest
 // closeDefSessions closes the scope's live sessions on one definition (an
 // empty adapter identity closes every definition the scope engaged) and
 // drains the engagements with the keepalive-idle decision.
-func (h *InProcessHost) closeDefSessions(scopeKey, defName string) {
+func (h *InProcessHost) closeDefSessions(ctx context.Context, scopeKey, defName string) {
 	for _, w := range h.scopeWrappers(scopeKey) {
 		if defName != "" && w.defName != defName {
 			continue
 		}
 		for _, id := range h.wrapperSessionIDs(scopeKey, w.defName) {
-			closeCtx, cancel := context.WithTimeout(context.Background(), closeSessionTimeout)
+			closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), closeSessionTimeout)
 			err := w.Handle.CloseSession(closeCtx, id)
 			cancel()
 			if err != nil {

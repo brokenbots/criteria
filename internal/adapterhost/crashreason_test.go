@@ -1,6 +1,7 @@
 package adapterhost
 
 import (
+	"context"
 	"errors"
 	"sync/atomic"
 	"testing"
@@ -108,7 +109,7 @@ func TestClassifySessionCrashUsesTaxonomy(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := classifySessionCrash(tc.sess, tc.execErr)
+			got := classifySessionCrash(context.Background(), tc.sess, tc.execErr)
 			if got != tc.want {
 				t.Errorf("classifySessionCrash() = %q, want %q", got, tc.want)
 			}

@@ -107,12 +107,12 @@ func TestCRI271_ClassifySessionCrash(t *testing.T) {
 		{"some other weird failure", CrashReasonUnknownAdapterError},
 	}
 	for _, tc := range cases {
-		got := classifySessionCrash(nil, errors.New(tc.errText))
+		got := classifySessionCrash(context.Background(), nil, errors.New(tc.errText))
 		if got != tc.want {
 			t.Errorf("classifySessionCrash(%q) = %q, want %q", tc.errText, got, tc.want)
 		}
 	}
-	if got := classifySessionCrash(nil, nil); got != CrashReasonUnknown {
+	if got := classifySessionCrash(context.Background(), nil, nil); got != CrashReasonUnknown {
 		t.Errorf("classifySessionCrash(nil, nil) = %q, want %q", got, CrashReasonUnknown)
 	}
 }

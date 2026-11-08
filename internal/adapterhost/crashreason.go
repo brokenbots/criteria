@@ -129,11 +129,16 @@ type JournalCrashSettler interface {
 // journal facts through the Supervise stream, which carries no flip
 // window). The budget must come from tunables, not be declared at call
 // sites.
-func SettledSupervisionCrashReason(h Handle, budget time.Duration) (string, bool) {
+func SettledSupervisionCrashReason(ctx context.Context, h Handle, budget time.Duration) (string, bool) {
 	if settler, isSettler := h.(JournalCrashSettler); isSettler {
-		ctx, cancel := context.WithTimeout(context.Background(), budget)
+		// WithoutCancel: the settle stays bounded by budget and must run
+		// even when the caller's ctx is already canceled — a run that
+		// aborts its step ctx on transport death still needs the journal
+		// classification, or the decision falls back to the transport
+		// heuristics.
+		settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), budget)
 		defer cancel()
-		reason, ok := settler.SettledSupervisionCrashReason(ctx)
+		reason, ok := settler.SettledSupervisionCrashReason(settleCtx)
 		if !ok {
 			return "", false
 		}

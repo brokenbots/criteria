@@ -2742,7 +2742,7 @@ func (m *SessionManager) registerSensitiveOutputs(result adapter.Result, step *w
 // a dead process is the most precise diagnosis, and the message heuristics
 // distinguish the transport failure shapes the go-plugin/gRPC stack produces
 // (legacy runners and peers without a Supervise stream).
-func classifySessionCrash(sess *Session, execErr error) string {
+func classifySessionCrash(ctx context.Context, sess *Session, execErr error) string {
 	if sess != nil {
 		if reason, ok := SupervisionCrashReason(sess.handle); ok {
 			return reason
@@ -2753,7 +2753,7 @@ func classifySessionCrash(sess *Session, execErr error) string {
 		// transport fails). A settled query bridges that flip window so a
 		// kill mid-Execute classifies from the journal instead of falling
 		// through to the transport-string heuristics below.
-		if reason, ok := SettledSupervisionCrashReason(sess.handle, tunables.DefaultCrashCloseSettle); ok {
+		if reason, ok := SettledSupervisionCrashReason(ctx, sess.handle, tunables.DefaultCrashCloseSettle); ok {
 			return reason
 		}
 		if ProcessExited(sess.handle) {
@@ -2811,7 +2811,7 @@ func idleStringOrEmpty(sess *Session) string {
 }
 
 func (m *SessionManager) handleCrash(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink, sess *Session, execErr error, rejection *v2.ExecutionRejection) (adapter.Result, error) {
-	reason := classifySessionCrash(sess, execErr)
+	reason := classifySessionCrash(ctx, sess, execErr)
 	sess.crashed.Store(true)
 	slog.Warn("adapter session crashed",
 		append([]any{"session", sess.Name, "adapter", sess.Adapter, "error", execErr}, sess.crashDiagnostics(reason)...)...)
@@ -2860,11 +2860,11 @@ func (m *SessionManager) handleCrash(ctx context.Context, name string, step *wor
 			"idle_since_last_event": idleStringOrEmpty(sess),
 		})
 		if respawnErr := m.respawn(ctx, sess); respawnErr != nil {
-			return m.failResult(sink, sess, fmt.Errorf("respawn after crash failed: %w (original crash: %w)", respawnErr, execErr))
+			return m.failResult(ctx, sink, sess, fmt.Errorf("respawn after crash failed: %w (original crash: %w)", respawnErr, execErr))
 		}
 		return m.retryAfterRespawn(ctx, name, step, sink, sess, rejection)
 	default:
-		return m.failResult(sink, sess, execErr)
+		return m.failResult(ctx, sink, sess, execErr)
 	}
 }
 
@@ -2897,7 +2897,7 @@ func (m *SessionManager) retryAfterRespawn(ctx context.Context, name string, ste
 	if errors.As(retryErr, &invErr) {
 		return adapter.Result{}, invErr
 	}
-	return m.failResult(sink, sess, retryErr)
+	return m.failResult(ctx, sink, sess, retryErr)
 }
 
 // lookupOrBind returns the session for name, binding a verified-only adapter
@@ -3194,7 +3194,7 @@ func (m *SessionManager) executeError(ctx context.Context, name string, step *wo
 		!sess.closing.Load() &&
 		(!ProcessExited(sess.handle) || isPeerSupervised(sess.handle)) {
 		slog.Warn("adapter transport closed during engine-initiated step-timeout teardown; routing as timeout, not crash",
-			append([]any{"session", sess.Name, "adapter", sess.Adapter}, sess.crashDiagnostics(classifySessionCrash(sess, execErr))...)...)
+			append([]any{"session", sess.Name, "adapter", sess.Adapter}, sess.crashDiagnostics(classifySessionCrash(ctx, sess, execErr))...)...)
 		return result, execErr
 	}
 
@@ -3808,13 +3808,13 @@ func (s *Session) resetLogStreamState() {
 	s.logStreamAlive.Store(false)
 }
 
-func (m *SessionManager) failResult(sink adapter.EventSink, sess *Session, err error) (adapter.Result, error) {
+func (m *SessionManager) failResult(ctx context.Context, sink adapter.EventSink, sess *Session, err error) (adapter.Result, error) {
 	sink.Adapter("session.crash", map[string]any{
 		"session":               sess.Name,
 		"adapter":               sess.Adapter,
 		"policy":                sess.OnCrash,
 		"error":                 err.Error(),
-		"crash_reason":          classifySessionCrash(sess, err),
+		"crash_reason":          classifySessionCrash(ctx, sess, err),
 		"idle_since_last_event": idleStringOrEmpty(sess),
 	})
 	return adapter.Result{Outcome: "failure"}, &SessionCrashError{Session: sess.Name, Err: err}
