@@ -191,6 +191,13 @@ func (h *InProcessHost) Ensure(ctx context.Context, scope envhost.ScopeRef, defs
 	if h.boot == nil {
 		return nil, errors.New("container host has no child boot resolver configured")
 	}
+	// The in-process host has no Boot handshake: Ensure itself is the arm
+	// point, so mark the runtime booted before the first child spawn.
+	h.rt.mu.Lock()
+	if !h.rt.booted {
+		h.rt.booted = true
+	}
+	h.rt.mu.Unlock()
 	settled := make(envhost.Handles, len(defs))
 	for _, def := range defs {
 		if def.Name == "" {
