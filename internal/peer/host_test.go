@@ -417,12 +417,14 @@ func TestInProcessHost_SignalKillMidExecuteClassifiesFromJournal(t *testing.T) {
 
 	// The classification the step outcome consumes comes from the journal —
 	// the process-exited-family reason, NOT a transport-close string match.
-	// The settle wait closes the go-plugin client's exited-flag flip window
-	// so the unrecorded-exit push fires deterministically.
-	time.Sleep(100 * time.Millisecond)
-	reason, ok := w.SupervisionCrashReason()
+	// The settled query closes the go-plugin client's exited-flag flip
+	// window itself (the journal exit fact rides that flip), so the query
+	// classifies deterministically right after the failed Execute.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	reason, ok := w.SettledSupervisionCrashReason(ctx)
 	if !ok || reason != adapterhost.CrashReasonProcessTerminated {
-		t.Fatalf("SupervisionCrashReason = (%q, %t), want (%q, true)", reason, ok, adapterhost.CrashReasonProcessTerminated)
+		t.Fatalf("SettledSupervisionCrashReason = (%q, %t), want (%q, true)", reason, ok, adapterhost.CrashReasonProcessTerminated)
 	}
 
 	// The journal is readable with the full supervision truth: spawn, the

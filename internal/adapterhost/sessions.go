@@ -2747,6 +2747,15 @@ func classifySessionCrash(sess *Session, execErr error) string {
 		if reason, ok := SupervisionCrashReason(sess.handle); ok {
 			return reason
 		}
+		// The in-process supervisor's journal carries the exit fact a
+		// moment after the failed execute observed transport death (the
+		// child client flips its process-exited flag strictly after the
+		// transport fails). A settled query bridges that flip window so a
+		// kill mid-Execute classifies from the journal instead of falling
+		// through to the transport-string heuristics below.
+		if reason, ok := SettledSupervisionCrashReason(sess.handle, tunables.DefaultCrashCloseSettle); ok {
+			return reason
+		}
 		if ProcessExited(sess.handle) {
 			return CrashReasonProcessExitedEarly
 		}

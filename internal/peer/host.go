@@ -684,6 +684,10 @@ func (h *InProcessHost) StopEnvHost(ctx context.Context) {
 	})
 }
 
+// Exit-flip settle cadence. The flip itself lands within milliseconds of
+// transport death; the poll interval bounds how a settled query advances.
+const exitFlipSettlePoll = 10 * time.Millisecond
+
 // SupervisionCrashReason returns the crash classification the journal
 // recorded for the definition's CURRENT child generation, if any — the
 // classification the wrapper serves so classifySessionCrash consumes
@@ -788,6 +792,57 @@ func (w *supervisedHostHandle) Kill() {
 // definition's current child generation.
 func (w *supervisedHostHandle) SupervisionCrashReason() (string, bool) {
 	return w.host.SupervisionCrashReason(w.defName, w.Handle)
+}
+
+// SettledSupervisionCrashReason is the classification query on a known
+// transport failure (JournalCrashSettler seam): the journal's exit fact
+// rides the child client's process-exited flip, which lands strictly
+// after the transport dies, so the plain query can miss a kill in flight.
+// This entry settles the flip within the ctx deadline — pushing the
+// exit fact through the exited-once-guarded recordExit — and classifies
+// identically to SupervisionCrashReason.
+func (w *supervisedHostHandle) SettledSupervisionCrashReason(ctx context.Context) (string, bool) {
+	if !w.host.settleExitFlip(w.defName, w.Handle, ctx) {
+		return w.host.SupervisionCrashReason(w.defName, w.Handle)
+	}
+	return w.host.SupervisionCrashReason(w.defName, w.Handle)
+}
+
+// settleExitFlip bridges the window between transport death and the child
+// client's process-exited flip for the definition's current generation:
+// the journal's exit/crash facts ride that flip. It waits until the flip
+// lands or the ctx deadline passes; the budget must belong to a caller
+// that already knows the transport failed, so healthy-child queries
+// classify instantly without this entry. Returns whether the flip is
+// believed settled (flipped, or the runtime already pushed the fact).
+func (h *InProcessHost) settleExitFlip(defName string, inner adapterhost.Handle, ctx context.Context) bool {
+	if inner == nil {
+		return false
+	}
+	rt := h.rt
+	rt.mu.Lock()
+	c := rt.children[defName]
+	current := c != nil && c.handle == inner
+	rt.mu.Unlock()
+	if !current {
+		return false
+	}
+	settled := false
+	for {
+		rt.mu.Lock()
+		exited := c.exited
+		rt.mu.Unlock()
+		if exited || adapterhost.ProcessExited(inner) {
+			settled = true
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return settled
+		case <-time.After(exitFlipSettlePoll):
+		}
+	}
+	return settled
 }
 
 // Client exposes the raw adapter v2 client of the live child for transports
