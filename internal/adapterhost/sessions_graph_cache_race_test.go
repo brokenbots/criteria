@@ -4,10 +4,8 @@ package adapterhost
 // resolution is a read-only walk over the compiled graph tree, and the only
 // cross-manager state a parallel iteration shares (the parent's bound
 // envhost.Host entries via ShareEnvHostsFrom) moves under SessionManager.mu.
-// Before the deletion this test pinned an unlocked cache writer
-// (graphAdapters/adapterDirs/deferredRemoteAdapters) against concurrent
-// resolution readers and BorrowRemoteProvisioningFrom; those caches die with
-// the compensation machinery, so the remaining overlap is verification
+// The compensation caches that used to race here died with the machinery
+// they compensated for, so the remaining overlap is verification
 // (read-only walks) against resolution and Share clones.
 //
 // This test pins the contract after the deletion: graph verification and
