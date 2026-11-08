@@ -20,7 +20,7 @@ func Chain(stepNames ...string) *WorkflowBuilder {
 	falseVal := false
 	b := New().
 		WithHeader("t", "0.1", initial, target).
-		WithAdapter("noop", "default").
+		WithAdapterFate("noop", "default", "reuse").
 		WithState(target, true, &trueVal).
 		WithState(failure, true, &falseVal)
 

@@ -20,8 +20,9 @@ type AdapterDef struct {
 	Type string
 	Name string
 	// Continuation declares the adapter instance's session fate at
-	// subworkflow boundaries ("reuse" | "fresh"); empty omits the attribute
-	// (undeclared), which defaults to fresh.
+	// subworkflow boundaries ("reuse" | "fresh"); empty emits an undeclared
+	// block, which the re-entry rule rejects when a parent and callee graph
+	// both declare the instance.
 	Continuation string
 }
 
@@ -295,7 +296,7 @@ func NewStandard() *WorkflowBuilder {
 	falseVal := false
 	return New().
 		WithHeader("t", "0.1", "start", "done").
-		WithAdapter("noop", "default").
+		WithAdapterFate("noop", "default", "reuse").
 		WithState("done", true, &trueVal).
 		WithState("failed", true, &falseVal)
 }
@@ -367,16 +368,25 @@ func (b *WorkflowBuilder) WithVariable(name, typeName, defaultVal string) *Workf
 	return b
 }
 
-// WithAdapter adds an adapter declaration.
+// WithAdapter adds an adapter declaration, replacing any earlier declaration
+// of the same instance so overrides compose instead of duplicating.
 func (b *WorkflowBuilder) WithAdapter(kind, name string) *WorkflowBuilder {
-	b.adapters = append(b.adapters, AdapterDef{Type: kind, Name: name})
-	return b
+	return b.WithAdapterFate(kind, name, "")
 }
 
 // WithAdapterFate adds an adapter declaration carrying a continuation
-// ("reuse" | "fresh"); empty continuation emits an undeclared adapter block.
+// ("reuse" | "fresh"); empty continuation emits an undeclared adapter block,
+// which is rejected by the re-entry rule when a parent and callee graph both
+// declare the instance (ADR-0014 D3).
 func (b *WorkflowBuilder) WithAdapterFate(kind, name, continuation string) *WorkflowBuilder {
-	b.adapters = append(b.adapters, AdapterDef{Type: kind, Name: name, Continuation: continuation})
+	def := AdapterDef{Type: kind, Name: name, Continuation: continuation}
+	for i := range b.adapters {
+		if b.adapters[i].Type == kind && b.adapters[i].Name == name {
+			b.adapters[i] = def
+			return b
+		}
+	}
+	b.adapters = append(b.adapters, def)
 	return b
 }
 
