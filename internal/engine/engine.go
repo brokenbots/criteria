@@ -1835,9 +1835,7 @@ func (e *Engine) maybeStartContainerEnvHosts(sessions *adapterhost.SessionManage
 			KeepAlive: keepalive,
 			Log:       slog.Default(),
 		}, e.containerBootForEnv(key))
-		if err := sessions.SetContainerEnvHost(key, host); err != nil {
-			return fmt.Errorf("container environment %q: %w", env.Name, err)
-		}
+		sessions.SetContainerEnvHost(key, host)
 	}
 	return nil
 }

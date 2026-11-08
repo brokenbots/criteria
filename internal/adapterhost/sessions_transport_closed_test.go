@@ -46,6 +46,7 @@ type kb246Handle struct {
 	outcome string
 
 	mu       sync.Mutex
+	kills    int
 	executes int
 }
 
@@ -57,6 +58,12 @@ func (h *kb246Handle) executions() int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.executes
+}
+
+func (h *kb246Handle) killCount() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.kills
 }
 
 func (h *kb246Handle) Info(context.Context) (Info, error) { return Info{Name: h.name}, nil }
@@ -73,9 +80,13 @@ func (h *kb246Handle) Execute(_ context.Context, _ string, _ *workflow.StepNode,
 	return adapter.Result{Outcome: h.outcome}, nil
 }
 func (h *kb246Handle) CloseSession(context.Context, string) error { return nil }
-func (h *kb246Handle) Kill()                                      {}
-func (h *kb246Handle) Pause(context.Context, string) error        { return nil }
-func (h *kb246Handle) Resume(context.Context, string) error       { return nil }
+func (h *kb246Handle) Kill() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.kills++
+}
+func (h *kb246Handle) Pause(context.Context, string) error  { return nil }
+func (h *kb246Handle) Resume(context.Context, string) error { return nil }
 func (h *kb246Handle) Inspect(context.Context, string) (*criteriav2.InspectResponse, error) {
 	return &criteriav2.InspectResponse{}, nil
 }

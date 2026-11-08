@@ -83,9 +83,7 @@ func TestContainerGate_EnvHostForAdapterContainerArm(t *testing.T) {
 		t.Fatalf("envHostForAdapter(remote) = %T, want the shim fold", host)
 	}
 
-	if err := m.SetContainerEnvHost("container.x", stubEnvHost{}); err != nil {
-		t.Fatalf("SetContainerEnvHost: %v", err)
-	}
+	m.SetContainerEnvHost("container.x", stubEnvHost{})
 	if host, ok := m.containerEnvHostForAdapter("container.a"); !ok {
 		t.Fatal("containerEnvHostForAdapter did not dispatch after the explicit bind")
 	} else if _, isStub := host.(stubEnvHost); !isStub {
@@ -109,9 +107,7 @@ func TestContainerGate_EnvHostForAdapterContainerArm(t *testing.T) {
 // host through the EnvHostStopper capability.
 func TestContainerGate_SetContainerEnvHostContracts(t *testing.T) {
 	m := NewSessionManager(nil)
-	if err := m.SetContainerEnvHost("container.empty", nil); err != nil {
-		t.Fatalf("SetContainerEnvHost(nil) errored: %v", err)
-	}
+	m.SetContainerEnvHost("container.empty", nil)
 	if _, ok := m.envHostBoundForEnv("container.empty"); ok {
 		t.Fatal("a nil container host was bound")
 	}
@@ -123,9 +119,7 @@ func TestContainerGate_SetContainerEnvHostContracts(t *testing.T) {
 	m2 := NewSessionManager(nil)
 	m2.SetGraph(graph)
 	stub := &stubStoppingEnvHost{}
-	if err := m2.SetContainerEnvHost("container.x", stub); err != nil {
-		t.Fatalf("SetContainerEnvHost: %v", err)
-	}
+	m2.SetContainerEnvHost("container.x", stub)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := m2.Shutdown(ctx); err != nil {
@@ -145,9 +139,7 @@ func TestContainerGate_ShutdownOwnership(t *testing.T) {
 	parent := NewSessionManager(nil)
 	parent.SetRemoteShimForEnv("remote.x", stubShim{})
 	host := &stubStoppingEnvHost{}
-	if err := parent.SetContainerEnvHost("container.x", host); err != nil {
-		t.Fatalf("SetContainerEnvHost: %v", err)
-	}
+	parent.SetContainerEnvHost("container.x", host)
 
 	borrower := NewSessionManager(nil)
 	borrower.BorrowRemoteProvisioningFrom(parent)

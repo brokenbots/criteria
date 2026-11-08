@@ -2829,15 +2829,19 @@ func (m *SessionManager) handleCrash(ctx context.Context, name string, step *wor
 	// session is the peer-pod recreate window — the recreated pod re-dials the
 	// same session key seconds later, so instead of failing the in-flight step
 	// the session re-enters the wait through the respawn machinery (identical
-	// to OnCrashRespawn). WaitForFreshHandle excludes the just-dead handle, so
+	// to OnCrashRespawn). The implicit arm keys on the REMOTE-only
+	// resolution (remoteEnvHostForAdapter): a bound remote host
+	// participates, and a container-bound adapter does not — a container
+	// session has no pod to recreate, so its transport closes follow the
+	// declared on_crash policy (the default fails the step with no respawn).
+	// WaitForFreshHandle excludes the just-dead handle, so
 	// it resolves the recreated pod's fresh dial, and any failure along the
 	// way stays fail-closed via that arm's own failResult path. ctx.Err()
 	// guards run-level cancellation: a cancelled step must not re-enter.
-	// Local (in-host) sessions keep the session-crash semantics. on_crash=
-	// abort_run is consulted first and keeps its hard-fail arm.
+	// on_crash=abort_run is consulted first and keeps its hard-fail arm.
 	remoteRetry := false
 	if onCrash != OnCrashAbortRun && reason == CrashReasonTransportClosed && ctx.Err() == nil {
-		_, remoteRetry = m.envHostForAdapter(sess.Name)
+		_, remoteRetry = m.remoteEnvHostForAdapter(sess.Name)
 	}
 
 	switch {

@@ -465,9 +465,7 @@ func TestContainerEnvHostJournalKillFacts(t *testing.T) {
 
 	m := adapterhost.NewSessionManager(nil)
 	m.SetGraph(g)
-	if err := m.SetContainerEnvHost("container.local", host); err != nil {
-		t.Fatalf("bind container env host: %v", err)
-	}
+	m.SetContainerEnvHost("container.local", host)
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	t.Cleanup(func() {

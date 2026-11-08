@@ -283,15 +283,14 @@ type EnvHostStopper interface {
 // Unlike SetEnvHostForEnv it REFUSES to fold through the shim lane: a
 // container environment with no bound supervisor keeps the local
 // BuildContainerRunner dispatch, so binding is explicit — the engine's
-// binder is the only production caller.
-func (m *SessionManager) SetContainerEnvHost(envKey string, host envhost.Host) error {
+// binder is the only production caller. A nil host binds nothing.
+func (m *SessionManager) SetContainerEnvHost(envKey string, host envhost.Host) {
 	if host == nil {
-		return nil
+		return
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.setEnvHostForEnvLocked(envKey, host)
-	return nil
 }
 
 // envHostForAdapter returns the host serving the environment the adapter
@@ -310,6 +309,26 @@ func (m *SessionManager) envHostForAdapter(name string) (envhost.Host, bool) {
 			return nil, false
 		}
 		return m.containerEnvHostForEnvKey(envKey)
+	}
+	m.mu.Lock()
+	host := m.envHostForEnvLocked(envKey)
+	m.mu.Unlock()
+	if host == nil {
+		return nil, false
+	}
+	return host, true
+}
+
+// remoteEnvHostForAdapter is the pre-carve REMOTE-only resolution the
+// implicit crash-retry arm keys on: the adapter declaration must bind a
+// REMOTE environment AND a host must serve it. A container-bound adapter
+// never resolves here — a container session has no pod to recreate, so its
+// transport closes follow the declared on_crash policy instead of the
+// remote pod-recreate arm.
+func (m *SessionManager) remoteEnvHostForAdapter(name string) (envhost.Host, bool) {
+	envKey, remote := m.remoteEnvForAdapter(name)
+	if !remote {
+		return nil, false
 	}
 	m.mu.Lock()
 	host := m.envHostForEnvLocked(envKey)
