@@ -33,9 +33,9 @@ func newHostEnvHarness(t *testing.T, perScope bool) (envhost.Host, *Server, *pee
 }
 
 func TestHostEnv_ControlScopeArms(t *testing.T) {
-	host, shim, _ := newHostEnvHarness(t, false)
+	host, shim, prov := newHostEnvHarness(t, true)
 
-	if _, err := host.Control(context.Background(), envhost.ControlRequest{
+	if _, err := host.Control(context.Background(), &envhost.ControlRequest{
 		Scope: envhost.ScopeRef{Scope: "alpha", Instance: "uuid-1"},
 		Kind:  envhost.ControlRegisterScope,
 		Token: "tok-1",
@@ -45,8 +45,17 @@ func TestHostEnv_ControlScopeArms(t *testing.T) {
 	if got := shim.scopeTokens["alpha/uuid-1"]; got != "tok-1" {
 		t.Errorf("shim token store = %q, want tok-1", got)
 	}
+	// The provider's per-scope key shaping must agree with the shim's
+	// snapshot: the acceptor contract requires the two configurations to
+	// match (see NewPeerSessionProvider).
+	if got, want := prov.key("noop", "alpha/uuid-1"), shim.sessionKey("noop", "alpha/uuid-1"); got != want {
+		t.Errorf("provider key %q != shim key %q (perScopeSessions snapshot mismatch)", got, want)
+	}
+	if prov == nil {
+		t.Fatal("per-scope provider must be wired")
+	}
 
-	if _, err := host.Control(context.Background(), envhost.ControlRequest{
+	if _, err := host.Control(context.Background(), &envhost.ControlRequest{
 		Scope: envhost.ScopeRef{Scope: "alpha", Instance: "uuid-1"},
 		Kind:  envhost.ControlUnregisterScope,
 	}); err != nil {
@@ -57,7 +66,7 @@ func TestHostEnv_ControlScopeArms(t *testing.T) {
 	}
 
 	// The root scope shape rides through the same store byte-for-byte.
-	if _, err := host.Control(context.Background(), envhost.ControlRequest{
+	if _, err := host.Control(context.Background(), &envhost.ControlRequest{
 		Scope: envhost.ScopeRef{Instance: "uuid-2"},
 		Kind:  envhost.ControlRegisterScope,
 		Token: "tok-2",
@@ -72,13 +81,13 @@ func TestHostEnv_ControlScopeArms(t *testing.T) {
 func TestHostEnv_ListenAddressAndCloseArms(t *testing.T) {
 	host, _, _ := newHostEnvHarness(t, false)
 
-	resp, err := host.Control(context.Background(), envhost.ControlRequest{Kind: envhost.ControlListenAddress})
+	resp, err := host.Control(context.Background(), &envhost.ControlRequest{Kind: envhost.ControlListenAddress})
 	if err != nil || resp.Address != "" {
 		t.Errorf("listen address arm on an unstarted host = %+v, %v; want empty address, nil", resp, err)
 	}
 
 	// Close with no stored session is a no-op, matching the pre-carve knob.
-	resp, err = host.Control(context.Background(), envhost.ControlRequest{
+	resp, err = host.Control(context.Background(), &envhost.ControlRequest{
 		Scope:   envhost.ScopeRef{Scope: "alpha", Instance: "uuid-1"},
 		Adapter: "noop.alpha",
 		Kind:    envhost.ControlCloseHandle,
@@ -107,7 +116,7 @@ func TestHostEnv_EnsurePropagatesContextError(t *testing.T) {
 func TestHostEnv_StaleIdentityAndUnknownArmGuards(t *testing.T) {
 	host, _, _ := newHostEnvHarness(t, false)
 
-	resp, err := host.Control(context.Background(), envhost.ControlRequest{
+	resp, err := host.Control(context.Background(), &envhost.ControlRequest{
 		Scope:   envhost.ScopeRef{Scope: "alpha", Instance: "uuid-1"},
 		Adapter: "noop.alpha",
 		Kind:    envhost.ControlEnsureFreshHandle,
@@ -117,7 +126,7 @@ func TestHostEnv_StaleIdentityAndUnknownArmGuards(t *testing.T) {
 		t.Errorf("stale identity guard = %+v, %v; want zero response, errStaleHandleIdentity", resp, err)
 	}
 
-	resp, err = host.Control(context.Background(), envhost.ControlRequest{Kind: envhost.ControlKind(99)})
+	resp, err = host.Control(context.Background(), &envhost.ControlRequest{Kind: envhost.ControlKind(99)})
 	if !errors.Is(err, errUnknownControlArm) || resp != (envhost.ControlResponse{}) {
 		t.Errorf("unknown arm guard = %+v, %v; want zero response, errUnknownControlArm", resp, err)
 	}
@@ -127,7 +136,7 @@ func TestHostEnv_ReleaseLanes(t *testing.T) {
 	host, shim, _ := newHostEnvHarness(t, false)
 	scope := envhost.ScopeRef{Scope: "alpha", Instance: "uuid-1"}
 
-	if _, err := host.Control(context.Background(), envhost.ControlRequest{
+	if _, err := host.Control(context.Background(), &envhost.ControlRequest{
 		Scope: scope,
 		Kind:  envhost.ControlRegisterScope,
 		Token: "tok-1",

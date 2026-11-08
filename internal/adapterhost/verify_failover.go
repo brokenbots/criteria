@@ -8,9 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brokenbots/criteria/internal/envhost"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/brokenbots/criteria/internal/envhost"
 )
 
 // classifyTransportLoss reports whether an error is a transport-class

@@ -883,7 +883,7 @@ func (m *SessionManager) RegisterRemoteScope(scope, token string) error {
 	if host == nil {
 		return errors.New("no remote shim registered")
 	}
-	_, err := host.Control(context.Background(), envhost.ControlRequest{
+	_, err := host.Control(context.Background(), &envhost.ControlRequest{
 		Scope: scopeRefForKey(scope),
 		Kind:  envhost.ControlRegisterScope,
 		Token: token,
@@ -902,7 +902,7 @@ func (m *SessionManager) UnregisterRemoteScope(scope string) error {
 	if host == nil {
 		return errors.New("no remote shim registered")
 	}
-	_, err := host.Control(context.Background(), envhost.ControlRequest{
+	_, err := host.Control(context.Background(), &envhost.ControlRequest{
 		Scope: scopeRefForKey(scope),
 		Kind:  envhost.ControlUnregisterScope,
 	})
@@ -920,7 +920,7 @@ func (m *SessionManager) CloseRemoteHandle(ctx context.Context, adapterType, sco
 	if host == nil {
 		return nil
 	}
-	_, err := host.Control(ctx, envhost.ControlRequest{
+	_, err := host.Control(ctx, &envhost.ControlRequest{
 		Scope:   scopeRefForKey(scope),
 		Adapter: adapterType,
 		Kind:    envhost.ControlCloseHandle,
@@ -942,7 +942,7 @@ func (m *SessionManager) RemoteListenAddr() string {
 	if host == nil {
 		return ""
 	}
-	resp, err := host.Control(context.Background(), envhost.ControlRequest{
+	resp, err := host.Control(context.Background(), &envhost.ControlRequest{
 		Kind: envhost.ControlListenAddress,
 	})
 	if err != nil {
@@ -961,7 +961,7 @@ func (m *SessionManager) RegisterRemoteScopeForEnv(ctx context.Context, envKey, 
 	if host == nil {
 		return errors.New("no remote shim registered")
 	}
-	_, err := host.Control(ctx, envhost.ControlRequest{
+	_, err := host.Control(ctx, &envhost.ControlRequest{
 		Scope: scopeRefForKey(scope),
 		Kind:  envhost.ControlRegisterScope,
 		Token: token,
@@ -978,7 +978,7 @@ func (m *SessionManager) UnregisterRemoteScopeForEnv(ctx context.Context, envKey
 	if host == nil {
 		return errors.New("no remote shim registered")
 	}
-	_, err := host.Control(ctx, envhost.ControlRequest{
+	_, err := host.Control(ctx, &envhost.ControlRequest{
 		Scope: scopeRefForKey(scope),
 		Kind:  envhost.ControlUnregisterScope,
 	})
@@ -998,7 +998,7 @@ func (m *SessionManager) CloseRemoteHandleForEnv(ctx context.Context, envKey, ad
 	if host == nil {
 		return nil
 	}
-	_, err := host.Control(ctx, envhost.ControlRequest{
+	_, err := host.Control(ctx, &envhost.ControlRequest{
 		Scope:   scopeRefForKey(scope),
 		Adapter: adapterName,
 		Kind:    envhost.ControlCloseHandle,
@@ -1009,14 +1009,14 @@ func (m *SessionManager) CloseRemoteHandleForEnv(ctx context.Context, envKey, ad
 // RemoteListenAddrForEnv returns the bound listen address of the host serving
 // envKey, or "" when no host is registered for it (per-environment
 // addresses are published to each environment's adapters).
-func (m *SessionManager) RemoteListenAddrForEnv(envKey string) string {
+func (m *SessionManager) RemoteListenAddrForEnv(ctx context.Context, envKey string) string {
 	m.mu.Lock()
 	host := m.envHostForEnvLocked(envKey)
 	m.mu.Unlock()
 	if host == nil {
 		return ""
 	}
-	resp, err := host.Control(context.Background(), envhost.ControlRequest{
+	resp, err := host.Control(ctx, &envhost.ControlRequest{
 		Kind: envhost.ControlListenAddress,
 	})
 	if err != nil {

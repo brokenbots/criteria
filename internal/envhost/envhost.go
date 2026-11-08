@@ -247,5 +247,5 @@ type Host interface {
 
 	// Control drives kill/respawn/open/close verbs per (definition,
 	// scope). It replaces the scattered per-environment knobs.
-	Control(ctx context.Context, req ControlRequest) (ControlResponse, error)
+	Control(ctx context.Context, req *ControlRequest) (ControlResponse, error)
 }

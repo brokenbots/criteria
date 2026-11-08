@@ -81,7 +81,7 @@ func (h *hostEnv) Journal(scope envhost.ScopeRef, adapter string) envhost.Journa
 // delegate of one pre-carve session-manager knob (Register/Unregister
 // scope tokens, per-definition handle close, listen-address read, fresh
 // handle wait), so behavior is unchanged.
-func (h *hostEnv) Control(ctx context.Context, req envhost.ControlRequest) (envhost.ControlResponse, error) {
+func (h *hostEnv) Control(ctx context.Context, req *envhost.ControlRequest) (envhost.ControlResponse, error) {
 	key := req.Scope.Key()
 	switch req.Kind {
 	case envhost.ControlRegisterScope:

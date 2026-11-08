@@ -57,7 +57,7 @@ func (h shimHost) Journal(envhost.ScopeRef, string) envhost.JournalReader {
 // Control maps each arm onto the knob body it replaced: scope-token
 // register/unregister, per-definition handle close, listen-address read,
 // and the fresh-handle wait for respawn dispatch.
-func (h shimHost) Control(ctx context.Context, req envhost.ControlRequest) (envhost.ControlResponse, error) {
+func (h shimHost) Control(ctx context.Context, req *envhost.ControlRequest) (envhost.ControlResponse, error) {
 	key := req.Scope.Key()
 	switch req.Kind {
 	case envhost.ControlRegisterScope:
@@ -156,7 +156,7 @@ func ensureHostHandle(ctx context.Context, host envhost.Host, name, defType, sco
 // recovers the session-layer handle type, mirroring the pre-carve
 // WaitForFreshHandle branch.
 func freshHostHandle(ctx context.Context, host envhost.Host, name, scope string, stale Handle) (Handle, error) {
-	resp, err := host.Control(ctx, envhost.ControlRequest{
+	resp, err := host.Control(ctx, &envhost.ControlRequest{
 		Scope:   scopeRefForKey(scope),
 		Adapter: name,
 		Kind:    envhost.ControlEnsureFreshHandle,

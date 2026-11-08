@@ -470,10 +470,10 @@ func lockedImageReference(lf *lockfile.Lockfile, adapterType, adapterName string
 	return ""
 }
 
-func emitProvisionWanted(deps Deps, lifecycle *remoteLifecycleContext, scopeName, scopeInstanceID, scopeKey, instanceID string, adapter *workflow.AdapterNode, envNode *workflow.EnvironmentNode, tokenPath, token string) {
+func emitProvisionWanted(ctx context.Context, deps Deps, lifecycle *remoteLifecycleContext, scopeName, scopeInstanceID, scopeKey, instanceID string, adapter *workflow.AdapterNode, envNode *workflow.EnvironmentNode, tokenPath, token string) {
 	digest := lockedDigest(lifecycle.lockfile, adapter.Type, adapter.Name)
 	imageRef := lockedImageReference(lifecycle.lockfile, adapter.Type, adapter.Name)
-	listenAddr := deps.Sessions.RemoteListenAddrForEnv(environmentKey(envNode))
+	listenAddr := deps.Sessions.RemoteListenAddrForEnv(ctx, environmentKey(envNode))
 	deps.Sink.OnAdapterLifecycleEvent(&AdapterLifecycleEvent{
 		RunID:             lifecycle.scopeLifecycle.runID,
 		ScopeName:         scopeName,
@@ -597,7 +597,7 @@ func rotateFreshRemoteScope(ctx context.Context, deps Deps, lifecycle *remoteLif
 		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
 		return "", fmt.Errorf("initialize adapter %q: persist scope instance: %w", instanceID, err)
 	}
-	emitProvisionWanted(deps, lifecycle, scopeName, scopeInstanceID, scopeKey, instanceID, adapter, envNode, tokenPath, token)
+	emitProvisionWanted(ctx, deps, lifecycle, scopeName, scopeInstanceID, scopeKey, instanceID, adapter, envNode, tokenPath, token)
 	return scopeKey, nil
 }
 
@@ -621,7 +621,7 @@ func tryReuseScopeInstance(ctx context.Context, deps Deps, lifecycle *remoteLife
 			deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", rerr.Error())
 			return "", false, fmt.Errorf("initialize adapter %q: register scope token: %w", instanceID, rerr)
 		}
-		emitProvisionWanted(deps, lifecycle, scopeName, scopeInstanceID, scopeKey, instanceID, adapter, envNode, tokenPath, token)
+		emitProvisionWanted(ctx, deps, lifecycle, scopeName, scopeInstanceID, scopeKey, instanceID, adapter, envNode, tokenPath, token)
 		return scopeKey, true, nil
 	}
 	logScopeReuseFallback(scopeName, instanceID, reason)
@@ -667,7 +667,7 @@ func tryReuseScopeInstance(ctx context.Context, deps Deps, lifecycle *remoteLife
 	}
 	slog.Info("reusing scope instance recovered from surviving rotated token",
 		"scope", scopeName, "adapter_instance", instanceID, "scope_instance", chosen.instanceID)
-	emitProvisionWanted(deps, lifecycle, scopeName, chosen.instanceID, scopeKey, instanceID, adapter, envNode, chosen.tokenPath, chosen.token)
+	emitProvisionWanted(ctx, deps, lifecycle, scopeName, chosen.instanceID, scopeKey, instanceID, adapter, envNode, chosen.tokenPath, chosen.token)
 	return scopeKey, true, nil
 }
 
@@ -788,7 +788,7 @@ func tryAdoptPriorRunScopeInstance(ctx context.Context, deps Deps, lifecycle *re
 		}
 		slog.Info("adopting scope instance from prior run invocation",
 			"scope", scopeName, "adapter_instance", instanceID, "scope_instance", chosen.instanceID, "prior_run_dir", priorDir)
-		emitProvisionWanted(deps, lifecycle, scopeName, chosen.instanceID, scopeKey, instanceID, adapter, envNode, tokenPath, chosen.token)
+		emitProvisionWanted(ctx, deps, lifecycle, scopeName, chosen.instanceID, scopeKey, instanceID, adapter, envNode, tokenPath, chosen.token)
 		return scopeKey, true, nil
 	}
 	return "", false, nil

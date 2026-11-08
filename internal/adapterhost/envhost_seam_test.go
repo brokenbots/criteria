@@ -73,10 +73,10 @@ func (h *seamSpyHost) Journal(scope envhost.ScopeRef, adapter string) envhost.Jo
 	return shimJournalUnavailable{}
 }
 
-func (h *seamSpyHost) Control(_ context.Context, req envhost.ControlRequest) (envhost.ControlResponse, error) {
+func (h *seamSpyHost) Control(_ context.Context, req *envhost.ControlRequest) (envhost.ControlResponse, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.controlReqs = append(h.controlReqs, req)
+	h.controlReqs = append(h.controlReqs, *req)
 	return h.controlResp, h.controlErr
 }
 
@@ -90,12 +90,6 @@ func (h *seamSpyHost) controls() []envhost.ControlRequest {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return append([]envhost.ControlRequest(nil), h.controlReqs...)
-}
-
-func (h *seamSpyHost) released() (scopes []string, fates []envhost.Fate) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return append([]string(nil), h.releaseScopes...), append([]envhost.Fate(nil), h.releaseFates...)
 }
 
 func TestEnvhostSeam_BoundHostServesScopeAndKillKnobs(t *testing.T) {
@@ -127,7 +121,7 @@ func TestEnvhostSeam_BoundHostServesScopeAndKillKnobs(t *testing.T) {
 	if err := m.CloseRemoteHandleForEnv(context.Background(), "remote.alpha", "noop.alpha", "scope-a/1"); err != nil {
 		t.Fatalf("CloseRemoteHandleForEnv(alpha): %v", err)
 	}
-	if got := m.RemoteListenAddrForEnv("remote.alpha"); got != "10.0.0.1:1" {
+	if got := m.RemoteListenAddrForEnv(context.Background(), "remote.alpha"); got != "10.0.0.1:1" {
 		t.Errorf("RemoteListenAddrForEnv(alpha) = %q, want 10.0.0.1:1", got)
 	}
 	ctrl = spy.controls()
@@ -184,7 +178,7 @@ func TestEnvhostSeam_ShimOnlyEnvsRouteThroughShimAdapter(t *testing.T) {
 	if got := alpha.closeCalls(); len(got) != 1 || got[0] != "noop.alpha:scope-a/1" {
 		t.Errorf("alpha close calls = %v, want [noop.alpha:scope-a/1]", got)
 	}
-	if got := m.RemoteListenAddrForEnv("remote.alpha"); got != "127.0.0.1:9001" {
+	if got := m.RemoteListenAddrForEnv(context.Background(), "remote.alpha"); got != "127.0.0.1:9001" {
 		t.Errorf("RemoteListenAddrForEnv(alpha) = %q, want 127.0.0.1:9001", got)
 	}
 
@@ -197,7 +191,7 @@ func TestEnvhostSeam_ShimOnlyEnvsRouteThroughShimAdapter(t *testing.T) {
 	if got := alpha.scopeToken("scope-c/1"); got != "tok-c" {
 		t.Errorf("default-shim fallback scope token = %q, want tok-c", got)
 	}
-	if got := m.RemoteListenAddrForEnv("remote.missing"); got != "127.0.0.1:9001" {
+	if got := m.RemoteListenAddrForEnv(context.Background(), "remote.missing"); got != "127.0.0.1:9001" {
 		t.Errorf("RemoteListenAddrForEnv(missing) fallback = %q, want 127.0.0.1:9001", got)
 	}
 	errMsg := "no remote shim registered"
@@ -293,7 +287,7 @@ func TestEnvhostSeam_BindingPrecedence(t *testing.T) {
 	alpha := newCri293Shim("alpha", "127.0.0.1:9001")
 	m.SetRemoteShimForEnv("remote.alpha", alpha)
 	m.SetEnvHostForEnv("remote.alpha", spy)
-	if got := m.RemoteListenAddrForEnv("remote.alpha"); got != "10.0.0.1:1" {
+	if got := m.RemoteListenAddrForEnv(context.Background(), "remote.alpha"); got != "10.0.0.1:1" {
 		t.Errorf("bound host must win: got %q, want 10.0.0.1:1", got)
 	}
 
@@ -305,7 +299,7 @@ func TestEnvhostSeam_BindingPrecedence(t *testing.T) {
 	alpha2 := newCri293Shim("alpha2", "127.0.0.1:9003")
 	m2.SetEnvHostForEnv("remote.alpha", spy2)
 	m2.SetRemoteShimForEnv("remote.alpha", alpha2)
-	if got := m2.RemoteListenAddrForEnv("remote.alpha"); got != "127.0.0.1:9003" {
+	if got := m2.RemoteListenAddrForEnv(context.Background(), "remote.alpha"); got != "127.0.0.1:9003" {
 		t.Errorf("re-shadowed shim must win: got %q, want 127.0.0.1:9003", got)
 	}
 	if err := m2.RegisterRemoteScopeForEnv(context.Background(), "remote.alpha", "scope-b/1", "tok-b"); err != nil {
@@ -395,7 +389,7 @@ func TestEnvhostSeam_ShimAdapterFreshWaitAndStaleGuard(t *testing.T) {
 
 	// A stale handle that is not a session-layer handle is refused without
 	// ever reaching the shim.
-	resp, err := host.Control(context.Background(), envhost.ControlRequest{
+	resp, err := host.Control(context.Background(), &envhost.ControlRequest{
 		Scope: scopeRefForKey("scope-a/1"),
 		Kind:  envhost.ControlEnsureFreshHandle,
 		Stale: 42,
@@ -407,7 +401,7 @@ func TestEnvhostSeam_ShimAdapterFreshWaitAndStaleGuard(t *testing.T) {
 		t.Errorf("shim fresh waits = %v, want none", got)
 	}
 
-	if resp, err := host.Control(context.Background(), envhost.ControlRequest{
+	if resp, err := host.Control(context.Background(), &envhost.ControlRequest{
 		Scope:   scopeRefForKey("scope-a/1"),
 		Adapter: "noop.alpha",
 		Kind:    envhost.ControlEnsureFreshHandle,

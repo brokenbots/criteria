@@ -238,13 +238,13 @@ func TestSessions_CRI293_PerEnvListenAddrPublication(t *testing.T) {
 	m.SetRemoteShimForEnv("remote.alpha", alpha)
 	m.SetRemoteShimForEnv("remote.beta", beta)
 
-	if got := m.RemoteListenAddrForEnv("remote.alpha"); got != "127.0.0.1:9001" {
+	if got := m.RemoteListenAddrForEnv(context.Background(), "remote.alpha"); got != "127.0.0.1:9001" {
 		t.Errorf("RemoteListenAddrForEnv(alpha) = %q, want 127.0.0.1:9001", got)
 	}
-	if got := m.RemoteListenAddrForEnv("remote.beta"); got != "127.0.0.1:9002" {
+	if got := m.RemoteListenAddrForEnv(context.Background(), "remote.beta"); got != "127.0.0.1:9002" {
 		t.Errorf("RemoteListenAddrForEnv(beta) = %q, want 127.0.0.1:9002", got)
 	}
-	if got := m.RemoteListenAddrForEnv("remote.missing"); got != "127.0.0.1:9002" {
+	if got := m.RemoteListenAddrForEnv(context.Background(), "remote.missing"); got != "127.0.0.1:9002" {
 		// Missing env keys fall back to the default shim (the latest
 		// registration) so legacy single-shim callers keep their address.
 		t.Errorf("RemoteListenAddrForEnv(missing) fallback = %q, want 127.0.0.1:9002", got)
@@ -278,7 +278,7 @@ func TestSessions_CRI293_LegacyDefaultShimFallback(t *testing.T) {
 	// in environments that have none.
 	dedicated := newCri293Shim("dedicated", "127.0.0.1:9003")
 	m.SetRemoteShimForEnv("remote.alpha", dedicated)
-	if got := m.RemoteListenAddrForEnv("remote.beta"); got != "127.0.0.1:9003" {
+	if got := m.RemoteListenAddrForEnv(context.Background(), "remote.beta"); got != "127.0.0.1:9003" {
 		// The default shim now points at the latest registration; beta has
 		// no dedicated entry so it falls back to it.
 		t.Errorf("RemoteListenAddrForEnv(beta) fallback = %q, want 127.0.0.1:9003", got)
