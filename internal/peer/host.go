@@ -616,43 +616,71 @@ func (h *InProcessHost) freshenHandle(ctx context.Context, scope envhost.ScopeRe
 		return nil, err
 	}
 
+	adopted, adopt, err := h.settleStaleChildForFreshen(scope, defName, staleInner)
+	if err != nil {
+		return nil, err
+	}
+	if adopt {
+		return adopted, nil
+	}
+
 	rt := h.rt
-	rt.mu.Lock()
-	c := rt.children[defName]
-	if c != nil && c.killRequested {
-		rt.mu.Unlock()
-		return nil, fmt.Errorf("adapter %q: host-initiated kill in flight; no fresh handle", defName)
-	}
-	alive := c != nil && c.handle != nil && !adapterhost.ProcessExited(c.handle)
-	alreadyFresh := alive && (staleInner == nil || c.handle != staleInner)
-	rt.mu.Unlock()
-	if alreadyFresh {
-		// The runtime already settled a child different from the stale
-		// one: adopt it without a second spawn.
-		rt.mu.Lock()
-		handle := c.handle
-		rt.mu.Unlock()
-		return h.bindHandle(scope, defName, handle), nil
-	}
-	if alive {
-		if err := h.displaceStaleChild(c, defName); err != nil {
-			return nil, err
-		}
-	} else if c != nil && c.handle != nil {
-		// The stale child is dead but its exit facts may not be journaled
-		// yet (the watcher can lag a settled death). The successor's
-		// Spawned marker must never precede the stale generation's
-		// Exited/CrashClassified facts — settle them first, budgeted, or
-		// fail closed.
-		if err := h.settleStaleExit(c, defName); err != nil {
-			return nil, err
-		}
-	}
 	fresh, ok := rt.spawnAndWatch(ctx, &spec)
 	if !ok {
 		return nil, fmt.Errorf("adapter %q: fresh child spawn failed", defName)
 	}
 	return h.bindHandle(scope, defName, fresh.handle), nil
+}
+
+// settleStaleChildForFreshen enforces the stale-side preconditions of the
+// fresh-handle arm: a host-initiated kill fails the request, a runtime
+// already-settled child different from the stale one is adopted without a
+// second spawn, a still-live stale child is displaced peer-initiated, and a
+// dead stale child's exit facts are settled into the journal before any
+// successor spawn (the successor's Spawned marker must never precede the
+// stale generation's Exited/CrashClassified facts). adopt=true carries an
+// adopted handle and the caller skips the respawn; otherwise the caller
+// owns the go-spawn.
+func (h *InProcessHost) settleStaleChildForFreshen(scope envhost.ScopeRef, defName string, staleInner adapterhost.Handle) (envhost.Handle, bool, error) {
+	rt := h.rt
+	rt.mu.Lock()
+	c := rt.children[defName]
+	if c != nil && c.killRequested {
+		rt.mu.Unlock()
+		return nil, false, fmt.Errorf("adapter %q: host-initiated kill in flight; no fresh handle", defName)
+	}
+	alive := c != nil && c.handle != nil && !adapterhost.ProcessExited(c.handle)
+	alreadyFresh := alive && (staleInner == nil || c.handle != staleInner)
+	rt.mu.Unlock()
+	if alreadyFresh {
+		rt.mu.Lock()
+		handle := c.handle
+		rt.mu.Unlock()
+		return h.bindHandle(scope, defName, handle), true, nil
+	}
+	if alive {
+		return nil, false, h.displaceStaleChild(c, defName)
+	}
+	if c != nil && c.handle != nil {
+		return nil, false, h.settleStaleExit(c, defName)
+	}
+	return nil, false, nil
+}
+
+// settleStaleExit guarantees the journal's generation boundary before a
+// successor spawn: a dead child whose exit facts the watcher has not yet
+// recorded has them recorded here (recordExit classifies exactly as the
+// watcher would — peer-initiated displacements stay graceful), and the
+// wait returns only once those facts are actually journaled.
+func (h *InProcessHost) settleStaleExit(c *childState, defName string) error {
+	rt := h.rt
+	rt.mu.Lock()
+	unrecorded := !c.exited && c.handle != nil && adapterhost.ProcessExited(c.handle)
+	rt.mu.Unlock()
+	if unrecorded {
+		rt.recordExit(c, false)
+	}
+	return h.waitChildExit(c, defName)
 }
 
 // displaceStaleChild kills a still-live stale child peer-initiated and
@@ -669,22 +697,6 @@ func (h *InProcessHost) displaceStaleChild(c *childState, defName string) error 
 	rt.mu.Unlock()
 	if stillAlive {
 		handle.Kill()
-	}
-	return h.waitChildExit(c, defName)
-}
-
-// settleStaleExit guarantees the journal's generation boundary before a
-// successor spawn: a dead child whose exit facts the watcher has not yet
-// recorded has them recorded here (recordExit classifies exactly as the
-// watcher would — peer-initiated displacements stay graceful), and the
-// wait returns only once those facts are actually journaled.
-func (h *InProcessHost) settleStaleExit(c *childState, defName string) error {
-	rt := h.rt
-	rt.mu.Lock()
-	unrecorded := !c.exited && c.handle != nil && adapterhost.ProcessExited(c.handle)
-	rt.mu.Unlock()
-	if unrecorded {
-		rt.recordExit(c, false)
 	}
 	return h.waitChildExit(c, defName)
 }
