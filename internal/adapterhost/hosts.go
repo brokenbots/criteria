@@ -258,6 +258,24 @@ type EnvHostStopper interface {
 	StopEnvHost(ctx context.Context)
 }
 
+// SetContainerEnvHost binds the in-process supervisor host serving a
+// container environment (host of record for the seam, keyed "container.<name>").
+// Unlike SetEnvHostForEnv it REFUSES to fold through the shim lane: a
+// container environment with no bound supervisor keeps the local
+// BuildContainerRunner dispatch, so binding is explicit — the engine's
+// binder is the only production caller.
+func (m *SessionManager) SetContainerEnvHost(envKey string, host envhost.Host) error {
+	if host == nil {
+		return nil
+	}
+	if _, ok := host.(envhost.Host); !ok {
+		return errors.New("container host does not implement envhost.Host")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.setEnvHostForEnvLocked(envKey, host)
+	return nil
+}
 
 // envHostForAdapter returns the host serving the remote environment the
 // adapter declaration is bound to — the exact resolution the dispatch

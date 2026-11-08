@@ -28,6 +28,9 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter/secrets"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	engineruntime "github.com/brokenbots/criteria/internal/engine/runtime"
+	"github.com/brokenbots/criteria/internal/envhost"
+	"github.com/brokenbots/criteria/internal/envreg"
+	"github.com/brokenbots/criteria/internal/peer"
 	"github.com/brokenbots/criteria/internal/runtime/state"
 	"github.com/brokenbots/criteria/workflow"
 	"github.com/brokenbots/criteria/workflow/lockfile"
@@ -312,6 +315,12 @@ type Engine struct {
 	// one adapter pod per environment and never collide). Set only by local
 	// run entrypoints via WithLocalShimIsolation.
 	localShimIsolation bool
+
+	// containerBootHook, when non-nil, is consulted before the production
+	// container boot resolver for every definition the container
+	// environments' in-process hosts ensure (tests inject child runners
+	// without a container runtime).
+	containerBootHook func(envKey string, def envhost.Definition) (peer.ChildBoot, error)
 
 	// adoptableRunDirs lists prior invocations' run data directories
 	// whose surviving per-scope adapter instances may be adopted instead of
@@ -758,6 +767,12 @@ func (e *Engine) Run(ctx context.Context) error {
 		failRunInit(err)
 		return err
 	}
+	// ADR-0014 M3: bind container environments' in-process supervisor hosts
+	// alongside the remote shims, before adapter provisioning.
+	if err := e.maybeStartContainerEnvHosts(ctx, sessions); err != nil {
+		failRunInit(err)
+		return err
+	}
 
 	deps, scopeOrder, rlc, err := e.initAdapters(ctx, sessions, sink, vars, "")
 	if err != nil {
@@ -825,6 +840,12 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	// WS20: if any environment is remote, start the phone-home shim before
 	// provisioning adapters.
 	if err := e.maybeStartRemoteShim(ctx, sessions); err != nil {
+		failRunInit(err)
+		return err
+	}
+	// ADR-0014 M3: bind container environments' in-process supervisor hosts
+	// alongside the remote shims, before adapter provisioning.
+	if err := e.maybeStartContainerEnvHosts(ctx, sessions); err != nil {
 		failRunInit(err)
 		return err
 	}
@@ -1578,17 +1599,21 @@ func (e *Engine) maybeStartRemoteShim(ctx context.Context, sessions *adapterhost
 // subworkflow cannot replace the operator's listen/token wiring for a shared
 // environment; between subworkflows, declaration order decides.
 func shimEnvironmentDeclarations(g *workflow.FSMGraph) map[string]*workflow.EnvironmentNode {
-	out := make(map[string]*workflow.EnvironmentNode)
-	collectShimEnvironments(g, out)
-	return out
+	return collectEnvironmentDeclarations(g, "remote")
 }
 
-func collectShimEnvironments(g *workflow.FSMGraph, out map[string]*workflow.EnvironmentNode) {
+// collectEnvironmentDeclarations returns every environment of the given
+// isolation kind: the root graph's declarations merged with those of every
+// compiled subworkflow body. Root declarations win on key conflicts so a
+// subworkflow cannot replace the operator's wiring for a shared
+// environment; between subworkflows, declaration order decides.
+func collectEnvironmentDeclarations(g *workflow.FSMGraph, envType string) map[string]*workflow.EnvironmentNode {
+	out := make(map[string]*workflow.EnvironmentNode)
 	if g == nil {
-		return
+		return out
 	}
 	for key, env := range g.Environments {
-		if env == nil || env.Type != "remote" {
+		if env == nil || env.Type != envType {
 			continue
 		}
 		if _, ok := out[key]; !ok {
@@ -1600,8 +1625,14 @@ func collectShimEnvironments(g *workflow.FSMGraph, out map[string]*workflow.Envi
 		if sw == nil {
 			continue
 		}
-		collectShimEnvironments(sw.Body, out)
+		// Root declarations win: first-wins on key conflicts.
+		for key, env := range collectEnvironmentDeclarations(sw.Body, envType) {
+			if _, ok := out[key]; !ok {
+				out[key] = env
+			}
+		}
 	}
+	return out
 }
 
 // declaredAdaptersForEnv walks the compiled graph and returns the adapter
@@ -1761,6 +1792,119 @@ func (e *Engine) startRemoteShimForEnv(ctx context.Context, envKey string, env *
 	// dispatch and scope bookkeeping route through the envhost seam while
 	// the shim stays registered for the query surfaces.
 	sessions.SetEnvHostForEnv(envKey, remote.NewHost(shim, provider))
+	return nil
+}
+
+// containerEnvironmentDeclarations returns every container environment the
+// run must bind an in-process supervisor host for: the root graph's
+// declarations merged with those of every compiled subworkflow body. Root
+// declarations win on key conflicts, mirroring shimEnvironmentDeclarations
+// so both isolation kinds compose identically across scopes.
+func containerEnvironmentDeclarations(g *workflow.FSMGraph) map[string]*workflow.EnvironmentNode {
+	return collectEnvironmentDeclarations(g, "container")
+}
+
+// maybeStartContainerEnvHosts binds the in-process supervisor host for
+// every container environment: each environment's host spawns and
+// supervises its adapters' definition children itself (journal-based crash
+// classification, CRITERIA_PEER_CHILD_KEEPALIVE semantics) and registers
+// under the envhost seam keyed "container.<name>" — the isolation-kind
+// counterpart of maybeStartRemoteShim, kept parallel until the M4 rename
+// folds the two bind paths.
+func (e *Engine) maybeStartContainerEnvHosts(ctx context.Context, sessions *adapterhost.SessionManager) error {
+	if e.graph == nil {
+		return nil
+	}
+	containerEnvs := containerEnvironmentDeclarations(e.graph)
+	for _, key := range slices.Sorted(maps.Keys(containerEnvs)) {
+		env := containerEnvs[key]
+		keepalive, err := containerChildKeepAlive(env.Name)
+		if err != nil {
+			return err
+		}
+		host := peer.NewInProcessHost(peer.HostConfig{
+			KeepAlive: keepalive,
+			Log:       slog.Default(),
+		}, e.containerBootForEnv(key))
+		if err := sessions.SetContainerEnvHost(key, host); err != nil {
+			return fmt.Errorf("container environment %q: %w", env.Name, err)
+		}
+	}
+	return nil
+}
+
+// containerChildKeepAlive resolves CRITERIA_PEER_CHILD_KEEPALIVE for a
+// container environment: unset keeps the peer machinery's default (true);
+// a set-but-unparseable value fails run init instead of silently flipping
+// the supervision policy.
+func containerChildKeepAlive(envName string) (bool, error) {
+	raw := envreg.CRITERIAPeerChildKeepalive.StringOr("")
+	if raw == "" {
+		return true, nil
+	}
+	keepalive, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("container environment %q: invalid %s %q: %w",
+			envName, envreg.CRITERIAPeerChildKeepalive.Env(), raw, err)
+	}
+	return keepalive, nil
+}
+
+// containerBootForEnv builds the boot resolver for one environment's host:
+// a definition's spawn contract comes from the adapter's container runner
+// (the image-backed RunnerFunc) plus the lockfile's pinned identity facts.
+// Tests override the hook per environment key (containerBootHook) to inject
+// a child runner without a container runtime.
+func (e *Engine) containerBootForEnv(envKey string) func(context.Context, envhost.Definition) (peer.ChildBoot, error) {
+	return func(ctx context.Context, def envhost.Definition) (peer.ChildBoot, error) {
+		if e.containerBootHook != nil {
+			return e.containerBootHook(envKey, def)
+		}
+		return e.containerBootDefault(def)
+	}
+}
+
+// containerBootDefault resolves the production spawn contract for one
+// adapter definition: the container RunnerFunc from the compiled graph plus
+// the pinned image reference, digest, and version. A definition that does
+// not resolve to a container runner fails closed — Ensure refuses to
+// discover a binary outside the declared boot contract.
+func (e *Engine) containerBootDefault(def envhost.Definition) (peer.ChildBoot, error) {
+	lf := e.effectivePinSet()
+	runnerFunc, err := adapter.BuildContainerRunner(e.graph, lf, def.Name)
+	if err != nil {
+		return peer.ChildBoot{}, fmt.Errorf("adapter %q: %w", def.Name, err)
+	}
+	if runnerFunc == nil {
+		return peer.ChildBoot{}, fmt.Errorf("adapter %q is not bound to a container environment with a compiled runner", def.Name)
+	}
+	boot := peer.ChildBoot{Runner: runnerFunc}
+	if entry := pinnedLockedAdapter(lf, def.Name); entry != nil {
+		boot.Version = entry.Version
+		if entry.ContainerImage != nil {
+			boot.Binary = entry.ContainerImage.Ref
+			boot.Digest = entry.ContainerImage.Digest
+		}
+		if entry.ResolvedDigest != "" {
+			boot.Digest = entry.ResolvedDigest
+		}
+	}
+	return boot, nil
+}
+
+// pinnedLockedAdapter returns the lockfile entry for an adapter instance
+// keyed by its "<type>.<name>" identity (both halves matched), or nil.
+func pinnedLockedAdapter(lf *lockfile.Lockfile, instanceID string) *lockfile.LockedAdapter {
+	if lf == nil {
+		return nil
+	}
+	wantType, wantName, ok := strings.Cut(instanceID, ".")
+	for i := range lf.Adapters {
+		a := &lf.Adapters[i]
+		if ok && a.Type == wantType && a.Name == wantName {
+			return a
+		}
+	}
 	return nil
 }
 
