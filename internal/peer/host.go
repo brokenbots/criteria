@@ -636,10 +636,16 @@ func (h *InProcessHost) freshenHandle(ctx context.Context, scope envhost.ScopeRe
 	if alive {
 		// Displace the stale child: peer-initiated so the exit is recorded
 		// as graceful (no crash fact), then spawn fresh once the death
-		// settled.
+		// settled. The flag write and the handle capture ride rt.mu — the
+		// exit watcher reads peerInitiated under the same lock when it
+		// records the displacement's exit fact.
+		rt.mu.Lock()
 		c.peerInitiated = true
-		if !adapterhost.ProcessExited(c.handle) {
-			c.handle.Kill()
+		handle := c.handle
+		stillAlive := !adapterhost.ProcessExited(handle)
+		rt.mu.Unlock()
+		if stillAlive {
+			handle.Kill()
 		}
 		if err := h.waitChildExit(c, defName); err != nil {
 			return nil, err

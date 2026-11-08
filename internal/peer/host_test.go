@@ -356,6 +356,88 @@ func TestInProcessHost_EnsureSpawnJournalsAndKeepaliveHoldsChild(t *testing.T) {
 	}
 }
 
+// TestInProcessHost_FreshHandleDisplacesLiveStaleChild covers the
+// fresh-handle displacement arm that runs while the stale child is STILL
+// ALIVE — the shape reachable when a container child survives but its
+// transport broke, and the engine requests a fresh handle. The live child
+// is killed peer-initiated (graceful classification, no crash fact), the
+// journal records both generations, and the returned handle serves a live
+// child.
+func TestInProcessHost_FreshHandleDisplacesLiveStaleChild(t *testing.T) {
+	h, ledger, logBuf := testHost(t, true, nil)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		h.StopEnvHost(ctx)
+	})
+
+	scope := envhost.ScopeRef{Scope: "run", Instance: "inst-a"}
+	w := ensureOnce(t, h, scope, "noop.sandbox", logBuf.String)
+
+	// EnsureFreshHandle naming the CURRENT live handle: the displacement
+	// arm, not the already-crashed path the other fresh-handle test drives.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	resp, err := h.Control(ctx, &envhost.ControlRequest{
+		Scope:   scope,
+		Adapter: "noop.sandbox",
+		Kind:    envhost.ControlEnsureFreshHandle,
+		Stale:   w,
+	})
+	if err != nil {
+		t.Fatalf("Control EnsureFreshHandle on a live child: %v\nsupervisor log:\n%s", err, logBuf.String())
+	}
+	fresh, ok := resp.Handle.(*supervisedHostHandle)
+	if !ok {
+		t.Fatalf("fresh handle of type %T, want *supervisedHostHandle", resp.Handle)
+	}
+	if fresh.Handle == w.Handle {
+		t.Fatal("fresh handle re-wrapped the stale child; want a displaced respawn")
+	}
+
+	// A second generation was spawned and registered.
+	if ledger.count() != 2 {
+		t.Fatalf("ledger holds %d spawns, want 2 after displacement", ledger.count())
+	}
+	if ledger.pid(1) == ledger.pid(0) {
+		t.Fatalf("displacement reused pid %d; want a fresh process", ledger.pid(1))
+	}
+	entries := waitJournalKind(t, h, scope, "noop.sandbox", envhost.JournalSpawned, 2)
+	spawned := journalKindsOf(entries, envhost.JournalSpawned)
+	if len(spawned) != 2 {
+		t.Fatalf("journal holds %d spawned entries, want 2: %+v", len(spawned), entries)
+	}
+	if spawned[1].Detail == spawned[0].Detail {
+		t.Fatalf("second spawn entry repeats the first generation's detail %q", spawned[1].Detail)
+	}
+
+	// The displaced child died gracefully — no crash classification rides
+	// the displacement anywhere in this definition's journal.
+	exited := journalKindsOf(entries, envhost.JournalExited)
+	if len(exited) != 1 {
+		t.Fatalf("journal holds %d exited entries at settle, want 1: %+v", len(exited), entries)
+	}
+	if !strings.Contains(exited[0].Detail, "graceful true") {
+		t.Fatalf("displaced child's exited entry = %q, want a graceful peer-initiated death", exited[0].Detail)
+	}
+	if crashes := journalKindsOf(entries, envhost.JournalCrashClassified); len(crashes) != 0 {
+		t.Fatalf("displacement produced crash facts: %+v", crashes)
+	}
+
+	// The fresh handle's client is live: calls through it succeed.
+	if fresh.ProcessExited() {
+		t.Fatal("fresh wrapper reports an exited child right after displacement")
+	}
+	sessCtx, sessCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer sessCancel()
+	if err := fresh.OpenSession(sessCtx, "sess-fresh", nil, nil); err != nil {
+		t.Fatalf("fresh-wrapper OpenSession: %v", err)
+	}
+	if err := fresh.CloseSession(sessCtx, "sess-fresh"); err != nil {
+		t.Fatalf("fresh-wrapper CloseSession: %v", err)
+	}
+}
+
 func safeAt(l *runnerLedger, n int) int {
 	if l.count() <= n {
 		return 0
