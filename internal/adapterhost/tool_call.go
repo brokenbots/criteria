@@ -536,8 +536,8 @@ func (s *permissionInterceptSink) handleToolCallRequest(payload map[string]any) 
 // nestedToolCallMaxDepth returns the effective policy.max_tool_depth for the
 // caller's graph. A compiled graph normalizes the unset default to 8
 // (workflow.DefaultPolicy); hand-built graphs may carry 0, so the engine
-// default applies there too. Graph-less sessions (parallel iteration
-// managers) consult the borrowed parent policy before the default.
+// default applies there too. Graph-less callers fall back to the compiled
+// workflow default.
 func (s *permissionInterceptSink) nestedToolCallMaxDepth() int {
 	if depth := s.effectiveToolCallPolicy().MaxToolDepth; depth > 0 {
 		return depth
@@ -546,17 +546,11 @@ func (s *permissionInterceptSink) nestedToolCallMaxDepth() int {
 }
 
 // effectiveToolCallPolicy computes the nested tool-call policy for this
-// session: the executing graph's policy when present, else the policy
-// borrowed from the declaring parent graph (parallel-iteration managers have
-// no graph of their own), else the compiled workflow default.
+// session: the executing graph's policy when present, else the compiled
+// workflow default.
 func (s *permissionInterceptSink) effectiveToolCallPolicy() workflow.Policy {
 	if s.graph != nil {
 		return s.graph.Policy
-	}
-	if s.mgr != nil {
-		if p := s.mgr.BorrowedGraphPolicy(); p != nil {
-			return *p
-		}
 	}
 	return workflow.DefaultPolicy
 }

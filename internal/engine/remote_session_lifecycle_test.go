@@ -474,7 +474,7 @@ func runIdleChain(t *testing.T, podServerOpts []grpc.ServerOption) *idleChain {
 
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
-	sessions.SetRemoteShim(realShim)
+	bindRemoteEnvHosts(sessions, g, realShim)
 	sink := &eventTrackingSink{}
 	lifecycle := newScopeLifecycleState(dataDir)
 	lifecycle.setRunID("run-123")

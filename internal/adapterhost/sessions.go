@@ -266,11 +266,6 @@ type SessionManager struct {
 	// decrement. The owner scope anchors the session's real teardown. Guarded
 	// by mu.
 	toolResourceLeases map[string]int
-	// borrowedPolicy is the parent graph's policy, set by the engine on
-	// borrowed managers so the nested tool-call gates (max_tool_depth,
-	// max_tool_calls) consult the declaring workflow's values instead
-	// of package defaults. Guarded by mu; nil when not borrowed.
-	borrowedPolicy *workflow.Policy
 	// toolCallBudgets counts reserved nested tool calls per caller session id
 	// (policy.max_tool_calls). Guarded by mu. Entries live as long as
 	// the sessions they count for; the map is cleared at Shutdown with the
@@ -629,25 +624,6 @@ func (m *SessionManager) ReleaseSharedToolResources() {
 			owner.releaseToolResourceLease(name)
 		}
 	}
-}
-
-// SetBorrowedGraphPolicy records the parent graph's policy for m to consult
-// when it has no graph of its own: the depth gate
-// (policy.max_tool_depth) and the call-count gate (policy.max_tool_calls)
-// must not fall back to package defaults when a per-workflow value was
-// declared. Thread-safe.
-func (m *SessionManager) SetBorrowedGraphPolicy(p *workflow.Policy) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.borrowedPolicy = p
-}
-
-// BorrowedGraphPolicy returns the parent graph policy recorded via
-// SetBorrowedGraphPolicy, or nil when none was borrowed.
-func (m *SessionManager) BorrowedGraphPolicy() *workflow.Policy {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.borrowedPolicy
 }
 
 // reserveToolCallBudget reserves one nested tool call for the caller session

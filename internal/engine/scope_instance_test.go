@@ -62,7 +62,7 @@ func newPerScopeTestHarness(t *testing.T, g *workflow.FSMGraph, dataDir string) 
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
 	shim := newFakeRemoteShim(&fakeRemoteHandle{})
-	sessions.SetRemoteShim(shim)
+	bindRemoteEnvHosts(sessions, g, shim)
 
 	lifecycle := newScopeLifecycleState(dataDir)
 	lifecycle.setRunID("run-123")
@@ -500,7 +500,7 @@ func TestInitScopeAdapters_VerifyFailureSurfacesAcceptTokenError(t *testing.T) {
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
 	shim := &failingRemoteShim{fakeRemoteShim: newFakeRemoteShim(&fakeRemoteHandle{}), waitErr: errors.New(`remote adapter "noop" session wait for scope "" exceeded 5m0s without a successful identity handshake: last identity rejection for scope "": accept_token verification failed for scope ""; stale adapter pod holding a pre-rotation accept token? (CRI-137)`)}
-	sessions.SetRemoteShim(shim)
+	bindRemoteEnvHosts(sessions, g, shim)
 
 	lifecycle := newScopeLifecycleState(dataDir)
 	lifecycle.setRunID("run-123")

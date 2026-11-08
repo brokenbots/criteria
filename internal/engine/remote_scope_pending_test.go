@@ -102,7 +102,7 @@ func startKB70InitChain(t *testing.T, probe remote.PodStateProbe, handshakeBudge
 
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
-	sessions.SetRemoteShim(realShim)
+	bindRemoteEnvHosts(sessions, g, realShim)
 	sink := &eventTrackingSink{}
 	lifecycle := newScopeLifecycleState(dataDir)
 	lifecycle.setRunID("run-123")
@@ -309,7 +309,7 @@ func runKB153BindChain(t *testing.T, budget time.Duration, keepRedialing bool) *
 
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
-	sessions.SetRemoteShim(realShim)
+	bindRemoteEnvHosts(sessions, g, realShim)
 	sink := &eventTrackingSink{}
 	lifecycle := newScopeLifecycleState(dataDir)
 	lifecycle.setRunID("run-kb153")
@@ -554,7 +554,7 @@ func TestRotateFreshRemoteScope_RegistersScopeBeforeTokenFileVisible(t *testing.
 			t.Errorf("token file(s) already visible at shim registration time: %v", visible)
 		}
 	}
-	sessions.SetRemoteShim(shim)
+	bindRemoteEnvHosts(sessions, g, shim)
 
 	lifecycle := newScopeLifecycleState(dataDir)
 	lifecycle.setRunID("run-kb232-order")
@@ -599,7 +599,7 @@ func TestRotateFreshRemoteScope_PersistFailure_UnregistersScope(t *testing.T) {
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
 	shim := newFakeRemoteShim(&fakeRemoteHandle{})
-	sessions.SetRemoteShim(shim)
+	bindRemoteEnvHosts(sessions, g, shim)
 
 	lifecycle := newScopeLifecycleState(dataDir)
 	lifecycle.setRunID("run-kb232-rollback")
@@ -659,7 +659,7 @@ func TestInitScopeAdapters_TwoPhase_RegistersAllScopesBeforeAnyVerify(t *testing
 	sessions := adapterhost.NewSessionManager(&fakeLoader{})
 	sessions.SetGraph(g)
 	shim := newFakeRemoteShim(&fakeRemoteHandle{})
-	sessions.SetRemoteShim(shim)
+	bindRemoteEnvHosts(sessions, g, shim)
 
 	lifecycle := newScopeLifecycleState(dataDir)
 	lifecycle.setRunID("run-kb232-two-phase")
