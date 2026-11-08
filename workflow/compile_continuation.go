@@ -6,8 +6,8 @@ package workflow
 // re-declaration makes the subworkflow re-entry shape explicit (declared by
 // BOTH a parent graph and its callee) must agree on one declared fate. An
 // undeclared re-entry pair is a hard validation error — fail-loud replaces
-// any default at the boundary; instances with no re-entry keep KB-257's
-// detach-at-body-exit semantics unless they themselves declare fresh.
+// any default at the boundary; instances with no re-entry keep the
+// churn-kill detach-at-body-exit semantics unless they themselves declare fresh.
 
 import (
 	"fmt"

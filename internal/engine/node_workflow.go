@@ -82,10 +82,11 @@ func runWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry str
 	// (ADR-0014 D3): an instance the body declares continuation = "fresh"
 	// is released at exit — close + unregister + tombstone, FOR THAT
 	// INSTANCE ONLY. That is the declaration-guarded, selective return of
-	// the release the churn kill (KB-257) removed from body exits; the
+	// the release the churn kill removed from body exits; the
 	// universal release that manufactured the teardown→rotate→re-dial
-	// handshake-race class stays dead. Every other instance keeps KB-257's
-	// detach: the live engagement survives the exit for a re-entry (or the
+	// handshake-race class stays dead. Every other instance keeps the
+	// churn-kill detach: the live
+	// engagement survives the exit for a re-entry (or the
 	// run's final teardown) to adopt.
 	defer func() { exitBodyScopeAdapters(ctx, body, scopeName, bodyOrder, deps, rlc) }()
 
@@ -94,8 +95,8 @@ func runWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry str
 
 // exitBodyScopeAdapters partitions the body's adapter order by the BODY
 // graph's declared session fate and disposes each partition: fresh-declared
-// instances release (releaseScopeAdapters), everything else keeps KB-257's
-// detach path. The partition only sees the body's own records — a
+// instances release (releaseScopeAdapters), everything else keeps the
+// churn-kill detach path. The partition only sees the body's own records — a
 // re-declared PARENT instance's per-scope record lives under the parent's
 // scope name and is never body-owned, so releaseScopeAdapters releases only
 // what the body owns.

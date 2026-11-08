@@ -329,9 +329,9 @@ type AdapterDeclSpec struct {
 	// re-declared by both a parent and a callee graph must declare the same
 	// fate on both sides: undeclared or conflicting re-entry declarations are
 	// a hard compile error (validateContinuation).
-	Continuation string     `hcl:"continuation,optional"`
+	Continuation string      `hcl:"continuation,optional"`
 	Config       *ConfigSpec `hcl:"config,block"`
-	Secrets     *ConfigSpec    `hcl:"secrets,block"` // optional secrets block
+	Secrets      *ConfigSpec `hcl:"secrets,block"` // optional secrets block
 	// Tools lists the statically presented tools declared via tool "<name>" { }
 	// blocks on this adapter (parse pass only). Each entry records the
 	// tool's name label; the block body is reserved for future use and is
@@ -826,8 +826,8 @@ type AdapterNode struct {
 	// means undeclared: unconstrained when no re-entry touches the instance,
 	// but a hard compile error when a parent and callee graph re-declare it
 	// without an agreeing fate (see validateContinuation).
-	Continuation     string            // "reuse", "fresh", or "" (undeclared)
-	OnCrash          string            // "fail" (default) or "continue"
+	Continuation string            // "reuse", "fresh", or "" (undeclared)
+	OnCrash      string            // "fail" (default) or "continue"
 	Config       map[string]string // compile-folded config from adapter.config { }
 	// Secrets holds raw HCL expressions from the adapter-level `secrets { }` block.
 	// These are treated as taint sources.

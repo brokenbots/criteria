@@ -5,7 +5,7 @@ package engine
 // continuation = "fresh" is released at the body exit (close + unregister +
 // tombstone, for that instance only), so the next re-entry opens a new
 // conversation; an instance declared "reuse" — and every undeclared
-// instance — keeps KB-257's detach path byte-for-byte.
+// instance — keeps the churn-kill detach path byte-for-byte.
 
 import (
 	"context"
@@ -115,7 +115,7 @@ func TestSubworkflowBodyExit_DeclaredFreshReleasesInstance(t *testing.T) {
 }
 
 // TestSubworkflowBodyExit_DeclaredReuseMatchesKB257Detach pins the reuse
-// fate as byte-identical to the KB-257 re-entry reuse: the body exit
+// fate as byte-identical to the churn-kill re-entry reuse: the body exit
 // detaches (the engagement survives), the re-entry hits the
 // already-provisioned skip with no second provision, and only the
 // run-final teardown releases.
