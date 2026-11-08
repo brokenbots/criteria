@@ -32,9 +32,54 @@ type hostEnv struct {
 // NewHost returns the envhost.Host binding for a remote environment: the
 // phone-home server (`NewShim`) plus the peer session provider serving its
 // peer-role dials, merged under one host object. Both arguments must come
-// from the same environment wiring.
-func NewHost(srv *Server, prov *peerSessionProvider) envhost.Host {
-	return &hostEnv{srv: srv, prov: prov}
+// from the same environment wiring. Options install the server's dial-time
+// wiring — the registrar for unregistered-scope dials and the pending-wait
+// signal sink — which the pre-carve session-manager code reached through
+// the (now-unexported) Server setters.
+func NewHost(srv *Server, prov *peerSessionProvider, opts ...HostOption) envhost.Host {
+	h := &hostEnv{srv: srv, prov: prov}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
+}
+
+// HostOption customizes a NewHost binding.
+type HostOption func(*hostEnv)
+
+// WithScopeRegistrar installs reg as the binding's dial-time scope
+// registrar: unregistered-scope dials whose digest verifies consult it to
+// re-register a run's surviving rotated token.
+func WithScopeRegistrar(reg ScopeRegistrar) HostOption {
+	return func(h *hostEnv) {
+		h.srv.setScopeRegistrar(reg)
+	}
+}
+
+// WithScopeSessionSink installs sink as the binding's scope_session_pending
+// signal sink for session waits crossing half their window.
+func WithScopeSessionSink(sink ScopeSessionSink) HostOption {
+	return func(h *hostEnv) {
+		h.srv.setScopeSessionSink(sink)
+	}
+}
+
+// Shim exposes the environment's phone-home shim: the peer session
+// provider the engine handed in, exactly the value the pre-carve
+// session-manager shim slot stored. It keeps the query surfaces
+// (declared-shim resolution, peer-first session lookup) byte-identical
+// now that there is no second shim-registration slot.
+func (h *hostEnv) Shim() adapterhost.RemoteShim {
+	return h.prov
+}
+
+// DefersVerify reports whether this environment defers
+// VerifyGraph handshake verification (per-scope session isolation:
+// per-scope sessions have no session to verify before a scope entry arms
+// it). It is the host-bound replacement of the session manager's
+// deferred-adapter bookkeeping.
+func (h *hostEnv) DefersVerify() bool {
+	return h.srv.perScopeSessions
 }
 
 // Ensure engages the scope's definitions and returns their live handles.

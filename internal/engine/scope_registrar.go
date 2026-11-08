@@ -10,6 +10,7 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapter/environment/remote"
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	"github.com/brokenbots/criteria/internal/envhost"
 )
 
 // dialScopeRegistrar implements remote.ScopeRegistrar: when a shim
@@ -51,7 +52,15 @@ func (r *dialScopeRegistrar) RegisterScopeOnDial(adapterName, scope, presentedTo
 	if err != nil {
 		return err
 	}
-	if err := r.sessions.RegisterRemoteScopeForEnv(context.Background(), r.envKey, scope, token); err != nil {
+	host, ok := r.sessions.EnvHost(r.envKey)
+	if !ok || host == nil {
+		return errors.New("no remote shim registered")
+	}
+	if _, err := host.Control(context.Background(), &envhost.ControlRequest{
+		Scope: scopeRefForKey(scope),
+		Kind:  envhost.ControlRegisterScope,
+		Token: token,
+	}); err != nil {
 		return fmt.Errorf("register surviving scope token: %w", err)
 	}
 	slog.Info("re-registered surviving scope token at dial time",

@@ -258,3 +258,14 @@ type Host interface {
 	// scope). It replaces the scattered per-environment knobs.
 	Control(ctx context.Context, req *ControlRequest) (ControlResponse, error)
 }
+
+// VerifyDeferrer is the optional capability of a bound host to defer the
+// blocking adapter-info verify handshake to scope entry. Remote bindings
+// with per-scope sessions defer: the per-scope token does not exist before
+// scope entry, so an eager verify would block before the adapter can
+// phone home. Bindings without the capability verify every adapter
+// eagerly. Consumers check the capability structurally — they must not
+// import a specific binding package to ask.
+type VerifyDeferrer interface {
+	DefersVerify() bool
+}

@@ -659,16 +659,6 @@ func (e *Engine) seedRunScope(ctx context.Context, sink Sink, reg *secrets.Regis
 // On failure it emits OnRunFailed and returns a wrapped error. The caller owns
 // the returned teardown order.
 func (e *Engine) initAdapters(ctx context.Context, sessions *adapterhost.SessionManager, sink Sink, vars map[string]cty.Value, failStep string) (Deps, []string, *remoteLifecycleContext, error) {
-	// Remote environments that enable per_scope_sessions rotate the
-	// accept token per scope. Defer their adapter-info verification from
-	// VerifyGraph to initScopeAdapters so the provisioning event and token
-	// rotation happen before the shim blocks for the adapter phone-home.
-	if e.graph != nil {
-		if deferredRemote := deferredPerScopeRemoteAdapters(e.graph); len(deferredRemote) > 0 {
-			sessions.SetDeferredRemoteAdapters(deferredRemote)
-		}
-	}
-
 	if err := sessions.VerifyGraph(ctx, e.graph, vars); err != nil {
 		sink.OnRunFailed(err.Error(), failStep)
 		return Deps{}, nil, nil, err
@@ -796,7 +786,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer func() { tearDownScopeAdapters(ctx, scopeOrder, deps, rlc) }()
+	defer func() { tearDownScopeAdapters(ctx, "", scopeOrder, deps, rlc) }()
 
 	current := e.graph.InitialState
 	sink.OnRunStarted(e.graph.Name, current)
@@ -863,7 +853,7 @@ func (e *Engine) RunFrom(ctx context.Context, startStep string, initialAttempt i
 	if err != nil {
 		return err
 	}
-	defer func() { tearDownScopeAdapters(ctx, scopeOrder, deps, rlc) }()
+	defer func() { tearDownScopeAdapters(ctx, "", scopeOrder, deps, rlc) }()
 
 	if err := e.bootstrapSessionsForResume(ctx, sessions); err != nil {
 		failRunInit(err)
@@ -1773,16 +1763,18 @@ func (e *Engine) startRemoteShimForEnv(ctx context.Context, envKey string, env *
 		return fmt.Errorf("remote environment %q: %w", env.Name, err)
 	}
 	shim.SetPerScopeSessions(cfg.PerScopeSessions)
-	// A digest-verified dial for a scope whose accept token is not
-	// registered (the post-rotation survivor shape) is validated against the
-	// run's persisted rotated tokens and re-registered, instead of looping
-	// on accept-fail rejections. Stale-token dials never reach the registrar.
+	var hostOpts []remote.HostOption
 	if cfg.PerScopeSessions {
-		shim.SetScopeRegistrar(&dialScopeRegistrar{dataDir: e.dataDir, envKey: envKey, sessions: sessions})
-		// Session waits that cross half their window without a
-		// completed handshake publish a named scope_session_pending lifecycle
-		// event instead of burning the remaining step deadline silently.
-		shim.SetScopeSessionSink(&scopeSessionEventBridge{engine: e, environmentName: env.Name})
+		hostOpts = append(hostOpts,
+			// A digest-verified dial for a scope whose accept token is not
+			// registered (the post-rotation survivor shape) is validated against the
+			// run's persisted rotated tokens and re-registered, instead of looping
+			// on accept-fail rejections. Stale-token dials never reach the registrar.
+			remote.WithScopeRegistrar(&dialScopeRegistrar{dataDir: e.dataDir, envKey: envKey, sessions: sessions}),
+			// Session waits that cross half their window without a
+			// completed handshake publish a named scope_session_pending lifecycle
+			// event instead of burning the remaining step deadline silently.
+			remote.WithScopeSessionSink(&scopeSessionEventBridge{engine: e, environmentName: env.Name}))
 	}
 	// The phone-home listener serves the peer transport (ADR-0007 Stage A)
 	// on the same port: every dial branches to the provider after the
@@ -1796,11 +1788,11 @@ func (e *Engine) startRemoteShimForEnv(ctx context.Context, envKey string, env *
 	if err := shim.Start(ctx); err != nil {
 		return fmt.Errorf("remote environment %q: %w", env.Name, err)
 	}
-	sessions.SetRemoteShimForEnv(envKey, provider)
-	// ADR-0014 stage 1: bind the environment's host of record so remote
-	// dispatch and scope bookkeeping route through the envhost seam while
-	// the shim stays registered for the query surfaces.
-	sessions.SetEnvHostForEnv(envKey, remote.NewHost(shim, provider))
+	// ADR-0014: bind the environment's host of record (shim + peer provider
+	// as the environment's remote shim). Remote dispatch, scope
+	// registration, handle close, and the listen-address query all resolve
+	// through this bound host; there is no second shim-registration slot.
+	sessions.SetEnvHostForEnv(envKey, remote.NewHost(shim, provider, hostOpts...))
 	return nil
 }
 

@@ -217,8 +217,9 @@ type ScopeSessionSink interface {
 	OnScopeSessionPending(*ScopeSessionPending)
 }
 
-// SetScopeSessionSink sets the sink for pending wait events.
-func (s *Server) SetScopeSessionSink(sink ScopeSessionSink) {
+// setScopeSessionSink installs the pending-wait signal sink for this
+// environment (NewHost |WithScopeSessionSink| owns the wiring).
+func (s *Server) setScopeSessionSink(sink ScopeSessionSink) {
 	s.mu.Lock()
 	s.pendingSink = sink
 	s.mu.Unlock()
@@ -530,8 +531,9 @@ func (s *Server) observePod(adapterType, scope string) (phase string, ok bool) {
 	return st.Phase, true
 }
 
-// SetScopeRegistrar installs a registrar for unregistered-scope dials.
-func (s *Server) SetScopeRegistrar(r ScopeRegistrar) {
+// setScopeRegistrar installs the dial-time registrar for
+// unregistered-scope dials (wired by NewHost |WithScopeRegistrar|).
+func (s *Server) setScopeRegistrar(r ScopeRegistrar) {
 	s.mu.Lock()
 	s.scopeRegistrar = r
 	s.mu.Unlock()

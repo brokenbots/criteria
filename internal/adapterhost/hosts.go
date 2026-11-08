@@ -3,6 +3,7 @@ package adapterhost
 import (
 	"context"
 	"errors"
+	"maps"
 
 	"github.com/brokenbots/criteria/internal/envhost"
 )
@@ -87,6 +88,24 @@ func (h shimHost) Control(ctx context.Context, req *envhost.ControlRequest) (env
 	default:
 		return envhost.ControlResponse{}, errUnknownControlArm
 	}
+}
+
+// Shim exposes the underlying shim so shutdown collection and the
+// legacy single-shim query surfaces keep serving through a host-bound
+// shim source (HostShimSource) instead of a parallel registration map.
+func (h shimHost) Shim() RemoteShim { return h.shim }
+
+// DefersVerify reports whether the session layer must defer the blocking
+// adapter-info verify for adapters served by this host: remote adapters
+// that enable per-scope sessions rotate their token at scope entry, so an
+// eager VerifyGraph handshake would block before the token exists. The
+// capability is discovered structurally (local shims satisfy it via their
+// PerScopeSessions getter) so this file never imports a remote binding.
+func (h shimHost) DefersVerify() bool {
+	if d, ok := h.shim.(interface{ PerScopeSessions() bool }); ok {
+		return d.PerScopeSessions()
+	}
+	return false
 }
 
 // shimJournalUnavailable reports the unavailable journal on behalf of
@@ -226,6 +245,8 @@ func (m *SessionManager) containerEnvForAdapter(instanceID string) (string, bool
 // WITHOUT the shimHost fold (the container dispatch lane has no shim
 // substrate to fold: an unbound container environment keeps the pre-carve
 // BuildContainerRunner dispatch).
+//
+// m.mu must NOT be held.
 func (m *SessionManager) envHostBoundForEnv(envKey string) (envhost.Host, bool) {
 	m.mu.Lock()
 	host, ok := m.envHostsByEnv[envKey]
@@ -234,6 +255,51 @@ func (m *SessionManager) envHostBoundForEnv(envKey string) (envhost.Host, bool) 
 		return nil, false
 	}
 	return host, true
+}
+
+// HostShimSource is the optional capability of a bound host to surface the
+// adapterhost shim that backs it. Shutdown collection walks bound hosts for
+// their shims so stop-time behavior is identical whether a shim arrived as
+// a bare registration (SetRemoteShim) or folded behind a host binding;
+// hosts without the substrate (container supervisor hosts) contribute no
+// shim side.
+type HostShimSource interface {
+	Shim() RemoteShim
+}
+
+// EnvHost returns the envhost.Host bound to envKey without the shim fold
+// (nil, false when the environment has no explicit binding). The engine's
+// scope registrar and lifecycle resolvers use it to reach the environment's
+// host of record directly instead of walking the legacy shim knobs.
+func (m *SessionManager) EnvHost(envKey string) (envhost.Host, bool) {
+	return m.envHostBoundForEnv(envKey)
+}
+
+// ShareEnvHostsFrom copies src's bound envhost.Host entries into m WITHOUT
+// taking ownership of the hosts. m then serves and registers scopes on the
+// same shared hosts (one host of record per environment, multiplexed across
+// callers), but m.Shutdown will not stop them — the owning parent
+// SessionManager does that at run end.
+//
+// This is how a parallel subworkflow iteration, which gets its own
+// SessionManager for local session isolation, still reaches the remote
+// environment: without the hosts, provisioning fails with "no remote shim
+// registered". Each iteration still rotates a DISTINCT scope on the shared
+// host, so scope isolation and per-scope provisioning events are preserved.
+func (m *SessionManager) ShareEnvHostsFrom(src *SessionManager) {
+	if src == nil || src == m {
+		return
+	}
+	src.mu.Lock()
+	envHosts := maps.Clone(src.envHostsByEnv)
+	src.mu.Unlock()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(envHosts) > 0 {
+		m.envHostsByEnv = mergeMapInto(m.envHostsByEnv, envHosts)
+		m.envHostsShared = true
+	}
 }
 
 // containerEnvHostForAdapter returns the bound envhost.Host serving the
@@ -277,6 +343,12 @@ func (m *SessionManager) containerEnvHostForEnvKey(envKey string) (envhost.Host,
 type EnvHostStopper interface {
 	StopEnvHost(ctx context.Context)
 }
+
+// NewShimHost binds a bare shim as a degenerate host-of-record so an
+// environment whose plumbing never materializes a peer provider still
+// reaches the seam through the same verbs. Tests and local-mode callers
+// use it to route a single shim through the host seam unchanged.
+func NewShimHost(shim RemoteShim) envhost.Host { return shimHost{shim: shim} }
 
 // SetContainerEnvHost binds the in-process supervisor host serving a
 // container environment (host of record for the seam, keyed "container.<name>").
