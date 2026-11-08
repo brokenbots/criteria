@@ -725,10 +725,10 @@ func (n *stepNode) runParallelSubworkflowIteration(ctx context.Context, st *RunS
 			defer iterDeps.Sessions.ReleaseSharedToolResources()
 		}
 	}
-// The iteration manager carries the executing graph so adapter/tool-call
-// resolution (callee declarations, env policy, container builds — every
-// m.graph consumer) resolves against the declaring workflow like any other
-// manager; the graph pointer is immutable and shared, so nothing is copied.
+	// The iteration manager carries the executing graph so adapter/tool-call
+	// resolution (callee declarations, env policy, container builds — every
+	// m.graph consumer) resolves against the declaring workflow like any other
+	// manager; the graph pointer is immutable and shared, so nothing is copied.
 	iterDeps.Sessions.SetGraph(n.graph)
 
 	// Parallel iterations share the parent's remoteLifecycleContext as-is:
