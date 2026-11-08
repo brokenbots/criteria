@@ -19,9 +19,11 @@ const (
 	continuationFresh = "fresh"
 
 	// ContinuationFresh is the enforced fate for an adapter instance whose
-	// graphs declare continuation = "fresh": the session is released
-	// (close + unregister + tombstone) at the subworkflow body exit, so the
-	// next re-entry opens a new conversation.
+	// graphs declare continuation = "fresh": a re-declaring subworkflow
+	// body releases the engagement it inherits for this instance at its
+	// entry and provisions its own conversation, and the body's own
+	// per-scope session releases (close + unregister + tombstone) at the
+	// body exit, so every re-entry opens a new conversation.
 	ContinuationFresh = continuationFresh
 )
 

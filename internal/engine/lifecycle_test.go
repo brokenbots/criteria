@@ -1421,6 +1421,15 @@ func (s *eventTrackingSink) provisionEventsLog() []AdapterLifecycleEvent {
 	return append([]AdapterLifecycleEvent(nil), s.provisionEvents...)
 }
 
+// lifecycleStatusesLog returns the recorded string-form lifecycle lines
+// ("<scope>:<adapter>:<status>") so tests can count statuses the structured
+// event path does not carry (verified / closed / close_failed).
+func (s *eventTrackingSink) lifecycleStatusesLog() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.lifecycleStatuses...)
+}
+
 // OnStepOutcome records per-step outcome errors so tests can assert the
 // failure chain (the base fakeSink captures only the run-level reason).
 func (s *eventTrackingSink) OnStepOutcome(step, outcome string, _ time.Duration, err error, _ string) {

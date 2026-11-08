@@ -78,14 +78,20 @@ func runWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry str
 	if err != nil {
 		return "", nil, nil, err
 	}
-	// Body exit disposes each instance per its DECLARED session fate
-	// (ADR-0014 D3): an instance the body declares continuation = "fresh"
-	// is released at exit — close + unregister + tombstone, FOR THAT
-	// INSTANCE ONLY. That is the declaration-guarded, selective return of
-	// the release the churn kill removed from body exits; the
-	// universal release that manufactured the teardown→rotate→re-dial
-	// handshake-race class stays dead. Every other instance keeps the
-	// churn-kill detach: the live
+	// Body entry runs the declared-fate hook inside initScopeAdapters: a
+	// body re-declaring an adapter instance with continuation = "fresh"
+	// releases the engagement an ancestor still owns for that instance
+	// (root-scope record or ledger record) BEFORE provisioning its own
+	// conversation, so the re-entry never inherits the outer conversation.
+	//
+	// Body exit then disposes each body-owned instance per its DECLARED
+	// session fate (ADR-0014 D3): an instance the body declares
+	// continuation = "fresh" is released at exit — close + unregister +
+	// tombstone, FOR THAT INSTANCE ONLY. That is the declaration-guarded,
+	// selective return of the release the churn kill removed from body
+	// exits; the universal release that manufactured the teardown→rotate→
+	// re-dial handshake-race class stays dead. Every other instance keeps
+	// the churn-kill detach: the live
 	// engagement survives the exit for a re-entry (or the
 	// run's final teardown) to adopt.
 	defer func() { exitBodyScopeAdapters(ctx, body, scopeName, bodyOrder, deps, rlc) }()
@@ -96,10 +102,11 @@ func runWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry str
 // exitBodyScopeAdapters partitions the body's adapter order by the BODY
 // graph's declared session fate and disposes each partition: fresh-declared
 // instances release (releaseScopeAdapters), everything else keeps the
-// churn-kill detach path. The partition only sees the body's own records — a
-// re-declared PARENT instance's per-scope record lives under the parent's
-// scope name and is never body-owned, so releaseScopeAdapters releases only
-// what the body owns.
+// churn-kill detach path. The partition only sees the body's own records —
+// a re-declared PARENT instance's per-scope record lives under the parent's
+// scope name and is never body-owned; the declared-fate entry hook
+// (releaseForeignScopeSessionsForFresh) released that inherited engagement
+// when the body entered, so the exit release stays body-owned too.
 func exitBodyScopeAdapters(ctx context.Context, body *workflow.FSMGraph, scopeName string, order []string, deps Deps, rlc *remoteLifecycleContext) {
 	var freshOrder, detachOrder []string
 	for _, adapterID := range order {
@@ -175,6 +182,10 @@ func startWorkflowBody(ctx context.Context, body *workflow.FSMGraph, bodyEntry s
 	// (first entry, or a body re-declaring a PARENT adapter — the parent's
 	// records never enter the detachment ledger — and sibling bodies'
 	// records have their own scope names).
+	//
+	// adoptDetached re-checks ledger membership because this snapshot may
+	// be stale by now: a declared-fresh body entry released its record for
+	// this very instance out of the ledger while initScopeAdapters ran.
 	if rlc != nil && len(detached) > 0 {
 		for _, rec := range detached {
 			if rec != nil && rec.scopeName == scopeName {
