@@ -22,9 +22,13 @@ import (
 // default-output-type doctrine — a typed schema replaces the default, and
 // untyped outcomes resolve their outputs from it (+26 words). 6520
 // reflects static FSM graph verification and outcome completeness
-// doctrine (+~170 words).
+// doctrine (+~170 words). 6600 reflects the adapter declaration gaining
+// the continuation session-fate row: fresh releases the session at body
+// exit so re-entry opens a new conversation, reuse detaches it so the
+// conversation survives, and a parent-and-callee re-declared pair must
+// declare the same fate on both sides (+~110 words).
 func TestSpecTokenBudget_UnderEightThousandWords(t *testing.T) {
-	const maxWords = 6520
+	const maxWords = 6600
 	data, err := os.ReadFile("../../docs/LANGUAGE-SPEC.md")
 	if err != nil {
 		t.Fatalf("docs/LANGUAGE-SPEC.md not found: %v", err)

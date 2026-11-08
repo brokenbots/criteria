@@ -320,15 +320,13 @@ type AdapterDeclSpec struct {
 	Environment hcl.Expression `hcl:"environment,optional"` // bare traversal reference (e.g. shell.default)
 	OnCrash     string         `hcl:"on_crash,optional"`
 	// Continuation declares the adapter instance's session fate at
-	// subworkflow boundaries: "fresh" closes, unregisters, and tombstones the
-	// per-scope session at body exit so a re-entry opens a new conversation;
-	// "reuse" detaches it — the session and its conversation survive for the
-	// next re-entry (and the run-final teardown releases it). Undeclared
-	// instances are unconstrained when no scope re-entry touches them (the
-	// engine keeps the KB-257 detach path), but an adapter instance
-	// re-declared by both a parent and a callee graph must declare the same
-	// fate on both sides: undeclared or conflicting re-entry declarations are
-	// a hard compile error (validateContinuation).
+	// subworkflow boundaries: "fresh" releases the session at body exit so a
+	// re-entry opens a new conversation; "reuse" detaches it so the session
+	// and its conversation survive re-entry. A parent-and-callee re-declared
+	// pair must declare the same fate on both sides (undeclared or
+	// conflicting re-entry declarations fail compilation,
+	// validateContinuation); undeclared instances keep the detach-at-exit
+	// path.
 	Continuation string      `hcl:"continuation,optional"`
 	Config       *ConfigSpec `hcl:"config,block"`
 	Secrets      *ConfigSpec `hcl:"secrets,block"` // optional secrets block
