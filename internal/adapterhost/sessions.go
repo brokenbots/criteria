@@ -817,11 +817,20 @@ func (m *SessionManager) RemoteShimRegisteredForEnv(envKey string) bool {
 // RemoteShimRegisteredForEnv it never falls back — an environment whose
 // remote dispatch resolves through the shimHost adapter (shim-only
 // registration) reports false.
+// EnvHostRegisteredForEnv reports whether envKey resolves to a dedicated
+// envhost.Host — one whose verbs are not the shimHost fallback seeded
+// from the shim map. It is the query mirror of SetEnvHostForEnv: tests
+// use it to pin that the engine's binding owns the environment instead
+// of the seam silently falling through to the shim.
 func (m *SessionManager) EnvHostRegisteredForEnv(envKey string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, ok := m.envHostsByEnv[envKey]
-	return ok
+	host, ok := m.envHostsByEnv[envKey]
+	if !ok {
+		return false
+	}
+	_, shimFallback := host.(shimHost)
+	return !shimFallback
 }
 
 // remoteEnvForAdapter returns the environment key ("remote.<name>") the
