@@ -33,6 +33,7 @@ import (
 	"log/slog"
 	"os/exec"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,7 +44,6 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/envhost"
-	"strings"
 )
 
 // ChildRunner spawns one adapter child through a go-plugin RunnerFunc —
@@ -802,9 +802,8 @@ func (w *supervisedHostHandle) SupervisionCrashReason() (string, bool) {
 // exit fact through the exited-once-guarded recordExit — and classifies
 // identically to SupervisionCrashReason.
 func (w *supervisedHostHandle) SettledSupervisionCrashReason(ctx context.Context) (string, bool) {
-	if !w.host.settleExitFlip(w.defName, w.Handle, ctx) {
-		return w.host.SupervisionCrashReason(w.defName, w.Handle)
-	}
+	// Both endings classify identically; the settle only pads the window.
+	_ = w.host.settleExitFlip(w.defName, w.Handle, ctx)
 	return w.host.SupervisionCrashReason(w.defName, w.Handle)
 }
 
