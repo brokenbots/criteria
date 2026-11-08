@@ -11,12 +11,15 @@ import (
 	criteriav1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 )
 
-// TestPeerWorkflowArmsAdjacency pins the arm numbers of the ADR-0008
-// additions against the compiled proto descriptor: SupervisionEvent.kind
-// arms stay append-only and contiguous (spawned=6 … child_run_terminal=12,
-// next free 13), and the ControlRequest oneof reuses the free field slot 5
-// (adapter_type/scope/grace_ms already own 2/3/4). Renumbering a published
-// arm is a breaking wire change; this test makes it fail loudly.
+// TestPeerWorkflowArmsAdjacency pins the arm numbers of the ADR-0008 and
+// ADR-0014 additions against the compiled proto descriptor:
+// SupervisionEvent.kind arms stay append-only and contiguous (spawned=6 …
+// child_run_terminal=12, child_run_teardown_partial=13, session_ledger=14,
+// next free 15), and the ControlRequest oneof reuses the shared kind field
+// space in append order (kill_child=1, cancel_child_run=5, open_session=6
+// … idle_reap=9; adapter_type/scope/grace_ms already own 2/3/4; next free
+// 10). Renumbering a published arm is a breaking wire change; this test
+// makes it fail loudly.
 func TestPeerWorkflowArmsAdjacency(t *testing.T) {
 	file := criteriav1.File_criteria_v1_peer_proto
 	if file == nil {
@@ -41,6 +44,7 @@ func TestPeerWorkflowArmsAdjacency(t *testing.T) {
 		{"child_run_started", 11},
 		{"child_run_terminal", 12},
 		{"child_run_teardown_partial", 13},
+		{"session_ledger", 14},
 	}
 	oneof := supervisionMsg.Oneofs().ByName("kind")
 	if oneof == nil {
@@ -88,6 +92,23 @@ func TestPeerWorkflowArmsAdjacency(t *testing.T) {
 	if got, want := cancel.Number(), protoreflect.FieldNumber(5); got != want {
 		t.Errorf("ControlRequest.cancel_child_run number = %d, want %d", got, want)
 	}
+	// ADR-0014 M6 session-control arms: the shared kind oneof continues at
+	// the next free slot, killing the old free-field-slot-5 note.
+	sessionArms := []struct {
+		name string
+		num  protoreflect.FieldNumber
+	}{
+		{"open_session", 6},
+		{"close_session", 7},
+		{"respawn_child", 8},
+		{"idle_reap", 9},
+	}
+	for _, want := range sessionArms {
+		f := oneofField(t, controlMsg, "kind", protoreflect.Name(want.name))
+		if f.Number() != want.num {
+			t.Errorf("ControlRequest.%s number = %d, want %d", f.Name(), f.Number(), want.num)
+		}
+	}
 }
 
 func oneofField(t *testing.T, msg protoreflect.MessageDescriptor, oneof, field protoreflect.Name) protoreflect.FieldDescriptor {
@@ -133,6 +154,34 @@ func TestChildRunArmPayloads(t *testing.T) {
 			}
 			if f.Number() != protoreflect.FieldNumber(num) {
 				t.Errorf("%s.%s number = %d, want %d", msg.FullName(), name, f.Number(), num)
+			}
+		}
+	}
+}
+
+// TestSessionLedgerArmPayloads pins the ADR-0014 M6 payload fields the
+// session ledger rides on: the SupervisionEvent arm carries event/reason,
+// and the control verbs carry their declared policy fields.
+func TestSessionLedgerArmPayloads(t *testing.T) {
+	file := criteriav1.File_criteria_v1_peer_proto
+	for name, want := range map[string]map[string]uint32{
+		"SessionLedger": {"event": 1, "reason": 2},
+		"OpenSession":   {"session_id": 1},
+		"CloseSession":  {"session_id": 1, "reason": 2, "detach": 3},
+		"RespawnChild":  {"policy_grace_ms": 1},
+		"IdleReap":      {"after_ms": 1},
+	} {
+		msg := file.Messages().ByName(protoreflect.Name(name))
+		if msg.FullName() == "" {
+			t.Fatalf("%s message not found", name)
+		}
+		for field, num := range want {
+			f := msg.Fields().ByName(protoreflect.Name(field))
+			if f == nil {
+				t.Fatalf("%s.%s missing", name, field)
+			}
+			if f.Number() != protoreflect.FieldNumber(num) {
+				t.Errorf("%s.%s number = %d, want %d", name, field, f.Number(), num)
 			}
 		}
 	}

@@ -391,7 +391,7 @@ func TestServer_IdentityFrameGoldenJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("identityFrame: %v", err)
 	}
-	want := `{"name":"fakex","version":"9.9.9","digest":"sha256:aa","token":"tok","scope":"sc","sdk_protocol_version":2,"role":"peer","peer":{"criteria_version":"` + version.Version + `","capabilities":["adapter.v2.full","supervision.v1","workflow.v1"]}}` + "\n"
+	want := `{"name":"fakex","version":"9.9.9","digest":"sha256:aa","token":"tok","scope":"sc","sdk_protocol_version":2,"role":"peer","peer":{"criteria_version":"` + version.Version + `","capabilities":["adapter.v2.full","supervision.v1","workflow.v1","session.v1"]}}` + "\n"
 	if string(got) != want {
 		t.Errorf("identity frame =\n%s\nwant\n%s", got, want)
 	}

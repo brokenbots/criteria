@@ -55,8 +55,8 @@ func (s *Server) controlSessionLedger(req *criteriav1.ControlRequest) *criteriav
 	if open := req.GetOpenSession(); open != nil {
 		return s.openLedgerSession(req.GetAdapterType(), req.GetScope(), open.GetSessionId())
 	}
-	if close := req.GetCloseSession(); close != nil {
-		return s.closeLedgerSession(req.GetAdapterType(), req.GetScope(), close)
+	if closeReq := req.GetCloseSession(); closeReq != nil {
+		return s.closeLedgerSession(req.GetAdapterType(), req.GetScope(), closeReq)
 	}
 	return &criteriav1.ControlResponse{Accepted: false, Detail: "unsupported control action"}
 }
@@ -121,26 +121,26 @@ func (s *Server) openLedgerSession(adapterType, scope, sessionID string) *criter
 // tracked (a later re-entry re-adopts it), release drops it. An untracked
 // session is an honest rejection — the ledger journals facts about the
 // engagements it holds.
-func (s *Server) closeLedgerSession(adapterType, scope string, close *criteriav1.CloseSession) *criteriav1.ControlResponse {
-	if close.GetSessionId() == "" {
+func (s *Server) closeLedgerSession(adapterType, scope string, closeReq *criteriav1.CloseSession) *criteriav1.ControlResponse {
+	if closeReq.GetSessionId() == "" {
 		return &criteriav1.ControlResponse{Accepted: false, Detail: "close session: session id is required"}
 	}
 	adapter, reject := s.resolveLedgerAdapter(adapterType)
 	if reject != nil {
 		return reject
 	}
-	key := sessionLedgerKey{adapterType: adapter, scope: scope, sessionID: close.GetSessionId()}
+	key := sessionLedgerKey{adapterType: adapter, scope: scope, sessionID: closeReq.GetSessionId()}
 	l := s.ledger
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if _, tracked := l.sessions[key]; !tracked {
 		return &criteriav1.ControlResponse{
 			Accepted: false,
-			Detail:   fmt.Sprintf("no ledger session %q on %q", close.GetSessionId(), adapter),
+			Detail:   fmt.Sprintf("no ledger session %q on %q", closeReq.GetSessionId(), adapter),
 		}
 	}
 	verb := SessionLedgerClosed
-	if close.GetDetach() {
+	if closeReq.GetDetach() {
 		// Detach fate: the engagement outlives the closing scope so a
 		// sibling or re-entering scope can adopt it; tracking stays.
 		verb = SessionLedgerDetached
@@ -149,13 +149,13 @@ func (s *Server) closeLedgerSession(adapterType, scope string, close *criteriav1
 	}
 	ev := &criteriav1.SupervisionEvent_SessionLedger{SessionLedger: &criteriav1.SessionLedger{
 		Event:  verb,
-		Reason: close.GetReason(),
+		Reason: closeReq.GetReason(),
 	}}
-	if _, err := s.journalFor().Append(ev, adapter, scope, close.GetSessionId()); err != nil {
+	if _, err := s.journalFor().Append(ev, adapter, scope, closeReq.GetSessionId()); err != nil {
 		s.log.Error("session ledger append", "event", verb, "error", err)
-		return &criteriav1.ControlResponse{Accepted: false, Detail: fmt.Sprintf("session %q ledger append: %v", close.GetSessionId(), err)}
+		return &criteriav1.ControlResponse{Accepted: false, Detail: fmt.Sprintf("session %q ledger append: %v", closeReq.GetSessionId(), err)}
 	}
-	return &criteriav1.ControlResponse{Accepted: true, Detail: fmt.Sprintf("session %q %s", close.GetSessionId(), verb)}
+	return &criteriav1.ControlResponse{Accepted: true, Detail: fmt.Sprintf("session %q %s", closeReq.GetSessionId(), verb)}
 }
 
 // controlRespawnChild executes Control RespawnChild (ADR-0014 M6): the
@@ -333,7 +333,11 @@ func (r *peerRuntime) controlIdleReap(req *criteriav1.ControlRequest, idle *crit
 	}
 	window := time.Duration(idle.GetAfterMs()) * time.Millisecond
 	r.mu.Lock()
-	r.idleReapPolicy[resolved] = window
+	if window > 0 {
+		r.idleReapPolicy[resolved] = window
+	} else {
+		delete(r.idleReapPolicy, resolved)
+	}
 	r.mu.Unlock()
 	if window > 0 {
 		return &criteriav1.ControlResponse{Accepted: true, Detail: fmt.Sprintf("idle reap policy for %q declared at %s", resolved, window)}
