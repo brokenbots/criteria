@@ -39,10 +39,8 @@ func TestServer_ControlSessionArmsRequireSessionV1(t *testing.T) {
 		if _, err := f.server.Control(f.ctx, arm.req); err == nil {
 			t.Errorf("arm[%d] %s accepted without session.v1", i, arm.name)
 			continue
-		} else {
-			if got := status.Code(err); got != codes.Unimplemented {
-				t.Errorf("arm[%d] %s status code = %v, want Unimplemented (typed error): %v", i, arm.name, got, err)
-			}
+		} else if got := status.Code(err); got != codes.Unimplemented {
+			t.Errorf("arm[%d] %s status code = %v, want Unimplemented (typed error): %v", i, arm.name, got, err)
 		}
 	}
 	// The shared-kind kill_child arm stays ungated on the same narrowed
@@ -55,7 +53,7 @@ func TestServer_ControlSessionArmsRequireSessionV1(t *testing.T) {
 	}
 }
 
-// TestServer_ControlSessionLedgerLedgerLifecycle drives the ledger verbs
+// TestServer_ControlSessionLedgerLifecycle drives the ledger verbs
 // through the negotiated Control surface against a planted hosted child:
 // open journals opened, re-entry re-adopts, detach keeps the engagement
 // tracked, release drops it, a post-release close is rejected honestly,
