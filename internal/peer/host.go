@@ -154,17 +154,18 @@ func NewInProcessHost(cfg HostConfig, boot func(context.Context, envhost.Definit
 		journalLimit = DefaultJournalLimit
 	}
 	rt := &peerRuntime{
-		cfg:           &Config{ChildKeepAlive: cfg.KeepAlive, JournalLimit: journalLimit},
-		log:           log,
-		loader:        adapterhost.NewLoader(),
-		journal:       NewEventJournal(journalLimit),
-		children:      map[string]*childState{},
-		bootSpec:      map[string]childSpec{},
-		serveCounts:   map[string]int{},
-		shutdownGrace: grace,
-		exitPoll:      exitPoll,
-		stopWatch:     make(chan struct{}),
-		watchDone:     make(chan struct{}),
+		cfg:            &Config{ChildKeepAlive: cfg.KeepAlive, JournalLimit: journalLimit},
+		log:            log,
+		loader:         adapterhost.NewLoader(),
+		journal:        NewEventJournal(journalLimit),
+		children:       map[string]*childState{},
+		bootSpec:       map[string]childSpec{},
+		idleReapPolicy: map[string]time.Duration{},
+		serveCounts:    map[string]int{},
+		shutdownGrace:  grace,
+		exitPoll:       exitPoll,
+		stopWatch:      make(chan struct{}),
+		watchDone:      make(chan struct{}),
 	}
 	return &InProcessHost{
 		rt:          rt,
