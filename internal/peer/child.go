@@ -57,8 +57,21 @@ type childState struct {
 	// classifies those deaths as intentional (graceful, no crash fact).
 	peerInitiated bool
 	exited        bool
-	lastExit      *criteriav1.ProcessExited
-	lastEventAt   time.Time
+	// exitFactsJournaled is the "exit facts journaled" settle signal: set
+	// under the runtime lock only AFTER the Exited append and — for an
+	// ungraceful exit — after the CrashClassified append. Waiters keyed on
+	// `exited` alone could observe a settled death before the journal held
+	// its terminal facts, letting a successor's Spawned marker interleave
+	// ahead of the stale generation's facts.
+	exitFactsJournaled bool
+	lastExit           *criteriav1.ProcessExited
+	lastEventAt        time.Time
+
+	// exitJournalGate is a test seam: when set (by tests, under the runtime
+	// lock), recordExit calls it after releasing the lock and BEFORE the
+	// Exited append, letting a test hold the exit facts unjournaled while
+	// exercising a successor-spawn arm deterministically.
+	exitJournalGate func(*childState)
 
 	// openSessions tracks the sessions the host opened through the served
 	// bridge of this child; they are closed before the shutdown kill.
@@ -601,6 +614,10 @@ func (r *peerRuntime) recordExit(c *childState, peerInitiated bool) {
 		idleMS = uint64(time.Since(c.lastEventAt).Milliseconds())
 	}
 	c.lastEventAt = time.Now()
+	var exitGate func(*childState)
+	if c.exitJournalGate != nil {
+		exitGate = c.exitJournalGate
+	}
 	r.mu.Unlock()
 
 	exitCode, signal, ok := adapterhost.ProcessWaitStatus(c.handle)
@@ -617,12 +634,18 @@ func (r *peerRuntime) recordExit(c *childState, peerInitiated bool) {
 	c.lastExit = exit
 	r.mu.Unlock()
 
+	if exitGate != nil {
+		exitGate(c)
+	}
 	if _, err := r.journal.Append(&criteriav1.SupervisionEvent_Exited{Exited: exit}, c.name, c.scope, ""); err != nil {
 		r.log.Error("journal exited event", "error", err)
 	}
 	if !graceful {
 		r.classifyUnexpectedExit(c, exitCode, signal)
 	}
+	r.mu.Lock()
+	c.exitFactsJournaled = true
+	r.mu.Unlock()
 }
 
 // classifyUnexpectedExit journals the CrashClassified event for an

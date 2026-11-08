@@ -644,6 +644,163 @@ func TestInProcessHost_KeepAliveFalseIdleKillsAndRespawns(t *testing.T) {
 	waitJournalKind(t, h, scope, envhost.JournalSpawned, 2)
 }
 
+// TestInProcessHost_FreshenHandleWaitsForStaleExitFacts pins the journal's
+// generation boundary deterministically: the stale generation's Exited (and,
+// for an ungraceful exit, CrashClassified) facts are journaled BEFORE the
+// successor's Spawned marker. The gate seam holds the stale child's exit
+// facts unjournaled while the dead-child branch of the fresh-handle arm
+// runs — with the settle guarantee the arm blocks (no successor spawn
+// during the hold); journalCrashReason must then be unable to attribute the
+// stale generation's process_terminated to the fresh child.
+func TestInProcessHost_FreshenHandleWaitsForStaleExitFacts(t *testing.T) {
+	h, ledger, logBuf := testHost(t, true, nil)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		h.StopEnvHost(ctx)
+	})
+
+	scope := envhost.ScopeRef{Scope: "run", Instance: "inst-boundary"}
+	w := ensureOnce(t, h, scope, logBuf.String)
+	pid := ledger.pid(0)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := w.OpenSession(ctx, "sess-boundary", nil, nil); err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+
+	// Arm the settle gate on the generation-1 child (test writes under the
+	// runtime lock, recordExit reads under the same lock): entering the gate
+	// signals "exited flag set, exit facts not yet journaled"; the gate
+	// blocks there until released.
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	closeRelease := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(closeRelease) // runs before StopEnvHost (LIFO): never trap shutdown on the gate
+	rt := h.rt
+	rt.mu.Lock()
+	stale := rt.children[noopSandboxDefName]
+	if stale == nil || stale.handle == nil {
+		rt.mu.Unlock()
+		t.Fatal("generation-1 child not registered")
+	}
+	stale.exitJournalGate = func(*childState) {
+		close(entered)
+		<-release
+	}
+	rt.mu.Unlock()
+
+	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
+		t.Fatalf("SIGKILL generation-1 child: %v", err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("gate never entered: the watcher did not reach the exit journaling phase")
+	}
+	waitPIDDead(t, pid)
+
+	// Drive the dead-child branch with the stale facts still unjournaled.
+	// With the settle guarantee the arm waits; WITHOUT it the successor
+	// spawns while the stale Exited/Crash facts are still pending.
+	freshenDone := make(chan struct {
+		handle envhost.Handle
+		err    error
+	}, 1)
+	go func() {
+		resp, err := h.Control(ctx, &envhost.ControlRequest{
+			Scope:   scope,
+			Adapter: noopSandboxDefName,
+			Kind:    envhost.ControlEnsureFreshHandle,
+			Stale:   w,
+		})
+		freshenDone <- struct {
+			handle envhost.Handle
+			err    error
+		}{resp.Handle, err}
+	}()
+
+	// While the facts are held, no successor may be spawned.
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if ledger.count() != 1 {
+			t.Fatalf("spawn ledger reached %d while the stale exit facts were unjournaled; want the arm held", ledger.count())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Release: the stale facts append, the settle signal fires, and the arm
+	// spawns the successor.
+	closeRelease()
+	select {
+	case result := <-freshenDone:
+		if result.err != nil {
+			t.Fatalf("fresh-handle arm after settle: %v", result.err)
+		}
+		fresh, isWrapper := result.handle.(*supervisedHostHandle)
+		if !isWrapper || fresh == nil {
+			t.Fatalf("fresh handle = %T, want *supervisedHostHandle", result.handle)
+		}
+		if fresh.ProcessExited() {
+			t.Fatal("fresh handle wraps an exited child")
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("fresh-handle arm never returned after the stale facts were journaled")
+	}
+	if ledger.count() != 2 || ledger.pid(1) == pid {
+		t.Fatalf("spawn ledger = %d pids (%d, %d), want one successor generation", ledger.count(), safeAt(ledger, 0), safeAt(ledger, 1))
+	}
+
+	// Journal order: for this definition the stale Exited and CrashClassified
+	// markers precede the successor's Spawned marker.
+	entries := waitJournalKind(t, h, scope, envhost.JournalSpawned, 2)
+	spawnIdx := make([]int, 0, 2)
+	exitedIdx := -1
+	crashIdx := -1
+	for i, e := range entries {
+		switch e.Kind {
+		case envhost.JournalSpawned:
+			spawnIdx = append(spawnIdx, i)
+		case envhost.JournalExited:
+			exitedIdx = i
+		case envhost.JournalCrashClassified:
+			crashIdx = i
+		}
+	}
+	if len(spawnIdx) != 2 {
+		t.Fatalf("journal holds %d spawned markers, want 2", len(spawnIdx))
+	}
+	if exitedIdx == -1 || crashIdx == -1 {
+		t.Fatalf("journal holds no stale Exited/CrashClassified facts (exited=%d, crash=%d)", exitedIdx, crashIdx)
+	}
+	if exitedIdx > spawnIdx[1] || crashIdx > spawnIdx[1] {
+		t.Fatalf("successor Spawned (index %d) precedes the stale generation's facts (exited %d, crash %d)",
+			spawnIdx[1], exitedIdx, crashIdx)
+	}
+
+	// The fresh generation classifies as unknown: the walk stops at the
+	// successor's Spawned marker, so the stale process_terminated must not
+	// leak into generation 2.
+	resp, err := h.Control(ctx, &envhost.ControlRequest{
+		Scope:   scope,
+		Adapter: noopSandboxDefName,
+		Kind:    envhost.ControlEnsureFreshHandle,
+		Stale:   w,
+	})
+	if err != nil {
+		t.Fatalf("Control re-adopt: %v", err)
+	}
+	fresh, isWrapper := resp.Handle.(*supervisedHostHandle)
+	if !isWrapper || fresh == nil {
+		t.Fatalf("re-adopted handle = %T, want *supervisedHostHandle", resp.Handle)
+	}
+	if reason, ok := fresh.SupervisionCrashReason(); ok {
+		t.Fatalf("fresh generation crash reason = (%q, true), want no stale attribution", reason)
+	}
+}
+
 // TestInProcessHost_ControlNoListener pins the contract pins that need no
 // spawn: scope registration is accepted (no tokens to rotate), listener
 // discovery is refused deterministically, and unknown arms fail closed.

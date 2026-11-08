@@ -638,6 +638,15 @@ func (h *InProcessHost) freshenHandle(ctx context.Context, scope envhost.ScopeRe
 		if err := h.displaceStaleChild(c, defName); err != nil {
 			return nil, err
 		}
+	} else if c != nil && c.handle != nil {
+		// The stale child is dead but its exit facts may not be journaled
+		// yet (the watcher can lag a settled death). The successor's
+		// Spawned marker must never precede the stale generation's
+		// Exited/CrashClassified facts — settle them first, budgeted, or
+		// fail closed.
+		if err := h.settleStaleExit(c, defName); err != nil {
+			return nil, err
+		}
 	}
 	fresh, ok := rt.spawnAndWatch(ctx, &spec)
 	if !ok {
@@ -664,21 +673,38 @@ func (h *InProcessHost) displaceStaleChild(c *childState, defName string) error 
 	return h.waitChildExit(c, defName)
 }
 
-// waitChildExit blocks until the child's exit fact is journaled or the
-// bounded wait expires (the watcher polls for the process death; a
-// not-yet-settled death makes the arm fail so the caller can retry).
+// settleStaleExit guarantees the journal's generation boundary before a
+// successor spawn: a dead child whose exit facts the watcher has not yet
+// recorded has them recorded here (recordExit classifies exactly as the
+// watcher would — peer-initiated displacements stay graceful), and the
+// wait returns only once those facts are actually journaled.
+func (h *InProcessHost) settleStaleExit(c *childState, defName string) error {
+	rt := h.rt
+	rt.mu.Lock()
+	unrecorded := !c.exited && c.handle != nil && adapterhost.ProcessExited(c.handle)
+	rt.mu.Unlock()
+	if unrecorded {
+		rt.recordExit(c, false)
+	}
+	return h.waitChildExit(c, defName)
+}
+
+// waitChildExit blocks until the child's exit facts are journaled (the
+// settle signal set after the Exited - and for a crash, CrashClassified -
+// appends) or the bounded wait expires; a not-yet-settled death makes the
+// arm fail so the caller can retry.
 func (h *InProcessHost) waitChildExit(c *childState, defName string) error {
 	rt := h.rt
 	deadline := time.Now().Add(rt.shutdownGrace)
 	for {
 		rt.mu.Lock()
-		exited := c.exited
+		settled := c.exitFactsJournaled
 		rt.mu.Unlock()
-		if exited {
+		if settled {
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("adapter %q: displaced child did not exit within %s", defName, rt.shutdownGrace)
+			return fmt.Errorf("adapter %q: child exit facts were not journaled within %s", defName, rt.shutdownGrace)
 		}
 		time.Sleep(freshHandlePollInterval)
 	}
