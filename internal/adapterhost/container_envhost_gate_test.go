@@ -68,8 +68,8 @@ func TestContainerGate_EnvHostForAdapterContainerArm(t *testing.T) {
 
 	// An unbound container environment with a shim registered still keeps
 	// the pre-carve dispatch for container handles; the remote arm folds.
-	m.SetRemoteShimForEnv("container.x", stubShim{})
-	m.SetRemoteShimForEnv("remote.x", stubShim{})
+	m.SetEnvHostForEnv("container.x", NewShimHost(stubShim{}))
+	m.SetEnvHostForEnv("remote.x", NewShimHost(stubShim{}))
 	if _, ok := m.containerEnvHostForAdapter("container.a"); ok {
 		t.Fatal("containerEnvHostForAdapter folded the shim into a container bound host")
 	}
@@ -132,19 +132,19 @@ func TestContainerGate_SetContainerEnvHostContracts(t *testing.T) {
 
 // TestContainerGate_ShutdownOwnership pins the stop ownership boundary:
 // this SessionManager stops only the supervisor hosts it OWNS (bound via
-// SetContainerEnvHost); hosts borrowed from a parent stay the parent's to
-// stop — a borrower's Shutdown must not stop hosts a sibling run still
-// uses.
+// SetContainerEnvHost); hosts shared by a parent stay the parent's to
+// stop — a borrower's Shutdown must not stop hosts a sibling iteration
+// still uses.
 func TestContainerGate_ShutdownOwnership(t *testing.T) {
 	parent := NewSessionManager(nil)
-	parent.SetRemoteShimForEnv("remote.x", stubShim{})
+	parent.SetEnvHostForEnv("remote.x", NewShimHost(stubShim{}))
 	host := &stubStoppingEnvHost{}
 	parent.SetContainerEnvHost("container.x", host)
 
 	borrower := NewSessionManager(nil)
-	borrower.BorrowRemoteProvisioningFrom(parent)
+	borrower.ShareEnvHostsFrom(parent)
 	if _, ok := borrower.envHostBoundForEnv("container.x"); !ok {
-		t.Fatal("borrower did not receive the borrowed container host")
+		t.Fatal("borrower did not receive the shared container host")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

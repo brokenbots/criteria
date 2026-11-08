@@ -46,7 +46,7 @@ func waitForPendingRec(t *testing.T, rec *pendingRecorder, timeout time.Duration
 func startPendingWait(t *testing.T, shim *Shim, scope string, window time.Duration) (*pendingRecorder, *capturedLogs, chan error) {
 	t.Helper()
 	rec := &pendingRecorder{}
-	shim.SetScopeSessionSink(rec)
+	shim.setScopeSessionSink(rec)
 	logs := captureLogs(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), window)

@@ -212,7 +212,7 @@ func TestKB156_LeaseSkipsIneligibleNames(t *testing.T) {
 	}
 	child.ReleaseSharedToolResources()
 
-	// The remote-declared name is cached on the child like VerifyGraph does;
+	// The remote-declared name resolves through the child's own graph walk;
 	// leases must not cross isolation boundaries (ADR-0008/0009).
 	remoteGraph := &workflow.FSMGraph{
 		WorkflowDir:        "kb156-remote",
@@ -226,11 +226,6 @@ func TestKB156_LeaseSkipsIneligibleNames(t *testing.T) {
 		AdapterOrder: []string{"mcp.edge"},
 	}
 	child.SetGraph(remoteGraph)
-	child.cacheGraphAdapterRef(graphAdapterRef{
-		instanceID: "mcp.edge",
-		node:       remoteGraph.Adapters["mcp.edge"],
-		graph:      remoteGraph,
-	})
 
 	leased := child.LeaseToolResourcesFrom(owner, []string{"mcp.probe", "mcp.edge", "mcp.ghost"})
 	if len(leased) != 0 {

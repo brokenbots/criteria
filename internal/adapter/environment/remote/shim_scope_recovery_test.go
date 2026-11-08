@@ -153,7 +153,7 @@ func TestShim_StaleTokenDial_DoesNotTriggerRegistrar(t *testing.T) {
 	registrar := &recordingRegistrar{shim: shim, allowed: map[string]string{
 		"root/kb25-stale/inst-current": "current-token",
 	}}
-	shim.SetScopeRegistrar(registrar)
+	shim.setScopeRegistrar(registrar)
 
 	err := acceptHandshakeDirect(t, shim, &handshakeMessage{
 		Name: "noop", Version: "1.0.0", Digest: "sha256:abcd1234",
@@ -181,7 +181,7 @@ func TestShim_UnregisteredScopeDial_RecoveredByRegistrar(t *testing.T) {
 	shim, addr := newRecoveryTestShim(t)
 	scope := "run_pr_reviewer_loop/2f0e9d4c-0000-4000-8000-000000000001"
 	registrar := &recordingRegistrar{shim: shim, allowed: map[string]string{scope: "survivor-token"}}
-	shim.SetScopeRegistrar(registrar)
+	shim.setScopeRegistrar(registrar)
 
 	go acceptHandshake(addr, &handshakeMessage{
 		Name: "noop", Version: "1.0.0", Digest: "sha256:abcd1234",
@@ -210,7 +210,7 @@ func TestShim_UnregisteredScopeDial_WrongTokenIsNotRecovered(t *testing.T) {
 	shim, _ := newRecoveryTestShim(t)
 	scope := "root/kb25-guess/inst-1"
 	registrar := &recordingRegistrar{shim: shim, allowed: map[string]string{scope: "survivor-token"}}
-	shim.SetScopeRegistrar(registrar)
+	shim.setScopeRegistrar(registrar)
 
 	err := acceptHandshakeDirect(t, shim, &handshakeMessage{
 		Name: "noop", Version: "1.0.0", Digest: "sha256:abcd1234",
@@ -231,7 +231,7 @@ func TestShim_UnregisteredScopeDial_RegistrarDecline_KeepsTypedRejection(t *test
 	shim, _ := newRecoveryTestShim(t)
 	scope := "root/kb25-declined/inst-1"
 	registrar := &recordingRegistrar{shim: shim, decline: true}
-	shim.SetScopeRegistrar(registrar)
+	shim.setScopeRegistrar(registrar)
 
 	err := acceptHandshakeDirect(t, shim, &handshakeMessage{
 		Name: "noop", Version: "1.0.0", Digest: "sha256:abcd1234",

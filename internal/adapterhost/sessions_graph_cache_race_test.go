@@ -1,23 +1,20 @@
 package adapterhost
 
-// sessions_graph_cache_race_test.go — CRI-50: cacheGraphAdapterRef wrote
-// SessionManager.graphAdapters/adapterDirs without holding SessionManager.mu,
-// while adapterDeclaration (via remoteEnvForAdapter/isOCIAdapter), adapterDir,
-// and BorrowRemoteProvisioningFrom read the same maps. The production call
-// graph keeps the two sides serialized today (VerifyGraph runs in initAdapters
-// strictly before the run loop; parallel subworkflow iterations get their own
-// SessionManager and borrow the caches through mu-protected
-// BorrowRemoteProvisioningFrom), but nothing at the API boundary prevented a
-// future caller from overlapping them — the maps are plain, unlocked state on
-// a shared struct.
+// sessions_graph_cache_race_test.go — CRI-50 re-home: adapter declaration
+// resolution is a read-only walk over the compiled graph tree, and the only
+// cross-manager state a parallel iteration shares (the parent's bound
+// envhost.Host entries via ShareEnvHostsFrom) moves under SessionManager.mu.
+// Before the deletion this test pinned an unlocked cache writer
+// (graphAdapters/adapterDirs/deferredRemoteAdapters) against concurrent
+// resolution readers and BorrowRemoteProvisioningFrom; those caches die with
+// the compensation machinery, so the remaining overlap is verification
+// (read-only walks) against resolution and Share clones.
 //
-// This test pins the contract after the fix: graph verification (the cache
-// writer) and adapter resolution (the cache readers) may overlap freely on one
-// SessionManager, and the race detector must stay clean. Before the fix it
-// reports a data race on m.graphAdapters/adapterDirs; it doubles as the
-// regression test for the synchronization contract and as the pin that the
-// cache keeps resolving subworkflow declarations after concurrent
-// verification.
+// This test pins the contract after the deletion: graph verification and
+// adapter resolution may overlap freely on one SessionManager while a sharing
+// iteration clones the hosts, and the race detector must stay clean; it also
+// doubles as the pin that the walk keeps resolving subworkflow declarations
+// after concurrent verification.
 
 import (
 	"context"
@@ -28,22 +25,23 @@ import (
 func TestSessions_GraphAdapterCache_ConcurrentVerifyAndResolve(t *testing.T) {
 	ctx := context.Background()
 	g, body := compileCRI269SessionsGraph(t, true)
-	const developer = "noop.developer" // subworkflow-declared: resolvable only via the per-instance cache
+	const developer = "noop.developer" // subworkflow-declared: resolvable only via the per-instance walk
 	const local = "shell.local"
 
 	m := NewSessionManager(&cri269Loader{})
 	m.SetGraph(g)
-	// Defer the subworkflow adapter's handshake so VerifyGraph exercises only
-	// the cache write path (no binary resolution, no process launch): the
-	// overlap under test is exactly the graph-adapter cache, nothing else.
-	m.SetDeferredRemoteAdapters([]string{developer})
+	// Defer the subworkflow adapter's blocking handshake through its host of
+	// record's DefersVerify capability so VerifyGraph exercises only the
+	// (read-only) walk path: no binary resolution, no process launch. The
+	// overlap under test is exactly the shared host clone, nothing else.
+	m.SetEnvHostForEnv("remote.prod", &seamSpyHost{defersVerify: true})
 
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
 
 	// Reader: the adapter-resolution read paths (adapterDeclaration via
-	// isRemoteAdapter/isOCIAdapter, and adapterDir) hammering the cache while
-	// VerifyGraph populates it.
+	// isRemoteAdapter/isOCIAdapter, and adapterDir) hammering the walk while
+	// VerifyGraph rounds run.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -64,8 +62,8 @@ func TestSessions_GraphAdapterCache_ConcurrentVerifyAndResolve(t *testing.T) {
 	}()
 
 	// Borrower: the production parallel-subworkflow-iteration path
-	// (runParallelSubworkflowIteration) that clones the parent's caches under
-	// the parent's mu while VerifyGraph-style population may be in flight.
+	// (runParallelSubworkflowIteration) that clones the parent's bound hosts
+	// under the parent's mu while verification may be in flight.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -76,7 +74,7 @@ func TestSessions_GraphAdapterCache_ConcurrentVerifyAndResolve(t *testing.T) {
 			default:
 			}
 			child := NewSessionManager(&cri269Loader{})
-			child.BorrowRemoteProvisioningFrom(m)
+			child.ShareEnvHostsFrom(m)
 		}
 	}()
 
@@ -89,15 +87,16 @@ func TestSessions_GraphAdapterCache_ConcurrentVerifyAndResolve(t *testing.T) {
 	close(stop)
 	wg.Wait()
 
-	// Pin the cache contract the synchronization protects: after VerifyGraph,
-	// the subworkflow declaration must resolve from the per-instance cache
-	// (the root graph never contains it), pointing at the declaring body.
+	// Pin the resolution contract the synchronization protects: after
+	// VerifyGraph rounds, the subworkflow declaration must resolve from the
+	// compiled tree walk (the root graph never contains it), pointing at the
+	// declaring body.
 	node, graph := m.adapterDeclaration(developer)
 	if node == nil || graph != body {
 		t.Fatalf("adapterDeclaration(%q) after VerifyGraph = (%v, %v), want the subworkflow body's declaration", developer, node, graph)
 	}
 	if node != body.Adapters[developer] {
-		t.Fatalf("cached node for %q must be the declaring body's adapter node", developer)
+		t.Fatalf("declared node for %q must be the declaring body's adapter node", developer)
 	}
 	if dir := m.adapterDir(developer); dir != body.WorkflowDir {
 		t.Fatalf("adapterDir(%q) = %q, want the declaring body's directory %q", developer, dir, body.WorkflowDir)

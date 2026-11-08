@@ -18,6 +18,68 @@ import (
 
 var _ envhost.Host = shimHost{}
 
+// seamHost is the scope bookkeeping path every resolver now takes: resolve
+// the bound host of record for the environment, then drive its control
+// arms. ok=false keeps the caller-owned failure lane (the pre-carve "no
+// remote shim registered" error), so every seam test resolves through this
+// path.
+func seamHost(t *testing.T, m *SessionManager, envKey string) envhost.Host {
+	t.Helper()
+	host, ok := m.EnvHost(envKey)
+	if !ok || host == nil {
+		t.Fatalf("no bound host of record for %q", envKey)
+	}
+	return host
+}
+
+// seamRegister drives the register arm on the bound host of record for one
+// scope/token, and fails the test when the arm errors.
+func seamRegister(t *testing.T, m *SessionManager, envKey, scope, token string) {
+	t.Helper()
+	if _, err := seamHost(t, m, envKey).Control(context.Background(), &envhost.ControlRequest{
+		Scope: scopeRefForKey(scope),
+		Kind:  envhost.ControlRegisterScope,
+		Token: token,
+	}); err != nil {
+		t.Fatalf("register scope %q on %q: %v", scope, envKey, err)
+	}
+}
+
+// seamUnregister drives the unregister arm on the bound host of record for
+// one scope, and fails the test when the arm errors.
+func seamUnregister(t *testing.T, m *SessionManager, envKey, scope string) {
+	t.Helper()
+	if _, err := seamHost(t, m, envKey).Control(context.Background(), &envhost.ControlRequest{
+		Scope: scopeRefForKey(scope),
+		Kind:  envhost.ControlUnregisterScope,
+	}); err != nil {
+		t.Fatalf("unregister scope %q on %q: %v", scope, envKey, err)
+	}
+}
+
+// seamCloseHandle drives the close arm on the bound host of record for one
+// scope/definition, and fails the test when the arm errors.
+func seamCloseHandle(t *testing.T, m *SessionManager, envKey, adapterName, scope string) {
+	t.Helper()
+	if _, err := seamHost(t, m, envKey).Control(context.Background(), &envhost.ControlRequest{
+		Scope:   scopeRefForKey(scope),
+		Adapter: adapterName,
+		Kind:    envhost.ControlCloseHandle,
+	}); err != nil {
+		t.Fatalf("close handle %q on %q: %v", adapterName, envKey, err)
+	}
+}
+
+// seamListenAddress reads the listen arm of the bound host of record.
+func seamListenAddress(t *testing.T, m *SessionManager, envKey string) string {
+	t.Helper()
+	resp, err := seamHost(t, m, envKey).Control(context.Background(), &envhost.ControlRequest{Kind: envhost.ControlListenAddress})
+	if err != nil {
+		t.Fatalf("listen arm on %q: %v", envKey, err)
+	}
+	return resp.Address
+}
+
 // seamSpyHost records every seam call it receives so tests can assert knob
 // routing and arm shapes. Configurable responses let the handle-recovery and
 // error-propagation paths be exercised without a second host type.
@@ -37,6 +99,16 @@ type seamSpyHost struct {
 	releaseFates   []envhost.Fate
 	journalScopes  []string
 	journalAdapter string
+
+	defersVerify bool
+}
+
+// DefersVerify is the VerifyDeferrer capability the verify path probes on
+// hosts of record.
+func (h *seamSpyHost) DefersVerify() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.defersVerify
 }
 
 func (h *seamSpyHost) Ensure(_ context.Context, scope envhost.ScopeRef, defs []envhost.Definition) (envhost.Handles, error) {
@@ -98,12 +170,10 @@ func TestEnvhostSeam_BoundHostServesScopeAndKillKnobs(t *testing.T) {
 	m.SetGraph(g)
 	beta := newCri293Shim("beta", "127.0.0.1:9002")
 	spy := &seamSpyHost{controlResp: envhost.ControlResponse{Address: "10.0.0.1:1"}}
-	m.SetRemoteShimForEnv("remote.beta", beta)
+	m.SetEnvHostForEnv("remote.beta", NewShimHost(beta))
 	m.SetEnvHostForEnv("remote.alpha", spy)
 
-	if err := m.RegisterRemoteScopeForEnv(context.Background(), "remote.alpha", "scope-a/1", "tok-a"); err != nil {
-		t.Fatalf("RegisterRemoteScopeForEnv(alpha): %v", err)
-	}
+	seamRegister(t, m, "remote.alpha", "scope-a/1", "tok-a")
 	ctrl := spy.controls()
 	if len(ctrl) != 1 || ctrl[0].Kind != envhost.ControlRegisterScope {
 		t.Fatalf("spy controls = %+v, want exactly one ControlRegisterScope", ctrl)
@@ -115,14 +185,10 @@ func TestEnvhostSeam_BoundHostServesScopeAndKillKnobs(t *testing.T) {
 		t.Errorf("beta scope calls = %v, want none", got)
 	}
 
-	if err := m.UnregisterRemoteScopeForEnv(context.Background(), "remote.alpha", "scope-a/1"); err != nil {
-		t.Fatalf("UnregisterRemoteScopeForEnv(alpha): %v", err)
-	}
-	if err := m.CloseRemoteHandleForEnv(context.Background(), "remote.alpha", "noop.alpha", "scope-a/1"); err != nil {
-		t.Fatalf("CloseRemoteHandleForEnv(alpha): %v", err)
-	}
-	if got := m.RemoteListenAddrForEnv(context.Background(), "remote.alpha"); got != "10.0.0.1:1" {
-		t.Errorf("RemoteListenAddrForEnv(alpha) = %q, want 10.0.0.1:1", got)
+	seamUnregister(t, m, "remote.alpha", "scope-a/1")
+	seamCloseHandle(t, m, "remote.alpha", "noop.alpha", "scope-a/1")
+	if got := seamListenAddress(t, m, "remote.alpha"); got != "10.0.0.1:1" {
+		t.Errorf("listen address of remote.alpha = %q, want 10.0.0.1:1", got)
 	}
 	ctrl = spy.controls()
 	if len(ctrl) != 4 {
@@ -143,10 +209,9 @@ func TestEnvhostSeam_BoundHostServesScopeAndKillKnobs(t *testing.T) {
 		}
 	}
 
-	// The unbound environment keeps its shim behavior unchanged.
-	if err := m.RegisterRemoteScopeForEnv(context.Background(), "remote.beta", "scope-b/1", "tok-b"); err != nil {
-		t.Fatalf("RegisterRemoteScopeForEnv(beta): %v", err)
-	}
+	// The shim-registered environment keeps its shim behavior unchanged:
+	// the shimHost fold serves the same arms with the shim underneath.
+	seamRegister(t, m, "remote.beta", "scope-b/1", "tok-b")
 	if got := beta.scopeToken("scope-b/1"); got != "tok-b" {
 		t.Errorf("beta scope token = %q, want tok-b", got)
 	}
@@ -158,57 +223,53 @@ func TestEnvhostSeam_ShimOnlyEnvsRouteThroughShimAdapter(t *testing.T) {
 	m.SetGraph(g)
 	alpha := newCri293Shim("alpha", "127.0.0.1:9001")
 	m.SetEnvHostForEnv("remote.beta", &seamSpyHost{}) // decoy for the other env
-	m.SetRemoteShimForEnv("remote.alpha", alpha)
+	m.SetEnvHostForEnv("remote.alpha", NewShimHost(alpha))
 
-	if err := m.RegisterRemoteScopeForEnv(context.Background(), "remote.alpha", "scope-a/1", "tok-a"); err != nil {
-		t.Fatalf("RegisterRemoteScopeForEnv(alpha): %v", err)
-	}
+	seamRegister(t, m, "remote.alpha", "scope-a/1", "tok-a")
 	if got := alpha.scopeToken("scope-a/1"); got != "tok-a" {
 		t.Errorf("alpha scope token = %q, want tok-a", got)
 	}
-	if err := m.UnregisterRemoteScopeForEnv(context.Background(), "remote.alpha", "scope-a/1"); err != nil {
-		t.Fatalf("UnregisterRemoteScopeForEnv(alpha): %v", err)
-	}
+	seamUnregister(t, m, "remote.alpha", "scope-a/1")
 	if got := alpha.unregisterCalls(); len(got) != 1 || got[0] != "scope-a/1" {
 		t.Errorf("alpha unregister calls = %v, want [scope-a/1]", got)
 	}
-	if err := m.CloseRemoteHandleForEnv(context.Background(), "remote.alpha", "noop.alpha", "scope-a/1"); err != nil {
-		t.Fatalf("CloseRemoteHandleForEnv(alpha): %v", err)
-	}
+	seamCloseHandle(t, m, "remote.alpha", "noop.alpha", "scope-a/1")
 	if got := alpha.closeCalls(); len(got) != 1 || got[0] != "noop.alpha:scope-a/1" {
 		t.Errorf("alpha close calls = %v, want [noop.alpha:scope-a/1]", got)
 	}
-	if got := m.RemoteListenAddrForEnv(context.Background(), "remote.alpha"); got != "127.0.0.1:9001" {
-		t.Errorf("RemoteListenAddrForEnv(alpha) = %q, want 127.0.0.1:9001", got)
+	if got := seamListenAddress(t, m, "remote.alpha"); got != "127.0.0.1:9001" {
+		t.Errorf("listen address of remote.alpha = %q, want 127.0.0.1:9001", got)
 	}
 
-	// An environment with neither a dedicated entry nor its own shim lane
-	// falls back to the default shim (the latest registration) — the
-	// pre-carve fallback every legacy caller relies on.
-	if err := m.RegisterRemoteScopeForEnv(context.Background(), "remote.missing", "scope-c/1", "tok-c"); err != nil {
-		t.Fatalf("RegisterRemoteScopeForEnv(missing) fallback: %v", err)
+	// An environment whose provisioning never binds a host of record leaves
+	// the per-env register refused; the legacy scope-key lane still falls
+	// back to the default shim (the legacy registration) — the pre-carve
+	// fallback the single-shim callers rely on.
+	m.SetRemoteShim(alpha)
+	if err := m.RegisterRemoteScope("scope-c/1", "tok-c"); err != nil {
+		t.Fatalf("default-shim fallback register: %v", err)
 	}
 	if got := alpha.scopeToken("scope-c/1"); got != "tok-c" {
 		t.Errorf("default-shim fallback scope token = %q, want tok-c", got)
 	}
-	if got := m.RemoteListenAddrForEnv(context.Background(), "remote.missing"); got != "127.0.0.1:9001" {
-		t.Errorf("RemoteListenAddrForEnv(missing) fallback = %q, want 127.0.0.1:9001", got)
+	if got := m.RemoteListenAddr(); got != "127.0.0.1:9001" {
+		t.Errorf("default-shim fallback listen = %q, want 127.0.0.1:9001", got)
 	}
 	errMsg := "no remote shim registered"
 	empty := NewSessionManager(&cri269Loader{})
 	empty.SetGraph(cri293TwoEnvGraph())
-	if got := empty.RegisterRemoteScopeForEnv(context.Background(), "remote.missing", "scope-c/1", "tok-c"); got == nil || got.Error() != errMsg {
-		t.Errorf("RegisterRemoteScopeForEnv without any shim = %v, want %q", got, errMsg)
+	if got := empty.RegisterRemoteScope("scope-c/1", "tok-c"); got == nil || got.Error() != errMsg {
+		t.Errorf("register without any shim = %v, want %q", got, errMsg)
 	}
-	if got := empty.CloseRemoteHandleForEnv(context.Background(), "remote.missing", "noop.alpha", "scope-c/1"); got != nil {
-		t.Errorf("CloseRemoteHandleForEnv without any shim = %v, want nil no-op", got)
+	if got := empty.CloseRemoteHandle(context.Background(), "noop.alpha", "scope-c/1"); got != nil {
+		t.Errorf("close handle without any shim = %v, want nil no-op", got)
 	}
 }
 
 // TestEnvhostSeam_KnobControlErrorsPropagate pins the failure lane of the
-// new Control-routed knobs: a bound host's Control error must surface
-// verbatim out of Register/Unregister/Close*ForEnv (the dispatch Ensure
-// error path is asserted separately in DispatchBranchesUseBoundHost).
+// Control arms every scope/kill resolver drives: a bound host's Control
+// error must surface verbatim (the dispatch Ensure error path is asserted
+// separately in DispatchBranchesUseBoundHost).
 func TestEnvhostSeam_KnobControlErrorsPropagate(t *testing.T) {
 	m := NewSessionManager(&cri269Loader{})
 	m.SetGraph(cri293TwoEnvGraph())
@@ -216,17 +277,17 @@ func TestEnvhostSeam_KnobControlErrorsPropagate(t *testing.T) {
 	spy := &seamSpyHost{controlErr: ctrlErr}
 	m.SetEnvHostForEnv("remote.alpha", spy)
 
-	if err := m.RegisterRemoteScopeForEnv(context.Background(), "remote.alpha", "scope-a/1", "tok-a"); !errors.Is(err, ctrlErr) {
-		t.Errorf("RegisterRemoteScopeForEnv error = %v, want verbatim control error", err)
+	if _, err := seamHost(t, m, "remote.alpha").Control(context.Background(), &envhost.ControlRequest{Scope: scopeRefForKey("scope-a/1"), Kind: envhost.ControlRegisterScope, Token: "tok-a"}); !errors.Is(err, ctrlErr) {
+		t.Errorf("register arm error = %v, want verbatim control error", err)
 	}
-	if err := m.UnregisterRemoteScopeForEnv(context.Background(), "remote.alpha", "scope-a/1"); !errors.Is(err, ctrlErr) {
-		t.Errorf("UnregisterRemoteScopeForEnv error = %v, want verbatim control error", err)
+	if _, err := seamHost(t, m, "remote.alpha").Control(context.Background(), &envhost.ControlRequest{Scope: scopeRefForKey("scope-a/1"), Kind: envhost.ControlUnregisterScope}); !errors.Is(err, ctrlErr) {
+		t.Errorf("unregister arm error = %v, want verbatim control error", err)
 	}
-	if err := m.CloseRemoteHandleForEnv(context.Background(), "remote.alpha", "noop.alpha", "scope-a/1"); !errors.Is(err, ctrlErr) {
-		t.Errorf("CloseRemoteHandleForEnv error = %v, want verbatim control error", err)
+	if _, err := seamHost(t, m, "remote.alpha").Control(context.Background(), &envhost.ControlRequest{Scope: scopeRefForKey("scope-a/1"), Adapter: "noop.alpha", Kind: envhost.ControlCloseHandle}); !errors.Is(err, ctrlErr) {
+		t.Errorf("close arm error = %v, want verbatim control error", err)
 	}
 	if got := len(spy.controls()); got != 3 {
-		t.Errorf("spy controls = %d, want one per failing knob (3)", got)
+		t.Errorf("spy controls = %d, want one per failing arm (3)", got)
 	}
 }
 
@@ -280,31 +341,30 @@ func TestEnvhostSeam_LegacyDefaultKnobsRouteThroughSeam(t *testing.T) {
 func TestEnvhostSeam_BindingPrecedence(t *testing.T) {
 	g := cri293TwoEnvGraph()
 
-	// A later SetEnvHostForEnv over a shim-only registration wins.
+	// A later SetEnvHostForEnv over a shim-only (shimHost) registration
+	// wins.
 	m := NewSessionManager(&cri269Loader{})
 	m.SetGraph(g)
 	spy := &seamSpyHost{controlResp: envhost.ControlResponse{Address: "10.0.0.1:1"}}
 	alpha := newCri293Shim("alpha", "127.0.0.1:9001")
-	m.SetRemoteShimForEnv("remote.alpha", alpha)
+	m.SetEnvHostForEnv("remote.alpha", NewShimHost(alpha))
 	m.SetEnvHostForEnv("remote.alpha", spy)
-	if got := m.RemoteListenAddrForEnv(context.Background(), "remote.alpha"); got != "10.0.0.1:1" {
+	if got := seamListenAddress(t, m, "remote.alpha"); got != "10.0.0.1:1" {
 		t.Errorf("bound host must win: got %q, want 10.0.0.1:1", got)
 	}
 
-	// A later SetRemoteShimForEnv re-shadows the binding with the shim
-	// adapter — the latest registration wins, matching the shim map.
+	// A later NewShimHost bind re-shadows an earlier host binding with the
+	// shim adapter — the latest registration wins, matching the shim map.
 	m2 := NewSessionManager(&cri269Loader{})
 	m2.SetGraph(g)
 	spy2 := &seamSpyHost{controlResp: envhost.ControlResponse{Address: "10.0.0.1:1"}}
 	alpha2 := newCri293Shim("alpha2", "127.0.0.1:9003")
 	m2.SetEnvHostForEnv("remote.alpha", spy2)
-	m2.SetRemoteShimForEnv("remote.alpha", alpha2)
-	if got := m2.RemoteListenAddrForEnv(context.Background(), "remote.alpha"); got != "127.0.0.1:9003" {
+	m2.SetEnvHostForEnv("remote.alpha", NewShimHost(alpha2))
+	if got := seamListenAddress(t, m2, "remote.alpha"); got != "127.0.0.1:9003" {
 		t.Errorf("re-shadowed shim must win: got %q, want 127.0.0.1:9003", got)
 	}
-	if err := m2.RegisterRemoteScopeForEnv(context.Background(), "remote.alpha", "scope-b/1", "tok-b"); err != nil {
-		t.Fatalf("RegisterRemoteScopeForEnv after re-shadow: %v", err)
-	}
+	seamRegister(t, m2, "remote.alpha", "scope-b/1", "tok-b")
 	if got := alpha2.scopeToken("scope-b/1"); got != "tok-b" {
 		t.Errorf("re-shadowed shim scope token = %q, want tok-b", got)
 	}
@@ -313,7 +373,7 @@ func TestEnvhostSeam_BindingPrecedence(t *testing.T) {
 	}
 }
 
-func TestEnvhostSeam_BorrowCarriesBoundHosts(t *testing.T) {
+func TestEnvhostSeam_ShareCarriesBoundHosts(t *testing.T) {
 	src := NewSessionManager(&cri269Loader{})
 	src.SetGraph(cri293TwoEnvGraph())
 	spy := &seamSpyHost{}
@@ -321,14 +381,12 @@ func TestEnvhostSeam_BorrowCarriesBoundHosts(t *testing.T) {
 
 	dst := NewSessionManager(&cri269Loader{})
 	dst.SetGraph(cri293TwoEnvGraph())
-	dst.BorrowRemoteProvisioningFrom(src)
+	dst.ShareEnvHostsFrom(src)
 
-	if err := dst.RegisterRemoteScopeForEnv(context.Background(), "remote.alpha", "scope-a/1", "tok-a"); err != nil {
-		t.Fatalf("RegisterRemoteScopeForEnv on borrower: %v", err)
-	}
+	seamRegister(t, dst, "remote.alpha", "scope-a/1", "tok-a")
 	ctrl := spy.controls()
 	if len(ctrl) != 1 || ctrl[0].Kind != envhost.ControlRegisterScope || ctrl[0].Scope.Key() != "scope-a/1" {
-		t.Fatalf("borrowed env routed to spy = %+v, want one register for scope-a/1", ctrl)
+		t.Fatalf("shared env routed to spy = %+v, want one register for scope-a/1", ctrl)
 	}
 }
 
@@ -383,6 +441,9 @@ func TestEnvhostSeam_HandleRecoveryAndIdentityGuards(t *testing.T) {
 	}
 }
 
+// TestEnvhostSeam_ShimAdapterFreshWaitAndStaleGuard pins the shimHost fold
+// of the EnsureFreshHandle arm: the stale identity guard trips before the
+// shim, and a well-formed request reaches the shim's fresh wait.
 func TestEnvhostSeam_ShimAdapterFreshWaitAndStaleGuard(t *testing.T) {
 	alpha := newCri293Shim("alpha", "127.0.0.1:9001")
 	host := shimHost{shim: alpha}
@@ -442,7 +503,7 @@ func TestEnvhostSeam_DispatchBranchesUseBoundHost(t *testing.T) {
 		controlResp:  envhost.ControlResponse{Handle: cri269Handle{}},
 	}
 	alpha := newCri293Shim("alpha", "127.0.0.1:9001")
-	m.SetRemoteShimForEnv("remote.alpha", alpha)
+	m.SetEnvHostForEnv("remote.alpha", NewShimHost(alpha))
 	m.SetEnvHostForEnv("remote.alpha", spy)
 
 	ctx := context.Background()
@@ -477,7 +538,7 @@ func TestEnvhostSeam_DispatchBranchesUseBoundHost(t *testing.T) {
 	m2 := NewSessionManager(&cri269Loader{})
 	m2.SetGraph(cri293TwoEnvGraph())
 	spy2 := &seamSpyHost{ensureErr: errEnsure}
-	m2.SetRemoteShimForEnv("remote.alpha", alpha)
+	m2.SetEnvHostForEnv("remote.alpha", NewShimHost(alpha))
 	m2.SetEnvHostForEnv("remote.alpha", spy2)
 	if _, err := m2.resolveAdapterHandle(ctx, "noop.alpha", "noop", "scope-a/1", nil); !errors.Is(err, errEnsure) {
 		t.Errorf("dispatch ensure error = %v, want verbatim ensure error", err)

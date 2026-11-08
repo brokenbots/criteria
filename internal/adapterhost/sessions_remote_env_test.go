@@ -137,8 +137,8 @@ func TestSessions_CRI293_PerEnvShimDispatch(t *testing.T) {
 	m.SetGraph(g)
 	alpha := newCri293Shim("alpha", "127.0.0.1:9001")
 	beta := newCri293Shim("beta", "127.0.0.1:9002")
-	m.SetRemoteShimForEnv("remote.alpha", alpha)
-	m.SetRemoteShimForEnv("remote.beta", beta)
+	m.SetEnvHostForEnv("remote.alpha", NewShimHost(alpha))
+	m.SetEnvHostForEnv("remote.beta", NewShimHost(beta))
 
 	ctx := context.Background()
 	for _, tc := range []struct {
@@ -167,8 +167,8 @@ func TestSessions_CRI293_PerEnvRespawnDispatch(t *testing.T) {
 	m.SetGraph(g)
 	alpha := newCri293Shim("alpha", "127.0.0.1:9001")
 	beta := newCri293Shim("beta", "127.0.0.1:9002")
-	m.SetRemoteShimForEnv("remote.alpha", alpha)
-	m.SetRemoteShimForEnv("remote.beta", beta)
+	m.SetEnvHostForEnv("remote.alpha", NewShimHost(alpha))
+	m.SetEnvHostForEnv("remote.beta", NewShimHost(beta))
 
 	ctx := context.Background()
 	sess := &Session{Name: "noop.beta", Adapter: "noop"}
@@ -189,43 +189,37 @@ func TestSessions_CRI293_PerEnvScopeRegistration(t *testing.T) {
 	m.SetGraph(g)
 	alpha := newCri293Shim("alpha", "127.0.0.1:9001")
 	beta := newCri293Shim("beta", "127.0.0.1:9002")
-	m.SetRemoteShimForEnv("remote.alpha", alpha)
-	m.SetRemoteShimForEnv("remote.beta", beta)
+	m.SetEnvHostForEnv("remote.alpha", NewShimHost(alpha))
+	m.SetEnvHostForEnv("remote.beta", NewShimHost(beta))
 
-	if err := m.RegisterRemoteScopeForEnv(context.Background(), "remote.alpha", "scope-a/1", "tok-a"); err != nil {
-		t.Fatalf("RegisterRemoteScopeForEnv(alpha): %v", err)
-	}
-	if err := m.RegisterRemoteScopeForEnv(context.Background(), "remote.beta", "scope-b/1", "tok-b"); err != nil {
-		t.Fatalf("RegisterRemoteScopeForEnv(beta): %v", err)
-	}
+	seamRegister(t, m, "remote.alpha", "scope-a/1", "tok-a")
+	seamRegister(t, m, "remote.beta", "scope-b/1", "tok-b")
 	if got := alpha.scopeToken("scope-a/1"); got != "tok-a" {
 		t.Errorf("alpha scope token = %q, want tok-a", got)
 	}
 	if got := beta.scopeToken("scope-b/1"); got != "tok-b" {
 		t.Errorf("beta scope token = %q, want tok-b", got)
 	}
-	if err := m.UnregisterRemoteScopeForEnv(context.Background(), "remote.beta", "scope-b/1"); err != nil {
-		t.Fatalf("UnregisterRemoteScopeForEnv(beta): %v", err)
-	}
+	seamUnregister(t, m, "remote.beta", "scope-b/1")
 	if got := beta.unregisterCalls(); len(got) != 1 || got[0] != "scope-b/1" {
 		t.Errorf("beta unregister calls = %v, want [scope-b/1]", got)
 	}
 	if got := alpha.unregisterCalls(); len(got) != 0 {
 		t.Errorf("alpha unregister calls = %v, want none", got)
 	}
-	ctx := context.Background()
-	if err := m.CloseRemoteHandleForEnv(ctx, "remote.alpha", "noop", "scope-a/1"); err != nil {
-		t.Fatalf("CloseRemoteHandleForEnv(alpha): %v", err)
-	}
+	seamCloseHandle(t, m, "remote.alpha", "noop", "scope-a/1")
 	if got := alpha.closeCalls(); len(got) != 1 || got[0] != "noop:scope-a/1" {
 		t.Errorf("alpha close calls = %v, want [noop:scope-a/1]", got)
 	}
 
-	// An environment without a dedicated shim falls back to the default
-	// shim (the latest registration) — that is the legacy single-shim
-	// behavior every pre-CRI-293 caller relies on.
-	if got := m.RegisterRemoteScopeForEnv(context.Background(), "remote.gamma", "scope-c/1", "tok-c"); got != nil {
-		t.Errorf("RegisterRemoteScopeForEnv(gamma) fallback: %v", got)
+	// An environment without a host of record refuses the registration:
+	// the engine binds a host of record for every declared remote
+	// environment, and the per-env register path has no shim-less fallback
+	// past the seam. The legacy scope-key lane answers only the default
+	// shim, which is unregistered here — the same fail-closed surface the
+	// engine sees for a missing host.
+	if err := m.RegisterRemoteScope("scope-c/1", "tok-c"); err == nil || err.Error() != "no remote shim registered" {
+		t.Errorf("register without any host = %v, want \"no remote shim registered\"", err)
 	}
 }
 
@@ -235,19 +229,14 @@ func TestSessions_CRI293_PerEnvListenAddrPublication(t *testing.T) {
 	m.SetGraph(g)
 	alpha := newCri293Shim("alpha", "127.0.0.1:9001")
 	beta := newCri293Shim("beta", "127.0.0.1:9002")
-	m.SetRemoteShimForEnv("remote.alpha", alpha)
-	m.SetRemoteShimForEnv("remote.beta", beta)
+	m.SetEnvHostForEnv("remote.alpha", NewShimHost(alpha))
+	m.SetEnvHostForEnv("remote.beta", NewShimHost(beta))
 
-	if got := m.RemoteListenAddrForEnv(context.Background(), "remote.alpha"); got != "127.0.0.1:9001" {
-		t.Errorf("RemoteListenAddrForEnv(alpha) = %q, want 127.0.0.1:9001", got)
+	if got := seamListenAddress(t, m, "remote.alpha"); got != "127.0.0.1:9001" {
+		t.Errorf("listen address of remote.alpha = %q, want 127.0.0.1:9001", got)
 	}
-	if got := m.RemoteListenAddrForEnv(context.Background(), "remote.beta"); got != "127.0.0.1:9002" {
-		t.Errorf("RemoteListenAddrForEnv(beta) = %q, want 127.0.0.1:9002", got)
-	}
-	if got := m.RemoteListenAddrForEnv(context.Background(), "remote.missing"); got != "127.0.0.1:9002" {
-		// Missing env keys fall back to the default shim (the latest
-		// registration) so legacy single-shim callers keep their address.
-		t.Errorf("RemoteListenAddrForEnv(missing) fallback = %q, want 127.0.0.1:9002", got)
+	if got := seamListenAddress(t, m, "remote.beta"); got != "127.0.0.1:9002" {
+		t.Errorf("listen address of remote.beta = %q, want 127.0.0.1:9002", got)
 	}
 }
 
@@ -274,14 +263,15 @@ func TestSessions_CRI293_LegacyDefaultShimFallback(t *testing.T) {
 		t.Errorf("legacy scope token = %q, want tok-x", got)
 	}
 
-	// Registering a dedicated env shim later keeps the default for adapters
-	// in environments that have none.
+	// Registering a dedicated env host later keeps the default lane only
+	// for environments that have no dedicated host.
 	dedicated := newCri293Shim("dedicated", "127.0.0.1:9003")
-	m.SetRemoteShimForEnv("remote.alpha", dedicated)
-	if got := m.RemoteListenAddrForEnv(context.Background(), "remote.beta"); got != "127.0.0.1:9003" {
-		// The default shim now points at the latest registration; beta has
-		// no dedicated entry so it falls back to it.
-		t.Errorf("RemoteListenAddrForEnv(beta) fallback = %q, want 127.0.0.1:9003", got)
+	m.SetEnvHostForEnv("remote.alpha", NewShimHost(dedicated))
+	if got := m.RemoteShimForEnv("remote.alpha"); got != dedicated {
+		t.Errorf("RemoteShimForEnv(alpha) after the dedicated bind = %v, want the dedicated shim", got)
+	}
+	if got := m.RemoteShimForEnv("remote.beta"); got != legacy {
+		t.Errorf("RemoteShimForEnv(beta) fallback = %v, want the legacy default shim", got)
 	}
 }
 
@@ -291,17 +281,17 @@ func TestSessions_CRI293_ShutdownStopsAllShims(t *testing.T) {
 	m.SetGraph(g)
 	alpha := newCri293Shim("alpha", "127.0.0.1:9001")
 	beta := newCri293Shim("beta", "127.0.0.1:9002")
-	m.SetRemoteShimForEnv("remote.alpha", alpha)
-	m.SetRemoteShimForEnv("remote.beta", beta)
+	m.SetEnvHostForEnv("remote.alpha", NewShimHost(alpha))
+	m.SetEnvHostForEnv("remote.beta", NewShimHost(beta))
 
 	if err := m.Shutdown(context.Background()); err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}
-	// Every registered shim must be stopped. The default shim aliases one
-	// environment's shim; since RemoteShim implementations cannot be
-	// assumed comparable, duplicates are kept and receive a second Stop,
-	// which must be a no-op (Shim.Stop idempotency contract). A shim
-	// registered only as the environment shim is stopped exactly once.
+	// Every bound shim must be stopped (Shutdown walks the shim substrate
+	// behind each bound host). Duplicate folds (shim under several hosts,
+	// default aliasing) receive a second Stop, which must be a no-op
+	// (Shim.Stop idempotency contract); a distinct shim is stopped at least
+	// once.
 	for _, s := range []*cri293Shim{alpha, beta} {
 		if got := s.stopCount(); got < 1 {
 			t.Errorf("%s shim stop count = %d, want >= 1", s.name, got)
@@ -319,8 +309,8 @@ func TestSessions_CRI293_ShutdownCollectsStopErrors(t *testing.T) {
 	stopErr := errors.New("boom")
 	alpha := newCri293Shim("alpha", "127.0.0.1:9001")
 	beta := &crashStopShim{cri293Shim: *newCri293Shim("beta", "127.0.0.1:9002"), err: stopErr}
-	m.SetRemoteShimForEnv("remote.alpha", alpha)
-	m.SetRemoteShimForEnv("remote.beta", beta)
+	m.SetEnvHostForEnv("remote.alpha", NewShimHost(alpha))
+	m.SetEnvHostForEnv("remote.beta", NewShimHost(beta))
 
 	if err := m.Shutdown(context.Background()); err == nil {
 		t.Fatal("Shutdown with a failing shim: want error, got nil")
