@@ -211,6 +211,31 @@ func TestEnvhostSeam_ShimOnlyEnvsRouteThroughShimAdapter(t *testing.T) {
 	}
 }
 
+// TestEnvhostSeam_KnobControlErrorsPropagate pins the failure lane of the
+// new Control-routed knobs: a bound host's Control error must surface
+// verbatim out of Register/Unregister/Close*ForEnv (the dispatch Ensure
+// error path is asserted separately in DispatchBranchesUseBoundHost).
+func TestEnvhostSeam_KnobControlErrorsPropagate(t *testing.T) {
+	m := NewSessionManager(&cri269Loader{})
+	m.SetGraph(cri293TwoEnvGraph())
+	ctrlErr := errors.New("control arm refused")
+	spy := &seamSpyHost{controlErr: ctrlErr}
+	m.SetEnvHostForEnv("remote.alpha", spy)
+
+	if err := m.RegisterRemoteScopeForEnv("remote.alpha", "scope-a/1", "tok-a"); !errors.Is(err, ctrlErr) {
+		t.Errorf("RegisterRemoteScopeForEnv error = %v, want verbatim control error", err)
+	}
+	if err := m.UnregisterRemoteScopeForEnv("remote.alpha", "scope-a/1"); !errors.Is(err, ctrlErr) {
+		t.Errorf("UnregisterRemoteScopeForEnv error = %v, want verbatim control error", err)
+	}
+	if err := m.CloseRemoteHandleForEnv(context.Background(), "remote.alpha", "noop.alpha", "scope-a/1"); !errors.Is(err, ctrlErr) {
+		t.Errorf("CloseRemoteHandleForEnv error = %v, want verbatim control error", err)
+	}
+	if got := len(spy.controls()); got != 3 {
+		t.Errorf("spy controls = %d, want one per failing knob (3)", got)
+	}
+}
+
 func TestEnvhostSeam_LegacyDefaultKnobsRouteThroughSeam(t *testing.T) {
 	g := cri293TwoEnvGraph()
 	m := NewSessionManager(&cri269Loader{})
@@ -318,7 +343,7 @@ func TestEnvhostSeam_HandleRecoveryAndIdentityGuards(t *testing.T) {
 	errEnsure := errors.New("ensure failed verbatim")
 
 	spy := &seamSpyHost{ensureHandle: handle}
-	got, err := ensureHostHandle(context.Background(), spy, "noop.alpha", "scope-a/1")
+	got, err := ensureHostHandle(context.Background(), spy, "noop.alpha", "noop", "scope-a/1")
 	if err != nil || got == nil {
 		t.Fatalf("ensureHostHandle = %v, %v; want handle, nil", got, err)
 	}
@@ -326,18 +351,21 @@ func TestEnvhostSeam_HandleRecoveryAndIdentityGuards(t *testing.T) {
 	if len(scopes) != 1 || scopes[0] != "scope-a/1" {
 		t.Errorf("ensure scopes = %v, want [scope-a/1]", scopes)
 	}
-	if len(defs) != 1 || len(defs[0]) != 1 || defs[0][0].Name != "noop.alpha" {
-		t.Errorf("ensure defs = %+v, want exactly [{noop.alpha}]", defs)
+	// Both definition identities must travel: the wait keys on the instance
+	// name while the bare adapter type rides along for host-side attribution
+	// (a Name/Type swap here must be caught by this assertion pair).
+	if len(defs) != 1 || len(defs[0]) != 1 || defs[0][0].Name != "noop.alpha" || defs[0][0].Type != "noop" {
+		t.Errorf("ensure defs = %+v, want exactly [{Name:noop.alpha Type:noop}]", defs)
 	}
 
 	spyErr := &seamSpyHost{ensureErr: errEnsure}
-	if got, err := ensureHostHandle(context.Background(), spyErr, "noop.alpha", "scope-a/1"); !errors.Is(err, errEnsure) || got != nil {
+	if got, err := ensureHostHandle(context.Background(), spyErr, "noop.alpha", "noop", "scope-a/1"); !errors.Is(err, errEnsure) || got != nil {
 		t.Errorf("ensureHostHandle error path = %v, %v; want nil, verbatim ensure error", got, err)
 	}
 
 	spyNone := &seamSpyHost{}
 	// A host that settles no handle for the definition must be refused.
-	if got, err := ensureHostHandle(context.Background(), spyNone, "noop.alpha", "scope-a/1"); !errors.Is(err, errUnsettledHandle) || got != nil {
+	if got, err := ensureHostHandle(context.Background(), spyNone, "noop.alpha", "noop", "scope-a/1"); !errors.Is(err, errUnsettledHandle) || got != nil {
 		t.Errorf("unsettled handle path = %v, %v; want nil, errUnsettledHandle", got, err)
 	}
 	// A handle foreign to the session layer's identity must be refused via
@@ -433,8 +461,8 @@ func TestEnvhostSeam_DispatchBranchesUseBoundHost(t *testing.T) {
 	if len(scopes) != 1 || scopes[0] != "scope-a/1" {
 		t.Errorf("dispatch ensure scopes = %v, want [scope-a/1]", scopes)
 	}
-	if len(defs) != 1 || len(defs[0]) != 1 || defs[0][0].Name != "noop.alpha" {
-		t.Errorf("dispatch ensure defs = %+v, want [{noop.alpha}]", defs)
+	if len(defs) != 1 || len(defs[0]) != 1 || defs[0][0].Name != "noop.alpha" || defs[0][0].Type != "noop" {
+		t.Errorf("dispatch ensure defs = %+v, want [{Name:noop.alpha Type:noop}]", defs)
 	}
 	if got := alpha.waitForCalls(); len(got) != 0 {
 		t.Errorf("shim waits = %v, want none (bound host owns dispatch)", got)

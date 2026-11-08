@@ -125,11 +125,15 @@ func scopeRefForKey(key string) envhost.ScopeRef {
 
 // ensureHostHandle ensures the definition's live handle through the
 // environment's host (remote dispatch) and recovers the session-layer
-// handle type. The Ensure error is returned verbatim: shim wait errors are
-// surfaced unchanged downstream, exactly as the pre-carve branch returned
-// them.
-func ensureHostHandle(ctx context.Context, host envhost.Host, name, scope string) (Handle, error) {
-	handles, err := host.Ensure(ctx, scopeRefForKey(scope), []envhost.Definition{{Name: name}})
+// handle type. Both definition identities travel on the Ensure request: the
+// wait keys on `name` (the "<type>.<name>" instance identity) and `defType`
+// rides along so the host's settled handles can be attributed to the right
+// adapter type — keying the wait by the bare type would hand back a sibling
+// definition's child. The Ensure error is returned verbatim: shim wait
+// errors are surfaced unchanged downstream, exactly as the pre-carve branch
+// returned them.
+func ensureHostHandle(ctx context.Context, host envhost.Host, name, defType, scope string) (Handle, error) {
+	handles, err := host.Ensure(ctx, scopeRefForKey(scope), []envhost.Definition{{Name: name, Type: defType}})
 	if err != nil {
 		return nil, err
 	}
@@ -137,6 +141,9 @@ func ensureHostHandle(ctx context.Context, host envhost.Host, name, scope string
 	if !ok {
 		return nil, errUnsettledHandle
 	}
+	// A settling host that records a nil handle also fails this conversion
+	// (intentional stage-1 tightening: pre-carve a nil settle could
+	// propagate, but no production binding can settle (nil, nil) today).
 	resolved, ok := handle.(Handle)
 	if !ok {
 		return nil, errForeignHandleIdentity
@@ -158,6 +165,8 @@ func freshHostHandle(ctx context.Context, host envhost.Host, name, scope string,
 	if err != nil {
 		return nil, err
 	}
+	// A settling host that records a nil handle also fails this conversion
+	// (intentional stage-1 tightening; no production binding settles (nil, nil)).
 	handle, ok := resp.Handle.(Handle)
 	if !ok {
 		return nil, errForeignHandleIdentity
