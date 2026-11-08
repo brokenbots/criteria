@@ -288,9 +288,6 @@ func (m *SessionManager) SetContainerEnvHost(envKey string, host envhost.Host) e
 	if host == nil {
 		return nil
 	}
-	if _, ok := host.(envhost.Host); !ok {
-		return errors.New("container host does not implement envhost.Host")
-	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.setEnvHostForEnvLocked(envKey, host)

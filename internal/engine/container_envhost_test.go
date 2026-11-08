@@ -486,9 +486,6 @@ func TestContainerEnvHostJournalKillFacts(t *testing.T) {
 	if ledger.count() != 1 {
 		t.Fatalf("spawned %d child(ren) at open, want 1", ledger.count())
 	}
-	if n := ledger.count(); n != 1 {
-		t.Fatalf("spawned %d child(ren) at open, want 1", n)
-	}
 
 	warm := g.Steps["warm"]
 	if warm == nil {
