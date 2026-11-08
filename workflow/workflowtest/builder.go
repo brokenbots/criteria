@@ -19,6 +19,10 @@ type PolicyDef struct {
 type AdapterDef struct {
 	Type string
 	Name string
+	// Continuation declares the adapter instance's session fate at
+	// subworkflow boundaries ("reuse" | "fresh"); empty omits the attribute
+	// (undeclared), which defaults to fresh.
+	Continuation string
 }
 
 // OutcomeDef defines a step outcome.
@@ -369,6 +373,13 @@ func (b *WorkflowBuilder) WithAdapter(kind, name string) *WorkflowBuilder {
 	return b
 }
 
+// WithAdapterFate adds an adapter declaration carrying a continuation
+// ("reuse" | "fresh"); empty continuation emits an undeclared adapter block.
+func (b *WorkflowBuilder) WithAdapterFate(kind, name, continuation string) *WorkflowBuilder {
+	b.adapters = append(b.adapters, AdapterDef{Type: kind, Name: name, Continuation: continuation})
+	return b
+}
+
 // WithStep adds a step block.
 func (b *WorkflowBuilder) WithStep(name string, opts ...StepOpt) *WorkflowBuilder {
 	s := StepDef{
@@ -506,7 +517,11 @@ func (b *WorkflowBuilder) Build() string {
 
 	// 3. Adapters
 	for _, a := range b.adapters {
-		sb.WriteString(fmt.Sprintf("adapter %q %q {}\n", a.Type, a.Name))
+		if a.Continuation != "" {
+			sb.WriteString(fmt.Sprintf("adapter %q %q {\n  continuation = %q\n}\n", a.Type, a.Name, a.Continuation))
+		} else {
+			sb.WriteString(fmt.Sprintf("adapter %q %q {}\n", a.Type, a.Name))
+		}
 	}
 	if len(b.adapters) > 0 {
 		sb.WriteString("\n")

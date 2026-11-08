@@ -75,7 +75,7 @@ func compileOneAdapter(g *FSMGraph, ad *AdapterDeclSpec, schemas map[string]Adap
 	effectiveEnv, d := resolveAdapterEnv(g, key, envKey)
 	diags = append(diags, d...)
 
-	continuation, d := resolveAdapterContinuation(key, ad.Continuation, ad)
+	continuation, d := resolveAdapterContinuation(key, ad.Continuation)
 	diags = append(diags, d...)
 
 	adapterConfig, configExprs, d := resolveAdapterConfig(key, ad, schemas, typeName, configEvalCtx)
@@ -174,6 +174,26 @@ func resolveAdapterOnCrash(key, onCrash string) (string, hcl.Diagnostics) {
 		}}
 	}
 	return onCrash, nil
+}
+
+// resolveAdapterContinuation validates the adapter's declared session-fate
+// (ADR-0014 D3): "reuse" keeps the session and its conversation alive across
+// subworkflow body exits via the detach ledger, "fresh" releases it at body
+// exit so a re-entry opens a new conversation. Empty means undeclared; the
+// engine enforces the default (fresh) at subworkflow boundaries, and the
+// re-entry compile rule (compile_continuation.go) requires a declaration for
+// adapter instances both a subworkflow body and its parent graph re-declare.
+func resolveAdapterContinuation(key, continuation string) (string, hcl.Diagnostics) {
+	switch continuation {
+	case "", continuationReuse, continuationFresh:
+		return continuation, nil
+	default:
+		return continuation, hcl.Diagnostics{{
+			Severity: hcl.DiagError,
+			Summary:  fmt.Sprintf("adapter %q: invalid continuation %q", key, continuation),
+			Detail:   "continuation must be \"reuse\" or \"fresh\"",
+		}}
+	}
 }
 
 // resolveAdapterEnv validates the adapter's environment reference against
