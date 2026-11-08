@@ -51,6 +51,11 @@ type childState struct {
 	// for this child, so an exit observed by the watcher before the kill
 	// lands is still classified as peer-initiated (graceful, no crash).
 	killRequested bool
+	// peerInitiated is set when THIS runtime decides the child dies
+	// deliberately outside a Control arm — the host binding's
+	// keepalive-idle kill and a fresh-handle displacement. The watcher
+	// classifies those deaths as intentional (graceful, no crash fact).
+	peerInitiated bool
 	exited        bool
 	lastExit      *criteriav1.ProcessExited
 	lastEventAt   time.Time
@@ -200,6 +205,18 @@ func (r *peerRuntime) childClientFor(name string) (adapterhost.Client, bool) {
 // host-initiated kill is in flight, and the dialing host digest-verifies
 // every identity frame at accept time exactly as it did for the boot spawn.
 func (r *peerRuntime) ensureChild(ctx context.Context, name string) (adapterhost.Client, bool) {
+	c, ok := r.ensureChildHandle(ctx, name)
+	if !ok {
+		return nil, false
+	}
+	return adapterhost.ClientOf(c.handle)
+}
+
+// ensureChildHandle is ensureChild's state-shape twin: the host binding
+// needs the live child state (its raw handle, exit facts, kill bookkeeping)
+// rather than the adapter client, so dial-mode Ensure keeps its client
+// contract by wrapping this.
+func (r *peerRuntime) ensureChildHandle(ctx context.Context, name string) (*childState, bool) {
 	// Serialize respawns per definition name: two dialers racing on the same
 	// dead child must not spawn two processes.
 	if m, _ := r.respawnMu.LoadOrStore(name, &sync.Mutex{}); m != nil {
@@ -221,9 +238,8 @@ func (r *peerRuntime) ensureChild(ctx context.Context, name string) (adapterhost
 			return nil, false
 		}
 		if c.handle != nil && !adapterhost.ProcessExited(c.handle) {
-			client, ok := adapterhost.ClientOf(c.handle)
 			r.mu.Unlock()
-			return client, ok
+			return c, true
 		}
 		// Clean exits respawn (adapter lifecycle choice: copilot idle-exit
 		// exit_code=0/signal=0). A crash — signal death or nonzero code —
@@ -241,20 +257,26 @@ func (r *peerRuntime) ensureChild(ctx context.Context, name string) (adapterhost
 
 	// Lock-free spawn: recordChild/verifyChild/recordSpawn manage r.mu
 	// internally (Boot's spawn loop runs unlocked the same way).
-	c, err := r.spawnChild(ctx, &spec)
+	return r.spawnAndWatch(ctx, &spec)
+}
+
+// spawnAndWatch spawns one child from a spec and starts its exit watcher.
+// The ensure path (dial peers and the in-process container host) and the
+// boot loop share it.
+func (r *peerRuntime) spawnAndWatch(ctx context.Context, spec *childSpec) (*childState, bool) {
+	c, err := r.spawnChild(ctx, spec)
 	if err != nil {
-		r.log.Error("peer child respawn failed", "adapter", name, "error", err)
+		r.log.Error("peer child respawn failed", "adapter", spec.spec.Name, "error", err)
 		return nil, false
 	}
 	if err := r.recordSpawn(c); err != nil {
-		r.log.Error("peer child respawn journal append failed", "adapter", name, "error", err)
+		r.log.Error("peer child respawn journal append failed", "adapter", spec.spec.Name, "error", err)
 	}
 	r.watchWG.Add(1)
 	go r.watchChild(c)
-	client, ok := adapterhost.ClientOf(c.handle)
-	r.log.Info("peer child respawned", "adapter", name,
+	r.log.Info("peer child respawned", "adapter", spec.spec.Name,
 		"binary", spec.spec.Binary, "digest", spec.spec.Digest)
-	return client, ok
+	return c, true
 }
 
 // childSpec is one boot entry: the manifest-derived adapter spec plus the
@@ -264,6 +286,11 @@ type childSpec struct {
 	// scope is the journal attribution scope for the child's process facts;
 	// "" when the child serves a whole scope set (per-scope dial mode).
 	scope string
+	// runner overrides binary discovery: when set, spawnChild hands the
+	// go-plugin RunnerFunc that starts the child (the in-process container
+	// host's container runner or a test injection lane) instead of
+	// resolving the adapter binary under CRITERIA_ADAPTERS.
+	runner ChildRunner
 }
 
 // childSpecs resolves the boot list: the multi-adapter manifest when
@@ -423,6 +450,16 @@ func (r *peerRuntime) recordSpawn(c *childState) error {
 // boot never leaves a half-registered child behind.
 func (r *peerRuntime) spawnChild(ctx context.Context, spec *childSpec) (*childState, error) {
 	s := &spec.spec
+	if spec.runner != nil {
+		// Runner-injected spawn (in-process container host / tests): the
+		// RunnerFunc owns binary+env+identity; discovery is skipped so the
+		// CRITERIA_ADAPTERS lookup cannot leak a wrong-identity binary in.
+		child, err := r.loader.ResolveWithRunnerFunc(ctx, s.Name, spec.runner)
+		if err != nil {
+			return nil, fmt.Errorf("start adapter %q: %w", s.Name, err)
+		}
+		return r.spawnVerified(ctx, spec, child)
+	}
 	// The discovery function pins the loader to the resolved spec binary so
 	// the resolution precedence (manifest → env → PATH → digest preference)
 	// stays in Config.Resolve and ResolveAdapterSpec.
@@ -440,7 +477,11 @@ func (r *peerRuntime) spawnChild(ctx context.Context, spec *childSpec) (*childSt
 	if err != nil {
 		return nil, fmt.Errorf("start adapter %q: %w", s.Name, err)
 	}
+	return r.spawnVerified(ctx, spec, child)
+}
 
+// spawnVerified registers and Info-verifies a freshly started child.
+func (r *peerRuntime) spawnVerified(ctx context.Context, spec *childSpec, child adapterhost.Handle) (*childState, error) {
 	c := r.recordChild(spec, child)
 	if err := r.verifyChild(ctx, spec, c, child); err != nil {
 		return nil, err
@@ -554,7 +595,7 @@ func (r *peerRuntime) recordExit(c *childState, peerInitiated bool) {
 		return
 	}
 	c.exited = true
-	graceful := peerInitiated || r.shuttingDown || c.killRequested
+	graceful := peerInitiated || c.peerInitiated || r.shuttingDown || c.killRequested
 	idleMS := uint64(0)
 	if !c.lastEventAt.IsZero() {
 		idleMS = uint64(time.Since(c.lastEventAt).Milliseconds())

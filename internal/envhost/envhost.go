@@ -155,6 +155,15 @@ const (
 	JournalDetached JournalKind = "detached"
 	// JournalReleased: an engagement released with tombstone semantics.
 	JournalReleased JournalKind = "released"
+	// JournalSpawned: a child process was spawned for the definition
+	// (process supervision truth; the in-process container host's spawn
+	// journal).
+	JournalSpawned JournalKind = "spawned"
+	// JournalExited: a child process exited with its wait status.
+	JournalExited JournalKind = "exited"
+	// JournalCrashClassified: an unexpected exit was classified into a
+	// stable crash reason.
+	JournalCrashClassified JournalKind = "crash_classified"
 )
 
 // JournalEntry is one supervision-truth record for a scope's engagement of
