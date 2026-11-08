@@ -174,19 +174,31 @@ func (c *Config) ManifestMode() bool { return len(c.Adapters) > 0 }
 // MultiChild reports whether the peer hosts more than one adapter child.
 func (c *Config) MultiChild() bool { return len(c.Adapters) > 1 }
 
+// ChildKeepAlive parses a CRITERIA_PEER_CHILD_KEEPALIVE value: surrounding
+// whitespace is trimmed, unset or empty keeps the default true, and a
+// non-boolean value is an error naming the variable. The single parser
+// behind both the peer Config tunables path and the engine's container-lane
+// consumer, so both accept exactly the same value shape.
+func ChildKeepAlive(raw string) (bool, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return true, nil
+	}
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("%s must be a boolean, got %q", EnvChildKeepAlive, raw)
+	}
+	return v, nil
+}
+
 // parseTunables reads and validates the parsed peer tunables: child
 // keepalive, journal limit, and backoff bounds.
 func (c *Config) parseTunables(getenv func(string) string) error {
-	keepAlive := strings.TrimSpace(getenv(EnvChildKeepAlive))
-	if keepAlive == "" {
-		c.ChildKeepAlive = true
-	} else {
-		v, err := strconv.ParseBool(keepAlive)
-		if err != nil {
-			return fmt.Errorf("%s must be a boolean, got %q", EnvChildKeepAlive, keepAlive)
-		}
-		c.ChildKeepAlive = v
+	keepAlive, err := ChildKeepAlive(getenv(EnvChildKeepAlive))
+	if err != nil {
+		return err
 	}
+	c.ChildKeepAlive = keepAlive
 
 	c.JournalLimit = DefaultJournalLimit
 	if raw := strings.TrimSpace(getenv(EnvJournalLimit)); raw != "" {
@@ -200,7 +212,6 @@ func (c *Config) parseTunables(getenv func(string) string) error {
 		c.JournalLimit = v
 	}
 
-	var err error
 	c.BackoffMin, err = parseBackoff(getenv, EnvBackoffMin, DefaultBackoffMin)
 	if err != nil {
 		return err

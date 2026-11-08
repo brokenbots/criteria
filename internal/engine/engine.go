@@ -1841,18 +1841,15 @@ func (e *Engine) maybeStartContainerEnvHosts(sessions *adapterhost.SessionManage
 }
 
 // containerChildKeepAlive resolves CRITERIA_PEER_CHILD_KEEPALIVE for a
-// container environment: unset keeps the peer machinery's default (true);
-// a set-but-unparseable value fails run init instead of silently flipping
+// container environment through the peer package's single parser (same
+// trim/empty/error semantics as the peer's own tunables path); a
+// set-but-unparseable value fails run init instead of silently flipping
 // the supervision policy.
 func containerChildKeepAlive(envName string) (bool, error) {
-	raw := envreg.CRITERIAPeerChildKeepalive.StringOr("")
-	if raw == "" {
-		return true, nil
-	}
-	keepalive, err := strconv.ParseBool(raw)
+	keepalive, err := peer.ChildKeepAlive(envreg.CRITERIAPeerChildKeepalive.StringOr(""))
 	if err != nil {
-		return false, fmt.Errorf("container environment %q: invalid %s %q: %w",
-			envName, envreg.CRITERIAPeerChildKeepalive.Env(), raw, err)
+		return false, fmt.Errorf("container environment %q: invalid %s: %w",
+			envName, envreg.CRITERIAPeerChildKeepalive.Env(), err)
 	}
 	return keepalive, nil
 }

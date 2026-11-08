@@ -341,6 +341,19 @@ func TestContainerChildKeepAlivePolicy(t *testing.T) {
 			t.Fatal("unset: keepalive = false, want true")
 		}
 	})
+	t.Run("whitespace-only-trims-to-default", func(t *testing.T) {
+		// The shared parser trims surrounding whitespace, so a value of "
+		// " keeps the default — the peer's own tunables path behaves
+		// identically.
+		t.Setenv("CRITERIA_PEER_CHILD_KEEPALIVE", " ")
+		keepalive, err := containerChildKeepAlive("env1")
+		if err != nil {
+			t.Fatalf("whitespace-only: %v", err)
+		}
+		if !keepalive {
+			t.Fatal("whitespace-only: keepalive = false, want true")
+		}
+	})
 	t.Run("disabled", func(t *testing.T) {
 		t.Setenv("CRITERIA_PEER_CHILD_KEEPALIVE", "0")
 		keepalive, err := containerChildKeepAlive("env1")
