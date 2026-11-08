@@ -444,6 +444,12 @@ func TestServer_ControlIdleReapDeclaredWindow(t *testing.T) {
 		t.Fatalf("declared window = %v (ok=%v), want 45s", window, ok)
 	}
 
+	// The declaration is scoped to the addressed child: another child
+	// carries no declared policy.
+	if window, ok := f.rt.idleReapWindow("other"); ok {
+		t.Fatalf("undeclared child carries a policy: %v", window)
+	}
+
 	// Re-declare overwrites the window.
 	if _, err := f.server.Control(f.ctx, &criteriav1.ControlRequest{
 		AdapterType: "fakex",
@@ -595,7 +601,7 @@ func newRespawnControlFixture(t *testing.T) *respawnControlFixture {
 func (f *respawnControlFixture) killChildWithSignal(t *testing.T) int {
 	t.Helper()
 	oldPid := f.liveChildPID(t)
-	if err := syscall.Kill(int(oldPid), syscall.SIGKILL); err != nil {
+	if err := syscall.Kill(oldPid, syscall.SIGKILL); err != nil {
 		t.Fatalf("kill child: %v", err)
 	}
 	for i := 0; i < 300; i++ {
@@ -621,5 +627,5 @@ func (f *respawnControlFixture) liveChildPID(t *testing.T) int {
 		return 0
 	}
 	pid, _ := adapterhost.ProcessPID(c.handle)
-	return int(pid)
+	return pid
 }

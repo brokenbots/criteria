@@ -723,6 +723,14 @@ func (r *peerRuntime) Control(ctx context.Context, req *criteriav1.ControlReques
 	if idle := req.GetIdleReap(); idle != nil {
 		return r.controlIdleReap(req, idle)
 	}
+	return r.controlKillChild(req)
+}
+
+// controlKillChild executes Control kill_child (ADR-0008): an empty
+// adapter_type addresses the primary child (legacy single-adapter hosts).
+// The mark-before-decree ordering keeps an exit the watcher observes
+// before the kill lands peer-initiated (graceful, no crash fact).
+func (r *peerRuntime) controlKillChild(req *criteriav1.ControlRequest) *criteriav1.ControlResponse {
 	name := req.GetAdapterType()
 	r.mu.Lock()
 	if name == "" {
@@ -756,23 +764,26 @@ func (r *peerRuntime) Control(ctx context.Context, req *criteriav1.ControlReques
 	handle := c.handle
 	r.mu.Unlock()
 
-	go func() {
-		timer := time.NewTimer(grace)
-		defer timer.Stop()
-		// The grace wait is detached from the Control RPC: the kill was
-		// acknowledged and must still land even if the host stream ends
-		// first. Peer shutdown (stopWatch closed) kills promptly.
-		select {
-		case <-timer.C:
-		case <-r.stopWatch:
-		}
-		if !adapterhost.ProcessExited(handle) {
-			handle.Kill()
-		}
-		// The exit fact is journaled by the watcher (killRequested keeps it
-		// graceful); during shutdown, Shutdown's own recordExit covers it.
-	}()
+	go r.killAfterGrace(handle, grace)
 	return &criteriav1.ControlResponse{Accepted: true, Detail: fmt.Sprintf("kill scheduled after %s grace", grace)}
+}
+
+// killAfterGrace waits out the declared grace and kills the child unless it
+// already exited. The grace wait is detached from the Control RPC: the kill
+// was acknowledged and must still land even if the host stream ends first.
+// Peer shutdown (stopWatch closed) kills promptly.
+func (r *peerRuntime) killAfterGrace(handle adapterhost.Handle, grace time.Duration) {
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-r.stopWatch:
+	}
+	if !adapterhost.ProcessExited(handle) {
+		handle.Kill()
+	}
+	// The exit fact is journaled by the watcher (killRequested keeps it
+	// graceful); during shutdown, Shutdown's own recordExit covers it.
 }
 
 // serveOpened counts the live phone-home conn serving each named child.

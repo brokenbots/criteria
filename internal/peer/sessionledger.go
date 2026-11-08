@@ -200,20 +200,8 @@ func (r *peerRuntime) controlRespawnChild(ctx context.Context, req *criteriav1.C
 	live := c != nil && c.handle != nil && !adapterhost.ProcessExited(c.handle)
 	r.mu.Unlock()
 
-	if c == nil && specOK && !shuttingDown {
-		// A hosted definition whose first spawn never landed (or whose
-		// failed verify deregistered it): the manifest still addresses a
-		// child — booting it is the respawn.
-		if r.displaceAndRespawn(ctx, name, &spec) == nil {
-			return &criteriav1.ControlResponse{Accepted: true, Detail: fmt.Sprintf("respawned %q", name)}
-		}
-		return &criteriav1.ControlResponse{Accepted: false, Detail: fmt.Sprintf("adapter %q spawn failed (see peer log)", name)}
-	}
 	if c == nil {
-		if req.GetAdapterType() == "" {
-			return &criteriav1.ControlResponse{Accepted: false, Detail: "no live adapter child"}
-		}
-		return &criteriav1.ControlResponse{Accepted: false, Detail: fmt.Sprintf("no adapter child %q", name)}
+		return r.respawnWithoutChild(ctx, req, name, &spec, specOK, shuttingDown)
 	}
 	if shuttingDown || !specOK {
 		return &criteriav1.ControlResponse{Accepted: false, Detail: fmt.Sprintf("no boot spec for %q: respawn impossible", name)}
@@ -223,28 +211,54 @@ func (r *peerRuntime) controlRespawnChild(ctx context.Context, req *criteriav1.C
 	}
 	if live {
 		grace := time.Duration(respawn.GetPolicyGraceMs()) * time.Millisecond
-		// The displacement is detached from the answering RPC (kill_child
-		// precedent); accepted=true speaks for the decree, not the new pid.
-		// Peer shutdown stops the displacement prompt: Shutdown kills the
-		// children itself and respawns nothing.
-		go func() {
-			timer := time.NewTimer(grace)
-			defer timer.Stop()
-			select {
-			case <-timer.C:
-			case <-r.stopWatch:
-				return
-			}
-			if err := r.displaceAndRespawn(context.WithoutCancel(ctx), name, &spec); err != nil {
-				r.log.Error("peer child displacement failed", "adapter", name, "error", err)
-			}
-		}()
+		// The displacement is detached from the answering RPC
+		// (kill_child precedent); accepted=true speaks for the decree,
+		// not the new pid.
+		go r.displaceAfterPolicyGrace(ctx, name, &spec, grace)
 		return &criteriav1.ControlResponse{Accepted: true, Detail: fmt.Sprintf("respawning %q after %s policy grace", name, grace)}
 	}
 	if err := r.displaceAndRespawn(ctx, name, &spec); err != nil {
 		return &criteriav1.ControlResponse{Accepted: false, Detail: fmt.Sprintf("adapter %q: %v", name, err)}
 	}
 	return &criteriav1.ControlResponse{Accepted: true, Detail: fmt.Sprintf("respawned %q", name)}
+}
+
+// respawnWithoutChild answers a respawn addressing a child the runtime has
+// no live record for. The first branch precedes the generic rejection: a
+// hosted definition whose first spawn never landed (or whose failed verify
+// deregistered it) still has a manifest addressing a child — booting it is
+// the respawn. Anything else (no boot spec, or the peer is shutting down)
+// is the honest missing-child rejection.
+func (r *peerRuntime) respawnWithoutChild(ctx context.Context, req *criteriav1.ControlRequest, name string, spec *childSpec, specOK, shuttingDown bool) *criteriav1.ControlResponse {
+	if specOK && !shuttingDown {
+		if r.displaceAndRespawn(ctx, name, spec) == nil {
+			return &criteriav1.ControlResponse{Accepted: true, Detail: fmt.Sprintf("respawned %q", name)}
+		}
+		return &criteriav1.ControlResponse{Accepted: false, Detail: fmt.Sprintf("adapter %q spawn failed (see peer log)", name)}
+	}
+	if req.GetAdapterType() == "" {
+		return &criteriav1.ControlResponse{Accepted: false, Detail: "no live adapter child"}
+	}
+	return &criteriav1.ControlResponse{Accepted: false, Detail: fmt.Sprintf("no adapter child %q", name)}
+}
+
+// displaceAfterPolicyGrace runs the live-generation displacement after the
+// declared policy grace. The wait is detached from the answering RPC
+// (kill_child precedent): the displacement must land even if the host
+// stream ends mid-grace — the WithoutCancel context keeps it running past
+// the answering call. Peer shutdown stops the displacement prompt:
+// Shutdown kills the children itself and respawns nothing.
+func (r *peerRuntime) displaceAfterPolicyGrace(ctx context.Context, name string, spec *childSpec, grace time.Duration) {
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-r.stopWatch:
+		return
+	}
+	if err := r.displaceAndRespawn(context.WithoutCancel(ctx), name, spec); err != nil {
+		r.log.Error("peer child displacement failed", "adapter", name, "error", err)
+	}
 }
 
 // displaceAndRespawn replaces the addressed generation with a fresh spawn
