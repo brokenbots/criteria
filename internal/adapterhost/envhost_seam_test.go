@@ -107,7 +107,7 @@ func TestEnvhostSeam_BoundHostServesScopeAndKillKnobs(t *testing.T) {
 	m.SetRemoteShimForEnv("remote.beta", beta)
 	m.SetEnvHostForEnv("remote.alpha", spy)
 
-	if err := m.RegisterRemoteScopeForEnv("remote.alpha", "scope-a/1", "tok-a"); err != nil {
+	if err := m.RegisterRemoteScopeForEnv(context.Background(), "remote.alpha", "scope-a/1", "tok-a"); err != nil {
 		t.Fatalf("RegisterRemoteScopeForEnv(alpha): %v", err)
 	}
 	ctrl := spy.controls()
@@ -121,7 +121,7 @@ func TestEnvhostSeam_BoundHostServesScopeAndKillKnobs(t *testing.T) {
 		t.Errorf("beta scope calls = %v, want none", got)
 	}
 
-	if err := m.UnregisterRemoteScopeForEnv("remote.alpha", "scope-a/1"); err != nil {
+	if err := m.UnregisterRemoteScopeForEnv(context.Background(), "remote.alpha", "scope-a/1"); err != nil {
 		t.Fatalf("UnregisterRemoteScopeForEnv(alpha): %v", err)
 	}
 	if err := m.CloseRemoteHandleForEnv(context.Background(), "remote.alpha", "noop.alpha", "scope-a/1"); err != nil {
@@ -150,7 +150,7 @@ func TestEnvhostSeam_BoundHostServesScopeAndKillKnobs(t *testing.T) {
 	}
 
 	// The unbound environment keeps its shim behavior unchanged.
-	if err := m.RegisterRemoteScopeForEnv("remote.beta", "scope-b/1", "tok-b"); err != nil {
+	if err := m.RegisterRemoteScopeForEnv(context.Background(), "remote.beta", "scope-b/1", "tok-b"); err != nil {
 		t.Fatalf("RegisterRemoteScopeForEnv(beta): %v", err)
 	}
 	if got := beta.scopeToken("scope-b/1"); got != "tok-b" {
@@ -166,13 +166,13 @@ func TestEnvhostSeam_ShimOnlyEnvsRouteThroughShimAdapter(t *testing.T) {
 	m.SetEnvHostForEnv("remote.beta", &seamSpyHost{}) // decoy for the other env
 	m.SetRemoteShimForEnv("remote.alpha", alpha)
 
-	if err := m.RegisterRemoteScopeForEnv("remote.alpha", "scope-a/1", "tok-a"); err != nil {
+	if err := m.RegisterRemoteScopeForEnv(context.Background(), "remote.alpha", "scope-a/1", "tok-a"); err != nil {
 		t.Fatalf("RegisterRemoteScopeForEnv(alpha): %v", err)
 	}
 	if got := alpha.scopeToken("scope-a/1"); got != "tok-a" {
 		t.Errorf("alpha scope token = %q, want tok-a", got)
 	}
-	if err := m.UnregisterRemoteScopeForEnv("remote.alpha", "scope-a/1"); err != nil {
+	if err := m.UnregisterRemoteScopeForEnv(context.Background(), "remote.alpha", "scope-a/1"); err != nil {
 		t.Fatalf("UnregisterRemoteScopeForEnv(alpha): %v", err)
 	}
 	if got := alpha.unregisterCalls(); len(got) != 1 || got[0] != "scope-a/1" {
@@ -191,7 +191,7 @@ func TestEnvhostSeam_ShimOnlyEnvsRouteThroughShimAdapter(t *testing.T) {
 	// An environment with neither a dedicated entry nor its own shim lane
 	// falls back to the default shim (the latest registration) — the
 	// pre-carve fallback every legacy caller relies on.
-	if err := m.RegisterRemoteScopeForEnv("remote.missing", "scope-c/1", "tok-c"); err != nil {
+	if err := m.RegisterRemoteScopeForEnv(context.Background(), "remote.missing", "scope-c/1", "tok-c"); err != nil {
 		t.Fatalf("RegisterRemoteScopeForEnv(missing) fallback: %v", err)
 	}
 	if got := alpha.scopeToken("scope-c/1"); got != "tok-c" {
@@ -203,7 +203,7 @@ func TestEnvhostSeam_ShimOnlyEnvsRouteThroughShimAdapter(t *testing.T) {
 	errMsg := "no remote shim registered"
 	empty := NewSessionManager(&cri269Loader{})
 	empty.SetGraph(cri293TwoEnvGraph())
-	if got := empty.RegisterRemoteScopeForEnv("remote.missing", "scope-c/1", "tok-c"); got == nil || got.Error() != errMsg {
+	if got := empty.RegisterRemoteScopeForEnv(context.Background(), "remote.missing", "scope-c/1", "tok-c"); got == nil || got.Error() != errMsg {
 		t.Errorf("RegisterRemoteScopeForEnv without any shim = %v, want %q", got, errMsg)
 	}
 	if got := empty.CloseRemoteHandleForEnv(context.Background(), "remote.missing", "noop.alpha", "scope-c/1"); got != nil {
@@ -222,10 +222,10 @@ func TestEnvhostSeam_KnobControlErrorsPropagate(t *testing.T) {
 	spy := &seamSpyHost{controlErr: ctrlErr}
 	m.SetEnvHostForEnv("remote.alpha", spy)
 
-	if err := m.RegisterRemoteScopeForEnv("remote.alpha", "scope-a/1", "tok-a"); !errors.Is(err, ctrlErr) {
+	if err := m.RegisterRemoteScopeForEnv(context.Background(), "remote.alpha", "scope-a/1", "tok-a"); !errors.Is(err, ctrlErr) {
 		t.Errorf("RegisterRemoteScopeForEnv error = %v, want verbatim control error", err)
 	}
-	if err := m.UnregisterRemoteScopeForEnv("remote.alpha", "scope-a/1"); !errors.Is(err, ctrlErr) {
+	if err := m.UnregisterRemoteScopeForEnv(context.Background(), "remote.alpha", "scope-a/1"); !errors.Is(err, ctrlErr) {
 		t.Errorf("UnregisterRemoteScopeForEnv error = %v, want verbatim control error", err)
 	}
 	if err := m.CloseRemoteHandleForEnv(context.Background(), "remote.alpha", "noop.alpha", "scope-a/1"); !errors.Is(err, ctrlErr) {
@@ -308,7 +308,7 @@ func TestEnvhostSeam_BindingPrecedence(t *testing.T) {
 	if got := m2.RemoteListenAddrForEnv("remote.alpha"); got != "127.0.0.1:9003" {
 		t.Errorf("re-shadowed shim must win: got %q, want 127.0.0.1:9003", got)
 	}
-	if err := m2.RegisterRemoteScopeForEnv("remote.alpha", "scope-b/1", "tok-b"); err != nil {
+	if err := m2.RegisterRemoteScopeForEnv(context.Background(), "remote.alpha", "scope-b/1", "tok-b"); err != nil {
 		t.Fatalf("RegisterRemoteScopeForEnv after re-shadow: %v", err)
 	}
 	if got := alpha2.scopeToken("scope-b/1"); got != "tok-b" {
@@ -329,7 +329,7 @@ func TestEnvhostSeam_BorrowCarriesBoundHosts(t *testing.T) {
 	dst.SetGraph(cri293TwoEnvGraph())
 	dst.BorrowRemoteProvisioningFrom(src)
 
-	if err := dst.RegisterRemoteScopeForEnv("remote.alpha", "scope-a/1", "tok-a"); err != nil {
+	if err := dst.RegisterRemoteScopeForEnv(context.Background(), "remote.alpha", "scope-a/1", "tok-a"); err != nil {
 		t.Fatalf("RegisterRemoteScopeForEnv on borrower: %v", err)
 	}
 	ctrl := spy.controls()

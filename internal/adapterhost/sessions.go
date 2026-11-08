@@ -954,14 +954,14 @@ func (m *SessionManager) RemoteListenAddr() string {
 // RegisterRemoteScopeForEnv registers a rotated accept token for the given
 // scope with the host serving envKey. It returns an error when no
 // host is registered for the environment.
-func (m *SessionManager) RegisterRemoteScopeForEnv(envKey, scope, token string) error {
+func (m *SessionManager) RegisterRemoteScopeForEnv(ctx context.Context, envKey, scope, token string) error {
 	m.mu.Lock()
 	host := m.envHostForEnvLocked(envKey)
 	m.mu.Unlock()
 	if host == nil {
 		return errors.New("no remote shim registered")
 	}
-	_, err := host.Control(context.Background(), envhost.ControlRequest{
+	_, err := host.Control(ctx, envhost.ControlRequest{
 		Scope: scopeRefForKey(scope),
 		Kind:  envhost.ControlRegisterScope,
 		Token: token,
@@ -971,14 +971,14 @@ func (m *SessionManager) RegisterRemoteScopeForEnv(envKey, scope, token string) 
 
 // UnregisterRemoteScopeForEnv removes a scope's accept token from the host
 // serving envKey so it rejects future reconnects with the old token.
-func (m *SessionManager) UnregisterRemoteScopeForEnv(envKey, scope string) error {
+func (m *SessionManager) UnregisterRemoteScopeForEnv(ctx context.Context, envKey, scope string) error {
 	m.mu.Lock()
 	host := m.envHostForEnvLocked(envKey)
 	m.mu.Unlock()
 	if host == nil {
 		return errors.New("no remote shim registered")
 	}
-	_, err := host.Control(context.Background(), envhost.ControlRequest{
+	_, err := host.Control(ctx, envhost.ControlRequest{
 		Scope: scopeRefForKey(scope),
 		Kind:  envhost.ControlUnregisterScope,
 	})

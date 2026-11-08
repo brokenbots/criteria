@@ -192,10 +192,10 @@ func TestSessions_CRI293_PerEnvScopeRegistration(t *testing.T) {
 	m.SetRemoteShimForEnv("remote.alpha", alpha)
 	m.SetRemoteShimForEnv("remote.beta", beta)
 
-	if err := m.RegisterRemoteScopeForEnv("remote.alpha", "scope-a/1", "tok-a"); err != nil {
+	if err := m.RegisterRemoteScopeForEnv(context.Background(), "remote.alpha", "scope-a/1", "tok-a"); err != nil {
 		t.Fatalf("RegisterRemoteScopeForEnv(alpha): %v", err)
 	}
-	if err := m.RegisterRemoteScopeForEnv("remote.beta", "scope-b/1", "tok-b"); err != nil {
+	if err := m.RegisterRemoteScopeForEnv(context.Background(), "remote.beta", "scope-b/1", "tok-b"); err != nil {
 		t.Fatalf("RegisterRemoteScopeForEnv(beta): %v", err)
 	}
 	if got := alpha.scopeToken("scope-a/1"); got != "tok-a" {
@@ -204,7 +204,7 @@ func TestSessions_CRI293_PerEnvScopeRegistration(t *testing.T) {
 	if got := beta.scopeToken("scope-b/1"); got != "tok-b" {
 		t.Errorf("beta scope token = %q, want tok-b", got)
 	}
-	if err := m.UnregisterRemoteScopeForEnv("remote.beta", "scope-b/1"); err != nil {
+	if err := m.UnregisterRemoteScopeForEnv(context.Background(), "remote.beta", "scope-b/1"); err != nil {
 		t.Fatalf("UnregisterRemoteScopeForEnv(beta): %v", err)
 	}
 	if got := beta.unregisterCalls(); len(got) != 1 || got[0] != "scope-b/1" {
@@ -224,7 +224,7 @@ func TestSessions_CRI293_PerEnvScopeRegistration(t *testing.T) {
 	// An environment without a dedicated shim falls back to the default
 	// shim (the latest registration) — that is the legacy single-shim
 	// behavior every pre-CRI-293 caller relies on.
-	if got := m.RegisterRemoteScopeForEnv("remote.gamma", "scope-c/1", "tok-c"); got != nil {
+	if got := m.RegisterRemoteScopeForEnv(context.Background(), "remote.gamma", "scope-c/1", "tok-c"); got != nil {
 		t.Errorf("RegisterRemoteScopeForEnv(gamma) fallback: %v", got)
 	}
 }

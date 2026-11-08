@@ -563,7 +563,7 @@ func TestRotateFreshRemoteScope_RegistersScopeBeforeTokenFileVisible(t *testing.
 	deps := Deps{Sessions: sessions, Sink: sink}
 
 	adapter := g.Adapters[g.AdapterOrder[0]]
-	scopeKey, err := maybeRotateRemoteScope(deps, rlc, g, adapter, g.AdapterOrder[0], "")
+	scopeKey, err := maybeRotateRemoteScope(context.Background(), deps, rlc, g, adapter, g.AdapterOrder[0], "")
 	if err != nil {
 		t.Fatalf("maybeRotateRemoteScope: %v", err)
 	}
@@ -619,7 +619,7 @@ func TestRotateFreshRemoteScope_PersistFailure_UnregistersScope(t *testing.T) {
 		t.Fatalf("seed record blocker: %v", err)
 	}
 
-	_, err := maybeRotateRemoteScope(deps, rlc, g, adapter, g.AdapterOrder[0], "")
+	_, err := maybeRotateRemoteScope(context.Background(), deps, rlc, g, adapter, g.AdapterOrder[0], "")
 	if err == nil {
 		t.Fatal("expected rotation to fail on the blocked record write")
 	}
