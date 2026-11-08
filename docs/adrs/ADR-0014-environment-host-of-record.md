@@ -163,6 +163,11 @@ supervise/journal machinery (it is conn-agnostic: `adapterJournal`,
 `Replay(cursor)`, `CrashClassified` are process-local types today). Local
 container sessions stop using string heuristics.
 
+One operator consequence of the supervisor shape: `InProcessHost.Kill()`
+ends the session only and never kills the child process, so a hung
+container step has no process-level abort; the child is reaped at host
+shutdown, at a Control kill, or by crashing.
+
 Stage 3 — shell/sandbox onto the degenerate host; delete the six knob surfaces,
 the adapter caches, `deferredPerScopeRemoteAdapters`, `BorrowRemoteProvisioningFrom`,
 `deriveSibling` (iterations reference the same host with their own scope keys —

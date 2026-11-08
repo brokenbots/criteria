@@ -153,6 +153,14 @@ type SessionManager struct {
 	// pre-carve, so behavior is unchanged.
 	envHostsByEnv map[string]envhost.Host
 
+	// envHostsBorrowed is set when this SessionManager's bound envhost
+	// hosts were borrowed from a parent SM (BorrowRemoteProvisioningFrom).
+	// Parallel subworkflow iterations share the parent's supervisor hosts
+	// exactly like its shims: the hosts own long-lived child processes the
+	// sibling iterations must keep using, so the borrower must not
+	// StopEnvHost them at its own shutdown — the owning parent does.
+	envHostsBorrowed bool
+
 	// LifecycleSink receives adapter provisioning events. When a verified-only
 	// adapter is promoted to a bound session, "opened" is emitted through this
 	// sink so lifecycle observers see the event at the correct phase-2 moment.
@@ -476,7 +484,10 @@ func (m *SessionManager) BorrowRemoteProvisioningFrom(src *SessionManager) {
 		m.remoteShimsByEnv = mergeMapInto(m.remoteShimsByEnv, byEnv)
 		m.remoteShimsBorrowed = true
 	}
-	m.envHostsByEnv = mergeMapInto(m.envHostsByEnv, envHosts)
+	if len(envHosts) > 0 {
+		m.envHostsByEnv = mergeMapInto(m.envHostsByEnv, envHosts)
+		m.envHostsBorrowed = true
+	}
 	m.graphAdapters = mergeMapInto(m.graphAdapters, graphAdapters)
 	m.adapterDirs = mergeMapInto(m.adapterDirs, adapterDirs)
 	m.deferredRemoteAdapters = mergeMapInto(m.deferredRemoteAdapters, deferred)
@@ -2731,9 +2742,18 @@ func (m *SessionManager) registerSensitiveOutputs(result adapter.Result, step *w
 // a dead process is the most precise diagnosis, and the message heuristics
 // distinguish the transport failure shapes the go-plugin/gRPC stack produces
 // (legacy runners and peers without a Supervise stream).
-func classifySessionCrash(sess *Session, execErr error) string {
+func classifySessionCrash(ctx context.Context, sess *Session, execErr error) string {
 	if sess != nil {
 		if reason, ok := SupervisionCrashReason(sess.handle); ok {
+			return reason
+		}
+		// The in-process supervisor's journal carries the exit fact a
+		// moment after the failed execute observed transport death (the
+		// child client flips its process-exited flag strictly after the
+		// transport fails). A settled query bridges that flip window so a
+		// kill mid-Execute classifies from the journal instead of falling
+		// through to the transport-string heuristics below.
+		if reason, ok := SettledSupervisionCrashReason(ctx, sess.handle, tunables.DefaultCrashCloseSettle); ok {
 			return reason
 		}
 		if ProcessExited(sess.handle) {
@@ -2791,7 +2811,7 @@ func idleStringOrEmpty(sess *Session) string {
 }
 
 func (m *SessionManager) handleCrash(ctx context.Context, name string, step *workflow.StepNode, sink adapter.EventSink, sess *Session, execErr error, rejection *v2.ExecutionRejection) (adapter.Result, error) {
-	reason := classifySessionCrash(sess, execErr)
+	reason := classifySessionCrash(ctx, sess, execErr)
 	sess.crashed.Store(true)
 	slog.Warn("adapter session crashed",
 		append([]any{"session", sess.Name, "adapter", sess.Adapter, "error", execErr}, sess.crashDiagnostics(reason)...)...)
@@ -2809,15 +2829,19 @@ func (m *SessionManager) handleCrash(ctx context.Context, name string, step *wor
 	// session is the peer-pod recreate window — the recreated pod re-dials the
 	// same session key seconds later, so instead of failing the in-flight step
 	// the session re-enters the wait through the respawn machinery (identical
-	// to OnCrashRespawn). WaitForFreshHandle excludes the just-dead handle, so
+	// to OnCrashRespawn). The implicit arm keys on the REMOTE-only
+	// resolution (remoteEnvHostForAdapter): a bound remote host
+	// participates, and a container-bound adapter does not — a container
+	// session has no pod to recreate, so its transport closes follow the
+	// declared on_crash policy (the default fails the step with no respawn).
+	// WaitForFreshHandle excludes the just-dead handle, so
 	// it resolves the recreated pod's fresh dial, and any failure along the
 	// way stays fail-closed via that arm's own failResult path. ctx.Err()
 	// guards run-level cancellation: a cancelled step must not re-enter.
-	// Local (in-host) sessions keep the session-crash semantics. on_crash=
-	// abort_run is consulted first and keeps its hard-fail arm.
+	// on_crash=abort_run is consulted first and keeps its hard-fail arm.
 	remoteRetry := false
 	if onCrash != OnCrashAbortRun && reason == CrashReasonTransportClosed && ctx.Err() == nil {
-		_, remoteRetry = m.envHostForAdapter(sess.Name)
+		_, remoteRetry = m.remoteEnvHostForAdapter(sess.Name)
 	}
 
 	switch {
@@ -2840,11 +2864,11 @@ func (m *SessionManager) handleCrash(ctx context.Context, name string, step *wor
 			"idle_since_last_event": idleStringOrEmpty(sess),
 		})
 		if respawnErr := m.respawn(ctx, sess); respawnErr != nil {
-			return m.failResult(sink, sess, fmt.Errorf("respawn after crash failed: %w (original crash: %w)", respawnErr, execErr))
+			return m.failResult(ctx, sink, sess, fmt.Errorf("respawn after crash failed: %w (original crash: %w)", respawnErr, execErr))
 		}
 		return m.retryAfterRespawn(ctx, name, step, sink, sess, rejection)
 	default:
-		return m.failResult(sink, sess, execErr)
+		return m.failResult(ctx, sink, sess, execErr)
 	}
 }
 
@@ -2877,7 +2901,7 @@ func (m *SessionManager) retryAfterRespawn(ctx context.Context, name string, ste
 	if errors.As(retryErr, &invErr) {
 		return adapter.Result{}, invErr
 	}
-	return m.failResult(sink, sess, retryErr)
+	return m.failResult(ctx, sink, sess, retryErr)
 }
 
 // lookupOrBind returns the session for name, binding a verified-only adapter
@@ -3174,7 +3198,7 @@ func (m *SessionManager) executeError(ctx context.Context, name string, step *wo
 		!sess.closing.Load() &&
 		(!ProcessExited(sess.handle) || isPeerSupervised(sess.handle)) {
 		slog.Warn("adapter transport closed during engine-initiated step-timeout teardown; routing as timeout, not crash",
-			append([]any{"session", sess.Name, "adapter", sess.Adapter}, sess.crashDiagnostics(classifySessionCrash(sess, execErr))...)...)
+			append([]any{"session", sess.Name, "adapter", sess.Adapter}, sess.crashDiagnostics(classifySessionCrash(ctx, sess, execErr))...)...)
 		return result, execErr
 	}
 
@@ -3497,8 +3521,8 @@ func (m *SessionManager) AdapterHandle(name string) (Handle, bool) {
 }
 
 func (m *SessionManager) Shutdown(ctx context.Context) error {
-	shims, sessions := m.takeForShutdown()
-	errs := make([]error, 0, len(shims)+len(sessions)+1)
+	shims, hosts, sessions := m.takeForShutdown()
+	errs := make([]error, 0, len(shims)+len(hosts)+len(sessions)+1)
 	// Stop every phone-home shim first so no new adapter connections are
 	// accepted during teardown, pending handle waiters are woken with an
 	// error, and no shim accept goroutine outlives the run (one
@@ -3506,6 +3530,15 @@ func (m *SessionManager) Shutdown(ctx context.Context) error {
 	for _, shim := range shims {
 		if err := shim.Stop(ctx); err != nil {
 			errs = append(errs, err)
+		}
+	}
+	// Stop every owned supervisor host before closing sessions: a container
+	// host's kill is what terminates its children, so stopping first means
+	// session close sees process-death facts instead of racing live
+	// children. (Borrowed hosts were never collected.)
+	for _, host := range hosts {
+		if stopper, ok := host.(EnvHostStopper); ok {
+			stopper.StopEnvHost(ctx)
 		}
 	}
 	for _, sess := range sessions {
@@ -3524,12 +3557,13 @@ func (m *SessionManager) Shutdown(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// takeForShutdown atomically collects every registered remote shim and
-// snapshots+clears the sessions and verification records under the lock.
-// The default shim usually aliases one environment's shim; duplicates are
-// kept because RemoteShim implementations cannot be assumed comparable and
-// Shim.Stop is idempotent, so a second Stop is a no-op.
-func (m *SessionManager) takeForShutdown() ([]RemoteShim, []*Session) {
+// takeForShutdown atomically collects every registered remote shim, every
+// non-borrowed supervisor host, and snapshots+clears the sessions and
+// verification records under the lock. The default shim usually aliases
+// one environment's shim; duplicates are kept because RemoteShim
+// implementations cannot be assumed comparable and Shim.Stop is
+// idempotent, so a second Stop is a no-op.
+func (m *SessionManager) takeForShutdown() ([]RemoteShim, []envhost.Host, []*Session) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	shims := make([]RemoteShim, 0, len(m.remoteShimsByEnv)+1)
@@ -3545,6 +3579,17 @@ func (m *SessionManager) takeForShutdown() ([]RemoteShim, []*Session) {
 			shims = append(shims, s)
 		}
 	}
+	// Supervisor hosts follow the same ownership rule: a borrowed host is
+	// the parent's to stop (its children outlive this iteration); an
+	// owned host is this run's lever over its container children.
+	hosts := make([]envhost.Host, 0, len(m.envHostsByEnv))
+	if !m.envHostsBorrowed {
+		for _, host := range m.envHostsByEnv {
+			if host != nil {
+				hosts = append(hosts, host)
+			}
+		}
+	}
 	sessions := make([]*Session, 0, len(m.sessions))
 	for name, sess := range m.sessions {
 		sessions = append(sessions, sess)
@@ -3553,7 +3598,7 @@ func (m *SessionManager) takeForShutdown() ([]RemoteShim, []*Session) {
 	for name := range m.verified {
 		delete(m.verified, name)
 	}
-	return shims, sessions
+	return shims, hosts, sessions
 }
 
 // closeSession marks a session closing, cancels its log stream, tears down
@@ -3767,13 +3812,13 @@ func (s *Session) resetLogStreamState() {
 	s.logStreamAlive.Store(false)
 }
 
-func (m *SessionManager) failResult(sink adapter.EventSink, sess *Session, err error) (adapter.Result, error) {
+func (m *SessionManager) failResult(ctx context.Context, sink adapter.EventSink, sess *Session, err error) (adapter.Result, error) {
 	sink.Adapter("session.crash", map[string]any{
 		"session":               sess.Name,
 		"adapter":               sess.Adapter,
 		"policy":                sess.OnCrash,
 		"error":                 err.Error(),
-		"crash_reason":          classifySessionCrash(sess, err),
+		"crash_reason":          classifySessionCrash(ctx, sess, err),
 		"idle_since_last_event": idleStringOrEmpty(sess),
 	})
 	return adapter.Result{Outcome: "failure"}, &SessionCrashError{Session: sess.Name, Err: err}

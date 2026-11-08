@@ -1,9 +1,15 @@
 package adapterhost
 
-import hplugin "github.com/hashicorp/go-plugin"
+import (
+	"strconv"
+
+	hplugin "github.com/hashicorp/go-plugin"
+)
 
 // ProcessPID reports the underlying adapter subprocess PID when available.
 // Built-in adapters and unsupported handle implementations return ok=false.
+// RunnerFunc-spawned children (the container lane) carry no reattach
+// config: their pid comes from the client runner's process identity.
 func ProcessPID(p Handle) (pid int, ok bool) {
 	rpc, isRPC := p.(*rpcHandle)
 	if !isRPC || rpc == nil || rpc.client == nil {
@@ -12,19 +18,33 @@ func ProcessPID(p Handle) (pid int, ok bool) {
 	// The seam in rpcHandle exposes only lifecycle methods; the reattach PID
 	// is an extra go-plugin capability that substitutes need not provide.
 	src, hasPID := rpc.client.(pluginReattachSource)
-	if !hasPID {
+	if hasPID {
+		rc := src.ReattachConfig()
+		if rc != nil && rc.Pid > 0 {
+			return rc.Pid, true
+		}
+	}
+	ids, hasID := rpc.client.(pluginIDSourcer)
+	if !hasID {
 		return 0, false
 	}
-	rc := src.ReattachConfig()
-	if rc == nil || rc.Pid <= 0 {
+	parsed, err := strconv.Atoi(ids.ID())
+	if err != nil || parsed <= 0 {
 		return 0, false
 	}
-	return rc.Pid, true
+	return parsed, true
 }
 
-// pluginReattachSource is the client surface ProcessPID consults for the
-// subprocess PID: provided by the real go-plugin client, optional on narrow
-// replacement seams.
+// pluginIDSourcer is the client surface ProcessPID falls back to when the
+// reattach config carries no pid: go-plugin's Client.ID passes through the
+// runner's identity, which for subprocess runners is the pid string.
+type pluginIDSourcer interface {
+	ID() string
+}
+
+// pluginReattachSource is the client surface ProcessPID consults first for
+// the subprocess PID: provided by the real go-plugin client, optional on
+// narrow replacement seams.
 type pluginReattachSource interface {
 	ReattachConfig() *hplugin.ReattachConfig
 }

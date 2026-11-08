@@ -1,5 +1,10 @@
 package adapterhost
 
+import (
+	"context"
+	"time"
+)
+
 // Crash-reason taxonomy for adapter session crash classification (T-02).
 //
 // This set is the single source of truth for the classification vocabulary:
@@ -88,11 +93,61 @@ func SupervisionCrashReason(h Handle) (string, bool) {
 	if !ok || sh == nil {
 		return "", false
 	}
-	reason, ok := sh.SupervisionCrashReason()
+	return filterTaxonomyReason(sh.SupervisionCrashReason())
+}
+
+// filterTaxonomyReason keeps the classification vocabulary guarantee: the
+// journal path yields taxonomy constants only, so anything else falls
+// through to the local evidence path.
+func filterTaxonomyReason(reason string, ok bool) (string, bool) {
 	if !ok || !isTaxonomyReason(reason) {
 		return "", false
 	}
 	return reason, true
+}
+
+// JournalCrashSettler is the optional SupervisedHandle capability for
+// in-process supervision: a transport death precedes the supervision
+// journal's exit fact (the child client flips its process-exited flag
+// strictly after the transport fails), so a kill that races
+// classification leaves the plain journal query empty for a few
+// milliseconds. A settled query bridges that flip window inside a caller
+// supplied budget before concluding "no terminal classification".
+type JournalCrashSettler interface {
+	SupervisedHandle
+	// SettledSupervisionCrashReason settles the journal's exit fact within
+	// the ctx deadline and classifies exactly like SupervisionCrashReason:
+	// the journal's current-generation crash fact and ok=true, or ok=false
+	// when no terminal classification was delivered.
+	SettledSupervisionCrashReason(ctx context.Context) (reason string, ok bool)
+}
+
+// SettledSupervisionCrashReason returns the journal-delivered crash
+// classification for h after settling the journal's exit fact, bounded by
+// budget. Handles without the settler capability answer immediately from
+// their existing journal flow (no settle — remote peers deliver their
+// journal facts through the Supervise stream, which carries no flip
+// window). The budget must come from tunables, not be declared at call
+// sites.
+func SettledSupervisionCrashReason(ctx context.Context, h Handle, budget time.Duration) (string, bool) {
+	if settler, isSettler := h.(JournalCrashSettler); isSettler {
+		// WithoutCancel: the settle stays bounded by budget and must run
+		// even when the caller's ctx is already canceled — a run that
+		// aborts its step ctx on transport death still needs the journal
+		// classification, or the decision falls back to the transport
+		// heuristics.
+		settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), budget)
+		defer cancel()
+		reason, ok := settler.SettledSupervisionCrashReason(settleCtx)
+		if !ok {
+			return "", false
+		}
+		if !isTaxonomyReason(reason) {
+			return "", false
+		}
+		return reason, true
+	}
+	return SupervisionCrashReason(h)
 }
 
 // isTaxonomyReason reports whether reason is one of the CrashReason*

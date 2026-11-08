@@ -48,6 +48,12 @@ const (
 	// teardown mark keeps reclassifying transport closes as teardown
 	// consequences instead of session crashes.
 	DefaultStepTimeoutTeardownWindow = 10 * time.Second
+	// DefaultCrashCloseSettle is how long a supervised-container crash
+	// classification waits for the in-process peer's journal to carry the
+	// child's exit fact after transport death: the go-plugin client flips
+	// its process-exited flag strictly after the transport fails, and the
+	// journal facts ride that flip.
+	DefaultCrashCloseSettle = 2 * time.Second
 	// DefaultStepStallWindow is how long an unbounded step may run with no
 	// observable adapter activity before the step-stall watchdog tears it down.
 	// Zero (or a negative override) disables stall detection.

@@ -201,12 +201,131 @@ func (m *SessionManager) envHostDefaultLocked() envhost.Host {
 	return m.envHostForEnvLocked("")
 }
 
-// envHostForAdapter returns the host serving the remote environment the
-// adapter declaration is bound to — the exact resolution the dispatch
-// branch used pre-carve (declared graph -> environment key -> per-env shim
-// with default-shim fallback). ok is false when the adapter is not remote,
-// or no host serves its environment.
+// containerEnvForAdapter returns the environment key ("container.<name>")
+// the adapter declaration is bound to when that environment is a CONTAINER
+// environment — the isolation-kind-keyed resolution the container bind
+// path dispatches on (the seam's container counterpart of
+// remoteEnvForAdapter, which stays remote-only).
+func (m *SessionManager) containerEnvForAdapter(instanceID string) (string, bool) {
+	adapterNode, graph := m.adapterDeclaration(instanceID)
+	if adapterNode == nil || graph == nil {
+		return "", false
+	}
+	envKey, ok := declaredAdapterEnvironmentKey(adapterNode, graph)
+	if !ok {
+		return "", false
+	}
+	envNode, ok := graph.Environments[envKey]
+	if !ok || envNode.Type != "container" {
+		return "", false
+	}
+	return envKey, true
+}
+
+// envHostBoundForEnv returns the dedicated envhost.Host bound to envKey,
+// WITHOUT the shimHost fold (the container dispatch lane has no shim
+// substrate to fold: an unbound container environment keeps the pre-carve
+// BuildContainerRunner dispatch).
+func (m *SessionManager) envHostBoundForEnv(envKey string) (envhost.Host, bool) {
+	m.mu.Lock()
+	host, ok := m.envHostsByEnv[envKey]
+	m.mu.Unlock()
+	if !ok || host == nil {
+		return nil, false
+	}
+	return host, true
+}
+
+// containerEnvHostForAdapter returns the bound envhost.Host serving the
+// container environment the adapter declaration resolves to. ok is false
+// when the adapter is not container-bound or its environment has no bound
+// supervisor host — the caller then keeps its pre-carve dispatch. A
+// shimHost bound under a container key (a stray shim registration; the
+// container lane has no shim substrate) is refused here: only an explicit
+// SetContainerEnvHost bind dispatches container handles.
+func (m *SessionManager) containerEnvHostForAdapter(name string) (envhost.Host, bool) {
+	envKey, container := m.containerEnvForAdapter(name)
+	if !container {
+		return nil, false
+	}
+	return m.containerEnvHostForEnvKey(envKey)
+}
+
+// containerEnvHostForEnvKey is the bind lookup for one container
+// environment key. A shimHost bound under a container key (a stray shim
+// registration; the container lane has no shim substrate) is refused:
+// only an explicit SetContainerEnvHost bind dispatches container handles.
+//
+// m.mu must NOT be held.
+func (m *SessionManager) containerEnvHostForEnvKey(envKey string) (envhost.Host, bool) {
+	host, ok := m.envHostBoundForEnv(envKey)
+	if !ok {
+		return nil, false
+	}
+	if _, isShim := host.(shimHost); isShim {
+		return nil, false
+	}
+	return host, true
+}
+
+// EnvHostStopper is the ownership contract for supervisor hosts this
+// SessionManager bound through SetEnvHostForEnv and owns at teardown: the
+// manager that bound the host stops it at shutdown, so a container host's
+// children are never left running past the run. Borrowed hosts
+// (BorrowRemoteProvisioningFrom shares the parent's hosts with parallel
+// iterations) are owned by the parent and are not stopped by a borrower.
+type EnvHostStopper interface {
+	StopEnvHost(ctx context.Context)
+}
+
+// SetContainerEnvHost binds the in-process supervisor host serving a
+// container environment (host of record for the seam, keyed "container.<name>").
+// Unlike SetEnvHostForEnv it REFUSES to fold through the shim lane: a
+// container environment with no bound supervisor keeps the local
+// BuildContainerRunner dispatch, so binding is explicit — the engine's
+// binder is the only production caller. A nil host binds nothing.
+func (m *SessionManager) SetContainerEnvHost(envKey string, host envhost.Host) {
+	if host == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.setEnvHostForEnvLocked(envKey, host)
+}
+
+// envHostForAdapter returns the host serving the environment the adapter
+// declaration is bound to, keyed on isolation kind: a REMOTE-bound adapter
+// resolves exactly as pre-carve (declared graph -> environment key ->
+// per-env shim with default-shim fallback); a CONTAINER-bound adapter
+// requires a dedicated bound supervisor host (no shim fold — an unbound
+// container environment keeps the local BuildContainerRunner dispatch).
+// ok is false when the adapter is not remote/container, or no host serves
+// its environment.
 func (m *SessionManager) envHostForAdapter(name string) (envhost.Host, bool) {
+	envKey, remote := m.remoteEnvForAdapter(name)
+	if !remote {
+		envKey, container := m.containerEnvForAdapter(name)
+		if !container {
+			return nil, false
+		}
+		return m.containerEnvHostForEnvKey(envKey)
+	}
+	m.mu.Lock()
+	host := m.envHostForEnvLocked(envKey)
+	m.mu.Unlock()
+	if host == nil {
+		return nil, false
+	}
+	return host, true
+}
+
+// remoteEnvHostForAdapter is the pre-carve REMOTE-only resolution the
+// implicit crash-retry arm keys on: the adapter declaration must bind a
+// REMOTE environment AND a host must serve it. A container-bound adapter
+// never resolves here — a container session has no pod to recreate, so its
+// transport closes follow the declared on_crash policy instead of the
+// remote pod-recreate arm.
+func (m *SessionManager) remoteEnvHostForAdapter(name string) (envhost.Host, bool) {
 	envKey, remote := m.remoteEnvForAdapter(name)
 	if !remote {
 		return nil, false
