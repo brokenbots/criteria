@@ -366,6 +366,9 @@ func (h *InProcessHost) liveEngagements(defName string) int {
 
 // killChildPeerInitiated kills a definition's current child as a
 // peer-initiated death (graceful journal classification; no crash fact).
+// The child record is dropped as the kill is issued so ensure's next call
+// takes the spawn path — the signal-death gate must never read this
+// deliberate death as a crash and refuse a later Ensure to respawn it.
 func (h *InProcessHost) killChildPeerInitiated(defName string) {
 	rt := h.rt
 	rt.mu.Lock()
@@ -376,10 +379,15 @@ func (h *InProcessHost) killChildPeerInitiated(defName string) {
 	}
 	c.peerInitiated = true
 	handle := c.handle
-	rt.mu.Unlock()
-	if !adapterhost.ProcessExited(handle) {
-		handle.Kill()
+	delete(rt.children, defName)
+	for i, n := range rt.order {
+		if n == defName {
+			rt.order = append(rt.order[:i], rt.order[i+1:]...)
+			break
+		}
 	}
+	rt.mu.Unlock()
+	handle.Kill()
 }
 
 // Release implements envhost.Host: ends a scope's engagement per the

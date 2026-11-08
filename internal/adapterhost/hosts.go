@@ -277,15 +277,22 @@ func (m *SessionManager) SetContainerEnvHost(envKey string, host envhost.Host) e
 	return nil
 }
 
-// envHostForAdapter returns the host serving the remote environment the
-// adapter declaration is bound to — the exact resolution the dispatch
-// branch used pre-carve (declared graph -> environment key -> per-env shim
-// with default-shim fallback). ok is false when the adapter is not remote,
-// or no host serves its environment.
+// envHostForAdapter returns the host serving the environment the adapter
+// declaration is bound to, keyed on isolation kind: a REMOTE-bound adapter
+// resolves exactly as pre-carve (declared graph -> environment key ->
+// per-env shim with default-shim fallback); a CONTAINER-bound adapter
+// requires a dedicated bound supervisor host (no shim fold — an unbound
+// container environment keeps the local BuildContainerRunner dispatch).
+// ok is false when the adapter is not remote/container, or no host serves
+// its environment.
 func (m *SessionManager) envHostForAdapter(name string) (envhost.Host, bool) {
 	envKey, remote := m.remoteEnvForAdapter(name)
 	if !remote {
-		return nil, false
+		envKey, container := m.containerEnvForAdapter(name)
+		if !container {
+			return nil, false
+		}
+		return m.envHostBoundForEnv(envKey)
 	}
 	m.mu.Lock()
 	host := m.envHostForEnvLocked(envKey)
