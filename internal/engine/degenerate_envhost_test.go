@@ -97,15 +97,23 @@ func TestMaybeStartDegenerateEnvHosts_ShellBindingStaysOffTheShimLanes(t *testin
 	}
 }
 
-// TestRun_ShellEnvironmentBindingKeepsLocalDispatch asserts the wiring on
-// laneSink records adapter-lifecycle observations so the run-path test can
-// pin the provisioning lane a shell-bound adapter takes (the local loader's
-// verified/opened/closed sequence) and prove no init failure or crash fired.
+// laneSink records what the run path actually did: the adapter-lifecycle
+// observations pin the provisioning lane a shell-bound adapter takes (the
+// local loader's verified/opened/closed sequence and no init failure or
+// crash), and the first step entered captures the run's live session
+// manager so the binding installed by the entrypoint's binder can be
+// asserted as observed mid-run (liveSessions lives only between
+// setLiveRunState and clearLiveRunState).
 type laneSink struct {
 	*fakeSink
 
+	eng *Engine
+
 	mu        sync.Mutex
 	lifecycle []laneEvent
+	live      *adapterhost.SessionManager
+	bound     bool
+	shimLane  bool
 }
 
 type laneEvent struct {
@@ -116,6 +124,37 @@ func (s *laneSink) OnAdapterLifecycle(scope, name, status, msg string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lifecycle = append(s.lifecycle, laneEvent{scope, name, status, msg})
+}
+
+// OnStepEntered captures the run's live session manager at the first step:
+// by then the entrypoint has run its binders, so the degenerate shell/sandbox
+// bindings are observable exactly as production installed them.
+func (s *laneSink) OnStepEntered(step, state string, attempt int) {
+	s.fakeSink.OnStepEntered(step, state, attempt)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.live != nil {
+		return
+	}
+	s.eng.mu.RLock()
+	live := s.eng.liveSessions
+	s.eng.mu.RUnlock()
+	if live == nil {
+		return
+	}
+	s.live = live
+	s.bound = live.EnvHostRegisteredForEnv("shell.demo")
+	s.shimLane = live.RemoteShimRegisteredForEnv("shell.demo")
+}
+
+// capturedBinding reports the binding observed on the run's live session
+// manager at the first step entered (or live=false when that never
+// happened): bound is the degenerate host-of-record presence for the shell
+// environment; shimming is the remote-shim lane that must stay dark.
+func (s *laneSink) capturedBinding() (live, bound, shimming bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.live != nil, s.bound, s.shimLane
 }
 
 func (s *laneSink) laneFor(name string) []string {
@@ -136,12 +175,13 @@ func (s *laneSink) allLanes() []laneEvent {
 	return append([]laneEvent(nil), s.lifecycle...)
 }
 
-// TestRun_ShellEnvironmentBindingKeepsLocalDispatch asserts the wiring on
-// the real run path: Run installs the degenerate in-process host for the
-// shell environment, and the shell-bound adapter stage still provisions
-// (verified/opened) and executes through the local loader to a success
-// terminal — the degenerate host's refusing arms are never exercised by
-// dispatch.
+// TestRun_ShellEnvironmentBindingKeepsLocalDispatch pins the Run call site
+// of the binder (engine.go:786): the degenerate in-process host for the
+// declared shell environment is observed LIVE on the run's session manager
+// when the first step is entered, off the remote shim lanes, and the
+// shell-bound adapter stage still provisions (verified/opened) and executes
+// through the local loader to a success terminal — the degenerate host's
+// refusing arms are never exercised by dispatch.
 func TestRun_ShellEnvironmentBindingKeepsLocalDispatch(t *testing.T) {
 	g := &workflow.FSMGraph{
 		Name:         "shell-dispatch",
@@ -171,8 +211,23 @@ func TestRun_ShellEnvironmentBindingKeepsLocalDispatch(t *testing.T) {
 	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
 		"noop": &fakeAdapter{name: "noop", outcome: "success"},
 	}}
-	if err := NewTestEngine(g, loader, sink).Run(context.Background()); err != nil {
+	eng := NewTestEngine(g, loader, sink)
+	sink.eng = eng
+	if err := eng.Run(context.Background()); err != nil {
 		t.Fatalf("run: %v", err)
+	}
+	// The Run call site must have installed the degenerate binding: the
+	// manager captured at the first step knows the shell environment's
+	// host of record is live and off the shim lanes.
+	live, bound, shimming := sink.capturedBinding()
+	if !live {
+		t.Fatal("Run: no run session manager was live at the first step; cannot observe the Run-binder binding")
+	}
+	if !bound {
+		t.Error("Run: the run's session manager has no degenerate host bound for shell.demo; want the Run-binder binding installed")
+	}
+	if shimming {
+		t.Error("Run: the shell environment surfaced a remote shim lane, want the binding off the shim lanes")
 	}
 	if terminal, ok := sink.terminalState(); terminal != "done" || !ok {
 		t.Errorf("terminal = %s ok=%v, want the run to succeed through the local loader", terminal, ok)
@@ -188,9 +243,10 @@ func TestRun_ShellEnvironmentBindingKeepsLocalDispatch(t *testing.T) {
 }
 
 // TestRunFrom_ShellEnvironmentBindingKeepsLocalDispatch pins the second
-// binder call site: the resume entrypoint binds the same degenerate host
-// set and the shell-bound adapter still re-provisions and executes through
-// the local loader to a success terminal.
+// binder call site (engine.go:859): the resume entrypoint installs the same
+// degenerate host binding on its run's session manager — observed live at
+// the first step — and the shell-bound adapter still re-provisions and
+// executes through the local loader to a success terminal.
 func TestRunFrom_ShellEnvironmentBindingKeepsLocalDispatch(t *testing.T) {
 	g := &workflow.FSMGraph{
 		Name:         "shell-resume",
@@ -220,8 +276,21 @@ func TestRunFrom_ShellEnvironmentBindingKeepsLocalDispatch(t *testing.T) {
 	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{
 		"noop": &fakeAdapter{name: "noop", outcome: "success"},
 	}}
-	if err := NewTestEngine(g, loader, sink).RunFrom(context.Background(), "run", 1); err != nil {
+	eng := NewTestEngine(g, loader, sink)
+	sink.eng = eng
+	if err := eng.RunFrom(context.Background(), "run", 1); err != nil {
 		t.Fatalf("run from: %v", err)
+	}
+	// The RunFrom call site must have installed the degenerate binding.
+	live, bound, shimming := sink.capturedBinding()
+	if !live {
+		t.Fatal("RunFrom: no run session manager was live at the first step; cannot observe the RunFrom-binder binding")
+	}
+	if !bound {
+		t.Error("RunFrom: the run's session manager has no degenerate host bound for shell.demo; want the RunFrom-binder binding installed")
+	}
+	if shimming {
+		t.Error("RunFrom: the shell environment surfaced a remote shim lane, want the binding off the shim lanes")
 	}
 	if terminal, ok := sink.terminalState(); terminal != "done" || !ok {
 		t.Errorf("terminal = %s ok=%v, want the resume to succeed through the local loader", terminal, ok)
