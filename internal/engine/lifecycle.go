@@ -470,10 +470,10 @@ func lockedImageReference(lf *lockfile.Lockfile, adapterType, adapterName string
 	return ""
 }
 
-func emitProvisionWanted(deps Deps, lifecycle *remoteLifecycleContext, scopeName, scopeInstanceID, scopeKey, instanceID string, adapter *workflow.AdapterNode, envNode *workflow.EnvironmentNode, tokenPath, token string) {
+func emitProvisionWanted(ctx context.Context, deps Deps, lifecycle *remoteLifecycleContext, scopeName, scopeInstanceID, scopeKey, instanceID string, adapter *workflow.AdapterNode, envNode *workflow.EnvironmentNode, tokenPath, token string) {
 	digest := lockedDigest(lifecycle.lockfile, adapter.Type, adapter.Name)
 	imageRef := lockedImageReference(lifecycle.lockfile, adapter.Type, adapter.Name)
-	listenAddr := deps.Sessions.RemoteListenAddrForEnv(environmentKey(envNode))
+	listenAddr := deps.Sessions.RemoteListenAddrForEnv(ctx, environmentKey(envNode))
 	deps.Sink.OnAdapterLifecycleEvent(&AdapterLifecycleEvent{
 		RunID:             lifecycle.scopeLifecycle.runID,
 		ScopeName:         scopeName,
@@ -508,7 +508,7 @@ func emitProvisionWanted(deps Deps, lifecycle *remoteLifecycleContext, scopeName
 // maybeRotateRemoteScope rotates the accept token for a per-scope remote adapter
 // and emits a provision-wanted lifecycle event. It returns the shim scope key to
 // pass to Verify, or an empty string when per-scope sessions are disabled.
-func maybeRotateRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, g *workflow.FSMGraph, adapter *workflow.AdapterNode, instanceID, scopeName string) (string, error) {
+func maybeRotateRemoteScope(ctx context.Context, deps Deps, lifecycle *remoteLifecycleContext, g *workflow.FSMGraph, adapter *workflow.AdapterNode, instanceID, scopeName string) (string, error) {
 	remCfg, envNode, ok := remoteEnvConfig(g, adapter)
 	if !ok || !remCfg.PerScopeSessions {
 		return "", nil
@@ -524,7 +524,7 @@ func maybeRotateRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, g *wor
 	// runner's shim instead of being rejected with a freshly rotated token
 	// forever. Any mismatch (missing token file, corrupt record, adapter type
 	// change) falls through to a fresh rotation, which self-heals the record.
-	scopeKey, reused, err := tryReuseScopeInstance(deps, lifecycle, envNode, adapter, instanceID, scopeName)
+	scopeKey, reused, err := tryReuseScopeInstance(ctx, deps, lifecycle, envNode, adapter, instanceID, scopeName)
 	if err != nil {
 		return "", err
 	}
@@ -540,14 +540,14 @@ func maybeRotateRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, g *wor
 	// Before rotating, adopt a surviving instance from a prior invocation of
 	// the same run fingerprint so its pods re-handshake with this run's shim
 	// immediately; with nothing adoptable this is a no-op.
-	scopeKey, adopted, aerr := tryAdoptPriorRunScopeInstance(deps, lifecycle, envNode, adapter, instanceID, scopeName)
+	scopeKey, adopted, aerr := tryAdoptPriorRunScopeInstance(ctx, deps, lifecycle, envNode, adapter, instanceID, scopeName)
 	if aerr != nil {
 		return "", aerr
 	}
 	if adopted {
 		return scopeKey, nil
 	}
-	return rotateFreshRemoteScope(deps, lifecycle, envNode, adapter, instanceID, scopeName)
+	return rotateFreshRemoteScope(ctx, deps, lifecycle, envNode, adapter, instanceID, scopeName)
 }
 
 // rotateFreshRemoteScope provisions a brand-new scope instance: it generates
@@ -563,7 +563,7 @@ func maybeRotateRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, g *wor
 // on a later re-dial (or never, when the accept loop gave up on the retry
 // budget). Registering the accepting token first means the file becomes
 // visible only after the shim already accepts connections carrying it.
-func rotateFreshRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, envNode *workflow.EnvironmentNode, adapter *workflow.AdapterNode, instanceID, scopeName string) (string, error) {
+func rotateFreshRemoteScope(ctx context.Context, deps Deps, lifecycle *remoteLifecycleContext, envNode *workflow.EnvironmentNode, adapter *workflow.AdapterNode, instanceID, scopeName string) (string, error) {
 	dataDir := lifecycle.scopeLifecycle.dataDir
 	scopeInstanceID := uuid.NewString()
 	scopeKey := scopeName + "/" + scopeInstanceID
@@ -575,7 +575,7 @@ func rotateFreshRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, envNod
 	// Register before the token becomes scanner-visible. On any later
 	// failure the registration is rolled back so the shim is never left
 	// holding a token no pod carries.
-	if err := deps.Sessions.RegisterRemoteScopeForEnv(environmentKey(envNode), scopeKey, token); err != nil {
+	if err := deps.Sessions.RegisterRemoteScopeForEnv(ctx, environmentKey(envNode), scopeKey, token); err != nil {
 		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
 		return "", fmt.Errorf("initialize adapter %q: register scope token: %w", instanceID, err)
 	}
@@ -585,7 +585,7 @@ func rotateFreshRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, envNod
 	// peer-side child set can tell them apart.
 	tokenPath, err := writeRotatedToken(dataDir, scopeName, scopeInstanceID, instanceID, token)
 	if err != nil {
-		_ = deps.Sessions.UnregisterRemoteScopeForEnv(environmentKey(envNode), scopeKey)
+		_ = deps.Sessions.UnregisterRemoteScopeForEnv(ctx, environmentKey(envNode), scopeKey)
 		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
 		return "", fmt.Errorf("initialize adapter %q: write accept token: %w", instanceID, err)
 	}
@@ -593,11 +593,11 @@ func rotateFreshRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, envNod
 		ScopeInstanceID: scopeInstanceID,
 		AdapterKey:      instanceID,
 	}); err != nil {
-		_ = deps.Sessions.UnregisterRemoteScopeForEnv(environmentKey(envNode), scopeKey)
+		_ = deps.Sessions.UnregisterRemoteScopeForEnv(ctx, environmentKey(envNode), scopeKey)
 		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", err.Error())
 		return "", fmt.Errorf("initialize adapter %q: persist scope instance: %w", instanceID, err)
 	}
-	emitProvisionWanted(deps, lifecycle, scopeName, scopeInstanceID, scopeKey, instanceID, adapter, envNode, tokenPath, token)
+	emitProvisionWanted(ctx, deps, lifecycle, scopeName, scopeInstanceID, scopeKey, instanceID, adapter, envNode, tokenPath, token)
 	return scopeKey, nil
 }
 
@@ -612,16 +612,16 @@ func rotateFreshRemoteScope(deps Deps, lifecycle *remoteLifecycleContext, envNod
 // reused=false when the caller should fall through to a fresh rotation, and a
 // non-nil error only when reuse was possible but registration with the shim
 // failed.
-func tryReuseScopeInstance(deps Deps, lifecycle *remoteLifecycleContext, envNode *workflow.EnvironmentNode, adapter *workflow.AdapterNode, instanceID, scopeName string) (scopeKey string, reused bool, err error) {
+func tryReuseScopeInstance(ctx context.Context, deps Deps, lifecycle *remoteLifecycleContext, envNode *workflow.EnvironmentNode, adapter *workflow.AdapterNode, instanceID, scopeName string) (scopeKey string, reused bool, err error) {
 	dataDir := lifecycle.scopeLifecycle.dataDir
 	scopeInstanceID, tokenPath, token, reason, ok := reusableScopeToken(dataDir, scopeName, instanceID, instanceID)
 	if ok {
 		scopeKey = scopeName + "/" + scopeInstanceID
-		if rerr := deps.Sessions.RegisterRemoteScopeForEnv(environmentKey(envNode), scopeKey, token); rerr != nil {
+		if rerr := deps.Sessions.RegisterRemoteScopeForEnv(ctx, environmentKey(envNode), scopeKey, token); rerr != nil {
 			deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", rerr.Error())
 			return "", false, fmt.Errorf("initialize adapter %q: register scope token: %w", instanceID, rerr)
 		}
-		emitProvisionWanted(deps, lifecycle, scopeName, scopeInstanceID, scopeKey, instanceID, adapter, envNode, tokenPath, token)
+		emitProvisionWanted(ctx, deps, lifecycle, scopeName, scopeInstanceID, scopeKey, instanceID, adapter, envNode, tokenPath, token)
 		return scopeKey, true, nil
 	}
 	logScopeReuseFallback(scopeName, instanceID, reason)
@@ -652,7 +652,7 @@ func tryReuseScopeInstance(deps Deps, lifecycle *remoteLifecycleContext, envNode
 		return "", false, nil
 	}
 	scopeKey = scopeName + "/" + chosen.instanceID
-	if rerr := deps.Sessions.RegisterRemoteScopeForEnv(environmentKey(envNode), scopeKey, chosen.token); rerr != nil {
+	if rerr := deps.Sessions.RegisterRemoteScopeForEnv(ctx, environmentKey(envNode), scopeKey, chosen.token); rerr != nil {
 		deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", rerr.Error())
 		return "", false, fmt.Errorf("initialize adapter %q: register scope token: %w", instanceID, rerr)
 	}
@@ -660,14 +660,14 @@ func tryReuseScopeInstance(deps Deps, lifecycle *remoteLifecycleContext, envNode
 	// runner's pods remain valid across the restart, not just the one this
 	// adapter reuses.
 	for _, cand := range candidates[1:] {
-		if rerr := deps.Sessions.RegisterRemoteScopeForEnv(environmentKey(envNode), scopeName+"/"+cand.instanceID, cand.token); rerr != nil {
+		if rerr := deps.Sessions.RegisterRemoteScopeForEnv(ctx, environmentKey(envNode), scopeName+"/"+cand.instanceID, cand.token); rerr != nil {
 			slog.Warn("registering surviving scope token failed; the matching pod may fail its handshake",
 				"scope", scopeName, "scope_instance", cand.instanceID, "error", rerr.Error())
 		}
 	}
 	slog.Info("reusing scope instance recovered from surviving rotated token",
 		"scope", scopeName, "adapter_instance", instanceID, "scope_instance", chosen.instanceID)
-	emitProvisionWanted(deps, lifecycle, scopeName, chosen.instanceID, scopeKey, instanceID, adapter, envNode, chosen.tokenPath, chosen.token)
+	emitProvisionWanted(ctx, deps, lifecycle, scopeName, chosen.instanceID, scopeKey, instanceID, adapter, envNode, chosen.tokenPath, chosen.token)
 	return scopeKey, true, nil
 }
 
@@ -732,7 +732,7 @@ func refuseSealedPriorRunRegistry(priorDir, dataDir, scopeName, instanceID strin
 	return true
 }
 
-func tryAdoptPriorRunScopeInstance(deps Deps, lifecycle *remoteLifecycleContext, envNode *workflow.EnvironmentNode, adapter *workflow.AdapterNode, instanceID, scopeName string) (scopeKey string, adopted bool, err error) {
+func tryAdoptPriorRunScopeInstance(ctx context.Context, deps Deps, lifecycle *remoteLifecycleContext, envNode *workflow.EnvironmentNode, adapter *workflow.AdapterNode, instanceID, scopeName string) (scopeKey string, adopted bool, err error) {
 	dirs := lifecycle.scopeLifecycle.adoptableRunDirs
 	if len(dirs) == 0 {
 		return "", false, nil
@@ -774,21 +774,21 @@ func tryAdoptPriorRunScopeInstance(deps Deps, lifecycle *remoteLifecycleContext,
 		// cannot double-adopt an instance that is already bound to this run.
 		releaseScopeInstance(priorDir, scopeName, instanceID, chosen.instanceID, instanceID)
 		scopeKey = scopeName + "/" + chosen.instanceID
-		if rerr := deps.Sessions.RegisterRemoteScopeForEnv(environmentKey(envNode), scopeKey, chosen.token); rerr != nil {
+		if rerr := deps.Sessions.RegisterRemoteScopeForEnv(ctx, environmentKey(envNode), scopeKey, chosen.token); rerr != nil {
 			deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", rerr.Error())
 			return "", false, fmt.Errorf("initialize adapter %q: register adopted scope token: %w", instanceID, rerr)
 		}
 		// Register every other surviving token too so all of the prior run's
 		// pods remain valid for re-handshake, not just the adopted one.
 		for _, cand := range candidates[1:] {
-			if rerr := deps.Sessions.RegisterRemoteScopeForEnv(environmentKey(envNode), scopeName+"/"+cand.instanceID, cand.token); rerr != nil {
+			if rerr := deps.Sessions.RegisterRemoteScopeForEnv(ctx, environmentKey(envNode), scopeName+"/"+cand.instanceID, cand.token); rerr != nil {
 				slog.Warn("registering surviving prior-run scope token failed; the matching pod may fail its handshake",
 					"scope", scopeName, "scope_instance", cand.instanceID, "error", rerr.Error())
 			}
 		}
 		slog.Info("adopting scope instance from prior run invocation",
 			"scope", scopeName, "adapter_instance", instanceID, "scope_instance", chosen.instanceID, "prior_run_dir", priorDir)
-		emitProvisionWanted(deps, lifecycle, scopeName, chosen.instanceID, scopeKey, instanceID, adapter, envNode, tokenPath, chosen.token)
+		emitProvisionWanted(ctx, deps, lifecycle, scopeName, chosen.instanceID, scopeKey, instanceID, adapter, envNode, tokenPath, chosen.token)
 		return scopeKey, true, nil
 	}
 	return "", false, nil
@@ -1024,7 +1024,7 @@ func stageAndRotateScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps
 		// rotate a fresh accept token for this scope, persist it under the run
 		// data directory, register it with the shim, and emit a provision-wanted
 		// event *before* blocking on WaitForHandle.
-		verifyScope, err := maybeRotateRemoteScope(deps, lifecycle, g, adapter, instanceID, scopeName)
+		verifyScope, err := maybeRotateRemoteScope(ctx, deps, lifecycle, g, adapter, instanceID, scopeName)
 		if err != nil {
 			return nil, err
 		}
@@ -1316,7 +1316,7 @@ func tearDownScopeAdapters(ctx context.Context, order []string, deps Deps, lifec
 					EnvironmentName:   rec.envName,
 				})
 				envKey := rec.envType + "." + rec.envName
-				_ = deps.Sessions.UnregisterRemoteScopeForEnv(envKey, rec.scopeKey)
+				_ = deps.Sessions.UnregisterRemoteScopeForEnv(ctx, envKey, rec.scopeKey)
 				// The kill is addressed by the adapter DEFINITION
 				// identity, never the adapter type. Per-definition peer
 				// children each serve one definition; a kind-addressed kill

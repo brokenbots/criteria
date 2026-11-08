@@ -192,10 +192,10 @@ func TestSessions_CRI293_PerEnvScopeRegistration(t *testing.T) {
 	m.SetRemoteShimForEnv("remote.alpha", alpha)
 	m.SetRemoteShimForEnv("remote.beta", beta)
 
-	if err := m.RegisterRemoteScopeForEnv("remote.alpha", "scope-a/1", "tok-a"); err != nil {
+	if err := m.RegisterRemoteScopeForEnv(context.Background(), "remote.alpha", "scope-a/1", "tok-a"); err != nil {
 		t.Fatalf("RegisterRemoteScopeForEnv(alpha): %v", err)
 	}
-	if err := m.RegisterRemoteScopeForEnv("remote.beta", "scope-b/1", "tok-b"); err != nil {
+	if err := m.RegisterRemoteScopeForEnv(context.Background(), "remote.beta", "scope-b/1", "tok-b"); err != nil {
 		t.Fatalf("RegisterRemoteScopeForEnv(beta): %v", err)
 	}
 	if got := alpha.scopeToken("scope-a/1"); got != "tok-a" {
@@ -204,7 +204,7 @@ func TestSessions_CRI293_PerEnvScopeRegistration(t *testing.T) {
 	if got := beta.scopeToken("scope-b/1"); got != "tok-b" {
 		t.Errorf("beta scope token = %q, want tok-b", got)
 	}
-	if err := m.UnregisterRemoteScopeForEnv("remote.beta", "scope-b/1"); err != nil {
+	if err := m.UnregisterRemoteScopeForEnv(context.Background(), "remote.beta", "scope-b/1"); err != nil {
 		t.Fatalf("UnregisterRemoteScopeForEnv(beta): %v", err)
 	}
 	if got := beta.unregisterCalls(); len(got) != 1 || got[0] != "scope-b/1" {
@@ -224,7 +224,7 @@ func TestSessions_CRI293_PerEnvScopeRegistration(t *testing.T) {
 	// An environment without a dedicated shim falls back to the default
 	// shim (the latest registration) — that is the legacy single-shim
 	// behavior every pre-CRI-293 caller relies on.
-	if got := m.RegisterRemoteScopeForEnv("remote.gamma", "scope-c/1", "tok-c"); got != nil {
+	if got := m.RegisterRemoteScopeForEnv(context.Background(), "remote.gamma", "scope-c/1", "tok-c"); got != nil {
 		t.Errorf("RegisterRemoteScopeForEnv(gamma) fallback: %v", got)
 	}
 }
@@ -238,13 +238,13 @@ func TestSessions_CRI293_PerEnvListenAddrPublication(t *testing.T) {
 	m.SetRemoteShimForEnv("remote.alpha", alpha)
 	m.SetRemoteShimForEnv("remote.beta", beta)
 
-	if got := m.RemoteListenAddrForEnv("remote.alpha"); got != "127.0.0.1:9001" {
+	if got := m.RemoteListenAddrForEnv(context.Background(), "remote.alpha"); got != "127.0.0.1:9001" {
 		t.Errorf("RemoteListenAddrForEnv(alpha) = %q, want 127.0.0.1:9001", got)
 	}
-	if got := m.RemoteListenAddrForEnv("remote.beta"); got != "127.0.0.1:9002" {
+	if got := m.RemoteListenAddrForEnv(context.Background(), "remote.beta"); got != "127.0.0.1:9002" {
 		t.Errorf("RemoteListenAddrForEnv(beta) = %q, want 127.0.0.1:9002", got)
 	}
-	if got := m.RemoteListenAddrForEnv("remote.missing"); got != "127.0.0.1:9002" {
+	if got := m.RemoteListenAddrForEnv(context.Background(), "remote.missing"); got != "127.0.0.1:9002" {
 		// Missing env keys fall back to the default shim (the latest
 		// registration) so legacy single-shim callers keep their address.
 		t.Errorf("RemoteListenAddrForEnv(missing) fallback = %q, want 127.0.0.1:9002", got)
@@ -278,7 +278,7 @@ func TestSessions_CRI293_LegacyDefaultShimFallback(t *testing.T) {
 	// in environments that have none.
 	dedicated := newCri293Shim("dedicated", "127.0.0.1:9003")
 	m.SetRemoteShimForEnv("remote.alpha", dedicated)
-	if got := m.RemoteListenAddrForEnv("remote.beta"); got != "127.0.0.1:9003" {
+	if got := m.RemoteListenAddrForEnv(context.Background(), "remote.beta"); got != "127.0.0.1:9003" {
 		// The default shim now points at the latest registration; beta has
 		// no dedicated entry so it falls back to it.
 		t.Errorf("RemoteListenAddrForEnv(beta) fallback = %q, want 127.0.0.1:9003", got)

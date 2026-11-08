@@ -34,7 +34,7 @@ func TestBorrowRemoteProvisioningFrom_SharesShimWithoutOwnership(t *testing.T) {
 	}
 	// ...can register a per-scope token on it (would error "no remote shim
 	// registered" without the borrow)...
-	if err := child.RegisterRemoteScopeForEnv("remote.scan", "scan/inst-0", "tok"); err != nil {
+	if err := child.RegisterRemoteScopeForEnv(context.Background(), "remote.scan", "scan/inst-0", "tok"); err != nil {
 		t.Fatalf("child RegisterRemoteScopeForEnv: %v", err)
 	}
 	// ...and inherits the verify caches so isRemoteAdapter sees the adapter.

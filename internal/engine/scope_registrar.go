@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"crypto/subtle"
 	"errors"
 	"fmt"
@@ -50,7 +51,7 @@ func (r *dialScopeRegistrar) RegisterScopeOnDial(adapterName, scope, presentedTo
 	if err != nil {
 		return err
 	}
-	if err := r.sessions.RegisterRemoteScopeForEnv(r.envKey, scope, token); err != nil {
+	if err := r.sessions.RegisterRemoteScopeForEnv(context.Background(), r.envKey, scope, token); err != nil {
 		return fmt.Errorf("register surviving scope token: %w", err)
 	}
 	slog.Info("re-registered surviving scope token at dial time",

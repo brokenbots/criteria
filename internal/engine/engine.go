@@ -1757,6 +1757,10 @@ func (e *Engine) startRemoteShimForEnv(ctx context.Context, envKey string, env *
 		return fmt.Errorf("remote environment %q: %w", env.Name, err)
 	}
 	sessions.SetRemoteShimForEnv(envKey, provider)
+	// ADR-0014 stage 1: bind the environment's host of record so remote
+	// dispatch and scope bookkeeping route through the envhost seam while
+	// the shim stays registered for the query surfaces.
+	sessions.SetEnvHostForEnv(envKey, remote.NewHost(shim, provider))
 	return nil
 }
 

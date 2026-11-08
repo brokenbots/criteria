@@ -10,6 +10,8 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/brokenbots/criteria/internal/envhost"
 )
 
 // classifyTransportLoss reports whether an error is a transport-class
@@ -52,11 +54,11 @@ func classifyTransportLoss(err error) bool {
 // re-dials) → keep re-waiting, anything else → fail fast (done).
 func verifyWaitRound(
 	ctx context.Context, deadline time.Time, budget time.Duration,
-	adapterName, scope string, staleHandle Handle,
-	shim RemoteShim,
+	name, scope string, staleHandle Handle,
+	host envhost.Host,
 ) (h Handle, retry bool, err error) {
 	waitCtx, wcancel := context.WithDeadline(ctx, deadline)
-	h, waitErr := shim.WaitForFreshHandle(waitCtx, adapterName, scope, staleHandle)
+	h, waitErr := freshHostHandle(waitCtx, host, name, scope, staleHandle)
 	wcancel()
 	if waitErr == nil {
 		return h, false, nil
@@ -68,7 +70,7 @@ func verifyWaitRound(
 		return nil, false, waitErr
 	case classifyTransportLoss(waitErr):
 		slog.Warn("fresh-line wait rejected; re-waiting",
-			"adapter", adapterName, "scope", scope,
+			"adapter", name, "scope", scope,
 			"budget_left", time.Until(deadline).String(),
 			"error", waitErr.Error())
 		return nil, true, nil
@@ -97,13 +99,13 @@ func (m *SessionManager) verifyTransportFailover(
 		if !time.Now().Before(deadline) {
 			return nil, Info{}, fmt.Errorf("handshake budget expired after transport loss (budget %s): %w", budget, context.DeadlineExceeded)
 		}
-		shim, ok := m.remoteShimForAdapter(name)
+		host, ok := m.envHostForAdapter(name)
 		if !ok {
 			// Teardown advanced past this wait: convergence is no longer
 			// meaningful, so surface it instead of spinning.
 			return nil, Info{}, fmt.Errorf("no remote shim available for %q after transport loss; teardown may have begun", adapterName)
 		}
-		h, retry, waitErr := verifyWaitRound(ctx, deadline, budget, name, scope, staleHandle, shim)
+		h, retry, waitErr := verifyWaitRound(ctx, deadline, budget, name, scope, staleHandle, host)
 		if retry {
 			continue
 		}
