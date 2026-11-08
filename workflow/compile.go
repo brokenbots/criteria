@@ -208,6 +208,13 @@ func runPostCompilePasses(diags hcl.Diagnostics, g *FSMGraph, spec *Spec, schema
 		diags = append(diags, checkReservedNames(spec)...)
 	}
 	diags = append(diags, CheckGraphCriteriaVersion(g, workflowNames(opts.SubworkflowChain))...)
+	// Re-entry continuation rule: adapter instances both a parent graph and
+	// its callee re-declare must declare an agreeing fate (ADR-0014 D3). This
+	// pass runs after both graphs' adapters compiled (subworkflows compile
+	// before adapters), and before transition resolution.
+	for _, err := range validateContinuation(g) {
+		diags = append(diags, &hcl.Diagnostic{Severity: hcl.DiagError, Summary: err.Error()})
+	}
 	diags = append(diags, resolveTransitions(g)...)
 	if g.InitialState != "" && !diags.HasErrors() {
 		diags = append(diags, checkReachability(g)...)

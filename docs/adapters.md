@@ -223,9 +223,14 @@ that scope:
 If the resolved working directory is missing at this point, the bind fails and
 produces an error that names the adapter, the step, and the directory. Because
 binding only happens for adapters that are actually reached, an adapter
-declared in a branch that is never taken is verified but never bound. Similarly,
-subworkflow adapter sessions are opened when the subworkflow is entered and
-torn down when it exits; they are not held open for the whole run.
+declared in a branch that is never taken is verified but never bound. Similarly, adapter instances declared inside a subworkflow body detach at
+body exit and are adopted again at the next re-entry by default; declaring
+`continuation = "fresh"` on the instance closes, unregisters, and tombstones
+the session at the body exit so the next re-entry opens a new conversation.
+When a parent graph and its callee re-declare the same instance, both sides
+must declare one agreeing fate — that is a hard compile-time rule. See
+[docs/adrs/ADR-0014-environment-host-of-record.md](adrs/ADR-0014-environment-host-of-record.md)
+for the session-fate policy.
 
 ### What is rejected eagerly vs. deferred
 

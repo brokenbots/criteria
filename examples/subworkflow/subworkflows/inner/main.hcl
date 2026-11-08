@@ -7,6 +7,7 @@ workflow {
 
 adapter "shell" "default" {
   config { }
+  continuation = "reuse"
 }
 
 variable "work" {

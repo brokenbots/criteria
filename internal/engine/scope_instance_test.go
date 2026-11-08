@@ -833,7 +833,8 @@ environment "remote" "prod" {
 }
 
 adapter "shell" "default" {
-  environment = remote.prod
+  environment  = remote.prod
+  continuation = "reuse"
 }
 
 subworkflow "child" {
@@ -873,7 +874,8 @@ environment "remote" "prod" {
 environment "shell" "local" {}
 
 adapter "shell" "default" {
-  environment = remote.prod
+  environment  = remote.prod
+  continuation = "reuse"
 }
 
 adapter "noop" "default" {
@@ -935,7 +937,8 @@ environment "remote" "prod" {
 }
 
 adapter "shell" "default" {
-  environment = remote.prod
+  environment  = remote.prod
+  continuation = "reuse"
 }
 
 step "engage" {

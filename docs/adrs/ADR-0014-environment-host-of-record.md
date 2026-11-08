@@ -127,13 +127,38 @@ remotely and locally.
 ### D3 — Session fate becomes an env-host-enforced contract
 
 Fate policy (the leakage fix, Item 2 of the 2026-11-06 design set) is declared
-on the adapter instance (`continuation = "reuse" | "fresh"`, default fresh at
-subworkflow re-entry) and ENFORCED in `Host.Ensure/Release` — the same code
+on the adapter instance (`continuation = "reuse" | "fresh"`) and ENFORCED in
+`Host.Ensure/Release` — the same code
 path in both hosting modes, which is what makes local and remote identical by
 construction instead of by coincidence. Adopt/reuse across runner generations
 (invocation-identity adoption, CRI-137/304 class) stays keyed to RUN identity
 inside the host's record lookup — recovery is not continuation, and this ADR
 does not change their semantics, only their address.
+
+Ruling addendum (2026-11-08, session-identity × per-call adapter config —
+Item 3 interplay): a per-call config change (model / reasoning effort /
+max_turns / any future per-call agent config) FORCES a fresh session — the
+conversation under the old config must not be inherited under the new one;
+retuning a live session in place stays available only where the call did not
+change config. Per-call config declared on a `continuation = "reuse"`
+instance is a HARD COMPILE ERROR — contradictory intents on one call;
+fail-loud beats last-writer-wins. These semantics belong to Item 3's future
+per-call-config schema; M7's validation matrix carries them as recorded rules.
+The compile-time re-entry rule — an adapter instance re-declared by both a
+parent and a callee graph must declare one agreeing fate on both sides; an
+undeclared or conflicting re-entry declaration is a hard validation error —
+is M7's fail-loud shape, and the selective fresh release (KB-257's detach
+path for everything not declared "fresh") is what the engine enforces.
+
+Enforcement ownership (2026-11-08, M7 implementation ruling): the declared
+fate is enforced in the engine's scope-lifecycle bookkeeping — body-entry for
+re-declared `fresh` instances (the inherited engagement is released before
+provisioning) and body-exit for the body's own `fresh` records — as the ONE
+code path for both hosting modes, which is what makes local and remote
+identical by construction. Routing that enforcement through
+`envhost.Host.Ensure/Release` rides the D5 Stage 2–3 seam migration and is
+tracked as such; until then the seam's `Release` remains reserved for the
+peer-fronted host and has no in-tree caller.
 
 ### D4 — What the peer gains (adapter session control)
 

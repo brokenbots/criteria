@@ -7,6 +7,7 @@ workflow {
 
 adapter "shell" "default" {
   config { }
+  continuation = "reuse"
 }
 
 // Declare a subworkflow that will be compiled from the ./subworkflows/inner directory

@@ -154,16 +154,24 @@ func (rlc *remoteLifecycleContext) DetachBodyScope(scopeName string, order []str
 // re-provisioning re-used the detached session takes ownership of the
 // record so its own exit re-detaches it (and the run-final teardown
 // releases what no body re-adopted).
+//
+// The membership check is what keeps the handback honest: the caller walks
+// a PRE-ENTRY ledger snapshot, and between that snapshot and this call a
+// declared-fresh body entry (or a concurrent parallel sibling) can have
+// released a record and taken it out of the ledger. Re-adding such a stale
+// record would resurrect a released engagement into the scope map for a
+// double release at teardown.
 func (rlc *remoteLifecycleContext) adoptDetached(rec *adapterLifecycleRecord) {
 	if rec == nil {
 		return
 	}
 	rlc.detachMu.Lock()
 	defer rlc.detachMu.Unlock()
-	rlc.scopeLifecycle.add(rec)
-	if rlc.detached != nil {
-		delete(rlc.detached, rec.scopeKey)
+	if cur, ok := rlc.detached[rec.scopeKey]; !ok || cur != rec {
+		return
 	}
+	rlc.scopeLifecycle.add(rec)
+	delete(rlc.detached, rec.scopeKey)
 }
 
 // detachedRecords snapshots the detachment ledger for a body entry: the
@@ -1012,19 +1020,35 @@ func stageAndRotateScopeAdapters(ctx context.Context, g *workflow.FSMGraph, deps
 	for _, instanceID := range g.AdapterOrder {
 		adapter := g.Adapters[instanceID]
 
-		// Subworkflow bodies re-declare parent adapters for safety.
-		// If the parent scope already provisioned this session, skip the whole
-		// init - rotating another token here would emit a second
-		// provision_wanted (leaking a second per-scope pod) for an engagement
-		// the parent already owns, and the parent's teardown would never
-		// release it.
+		// Subworkflow bodies re-declare parent adapters for safety. When
+		// the parent scope already provisioned this session:
 		//
-		// The child's declaration is intentionally not re-validated here; the skip is not accidental.
-		// Concurrency bound is evidence-based, not enforced: reuse-only keeps at most one live per-scope instance per adapter (the reuse tests observe peak 1).
+		//   - undeclared / "reuse" — skip the whole init (today's
+		//     KB-257 detach-and-reuse path). Rotating another token here
+		//     would emit a second provision_wanted (leaking a second
+		//     per-scope pod) for an engagement the parent already owns, and
+		//     the parent's teardown would never release it. The child's
+		//     declaration is intentionally not re-validated here; the skip
+		//     is not accidental. Concurrency bound is evidence-based, not
+		//     enforced: reuse-only keeps at most one live per-scope
+		//     instance per adapter (the reuse tests observe peak 1).
+		//
+		//   - declared "fresh" (ADR-0014 D3) — the inherited engagement is
+		//     released here (entry hook) and the fall-through provisions
+		//     THIS scope's own conversation. The universal release the
+		//     churn kill removed must not return: only this instance is
+		//     touched, only because its body declared the fate.
 		if deps.Sessions.SessionOpen(instanceID) {
-			slog.Info("re-declared adapter already provisioned by parent scope; reusing",
-				"scope", scopeName, "adapter_instance", instanceID)
-			continue
+			if adapter.Continuation == workflow.ContinuationFresh {
+				if rerr := releaseForeignScopeSessionsForFresh(ctx, deps, lifecycle, scopeName, instanceID); rerr != nil {
+					deps.Sink.OnAdapterLifecycle(scopeName, instanceID, "init_failed", rerr.Error())
+					return nil, fmt.Errorf("initialize adapter %q: %w", instanceID, rerr)
+				}
+			} else {
+				slog.Info("re-declared adapter already provisioned by parent scope; reusing",
+					"scope", scopeName, "adapter_instance", instanceID)
+				continue
+			}
 		}
 
 		// Prepare the adapter inputs (secrets, origin refs, working dir, runtime
@@ -1311,6 +1335,54 @@ func drainDetachedLedger(ctx context.Context, deps Deps, lifecycle *remoteLifecy
 
 func tearDownScopeAdapters(ctx context.Context, scopeName string, order []string, deps Deps, lifecycle *remoteLifecycleContext) {
 	drainDetachedLedger(ctx, deps, lifecycle)
+	releaseScopeAdapters(ctx, scopeName, order, deps, lifecycle)
+}
+
+// releaseScopeAdapters is the close+unregister+tombstone half of
+// tearDownScopeAdapters, WITHOUT the detachment-ledger drain. A subworkflow
+// body's exit uses it to release a single declared-fresh instance
+// (ADR-0014 D3) without touching records other bodies detached — draining
+// the ledger here would release foreign engagements while their owning
+// bodies are still live. Errors during release are logged via the adapter
+// lifecycle sink but do not change the run's terminal state.
+// releaseScopeRecord performs the release half of a per-scope remote record
+// teardown: a "released" lifecycle event, scope-token unregistration so a
+// torn-down pod cannot reconnect with the old token, the definition-addressed
+// handle close, and the persisted-instance tombstone that forces the next
+// deliberate scope entry to rotate a fresh token instead of the token-file
+// scan resurrecting the released one (the rotated token file is kept for
+// post-run forensics). The record's rotator — the scope map or the
+// detachment ledger — is owned by the caller, which also removes it.
+func releaseScopeRecord(ctx context.Context, deps Deps, lifecycle *remoteLifecycleContext, rec *adapterLifecycleRecord) {
+	if lifecycle == nil || lifecycle.scopeLifecycle == nil || rec == nil || !rec.perScope {
+		return
+	}
+	deps.Sink.OnAdapterLifecycleEvent(&AdapterLifecycleEvent{
+		RunID:             rec.runID,
+		ScopeName:         rec.scopeName,
+		ScopeInstanceID:   rec.scopeInstanceID,
+		AdapterName:       rec.adapterName,
+		AdapterType:       rec.adapterType,
+		Digest:            rec.digest,
+		ShimListenAddress: rec.listenAddr,
+		TokenRef:          rec.tokenPath,
+		Status:            "released",
+		EnvironmentType:   rec.envType,
+		EnvironmentName:   rec.envName,
+	})
+	envKey := rec.envType + "." + rec.envName
+	_ = unregisterScopeToken(ctx, deps, envKey, rec.scopeKey)
+	// The kill is addressed by the adapter DEFINITION
+	// identity, never the adapter type. Per-definition peer
+	// children each serve one definition; a kind-addressed kill
+	// from this scope's teardown could take down a sibling
+	// definition's child (the pair_programming_loop handshake
+	// kill-chain).
+	_ = closeScopeHandle(context.WithoutCancel(ctx), deps, envKey, rec.adapterName, rec.scopeKey)
+	releaseScopeInstance(lifecycle.scopeLifecycle.dataDir, rec.scopeName, rec.adapterName, rec.scopeInstanceID, rec.adapterName)
+}
+
+func releaseScopeAdapters(ctx context.Context, scopeName string, order []string, deps Deps, lifecycle *remoteLifecycleContext) {
 	if len(order) == 0 {
 		return
 	}
@@ -1323,38 +1395,12 @@ func tearDownScopeAdapters(ctx context.Context, scopeName string, order []string
 	for i := len(order) - 1; i >= 0; i-- {
 		adapterID := order[i]
 
-		// Emit a release event for per-scope remote adapters before
-		// closing the session, then unregister the scope token so a torn-down
-		// pod cannot reconnect with the old token.
+		// Emit the release event for the per-scope remote adapter, unregister
+		// the scope token, and close the definition-addressed handle BEFORE
+		// closing the session.
 		if lifecycle != nil && lifecycle.scopeLifecycle != nil {
 			if rec := lifecycle.scopeLifecycle.get(scopeName, adapterID); rec != nil && rec.perScope {
-				deps.Sink.OnAdapterLifecycleEvent(&AdapterLifecycleEvent{
-					RunID:             rec.runID,
-					ScopeName:         rec.scopeName,
-					ScopeInstanceID:   rec.scopeInstanceID,
-					AdapterName:       rec.adapterName,
-					AdapterType:       rec.adapterType,
-					Digest:            rec.digest,
-					ShimListenAddress: rec.listenAddr,
-					TokenRef:          rec.tokenPath,
-					Status:            "released",
-					EnvironmentType:   rec.envType,
-					EnvironmentName:   rec.envName,
-				})
-				envKey := rec.envType + "." + rec.envName
-				_ = unregisterScopeToken(ctx, deps, envKey, rec.scopeKey)
-				// The kill is addressed by the adapter DEFINITION
-				// identity, never the adapter type. Per-definition peer
-				// children each serve one definition; a kind-addressed kill
-				// from this scope's teardown could take down a sibling
-				// definition's child (the pair_programming_loop handshake
-				// kill-chain).
-				_ = closeScopeHandle(cleanupCtx, deps, envKey, rec.adapterName, rec.scopeKey)
-				// Tombstone the persisted scope instance so the
-				// next deliberate scope entry rotates a fresh token instead
-				// of the token-file scan resurrecting the released one. The
-				// rotated token file is kept for post-run forensics.
-				releaseScopeInstance(lifecycle.scopeLifecycle.dataDir, rec.scopeName, rec.adapterName, rec.scopeInstanceID, rec.adapterName)
+				releaseScopeRecord(cleanupCtx, deps, lifecycle, rec)
 				lifecycle.scopeLifecycle.remove(scopeName, adapterID)
 			}
 		}
@@ -1368,4 +1414,93 @@ func tearDownScopeAdapters(ctx context.Context, scopeName string, order []string
 			deps.Sink.OnAdapterLifecycle("", adapterID, "closed", "")
 		}
 	}
+}
+
+// releaseForeignScopeSessionsForFresh is the declared-fate ENTRY hook
+// (ADR-0014 D3): a subworkflow body re-declaring an adapter instance with
+// continuation = "fresh" opens a NEW conversation at its entry, so every
+// engagement an ancestor still owns for that instance — the root scope's
+// live record and any prior body's record parked in the detachment ledger —
+// is released here: close + unregister + tombstone, for that instance only.
+// The universal release the churn kill removed must not return: instances
+// this body does not declare fresh keep the already-provisioned skip, and
+// the ledger drain keeps releasing only what nobody adopted.
+//
+// A record owned by another LIVE body scope (concurrent parallel siblings)
+// is runnable right now and cannot be released — those pairs must declare
+// agreeing per-instance fates that honour sharing (reuse), so declared-fresh
+// re-entry fails loud rather than racing a sibling.
+func releaseForeignScopeSessionsForFresh(ctx context.Context, deps Deps, lifecycle *remoteLifecycleContext, scopeName, instanceID string) error {
+	if lifecycle != nil {
+		lifecycle.detachMu.Lock()
+		releaseDetachedLedgerForFresh(ctx, deps, lifecycle, scopeName, instanceID)
+		conflict := releaseLiveScopeRecordsForFresh(ctx, deps, lifecycle, scopeName, instanceID)
+		lifecycle.detachMu.Unlock()
+		if conflict != nil {
+			return fmt.Errorf("adapter %q declares continuation = \"fresh\" but body scope %q still holds its live session; a concurrently running body's engagement cannot be released for this re-entry", instanceID, conflict.scopeName)
+		}
+	}
+	// The session itself keys on the adapter instance inside the run-scoped
+	// SessionManager, so the inherited engagement is closed even when the
+	// fate rides local sessions (non-per-scope) that carry no per-scope
+	// record. Close is idempotent for already-closed instances, and the
+	// instance's owner-scope order keeps calling it at teardown, so this
+	// close does not orphan anything downstream.
+	cleanupCtx := context.WithoutCancel(ctx)
+	if err := deps.Sessions.Close(cleanupCtx, instanceID); err != nil {
+		deps.Sink.OnAdapterLifecycle("", instanceID, "close_failed", err.Error())
+		return fmt.Errorf("close inherited session for adapter %q: %w", instanceID, err)
+	}
+	deps.Sink.OnAdapterLifecycle("", instanceID, "closed", "")
+	slog.Info("declared-fresh re-entry released an inherited session",
+		"scope", scopeName, "adapter_instance", instanceID)
+	return nil
+}
+
+// releaseDetachedLedgerForFresh abandons the ledger's handback for the
+// fresh-declared instance: a prior body detached this instance's record and
+// its session is live, so the fresh re-entry releases the record instead of
+// re-adopting it. Taking the record out of the ledger also removes it from
+// the run-final drain, and startWorkflowBody's pre-entry snapshots are
+// rejected by adoptDetached's membership check when they reach the adoption
+// loop. The caller must hold lifecycle.detachMu.
+func releaseDetachedLedgerForFresh(ctx context.Context, deps Deps, lifecycle *remoteLifecycleContext, scopeName, instanceID string) {
+	for key, rec := range lifecycle.detached {
+		if rec == nil || rec.adapterName != instanceID {
+			continue
+		}
+		slog.Info("declared-fresh re-entry releases a detached engagement",
+			"scope", scopeName, "adapter_instance", instanceID, "record_scope", rec.scopeName)
+		releaseScopeRecord(context.WithoutCancel(ctx), deps, lifecycle, rec)
+		delete(lifecycle.detached, key)
+	}
+}
+
+// releaseLiveScopeRecordsForFresh releases the live root-scope ("") record
+// the ancestor provisioned, which a fresh re-entry may consume. A record
+// under another body scope belongs to a concurrent sibling and is returned
+// as the conflict instead of being released — the caller fails loud before
+// closing the session. The caller must hold lifecycle.detachMu; this helper
+// takes and releases lifecycle.scopeLifecycle.mu.
+func releaseLiveScopeRecordsForFresh(ctx context.Context, deps Deps, lifecycle *remoteLifecycleContext, scopeName, instanceID string) *adapterLifecycleRecord {
+	var conflict *adapterLifecycleRecord
+	if lifecycle.scopeLifecycle == nil {
+		return conflict
+	}
+	lifecycle.scopeLifecycle.mu.Lock()
+	defer lifecycle.scopeLifecycle.mu.Unlock()
+	for key, rec := range lifecycle.scopeLifecycle.records {
+		if rec == nil || rec.adapterName != instanceID || !rec.perScope || rec.scopeName == scopeName {
+			continue
+		}
+		if rec.scopeName != "" {
+			conflict = rec
+			continue
+		}
+		slog.Info("declared-fresh re-entry releases the inherited root-scope engagement",
+			"scope", scopeName, "adapter_instance", instanceID)
+		releaseScopeRecord(context.WithoutCancel(ctx), deps, lifecycle, rec)
+		delete(lifecycle.scopeLifecycle.records, key)
+	}
+	return conflict
 }

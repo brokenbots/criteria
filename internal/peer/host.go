@@ -167,6 +167,7 @@ func NewInProcessHost(cfg HostConfig, boot func(context.Context, envhost.Definit
 		stopWatch:      make(chan struct{}),
 		watchDone:      make(chan struct{}),
 	}
+	rt.watchCond = sync.NewCond(&rt.watchMu)
 	return &InProcessHost{
 		rt:          rt,
 		boot:        boot,

@@ -275,7 +275,9 @@ func cri39ChildHCL(parallelList string, parallelMax int) string {
   target_state  = "done"
 }
 
-adapter "fake" "default" {}
+adapter "fake" "default" {
+  continuation = "reuse"
+}
 
 step "run" {
   target       = adapter.fake.default
@@ -304,7 +306,9 @@ func cri39SequentialChildHCL(list string) string {
   target_state  = "done"
 }
 
-adapter "fake" "default" {}
+adapter "fake" "default" {
+  continuation = "reuse"
+}
 
 step "run" {
   target   = adapter.fake.default
@@ -390,7 +394,9 @@ subworkflow "grandchild" {
   source = "./grandchild"
 }
 
-adapter "fake" "default" {}
+adapter "fake" "default" {
+  continuation = "reuse"
+}
 
 step "run" {
   target       = subworkflow.grandchild
@@ -429,7 +435,9 @@ func TestParallelCeiling_SingleLevelParallel(t *testing.T) {
   target_state  = "done"
 }
 
-adapter "fake" "default" {}
+adapter "fake" "default" {
+  continuation = "reuse"
+}
 
 step "work" {
   target       = adapter.fake.default
@@ -482,7 +490,9 @@ func cri39SiblingChildHCL(list string, aMax, bMax int) string {
   target_state  = "done"
 }
 
-adapter "fake" "default" {}
+adapter "fake" "default" {
+  continuation = "reuse"
+}
 
 step "a" {
   target       = adapter.fake.default
@@ -534,7 +544,9 @@ func cri39SubworkflowSiblingChildHCL(list string, aMax int) string {
   target_state  = "done"
 }
 
-adapter "fake" "default" {}
+adapter "fake" "default" {
+  continuation = "reuse"
+}
 
 subworkflow "grandchild" {
   source = "./grandchild"

@@ -111,10 +111,23 @@ type peerRuntime struct {
 	// exitPoll is the process-exit poll interval (tunable in tests).
 	exitPoll  time.Duration
 	stopWatch chan struct{}
-	// watchDone closes once every child exit watcher has stopped.
+	// watchDone closes once every child exit watcher has stopped: the
+	// first drain of all registered watchers closes it, and when no
+	// watcher was ever registered it stays open (nothing waits on it).
+	// The channel is never swapped — consumers read it directly.
 	watchDone chan struct{}
-	watchWG   sync.WaitGroup
-	stopOnce  sync.Once
+	watchMu   sync.Mutex
+	// The watcher bookkeeping is lock- and condition-guarded because a
+	// watcher may be registered from the respawn path at any time, even
+	// while a drain is in flight: registration is refused once shutdown
+	// begins, and the drain waits for watchers registered before that.
+	// (A WaitGroup cannot accept a counter increment concurrent with a
+	// Wait, which is what the respawn path would need.)
+	watchCond       *sync.Cond
+	watchActive     int
+	watchClosed     bool
+	watchDoneClosed bool
+	stopOnce        sync.Once
 }
 
 // NewRuntime builds a peer runtime for the given (already resolved)
@@ -123,7 +136,7 @@ func NewRuntime(cfg *Config, log *slog.Logger) *peerRuntime {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &peerRuntime{
+	rt := &peerRuntime{
 		cfg:            cfg,
 		log:            log,
 		loader:         adapterhost.NewLoader(),
@@ -137,6 +150,58 @@ func NewRuntime(cfg *Config, log *slog.Logger) *peerRuntime {
 		stopWatch:      make(chan struct{}),
 		watchDone:      make(chan struct{}),
 	}
+	rt.watchCond = sync.NewCond(&rt.watchMu)
+	return rt
+}
+
+// registerExitWatcher reserves a live-watcher slot and reports whether the
+// reservation was accepted: once shutdown has begun no watcher may
+// register, so the caller must not spawn an unwatched child on refusal.
+func (r *peerRuntime) registerExitWatcher() bool {
+	r.watchMu.Lock()
+	defer r.watchMu.Unlock()
+	if r.watchClosed {
+		return false
+	}
+	r.watchActive++
+	return true
+}
+
+// releaseExitWatcher drops a finished watcher's slot; every transition to
+// a zero count wakes a shutdown drain in flight — the drain's predicate is
+// the zero count, and later watcher generations must wake it too, not
+// just the one that first closed watchDone.
+func (r *peerRuntime) releaseExitWatcher() {
+	r.watchMu.Lock()
+	defer r.watchMu.Unlock()
+	r.watchActive--
+	if r.watchActive == 0 {
+		if !r.watchDoneClosed {
+			r.watchDoneClosed = true
+			close(r.watchDone)
+		}
+		r.watchCond.Broadcast()
+	}
+}
+
+// drainExitWatchers blocks until every registered watcher has stopped.
+// Callers invoke it under watchClosed — set before the drain begins — so
+// no watcher can register after the count reaches zero.
+func (r *peerRuntime) drainExitWatchers() {
+	r.watchMu.Lock()
+	defer r.watchMu.Unlock()
+	for r.watchActive > 0 {
+		r.watchCond.Wait()
+	}
+}
+
+// closeWatcherRegistration refuses all future watcher registrations; it is
+// the drain's precondition. Watchers registered before this point are
+// awaited by drainExitWatchers.
+func (r *peerRuntime) closeWatcherRegistration() {
+	r.watchMu.Lock()
+	defer r.watchMu.Unlock()
+	r.watchClosed = true
 }
 
 // Config returns the runtime configuration.
@@ -283,15 +348,22 @@ func (r *peerRuntime) ensureChildHandle(ctx context.Context, name string) (*chil
 // The ensure path (dial peers and the in-process container host) and the
 // boot loop share it.
 func (r *peerRuntime) spawnAndWatch(ctx context.Context, spec *childSpec) (*childState, bool) {
+	// The watcher slot is reserved before the spawn: a running child's
+	// exit must be journaled, a failed spawn must not leak the slot, and a
+	// refused reservation (shutdown in flight) must not leave an unwatched
+	// child behind.
+	if !r.registerExitWatcher() {
+		return nil, false
+	}
 	c, err := r.spawnChild(ctx, spec)
 	if err != nil {
+		r.releaseExitWatcher()
 		r.log.Error("peer child respawn failed", "adapter", spec.spec.Name, "error", err)
 		return nil, false
 	}
 	if err := r.recordSpawn(c); err != nil {
 		r.log.Error("peer child respawn journal append failed", "adapter", spec.spec.Name, "error", err)
 	}
-	r.watchWG.Add(1)
 	go r.watchChild(c)
 	r.log.Info("peer child respawned", "adapter", spec.spec.Name,
 		"binary", spec.spec.Binary, "digest", spec.spec.Digest)
@@ -397,25 +469,27 @@ func (r *peerRuntime) Boot(ctx context.Context) error {
 
 	spawned := make([]*childState, 0, len(specs))
 	for i := range specs {
+		// The watcher slot is reserved before the spawn: a refused slot
+		// (shutdown in flight) must not leave an unwatched child, so the
+		// boot fails through the normal teardown path.
+		if !r.registerExitWatcher() {
+			r.teardownSpawnedChildren(ctx, spawned)
+			return fmt.Errorf("adapter %q: refusing unwatched boot spawn during shutdown", specs[i].spec.Name)
+		}
 		c, err := r.spawnChild(ctx, &specs[i])
 		if err != nil {
+			r.releaseExitWatcher()
 			r.teardownSpawnedChildren(ctx, spawned)
 			return err
 		}
 		if err := r.recordSpawn(c); err != nil {
 			spawned = append(spawned, c)
+			r.releaseExitWatcher()
 			r.teardownSpawnedChildren(ctx, spawned)
 			return err
 		}
 		spawned = append(spawned, c)
-		r.watchWG.Add(1)
 		go r.watchChild(c)
-	}
-	if len(spawned) > 0 {
-		go func() {
-			r.watchWG.Wait()
-			close(r.watchDone)
-		}()
 	}
 	return nil
 }
@@ -574,7 +648,7 @@ func (r *peerRuntime) verifyChild(ctx context.Context, spec *childSpec, c *child
 // moment it disappears. A peer-initiated shutdown stops the watcher first,
 // so exits observed here are always ungraceful crashes.
 func (r *peerRuntime) watchChild(c *childState) {
-	defer r.watchWG.Done()
+	defer r.releaseExitWatcher()
 	ticker := time.NewTicker(r.exitPoll)
 	defer ticker.Stop()
 	for {
@@ -926,8 +1000,11 @@ func (r *peerRuntime) Shutdown(ctx context.Context) error {
 		}
 		r.mu.Unlock()
 
+		// Registration is refused from here on, so the drain below can
+		// only be waiting for watchers that registered before it.
+		r.closeWatcherRegistration()
 		close(r.stopWatch)
-		r.watchWG.Wait()
+		r.drainExitWatchers()
 
 		r.shutdownChildren(ctx, children)
 		if err := r.loader.Shutdown(ctx); err != nil {

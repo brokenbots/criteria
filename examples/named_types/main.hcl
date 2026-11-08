@@ -45,7 +45,9 @@ type "audit" {
   })
 }
 
-adapter "noop" "default" {}
+adapter "noop" "default" {
+  continuation = "reuse"
+}
 
 data "internal" "budget" {
   type  = type.num

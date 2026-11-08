@@ -40,7 +40,9 @@ workflow {
   target_state  = "done"
 }
 
-adapter "noop" "default" {}
+adapter "noop" "default" {
+  continuation = "reuse"
+}
 
 subworkflow "child" {
   source = "./child"
@@ -73,7 +75,9 @@ workflow {
   target_state  = "done"
 }
 
-adapter "noop" "default" {}
+adapter "noop" "default" {
+  continuation = "reuse"
+}
 
 subworkflow "grand" {
   source = "./grand"
@@ -99,7 +103,9 @@ workflow {
   target_state  = "done"
 }
 
-adapter "noop" "default" {}
+adapter "noop" "default" {
+  continuation = "reuse"
+}
 
 step "execute" {
   target = adapter.noop.default

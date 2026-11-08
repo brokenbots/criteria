@@ -5,7 +5,9 @@ workflow {
   target_state  = "done"
 }
 
-adapter "noop" "default" {}
+adapter "noop" "default" {
+  continuation = "reuse"
+}
 
 subworkflow "process_one" {
   source = "./child"
