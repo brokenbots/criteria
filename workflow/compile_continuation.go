@@ -64,7 +64,7 @@ func validateContinuation(g *FSMGraph) []error {
 	return errs
 }
 
-// subworkflowOrder lists subworkflow names in declaration order for
+// subworkflowOrder lists subworkflow names in sorted (alphabetical) order for
 // deterministic diagnostics.
 func subworkflowOrder(g *FSMGraph) []string {
 	names := make([]string, 0, len(g.Subworkflows))

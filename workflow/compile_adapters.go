@@ -177,12 +177,14 @@ func resolveAdapterOnCrash(key, onCrash string) (string, hcl.Diagnostics) {
 }
 
 // resolveAdapterContinuation validates the adapter's declared session-fate
-// (ADR-0014 D3): "reuse" keeps the session and its conversation alive across
-// subworkflow body exits via the detach ledger, "fresh" releases it at body
-// exit so a re-entry opens a new conversation. Empty means undeclared; the
-// engine enforces the default (fresh) at subworkflow boundaries, and the
-// re-entry compile rule (compile_continuation.go) requires a declaration for
-// adapter instances both a subworkflow body and its parent graph re-declare.
+// value against the continuation policy (ADR-0014 D3): "reuse" keeps the
+// session and its conversation alive across subworkflow body exits via the
+// detach ledger, "fresh" releases it so the next re-entry opens a new
+// conversation. Empty means undeclared: the body's own undeclared instances
+// detach at body exit (the KB-257 path), and the re-entry compile rule
+// (compile_continuation.go, validateContinuation) keeps declarations
+// mandatory for adapter instances re-declared by both a parent and a callee
+// graph.
 func resolveAdapterContinuation(key, continuation string) (string, hcl.Diagnostics) {
 	switch continuation {
 	case "", continuationReuse, continuationFresh:

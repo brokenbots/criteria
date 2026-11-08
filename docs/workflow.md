@@ -729,8 +729,10 @@ otherwise. See [docs/adapters.md](adapters.md) for details on declaring
 capabilities.
 
 Subworkflow steps that use `parallel` receive fully isolated adapter sessions
-per iteration — each goroutine's subworkflow opens and closes its own sessions
-independently.
+per iteration — each goroutine's subworkflow runs against its own per-scope
+session, isolated from the other iterations; the instance's declared
+`continuation` governs whether the session detaches (default) or is released
+when the iteration's body exits.
 
 **Data values in `parallel` steps:**
 

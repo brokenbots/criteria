@@ -150,6 +150,16 @@ undeclared or conflicting re-entry declaration is a hard validation error —
 is M7's fail-loud shape, and the selective fresh release (KB-257's detach
 path for everything not declared "fresh") is what the engine enforces.
 
+Enforcement ownership (2026-11-08, M7 implementation ruling): the declared
+fate is enforced in the engine's scope-lifecycle bookkeeping — body-entry for
+re-declared `fresh` instances (the inherited engagement is released before
+provisioning) and body-exit for the body's own `fresh` records — as the ONE
+code path for both hosting modes, which is what makes local and remote
+identical by construction. Routing that enforcement through
+`envhost.Host.Ensure/Release` rides the D5 Stage 2–3 seam migration and is
+tracked as such; until then the seam's `Release` remains reserved for the
+peer-fronted host and has no in-tree caller.
+
 ### D4 — What the peer gains (adapter session control)
 
 Once the peer fronts `Host` for remote envs, ledger verbs become first-class

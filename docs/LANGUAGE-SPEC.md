@@ -148,7 +148,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `output "name" { ... }`
 
-- **Source:** [`workflow/schema.go:450`](../workflow/schema.go#L450)
+- **Source:** [`workflow/schema.go:461`](../workflow/schema.go#L461)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -171,14 +171,14 @@ The following block types are defined. Tables are auto-generated from [`workflow
 | `version` | string | no | Version is the semver constraint resolved at lock time: exact ("1.2.3"), caret ("^1.2"), tilde ("~1.2.0"), wildcard ("1.x"), or "latest". The lockfile pins the resolved digest for run-to-run reproducibility. |
 | `environment` | hcl.Expression | no | _(no description)_ |
 | `on_crash` | string | no | _(no description)_ |
+| `continuation` | string | no | Continuation declares the adapter instance's session fate at subworkflow boundaries: "fresh" closes, unregisters, and tombstones the per-scope session at body exit so a re-entry opens a new conversation; "reuse" detaches it — the session and its conversation survive for the next re-entry (and the run-final teardown releases it). Undeclared instances are unconstrained when no scope re-entry touches them (the engine keeps the KB-257 detach path), but an adapter instance re-declared by both a parent and a callee graph must declare the same fate on both sides: undeclared or conflicting re-entry declarations are a hard compile error (validateContinuation). |
 | `dynamic_tools` | bool | no | DynamicTools admits a runtime-discovered tool surface alongside any static tool blocks (dynamic_tools = bool, default false). Parsed by the schema decode; consumed by the tools validation (lenient static-name check) and the runtime tool-discovery path. |
-| `continuation` | string | no | Session fate for this adapter instance at subworkflow boundaries: `"fresh"` releases the per-scope session at the body exit (close + unregister + tombstone) so the next re-entry opens a new conversation; `"reuse"` detaches it, and the session and its conversation survive to the next re-entry. Values outside `"reuse"`/`"fresh"` are rejected at compile. When a parent graph and its callee both declare the same instance, both sides must declare one agreeing fate — an undeclared or conflicting re-entry declaration is a hard compile error (ADR-0014 D3). |
 
 - **Nested blocks:** [`config`](#config---), [`secrets`](#secrets---), [`tool`](#tool-name---)
 
 ### `subworkflow "name" { ... }`
 
-- **Source:** [`workflow/schema.go:463`](../workflow/schema.go#L463)
+- **Source:** [`workflow/schema.go:474`](../workflow/schema.go#L474)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -192,7 +192,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `step "name" { ... }`
 
-- **Source:** [`workflow/schema.go:354`](../workflow/schema.go#L354)
+- **Source:** [`workflow/schema.go:365`](../workflow/schema.go#L365)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -209,7 +209,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `state "name" { ... }`
 
-- **Source:** [`workflow/schema.go:622`](../workflow/schema.go#L622)
+- **Source:** [`workflow/schema.go:633`](../workflow/schema.go#L633)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -222,7 +222,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `wait "name" { ... }`
 
-- **Source:** [`workflow/schema.go:605`](../workflow/schema.go#L605)
+- **Source:** [`workflow/schema.go:616`](../workflow/schema.go#L616)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -235,7 +235,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `approval "name" { ... }`
 
-- **Source:** [`workflow/schema.go:614`](../workflow/schema.go#L614)
+- **Source:** [`workflow/schema.go:625`](../workflow/schema.go#L625)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -248,13 +248,13 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `switch "name" { ... }`
 
-- **Source:** [`workflow/schema.go:633`](../workflow/schema.go#L633)
+- **Source:** [`workflow/schema.go:644`](../workflow/schema.go#L644)
 - **Labels:** `name`
 - **Nested blocks:** [`match`](#match---), [`default`](#default---)
 
 ### `permissions { ... }`
 
-- **Source:** [`workflow/schema.go:686`](../workflow/schema.go#L686)
+- **Source:** [`workflow/schema.go:697`](../workflow/schema.go#L697)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -264,7 +264,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `policy { ... }`
 
-- **Source:** [`workflow/schema.go:653`](../workflow/schema.go#L653)
+- **Source:** [`workflow/schema.go:664`](../workflow/schema.go#L664)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
@@ -286,7 +286,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `tool "name" { ... }`
 
-- **Source:** [`workflow/schema.go:344`](../workflow/schema.go#L344)
+- **Source:** [`workflow/schema.go:355`](../workflow/schema.go#L355)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -307,7 +307,7 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `outcome "name" { ... }`
 
-- **Source:** [`workflow/schema.go:564`](../workflow/schema.go#L564)
+- **Source:** [`workflow/schema.go:575`](../workflow/schema.go#L575)
 - **Labels:** `name`
 - **Attributes:**
 
@@ -324,17 +324,17 @@ The following block types are defined. Tables are auto-generated from [`workflow
 
 ### `match { ... }`
 
-- **Source:** [`workflow/schema.go:642`](../workflow/schema.go#L642)
+- **Source:** [`workflow/schema.go:653`](../workflow/schema.go#L653)
 - **Additional attributes:** captures: condition (required), next (required), output (optional)
 
 ### `default { ... }`
 
-- **Source:** [`workflow/schema.go:648`](../workflow/schema.go#L648)
+- **Source:** [`workflow/schema.go:659`](../workflow/schema.go#L659)
 - **Additional attributes:** captures: next (required), output (optional)
 
 ### `write { ... }`
 
-- **Source:** [`workflow/schema.go:591`](../workflow/schema.go#L591)
+- **Source:** [`workflow/schema.go:602`](../workflow/schema.go#L602)
 - **Attributes:**
 
 | Attribute | Type | Required | Description |
