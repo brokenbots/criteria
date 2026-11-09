@@ -181,7 +181,7 @@ func (h *exitedPlaceholderPeerHandle) Restore(context.Context, string, []byte, u
 
 // TestPlainExitedPeerJournalStaysOrdinaryStepError pins the peer shape
 // whose journal carries only the plain Exited placeholder: no crash
-// evidence exists ( SupervisionCrashReason answers ("", false), no
+// evidence exists (SupervisionCrashReason answers ("", false), no
 // ProcessExitReporter), so the failed Execute returns the raw transport
 // error directly — no SessionCrashError, no crashed flag, no session.crash
 // event.

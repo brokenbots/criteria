@@ -270,9 +270,9 @@ func TestLoader_ExpectedCloseLogsAtDebug(t *testing.T) {
 // the specific boundary: host cancels the context AND the adapter returns an
 // EOF-like error (not context.Canceled). An EOF-shaped error carries no
 // classification evidence (ADR-0014 M5: classification reads journal and
-// structural facts only), and it is the expected-close early return — the
-// canceled context marks the close as initiated by the host — that keeps
-// crash classification from firing → DEBUG not WARN.
+// structural facts only), and the canceled context routes the failure
+// through the expected-close early return, which suppresses crash
+// classification → DEBUG not WARN.
 func TestLoader_HostCanceledContextWithEOFLogsAtDebug(t *testing.T) {
 	var buf bytes.Buffer
 	old := slog.Default()
