@@ -837,12 +837,17 @@ func TestPeerProcessExitedAfterJournalEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WaitForHandle: %v", err)
 	}
-	reporter := handle.(adapterhost.ProcessExitReporter)
-	if reporter.ProcessExited() {
-		t.Fatalf("ProcessExited true before journal event observed")
+	ph, ok := handle.(*peerHandle)
+	if !ok {
+		t.Fatalf("handle type %T, want *peerHandle", handle)
+	}
+	if ph.ps.processExited(ph.name) {
+		t.Fatalf("terminal journal fact observed before the journal event replayed")
 	}
 
-	waitFor(t, "ProcessExited after journal event", reporter.ProcessExited)
+	waitFor(t, "terminal journal fact after the replay", func() bool {
+		return ph.ps.processExited(ph.name)
+	})
 	ps := mustPeerSession(t, provider)
 	ps.mu.Lock()
 	aj := ps.journals.trackFor(ps.dial.AdapterType)
@@ -858,9 +863,11 @@ func TestPeerProcessExitedAfterJournalEvent(t *testing.T) {
 		t.Fatalf("last replay seq = %d, want 1 (duplicate event_seq must not advance)", lastSeq)
 	}
 
-	// The adapterhost-level probe the crash classifier uses must agree.
-	if !adapterhost.ProcessExited(handle) {
-		t.Fatalf("adapterhost.ProcessExited(handle) = false after journal exit")
+	// The exit stays classification-free: the plain Exited placeholder is
+	// not a CrashClassified wire fact, so SupervisionCrashReason reports no
+	// classification for it.
+	if reason, ok := adapterhost.SupervisionCrashReason(handle); ok {
+		t.Fatalf("SupervisionCrashReason = (%q, true), want no classification for the plain Exited placeholder", reason)
 	}
 }
 
@@ -991,15 +998,21 @@ func TestPeerKillReportsExitThroughJournal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WaitForHandle: %v", err)
 	}
-	reporter := handle.(adapterhost.ProcessExitReporter)
-	if reporter.ProcessExited() {
-		t.Fatalf("ProcessExited true before Kill")
+	ph, ok := handle.(*peerHandle)
+	if !ok {
+		t.Fatalf("handle type %T, want *peerHandle", handle)
+	}
+	if ph.ps.processExited(ph.name) {
+		t.Fatal("terminal journal fact observed before Kill")
 	}
 
 	// Kill issues Control{kill_child} on the peer; the fake peer records the
-	// exit in its journal and the supervision replay flips ProcessExited.
+	// exit in its journal and the supervision replay lands the terminal
+	// fact on the host's journal read path.
 	handle.Kill()
-	waitFor(t, "ProcessExited after Kill", reporter.ProcessExited)
+	waitFor(t, "terminal journal fact after Kill", func() bool {
+		return ph.ps.processExited(ph.name)
+	})
 }
 
 func TestPeerCloseHandleAndStop(t *testing.T) {
@@ -1797,13 +1810,19 @@ func TestPeerSupervisionUnimplementedKeepsHandleUsable(t *testing.T) {
 	}
 
 	// A pre-PeerService peer build: the supervisor records unavailability in
-	// the log, ProcessExited stays false (the caller falls back to error
-	// heuristics, like a legacy handle), and the v2 service remains usable.
-	if _, ok := handle.(adapterhost.ProcessExitReporter); !ok {
-		t.Fatalf("handle %T does not implement ProcessExitReporter", handle)
+	// the log, and without a supervise stream no supervision fact ever
+	// lands — no terminal journal fact, no crash classification (journal
+	// delivery is the only classification source, ADR-0014 M5). The v2
+	// service remains usable.
+	if reason, ok := adapterhost.SupervisionCrashReason(handle); ok {
+		t.Fatalf("SupervisionCrashReason = (%q, true), want no classification without a supervise stream", reason)
 	}
-	if handle.(adapterhost.ProcessExitReporter).ProcessExited() {
-		t.Fatal("ProcessExited = true without any journal event")
+	if _, ok := handle.(*peerHandle); !ok {
+		t.Fatalf("handle %T, want *peerHandle", handle)
+	}
+	ph := handle.(*peerHandle)
+	if ph.ps.processExited(ph.name) {
+		t.Fatal("terminal journal fact observed without any journal event")
 	}
 	if !waitForLog(t, logs, "does not implement supervision", 5*time.Second) {
 		t.Fatal("supervision-unavailable warning never recorded")
@@ -1856,9 +1875,9 @@ func TestPeerKillChildRejectionIsTolerated(t *testing.T) {
 	handle.Kill()
 }
 
-func TestPeerProcessExitedNilGuards(t *testing.T) {
+func TestPeerSupervisionCrashReasonNilGuards(t *testing.T) {
 	var nilHandle *peerHandle
-	if nilHandle.ProcessExited() {
-		t.Fatal("nil handle ProcessExited = true")
+	if _, ok := nilHandle.SupervisionCrashReason(); ok {
+		t.Fatal("nil handle SupervisionCrashReason reported a classification")
 	}
 }

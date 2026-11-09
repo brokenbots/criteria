@@ -16,13 +16,18 @@ import (
 	"github.com/brokenbots/criteria/workflow"
 )
 
-// cri271CrashErr is the verbatim failure signature from CRI-271: the go-plugin
-// shim's gRPC transport closing underneath a live adapter session.
+// cri271CrashErr is the failure shape the go-plugin shim produced in CRI-271:
+// the gRPC transport closing underneath a live adapter session. Under M5 the
+// host never reads this text; the failing handle carries the structural
+// evidence instead (ProcessExited).
 var cri271CrashErr = errors.New("rpc error: code = Canceled desc = grpc: the client connection is closing")
 
 // cri271Handle is a minimal Handle stub that records OpenSession calls and
-// either fails every Execute with the CRI-271 signature (gen 1) or succeeds
-// (gen 2), emulating a dead process being replaced by a fresh respawn.
+// either reports a dead process on Execute (gen 1) or succeeds (gen 2),
+// emulating a dead process being replaced by a fresh respawn. The dead gen
+// exposes the process-exit fact through the ProcessExitReporter capability —
+// the structural evidence the M5 classifier routes on, in place of the
+// deleted text heuristics.
 type cri271Handle struct {
 	name  string
 	gen   int
@@ -31,6 +36,8 @@ type cri271Handle struct {
 	mu    sync.Mutex
 	opens []string
 }
+
+func (h *cri271Handle) ProcessExited() bool { return h.fails }
 
 func (h *cri271Handle) Info(context.Context) (Info, error) { return Info{Name: h.name}, nil }
 func (h *cri271Handle) OpenSession(_ context.Context, name string, _, _ map[string]string) error {
@@ -86,30 +93,28 @@ func (l *cri271Loader) resolveCount() int {
 	return len(l.resolves)
 }
 
-// TestCRI271_ClassifySessionCrash pins the crash-reason vocabulary engine
-// logs rely on (CRI-271 acceptance 1). The process-exited branch delegates to
-// go-plugin's rpc client and needs a real subprocess, so it is covered
-// indirectly by the message heuristics; every shape produced by the
-// go-plugin/gRPC stack is pinned here.
+// TestCRI271_ClassifySessionCrash pins the M5 deletion (CRI-271's vocabulary
+// extraction survives; the text arms do not): none of the go-plugin/gRPC
+// failure texts classify a crash on their own — without a journal fact or a
+// structural process exit every text is an ordinary adapter error, and the
+// classifier only ever returns documented taxonomy constants. The
+// process-exited and journal-delivered branches are pinned in
+// TestClassifySessionCrashJournalDeliveryOnly and the CRI-271 Execute tests
+// via the structural exit on the failing handle generation.
 func TestCRI271_ClassifySessionCrash(t *testing.T) {
-	cases := []struct {
-		errText string
-		want    string
-	}{
-		{"rpc error: code = Canceled desc = grpc: the client connection is closing",
-			CrashReasonTransportClosed},
-		{"transport is closing", CrashReasonTransportClosed},
-		{"heartbeat stall detected in log stream", CrashReasonHeartbeatStall},
-		{"rpc error: code = Unavailable desc = connection error", CrashReasonEndpointUnavailable},
-		{"write |1: broken pipe", CrashReasonStdioPipeBroken},
-		{"EOF", CrashReasonStdioEOF},
-		{"process terminated unexpectedly", CrashReasonProcessTerminated},
-		{"some other weird failure", CrashReasonUnknownAdapterError},
+	cases := []string{
+		"rpc error: code = Canceled desc = grpc: the client connection is closing",
+		"transport is closing",
+		"heartbeat stall detected in log stream",
+		"rpc error: code = Unavailable desc = connection error",
+		"write |1: broken pipe",
+		"EOF",
+		"process terminated unexpectedly",
+		"some other weird failure",
 	}
-	for _, tc := range cases {
-		got := classifySessionCrash(context.Background(), nil, errors.New(tc.errText))
-		if got != tc.want {
-			t.Errorf("classifySessionCrash(%q) = %q, want %q", tc.errText, got, tc.want)
+	for _, errText := range cases {
+		if got := classifySessionCrash(context.Background(), nil, errors.New(errText)); got != CrashReasonUnknownAdapterError {
+			t.Errorf("classifySessionCrash(%q) = %q, want %q (error text is not evidence)", errText, got, CrashReasonUnknownAdapterError)
 		}
 	}
 	if got := classifySessionCrash(context.Background(), nil, nil); got != CrashReasonUnknown {
@@ -181,10 +186,12 @@ func TestCRI271_HeartbeatStallThresholdEnv(t *testing.T) {
 	}
 }
 
-// TestCRI271_ExecuteCrashEmitsDiagnosableEvent replays the CRI-271 signature
-// end to end through SessionManager.Execute: the crash WARN names the reason
-// and the idle window, and the session.crash sink event carries the same
-// fields so engine logs answer "which session died and why".
+// TestCRI271_ExecuteCrashEmitsDiagnosableEvent replays the CRI-271 failure
+// end to end through SessionManager.Execute: the failing handle generation
+// carries the structural exit fact, so the crash WARN names the reason and
+// the idle window, and the session.crash sink event carries the same fields
+// so engine logs answer "which session died and why". The crash_reason comes
+// from the structural evidence, not from matching the transport text.
 func TestCRI271_ExecuteCrashEmitsDiagnosableEvent(t *testing.T) {
 	var buf bytes.Buffer
 	old := slog.Default()
@@ -214,8 +221,8 @@ func TestCRI271_ExecuteCrashEmitsDiagnosableEvent(t *testing.T) {
 	if !ok {
 		t.Fatal("expected a session.crash sink event")
 	}
-	if evt["crash_reason"] != CrashReasonTransportClosed {
-		t.Errorf("event crash_reason = %v", evt["crash_reason"])
+	if evt["crash_reason"] != CrashReasonProcessExitedEarly {
+		t.Errorf("event crash_reason = %v, want the structural exit class %q", evt["crash_reason"], CrashReasonProcessExitedEarly)
 	}
 	if idle, _ := evt["idle_since_last_event"].(string); idle == "" {
 		t.Errorf("event idle_since_last_event = %v, want non-empty", evt["idle_since_last_event"])

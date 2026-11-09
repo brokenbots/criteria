@@ -15,7 +15,6 @@ import (
 
 	criteriav1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 
-	"github.com/brokenbots/criteria/internal/adapterhost"
 )
 
 // multiAdapterFake returns a fake peer dialing as `dialName` and advertising
@@ -243,8 +242,13 @@ func TestPeerSessionMixedFleetLegacyDialUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WaitForHandle: %v", err)
 	}
-	reporter := handle.(adapterhost.ProcessExitReporter)
-	waitFor(t, "process exit attributed to the dial adapter", reporter.ProcessExited)
+	ph, ok := handle.(*peerHandle)
+	if !ok {
+		t.Fatalf("handle type %T, want *peerHandle", handle)
+	}
+	waitFor(t, "process exit attributed to the dial adapter", func() bool {
+		return ph.ps.processExited(ph.name)
+	})
 	if _, ok := peerHandleFrom(provider, ""); !ok {
 		t.Fatalf("legacy dial did not register under its registry key")
 	}

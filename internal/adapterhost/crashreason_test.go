@@ -3,8 +3,10 @@ package adapterhost
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // crashReasonConsts enumerates every exported CrashReason* constant. The
@@ -18,6 +20,7 @@ func crashReasonConsts() map[string]string {
 		"CrashReasonHeartbeatStall":      CrashReasonHeartbeatStall,
 		"CrashReasonTransportClosed":     CrashReasonTransportClosed,
 		"CrashReasonEndpointUnavailable": CrashReasonEndpointUnavailable,
+		"CrashReasonChildRunLost":        CrashReasonChildRunLost,
 		"CrashReasonStdioPipeBroken":     CrashReasonStdioPipeBroken,
 		"CrashReasonStdioEOF":            CrashReasonStdioEOF,
 		"CrashReasonProcessTerminated":   CrashReasonProcessTerminated,
@@ -38,6 +41,7 @@ func crashReasonLiterals() map[string]string {
 		"CrashReasonHeartbeatStall":      "log-stream heartbeat stall (adapter stopped streaming)",
 		"CrashReasonTransportClosed":     "gRPC client transport closed (adapter or shim closed the connection)",
 		"CrashReasonEndpointUnavailable": "gRPC endpoint unavailable (adapter process gone)",
+		"CrashReasonChildRunLost":        "workflow.v1 child run was in flight when the peer connection was lost",
 		"CrashReasonStdioPipeBroken":     "plugin stdio pipe broken (adapter process died)",
 		"CrashReasonStdioEOF":            "plugin stdio EOF (adapter process exited or closed its stream)",
 		"CrashReasonProcessTerminated":   "adapter process terminated",
@@ -74,8 +78,8 @@ func TestCrashReasonTaxonomy(t *testing.T) {
 }
 
 // exitedHandle is a minimal Handle that reports a process exit, exercising
-// the ProcessExited branch of classifySessionCrash (which the message-
-// heuristic cases cannot reach without a real subprocess).
+// the ProcessExited branch of classifySessionCrash (which a session with
+// no supervision fact cannot reach without a real subprocess).
 type exitedHandle struct {
 	Handle
 	exited atomic.Bool
@@ -83,9 +87,40 @@ type exitedHandle struct {
 
 func (h *exitedHandle) ProcessExited() bool { return h.exited.Load() }
 
+// settledOnlySupervisedHandle is a supervised handle whose plain query
+// reports no fact (the supervision journal has not recorded the crash
+// yet) while its settled query delivers one — the flip window between a
+// transport death and the journal's exit fact, exposed for classification
+// tests. Embedding supervisedCrashHandle gives it the SupervisedHandle
+// shape with an empty plain query; only SettledSupervisionCrashReason is
+// overridden.
+type settledOnlySupervisedHandle struct {
+	*supervisedCrashHandle
+
+	mu      sync.Mutex
+	settled string
+}
+
+func (h *settledOnlySupervisedHandle) SettledSupervisionCrashReason(context.Context) (string, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.settled == "" {
+		return "", false
+	}
+	return h.settled, true
+}
+
+func (h *settledOnlySupervisedHandle) deliverSettled(reason string) {
+	h.mu.Lock()
+	h.settled = reason
+	h.mu.Unlock()
+}
+
 // TestClassifySessionCrashUsesTaxonomy proves every classifySessionCrash
 // return path yields a member of the exported taxonomy (single source of
-// truth: the classifier cannot drift off the const set).
+// truth: the classifier cannot drift off the const set), and pins the M5
+// classification source: error text is never evidence, so the deleted
+// message heuristics fall through to the unknown-adapter-error class.
 func TestClassifySessionCrashUsesTaxonomy(t *testing.T) {
 	members := make(map[string]bool, len(crashReasonConsts()))
 	for _, reason := range crashReasonConsts() {
@@ -102,10 +137,22 @@ func TestClassifySessionCrashUsesTaxonomy(t *testing.T) {
 		want    string
 	}{
 		{"nil session nil error", nil, nil, CrashReasonUnknown},
-		{"message heuristics", nil, errors.New("EOF"), CrashReasonStdioEOF},
-		{"transport close", nil, errors.New("rpc error: transport is closing"), CrashReasonTransportClosed},
+		// M5: classification is journal-only. These texts were once the
+		// string-matching crash arms; with the handle carrying no fact,
+		// they are ordinary adapter errors and classify nothing.
+		{"stdio EOF text without supervision fact", nil, errors.New("EOF"), CrashReasonUnknownAdapterError},
+		{"transport-close text without supervision fact", nil, errors.New("rpc error: transport is closing"), CrashReasonUnknownAdapterError},
 		{"fallback", nil, errors.New("bizarre failure"), CrashReasonUnknownAdapterError},
 		{"process exited", &Session{handle: exited}, errors.New("anything"), CrashReasonProcessExitedEarly},
+		// The watchdog stall evidence rides the error itself, and outranks
+		// the structural exit: a fresh-exit handle with a stall carrier
+		// classifies as the stall, not as the exit.
+		{
+			name:    "watchdog stall evidence",
+			sess:    &Session{handle: &exitedHandle{}},
+			execErr: &watchdogStallError{threshold: time.Second},
+			want:    CrashReasonHeartbeatStall,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -118,4 +165,46 @@ func TestClassifySessionCrashUsesTaxonomy(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestClassifySessionCrashJournalDeliveryOnly proves the M5 classification
+// source: every crash class is reachable through the journal-delivery seam
+// (the peer's CrashClassified wire facts, served verbatim by the handle's
+// SupervisionCrashReason), and — for a supervised handle in the flip
+// window — through the settled query. Nothing else classifies: the same
+// transport-shaped error text against a fact-free handle is not a crash.
+func TestClassifySessionCrashJournalDeliveryOnly(t *testing.T) {
+	// Transport-shaped text that the deleted string arms once matched, fed
+	// alongside every delivered fact: the fact must win over the text.
+	legacyText := errors.New("rpc error: code = Unavailable desc = transport is closing")
+
+	for name, reason := range crashReasonConsts() {
+		t.Run("delivered fact "+name, func(t *testing.T) {
+			_, sess, h := newSupervisedSession()
+			h.deliver(reason)
+			if got := classifySessionCrash(context.Background(), sess, legacyText); got != reason {
+				t.Errorf("classifySessionCrash() = %q, want delivered fact %q verbatim", got, reason)
+			}
+		})
+	}
+
+	t.Run("settled query bridges the flip window", func(t *testing.T) {
+		h := &settledOnlySupervisedHandle{
+			supervisedCrashHandle: &supervisedCrashHandle{
+				cri287Handle: &cri287Handle{name: "fake", deadAfter: 0},
+			},
+		}
+		sess := &Session{Name: "shell.settled", Adapter: "shell", handle: h}
+
+		// Before the settled fact lands the handle carries nothing, so the
+		// transport-shaped error stays an ordinary adapter error.
+		if got := classifySessionCrash(context.Background(), sess, legacyText); got != CrashReasonUnknownAdapterError {
+			t.Errorf("pre-settle classifySessionCrash() = %q, want %q", got, CrashReasonUnknownAdapterError)
+		}
+
+		h.deliverSettled(CrashReasonTransportClosed)
+		if got := classifySessionCrash(context.Background(), sess, legacyText); got != CrashReasonTransportClosed {
+			t.Errorf("post-settle classifySessionCrash() = %q, want %q from the settled journal query", got, CrashReasonTransportClosed)
+		}
+	})
 }

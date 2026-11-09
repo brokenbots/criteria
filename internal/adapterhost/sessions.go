@@ -2539,18 +2539,18 @@ func (m *SessionManager) registerSensitiveOutputs(result adapter.Result, step *w
 	}
 }
 
-// classifySessionCrash names the likely cause of an adapter session crash so
-// engine logs answer "which session died and why". The returned
-// string is always one of the exported CrashReason* constants in
-// crashreason.go — the single source of truth also consumed by peer
-// supervision journal emission (peer.proto CrashClassified.reason, T-05/T-07).
-// A supervision-delivered classification comes first (T-07): the peer
-// observed the child directly and its CrashClassified.reason is consumed
-// verbatim — no new strings, no reinterpretation. The adapter-process
-// checks and message heuristics then serve connections without supervision:
-// a dead process is the most precise diagnosis, and the message heuristics
-// distinguish the transport failure shapes the go-plugin/gRPC stack produces
-// (legacy runners and peers without a Supervise stream).
+// classifySessionCrash names the cause of an adapter session crash so
+// engine logs answer "which session died and why". The returned string is
+// always one of the exported CrashReason* constants in crashreason.go — the
+// single source of truth also consumed by peer supervision journal emission
+// (peer.proto CrashClassified.reason, T-05/T-07). Classification is
+// journal-only (ADR-0014 M5): a delivered classification is consumed
+// verbatim — no new strings, no reinterpretation — and else the
+// structurally-known terminal states decide (a dead process, the watchdog's
+// observed heartbeat stall). Error text is never parsed: the deleted
+// string-matching arms would have classified transport-close signatures as
+// crashes, so a transport failure on a process whose supervision journal
+// carries no terminal fact is an ordinary step error now.
 func classifySessionCrash(ctx context.Context, sess *Session, execErr error) string {
 	if sess != nil {
 		if reason, ok := SupervisionCrashReason(sess.handle); ok {
@@ -2560,10 +2560,16 @@ func classifySessionCrash(ctx context.Context, sess *Session, execErr error) str
 		// moment after the failed execute observed transport death (the
 		// child client flips its process-exited flag strictly after the
 		// transport fails). A settled query bridges that flip window so a
-		// kill mid-Execute classifies from the journal instead of falling
-		// through to the transport-string heuristics below.
+		// kill mid-Execute classifies from the journal.
 		if reason, ok := SettledSupervisionCrashReason(ctx, sess.handle, tunables.DefaultCrashCloseSettle); ok {
 			return reason
+		}
+		// The heartbeat watchdog's verdict rides the typed carrier: the
+		// watchdog observed the stall directly, so the classification is
+		// structural, not message matching.
+		var stall *watchdogStallError
+		if errors.As(execErr, &stall) {
+			return CrashReasonHeartbeatStall
 		}
 		if ProcessExited(sess.handle) {
 			return CrashReasonProcessExitedEarly
@@ -2571,28 +2577,6 @@ func classifySessionCrash(ctx context.Context, sess *Session, execErr error) str
 	}
 	if execErr == nil {
 		return CrashReasonUnknown
-	}
-	msg := strings.ToLower(execErr.Error())
-	switch {
-	case strings.Contains(msg, "heartbeat stall"):
-		return CrashReasonHeartbeatStall
-	// "transport is closing" / "the client connection is closing" are
-	// the legacy go-plugin gRPC closing signatures. The peer recreate
-	// window closes the phone-home bridge mid-execute and surfaces
-	// "Canceled (connection closing)" — the bare closing text is the shared
-	// signature, including when wrapped by other stacks.
-	case strings.Contains(msg, "transport is closing"),
-		strings.Contains(msg, "the client connection is closing"),
-		strings.Contains(msg, "connection closing"):
-		return CrashReasonTransportClosed
-	case strings.Contains(msg, "unavailable"):
-		return CrashReasonEndpointUnavailable
-	case strings.Contains(msg, "broken pipe"):
-		return CrashReasonStdioPipeBroken
-	case strings.Contains(msg, "eof"):
-		return CrashReasonStdioEOF
-	case strings.Contains(msg, "terminated"):
-		return CrashReasonProcessTerminated
 	}
 	return CrashReasonUnknownAdapterError
 }
@@ -2841,7 +2825,7 @@ func (m *SessionManager) execute(ctx context.Context, name string, step *workflo
 	// detector, so we never declare a crash on a heartbeat the adapter was not
 	// sending.
 	if sess.logStreamAlive.Load() && sess.hbMonitor.Stalled(m.heartbeatStallThreshold()) {
-		return m.handleCrash(ctx, name, step, sink, sess, fmt.Errorf("heartbeat stall (>%s)", m.heartbeatStallThreshold()), rejection)
+		return m.handleCrash(ctx, name, step, sink, sess, &watchdogStallError{threshold: m.heartbeatStallThreshold()}, rejection)
 	}
 
 	// Serialize executes on sessions that never declared the
@@ -2963,7 +2947,7 @@ func (m *SessionManager) executeError(ctx context.Context, name string, step *wo
 
 	// An explicit Close/Shutdown (closing flag) or a host-canceled context
 	// (run timeout, user abort) both cause the gRPC stream to produce
-	// EOF/broken-pipe errors. Check this before the string heuristic so
+	// transport-closing errors. Check this before crash classification so
 	// neither case is misclassified as a crash.
 	if sess.closing.Load() || ctx.Err() != nil {
 		slog.Debug("adapter stream closed (expected)", "session", sess.Name, "adapter", sess.Adapter)
@@ -3003,7 +2987,7 @@ func (m *SessionManager) executeError(ctx context.Context, name string, step *wo
 	// fields only: the returned error stays the raw transport error, so the
 	// outcome is still routed as a timeout.
 	if m.engineStepTimeoutTeardownWindowOpen() &&
-		isSessionCrashCandidate(sess, execErr) &&
+		isSessionCrashCandidate(ctx, sess) &&
 		!sess.closing.Load() &&
 		(!ProcessExited(sess.handle) || isPeerSupervised(sess.handle)) {
 		slog.Warn("adapter transport closed during engine-initiated step-timeout teardown; routing as timeout, not crash",
@@ -3011,7 +2995,7 @@ func (m *SessionManager) executeError(ctx context.Context, name string, step *wo
 		return result, execErr
 	}
 
-	if !isSessionCrashCandidate(sess, execErr) {
+	if !isSessionCrashCandidate(ctx, sess) {
 		return result, execErr
 	}
 
@@ -3710,49 +3694,35 @@ func (m *SessionManager) ReopenCrashedSession(ctx context.Context, name string) 
 	return nil
 }
 
-func isLikelySessionCrash(sess *Session, err error) bool {
-	if err == nil {
-		return false
-	}
-	if sess.closing.Load() {
-		// Expected: caller initiated close; any subsequent EOF /
-		// transport-closing / broken-pipe is the normal teardown.
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "connection") ||
-		strings.Contains(msg, "transport is closing") ||
-		strings.Contains(msg, "unavailable") ||
-		strings.Contains(msg, "broken pipe") ||
-		strings.Contains(msg, "eof") ||
-		strings.Contains(msg, "terminated")
-}
-
-// supervisionCrashCandidate reports whether the session's handle carries a
-// journal-delivered crash classification (ADR-0007, T-07): the peer watched
-// the adapter child directly and its CrashClassified.reason is consumed
-// verbatim, so a failed Execute on such a handle is a crash candidate even
-// when the transport error text matches no legacy heuristic — a real peer
-// conn produces a bare codes.Canceled "context canceled" when the child's
-// death cancels the server-side Execute handler first, a shape the string
-// signatures never see. Handles without the SupervisedHandle seam, and
-// supervised handles whose journal delivered only the plain Exited
-// placeholder (ok=false, e.g. a clean child exit), are not candidates, so
-// legacy-runner connections keep the existing routing unchanged.
-func supervisionCrashCandidate(sess *Session) bool {
+// isSessionCrashCandidate is the crash-candidate predicate executeError
+// routes on (ADR-0014 M5): the session's handle carries classification
+// evidence — a journal-delivered crash fact (peer or in-process
+// supervisor), its settled form, or the structurally-known process death.
+// A transport failure whose error text matches no such evidence is an
+// ordinary step error: a transport-close signature from a process that is
+// still alive and carries no journal terminal is not a crash, so error
+// text is never consulted here.
+//
+// The settled query is bounded by tunables.DefaultCrashCloseSettle and
+// costs real time only when a failed Execute carries no immediate
+// classification evidence — the rare path this budget exists for (an
+// organic adapter error on a supervised handle leaves a living child whose
+// journal has nothing to settle, so the query runs the full budget once
+// before the step error routes). Remote peers answer immediately: their
+// settle falls back to the plain journal query, conn-level loss surfaces
+// as the structural transport-closed fact, and the in-process
+// supervisor's flip settles within milliseconds of the transport death.
+func isSessionCrashCandidate(ctx context.Context, sess *Session) bool {
 	if sess == nil {
 		return false
 	}
-	_, ok := SupervisionCrashReason(sess.handle)
-	return ok
-}
-
-// isSessionCrashCandidate is the crash-candidate predicate executeError
-// routes on: the legacy transport-text heuristics plus the authoritative
-// supervision wire fact. The wire fact is evidence, not message matching,
-// so it decides regardless of the transport error text.
-func isSessionCrashCandidate(sess *Session, execErr error) bool {
-	return isLikelySessionCrash(sess, execErr) || supervisionCrashCandidate(sess)
+	if _, ok := SupervisionCrashReason(sess.handle); ok {
+		return true
+	}
+	if _, ok := SettledSupervisionCrashReason(ctx, sess.handle, tunables.DefaultCrashCloseSettle); ok {
+		return true
+	}
+	return ProcessExited(sess.handle)
 }
 
 // sessionLogAdapterSink routes session-level log lines to the active step's

@@ -453,11 +453,12 @@ func TestPeerIntegrationCrashFidelity(t *testing.T) {
 		t.Errorf("CrashClassified.Detail = %q, want the real wait status (signal 9)", crash.GetDetail())
 	}
 
-	// The host observes the journal wire facts verbatim: ProcessExited flips
-	// from the supervision replay and SupervisionCrashReason carries the
-	// journal's classification — the precise branch, not a transport string.
-	waitFor(t, "host ProcessExited from supervision replay", func() bool {
-		return adapterhost.ProcessExited(ph)
+	// The host observes the journal wire facts verbatim: the terminal fact
+	// replays off the supervision stream and SupervisionCrashReason carries
+	// the journal's classification — the precise wire fact, not a transport
+	// string.
+	waitFor(t, "host terminal journal fact from supervision replay", func() bool {
+		return ph.ps.processExited(ph.name)
 	})
 	reason, ok := adapterhost.SupervisionCrashReason(ph)
 	if !ok || reason != adapterhost.CrashReasonProcessTerminated {
@@ -845,8 +846,8 @@ func TestPeerIntegrationReconnectAfterHostBounce(t *testing.T) {
 	// The buffered facts replay onto the fresh handle: the supervision
 	// cursor starts at the journal tail for a new session and event_seq
 	// dedup guards against double delivery.
-	waitFor(t, "replayed ProcessExited on fresh handle", func() bool {
-		return adapterhost.ProcessExited(ph2)
+	waitFor(t, "replayed terminal journal fact on fresh handle", func() bool {
+		return ph2.ps.processExited(ph2.name)
 	})
 	reason, ok := adapterhost.SupervisionCrashReason(ph2)
 	if !ok || reason != adapterhost.CrashReasonProcessTerminated {
@@ -994,7 +995,7 @@ func TestPeerIntegrationTeardownWindowOnPeerPath(t *testing.T) {
 			t.Fatalf("SIGKILL child: %v", err)
 		}
 		waitFor(t, "child death replays to the host", func() bool {
-			return adapterhost.ProcessExited(ph)
+			return ph.ps.processExited(ph.name)
 		})
 
 		coll := &peerEventCollector{}
@@ -1027,8 +1028,8 @@ func TestPeerIntegrationTeardownWindowOnPeerPath(t *testing.T) {
 		if err := syscall.Kill(int(spawned.GetPid()), syscall.SIGKILL); err != nil {
 			t.Fatalf("SIGKILL child: %v", err)
 		}
-		waitFor(t, "ProcessExited from journal", func() bool {
-			return adapterhost.ProcessExited(ph)
+		waitFor(t, "terminal journal fact from journal", func() bool {
+			return ph.ps.processExited(ph.name)
 		})
 		waitFor(t, "CrashClassified from journal", func() bool {
 			r, ok := adapterhost.SupervisionCrashReason(ph)

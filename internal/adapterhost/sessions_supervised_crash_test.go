@@ -6,10 +6,9 @@ package adapterhost
 // ADR-0007 T-07) routes to the crash machinery regardless of the transport
 // error text, because a real peer conn produces a bare codes.Canceled
 // "context canceled" when the child's death cancels the server-side Execute
-// handler first — an error shape matching none of the legacy string
-// heuristics. Scoping: handles without the seam, and supervised handles
-// whose journal delivered only the plain Exited placeholder (ok=false),
-// keep the existing routing.
+// handler first — an error shape the host never inspects textually (the
+// journal, not the message, is the classification source). Scoping: handles
+// without any classification evidence keep the existing routing.
 
 import (
 	"context"
@@ -27,14 +26,13 @@ import (
 
 // canceledTurnError is the transport error the peer path produces when the
 // child's death cancels the server-side Execute handler before the client
-// transport notices: codes.Canceled "context canceled", matching none of the
-// legacy heuristic signatures ("connection", "transport is closing",
-// "unavailable", "broken pipe", "eof", "terminated").
+// transport notices: codes.Canceled "context canceled". The host never
+// inspects this text — the journal-delivered fact is what classifies.
 var canceledTurnError = status.Error(codes.Canceled, "context canceled")
 
 // canceledSupervisedHandle is the supervised fake with the transport failure
 // shape swapped for the bare canceled-turn error: the supervisedCrashHandle
-// classification seam plus an Execute replay the legacy heuristics never match.
+// classification seam plus an Execute replay whose text carries no evidence.
 type canceledSupervisedHandle struct {
 	*supervisedCrashHandle
 }
@@ -134,53 +132,61 @@ func TestSupervisedCrashCandidate_ClassificationInsideWindowRoutesTimeout(t *tes
 	}
 }
 
-// TestSupervisedCrashCandidate_PlainExitedPlaceholderNotWidened pins the
-// scoping rule: a supervised handle whose journal delivered only the plain
-// Exited placeholder (SupervisionCrashReason ok=false, e.g. a clean child
-// exit) does not turn a later heuristic-unmatched Execute error into a
-// crash — the gate is widened on the delivered classification, not on
-// ProcessExited.
-func TestSupervisedCrashCandidate_PlainExitedPlaceholderNotWidened(t *testing.T) {
+// TestSupervisedCrashCandidate_PlainExitedPlaceholderRoutesCrashStructurally
+// pins the M5 scoping: a supervised handle whose journal delivered only the
+// plain Exited placeholder (SupervisionCrashReason ok=false) carries no
+// classification, but the underlying process exit is structural crash
+// evidence, so the failed Execute still routes to the crash machinery — with
+// crash_reason from the structural arm, not from the journal.
+func TestSupervisedCrashCandidate_PlainExitedPlaceholderRoutesCrashStructurally(t *testing.T) {
 	sm, sess, h := newSupervisedCrashSession()
 	h.exited.Store(true)
 
 	coll := &adapterEventCollector{}
 	_, err := sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, coll, nil)
-	if err == nil || !errors.Is(err, canceledTurnError) {
-		t.Fatalf("Execute err = %v, want the raw transport error (no classification delivered)", err)
-	}
 	var crashErr *SessionCrashError
-	if errors.As(err, &crashErr) {
-		t.Fatalf("Execute err = %v, want no SessionCrashError for the plain Exited placeholder", err)
+	if !errors.As(err, &crashErr) || crashErr.Session != "shell.develop" {
+		t.Fatalf("Execute err = %v, want SessionCrashError (structural exit is crash evidence)", err)
 	}
-	if sess.crashed.Load() {
-		t.Error("session must not be marked crashed without a delivered classification")
+	if !errors.Is(err, canceledTurnError) {
+		t.Errorf("crash err = %v, want it to wrap the raw transport error", err)
 	}
-	if _, ok := coll.first("session.crash"); ok {
-		t.Error("session.crash event must not be emitted without a delivered classification")
+	if !sess.crashed.Load() {
+		t.Error("session should be marked crashed for the structural exit")
+	}
+	event, ok := coll.first("session.crash")
+	if !ok {
+		t.Fatal("expected the session.crash event")
+	}
+	if got := event["crash_reason"]; got != CrashReasonProcessExitedEarly {
+		t.Errorf("crash_reason = %q, want %q (structural exit arm, not a journal classification)", got, CrashReasonProcessExitedEarly)
 	}
 }
 
-// TestSupervisedCrashCandidate_LegacyHandleKeepsStringHeuristics pins the
-// legacy path: a handle without the SupervisedHandle seam and a transport
-// error matching no heuristic signature is returned as-is — no crash
-// classification, no behavior change.
-func TestSupervisedCrashCandidate_LegacyHandleKeepsStringHeuristics(t *testing.T) {
+// TestSupervisedCrashCandidate_UnmatchedErrorOnHandleWithoutEvidenceStaysRaw
+// pins the boundary: a handle carrying no classification evidence (no
+// SupervisedHandle fact, no process exit) and an Execute error the host
+// never inspects textually is returned as-is — no crash classification, no
+// behavior change.
+func TestSupervisedCrashCandidate_UnmatchedErrorOnHandleWithoutEvidenceStaysRaw(t *testing.T) {
 	sm, sess := newCrashSession(&canceledHandle{cri287Handle: &cri287Handle{name: "fake", deadAfter: 0}})
 
 	coll := &adapterEventCollector{}
 	_, err := sm.Execute(context.Background(), "shell.develop", &workflow.StepNode{Name: "comment_handler_failed"}, coll, nil)
 	if err == nil || !errors.Is(err, canceledTurnError) {
-		t.Fatalf("Execute err = %v, want the raw transport error (legacy handle, no heuristic match)", err)
+		t.Fatalf("Execute err = %v, want the raw transport error (no evidence on the handle)", err)
 	}
 	var crashErr *SessionCrashError
 	if errors.As(err, &crashErr) {
-		t.Fatalf("Execute err = %v, want no SessionCrashError for the legacy handle", err)
+		t.Fatalf("Execute err = %v, want no SessionCrashError for the evidence-free handle", err)
 	}
 	if sess.crashed.Load() {
-		t.Error("session must not be marked crashed for the legacy handle")
+		t.Error("session must not be marked crashed without evidence")
 	}
 	if _, ok := coll.first("session.crash"); ok {
-		t.Error("session.crash event must not be emitted for the legacy handle")
+		t.Error("session.crash event must not be emitted without evidence")
+	}
+	if isSessionCrashCandidate(context.Background(), sess) {
+		t.Error("evidence-free handle must not be a crash candidate")
 	}
 }
