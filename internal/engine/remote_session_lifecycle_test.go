@@ -433,8 +433,8 @@ func podHomeLoop(proxyAddr string, hs *cri137Handshake, stop <-chan struct{}, do
 		// host-side session's supervisor and becomes a crash-classification
 		// fact (ADR-0014 M5: journal replay is the read path for session
 		// death).
-		if superviser, ok := any(server).(peerSuperviseService); ok {
-			grpcServer.RegisterService(peerSuperviseServiceDesc, superviser)
+		if supervisor, ok := any(server).(peerSuperviseService); ok {
+			grpcServer.RegisterService(peerSuperviseServiceDesc, supervisor)
 		}
 		serveDone := make(chan struct{})
 		go func() {
