@@ -923,8 +923,11 @@ func (ps *peerSession) lastEventSeq() uint64 {
 
 // processExited reports whether the peer journal delivered a terminal
 // process event for the named adapter child (definition name).
-// Connection loss alone does not count: the transport may drop for reasons
-// that are not adapter deaths.
+// Connection loss alone does not count — the transport may drop for
+// reasons that are not adapter deaths; the host reads conn loss through
+// SupervisionCrashReason's lost-conn arm instead. Production callers read
+// the journal through the SupervisedHandle seam; this accessor is a test
+// seam for journal-arrival races.
 func (ps *peerSession) processExited(adapterName string) bool {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()

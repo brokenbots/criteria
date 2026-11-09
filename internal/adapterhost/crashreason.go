@@ -73,17 +73,23 @@ const (
 // a session whose journal delivered nothing and whose process is still
 // alive is not a crash, whatever the transport error says.
 type SupervisedHandle interface {
-	// SupervisionCrashReason returns the journal-delivered crash reason and
-	// ok=true. ok=false means no terminal classification was delivered (the
-	// child is alive, exited cleanly, or only the plain Exited journal
-	// record arrived) — classification then falls through to the local
-	// evidence path.
+	// SupervisionCrashReason returns the crash reason the handle's
+	// supervision story carries and ok=true. The value is a single
+	// CrashReason* wire fact — most often the journal's CrashClassified
+	// record verbatim, but a supervised handle may also synthesize the
+	// fact structurally when the journal holds no terminal and the conn
+	// knowledge is itself the missing-terminal evidence (e.g. the peer's
+	// lost-conn arm: ChildRunLost for a run in flight, else
+	// TransportClosed). ok=false means no terminal classification is
+	// available (the child is alive, exited cleanly, or only the plain
+	// Exited journal record arrived) — classification then falls through
+	// to the local structural evidence path.
 	SupervisionCrashReason() (reason string, ok bool)
 }
 
-// SupervisionCrashReason returns the crash classification the peer
-// supervision journal delivered for h's adapter child (verbatim wire fact),
-// or ok=false when the handle carries no supervision classification —
+// SupervisionCrashReason returns the crash classification the handle's
+// supervision story delivers for its adapter child (verbatim wire fact), or
+// ok=false when the handle carries no supervision classification —
 // including when the delivered reason is empty or outside the CrashReason*
 // taxonomy (wire garbage or host/peer version skew): the classification
 // path is documented to yield taxonomy constants only, so anything else

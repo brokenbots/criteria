@@ -14,7 +14,6 @@ import (
 	"time"
 
 	criteriav1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
-
 )
 
 // multiAdapterFake returns a fake peer dialing as `dialName` and advertising

@@ -131,6 +131,77 @@ func TestPeerSupervisionCrashReasonWireFact(t *testing.T) {
 	})
 }
 
+// TestPeerLostConnClassifiesWithoutJournalFact pins the connection-level
+// structural fact the peer synthesizes when the supervision journal holds
+// no terminal (ADR-0014 M5): with peerHandle.ProcessExited gone, a conn
+// drop is the only evidence the host gets, so the lost-conn arm must fire —
+// otherwise a peer session with a dead conn and no journal fact would never
+// classify as a crash and silently miss the KB-246 recreate window. The
+// journal is left empty on purpose: a delivered CrashClassified would mask
+// the deletion of the lost-conn arm.
+func TestPeerLostConnClassifiesWithoutJournalFact(t *testing.T) {
+	t.Run("lost conn with no child run: TransportClosed, end to end", func(t *testing.T) {
+		provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
+		fp := newFakePeer("")
+		fp.connect(t, addr)
+
+		sm, name, ph := startPeerSessionManager(t, provider)
+		fp.drop()
+		waitFor(t, "peer session marked lost", func() bool {
+			return ph.ps.lost.Load()
+		})
+
+		reason, ok := adapterhost.SupervisionCrashReason(ph)
+		if !ok {
+			t.Fatal("SupervisionCrashReason = ok=false on a lost conn with no journal terminal, want (TransportClosed, true)")
+		}
+		if reason != adapterhost.CrashReasonTransportClosed {
+			t.Fatalf("reason = %q, want %q (the lost-conn crash fact)", reason, adapterhost.CrashReasonTransportClosed)
+		}
+
+		// No teardown mark: the dead conn is the crash. The host classifies
+		// the failure from the synthesized lost-conn fact alone — no error
+		// text, no journal terminal.
+		coll := &peerEventCollector{}
+		_, err := sm.Execute(context.Background(), name, &workflow.StepNode{Name: "develop"}, coll, nil)
+		var crashErr *adapterhost.SessionCrashError
+		if !errors.As(err, &crashErr) || crashErr.Session != name {
+			t.Fatalf("Execute err = %v, want SessionCrashError for %s (lost conn with no journal fact must still crash-classify)", err, name)
+		}
+		event, ok := coll.first("session.crash")
+		if !ok {
+			t.Fatal("expected the session.crash event")
+		}
+		if got := event["crash_reason"]; got != adapterhost.CrashReasonTransportClosed {
+			t.Errorf("crash_reason = %q, want %q", got, adapterhost.CrashReasonTransportClosed)
+		}
+	})
+
+	t.Run("lost conn with in-flight child run: ChildRunLost", func(t *testing.T) {
+		provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
+		fp := newFakePeer("")
+		// The child run started and never reached a terminal arm: the run
+		// arm outranks the plain transport fact (ADR-0008 child-run loss).
+		fp.appendEvent(childRunStartedArm("run-lost-conn"))
+		fp.connect(t, addr)
+
+		_, _, ph := startPeerSessionManager(t, provider)
+		waitForInFlightRun(t, ph.ps, "run-lost-conn")
+		fp.drop()
+		waitFor(t, "peer session marked lost", func() bool {
+			return ph.ps.lost.Load()
+		})
+
+		reason, ok := adapterhost.SupervisionCrashReason(ph)
+		if !ok {
+			t.Fatal("SupervisionCrashReason = ok=false on a lost conn with an in-flight child run, want (ChildRunLost, true)")
+		}
+		if reason != adapterhost.CrashReasonChildRunLost {
+			t.Fatalf("reason = %q, want %q (the in-flight run outranks the transport fact)", reason, adapterhost.CrashReasonChildRunLost)
+		}
+	})
+}
+
 // TestPeerCRI287TeardownWindowPeerPath pins requirement 2 end to end on the
 // peer path: with the engine-initiated step-timeout teardown window open, a
 // supervision-delivered ProcessExited arriving with the engine's canceled

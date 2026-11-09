@@ -232,7 +232,13 @@ product version). The release tag and date are finalized by the release gate.
   arrives as the journal's `CrashReasonTransportClosed` fact, so KB-246
   re-entry and session-crash recovery behavior is unchanged for supervised
   peers. A grep gate pins the deletion: adapterhost sources carry no
-  string-matching crash arms.
+  string-matching crash arms. As a deliberate consequence of the new
+  classification source, every lost peer conn now classifies a crash fact —
+  `CrashReasonTransportClosed` (or `CrashReasonChildRunLost` when a child
+  run was in flight) synthesized from the session's conn knowledge when the
+  journal holds no terminal — so the KB-246 recreate window and respawn
+  recovery cover a dead peer conn even when its supervision journal never
+  delivered a terminal record.
 
 ### Directory layout (XDG base directories)
 
