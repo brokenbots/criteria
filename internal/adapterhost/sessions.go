@@ -2984,8 +2984,16 @@ func (m *SessionManager) executeError(ctx context.Context, name string, step *wo
 	// The classifySessionCrash call in the diagnostics below feeds
 	// evidence fields only: the returned error stays the raw transport
 	// error, so the outcome is still routed as a timeout.
+	//
+	// The candidate is evaluated exactly once per failed Execute: the
+	// predicate's settled query is a real-time settle bounded by
+	// DefaultCrashCloseSettle, so a second evaluation would double the
+	// budget and could observe a different journal state (a fact landing
+	// between the two settles). The hoist sits strictly after the
+	// expected-close early return above — that path must not pay a settle.
+	candidate := isSessionCrashCandidate(ctx, sess)
 	if m.engineStepTimeoutTeardownWindowOpen() &&
-		isSessionCrashCandidate(ctx, sess) &&
+		candidate &&
 		!sess.closing.Load() &&
 		(!ProcessExited(sess.handle) || isPeerSupervised(sess.handle)) {
 		slog.Warn("adapter transport closed during engine-initiated step-timeout teardown; routing as timeout, not crash",
@@ -2993,7 +3001,7 @@ func (m *SessionManager) executeError(ctx context.Context, name string, step *wo
 		return result, execErr
 	}
 
-	if !isSessionCrashCandidate(ctx, sess) {
+	if !candidate {
 		return result, execErr
 	}
 

@@ -99,11 +99,15 @@ type settledOnlySupervisedHandle struct {
 
 	mu      sync.Mutex
 	settled string
+	// settles counts every settled query so tests can pin the settle
+	// budget spent per failed Execute (one candidate evaluation).
+	settles int
 }
 
 func (h *settledOnlySupervisedHandle) SettledSupervisionCrashReason(context.Context) (string, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.settles++
 	if h.settled == "" {
 		return "", false
 	}
@@ -114,6 +118,12 @@ func (h *settledOnlySupervisedHandle) deliverSettled(reason string) {
 	h.mu.Lock()
 	h.settled = reason
 	h.mu.Unlock()
+}
+
+func (h *settledOnlySupervisedHandle) settleCount() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.settles
 }
 
 // TestClassifySessionCrashUsesTaxonomy proves every classifySessionCrash

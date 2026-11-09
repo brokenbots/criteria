@@ -268,9 +268,11 @@ func TestLoader_ExpectedCloseLogsAtDebug(t *testing.T) {
 
 // TestLoader_HostCanceledContextWithEOFLogsAtDebug is the regression test for
 // the specific boundary: host cancels the context AND the adapter returns an
-// EOF-like error (not context.Canceled). EOF matches the crash heuristic, but
-// the canceled context must suppress crash classification → DEBUG not WARN
-// (W12 step 2).
+// EOF-like error (not context.Canceled). An EOF-shaped error carries no
+// classification evidence (ADR-0014 M5: classification reads journal and
+// structural facts only), and it is the expected-close early return — the
+// canceled context marks the close as initiated by the host — that keeps
+// crash classification from firing → DEBUG not WARN.
 func TestLoader_HostCanceledContextWithEOFLogsAtDebug(t *testing.T) {
 	var buf bytes.Buffer
 	old := slog.Default()
@@ -281,7 +283,8 @@ func TestLoader_HostCanceledContextWithEOFLogsAtDebug(t *testing.T) {
 		loader:   nil,
 		sessions: map[string]*Session{},
 	}
-	// eofHandle returns "eof: connection terminated" — matches the crash heuristic.
+	// eofHandle returns "eof: connection terminated" — a transport-text-only
+	// error with no journal or structural evidence behind it.
 	// closing flag NOT set; only ctx.Err() should suppress crash classification.
 	sess := &Session{Name: "agent", Adapter: "eof-stub", handle: &eofHandle{}}
 	sm.mu.Lock()
