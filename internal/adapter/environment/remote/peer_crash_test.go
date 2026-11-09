@@ -72,7 +72,8 @@ func journalCrash(fp *fakePeer, exitCode int32, reason, detail string) {
 // TestPeerSupervisionCrashReasonWireFact pins the SupervisedHandle seam on
 // the real peerHandle: the journal's classification arrives verbatim, and a
 // journal with only the plain Exited record reports no classification (the
-// host then falls through to the ProcessExited evidence path).
+// host reads the terminal process fact from the journal and treats it as no
+// crash for the exited child — journal-only classification, ADR-0014 M5).
 func TestPeerSupervisionCrashReasonWireFact(t *testing.T) {
 	t.Run("journal CrashClassified is the wire fact", func(t *testing.T) {
 		provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
@@ -81,12 +82,14 @@ func TestPeerSupervisionCrashReasonWireFact(t *testing.T) {
 		fp.connect(t, addr)
 
 		_, _, ph := startPeerSessionManager(t, provider)
-		reporter := adapterhost.ProcessExitReporter(ph)
-		waitFor(t, "ProcessExited from journal", reporter.ProcessExited)
+		waitFor(t, "terminal journal fact", func() bool {
+			return ph.ps.processExited(ph.name)
+		})
 
 		// The Exited and Crash records are separate journal events, so the
-		// classification can still be in flight when ProcessExited fires:
-		// wait for the classification itself before pinning the wire fact.
+		// classification can still be in flight when the terminal fact
+		// lands: wait for the classification itself before pinning the
+		// wire fact.
 		waitFor(t, "supervision classification from journal", func() bool {
 			_, ok := adapterhost.SupervisionCrashReason(ph)
 			return ok
@@ -108,14 +111,12 @@ func TestPeerSupervisionCrashReasonWireFact(t *testing.T) {
 		fp.connect(t, addr)
 
 		_, _, ph := startPeerSessionManager(t, provider)
-		reporter := adapterhost.ProcessExitReporter(ph)
-		waitFor(t, "ProcessExited from journal", reporter.ProcessExited)
+		waitFor(t, "terminal journal fact", func() bool {
+			return ph.ps.processExited(ph.name)
+		})
 
 		if reason, ok := adapterhost.SupervisionCrashReason(ph); ok {
 			t.Fatalf("SupervisionCrashReason = (%q, true), want ok=false for the plain Exited placeholder", reason)
-		}
-		if !adapterhost.ProcessExited(ph) {
-			t.Fatal("ProcessExited must stay true so classification falls through to the exit evidence")
 		}
 	})
 	t.Run("live child reports no classification", func(t *testing.T) {
@@ -126,6 +127,77 @@ func TestPeerSupervisionCrashReasonWireFact(t *testing.T) {
 		_, _, ph := startPeerSessionManager(t, provider)
 		if _, ok := adapterhost.SupervisionCrashReason(ph); ok {
 			t.Fatal("SupervisionCrashReason must report ok=false for a live child")
+		}
+	})
+}
+
+// TestPeerLostConnClassifiesWithoutJournalFact pins the connection-level
+// structural fact the peer synthesizes when the supervision journal holds
+// no terminal (ADR-0014 M5): with peerHandle.ProcessExited gone, a conn
+// drop is the only evidence the host gets, so the lost-conn arm must fire —
+// otherwise a peer session with a dead conn and no journal fact would never
+// classify as a crash and silently miss the KB-246 recreate window. The
+// journal is left empty on purpose: a delivered CrashClassified would mask
+// the deletion of the lost-conn arm.
+func TestPeerLostConnClassifiesWithoutJournalFact(t *testing.T) {
+	t.Run("lost conn with no child run: TransportClosed, end to end", func(t *testing.T) {
+		provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
+		fp := newFakePeer("")
+		fp.connect(t, addr)
+
+		sm, name, ph := startPeerSessionManager(t, provider)
+		fp.drop()
+		waitFor(t, "peer session marked lost", func() bool {
+			return ph.ps.lost.Load()
+		})
+
+		reason, ok := adapterhost.SupervisionCrashReason(ph)
+		if !ok {
+			t.Fatal("SupervisionCrashReason = ok=false on a lost conn with no journal terminal, want (TransportClosed, true)")
+		}
+		if reason != adapterhost.CrashReasonTransportClosed {
+			t.Fatalf("reason = %q, want %q (the lost-conn crash fact)", reason, adapterhost.CrashReasonTransportClosed)
+		}
+
+		// No teardown mark: the dead conn is the crash. The host classifies
+		// the failure from the synthesized lost-conn fact alone — no error
+		// text, no journal terminal.
+		coll := &peerEventCollector{}
+		_, err := sm.Execute(context.Background(), name, &workflow.StepNode{Name: "develop"}, coll, nil)
+		var crashErr *adapterhost.SessionCrashError
+		if !errors.As(err, &crashErr) || crashErr.Session != name {
+			t.Fatalf("Execute err = %v, want SessionCrashError for %s (lost conn with no journal fact must still crash-classify)", err, name)
+		}
+		event, ok := coll.first("session.crash")
+		if !ok {
+			t.Fatal("expected the session.crash event")
+		}
+		if got := event["crash_reason"]; got != adapterhost.CrashReasonTransportClosed {
+			t.Errorf("crash_reason = %q, want %q", got, adapterhost.CrashReasonTransportClosed)
+		}
+	})
+
+	t.Run("lost conn with in-flight child run: ChildRunLost", func(t *testing.T) {
+		provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
+		fp := newFakePeer("")
+		// The child run started and never reached a terminal arm: the run
+		// arm outranks the plain transport fact (ADR-0008 child-run loss).
+		fp.appendEvent(childRunStartedArm("run-lost-conn"))
+		fp.connect(t, addr)
+
+		_, _, ph := startPeerSessionManager(t, provider)
+		waitForInFlightRun(t, ph.ps, "run-lost-conn")
+		fp.drop()
+		waitFor(t, "peer session marked lost", func() bool {
+			return ph.ps.lost.Load()
+		})
+
+		reason, ok := adapterhost.SupervisionCrashReason(ph)
+		if !ok {
+			t.Fatal("SupervisionCrashReason = ok=false on a lost conn with an in-flight child run, want (ChildRunLost, true)")
+		}
+		if reason != adapterhost.CrashReasonChildRunLost {
+			t.Fatalf("reason = %q, want %q (the in-flight run outranks the transport fact)", reason, adapterhost.CrashReasonChildRunLost)
 		}
 	})
 }
@@ -175,8 +247,9 @@ func TestPeerCRI287TeardownWindowPeerPath(t *testing.T) {
 		// asynchronously; wait for the wire facts to land before dropping
 		// the conn, so the classification is delivered before the transport
 		// dies (otherwise CI races a bare codes.Canceled past handleCrash).
-		reporter := adapterhost.ProcessExitReporter(ph)
-		waitFor(t, "ProcessExited from journal", reporter.ProcessExited)
+		waitFor(t, "terminal journal fact", func() bool {
+			return ph.ps.processExited(ph.name)
+		})
 		waitFor(t, "CrashClassified from journal", func() bool {
 			r, ok := adapterhost.SupervisionCrashReason(ph)
 			return ok && r == adapterhost.CrashReasonProcessTerminated

@@ -86,8 +86,20 @@ type nestedCalleeAdapter struct {
 	// concurrency tests declare the concurrent_execute capability).
 	caps []string
 
+	// connDown marks the simulated callee death as journal-delivered
+	// (journal-only classification, ADR-0014 M5): execErr stays an
+	// ordinary adapter failure unless the test arms the fact.
+	connDown bool
+
 	ctxErrMu sync.Mutex
 	ctxErrs  []error // ctx.Err() values observed by blocking executes
+}
+
+func (a *nestedCalleeAdapter) SupervisionCrashReason() (string, bool) {
+	if !a.connDown {
+		return "", false
+	}
+	return CrashReasonTransportClosed, true
 }
 
 func (a *nestedCalleeAdapter) Info(_ context.Context) (Info, error) {
@@ -807,7 +819,7 @@ func TestNestedToolCall_CalleeAbortRunPropagates(t *testing.T) {
 	audit := &sliceAuditWriter{}
 	calleeRec := &nestedCalleeRecorder{}
 	caller := &nestedCallerAdapter{target: nestedCallTarget, args: nestedToolCallArgs()}
-	callee := &nestedCalleeAdapter{rec: calleeRec, execErr: errors.New("connection terminated")}
+	callee := &nestedCalleeAdapter{rec: calleeRec, execErr: errors.New("connection terminated"), connDown: true}
 	sm := newNestedToolCallManager(t, caller, callee)
 	sm.Audit = audit
 

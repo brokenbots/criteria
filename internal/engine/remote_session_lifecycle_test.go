@@ -42,6 +42,7 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapter/environment/remote"
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -122,6 +123,19 @@ func (a *cri271Adapter) callLog() (opens, executes []string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return append([]string(nil), a.opens...), append([]string(nil), a.executes...)
+}
+
+// SupervisionCrashReason serves the lost-conn fact once the fake's phone-home
+// life has ended — the structural stand-in for the peer handle's journal
+// carrying the transport-closed record (M5 classification source; the
+// transport error text is never read).
+func (a *cri271Adapter) SupervisionCrashReason() (string, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.live {
+		return adapterhost.CrashReasonTransportClosed, true
+	}
+	return "", false
 }
 
 type cri271Sink struct {
@@ -211,7 +225,7 @@ func TestRemoteSession_FunctionalCrashReopensSessionForBookkeeping(t *testing.T)
 	if reason, _ := data["crash_reason"].(string); reason == "" {
 		t.Error("expected a named crash_reason on the session.crash event")
 	} else if reason != adapterhost.CrashReasonTransportClosed {
-		t.Errorf("crash_reason=%q; want the named shim-connection-drop cause", reason)
+		t.Errorf("crash_reason=%q; want the handle's journal-delivered transport-closed fact", reason)
 	}
 	if idle, ok := data["idle_since_last_event"].(string); !ok || idle == "" {
 		t.Errorf("expected idle_since_last_event on the session.crash event, got %v", data["idle_since_last_event"])
@@ -351,6 +365,38 @@ func (s *cri276PodServer) Execute(req *criteriav2.ExecuteRequest, stream criteri
 	return stream.Send(ev)
 }
 
+// superviseJournal is the HandlerType contract for the hand-registered
+// criteria.v1.PeerService Supervise stream: the pod journals no events, and
+// the stream's only job is carrying transport-level death as a stream error,
+// the same shape fakePeer in the remote package serves so the host-side
+// peer session's supervision consumer observes conn loss directly.
+type peerSuperviseService interface {
+	superviseJournal()
+}
+
+// superviseJournalHandler receives the SupervisionRequest and then parks on
+// the stream context until the connection dies.
+func superviseJournalHandler(srv interface{}, stream grpc.ServerStream) error {
+	req := new(pb.SupervisionRequest)
+	if err := stream.RecvMsg(req); err != nil {
+		return err
+	}
+	<-stream.Context().Done()
+	return nil
+}
+
+var peerSuperviseServiceDesc = &grpc.ServiceDesc{
+	ServiceName: "criteria.v1.PeerService",
+	HandlerType: (*peerSuperviseService)(nil),
+	Methods:     []grpc.MethodDesc{},
+	Streams: []grpc.StreamDesc{{
+		StreamName:    "Supervise",
+		ServerStreams: true,
+		Handler:       superviseJournalHandler,
+	}},
+	Metadata: "peer.proto",
+}
+
 func podHomeLoop(proxyAddr string, hs *cri137Handshake, stop <-chan struct{}, done chan<- struct{}, accepted *atomic.Int64, server criteriav2.AdapterServiceServer, serverOpts []grpc.ServerOption) {
 	defer close(done)
 	for {
@@ -382,6 +428,14 @@ func podHomeLoop(proxyAddr string, hs *cri137Handshake, stop <-chan struct{}, do
 		observed := &countingConn{Conn: conn}
 		grpcServer := grpc.NewServer(serverOpts...)
 		criteriav2.RegisterAdapterServiceServer(grpcServer, server)
+		// Pods that implement the supervision marker also host the
+		// PeerService journal stream, so conn-level death reaches the
+		// host-side session's supervisor and becomes a crash-classification
+		// fact (ADR-0014 M5: journal replay is the read path for session
+		// death).
+		if supervisor, ok := any(server).(peerSuperviseService); ok {
+			grpcServer.RegisterService(peerSuperviseServiceDesc, supervisor)
+		}
 		serveDone := make(chan struct{})
 		go func() {
 			defer close(serveDone)
@@ -431,6 +485,10 @@ func podHomeSleep(stop <-chan struct{}, d time.Duration) bool {
 		return true
 	}
 }
+
+// superviseJournal marks the pod as serving the peer supervision journal;
+// the stream handler never emits events (see superviseJournalHandler).
+func (s *cri276PodServer) superviseJournal() {}
 
 type cri276AdapterEvents struct{}
 
@@ -1002,6 +1060,7 @@ type cri287CopilotDying struct {
 	mu    sync.Mutex
 	opens []string
 	turns int
+	dead  bool
 }
 
 func (a *cri287CopilotDying) Info(context.Context) (adapterhost.Info, error) {
@@ -1022,9 +1081,15 @@ func (a *cri287CopilotDying) Execute(_ context.Context, _ string, _ *workflow.St
 	turn := a.turns
 	a.mu.Unlock()
 	if turn == 1 {
+		a.mu.Lock()
+		a.dead = true
+		a.mu.Unlock()
 		a.shared.setUp(false)
 		return adapter.Result{}, errors.New(cri271CrashErr)
 	}
+	a.mu.Lock()
+	a.dead = false
+	a.mu.Unlock()
 	a.shared.setUp(true)
 	a.shared.completedTurn()
 	return adapter.Result{Outcome: "success"}, nil
@@ -1041,6 +1106,20 @@ func (a *cri287CopilotDying) Snapshot(context.Context, string) (*criteriav2.Snap
 	return &criteriav2.SnapshotResponse{}, nil
 }
 func (a *cri287CopilotDying) Restore(context.Context, string, []byte, uint32) error { return nil }
+
+// SupervisionCrashReason serves the lost-conn fact once the fake's own
+// phone-home turn has died — the structural stand-in for the peer handle's
+// journal carrying the transport-closed record (M5 classification source).
+// The sibling shell handle shares only the run's up/down flag, so it stays
+// fact-free and its in-window failures keep the timeout routing.
+func (a *cri287CopilotDying) SupervisionCrashReason() (string, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.dead {
+		return adapterhost.CrashReasonTransportClosed, true
+	}
+	return "", false
+}
 
 func TestRemoteSession_GenuineAdapterDeathStillCrashClassified(t *testing.T) {
 	g := compile(t, strings.Replace(cri287Workflow, "  timeout = \"150ms\"\n", "", 1))
@@ -1069,7 +1148,7 @@ func TestRemoteSession_GenuineAdapterDeathStillCrashClassified(t *testing.T) {
 		t.Errorf("session.crash session=%v; want copilot.default", data["session"])
 	}
 	if reason, _ := data["crash_reason"].(string); reason != adapterhost.CrashReasonTransportClosed {
-		t.Errorf("crash_reason=%q; want the classified transport-close cause", reason)
+		t.Errorf("crash_reason=%q; want the dying handle's journal-delivered lost-conn fact", reason)
 	}
 }
 

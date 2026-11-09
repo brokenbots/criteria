@@ -3,7 +3,7 @@ package adapterhost
 // sessions_t07_test.go — T-07: crash classification from wire facts. A peer
 // handle whose supervision journal delivered a CrashClassified.reason wire
 // fact (ADR-0007, T-05) is consumed VERBATIM by classifySessionCrash, ahead
-// of the ProcessExited branch and the legacy string heuristics. The CRI-287
+// of the structural process-exit and watchdog-stall evidence. The CRI-287
 // teardown-window carve-out applies to peer-supervised handles: a
 // supervision-delivered ProcessExited inside the open window is a teardown
 // consequence (the child dies with the engine's canceled turn), so the
@@ -73,13 +73,15 @@ func TestClassifySessionCrash_SupervisionWireFactPriority(t *testing.T) {
 			t.Errorf("crash reason = %q, want %q", got, CrashReasonProcessExitedEarly)
 		}
 	})
-	t.Run("no classification and no exit falls back to heuristics", func(t *testing.T) {
+	t.Run("no classification and no exit is not a crash", func(t *testing.T) {
 		_, _, h := newSupervisedSession()
-		if got := classifySessionCrash(context.Background(), &Session{handle: h}, cri287TransportErr); got != CrashReasonTransportClosed {
-			t.Errorf("crash reason = %q, want the heuristic %q", got, CrashReasonTransportClosed)
+		// M5: error text is never evidence — the transport-shaped failure
+		// against a fact-free handle is an ordinary adapter error.
+		if got := classifySessionCrash(context.Background(), &Session{handle: h}, cri287TransportErr); got != CrashReasonUnknownAdapterError {
+			t.Errorf("crash reason = %q, want %q (no fact, no evidence, no crash)", got, CrashReasonUnknownAdapterError)
 		}
 	})
-	t.Run("legacy handle without the seam is unchanged", func(t *testing.T) {
+	t.Run("process exit carries no classified fact", func(t *testing.T) {
 		h := &cri287Handle{name: "fake", deadAfter: 0}
 		h.exited.Store(true)
 		if got := classifySessionCrash(context.Background(), &Session{handle: h}, nil); got != CrashReasonProcessExitedEarly {
@@ -223,7 +225,8 @@ func TestCRI287_PeerTransportCloseDuringTeardownWindowRoutedAsTimeout(t *testing
 // contrast for the transport-close peer path: once the window expires the
 // same failure keeps the CRI-271 hard-failure classification.
 func TestCRI287_PeerWindowExpiredReenablesWireFactClassification(t *testing.T) {
-	sm, sess, _ := newSupervisedSession()
+	sm, sess, h := newSupervisedSession()
+	h.deliver(CrashReasonTransportClosed)
 	sm.StepTimeoutTeardownWindow = 25 * time.Millisecond
 	sm.MarkEngineStepTimeoutTeardown()
 

@@ -82,8 +82,9 @@ type ProcessExitReporter interface {
 
 // ProcessExited reports whether the go-plugin client backing the handle has
 // observed its subprocess exit. Handles that cannot report exit
-// (built-in adapters, plain fakes) report false: no exit signal exists for
-// them, so callers must fall back to error-message heuristics.
+// (built-in adapters, plain fakes) report false: no structural exit signal
+// exists for them, so classification yields no fact and callers must treat
+// the failure as an ordinary step error (ADR-0014 M5 — no text fallback).
 func ProcessExited(p Handle) bool {
 	reporter, ok := p.(ProcessExitReporter)
 	if !ok || reporter == nil {

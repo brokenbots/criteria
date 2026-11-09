@@ -207,6 +207,19 @@ func (c *kb45CrashingClient) Log(_ context.Context, _ *v2.LogRequest, _ LogEvent
 	return io.EOF
 }
 
+// kb45CrashingHandle arms the supervision fact the pre-bound gen1's dying
+// journal delivered (journal-only classification, ADR-0014 M5): the conn is
+// gone before the first Execute, so classification never re-reads the
+// error text. The rpcHandle embed keeps the process-reporting and log-stream
+// seams of the local runner shape.
+type kb45CrashingHandle struct {
+	*rpcHandle
+}
+
+func (h *kb45CrashingHandle) SupervisionCrashReason() (string, bool) {
+	return CrashReasonTransportClosed, true
+}
+
 // TestSessionManager_SynthesizedFallbackSkipsRecheckAfterRespawn pins the
 // respawn retry path: the crash respawn re-runs the step on the replacement
 // generation, the replacement never finalizes, the synthesized fallback is
@@ -221,7 +234,7 @@ func TestSessionManager_SynthesizedFallbackSkipsRecheckAfterRespawn(t *testing.T
 		Adapter: "fake",
 		// Gen1 dies with the CRI-271 transport signature on Execute; the
 		// crash machinery resolves the replacement from the loader.
-		handle:  NewRPCHandle("fake", nil, &kb45CrashingClient{}),
+		handle:  &kb45CrashingHandle{rpcHandle: NewRPCHandle("fake", nil, &kb45CrashingClient{}).(*rpcHandle)},
 		OnCrash: OnCrashRespawn,
 	}
 	sm.mu.Lock()

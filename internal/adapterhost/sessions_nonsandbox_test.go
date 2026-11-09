@@ -267,12 +267,16 @@ func TestSessionManagerCrashPolicyAbortRun(t *testing.T) {
 	}
 }
 
-// TestSession_ClosingFlagSuppressesCrashHeuristic verifies that setting the
-// closing flag causes isLikelySessionCrash to return false even for
-// EOF/connection-close errors (W12).
-func TestSession_ClosingFlagSuppressesCrashHeuristic(t *testing.T) {
-	sess := &Session{}
-	sess.closing.Store(true)
+// TestSession_TransportShapedErrorWithoutEvidenceIsNotACrash pins the M5
+// classification source: the error texts the deleted string arms once
+// matched are ordinary adapter errors on a handle carrying no supervision
+// fact. They classify as unknown-adapter-error and never mark a crash
+// candidate; only a journal-delivered fact or a structural process exit
+// does (the closing-flag and canceled-context suppression paths stay
+// pinned in loader_test.go, W12).
+func TestSession_TransportShapedErrorWithoutEvidenceIsNotACrash(t *testing.T) {
+	sess := &Session{Name: "agent", Adapter: "shell", handle: &eofHandle{}}
+	ctx := context.Background()
 	for _, errMsg := range []string{
 		"eof",
 		"eof: connection terminated",
@@ -281,38 +285,12 @@ func TestSession_ClosingFlagSuppressesCrashHeuristic(t *testing.T) {
 		"connection refused",
 		"terminated",
 	} {
-		if isLikelySessionCrash(sess, errors.New(errMsg)) {
-			t.Errorf("expected isLikelySessionCrash to return false with closing flag set, err=%q", errMsg)
+		if got := classifySessionCrash(ctx, sess, errors.New(errMsg)); got != CrashReasonUnknownAdapterError {
+			t.Errorf("classifySessionCrash(err=%q) = %q, want %q (error text is not evidence)", errMsg, got, CrashReasonUnknownAdapterError)
 		}
 	}
-}
-
-// TestSession_UnexpectedExitTriggersHeuristic verifies that without the
-// closing flag, crash-like errors trigger the heuristic (W12).
-func TestSession_UnexpectedExitTriggersHeuristic(t *testing.T) {
-	sess := &Session{}
-	for _, errMsg := range []string{
-		"eof",
-		"eof: connection terminated",
-		"transport is closing",
-		"broken pipe",
-		"connection refused",
-		"terminated",
-	} {
-		if !isLikelySessionCrash(sess, errors.New(errMsg)) {
-			t.Errorf("expected isLikelySessionCrash to return true without closing flag, err=%q", errMsg)
-		}
-	}
-}
-
-// TestSession_ExecuteEOFWithoutCloseIsCrash verifies that an Execute call
-// returning an EOF-like error without a preceding Close still triggers the
-// crash heuristic (W12 risk mitigation).
-func TestSession_ExecuteEOFWithoutCloseIsCrash(t *testing.T) {
-	sess := &Session{}
-	// closing flag is NOT set — this simulates an unsolicited adapter exit
-	if !isLikelySessionCrash(sess, errors.New("read: eof")) {
-		t.Error("expected crash heuristic to fire for EOF without closing flag")
+	if isSessionCrashCandidate(ctx, sess) {
+		t.Error("isSessionCrashCandidate() = true on a fact-free handle; error text must never mark a crash candidate")
 	}
 }
 

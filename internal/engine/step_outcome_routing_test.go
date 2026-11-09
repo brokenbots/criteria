@@ -566,6 +566,19 @@ func (p *cri130Adapter) Execute(ctx context.Context, name string, step *workflow
 	return p.fakeAdapter.Execute(ctx, name, step, sink, nil)
 }
 
+// SupervisionCrashReason delivers the fact the journal carried for the
+// simulated mid-turn connection death (journal-only classification,
+// ADR-0014 M5): the crash the CRI-130 routing rules consume is a
+// journal-delivered CrashReasonTransportClosed, not a text match.
+func (p *cri130Adapter) SupervisionCrashReason() (string, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.crashed {
+		return adapterhost.CrashReasonTransportClosed, true
+	}
+	return "", false
+}
+
 func cri130NewLoader(p *cri130Adapter) *fakeLoader {
 	return &fakeLoader{adapters: map[string]adapterhost.Handle{
 		"fake":         p,

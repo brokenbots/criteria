@@ -2,6 +2,7 @@ package adapterhost
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -66,24 +67,29 @@ const (
 //
 // The reason value is a CrashClassified.reason wire fact — one of the
 // CrashReason* constants above, the same taxonomy the host's own classifier
-// uses, emitted by the peer's child-side journal (T-05). Because the peer
-// watched the child directly, its classification outranks every host-side
-// heuristic: classifySessionCrash consults this seam before the
-// ProcessExited branch and before the legacy string matching, which remain
-// the fallbacks for legacy-runner connections and for peers whose
-// Supervise stream is unavailable.
+// uses, emitted by the peer's child-side journal (T-05). Classification is
+// journal-only (ADR-0014 M5): a delivered classification is consumed
+// verbatim ahead of the structural checks, and error text is never parsed —
+// a session whose journal delivered nothing and whose process is still
+// alive is not a crash, whatever the transport error says.
 type SupervisedHandle interface {
-	// SupervisionCrashReason returns the journal-delivered crash reason and
-	// ok=true. ok=false means no terminal classification was delivered (the
-	// child is alive, exited cleanly, or only the plain Exited journal
-	// record arrived) — classification then falls through to the local
-	// evidence path.
+	// SupervisionCrashReason returns the crash reason the handle's
+	// supervision story carries and ok=true. The value is a single
+	// CrashReason* wire fact — most often the journal's CrashClassified
+	// record verbatim, but a supervised handle may also synthesize the
+	// fact structurally when the journal holds no terminal and the conn
+	// knowledge is itself the missing-terminal evidence (e.g. the peer's
+	// lost-conn arm: ChildRunLost for a run in flight, else
+	// TransportClosed). ok=false means no terminal classification is
+	// available (the child is alive, exited cleanly, or only the plain
+	// Exited journal record arrived) — classification then falls through
+	// to the local structural evidence path.
 	SupervisionCrashReason() (reason string, ok bool)
 }
 
-// SupervisionCrashReason returns the crash classification the peer
-// supervision journal delivered for h's adapter child (verbatim wire fact),
-// or ok=false when the handle carries no supervision classification —
+// SupervisionCrashReason returns the crash classification the handle's
+// supervision story delivers for its adapter child (verbatim wire fact), or
+// ok=false when the handle carries no supervision classification —
 // including when the delivered reason is empty or outside the CrashReason*
 // taxonomy (wire garbage or host/peer version skew): the classification
 // path is documented to yield taxonomy constants only, so anything else
@@ -104,6 +110,19 @@ func filterTaxonomyReason(reason string, ok bool) (string, bool) {
 		return "", false
 	}
 	return reason, true
+}
+
+// watchdogStallError is the typed carrier for the heartbeat watchdog's
+// verdict (ADR-0014 M5): the watchdog observed the log-stream stall
+// directly, so the classification is structural evidence and classifySessionCrash
+// reads it through errors.As instead of matching the message text. The
+// message keeps the previous log rendering verbatim.
+type watchdogStallError struct {
+	threshold time.Duration
+}
+
+func (e *watchdogStallError) Error() string {
+	return fmt.Sprintf("heartbeat stall (>%s)", e.threshold)
 }
 
 // JournalCrashSettler is the optional SupervisedHandle capability for
@@ -134,8 +153,7 @@ func SettledSupervisionCrashReason(ctx context.Context, h Handle, budget time.Du
 		// WithoutCancel: the settle stays bounded by budget and must run
 		// even when the caller's ctx is already canceled — a run that
 		// aborts its step ctx on transport death still needs the journal
-		// classification, or the decision falls back to the transport
-		// heuristics.
+		// classification for its crash decision.
 		settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), budget)
 		defer cancel()
 		reason, ok := settler.SettledSupervisionCrashReason(settleCtx)

@@ -61,6 +61,20 @@ func (h *cri287Handle) Execute(_ context.Context, _ string, _ *workflow.StepNode
 	}
 	return adapter.Result{Outcome: "success"}, nil
 }
+
+// SupervisionCrashReason delivers the journal fact for the simulated conn
+// death once the transport has failed (journal-only classification,
+// ADR-0014 M5); teardown-window pins read it after the gate closes. A plain
+// process exit carries no classified fact — the structural arm owns it, the
+// same placeholder shape the peer session returns.
+func (h *cri287Handle) SupervisionCrashReason() (string, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.exited.Load() || h.executes <= h.deadAfter {
+		return "", false
+	}
+	return CrashReasonTransportClosed, true
+}
 func (h *cri287Handle) CloseSession(context.Context, string) error { return nil }
 func (h *cri287Handle) Kill()                                      {}
 func (h *cri287Handle) Pause(context.Context, string) error        { return nil }
@@ -241,8 +255,11 @@ func TestCRI287_ProcessExitedDuringTeardownWindowStillCrashClassified(t *testing
 		sessions:                  map[string]*Session{},
 		StepTimeoutTeardownWindow: time.Minute,
 	}
-	gen1 := &cri287Handle{name: "fake", deadAfter: 0}
-	gen1.exited.Store(true)
+	// cri271Handle is the local-process fake: ProcessExited is verifiable
+	// and no supervision journal fact exists, so the legacy local rule
+	// applies — a verifiably-dead subprocess escapes the open teardown
+	// window (peer-supervised handles route through the carve-out instead).
+	gen1 := &cri271Handle{name: "fake", gen: 1, fails: true}
 	sess := &Session{Name: "shell.develop", Adapter: "shell", handle: gen1}
 	sm.mu.Lock()
 	sm.sessions["shell.develop"] = sess

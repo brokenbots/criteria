@@ -778,9 +778,10 @@ func (ps *peerSession) supervise() {
 			// Stream closed cleanly by the peer; replay from lastSeq.
 		case status.Code(err) == codes.Unimplemented:
 			// A peer build predating PeerService: the adapter service is
-			// still usable, only supervision is unavailable — ProcessExited
-			// stays false and callers fall back to error-message heuristics,
-			// exactly like a legacy handle.
+			// still usable, only supervision is unavailable — no terminal
+			// fact ever lands, so no crash classification exists for its
+			// sessions (journal delivery is the only classification source,
+			// ADR-0014 M5).
 			slog.Warn("peer adapter does not implement supervision; supervision unavailable",
 				"adapter", ps.dial.AdapterType, "scope", ps.dial.Scope)
 			return
@@ -876,8 +877,8 @@ func (ps *peerSession) applySupervisionEvent(ev *criteriav1.SupervisionEvent) {
 	if exited {
 		// Terminal supervision event: the adapter child behind this conn has
 		// exited. T-07 wires the session-record handoff (crash classification
-		// + respawn) onto this hook; the handle's ProcessExited() already
-		// reads the state set here.
+		// + respawn) onto this hook; the handle's journal read paths
+		// (processExited / SupervisionCrashReason) read the state set here.
 		slog.Warn("peer adapter process exited",
 			"adapter", adapterName, "scope", ps.dial.Scope,
 			"reason", reason, "detail", detail)
@@ -922,8 +923,11 @@ func (ps *peerSession) lastEventSeq() uint64 {
 
 // processExited reports whether the peer journal delivered a terminal
 // process event for the named adapter child (definition name).
-// Connection loss alone does not count: the transport may drop for reasons
-// that are not adapter deaths.
+// Connection loss alone does not count — the transport may drop for
+// reasons that are not adapter deaths; the host reads conn loss through
+// SupervisionCrashReason's lost-conn arm instead. Production callers read
+// the journal through the SupervisedHandle seam; this accessor is a test
+// seam for journal-arrival races.
 func (ps *peerSession) processExited(adapterName string) bool {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
@@ -967,7 +971,9 @@ func (ps *peerSession) control(ctx context.Context, req *criteriav1.ControlReque
 
 // died marks the conn-level session dead: drop it from the provider's
 // registry (if still current) and release the transport. The lost record is
-// the child-run-loss classification input: the crash reason keys on it.
+// the crash-classification input for everything that follows: the child-run
+// loss keys on it, and (ADR-0014 M5) a loss with no journal terminal is the
+// structural transport-closed crash fact.
 func (ps *peerSession) died(cause error) {
 	ps.lost.Store(true)
 	if ps.onDead != nil {
@@ -992,7 +998,7 @@ func (ps *peerSession) close(reason string) {
 }
 
 // peerHandle implements adapterhost.Handle (plus LogStreamStarter,
-// PermissionStreamer and ProcessExitReporter) over a peer session. Every
+// PermissionStreamer and SupervisedHandle) over a peer session. Every
 // method is a direct v2 AdapterService call on the peer client — the same
 // contract the go-plugin rpcHandle serves, so SessionManager dispatch and
 // the HeartbeatMonitor / permission flows are unchanged.
@@ -1130,7 +1136,8 @@ func (h *peerHandle) CloseSession(ctx context.Context, id string) error {
 
 // Kill asks the peer to terminate the adapter child (Control{kill_child}).
 // The peer reports the actual exit through the supervision journal, which is
-// what flips ProcessExited() — there is no host-side process to signal.
+// what settles the journal's exit state (the host then classifies from the
+// journal) — there is no host-side process to signal.
 func (h *peerHandle) Kill() {
 	h.killOnce.Do(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), peerKillTimeout)
@@ -1165,25 +1172,21 @@ func (h *peerHandle) killChild(ctx context.Context) {
 // IsPhoneHomeBridge marks peerHandle as a live phone-home connection.
 func (h *peerHandle) IsPhoneHomeBridge() {}
 
-// ProcessExited implements ProcessExitReporter from the supervision journal:
-// true once the peer delivered ProcessExited or CrashClassified for this
-// handle's (adapter_type, scope). This makes classifySessionCrash's precise
-// branch (CrashReasonProcessExitedEarly) reachable for remote adapters —
-// the role the go-plugin reaper plays for local adapters.
-func (h *peerHandle) ProcessExited() bool {
-	if h == nil || h.ps == nil {
-		return false
-	}
-	return h.ps.processExited(h.name)
-}
-
 // SupervisionCrashReason implements adapterhost.SupervisedHandle (T-07): it
-// returns the crash classification the supervision journal delivered
+// returns the crash classification the supervision journal delivers
 // (CrashClassified.reason verbatim — a peer-emitted CrashReason* wire fact,
 // never a new string). ok=false when the journal only delivered the plain
-// Exited placeholder: the host then classifies from the ProcessExited
-// evidence (and, for legacy runners and peers whose Supervise stream is
-// unavailable, from the string heuristics) exactly as before.
+// Exited placeholder: the host then classifies from the structurally-known
+// process death (CrashReasonProcessExitedEarly) exactly as it does for
+// local handles. Journal delivery is the only source of the terminal
+// classifications (ADR-0014 M5) — error text is never parsed here.
+//
+// Connection-level loss (died) is itself structural knowledge: with no
+// journal terminal in hand, a lost conn is the missing terminal fact —
+// ADR-0008's child-run loss when a run was tracked in flight, else the
+// transport-closed crash fact the KB-246 recreate window keys its re-entry
+// on. A normal CloseSession teardown does not set lost, so this arm never
+// fires for expected closes.
 func (h *peerHandle) SupervisionCrashReason() (string, bool) {
 	if h == nil || h.ps == nil {
 		return "", false
@@ -1198,15 +1201,11 @@ func (h *peerHandle) SupervisionCrashReason() (string, bool) {
 		}
 		return aj.exitReason, true
 	}
-	// ADR-0008: a transport loss while a child run was tracked in
-	// flight is the crash fact for the step — the child's verdict did not
-	// land before the connection died (the classifier prefers this over the
-	// transport heuristics, without overriding the journal's own
-	// CrashClassified evidence above).
 	if ps.lost.Load() {
 		if rec := aj.childRunInFlightLocked(); rec != nil {
 			return adapterhost.CrashReasonChildRunLost, true
 		}
+		return adapterhost.CrashReasonTransportClosed, true
 	}
 	return "", false
 }

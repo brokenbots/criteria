@@ -219,6 +219,26 @@ product version). The release tag and date are finalized by the release gate.
   change forces a fresh session and per-call config on a `reuse` instance is
   a compile error, retiring the r2/r3-style never-opened-instance workaround
   by construction.
+- **Crash classification from the supervision journal only (ADR-0014 M5,
+  KB-380).** `classifySessionCrash` no longer matches error text: a crashed
+  adapter session classifies from a `CrashClassified`-shaped supervision
+  fact — journal delivery from the peer (or the in-process supervisor) —
+  and otherwise only from structurally-known terminal state (watchdog stall
+  verdicts and process exits). The legacy string-matching arms on transport
+  shapes ("transport is closing" / "unavailable" / "broken pipe" / "eof" /
+  "terminated"), the process-exit-as-proxy fallthrough for remote composite
+  handles, and the legacy-runner compat class they existed for are deleted;
+  the transport-loss shape on a genuinely-dead phone-home connection now
+  arrives as the journal's `CrashReasonTransportClosed` fact, so KB-246
+  re-entry and session-crash recovery behavior is unchanged for supervised
+  peers. A grep gate pins the deletion: adapterhost sources carry no
+  string-matching crash arms. As a deliberate consequence of the new
+  classification source, every lost peer conn now classifies a crash fact —
+  `CrashReasonTransportClosed` (or `CrashReasonChildRunLost` when a child
+  run was in flight) synthesized from the session's conn knowledge when the
+  journal holds no terminal — so the KB-246 recreate window and respawn
+  recovery cover a dead peer conn even when its supervision journal never
+  delivered a terminal record.
 
 ### Directory layout (XDG base directories)
 
