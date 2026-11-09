@@ -29,6 +29,30 @@ type loggingMockHandle struct {
 	cancelled              bool
 	emitTrigger            chan struct{} // when closed, the log goroutine starts emitting
 	startLogStreamOverride func(ctx context.Context, sessionID string, sink LogEventSink) (cancel func(), done <-chan error, err error)
+
+	// journalCrashReason arms the supervision fact for a simulated
+	// connection death (journal-only classification, ADR-0014 M5): the
+	// conn-death closures arm the fact the journal delivered, and the
+	// crash path classifies from the fact rather than the error text.
+	journalCrashReason string
+}
+
+// deliverJournalFact marks the handle's simulated connection death as
+// journal-delivered; the crash machinery then classifies it without ever
+// parsing the returned error text.
+func (m *loggingMockHandle) deliverJournalFact() {
+	m.mu.Lock()
+	m.journalCrashReason = CrashReasonTransportClosed
+	m.mu.Unlock()
+}
+
+func (m *loggingMockHandle) SupervisionCrashReason() (string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.journalCrashReason == "" {
+		return "", false
+	}
+	return m.journalCrashReason, true
 }
 
 func (m *loggingMockHandle) Info(ctx context.Context) (Info, error) { return Info{}, nil }
@@ -487,9 +511,10 @@ func TestSessionManager_RespawnRestartsLogStream(t *testing.T) {
 		logEvents: []*v2.LogEvent{
 			{StreamName: "stdout", Line: []byte("pre-respawn secret\n"), Timestamp: timestamppb.Now()},
 		},
-		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
-			return adapter.Result{}, errors.New("connection reset")
-		},
+	}
+	h1.executeFunc = func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
+		h1.deliverJournalFact()
+		return adapter.Result{}, errors.New("connection reset")
 	}
 
 	// Respawned handle succeeds.
@@ -563,6 +588,7 @@ func TestSessionManager_OldWatcherAfterReset_NoFalseDiagnostic(t *testing.T) {
 		// This makes oldDone close, allowing respawn to start the new stream
 		// while the old watcher goroutine may still be scheduled later.
 		close(oldBlocked)
+		h1.deliverJournalFact()
 		return adapter.Result{}, errors.New("connection reset")
 	}
 
@@ -606,9 +632,13 @@ func TestSessionManager_RespawnedEarlyLogEnd_DetectsBrokenContract(t *testing.T)
 	defer slog.SetDefault(oldLogger)
 
 	h1 := &loggingMockHandle{
-		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
-			return adapter.Result{}, errors.New("connection reset")
+		logEvents: []*v2.LogEvent{
+			{StreamName: "stdout", Line: []byte("post-respawn secret\n"), Timestamp: timestamppb.Now()},
 		},
+	}
+	h1.executeFunc = func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
+		h1.deliverJournalFact()
+		return adapter.Result{}, errors.New("connection reset")
 	}
 	// The respawned handle is broken: its Log returns immediately.
 	h2 := &loggingMockHandle{
@@ -675,9 +705,9 @@ func TestSessionManager_RestartLogStream_BoundedWait(t *testing.T) {
 		return cancelFn, d, nil
 	}
 	h1.executeFunc = func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
+		h1.deliverJournalFact()
 		return adapter.Result{}, errors.New("connection reset")
 	}
-
 	h2 := &loggingMockHandle{
 		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
 			return adapter.Result{Outcome: "success"}, nil
@@ -740,10 +770,10 @@ func TestSessionManager_RespawnThenClose_NoFalseDiagnostic(t *testing.T) {
 	slog.SetDefault(slog.New(rec))
 	defer slog.SetDefault(oldLogger)
 
-	h1 := &loggingMockHandle{
-		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
-			return adapter.Result{}, errors.New("connection reset")
-		},
+	h1 := &loggingMockHandle{}
+	h1.executeFunc = func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
+		h1.deliverJournalFact()
+		return adapter.Result{}, errors.New("connection reset")
 	}
 	h2 := &loggingMockHandle{
 		executeFunc: func(ctx context.Context, sessionID string, step *workflow.StepNode, sink adapter.EventSink, rejection *v2.ExecutionRejection) (adapter.Result, error) {
