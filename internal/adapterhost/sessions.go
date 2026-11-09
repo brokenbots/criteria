@@ -2954,38 +2954,36 @@ func (m *SessionManager) executeError(ctx context.Context, name string, step *wo
 		return result, execErr
 	}
 
-	// A transport close observed while the step-timeout teardown
-	// window is open is the consequence of the engine-initiated cancellation
-	// (the canceled Execute stream tears down sibling phone-home transports
-	// in the same second), not an adapter death. Return the error as-is so
-	// the step's declared failure/default outcome routing (the checkpoint
-	// loop) proceeds instead of the crash machinery terminating the run. The
-	// window is bound to the cascade (see the engineStepTimeoutTeardownAt
-	// comment), so crashes outside it keep the hard-failure classification.
-	// Deaths with positive evidence are never downgraded for
-	// legacy-runner handles: ProcessExited is the verifiable "adapter is
-	// dead" signal — the transport-close classification only applies while
-	// the process is still running — and a host-initiated close (closing
-	// flag) is the expected-close path above; both fall through to crash
-	// classification.
+	// A crash-shaped failure observed while the step-timeout teardown
+	// window is open is the consequence of the engine-initiated
+	// cancellation (the canceled Execute stream tears down sibling
+	// phone-home transports in the same second), not an adapter death.
+	// Return the error as-is so the step's declared failure/default
+	// outcome routing (the checkpoint loop) proceeds instead of the crash
+	// machinery terminating the run. The window is bound to the cascade
+	// (see the engineStepTimeoutTeardownAt comment), so crashes outside it
+	// keep the hard-failure classification. A structural process exit is
+	// never downgraded for handles that are not peer-supervised:
+	// ProcessExited is the verifiable "adapter is dead" signal, and a
+	// host-initiated close (closing flag) is the expected-close path
+	// above.
 	//
 	// T-07 peer carve-out: on a peer-supervised handle the ProcessExited
 	// fact is supervision-delivered, and the supervised child can die as a
-	// direct consequence of the same teardown cascade (the engine's canceled
-	// turn takes the child down with it). Inside the open window that
-	// ProcessExited is therefore treated like the transport-close evidence
-	// above — a teardown consequence, routed as timeout, not a crash. The
-	// window bounds the carve-out: after it expires a follow-on Execute on
-	// the dead peer handle fails and classifies the crash from the
-	// journal-delivered wire fact (SupervisionCrashReason), which then
-	// reaches the crash machinery with the full wire-fact reason. The
-	// candidate predicate includes that wire fact (isSessionCrashCandidate),
-	// so a classification-backed failure routes through this carve-out
-	// inside the window (timeout) and through handleCrash outside it,
-	// regardless of the transport error text. The
-	// classifySessionCrash call in the diagnostics below feeds evidence
-	// fields only: the returned error stays the raw transport error, so the
-	// outcome is still routed as a timeout.
+	// direct consequence of the same teardown cascade (the engine's
+	// canceled turn takes the child down with it). Inside the open window
+	// both it and the journal's lost-conn fact are teardown consequences,
+	// routed as timeout, not a crash. The window bounds the carve-out:
+	// after it expires a follow-on Execute on the dead peer handle fails
+	// and classifies the crash from the journal-delivered wire fact
+	// (SupervisionCrashReason), which then reaches the crash machinery
+	// with the full wire-fact reason. The candidate predicate includes
+	// that wire fact (isSessionCrashCandidate), so a fact-carrying
+	// failure routes through this carve-out inside the window (timeout)
+	// and through handleCrash outside it regardless of the error text.
+	// The classifySessionCrash call in the diagnostics below feeds
+	// evidence fields only: the returned error stays the raw transport
+	// error, so the outcome is still routed as a timeout.
 	if m.engineStepTimeoutTeardownWindowOpen() &&
 		isSessionCrashCandidate(ctx, sess) &&
 		!sess.closing.Load() &&

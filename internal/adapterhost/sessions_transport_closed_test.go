@@ -2,15 +2,17 @@ package adapterhost
 
 // sessions_kb246_test.go — KB-246 defect-4: the fleet's drift-recreate window
 // closes the old peer pod's phone-home conns mid-execute while the recreated
-// pod dials back the same session key the same second ("Canceled (connection
-// closing)"). The in-flight step died immediately (on_crash=fail short-circuits
-// before any re-wait), so a sequential subworkflow body failed in one step.
-// The fix re-keys the transport-closed crash on a shim-dispatched (remote)
-// session into the respawn arm: WaitForFreshHandle re-enters the wait, the
-// recreated pod's fresh dial resolves (the stale handle is excluded), and the
-// step re-executes once on the fresh handle. Recovery failure stays
-// fail-closed; local sessions keep CRI-130 crash semantics; on_crash=
-// abort_run keeps its hard-fail arm.
+// pod dials back the same session key the same second. The in-flight step
+// died immediately (on_crash=fail short-circuits before any re-wait), so a
+// sequential subworkflow body failed in one step. Under M5 (ADR-0014) the
+// failing handle carries the transport-closed fact through the supervision
+// seam (the classification source — the recreate-window error text is never
+// read), and the fix re-keys that crash on a shim-dispatched (remote) session
+// into the respawn arm: WaitForFreshHandle re-enters the wait, the recreated
+// pod's fresh dial resolves (the stale handle is excluded), and the step
+// re-executes once on the fresh handle. Recovery failure stays fail-closed;
+// local sessions keep CRI-130 crash semantics; on_crash=abort_run keeps its
+// hard-fail arm.
 
 import (
 	"context"
@@ -39,7 +41,10 @@ func (kb246Loader) Resolve(context.Context, string) (Handle, error) {
 func (kb246Loader) Shutdown(context.Context) error { return nil }
 
 // kb246Handle stands in for a phone-home bridge handle. A dead handle
-// replays the transport error on every Execute; a live one returns `outcome`.
+// replays the transport error on every Execute and carries the lost-conn
+// fact through the supervision seam (the classification source — the real
+// phone-home bridge handle delivers the journal's transport-closed record
+// for the dead conn); a live one returns `outcome`.
 type kb246Handle struct {
 	name    string
 	dead    bool
@@ -52,6 +57,18 @@ type kb246Handle struct {
 
 func newKB246Handle(name string, dead bool, outcome string) *kb246Handle {
 	return &kb246Handle{name: name, dead: dead, outcome: outcome}
+}
+
+// SupervisionCrashReason serves the lost-conn fact for a dead bridge: the
+// handle's journal recorded the transport-closed classification, delivered
+// verbatim to the classifier (fact source, not error text).
+func (h *kb246Handle) SupervisionCrashReason() (string, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.dead {
+		return CrashReasonTransportClosed, true
+	}
+	return "", false
 }
 
 func (h *kb246Handle) executions() int {
@@ -327,15 +344,28 @@ func TestSessions_KB246_TransportClosedAbortRunStillAborts(t *testing.T) {
 	}
 }
 
-// TestSessions_KB246_ClassifyConnectionClosing pins the classification fix:
-// the fleet's recreate-window signature ("Canceled (connection closing)") is
-// a transport close, not an unclassified adapter error.
+// TestSessions_KB246_ClassifyConnectionClosing pins the classification
+// source (M5): the failing phone-home handle's lost-conn fact — the
+// supervision journal's transport-closed record — classifies the crash and
+// marks the crash candidate; the fleet's recreate-window error text is never
+// read. Without the fact the same text is an ordinary adapter error.
 func TestSessions_KB246_ClassifyConnectionClosing(t *testing.T) {
-	h := &kb246Handle{name: "fake"}
-	sess := &Session{Name: "shell.develop", Adapter: "shell", handle: h}
+	dead := newKB246Handle("fake", true, "")
+	sess := &Session{Name: "shell.develop", Adapter: "shell", handle: dead}
 
 	if got := classifySessionCrash(context.Background(), sess, kb246FleetErr); got != CrashReasonTransportClosed {
-		t.Errorf("classifySessionCrash(%v) = %q, want %q", kb246FleetErr, got, CrashReasonTransportClosed)
+		t.Errorf("classifySessionCrash(%v) = %q, want the handle's lost-conn fact %q", kb246FleetErr, got, CrashReasonTransportClosed)
+	}
+	if !isSessionCrashCandidate(context.Background(), sess) {
+		t.Error("a handle carrying the lost-conn fact must be a crash candidate")
+	}
+
+	live := &Session{Name: "shell.develop", Adapter: "shell", handle: newKB246Handle("fresh", false, "success")}
+	if got := classifySessionCrash(context.Background(), live, kb246FleetErr); got != CrashReasonUnknownAdapterError {
+		t.Errorf("classifySessionCrash(%v) without a lost-conn fact = %q, want %q (error text is not evidence)", kb246FleetErr, got, CrashReasonUnknownAdapterError)
+	}
+	if isSessionCrashCandidate(context.Background(), live) {
+		t.Error("error text alone must not mark a crash candidate")
 	}
 }
 
