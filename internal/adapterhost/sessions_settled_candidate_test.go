@@ -88,10 +88,11 @@ func TestSettledCrashCandidate_SettledFactRoutesCrashOutsideWindow(t *testing.T)
 // no session.crash event. Every settler is peer-supervised (JournalCrashSettler
 // embeds SupervisedHandle, which isPeerSupervised tests for), so the
 // open-window carve-out never reaches handleCrash for a settler; the
-// settled-fact crash route is the window-closed path above.
+// settled-fact crash route is the window-closed path above. The taxonomy
+// reason is a different member to pin that the routing is content-blind.
 func TestSettledCrashCandidate_SettledFactInsideWindowRoutesTimeout(t *testing.T) {
 	h, sm, sess := newSettledOnlySession()
-	h.deliverSettled(CrashReasonTransportClosed)
+	h.deliverSettled(CrashReasonChildRunLost)
 	sm.StepTimeoutTeardownWindow = time.Minute
 	sm.MarkEngineStepTimeoutTeardown()
 
