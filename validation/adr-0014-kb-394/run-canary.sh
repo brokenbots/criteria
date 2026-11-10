@@ -7,12 +7,14 @@
 #   1. preflight: pulls the lockfile-pinned container image into the local
 #      runtime daemon (registry reachability + image presence proven early),
 #   2. pulls the KB-398-published adapter artifact into the per-run cache and
-#      re-locks the workflow with the real CLI; a regenerated lockfile that
-#      drifts from the committed pin fails the gate with a diff (digest,
-#      version, or image drift means the registry content changed),
+#      re-locks the workflow with the real CLI; the regenerated lockfile's
+#      semantic pins (schema version, reference, version, digest, protocol,
+#      platforms, container image) are compared against the committed pin and
+#      any difference FAILS CLOSED — only formatting (comments/blank lines)
+#      is ignored, so registry-side change stops the run,
 #   3. runs `criteria apply` with an ND-JSON --events-file under fresh
 #      HOME/XDG/TMPDIR isolation, so every run starts pristine,
-#   4. mid-crash_demo kills via the container runtime the Container hosting
+#   4. mid-crash_demo kills via the container runtime the container hosting
 #      the crash_demo executor's adapter child — located by its live run
 #      cidfile plus a `sleep 12` process in-image. The engine's in-process
 #      supervisor journal classifies the supervised exit (typed
@@ -39,9 +41,8 @@ case "$KILL_LANE" in executor | none) ;; *)
   ;;
 esac
 OUT="${CANARY_OUT:-/tmp/kb394/canary-$(date +%Y%m%dT%H%M%S)}"
-RUN_DIR_ROOT="$OUT/run-root"
 TMPDIR="$OUT/tmp"
-mkdir -p "$OUT" "$RUN_DIR_ROOT" "$TMPDIR"
+mkdir -p "$OUT" "$TMPDIR"
 EVENTS="$OUT/events.ndjson"
 export TMPDIR
 
@@ -97,12 +98,58 @@ if ! "$CRITERIA" adapter lock "$SCRATCH" --allow-unsigned >"$OUT/lock.log" 2>&1;
   echo "canary: adapter lock failed; see $OUT/lock.log" >&2
   exit 2
 fi
-if ! diff -u "$TREE/.criteria.lock.hcl" "$SCRATCH/.criteria.lock.hcl" >"$OUT/lock-drift.diff" 2>&1; then
-  echo "canary: LOCKFILE DRIFT committed pin vs registry (proceeding with regenerated pin; update the committed tree)"
-  cat "$OUT/lock-drift.diff"
-else
-  echo "lock gate: regenerated lockfile matches the committed pin"
+# Semantic pin comparison: the canonical lockfile emitter (workflow/lockfile
+# Write) emits no comments and no blank lines while the committed pin carries
+# a header, so a raw text diff would always report drift and the gate could
+# never pass. Extract each adapter's identity + pin fields — comments and
+# blank lines ignored — and compare those; any semantic difference fails
+# closed: the run does not proceed on a silently substituted pin.
+lock_pin() {
+  awk '
+    function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+    {
+      line = $0
+      sub(/#.*/, "", line)
+      sub(/^[ \t]+/, "", line)
+      sub(/[ \t]+$/, "", line)
+      if (line == "") next
+      if (line ~ /^adapter[ \t]*"/) {
+        n = split(line, f, "\"")
+        at = f[2] "." f[4]
+        next
+      }
+      if (line == "container_image {") { cimg = 1; next }
+      if (line == "}") {
+        if (cimg) cimg = 0
+        else at = ""
+        next
+      }
+      i = index(line, "=")
+      if (i == 0) next
+      k = trim(substr(line, 1, i - 1))
+      v = trim(substr(line, i + 1))
+      gsub(/^"|"$/, "", v)
+      if (at == "" && k == "schema_version") schema = v
+      if (at != "") pin[at "|" (cimg ? "container_image." k : k)] = v
+    }
+    END {
+      print "schema_version=" (schema == "" ? "absent" : schema)
+      nf = split("reference version resolved_digest sdk_protocol_version platforms container_image.ref container_image.digest", fl, " ")
+      for (a in pin) { split(a, p, "|"); ad[p[1]] = 1 }
+      for (a in ad) {
+        for (j = 1; j <= nf; j++)
+          print "adapter=" a " " fl[j] "=" ((a "|" fl[j]) in pin ? pin[a "|" fl[j]] : "absent")
+      }
+    }' "$1" | sort
+}
+lock_pin "$TREE/.criteria.lock.hcl" >"$OUT/lock-pin-committed.txt"
+lock_pin "$SCRATCH/.criteria.lock.hcl" >"$OUT/lock-pin-regenerated.txt"
+if ! diff -u "$OUT/lock-pin-committed.txt" "$OUT/lock-pin-regenerated.txt" >"$OUT/lock-drift.diff" 2>&1; then
+  echo "canary: LOCKFILE PIN DRIFT committed vs registry — failing closed (update the committed tree or accept the registry change deliberately)" >&2
+  cat "$OUT/lock-drift.diff" >&2
+  exit 2
 fi
+echo "lock gate: semantic pins match the committed pin (comments/blank lines ignored)"
 
 # ---------------------------------------------------------------- run apply
 (
@@ -152,11 +199,9 @@ done
 
 # ------------------------------------------------------------- drain + wrap
 sleep 2
-if [ "$APPLY_PID" -ne 0 ]; then
-  kill -0 "$APPLY_PID" 2>/dev/null && sleep 5
-  kill "$APPLY_PID" 2>/dev/null
-  wait "$APPLY_PID" 2>/dev/null
-fi
+kill -0 "$APPLY_PID" 2>/dev/null && sleep 5
+kill "$APPLY_PID" 2>/dev/null
+wait "$APPLY_PID" 2>/dev/null
 for cid in $(cat "$TMPDIR"/criteria-cid-*.txt 2>/dev/null); do
   "$RUNTIME" rm -f "$cid" >/dev/null 2>&1
 done
@@ -186,3 +231,56 @@ echo
 echo "--- run outcome ---"
 tail -3 "$OUT/apply-stdout.log" 2>/dev/null
 echo "(evidence archived under $OUT)"
+
+# ------------------------------------------------------------ evidence gate
+# An acceptance run is only green if the evidence exists: assert the markers
+# the EVIDENCE.md pre-declared shape names and exit non-zero naming the
+# missing ones, so a red evidence run can never masquerade as success by exit
+# status. Crash markers (1a/1c) are asserted on the executor lane only —
+# CANARY_KILL_LANE none intentionally skips the injection.
+[ -f "$EVENTS" ] || : >"$EVENTS"
+echo
+echo "=== evidence gate ==="
+missing=""
+gate() { # gate <pattern> <label> <files...>
+  pat=$1
+  label=$2
+  shift 2
+  if grep -E -q -- "$pat" "$@" 2>/dev/null; then
+    echo "  ok: $label"
+  else
+    echo "  MISSING: $label"
+    missing="$missing
+  - $label"
+  fi
+}
+if [ "$KILL_LANE" = "executor" ]; then
+  gate '"msg":"adapter child exited unexpectedly"' \
+    "1a: supervisor journal exit classification in operator logs" \
+    "$OUT/apply-stderr.log" "$OUT/apply-stdout.log"
+  gate '"kind":"session.respawned".*"crash_reason"' \
+    "1c: session.respawned event carrying the typed crash_reason" \
+    "$EVENTS"
+else
+  echo "  (kill lane none: crash markers 1a/1c not asserted)"
+fi
+gate '"payload_type":"RunCompleted".*"finalState":"done".*"success":true' \
+  "RunCompleted finalState=done success=true (green run)" \
+  "$EVENTS"
+gate '"msg":"declared-fresh re-entry released an inherited session"' \
+  "2a: fresh re-entry released the inherited session" \
+  "$OUT/apply-stderr.log" "$OUT/apply-stdout.log"
+gate '"msg":"re-declared adapter already provisioned by parent scope; reusing"' \
+  "2b: reuse re-entry continued the inherited conversation" \
+  "$OUT/apply-stderr.log" "$OUT/apply-stdout.log"
+if grep -q 'payload_type.:RunFailed' "$EVENTS" 2>/dev/null; then
+  echo "  MISSING: no RunFailed events in the stream"
+  missing="$missing
+  - no RunFailed events in the stream"
+fi
+if [ -n "$missing" ]; then
+  echo "canary: EVIDENCE GATE FAILED — missing markers:" >&2
+  printf '%s\n' "$missing" >&2
+  exit 1
+fi
+echo "evidence gate: all acceptance markers present"

@@ -101,6 +101,9 @@ step "crash_demo" {
   target = adapter.shell.crasher
   input {
     command = "sleep 12"
+    # adapter-side input timeout; the engine-enforced bound is the step-level
+    # `timeout` attribute (workflow/schema.go), kept far past the sleep so a
+    # timeout never masks the injected crash.
     timeout = "2m"
   }
 
