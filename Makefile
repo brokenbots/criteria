@@ -223,7 +223,7 @@ lint-no-todos: ## Fail if any TODO/FIXME/XXX marker appears in non-test producti
 	fi
 	@echo "OK: no TODO/FIXME/XXX markers in production code"
 
-lint-sh: ## Check POSIX shell syntax of install.sh and tools/*.sh scripts
+lint-sh: ## Check POSIX shell syntax of install.sh, tools/govulncheck-filter.sh, and tools/armgate/arm-gate.sh
 	@sh -n install.sh
 	@sh -n tools/govulncheck-filter.sh
 	@sh -n tools/armgate/arm-gate.sh
