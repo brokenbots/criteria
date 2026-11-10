@@ -106,6 +106,7 @@ step "crash_demo" {
     # timeout never masks the injected crash.
     timeout = "2m"
   }
+  timeout = "2m"
 
   outcome "success" { next = step.reentry-fresh-1 }
   outcome "failure" { next = state.failed }
