@@ -139,7 +139,7 @@ func TestAccessors(t *testing.T) {
 // so the docs table cannot accidentally advertise them.
 func TestHiddenRows(t *testing.T) {
 	for _, v := range []Var{CRITERIAPlugin, CRITERIARemoteFamily, CRITERIAAdapterFamily,
-		CRITERIARemoteE2E, CRITERIAPeerE2E, CRITERIAContainerTests, CRITERIAConformanceAdapter,
+		CRITERIARemoteE2E, CRITERIAPeerE2E, CRITERIAContainerE2E, CRITERIAContainerTests, CRITERIAConformanceAdapter,
 		CRITERIAConformanceAdapterName, CRITERIARemoteStepStartedFile} {
 		if !v.Hidden() {
 			t.Errorf("%s must stay hidden from the docs table", v.Env())

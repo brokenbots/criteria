@@ -56,7 +56,7 @@ var registry = []*Var{
 	&CRITERIATestFamily,
 
 	// --- Hidden test-harness gates (registered so reads stay audited).
-	&CRITERIARemoteE2E, &CRITERIAPeerE2E, &CRITERIAContainerTests,
+	&CRITERIARemoteE2E, &CRITERIAPeerE2E, &CRITERIAContainerE2E, &CRITERIAContainerTests,
 	&CRITERIAConformanceAdapter, &CRITERIAConformanceAdapterName, &CRITERIARemoteStepStartedFile,
 
 	// --- Hidden maintainer hooks.
@@ -182,6 +182,7 @@ var (
 var (
 	CRITERIARemoteE2E              = Var{name: "CRITERIA_REMOTE_E2E", kind: KindBool, hidden: true, scope: "internal/ci/smoke (test gate)", doc: "Set to 1 to enable the remote-adapter end-to-end smoke tests."}
 	CRITERIAPeerE2E                = Var{name: "CRITERIA_PEER_E2E", kind: KindBool, hidden: true, scope: "internal/ci/smoke (test gate)", doc: "Set to 1 to enable the peer end-to-end smoke tests."}
+	CRITERIAContainerE2E           = Var{name: "CRITERIA_CONTAINER_E2E", kind: KindBool, hidden: true, scope: "internal/ci/smoke (test gate)", doc: "Set to 1 to enable the container-adapter end-to-end smoke tests, which require Docker and a loopback OCI registry."}
 	CRITERIAContainerTests         = Var{name: "CRITERIA_CONTAINER_TESTS", kind: KindBool, hidden: true, scope: "internal/adapter/environment/container (test gate)", doc: "Set to 1 to enable container-runner tests that require a container runtime."}
 	CRITERIAConformanceAdapter     = Var{name: "CRITERIA_CONFORMANCE_ADAPTER", kind: KindString, hidden: true, scope: "internal/adapter/conformance (test gate)", doc: "Selects an out-of-process adapter binary for the conformance suite instead of the in-memory reference."}
 	CRITERIAConformanceAdapterName = Var{name: "CRITERIA_CONFORMANCE_ADAPTER_NAME", kind: KindString, hidden: true, scope: "internal/adapter/conformance (test gate)", doc: "The name recorded for the out-of-process conformance adapter."}
