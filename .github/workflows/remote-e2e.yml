@@ -84,3 +84,35 @@ jobs:
             python3 -c "import yaml,sys; list(yaml.safe_load_all(open(sys.argv[1])))" "$f"
             echo "ok: $f"
           done
+
+  # Container-lane gate (ADR-0014 M8): publishes the fixture adapter as a
+  # container-capable artifact into a throwaway loopback registry, locks a
+  # container-bound workflow against it, and runs the engine so the adapter
+  # child launches in-image and the go-plugin handshake reaches the env
+  # host. Needs Docker only; no kind/kubectl.
+  container-e2e:
+    name: Container adapter end-to-end
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Cache Go build cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/go-build
+          key: go-build-container-e2e-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            go-build-container-e2e-${{ runner.os }}-
+
+      - name: Sync workspace
+        run: go work sync
+
+      - name: Run container adapter smoke tests
+        run: go test -v -timeout 10m ./internal/ci/smoke/ -run TestContainerAdapter
+        env:
+          CRITERIA_CONTAINER_E2E: "1"
