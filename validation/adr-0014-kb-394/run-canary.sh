@@ -268,7 +268,7 @@ if [ "$KILL_LANE" = "executor" ]; then
   gate '"msg":"adapter child exited unexpectedly"' \
     "1a: supervisor journal exit classification in operator logs" \
     "$OUT/apply-stderr.log" "$OUT/apply-stdout.log"
-  gate '"kind":"session.respawned".*"crash_reason"' \
+  gate '"kind":"session.respawned".*"crash_reason":"adapter process terminated"' \
     "1c: session.respawned event carrying the typed crash_reason" \
     "$EVENTS"
 else
