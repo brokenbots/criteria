@@ -13,9 +13,10 @@
 # built at or above that version. A tag-exact local build suffices when the
 # published release lags the image.
 #
-# This gate fails closed: it refuses to pass when the image carries no
-# parseable engine version, when no binary at/above the image's engine
-# version is available, or when any tree fails `criteria validate`.
+# This gate fails closed: it refuses to pass when the supplied --tree set
+# is empty or every tree was blanked (zero trees gated), when the image
+# carries no parseable engine version, when no binary at/above the image's
+# engine version is available, or when any tree fails `criteria validate`.
 set -eu
 
 PROG=arm-gate
@@ -100,8 +101,16 @@ while [ $# -gt 0 ]; do
       BASE_IMAGE=$2; shift 2 ;;
     --tree)
       [ $# -ge 2 ] || { err "missing value for $1"; usage; exit 2; }
-      TREES="$TREES$2
-"; shift 2 ;;
+      # An empty value is refused but does not abort parsing: other valid
+      # --tree values still gate, and an all-empty set is caught by the
+      # at-least-one-tree guard below.
+      if [ -z "$2" ]; then
+        err "--tree requires a non-empty path"
+      else
+        TREES="$TREES$2
+"
+      fi
+      shift 2 ;;
     --criteria-bin)
       [ $# -ge 2 ] || { err "missing value for $1"; usage; exit 2; }
       CRITERIA_BIN=$2; shift 2 ;;
@@ -236,6 +245,13 @@ while IFS= read -r tree; do
 done <<EOF
 $TREES
 EOF
+
+# Zero trees gated is fail-open on the arming contract: nothing was checked,
+# so the gate must refuse regardless of the failure count.
+if [ "$total" -eq 0 ]; then
+  printf '%s: GATE FAILED: no trees were gated — do NOT arm\n' "$PROG" >&2
+  exit 1
+fi
 
 if [ "$failures" -gt 0 ]; then
   printf '%s: GATE FAILED: %s of %s tree(s) do not compile under engine v%s — do NOT arm\n' \

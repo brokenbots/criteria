@@ -61,15 +61,28 @@ func moduleRoot() string {
 	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 }
 
-// runGate invokes the script with a hermetic environment: a minimal PATH so
-// the host's own criteria binary can never leak in as a candidate, and temp
-// HOME/CRITERIA_HOME/TMPDIR so validate touches nothing user-owned.
+// shadowStubVersion is the engine version the runGate PATH shadow reports.
+// It is older than every base stamp the suite gates against, so the shadow
+// is always rejected and the PATH-discovery branch stays deterministic.
+const shadowStubVersion = "v0.5.0"
+
+// runGate invokes the script with a hermetic environment. PATH is
+// [test-supplied candidates] -> [in-suite shadow stub] -> /usr/bin:/bin: the
+// shadow stub reports an engine older than any base stamp used here, and
+// `command -v criteria` resolves only the first match, so a host with its
+// own criteria binary under /usr/bin or /bin can never leak in as the PATH
+// candidate — the stub is always found first and always rejected as too old.
+// HOME/CRITERIA_HOME/TMPDIR point at temp dirs so validate touches nothing
+// user-owned. pathExtra is the caller's pre-seeded candidate dirs, in PATH
+// form (each dir followed by ":" when not empty).
 func runGate(t *testing.T, pathExtra, environ string, args ...string) (string, int) {
 	t.Helper()
 
+	shadow := writePathStub(t, shadowStubVersion)
+
 	dir := t.TempDir()
 	env := []string{
-		"PATH=" + pathExtra + "/usr/bin:/bin",
+		"PATH=" + pathExtra + shadow + ":/usr/bin:/bin",
 		"HOME=" + dir,
 		"CRITERIA_HOME=" + dir,
 		"TMPDIR=" + dir,
@@ -97,8 +110,9 @@ func fixture(t *testing.T, name string) string {
 	return filepath.Join(moduleRoot(), "tools", "armgate", "testdata", name)
 }
 
-// writePathStub installs a criteria-shaped stub on PATH. It answers
-// `version` with the given output and pretends every `validate` passes.
+// writePathStub writes a criteria-shaped stub into its own temp dir and
+// returns the dir, ready to place on PATH. It answers `version` with the
+// given output and pretends every `validate` passes.
 func writePathStub(t *testing.T, versionOutput string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -320,6 +334,79 @@ func TestArmGate_MultipleTreesGateTogether(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected gate output to contain %q; output:\n%s", want, out)
 		}
+	}
+}
+
+// TestArmGate_EmptyTreeFailsClosed: an empty --tree value is refused and can
+// never yield a pass — nothing was checked, so no arm may proceed.
+func TestArmGate_EmptyTreeFailsClosed(t *testing.T) {
+	out, code := runGate(t, "",
+		"",
+		"--base-image", "criteria-base:v0.5.57",
+		"--tree", "",
+	)
+	if code == 0 {
+		t.Fatalf("expected nonzero exit (usage error: nothing valid was supplied), got %d; output:\n%s", code, out)
+	}
+	for _, want := range []string{
+		"--tree requires a non-empty path",
+		"at least one --tree is required",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected gate output to contain %q; output:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "GATE PASSED") {
+		t.Fatalf("empty --tree must never print GATE PASSED; output:\n%s", out)
+	}
+}
+
+// TestArmGate_EmptyTreeWithValidTreeStillGates: an empty --tree argument is
+// not counted as a tree and does not suppress a valid tree supplied after it.
+func TestArmGate_EmptyTreeWithValidTreeStillGates(t *testing.T) {
+	stubDir := writePathStub(t, "v0.5.57")
+	out, code := runGate(t, stubDir+":",
+		"",
+		"--base-image", "criteria-base:v0.5.57",
+		"--tree", "",
+		"--tree", fixture(t, "valid"),
+	)
+	if code != 0 {
+		t.Fatalf("expected exit 0 (valid tree still gated), got %d; output:\n%s", code, out)
+	}
+	for _, want := range []string{
+		"--tree requires a non-empty path",
+		"GATE PASSED: 1 tree(s)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected gate output to contain %q; output:\n%s", want, out)
+		}
+	}
+}
+
+// TestArmGate_NoTreesGatedFailsClosed: the defense-in-depth path for a tree
+// set that populates the list only with blank entries — the read loop skips
+// every blank line, so zero trees were gated and the gate refuses to arm.
+func TestArmGate_NoTreesGatedFailsClosed(t *testing.T) {
+	stubDir := writePathStub(t, "v0.5.57")
+	out, code := runGate(t, stubDir+":",
+		"",
+		"--base-image", "criteria-base:v0.5.57",
+		"--tree", "\n",
+	)
+	if code == 0 {
+		t.Fatalf("expected nonzero exit (fail closed) when no tree was gated, got %d; output:\n%s", code, out)
+	}
+	for _, want := range []string{
+		"no trees were gated",
+		"do NOT arm",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected gate output to contain %q; output:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "GATE PASSED") {
+		t.Fatalf("zero gated trees must never print GATE PASSED; output:\n%s", out)
 	}
 }
 
