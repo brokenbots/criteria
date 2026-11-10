@@ -136,14 +136,13 @@ func buildCriteriaCLI(t *testing.T, moduleRoot, moduleBinDir string) string {
 	return cli
 }
 
-func runCLI(t *testing.T, cli string, args ...string) string {
+func runCLI(t *testing.T, cli string, args ...string) {
 	t.Helper()
 	cmd := exec.Command(cli, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("criteria %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
-	return string(out)
 }
 
 // TestContainerAdapter_HappyPath publishes the noop fixture as a
