@@ -19,7 +19,8 @@
 #      cidfile plus a `sleep 12` process in-image. The engine's in-process
 #      supervisor journal classifies the supervised exit (typed
 #      CrashClassified); on_crash = "respawn" re-opens the session on a fresh
-#      container child and the run continues green through both re-entry
+#      container child (recorded by cidfile-path novelty in the injector log)
+#      and the run continues green through both re-entry
 #      lanes (fresh releases and reopens; reuse detaches and re-adopts).
 #   5. tears down cleanly, then prints the seq-cited evidence summary the
 #      card's comment quotes (event stream + operator logs).
@@ -191,6 +192,12 @@ trap 'kill "$APPLY_PID" 2>/dev/null; for cid in $(cat "$TMPDIR"/criteria-cid-*.t
 
 # ------------------------------------------------------- reconcile + inject
 INJECTED=0
+REPLEN=0
+# The replacement executor is matched by cidfile-path novelty, not mtime: the
+# container runner creates a NEW criteria-cid-<uniq>.txt per start and removes
+# the killed container's cidfile on exit, so the pre-kill path set is the
+# discriminator and the in-image `sleep 12` probe confirms the role.
+PREKILL_CIDFILES="$OUT/cidfile-prekill.txt"
 while kill -0 "$APPLY_PID" 2>/dev/null; do
   if [ -f "$EVENTS" ]; then
     if [ "$INJECTED" -eq 0 ] && [ "$KILL_LANE" != "none" ] &&
@@ -213,6 +220,9 @@ while kill -0 "$APPLY_PID" 2>/dev/null; do
         }
         cid=$(crash_demo_container)
         if [ -n "${cid:-}" ]; then
+          # pre-poll novelty base: written just before the kill; the reconcile
+          # sweep only treats the file as ready once this exists
+          ls "$TMPDIR"/criteria-cid-*.txt 2>/dev/null >"$PREKILL_CIDFILES.tmp" && mv -f "$PREKILL_CIDFILES.tmp" "$PREKILL_CIDFILES"
           echo "crash injector: $RUNTIME kill cid=$cid (crash_demo executor, sleep 12 in-image)" >>"$OUT/injector.log"
           "$RUNTIME" kill "$cid" >/dev/null 2>&1
         else
@@ -220,12 +230,28 @@ while kill -0 "$APPLY_PID" 2>/dev/null; do
         fi
       ) &
     fi
+    if [ "$INJECTED" -eq 1 ] && [ "$REPLEN" -eq 0 ] && [ -f "$PREKILL_CIDFILES" ]; then
+      for f in "$TMPDIR"/criteria-cid-*.txt; do
+        [ -f "$f" ] || continue
+        grep -F -q -x -- "$f" "$PREKILL_CIDFILES" && continue
+        cid=$(cat "$f" 2>/dev/null)
+        [ -n "$cid" ] || continue
+        if "$RUNTIME" top "$cid" 2>/dev/null | grep -q 'sleep 12'; then
+          echo "crash injector: replacement cidfile $f cid=$cid (post-respawn crash_demo executor)" >>"$OUT/injector.log"
+          REPLEN=1
+          break
+        fi
+      done
+    fi
     if grep -E -q 'RunCompleted|RunFailed' "$EVENTS" 2>/dev/null; then
       break
     fi
   fi
   sleep 0.2
 done
+if [ "$INJECTED" -eq 1 ] && [ "$REPLEN" -eq 0 ]; then
+  echo "crash injector: no replacement cidfile observed" >>"$OUT/injector.log"
+fi
 
 # ------------------------------------------------------------- drain + wrap
 sleep 2
@@ -266,7 +292,7 @@ echo "(evidence archived under $OUT)"
 # An acceptance run is only green if the evidence exists: assert the markers
 # the EVIDENCE.md pre-declared shape names and exit non-zero naming the
 # missing ones, so a red evidence run can never masquerade as success by exit
-# status. Crash markers (1a/1c) are asserted on the executor lane only —
+# status. Crash markers (1a/1c/1d) are asserted on the executor lane only —
 # CANARY_KILL_LANE none intentionally skips the injection.
 [ -f "$EVENTS" ] || : >"$EVENTS"
 echo
@@ -291,6 +317,9 @@ if [ "$KILL_LANE" = "executor" ]; then
   gate '"kind":"session.respawned".*"crash_reason":"adapter process terminated"' \
     "1c: session.respawned event carrying the typed crash_reason" \
     "$EVENTS"
+  gate 'crash injector: replacement cidfile .+ cid=.+ \(post-respawn crash_demo executor\)' \
+    "1d: respawn opened the replacement crash_demo executor container (fresh cidfile recorded)" \
+    "$OUT/injector.log"
 else
   echo "  (kill lane none: crash markers 1a/1c not asserted)"
 fi

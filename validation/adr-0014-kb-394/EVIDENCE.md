@@ -104,7 +104,7 @@ child, the IN-PROCESS supervisor journal classification (not a peer process):
 ## Observation (live run)
 
 The harness itself gates the evidence: it exits non-zero naming any missing
-marker (1a/1c asserted only on the executor lane, RunCompleted
+marker (1a, 1c, and 1d asserted only on the executor lane, RunCompleted
 finalState=done success=true, 2a, 2b, and no RunFailed events), so a red
 evidence run cannot pass by exit status alone. Pending the ops-side run of
 the procedure above; cite run id and seq numbers for the markers 1a-1d and
