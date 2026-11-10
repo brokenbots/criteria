@@ -61,12 +61,12 @@ func startPeerSessionManager(t *testing.T, provider *peerSessionProvider) (*adap
 
 // journalCrash appends the ungraceful-exit journal pair the peer child
 // records (Exited first, then CrashClassified — internal/peer/child.go).
-func journalCrash(fp *fakePeer, exitCode int32, reason, detail string) {
+func journalCrash(fp *fakePeer, exitCode int32, detail string) {
 	fp.appendEvent(&criteriav1.SupervisionEvent{
 		Kind: &criteriav1.SupervisionEvent_Exited{Exited: &criteriav1.ProcessExited{ExitCode: exitCode}},
 	})
 	fp.appendEvent(&criteriav1.SupervisionEvent{
-		Kind: &criteriav1.SupervisionEvent_Crash{Crash: &criteriav1.CrashClassified{Reason: reason, Detail: detail}},
+		Kind: &criteriav1.SupervisionEvent_Crash{Crash: &criteriav1.CrashClassified{Reason: adapterhost.CrashReasonProcessTerminated, Detail: detail}},
 	})
 }
 
@@ -79,7 +79,7 @@ func TestPeerSupervisionCrashReasonWireFact(t *testing.T) {
 	t.Run("journal CrashClassified is the wire fact", func(t *testing.T) {
 		provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
 		fp := newFakePeer("")
-		journalCrash(fp, 143, adapterhost.CrashReasonProcessTerminated, "adapter child exited while supervised")
+		journalCrash(fp, 143, "adapter child exited while supervised")
 		fp.connect(t, addr)
 
 		_, _, ph := startPeerSessionManager(t, provider)
@@ -154,7 +154,7 @@ func TestPeerSettledSupervisionCrashReason(t *testing.T) {
 		// the death).
 		go func() {
 			time.Sleep(100 * time.Millisecond)
-			journalCrash(fp, -1, adapterhost.CrashReasonProcessTerminated, "adapter child exited while supervised (exit code -1, signal 9)")
+			journalCrash(fp, -1, "adapter child exited while supervised (exit code -1, signal 9)")
 		}()
 
 		settleCtx, cancel := context.WithTimeout(context.Background(), tunables.DefaultCrashCloseSettle)
@@ -268,7 +268,7 @@ func TestPeerCRI287TeardownWindowPeerPath(t *testing.T) {
 	t.Run("inside the window: routed as timeout, not a crash", func(t *testing.T) {
 		provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
 		fp := newFakePeer("")
-		journalCrash(fp, 143, adapterhost.CrashReasonProcessTerminated, "adapter child exited while supervised")
+		journalCrash(fp, 143, "adapter child exited while supervised")
 		fp.connect(t, addr)
 
 		sm, name, _ := startPeerSessionManager(t, provider)
@@ -295,7 +295,7 @@ func TestPeerCRI287TeardownWindowPeerPath(t *testing.T) {
 	t.Run("outside the window: wire fact classifies verbatim", func(t *testing.T) {
 		provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
 		fp := newFakePeer("")
-		journalCrash(fp, 143, adapterhost.CrashReasonProcessTerminated, "adapter child exited while supervised")
+		journalCrash(fp, 143, "adapter child exited while supervised")
 		fp.connect(t, addr)
 
 		sm, name, ph := startPeerSessionManager(t, provider)
