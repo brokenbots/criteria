@@ -1,4 +1,4 @@
-# KB-394 canary lockfile — pins the criteria-adapter-shell artifact published
+# KB-394 canary lockfile — pins the criteria-adapter-shell artifact published (4-platform tree, republished deliberately)
 # to the LAN registry by the KB-398 gate (PR #597 close-out, 2026-11-10) and
 # the container image its manifest declares. The container lane resolves the
 # container_image block at session open: the adapter child launches in-image
@@ -12,10 +12,10 @@ schema_version = 1
 adapter "shell" "crasher" {
   reference            = "localhost:5000/criteria-adapter-shell:v0.5.6"
   version              = "v0.5.6"
-  resolved_digest      = "sha256:a86fbdeb57e79623a70eeed9e36dc6c7b1e60258286b2bb48842cc226daec75a"
+  resolved_digest      = "sha256:9acf32f98e7b896b515c37a2f0e83c5352f3ca86d8b84322148781dbc77fe1a5"
   source_url           = "https://github.com/brokenbots/criteria-adapter-shell"
   sdk_protocol_version = 2
-  platforms            = ["linux/amd64"]
+  platforms            = ["linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64"]
 
   container_image {
     ref    = "localhost:5000/criteria-adapter-shell:0.5.5-image"
@@ -26,10 +26,10 @@ adapter "shell" "crasher" {
 adapter "shell" "freshp" {
   reference            = "localhost:5000/criteria-adapter-shell:v0.5.6"
   version              = "v0.5.6"
-  resolved_digest      = "sha256:a86fbdeb57e79623a70eeed9e36dc6c7b1e60258286b2bb48842cc226daec75a"
+  resolved_digest      = "sha256:9acf32f98e7b896b515c37a2f0e83c5352f3ca86d8b84322148781dbc77fe1a5"
   source_url           = "https://github.com/brokenbots/criteria-adapter-shell"
   sdk_protocol_version = 2
-  platforms            = ["linux/amd64"]
+  platforms            = ["linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64"]
 
   container_image {
     ref    = "localhost:5000/criteria-adapter-shell:0.5.5-image"
@@ -40,10 +40,10 @@ adapter "shell" "freshp" {
 adapter "shell" "reusep" {
   reference            = "localhost:5000/criteria-adapter-shell:v0.5.6"
   version              = "v0.5.6"
-  resolved_digest      = "sha256:a86fbdeb57e79623a70eeed9e36dc6c7b1e60258286b2bb48842cc226daec75a"
+  resolved_digest      = "sha256:9acf32f98e7b896b515c37a2f0e83c5352f3ca86d8b84322148781dbc77fe1a5"
   source_url           = "https://github.com/brokenbots/criteria-adapter-shell"
   sdk_protocol_version = 2
-  platforms            = ["linux/amd64"]
+  platforms            = ["linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64"]
 
   container_image {
     ref    = "localhost:5000/criteria-adapter-shell:0.5.5-image"

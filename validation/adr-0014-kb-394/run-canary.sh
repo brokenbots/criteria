@@ -311,7 +311,7 @@ gate() { # gate <pattern> <label> <files...>
   fi
 }
 if [ "$KILL_LANE" = "executor" ]; then
-  gate '"msg":"adapter child exited unexpectedly"' \
+  gate 'adapter child exited unexpectedly.*adapter process terminated' \
     "1a: supervisor journal exit classification in operator logs" \
     "$OUT/apply-stderr.log" "$OUT/apply-stdout.log"
   gate '"kind":"session.respawned".*"crash_reason":"adapter process terminated"' \
@@ -326,10 +326,10 @@ fi
 gate '"payload_type":"RunCompleted".*"finalState":"done".*"success":true' \
   "RunCompleted finalState=done success=true (green run)" \
   "$EVENTS"
-gate '"msg":"declared-fresh re-entry released an inherited session"' \
+gate 'declared-fresh re-entry released an inherited session' \
   "2a: fresh re-entry released the inherited session" \
   "$OUT/apply-stderr.log" "$OUT/apply-stdout.log"
-gate '"msg":"re-declared adapter already provisioned by parent scope; reusing"' \
+gate 're-declared adapter already provisioned by parent scope; reusing' \
   "2b: reuse re-entry continued the inherited conversation" \
   "$OUT/apply-stderr.log" "$OUT/apply-stdout.log"
 if grep -F -q '"payload_type":"RunFailed"' "$EVENTS" 2>/dev/null; then
