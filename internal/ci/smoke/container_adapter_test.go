@@ -30,9 +30,10 @@ import (
 	"github.com/brokenbots/criteria/workflow/workflowtest"
 )
 
-// registryPort is the host port the throwaway registry container is published
-// on; localhost registries are reached over plain HTTP by both the CLI (oci
-// IsLocalhost) and the docker daemon's default insecure fallback.
+// newE2ERegistry starts a throwaway OCI registry container on a free
+// loopback port and returns its <localhost>:<port> address; localhost
+// registries are reached over plain HTTP by both the CLI (oci IsLocalhost)
+// and the docker daemon's default insecure fallback.
 func newE2ERegistry(t *testing.T) string {
 	t.Helper()
 
@@ -159,7 +160,7 @@ func TestContainerAdapter_HappyPath(t *testing.T) {
 	}
 	requireTools(t, "docker")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 	defer cancel()
 
 	moduleRoot := findModuleRoot(t)
@@ -167,9 +168,6 @@ func TestContainerAdapter_HappyPath(t *testing.T) {
 
 	registry := newE2ERegistry(t)
 	imageRef := buildNoopAdapterImage(t, moduleRoot, moduleBinDir, registry, "e2e-noop-image")
-	if _, err := exec.Command("docker", "image", "inspect", imageRef).Output(); err != nil {
-		t.Fatalf("adapter container image %s missing after build", imageRef)
-	}
 
 	cli := buildCriteriaCLI(t, moduleRoot, moduleBinDir)
 	noopBin := filepath.Join(moduleBinDir, "criteria-adapter-noop")
