@@ -190,7 +190,7 @@ while kill -0 "$APPLY_PID" 2>/dev/null; do
         fi
       ) &
     fi
-    if grep -q 'RunCompleted\|RunFailed' "$EVENTS" 2>/dev/null; then
+    if grep -E -q 'RunCompleted|RunFailed' "$EVENTS" 2>/dev/null; then
       break
     fi
   fi
@@ -217,7 +217,7 @@ echo
 echo "--- event stream (crash + fate evidence) ---"
 grep '"kind":"session.respawned"' "$EVENTS" 2>/dev/null || echo "no session.respawned events"
 grep '"kind":"session.crash"' "$EVENTS" 2>/dev/null || true
-grep 'RunCompleted\|RunFailed' "$EVENTS" 2>/dev/null | tail -1
+grep -E 'RunCompleted|RunFailed' "$EVENTS" 2>/dev/null | tail -1
 echo
 echo "--- operator logs (in-process supervisor + fate re-entry) ---"
 grep '"msg":"adapter child exited unexpectedly"' "$OUT/apply-stderr.log" 2>/dev/null || echo "no supervisor exit log"
@@ -273,7 +273,7 @@ gate '"msg":"declared-fresh re-entry released an inherited session"' \
 gate '"msg":"re-declared adapter already provisioned by parent scope; reusing"' \
   "2b: reuse re-entry continued the inherited conversation" \
   "$OUT/apply-stderr.log" "$OUT/apply-stdout.log"
-if grep -q 'payload_type.:RunFailed' "$EVENTS" 2>/dev/null; then
+if grep -F -q '"payload_type":"RunFailed"' "$EVENTS" 2>/dev/null; then
   echo "  MISSING: no RunFailed events in the stream"
   missing="$missing
   - no RunFailed events in the stream"
