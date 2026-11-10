@@ -38,10 +38,11 @@ The gate ships in this repository as
 engine seed from the image ref (the last `vX.Y.Z` token in the tag, e.g.
 `criteria-base:v0.1-v0.5.56` → engine v0.5.56), picks a binary reporting at
 least that version (explicit `--criteria-bin`, then PATH, then an opt-in
-tag-exact build from `--criteria-repo`), and fails closed when the supplied
-tree set is empty or every tree was blanked (zero trees gated), when the
-seed is unparseable, no binary qualifies, or any tree fails
-`criteria validate`.
+tag-exact build from `--criteria-repo`), and refuses to pass when the
+supplied `--tree` set is empty or every tree was blanked (zero trees
+gated). It fails closed (exit 1) when the seed is unparseable, no binary
+qualifies, or any tree fails `criteria validate`; the nothing-supplied
+case is a usage error (exit 2) because nothing was checked.
 Warnings are not failures — an unverified adapter schema is surfaced as a
 warning by `criteria validate` and does not block arming; compile errors do.
 
@@ -59,10 +60,13 @@ tools/armgate/arm-gate.sh \
 
 Exit 0 → safe to arm. Exit 1 → the gate failed closed: read the `criteria
 validate` output above the summary line, fix the tree or roll back the image
-expectation, and leave the card disarmed. A zero-tree outcome is also a
-fail-closed exit 1 — an unset or empty route variable yields a refused
-`--tree` (or no gated tree at all), never a pass. Exit 2 → usage error
-(nothing was checked).
+expectation, and leave the card disarmed. A supplied tree set that gates
+zero trees (e.g. only blanked values) is this same exit 1 fail-closed
+outcome — `no trees were gated — do NOT arm`. A refused or empty `--tree`
+value (the unset/empty-route-variable case) exits 2 instead: a usage error,
+nothing was checked — fix the invocation so every pinned tree is passed.
+Neither zero-tree outcome ever passes; exit 0 means the supplied trees
+compiled clean.
 
 The `--criteria-repo` fallback is the release-lag path: it checks out the
 repo at tag `v<engine>`, runs `make build`, and gates with that binary. It
