@@ -24,6 +24,29 @@ type AdapterDef struct {
 	// block, which the re-entry rule rejects when a parent and callee graph
 	// both declare the instance.
 	Continuation string
+	// Environment references a declared environment (rendered via
+	// EnvironmentRef).
+	Environment string
+	// Source is the adapter's OCI location (registry/repo path or registry
+	// alias); Version is the semver constraint resolved at lock time.
+	Source  string
+	Version string
+}
+
+// EnvironmentDef defines an environment block: a typed execution
+// environment with two labels (type then name) and an optional raw body.
+type EnvironmentDef struct {
+	Type string
+	Name string
+	// Body is the raw HCL emitted verbatim inside the block
+	// (e.g. "variables = {...}"); empty yields a bare block.
+	Body string
+}
+
+// EnvironmentRef renders the bare traversal reference for a declared
+// environment ("<type>.<name>"), suitable for AdapterEnvironment.
+func EnvironmentRef(envType, name string) string {
+	return envType + "." + name
 }
 
 // OutcomeDef defines a step outcome.
@@ -242,6 +265,31 @@ type SubworkflowDef struct {
 	Input  string
 }
 
+// AdapterOpt configures an AdapterDef.
+type AdapterOpt func(*AdapterDef)
+
+// AdapterEnvironment binds the adapter to a declared environment via its
+// bare traversal reference (e.g. EnvironmentRef("container", "e2e")).
+func AdapterEnvironment(ref string) AdapterOpt {
+	return func(a *AdapterDef) {
+		a.Environment = ref
+	}
+}
+
+// AdapterSource sets the adapter's OCI source location.
+func AdapterSource(source string) AdapterOpt {
+	return func(a *AdapterDef) {
+		a.Source = source
+	}
+}
+
+// AdapterVersion sets the adapter's semver version constraint.
+func AdapterVersion(version string) AdapterOpt {
+	return func(a *AdapterDef) {
+		a.Version = version
+	}
+}
+
 // SubworkflowOpt configures a SubworkflowDef.
 type SubworkflowOpt func(*SubworkflowDef)
 
@@ -267,6 +315,7 @@ type WorkflowBuilder struct {
 	targetState  string
 	policy       *PolicyDef
 	variables    []VariableDef
+	environments []EnvironmentDef
 	adapters     []AdapterDef
 	steps        []StepDef
 	switches     []SwitchDef
@@ -368,18 +417,38 @@ func (b *WorkflowBuilder) WithVariable(name, typeName, defaultVal string) *Workf
 	return b
 }
 
+// WithEnvironment adds an environment declaration (type then name, with an
+// optional raw body emitted verbatim inside the block), replacing any earlier
+// declaration of the same instance so overrides compose instead of
+// duplicating.
+func (b *WorkflowBuilder) WithEnvironment(envType, name, body string) *WorkflowBuilder {
+	def := EnvironmentDef{Type: envType, Name: name, Body: body}
+	for i := range b.environments {
+		if b.environments[i].Type == envType && b.environments[i].Name == name {
+			b.environments[i] = def
+			return b
+		}
+	}
+	b.environments = append(b.environments, def)
+	return b
+}
+
 // WithAdapter adds an adapter declaration, replacing any earlier declaration
-// of the same instance so overrides compose instead of duplicating.
-func (b *WorkflowBuilder) WithAdapter(kind, name string) *WorkflowBuilder {
-	return b.WithAdapterFate(kind, name, "")
+// of the same instance so overrides compose instead of duplicating; options
+// set the environment binding, OCI source, and version constraint.
+func (b *WorkflowBuilder) WithAdapter(kind, name string, opts ...AdapterOpt) *WorkflowBuilder {
+	return b.WithAdapterFate(kind, name, "", opts...)
 }
 
 // WithAdapterFate adds an adapter declaration carrying a continuation
 // ("reuse" | "fresh"); empty continuation emits an undeclared adapter block,
 // which is rejected by the re-entry rule when a parent and callee graph both
-// declare the instance (ADR-0014 D3).
-func (b *WorkflowBuilder) WithAdapterFate(kind, name, continuation string) *WorkflowBuilder {
+// declare the instance (ADR-0014 D3); options mirror WithAdapter.
+func (b *WorkflowBuilder) WithAdapterFate(kind, name, continuation string, opts ...AdapterOpt) *WorkflowBuilder {
 	def := AdapterDef{Type: kind, Name: name, Continuation: continuation}
+	for _, opt := range opts {
+		opt(&def)
+	}
 	for i := range b.adapters {
 		if b.adapters[i].Type == kind && b.adapters[i].Name == name {
 			b.adapters[i] = def
@@ -525,19 +594,38 @@ func (b *WorkflowBuilder) Build() string {
 		sb.WriteString("}\n\n")
 	}
 
-	// 3. Adapters
-	for _, a := range b.adapters {
-		if a.Continuation != "" {
-			sb.WriteString(fmt.Sprintf("adapter %q %q {\n  continuation = %q\n}\n", a.Type, a.Name, a.Continuation))
-		} else {
-			sb.WriteString(fmt.Sprintf("adapter %q %q {}\n", a.Type, a.Name))
+	// 3. Environments
+	for _, e := range b.environments {
+		sb.WriteString(fmt.Sprintf("environment %q %q {\n", e.Type, e.Name))
+		if body := strings.TrimSpace(e.Body); body != "" {
+			sb.WriteString(body)
+			sb.WriteString("\n")
 		}
+		sb.WriteString("}\n\n")
+	}
+
+	// 4. Adapters
+	for _, a := range b.adapters {
+		sb.WriteString("adapter \"" + a.Type + "\" \"" + a.Name + "\" {\n")
+		if a.Continuation != "" {
+			sb.WriteString("  continuation = \"" + a.Continuation + "\"\n")
+		}
+		if a.Environment != "" {
+			sb.WriteString("  environment = " + a.Environment + "\n")
+		}
+		if a.Source != "" {
+			sb.WriteString("  source = \"" + a.Source + "\"\n")
+		}
+		if a.Version != "" {
+			sb.WriteString("  version = \"" + a.Version + "\"\n")
+		}
+		sb.WriteString("}\n")
 	}
 	if len(b.adapters) > 0 {
 		sb.WriteString("\n")
 	}
 
-	// 4. Subworkflows
+	// 5. Subworkflows
 	for _, sw := range b.subworkflows {
 		sb.WriteString(fmt.Sprintf("subworkflow %q {\n", sw.Name))
 		sb.WriteString(fmt.Sprintf("  source = %q\n", sw.Source))
@@ -550,7 +638,7 @@ func (b *WorkflowBuilder) Build() string {
 		sb.WriteString("}\n\n")
 	}
 
-	// 5. Steps
+	// 6. Steps
 	for stepIdx := range b.steps {
 		s := &b.steps[stepIdx]
 		sb.WriteString(fmt.Sprintf("step %q {\n", s.Name))
@@ -612,7 +700,7 @@ func (b *WorkflowBuilder) Build() string {
 		sb.WriteString("}\n\n")
 	}
 
-	// 5. Switches
+	// 7. Switches
 	for _, sw := range b.switches {
 		sb.WriteString(fmt.Sprintf("switch %q {\n", sw.Name))
 		for _, m := range sw.Matches {
@@ -639,7 +727,7 @@ func (b *WorkflowBuilder) Build() string {
 		sb.WriteString("}\n\n")
 	}
 
-	// 6. Waits
+	// 8. Waits
 	for _, w := range b.waits {
 		sb.WriteString(fmt.Sprintf("wait %q {\n", w.Name))
 		if w.Signal != "" {
@@ -651,7 +739,7 @@ func (b *WorkflowBuilder) Build() string {
 		sb.WriteString("}\n\n")
 	}
 
-	// 7. Approvals
+	// 9. Approvals
 	for _, a := range b.approvals {
 		sb.WriteString(fmt.Sprintf("approval %q {\n", a.Name))
 		if len(a.Approvers) > 0 {
@@ -673,7 +761,7 @@ func (b *WorkflowBuilder) Build() string {
 		sb.WriteString("}\n\n")
 	}
 
-	// 8. States
+	// 10. States
 	for _, st := range b.states {
 		sb.WriteString(fmt.Sprintf("state %q {\n", st.Name))
 		sb.WriteString(fmt.Sprintf("  terminal = %t\n", st.Terminal))
@@ -683,7 +771,7 @@ func (b *WorkflowBuilder) Build() string {
 		sb.WriteString("}\n\n")
 	}
 
-	// 9. Raw Blocks
+	// 11. Raw Blocks
 	for _, raw := range b.rawBlocks {
 		sb.WriteString(strings.TrimSpace(raw))
 		sb.WriteString("\n\n")
