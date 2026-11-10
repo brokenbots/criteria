@@ -87,9 +87,9 @@ command -v "$RUNTIME" >/dev/null 2>&1 || {
   }
 
 # ------------------------------------------------------------- lock + gate
-# Re-lock with the real CLI and diff against the committed pin: the committed
-# lockfile is the reviewable source of record, the regenerated file is what
-# apply consumes, and any drift between them is registry-side change.
+# Re-lock with the real CLI: the committed lockfile is the reviewable source
+# of record, the regenerated file is what apply consumes, and any semantic
+# drift between them is registry-side change.
 SCRATCH="$OUT/workflow"
 rm -rf "$SCRATCH"
 cp -R "$TREE" "$SCRATCH"
@@ -114,7 +114,7 @@ lock_pin() {
       sub(/[ \t]+$/, "", line)
       if (line == "") next
       if (line ~ /^adapter[ \t]*"/) {
-        n = split(line, f, "\"")
+        split(line, f, "\"")
         at = f[2] "." f[4]
         next
       }
