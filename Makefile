@@ -223,10 +223,11 @@ lint-no-todos: ## Fail if any TODO/FIXME/XXX marker appears in non-test producti
 	fi
 	@echo "OK: no TODO/FIXME/XXX markers in production code"
 
-lint-sh: ## Check POSIX shell syntax of install.sh, tools/govulncheck-filter.sh, and tools/armgate/arm-gate.sh
+lint-sh: ## Check POSIX shell syntax of install.sh, tools/govulncheck-filter.sh, tools/armgate/arm-gate.sh, and validation/adr-0014-kb-394/run-canary.sh
 	@sh -n install.sh
 	@sh -n tools/govulncheck-filter.sh
 	@sh -n tools/armgate/arm-gate.sh
+	@sh -n validation/adr-0014-kb-394/run-canary.sh
 	@echo "Shell scripts: POSIX syntax OK"
 
 lint: lint-imports lint-go lint-baseline-check spec-check lint-no-todos lint-sh ## Run all linters
@@ -287,7 +288,8 @@ validate: build ## Validate all example workflow directories
 		examples/llm-pack/07-shared-variable \
 		examples/llm-pack/08-fileset-template \
 		examples/llm-pack/09-adapter-tools \
-		examples/peer-remote; do \
+		examples/peer-remote \
+		validation/adr-0014-kb-394/canary-container; do \
 		echo "Validating $$d..."; \
 		CRITERIA_WORKFLOW_ALLOWED_PATHS="$(CURDIR)" ./bin/criteria validate "$$d" || exit 1; \
 	done
