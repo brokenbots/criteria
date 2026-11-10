@@ -151,6 +151,16 @@ if ! diff -u "$OUT/lock-pin-committed.txt" "$OUT/lock-pin-regenerated.txt" >"$OU
 fi
 echo "lock gate: semantic pins match the committed pin (comments/blank lines ignored)"
 
+# Preflight compile check: a red tree must fail before the crash injection
+# spends a run. The scratch copy already passed the pin gate above; a plain
+# validate compiles the root plus both child subworkflows (allowed paths are
+# not required for the scratch copy) and only emits the permissive
+# shell-adapter schema warning when the adapter binary is not installed.
+if ! "$CRITERIA" validate "$SCRATCH" >"$OUT/validate.log" 2>&1; then
+  echo "canary: preflight compile check failed; see $OUT/validate.log" >&2
+  exit 2
+fi
+
 # ---------------------------------------------------------------- run apply
 (
   cd "$SCRATCH" &&
