@@ -1,10 +1,14 @@
 # Arm gate: compiling pinned trees against the runner-pod engine stamp
 
 This page states the operative engine rule behind the arm contract and the
-compile gate the shepherd runs before arming a card. The arm contract text in
-the [workflow-example operator guide's arming section](https://github.com/brokenbots/workflow-example/blob/main/docs/jobs-setup.md)
-is the authoritative mirrored copy of this rule; this page carries the working
-copy and the script.
+compile gate the shepherd runs before arming a card. The rule is landed in
+the [workflow-example operator guide](https://github.com/brokenbots/workflow-example/blob/main/docs/jobs-setup.md)
+as the third hard guard in `docs/jobs-setup.md`, "Hard guards enforced by the
+tool" (arm-time compile gate) plus the everyday-loop gate step, carried on
+that repo's `KB-368` branch; the arc shepherd contract statement sits in
+`arc_shepherd_v1/scripts/confirm_action.sh.tftpl` (arm case) and
+`arc_shepherd_v1/scripts/doctrine.md` in the same repo. This page carries
+the working copy and the script.
 
 ## The engine rule
 
@@ -34,8 +38,10 @@ The gate ships in this repository as
 engine seed from the image ref (the last `vX.Y.Z` token in the tag, e.g.
 `criteria-base:v0.1-v0.5.56` → engine v0.5.56), picks a binary reporting at
 least that version (explicit `--criteria-bin`, then PATH, then an opt-in
-tag-exact build from `--criteria-repo`), and fails closed when the seed is
-unparseable, no binary qualifies, or any tree fails `criteria validate`.
+tag-exact build from `--criteria-repo`), and fails closed when the supplied
+tree set is empty or every tree was blanked (zero trees gated), when the
+seed is unparseable, no binary qualifies, or any tree fails
+`criteria validate`.
 Warnings are not failures — an unverified adapter schema is surfaced as a
 warning by `criteria validate` and does not block arming; compile errors do.
 
@@ -53,8 +59,10 @@ tools/armgate/arm-gate.sh \
 
 Exit 0 → safe to arm. Exit 1 → the gate failed closed: read the `criteria
 validate` output above the summary line, fix the tree or roll back the image
-expectation, and leave the card disarmed. Exit 2 → usage error (nothing was
-checked).
+expectation, and leave the card disarmed. A zero-tree outcome is also a
+fail-closed exit 1 — an unset or empty route variable yields a refused
+`--tree` (or no gated tree at all), never a pass. Exit 2 → usage error
+(nothing was checked).
 
 The `--criteria-repo` fallback is the release-lag path: it checks out the
 repo at tag `v<engine>`, runs `make build`, and gates with that binary. It
