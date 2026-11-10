@@ -84,3 +84,11 @@ jobs:
             python3 -c "import yaml,sys; list(yaml.safe_load_all(open(sys.argv[1])))" "$f"
             echo "ok: $f"
           done
+
+  # Container-lane gate: delegated to .github/workflows/container-e2e.yml
+  # (workflow_call) so the weekly schedule and the release pipeline's Gate 3
+  # (D57.3) keep covering the container lane through this workflow, while the
+  # same gate also runs pull_request-first in container-e2e.yml.
+  container-e2e:
+    name: Container adapter end-to-end
+    uses: ./.github/workflows/container-e2e.yml

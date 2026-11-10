@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -386,6 +387,18 @@ func (l *DefaultLoader) ResolveWithRunnerFunc(ctx context.Context, name string, 
 		Logger:           adapterClientLogger(),
 		SkipHostEnv:      true,
 		RunnerFunc:       rf,
+		// A runner-hosted adapter runs inside its own namespace (container)
+		// under a different uid, so the socket the plugin creates must be
+		// dialable by the host user. go-plugin exports the group to the
+		// runner via PLUGIN_UNIX_SOCKET_GROUP, chowns the host-side socket
+		// dir to it (0770), and the in-image SDK server chowns/chmods the
+		// resulting socket to 0660 <group> — with the group set to the
+		// host user's own primary gid, the local user is always a member
+		// of it and can dial the socket. The local (Cmd) resolve path runs
+		// the plugin as the same uid and leaves UnixSocketConfig unset.
+		UnixSocketConfig: &hplugin.UnixSocketConfig{
+			Group: strconv.Itoa(os.Getgid()),
+		},
 	})
 
 	return l.startAdapterClient(name, client)

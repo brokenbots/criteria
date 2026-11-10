@@ -6,7 +6,9 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -895,8 +897,17 @@ func TestLoaderResolveWithRunnerFunc(t *testing.T) {
 	})
 	t.Cleanup(func() { _ = loader.Shutdown(context.Background()) })
 
+	// The runner-hosted resolve path must configure go-plugin's unix-socket
+	// group so the socket the plugin creates (potentially inside its own
+	// namespace under a different uid) is dialable by the host user: the
+	// group env var reaches the RunnerFunc, and the client chowns its
+	// host-side socket dir group-writable (0770).
+	var capturedEnv []string
+	var capturedSocketDir string
 	// RunnerFunc that simply starts the cmd directly, bypassing discovery.
 	rf := func(_ hclog.Logger, cmd *exec.Cmd, socketDir string) (runner.Runner, error) {
+		capturedEnv = cmd.Env
+		capturedSocketDir = socketDir
 		// go-plugin passes an empty cmd when RunnerFunc is used; we must set
 		// the binary path ourselves.
 		cmd.Path = adapterBin
@@ -918,6 +929,24 @@ func TestLoaderResolveWithRunnerFunc(t *testing.T) {
 	}
 	if info.Name != "noop" {
 		t.Errorf("adapter name=%q want noop", info.Name)
+	}
+
+	groupEnv := strconv.Itoa(os.Getgid())
+	env := map[string]string{}
+	for _, kv := range capturedEnv {
+		if k, v, found := strings.Cut(kv, "="); found {
+			env[k] = v
+		}
+	}
+	if got, ok := env["PLUGIN_UNIX_SOCKET_GROUP"]; !ok {
+		t.Errorf("PLUGIN_UNIX_SOCKET_GROUP missing from runner cmd env (env keys: %d)", len(env))
+	} else if got != groupEnv {
+		t.Errorf("PLUGIN_UNIX_SOCKET_GROUP=%q want %q (the host user's own primary gid)", got, groupEnv)
+	}
+	if dir, err := os.Stat(capturedSocketDir); err != nil {
+		t.Errorf("socket dir %q: %v", capturedSocketDir, err)
+	} else if dir.Mode().Perm() != 0o770 {
+		t.Errorf("socket dir mode = %v, want 0770 (group-writable so the host can dial)", dir.Mode().Perm())
 	}
 	handle.Kill()
 }

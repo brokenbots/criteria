@@ -1096,6 +1096,20 @@ func (c *serveChildClient) OpenSession(ctx context.Context, req *v2.OpenSessionR
 	return resp, err
 }
 
+// Execute nudges the child's exit watcher on any call failure: a child's
+// death surfaces first as the transport failure of the call riding it, and
+// the watcher's next poll tick would otherwise hold the terminal journal
+// facts back by up to one interval — exactly the window the host's
+// failing-step classification races. Harmless on every ordinary call
+// error: the watcher re-checks the process state before recording.
+func (c *serveChildClient) Execute(ctx context.Context, req *v2.ExecuteRequest, sink adapterhost.ExecuteEventSink) error {
+	err := c.Client.Execute(ctx, req, sink)
+	if err != nil {
+		c.rt.childExitNudge(c.name)
+	}
+	return err
+}
+
 func (c *serveChildClient) CloseSession(ctx context.Context, req *v2.CloseSessionRequest) (*v2.CloseSessionResponse, error) {
 	resp, err := c.Client.CloseSession(ctx, req)
 	if err == nil {

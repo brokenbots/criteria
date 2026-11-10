@@ -128,3 +128,80 @@ func TestFixtureHelpers(t *testing.T) {
 		t.Errorf("expected subworkflow ref and input in generated HCL, got:\n%s", subHCL)
 	}
 }
+
+func TestEnvironmentAndContainerAdapterBuilder(t *testing.T) {
+	done := true
+	hcl := workflowtest.New().
+		WithHeader("t", "0.1", "start", "done").
+		WithState("done", true, &done).
+		WithEnvironment("container", "e2e", "").
+		WithAdapter("noop", "default",
+			workflowtest.AdapterEnvironment(workflowtest.EnvironmentRef("container", "e2e")),
+			workflowtest.AdapterSource("localhost:5000/e2e-noop"),
+			workflowtest.AdapterVersion("v1.0.0"),
+		).
+		WithStep("start", workflowtest.Next("state.done")).
+		Build()
+
+	if !strings.Contains(hcl, `environment "container" "e2e" {`) {
+		t.Errorf("expected environment block in generated HCL, got:\n%s", hcl)
+	}
+	if !strings.Contains(hcl, "environment = container.e2e") ||
+		!strings.Contains(hcl, `source      = "localhost:5000/e2e-noop"`) ||
+		!strings.Contains(hcl, `version     = "v1.0.0"`) {
+		t.Errorf("expected adapter environment/source/version in generated HCL, got:\n%s", hcl)
+	}
+
+	spec, diags := workflow.Parse("test.hcl", []byte(hcl))
+	if diags.HasErrors() {
+		t.Fatalf("parse failed:\n%s\nHCL:\n%s", diags.Error(), hcl)
+	}
+	graph, diags := workflow.Compile(spec, nil)
+	if diags.HasErrors() {
+		t.Fatalf("compile failed:\n%s\nHCL:\n%s", diags.Error(), hcl)
+	}
+	adapter, ok := graph.Adapters["noop.default"]
+	if !ok {
+		t.Fatalf("expected noop.default adapter in graph")
+	}
+	if adapter.Environment != "container.e2e" {
+		t.Errorf("adapter Environment = %q, want container.e2e", adapter.Environment)
+	}
+	if adapter.Source != "localhost:5000/e2e-noop" {
+		t.Errorf("adapter Source = %q, want localhost:5000/e2e-noop", adapter.Source)
+	}
+	env, ok := graph.Environments["container.e2e"]
+	if !ok {
+		t.Fatalf("expected container.e2e environment in graph")
+	}
+	if env.Type != "container" || env.Name != "e2e" {
+		t.Errorf("environment = %s.%s, want container.e2e", env.Type, env.Name)
+	}
+}
+
+func TestWithEnvironmentReplaceDedupes(t *testing.T) {
+	hcl := workflowtest.New().
+		WithEnvironment("shell", "ci", "variables = { A = \"1\" }").
+		WithEnvironment("shell", "ci", "variables = { A = \"2\" }").
+		Build()
+	if !strings.Contains(hcl, `A = "2"`) || strings.Contains(hcl, `A = "1"`) {
+		t.Errorf("expected later WithEnvironment to replace the earlier declaration, got:\n%s", hcl)
+	}
+	if got := strings.Count(hcl, `environment "shell" "ci"`); got != 1 {
+		t.Errorf("expected exactly one shell.ci block, got %d in:\n%s", got, hcl)
+	}
+}
+
+func TestAdapterOverridesCompose(t *testing.T) {
+	hcl := workflowtest.NewStandard().
+		WithAdapter("noop", "default", workflowtest.AdapterVersion("v1")).
+		WithAdapter("noop", "default", workflowtest.AdapterSource("reg.io/a/b")).
+		WithAdapterFate("noop", "default", "reuse").
+		Build()
+	if !strings.Contains(hcl, `continuation = "reuse"`) {
+		t.Errorf("expected continuation override, got:\n%s", hcl)
+	}
+	if strings.Contains(hcl, "source") {
+		t.Errorf("expected WithAdapterFate without opts to reset source, got:\n%s", hcl)
+	}
+}
