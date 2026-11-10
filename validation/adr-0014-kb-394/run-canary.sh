@@ -321,7 +321,7 @@ if [ "$KILL_LANE" = "executor" ]; then
     "1d: respawn opened the replacement crash_demo executor container (fresh cidfile recorded)" \
     "$OUT/injector.log"
 else
-  echo "  (kill lane none: crash markers 1a/1c not asserted)"
+  echo "  (kill lane none: crash markers 1a/1c/1d not asserted)"
 fi
 gate '"payload_type":"RunCompleted".*"finalState":"done".*"success":true' \
   "RunCompleted finalState=done success=true (green run)" \
