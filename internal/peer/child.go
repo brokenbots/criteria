@@ -67,6 +67,15 @@ type childState struct {
 	lastExit           *criteriav1.ProcessExited
 	lastEventAt        time.Time
 
+	// exitObserved wakes the child's exit watcher out of its poll tick: a
+	// child's death first surfaces to a consumer of its client (a failed
+	// Execute or Log call) rather than to the watcher's next tick, and the
+	// terminal journal facts must be on the phone-home stream before the
+	// host's failing call classifies. Nil in tests that build states
+	// directly — a nil channel select arm simply never fires, leaving the
+	// poll as the only driver.
+	exitObserved chan struct{}
+
 	// exitJournalGate is a test seam: when set (by tests, under the runtime
 	// lock), recordExit calls it after releasing the lock and BEFORE the
 	// Exited append, letting a test hold the exit facts unjournaled while
@@ -594,6 +603,7 @@ func (r *peerRuntime) recordChild(spec *childSpec, child adapterhost.Handle) *ch
 		binary:       s.Binary,
 		digest:       s.Digest,
 		openSessions: map[string]struct{}{},
+		exitObserved: make(chan struct{}, 1),
 	}
 	r.mu.Lock()
 	existed := false
@@ -644,9 +654,48 @@ func (r *peerRuntime) verifyChild(ctx context.Context, spec *childSpec, c *child
 	return nil
 }
 
-// watchChild polls one child's process state and journals the exit fact the
-// moment it disappears. A peer-initiated shutdown stops the watcher first,
-// so exits observed here are always ungraceful crashes.
+// childExitNudge wakes the named child's exit watcher out of its poll
+// tick: the child's death surfaces first as the transport failure of the
+// call riding its client, and the watcher otherwise observes it up to
+// one poll tick later. Harmless when the child is alive (the watcher
+// re-checks the process state before recording anything) and when no
+// matching child is hosted; the nudge is lossy by design (a wake that
+// races the poll tick costs an interval, not a fact).
+func (r *peerRuntime) childExitNudge(name string) {
+	r.mu.Lock()
+	c, ok := r.children[name]
+	r.mu.Unlock()
+	if !ok || c.exitObserved == nil {
+		return
+	}
+	select {
+	case c.exitObserved <- struct{}{}:
+	default:
+	}
+}
+
+// observeChildDeath records the child's exit fact the moment the child is
+// observed exited. c.handle is swapped to nil under r.mu by the respawn
+// path (ensureChild) and by tests; the watcher must read it under the
+// same lock. Reports whether the child was recorded as exited (the
+// watcher's terminal step).
+func (r *peerRuntime) observeChildDeath(c *childState) bool {
+	r.mu.Lock()
+	handle := c.handle
+	r.mu.Unlock()
+	if handle != nil && adapterhost.ProcessExited(handle) {
+		r.recordExit(c, false)
+		return true
+	}
+	return false
+}
+
+// watchChild watches one child's process state and journals the exit fact
+// the moment it disappears. The observation is event-driven where the
+// child's transport surfaces it (exitObserved nudges) and poll-driven as
+// the fallback, so a kill that races an in-flight call never waits out a
+// whole poll tick. A peer-initiated shutdown stops the watcher first, so
+// exits observed here are always ungraceful crashes.
 func (r *peerRuntime) watchChild(c *childState) {
 	defer r.releaseExitWatcher()
 	ticker := time.NewTicker(r.exitPoll)
@@ -655,15 +704,12 @@ func (r *peerRuntime) watchChild(c *childState) {
 		select {
 		case <-r.stopWatch:
 			return
+		case <-c.exitObserved:
+			if r.observeChildDeath(c) {
+				return
+			}
 		case <-ticker.C:
-			// c.handle is swapped to nil under r.mu by the respawn path
-			// (ensureChild) and by tests; the watcher must read it under
-			// the same lock.
-			r.mu.Lock()
-			handle := c.handle
-			r.mu.Unlock()
-			if handle != nil && adapterhost.ProcessExited(handle) {
-				r.recordExit(c, false)
+			if r.observeChildDeath(c) {
 				return
 			}
 		}

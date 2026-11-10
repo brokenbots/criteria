@@ -24,6 +24,7 @@ import (
 
 	"github.com/brokenbots/criteria/internal/adapter"
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	"github.com/brokenbots/criteria/internal/tunables"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -1208,6 +1209,32 @@ func (h *peerHandle) SupervisionCrashReason() (string, bool) {
 		return adapterhost.CrashReasonTransportClosed, true
 	}
 	return "", false
+}
+
+// SettledSupervisionCrashReason implements adapterhost.JournalCrashSettler
+// for the remote peer: the peer's terminal facts ride its exit watcher,
+// which observes a child's death up to one poll tick after the transport
+// already failed the in-flight call, so a classification that races a
+// fresh child death reads an empty journal and would misread the crash as
+// an ordinary step failure. Within the settle budget the query waits for
+// the facts to arrive on the live Supervise stream and classifies exactly
+// like SupervisionCrashReason from whatever the journal settles on;
+// a budget that expires without facts keeps the fail-closed "no terminal
+// classification" shape of the plain query.
+func (h *peerHandle) SettledSupervisionCrashReason(ctx context.Context) (string, bool) {
+	if h == nil || h.ps == nil {
+		return "", false
+	}
+	for {
+		if reason, ok := h.SupervisionCrashReason(); ok {
+			return reason, true
+		}
+		select {
+		case <-ctx.Done():
+			return "", false
+		case <-time.After(tunables.DefaultRemoteJournalSettlePoll):
+		}
+	}
 }
 
 // Prompt delivers a mid-turn agent message into the live adapter session on

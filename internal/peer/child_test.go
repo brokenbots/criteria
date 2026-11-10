@@ -247,6 +247,91 @@ func TestPeerRuntime_ExitWatcherClassifiesCrash(t *testing.T) {
 	}
 }
 
+// TestPeerRuntime_ExitNudgeJournalsPromptly pins the event-driven
+// observation arm of the exit watcher: a transport consumer's nudge
+// (childExitNudge, wired from a failing child client) must wake the watcher
+// and journal the terminal facts without waiting out the watcher's poll
+// tick. Without the nudge arm, the observation only happens on the next
+// exitPoll tick — a gap that outruns the host's settled crash
+// classification and loses the terminal facts.
+func TestPeerRuntime_ExitNudgeJournalsPromptly(t *testing.T) {
+	fake := &fakeHandle{}
+	cfg, err := LoadConfig(getenvFrom(map[string]string{EnvRemoteHost: "h:1"}))
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.AdapterName = "fakex"
+
+	rt := NewRuntime(&cfg, captureLogger(&bytes.Buffer{}))
+	// A poll tick that would not fire inside the test window: only the
+	// nudge may observe the exit.
+	rt.exitPoll = time.Minute
+	rt.loader.RegisterBuiltin("fakex", func() adapterhost.Handle { return fake })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := rt.Boot(ctx); err != nil {
+		t.Fatalf("boot: %v", err)
+	}
+	fake.exited.Store(true)
+	rt.childExitNudge("fakex")
+
+	select {
+	case <-rt.watchDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("exit watcher did not wake on the transport-failure nudge")
+	}
+
+	events := rt.Journal().Replay(0)
+	if len(events) != 3 {
+		t.Fatalf("journal has %d events, want spawned+exited+crash", len(events))
+	}
+	if events[1].GetExited() == nil || events[1].GetExited().GetGraceful() {
+		t.Errorf("event 2 = %T graceful=%v, want ungraceful exited", events[1].GetKind(), events[1].GetExited().GetGraceful())
+	}
+	if crash := events[2].GetCrash(); crash == nil || crash.GetReason() != adapterhost.CrashReasonProcessTerminated {
+		t.Fatalf("event 3 = %T, want crash classified %q", events[2].GetKind(), adapterhost.CrashReasonProcessTerminated)
+	}
+
+	if err := rt.Shutdown(ctx); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+	if got := len(rt.Journal().Replay(0)); got != 3 {
+		t.Errorf("journal has %d events after shutdown, want 3 (exit already recorded)", got)
+	}
+}
+
+// TestPeerRuntime_ExitNudgeNeverKillsLiveChild pins the nudge's
+// false-negative safety: a nudge delivered while the child is alive
+// (an ordinary call error, not a death) must not journal any exit — the
+// watcher re-checks the live process state before recording.
+func TestPeerRuntime_ExitNudgeNeverKillsLiveChild(t *testing.T) {
+	fake := &fakeHandle{}
+	cfg, err := LoadConfig(getenvFrom(map[string]string{EnvRemoteHost: "h:1"}))
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.AdapterName = "fakex"
+
+	rt := NewRuntime(&cfg, captureLogger(&bytes.Buffer{}))
+	rt.exitPoll = time.Minute
+	rt.loader.RegisterBuiltin("fakex", func() adapterhost.Handle { return fake })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := rt.Boot(ctx); err != nil {
+		t.Fatalf("boot: %v", err)
+	}
+	rt.childExitNudge("fakex")
+	if got := len(rt.Journal().Replay(0)); got != 1 {
+		t.Fatalf("journal has %d events after a live-child nudge, want only spawned", got)
+	}
+
+	if err := rt.Shutdown(ctx); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+}
+
 // TestPeerRuntime_KillChildJournalsCrashSequence verifies the crash emission
 // points against a real child: SIGKILL of the adapter process journals
 // ProcessSpawned → ProcessExited (ungraceful; go-plugin does not expose the

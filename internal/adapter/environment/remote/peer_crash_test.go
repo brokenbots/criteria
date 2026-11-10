@@ -20,6 +20,7 @@ import (
 	criteriav1 "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 
 	"github.com/brokenbots/criteria/internal/adapterhost"
+	"github.com/brokenbots/criteria/internal/tunables"
 	"github.com/brokenbots/criteria/workflow"
 )
 
@@ -127,6 +128,61 @@ func TestPeerSupervisionCrashReasonWireFact(t *testing.T) {
 		_, _, ph := startPeerSessionManager(t, provider)
 		if _, ok := adapterhost.SupervisionCrashReason(ph); ok {
 			t.Fatal("SupervisionCrashReason must report ok=false for a live child")
+		}
+	})
+}
+
+// TestPeerSettledSupervisionCrashReason pins the remote settle arm
+// (JournalCrashSettler): the peer's exit watcher emits its terminal journal
+// facts up to one poll tick after the transport already failed the host's
+// call, so a classification racing a fresh child death reads an empty
+// journal. The settled query bridges that in-flight window on the live
+// Supervise stream and classifies exactly like the plain query once the
+// facts land; a placeholder-only journal and a budget that expires
+// without facts keep the fail-closed no-classification shape.
+func TestPeerSettledSupervisionCrashReason(t *testing.T) {
+	t.Run("facts arriving during the settle window classify", func(t *testing.T) {
+		provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
+		fp := newFakePeer("")
+		fp.connect(t, addr)
+
+		_, _, ph := startPeerSessionManager(t, provider)
+
+		// The crash facts land mid-flight, after the settled query started
+		// polling — the exact shape classification races on a real peer
+		// (the host's Execute fails before the peer's exit watcher journals
+		// the death).
+		go func() {
+			time.Sleep(100 * time.Millisecond)
+			journalCrash(fp, -1, adapterhost.CrashReasonProcessTerminated, "adapter child exited while supervised (exit code -1, signal 9)")
+		}()
+
+		settleCtx, cancel := context.WithTimeout(context.Background(), tunables.DefaultCrashCloseSettle)
+		defer cancel()
+		reason, ok := adapterhost.SettledSupervisionCrashReason(settleCtx, ph, tunables.DefaultCrashCloseSettle)
+		if !ok {
+			t.Fatal("settled query = ok=false, want the journal classification once the facts arrive mid-window")
+		}
+		if reason != adapterhost.CrashReasonProcessTerminated {
+			t.Fatalf("reason = %q, want %q", reason, adapterhost.CrashReasonProcessTerminated)
+		}
+	})
+
+	t.Run("exited placeholder settles with no classification", func(t *testing.T) {
+		provider, addr := startPeerFixture(t, &Config{ListenAddress: "127.0.0.1:0"})
+		fp := newFakePeer("")
+		fp.appendEvent(&criteriav1.SupervisionEvent{
+			Kind: &criteriav1.SupervisionEvent_Exited{Exited: &criteriav1.ProcessExited{ExitCode: 1}},
+		})
+		fp.connect(t, addr)
+
+		_, _, ph := startPeerSessionManager(t, provider)
+		waitFor(t, "terminal journal fact", func() bool {
+			return ph.ps.processExited(ph.name)
+		})
+
+		if reason, ok := adapterhost.SettledSupervisionCrashReason(context.Background(), ph, 100*time.Millisecond); ok {
+			t.Fatalf("settled query = (%q, true), want ok=false for the plain Exited placeholder", reason)
 		}
 	})
 }

@@ -54,6 +54,13 @@ const (
 	// its process-exited flag strictly after the transport fails, and the
 	// journal facts ride that flip.
 	DefaultCrashCloseSettle = 2 * time.Second
+	// DefaultRemoteJournalSettlePoll is the wake cadence of the remote
+	// peer handle's settled journal classification (JournalCrashSettler):
+	// the peer's exit watcher emits its terminal facts at child-death
+	// observation or on the next poll tick, so the settled query re-reads
+	// the journal on this cadence until the facts arrive on the live
+	// Supervise stream or the settle budget runs out.
+	DefaultRemoteJournalSettlePoll = 10 * time.Millisecond
 	// DefaultStepStallWindow is how long an unbounded step may run with no
 	// observable adapter activity before the step-stall watchdog tears it down.
 	// Zero (or a negative override) disables stall detection.

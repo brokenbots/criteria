@@ -144,10 +144,8 @@ type JournalCrashSettler interface {
 // SettledSupervisionCrashReason returns the journal-delivered crash
 // classification for h after settling the journal's exit fact, bounded by
 // budget. Handles without the settler capability answer immediately from
-// their existing journal flow (no settle — remote peers deliver their
-// journal facts through the Supervise stream, which carries no flip
-// window). The budget must come from tunables, not be declared at call
-// sites.
+// their existing journal flow. The budget must come from tunables, not be
+// declared at call sites.
 func SettledSupervisionCrashReason(ctx context.Context, h Handle, budget time.Duration) (string, bool) {
 	if settler, isSettler := h.(JournalCrashSettler); isSettler {
 		// WithoutCancel: the settle stays bounded by budget and must run
