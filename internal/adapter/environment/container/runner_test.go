@@ -18,6 +18,10 @@ func TestNewDockerRunner_CommandArgs(t *testing.T) {
 	cmd := &exec.Cmd{Env: []string{
 		"CRITERIA_PLUGIN=secret",
 		"PLUGIN_UNIX_SOCKET_DIR=/tmp/sock",
+		// The group handoff for runner-hosted sockets: the in-image SDK
+		// server chowns/chmods its socket 0660 to this group so the host
+		// user can dial it (the container runs under a different uid).
+		"PLUGIN_UNIX_SOCKET_GROUP=1000",
 	}}
 	prepared := Prepared{
 		Runtime:  "docker",
@@ -45,6 +49,7 @@ func TestNewDockerRunner_CommandArgs(t *testing.T) {
 		"-v", "/tmp/sock:/tmp/sock",
 		"-e", "CRITERIA_PLUGIN=secret",
 		"-e", "PLUGIN_UNIX_SOCKET_DIR=/tmp/sock",
+		"-e", "PLUGIN_UNIX_SOCKET_GROUP=1000",
 		"--network", "bridge",
 		"-v", "/data:/data:ro",
 		"-v", "/tmp:/tmp",
