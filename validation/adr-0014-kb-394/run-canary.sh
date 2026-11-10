@@ -104,6 +104,12 @@ fi
 # never pass. Extract each adapter's identity + pin fields — comments and
 # blank lines ignored — and compare those; any semantic difference fails
 # closed: the run does not proceed on a silently substituted pin.
+# The adapter context clears only when the adapter block itself closes
+# (brace-depth tracking, not the first `}` seen): the emitter writes each
+# adapter's attributes, then signature, then container_image (ref, digest),
+# then remote, so a nested block's close must not drop the adapter context —
+# that once made signed lockfiles print their container_image pins as absent
+# and the gate pass while blind to them.
 lock_pin() {
   awk '
     function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
@@ -116,21 +122,35 @@ lock_pin() {
       if (line ~ /^adapter[ \t]*"/) {
         split(line, f, "\"")
         at = f[2] "." f[4]
-        next
-      }
-      if (line == "container_image {") { cimg = 1; next }
-      if (line == "}") {
-        if (cimg) cimg = 0
-        else at = ""
+        depth = 1
+        cimg = 0
         next
       }
       i = index(line, "=")
-      if (i == 0) next
-      k = trim(substr(line, 1, i - 1))
-      v = trim(substr(line, i + 1))
-      gsub(/^"|"$/, "", v)
-      if (at == "" && k == "schema_version") schema = v
-      if (at != "") pin[at "|" (cimg ? "container_image." k : k)] = v
+      if (at == "") {
+        # top level: only the lockfile-wide schema_version matters
+        if (i > 0 && trim(substr(line, 1, i - 1)) == "schema_version") {
+          v = trim(substr(line, i + 1))
+          gsub(/^"|"$/, "", v)
+          schema = v
+        }
+        next
+      }
+      opens = gsub(/\{/, "&", line)
+      closes = gsub(/\}/, "&", line)
+      if (depth == 1 && opens == 1 && line == "container_image {") cimg = 1
+      depth += opens - closes
+      if (depth <= 0) {
+        at = ""
+        next
+      }
+      if (cimg && depth == 1) cimg = 0
+      if (opens == 0 && closes == 0 && i > 0) {
+        k = trim(substr(line, 1, i - 1))
+        v = trim(substr(line, i + 1))
+        gsub(/^"|"$/, "", v)
+        pin[at "|" (cimg ? "container_image." k : k)] = v
+      }
     }
     END {
       print "schema_version=" (schema == "" ? "absent" : schema)
