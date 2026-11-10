@@ -237,6 +237,34 @@ func TestGraphVerify_OutcomeCompleteness(t *testing.T) {
 			wantSubstr: `step "run": outcome completeness requires handling adapter failure/error paths`,
 		},
 		{
+			name: "schema-bearing success arm without failure lanes fails completeness",
+			// StepRaw places the schema attribute on the arm so the step
+			// enters contract mode; a contract-mode success arm without any
+			// failure/error lane is still rejected — the verifier is
+			// absolute and has no contract-mode or adapter-kind opt-out.
+			stepOpts: []workflowtest.StepOpt{workflowtest.StepRaw(`outcome "success" {
+  schema = object({ reason = string })
+  next   = state.done
+}`)},
+			wantErr:    true,
+			wantSubstr: `step "run": outcome completeness requires handling adapter failure/error paths`,
+		},
+		{
+			name: "schema-bearing success arm plus declared fallback compiles",
+			// The recomposed never-finalize probe shape: a schema-bearing
+			// success arm declared alongside a non-failure-class fallback
+			// arm satisfies the absolute verifier, so the fallback synthesis
+			// lane stays compile-legal.
+			stepOpts: []workflowtest.StepOpt{
+				workflowtest.StepRaw(`outcome "success" {
+  schema = object({ reason = string })
+  next   = state.done
+}`),
+				workflowtest.FallbackOutcome("finalize_exhausted", "state.failed"),
+			},
+			wantErr: false,
+		},
+		{
 			name:       "step with only failure outcome fails completeness",
 			stepOpts:   []workflowtest.StepOpt{workflowtest.Outcome("failure", "state.done")},
 			wantErr:    true,

@@ -5,17 +5,16 @@ package engine
 // mapping, or a declared fallback). A step designed to leave an unknown
 // adapter verdict wholly unmapped — the retired never-finalize probe shape,
 // whose observation WAS the loud unmapped-name failure — is a compile-verified
-// impossibility. These tests pin the surviving semantics: on a contract-mode
-// step an unknown verdict routes through the StepOutcomeInvalid repair loop
-// (loud but routed: exhaustion fails the run with the wrapped contract
-// issues, never the unmapped-name branch), a session that never finalizes
-// synthesizes the step's DECLARED fallback by name so the probe observation
-// survives as a typed routed outcome, and the verifier rejects the unhandled
-// shape even for contract-mode (schema-bearing) steps.
+// impossibility (the compile half of that contract is pinned in the workflow
+// package's outcome-completeness table). These tests pin the surviving runtime
+// semantics: on a contract-mode step an unknown verdict routes through the
+// StepOutcomeInvalid repair loop (loud but routed: exhaustion fails the run
+// with the wrapped contract issues, never the unmapped-name branch), and a
+// session that never finalizes synthesizes the step's DECLARED fallback by
+// name so the probe observation survives as a typed routed outcome.
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -112,6 +111,13 @@ func TestRun_UnknownOutcomeOnContractStepNeverReachesUnmappedBranch(t *testing.T
 		require.NotEqual(t, "ship", o.step, "a rejected-then-exhausted step emits no outcome event")
 	}
 	require.Empty(t, sink.defaulted, "no default is declared, so nothing is default-mapped")
+
+	// The exhaustion failure reaches the run lifecycle: OnRunFailed carries
+	// the wrapped failure reason (the standard failure path, not a terminal
+	// completion), so the observation stays loud at the run level too.
+	require.NotEmpty(t, sink.failure, "the run-failure reason must reach OnRunFailed")
+	require.Contains(t, sink.failure, `step "ship" failed after 2 attempts`)
+	require.Contains(t, sink.failure, `outcome_not_allowed: outcome "ghost-name" is not in allowed_outcomes`)
 }
 
 // TestRun_NeverFinalizeSynthesizesTheDeclaredFallbackByName pins the
@@ -147,46 +153,4 @@ func TestRun_NeverFinalizeSynthesizesTheDeclaredFallbackByName(t *testing.T) {
 	if outs, ok := sink.captured["ship"]; ok {
 		require.Empty(t, outs, "the synthesized fallback carries no payload")
 	}
-}
-
-// probeDiagText compiles builder output non-fatally and renders every
-// diagnostic (summary + detail) so completeness rejections can be asserted.
-func probeDiagText(t *testing.T, src string) string {
-	t.Helper()
-	spec, parseDiags := workflow.Parse("probe.hcl", []byte(src))
-	require.False(t, parseDiags.HasErrors(), "parse: %s", parseDiags.Error())
-	_, compileDiags := workflow.Compile(spec, nil)
-	var sb strings.Builder
-	for _, d := range compileDiags {
-		sb.WriteString(d.Summary)
-		if d.Detail != "" {
-			sb.WriteString(": ")
-			sb.WriteString(d.Detail)
-		}
-		sb.WriteString("\n")
-	}
-	return sb.String()
-}
-
-// TestCompile_UnmappedProbeShapeIsACompletenessRejection pins the compile
-// half of the impossibility: a contract-mode (schema-bearing) step whose
-// design leaves adapter failure/error lanes unhandled is rejected outright —
-// the verifier is absolute and has no contract-mode or adapter-kind opt-out —
-// while the recomposed probe shape (schema success arm declared alongside a
-// non-failure-class fallback arm) compiles clean.
-func TestCompile_UnmappedProbeShapeIsACompletenessRejection(t *testing.T) {
-	t.Run("schema-bearing success arm without failure lanes is rejected", func(t *testing.T) {
-		b := workflowtest.NewStandard().
-			WithInitial("probe").
-			WithStep("probe", workflowtest.StepRaw(`outcome "success" {
-  schema = object({ reason = string })
-  next   = state.done
-}`))
-		msgs := probeDiagText(t, b.Build())
-		require.Contains(t, msgs, `step "probe": outcome completeness requires handling adapter failure/error paths`)
-	})
-	t.Run("declared fallback synthesis shape compiles", func(t *testing.T) {
-		g := compile(t, neverFinalizeProbeWorkflow().Build())
-		require.NotNil(t, g)
-	})
 }
