@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1.7
 
-FROM golang:1.27-alpine AS build
+# Exact-pinned builder, kept in sync with the root go.mod toolchain: the
+# official golang images set GOTOOLCHAIN=local, so this stage's own toolchain
+# carries every module floor and the same patched stdlib the repo builds with.
+FROM golang:1.27.4-alpine AS build
 
 WORKDIR /src
 

@@ -3,10 +3,12 @@ module github.com/brokenbots/criteria
 go 1.27
 
 // go1.27.0's standard library carries GO-2026-6809/6603/6599-class findings;
-// 1.27.3 ships every fix. This also matches the image-toolchain build floors
-// (Dockerfile.peer's golang:1.27.3-bookworm builder). setup-go honors this
-// line for CI's toolchain installs.
-toolchain go1.27.3
+// 1.27.3 shipped every fix except GO-2026-6859 (net/http MaxBytesReader
+// header race, reachable from the sdk/workflow modules); 1.27.4 ships every
+// fix. This also matches the image-toolchain build floors (Dockerfile.peer's
+// golang:1.27.4-bookworm and Dockerfile.runtime's golang:1.27.4-alpine
+// builders). setup-go honors this line for CI's toolchain installs.
+toolchain go1.27.4
 
 require (
 	connectrpc.com/connect v1.21.1
@@ -197,11 +199,12 @@ require (
 	go.opentelemetry.io/contrib/detectors/gcp v1.44.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.68.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.70.0 // indirect
-	go.opentelemetry.io/otel v1.45.0 // indirect
-	go.opentelemetry.io/otel/metric v1.45.0 // indirect
-	go.opentelemetry.io/otel/sdk v1.45.0 // indirect
-	go.opentelemetry.io/otel/sdk/metric v1.45.0 // indirect
-	go.opentelemetry.io/otel/trace v1.45.0 // indirect
+	go.opentelemetry.io/otel v1.47.0 // indirect
+	go.opentelemetry.io/otel/log v1.47.0 // indirect
+	go.opentelemetry.io/otel/metric v1.47.0 // indirect
+	go.opentelemetry.io/otel/sdk v1.47.0 // indirect
+	go.opentelemetry.io/otel/sdk/metric v1.47.0 // indirect
+	go.opentelemetry.io/otel/trace v1.47.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.28.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
