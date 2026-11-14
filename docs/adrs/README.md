@@ -21,6 +21,7 @@ final.
 | [ADR-0006](ADR-0006-sendprompt-injection.md) | SendPrompt: mid-turn agent message injection; redirect deferred | Accepted |
 | [ADR-0007](ADR-0007-peer-execution.md) | Peer execution: criteria-to-criteria remote adapters (staged A→B) | Proposed |
 | [ADR-0008](ADR-0008-criteria-as-adapter.md) | Criteria-as-adapter — a criteria instance serving the adapter v2 surface | Proposed |
+| [ADR-0010](ADR-0010-kintsugi-split.md) | Kintsugi split — Parapet standalone repo + castle-side proto/SDK extraction | Accepted |
 | [ADR-0014](ADR-0014-environment-host-of-record.md) | The environment as host-of-record: one session/ownership seam | Accepted |
 
 > **Pending — no record yet.** [ADR-0013] (decision adapter: System One
