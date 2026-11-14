@@ -1,6 +1,7 @@
 package smoke
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -19,13 +20,14 @@ import (
 // is enforced in the job graphs of .github/workflows/ci.yml and
 // .github/workflows/container-e2e.yml. These guards pin the wiring (needs
 // legs plus docs_only conditions, the skip-tolerant all-checks aggregate,
-// the positive docs-only-skip signal, classifier coverage under make lint-sh)
-// and the classifier's behavior against real git fixtures, so a workflow
-// edit cannot silently ungate a repo-state scan or loosen the skip-tolerant
-// aggregate.
+// the positive docs-only-skip signal, the read-only token permissions block,
+// classifier coverage under make lint-sh) and the classifier's behavior
+// against real git fixtures, so a workflow edit cannot silently ungate a
+// repo-state scan or loosen the skip-tolerant aggregate.
 
 type ciWorkflow struct {
-	Jobs map[string]ciJob `yaml:"jobs"`
+	Jobs        map[string]ciJob  `yaml:"jobs"`
+	Permissions map[string]string `yaml:"permissions"`
 }
 
 type ciJob struct {
@@ -223,6 +225,32 @@ func TestCIWorkflowDocsOnlyGates(t *testing.T) {
 	}
 }
 
+// TestCIWorkflowsDeclareReadOnlyPermissions pins the least-privilege GitHub
+// token contract on both PR-triggered workflows: a workflow-level
+// permissions mapping grants read-only repository content to every job and
+// nothing broader. Write scopes, if a job ever needs one, belong on that
+// job alone.
+func TestCIWorkflowsDeclareReadOnlyPermissions(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"ci.yml", "container-e2e.yml"} {
+		t.Run(name, func(t *testing.T) {
+			wf := loadCIWorkflow(t, name)
+			if wf.Permissions == nil {
+				t.Fatalf("%s has no workflow-level permissions block; every job inherits the full default token", name)
+			}
+			if got := wf.Permissions["contents"]; got != "read" {
+				t.Errorf("%s: permissions.contents = %q, want \"read\"", name, got)
+			}
+			for scope, level := range wf.Permissions {
+				if scope != "contents" && level != "none" {
+					t.Errorf("%s: workflow-level permissions[%s] = %q; only contents: read (or none) belongs at workflow level", name, scope, level)
+				}
+			}
+		})
+	}
+}
+
 // TestAllChecksRecomputeScript executes the all-checks aggregate recompute
 // script from ci.yml under POSIX sh with explicit result fixtures. The
 // aggregate is the docs-only safeguard: skipped (docs-only) legs must count
@@ -289,8 +317,8 @@ func TestAllChecksRecomputeScript(t *testing.T) {
 		cmd.Env = append(os.Environ(), "RESULTS="+results, "CHANGES_RESULT="+changes)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			exitErr, exited := err.(*exec.ExitError)
-			if !exited {
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) {
 				t.Fatalf("run recompute script: %v\n%s", err, out)
 			}
 			return exitErr.ExitCode(), string(out)

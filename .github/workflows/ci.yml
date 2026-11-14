@@ -6,6 +6,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Read-only GitHub token by default: no job in this workflow writes to the
+# repository, API, or packages. A write scope, if ever needed, belongs on
+# the single job asking for it.
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

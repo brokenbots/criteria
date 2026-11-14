@@ -12,6 +12,12 @@ on:
   # pipeline's Gate 3 (D57.3) keep covering the container lane.
   workflow_call:
 
+# Read-only GitHub token by default: no job in this workflow writes to the
+# repository, API, or packages. A write scope, if ever needed, belongs on
+# the single job asking for it.
+permissions:
+  contents: read
+
 jobs:
   changes:
     name: Detect docs-only PR
