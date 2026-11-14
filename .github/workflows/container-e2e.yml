@@ -37,6 +37,11 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
         run: |
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "event $EVENT_NAME: not a pull request, running full CI"
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           .github/scripts/detect-docs-only.sh >> "$GITHUB_OUTPUT"
 
   container-e2e:

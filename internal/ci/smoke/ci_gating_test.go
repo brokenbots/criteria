@@ -39,12 +39,16 @@ type ciJob struct {
 }
 
 // ciStep models the subset of a step needed to extract the all-checks
-// aggregate recompute script. Env values stay as yaml.Node because GHA
-// expressions and the numeric values used elsewhere in the workflow are not
-// strings.
+// aggregate recompute script and to pin the changes job's classify wiring.
+// Env values stay as yaml.Node because GHA expressions and the numeric
+// values used elsewhere in the workflow are not strings.
 type ciStep struct {
-	Run string               `yaml:"run"`
-	Env map[string]yaml.Node `yaml:"env"`
+	Run   string               `yaml:"run"`
+	Env   map[string]yaml.Node `yaml:"env"`
+	Uses  string               `yaml:"uses"`
+	If    string               `yaml:"if"`
+	ID    string               `yaml:"id"`
+	Shell string               `yaml:"shell"`
 }
 
 // ciNeeds accepts both YAML shapes of a workflow `needs` entry (scalar or
@@ -246,6 +250,108 @@ func TestCIWorkflowsDeclareReadOnlyPermissions(t *testing.T) {
 				if scope != "contents" && level != "none" {
 					t.Errorf("%s: workflow-level permissions[%s] = %q; only contents: read (or none) belongs at workflow level", name, scope, level)
 				}
+			}
+		})
+	}
+}
+
+// TestCIChangesJobSafeWithoutRepository pins the non-pull_request safety of
+// the changes job in both PR-triggered workflows: the job skips
+// actions/checkout on every non-PR event, so its classify step must never
+// reference the repo-relative classifier script without a repository — it
+// must short-circuit to docs_only=false first. A regression here pushes
+// push/workflow_dispatch/workflow_call runs into exit 127 on the missing
+// script, which skips every repo-state dependent and hard-fails the
+// skip-tolerant all-checks aggregate.
+func TestCIChangesJobSafeWithoutRepository(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"ci.yml", "container-e2e.yml"} {
+		t.Run("wiring/"+name, func(t *testing.T) {
+			job, ok := loadCIWorkflow(t, name).Jobs["changes"]
+			if !ok {
+				t.Fatalf("%s has no changes job", name)
+			}
+			var classify *ciStep
+			unconditionalCheckout := false
+			for i := range job.Steps {
+				step := &job.Steps[i]
+				if step.ID == "detect" {
+					classify = step
+				}
+				if strings.HasPrefix(step.Uses, "actions/checkout") && step.If == "" {
+					unconditionalCheckout = true
+				}
+			}
+			if classify == nil {
+				t.Fatalf("%s changes job has no classify step (id: detect)", name)
+			}
+			if unconditionalCheckout {
+				return // checkout is unconditional: the script always has its repo
+			}
+			// With the checkout skipped there is no repository, so everything
+			// the short-circuit needs (the EVENT_NAME comparison, the
+			// docs_only=false output, the positive exit) must precede the
+			// script reference.
+			scriptIdx := strings.Index(classify.Run, ".github/scripts/detect-docs-only.sh")
+			if scriptIdx < 0 {
+				t.Fatal("classify step never invokes the classifier script")
+			}
+			guard := classify.Run[:scriptIdx]
+			for _, want := range []string{
+				`$EVENT_NAME" != "pull_request"`,
+				"docs_only=false",
+				"GITHUB_OUTPUT",
+				"exit 0",
+			} {
+				if !strings.Contains(guard, want) {
+					t.Errorf("classify step must short-circuit non-pull_request events to docs_only=false before invoking the script; %q missing before the script reference:\n%s", want, classify.Run)
+				}
+			}
+		})
+
+		t.Run("workspace-less/"+name, func(t *testing.T) {
+			job, ok := loadCIWorkflow(t, name).Jobs["changes"]
+			if !ok {
+				t.Fatalf("%s has no changes job", name)
+			}
+			var classifyStep ciStep
+			for _, step := range job.Steps {
+				if step.ID == "detect" {
+					classifyStep = step
+				}
+			}
+			if classifyStep.ID != "detect" {
+				t.Fatalf("%s changes job has no classify step (id: detect)", name)
+			}
+			script := filepath.Join(t.TempDir(), "classify.sh")
+			if err := os.WriteFile(script, []byte(classifyStep.Run), 0o755); err != nil {
+				t.Fatalf("write classify script: %v", err)
+			}
+			shell := classifyStep.Shell
+			if shell == "" {
+				shell = "bash" // GHA default shell for run steps, invoked with -e
+			}
+			for _, event := range []string{"push", "workflow_dispatch", "workflow_call"} {
+				t.Run(event, func(t *testing.T) {
+					// The working directory is an EMPTY temp dir on purpose,
+					// mirroring a runner where the conditional checkout did
+					// not fetch the repository.
+					cmd := exec.Command(shell, "-e", script)
+					cmd.Dir = t.TempDir()
+					outputPath := filepath.Join(t.TempDir(), "github-output")
+					cmd.Env = append(os.Environ(), "EVENT_NAME="+event, "BASE_REF=main", "GITHUB_OUTPUT="+outputPath)
+					if out, err := cmd.CombinedOutput(); err != nil {
+						t.Fatalf("classify step in an empty directory (EVENT_NAME=%s): %v\n%s", event, err, out)
+					}
+					data, err := os.ReadFile(outputPath)
+					if err != nil {
+						t.Fatalf("read GITHUB_OUTPUT (EVENT_NAME=%s): %v", event, err)
+					}
+					if !strings.Contains(string(data), "docs_only=false") {
+						t.Errorf("EVENT_NAME=%s: GITHUB_OUTPUT missing docs_only=false, got:\n%s", event, data)
+					}
+				})
 			}
 		})
 	}
