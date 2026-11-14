@@ -223,10 +223,11 @@ lint-no-todos: ## Fail if any TODO/FIXME/XXX marker appears in non-test producti
 	fi
 	@echo "OK: no TODO/FIXME/XXX markers in production code"
 
-lint-sh: ## Check POSIX shell syntax of install.sh, tools/govulncheck-filter.sh, tools/armgate/arm-gate.sh, and validation/adr-0014-kb-394/run-canary.sh
+lint-sh: ## Check POSIX shell syntax of install.sh, tools/govulncheck-filter.sh, tools/armgate/arm-gate.sh, .github/scripts/detect-docs-only.sh, and validation/adr-0014-kb-394/run-canary.sh
 	@sh -n install.sh
 	@sh -n tools/govulncheck-filter.sh
 	@sh -n tools/armgate/arm-gate.sh
+	@sh -n .github/scripts/detect-docs-only.sh
 	@sh -n validation/adr-0014-kb-394/run-canary.sh
 	@echo "Shell scripts: POSIX syntax OK"
 

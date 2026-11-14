@@ -6,6 +6,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Read-only GitHub token by default: no job in this workflow writes to the
+# repository, API, or packages. A write scope, if ever needed, belongs on
+# the single job asking for it.
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -48,9 +54,54 @@ jobs:
       - name: no-todo-markers-in-production-code
         run: make lint-no-todos
 
+  # Docs-only classification backs the repo-state job gates below: every
+  # changed PR file matching docs/** or **/*.md is documentation and cannot
+  # change dependencies, build output, or release artifacts, so scanning the
+  # dependency state of the merge ref would only re-report pre-existing main
+  # health. The classifier fails closed (docs_only=false) on anything it
+  # cannot observe, including empty diffs and git errors.
+  changes:
+    name: Detect docs-only PR
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.detect.outputs.docs_only }}
+    steps:
+      # Full history is only needed to compute the merge-base diff of a
+      # pull_request; other events skip checkout and default to full CI.
+      - uses: actions/checkout@v7
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 0
+      - name: Classify changed files
+        id: detect
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "event $EVENT_NAME: not a pull request, running full CI"
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          .github/scripts/detect-docs-only.sh >> "$GITHUB_OUTPUT"
+
+  # Positive green signal for docs-only PRs (which skip the repo-state jobs).
+  docs-only-skip:
+    name: Docs-only PR (repo-state scans skipped)
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.docs_only == 'true'
+    steps:
+      - name: Confirm skip
+        run: |
+          echo "Documentation-only PR: repo-state scans skipped (a docs diff cannot cause or fix a vulnerability)."
+
   unit-tests:
     name: Unit tests
     runs-on: ubuntu-latest
+    needs: [changes]
+    # Docs-only PRs skip this repo-state job; mixed diffs run it (see changes).
+    if: needs.changes.outputs.docs_only != 'true'
     steps:
       - uses: actions/checkout@v7
         with:
@@ -104,6 +155,9 @@ jobs:
   e2e:
     name: Build & E2E
     runs-on: ubuntu-latest
+    needs: [changes]
+    # Docs-only PRs skip this repo-state job; mixed diffs run it (see changes).
+    if: needs.changes.outputs.docs_only != 'true'
     env:
       # The shell adapter is now an out-of-process discovered binary (not an
       # in-process builtin), so e2e steps must find the built adapter plugins.
@@ -232,6 +286,10 @@ jobs:
   osv-scan:
     name: Vulnerability scan (osv-scanner)
     runs-on: ubuntu-latest
+    needs: [changes]
+    # A docs diff cannot introduce an advisory; skipping avoids failing docs
+    # PRs on pre-existing main health. Mixed diffs run it (see changes).
+    if: needs.changes.outputs.docs_only != 'true'
     # WS51 cleared the dependency backlog and flipped this gate to blocking: it is
     # now a required check in all-checks. A PR introducing a dependency with a
     # known OSV advisory fails CI until upgraded or time-boxed in osv-scanner.toml.
@@ -261,6 +319,10 @@ jobs:
   govulncheck:
     name: Vulnerability scan (govulncheck)
     runs-on: ubuntu-latest
+    needs: [changes]
+    # A docs diff cannot import a vulnerable symbol; skipping avoids failing
+    # docs PRs on pre-existing main health. Mixed diffs run it (see changes).
+    if: needs.changes.outputs.docs_only != 'true'
     # Blocking govulncheck gate. Detects known Go vulnerabilities in
     # reachable code paths across all workspace modules. Failures must be
     # resolved by upgrading the affected dependency or documenting a reachable
@@ -290,6 +352,10 @@ jobs:
   deps-report:
     name: Dependency freshness report
     runs-on: ubuntu-latest
+    needs: [changes]
+    # A docs diff cannot change the dependency tree; skipping avoids flapping
+    # docs PRs on pre-existing main drift. Mixed diffs run it (see changes).
+    if: needs.changes.outputs.docs_only != 'true'
     # WS50: non-blocking by design. Enforcement of "latest major.minor" lives
     # with review + the catch-up workstream (WS51); a hard gate would flap on
     # upstream release cadence. This job only surfaces drift on every PR.
@@ -336,7 +402,7 @@ jobs:
         startsWith(github.head_ref, 'release/') ||
         contains(github.event.pull_request.title, '-rc')
       )
-    needs: [unit-tests, e2e]
+    needs: [unit-tests, e2e, changes]
     steps:
       - uses: actions/checkout@v7
 
@@ -412,7 +478,13 @@ jobs:
     # failure surfaces before a coverage failure. Floors live in
     # tools/coverage-floors.txt; a PR that drops below floor must add tests or
     # lower the floor with a documented reason.
-    needs: unit-tests
+    needs: [unit-tests, changes]
+    # The coverage ratchet consumes unit-test artifacts (state surface), so it
+    # never runs for docs-only PRs: with unit-tests skipped the job's own
+    # docs_only condition keeps it skipped too. The changes leg makes the
+    # outcome explicit in the graph instead of relying on implicit upstream
+    # success().
+    if: needs.changes.outputs.docs_only != 'true'
     steps:
       - uses: actions/checkout@v7
         with:
@@ -456,7 +528,10 @@ jobs:
     # floors downward, removing an existing floor line, or merging its own PR.
     # A floor decrease or removal is allowed only when the PR carries the
     # explicit human-approval label.
-    if: github.event_name == 'pull_request'
+    needs: [changes]
+    # PR-only guard (non-PR events have no base floor file to diff); it reads
+    # coverage floors, a repo-state file, so docs-only PRs skip it too.
+    if: github.event_name == 'pull_request' && needs.changes.outputs.docs_only != 'true'
     steps:
       - uses: actions/checkout@v7
         with:
@@ -488,9 +563,58 @@ jobs:
           fi
           go run ./tools/coverage-floor-guard --base /tmp/coverage-floors.base.txt --head /tmp/coverage-floors.head.txt $approved
 
+  # Aggregates the whole CI set. Plain `needs` + a success-only job would be
+  # skipped whenever any docs-only-gated job above is skipped, so the result
+  # is recomputed explicitly: skipped jobs (docs-only PRs) count as green,
+  # failures and cancellations still fail the gate. The changes job itself
+  # must succeed — a failed classification skips the repo-state jobs as
+  # dependents, so accepting "skipped" for changes would turn a broken
+  # classifier into a green aggregate. Branch protection treats skipped
+  # required checks as neutral, but this aggregate also gives required checks
+  # an explicit green target on docs-only PRs.
   all-checks:
     name: All checks passed
     runs-on: ubuntu-latest
-    needs: [lint, unit-tests, e2e, install-script-syntax, proto-drift, workspace-sync-drift, osv-scan, govulncheck, coverage-check, coverage-floor-ratchet-guard]
+    needs: [changes, lint, unit-tests, e2e, install-script-syntax, proto-drift, workspace-sync-drift, osv-scan, govulncheck, coverage-check, coverage-floor-ratchet-guard]
+    if: ${{ !cancelled() }}
     steps:
-      - run: echo "All required checks passed."
+      # Each line is a real template expression; hyphenated job names need
+      # bracket access in the Actions expression grammar.
+      - name: Recompute aggregate result
+        env:
+          RESULTS: |
+            lint=${{ needs['lint'].result }}
+            unit-tests=${{ needs['unit-tests'].result }}
+            e2e=${{ needs['e2e'].result }}
+            install-script-syntax=${{ needs['install-script-syntax'].result }}
+            proto-drift=${{ needs['proto-drift'].result }}
+            workspace-sync-drift=${{ needs['workspace-sync-drift'].result }}
+            osv-scan=${{ needs['osv-scan'].result }}
+            govulncheck=${{ needs['govulncheck'].result }}
+            coverage-check=${{ needs['coverage-check'].result }}
+            coverage-floor-ratchet-guard=${{ needs['coverage-floor-ratchet-guard'].result }}
+          CHANGES_RESULT: ${{ needs['changes'].result }}
+        run: |
+          set -eu
+          status=0
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            case "$line" in
+              *=success|*=skipped) ;;
+              *)
+                echo "::error::job ${line%%=*} finished with ${line#*=}"
+                status=1
+                ;;
+            esac
+          done <<EOF
+          $RESULTS
+          EOF
+          # The docs-only classification must succeed, not merely skip.
+          if [ "$CHANGES_RESULT" != "success" ]; then
+            echo "::error::changes job finished with ${CHANGES_RESULT}: docs-only classification must succeed to skip repo-state jobs"
+            exit 1
+          fi
+          if [ "$status" -ne 0 ]; then
+            exit 1
+          fi
+          echo "All required checks passed (docs-only repo-state skips accepted)."
