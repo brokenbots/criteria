@@ -21,6 +21,7 @@ final.
 | [ADR-0006](ADR-0006-sendprompt-injection.md) | SendPrompt: mid-turn agent message injection; redirect deferred | Accepted |
 | [ADR-0007](ADR-0007-peer-execution.md) | Peer execution: criteria-to-criteria remote adapters (staged A→B) | Proposed |
 | [ADR-0008](ADR-0008-criteria-as-adapter.md) | Criteria-as-adapter — a criteria instance serving the adapter v2 surface | Proposed |
+| [ADR-0009](ADR-0009-subworkflow-overrides.md) | Subworkflow environment/adapter overrides — pass-in/pinning model | Proposed |
 | [ADR-0010](ADR-0010-kintsugi-split.md) | Kintsugi split — Parapet standalone repo + castle-side proto/SDK extraction | Accepted |
 | [ADR-0012](ADR-0012-interactive-shell.md) | Interactive criteria shell — one `criteria shell` verb surface over LocalControlService (human REPL + AI-harness NDJSON; free graph edits under linkage validation) | Accepted |
 | [ADR-0013](ADR-0013-decision-adapter.md) | decision adapter — the System One decision-model family behind one adapter (one `/v1/systemone` wire for TypeSafe Jev cloud + local Ollama; strict question contract, fail-closed step outcome mapping) | Accepted |
