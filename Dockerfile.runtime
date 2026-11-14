@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1.7
 
-FROM golang:1.27-alpine AS build
+# The patch pin tracks the root go.mod toolchain line (1.27.4 ships the
+# net/http fix for GO-2026-6859 the built binary embeds), pinning this
+# builder to golang:1.27.4-alpine. Keep it exact-pinned.
+FROM golang:1.27.4-alpine AS build
 
 WORKDIR /src
 
