@@ -23,16 +23,7 @@ final.
 | [ADR-0008](ADR-0008-criteria-as-adapter.md) | Criteria-as-adapter — a criteria instance serving the adapter v2 surface | Proposed |
 | [ADR-0010](ADR-0010-kintsugi-split.md) | Kintsugi split — Parapet standalone repo + castle-side proto/SDK extraction | Accepted |
 | [ADR-0012](ADR-0012-interactive-shell.md) | Interactive criteria shell — one `criteria shell` verb surface over LocalControlService (human REPL + AI-harness NDJSON; free graph edits under linkage validation) | Accepted |
+| [ADR-0013](ADR-0013-decision-adapter.md) | decision adapter — the System One decision-model family behind one adapter (one `/v1/systemone` wire for TypeSafe Jev cloud + local Ollama; strict question contract, fail-closed step outcome mapping) | Accepted |
 | [ADR-0014](ADR-0014-environment-host-of-record.md) | The environment as host-of-record: one session/ownership seam | Accepted |
-
-> **Pending — no record yet.** [ADR-0013] (decision adapter: System One
-> decision-model calls with a strict question contract and fail-closed step
-> outcome mapping) is not written yet — its record tracks Kanboard KB-199, and
-> this index only lists ADRs that exist, never a row for an unwritten one.
-> Until the record lands, the contract it will capture is documented in the
-> adapter's own repo: the
-> [`criteria-adapter-decision` README](https://github.com/brokenbots/criteria-adapter-decision)
-> (full adapter contract) and its
-> [backend guide](https://github.com/brokenbots/criteria-adapter-decision/blob/main/docs/backends.md).
 
 [template]: https://github.com/joelparkerhenderson/architecture-decision-record
