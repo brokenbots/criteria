@@ -836,7 +836,7 @@ func isTerminalRunStatus(status string) bool {
 // this run's channel and owner identity (ADR-0006). Compile and option errors
 // are reported together; on a resume-option failure the loader is shut down
 // because the caller's shutdown deferral is only registered on success.
-func assembleAgentRunEngine(ctx context.Context, workflowPath string, cp *StepCheckpoint, reattachResp *pb.ReattachRunResponse, log *slog.Logger, opts *agentOptions, runID string, promptCh <-chan *pb.AgentPrompt, criteriaID string) (*workflow.FSMGraph, *adapterhost.DefaultLoader, []engine.Option, error) {
+func assembleAgentRunEngine(ctx context.Context, workflowPath string, cp *StepCheckpoint, reattachResp *pb.ReattachRunResponse, log *slog.Logger, opts *agentOptions, runID string, promptCh <-chan *pb.AgentPrompt, criteriaID string) (*workflow.FSMGraph, adapterhost.Loader, []engine.Option, error) {
 	graph, loader, err := compileAgentWorkflow(ctx, workflowPath, log, opts)
 	if err != nil {
 		return nil, nil, nil, err
@@ -1022,8 +1022,10 @@ func runAndDrain(agentCtx, runCtx context.Context, log *slog.Logger, eng *engine
 
 // compileAgentWorkflow parses and compiles the workflow at workflowPath using
 // the same pipeline as local/server apply. It returns the compiled graph and
-// the adapter loader (which the caller must shut down).
-func compileAgentWorkflow(ctx context.Context, workflowPath string, log *slog.Logger, opts *agentOptions) (*workflow.FSMGraph, *adapterhost.DefaultLoader, error) {
+// the adapter loader (which the caller must shut down). It is a function
+// variable so tests can wrap loader construction and observe loader
+// shutdown on failure paths.
+var compileAgentWorkflow = func(ctx context.Context, workflowPath string, log *slog.Logger, opts *agentOptions) (*workflow.FSMGraph, adapterhost.Loader, error) {
 	_, graph, loader, err := compileForExecution(ctx, workflowPath, log, opts.warnsAsErrors, opts.allowUnsigned, opts.subworkflowRoots...)
 	if err != nil {
 		return nil, nil, err
