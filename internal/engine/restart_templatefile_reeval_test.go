@@ -208,4 +208,79 @@ func TestRestart_TemplateFileInputReevaluationByteIdentical(t *testing.T) {
 	}
 }
 
+// TestRestart_TemplateFileReeval_ServerBlobLegacyShape reproduces the server
+// reattach shape that lost typed variable values: the orchestrator assembles
+// the wire VariableScope from string-rendered events, so the restored blob
+// carries only the lossy legacy "var" map plus step outputs — never the
+// vars_typed pair. The resumed engine must re-apply the launch-time typed
+// overrides on top of the restored scope, so the re-entered collect step
+// re-evaluates its templatefile() input with the same typed values as the
+// pre-restart render (jsonencode over a list(string) stays a list and
+// shellquote accepts it); without that re-application the rendered variables
+// fall back to declared defaults and shellquote rejects the value.
+func TestRestart_TemplateFileReeval_ServerBlobLegacyShape(t *testing.T) {
+	dir := t.TempDir()
+	g := kb411TemplateFileGraph(t, dir)
+
+	overrides := map[string]cty.Value{
+		"repos":     cty.ListVal([]cty.Value{cty.StringVal("infra"), cty.StringVal("tools")}),
+		"sweep_key": cty.StringVal("nightly"),
+	}
+
+	recorderA := &templatefileRecorderAdapter{fakeAdapter: fakeAdapter{name: "noop", outcome: "success"}}
+	loaderA := &fakeLoader{adapters: map[string]adapterhost.Handle{"noop": recorderA}}
+	engA := NewTestEngine(g, loaderA, &fakeSink{},
+		WithVarOverrides(overrides),
+		WithWorkflowDir(dir))
+
+	if err := engA.Run(context.Background()); err != nil {
+		t.Fatalf("initial run: %v", err)
+	}
+	commandsA := recorderA.rendered()
+	if len(commandsA) != 1 {
+		t.Fatalf("initial run recorded %d renders, want 1", len(commandsA))
+	}
+	cmdA := commandsA[0]
+	for _, want := range []string{`key="$( 'nightly' )"`, `repos=( '["infra","tools"]' )`} {
+		if !strings.Contains(cmdA, want) {
+			t.Errorf("initial render missing %q; command:\n%s", want, cmdA)
+		}
+	}
+
+	// Server-shaped legacy blob: legacy lossy string "var" map plus the
+	// collect step's captured outputs; no vars_typed pair (the wire channel
+	// cannot carry one). Modelled on the blob a ReattachRun response delivers.
+	legacyBlob := `{"var":{"repos":"[\"infra\",\"tools\"]"},"steps":{"collect":{"stdout":"artifact-42.bin","exit_code":"0"}}}`
+	restoredVars, restoredIter, err := workflow.RestoreVarScope(legacyBlob, g)
+	if err != nil {
+		t.Fatalf("RestoreVarScope: %v", err)
+	}
+
+	recorderB := &templatefileRecorderAdapter{fakeAdapter: fakeAdapter{name: "noop", outcome: "success"}}
+	loaderB := &fakeLoader{adapters: map[string]adapterhost.Handle{"noop": recorderB}}
+	engB := NewTestEngine(g, loaderB, &fakeSink{},
+		WithResumedVars(restoredVars),
+		WithResumedIter(restoredIter),
+		WithVarOverrides(overrides),
+		WithWorkflowDir(dir))
+
+	if err := engB.RunFrom(context.Background(), "collect", 1); err != nil {
+		t.Fatalf("restarted run: %v", err)
+	}
+
+	commandsB := recorderB.rendered()
+	if len(commandsB) != 1 {
+		t.Fatalf("restarted run recorded %d renders, want 1", len(commandsB))
+	}
+	cmdB := commandsB[0]
+	if cmdB != cmdA {
+		t.Errorf("restart re-evaluation over the server-shaped legacy blob is not byte-identical:\n--- first render ---\n%s\n--- restart render ---\n%s", cmdA, cmdB)
+	}
+	for _, want := range []string{`key="$( 'nightly' )"`, `repos=( '["infra","tools"]' )`} {
+		if !strings.Contains(cmdB, want) {
+			t.Errorf("restart render missing %q; command:\n%s", want, cmdB)
+		}
+	}
+}
+
 func boolPtr(v bool) *bool { return &v }
