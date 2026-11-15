@@ -1096,17 +1096,18 @@ func finishIterationInGraph(st *RunState, stepName string, graph *workflow.FSMGr
 	return co.Next, nil
 }
 
-// seedRunVars returns the restored scope unchanged for resumed runs. For fresh
-// runs it seeds from graph defaults, applies any CLI overrides, resolves secret
-// variable provider origins, and emits OnVariableSet events.
+// seedRunVars returns the restored scope re-applied with the launch-time
+// overrides for resumed runs. For fresh runs it seeds from graph defaults,
+// applies any CLI overrides, resolves secret variable provider origins, and
+// emits OnVariableSet events.
 func (e *Engine) seedRunVars(ctx context.Context, sink Sink, reg *secrets.Registry) (map[string]cty.Value, error) {
 	if e.resumedVars != nil {
-		return e.seedResumedVars(), nil
+		return e.seedResumedVars()
 	}
 	return e.seedFreshVars(ctx, sink, reg)
 }
 
-func (e *Engine) seedResumedVars() map[string]cty.Value {
+func (e *Engine) seedResumedVars() (map[string]cty.Value, error) {
 	// Locals are compile-time constants that are never persisted in the
 	// scope snapshot. Always reseed them from the current graph so that
 	// resumed runs have the same local.* bindings as fresh runs.
@@ -1115,7 +1116,24 @@ func (e *Engine) seedResumedVars() map[string]cty.Value {
 		resumed[k] = v
 	}
 	resumed["local"] = workflow.SeedLocalsFromGraph(e.graph)
-	return resumed
+	// Re-apply the launch-time overrides on top of the restored scope so a
+	// re-entered step re-evaluates input expressions with the same typed
+	// values the fresh engine used. The persisted scope (server blob or
+	// snapshot) cannot be relied on to carry structured values — see
+	// workflow.SerializeVarScope — so vars like jsonencode(var.list) would
+	// otherwise re-evaluate against a null default and lose type information.
+	// Overrides win over restored values; variables outside the override set
+	// keep their restored or declared value, and the restored step outputs
+	// and locals are left intact. A conversion failure fails the resume
+	// rather than silently defaulting the scope.
+	if len(e.varOverrides) > 0 {
+		var err error
+		resumed, err = workflow.ApplyVarOverrides(e.graph, resumed, e.varOverrides)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return resumed, nil
 }
 
 func (e *Engine) seedFreshVars(ctx context.Context, sink Sink, reg *secrets.Registry) (map[string]cty.Value, error) {
