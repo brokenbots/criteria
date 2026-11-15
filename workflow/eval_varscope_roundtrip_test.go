@@ -72,8 +72,6 @@ func TestVarScope_RoundTrip_EmptyScope(t *testing.T) {
 // intentionally different from the runtime values to prove the JSON overlay
 // wins over graph seeding, not just that types are preserved.
 func TestVarScope_RoundTrip_PrimitiveTypes(t *testing.T) {
-	t.Skip("known bug: RestoreVarScope does not overlay primitive var values from JSON scope; " +
-		"primitive type round-trip deferred to workstream eval-varscope-restore")
 	vars := map[string]cty.Value{
 		"var": cty.ObjectVal(map[string]cty.Value{
 			"greet": cty.StringVal("hello world"),
@@ -112,8 +110,9 @@ func TestVarScope_RoundTrip_PrimitiveTypes(t *testing.T) {
 
 // TestVarScope_RoundTrip_ListAndMap exercises two scenarios:
 //  1. Step outputs stored as multiple string key→value pairs (round-trips correctly).
-//  2. List/map vars in vars["var"] — demonstrates the known limitation that
-//     non-primitive cty types cannot be restored from the string serialization.
+//  2. List/map vars in vars["var"] — structured types ride the typed
+//     "vars_typed" cty-JSON pair and round-trip losslessly (the legacy string
+//     "var" map cannot represent them, which is why the typed pair exists).
 func TestVarScope_RoundTrip_ListAndMap(t *testing.T) {
 	t.Run("step_outputs_round_trip", func(t *testing.T) {
 		g := &FSMGraph{Variables: map[string]*VariableNode{}}
@@ -143,19 +142,40 @@ func TestVarScope_RoundTrip_ListAndMap(t *testing.T) {
 		}
 	})
 
-	t.Run("list_var_override_not_restored", func(t *testing.T) {
-		// Known limitation: non-primitive (list, map, object) vars are not
-		// restored from the JSON scope because CtyValueToString is lossy for
-		// these types. A list var serializes to a comma-joined string and cannot
-		// be recovered as a cty.List on restore. Complex-type vars always fall
-		// back to the FSMGraph default value.
-		//
-		// This means CLI var overrides for list/map/object types (even if
-		// ApplyVarOverrides were extended to support them) would be silently lost
-		// on crash-resume. See the [ARCH-REVIEW] note below.
-		t.Skip("known limitation: list/map/object vars fall back to FSMGraph defaults on restore; " +
-			"CtyValueToString is lossy for non-primitive types and overrides would be silently dropped. " +
-			"Tracked as [ARCH-REVIEW].")
+	t.Run("list_and_map_vars_round_trip", func(t *testing.T) {
+		// Structured vars round-trip losslessly through the typed
+		// "vars_typed"/"vars_typed_type" cty-JSON pair: a shell pipeline
+		// receiving jsonencode(var.repos) sees the identical pre-restart value
+		// after a crash-resume instead of a comma-joined string or a default.
+		g := fsmGraphWithVarDefaults(map[string]cty.Value{
+			"repos":  cty.ListValEmpty(cty.String),
+			"limits": cty.ObjectVal(map[string]cty.Value{"workers": cty.NumberIntVal(0)}),
+		})
+		vars := map[string]cty.Value{
+			"var": cty.ObjectVal(map[string]cty.Value{
+				"repos":  cty.ListVal([]cty.Value{cty.StringVal("infra"), cty.StringVal("tools")}),
+				"limits": cty.ObjectVal(map[string]cty.Value{"workers": cty.NumberIntVal(4)}),
+			}),
+			"steps": cty.EmptyObjectVal,
+		}
+
+		scopeJSON, err := SerializeVarScope(vars)
+		if err != nil {
+			t.Fatalf("SerializeVarScope: %v", err)
+		}
+		restored, _, err := RestoreVarScope(scopeJSON, g)
+		if err != nil {
+			t.Fatalf("RestoreVarScope: %v", err)
+		}
+
+		varObj := restored["var"]
+		assertCtyMapEqual(t, map[string]cty.Value{
+			"repos":  cty.ListVal([]cty.Value{cty.StringVal("infra"), cty.StringVal("tools")}),
+			"limits": cty.ObjectVal(map[string]cty.Value{"workers": cty.NumberIntVal(4)}),
+		}, map[string]cty.Value{
+			"repos":  varObj.GetAttr("repos"),
+			"limits": varObj.GetAttr("limits"),
+		})
 	})
 }
 
