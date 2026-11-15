@@ -2399,3 +2399,142 @@ func TestServerRestartUnmatchedFingerprintVarsNotLeaked(t *testing.T) {
 		t.Fatalf("old run must not render from the restarted invocation's vars, got chunks %q", chunks)
 	}
 }
+
+// malformedScopeReattachResp builds a reattach response whose persisted
+// variable scope does not parse. The scope-restore decode contract fails
+// closed, so any resume carrying this response must refuse to re-enter the
+// run instead of driving the workflow on graph-seeded defaults.
+func malformedScopeReattachResp(status, currentStep string) *pb.ReattachRunResponse {
+	return &pb.ReattachRunResponse{
+		CanResume:     true,
+		Status:        status,
+		CurrentStep:   currentStep,
+		VariableScope: "{not-json",
+	}
+}
+
+// assertCheckpointRetained asserts the step checkpoint for runID is still
+// listed on disk: a failed scope restore must leave the checkpoint in place
+// for a future recovery attempt instead of abandoning it.
+func assertCheckpointRetained(t *testing.T, runID string) {
+	t.Helper()
+	list, err := ListStepCheckpoints()
+	if err != nil {
+		t.Fatalf("ListStepCheckpoints: %v", err)
+	}
+	for _, item := range list {
+		if item.RunID == runID {
+			return
+		}
+	}
+	t.Errorf("step checkpoint for %q was removed on scope-restore failure; it must be retained for a future retry", runID)
+}
+
+// TestResumePausedRun_MalformedScopeFailsClosed pins the fail-closed
+// scope-restore contract on the paused re-entry path: a reattach response
+// whose variable scope does not parse must consume the run and fail the
+// resume with the checkpoint retained, never start the engine on
+// graph-seeded defaults and nothing published.
+func TestResumePausedRun_MalformedScopeFailsClosed(t *testing.T) {
+	requireNoGoroutineLeak(t)
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	wfFile := writeWorkflowFile(t, minimalWorkflow)
+	cp := &StepCheckpoint{RunID: "rpr-corrupt-scope", WorkflowPath: wfFile}
+	writeCheckpointDirect(t, stateDir, cp)
+
+	graph, err := parseWorkflowFromPath(context.Background(), wfFile)
+	if err != nil {
+		t.Fatalf("parseWorkflowFromPath: %v", err)
+	}
+
+	ft := &fakeTransport{}
+	consumed, resumeErr := resumePausedRun(context.Background(), discardLogger(), ft, cp, graph,
+		malformedScopeReattachResp("paused", "done"), nil, nil, nil)
+	if !consumed {
+		t.Error("a corrupt scope must still be consumed: the resume decision is made (fail), not abandoned")
+	}
+	if resumeErr == nil {
+		t.Fatal("expected the pause resume to fail on the unparseable persisted scope")
+	}
+	if !strings.Contains(resumeErr.Error(), `restore variable scope for run "rpr-corrupt-scope"`) {
+		t.Errorf("scope-restore error must name the contract, got: %v", resumeErr)
+	}
+	assertCheckpointRetained(t, cp.RunID)
+	if len(ft.published) != 0 {
+		t.Errorf("no engine events may be published after a scope-restore failure, got %d", len(ft.published))
+	}
+}
+
+// TestResumeActiveRun_MalformedScopeFailsClosed pins the fail-closed
+// scope-restore contract on the active re-entry path, including ordering:
+// the restore runs before the StepResumed marker, so a rejected re-entry
+// leaves no resumed marker for a run that never starts and the checkpoint
+// stays on disk for a future recovery attempt.
+func TestResumeActiveRun_MalformedScopeFailsClosed(t *testing.T) {
+	requireNoGoroutineLeak(t)
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	wfFile := writeWorkflowFile(t, minimalWorkflow)
+	cp := &StepCheckpoint{RunID: "rar-corrupt-scope", WorkflowPath: wfFile}
+	writeCheckpointDirect(t, stateDir, cp)
+
+	graph, err := parseWorkflowFromPath(context.Background(), wfFile)
+	if err != nil {
+		t.Fatalf("parseWorkflowFromPath: %v", err)
+	}
+
+	ft := &fakeTransport{}
+	consumed, resumeErr := resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph,
+		malformedScopeReattachResp("running", "collect"), nil, nil, nil)
+	if !consumed {
+		t.Error("a corrupt scope must still be consumed: the resume decision is made (fail), not abandoned")
+	}
+	if resumeErr == nil {
+		t.Fatal("expected the active resume to fail on the unparseable persisted scope")
+	}
+	if !strings.Contains(resumeErr.Error(), `restore variable scope for run "rar-corrupt-scope"`) {
+		t.Errorf("scope-restore error must name the contract, got: %v", resumeErr)
+	}
+	assertCheckpointRetained(t, cp.RunID)
+	for _, env := range ft.published {
+		if env.GetStepResumed() != nil {
+			t.Error("no StepResumed may be published when the scope restore fails: the restore runs before the resumed marker")
+		}
+	}
+}
+
+// TestResumeActiveRun_UnresolvableRunDirNotConsumed pins the second engine
+// build failure mode behind the buildResumedActiveEngine error split: when
+// the run data dir cannot be resolved, this process never owned the run, so
+// the resume is reported consumed=false with a nil error and the caller can
+// fall through to a fresh run — distinguishable from the corrupt-scope
+// failure above, which must fail the resume via consumed=true.
+func TestResumeActiveRun_UnresolvableRunDirNotConsumed(t *testing.T) {
+	requireNoGoroutineLeak(t)
+	stateDir := t.TempDir()
+	t.Setenv("CRITERIA_STATE_DIR", stateDir)
+
+	wfFile := writeWorkflowFile(t, minimalWorkflow)
+	// An empty run id cannot resolve a run data dir (run_id required), while
+	// the (empty) variable scope is parseable: this isolates dir resolution
+	// from the scope-restore failure mode.
+	cp := &StepCheckpoint{RunID: "", WorkflowPath: wfFile}
+
+	graph, err := parseWorkflowFromPath(context.Background(), wfFile)
+	if err != nil {
+		t.Fatalf("parseWorkflowFromPath: %v", err)
+	}
+
+	ft := &fakeTransport{}
+	consumed, resumeErr := resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph,
+		&pb.ReattachRunResponse{CanResume: true, Status: "running", CurrentStep: "done"}, nil, nil, nil)
+	if consumed {
+		t.Error("an unresolvable run dir must report consumed=false so the caller can start a fresh run")
+	}
+	if resumeErr != nil {
+		t.Errorf("an unresolvable run dir must not fail the resume, got: %v", resumeErr)
+	}
+}
