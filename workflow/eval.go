@@ -888,50 +888,65 @@ func RestoreVarScope(scopeJSON string, g *FSMGraph) (map[string]cty.Value, []Ite
 		vars["steps"] = steps
 	}
 
-	// Restore run-time variable values (typed cty-JSON form). The restored
-	// object overlays the graph seeds only where the attribute still exists in
-	// the declared var object and its cty type equals the declared type; a
-	// renamed, removed, or retyped variable keeps the declared default instead
-	// of feeding a drifted value into input-expression re-evaluation. Legacy
-	// checkpoints carry only the lossy string "var" map, which is intentionally
-	// not re-applied here — graph defaults win on restore, exactly as before
-	// the typed pair existed.
-	if varBytes, typeBytes, ok := typedVarsFromScope(raw); ok {
-		declared, errT := ctyjson.UnmarshalType(typeBytes)
-		if errT != nil {
-			return vars, nil, fmt.Errorf("restore variable types: %w", errT)
-		}
-		restored, errV := ctyjson.Unmarshal(varBytes, declared)
-		if errV != nil {
-			return vars, nil, fmt.Errorf("restore variable values: %w", errV)
-		}
-		if restored.IsNull() {
-			restored = cty.ObjectVal(map[string]cty.Value{})
-		}
-		if !restored.Type().IsObjectType() {
-			return vars, nil, fmt.Errorf("restore variables: expected an object, got %s", restored.Type().FriendlyName())
-		}
-		if seedObj, ok := vars["var"]; ok && seedObj != cty.NilVal && seedObj.Type().IsObjectType() {
-			vars["var"] = mergeRestoredVars(seedObj, restored)
-		}
+	if err := restoreTypedVars(raw, vars); err != nil {
+		return vars, nil, err
 	}
 
-	// Restore iteration cursor stack.
-	// Support both W10 array format and W07 single-object format.
+	return vars, restoreIterStack(raw), nil
+}
+
+// restoreTypedVars overlays run-time variable values from the typed cty-JSON
+// "vars_typed"/"vars_typed_type" pair onto the graph-seeded vars map. The
+// restored object overlays the graph seeds only where the attribute still
+// exists in the declared var object and its cty type equals the declared
+// type; a renamed, removed, or retyped variable keeps the declared default
+// instead of feeding a drifted value into input-expression re-evaluation.
+// Legacy checkpoints carry only the lossy string "var" map, which is
+// intentionally not re-applied here — graph defaults win on restore, exactly
+// as before the typed pair existed.
+func restoreTypedVars(raw map[string]interface{}, vars map[string]cty.Value) error {
+	varBytes, typeBytes, ok := typedVarsFromScope(raw)
+	if !ok {
+		return nil
+	}
+	declared, errT := ctyjson.UnmarshalType(typeBytes)
+	if errT != nil {
+		return fmt.Errorf("restore variable types: %w", errT)
+	}
+	restored, errV := ctyjson.Unmarshal(varBytes, declared)
+	if errV != nil {
+		return fmt.Errorf("restore variable values: %w", errV)
+	}
+	if restored.IsNull() {
+		restored = cty.ObjectVal(map[string]cty.Value{})
+	}
+	if !restored.Type().IsObjectType() {
+		return fmt.Errorf("restore variables: expected an object, got %s", restored.Type().FriendlyName())
+	}
+	if seedObj, ok := vars["var"]; ok && seedObj != cty.NilVal && seedObj.Type().IsObjectType() {
+		vars["var"] = mergeRestoredVars(seedObj, restored)
+	}
+	return nil
+}
+
+// restoreIterStack rebuilds the iteration cursor stack, supporting both the
+// W10 array format and the legacy W07 single-object format.
+func restoreIterStack(raw map[string]interface{}) []IterCursor {
 	var stack []IterCursor
-	if iterRaw, ok := raw["iter"]; ok {
-		switch v := iterRaw.(type) {
-		case []interface{}:
-			for _, elem := range v {
-				if m, ok := elem.(map[string]interface{}); ok {
-					stack = append(stack, deserializeIterCursor(m))
-				}
-			}
-		case map[string]interface{}:
-			// Legacy W07 single-cursor format.
-			stack = []IterCursor{deserializeIterCursor(v)}
-		}
+	iterRaw, ok := raw["iter"]
+	if !ok {
+		return nil
 	}
-
-	return vars, stack, nil
+	switch v := iterRaw.(type) {
+	case []interface{}:
+		for _, elem := range v {
+			if m, ok := elem.(map[string]interface{}); ok {
+				stack = append(stack, deserializeIterCursor(m))
+			}
+		}
+	case map[string]interface{}:
+		// Legacy W07 single-cursor format.
+		stack = []IterCursor{deserializeIterCursor(v)}
+	}
+	return stack
 }
