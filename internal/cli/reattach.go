@@ -6,6 +6,8 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/zclconf/go-cty/cty"
+
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/diagutil"
 	"github.com/brokenbots/criteria/internal/engine"
@@ -13,7 +15,6 @@ import (
 	servertrans "github.com/brokenbots/criteria/internal/transport/server"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/workflow"
-	"github.com/zclconf/go-cty/cty"
 )
 
 // reattachTransport is the minimal server-client interface required by the

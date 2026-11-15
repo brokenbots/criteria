@@ -706,21 +706,12 @@ func executeAgentAssignment(agentCtx, runCtx context.Context, log *slog.Logger, 
 		return err
 	}
 
-	graph, loader, err := compileAgentWorkflow(runCtx, workflowPath, log, opts)
+	graph, loader, engOpts, err := assembleAgentRunEngine(runCtx, workflowPath, cp, reattachResp, log, opts, runID, promptCh, client.CriteriaID())
 	if err != nil {
 		reportAgentAssignmentFailed(runCtx, log, publisher, runID, err)
 		return err
 	}
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(runCtx)) }()
-
-	engOpts, err := resumeEngineOptions(cp, reattachResp, graph, log, runID)
-	if err != nil {
-		reportAgentAssignmentFailed(runCtx, log, publisher, runID, err)
-		return err
-	}
-	// ADR-0006: carry this run's prompt channel and the agent's owner identity
-	// into the engine so delivered prompts can be authorized and routed (D1/D4).
-	engOpts = append(engOpts, engine.WithAgentPrompts(promptCh, client.CriteriaID(), runID))
 	eng, sink, runSink, state, err := buildAgentRun(agentCtx, runCtx, log, client, assignment, opts, publisher, graph, loader, dir, workflowPath, engOpts...)
 	if err != nil {
 		reportAgentAssignmentFailed(runCtx, log, publisher, runID, err)
@@ -838,6 +829,24 @@ func isTerminalRunStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+// assembleAgentRunEngine compiles the assignment workflow and assembles the
+// engine options for executing or resuming it, including prompt routing of
+// this run's channel and owner identity (ADR-0006). Compile and option errors
+// are reported together; on a resume-option failure the loader is shut down
+// because the caller's shutdown deferral is only registered on success.
+func assembleAgentRunEngine(ctx context.Context, workflowPath string, cp *StepCheckpoint, reattachResp *pb.ReattachRunResponse, log *slog.Logger, opts *agentOptions, runID string, promptCh <-chan *pb.AgentPrompt, criteriaID string) (*workflow.FSMGraph, *adapterhost.DefaultLoader, []engine.Option, error) {
+	graph, loader, err := compileAgentWorkflow(ctx, workflowPath, log, opts)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	engOpts, err := resumeEngineOptions(cp, reattachResp, graph, log, runID)
+	if err != nil {
+		_ = loader.Shutdown(context.WithoutCancel(ctx))
+		return nil, nil, nil, err
+	}
+	return graph, loader, append(engOpts, engine.WithAgentPrompts(promptCh, criteriaID, runID)), nil
 }
 
 // resumeEngineOptions builds engine options that restore a run's execution

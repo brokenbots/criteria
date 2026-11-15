@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/zclconf/go-cty/cty"
+
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/bootgate"
 	"github.com/brokenbots/criteria/internal/engine"
@@ -18,7 +20,6 @@ import (
 	"github.com/brokenbots/criteria/internal/tunables"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/workflow"
-	"github.com/zclconf/go-cty/cty"
 )
 
 func applyClientOptions(opts applyOptions) servertrans.Options {
