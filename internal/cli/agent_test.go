@@ -16,8 +16,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/brokenbots/criteria/internal/cli/applytest"
+	"github.com/brokenbots/criteria/internal/adapterhost"
 	servertrans "github.com/brokenbots/criteria/internal/transport/server"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
+	"github.com/brokenbots/criteria/workflow"
 )
 
 // startTestAgent starts runAgent against the supplied fake server and returns
@@ -807,4 +809,125 @@ func TestLoadResumeState_TerminalRunDeletesAdapterCheckpoints(t *testing.T) {
 	if len(entries) != 0 {
 		t.Errorf("adapter checkpoints survived the terminal clear: %d entries under %s", len(entries), snapDir)
 	}
+}
+
+// spyLoader wraps a real adapter loader and records Shutdown calls so a
+// test can assert the loader lifetime on assignment failure paths.
+type spyLoader struct {
+	adapterhost.Loader
+	mu        sync.Mutex
+	shutdowns int
+}
+
+func (s *spyLoader) Shutdown(ctx context.Context) error {
+	s.mu.Lock()
+	s.shutdowns++
+	s.mu.Unlock()
+	return s.Loader.Shutdown(ctx)
+}
+
+func (s *spyLoader) shutdownCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.shutdowns
+}
+
+// TestAgent_MalformedScopeFailsBeforeExecution drives the full agent
+// assignment path with a persisted checkpoint whose reattach response carries
+// an unparseable variable scope: the resume's fail-closed scope-restore
+// contract must fail the assignment before execution instead of running the
+// workflow on graph-seeded defaults. The RunFailed event is reported
+// centrally with the contract error, the step checkpoint stays on disk for a
+// future recovery attempt, and the compiled adapter loader is shut down even
+// though the caller's shutdown deferral is only registered on success.
+func TestAgent_MalformedScopeFailsBeforeExecution(t *testing.T) {
+	requireNoGoroutineLeak(t)
+	fake := applytest.New(t)
+	stateDir := t.TempDir()
+
+	runID := uuid.NewString()
+	fake.SetReattachState(runID, "running", "collect", 0, "{not-json", "")
+
+	// Wrap loader construction so the failure-path shutdown is observable:
+	// assembleAgentRunEngine must shut the loader down itself when resume
+	// option assembly fails, before executeAgentAssignment registers its
+	// own deferral. Only the first compile (the failing assignment) is
+	// wrapped; a later assignment's successful run has its own shutdown
+	// contract.
+	var spy *spyLoader
+	origCompile := compileAgentWorkflow
+	compileAgentWorkflow = func(ctx context.Context, workflowPath string, log *slog.Logger, opts *agentOptions) (*workflow.FSMGraph, adapterhost.Loader, error) {
+		graph, loader, err := origCompile(ctx, workflowPath, log, opts)
+		if err != nil {
+			return nil, nil, err
+		}
+		if spy == nil {
+			spy = &spyLoader{Loader: loader}
+			loader = spy
+		}
+		return graph, loader, nil
+	}
+	t.Cleanup(func() { compileAgentWorkflow = origCompile })
+
+	wfFile := writeWorkflowFile(t, minimalWorkflow)
+	writeCheckpointDirect(t, stateDir, &StepCheckpoint{RunID: runID, WorkflowPath: wfFile})
+
+	cancel, errCh := startAgentWithStateDir(t, fake, stateDir)
+	defer cancel()
+	fake.WaitForCond(t, 5*time.Second, func() bool { return fake.ControlAttachCount() > 0 })
+
+	fake.QueueAssignment(makeAssignment(runID, "malformed_scope", minimalWorkflow))
+	fake.WaitForCond(t, 10*time.Second, func() bool { return runHasEventOfType(fake, runID, "RunFailed") })
+
+	// Exactly one terminal failure, naming the scope-restore contract, and
+	// nothing else for the run: no execution happened on graph-seeded
+	// defaults. reportAgentAssignmentFailed drains the publisher before
+	// returning, so the event log is final at this point.
+	var rfReason string
+	for _, env := range fake.Events() {
+		if env.RunId != runID {
+			continue
+		}
+		if rf := env.GetRunFailed(); rf != nil {
+			rfReason = rf.GetReason()
+		}
+	}
+	if runEventCountOfType(fake, runID, "RunFailed") != 1 {
+		t.Errorf("expected exactly one RunFailed for %q, got %d", runID, runEventCountOfType(fake, runID, "RunFailed"))
+	}
+	if runEventCountOfType(fake, runID, "RunCompleted") != 0 {
+		t.Error("the assignment must fail, not complete on graph-seeded defaults")
+	}
+	if stepEnteredCount(fake, runID, "collect") != 0 {
+		t.Error("no step may execute when the persisted scope cannot be restored")
+	}
+	if !strings.Contains(rfReason, "restore variable scope for run "+runID) {
+		t.Errorf("RunFailed reason %q should name the scope-restore contract for %q", rfReason, runID)
+	}
+
+	// The failure did not clean up the crashed run: the step checkpoint is
+	// retained so a later repair can retry the resume.
+	cp, err := readStepCheckpoint(runID)
+	if err != nil || cp == nil {
+		t.Errorf("step checkpoint must survive the failed assignment (cp=%v err=%v)", cp, err)
+	}
+
+	// The agent must remain available: a subsequent assignment with a clean
+	// scope still succeeds after the failed resume.
+	nextID := uuid.NewString()
+	fake.QueueAssignment(makeAssignment(nextID, "two_step", twoStepWorkflow))
+	fake.WaitForCond(t, 10*time.Second, func() bool { return runHasEventOfType(fake, nextID, "RunCompleted") })
+
+	// assembleAgentRunEngine shut the compiled loader down on the option
+	// failure path; the caller only registers the shutdown deferral after
+	// option assembly succeeds.
+	if spy == nil {
+		t.Fatal("compile wrap was not invoked: the assignment never compiled its workflow")
+	}
+	if got := spy.shutdownCount(); got != 1 {
+		t.Errorf("loader shutdown calls on the failed assignment = %d, want 1", got)
+	}
+
+	cancel()
+	waitAgent(t, errCh)
 }
