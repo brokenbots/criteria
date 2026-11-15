@@ -277,7 +277,7 @@ func TestExecuteServerRun_Cancellation(t *testing.T) {
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
 	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
-	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel, nil, "")
+	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel, nil, "", nil)
 	if err != nil {
 		t.Fatalf("setupServerRun: %v", err)
 	}
@@ -367,7 +367,7 @@ func TestExecuteServerRun_TimeoutPropagation(t *testing.T) {
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(bgCtx)) }()
 
 	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
-	client, runID, resumed, _, err := setupServerRun(bgCtx, log, graph, src, fake.URL(), "test", &copts, cancel, nil, "")
+	client, runID, resumed, _, err := setupServerRun(bgCtx, log, graph, src, fake.URL(), "test", &copts, cancel, nil, "", nil)
 	if err != nil {
 		t.Fatalf("setupServerRun: %v", err)
 	}
@@ -452,7 +452,7 @@ func TestExecuteServerRun_CastleBoundaryPauseAndSignalLessResume(t *testing.T) {
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
 	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
-	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel, nil, "")
+	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel, nil, "", nil)
 	if err != nil {
 		t.Fatalf("setupServerRun: %v", err)
 	}
@@ -547,7 +547,7 @@ func TestSetupServerRun_TLSDisable(t *testing.T) {
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
 	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
-	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel, nil, "")
+	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel, nil, "", nil)
 	if err != nil {
 		t.Fatalf("setupServerRun: %v", err)
 	}
@@ -593,7 +593,7 @@ func TestSetupServerRun_TLSEnable(t *testing.T) {
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
 	copts := servertrans.Options{TLSMode: servertrans.TLSEnable, CAFile: caFile}
-	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel, nil, "")
+	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel, nil, "", nil)
 	if err != nil {
 		t.Fatalf("setupServerRun with TLS: %v", err)
 	}
@@ -652,7 +652,7 @@ func TestSetupServerRun_MTLS(t *testing.T) {
 		CertFile: certFile,
 		KeyFile:  keyFile,
 	}
-	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel, nil, "")
+	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel, nil, "", nil)
 	if err != nil {
 		t.Fatalf("setupServerRun with mTLS: %v", err)
 	}
@@ -680,7 +680,7 @@ func TestSetupServerRun_MTLSMissingCert(t *testing.T) {
 
 	log := newApplyLogger()
 	copts := servertrans.Options{TLSMode: servertrans.TLSMutual}
-	_, _, _, _, err := setupServerRun(context.Background(), log, nil, nil, "https://localhost:9999", "test", &copts, nil, nil, "")
+	_, _, _, _, err := setupServerRun(context.Background(), log, nil, nil, "https://localhost:9999", "test", &copts, nil, nil, "", nil)
 	if err == nil {
 		t.Fatal("expected error for mtls without cert")
 	}
@@ -731,7 +731,7 @@ func TestSetupServerRun_MTLSRejectsCACert(t *testing.T) {
 		CertFile: certFile,
 		KeyFile:  keyFile,
 	}
-	_, _, _, _, err = setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel, nil, "")
+	_, _, _, _, err = setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel, nil, "", nil)
 	if err == nil {
 		t.Fatal("expected setupServerRun to fail: CA cert must be rejected as a client credential")
 	}
@@ -766,7 +766,7 @@ func TestDrainResumeCycles_PauseThenResume(t *testing.T) {
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
 	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
-	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel, nil, "")
+	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel, nil, "", nil)
 	if err != nil {
 		t.Fatalf("setupServerRun: %v", err)
 	}
@@ -957,7 +957,7 @@ func TestDrainResumeCycles_StreamDropAndReconnect(t *testing.T) {
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
 	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
-	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel, nil, "")
+	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "test", &copts, cancel, nil, "", nil)
 	if err != nil {
 		t.Fatalf("setupServerRun: %v", err)
 	}

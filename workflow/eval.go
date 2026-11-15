@@ -686,13 +686,19 @@ func WithIndexedStepOutput(vars map[string]cty.Value, stepName string, index cty
 // SerializeVarScope encodes the run vars map and optional iteration cursor
 // stack into a JSON string for persistence. The format is:
 //
-//	{"var": {"name": "value"}, "steps": {"step": {"key": "value"}}, "iter": [...]}
+//	{"var": {"name": "value"}, "steps": {"step": {"key": "value"}}, "iter": [...],
+//	 "vars_typed": {...}, "vars_typed_type": {...}}
 //
-// The "var" map uses string values only; null-valued variables are omitted
-// (key absent). On restore, absent keys fall back to FSMGraph defaults.
-// The iter field is a JSON array of cursor objects; it is omitted when the
-// stack is empty. The server stores this blob verbatim without interpreting
-// cursor internals. See IterCursor for field documentation.
+// Variable values are carried twice. The legacy "var" map is kept because
+// older readers restore from it, but it is lossy: values are stringified and
+// null-valued variables are omitted (key absent). The typed
+// "vars_typed"/"vars_typed_type" cty-JSON pair is the lossless channel and
+// the one RestoreVarScope prefers, so a restart re-evaluation of run-time
+// variables sees the exact pre-restart values (structured types included).
+// On restore, attributes absent from the typed pair fall back to FSMGraph
+// defaults. The iter field is a JSON array of cursor objects; it is omitted
+// when the stack is empty. The server stores this blob verbatim without
+// interpreting cursor internals. See IterCursor for field documentation.
 func SerializeVarScope(vars map[string]cty.Value, cursorStack ...[]IterCursor) (string, error) {
 	scope := map[string]interface{}{}
 	if varObj, ok := vars["var"]; ok && varObj != cty.NilVal && varObj.Type().IsObjectType() {
@@ -707,6 +713,13 @@ func SerializeVarScope(vars map[string]cty.Value, cursorStack ...[]IterCursor) (
 			}
 		}
 		scope["var"] = varMap
+		valBytes, errV := ctyjson.Marshal(varObj, varObj.Type())
+		typeBytes, errT := ctyjson.MarshalType(varObj.Type())
+		if err := errors.Join(errV, errT); err != nil {
+			return "", fmt.Errorf("cannot serialize variables: %w", err)
+		}
+		scope["vars_typed"] = string(valBytes)
+		scope["vars_typed_type"] = string(typeBytes)
 	}
 	if stepsObj, ok := vars["steps"]; ok && stepsObj != cty.NilVal && stepsObj.Type().IsObjectType() {
 		// Step outputs are stored with their native cty type. Serialize the whole
@@ -819,6 +832,38 @@ func restoreStepOutputs(raw map[string]interface{}) (cty.Value, error) {
 	return cty.NilVal, nil
 }
 
+// typedVarsFromScope extracts the typed (cty-JSON) variable value and type
+// bytes from a decoded scope map. It returns ok=false when the typed form is
+// absent (e.g. a legacy checkpoint), so restore falls back to graph defaults.
+func typedVarsFromScope(raw map[string]interface{}) (valBytes, typeBytes []byte, ok bool) {
+	v, vok := raw["vars_typed"].(string)
+	t, tok := raw["vars_typed_type"].(string)
+	if !vok || !tok {
+		return nil, nil, false
+	}
+	return []byte(v), []byte(t), true
+}
+
+// mergeRestoredVars overlays restored variable values onto the graph-seeded
+// var object. Only attributes present in both objects with equal cty types
+// are overlaid; the seed value survives everywhere else.
+func mergeRestoredVars(seeded, restored cty.Value) cty.Value {
+	seededTypes := seeded.Type().AttributeTypes()
+	restoredTypes := restored.Type().AttributeTypes()
+	merged := make(map[string]cty.Value, len(seededTypes))
+	for name := range seededTypes {
+		merged[name] = seeded.GetAttr(name)
+	}
+	for name, restoredType := range restoredTypes {
+		seededType, ok := seededTypes[name]
+		if !ok || !seededType.Equals(restoredType) {
+			continue
+		}
+		merged[name] = restored.GetAttr(name)
+	}
+	return cty.ObjectVal(merged)
+}
+
 // RestoreVarScope rebuilds a run's vars map and iteration cursor stack from
 // a JSON-encoded scope snapshot and the compiled workflow graph. Variable
 // defaults come from the graph; step outputs are restored from the JSON scope.
@@ -845,22 +890,65 @@ func RestoreVarScope(scopeJSON string, g *FSMGraph) (map[string]cty.Value, []Ite
 		vars["steps"] = steps
 	}
 
-	// Restore iteration cursor stack.
-	// Support both W10 array format and W07 single-object format.
-	var stack []IterCursor
-	if iterRaw, ok := raw["iter"]; ok {
-		switch v := iterRaw.(type) {
-		case []interface{}:
-			for _, elem := range v {
-				if m, ok := elem.(map[string]interface{}); ok {
-					stack = append(stack, deserializeIterCursor(m))
-				}
-			}
-		case map[string]interface{}:
-			// Legacy W07 single-cursor format.
-			stack = []IterCursor{deserializeIterCursor(v)}
-		}
+	if err := restoreTypedVars(raw, vars); err != nil {
+		return vars, nil, err
 	}
 
-	return vars, stack, nil
+	return vars, restoreIterStack(raw), nil
+}
+
+// restoreTypedVars overlays run-time variable values from the typed cty-JSON
+// "vars_typed"/"vars_typed_type" pair onto the graph-seeded vars map. The
+// restored object overlays the graph seeds only where the attribute still
+// exists in the declared var object and its cty type equals the declared
+// type; a renamed, removed, or retyped variable keeps the declared default
+// instead of feeding a drifted value into input-expression re-evaluation.
+// Legacy checkpoints carry only the lossy string "var" map, which is
+// intentionally not re-applied here — graph defaults win on restore, exactly
+// as before the typed pair existed.
+func restoreTypedVars(raw map[string]interface{}, vars map[string]cty.Value) error {
+	varBytes, typeBytes, ok := typedVarsFromScope(raw)
+	if !ok {
+		return nil
+	}
+	declared, errT := ctyjson.UnmarshalType(typeBytes)
+	if errT != nil {
+		return fmt.Errorf("restore variable types: %w", errT)
+	}
+	restored, errV := ctyjson.Unmarshal(varBytes, declared)
+	if errV != nil {
+		return fmt.Errorf("restore variable values: %w", errV)
+	}
+	if restored.IsNull() {
+		restored = cty.ObjectVal(map[string]cty.Value{})
+	}
+	if !restored.Type().IsObjectType() {
+		return fmt.Errorf("restore variables: expected an object, got %s", restored.Type().FriendlyName())
+	}
+	if seedObj, ok := vars["var"]; ok && seedObj != cty.NilVal && seedObj.Type().IsObjectType() {
+		vars["var"] = mergeRestoredVars(seedObj, restored)
+	}
+	return nil
+}
+
+// restoreIterStack rebuilds the iteration cursor stack, supporting both the
+// W10 array format and the legacy W07 single-object format.
+func restoreIterStack(raw map[string]interface{}) []IterCursor {
+	var stack []IterCursor
+	iterRaw, ok := raw["iter"]
+	if !ok {
+		return nil
+	}
+	switch v := iterRaw.(type) {
+	case []interface{}:
+		for _, elem := range v {
+			if m, ok := elem.(map[string]interface{}); ok {
+				stack = append(stack, deserializeIterCursor(m))
+			}
+		}
+	case map[string]interface{}:
+		// Legacy W07 single-cursor format.
+		stack = []IterCursor{deserializeIterCursor(v)}
+	}
+	return stack
 }

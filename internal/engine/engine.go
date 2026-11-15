@@ -1096,17 +1096,18 @@ func finishIterationInGraph(st *RunState, stepName string, graph *workflow.FSMGr
 	return co.Next, nil
 }
 
-// seedRunVars returns the restored scope unchanged for resumed runs. For fresh
-// runs it seeds from graph defaults, applies any CLI overrides, resolves secret
-// variable provider origins, and emits OnVariableSet events.
+// seedRunVars returns the restored scope re-applied with the launch-time
+// overrides for resumed runs. For fresh runs it seeds from graph defaults,
+// applies any CLI overrides, resolves secret variable provider origins, and
+// emits OnVariableSet events.
 func (e *Engine) seedRunVars(ctx context.Context, sink Sink, reg *secrets.Registry) (map[string]cty.Value, error) {
 	if e.resumedVars != nil {
-		return e.seedResumedVars(), nil
+		return e.seedResumedVars(ctx, reg)
 	}
 	return e.seedFreshVars(ctx, sink, reg)
 }
 
-func (e *Engine) seedResumedVars() map[string]cty.Value {
+func (e *Engine) seedResumedVars(ctx context.Context, reg *secrets.Registry) (map[string]cty.Value, error) {
 	// Locals are compile-time constants that are never persisted in the
 	// scope snapshot. Always reseed them from the current graph so that
 	// resumed runs have the same local.* bindings as fresh runs.
@@ -1115,7 +1116,39 @@ func (e *Engine) seedResumedVars() map[string]cty.Value {
 		resumed[k] = v
 	}
 	resumed["local"] = workflow.SeedLocalsFromGraph(e.graph)
-	return resumed
+	// Re-apply the launch-time overrides on top of the restored scope so a
+	// re-entered step re-evaluates input expressions with the same typed
+	// values the fresh engine used. The persisted scope (server blob or
+	// snapshot) cannot be relied on to carry structured values — see
+	// workflow.SerializeVarScope — so vars like jsonencode(var.list) would
+	// otherwise re-evaluate against a null default and lose type information.
+	// Overrides win over restored values; variables outside the override set
+	// keep their restored or declared value, and the restored step outputs
+	// and locals are left intact. A conversion failure fails the resume
+	// rather than silently defaulting the scope.
+	if len(e.varOverrides) > 0 {
+		var err error
+		resumed, err = workflow.ApplyVarOverrides(e.graph, resumed, e.varOverrides)
+		if err != nil {
+			return nil, err
+		}
+	}
+	// The launch-time overrides re-applied above carry the same invocation
+	// values the fresh path resolved at launch, so the run's declared secret
+	// variables must receive the same fresh-path treatment: resolver-bound
+	// override values expand through the provider stack; literal override
+	// values and restored (already-resolved) values register with the run's
+	// redaction registry so they never travel unscrubbed. Without this a
+	// provider reference (for example env:TOKEN) would reach the adapter
+	// unexpanded, and secrets outside the override set would lose redaction.
+	if reg != nil {
+		var err error
+		resumed, err = e.resolveResumedSecretOrigins(ctx, resumed, reg)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return resumed, nil
 }
 
 func (e *Engine) seedFreshVars(ctx context.Context, sink Sink, reg *secrets.Registry) (map[string]cty.Value, error) {
@@ -1194,6 +1227,97 @@ func (e *Engine) resolveSecretVarOrigins(ctx context.Context, vars map[string]ct
 	out["var"] = cty.ObjectVal(resolved)
 	e.secretOrigins = origins
 	return out, nil
+}
+
+// resolveResumedSecretOrigins gives a resumed run's declared secret variables
+// the fresh-path secret treatment (resolveSecretVarOrigins) without re-parsing
+// resolved values. Inside the launch-time override set the values are the
+// original invocation strings, so resolver references expand through the
+// provider stack and literal values register as-is, mirroring the fresh path
+// (including the origin bookkeeping for adapter session snapshots). Outside
+// the override set the restored values are already resolved, so they only
+// register with the redaction registry; their origin refs left with the
+// invocation that crashed and must not be re-derived from raw secret strings
+// that happen to resemble a provider reference.
+func (e *Engine) resolveResumedSecretOrigins(ctx context.Context, vars map[string]cty.Value, reg *secrets.Registry) (map[string]cty.Value, error) {
+	varObj := vars["var"]
+	if varObj == cty.NilVal || !varObj.Type().IsObjectType() || len(e.graph.Variables) == 0 {
+		return vars, nil
+	}
+
+	stack, err := secrets.StackFromEnvironment(getEnvironmentNode(e.graph, ""))
+	if err != nil {
+		return nil, fmt.Errorf("resolve secret variable origins: %w", err)
+	}
+
+	attrs := varObj.AsValueMap()
+	resolved := make(map[string]cty.Value)
+	for name, node := range e.graph.Variables {
+		raw, ok := secretStringAttr(node, attrs[name])
+		if !ok {
+			continue
+		}
+		if _, overridden := e.varOverrides[name]; !overridden {
+			// The restored value is the secret itself.
+			reg.Register(raw)
+			continue
+		}
+		out, errR := e.resolveOverrideSecretVar(ctx, name, cty.StringVal(raw), stack, reg)
+		if errR != nil {
+			return nil, errR
+		}
+		if out != cty.NilVal {
+			resolved[name] = out
+		}
+	}
+	if len(resolved) == 0 {
+		return vars, nil
+	}
+	for name, val := range resolved {
+		attrs[name] = val
+	}
+	out := make(map[string]cty.Value, len(vars))
+	for k, v := range vars {
+		out[k] = v
+	}
+	out["var"] = cty.ObjectVal(attrs)
+	return out, nil
+}
+
+// secretStringAttr reports whether a declared secret variable currently holds
+// a known non-null string value and returns that value.
+func secretStringAttr(node *workflow.VariableNode, val cty.Value) (string, bool) {
+	if node == nil || !node.Secret {
+		return "", false
+	}
+	if val == cty.NilVal || val.IsNull() || !val.IsKnown() || val.Type() != cty.String {
+		return "", false
+	}
+	return val.AsString(), true
+}
+
+// resolveOverrideSecretVar resolves, redacts, and records the origin for one
+// override-set secret variable; it returns cty.NilVal when the value needs no
+// rewrite (a literal override, already the secret itself).
+func (e *Engine) resolveOverrideSecretVar(ctx context.Context, name string, val cty.Value, stack *secrets.Stack, reg *secrets.Registry) (cty.Value, error) {
+	ref := secrets.ParseOriginRef(val.AsString())
+	if e.secretOrigins == nil {
+		e.secretOrigins = make(map[string]secrets.OriginRef)
+	}
+	if ref.Kind == "literal" {
+		// A literal override is the secret itself; the fresh path
+		// registers the same value and records the literal ref.
+		reg.Register(ref.Ref)
+		e.secretOrigins[name] = ref
+		return cty.NilVal, nil
+	}
+	resolvedVal, err := stack.Resolve(ctx, ref)
+	if err != nil {
+		return cty.NilVal, fmt.Errorf("variable %q (origin %s): %w", name, ref, err)
+	}
+	reg.Register(resolvedVal)
+	e.secretOrigins[name] = ref
+	return cty.StringVal(resolvedVal), nil
 }
 
 // resolveSecretDataOrigins walks declared secret data blocks and resolves any

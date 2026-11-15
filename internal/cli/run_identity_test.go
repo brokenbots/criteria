@@ -262,7 +262,7 @@ func TestExecuteServerRunPerScopeSessionsAdoptsPriorRunToken_CRI304(t *testing.T
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
 	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
-	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri304-adopt", &copts, cancel, nil, fingerprint)
+	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri304-adopt", &copts, cancel, nil, fingerprint, nil)
 	if err != nil {
 		t.Fatalf("setupServerRun: %v", err)
 	}

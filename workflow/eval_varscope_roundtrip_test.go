@@ -72,8 +72,6 @@ func TestVarScope_RoundTrip_EmptyScope(t *testing.T) {
 // intentionally different from the runtime values to prove the JSON overlay
 // wins over graph seeding, not just that types are preserved.
 func TestVarScope_RoundTrip_PrimitiveTypes(t *testing.T) {
-	t.Skip("known bug: RestoreVarScope does not overlay primitive var values from JSON scope; " +
-		"primitive type round-trip deferred to workstream eval-varscope-restore")
 	vars := map[string]cty.Value{
 		"var": cty.ObjectVal(map[string]cty.Value{
 			"greet": cty.StringVal("hello world"),
@@ -112,8 +110,9 @@ func TestVarScope_RoundTrip_PrimitiveTypes(t *testing.T) {
 
 // TestVarScope_RoundTrip_ListAndMap exercises two scenarios:
 //  1. Step outputs stored as multiple string key→value pairs (round-trips correctly).
-//  2. List/map vars in vars["var"] — demonstrates the known limitation that
-//     non-primitive cty types cannot be restored from the string serialization.
+//  2. List/map vars in vars["var"] — structured types ride the typed
+//     "vars_typed" cty-JSON pair and round-trip losslessly (the legacy string
+//     "var" map cannot represent them, which is why the typed pair exists).
 func TestVarScope_RoundTrip_ListAndMap(t *testing.T) {
 	t.Run("step_outputs_round_trip", func(t *testing.T) {
 		g := &FSMGraph{Variables: map[string]*VariableNode{}}
@@ -143,19 +142,40 @@ func TestVarScope_RoundTrip_ListAndMap(t *testing.T) {
 		}
 	})
 
-	t.Run("list_var_override_not_restored", func(t *testing.T) {
-		// Known limitation: non-primitive (list, map, object) vars are not
-		// restored from the JSON scope because CtyValueToString is lossy for
-		// these types. A list var serializes to a comma-joined string and cannot
-		// be recovered as a cty.List on restore. Complex-type vars always fall
-		// back to the FSMGraph default value.
-		//
-		// This means CLI var overrides for list/map/object types (even if
-		// ApplyVarOverrides were extended to support them) would be silently lost
-		// on crash-resume. See the [ARCH-REVIEW] note below.
-		t.Skip("known limitation: list/map/object vars fall back to FSMGraph defaults on restore; " +
-			"CtyValueToString is lossy for non-primitive types and overrides would be silently dropped. " +
-			"Tracked as [ARCH-REVIEW].")
+	t.Run("list_and_map_vars_round_trip", func(t *testing.T) {
+		// Structured vars round-trip losslessly through the typed
+		// "vars_typed"/"vars_typed_type" cty-JSON pair: a shell pipeline
+		// receiving jsonencode(var.repos) sees the identical pre-restart value
+		// after a crash-resume instead of a comma-joined string or a default.
+		g := fsmGraphWithVarDefaults(map[string]cty.Value{
+			"repos":  cty.ListValEmpty(cty.String),
+			"limits": cty.ObjectVal(map[string]cty.Value{"workers": cty.NumberIntVal(0)}),
+		})
+		vars := map[string]cty.Value{
+			"var": cty.ObjectVal(map[string]cty.Value{
+				"repos":  cty.ListVal([]cty.Value{cty.StringVal("infra"), cty.StringVal("tools")}),
+				"limits": cty.ObjectVal(map[string]cty.Value{"workers": cty.NumberIntVal(4)}),
+			}),
+			"steps": cty.EmptyObjectVal,
+		}
+
+		scopeJSON, err := SerializeVarScope(vars)
+		if err != nil {
+			t.Fatalf("SerializeVarScope: %v", err)
+		}
+		restored, _, err := RestoreVarScope(scopeJSON, g)
+		if err != nil {
+			t.Fatalf("RestoreVarScope: %v", err)
+		}
+
+		varObj := restored["var"]
+		assertCtyMapEqual(t, map[string]cty.Value{
+			"repos":  cty.ListVal([]cty.Value{cty.StringVal("infra"), cty.StringVal("tools")}),
+			"limits": cty.ObjectVal(map[string]cty.Value{"workers": cty.NumberIntVal(4)}),
+		}, map[string]cty.Value{
+			"repos":  varObj.GetAttr("repos"),
+			"limits": varObj.GetAttr("limits"),
+		})
 	})
 }
 
@@ -516,8 +536,6 @@ func TestRestoreVarScope_UnknownStepReference_UnknownStepContract(t *testing.T) 
 // default deliberately differs from the serialized value to prove it is the
 // JSON that determines the restored value, not mere graph seeding.
 func TestRestoreVarScope_VarValues_RestoredFromJSON(t *testing.T) {
-	t.Skip("known bug: RestoreVarScope does not overlay primitive var values from JSON scope; " +
-		"implementation deferred to workstream eval-varscope-restore")
 	g := &FSMGraph{
 		Variables: map[string]*VariableNode{
 			"greeting": {Name: "greeting", Type: cty.String, Default: cty.StringVal("default-value")},
@@ -549,8 +567,6 @@ func TestRestoreVarScope_VarValues_RestoredFromJSON(t *testing.T) {
 // value), not to the default. Prior to the fix, s=="" caused the overlay to be
 // skipped, so the graph default incorrectly won.
 func TestRestoreVarScope_EmptyString_PreservedOverDefault(t *testing.T) {
-	t.Skip("known bug: RestoreVarScope does not overlay primitive var values from JSON scope; " +
-		"empty-string preservation deferred to workstream eval-varscope-restore")
 	g := &FSMGraph{
 		Variables: map[string]*VariableNode{
 			"greeting": {Name: "greeting", Type: cty.String, Default: cty.StringVal("non-empty-default")},
@@ -579,8 +595,11 @@ func TestRestoreVarScope_EmptyString_PreservedOverDefault(t *testing.T) {
 // between a JSON var value and the FSMGraph-declared type returns an error.
 // This guards against corrupt scope blobs reaching the engine.
 func TestRestoreVarScope_VarTypeMismatch_ReturnsError(t *testing.T) {
-	t.Skip("known bug: RestoreVarScope does not parse JSON var values and therefore " +
-		"cannot detect type mismatches; deferred to workstream eval-varscope-restore")
+	t.Skip("the typed \"vars_typed\"/\"vars_typed_type\" pair is the only variable restore channel " +
+		"in RestoreVarScope; the legacy lossy string \"var\" map is intentionally not overlaid there, " +
+		"so legacy-blob fail-closed validation (naming the offending variable on a type mismatch) " +
+		"belongs to workstream eval-varscope-restore. The serve-adapter path still applies the " +
+		"legacy map for legacy blobs via ApplyVarOverrides")
 	// JSON declares count as a non-numeric string, but the graph declares count as number.
 	jsonScope := `{"var": {"count": "not-a-number"}}`
 	g := &FSMGraph{
@@ -602,9 +621,11 @@ func TestRestoreVarScope_VarTypeMismatch_ReturnsError(t *testing.T) {
 // would accept it as 1) but is not a valid float string. RestoreVarScope must
 // reject it with an error rather than silently restoring count=1.
 func TestRestoreVarScope_NumericPrefixGarbage_ReturnsError(t *testing.T) {
-	t.Skip("known bug: RestoreVarScope does not parse JSON var values; " +
-		"prefix-valid garbage such as '1oops' is silently ignored (FSMGraph default used); " +
-		"strict strconv.ParseFloat validation deferred to workstream eval-varscope-restore")
+	t.Skip("the typed \"vars_typed\"/\"vars_typed_type\" pair is the only variable restore channel " +
+		"in RestoreVarScope; the legacy lossy string \"var\" map is intentionally not overlaid there, " +
+		"so '1oops' never reaches a numeric parser and the FSMGraph default wins. Strict legacy-blob " +
+		"numeric parsing belongs to workstream eval-varscope-restore. The serve-adapter path still " +
+		"applies the legacy map for legacy blobs via ApplyVarOverrides")
 	jsonScope := `{"var": {"count": "1oops"}}`
 	g := &FSMGraph{
 		Variables: map[string]*VariableNode{
@@ -621,13 +642,12 @@ func TestRestoreVarScope_NumericPrefixGarbage_ReturnsError(t *testing.T) {
 }
 
 // TestRestoreVarScope_LegacyEmptyStringForNumber_FallsBackToDefault covers the
-// backward-compatibility path in restoreVarFromString: old checkpoint blobs
-// (produced before the null-omission fix) may contain {"count":""} for a
-// number-typed variable that had no runtime value. The empty string is treated
-// as a null sentinel for non-string types, so the FSMGraph default wins.
+// legacy-blob backward-compatibility boundary: old checkpoint blobs may
+// contain {"count":""} for a number-typed variable that had no runtime value.
+// RestoreVarScope overlays variables only through the typed "vars_typed" pair
+// and intentionally skips the legacy lossy string "var" map, so the FSMGraph
+// default wins.
 func TestRestoreVarScope_LegacyEmptyStringForNumber_FallsBackToDefault(t *testing.T) {
-	t.Skip("known bug: RestoreVarScope does not parse JSON var values; " +
-		"legacy empty-string sentinel behaviour deferred to workstream eval-varscope-restore")
 	jsonScope := `{"var": {"count": ""}}`
 	g := &FSMGraph{
 		Variables: map[string]*VariableNode{
@@ -645,26 +665,29 @@ func TestRestoreVarScope_LegacyEmptyStringForNumber_FallsBackToDefault(t *testin
 	}
 }
 
-// TestRestoreVarScope_UnknownVarInJSON_SilentlySkipped verifies that a variable
-// present in the JSON "var" section but absent from the FSMGraph is silently
-// ignored. This supports crash-resume across schema drift where variables may
-// be removed from the workflow between runs.
+// TestRestoreVarScope_UnknownVarInJSON_SilentlySkipped verifies that a typed
+// restored variable absent from the FSMGraph is silently ignored. This
+// supports crash-resume across schema drift where variables may be removed
+// from the workflow between runs. The legacy lossy string "var" map is
+// carried alongside the typed pair to confirm it does not perturb the typed
+// overlay.
 func TestRestoreVarScope_UnknownVarInJSON_SilentlySkipped(t *testing.T) {
-	t.Skip("known bug: RestoreVarScope does not overlay primitive var values from JSON scope; " +
-		"unknown-var tolerance behaviour deferred to workstream eval-varscope-restore")
-	jsonScope := `{"var": {"known": "hello", "gone": "orphan"}}`
-	g := &FSMGraph{
-		Variables: map[string]*VariableNode{
-			"known": {Name: "known", Type: cty.String, Default: cty.StringVal("default")},
-			// "gone" is not in the graph.
-		},
-	}
-	restored, _, err := RestoreVarScope(jsonScope, g)
+	scopeJSON := typedVarsScopeJSON(t, cty.ObjectVal(map[string]cty.Value{
+		"known": cty.StringVal("hello"),
+		"gone":  cty.StringVal("orphan"),
+	}), map[string]interface{}{
+		"var": map[string]interface{}{"known": "hello", "gone": "orphan"},
+	})
+	g := fsmGraphWithVarDefaults(map[string]cty.Value{
+		"known": cty.StringVal("default"),
+		// "gone" is not in the graph.
+	})
+	restored, _, err := RestoreVarScope(scopeJSON, g)
 	if err != nil {
 		t.Fatalf("RestoreVarScope: %v", err)
 	}
 	varObj := restored["var"]
-	// "known" should be restored from JSON; "gone" should not be present in scope.
+	// "known" should be restored from the typed pair; "gone" should not be present in scope.
 	if got := varObj.GetAttr("known").AsString(); got != "hello" {
 		t.Errorf("known = %q, want %q", got, "hello")
 	}

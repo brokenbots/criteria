@@ -706,17 +706,12 @@ func executeAgentAssignment(agentCtx, runCtx context.Context, log *slog.Logger, 
 		return err
 	}
 
-	graph, loader, err := compileAgentWorkflow(runCtx, workflowPath, log, opts)
+	graph, loader, engOpts, err := assembleAgentRunEngine(runCtx, workflowPath, cp, reattachResp, log, opts, runID, promptCh, client.CriteriaID())
 	if err != nil {
 		reportAgentAssignmentFailed(runCtx, log, publisher, runID, err)
 		return err
 	}
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(runCtx)) }()
-
-	engOpts := resumeEngineOptions(cp, reattachResp, graph, log, runID)
-	// ADR-0006: carry this run's prompt channel and the agent's owner identity
-	// into the engine so delivered prompts can be authorized and routed (D1/D4).
-	engOpts = append(engOpts, engine.WithAgentPrompts(promptCh, client.CriteriaID(), runID))
 	eng, sink, runSink, state, err := buildAgentRun(agentCtx, runCtx, log, client, assignment, opts, publisher, graph, loader, dir, workflowPath, engOpts...)
 	if err != nil {
 		reportAgentAssignmentFailed(runCtx, log, publisher, runID, err)
@@ -836,27 +831,46 @@ func isTerminalRunStatus(status string) bool {
 	}
 }
 
-// resumeEngineOptions builds engine options that restore a run's execution
-// state when a checkpoint and a resumable server response are available.
-func resumeEngineOptions(cp *StepCheckpoint, reattachResp *pb.ReattachRunResponse, graph *workflow.FSMGraph, log *slog.Logger, runID string) []engine.Option {
-	if cp == nil || reattachResp == nil || !reattachResp.CanResume || reattachResp.CurrentStep == "" {
-		return nil
+// assembleAgentRunEngine compiles the assignment workflow and assembles the
+// engine options for executing or resuming it, including prompt routing of
+// this run's channel and owner identity (ADR-0006). Compile and option errors
+// are reported together; on a resume-option failure the loader is shut down
+// because the caller's shutdown deferral is only registered on success.
+func assembleAgentRunEngine(ctx context.Context, workflowPath string, cp *StepCheckpoint, reattachResp *pb.ReattachRunResponse, log *slog.Logger, opts *agentOptions, runID string, promptCh <-chan *pb.AgentPrompt, criteriaID string) (*workflow.FSMGraph, adapterhost.Loader, []engine.Option, error) {
+	graph, loader, err := compileAgentWorkflow(ctx, workflowPath, log, opts)
+	if err != nil {
+		return nil, nil, nil, err
 	}
-	var opts []engine.Option
+	engOpts, err := resumeEngineOptions(cp, reattachResp, graph, log, runID)
+	if err != nil {
+		_ = loader.Shutdown(context.WithoutCancel(ctx))
+		return nil, nil, nil, err
+	}
+	return graph, loader, append(engOpts, engine.WithAgentPrompts(promptCh, criteriaID, runID)), nil
+}
+
+// resumeEngineOptions builds engine options that restore a run's execution
+// state when a checkpoint and a resumable server response are available. A
+// scope-restore failure returns an error: the agent run must fail instead of
+// starting on graph-seeded default variables.
+func resumeEngineOptions(cp *StepCheckpoint, reattachResp *pb.ReattachRunResponse, graph *workflow.FSMGraph, log *slog.Logger, runID string) ([]engine.Option, error) {
+	if cp == nil || reattachResp == nil || !reattachResp.CanResume || reattachResp.CurrentStep == "" {
+		return nil, nil
+	}
 	restoredVars, restoredIter, err := workflow.RestoreVarScope(reattachResp.VariableScope, graph)
 	if err != nil {
-		log.Error("failed to restore variable scope", "run_id", runID, "error", err)
-	} else {
-		opts = append(opts,
-			engine.WithResumedVars(restoredVars),
-			engine.WithResumedIter(restoredIter),
-			engine.WithResumedVisits(cp.Visits),
-		)
+		log.Error("failed to restore variable scope; failing the agent run", "run_id", runID, "error", err)
+		return nil, fmt.Errorf("restore variable scope for run %s: %w", runID, err)
+	}
+	opts := []engine.Option{
+		engine.WithResumedVars(restoredVars),
+		engine.WithResumedIter(restoredIter),
+		engine.WithResumedVisits(cp.Visits),
 	}
 	if reattachResp.Status == agentRunStatusPaused {
 		opts = append(opts, engine.WithPendingSignal(reattachResp.PendingSignal))
 	}
-	return opts
+	return opts, nil
 }
 
 // prepareAgentAssignmentDir writes the workflow (and optional lockfile) source
@@ -1008,8 +1022,10 @@ func runAndDrain(agentCtx, runCtx context.Context, log *slog.Logger, eng *engine
 
 // compileAgentWorkflow parses and compiles the workflow at workflowPath using
 // the same pipeline as local/server apply. It returns the compiled graph and
-// the adapter loader (which the caller must shut down).
-func compileAgentWorkflow(ctx context.Context, workflowPath string, log *slog.Logger, opts *agentOptions) (*workflow.FSMGraph, *adapterhost.DefaultLoader, error) {
+// the adapter loader (which the caller must shut down). It is a function
+// variable so tests can wrap loader construction and observe loader
+// shutdown on failure paths.
+var compileAgentWorkflow = func(ctx context.Context, workflowPath string, log *slog.Logger, opts *agentOptions) (*workflow.FSMGraph, adapterhost.Loader, error) {
 	_, graph, loader, err := compileForExecution(ctx, workflowPath, log, opts.warnsAsErrors, opts.allowUnsigned, opts.subworkflowRoots...)
 	if err != nil {
 		return nil, nil, err

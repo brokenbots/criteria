@@ -6,6 +6,8 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/zclconf/go-cty/cty"
+
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/internal/diagutil"
 	"github.com/brokenbots/criteria/internal/engine"
@@ -43,23 +45,31 @@ type reattachTransport interface {
 // eventsOut, when non-nil, mirrors the resumed runs' events into the ND-JSON
 // events file (server-mode dual-write).
 //
-// fingerprint is the invocation identity. The boolean reports
-// whether any checkpoint whose fingerprint matches was consumed here — driven
-// to a terminal outcome or already accounted for server-side — in which case
-// the caller must not start a second run for the same identity. outcome
-// carries the consumed run's result: nil when the resumed run succeeded (or
-// its fate was already recorded server-side), non-nil for a failed one, so
-// the restarted invocation exits non-zero for a failed run instead of
-// masking it. This function blocks until all resumable runs have completed
-// (or failed).
-func resumeInFlightRuns(ctx context.Context, log *slog.Logger, clientOpts *servertrans.Options, eventsOut io.Writer, fingerprint string) (matched bool, outcome error) {
+// fingerprint is the invocation identity and mergedVars are that invocation's
+// typed CLI variable inputs. The boolean reports whether any checkpoint whose
+// fingerprint matches was consumed here — driven to a terminal outcome or
+// already accounted for server-side — in which case the caller must not
+// start a second run for the same identity. outcome carries the consumed
+// run's result: nil when the resumed run succeeded (or its fate was already
+// recorded server-side), non-nil for a failed one, so the restarted
+// invocation exits non-zero for a failed run instead of masking it. This
+// function blocks until all resumable runs have completed (or failed).
+func resumeInFlightRuns(ctx context.Context, log *slog.Logger, clientOpts *servertrans.Options, eventsOut io.Writer, fingerprint string, mergedVars map[string]cty.Value) (matched bool, outcome error) {
 	checkpoints, err := ListStepCheckpoints()
 	if err != nil {
 		log.Warn("could not list step checkpoints; skipping crash recovery", "error", err)
 		return false, nil
 	}
 	for _, cp := range checkpoints {
-		consumed, cpOutcome := resumeOneRun(ctx, log, cp, clientOpts, eventsOut)
+		// The invocation's vars are only re-applied to checkpoints minted by
+		// an invocation of the same identity: checkpoint state is shared per
+		// home, and another invocation's --var/--var-file inputs must never
+		// leak into its crashed run.
+		var resumeVars map[string]cty.Value
+		if fingerprint != "" && cp.Fingerprint == fingerprint {
+			resumeVars = mergedVars
+		}
+		consumed, cpOutcome := resumeOneRun(ctx, log, cp, clientOpts, eventsOut, resumeVars)
 		if consumed && fingerprint != "" && cp.Fingerprint == fingerprint {
 			matched = true
 			if outcome == nil {
@@ -77,8 +87,12 @@ func resumeInFlightRuns(ctx context.Context, log *slog.Logger, clientOpts *serve
 // it), plus the run's outcome error (nil on success or when the server
 // already owns the run's fate). It returns false only when the checkpoint was
 // abandoned as unusable and no run outcome was recorded, so the caller may
-// proceed with a fresh run.
-func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, clientOpts *servertrans.Options, eventsOut io.Writer) (consumed bool, outcome error) {
+// proceed with a fresh run. resumeVars is the per-checkpoint variable set the
+// caller gated on the run identity (nil when the checkpoint was minted by a
+// different invocation or the invocation carries no vars); it is re-applied
+// on top of the restored scope so launch-time typed values survive the
+// reattach.
+func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, clientOpts *servertrans.Options, eventsOut io.Writer, resumeVars map[string]cty.Value) (consumed bool, outcome error) {
 	log = log.With("run_id", cp.RunID, "step", cp.CurrentStep)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -116,9 +130,9 @@ func resumeOneRun(ctx context.Context, log *slog.Logger, cp *StepCheckpoint, cli
 	}
 
 	if resp.Status == "paused" {
-		return resumePausedRun(ctx, log, rc, cp, graph, resp, eventsOut, cancel)
+		return resumePausedRun(ctx, log, rc, cp, graph, resp, eventsOut, cancel, resumeVars)
 	}
-	return resumeActiveRun(ctx, log, rc, cp, graph, resp, eventsOut, cancel)
+	return resumeActiveRun(ctx, log, rc, cp, graph, resp, eventsOut, cancel, resumeVars)
 }
 
 // abandonCheckpoint logs a warning (with optional error) and removes the checkpoint.
@@ -252,9 +266,14 @@ func startRecoveryControlConsumers(ctx context.Context, log *slog.Logger, rc rea
 
 // resumePausedRun re-enters a paused run using WithPendingSignal, then
 // services further resume signals until the run reaches a terminal state.
-// It returns whether the run was consumed (see resumeOneRun) and the run's
-// outcome error (nil on success).
-func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse, eventsOut io.Writer, cancelRun func()) (bool, error) {
+// resumeVars is the per-checkpoint variable set gated by the caller on the
+// run identity (nil when none apply); it is re-applied on top of the restored
+// scope so launch-time typed values survive the reattach. It returns whether
+// the run was consumed (see resumeOneRun) and the run's outcome error (nil on
+// success). A scope-restore failure fails the resume with the checkpoint left
+// in place: re-entering on graph-seeded defaults would re-evaluate input
+// expressions against the wrong variable values.
+func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse, eventsOut io.Writer, cancelRun func(), resumeVars map[string]cty.Value) (bool, error) {
 	if streamErr := rc.StartStreams(ctx, cp.RunID); streamErr != nil {
 		abandonCheckpoint(log, cp, "failed to start server streams for paused run", streamErr)
 		return false, nil
@@ -264,7 +283,8 @@ func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 
 	restoredVars, restoredIter, restoreErr := workflow.RestoreVarScope(resp.VariableScope, graph)
 	if restoreErr != nil {
-		log.Warn("could not restore variable scope after pause reattach; starting with defaults", "error", restoreErr)
+		log.Error("paused run re-entry rejected: could not restore variable scope", "error", restoreErr)
+		return true, fmt.Errorf("restore variable scope for run %q: %w", cp.RunID, restoreErr)
 	}
 	// The shared base carries the checkpoint surface (snapshot base
 	// + run id) so the re-entered engine saves and restores adapter state.
@@ -282,6 +302,7 @@ func resumePausedRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		engine.WithResumedVars(restoredVars),
 		engine.WithResumedIter(restoredIter),
 		engine.WithResumedVisits(cp.Visits),
+		engine.WithVarOverrides(resumeVars),
 		engine.WithPendingSignal(resp.PendingSignal),
 		engine.WithLogger(log),
 		engine.WithAuditWriter(auditWriter),
@@ -397,20 +418,23 @@ func checkIterationCursorValidity(graph *workflow.FSMGraph, variableScope string
 	return nil
 }
 
-// resumeActiveRun handles the normal (non-paused) resume path. It returns
-// whether the run was consumed (see resumeOneRun) and the run's outcome
-// error, mirroring the fresh-run error contract: an engine error is returned
-// verbatim and a terminal success=false completion surfaces the same
-// "run completed with terminal state" error as the fresh path.
+// resumeActiveRun re-enters a crashed active run, re-running the interrupted
+// step at attempt 1 with a fresh retry budget. resumeVars is the per-checkpoint
+// variable set gated by the caller on the run identity (nil when none apply);
+// it is re-applied on top of the restored scope so launch-time typed values
+// survive the reattach. It returns whether the run was consumed (see
+// resumeOneRun) and the run's outcome error, mirroring the fresh-run error
+// contract: an engine error is returned verbatim, a terminal success=false
+// completion surfaces the same "run completed with terminal state" error as
+// the fresh path, and success returns (true, nil).
 //
-// The interrupted step restarts at attempt 1 with a fresh retry
-// budget. The pre-crash attempt produced no outcome (the runner was killed
+// The pre-crash attempt produced no outcome (the runner was killed
 // mid-attempt), so counting it against max_step_retries made mid-step crash
 // recovery useless for any workflow with max_step_retries <= 1: the resumed
 // run failed immediately. The persisted max_visits counts (restored via
 // WithResumedVisits) still bound total attempts across resumes, so a
 // crash-loop cannot amplify into unbounded work.
-func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse, eventsOut io.Writer, cancelRun func()) (bool, error) {
+func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse, eventsOut io.Writer, cancelRun func(), resumeVars map[string]cty.Value) (bool, error) {
 	// resp.Attempt is the server's view of the pre-crash attempt; it stays
 	// out of the budget decision and is surfaced for diagnostics only.
 	nextAttempt := 1
@@ -422,7 +446,13 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 		return false, nil
 	}
 
-	eng, tracked, sink := buildResumedActiveEngine(ctx, log, rc, cp, graph, resp, nextAttempt, eventsOut)
+	eng, tracked, sink, buildErr := buildResumedActiveEngine(ctx, log, rc, cp, graph, resp, nextAttempt, eventsOut, resumeVars)
+	if buildErr != nil {
+		// The persisted scope could not be restored: fail the resume with
+		// the checkpoint left in place rather than running the workflow on
+		// graph-seeded defaults.
+		return true, buildErr
+	}
 	if eng == nil {
 		// The run data dir could not be resolved (logged by the builder);
 		// the run cannot be driven from this process and the checkpoint is
@@ -454,11 +484,22 @@ func resumeActiveRun(ctx context.Context, log *slog.Logger, rc reattachTransport
 
 // buildResumedActiveEngine constructs the event wiring and engine for a
 // crash-resumed active run: the server sink wrapped in a terminal-success
-// tracker, the ND-JSON mirror, and the engine with restored state. A nil
-// engine means the run data dir could not be resolved (already logged); the
-// run cannot be driven from this process. The base sink is returned alongside
-// the engine so the caller can pin castle control consumers to it.
-func buildResumedActiveEngine(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse, nextAttempt int, eventsOut io.Writer) (*engine.Engine, *terminalSuccessSink, *run.Sink) {
+// tracker, the ND-JSON mirror, and the engine with restored state. It returns
+// a non-nil error when the persisted scope could not be restored: the caller
+// must fail the resume instead of driving the workflow on graph-seeded
+// defaults. It returns a nil engine with a nil error only when the run data
+// dir could not be resolved (already logged); the run cannot be driven from
+// this process. The base sink is returned alongside the engine so the caller
+// can pin castle control consumers to it.
+func buildResumedActiveEngine(ctx context.Context, log *slog.Logger, rc reattachTransport, cp *StepCheckpoint, graph *workflow.FSMGraph, resp *pb.ReattachRunResponse, nextAttempt int, eventsOut io.Writer, resumeVars map[string]cty.Value) (*engine.Engine, *terminalSuccessSink, *run.Sink, error) {
+	// Restore variable scope and iter cursor from the server (W04/W07)
+	// before any event is emitted so a restore failure fails the resume
+	// without leaving a StepResumed marker for a run that never starts.
+	restoredVars, restoredIter, restoreErr := workflow.RestoreVarScope(resp.VariableScope, graph)
+	if restoreErr != nil {
+		log.Error("could not restore variable scope; failing the resume", "run_id", cp.RunID, "error", restoreErr)
+		return nil, nil, nil, fmt.Errorf("restore variable scope for run %q: %w", cp.RunID, restoreErr)
+	}
 	sink := &run.Sink{RunID: cp.RunID, Client: rc, Log: log, Ctx: ctx}
 	tracked := &terminalSuccessSink{Sink: sink}
 	sink.StepResumed(ctx, resp.CurrentStep, nextAttempt, "criteria_restart")
@@ -472,12 +513,6 @@ func buildResumedActiveEngine(ctx context.Context, log *slog.Logger, rc reattach
 	}
 	loader := adapterhost.NewLoader()
 
-	// Restore variable scope and iter cursor from the server (W04/W07).
-	restoredVars, restoredIter, restoreErr := workflow.RestoreVarScope(resp.VariableScope, graph)
-	if restoreErr != nil {
-		log.Warn("could not restore variable scope; starting with defaults", "error", restoreErr)
-	}
-
 	auditPath, _ := auditLogPath(cp.RunID)
 	auditWriter := adapterhost.NewFileAuditWriter(auditPath)
 	// The shared base carries the checkpoint surface (snapshot base
@@ -485,18 +520,19 @@ func buildResumedActiveEngine(ctx context.Context, log *slog.Logger, rc reattach
 	_, baseOpts, baseOptsErr := serverRunEngineOptions(cp.RunID, cp.WorkflowPath)
 	if baseOptsErr != nil {
 		log.Error("resumed run failed to resolve engine options", "run_id", cp.RunID, "error", baseOptsErr)
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	engOpts := append([]engine.Option{
 		engine.WithResumedVars(restoredVars),
 		engine.WithResumedIter(restoredIter),
 		engine.WithResumedVisits(cp.Visits),
+		engine.WithVarOverrides(resumeVars),
 		engine.WithLogger(log),
 		engine.WithAuditWriter(auditWriter),
 		engine.WithAgentPrompts(rc.AgentPromptCh(), rc.CriteriaID(), cp.RunID),
 	}, baseOpts...)
 	eng := engine.New(graph, loader, engineSink, engOpts...)
-	return eng, tracked, sink
+	return eng, tracked, sink, nil
 }
 
 func parseWorkflowFromPath(ctx context.Context, path string) (*workflow.FSMGraph, error) {
