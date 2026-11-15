@@ -31,6 +31,10 @@ type AdapterDef struct {
 	// alias); Version is the semver constraint resolved at lock time.
 	Source  string
 	Version string
+	// Secrets maps secret binding names to expressions (e.g. "token" ->
+	// "var.token"); rendered as a secrets block that passes the evaluated
+	// values into the adapter's OpenSession secret channel.
+	Secrets map[string]string
 }
 
 // EnvironmentDef defines an environment block: a typed execution
@@ -255,6 +259,9 @@ type VariableDef struct {
 	Name    string
 	Type    string
 	Default string
+	// Secret marks the variable with `secret = true` so its value resolves
+	// through the environment secret provider and registers for redaction.
+	Secret bool
 }
 
 // SubworkflowDef defines a subworkflow declaration block.
@@ -287,6 +294,14 @@ func AdapterSource(source string) AdapterOpt {
 func AdapterVersion(version string) AdapterOpt {
 	return func(a *AdapterDef) {
 		a.Version = version
+	}
+}
+
+// AdapterSecrets maps secret binding names to expressions in the adapter's
+// secrets block (e.g. "token" -> "var.token").
+func AdapterSecrets(secretExprs map[string]string) AdapterOpt {
+	return func(a *AdapterDef) {
+		a.Secrets = secretExprs
 	}
 }
 
@@ -413,6 +428,17 @@ func (b *WorkflowBuilder) WithVariable(name, typeName, defaultVal string) *Workf
 		Name:    name,
 		Type:    typeName,
 		Default: defaultVal,
+	})
+	return b
+}
+
+// WithSecretVariable adds a variable declaration marked with `secret = true`
+// so the run resolves it through the environment secret provider.
+func (b *WorkflowBuilder) WithSecretVariable(name, typeName string) *WorkflowBuilder {
+	b.variables = append(b.variables, VariableDef{
+		Name:   name,
+		Type:   typeName,
+		Secret: true,
 	})
 	return b
 }
@@ -588,6 +614,9 @@ func (b *WorkflowBuilder) Build() string {
 		if v.Type != "" {
 			sb.WriteString(fmt.Sprintf("  type = %s\n", v.Type))
 		}
+		if v.Secret {
+			sb.WriteString("  secret = true\n")
+		}
 		if v.Default != "" {
 			sb.WriteString(fmt.Sprintf("  default = %s\n", v.Default))
 		}
@@ -618,6 +647,21 @@ func (b *WorkflowBuilder) Build() string {
 		}
 		if a.Version != "" {
 			sb.WriteString("  version = \"" + a.Version + "\"\n")
+		}
+		if len(a.Secrets) > 0 {
+			// Sorted for deterministic rendering: the block feeds the
+			// adapter secret channel, whose observable behavior is
+			// name-independent.
+			names := make([]string, 0, len(a.Secrets))
+			for name := range a.Secrets {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			sb.WriteString("  secrets {\n")
+			for _, name := range names {
+				sb.WriteString("    " + name + " = " + a.Secrets[name] + "\n")
+			}
+			sb.WriteString("  }\n")
 		}
 		sb.WriteString("}\n")
 	}

@@ -1134,15 +1134,16 @@ func (e *Engine) seedResumedVars(ctx context.Context, reg *secrets.Registry) (ma
 		}
 	}
 	// The launch-time overrides re-applied above carry the same invocation
-	// values the fresh path resolved at launch, so provider-reference
-	// secrets inside the override set must undergo the same origin
-	// treatment as a fresh run: resolved through the provider stack,
-	// registered for redaction, and recorded in e.secretOrigins so adapter
-	// session snapshots can re-resolve them. Without this the literal
-	// reference (for example env:TOKEN) would reach the adapter unexpanded.
-	if len(e.varOverrides) > 0 && reg != nil {
+	// values the fresh path resolved at launch, so the run's declared secret
+	// variables must receive the same fresh-path treatment: resolver-bound
+	// override values expand through the provider stack; literal override
+	// values and restored (already-resolved) values register with the run's
+	// redaction registry so they never travel unscrubbed. Without this a
+	// provider reference (for example env:TOKEN) would reach the adapter
+	// unexpanded, and secrets outside the override set would lose redaction.
+	if reg != nil {
 		var err error
-		resumed, err = e.resolveOverrideSecretOrigins(ctx, resumed, reg)
+		resumed, err = e.resolveResumedSecretOrigins(ctx, resumed, reg)
 		if err != nil {
 			return nil, err
 		}
@@ -1228,16 +1229,19 @@ func (e *Engine) resolveSecretVarOrigins(ctx context.Context, vars map[string]ct
 	return out, nil
 }
 
-// resolveOverrideSecretOrigins resolves provider-reference origins for the
-// declared secret variables covered by the launch-time override set on a
-// resumed run; resolution, redaction registration, and origin bookkeeping
-// mirror resolveSecretVarOrigins. Only the override set is walked: the rest
-// of the restored scope already holds resolved values, and re-parsing those
-// strings as origin refs would mis-tag e.secretOrigins with a literal origin
-// derived from a raw secret value.
-func (e *Engine) resolveOverrideSecretOrigins(ctx context.Context, vars map[string]cty.Value, reg *secrets.Registry) (map[string]cty.Value, error) {
+// resolveResumedSecretOrigins gives a resumed run's declared secret variables
+// the fresh-path secret treatment (resolveSecretVarOrigins) without re-parsing
+// resolved values. Inside the launch-time override set the values are the
+// original invocation strings, so resolver references expand through the
+// provider stack and literal values register as-is, mirroring the fresh path
+// (including the origin bookkeeping for adapter session snapshots). Outside
+// the override set the restored values are already resolved, so they only
+// register with the redaction registry; their origin refs left with the
+// invocation that crashed and must not be re-derived from raw secret strings
+// that happen to resemble a provider reference.
+func (e *Engine) resolveResumedSecretOrigins(ctx context.Context, vars map[string]cty.Value, reg *secrets.Registry) (map[string]cty.Value, error) {
 	varObj := vars["var"]
-	if varObj == cty.NilVal || !varObj.Type().IsObjectType() {
+	if varObj == cty.NilVal || !varObj.Type().IsObjectType() || len(e.graph.Variables) == 0 {
 		return vars, nil
 	}
 
@@ -1248,13 +1252,22 @@ func (e *Engine) resolveOverrideSecretOrigins(ctx context.Context, vars map[stri
 
 	attrs := varObj.AsValueMap()
 	resolved := make(map[string]cty.Value)
-	for name := range e.varOverrides {
-		val, errR := e.resolveOverrideSecretVar(ctx, name, attrs, stack, reg)
+	for name, node := range e.graph.Variables {
+		raw, ok := secretStringAttr(node, attrs[name])
+		if !ok {
+			continue
+		}
+		if _, overridden := e.varOverrides[name]; !overridden {
+			// The restored value is the secret itself.
+			reg.Register(raw)
+			continue
+		}
+		out, errR := e.resolveOverrideSecretVar(ctx, name, cty.StringVal(raw), stack, reg)
 		if errR != nil {
 			return nil, errR
 		}
-		if val != cty.NilVal {
-			resolved[name] = val
+		if out != cty.NilVal {
+			resolved[name] = out
 		}
 	}
 	if len(resolved) == 0 {
@@ -1271,20 +1284,31 @@ func (e *Engine) resolveOverrideSecretOrigins(ctx context.Context, vars map[stri
 	return out, nil
 }
 
-// resolveOverrideSecretVar resolves, redacts, and records the origin for one
-// override-set secret variable; it returns cty.NilVal when the name needs no
-// rewrite (undeclared, non-secret, not a string, or a literal-value override
-// that the fresh seed already registered).
-func (e *Engine) resolveOverrideSecretVar(ctx context.Context, name string, attrs map[string]cty.Value, stack *secrets.Stack, reg *secrets.Registry) (cty.Value, error) {
-	node, declared := e.graph.Variables[name]
-	val, present := attrs[name]
-	if !declared || !present || !node.Secret || val.IsNull() || !val.IsKnown() || val.Type() != cty.String {
-		return cty.NilVal, nil
+// secretStringAttr reports whether a declared secret variable currently holds
+// a known non-null string value and returns that value.
+func secretStringAttr(node *workflow.VariableNode, val cty.Value) (string, bool) {
+	if node == nil || !node.Secret {
+		return "", false
 	}
+	if val == cty.NilVal || val.IsNull() || !val.IsKnown() || val.Type() != cty.String {
+		return "", false
+	}
+	return val.AsString(), true
+}
+
+// resolveOverrideSecretVar resolves, redacts, and records the origin for one
+// override-set secret variable; it returns cty.NilVal when the value needs no
+// rewrite (a literal override, already the secret itself).
+func (e *Engine) resolveOverrideSecretVar(ctx context.Context, name string, val cty.Value, stack *secrets.Stack, reg *secrets.Registry) (cty.Value, error) {
 	ref := secrets.ParseOriginRef(val.AsString())
+	if e.secretOrigins == nil {
+		e.secretOrigins = make(map[string]secrets.OriginRef)
+	}
 	if ref.Kind == "literal" {
-		// An override whose value is not a provider reference is the
-		// secret itself; registering it is handled by the fresh seed.
+		// A literal override is the secret itself; the fresh path
+		// registers the same value and records the literal ref.
+		reg.Register(ref.Ref)
+		e.secretOrigins[name] = ref
 		return cty.NilVal, nil
 	}
 	resolvedVal, err := stack.Resolve(ctx, ref)
@@ -1292,9 +1316,6 @@ func (e *Engine) resolveOverrideSecretVar(ctx context.Context, name string, attr
 		return cty.NilVal, fmt.Errorf("variable %q (origin %s): %w", name, ref, err)
 	}
 	reg.Register(resolvedVal)
-	if e.secretOrigins == nil {
-		e.secretOrigins = make(map[string]secrets.OriginRef)
-	}
 	e.secretOrigins[name] = ref
 	return cty.StringVal(resolvedVal), nil
 }
