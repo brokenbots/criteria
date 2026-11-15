@@ -16,10 +16,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/brokenbots/criteria/internal/cli/applytest"
 	"github.com/brokenbots/criteria/internal/testutil"
 	servertrans "github.com/brokenbots/criteria/internal/transport/server"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/workflow"
+	"github.com/brokenbots/criteria/workflow/workflowtest"
 )
 
 // fakeTransport is a test-only implementation of reattachTransport that lets
@@ -2104,5 +2106,296 @@ func TestResumeOneLocalRun_SharedListenAddressIsolated(t *testing.T) {
 		}
 	case <-time.After(15 * time.Second):
 		t.Fatal("resumeOneLocalRun did not return after cancellation")
+	}
+}
+
+// kb411CollectTemplateFile is the collect_inventory.sh.tftpl fixture. Line 21
+// pipelines a directly-bound string variable into shellquote; line 24
+// pipelines jsonencode(var.repos) through shellquote, so both variable
+// channels must render with their pre-restart shapes.
+func kb411CollectTemplateFile() []byte {
+	return []byte(`#!/usr/bin/env bash
+set -euo pipefail
+IFS=$'\n\t'
+
+# collect_inventory.sh — sweep repo inventory ("criteria": sweeping).
+# Rendered by the collect step via templatefile().
+# Inputs: sweep_key (string, launch-provided), repos_json (jsonencode(var.repos)).
+# The sweep key is shell-quoted so the report line is injection-safe.
+
+mode="${MODE:-inventory}"
+out="${OUT:-inventory.json}"
+workdir="${WORKDIR:-.}"
+
+echo "repo criteria: sweeping"
+
+cleanup() {
+  rm -f "${workdir}/.sweep.lock"
+}
+trap cleanup EXIT
+
+key="$( {{ .sweep_key | shellquote }} )"
+echo "sweep key: ${key}"
+
+repos=( {{ .repos_json | shellquote }} )
+for r in "${repos[@]}"; do
+  echo "repo: ${r}"
+done
+
+{
+  echo "mode: ${mode}"
+  echo "out: ${out}"
+} > "${out}"
+
+echo "wrote ${out}"
+`)
+}
+
+// kb411LegacyScopeBlob mirrors the variable-scope shape a server delivers on
+// reattach: the orchestrator assembles the scope from wire events whose
+// variable channel is a string render, so it carries no typed pair — the
+// restored `var` object stays empty. Launch-time typed values must come from
+// the restarted invocation's own var inputs via WithVarOverrides.
+const kb411LegacyScopeBlob = `{"var":{"repos":"[\"infra\",\"tools\"]"},"steps":{"collect":{"stdout":"artifact-42.bin","exit_code":"0"}}}`
+
+// kb411EmitTemplateFile returns a one-line template fed through both variable
+// channels (a directly-bound string and jsonencode(var.repos) pipelined into
+// shellquote). The noop adapter surfaces its emit_log input verbatim on the
+// Log stream, so a step input that renders this template makes the
+// re-evaluation's typed values observable byte-for-byte through the server
+// event stream.
+func kb411EmitTemplateFile() []byte {
+	return []byte("sweep_key={{ .sweep_key | shellquote }} repos_json={{ .repos_json | shellquote }}\n")
+}
+
+// kb411EmitRenderedLine is the expected render of kb411EmitTemplateFile under
+// sweep_key=nightly and repos = ["infra","tools"]: a list-shaped jsonencode
+// shell-quoted as a flat string, not the double-encoded wrap a string-typed
+// value would produce.
+const kb411EmitRenderedLine = `sweep_key='nightly' repos_json='["infra","tools"]'`
+
+func kb411BoolPtr(v bool) *bool { return &v }
+
+// kb411CLITemplateWorkflow writes the template-file workflow used by the
+// server-reattach regression tests: a single collect step whose input renders
+// both a command and an emit_log line from templatefile() over the declared
+// variables. Both templates live next to the workflow file so the runtime
+// resolves them. It returns the workflow path.
+func kb411CLITemplateWorkflow(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "collect_inventory.sh.tftpl"), kb411CollectTemplateFile(), 0o600); err != nil {
+		t.Fatalf("write collect template: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "collect_emit.tftpl"), kb411EmitTemplateFile(), 0o600); err != nil {
+		t.Fatalf("write emit template: %v", err)
+	}
+	hcl := workflowtest.New().
+		WithHeader("kb411cli", "0.1", "collect", "done").
+		WithAdapterFate("noop", "default", "reuse").
+		WithVariable("repos", "list(string)", "").
+		WithVariable("sweep_key", "string", "").
+		WithStep("collect", workflowtest.Target("adapter.noop.default"),
+			workflowtest.StepRaw(`input {
+  command = templatefile("collect_inventory.sh.tftpl", {
+    sweep_key  = var.sweep_key
+    repos_json = jsonencode(var.repos)
+  })
+  emit_log = templatefile("collect_emit.tftpl", {
+    sweep_key  = var.sweep_key
+    repos_json = jsonencode(var.repos)
+  })
+  # The fixture queues the emit_log line before any delay; holding Execute
+  # open keeps the session's step sink bound while the log pump delivers it
+  # through the Log stream, making the line observable in the event stream.
+  delay_ms = "300"
+}`),
+			workflowtest.Outcome("success", "state.done"),
+			workflowtest.Outcome("failure", "state.failed")).
+		WithState("done", true, kb411BoolPtr(true)).
+		WithState("failed", true, kb411BoolPtr(false)).
+		Build()
+	p := filepath.Join(dir, "workflow.hcl")
+	if err := os.WriteFile(p, []byte(strings.TrimSpace(hcl)+"\n"), 0o600); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+	return p
+}
+
+func kb411StepLogChunks(envs []*pb.Envelope, runID string) []string {
+	var chunks []string
+	for _, env := range envs {
+		if env.GetRunId() != runID {
+			continue
+		}
+		if sl := env.GetStepLog(); sl != nil {
+			chunks = append(chunks, strings.TrimSpace(sl.GetChunk()))
+		}
+	}
+	return chunks
+}
+
+func kb411CountRunEnvelope(envs []*pb.Envelope, runID string, terminal func(*pb.Envelope) bool) int {
+	n := 0
+	for _, env := range envs {
+		if env.GetRunId() == runID && terminal(env) {
+			n++
+		}
+	}
+	return n
+}
+
+// TestServerRestartResumedTemplateFileVarsApplyOverrides drives the CLI
+// server-reattach boundary with a fingerprint-matching checkpoint whose
+// reattach scope is a server-shaped legacy blob with no typed variable pair.
+// The restarted invocation carries --var inputs, so the resumed engine must
+// re-evaluate the templatefile() inputs with the same typed values as the
+// pre-crash render: the emitted render line is byte-identical to the
+// launch-time one and no type error occurs.
+func TestServerRestartResumedTemplateFileVarsApplyOverrides(t *testing.T) {
+	requireNoGoroutineLeak(t)
+	cri125SetupAdapter(t)
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+	testutil.RequireUnixSockets(t)
+
+	fake := applytest.New(t)
+	wfPath := kb411CLITemplateWorkflow(t)
+	varOverrides := []string{`repos=["infra","tools"]`, "sweep_key=nightly"}
+	mergedVars, err := mergeVarSources(nil, varOverrides)
+	if err != nil {
+		t.Fatalf("merge var sources: %v", err)
+	}
+	fp := runIdentityFingerprint(wfPath, fake.URL(), nil, varOverrides)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	log := discardLogger()
+	src, graph, loader, err := compileForExecution(ctx, wfPath, log, false, false)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
+
+	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
+	// First invocation mints the run identity and credentials; the fresh run
+	// is never executed here (the caller drives fresh engines). The checkpoint
+	// it would have left matches the restarted invocation's fingerprint.
+	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "kb411-server", &copts, cancel, nil, fp, mergedVars)
+	if err != nil {
+		t.Fatalf("first setupServerRun: %v", err)
+	}
+	if resumed {
+		t.Fatal("first setupServerRun unexpectedly resumed")
+	}
+	client.Close()
+
+	fake.SetReattachState(runID, "running", "collect", 0, "", kb411LegacyScopeBlob)
+	writeRunCheckpoint(log, runID, graph.Name, wfPath, fake.URL(), fp, "collect", 0, client.CriteriaID(), client.Token(), nil)
+
+	client2, runID2, resumed2, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "kb411-server-restart", &copts, cancel, nil, fp, mergedVars)
+	if err != nil {
+		t.Fatalf("second setupServerRun (resume): %v", err)
+	}
+	defer client2.Close()
+	if !resumed2 {
+		t.Fatal("matching checkpoint must be resumed on restart")
+	}
+	if runID2 != "" {
+		t.Fatalf("a resumed invocation must not create a second run, got run_id %q", runID2)
+	}
+	if fake.CreatedRunCount() != 1 {
+		t.Fatalf("CreateRun must be called exactly once across the restart, got %d", fake.CreatedRunCount())
+	}
+
+	envs := fake.Events()
+	chunks := kb411StepLogChunks(envs, runID)
+	if len(chunks) != 1 {
+		t.Fatalf("expected exactly one emitted render line from the resumed execution, got %d chunks: %q", len(chunks), chunks)
+	}
+	if chunks[0] != kb411EmitRenderedLine {
+		t.Fatalf("resumed re-evaluation rendered %q, want byte-identical %q", chunks[0], kb411EmitRenderedLine)
+	}
+	if n := kb411CountRunEnvelope(envs, runID, func(e *pb.Envelope) bool { return e.GetRunFailed() != nil }); n != 0 {
+		t.Fatalf("resumed run must not fail, got %d run.failed envelopes", n)
+	}
+	if n := kb411CountRunEnvelope(envs, runID, func(e *pb.Envelope) bool { return e.GetRunCompleted() != nil }); n != 1 {
+		t.Fatalf("expected exactly one run.completed envelope for the resumed run, got %d", n)
+	}
+}
+
+// TestServerRestartUnmatchedFingerprintVarsNotLeaked pins the leak-protection
+// gate: a checkpoint minted by an invocation without var inputs is resumed by
+// a restarted invocation that carries --var inputs, and the invocation's vars
+// must not be applied to it. The old run re-renders on graph-seeded defaults
+// (null variables) and fails at the shellquote type check; the restarted
+// invocation proceeds with a fresh, unrelated run.
+func TestServerRestartUnmatchedFingerprintVarsNotLeaked(t *testing.T) {
+	requireNoGoroutineLeak(t)
+	cri125SetupAdapter(t)
+	t.Setenv("CRITERIA_STATE_DIR", t.TempDir())
+	testutil.RequireUnixSockets(t)
+
+	fake := applytest.New(t)
+	wfPath := kb411CLITemplateWorkflow(t)
+	varOverrides := []string{`repos=["infra","tools"]`, "sweep_key=nightly"}
+	mergedVars, err := mergeVarSources(nil, varOverrides)
+	if err != nil {
+		t.Fatalf("merge var sources: %v", err)
+	}
+	// The crashed checkpoint was minted without any var inputs, so its
+	// fingerprint cannot match a restarted invocation that carries the var
+	// inputs; it passes cpFP only to exercise the gate.
+	cpFP := runIdentityFingerprint(wfPath, fake.URL(), nil, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	log := discardLogger()
+	src, graph, loader, err := compileForExecution(ctx, wfPath, log, false, false)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
+
+	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
+	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "kb411-server", &copts, cancel, nil, cpFP, nil)
+	if err != nil {
+		t.Fatalf("first setupServerRun: %v", err)
+	}
+	if resumed {
+		t.Fatal("first setupServerRun unexpectedly resumed")
+	}
+	client.Close()
+
+	fake.SetReattachState(runID, "running", "collect", 0, "", kb411LegacyScopeBlob)
+	writeRunCheckpoint(log, runID, graph.Name, wfPath, fake.URL(), cpFP, "collect", 0, client.CriteriaID(), client.Token(), nil)
+
+	// The restarted invocation's fingerprint includes the var inputs and
+	// therefore cannot match the var-less checkpoint's.
+	invFP := runIdentityFingerprint(wfPath, fake.URL(), nil, varOverrides)
+	client2, runID2, resumed2, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "kb411-server-restart", &copts, cancel, nil, invFP, mergedVars)
+	if err != nil {
+		t.Fatalf("second setupServerRun: %v", err)
+	}
+	defer client2.Close()
+
+	if runID2 == "" || runID2 == runID {
+		t.Fatalf("expected a fresh run_id for the restarted invocation, got %q (original %q)", runID2, runID)
+	}
+	if fake.CreatedRunCount() != 2 {
+		t.Fatalf("unmatched checkpoint must not suppress a fresh run, got %d CreateRun calls", fake.CreatedRunCount())
+	}
+	if resumed2 {
+		t.Fatal("an unmatched checkpoint must not be reported as resumed")
+	}
+
+	envs := fake.Events()
+	// The old run was still resumed (its outcome is the server's), but
+	// without the invocation's vars: its re-render must fail on the type
+	// check rather than emitting a line rendered from mismatched values.
+	if n := kb411CountRunEnvelope(envs, runID, func(e *pb.Envelope) bool { return e.GetRunFailed() != nil }); n != 1 {
+		t.Fatalf("old run must fail exactly once when no invocation vars are applied, got %d run.failed envelopes", n)
+	}
+	if chunks := kb411StepLogChunks(envs, runID); len(chunks) != 0 {
+		t.Fatalf("old run must not render from the restarted invocation's vars, got chunks %q", chunks)
 	}
 }
