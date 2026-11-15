@@ -164,7 +164,7 @@ func TestRestart_TemplateFileInputReevaluationByteIdentical(t *testing.T) {
 		t.Fatalf("initial run recorded %d renders, want 1", len(commandsA))
 	}
 	cmdA := commandsA[0]
-	for _, want := range []string{"repos=( [\"infra\",\"tools\"] )", "sweep key: 'nightly'"} {
+	for _, want := range []string{`key="$( 'nightly' )"`, `repos=( '["infra","tools"]' )`} {
 		if !strings.Contains(cmdA, want) {
 			t.Errorf("initial render missing %q; command:\n%s", want, cmdA)
 		}
@@ -201,7 +201,7 @@ func TestRestart_TemplateFileInputReevaluationByteIdentical(t *testing.T) {
 	if cmdB != cmdA {
 		t.Errorf("restart re-evaluation is not byte-identical:\n--- first render ---\n%s\n--- restart render ---\n%s", cmdA, cmdB)
 	}
-	for _, want := range []string{"repos=( [\"infra\",\"tools\"] )", "sweep key: 'nightly'"} {
+	for _, want := range []string{`key="$( 'nightly' )"`, `repos=( '["infra","tools"]' )`} {
 		if !strings.Contains(cmdB, want) {
 			t.Errorf("restart render missing %q; command:\n%s", want, cmdB)
 		}

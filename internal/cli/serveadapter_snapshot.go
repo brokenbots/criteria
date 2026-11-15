@@ -332,21 +332,31 @@ func (c *serveAdapterClient) applyChildRunRestore(run *serveAdapterRun) ([]engin
 
 // restoreRunScope rebuilds a run's variable scope and iteration cursor stack
 // from a serialized scope blob (the exact blob engine VarScope serializes at
-// a pause boundary). workflow.RestoreVarScope rehydrates step outputs and the
-// iteration stack; the "var" section is re-applied through
-// workflow.ApplyVarOverrides — the same typed-conversion path the CLI uses for
-// --var overrides — so variables absent from the blob fall back to graph
-// defaults and captured values are coerced to their declared types.
+// a pause boundary). workflow.RestoreVarScope rehydrates the typed
+// "vars_typed" variable pair alongside step outputs and the iteration stack;
+// only legacy blobs that lack the typed pair still re-apply the string "var"
+// section through workflow.ApplyVarOverrides — the same typed-conversion path
+// the CLI uses for --var overrides — so variables absent from the blob fall
+// back to graph defaults and captured values are coerced to their declared
+// types.
 func restoreRunScope(scopeJSON string, g *workflow.FSMGraph) (map[string]cty.Value, []workflow.IterCursor, error) {
 	vars, iter, err := workflow.RestoreVarScope(scopeJSON, g)
 	if err != nil {
 		return nil, nil, fmt.Errorf("restore variable scope: %w", err)
 	}
 	var raw struct {
-		Var map[string]string `json:"var"`
+		Var           map[string]string `json:"var"`
+		VarsTyped     string            `json:"vars_typed"`
+		VarsTypedType string            `json:"vars_typed_type"`
 	}
 	if err := json.Unmarshal([]byte(scopeJSON), &raw); err != nil {
 		return nil, nil, fmt.Errorf("restore variable scope: %w", err)
+	}
+	if raw.VarsTyped != "" && raw.VarsTypedType != "" {
+		// RestoreVarScope already applied the typed variable pair; re-applying
+		// the legacy string map would re-coerce structured variables through
+		// the comma-joined string form.
+		return vars, iter, nil
 	}
 	overrides := make(map[string]cty.Value, len(raw.Var))
 	for k, v := range raw.Var {

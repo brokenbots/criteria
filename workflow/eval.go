@@ -689,7 +689,11 @@ func WithIndexedStepOutput(vars map[string]cty.Value, stepName string, index cty
 //	{"var": {"name": "value"}, "steps": {"step": {"key": "value"}}, "iter": [...]}
 //
 // The "var" map uses string values only; null-valued variables are omitted
-// (key absent). On restore, absent keys fall back to FSMGraph defaults.
+// (key absent) but every value is carried losslessly a second time in the
+// typed "vars_typed"/"vars_typed_type" cty-JSON pair, which RestoreVarScope
+// prefers so a restart re-evaluation of run-time variables sees the exact
+// pre-restart values (structured types included). On restore, attributes
+// absent from the typed pair fall back to FSMGraph defaults.
 // The iter field is a JSON array of cursor objects; it is omitted when the
 // stack is empty. The server stores this blob verbatim without interpreting
 // cursor internals. See IterCursor for field documentation.
@@ -707,6 +711,13 @@ func SerializeVarScope(vars map[string]cty.Value, cursorStack ...[]IterCursor) (
 			}
 		}
 		scope["var"] = varMap
+		valBytes, errV := ctyjson.Marshal(varObj, varObj.Type())
+		typeBytes, errT := ctyjson.MarshalType(varObj.Type())
+		if err := errors.Join(errV, errT); err != nil {
+			return "", fmt.Errorf("cannot serialize variables: %w", err)
+		}
+		scope["vars_typed"] = string(valBytes)
+		scope["vars_typed_type"] = string(typeBytes)
 	}
 	if stepsObj, ok := vars["steps"]; ok && stepsObj != cty.NilVal && stepsObj.Type().IsObjectType() {
 		// Step outputs are stored with their native cty type. Serialize the whole
@@ -819,6 +830,38 @@ func restoreStepOutputs(raw map[string]interface{}) (cty.Value, error) {
 	return cty.NilVal, nil
 }
 
+// typedVarsFromScope extracts the typed (cty-JSON) variable value and type
+// bytes from a decoded scope map. It returns ok=false when the typed form is
+// absent (e.g. a legacy checkpoint), so restore falls back to graph defaults.
+func typedVarsFromScope(raw map[string]interface{}) (valBytes, typeBytes []byte, ok bool) {
+	v, vok := raw["vars_typed"].(string)
+	t, tok := raw["vars_typed_type"].(string)
+	if !vok || !tok {
+		return nil, nil, false
+	}
+	return []byte(v), []byte(t), true
+}
+
+// mergeRestoredVars overlays restored variable values onto the graph-seeded
+// var object. Only attributes present in both objects with equal cty types
+// are overlaid; the seed value survives everywhere else.
+func mergeRestoredVars(seeded, restored cty.Value) cty.Value {
+	seededTypes := seeded.Type().AttributeTypes()
+	restoredTypes := restored.Type().AttributeTypes()
+	merged := make(map[string]cty.Value, len(seededTypes))
+	for name := range seededTypes {
+		merged[name] = seeded.GetAttr(name)
+	}
+	for name, restoredType := range restoredTypes {
+		seededType, ok := seededTypes[name]
+		if !ok || !seededType.Equals(restoredType) {
+			continue
+		}
+		merged[name] = restored.GetAttr(name)
+	}
+	return cty.ObjectVal(merged)
+}
+
 // RestoreVarScope rebuilds a run's vars map and iteration cursor stack from
 // a JSON-encoded scope snapshot and the compiled workflow graph. Variable
 // defaults come from the graph; step outputs are restored from the JSON scope.
@@ -843,6 +886,34 @@ func RestoreVarScope(scopeJSON string, g *FSMGraph) (map[string]cty.Value, []Ite
 		return vars, nil, err
 	} else if steps != cty.NilVal {
 		vars["steps"] = steps
+	}
+
+	// Restore run-time variable values (typed cty-JSON form). The restored
+	// object overlays the graph seeds only where the attribute still exists in
+	// the declared var object and its cty type equals the declared type; a
+	// renamed, removed, or retyped variable keeps the declared default instead
+	// of feeding a drifted value into input-expression re-evaluation. Legacy
+	// checkpoints carry only the lossy string "var" map, which is intentionally
+	// not re-applied here — graph defaults win on restore, exactly as before
+	// the typed pair existed.
+	if varBytes, typeBytes, ok := typedVarsFromScope(raw); ok {
+		declared, errT := ctyjson.UnmarshalType(typeBytes)
+		if errT != nil {
+			return vars, nil, fmt.Errorf("restore variable types: %w", errT)
+		}
+		restored, errV := ctyjson.Unmarshal(varBytes, declared)
+		if errV != nil {
+			return vars, nil, fmt.Errorf("restore variable values: %w", errV)
+		}
+		if restored.IsNull() {
+			restored = cty.ObjectVal(map[string]cty.Value{})
+		}
+		if !restored.Type().IsObjectType() {
+			return vars, nil, fmt.Errorf("restore variables: expected an object, got %s", restored.Type().FriendlyName())
+		}
+		if seedObj, ok := vars["var"]; ok && seedObj != cty.NilVal && seedObj.Type().IsObjectType() {
+			vars["var"] = mergeRestoredVars(seedObj, restored)
+		}
 	}
 
 	// Restore iteration cursor stack.
