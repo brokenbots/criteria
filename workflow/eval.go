@@ -686,17 +686,19 @@ func WithIndexedStepOutput(vars map[string]cty.Value, stepName string, index cty
 // SerializeVarScope encodes the run vars map and optional iteration cursor
 // stack into a JSON string for persistence. The format is:
 //
-//	{"var": {"name": "value"}, "steps": {"step": {"key": "value"}}, "iter": [...]}
+//	{"var": {"name": "value"}, "steps": {"step": {"key": "value"}}, "iter": [...],
+//	 "vars_typed": {...}, "vars_typed_type": {...}}
 //
-// The "var" map uses string values only; null-valued variables are omitted
-// (key absent) but every value is carried losslessly a second time in the
-// typed "vars_typed"/"vars_typed_type" cty-JSON pair, which RestoreVarScope
-// prefers so a restart re-evaluation of run-time variables sees the exact
-// pre-restart values (structured types included). On restore, attributes
-// absent from the typed pair fall back to FSMGraph defaults.
-// The iter field is a JSON array of cursor objects; it is omitted when the
-// stack is empty. The server stores this blob verbatim without interpreting
-// cursor internals. See IterCursor for field documentation.
+// Variable values are carried twice. The legacy "var" map is kept because
+// older readers restore from it, but it is lossy: values are stringified and
+// null-valued variables are omitted (key absent). The typed
+// "vars_typed"/"vars_typed_type" cty-JSON pair is the lossless channel and
+// the one RestoreVarScope prefers, so a restart re-evaluation of run-time
+// variables sees the exact pre-restart values (structured types included).
+// On restore, attributes absent from the typed pair fall back to FSMGraph
+// defaults. The iter field is a JSON array of cursor objects; it is omitted
+// when the stack is empty. The server stores this blob verbatim without
+// interpreting cursor internals. See IterCursor for field documentation.
 func SerializeVarScope(vars map[string]cty.Value, cursorStack ...[]IterCursor) (string, error) {
 	scope := map[string]interface{}{}
 	if varObj, ok := vars["var"]; ok && varObj != cty.NilVal && varObj.Type().IsObjectType() {
