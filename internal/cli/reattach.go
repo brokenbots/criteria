@@ -418,20 +418,17 @@ func checkIterationCursorValidity(graph *workflow.FSMGraph, variableScope string
 	return nil
 }
 
-// resumeActiveRun handles the normal (non-paused) resume path. It returns
-// whether the run was consumed (see resumeOneRun) and the run's outcome
-// error, mirroring the fresh-run error contract: an engine error is returned
-// verbatim and a terminal success=false completion surfaces the same
-// "run completed with terminal state" error as the fresh path.
 // resumeActiveRun re-enters a crashed active run, re-running the interrupted
-// step at attempt 1 with a fresh budget. resumeVars is the per-checkpoint
+// step at attempt 1 with a fresh retry budget. resumeVars is the per-checkpoint
 // variable set gated by the caller on the run identity (nil when none apply);
 // it is re-applied on top of the restored scope so launch-time typed values
 // survive the reattach. It returns whether the run was consumed (see
-// resumeOneRun) and the run's outcome error (nil on success).
+// resumeOneRun) and the run's outcome error, mirroring the fresh-run error
+// contract: an engine error is returned verbatim, a terminal success=false
+// completion surfaces the same "run completed with terminal state" error as
+// the fresh path, and success returns (true, nil).
 //
-// The interrupted step restarts at attempt 1 with a fresh retry
-// budget. The pre-crash attempt produced no outcome (the runner was killed
+// The pre-crash attempt produced no outcome (the runner was killed
 // mid-attempt), so counting it against max_step_retries made mid-step crash
 // recovery useless for any workflow with max_step_retries <= 1: the resumed
 // run failed immediately. The persisted max_visits counts (restored via

@@ -86,15 +86,15 @@ func (a *templatefileRecorderAdapter) rendered() []string {
 	return append([]string(nil), a.commands...)
 }
 
-// kb411TemplateFileGraph compiles the workflow under test: two launch-provided
+// templateReevalGraph compiles the workflow under test: two launch-provided
 // variables (a list and a string, both declared without defaults so only the
 // run-time override supplies values) and a collect step whose command input is
 // rendered from the template fixture.
-func kb411TemplateFileGraph(t *testing.T, dir string) *workflow.FSMGraph {
+func templateReevalGraph(t *testing.T, dir string) *workflow.FSMGraph {
 	t.Helper()
 
 	b := workflowtest.New().
-		WithHeader("kb411template", "0.1", "collect", "done").
+		WithHeader("tfeval-template", "0.1", "collect", "done").
 		WithAdapterFate("noop", "default", "reuse").
 		WithVariable("repos", "list(string)", "").
 		WithVariable("sweep_key", "string", "").
@@ -144,7 +144,7 @@ func compileKb411Graph(t *testing.T, src, dir string) *workflow.FSMGraph {
 // shellquote both keep their exact values across restart.
 func TestRestart_TemplateFileInputReevaluationByteIdentical(t *testing.T) {
 	dir := t.TempDir()
-	g := kb411TemplateFileGraph(t, dir)
+	g := templateReevalGraph(t, dir)
 
 	recorderA := &templatefileRecorderAdapter{fakeAdapter: fakeAdapter{name: "noop", outcome: "success"}}
 	loaderA := &fakeLoader{adapters: map[string]adapterhost.Handle{"noop": recorderA}}
@@ -220,7 +220,7 @@ func TestRestart_TemplateFileInputReevaluationByteIdentical(t *testing.T) {
 // fall back to declared defaults and shellquote rejects the value.
 func TestRestart_TemplateFileReeval_ServerBlobLegacyShape(t *testing.T) {
 	dir := t.TempDir()
-	g := kb411TemplateFileGraph(t, dir)
+	g := templateReevalGraph(t, dir)
 
 	overrides := map[string]cty.Value{
 		"repos":     cty.ListVal([]cty.Value{cty.StringVal("infra"), cty.StringVal("tools")}),
