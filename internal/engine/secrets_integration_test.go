@@ -14,6 +14,7 @@ import (
 	"github.com/brokenbots/criteria/internal/adapter/secrets"
 	"github.com/brokenbots/criteria/internal/adapterhost"
 	"github.com/brokenbots/criteria/workflow"
+	"github.com/brokenbots/criteria/workflow/workflowtest"
 )
 
 // secretRecordingAdapter records the secrets passed to OpenSession and can
@@ -361,6 +362,113 @@ state "done" { terminal = true }`)
 	}
 	if ad.openSecrets == nil || ad.openSecrets["token"] != secretValue {
 		t.Fatalf("expected data secret to reach adapter via secret channel, got %v", ad.openSecrets)
+	}
+}
+
+// TestRestart_ResumedOverrideSecretOriginResolution verifies the resumed
+// scope treatment of launch-time override secrets (KB-411 round 4): a
+// provider-reference override re-applied on resume must be resolved through
+// the provider stack, registered for redaction, and recorded in
+// secretOrigins, while restored scope secrets outside the override set stay
+// untouched — their values were already resolved before the restart, and
+// re-parsing them as origin refs would mis-tag the origin map.
+func TestRestart_ResumedOverrideSecretOriginResolution(t *testing.T) {
+	secretValue := "supersecret-resumed-777"
+	secretEnvName := "CRITERIA_TEST_SECRET_RESUMED_OVERRIDE"
+	restoredPlain := "resolved-before-restart-777"
+	t.Setenv(secretEnvName, secretValue)
+
+	b := workflowtest.New().
+		WithHeader("tfeval-secret-resume", "0.1", "collect", "done").
+		WithEnvironment("sandbox", "default", `secrets = { provider = "env" }`).
+		WithRaw(`variable "token" {
+  type   = string
+  secret = true
+}`).WithRaw(`variable "plain_secret" {
+  type   = string
+  secret = true
+}`).WithRaw(`adapter "noop" "default" {
+  environment = sandbox.default
+  secrets {
+    token        = var.token
+    plain_secret = var.plain_secret
+  }
+}`).
+		WithStep("collect", workflowtest.Target("adapter.noop.default"),
+			workflowtest.Outcome("success", "state.done"),
+			workflowtest.Outcome("error", "state.failed")).
+		WithState("done", true, boolPtr(true)).
+		WithState("failed", true, boolPtr(false))
+	g := compileGraphWithDir(t, b.Build(), t.TempDir())
+
+	// Execute embeds the resolved secret in its error so the run fails and
+	// redaction against the run's registry is observable. On the pre-fix
+	// resumed path the adapter never receives the resolved value, the
+	// registry never registers it, and the error text travels unredacted —
+	// which is how this test fails before the fix.
+	ad := &secretRecordingAdapter{name: "noop", outcome: "success", injectSecretInErr: secretValue}
+	loader := &fakeLoader{adapters: map[string]adapterhost.Handle{"noop": ad}}
+	sink := &redactingSink{}
+
+	// Server-shaped restart blob carrying the vars_typed pair: token holds
+	// the already-resolved pre-restart secret value, plain_secret its
+	// resolved value. The legacy lossy "var" map is deliberately not
+	// re-applied on restore, so the typed pair is what delivers the values.
+	preVars := map[string]cty.Value{
+		"token":        cty.StringVal("resolved-before-restart-too"),
+		"plain_secret": cty.StringVal(restoredPlain),
+	}
+	scopeJSON, err := workflow.SerializeVarScope(map[string]cty.Value{"var": cty.ObjectVal(preVars)})
+	if err != nil {
+		t.Fatalf("SerializeVarScope: %v", err)
+	}
+	restoredVars, restoredIter, err := workflow.RestoreVarScope(scopeJSON, g)
+	if err != nil {
+		t.Fatalf("RestoreVarScope: %v", err)
+	}
+
+	eng := NewTestEngine(g, loader, sink,
+		WithResumedVars(restoredVars),
+		WithResumedIter(restoredIter),
+		WithVarOverrides(map[string]cty.Value{
+			"token": cty.StringVal("env:" + secretEnvName),
+		}))
+
+	err = eng.RunFrom(context.Background(), "collect", 1)
+	if err == nil {
+		t.Fatal("expected the run to fail: the adapter embeds the resolved secret in its error")
+	}
+
+	// The override resolved through the provider stack before reaching the
+	// adapter: the literal env: reference never travels.
+	if ad.openSecrets["token"] != secretValue {
+		t.Fatalf("resumed override secret must be resolved, not left as a literal reference; got adapter secrets %v", ad.openSecrets)
+	}
+	// The restored, non-overridden secret passes through unchanged: no
+	// re-parsing of already-resolved values.
+	if ad.openSecrets["plain_secret"] != restoredPlain {
+		t.Fatalf("restored secret outside the override set must keep its resolved value, got adapter secrets %v", ad.openSecrets)
+	}
+	if len(sink.stepOutcomeErrors) == 0 {
+		t.Fatal("expected the adapter error to reach the sink")
+	}
+	for i, recordedErr := range sink.stepOutcomeErrors {
+		if strContains(recordedErr.Error(), secretValue) {
+			t.Fatalf("step outcome error[%d] leaked raw secret %q: %s", i, secretValue, recordedErr)
+		}
+		if !strContains(recordedErr.Error(), "[REDACTED]") {
+			t.Fatalf("step outcome error[%d] should contain [REDACTED]: %s", i, recordedErr)
+		}
+	}
+	// The origin is recorded so adapter session snapshots re-resolve the
+	// value on resume rather than persisting the raw secret; the restored
+	// secret must not gain a mis-tagged literal origin.
+	ref, has := eng.secretOrigins["token"]
+	if !has || ref.Kind != "env" || ref.Ref != secretEnvName {
+		t.Fatalf("expected secretOrigins[token] = {env %q}, got %+v", secretEnvName, ref)
+	}
+	if _, has := eng.secretOrigins["plain_secret"]; has {
+		t.Fatal("restored secret outside the override set must not gain a mis-tagged literal origin")
 	}
 }
 

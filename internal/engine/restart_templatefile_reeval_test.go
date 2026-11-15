@@ -116,12 +116,12 @@ func templateReevalGraph(t *testing.T, dir string) *workflow.FSMGraph {
 		t.Fatalf("write template: %v", err)
 	}
 
-	return compileKb411Graph(t, b.Build(), dir)
+	return compileGraphWithDir(t, b.Build(), dir)
 }
 
-// compileKb411Graph compiles source with the workflow directory configured so
+// compileGraphWithDir compiles source with the workflow directory configured so
 // compile-time folding can resolve templatefile() against the template fixture.
-func compileKb411Graph(t *testing.T, src, dir string) *workflow.FSMGraph {
+func compileGraphWithDir(t *testing.T, src, dir string) *workflow.FSMGraph {
 	t.Helper()
 	src = injectDefaultAdapters(src)
 	spec, diags := workflow.Parse("t.hcl", []byte(src))

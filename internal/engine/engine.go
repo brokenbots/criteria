@@ -1249,27 +1249,13 @@ func (e *Engine) resolveOverrideSecretOrigins(ctx context.Context, vars map[stri
 	attrs := varObj.AsValueMap()
 	resolved := make(map[string]cty.Value)
 	for name := range e.varOverrides {
-		node, declared := e.graph.Variables[name]
-		val, present := attrs[name]
-		if !declared || !present || !node.Secret || val.IsNull() || !val.IsKnown() || val.Type() != cty.String {
-			continue
+		val, errR := e.resolveOverrideSecretVar(ctx, name, attrs, stack, reg)
+		if errR != nil {
+			return nil, errR
 		}
-		ref := secrets.ParseOriginRef(val.AsString())
-		if ref.Kind == "literal" {
-			// An override whose value is not a provider reference is the
-			// secret itself; registering it is handled by the fresh seed.
-			continue
+		if val != cty.NilVal {
+			resolved[name] = val
 		}
-		resolvedVal, resolveErr := stack.Resolve(ctx, ref)
-		if resolveErr != nil {
-			return nil, fmt.Errorf("variable %q (origin %s): %w", name, ref, resolveErr)
-		}
-		resolved[name] = cty.StringVal(resolvedVal)
-		reg.Register(resolvedVal)
-		if e.secretOrigins == nil {
-			e.secretOrigins = make(map[string]secrets.OriginRef)
-		}
-		e.secretOrigins[name] = ref
 	}
 	if len(resolved) == 0 {
 		return vars, nil
@@ -1283,6 +1269,34 @@ func (e *Engine) resolveOverrideSecretOrigins(ctx context.Context, vars map[stri
 	}
 	out["var"] = cty.ObjectVal(attrs)
 	return out, nil
+}
+
+// resolveOverrideSecretVar resolves, redacts, and records the origin for one
+// override-set secret variable; it returns cty.NilVal when the name needs no
+// rewrite (undeclared, non-secret, not a string, or a literal-value override
+// that the fresh seed already registered).
+func (e *Engine) resolveOverrideSecretVar(ctx context.Context, name string, attrs map[string]cty.Value, stack *secrets.Stack, reg *secrets.Registry) (cty.Value, error) {
+	node, declared := e.graph.Variables[name]
+	val, present := attrs[name]
+	if !declared || !present || !node.Secret || val.IsNull() || !val.IsKnown() || val.Type() != cty.String {
+		return cty.NilVal, nil
+	}
+	ref := secrets.ParseOriginRef(val.AsString())
+	if ref.Kind == "literal" {
+		// An override whose value is not a provider reference is the
+		// secret itself; registering it is handled by the fresh seed.
+		return cty.NilVal, nil
+	}
+	resolvedVal, err := stack.Resolve(ctx, ref)
+	if err != nil {
+		return cty.NilVal, fmt.Errorf("variable %q (origin %s): %w", name, ref, err)
+	}
+	reg.Register(resolvedVal)
+	if e.secretOrigins == nil {
+		e.secretOrigins = make(map[string]secrets.OriginRef)
+	}
+	e.secretOrigins[name] = ref
+	return cty.StringVal(resolvedVal), nil
 }
 
 // resolveSecretDataOrigins walks declared secret data blocks and resolves any
