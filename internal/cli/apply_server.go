@@ -18,6 +18,7 @@ import (
 	"github.com/brokenbots/criteria/internal/tunables"
 	pb "github.com/brokenbots/criteria/sdk/pb/criteria/v1"
 	"github.com/brokenbots/criteria/workflow"
+	"github.com/zclconf/go-cty/cty"
 )
 
 func applyClientOptions(opts applyOptions) servertrans.Options {
@@ -328,7 +329,11 @@ func runApplyServer(ctx context.Context, opts applyOptions) error {
 	// keeps failed) the original run instead of forking a second run with a
 	// fresh run_id against stale adapter state.
 	fingerprint := runIdentityFingerprint(opts.workflowPath, opts.serverURL, opts.varFiles, opts.varOverrides)
-	client, runID, resumedMatching, resumeErr, err := setupServerRun(runCtx, log, prepared.graph, prepared.src, opts.serverURL, opts.name, &copts, cancelRun, prepared.eventsOut, fingerprint)
+	mergedVars, err := mergeVarSources(opts.varFiles, opts.varOverrides)
+	if err != nil {
+		return err
+	}
+	client, runID, resumedMatching, resumeErr, err := setupServerRun(runCtx, log, prepared.graph, prepared.src, opts.serverURL, opts.name, &copts, cancelRun, prepared.eventsOut, fingerprint, mergedVars)
 	if err != nil {
 		return err
 	}
@@ -438,8 +443,11 @@ func gateBootOnOperatorView(ctx context.Context, log *slog.Logger) (blocked bool
 // reports whether a checkpoint matching fingerprint was consumed by the
 // resume pass: the caller must then NOT create a fresh run (runID is empty in
 // that case) and must propagate resumeErr, which carries the resumed run's
-// outcome.
-func setupServerRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, src []byte, serverURL, name string, clientOpts *servertrans.Options, cancelRun func(), eventsOut io.Writer, fingerprint string) (client *servertrans.Client, runID string, resumed bool, resumeErr, err error) {
+// outcome. mergedVars are the invocation's typed CLI variable inputs; the
+// resume pass re-applies them only to checkpoints minted by an invocation
+// with the same fingerprint, so launch-time --var/--var-file values survive
+// a crash-reattach without leaking into runs of a different identity.
+func setupServerRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGraph, src []byte, serverURL, name string, clientOpts *servertrans.Options, cancelRun func(), eventsOut io.Writer, fingerprint string, mergedVars map[string]cty.Value) (client *servertrans.Client, runID string, resumed bool, resumeErr, err error) {
 	client, err = servertrans.NewClient(serverURL, log, *clientOpts)
 	if err != nil {
 		return nil, "", false, nil, err
@@ -453,7 +461,7 @@ func setupServerRun(ctx context.Context, log *slog.Logger, graph *workflow.FSMGr
 		return nil, "", false, nil, fmt.Errorf("register: %w", err)
 	}
 
-	matched, outcome := resumeInFlightRuns(ctx, log, clientOpts, eventsOut, fingerprint)
+	matched, outcome := resumeInFlightRuns(ctx, log, clientOpts, eventsOut, fingerprint, mergedVars)
 	if matched {
 		return client, "", true, outcome, nil
 	}

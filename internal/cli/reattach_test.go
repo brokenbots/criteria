@@ -971,7 +971,7 @@ func TestResumeActiveRun_FreshAttemptBudgetOnResume(t *testing.T) {
 	}
 
 	ft := &fakeTransport{}
-	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp, nil, nil)
+	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp, nil, nil, nil)
 
 	// Checkpoint must be removed.
 	list, _ := ListStepCheckpoints()
@@ -1028,7 +1028,7 @@ func TestResumeActiveRun_HappyPath(t *testing.T) {
 	}
 
 	ft := &fakeTransport{}
-	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp, nil, nil)
+	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp, nil, nil, nil)
 
 	// Checkpoint must be removed after the run completes.
 	list, _ := ListStepCheckpoints()
@@ -1100,7 +1100,7 @@ func TestResumeActiveRun_DualWriteMirrorsEventsFile(t *testing.T) {
 
 	ft := &fakeTransport{}
 	var eventsBuf bytes.Buffer
-	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp, &eventsBuf, nil)
+	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp, &eventsBuf, nil, nil)
 
 	fileEvents := parseNDJSONEnvelopes(t, eventsBuf.Bytes())
 	assertSingleRunStrictSeq(t, fileEvents, cp.RunID)
@@ -1142,7 +1142,7 @@ func TestResumePausedRun_DualWriteMirrorsEventsFile(t *testing.T) {
 
 	ft := &fakeTransport{}
 	var eventsBuf bytes.Buffer
-	resumePausedRun(context.Background(), discardLogger(), ft, cp, graph, resp, &eventsBuf, nil)
+	resumePausedRun(context.Background(), discardLogger(), ft, cp, graph, resp, &eventsBuf, nil, nil)
 
 	fileEvents := parseNDJSONEnvelopes(t, eventsBuf.Bytes())
 	assertSingleRunStrictSeq(t, fileEvents, cp.RunID)
@@ -1184,7 +1184,7 @@ func TestResumeActiveRun_MaxRetriesDualWriteMirrorsEventsFile(t *testing.T) {
 
 	ft := &fakeTransport{}
 	var eventsBuf bytes.Buffer
-	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp, &eventsBuf, nil)
+	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp, &eventsBuf, nil, nil)
 
 	fileEvents := parseNDJSONEnvelopes(t, eventsBuf.Bytes())
 	assertSingleRunStrictSeq(t, fileEvents, cp.RunID)
@@ -1258,7 +1258,7 @@ func TestResumeActiveRun_VisitsRestored(t *testing.T) {
 	}
 
 	ft := &fakeTransport{}
-	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp, nil, nil)
+	resumeActiveRun(context.Background(), discardLogger(), ft, cp, graph, resp, nil, nil, nil)
 
 	// The engine must emit RunFailed because visits["work"]=1 >= max_visits=1.
 	var gotFailed bool
@@ -1299,7 +1299,7 @@ func TestResumePausedRun_StartsStreamsAndRunsEngine(t *testing.T) {
 	}
 
 	ft := &fakeTransport{}
-	resumePausedRun(context.Background(), discardLogger(), ft, cp, graph, resp, nil, nil)
+	resumePausedRun(context.Background(), discardLogger(), ft, cp, graph, resp, nil, nil, nil)
 
 	// Checkpoint must be removed.
 	list, _ := ListStepCheckpoints()
@@ -1342,7 +1342,7 @@ func TestResumePausedRun_StartStreamsError(t *testing.T) {
 	}
 
 	ft := &fakeTransport{startStreamsErr: fmt.Errorf("connection refused")}
-	resumePausedRun(context.Background(), discardLogger(), ft, cp, graph, resp, nil, nil)
+	resumePausedRun(context.Background(), discardLogger(), ft, cp, graph, resp, nil, nil, nil)
 
 	// Checkpoint must be removed (abandoned on stream error).
 	list, _ := ListStepCheckpoints()
@@ -1484,7 +1484,7 @@ func TestResumeActiveRun_PauseRunLandsDuringRecoveredRun(t *testing.T) {
 	defer runCancel()
 	done := make(chan bool, 1)
 	go func() {
-		consumed, outcome := resumeActiveRun(runCtx, log, ft, cp, graph, resp, nil, runCancel)
+		consumed, outcome := resumeActiveRun(runCtx, log, ft, cp, graph, resp, nil, runCancel, nil)
 		if outcome != nil {
 			t.Errorf("pause-landed resume returned error %v", outcome)
 		}
@@ -1545,7 +1545,7 @@ func TestResumePausedRun_PauseRunLandsDuringRecoveredRun(t *testing.T) {
 	go func() {
 		// After the pause lands the driver parks in serviceResumeSignals;
 		// cancelling the run context below ends it.
-		consumed, outcome := resumePausedRun(runCtx, log, ft, cp, graph, resp, nil, runCancel)
+		consumed, outcome := resumePausedRun(runCtx, log, ft, cp, graph, resp, nil, runCancel, nil)
 		if outcome != nil {
 			t.Errorf("pause-landed re-entry returned error %v", outcome)
 		}
@@ -1602,7 +1602,7 @@ func TestResumeActiveRun_RunCancelCancelsRecoveredRun(t *testing.T) {
 	done := make(chan bool, 1)
 	outcomeCh := make(chan error, 1)
 	go func() {
-		consumed, outcome := resumeActiveRun(runCtx, log, ft, cp, graph, resp, nil, runCancel)
+		consumed, outcome := resumeActiveRun(runCtx, log, ft, cp, graph, resp, nil, runCancel, nil)
 		done <- consumed
 		outcomeCh <- outcome
 	}()
@@ -1648,7 +1648,7 @@ func TestResumePausedRun_RunCancelCancelsRecoveredRun(t *testing.T) {
 	done := make(chan bool, 1)
 	outcomeCh := make(chan error, 1)
 	go func() {
-		consumed, outcome := resumePausedRun(runCtx, log, ft, cp, graph, resp, nil, runCancel)
+		consumed, outcome := resumePausedRun(runCtx, log, ft, cp, graph, resp, nil, runCancel, nil)
 		done <- consumed
 		outcomeCh <- outcome
 	}()
@@ -1691,7 +1691,7 @@ func TestResumeActiveRun_RunCancelForeignRunIDLoggedNotRun(t *testing.T) {
 	done := make(chan bool, 1)
 	outcomeCh := make(chan error, 1)
 	go func() {
-		consumed, outcome := resumeActiveRun(runCtx, log, ft, cp, graph, resp, nil, runCancel)
+		consumed, outcome := resumeActiveRun(runCtx, log, ft, cp, graph, resp, nil, runCancel, nil)
 		done <- consumed
 		outcomeCh <- outcome
 	}()

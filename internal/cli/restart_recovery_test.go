@@ -483,7 +483,7 @@ func TestCRI125_ServerRestartResumesOriginalRun(t *testing.T) {
 	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
 	// First invocation: fresh run (no checkpoints yet), which registers a
 	// client and creates the run.
-	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri125-server", &copts, cancel, nil, fp)
+	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri125-server", &copts, cancel, nil, fp, nil)
 	if err != nil {
 		t.Fatalf("first setupServerRun: %v", err)
 	}
@@ -498,7 +498,7 @@ func TestCRI125_ServerRestartResumesOriginalRun(t *testing.T) {
 	fake.SetReattachState(runID, "running", "run_adapter", 0, "", "")
 	writeRunCheckpoint(log, runID, graph.Name, wfPath, fake.URL(), fp, "run_adapter", 0, client.CriteriaID(), client.Token(), nil)
 
-	client2, runID2, resumed2, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri125-server-restart", &copts, cancel, nil, fp)
+	client2, runID2, resumed2, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri125-server-restart", &copts, cancel, nil, fp, nil)
 	if err != nil {
 		t.Fatalf("second setupServerRun: %v", err)
 	}
@@ -534,7 +534,7 @@ func TestCRI125_ServerRestartDifferentFingerprintProceeds(t *testing.T) {
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
 	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
-	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri125-server", &copts, cancel, nil, fp)
+	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri125-server", &copts, cancel, nil, fp, nil)
 	if err != nil {
 		t.Fatalf("first setupServerRun: %v", err)
 	}
@@ -549,7 +549,7 @@ func TestCRI125_ServerRestartDifferentFingerprintProceeds(t *testing.T) {
 	fake.SetReattachState(runID, "running", "run_adapter", 0, "", "")
 	writeRunCheckpoint(log, runID, graph.Name, wfPath, fake.URL(), "unrelated-fingerprint", "run_adapter", 0, client.CriteriaID(), client.Token(), nil)
 
-	client2, runID2, resumed2, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri125-server-fresh", &copts, cancel, nil, fp)
+	client2, runID2, resumed2, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri125-server-fresh", &copts, cancel, nil, fp, nil)
 	if err != nil {
 		t.Fatalf("second setupServerRun: %v", err)
 	}
@@ -724,7 +724,7 @@ func TestCRI125_ServerResumedFailedRunReportsFailure(t *testing.T) {
 	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
 	// First invocation: fresh run (no checkpoints yet), which registers a
 	// client and creates the run.
-	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri125-fail-server", &copts, cancel, nil, fp)
+	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri125-fail-server", &copts, cancel, nil, fp, nil)
 	if err != nil {
 		t.Fatalf("first setupServerRun: %v", err)
 	}
@@ -738,7 +738,7 @@ func TestCRI125_ServerResumedFailedRunReportsFailure(t *testing.T) {
 	fake.SetReattachState(runID, "running", "run_adapter", 0, "", "")
 	writeRunCheckpoint(log, runID, graph.Name, wfPath, fake.URL(), fp, "run_adapter", 0, client.CriteriaID(), client.Token(), nil)
 
-	client2, runID2, resumed2, resumeErr2, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri125-fail-server-restart", &copts, cancel, nil, fp)
+	client2, runID2, resumed2, resumeErr2, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri125-fail-server-restart", &copts, cancel, nil, fp, nil)
 	if err != nil {
 		t.Fatalf("second setupServerRun: %v", err)
 	}

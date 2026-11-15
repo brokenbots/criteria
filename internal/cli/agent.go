@@ -713,7 +713,11 @@ func executeAgentAssignment(agentCtx, runCtx context.Context, log *slog.Logger, 
 	}
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(runCtx)) }()
 
-	engOpts := resumeEngineOptions(cp, reattachResp, graph, log, runID)
+	engOpts, err := resumeEngineOptions(cp, reattachResp, graph, log, runID)
+	if err != nil {
+		reportAgentAssignmentFailed(runCtx, log, publisher, runID, err)
+		return err
+	}
 	// ADR-0006: carry this run's prompt channel and the agent's owner identity
 	// into the engine so delivered prompts can be authorized and routed (D1/D4).
 	engOpts = append(engOpts, engine.WithAgentPrompts(promptCh, client.CriteriaID(), runID))
@@ -837,26 +841,27 @@ func isTerminalRunStatus(status string) bool {
 }
 
 // resumeEngineOptions builds engine options that restore a run's execution
-// state when a checkpoint and a resumable server response are available.
-func resumeEngineOptions(cp *StepCheckpoint, reattachResp *pb.ReattachRunResponse, graph *workflow.FSMGraph, log *slog.Logger, runID string) []engine.Option {
+// state when a checkpoint and a resumable server response are available. A
+// scope-restore failure returns an error: the agent run must fail instead of
+// starting on graph-seeded default variables.
+func resumeEngineOptions(cp *StepCheckpoint, reattachResp *pb.ReattachRunResponse, graph *workflow.FSMGraph, log *slog.Logger, runID string) ([]engine.Option, error) {
 	if cp == nil || reattachResp == nil || !reattachResp.CanResume || reattachResp.CurrentStep == "" {
-		return nil
+		return nil, nil
 	}
-	var opts []engine.Option
 	restoredVars, restoredIter, err := workflow.RestoreVarScope(reattachResp.VariableScope, graph)
 	if err != nil {
-		log.Error("failed to restore variable scope", "run_id", runID, "error", err)
-	} else {
-		opts = append(opts,
-			engine.WithResumedVars(restoredVars),
-			engine.WithResumedIter(restoredIter),
-			engine.WithResumedVisits(cp.Visits),
-		)
+		log.Error("failed to restore variable scope; failing the agent run", "run_id", runID, "error", err)
+		return nil, fmt.Errorf("restore variable scope for run %s: %w", runID, err)
+	}
+	opts := []engine.Option{
+		engine.WithResumedVars(restoredVars),
+		engine.WithResumedIter(restoredIter),
+		engine.WithResumedVisits(cp.Visits),
 	}
 	if reattachResp.Status == agentRunStatusPaused {
 		opts = append(opts, engine.WithPendingSignal(reattachResp.PendingSignal))
 	}
-	return opts
+	return opts, nil
 }
 
 // prepareAgentAssignmentDir writes the workflow (and optional lockfile) source

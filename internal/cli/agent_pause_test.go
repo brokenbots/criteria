@@ -130,7 +130,7 @@ func TestAgentRunAndDrain_PauseLandsDuringInitialRun(t *testing.T) {
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
 	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
-	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri254-agent", &copts, nil, nil, "")
+	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri254-agent", &copts, nil, nil, "", nil)
 	if err != nil {
 		t.Fatalf("setupServerRun: %v", err)
 	}
@@ -327,7 +327,7 @@ func TestAgentRunAndDrain_PauseLandsDuringResumeCycle(t *testing.T) {
 	defer func() { _ = loader.Shutdown(context.WithoutCancel(ctx)) }()
 
 	copts := servertrans.Options{TLSMode: servertrans.TLSDisable}
-	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri254-agent", &copts, nil, nil, "")
+	client, runID, resumed, _, err := setupServerRun(ctx, log, graph, src, fake.URL(), "cri254-agent", &copts, nil, nil, "", nil)
 	if err != nil {
 		t.Fatalf("setupServerRun: %v", err)
 	}

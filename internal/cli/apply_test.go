@@ -207,7 +207,7 @@ func TestResumeInFlightRuns_ServerFn_EmptyCheckpoints(t *testing.T) {
 	t.Setenv("CRITERIA_STATE_DIR", dir)
 	log := newApplyLogger()
 	// Must not panic.
-	resumeInFlightRuns(context.Background(), log, &servertrans.Options{}, nil, "")
+	resumeInFlightRuns(context.Background(), log, &servertrans.Options{}, nil, "", nil)
 }
 
 func TestRunApplyLocal_InvalidOutputMode_ReturnsError(t *testing.T) {
