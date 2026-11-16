@@ -1,71 +1,30 @@
+# devops_maint_v1 Lane B — org dependabot policy for Go repos (KB-408,
+# ADR-0015 wave 3). Applied per repo as .github/dependabot.yml.
+#
+# Policy (ADR-0015 Lane B item 2):
+#   - weekly cadence for every in-scope ecosystem
+#   - minor+patch bumps grouped into ONE PR per ecosystem
+#   - majors stay OUTSIDE the group on purpose: they arrive as separate PRs and
+#     the devops_maint_v1 classify gate routes semver-major bumps to the
+#     needs_judgment lane — never auto-acted. Do not add a semver-major entry.
+#
+# Schema matches the org's proven working files (criteria et al): ecosystem
+# `gomod` with update-types [minor, patch]. A 7-day cooldown matches the org
+# supply-chain posture — a freshly published (possibly compromised) release is
+# not ingested immediately; security updates are exempt by design.
 version: 2
 
-# Dependency-freshness & supply-chain policy: docs/dependency-policy.md
-#
-# Dependabot owns only the routine minor/patch lane. Majors are SIGNALS here, not
-# merge-ready PRs — a Go major is a module-path (/vN) change driven by `gomajor`
-# (see `make deps-majors`), which Dependabot cannot perform. Freshness is tracked
-# by `make deps-outdated` (go-mod-outdated), not by this file.
-#
-# Every ecosystem carries a 7-day cooldown so a freshly-published (possibly
-# compromised) release is not ingested immediately. Security updates are exempt
-# from the cooldown by Dependabot's design. Majors are no longer ignored.
-
 updates:
-  # Root module
-  - package-ecosystem: gomod
+  # Every org repo runs actions; actions/* bumps (integer majors like v6 -> v7)
+  # land outside the group as individual judgment PRs.
+  - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
     cooldown:
       default-days: 7
-    groups:
-      minor-and-patch:
-        update-types:
-          - minor
-          - patch
 
-  # SDK sub-module
   - package-ecosystem: gomod
-    directory: /sdk
-    schedule:
-      interval: weekly
-    cooldown:
-      default-days: 7
-    groups:
-      minor-and-patch:
-        update-types:
-          - minor
-          - patch
-
-  # Tools sub-module (golangci-lint, gomajor, go-mod-outdated, spec-gen deps)
-  - package-ecosystem: gomod
-    directory: /tools
-    schedule:
-      interval: weekly
-    cooldown:
-      default-days: 7
-    groups:
-      minor-and-patch:
-        update-types:
-          - minor
-          - patch
-
-  # Workflow sub-module
-  - package-ecosystem: gomod
-    directory: /workflow
-    schedule:
-      interval: weekly
-    cooldown:
-      default-days: 7
-    groups:
-      minor-and-patch:
-        update-types:
-          - minor
-          - patch
-
-  # GitHub Actions
-  - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
